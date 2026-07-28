@@ -122,21 +122,27 @@ export type DashboardGroups = { mine: DashboardSummary[]; domain: DashboardSumma
 /** List dashboards visible to the user, grouped like every other governed surface.
  *  Archived dashboards are soft-hidden by default (reversible).
  *
- *  ACTIVE-DOMAIN scope: a Personal dashboard shows under "My" only when its domain
- *  is in the caller's live scope. With an active domain chosen (sidebar switcher),
- *  user.domains is narrowed to [active] by auth.ts, so "My" filters to that domain
- *  too. "All Domains" keeps user.domains = every membership, so every personal
- *  dashboard still shows. Domain/Marketplace tiers already narrow via their own
- *  checks, so only "My" needs the extra inScope gate. */
+ *  GROUP BY VISIBILITY (tier), not ownership; STRICT DOMAIN ISOLATION: EVERY tier —
+ *  My, Domain AND Company (marketplace) — narrows to the ACTIVE domain. auth.ts narrows
+ *  user.domains to [active] when a domain is chosen, so each tier filters to it; "All
+ *  Domains" keeps every membership so all show; a domainless dashboard always shows.
+ *  This closes the leak where an owner's domain-A dashboard showed while acting in
+ *  domain B (the old `else if owner ===` fallthrough put an out-of-scope owned domain
+ *  dashboard into "My"). Cross-domain discovery is the dedicated Marketplace's job. */
 export function listDashboards(user: Principal, opts: { includeArchived?: boolean } = {}): DashboardGroups {
   const mine: DashboardSummary[] = [];
   const domain: DashboardSummary[] = [];
   const marketplace: DashboardSummary[] = [];
   for (const d of dashState().dashboards) {
     if (d.archived && !opts.includeArchived) continue;
+    // Visibility gate first (a Personal dashboard is owner-only), THEN group by tier.
+    const visible = d.tier === 'marketplace' || d.tier === 'domain' || d.owner === user.id;
+    if (!visible) continue;
+    const inScope = !d.domain || user.domains.includes(d.domain);
+    if (!inScope) continue; // strict active-domain isolation, every tier, incl the owner
     if (d.tier === 'marketplace') marketplace.push(summarise(d));
-    else if (d.tier === 'domain' && user.domains.includes(d.domain)) domain.push(summarise(d));
-    else if (d.owner === user.id && (!d.domain || user.domains.includes(d.domain))) mine.push(summarise(d));
+    else if (d.tier === 'domain') domain.push(summarise(d));
+    else mine.push(summarise(d)); // personal
   }
   return { mine, domain, marketplace };
 }

@@ -248,6 +248,11 @@ export const config = {
   // Software golden path: per-app live subdomain suffix + image registry. Harbor
   // is a default-off heavy workload (chart `harbor.enabled`); locally CI uses
   // Forgejo's built-in OCI registry, so HARBOR_REGISTRY defaults to it.
+  // The OS's own public base URL (e.g. https://agentic.datamasterclass.com). Baked
+  // into governed apps at build time as VITE_OS_API so a deployed app's os.whoami()
+  // reaches the OS across subdomains (not its own origin). '' locally → apps derive
+  // it from their host or run same-origin. Same var the emailed-links path reads.
+  osPublicUrl: base(env('OS_PUBLIC_URL', '')),
   appsBaseDomain: env('OS_APPS_DOMAIN', 'apps.local'),
   harborEnabled: env('HARBOR_ENABLED', '') === 'true',
   harborRegistry: env('HARBOR_REGISTRY', 'forgejo-http:3000/gitea_admin'),

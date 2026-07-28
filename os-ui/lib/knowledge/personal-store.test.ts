@@ -251,7 +251,7 @@ test('activeDomain=null (All) shows mine entries from every domain', () => {
   assert.equal(all.mine.length, 2);
 });
 
-test('activeDomain filters the domain (Shared) group too, but marketplace is never narrowed', () => {
+test('activeDomain filters EVERY tier incl the Company (Marketplace) group (strict isolation)', () => {
   __resetStore();
   // Create entries from each domain and promote them to Shared.
   const recSales = createPersonalKnowledge(biAdmin, { title: 'Sales shared', domain: 'sales' });
@@ -259,7 +259,7 @@ test('activeDomain filters the domain (Shared) group too, but marketplace is nev
   promotePersonalKnowledge(recSales.id, biAdmin);
   promotePersonalKnowledge(recFinance.id, biAdmin);
 
-  // Certify one to marketplace via an admin (ada is sales-only admin — create a tenant admin).
+  // Certify one to marketplace via an admin. It is homed in SALES.
   const tenantAdmin = { id: 'ta', domains: ['sales', 'finance'], role: 'admin' as const };
   const recCertified = createPersonalKnowledge(tenantAdmin, { title: 'Certified entry', domain: 'sales' });
   promotePersonalKnowledge(recCertified.id, tenantAdmin);
@@ -269,13 +269,15 @@ test('activeDomain filters the domain (Shared) group too, but marketplace is nev
   const inSales = listPersonalKnowledge(bi, { activeDomain: 'sales' });
   assert.equal(inSales.domain.length, 1, 'domain group scoped to sales');
   assert.equal(inSales.domain[0].title, 'Sales shared');
-  // Marketplace is never narrowed.
-  assert.equal(inSales.marketplace.length, 1);
+  // Company (Marketplace) narrows too: the sales-homed certified entry shows in sales.
+  assert.equal(inSales.marketplace.length, 1, 'sales-homed certified entry shows in sales');
 
   const inFinance = listPersonalKnowledge(bi, { activeDomain: 'finance' });
   assert.equal(inFinance.domain.length, 1, 'domain group scoped to finance');
   assert.equal(inFinance.domain[0].title, 'Finance shared');
-  assert.equal(inFinance.marketplace.length, 1, 'marketplace unchanged');
+  // Strict isolation: the sales-homed certified entry does NOT show while acting in finance
+  // (cross-domain discovery is the dedicated Marketplace catalog's job).
+  assert.equal(inFinance.marketplace.length, 0, 'sales-homed certified entry is hidden in finance');
 });
 
 test('single-domain user unaffected: no activeDomain behaves exactly as before', () => {

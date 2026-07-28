@@ -270,13 +270,16 @@ test('a Builder OUTSIDE the domain cannot apply the promotion', () => {
   assert.throws(() => applyApprovedFilePromotion(req, kenji), /domain/i);
 });
 
-test('an Admin certifies a domain asset into a marketplace product', () => {
+test('an Admin certifies a domain asset into a marketplace product (per-tab Company tier is domain-isolated)', () => {
   const a = documented();
   applyApprovedFilePromotion(requestPromotion(a.id, amir, {}), bea);
   const product = transition(a.id, sara, 'certify', {});
   assert.equal(product.tier, 'product');
-  // discoverable by anyone now
-  assert.ok(listFiles(kenji).marketplace.some((f) => f.id === a.id));
+  // Strict isolation: the sales-homed product shows in a SALES user's Company tier…
+  assert.ok(listFiles(sara).marketplace.some((f) => f.id === a.id));
+  // …but NOT in a finance user's per-tab list. Cross-domain discovery is the dedicated
+  // Marketplace catalog's job, not this list's.
+  assert.ok(!listFiles(kenji).marketplace.some((f) => f.id === a.id));
 });
 
 test('own promoted (Shared) file groups under Domain, not Mine', () => {

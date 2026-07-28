@@ -271,18 +271,22 @@ export function listWorkflows(user: Principal, opts: { includeArchived?: boolean
     if (rec.archived && !opts.includeArchived) continue;
     if (!canView(rec, user)) continue;
     // Group by VISIBILITY, not ownership: Shared workflows are domain knowledge and
-    // belong under Domain even when the caller authored them; Marketplace under
-    // Marketplace; Personal (the caller's own drafts, plus same-domain drafts a
-    // builder stewards — already gated by canView) under Personal.
+    // belong under Domain even when the caller authored them; Marketplace under this tab's
+    // "Company" tier; Personal (the caller's own drafts, plus same-domain drafts a builder
+    // stewards — already gated by canView) under Personal.
+    // STRICT DOMAIN ISOLATION: EVERY tier — My, Domain AND Company — narrows to the ACTIVE
+    // domain (auth.ts narrows user.domains to [active]; "All Domains" keeps every membership;
+    // a domainless workflow always shows). canView already narrows Shared→domain; the extra
+    // inScope gate narrows Personal AND the Marketplace/Company tier (a certified workflow
+    // homed in domain A must not show in domain B — cross-domain discovery is the dedicated
+    // Marketplace's job, not this list's).
+    const inScope = !rec.domain || user.domains.includes(rec.domain);
+    if (!inScope) continue;
     if (rec.visibility === 'Marketplace') {
       marketplace.push(summarise(rec));
     } else if (rec.visibility === 'Shared') {
       domain.push(summarise(rec));
-    } else if (!rec.domain || user.domains.includes(rec.domain)) {
-      // ACTIVE-DOMAIN scope: a Personal draft shows under "My" only when its domain
-      // is in the caller's live scope — with an active domain chosen, user.domains is
-      // narrowed to [active], so "My" filters to that domain too. "All domains" shows
-      // every personal draft. Shared/Marketplace already narrow via canView.
+    } else {
       mine.push(summarise(rec));
     }
   }

@@ -114,9 +114,30 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
       throw new OsError(reason || `OS request failed (${res.status})`, res.status, url);
     }
 
-    // 2xx — parse JSON (empty body tolerated as null).
+    // 2xx — parse JSON HONESTLY. When the OS base URL is empty/misconfigured the
+    // request hits the app's OWN origin and nginx serves the SPA index.html (200
+    // text/html) — blindly JSON.parsing that yields "Unrecognized token '<'". So
+    // reject a non-JSON content-type (or an HTML-looking body) with a clear error
+    // instead of a raw parse crash; the app then shows its honest signed-out /
+    // "OS not configured" screen. Empty body is still tolerated as null.
+    const ctype = res.headers?.get?.('content-type') ?? '';
     const text = await res.text();
-    return (text ? JSON.parse(text) : null) as T;
+    if (!text) return null as T;
+    const looksHtml = /^\s*</.test(text);
+    if ((ctype && !/json/i.test(ctype)) || looksHtml) {
+      throw new OsError(
+        'The OS returned a non-JSON response — the app is likely not pointed at the ' +
+          'Sovereign OS (OS_API_URL not configured), or the OS URL is wrong. Sign in to ' +
+          'the OS and check the app\'s OS base URL.',
+        res.status,
+        url,
+      );
+    }
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new OsError(`The OS returned malformed JSON from ${url}.`, res.status, url);
+    }
   }
 
   /** Pull the server's `{ error }` reason out of a failed response, best-effort. */

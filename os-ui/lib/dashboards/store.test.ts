@@ -149,13 +149,16 @@ test('active-domain: personal dashboard appears when "All Domains" is active (us
   assert.ok(mine.some((d) => d.id === 'dash_scope_c'), 'domain-A dashboard must appear when All Domains is active');
 });
 
-test('active-domain: Marketplace tier is never narrowed by active domain', () => {
+test('active-domain: the per-tab Company (Marketplace) tier IS narrowed by active domain', () => {
+  // Strict-isolation model: a certified dashboard homed in sales does NOT show in an
+  // ops user's tab. Cross-domain discovery is the dedicated Marketplace catalog's job.
   const userA: Principal = { id: 'ada', domains: ['sales'], role: 'admin' };
-  saveDashboard(userA, 'dash_scope_mkt', spec('Public Dash'));
+  saveDashboard(userA, 'dash_scope_mkt', spec('Public Dash')); // stamped domain = sales
   transitionDashboard('dash_scope_mkt', userA, 'promote');
   transitionDashboard('dash_scope_mkt', userA, 'certify');
-  // Active domain set to 'ops' (a completely different domain)
   const userOps: Principal = { id: 'bob', domains: ['ops'], role: 'creator' };
-  const { marketplace } = listDashboards(userOps);
-  assert.ok(marketplace.some((d) => d.id === 'dash_scope_mkt'), 'Marketplace dashboard must appear regardless of active domain');
+  assert.ok(!listDashboards(userOps).marketplace.some((d) => d.id === 'dash_scope_mkt'),
+    'a sales-homed certified dashboard must NOT show in an ops user\'s Company tier');
+  assert.ok(listDashboards(userA).marketplace.some((d) => d.id === 'dash_scope_mkt'),
+    'it shows under Company for a sales user');
 });

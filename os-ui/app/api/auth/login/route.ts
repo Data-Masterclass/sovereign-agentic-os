@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
 import { authenticate } from '@/lib/core/auth';
-import { SESSION_COOKIE, SESSION_MAX_AGE, signSession } from '@/lib/core/session';
+import { SESSION_COOKIE, SESSION_MAX_AGE, sessionCookieOptions, signSession } from '@/lib/core/session';
 import { rateLimit, rateLimitReset, clientIp } from '@/lib/core/ratelimit';
 
 export const dynamic = 'force-dynamic';
@@ -44,12 +44,16 @@ export async function POST(req: Request) {
   rateLimitReset(key);
   const token = await signSession(claims, config.sessionSecret);
   const res = NextResponse.json({ user: claims });
-  res.cookies.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: SESSION_MAX_AGE,
-  });
+  res.cookies.set(
+    SESSION_COOKIE,
+    token,
+    // Scope the cookie to the shared parent domain so it also flows to deployed
+    // governed apps' subdomains (identity delegation). Host-only when not derivable.
+    sessionCookieOptions({
+      osPublicUrl: config.osPublicUrl,
+      appsDomain: config.appsBaseDomain,
+      maxAge: SESSION_MAX_AGE,
+    }),
+  );
   return res;
 }

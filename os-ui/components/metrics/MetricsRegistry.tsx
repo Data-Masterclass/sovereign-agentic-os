@@ -47,10 +47,11 @@ function rootOf(m: MetricSummary): FolderRoot {
 }
 
 function MetricCard({
-  m, onOpen, scope, canManage, onMove,
+  m, onOpen, scope, canManage, onMove, picked, onPick,
 }: {
   m: MetricSummary; onOpen: (m: MetricSummary) => void; scope: ScopeKey;
   canManage: boolean; onMove?: (m: MetricSummary) => void;
+  picked?: boolean; onPick?: (checked: boolean) => void;
 }) {
   const showDomain = showDomainForScope(scope);
   // FAIL-SOFT: one metric's model couldn't load — render its reason inline, non-clickable,
@@ -78,11 +79,26 @@ function MetricCard({
       onClick={() => onOpen(m)}
       onKeyDown={(e) => { if (e.key === 'Enter') onOpen(m); }}
       className="card tile"
-      style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 120, boxSizing: 'border-box' }}
+      style={{
+        cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 120, boxSizing: 'border-box',
+        ...(picked ? { borderColor: 'var(--gold-line)', boxShadow: '0 0 0 1px var(--gold-line)' } : {}),
+      }}
       title="Open this metric — explore, govern, or set an alert"
     >
       <div className="tile-top">
-        <span className="tile-name">{m.name}</span>
+        <div className="row" style={{ gap: 6, alignItems: 'center', minWidth: 0 }}>
+          {onPick ? (
+            // Multi-select for bulk archive. Stop the click so ticking a card
+            // doesn't also open it.
+            <input
+              type="checkbox" className="file-pick" aria-label={`Select ${m.name}`}
+              checked={!!picked}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => onPick(e.target.checked)}
+            />
+          ) : null}
+          <span className="tile-name">{m.name}</span>
+        </div>
         <div className="row" style={{ gap: 4, alignItems: 'center' }}>
           {showDomain ? <DomainTag domain={m.domain} /> : null}
           <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_WORD[m.tier]}</span>
@@ -136,6 +152,12 @@ function MetricsRegistryInner({
   // Move picker: which metric ids are moving; null = closed.
   const [moveIds, setMoveIds] = useState<{ ids: string[]; root: FolderRoot } | null>(null);
   const [folderMove, setFolderMove] = useState<FolderRef | null>(null);
+  // Multi-select in the grid → bulk archive. `picked` is the ticked metric ids.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  // A bulk op is running (disable the bar); a concise honest result notice
+  // ("N archived / K failed / S skipped") shown until the next selection change.
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkNotice, setBulkNotice] = useState('');
 
   useEffect(() => { void loadFolders(); }, [loadFolders, groups]);
 
@@ -180,6 +202,11 @@ function MetricsRegistryInner({
     ? itemsUnderFolder(sel.path, active.filter((m) => rootOf(m) === sel.root))
     : active;
 
+  // Bulk selection helpers: the ticked metrics (resolved from the visible set) and
+  // whether the whole current view is already selected — drives the select-all toggle.
+  const pickedMetrics = shown.filter((m) => picked.has(m.id));
+  const allInViewPicked = shown.length > 0 && shown.every((m) => picked.has(m.id));
+
   const reload = useCallback(() => { onReload?.(); void loadFolders(); }, [onReload, loadFolders]);
 
   const moveInto = useCallback(async (ids: string[], folder: string) => {
@@ -195,6 +222,35 @@ function MetricsRegistryInner({
     }
     reload();
   }, [reload]);
+
+  // Bulk ARCHIVE — reuses the SAME per-metric archive endpoint the single-metric
+  // lifecycle uses (POST /api/metrics/{id} {action:'archive'}), looped per id.
+  // Confirmed once via the shared ConfirmDialog. Only metrics the user can manage
+  // are attempted; the rest are reported as skipped. Honest per-run summary.
+  const bulkArchive = useCallback(async (metrics: MetricSummary[]) => {
+    const eligible = metrics.filter((m) => !m.error && canManage(m));
+    const skipped = metrics.length - eligible.length;
+    if (eligible.length === 0) {
+      setBulkNotice(`Nothing to archive — ${skipped} not yours to manage.`);
+      return;
+    }
+    if (!(await confirm(archiveFolderCopy(`${eligible.length} metric${eligible.length > 1 ? 's' : ''}`, eligible.length)))) return;
+    setBulkBusy(true); setBulkNotice(''); setErr('');
+    let archivedCount = 0; let failed = 0;
+    for (const m of eligible) {
+      try {
+        const res = await fetch(`/api/metrics/${encodeURIComponent(m.id)}`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'archive' }),
+        });
+        if (res.ok) archivedCount += 1; else failed += 1;
+      } catch { failed += 1; }
+    }
+    setBulkBusy(false);
+    setPicked(new Set());
+    setBulkNotice(`${archivedCount} archived${failed ? ` · ${failed} failed` : ''}${skipped ? ` · ${skipped} skipped` : ''}.`);
+    reload();
+  }, [canManage, confirm, reload]);
 
   const createFolder = useCallback(async (root: FolderRoot, parentPath: string) => {
     const name = window.prompt('Folder name');
@@ -258,7 +314,7 @@ function MetricsRegistryInner({
       <div className="seg" style={{ marginTop: 14 }}>
         {SCOPE_GROUPS.map((g) => (
           <button key={g.key} type="button" className={scope === g.key ? 'on' : ''}
-            onClick={() => { setScope(g.key); setSel(null); }}>
+            onClick={() => { setScope(g.key); setSel(null); setPicked(new Set()); setBulkNotice(''); }}>
             {g.label('Metrics')}{counts ? ` (${counts[g.key]})` : ''}
           </button>
         ))}
@@ -344,15 +400,67 @@ function MetricsRegistryInner({
               {shown.length === 0 ? (
                 <div className="stub-page">This folder is empty.</div>
               ) : (
-                <div className="tile-grid">
-                  {shown.map((m) => (
-                    <MetricCard
-                      key={m.id} m={m} onOpen={onOpen} scope={scope}
-                      canManage={canManage(m)}
-                      onMove={canManage(m) ? (mm) => setMoveIds({ ids: [mm.id], root: rootOf(mm) }) : undefined}
-                    />
-                  ))}
-                </div>
+                <>
+                  {/* Select-all: ticks (or clears) every metric in the current view
+                      (the active scope + folder filter — the `shown` set). */}
+                  <div className="files-selectall">
+                    <label>
+                      <input
+                        type="checkbox" className="file-pick"
+                        checked={allInViewPicked}
+                        ref={(el) => { if (el) el.indeterminate = picked.size > 0 && !allInViewPicked; }}
+                        onChange={(e) => setPicked((cur) => {
+                          const next = new Set(cur);
+                          if (e.target.checked) for (const m of shown) next.add(m.id);
+                          else for (const m of shown) next.delete(m.id);
+                          return next;
+                        })}
+                        aria-label={allInViewPicked ? 'Deselect all metrics' : 'Select all metrics'}
+                      />
+                      {allInViewPicked ? 'Deselect all' : 'Select all'}
+                    </label>
+                  </div>
+                  {/* Bulk actions — appear once ≥1 card is ticked. Archive reuses the
+                      SAME per-metric archive endpoint the detail view uses. Bulk MOVE
+                      to a domain is intentionally absent: a metric is a measure ON a
+                      dataset and inherits the dataset's domain, so it isn't independently
+                      movable (cross-domain move is excluded for metrics by design). The
+                      note says so honestly; move the dataset in Data to move the metric. */}
+                  {pickedMetrics.length > 0 ? (
+                    <div className="files-bulk" aria-busy={bulkBusy}>
+                      <span>{pickedMetrics.length} selected</span>
+                      <button className="btn ghost sm" disabled={bulkBusy}
+                        onClick={() => void bulkArchive(pickedMetrics)}
+                        title="Archive the selected metrics (reversible)">
+                        Archive
+                      </button>
+                      <button className="btn ghost sm" disabled={bulkBusy}
+                        onClick={() => { setPicked(new Set()); setBulkNotice(''); }}>Clear</button>
+                      <span className="hint" style={{ margin: 0 }}>
+                        Metrics move with their dataset — move the dataset in Data.
+                      </span>
+                      {bulkBusy ? <span className="muted"><span className="spin" /> Working…</span> : null}
+                      {bulkNotice ? <span className="muted">{bulkNotice}</span> : null}
+                    </div>
+                  ) : bulkNotice ? (
+                    <div className="files-bulk"><span className="muted">{bulkNotice}</span></div>
+                  ) : null}
+                  <div className="tile-grid">
+                    {shown.map((m) => (
+                      <MetricCard
+                        key={m.id} m={m} onOpen={onOpen} scope={scope}
+                        canManage={canManage(m)}
+                        onMove={canManage(m) ? (mm) => setMoveIds({ ids: [mm.id], root: rootOf(mm) }) : undefined}
+                        picked={picked.has(m.id)}
+                        onPick={(checked) => setPicked((cur) => {
+                          const next = new Set(cur);
+                          if (checked) next.add(m.id); else next.delete(m.id);
+                          return next;
+                        })}
+                      />
+                    ))}
+                  </div>
+                </>
               )}
             </FolderLayout>
           </div>

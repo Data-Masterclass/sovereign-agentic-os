@@ -62,6 +62,96 @@ export function canPromote(role: Role, from: 'Personal' | 'Shared'): boolean {
 export const SESSION_COOKIE = 'soa_session';
 const MAX_AGE_SECONDS = 60 * 60 * 12; // 12h
 
+/**
+ * The cookie `Domain` that lets the OS session flow to BOTH the OS host and the
+ * per-app subdomains (`<slug>.<domain>.<appsDomain>`) so a deployed governed app's
+ * `os.whoami()` carries the session (identity delegation / SSO). We scope the
+ * cookie to the SHARED PARENT domain of the OS public host and the apps domain —
+ * the longest common dotted suffix that still has ≥2 labels (never a bare TLD).
+ *
+ * Returns null (→ host-only cookie, the safe default) when:
+ *   • no OS public URL is configured (local dev / same-origin), or
+ *   • the host and apps domain share no ≥2-label parent (misconfigured / unrelated
+ *     deployment) — we must NOT widen the cookie somewhere it doesn't belong.
+ *
+ * Read at CALL time (never breaks the OS's own login: an empty/mismatching config
+ * simply keeps today's host-only behaviour).
+ *
+ * @param osPublicUrl e.g. `https://agentic.datamasterclass.com`
+ * @param appsDomain  e.g. `apps.datamasterclass.com`
+ */
+export function sessionCookieDomain(
+  osPublicUrl: string | undefined,
+  appsDomain: string | undefined,
+): string | null {
+  const osHost = hostOf(osPublicUrl);
+  const apps = (appsDomain ?? '').trim().toLowerCase().replace(/\.+$/, '');
+  if (!osHost || !apps) return null;
+  // No cross-subdomain scoping needed for local/IP hosts.
+  if (osHost === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(osHost)) return null;
+  const parent = longestCommonDomainSuffix(osHost, apps);
+  // Require a real parent (≥2 labels, e.g. datamasterclass.com) — never a bare TLD.
+  if (!parent || parent.split('.').length < 2) return null;
+  return `.${parent}`;
+}
+
+function hostOf(url: string | undefined): string {
+  const raw = (url ?? '').trim();
+  if (!raw) return '';
+  try {
+    return new URL(raw).hostname.toLowerCase();
+  } catch {
+    // Bare host (no scheme) — accept it as-is.
+    return raw.toLowerCase().replace(/\/.*$/, '');
+  }
+}
+
+/** The longest shared dotted suffix of two hostnames (label-aligned). */
+function longestCommonDomainSuffix(a: string, b: string): string {
+  const al = a.split('.');
+  const bl = b.split('.');
+  const out: string[] = [];
+  let i = al.length - 1;
+  let j = bl.length - 1;
+  while (i >= 0 && j >= 0 && al[i] === bl[j]) {
+    out.unshift(al[i]);
+    i--;
+    j--;
+  }
+  return out.join('.');
+}
+
+/**
+ * The canonical session-cookie options. ONE place so login / bootstrap / logout
+ * agree. `Domain` (when derivable) widens the cookie to the shared parent so it
+ * flows to deployed governed apps' subdomains. `sameSite:'lax'` still sends the
+ * cookie on same-site subdomain XHR (subdomains of one registrable domain are
+ * same-site), which is what the app's credentialed `os.whoami()` relies on.
+ */
+export function sessionCookieOptions(opts: {
+  osPublicUrl?: string;
+  appsDomain?: string;
+  maxAge?: number;
+  isProd?: boolean;
+}): {
+  httpOnly: true;
+  sameSite: 'lax';
+  secure: boolean;
+  path: '/';
+  maxAge: number;
+  domain?: string;
+} {
+  const domain = sessionCookieDomain(opts.osPublicUrl, opts.appsDomain);
+  return {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: opts.isProd ?? process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: opts.maxAge ?? MAX_AGE_SECONDS,
+    ...(domain ? { domain } : {}),
+  };
+}
+
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 

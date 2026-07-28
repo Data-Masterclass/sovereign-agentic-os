@@ -912,6 +912,45 @@ function withVendoredUi(tpl: Template, files: ScaffoldFile[]): ScaffoldFile[] {
 }
 
 /**
+ * Bake the OS's public URL into a seeded CI workflow so the built app image
+ * carries the correct OS base URL (the Dockerfile declares `ARG OS_API_URL`,
+ * Vite reads it as `VITE_OS_API`). WITHOUT this the `docker build ... ./src`
+ * step passes no build arg, `VITE_OS_API=""`, and the deployed app's
+ * `os.whoami()` hits its OWN origin (nginx serves index.html → the app crashed
+ * with a JSON parse error on `'<'`).
+ *
+ * We rewrite the `docker build` line to add `--build-arg OS_API_URL=<osPublicUrl>`.
+ * Idempotent: skips if a build-arg is already present. When the OS public URL is
+ * unknown (`''`, e.g. local dev) the workflow is returned UNCHANGED — the app then
+ * derives the OS origin from its host at runtime (scaffold app-meta.ts) or runs
+ * same-origin, so nothing breaks locally.
+ *
+ * Exported for unit tests. Value is single-quoted for the shell; the OS public URL
+ * is an operator-set env var (not user input), and we defensively reject a value
+ * containing a single quote.
+ */
+export function bakeOsApiUrlIntoWorkflow(content: string, osPublicUrl: string): string {
+  const url = (osPublicUrl ?? '').trim().replace(/\/+$/, '');
+  if (!url || url.includes("'") || url.includes('\n')) return content;
+  // Match a `docker build` invocation and inject the build arg right after it,
+  // unless one is already there (idempotent on re-scaffold / self-heal).
+  return content.replace(/docker build\b(?![^\n]*--build-arg OS_API_URL=)/g, (m) =>
+    `${m} --build-arg OS_API_URL='${url}'`,
+  );
+}
+
+/** Apply {@link bakeOsApiUrlIntoWorkflow} to every seeded workflow file. */
+function withBakedOsApiUrl(files: ScaffoldFile[]): ScaffoldFile[] {
+  const url = config.osPublicUrl;
+  if (!url) return files;
+  return files.map((f) =>
+    f.path.startsWith('.forgejo/workflows/')
+      ? { ...f, content: bakeOsApiUrlIntoWorkflow(f.content, url) }
+      : f,
+  );
+}
+
+/**
  * Idempotently (re)assert the repo-level Actions secrets the seeded CI workflow
  * depends on — today exactly one: REGISTRY_PASS (checkout clone + registry login).
  * Forgejo's PUT creates or overwrites, so calling this is always safe. Used at
@@ -967,7 +1006,9 @@ async function scaffoldRepo(
   // package.json to local `file:` deps so the built Docker image resolves them with
   // no external registry — fully sovereign / offline. (Order: SDK first, then UI —
   // each rewrites the package.json dep it owns and appends its own vendor/ files.)
-  const baseFiles = withVendoredUi(tpl, withVendoredSdk(tpl, tpl.files(name, slug)));
+  // Bake the OS public URL into the CI workflow's `docker build` so the deployed
+  // image knows how to reach the OS across subdomains (the SSO/whoami base URL).
+  const baseFiles = withBakedOsApiUrl(withVendoredUi(tpl, withVendoredSdk(tpl, tpl.files(name, slug))));
   const ordered = [
     ...baseFiles.filter((f) => !isWorkflow(f.path)),
     ...baseFiles.filter((f) => isWorkflow(f.path)),
@@ -1385,11 +1426,14 @@ export async function listAppsForUser(user: CurrentUser): Promise<App[]> {
   const map = await getCache();
   return [...map.values()]
     .filter((a) => visibleToUser(a, user))
-    // ACTIVE-DOMAIN scope: narrow "My" (Personal) apps to the domain being acted in
-    // (auth.ts narrows user.domains to [active]; "All Domains" keeps every membership).
-    // Shared already filters on user.domains via visibleToUser; Certified stays tenant-wide.
-    // The single-app open (getAppForUser) intentionally stays un-narrowed.
-    .filter((a) => a.visibility !== 'Personal' || !a.domain || user.domains.includes(a.domain))
+    // STRICT DOMAIN ISOLATION: narrow EVERY tier — My (Personal), Domain (Shared) AND
+    // Company (Certified) — to the domain being acted in (auth.ts narrows user.domains to
+    // [active]; "All Domains" keeps every membership; a domainless app always shows). A
+    // certified app homed in domain A must NOT show while acting in domain B — cross-domain
+    // discovery is the dedicated Marketplace catalog's job, not this list's. Shared already
+    // filters on user.domains via visibleToUser; this adds the same gate for Personal +
+    // Certified. The single-app open (getAppForUser) intentionally stays un-narrowed.
+    .filter((a) => !a.domain || user.domains.includes(a.domain))
     .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt));
 }
 

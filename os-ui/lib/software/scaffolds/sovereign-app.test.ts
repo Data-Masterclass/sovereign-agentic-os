@@ -105,6 +105,17 @@ test('sovereign-app scaffold: owning domain is derived from the app host', () =>
   assert.match(meta, /return null/, 'honestly returns null when underivable');
 });
 
+test('sovereign-app scaffold: osBaseUrl uses the baked build arg and has an honest runtime fallback', () => {
+  const meta = byPath('src/template/app-meta.ts');
+  // Primary: the OS URL baked at build time (Dockerfile ARG OS_API_URL → VITE_OS_API).
+  assert.match(meta, /VITE_OS_API/, 'reads the build-time OS URL');
+  assert.match(meta, /export function osBaseUrl/, 'exports osBaseUrl');
+  // Fallback: derive the OS origin from the deployed app host when the arg is missing,
+  // so a rebuilt/old app degrades gracefully instead of hitting its own origin.
+  assert.match(meta, /deriveOsOriginFromHost/, 'has a host-derived runtime fallback');
+  assert.match(meta, /labels\.slice\(2\)/, 'drops <slug>.<domain> to reach the OS parent host');
+});
+
 test('sovereign-app scaffold: scope helpers mirror My/Domain and stamp owner+domain', () => {
   const scope = byPath('src/template/scope.ts');
   for (const fn of ['isMine', 'inDomain', 'onlyMine', 'onlyDomain', 'visibleTo', 'stamp']) {

@@ -116,20 +116,23 @@ test('listModelsForUser is RLS-scoped — no other-domain or other-user Personal
   upsertModel(m({ id: 'svc_dm', model: 'dm_model', name: 'C Domain marketing', owner: 'mara', domain: 'marketing', tier: 'Domain' }));
   upsertModel(m({ id: 'svc_mp', model: 'mp_model', name: 'D Marketplace', owner: 'sara', domain: 'sales', tier: 'Marketplace' }));
 
-  // Owner in sales: own Personal + sales Domain + Marketplace; NOT marketing's Domain model.
+  // Strict isolation: EVERY tier (incl the Marketplace/Company `mp_model`, homed in sales)
+  // narrows to the active domain. Owner in sales: own Personal + sales Domain + the sales-
+  // homed Marketplace model; NOT marketing's Domain model.
   assert.deepEqual(
     new Set(listModelsForUser({ id: 'sara', domains: ['sales'] }).map((x) => x.model)),
     new Set(['p_model', 'd_model', 'mp_model']),
   );
-  // A different sales user: sales Domain + Marketplace, but NOT sara's Personal model.
+  // A different sales user: sales Domain + the sales-homed Marketplace model, but NOT sara's Personal.
   assert.deepEqual(
     new Set(listModelsForUser({ id: 'bob', domains: ['sales'] }).map((x) => x.model)),
     new Set(['d_model', 'mp_model']),
   );
-  // A marketing user: only marketing's Domain + Marketplace — no sales Personal/Domain leak.
+  // A marketing user: ONLY marketing's Domain model — the sales-homed Marketplace model does
+  // NOT leak across domains here (cross-domain discovery is the dedicated Marketplace catalog's job).
   assert.deepEqual(
     new Set(listModelsForUser({ id: 'mara', domains: ['marketing'] }).map((x) => x.model)),
-    new Set(['dm_model', 'mp_model']),
+    new Set(['dm_model']),
   );
   // The unscoped variant still returns the whole registry (system/aggregate use only).
   assert.equal(listModels().length, 4);
@@ -579,10 +582,13 @@ test('active-domain: Personal model appears when All Domains is active (viewer.d
   assert.ok(result.some((m) => m.model === 'test_model'), 'sales Personal model must appear when All Domains is active');
 });
 
-test('active-domain: Marketplace tier is never narrowed by active domain', () => {
+test('active-domain: the per-tab Company (Marketplace) tier IS narrowed by active domain', () => {
+  // Strict-isolation model: a Marketplace model homed in sales does NOT show for a
+  // finance user. Cross-domain discovery is the dedicated Marketplace catalog's job.
   _resetModels();
-  upsertModel({ ...personalModel(), tier: 'Marketplace' });
-  // Active domain set to 'finance' (completely different from model's sales domain)
-  const result = listModelsForUser({ id: 'bob', domains: ['finance'] });
-  assert.ok(result.some((m) => m.model === 'test_model'), 'Marketplace model must appear regardless of active domain');
+  upsertModel({ ...personalModel(), tier: 'Marketplace' }); // domain = sales
+  assert.ok(!listModelsForUser({ id: 'bob', domains: ['finance'] }).some((m) => m.model === 'test_model'),
+    'a sales-homed Marketplace model must NOT show for a finance user');
+  assert.ok(listModelsForUser({ id: 'bob', domains: ['sales'] }).some((m) => m.model === 'test_model'),
+    'it shows for a sales user');
 });

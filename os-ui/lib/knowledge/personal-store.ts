@@ -190,12 +190,14 @@ function summarise(rec: PersonalKnowledgeRecord): PersonalKnowledgeSummary {
 
 /** Grouped payload matching every other OS store: mine / domain / marketplace.
  *
- *  `activeDomain` mirrors the OS-wide domain switcher: when non-null the "mine"
- *  group is restricted to entries stamped with that domain (consistent with how
- *  `listFolders` and the artifact lists behave on a scoped domain). The "domain"
- *  (Shared) group is also narrowed — only entries from the active domain surface.
- *  The "marketplace" (Certified) group is tenant-wide and is never narrowed.
- *  null / undefined = "All domains" — shows every owned / visible entry. */
+ *  `activeDomain` mirrors the OS-wide domain switcher: when non-null EVERY tier is
+ *  restricted to entries stamped with that domain (STRICT DOMAIN ISOLATION —
+ *  consistent with how `listFolders` and the artifact lists behave on a scoped
+ *  domain). "My", "Domain" (Shared) AND "Company" (Marketplace/Certified) all narrow:
+ *  a certified entry homed in domain A must not show while acting in domain B — cross-
+ *  domain discovery is the dedicated Marketplace's job, not this list's. A domainless
+ *  entry always shows. null / undefined = "All domains" — shows every owned / visible
+ *  entry. */
 export function listPersonalKnowledge(
   user: Principal,
   opts: { includeArchived?: boolean; activeDomain?: string | null } = {},
@@ -209,15 +211,14 @@ export function listPersonalKnowledge(
   for (const rec of st().entries.values()) {
     if (rec.archived && !opts.includeArchived) continue;
     if (!canView(rec, user)) continue;
+    // Strict active-domain isolation for EVERY tier: hide anything homed in another
+    // domain (a domainless entry always shows so the admin can domain-move it).
+    if (activeDomain !== null && rec.domain && rec.domain !== activeDomain) continue;
     if (rec.visibility === 'Marketplace') {
       marketplace.push(summarise(rec));
     } else if (rec.visibility === 'Shared') {
-      // Domain group: only surface if it matches the active domain (when one is set).
-      if (activeDomain !== null && rec.domain !== activeDomain) continue;
       domain.push(summarise(rec));
     } else {
-      // Mine group: personal entries are owner-private; scope by active domain when set.
-      if (activeDomain !== null && rec.domain !== activeDomain) continue;
       mine.push(summarise(rec));
     }
   }

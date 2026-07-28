@@ -402,14 +402,17 @@ export function listDatasets(user: Principal, opts: { includeArchived?: boolean 
     if (!canView(d, user)) continue;
     // Group by VISIBILITY (tier), not ownership: a promoted asset is domain data and
     // belongs under Domain even when the caller authored it; a certified product under
-    // Marketplace; a private dataset (owner-only, via canView) under Personal.
-    // ACTIVE-DOMAIN scope: a Personal dataset shows under "My" only when its domain is
-    // in the caller's live scope — with an active domain chosen, user.domains is
-    // narrowed to [active], so "My" filters to that domain too. "All domains" shows
-    // every personal dataset. Domain/Company tiers already narrow via canView.
-    if (d.tier === 'product') marketplace.push(summarise(d, rec.archived));
-    else if (d.tier === 'asset') domain.push(summarise(d, rec.archived));
-    else if (!d.domain || user.domains.includes(d.domain)) mine.push(summarise(d, rec.archived));
+    // this tab's "Company" tier; a private dataset (owner-only, via canView) under Personal.
+    // STRICT DOMAIN ISOLATION (platform-admin model): EVERY tier — My, Domain AND Company —
+    // narrows to the ACTIVE domain for EVERYONE incl the owner/admin (canView returns true
+    // for the owner regardless of domain, so without this an owner sees their domain-A
+    // artifacts while acting in domain B). "All Domains" = every membership → shown; a
+    // domainless (unassigned) artifact always shows. Cross-domain discovery of a certified
+    // product happens ONLY through the dedicated Marketplace catalog surface, never here.
+    const inScope = !d.domain || user.domains.includes(d.domain);
+    if (d.tier === 'product') { if (inScope) marketplace.push(summarise(d, rec.archived)); }
+    else if (d.tier === 'asset') { if (inScope) domain.push(summarise(d, rec.archived)); }
+    else if (inScope) mine.push(summarise(d, rec.archived));
   }
   const byName = (a: DatasetSummary, b: DatasetSummary) => a.name.localeCompare(b.name);
   return { mine: mine.sort(byName), domain: domain.sort(byName), marketplace: marketplace.sort(byName) };

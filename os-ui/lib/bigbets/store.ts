@@ -312,14 +312,16 @@ export function listBets(user: Principal, opts: { includeArchived?: boolean } = 
     .filter((b) => {
       if (!canView(b, user)) return false;
       if (!opts.includeArchived && b.status === 'archived') return false;
-      // ACTIVE-DOMAIN scope: if the caller is the owner (My-tier) but the bet
-      // lives in a domain outside their current live scope, hide it. Admin sees
-      // all (admin role bypasses canView's domain check already). Cross-domain
-      // bets are admin-owned so they pass the role check above.
-      if (user.role !== 'admin' && b.owner === user.id) {
-        return !b.domain || user.domains.includes(b.domain);
-      }
-      return true;
+      // STRICT DOMAIN ISOLATION (platform-admin model) — applies to EVERYONE, admins
+      // included, and to EVERY tier incl a cross-domain (Company) bet: a bet shows only
+      // when its home domain is in the caller's live scope (auth.ts narrows user.domains
+      // to the active domain; "All Domains" keeps every membership). This is why an admin
+      // acting in domain B no longer sees their domain-A bets — nor a Company bet homed in
+      // domain A. A bet with no domain (unassigned) always shows (the admin assigns it via
+      // the domain-move tool). Cross-domain discovery is the Marketplace catalog's job, not
+      // this list's.
+      if (!b.domain) return true;
+      return user.domains.includes(b.domain);
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 }

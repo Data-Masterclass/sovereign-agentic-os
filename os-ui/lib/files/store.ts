@@ -388,20 +388,22 @@ export function listFiles(user: Principal, opts: { includeArchived?: boolean } =
     const a = parseAsset(rec.yaml);
     if (!canView(a, user)) continue;
     const s = summarise(a, rec);
-    // ACTIVE-DOMAIN scope: a Personal file shows under "My" only when its domain is
-    // in the caller's live scope. With an active domain chosen (sidebar switcher),
-    // user.domains is narrowed to [active], so "My" filters to that domain too —
-    // the "operate as a member of only one domain" behaviour. "All domains" keeps
-    // user.domains = every membership, so every personal file still shows. Domain/
-    // Company tiers already narrow via canView's domain check, so only "My" needs it.
+    // STRICT DOMAIN ISOLATION: EVERY tier — My, Domain AND Company (product) — narrows to
+    // the ACTIVE domain. auth.ts narrows user.domains to [active] when a domain is chosen,
+    // so each tier filters to it; "All Domains" keeps every membership so all show; a
+    // domainless file always shows. This closes the leak where canView returns true for the
+    // OWNER regardless of domain, so without the per-tier gate an owner's domain-A
+    // asset/product leaked into Domain/Company while acting in domain B. Cross-domain
+    // discovery of a certified product is the dedicated Marketplace's job, not this list's.
     const inScope = !a.domain || user.domains.includes(a.domain);
     if (a.owner === user.id && inScope) owned.push(s);
+    if (!inScope) continue; // strict active-domain isolation, every tier, incl the owner
     // Group by VISIBILITY (tier), not ownership: a promoted asset is domain content and
-    // belongs under Domain even when the caller authored it; a certified product under
-    // Marketplace; a private file (owner-only, via canView) under Personal.
+    // belongs under Domain even when the caller authored it; a certified product under this
+    // tab's "Company" tier; a private file (owner-only, via canView) under Personal.
     if (a.tier === 'product') marketplace.push(s);
     else if (a.tier === 'asset') domain.push(s);
-    else if (inScope) mine.push(s);
+    else mine.push(s);
   }
   const byName = (x: FileSummary, y: FileSummary) => x.folder.localeCompare(y.folder) || x.name.localeCompare(y.name);
   mine.sort(byName); domain.sort(byName); marketplace.sort(byName);

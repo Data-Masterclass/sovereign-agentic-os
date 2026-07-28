@@ -233,22 +233,24 @@ export function listModels(): ServiceModel[] {
 export type ModelViewer = { id: string; domains: string[] };
 
 /**
- * RLS predicate mirroring `lib/artifacts.visibleToUser` for the model tier ladder:
+ * RLS predicate for the model tier ladder under STRICT DOMAIN ISOLATION — EVERY tier
+ * narrows to the viewer's live (active) domain scope:
  *   • Personal    → owner only AND domain must be in the viewer's live scope
  *   • Domain      → members of the owning domain only (no cross-domain leak)
- *   • Marketplace → published cross-domain (discovery; any domain may see + import)
+ *   • Marketplace → this tab's "Company" tier: the owning domain only (a certified
+ *     model homed in domain A must NOT show while acting in domain B). Cross-domain
+ *     discovery + import is the dedicated Marketplace catalog's job, not this list's.
  *
- * ACTIVE-DOMAIN scope: a Personal model shows only when its domain is in the
- * caller's live scope. With an active domain chosen (sidebar switcher), user.domains
- * is narrowed to [active] by auth.ts, so "My" filters to that domain. "All Domains"
- * keeps user.domains = every membership, so every personal model still shows.
- * Domain/Marketplace tiers already narrow via their own domain/tier checks.
+ * auth.ts narrows viewer.domains to [active] when a domain is chosen, so each tier
+ * filters to it; "All Domains" keeps every membership so all show. A domainless model
+ * always shows (the admin assigns it via the domain-move tool).
  */
 function modelVisibleToUser(m: ServiceModel, viewer: ModelViewer): boolean {
-  if (m.tier === 'Marketplace') return true;
-  if (m.tier === 'Domain') return viewer.domains.includes(m.domain);
+  const inScope = !m.domain || viewer.domains.includes(m.domain);
+  if (m.tier === 'Marketplace') return inScope;
+  if (m.tier === 'Domain') return inScope;
   // Personal: owner only, AND domain must be in the caller's live scope.
-  return m.owner === viewer.id && viewer.domains.includes(m.domain);
+  return m.owner === viewer.id && inScope;
 }
 
 /**

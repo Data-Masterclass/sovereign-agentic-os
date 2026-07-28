@@ -13,6 +13,48 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.14] — 2026-07-28
+
+### Fixed
+- **Generated-app SSO to the OS now works** (was failing with "The OS could not
+  be reached: JSON Parse error: Unrecognized token '<'"). Root cause: nothing
+  baked the OS URL into app builds, so the app's `whoami` hit its own origin and
+  got HTML. End-to-end fix: (1) the app image build now receives
+  `--build-arg OS_API_URL=<OS_PUBLIC_URL>` (injected server-side into the seeded
+  CI at scaffold time); (2) the OS **session cookie is scoped to the shared
+  parent domain** so app subdomains carry it (host-only fallback when there's no
+  safe shared parent — never a bare TLD, OS login unaffected); (3) **CORS** now
+  allows the OS origin + `*.<appsDomain>` with credentials (never `*`); (4) the
+  app SDK **fails honestly** on a non-JSON/HTML response (clear "sign in to the
+  OS" instead of a `JSON.parse` crash), with a runtime OS-origin fallback derived
+  from the app host. **Existing apps must be rebuilt** to bake the URL; until
+  then they fail honestly rather than crash.
+
+## [os-ui 0.6.13] — 2026-07-28
+
+### Fixed
+- **Strict domain isolation across every tab.** Each artifact tab now groups by
+  visibility (Personal→My, Shared→Domain, Certified→Company) and narrows ALL
+  three tiers to the domain you're acting in — for every role including owner
+  and admin (previously `canView`/ownership and some admin special-cases
+  bypassed the narrowing, leaking agentic-leader datasets/metrics/big-bets into
+  kiekert, and grouping an owned Shared agent under "My" instead of "Domain").
+  A domainless/unassigned artifact still shows (assign it via the domain-move
+  tool). The **Marketplace catalog stays cross-domain** — it is the single
+  adoption surface: publish to Company → it lists in the Marketplace → another
+  domain adopts it → it appears under that domain's Company tier. Fixes span
+  agents, data, metrics, dashboards, files, knowledge (workflows + personal),
+  science, connections, big bets, and software.
+
+### Added
+- **Metrics tab: multi-select + bulk archive.** Per-row checkboxes + a bulk
+  action bar to archive the selected metrics (confirm-gated, honest per-item
+  result). Bulk cross-domain move is intentionally not offered — a metric
+  inherits its dataset's domain (move the dataset in Data).
+- Test coverage for the Operating Model MCP write tools (`update_operating_manual`
+  et al. already shipped; a stale MCP connection is why they weren't visible —
+  reconnect the connector to pick them up).
+
 ## [os-ui 0.6.12] — 2026-07-28
 
 ### Added

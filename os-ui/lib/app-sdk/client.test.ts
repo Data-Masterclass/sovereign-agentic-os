@@ -9,7 +9,10 @@ import { Forbidden, NotAuthenticated, OsError, UnsupportedQuery } from './errors
 /** A recording fetch stub: returns a queued JSON response and captures the call. */
 type Call = { url: string; init: RequestInit };
 function stubFetch(
-  responder: (url: string, init: RequestInit) => { status?: number; body?: unknown; text?: string },
+  responder: (
+    url: string,
+    init: RequestInit,
+  ) => { status?: number; body?: unknown; text?: string; contentType?: string },
 ) {
   const calls: Call[] = [];
   const fn = (async (url: string, init: RequestInit = {}) => {
@@ -17,9 +20,13 @@ function stubFetch(
     const r = responder(url, init);
     const status = r.status ?? 200;
     const text = r.text ?? (r.body === undefined ? '' : JSON.stringify(r.body));
+    // Default a JSON content-type (the OS's real governed routes send it); a test
+    // can pass contentType:'text/html'/'' + text:'<...>' to exercise honest failure.
+    const contentType = r.contentType ?? (r.text !== undefined ? '' : 'application/json');
     return {
       ok: status >= 200 && status < 300,
       status,
+      headers: { get: (k: string) => (k.toLowerCase() === 'content-type' ? contentType : null) },
       text: async () => text,
     } as unknown as Response;
   }) as unknown as typeof fetch;
@@ -201,4 +208,46 @@ test('createOsClient throws early when no fetch is available at all', () => {
   } finally {
     (globalThis as { fetch?: unknown }).fetch = saved;
   }
+});
+
+// ── honest failure on an HTML / non-JSON 2xx (the SSO "Unrecognized token '<'" bug) ──
+
+test('whoami on an HTML 200 fails HONESTLY with an OsError — never a raw JSON.parse crash', async () => {
+  // The exact broken case: OS base URL empty → the fetch hits the app's own origin
+  // and nginx serves the SPA index.html (200, text/html). The old code did
+  // JSON.parse('<!doctype html>...') → "Unrecognized token '<'". Now: a clean OsError.
+  const { fn } = stubFetch(() => ({
+    status: 200,
+    text: '<!doctype html><html><body>app shell</body></html>',
+    contentType: 'text/html; charset=utf-8',
+  }));
+  const os = createOsClient({ fetch: fn });
+  await assert.rejects(
+    () => os.whoami(),
+    (e: unknown) => {
+      assert.ok(e instanceof OsError, 'is an OsError, not a SyntaxError');
+      assert.ok(!/Unrecognized token/i.test((e as Error).message), 'not a raw parse crash');
+      assert.match((e as Error).message, /non-JSON|not pointed at the Sovereign OS|OS_API_URL/i);
+      return true;
+    },
+  );
+});
+
+test('a 200 with a leading "<" body (no/again wrong content-type) also fails honestly', async () => {
+  const { fn } = stubFetch(() => ({ status: 200, text: '  <not json', contentType: '' }));
+  const os = createOsClient({ fetch: fn });
+  await assert.rejects(() => os.context(), (e: unknown) => e instanceof OsError);
+});
+
+test('a valid JSON 200 (correct content-type) still parses normally', async () => {
+  const { fn } = stubFetch(() => ({ body: { user: { id: 'u9' } }, contentType: 'application/json' }));
+  const os = createOsClient({ fetch: fn });
+  const me = await os.whoami();
+  assert.equal(me.user?.id, 'u9');
+});
+
+test('an empty 200 body is tolerated as null (not an error)', async () => {
+  const { fn } = stubFetch(() => ({ status: 200, text: '', contentType: 'application/json' }));
+  const os = createOsClient({ fetch: fn });
+  assert.equal(await os.whoami(), null as unknown);
 });

@@ -347,16 +347,17 @@ export async function moveConnectionsDomain(sel: { id?: string; onlyUnassigned?:
 // ------------------------------------------------------------------- Scoping ---
 
 function visibleToUser(c: Connection, user: CurrentUser): boolean {
-  if (c.visibility === 'Personal') {
-    // Owner-only. ACTIVE-DOMAIN scope: a personal connection is only shown when
-    // its domain is in the caller's live scope — with an active domain chosen,
-    // user.domains is narrowed to [active], so "My" filters to that domain too.
-    // "All domains" keeps user.domains = every membership so all personal
-    // connections remain visible. Matches the data/files/metrics/pillars pattern.
-    return c.owner === user.id && (!c.domain || user.domains.includes(c.domain));
-  }
-  if (c.visibility === 'Shared') return user.domains.includes(c.domain);
-  return true; // Certified (Marketplace) — discoverable across domains
+  // STRICT DOMAIN ISOLATION: EVERY tier narrows to the caller's live (active) domain.
+  // auth.ts narrows user.domains to [active] when a domain is chosen; "All Domains"
+  // keeps every membership; a domainless connection always shows. Matches the
+  // data/files/metrics/pillars pattern.
+  const inScope = !c.domain || user.domains.includes(c.domain);
+  if (c.visibility === 'Personal') return c.owner === user.id && inScope;
+  if (c.visibility === 'Shared') return inScope;
+  // Certified (this tab's "Company" tier): the owning domain only — a certified
+  // connection homed in domain A must NOT show while acting in domain B. Cross-domain
+  // discovery is the dedicated Marketplace catalog's job, not this list's.
+  return inScope;
 }
 
 /** The edit-scope arg for a connection. A Personal connection is owner-only —

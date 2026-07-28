@@ -205,13 +205,16 @@ test('Builder role gate: a builder may promote, but only data they can edit', ()
   assert.throws(() => transition(d.id, bea, 'certify'), (e: DatasetError) => e.status === 403);
 });
 
-test('only Admin certifies asset -> product; product is marketplace-discoverable', () => {
+test('only Admin certifies asset -> product; the per-tab Company tier is domain-isolated', () => {
   const id = seedOrders();
   transition(id, sara, 'promote', { visibility: 'domain' });
   const product = transition(id, sara, 'certify', { visibility: 'shared' });
   assert.equal(product.tier, 'product');
-  // Now a finance user sees it in the marketplace group.
-  assert.equal(listDatasets(kenji).marketplace.some((x) => x.id === id), true);
+  // Strict isolation: the sales-homed product shows in a SALES user's Company tier…
+  assert.equal(listDatasets(sara).marketplace.some((x) => x.id === id), true);
+  // …but NOT in a finance user's per-tab list. Cross-domain discovery is the dedicated
+  // Marketplace catalog's job; a finance domain adopts it via importProduct.
+  assert.equal(listDatasets(kenji).marketplace.some((x) => x.id === id), false);
 });
 
 test('own promoted (Shared) dataset groups under Domain, not Mine', () => {

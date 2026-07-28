@@ -7,8 +7,10 @@
  *
  * Rule: a Personal connection owned by the caller in domain A must be hidden
  * when domain B is active, visible when A is active, and visible under "All
- * Domains". Shared connections are already narrowed by visibleToUser →
- * user.domains.includes(c.domain). Certified connections are never narrowed.
+ * Domains". Under STRICT DOMAIN ISOLATION EVERY tier narrows to the active domain:
+ * Shared AND Certified ("Company") connections are narrowed by visibleToUser →
+ * user.domains.includes(c.domain); only a domainless connection always shows. Cross-
+ * domain discovery is the dedicated Marketplace catalog's job, not this list's.
  */
 
 import { test } from 'node:test';
@@ -89,4 +91,25 @@ test('Shared connection in domain A is hidden when active domain is B', async ()
   // Active domain = finance → Shared connection in sales must NOT appear.
   const visibleFinance = await listConnectionsForUser(builderFinance);
   assert.ok(!visibleFinance.some((x) => x.id === c.id), 'Shared sales connection must be hidden when active domain is finance');
+});
+
+test('CERTIFIED (Company) connection in domain A: hidden in B, shown in A + All Domains', async () => {
+  __resetConnections();
+  const admin = { id: 'ad', name: 'AD', role: 'admin' as const, domains: ['sales'] };
+  const { promoteConnection, getConnectionForUser } = await import('./store.ts');
+  const c = await createConnection(builderAll, {
+    name: 'Certified Sales API', template: 'database', endpoint: '', credential: 'pw', domain: 'sales',
+  });
+  await promoteConnection(c.id, admin); // Personal → Shared
+  await promoteConnection(c.id, admin); // Shared → Certified (Company)
+  assert.equal((await getConnectionForUser(c.id, builderAll)).visibility, 'Certified');
+
+  // Strict isolation: a Certified connection homed in sales must NOT show in finance
+  // (the fixed leak — Certified was previously returned to everyone across domains).
+  assert.ok(!(await listConnectionsForUser(builderFinance)).some((x) => x.id === c.id),
+    'Certified sales connection must be hidden when active domain is finance');
+  assert.ok((await listConnectionsForUser(builderSales)).some((x) => x.id === c.id),
+    'Certified sales connection must be shown when active domain is sales');
+  assert.ok((await listConnectionsForUser(builderAll)).some((x) => x.id === c.id),
+    'Certified sales connection must be shown under All Domains');
 });

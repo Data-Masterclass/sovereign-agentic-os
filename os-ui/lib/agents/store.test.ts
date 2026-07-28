@@ -238,15 +238,15 @@ test('canRun: in-domain consumer of a Shared system can run but not edit; out-of
   assert.throws(() => getSystemForRun(personal.id, amir), /not permitted to run/i);
 });
 
-test("an owner's own Marketplace system lists under Mine only (no double-list)", () => {
-  // Finding #6 — listSystems must use else-if for Marketplace so an owner's own
-  // published system is not listed twice (Mine + Marketplace).
+test("an owner's own Marketplace system groups under Company, not Mine (group-by-visibility)", () => {
+  // Strict-isolation model: GROUP BY VISIBILITY, not ownership. An owner's own
+  // published (Marketplace) system belongs under the Company tier, never under Mine.
   __resetStore();
   const m = makeMarketplace(sara, { name: 'Pubbed', domain: 'sales' });
   const g = listSystems(sara);
-  assert.ok(g.mine.some((s) => s.id === m.id), 'appears in Mine');
-  assert.ok(!g.marketplace.some((s) => s.id === m.id), 'not double-listed in Marketplace');
-  // A different user still discovers it in the Marketplace.
+  assert.ok(!g.mine.some((s) => s.id === m.id), 'owned Marketplace system must NOT be under Mine');
+  assert.ok(g.marketplace.some((s) => s.id === m.id), 'owned Marketplace system is under Company');
+  // A same-domain user also sees it under Company (cross-domain discovery is the Marketplace catalog's job).
   assert.ok(listSystems(amir).marketplace.some((s) => s.id === m.id));
 });
 
@@ -404,8 +404,10 @@ test('markPendingShares: a filed Personal→Shared promotion badges the owned Pe
 test('markPendingShares: never badges an already-Shared system even if an id lingers', () => {
   __resetStore();
   const shared = makeShared(sara, { name: 'Already shared', domain: 'sales' });
+  // Group-by-visibility: a Shared system lives under the Domain group, not Mine.
   const marked = markPendingShares(listSystems(sara), new Set([shared.id]));
-  assert.equal(marked.mine.find((s) => s.id === shared.id)!.pendingShare, undefined);
+  assert.equal(marked.mine.find((s) => s.id === shared.id), undefined, 'a Shared system is not under Mine');
+  assert.equal(marked.domain.find((s) => s.id === shared.id)!.pendingShare, undefined, 'Shared is never badged pendingShare');
 });
 
 test('BUILDER-GATE: a creator saving a Write-bounded artifact grant is rejected server-side', () => {
@@ -765,11 +767,17 @@ test('active-domain: personal system appears under Mine when All Domains is acti
   assert.ok(mine.some((s) => s.id === sys.id), 'sales domain system must appear when All Domains is active');
 });
 
-test('active-domain: Marketplace tier is never narrowed by active domain', () => {
+test('active-domain: the per-tab Company (Marketplace) tier IS narrowed by active domain', () => {
+  // Strict-isolation model: the per-tab Company tier narrows to the active domain too —
+  // a Marketplace system homed in sales does NOT show in a finance user's tab. Cross-
+  // domain discovery of a published system is the dedicated Marketplace catalog's job.
   __resetStore();
   const market = makeMarketplace(sara, { name: 'Public Kit', domain: 'sales' });
-  // A user whose active domain is 'finance' (completely different domain)
   const financeUser: Principal = { id: 'fin', domains: ['finance'], role: 'creator' };
-  const { marketplace } = listSystems(financeUser);
-  assert.ok(marketplace.some((s) => s.id === market.id), 'Marketplace system must appear regardless of active domain');
+  assert.ok(!listSystems(financeUser).marketplace.some((s) => s.id === market.id),
+    'a sales-homed Marketplace system must NOT show in a finance user\'s Company tier');
+  // In its own domain (sales) it shows under Company.
+  const salesUser: Principal = { id: 'fin', domains: ['sales'], role: 'creator' };
+  assert.ok(listSystems(salesUser).marketplace.some((s) => s.id === market.id),
+    'a sales-homed Marketplace system shows under Company for a sales user');
 });

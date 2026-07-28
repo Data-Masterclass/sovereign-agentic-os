@@ -5,11 +5,13 @@
 /**
  * Active-domain scope tests for lib/bigbets/store.ts → listBets
  *
- * Rule: a bet owned by the caller in domain A must be hidden when domain B is
- * active, visible when A is active, and visible under "All Domains". Domain-
- * peer bets (where the caller is NOT the owner but is in the bet's domain) are
- * already narrowed by canView → user.domains.includes(bet.domain). Company /
- * cross-domain bets owned by an admin are not narrowed.
+ * Rule (strict domain isolation): a bet owned by the caller in domain A must be
+ * hidden when domain B is active, visible when A is active, and visible under "All
+ * Domains". Domain-peer bets (where the caller is NOT the owner but is in the bet's
+ * domain) are already narrowed by canView → user.domains.includes(bet.domain).
+ * EVERY tier — incl a cross-domain (Company) bet — narrows to the active domain;
+ * only a domainless (unassigned) bet always shows. Cross-domain discovery is the
+ * Marketplace catalog's job, not this list's.
  */
 
 import { test } from 'node:test';
@@ -81,10 +83,9 @@ test('owner bet in domain A is shown under All Domains', () => {
   assert.ok(visibleAll.some((b) => b.id === bet.id), 'sales bet must be visible under All Domains');
 });
 
-test('admin sees all bets regardless of active domain', () => {
+test("admin's bets narrow to the active domain too — no admin bypass", () => {
   reset();
-  const adminAll = { id: 'admin', name: 'Admin', role: 'admin' as const, domains: ['platform'] };
-  // A builder creates a bet in sales.
+  // A builder creates a domain-scoped (non-crossDomain) bet in sales.
   const bet = createBet(builderAll, {
     name: 'Sales Bet',
     problem: { who: 'sales', need: 'grow revenue', obstacle: '', impact: '' },
@@ -94,7 +95,14 @@ test('admin sees all bets regardless of active domain', () => {
     domain: 'sales',
   });
 
-  // Admin (not in sales domain) must still see the bet.
-  const visibleAdmin = listBets(adminAll);
-  assert.ok(visibleAdmin.some((b) => b.id === bet.id), 'admin must see all bets regardless of domain');
+  // Admin acting in another domain (user.domains narrowed to [platform]) must NOT
+  // see the sales bet — the universal active-domain rule applies to admins too.
+  const adminElsewhere = { id: 'admin', name: 'Admin', role: 'admin' as const, domains: ['platform'] };
+  assert.equal(listBets(adminElsewhere).some((b) => b.id === bet.id), false, 'admin in another domain does not see it');
+
+  // Admin acting in sales → sees it; under "All Domains" (both memberships) → sees it.
+  const adminInSales = { ...adminElsewhere, domains: ['sales'] };
+  assert.ok(listBets(adminInSales).some((b) => b.id === bet.id), 'admin in the bet domain sees it');
+  const adminAllDomains = { ...adminElsewhere, domains: ['platform', 'sales'] };
+  assert.ok(listBets(adminAllDomains).some((b) => b.id === bet.id), 'admin under All Domains sees it');
 });

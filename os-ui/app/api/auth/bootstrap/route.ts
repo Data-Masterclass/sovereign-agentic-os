@@ -6,7 +6,7 @@ import { config } from '@/lib/core/config';
 import { currentUser } from '@/lib/core/auth';
 import { completeFirstLogin, getPublicUser, setupAdmin } from '@/lib/platform-admin/users';
 import { assessPasswordStrength, hashPassword } from '@/lib/core/password';
-import { SESSION_COOKIE, SESSION_MAX_AGE, signSession } from '@/lib/core/session';
+import { SESSION_COOKIE, SESSION_MAX_AGE, sessionCookieOptions, signSession } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,13 +74,15 @@ export async function POST(req: Request) {
       config.sessionSecret,
     );
     const res = NextResponse.json({ user });
-    res.cookies.set(SESSION_COOKIE, token, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      path: '/',
-      maxAge: SESSION_MAX_AGE,
-    });
+    res.cookies.set(
+      SESSION_COOKIE,
+      token,
+      sessionCookieOptions({
+        osPublicUrl: config.osPublicUrl,
+        appsDomain: config.appsBaseDomain,
+        maxAge: SESSION_MAX_AGE,
+      }),
+    );
     return res;
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;

@@ -4,6 +4,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { config as appConfig } from '@/lib/core/config';
 import { SESSION_COOKIE, verifySession } from '@/lib/core/session';
+import { corsHeadersFor } from '@/lib/core/cors';
 
 /**
  * Edge gate. Page navigations require a valid signed session (else → /signin).
@@ -35,7 +36,22 @@ export async function middleware(req: NextRequest) {
   // JSON via requireUser()), so let them pass rather than redirecting — an
   // unauthenticated iframe should see a clean 401, not an HTML /signin page.
   if (pathname.startsWith('/api/') || pathname.startsWith('/tools/')) {
-    return NextResponse.next();
+    // CREDENTIALED CORS for deployed governed apps calling back into the OS
+    // (identity delegation: os.whoami() etc. from `<slug>.<domain>.<appsDomain>`).
+    // Reflect ONLY recognised app/OS origins; same-origin calls carry no Origin
+    // and pass through unchanged. Answer the preflight here; attach headers to
+    // the real response so the credentialed fetch is accepted by the browser.
+    const cors = corsHeadersFor(
+      req.headers.get('origin'),
+      appConfig.osPublicUrl,
+      appConfig.appsBaseDomain,
+    );
+    if (cors && req.method === 'OPTIONS') {
+      return new NextResponse(null, { status: 204, headers: cors });
+    }
+    const res = NextResponse.next();
+    if (cors) for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
+    return res;
   }
 
   const token = req.cookies.get(SESSION_COOKIE)?.value;
