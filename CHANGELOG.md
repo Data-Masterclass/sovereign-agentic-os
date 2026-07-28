@@ -13,7 +13,20 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
-## [os-ui 0.6.20] — 2026-07-28
+## [os-ui 0.6.21] — 2026-07-28
+
+### Fixed
+- **The intermittent "commit → App not found" (and the same class of false
+  not-found across every durable-mirror-backed store) is fixed.** The mirror's
+  by-id read (`osMirror.getDoc`, `lib/infra/os-mirror.ts`) treated a TRANSIENT
+  OpenSearch failure (5xx / auth blip / timeout-with-response) the same as a
+  genuine 404 — so a momentary hiccup on an app lookup surfaced as "App not
+  found," blocking a real `commit` mid-build (seen in the Software build log).
+  `getDoc` now distinguishes: a genuine 404 or an unreachable cluster returns
+  null immediately (offline-degrade, unchanged), but a transient non-404 error is
+  retried a few times before giving up. Still never throws — the module's
+  graceful contract is preserved. Benefits apps, data, connections, bigbets, and
+  every other store on the shared mirror.
 
 ### Fixed
 - **Generated apps no longer fail to build when the agent uses common UI

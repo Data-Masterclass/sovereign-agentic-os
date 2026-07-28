@@ -155,13 +155,27 @@ export function osMirror(opts: {
   }
 
   async function getDoc(id: string): Promise<unknown | null> {
-    const res = await osFetch(`/${index}/_doc/${id}`);
-    if (!res || !res.ok) return null;
-    try {
-      const body = (await res.json()) as { _source?: unknown };
-      return body?._source ?? null;
-    } catch {
-      return null;
+    // A by-id GET must distinguish "genuinely absent" (404) from a TRANSIENT
+    // failure (5xx / auth blip / timeout-with-response). Conflating the two made a
+    // momentary OpenSearch hiccup surface as a false "not found" (the intermittent
+    // "commit → App not found"). So: 404 and an unreachable cluster return null
+    // immediately (offline-degrade, no wasted retries); a transient non-404 error
+    // is retried a couple times before we give up. Still NEVER throws.
+    for (let attempt = 0; ; attempt++) {
+      const res = await osFetch(`/${index}/_doc/${id}`);
+      if (!res) return null; // cluster unreachable → graceful null
+      if (res.status === 404) return null; // genuinely absent
+      if (res.ok) {
+        try {
+          const body = (await res.json()) as { _source?: unknown };
+          return body?._source ?? null;
+        } catch {
+          return null;
+        }
+      }
+      // Transient non-404 error: retry up to 3 attempts, then degrade to null.
+      if (attempt >= 2) return null;
+      await new Promise((r) => setTimeout(r, 40 * (attempt + 1)));
     }
   }
 

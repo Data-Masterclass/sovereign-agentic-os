@@ -199,6 +199,52 @@ test('getDoc returns the _source when present and null when missing', async () =
   }
 });
 
+test('getDoc RETRIES a transient 5xx and never surfaces a false not-found', async () => {
+  // Reproduces the intermittent "commit → App not found": a momentary OpenSearch
+  // hiccup on a by-id GET must NOT be reported as "not found".
+  const orig = globalThis.fetch;
+  let getCalls = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const path = String(input).replace(/^https?:\/\/[^/]+/, '');
+    if (path.includes('/_doc/')) {
+      getCalls++;
+      if (getCalls < 3) return new Response('unavailable', { status: 503 }); // hiccup twice
+      return new Response(JSON.stringify({ _id: 'app1', _source: { id: 'app1', ok: true } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  try {
+    const m = osMirror({ index: 'os-mirror-test-retry' });
+    assert.deepEqual(await m.getDoc('app1'), { id: 'app1', ok: true });
+    assert.equal(getCalls, 3, 'retried the transient error until it succeeded');
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('getDoc returns null IMMEDIATELY on a genuine 404 (no wasted retries)', async () => {
+  const orig = globalThis.fetch;
+  let getCalls = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const path = String(input).replace(/^https?:\/\/[^/]+/, '');
+    if (path.includes('/_doc/')) {
+      getCalls++;
+      return new Response(JSON.stringify({ found: false }), { status: 404, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  try {
+    const m = osMirror({ index: 'os-mirror-test-404' });
+    assert.equal(await m.getDoc('nope'), null);
+    assert.equal(getCalls, 1, 'a real 404 is authoritative — no retries');
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
 test('hydration round-trip: a doc written through comes back unchanged after a "restart"', async () => {
   const os = fakeOs({ indexExists: false });
   const m = osMirror({ index: 'os-mirror-test-i' });
