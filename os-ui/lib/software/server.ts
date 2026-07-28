@@ -201,6 +201,7 @@ export async function pickBackend(): Promise<PipelineBackend> {
 // path in apps.ts can update it too, without an import cycle). Re-exported here
 // for existing importers.
 import { snapshotFiles, getSnapshot } from './snapshot.ts';
+import { ensureSectionsRegistered } from './sections-registry.ts';
 export { snapshotFiles, getSnapshot };
 
 /**
@@ -233,10 +234,14 @@ export async function commitToApp(
   const app = await getAppByIdInternal(appId);
   if (!app) throw withStatus(new Error('App not found'), 404);
   const backend = await pickBackend();
-  // Push only the changeset (correct for live Forgejo); parse against the full tree.
-  const step = await backend.commit(app.slug, files, message);
+  // Auto-wire epic story pages into the section registry BEFORE committing, so a
+  // built page can never be left unregistered/invisible (sovereign-app only; a
+  // no-op for other templates; fail-open). Then push only the changeset (correct
+  // for live Forgejo) and parse against the full tree.
   const prior = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
-  const tree = mergeTree(prior, files);
+  const toCommit = ensureSectionsRegistered(prior, files, app.template);
+  const step = await backend.commit(app.slug, toCommit, message);
+  const tree = mergeTree(prior, toCommit);
 
   // Metadata fidelity: parse the convention over the WHOLE tree on every commit.
   const manifest = parseAppManifest(tree, { name: app.name, owner: app.owner, description: app.description });

@@ -13,6 +13,21 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.22] — 2026-07-28
+
+### Changed
+- **A built story page can no longer be left unwired — the section registry is now
+  auto-generated.** A `sovereign-app`'s nav is driven by `src/template/sections.tsx`;
+  previously the build agent had to hand-edit that central file per story and did so
+  unreliably, so a written-but-unregistered page was invisible ("builds fine, no
+  feature shows"). Now, on every commit, the OS deterministically regenerates
+  `sections.tsx` from the committed page files under `src/epics/<epic>/<story>/`
+  (`lib/software/sections-registry.ts`, wired into `commitToApp`) — one top-level
+  PascalCase page component per story folder becomes one nav section. Sovereign-app
+  only; a no-op for other templates; fail-open (never blocks a commit). The build
+  directive now tells the agent to just write the page (registration is automatic;
+  don't hand-edit the generated file).
+
 ## [os-ui 0.6.21] — 2026-07-28
 
 ### Fixed

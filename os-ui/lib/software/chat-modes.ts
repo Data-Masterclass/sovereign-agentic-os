@@ -110,12 +110,12 @@ export const CODE_STRUCTURE_CONVENTION = [
   '  • Multi-line text is `<Textarea rows={3} …/>` — NOT `<Input as="textarea">`.',
   '  • `<Select>` renders a native <select>: pass `<option value=…>` CHILDREN (no `options=` prop).',
   '',
-  '## Wire every story into the UI — a built page that is not registered is INVISIBLE:',
-  'After creating a story page under epics/<epic>/<story>/<Name>.tsx (default-export a component), you MUST',
-  'register it in `src/template/sections.tsx`: add its import + ONE `SECTIONS` entry `{ id, label, icon, page }`.',
-  'Do this in the SAME build run as the page — never leave "register the page" as a follow-up. If you skip it,',
-  'the build looks fine but the app shows no feature. Replace the placeholder `workspace` entry with the first',
-  'real section.',
+  '## Story pages are AUTO-REGISTERED — just write the page:',
+  'Create each story page as `src/epics/<epic>/<story>/<Name>.tsx` with a DEFAULT-exported React component.',
+  'The OS regenerates `src/template/sections.tsx` from these page files on every commit, so the page appears',
+  'in the nav automatically — do NOT hand-edit sections.tsx (the generated registry overwrites your edits).',
+  'One page component per story folder becomes one nav section (its label is the story-folder name); shared or',
+  'helper code goes in `epics/<epic>/general/` or a nested subfolder so it is not mistaken for a page.',
 ].join('\n');
 
 /**
