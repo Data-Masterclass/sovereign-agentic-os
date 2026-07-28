@@ -821,6 +821,27 @@ export async function ensureHydrated(): Promise<void> {
   await Promise.all([getCache(), versions.ensureHydrated()]);
 }
 
+/**
+ * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
+ * Reassigns the app's `domain` (the visibility-scoping field) and writes through.
+ * NOTE: this reassigns visibility scope only; it does NOT move the app's Forgejo
+ * repository. `sel.id` moves one; `sel.onlyUnassigned` sweeps only empty-domain
+ * records. Returns the ids moved.
+ */
+export async function moveAppsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): Promise<string[]> {
+  const map = await getCache();
+  const moved: string[] = [];
+  for (const app of map.values()) {
+    if (sel.id !== undefined && app.id !== sel.id) continue;
+    if (sel.onlyUnassigned && app.domain) continue;
+    if (app.domain === target) continue;
+    app.domain = target;
+    writeThrough(app);
+    moved.push(app.id);
+  }
+  return moved;
+}
+
 // ------------------------------------------------------------------- Forgejo --
 
 function authHeader(): string {

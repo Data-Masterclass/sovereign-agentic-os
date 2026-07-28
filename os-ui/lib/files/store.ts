@@ -314,6 +314,29 @@ function persist(rec: FileRecord, a: FileAsset): FileRecord {
   return rec;
 }
 
+/**
+ * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
+ * A file carries its domain in the canonical yaml (scoping parses it) and, for a
+ * shared/certified file, in its domain read-grant (the policy source). So we
+ * parse → set a.domain → repoint any domain grant → persist, which re-serializes
+ * and stamps rec.domain. `sel.id` moves one; `sel.onlyUnassigned` sweeps only
+ * empty-domain records. Returns the ids moved.
+ */
+export function moveFilesDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): string[] {
+  const moved: string[] = [];
+  for (const rec of fs().store.values()) {
+    if (sel.id !== undefined && rec.id !== sel.id) continue;
+    if (sel.onlyUnassigned && rec.domain) continue;
+    if (rec.domain === target) continue;
+    const a = parseAsset(rec.yaml);
+    a.domain = target;
+    for (const g of a.grants) if (g.grantee.kind === 'domain') g.grantee.id = target;
+    persist(rec, a);
+    moved.push(rec.id);
+  }
+  return moved;
+}
+
 // --------------------------------------------------------------------- lists --
 
 function statusOf(a: FileAsset): FileStatus {

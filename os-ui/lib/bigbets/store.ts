@@ -154,6 +154,25 @@ export function auditLog(betId?: string): AuditEvent[] {
   return betId ? audit.filter((e) => e.betId === betId) : [...audit];
 }
 
+/**
+ * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
+ * Scoping reads the bet's `domain` field, so we set it and write through.
+ * `sel.id` moves one; `sel.onlyUnassigned` sweeps only empty-domain records.
+ * Returns the ids moved.
+ */
+export function moveBetsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): string[] {
+  const moved: string[] = [];
+  for (const bet of state().bets.values()) {
+    if (sel.id !== undefined && bet.id !== sel.id) continue;
+    if (sel.onlyUnassigned && bet.domain) continue;
+    if (bet.domain === target) continue;
+    bet.domain = target;
+    writeThrough(bet);
+    moved.push(bet.id);
+  }
+  return moved;
+}
+
 // ----------------------------------------------------------------- scoping ---
 
 function isMember(bet: BigBet, user: Principal): boolean {

@@ -201,6 +201,25 @@ function persist(m: ServiceModel): ServiceModel {
 }
 
 /**
+ * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
+ * A model's identity is its `model` key; scoping reads its `domain` field, so we
+ * set it and persist. `sel.id` matches the model key; `sel.onlyUnassigned` sweeps
+ * only empty-domain records. Returns the model keys moved.
+ */
+export function moveModelsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): string[] {
+  const moved: string[] = [];
+  for (const m of store().values()) {
+    if (sel.id !== undefined && m.model !== sel.id) continue;
+    if (sel.onlyUnassigned && m.domain) continue;
+    if (m.domain === target) continue;
+    m.domain = target;
+    persist(m);
+    moved.push(m.model);
+  }
+  return moved;
+}
+
+/**
  * UNSCOPED full registry — for SYSTEM / governed contexts only (the model's own
  * serve path, aggregate counts). It returns every domain's models including other
  * users' Personal-tier ones, so it must NEVER back a per-viewer tab. UI/tab

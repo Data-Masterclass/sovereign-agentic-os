@@ -13,6 +13,20 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.12] — 2026-07-28
+
+### Added
+- **Superadmin cross-domain artifact move** (Admin only, audited). Platform
+  admins can reassign an artifact's domain and bulk-assign every UNASSIGNED
+  artifact to a chosen domain, from the Domains admin page (type-to-confirm on
+  the bulk op). Covers all primary artifact kinds — datasets, dashboards,
+  files, workflows, personal knowledge, agents, science models, pillars, big
+  bets, connections, apps, and the base artifact store — persisting through each
+  store's durable mirror (datasets/files also update the yaml-embedded domain
+  and repoint the domain read-grant). Metrics move transitively with their
+  dataset. Creator/builder/domain_admin are denied (403); every move is written
+  to the OS audit log.
+
 ## [os-ui 0.6.11] — 2026-07-28
 
 ### Changed

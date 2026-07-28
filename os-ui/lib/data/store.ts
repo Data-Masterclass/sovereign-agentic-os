@@ -332,6 +332,28 @@ function persist(rec: DatasetRecord, d: Dataset, snap?: { author: string; summar
   return rec;
 }
 
+/**
+ * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
+ * A dataset carries its domain in BOTH the record field AND its canonical yaml
+ * (scoping parses the yaml), so we parse → set d.domain → persist, which
+ * re-serializes the yaml and stamps rec.domain together — the store's own
+ * discipline, not a partial poke. `sel.id` moves one; `sel.onlyUnassigned`
+ * sweeps only empty-domain records. Returns the ids moved.
+ */
+export function moveDatasetsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): string[] {
+  const moved: string[] = [];
+  for (const rec of ds().store.values()) {
+    if (sel.id !== undefined && rec.id !== sel.id) continue;
+    if (sel.onlyUnassigned && rec.domain) continue;
+    if (rec.domain === target) continue;
+    const d = parseDataset(rec.yaml);
+    d.domain = target;
+    persist(rec, d);
+    moved.push(rec.id);
+  }
+  return moved;
+}
+
 // --------------------------------------------------------------------- lists --
 
 function furthest(d: Dataset): { freshness: string | null; layer: Layer | null } {

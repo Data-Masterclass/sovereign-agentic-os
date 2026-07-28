@@ -182,6 +182,28 @@ async function getCache(): Promise<Map<string, Pillar>> {
   return map;
 }
 
+/**
+ * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
+ * Scoping reads the pillar's `domain` field, so we set it and write through.
+ * `sel.id` moves one; `sel.onlyUnassigned` sweeps only empty-domain records
+ * (a tenant pillar carries domain='tenant', so the sweep never touches it).
+ * Returns the ids moved.
+ */
+export async function movePillarsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): Promise<string[]> {
+  const map = await getCache();
+  const moved: string[] = [];
+  for (const p of map.values()) {
+    if (sel.id !== undefined && p.id !== sel.id) continue;
+    if (sel.onlyUnassigned && p.domain) continue;
+    if (p.domain === target) continue;
+    p.domain = target;
+    p.updatedAt = new Date().toISOString();
+    writeThrough(p);
+    moved.push(p.id);
+  }
+  return moved;
+}
+
 // --------------------------------------------------------------- Read paths ----
 
 /**

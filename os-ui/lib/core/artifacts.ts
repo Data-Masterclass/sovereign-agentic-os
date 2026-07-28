@@ -418,6 +418,34 @@ export async function deleteArtifact(artId: string, user: CurrentUser): Promise<
   versions.purge(artId);
 }
 
+/**
+ * Cross-domain governance move (admin-only, gated by the caller in
+ * lib/platform-admin/domain-move.ts). Reassigns the stored `domain` on matching
+ * records and writes each change through the durable mirror — reusing this
+ * store's own persistence discipline. `sel.id` moves exactly one record;
+ * `sel.onlyUnassigned` sweeps only records whose domain is empty/missing. Never
+ * touches records that already carry a domain when `onlyUnassigned` is set.
+ * Returns the ids actually moved (already-on-target records are skipped).
+ */
+export async function moveArtifactsDomain(
+  sel: { id?: string; onlyUnassigned?: boolean },
+  target: string,
+): Promise<string[]> {
+  const map = await getCache();
+  const moved: string[] = [];
+  for (const a of map.values()) {
+    if (sel.id !== undefined && a.id !== sel.id) continue;
+    if (sel.onlyUnassigned && a.domain) continue;
+    if (a.domain === target) continue;
+    a.domain = target;
+    a.updatedAt = now();
+    map.set(a.id, a);
+    writeThrough(a);
+    moved.push(a.id);
+  }
+  return moved;
+}
+
 function withStatus(err: Error, status: number): Error {
   (err as Error & { status?: number }).status = status;
   return err;

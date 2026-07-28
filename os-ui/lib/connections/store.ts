@@ -324,6 +324,26 @@ async function getCache(): Promise<Map<string, Connection>> {
   return map;
 }
 
+/**
+ * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
+ * Scoping reads the connection's `domain` field (its `principal` is a slug, not
+ * domain-derived), so we set the field and write through. `sel.id` moves one;
+ * `sel.onlyUnassigned` sweeps only empty-domain records. Returns the ids moved.
+ */
+export async function moveConnectionsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): Promise<string[]> {
+  const map = await getCache();
+  const moved: string[] = [];
+  for (const c of map.values()) {
+    if (sel.id !== undefined && c.id !== sel.id) continue;
+    if (sel.onlyUnassigned && c.domain) continue;
+    if (c.domain === target) continue;
+    c.domain = target;
+    writeThrough(c);
+    moved.push(c.id);
+  }
+  return moved;
+}
+
 // ------------------------------------------------------------------- Scoping ---
 
 function visibleToUser(c: Connection, user: CurrentUser): boolean {

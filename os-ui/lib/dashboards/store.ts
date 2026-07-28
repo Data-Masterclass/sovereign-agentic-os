@@ -92,6 +92,25 @@ export function __resetDashboards(): void {
   versions.__reset();
 }
 
+/**
+ * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
+ * Reassigns the stored `domain` on matching dashboards and writes each through
+ * the durable mirror. `sel.id` moves one; `sel.onlyUnassigned` sweeps only
+ * empty-domain records. Returns the ids moved.
+ */
+export function moveDashboardsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): string[] {
+  const moved: string[] = [];
+  for (const d of dashState().dashboards) {
+    if (sel.id !== undefined && d.id !== sel.id) continue;
+    if (sel.onlyUnassigned && d.domain) continue;
+    if (d.domain === target) continue;
+    d.domain = target;
+    writeThrough(d);
+    moved.push(d.id);
+  }
+  return moved;
+}
+
 export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number; archived?: boolean };
 
 function summarise(d: Stored): DashboardSummary {

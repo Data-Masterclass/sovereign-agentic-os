@@ -119,6 +119,25 @@ export function __resetStore(): void {
   versions.__reset();
 }
 
+/**
+ * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
+ * Scoping reads the record's `domain` field, so we set it and write through.
+ * `sel.id` moves one; `sel.onlyUnassigned` sweeps only empty-domain records.
+ * Returns the ids moved.
+ */
+export function movePersonalKnowledgeDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): string[] {
+  const moved: string[] = [];
+  for (const rec of st().entries.values()) {
+    if (sel.id !== undefined && rec.id !== sel.id) continue;
+    if (sel.onlyUnassigned && rec.domain) continue;
+    if (rec.domain === target) continue;
+    rec.domain = target;
+    writeThrough(rec);
+    moved.push(rec.id);
+  }
+  return moved;
+}
+
 // --------------------------------------------------------------- scoping -----
 function get(id: string): PersonalKnowledgeRecord {
   ensureSeeded();

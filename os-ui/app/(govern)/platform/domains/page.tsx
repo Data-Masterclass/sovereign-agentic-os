@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
+import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 
 type Domain = {
   id: string;
@@ -18,6 +19,15 @@ type Domain = {
 type Template = { id: string; name: string; description: string; layers: { ml: boolean } };
 
 export default function DomainsPage() {
+  return (
+    <ConfirmProvider>
+      <DomainsInner />
+    </ConfirmProvider>
+  );
+}
+
+function DomainsInner() {
+  const confirm = useConfirm();
   const [domains, setDomains] = useState<Domain[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [error, setError] = useState('');
@@ -32,6 +42,14 @@ export default function DomainsPage() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const renameRef = useRef<HTMLInputElement>(null);
+
+  // Governance: cross-domain artifact move.
+  const [kinds, setKinds] = useState<string[]>([]);
+  const [moveKind, setMoveKind] = useState('');
+  const [moveId, setMoveId] = useState('');
+  const [moveTarget, setMoveTarget] = useState('');
+  const [bulkTarget, setBulkTarget] = useState('');
+  const [moveMsg, setMoveMsg] = useState('');
 
   const load = useCallback(async () => {
     setError('');
@@ -103,6 +121,87 @@ export default function DomainsPage() {
 
   const cancelRename = useCallback(() => setRenaming(null), []);
 
+  // Load the movable artifact kinds once (admin-gated GET).
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/platform-admin/domain-move', { cache: 'no-store' });
+        if (!res.ok) return;
+        const body = await res.json();
+        const ks: string[] = body.kinds ?? [];
+        setKinds(ks);
+        if (ks.length) setMoveKind((k) => k || ks[0]);
+      } catch {
+        /* non-fatal: the move controls just stay empty */
+      }
+    })();
+  }, []);
+
+  // Default the target pickers to the first live domain once domains load.
+  const liveDomains = domains.filter((d) => !d.archived);
+  useEffect(() => {
+    if (liveDomains.length) {
+      setMoveTarget((t) => t || liveDomains[0].id);
+      setBulkTarget((t) => t || liveDomains[0].id);
+    }
+  }, [liveDomains.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const moveOne = useCallback(async () => {
+    if (!moveKind || !moveId.trim() || !moveTarget) return;
+    setBusy('move-one');
+    setMoveMsg('');
+    setError('');
+    try {
+      const res = await fetch('/api/platform-admin/domain-move', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ kind: moveKind, id: moveId.trim(), targetDomain: moveTarget }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) setError(body.error ?? 'Move failed');
+      else {
+        setMoveMsg(`Moved ${body.kind} "${body.id}" to ${body.targetDomain}.`);
+        setMoveId('');
+      }
+    } finally {
+      setBusy('');
+    }
+  }, [moveKind, moveId, moveTarget]);
+
+  const assignUnassigned = useCallback(async () => {
+    if (!bulkTarget) return;
+    const name = liveDomains.find((d) => d.id === bulkTarget)?.name ?? bulkTarget;
+    const ok = await confirm({
+      title: `Assign all unassigned artifacts to “${name}”?`,
+      body: `Every artifact with no domain — datasets, files, dashboards, agents, models, knowledge, connections, apps, workflows, pillars and big bets — will be reassigned to “${name}”. Artifacts that already have a domain are left untouched. This is auditable but not one-click reversible.`,
+      confirmLabel: 'Assign all',
+      danger: true,
+      confirmPhrase: bulkTarget,
+    });
+    if (!ok) return;
+    setBusy('bulk');
+    setMoveMsg('');
+    setError('');
+    try {
+      const res = await fetch('/api/platform-admin/domain-move', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ op: 'bulk-unassigned', targetDomain: bulkTarget }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) setError(body.error ?? 'Assign failed');
+      else {
+        const per = Object.entries(body.counts ?? {})
+          .filter(([, n]) => (n as number) > 0)
+          .map(([k, n]) => `${k}: ${n}`)
+          .join(', ');
+        setMoveMsg(`Assigned ${body.total} unassigned artifact(s) to ${body.targetDomain}${per ? ` (${per})` : ''}.`);
+      }
+    } finally {
+      setBusy('');
+    }
+  }, [bulkTarget, liveDomains, confirm]);
+
   return (
     <>
       <PageHeader title="Domains" crumb="platform · structural map of the tenant" />
@@ -132,6 +231,50 @@ export default function DomainsPage() {
           ) : null}
         </div>
 
+        <div className="section-title">Reassign artifact domain</div>
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="hint" style={{ marginBottom: 10 }}>
+            Move an artifact to a different domain. This changes <strong>who can see it</strong> (domain
+            scoping), so it is admin-only and audited.
+          </div>
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <select value={moveKind} onChange={(e) => setMoveKind(e.target.value)} aria-label="Artifact kind">
+              {kinds.map((k) => <option key={k} value={k}>{k}</option>)}
+            </select>
+            <input
+              style={{ flex: '1 1 200px' }}
+              value={moveId}
+              onChange={(e) => setMoveId(e.target.value)}
+              placeholder="artifact id"
+              autoComplete="off"
+            />
+            <span className="muted" style={{ fontSize: 12 }}>→</span>
+            <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)} aria-label="Target domain">
+              {liveDomains.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+            <button className="btn" onClick={moveOne} disabled={busy === 'move-one' || !moveKind || !moveId.trim() || !moveTarget}>
+              {busy === 'move-one' ? <span className="spin" /> : 'Move'}
+            </button>
+          </div>
+        </div>
+
+        <div className="section-title">Assign unassigned artifacts</div>
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="hint" style={{ marginBottom: 10 }}>
+            Bulk-assign <strong>every artifact with no domain</strong> to one domain. Artifacts that already
+            have a domain are never touched. Type-to-confirm; audited.
+          </div>
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <select value={bulkTarget} onChange={(e) => setBulkTarget(e.target.value)} aria-label="Target domain for unassigned">
+              {liveDomains.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+            <button className="btn" onClick={assignUnassigned} disabled={busy === 'bulk' || !bulkTarget}>
+              {busy === 'bulk' ? <span className="spin" /> : 'Assign all unassigned'}
+            </button>
+          </div>
+        </div>
+
+        {moveMsg ? <div className="hint" style={{ marginBottom: 12 }}>{moveMsg}</div> : null}
         {error ? <div className="error">{error}</div> : null}
 
         <div className="section-title">Domains<span className="count-pill">{domains.length}</span></div>
