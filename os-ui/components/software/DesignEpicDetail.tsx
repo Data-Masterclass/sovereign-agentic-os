@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import type { AppEpic, AppStory } from '@/lib/software/apps';
 import { clampEpicIndex } from '@/lib/software/story-tree';
 import { specHasContent, type StorySpec } from '@/lib/software/story-spec';
+import { useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import StorySpecEditor from './StorySpecEditor';
 
 /**
@@ -38,6 +39,7 @@ export default function DesignEpicDetail({
   /** Report the story the user is currently focused on (expanded), so the assistant can target it. */
   onActiveStory?: (ref: { epicId: string; storyId: string } | null) => void;
 }) {
+  const confirm = useConfirm();
   const [idx, setIdx] = useState(0);
   const [editing, setEditing] = useState(false);
   // ONE open story at a time — the single source of truth for both the expanded row and
@@ -75,6 +77,32 @@ export default function DesignEpicDetail({
   const epic = epics[at];
 
   const patchEpic = (fn: (e: AppEpic) => AppEpic) => onSave(epics.map((e, i) => (i === at ? fn(e) : e)));
+  // Delete the whole EPIC (cascades its stories + specs) behind the OS-standard
+  // confirm dialog. The epics.length effect re-clamps the shown index afterward.
+  const removeEpic = async () => {
+    const n = epic.stories.length;
+    const ok = await confirm({
+      title: 'Delete this EPIC?',
+      body: `“${epic.title.trim() || 'Untitled EPIC'}” and its ${n} user stor${n === 1 ? 'y' : 'ies'} (with their specs) will be permanently removed. This cannot be undone.`,
+      confirmLabel: 'Delete EPIC',
+      danger: true,
+    });
+    if (!ok) return;
+    setEditing(false);
+    setOpenStoryId(null);
+    onSave(epics.filter((_, i) => i !== at));
+  };
+  const removeStory = async (story: AppStory) => {
+    const ok = await confirm({
+      title: 'Delete this user story?',
+      body: `“${story.title.trim() || 'Untitled story'}” and its spec (features, NFRs, rules) will be permanently removed. This cannot be undone.`,
+      confirmLabel: 'Delete story',
+      danger: true,
+    });
+    if (!ok) return;
+    if (openStoryId === story.id) setOpenStoryId(null);
+    patchEpic((e) => ({ ...e, stories: e.stories.filter((s) => s.id !== story.id) }));
+  };
   const setStorySpec = (storyId: string, spec: StorySpec) =>
     patchEpic((e) => ({ ...e, stories: e.stories.map((s) => (s.id === storyId ? { ...s, spec } : s)) }));
 
@@ -92,11 +120,16 @@ export default function DesignEpicDetail({
 
       <div className="ded-head-actions">
         <span className="badge muted">{epic.stories.length} stor{epic.stories.length === 1 ? 'y' : 'ies'}</span>
-        {canEdit ? (
-          <button className={editing ? 'btn sm' : 'btn ghost sm'} onClick={() => setEditing((v) => !v)}>
-            {editing ? 'Done editing' : 'Edit'}
-          </button>
-        ) : null}
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          {canEdit && editing ? (
+            <button className="btn ghost sm danger" onClick={removeEpic} title="Delete this EPIC and all its stories">Delete EPIC</button>
+          ) : null}
+          {canEdit ? (
+            <button className={editing ? 'btn sm' : 'btn ghost sm'} onClick={() => setEditing((v) => !v)}>
+              {editing ? 'Done editing' : 'Edit'}
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {/* Epic title + description + requirements — read-first, editable on toggle. */}
@@ -150,7 +183,7 @@ export default function DesignEpicDetail({
               open={openStoryId === story.id}
               onToggle={() => setOpenStoryId((cur) => (cur === story.id ? null : story.id))}
               onPatch={(fn) => patchEpic((e) => ({ ...e, stories: e.stories.map((s) => (s.id === story.id ? fn(s) : s)) }))}
-              onRemove={() => { if (openStoryId === story.id) setOpenStoryId(null); patchEpic((e) => ({ ...e, stories: e.stories.filter((s) => s.id !== story.id) })); }}
+              onRemove={() => { void removeStory(story); }}
               onSaveSpec={(spec) => setStorySpec(story.id, spec)}
             />
           ))}

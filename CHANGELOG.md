@@ -13,6 +13,19 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.17] — 2026-07-28
+
+### Added
+- **Delete controls across the Software Design stage**, each behind the OS-standard
+  confirm dialog (matching the archive/delete UX everywhere else):
+  - **Delete EPIC** — a whole epic (cascading its user stories + specs) was
+    previously impossible to remove in the one-epic detail view; now a danger
+    button in the epic's Edit mode, gated by a confirmation.
+  - **Delete user story** — the existing remove now confirms first (names the
+    story + warns its spec goes with it).
+  - **Delete feature / requirement / rule** — each spec item's remove now confirms
+    (names the item) instead of deleting on a single click.
+
 ## [os-ui 0.6.16] — 2026-07-28
 
 ### Fixed

@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { emptySpec, specHasContent, type StorySpec } from '@/lib/software/story-spec';
+import { useConfirm } from '@/components/lifecycle/ConfirmDialog';
 
 /**
  * StorySpecEditor — the Design-stage SPECIFICATION editor for ONE user story. It shows
@@ -17,10 +18,10 @@ import { emptySpec, specHasContent, type StorySpec } from '@/lib/software/story-
  * A blank spec reads as an invitation ("what should this story do?"), never a wall.
  */
 
-const LISTS: { key: keyof StorySpec; label: string; hint: string; placeholder: string }[] = [
-  { key: 'features', label: 'Features', hint: 'What it does', placeholder: 'e.g. Send a reminder email' },
-  { key: 'nfrs', label: 'Non-functional requirements', hint: 'How well', placeholder: 'e.g. Renders in under 200ms' },
-  { key: 'rules', label: 'Rules', hint: 'Governance & business rules', placeholder: 'e.g. Writes are held for approval' },
+const LISTS: { key: keyof StorySpec; label: string; noun: string; hint: string; placeholder: string }[] = [
+  { key: 'features', label: 'Features', noun: 'feature', hint: 'What it does', placeholder: 'e.g. Send a reminder email' },
+  { key: 'nfrs', label: 'Non-functional requirements', noun: 'requirement', hint: 'How well', placeholder: 'e.g. Renders in under 200ms' },
+  { key: 'rules', label: 'Rules', noun: 'rule', hint: 'Governance & business rules', placeholder: 'e.g. Writes are held for approval' },
 ];
 
 export default function StorySpecEditor({
@@ -53,6 +54,7 @@ export default function StorySpecEditor({
           <SpecList
             key={l.key}
             label={l.label}
+            noun={l.noun}
             hint={l.hint}
             placeholder={l.placeholder}
             items={draft[l.key]}
@@ -81,16 +83,27 @@ export default function StorySpecEditor({
 
 /** One editable list — a titled column with removable chips + an add row. */
 function SpecList({
-  label, hint, placeholder, items, canEdit, onChange,
+  label, noun, hint, placeholder, items, canEdit, onChange,
 }: {
   label: string;
+  noun: string;
   hint: string;
   placeholder: string;
   items: string[];
   canEdit: boolean;
   onChange: (items: string[]) => void;
 }) {
+  const confirm = useConfirm();
   const [entry, setEntry] = useState('');
+  const remove = async (i: number) => {
+    const ok = await confirm({
+      title: `Delete this ${noun}?`,
+      body: `“${items[i]}” will be removed from the spec. This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (ok) onChange(items.filter((_, j) => j !== i));
+  };
   const add = () => {
     const v = entry.trim();
     if (!v) return;
@@ -111,7 +124,7 @@ function SpecList({
             <li key={i} className="spl-item">
               <span style={{ flex: 1, minWidth: 0 }}>{it}</span>
               {canEdit ? (
-                <button type="button" className="icon-btn danger" title="Remove" onClick={() => onChange(items.filter((_, j) => j !== i))}>✕</button>
+                <button type="button" className="icon-btn danger" title="Delete" onClick={() => { void remove(i); }}>✕</button>
               ) : null}
             </li>
           ))}
