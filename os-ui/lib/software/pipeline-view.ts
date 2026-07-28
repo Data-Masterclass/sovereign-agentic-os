@@ -80,6 +80,11 @@ export const PIPELINE_MSG = {
   building: 'Building & deploying…',
   complete: 'Build & deploy complete.',
   incompletePrefix: 'A build/deploy stage did not complete — see the marked stage',
+  // A live app whose LATEST build FAILED: the running pod serves an EARLIER release,
+  // so recent commits are NOT deployed. This must be LOUD — it is the "looks fine
+  // until you open the app" trap. Named stage is appended by the caller.
+  staleLivePrefix:
+    'The latest build FAILED — the app is live on an EARLIER release, so your recent changes are NOT deployed. Fix the build error and re-commit',
 } as const;
 
 /**
@@ -94,9 +99,14 @@ export function derivePipelineView(pipeline: Record<string, string>, deploy: Dep
   const serving = isServingLive(deploy);
   let firstPendingSeen = false;
   const steps: Step[] = PIPELINE_STAGES.map((s) => {
-    // Live-and-serving ⇒ this stage is provably complete.
-    if (serving) return { key: s, label: PIPELINE_STAGE_LABEL[s], state: 'done' as StepState };
-    let state = rawStageState(pipeline[s] ?? 'pending');
+    const raw = pipeline[s] ?? 'pending';
+    // Live-and-serving ⇒ this stage is provably complete — EXCEPT one that is
+    // genuinely FAILING (the latest CI run failed). Force-greening a `failing`
+    // stage would hide that the live pod is serving an EARLIER release while new
+    // commits don't deploy. A merely pending/stalled stage on a live app IS benign
+    // reconcile-lag (a post-live edit / fast-cached build), so keep force-greening it.
+    if (serving && raw !== 'failing') return { key: s, label: PIPELINE_STAGE_LABEL[s], state: 'done' as StepState };
+    let state = rawStageState(raw);
     if (state === 'pending') {
       state = firstPendingSeen ? 'pending' : 'active';
       firstPendingSeen = true;
@@ -112,6 +122,9 @@ export function derivePipelineView(pipeline: Record<string, string>, deploy: Dep
   let commentary: string;
   if (!done) commentary = PIPELINE_MSG.building;
   else if (ok) commentary = PIPELINE_MSG.complete;
+  // A live-and-serving app with a failed stage = the latest build broke; be explicit
+  // that the app is stuck on an older release (not merely "a stage didn't complete").
+  else if (serving) commentary = `${PIPELINE_MSG.staleLivePrefix}: ${failedStep!.label}.`;
   else commentary = `${PIPELINE_MSG.incompletePrefix}: ${failedStep!.label}.`;
 
   return { steps, active: !done, done, ok, commentary };

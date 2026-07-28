@@ -65,6 +65,22 @@ test('failed non-live pipeline ⇒ the failed stage marked + named in both surfa
   assert.equal(v.commentary, `${PIPELINE_MSG.incompletePrefix}: Build image (CI).`);
 });
 
+// (d) The trap: a LIVE app whose LATEST build FAILED must NOT force-green the CI
+// stage — it is serving an EARLIER release, and the failure must be loud in both
+// surfaces. (Kiekert reproduction: live, releases shipped, but actions='failing'.)
+test('live app whose LATEST build FAILED ⇒ CI marked fail + honest "live on earlier release" message', () => {
+  const live: DeployFacts = { state: 'live', releases: 2 };
+  const raw = { forgejo: 'ok', actions: 'failing', harbor: 'ok', argocd: 'ok', live: 'ok' };
+  const v = derivePipelineView(raw, live);
+  assert.equal(stageStates(v).actions, 'fail', 'a genuinely failing CI is never force-greened, even when live');
+  assert.equal(v.ok, false);
+  assert.equal(v.commentary, `${PIPELINE_MSG.staleLivePrefix}: Build image (CI).`);
+  // A merely pending/stalled stage on the SAME live app stays benign (force-greened).
+  const benign = derivePipelineView({ ...raw, actions: 'ok', harbor: 'stalled' }, live);
+  assert.equal(stageStates(benign).harbor, 'done');
+  assert.equal(benign.ok, true);
+});
+
 // A cached/fast SUCCESSFUL build: the CI stage earned 'ok' — it must read done,
 // not failed, even though it built quickly. (Success earned, never lost.)
 test('cached/fast successful build ⇒ actions ok (not failed)', () => {

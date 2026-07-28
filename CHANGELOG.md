@@ -13,6 +13,21 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.23] — 2026-07-28
+
+### Fixed
+- **A failing CI is now loud in Test + Publish — no more "looks complete" while the
+  app is frozen on an old release.** The honest-pipeline derivation force-greened
+  EVERY stage for a live app (a fix for stale/cached CI status) — but it also
+  force-greened a genuinely `failing` "Build image (CI)" stage, so an app whose
+  latest build broke still showed "Build & deploy complete," all green, in both
+  stages (the exact "looks good until I open the app" trap). Now a live app's
+  stages are still shown complete when the CI status is merely pending/stalled
+  (benign reconcile-lag), but a genuinely **failing** stage stays red and both
+  Test and Publish show: "The latest build FAILED — the app is live on an EARLIER
+  release, so your recent changes are NOT deployed. Fix the build error and
+  re-commit: Build image (CI)." Shared derivation, so the two surfaces still agree.
+
 ## [os-ui 0.6.22] — 2026-07-28
 
 ### Changed
