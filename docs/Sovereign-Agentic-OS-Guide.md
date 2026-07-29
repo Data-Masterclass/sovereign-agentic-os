@@ -2,7 +2,7 @@
 title: "Sovereign Agentic OS"
 subtitle: "The governed, EU-sovereign operating system for data, knowledge, agents and software — where AI gets real, safe hands on your work."
 author: "Orchestrated by Data Masterclass · datamasterclass.com · www.sovereign-agentic.com"
-date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.6.8) · generated {{DATE}} from commit {{GIT_COMMIT}}"
+date: "Chart 0.2.11 (app 0.2.0-alpha.11 · os-ui 0.6.23) · generated {{DATE}} from commit {{GIT_COMMIT}}"
 titlepage: true
 titlepage-rule-color: "c8a24a"
 toc: true
@@ -125,7 +125,7 @@ builders, because they all share four traits:
   the machinery is identical: **Agents** — Define · Design · Build · Run · Evaluate; **Data** —
   Ingest · Define · Harmonize · Validate · Publish; **Metrics** — Define · Refine · Preview ·
   Publish · Monitor; **Dashboards** — Define · Design · Build · View · Govern; **Software** —
-  Define · Design · Build · Preview · Operate; **Science** — Define · Train · Deploy · Predict ·
+  Define · Design · Build · Test · Publish; **Science** — Define · Train · Deploy · Predict ·
   Monitor.
 - **Honest, gated navigation.** A stage is reachable only when its precondition is met (you
   can't Harmonize to Gold before Silver exists), and a stage shows a ✓ only when you completed
@@ -389,8 +389,12 @@ honestly rather than inventing an answer when retrieval comes back empty.
   human-readable line per action — *"Committed 3 files"*, *"Provisioning preview…"* — with
   errors shown as warnings with the real reason and retries visible in the feed, plus a real
   before/after **file diff** of what was committed per run; the raw code panel lives one
-  click away in the **Developer view**) · **Preview** (a live in-cluster pod) · **Operate** (the deployed app plus
-  its live tool surface). A persistent **Build ▸ Preview ▸ Deploy status rail** keeps the
+  click away in the **Developer view**) · **Test** (a *"Verify & Improve"* pass — the reasoning
+  model checks each built story against its spec across five dimensions — Functionality · User
+  Experience · Code Structure · Security · Documentation — and turns any shortfall into a tracked
+  refinement with a visible **Proposed → Designed → Built** state, beside a live in-cluster
+  preview pod) · **Publish** (the Builder-reviewed deploy, promote / certify, the live tool
+  surface, and lifecycle). A persistent **Build ▸ Preview ▸ Deploy status rail** keeps the
   honest, single-glance state in view throughout. At **Define** you pick one of **four
   scaffold templates** — **Application** (the default, full OS UX), **Website**, **APIs only**
   (no user interface), or **Empty app** — and each pre-shapes the epic structure the Build
@@ -408,12 +412,17 @@ honestly rather than inventing an answer when retrieval comes back empty.
   can reach the app — managing users stays in the OS; and a top-bar **MCP button** links to
   the app's own MCP connection in Connections. The scaffolded **README is the build
   contract** — it documents how each story adds a page + section, and the Build assistant
-  reads the same text as context. Code commits to an
+  reads the same text as context. Each built story page is **auto-wired into the app's
+  navigation**: the OS deterministically regenerates the section registry from the committed
+  story pages on every commit, so a written story can never be left invisible ("builds fine
+  but no feature shows"). Code commits to an
   in-cluster **Forgejo** repo (no GitHub, no tokens, your code never leaves). Commits are
   **sha-aware** — every write fetches the live blob sha first, so concurrent edits can never
   silently no-op or overwrite — and the pipeline status is **earned, not claimed**: the CI
   badge reflects the actual outcome of the latest Actions run on your commit (a missing repo
-  secret even self-heals on the next push). An app can still
+  secret even self-heals on the next push), and a build that *fails* is loud — the Test and
+  Publish stages say plainly that the app is serving an *earlier* release with your recent
+  changes undeployed, so a broken build never masquerades as "complete." An app can still
   **declare its surface** — `surface: ui | api | both` in `app.yaml`, which wins over
   auto-detection so a Streamlit/Gradio/Flask UI is never mislabelled "API." *Request deploy*
   assembles a review card — a security scan of the **live repo tree**, resource envelope, diff —
@@ -1044,9 +1053,12 @@ passwords), scopes records My / Domain, and calls back through the OS-client SDK
 (`@sovereign-os/app-sdk`) under the signed-in user's own security — with a **live streaming
 Build** (the plan first, then one honest line per action, warnings and retries visible, behind a
 persistent Build ▸ Preview ▸ Deploy status rail) driven from the **Epics & stories tree**
-(per-story status chips, one-click build targets, *"N of M stories built"*), showing real
+(per-story status chips, one-click build targets, *"N of M stories built"*) — every built
+story **auto-wired into the app's navigation** (the section registry regenerates from the
+committed pages, so a story can never build-but-not-show) and a **failed build surfaced
+honestly** in Test and Publish (never a fake "complete" over a stale release). It shows real
 per-run file diffs, live preview, and a Builder-reviewed deploy that
-scans the live repo tree; they build a real image in-cluster (Forgejo CI) or publish static, and
+scans the live repo tree; apps build a real image in-cluster (Forgejo CI) or publish static, and
 deploy to a live per-app URL. **Dashboards** render **natively in the OS** — Apache ECharts on
 the governed Cube layer, every panel queried **as the viewer** under per-user row-level security —
 with Power BI / Tableau / Superset-console bridges over the Cube SQL API. A developer **`sos` CLI** (Phase 0) brings the same governed door to
