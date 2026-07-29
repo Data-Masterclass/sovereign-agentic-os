@@ -12,9 +12,10 @@
 #
 # HOW IT WORKS
 #   - Markdown -> PDF via DOCKERIZED pandoc (no host pandoc/LaTeX install needed).
-#   - The source .md carries {{DATE}} and {{GIT_COMMIT}} placeholders. They are
-#     substituted INTO A TEMP COPY at build time from `git log -1` (so the source
-#     stays reproducible / re-runnable). The committed .md keeps the placeholders.
+#   - The source .md carries {{DATE}} and {{GIT_COMMIT}} placeholders, substituted
+#     INTO A TEMP COPY at build time: {{DATE}} = the wall-clock generation date,
+#     {{GIT_COMMIT}} = the source short-hash from `git log -1`. The committed .md
+#     keeps the placeholders (so the source stays reproducible / re-runnable).
 #   - Idempotent: re-running just rebuilds the PDF. One-time cost is the docker
 #     image pull (see IMAGE below); cached afterwards.
 #
@@ -47,7 +48,10 @@ command -v docker >/dev/null 2>&1 || command -v npx >/dev/null 2>&1 \
   || die "Need either docker (for pandoc) or npx (for md-to-pdf) on PATH."
 
 # --- 1. stamp the build metadata into a temp working copy --------------------
-DATE="$(git log -1 --format=%cd --date=format:'%Y-%m-%d' 2>/dev/null || date +%Y-%m-%d)"
+# DATE is the actual GENERATION date (wall-clock) — the cover says "generated
+# {{DATE}}", so it must be when the PDF was really built, not the last-commit date.
+# COMMIT stays the git short-hash so the source revision is still recorded.
+DATE="$(date +%Y-%m-%d)"
 COMMIT="$(git log -1 --format=%h 2>/dev/null || echo 'uncommitted')"
 c "Stamping build metadata (date=$DATE commit=$COMMIT)…"
 sed -e "s/{{DATE}}/$DATE/g" -e "s/{{GIT_COMMIT}}/$COMMIT/g" "$SRC" > "$WORK"
