@@ -38,7 +38,7 @@ export type MetricGroups = { mine: MetricSummary[]; domain: MetricSummary[]; mar
 
 export type CheckRow = { name: string; ok: boolean; detail: string };
 export type BuildRow = { tool: string; status: 'ok' | 'fail'; detail: string; error?: string };
-export type Mode = 'live' | 'live (sql)' | 'offline-mock';
+export type Mode = 'live' | 'live (sql)' | 'offline-mock' | 'unavailable';
 
 export type DefineResult = {
   datasetId: string;
@@ -58,6 +58,13 @@ export type ExploreResult = {
   securityContext: Record<string, unknown>;
   sql: string;
   mode: Mode;
+  /** Honest degradation notices from the server resolver (dropped slice members, or
+   *  an unreachable semantic layer). Present ⇒ show it; never silently swallow. */
+  warning?: string;
+  /** True when a real deployment's Cube is unreachable — no number, an honest outage. */
+  unavailable?: boolean;
+  /** True when Cube is up but the measure hasn't sync'd yet (soft "syncing"). */
+  pending?: boolean;
 };
 
 export type GovernResult = {

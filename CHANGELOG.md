@@ -13,6 +13,42 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.24] — 2026-07-30
+
+### Fixed
+- **Metrics never fabricate a number again — an unreachable Cube is an honest
+  outage, not a made-up KPI.** Diagnosed from the "metrics return absurd values"
+  report (a count on a 40-row Product table returned ~286,936). Root cause: it was
+  NOT a join fan-out — the generated Cube schema is correct (`COUNT(*)` over one
+  table, no joins) and real Trino counts 40. The metric explorer's resolver
+  (`exploreMetric`, `lib/metrics/build/explore-server.ts`) probes Cube via
+  `liveMetricsReachable()`, and when Cube is unreachable it fell back to an
+  **offline-mock that fabricates the value by hashing** the member+region
+  (`hash % 90000 + 10000` per region, summed over DE/FR/US → the ~287k figure).
+  On the live cluster Cube was unreachable, so every metric showed hash noise
+  presented as real. Now, on a real deployment (`OS_PROFILE ≠ local`), an
+  unreachable Cube returns `mode: 'unavailable'` with **no number** (rows: []) and
+  a clear "metric temporarily unavailable — the semantic layer is unreachable"
+  notice, wired through the client `ExploreResult` type and the explorer UI. The
+  offline-mock stays ONLY on the local/laptop teaching flow (no cluster), where a
+  demo value is legitimate and clearly labelled. (The separate infra task — why
+  Cube is unreachable on the cluster — is tracked apart; this change guarantees a
+  fabricated number can never be shown as a KPI regardless.)
+
+## [data-runner] — 2026-07-30
+
+### Fixed
+- **Bronze is now truly RAW — no automatic type coercion on CSV upload.** A CSV
+  column of `yes`/`no` was being auto-converted to boolean `true`/`false` in the
+  Bronze Iceberg table (also `40`→bigint, `2024-01-01`→date), silently rewriting
+  the user's data. Cause: DuckDB `read_csv_auto()` infers column types from the
+  text. Delimited text (CSV/TSV/TXT) now lands with `all_varchar=true` — every
+  value preserved as the literal string; Parquet/JSON keep their real embedded
+  types (typed source formats). Type conversion becomes an explicit, opt-in step
+  in Silver, never guessed in Bronze. (`images/data-runner/app.py`,
+  `_ingest_select`; new `test_bronze_raw.py` proves yes/no stays VARCHAR against
+  the real DuckDB engine.)
+
 ## [os-ui 0.6.23] — 2026-07-28
 
 ### Fixed

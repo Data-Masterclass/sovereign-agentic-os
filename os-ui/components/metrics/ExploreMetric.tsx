@@ -165,6 +165,12 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
 
       {err ? <div className="error" style={{ marginTop: 14 }}>{err}</div> : null}
 
+      {result?.warning ? (
+        <div className="error" style={{ marginTop: 14, background: 'rgba(200,120,20,.10)', borderColor: 'rgba(200,120,20,.4)' }}>
+          {result.warning}
+        </div>
+      ) : null}
+
       {result ? (
         <>
           <div className="section-title" style={{ marginTop: 20 }}>
@@ -189,7 +195,9 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
             </p>
           ) : null}
           {result.rows.length === 0 ? (
-            <div className="stub-page">No rows for this viewer.</div>
+            <div className="stub-page">
+              {result.unavailable ? 'No number shown — the semantic layer is unavailable.' : 'No rows for this viewer.'}
+            </div>
           ) : (
             <div className="table-wrap">
               <table>

@@ -139,22 +139,37 @@ def _catalog():
     return cat
 
 
-def _read_to_arrow(local_path: str, object_key: str):
-    """Read the downloaded file with DuckDB (schema inference) -> Arrow table."""
+def _ingest_select(local_path: str, object_key: str) -> str:
+    """Build the DuckDB SELECT that lands an uploaded file into the Bronze table.
+
+    BRONZE IS THE RAW LANDING — no automatic type coercion. A delimited text file
+    (CSV/TSV/TXT) carries no real types, so we read every column as VARCHAR
+    (all_varchar=true): the strings "yes"/"no" must stay "yes"/"no" and never
+    become a boolean, "40" stays "40", "2024-01-01" stays text. Guessing types
+    here silently rewrites the user's data (yes/no → true/false was the reported
+    bug). Type conversion is an explicit, opt-in step in Silver, never in Bronze.
+
+    Parquet is a typed columnar format (its stored types ARE the source of truth)
+    and JSON carries native type tokens, so those keep their embedded types — only
+    untyped delimited text is forced to VARCHAR.
+
+    (local_path is a runner-controlled temp path, never caller input — safe to inline.)
+    """
     lower = object_key.lower()
     if lower.endswith(".parquet"):
-        reader = "read_parquet"
-    elif lower.endswith(".json") or lower.endswith(".ndjson"):
-        reader = "read_json_auto"
-    else:  # default: CSV (covers .csv / .tsv / .txt)
-        reader = "read_csv_auto"
+        return f"SELECT * FROM read_parquet('{local_path}')"
+    if lower.endswith(".json") or lower.endswith(".ndjson"):
+        return f"SELECT * FROM read_json_auto('{local_path}')"
+    # default: CSV (covers .csv / .tsv / .txt) — raw landing, every column VARCHAR.
+    return f"SELECT * FROM read_csv_auto('{local_path}', all_varchar=true)"
+
+
+def _read_to_arrow(local_path: str, object_key: str):
+    """Read the downloaded file with DuckDB -> Arrow table (raw Bronze schema)."""
     con = duckdb.connect()
     try:
         con.execute("SET temp_directory='/tmp'")
-        # local_path is a runner-controlled temp path (never caller input) — safe to inline.
-        return con.execute(
-            f"SELECT * FROM {reader}('{local_path}')"
-        ).fetch_arrow_table()
+        return con.execute(_ingest_select(local_path, object_key)).fetch_arrow_table()
     finally:
         con.close()
 

@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import { config } from '@/lib/core/config';
 import { cubeLoad, queryRun } from '@/lib/infra/governed';
 import { type DelegatedToken, propagate } from '../../data/identity.ts';
 import type { Dataset, Measure } from '../../data/index.ts';
@@ -26,8 +27,22 @@ import { isCubeSyncLag, liveMetricsReachable } from './live-clients.ts';
  */
 
 /** 'live (sql)' = the pre-save preview: the number came from a governed Trino query
- *  (the draft measure isn't in Cube yet), honestly labelled apart from Cube-served. */
-export type ExploreMode = 'live' | 'live (sql)' | 'offline-mock';
+ *  (the draft measure isn't in Cube yet), honestly labelled apart from Cube-served.
+ *  'unavailable' = a REAL deployment whose Cube semantic layer is unreachable: we
+ *  return NO number rather than a fabricated offline-mock one (see metricsMustBeLive). */
+export type ExploreMode = 'live' | 'live (sql)' | 'offline-mock' | 'unavailable';
+
+/**
+ * On a real deployment (OS_PROFILE ≠ 'local') the Cube semantic layer is a required
+ * backend — if it's unreachable that's an OUTAGE, and a metric must say so, never
+ * fabricate a plausible number. The offline-mock resolver (a hash-seeded demo value)
+ * is ONLY legitimate on the local/laptop teaching flow, where no cluster exists and
+ * the mock is clearly a worked example. This gate is what stops a made-up 286,936
+ * from being shown as if it were a real KPI.
+ */
+function metricsMustBeLive(): boolean {
+  return config.deploymentProfile !== 'local';
+}
 
 /** The live executor: governed Cube load with the viewer's securityContext (R3 RLS). */
 function liveExecutor(): CubeExecutor {
@@ -71,6 +86,9 @@ export type ExploreServerResult = {
   mode: ExploreMode;
   /** True when Cube is up but the just-defined measure hasn't sync'd yet (soft "syncing"). */
   pending?: boolean;
+  /** True on a real deployment when the semantic layer is unreachable — no number is
+   *  returned (rows: []) rather than a fabricated one. The UI shows an honest outage. */
+  unavailable?: boolean;
   /** LOUD degradation notice (Northpeak fix): requested slice members the view does not
    *  expose were dropped from the query — the result is NOT sliced as asked. */
   warning?: string;
@@ -92,6 +110,21 @@ export async function exploreMetric(
 ): Promise<ExploreServerResult> {
   const spec = exploreSpec(dataset, measure, slice);
   const live = await liveMetricsReachable();
+  // HONESTY GATE: on a real deployment, an unreachable Cube is an outage — return no
+  // number (never the hash-seeded offline-mock, which is what surfaced fabricated KPIs
+  // like 286,936). Local/teaching keeps the mock so the laptop flow still runs.
+  if (!live && metricsMustBeLive()) {
+    return {
+      member: spec.member,
+      rows: [],
+      securityContext: {},
+      sql: dropToSql(spec),
+      mode: 'unavailable',
+      unavailable: true,
+      warning:
+        'Metric temporarily unavailable — the governed semantic layer (Cube) is unreachable, so this number cannot be computed right now. No value is shown rather than an estimated one. Retry shortly; if it persists, the Cube service needs attention.',
+    };
+  }
   const base = {
     member: spec.member,
     sql: dropToSql(spec),
