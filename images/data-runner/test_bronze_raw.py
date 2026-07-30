@@ -1,20 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
-"""Bronze is the RAW landing — no automatic type coercion.
+"""Bronze is the RAW landing — no automatic type coercion (PyArrow reader, no DuckDB).
 
-Regression guard for the reported bug: a CSV column of "yes"/"no" strings was
-being auto-converted to boolean true/false at Bronze (DuckDB read_csv_auto infers
-types from the text). Bronze must preserve the bytes as-is; type conversion is an
-opt-in Silver step. Run:  python3 -m pytest -q test_bronze_raw.py
+Regression guard for the reported bug: a CSV column of "yes"/"no" strings was being
+auto-converted to boolean true/false at Bronze. The ingest now reads with PyArrow —
+CSV forced to all-string (raw), Parquet/JSON keeping their native types — and DuckDB
+is gone from the data-runner entirely. Run:  python3 -m pytest -q test_bronze_raw.py
 """
-import importlib
+import os
 import sys
 import tempfile
 import types
 import unittest
 
-# Stub the runtime-only deps so `import app` works — but DO NOT stub duckdb here,
-# the behaviour test needs the real engine.
+# Stub only boto3/pyiceberg so `import app` needs no cluster. PyArrow is a REAL dep
+# (the ingest reader) and is NOT stubbed — these tests exercise the genuine reader.
 for name in ("boto3",):
     sys.modules.setdefault(name, types.ModuleType(name))
 botocore = types.ModuleType("botocore")
@@ -33,74 +33,69 @@ sys.modules.setdefault("pyiceberg.catalog", pyiceberg_catalog)
 import app  # noqa: E402
 
 
-def _real_duckdb():
-    """Return the REAL duckdb module (not a sibling test's stub), or None if it
-    isn't installed. A sibling test may have registered a bare-ModuleType stub in
-    sys.modules; drop it and import the genuine package."""
-    mod = sys.modules.get("duckdb")
-    if mod is not None and not hasattr(mod, "connect"):
-        del sys.modules["duckdb"]  # a stub — evict it
-    try:
-        mod = importlib.import_module("duckdb")
-    except Exception:
-        return None
-    return mod if hasattr(mod, "connect") else None
+def _write(suffix: str, text: str) -> str:
+    fd, path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return path
 
 
-class IngestSelectTests(unittest.TestCase):
-    """The SQL builder must force VARCHAR for delimited text and leave typed
-    formats (parquet/json) alone. Pure — no engine needed, always runs."""
+class NoDuckDbTests(unittest.TestCase):
+    def test_duckdb_is_gone(self):
+        # The sovereign stack has one query engine (Trino); the ingest reader is
+        # PyArrow. DuckDB must not be imported or referenced by the data-runner.
+        self.assertNotIn("duckdb", sys.modules, "data-runner must not import duckdb")
+        self.assertFalse(hasattr(app, "duckdb"), "app must not hold a duckdb handle")
 
-    def test_csv_reads_all_varchar(self):
-        for key in ("uploads/u/x.csv", "uploads/u/x.CSV", "uploads/u/x.tsv", "uploads/u/x.txt"):
-            sql = app._ingest_select("/tmp/f", key)
-            self.assertIn("read_csv_auto", sql)
-            self.assertIn("all_varchar=true", sql,
-                          f"Bronze CSV read must be all_varchar (raw) for {key}: {sql}")
 
-    def test_parquet_keeps_source_types(self):
-        sql = app._ingest_select("/tmp/f", "uploads/u/x.parquet")
-        self.assertIn("read_parquet", sql)
-        self.assertNotIn("all_varchar", sql)  # typed columnar source — never forced
+class RawBronzeReaderTests(unittest.TestCase):
+    """The real PyArrow reader: delimited text lands as ALL strings (raw, no coercion),
+    typed formats (parquet/json) keep their native types."""
+
+    def _types(self, table):
+        return {f.name: str(f.type) for f in table.schema}
+
+    def test_csv_yes_no_stays_string_not_boolean(self):
+        p = _write(".csv", "name,in_stock,qty,joined\nWidget,yes,40,2024-01-01\nGadget,no,3,2024-02-02\n")
+        try:
+            t = app._read_to_arrow(p, "orders.csv")
+            self.assertEqual(set(self._types(t).values()), {"string"},
+                             "every Bronze CSV column must be raw string — no bool/int/date inference")
+            self.assertEqual(t.column("in_stock").to_pylist(), ["yes", "no"])  # literal, not true/false
+            self.assertEqual(t.column("qty").to_pylist(), ["40", "3"])          # literal, not int
+            self.assertEqual(t.num_rows, 2)
+        finally:
+            os.remove(p)
+
+    def test_tsv_is_tab_delimited_and_all_string(self):
+        p = _write(".tsv", "a\tb\n1\tyes\n2\tno\n")
+        try:
+            t = app._read_to_arrow(p, "x.tsv")
+            self.assertEqual([f.name for f in t.schema], ["a", "b"])  # tab split, not one column
+            self.assertEqual(set(self._types(t).values()), {"string"})
+        finally:
+            os.remove(p)
 
     def test_json_keeps_native_types(self):
-        for key in ("uploads/u/x.json", "uploads/u/x.ndjson"):
-            sql = app._ingest_select("/tmp/f", key)
-            self.assertIn("read_json_auto", sql)
-            self.assertNotIn("all_varchar", sql)
-
-
-class RawBronzeBehaviourTests(unittest.TestCase):
-    """End-to-end against the real DuckDB engine: a yes/no + numbers + dates CSV
-    must land as ALL VARCHAR with the literal values preserved — no coercion."""
-
-    def setUp(self):
-        self.duckdb = _real_duckdb()
-        if self.duckdb is None:
-            self.skipTest("duckdb not installed in this environment")
-
-    def _describe_types(self, sql):
-        con = self.duckdb.connect()
+        p = _write(".ndjson", '{"id":1,"active":true}\n{"id":2,"active":false}\n')
         try:
-            return {row[1] for row in con.execute("DESCRIBE " + sql).fetchall()}
+            t = app._read_to_arrow(p, "x.ndjson")
+            self.assertEqual(self._types(t)["id"], "int64")   # JSON has real type tokens
+            self.assertEqual(self._types(t)["active"], "bool")
         finally:
-            con.close()
+            os.remove(p)
 
-    def test_yes_no_stays_string_not_boolean(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".csv", dir="/tmp", delete=True) as f:
-            f.write("name,in_stock,qty,joined\nWidget,yes,40,2024-01-01\nGadget,no,3,2024-02-02\n")
-            f.flush()
-            sql = app._ingest_select(f.name, "orders.csv")
-            # Every column raw VARCHAR — no BOOLEAN/BIGINT/DATE inference.
-            self.assertEqual(self._describe_types(sql), {"VARCHAR"})
-            # The literal values survive: still "yes"/"no", not true/false.
-            con = self.duckdb.connect()
-            try:
-                vals = [r[0] for r in con.execute(
-                    f"SELECT in_stock FROM read_csv_auto('{f.name}', all_varchar=true)").fetchall()]
-            finally:
-                con.close()
-            self.assertEqual(vals, ["yes", "no"])
+    def test_parquet_keeps_source_types(self):
+        import pyarrow as pa
+        from pyarrow import parquet as papq
+        p = _write(".parquet", "")
+        papq.write_table(pa.table({"n": [1, 2], "ok": [True, False]}), p)
+        try:
+            t = app._read_to_arrow(p, "x.parquet")
+            self.assertEqual(self._types(t)["n"], "int64")    # typed columnar source preserved
+            self.assertEqual(self._types(t)["ok"], "bool")
+        finally:
+            os.remove(p)
 
 
 if __name__ == "__main__":

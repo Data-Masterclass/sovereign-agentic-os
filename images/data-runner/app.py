@@ -9,13 +9,14 @@ Polaris REST catalog, so the Data-tab "Upload" stops being an in-memory placebo.
 
 Path (single-purpose, no orchestration):
   MinIO object (boto3 GET, no httpfs -> works under default-deny egress)
-    -> DuckDB reads + infers the schema (CSV/Parquet/JSON)
+    -> PyArrow reads the file (CSV as RAW strings — no type coercion; Parquet/JSON
+       keep their native types)
     -> PyIceberg writes `lakehouse.personal_<uid>.bronze_<slug>` via Polaris REST.
 
 /ingest-rows accepts a JSON body with inline rows (list of dicts) instead of an
 S3 object key. Designed for Salesforce API-batch sync: os-ui pulls rows from the
 Salesforce REST API (which Trino cannot reach) and streams them here page-by-page.
-Each batch is written to a temp NDJSON file so the same DuckDB read_json_auto path
+Each batch is written to a temp NDJSON file so the same PyArrow read_json path
 infers the schema — identical to an NDJSON file upload. Callers must page their
 payloads; a single batch is capped at 10 000 rows.
 
@@ -41,6 +42,7 @@ Plain HTTP: POST /ingest + POST /ingest-rows + GET /health.
 """
 import hmac
 import io
+import csv as csvmod
 import json
 import os
 import re
@@ -48,8 +50,11 @@ import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import boto3
-import duckdb
+import pyarrow as pa
 from botocore.config import Config as BotoConfig
+from pyarrow import csv as pacsv
+from pyarrow import json as pajson
+from pyarrow import parquet as papq
 from pyiceberg.catalog import load_catalog
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -139,39 +144,39 @@ def _catalog():
     return cat
 
 
-def _ingest_select(local_path: str, object_key: str) -> str:
-    """Build the DuckDB SELECT that lands an uploaded file into the Bronze table.
-
-    BRONZE IS THE RAW LANDING — no automatic type coercion. A delimited text file
-    (CSV/TSV/TXT) carries no real types, so we read every column as VARCHAR
-    (all_varchar=true): the strings "yes"/"no" must stay "yes"/"no" and never
-    become a boolean, "40" stays "40", "2024-01-01" stays text. Guessing types
-    here silently rewrites the user's data (yes/no → true/false was the reported
-    bug). Type conversion is an explicit, opt-in step in Silver, never in Bronze.
-
-    Parquet is a typed columnar format (its stored types ARE the source of truth)
-    and JSON carries native type tokens, so those keep their embedded types — only
-    untyped delimited text is forced to VARCHAR.
-
-    (local_path is a runner-controlled temp path, never caller input — safe to inline.)
-    """
-    lower = object_key.lower()
-    if lower.endswith(".parquet"):
-        return f"SELECT * FROM read_parquet('{local_path}')"
-    if lower.endswith(".json") or lower.endswith(".ndjson"):
-        return f"SELECT * FROM read_json_auto('{local_path}')"
-    # default: CSV (covers .csv / .tsv / .txt) — raw landing, every column VARCHAR.
-    return f"SELECT * FROM read_csv_auto('{local_path}', all_varchar=true)"
+def _csv_columns(local_path: str, delimiter: str) -> list:
+    """The header row's column names — read directly so we can force every column to
+    string BEFORE PyArrow infers types. utf-8-sig strips a leading BOM."""
+    with open(local_path, newline="", encoding="utf-8-sig") as fh:
+        return next(csvmod.reader(fh, delimiter=delimiter), [])
 
 
 def _read_to_arrow(local_path: str, object_key: str):
-    """Read the downloaded file with DuckDB -> Arrow table (raw Bronze schema)."""
-    con = duckdb.connect()
-    try:
-        con.execute("SET temp_directory='/tmp'")
-        return con.execute(_ingest_select(local_path, object_key)).fetch_arrow_table()
-    finally:
-        con.close()
+    """Read the downloaded file into an Arrow table with PyArrow (NO DuckDB).
+
+    BRONZE IS THE RAW LANDING — no automatic type coercion. A delimited text file
+    (CSV/TSV/TXT) carries no real types, so we read every column as string: the
+    values "yes"/"no" must stay "yes"/"no" and never become a boolean, "40" stays
+    "40", "2024-01-01" stays text. Guessing types here silently rewrites the user's
+    data (yes/no → true/false was the reported bug). Type conversion is an explicit,
+    opt-in step in Silver, never in Bronze. We force strings by naming every column
+    string in ConvertOptions (learned from the header row).
+
+    Parquet is a typed columnar format (its stored types ARE the source of truth)
+    and JSON carries native type tokens, so those keep their embedded types — only
+    untyped delimited text is forced to string.
+    """
+    lower = object_key.lower()
+    if lower.endswith(".parquet"):
+        return papq.read_table(local_path)
+    if lower.endswith(".json") or lower.endswith(".ndjson"):
+        return pajson.read_json(local_path)
+    # default: CSV (covers .csv / .tsv / .txt) — raw landing, every column string.
+    delimiter = "\t" if lower.endswith(".tsv") else ","
+    names = _csv_columns(local_path, delimiter)
+    convert = pacsv.ConvertOptions(column_types={n: pa.string() for n in names})
+    parse = pacsv.ParseOptions(delimiter=delimiter)
+    return pacsv.read_csv(local_path, parse_options=parse, convert_options=convert)
 
 
 def ingest(body: dict) -> dict:
@@ -302,8 +307,8 @@ def ingest_rows(body: dict) -> dict:
     table_name = f"bronze_{ds_slug}"
     fqn_trino = f"iceberg.{namespace}.{table_name}"
 
-    # Materialise the row batch as NDJSON so _read_to_arrow / read_json_auto infers
-    # the schema exactly like a JSON file upload does (same DuckDB path, same types).
+    # Materialise the row batch as NDJSON so _read_to_arrow / PyArrow read_json infers
+    # the schema exactly like a JSON file upload does (same path, same types).
     with tempfile.NamedTemporaryFile(
         dir="/tmp", suffix=".ndjson", delete=True, mode="w", encoding="utf-8"
     ) as tmp:
@@ -347,7 +352,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.rstrip("/") == "/health":
-            self._send(200, {"status": "ok", "engine": "duckdb+pyiceberg",
+            self._send(200, {"status": "ok", "engine": "pyarrow+pyiceberg",
                              "warehouse": POLARIS_WAREHOUSE})
         else:
             self._send(404, {"error": "not found"})

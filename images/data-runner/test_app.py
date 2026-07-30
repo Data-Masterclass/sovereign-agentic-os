@@ -2,9 +2,10 @@
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 """Unit tests for the data-runner's ingest logic (guards + replace/append modes).
 
-The heavy runtime deps (boto3/duckdb/pyiceberg) are stubbed in sys.modules BEFORE
-importing app.py, and the network-touching seams (_s3_client/_catalog/_read_to_arrow)
-are monkeypatched with fakes — so these run with stdlib + pytest only:
+The network/service deps (boto3/pyiceberg) are stubbed in sys.modules BEFORE importing
+app.py, and the network-touching seams (_s3_client/_catalog/_read_to_arrow) are
+monkeypatched with fakes — so these run without a cluster (PyArrow, the ingest reader,
+is a real dep but the reader seam is patched, so no file/engine is actually touched):
 
     python3 -m pytest -q test_app.py
 """
@@ -14,8 +15,11 @@ import types
 import unittest
 from unittest import mock
 
-# ---- Stub the runtime-only deps so `import app` works without the image env. ----
-for name in ("boto3", "duckdb"):
+# ---- Stub the runtime-only deps so `import app` works without the image env.
+# PyArrow is a REAL dependency now (the ingest reader; DuckDB was removed), so it is
+# NOT stubbed — but _read_to_arrow is monkeypatched in every test, so these unit
+# tests still never touch a real file or the network. ----
+for name in ("boto3",):
     sys.modules.setdefault(name, types.ModuleType(name))
 botocore = types.ModuleType("botocore")
 botocore_config = types.ModuleType("botocore.config")
@@ -250,8 +254,8 @@ class IngestRowsNdjsonTests(unittest.TestCase):
         for line, expected_row in zip(captured["lines"], ROWS_BASE["rows"]):
             self.assertEqual(json.loads(line), expected_row)
 
-        # The key passed to _read_to_arrow must end in .ndjson so DuckDB uses
-        # read_json_auto (same extension branch as _read_to_arrow's own dispatch).
+        # The key passed to _read_to_arrow must end in .ndjson so PyArrow uses
+        # read_json (same extension branch as _read_to_arrow's own dispatch).
         self.assertTrue(captured["key"].endswith(".ndjson"), captured["key"])
 
         self.assertEqual(out["rowCount"], len(ROWS_BASE["rows"]))
@@ -271,7 +275,7 @@ class FailureModeTests(unittest.TestCase):
         log = []
 
         def raising_read(*_a, **_kw):
-            raise RuntimeError("DuckDB: cannot parse file — corrupt data")
+            raise RuntimeError("PyArrow: cannot parse file — corrupt data")
 
         with mock.patch.object(app, "_s3_client", lambda: FakeS3()), \
              mock.patch.object(app, "_catalog", lambda: FakeCatalog(log, exists=False)), \
@@ -281,7 +285,7 @@ class FailureModeTests(unittest.TestCase):
 
         # The exception message must be meaningful — not a raw AttributeError from
         # trying to call .schema on None or similar.
-        self.assertIn("DuckDB", str(ctx.exception),
+        self.assertIn("PyArrow", str(ctx.exception),
                       "the original error message must be preserved, not swallowed")
         # Nothing was written to Iceberg — no create/append in the log.
         ops = [op for op, *_ in log]

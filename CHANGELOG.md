@@ -37,17 +37,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [data-runner] — 2026-07-30
 
+### Changed
+- **DuckDB removed from the ingest service — one query engine (Trino) for the whole
+  sovereign stack.** The data-runner was the last place DuckDB lingered (it read the
+  uploaded file to infer the Bronze schema). The reader is now **PyArrow** (already a
+  PyIceberg dependency), and `duckdb` is dropped from `requirements.txt` and the image.
+
 ### Fixed
 - **Bronze is now truly RAW — no automatic type coercion on CSV upload.** A CSV
   column of `yes`/`no` was being auto-converted to boolean `true`/`false` in the
-  Bronze Iceberg table (also `40`→bigint, `2024-01-01`→date), silently rewriting
-  the user's data. Cause: DuckDB `read_csv_auto()` infers column types from the
-  text. Delimited text (CSV/TSV/TXT) now lands with `all_varchar=true` — every
-  value preserved as the literal string; Parquet/JSON keep their real embedded
-  types (typed source formats). Type conversion becomes an explicit, opt-in step
-  in Silver, never guessed in Bronze. (`images/data-runner/app.py`,
-  `_ingest_select`; new `test_bronze_raw.py` proves yes/no stays VARCHAR against
-  the real DuckDB engine.)
+  Bronze Iceberg table (also `40`→bigint, `2024-01-01`→date), silently rewriting the
+  user's data — DuckDB `read_csv_auto()` inferred types from the text. The PyArrow
+  reader forces **every delimited-text (CSV/TSV/TXT) column to string** (raw landing;
+  values preserved literally), while Parquet/JSON keep their real embedded types
+  (typed source formats). Type conversion becomes an explicit, opt-in step in Silver,
+  never guessed in Bronze. (`images/data-runner/app.py` `_read_to_arrow`;
+  `test_bronze_raw.py` proves yes/no stays string and DuckDB is absent, against the
+  real PyArrow engine.)
 
 ## [os-ui 0.6.23] — 2026-07-28
 
