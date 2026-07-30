@@ -428,6 +428,11 @@ export default function DataBuilder({
     if (typeof window !== 'undefined') window.localStorage.setItem(DATA_MODE_KEY, m);
   };
 
+  /* ── Published landing: a published dataset (shared to Domain or certified to Company)
+     opens in a calm PREVIEW + TALK-TO-DATA view — most people want to USE it, not rebuild
+     it. A prominent "Edit data stages" button drops into the full 5-stage builder. */
+  const [builderOpen, setBuilderOpen] = useState(false);
+
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [checks, setChecks] = useState<DataCheck[]>([]);
   const [loadErr, setLoadErr] = useState('');
@@ -748,6 +753,40 @@ export default function DataBuilder({
   }, [datasetId]);
   useEffect(() => { void loadPreview(); }, [loadPreview]);
 
+  // The governed 50-row data preview, as a reusable block so EVERY stage can show
+  // "what's in the table right now" — Bronze/Silver had it; Gold, Validate and Publish
+  // now get the same view. It always reads the highest built layer through the governed
+  // Trino path (OPA-checked); nothing is shown until a layer is built.
+  const rowPreviewBlock = (heading: string, subtitle: string) => (
+    <>
+      <div className="section-title" style={{ marginTop: 22 }}>
+        {heading}
+        <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={loadPreview} disabled={previewing}>
+          {previewing ? <span className="spin" /> : 'Refresh preview'}
+        </button>
+      </div>
+      <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>{subtitle}</p>
+      {previewErr ? <div className="error" style={{ marginBottom: 10 }}>{previewErr}</div> : null}
+      {preview ? (
+        preview.available ? (
+          <>
+            <p className="muted" style={{ fontSize: 12.5, margin: '0 0 8px' }}>
+              First {preview.rowCount} row{preview.rowCount === 1 ? '' : 's'} · {preview.layer}{' · '}<span className="mono" style={{ fontSize: 10 }}>{preview.fqn}</span>
+            </p>
+            {preview.columns.length > 0 ? (
+              <div className="table-wrap" style={{ marginBottom: 16 }}>
+                <table>
+                  <thead><tr>{preview.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+                  <tbody>{preview.rows.map((r, i) => <tr key={i}>{r.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody>
+                </table>
+              </div>
+            ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>No rows to show.</p>}
+          </>
+        ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{preview.reason}</p>
+      ) : null}
+    </>
+  );
+
   // Apply an assistant Define draft into the docs + quality-rule editors (never auto-saves).
   const applyDraft = useCallback((draft: DefineDraft) => {
     if (typeof draft.description === 'string' && draft.description.trim()) setDesc(draft.description.trim());
@@ -835,6 +874,11 @@ export default function DataBuilder({
   const fqn = layer ? physicalFqn(dataset, layer) : null;
   const cubeReady = isCubeReady(dataset);
   const published = !!dataset.certification;
+  // "Published" for the landing view = shared beyond the owner's private space (promoted
+  // to Domain = asset, or certified to Company = product). Such a dataset opens in the
+  // preview+talk landing until the user clicks "Edit data stages".
+  const isPublished = dataset.tier === 'asset' || dataset.tier === 'product';
+  const showLanding = isPublished && !builderOpen;
   const canEdit = !!user && canManageArtifact(user, { owner: dataset.owner, domain: dataset.domain });
   const isAdmin = user?.role === 'admin';
 
@@ -878,11 +922,28 @@ export default function DataBuilder({
     <ConfirmProvider>
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
         <button className="btn ghost" onClick={onBack}>← Datasets</button>
-        <BuilderModeToggle
-          mode={viewMode}
-          onChange={setModePersisted}
-          developerHint="The raw technical surface — dbt/Cube artifacts, FQNs, RLS summary"
-        />
+        {showLanding ? (
+          // The published landing: one prominent doorway into the full pipeline.
+          <button className="btn primary" onClick={() => setBuilderOpen(true)} title="Open the 5-stage builder to edit this dataset's pipeline">
+            ✎ Edit data stages
+          </button>
+        ) : isPublished ? (
+          // Editing a published dataset — offer the way back to its calm landing, plus the mode toggle.
+          <div className="row" style={{ alignItems: 'center', gap: 10 }}>
+            <button className="btn ghost sm" onClick={() => setBuilderOpen(false)}>← Done editing</button>
+            <BuilderModeToggle
+              mode={viewMode}
+              onChange={setModePersisted}
+              developerHint="The raw technical surface — dbt/Cube artifacts, FQNs, RLS summary"
+            />
+          </div>
+        ) : (
+          <BuilderModeToggle
+            mode={viewMode}
+            onChange={setModePersisted}
+            developerHint="The raw technical surface — dbt/Cube artifacts, FQNs, RLS summary"
+          />
+        )}
       </div>
 
       {/* ── Header + status chips (always visible, above the stepper) ── */}
@@ -971,7 +1032,20 @@ export default function DataBuilder({
         )}
       </div>
 
-      {viewMode === 'simple' ? (
+      {showLanding ? (
+        // ── Published landing: preview + Talk to Data (use it, don't rebuild it) ──
+        <div>
+          <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
+            This dataset is <strong>published</strong>. Preview it and ask it questions below — or use <strong>✎ Edit data stages</strong> (top-right) to open the full 5-stage pipeline.
+          </p>
+          {rowPreviewBlock('Data preview', 'The first 50 rows of the published table, read through the governed Trino path under your own row security.')}
+          <div style={{ marginTop: 24 }}>
+            <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
+          </div>
+          {/* What's already built on this data — metrics, dashboards, agent systems. */}
+          <ConnectedBuild datasetId={dataset.id} />
+        </div>
+      ) : viewMode === 'simple' ? (
       <StageShell
         stages={DATA_STAGES}
         state={stage}
@@ -1051,33 +1125,7 @@ export default function DataBuilder({
             ) : null}
 
             {/* Raw preview of what landed — the governed SELECT * LIMIT 50. */}
-            <div className="section-title" style={{ marginTop: 22 }}>
-              Raw preview
-              <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={loadPreview} disabled={previewing}>
-                {previewing ? <span className="spin" /> : 'Refresh preview'}
-              </button>
-            </div>
-            <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-              A read-only scan of the first 50 rows through the governed query path (Trino, OPA-checked). Nothing is previewed until a layer is built.
-            </p>
-            {previewErr ? <div className="error" style={{ marginBottom: 10 }}>{previewErr}</div> : null}
-            {preview ? (
-              preview.available ? (
-                <>
-                  <p className="muted" style={{ fontSize: 12.5, margin: '0 0 8px' }}>
-                    First {preview.rowCount} row{preview.rowCount === 1 ? '' : 's'} · {preview.layer}{' · '}<span className="mono" style={{ fontSize: 10 }}>{preview.fqn}</span>
-                  </p>
-                  {preview.columns.length > 0 ? (
-                    <div className="table-wrap" style={{ marginBottom: 16 }}>
-                      <table>
-                        <thead><tr>{preview.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
-                        <tbody>{preview.rows.map((r, i) => <tr key={i}>{r.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody>
-                      </table>
-                    </div>
-                  ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>No rows to show.</p>}
-                </>
-              ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{preview.reason}</p>
-            ) : null}
+            {rowPreviewBlock('Raw preview', 'A read-only scan of the first 50 rows through the governed query path (Trino, OPA-checked). Nothing is previewed until a layer is built.')}
           </div>
         ) : null}
 
@@ -1194,6 +1242,9 @@ export default function DataBuilder({
                 <ExplorePanel datasetId={dataset.id} builtLayers={builtLayers} showPreview={false} />
               </>
             ) : null}
+
+            {/* See the result — the first 50 rows of the highest built layer (Gold if built). */}
+            {rowPreviewBlock('Data preview', 'The first 50 rows of your highest built layer — Gold if built, otherwise Silver or Bronze — read through the governed Trino path.')}
           </div>
         ) : null}
 
@@ -1396,6 +1447,9 @@ export default function DataBuilder({
             {/* Lineage — refinement + consumption chain, moved here from the old Use stage. */}
             <div className="section-title" style={{ marginTop: 24 }}>Lineage</div>
             <LineagePanel datasetId={dataset.id} />
+
+            {/* The rows the checks ran against — same governed preview as every other stage. */}
+            {rowPreviewBlock('Data preview', 'The first 50 rows the quality checks run against — read through the governed Trino path.')}
           </div>
         ) : null}
 
@@ -1462,6 +1516,9 @@ export default function DataBuilder({
               </div>
             ) : null}
             {shareErr ? <div className="error" style={{ marginTop: 8 }}>{shareErr}</div> : null}
+
+            {/* Preview what you're publishing — the same governed 50-row view as every stage. */}
+            {rowPreviewBlock('Data preview', 'The first 50 rows of what you are publishing — read through the governed Trino path, under your own row security.')}
 
             {/* Talk to Data — governed NL→SQL over what the viewer can see (usage before promote). */}
             <div {...anchorAttr(ANCHORS.data.query)} style={{ marginTop: 24 }}>

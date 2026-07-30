@@ -13,6 +13,26 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.25] — 2026-07-30
+
+### Changed
+- **Data stages are now voluntarily skippable, each clearly described, with a data
+  preview on every stage.** (1) No stage hard-gates navigation any more — you can jump
+  straight from Bronze to Publish without building Silver/Gold first (a single-table or
+  pass-through Gold is legitimate; not every dataset needs cleaning or a join). The ✓
+  stays honest: `completed()` still reads real layer state, so a skipped stage is simply
+  left unchecked, never faked. (2) Each stage's description says plainly what it does and
+  flags the refinement stages as optional. (3) The governed 50-row **Data preview**
+  (the one that was only on Bronze/Silver) now appears on **Gold, Validate and Publish**
+  too — one reusable block reading the highest built layer through the governed Trino
+  path. (`lib/data/stages.ts`, `components/data/DataBuilder.tsx`; stages test updated.)
+- **A published dataset opens in a calm PREVIEW + TALK-TO-DATA landing**, not the
+  builder. A dataset shared to the Domain (asset) or certified to the Company (product)
+  now lands on a preview + Talk-to-Data view (with its connected metrics/dashboards/agents)
+  — because most people want to USE it, not rebuild it — behind a prominent **"✎ Edit
+  data stages"** button (top-right) that opens the full 5-stage builder, with a "← Done
+  editing" way back. Personal/unpublished datasets open in the builder as before.
+
 ## [os-ui 0.6.24] — 2026-07-30
 
 ### Fixed

@@ -16,13 +16,16 @@
  *   Validate (Data Quality & Lineage) — author DQ rules + run checks + badge + lineage trace
  *   Publish (Metrics & Usage)    — Talk-to-Data + doorways THEN promote/certify (usage before promote)
  *
- * `enabled(ctx)` gates which stages are reachable off REAL dataset state (the layer dots
- * and tier the registry already tracks) — you can't Define without Bronze, can't Harmonize
- * without Silver, can't Validate without something materialized, can't Publish without
- * a refined (Silver/Gold) layer. `completed(ctx)` is each stage's LIVE condition; a stage
- * shows a ✓ only when the user ALSO worked it this session (tracked by the StageState in
- * the component). So a freshly-opened dataset shows no pre-marked checks, and a check
- * clears if the user later invalidates it (e.g. the layer is rebuilt away).
+ * STAGES ARE VOLUNTARILY SKIPPABLE. Every stage is always reachable — you can move
+ * straight from Bronze to Publish without doing Silver/Gold first (a single-table or
+ * pass-through Gold is legitimate, and not every dataset needs cleaning or a join).
+ * We deliberately do NOT hard-gate navigation: no `enabled` predicate blocks a stage.
+ * What stays honest is the ✓ — `completed(ctx)` is each stage's LIVE condition, and a
+ * stage shows a ✓ only when the user ALSO worked it this session (tracked by the
+ * StageState in the component). So a freshly-opened dataset shows no pre-marked checks,
+ * a check clears if the user later invalidates it (e.g. the layer is rebuilt away), and
+ * skipping a stage simply leaves it unchecked — never a faked green. Each stage's `hint`
+ * says plainly what it does and that the refinement stages are optional.
  */
 
 import type { StageDef } from '@/lib/core/stages';
@@ -47,44 +50,40 @@ export type DataCtx = {
 };
 
 /**
- * Five stages in medallion order. Ingest is always reachable; Define needs Bronze;
- * Harmonize needs Silver; Validate needs a materialized layer; Publish needs a refined
- * layer. Each gate reads the dataset's real state so skipping ahead past unbuilt work
- * is impossible and no ✓ is ever faked.
+ * Five stages in medallion order — ALL always reachable (no `enabled` gate), so a user
+ * can skip straight through. `completed(ctx)` reads the dataset's real state, so a ✓ is
+ * only ever earned, never faked; skipping a stage simply leaves it unchecked. Each
+ * `hint` describes what the stage does and flags the optional (refinement) stages.
  */
 export const DATA_STAGES: StageDef<DataStageId, DataCtx>[] = [
   {
     id: 'ingest',
     title: 'Ingest (Bronze)',
-    hint: 'Name the dataset, pick or land the source into Bronze, and explore the raw data.',
+    hint: 'Name the dataset and load your source as the raw Bronze table, then explore exactly what landed. This is the one required step — the rest are optional.',
     completed: (c) => c.bronzeBuilt,
   },
   {
     id: 'define',
     title: 'Define (Silver)',
-    hint: 'Columns are real now — document their meanings and clean/conform into the Silver layer.',
-    enabled: (c) => c.bronzeBuilt,
+    hint: 'Optional. Document what each column means and clean/conform the data into a tidy Silver layer. Skip it to keep Bronze as-is.',
     completed: (c) => c.silverBuilt,
   },
   {
     id: 'harmonize',
     title: 'Harmonize (Gold)',
-    hint: 'Join and aggregate Silver into the Gold business mart, then explore the result.',
-    enabled: (c) => c.silverBuilt,
+    hint: 'Optional. Join or aggregate into a Gold business mart — a single-table or straight pass-through Gold is fine. Skip it if Bronze/Silver already answers your question.',
     completed: (c) => c.goldBuilt,
   },
   {
     id: 'validate',
     title: 'Validate (Quality & Lineage)',
-    hint: 'Author data-quality rules, run checks to get a real pass/fail badge, and trace the lineage chain.',
-    enabled: (c) => c.materialized,
+    hint: 'Optional but recommended. Author data-quality checks, run them for a real pass/fail score, and trace the lineage before you share.',
     completed: (c) => c.materialized,
   },
   {
     id: 'publish',
     title: 'Publish (Metrics & Usage)',
-    hint: 'Ask it in plain language, jump to Metrics or Dashboards, then promote to your domain or certify as a data product.',
-    enabled: (c) => c.refined,
+    hint: 'Preview and talk to your data in plain language, jump to Metrics or Dashboards, then promote it to your domain or certify it as a data product.',
     completed: (c) => c.refined,
   },
 ];
