@@ -13,6 +13,21 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [chart] — 2026-07-30
+
+### Fixed
+- **Cube memory raised 768Mi → 4Gi (limit) / 1Gi (request) — the real cause of the
+  "wrong metric numbers".** On the live cluster the Cube pod was `OOMKilled` in a
+  CrashLoopBackOff (884 restarts over 3.5 days) at the old 768Mi limit, so
+  `/cubejs-api/v1/meta` never came up and EVERY metric silently fell back to the
+  fabricated offline-mock (the ~286,936 hash noise). Cube.js (Node) holds the whole
+  schema + query plans in-heap, so 768Mi is far too small for a real cohort schema;
+  the node has ~107 GiB allocatable. Patched live and persisted in
+  `charts/sovereign-agentic-os/values.yaml` so a future `helm upgrade` can't
+  re-introduce the OOM. After recovery a Northpeak metric resolved to a real number
+  with `mode:"live"`. (Pairs with the os-ui 0.6.24 honesty gate, which independently
+  guarantees an unreachable Cube can never again show a fabricated number.)
+
 ## [os-ui 0.6.25] — 2026-07-30
 
 ### Changed

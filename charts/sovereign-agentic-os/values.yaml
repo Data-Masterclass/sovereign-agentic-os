@@ -1573,8 +1573,13 @@ cube:
     user: cube-sales
     catalog: iceberg
   resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { cpu: "1", memory: 768Mi }
+    # Cube.js (Node) loads the whole schema + plans queries in-heap. 768Mi OOMKilled
+    # it in a crash-loop on the live cluster (884 restarts / 3.5 days → every metric
+    # silently fell back to the offline-mock), so the floor is 1Gi and the ceiling 4Gi
+    # (the node has ~107GiB allocatable — memory here scales with schema/query size,
+    # not node capacity). Do NOT lower below ~2Gi with a real cohort schema.
+    requests: { cpu: 100m, memory: 1Gi }
+    limits: { cpu: "1", memory: 4Gi }
   # Cube model-sync sidecar (data-tab T7): polls os-ui GET /api/cube/models and
   # writes changed cube_dbt model YAML into the shared /cube/conf/model dir; Cube
   # dev-mode schema-watch hot-reloads. Reuses the Cube image (node runtime) — NO
