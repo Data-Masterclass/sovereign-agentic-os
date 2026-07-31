@@ -10,15 +10,10 @@ import {
   personalSchema,
   slug,
   JOIN_TYPES,
-  MEASURE_AGGS,
-  MEASURE_OPS,
   CAST_TYPES,
   type JoinType,
-  type MeasureAgg,
-  type MeasureOp,
   type CastType,
   type GoldDimension,
-  type GoldMeasure,
   type JoinInput,
   type KeyAdapt,
 } from '@/lib/data/transform';
@@ -28,11 +23,13 @@ import ExplorePanel from './ExplorePanel';
 
 /**
  * Gold JOIN builder — dataset REUSE (data-tab stage 4). Pick 1..n OTHER datasets you
- * can see, choose the join keys, project the columns and name the business measures →
- * one governed CTAS writes `gold_<slug>` in YOUR schema, reading each joined table AS
- * YOU (so masking holds). Calm + guided: the machinery (aliases, GROUP BY, the exact
- * SQL) stays hidden behind "Show the code" until you ask for it; the Gold step lights
- * only after the table is written into Trino and a probe reads it back.
+ * can see, choose the join keys and project the columns → one governed CTAS writes
+ * `gold_<slug>` in YOUR schema, reading each joined table AS YOU (so masking holds).
+ * Measures are NOT defined here — they belong to the Publish stage (and the Metrics
+ * tab), where governed measures are declared on top of the finished Gold table. Calm +
+ * guided: the machinery (aliases, the exact SQL) stays hidden behind "Show the code"
+ * until you ask for it; the Gold step lights only after the table is written into
+ * Trino and a probe reads it back.
  */
 
 type Joinable = { id: string; name: string; domain: string; tier: string; fqn: string; columns: string[] };
@@ -43,12 +40,11 @@ type BuildReport = { ok: boolean; rows: BuildRow[]; mode?: 'live' | 'offline-moc
  *  to a type, or normalize text. `adaptType` is the target type when `adaptMode==='cast'`. */
 type JoinRow = { datasetId: string; type: JoinType; baseCol: string; joinCol: string; adaptMode: 'none' | 'cast' | 'text'; adaptType: CastType };
 type DimRow = { source: string; as: string }; // source = "ref::column"
-type MeasureRow = { name: string; agg: MeasureAgg; col: string; op: '' | MeasureOp; col2: string };
 
 const NONE = '';
 
 /** Re-hydrate the panel's editable rows from a stored {@link GoldSpec}. The stored spec
- *  IS the panel's own vocabulary (datasetId-keyed joins, `ref::column` dim/measure refs),
+ *  IS the panel's own vocabulary (datasetId-keyed joins, `ref::column` dim refs),
  *  so this is a defaulting map, not a translation — an absent spec yields empty rows. */
 function hydrateJoins(spec?: GoldSpec): JoinRow[] {
   return (spec?.joins ?? []).map((j) => ({
@@ -62,15 +58,6 @@ function hydrateJoins(spec?: GoldSpec): JoinRow[] {
 }
 function hydrateDims(spec?: GoldSpec): DimRow[] {
   return (spec?.dimensions ?? []).map((d) => ({ source: d.source, as: d.as ?? '' }));
-}
-function hydrateMeasures(spec?: GoldSpec): MeasureRow[] {
-  return (spec?.measures ?? []).map((m) => ({
-    name: m.name,
-    agg: (MEASURE_AGGS as readonly string[]).includes(m.agg) ? (m.agg as MeasureAgg) : 'sum',
-    col: m.col ?? '',
-    op: (MEASURE_OPS as readonly string[]).includes(m.op ?? '') ? (m.op as MeasureOp) : '',
-    col2: m.col2 ?? '',
-  }));
 }
 
 /** Decode a "ref::column" select value into a ColRef, or null when unset. */
@@ -110,7 +97,7 @@ export default function GoldJoinPanel({
   /** Whether a Gold version already exists. Drives the "already built ✓ — explore /
    *  rebuild" state so the definition is never a one-shot black box. */
   goldBuilt: boolean;
-  /** The stored raw Gold spec — RE-HYDRATES the joins/columns/measures so an existing
+  /** The stored raw Gold spec — RE-HYDRATES the joins/columns so an existing
    *  Gold definition stays visible + editable + rebuildable. Absent ⇒ a fresh build. */
   initialSpec?: GoldSpec;
   /** Reload the dataset (record the ✓) WITHOUT auto-advancing the stepper — the user
@@ -122,10 +109,14 @@ export default function GoldJoinPanel({
   const [joinable, setJoinable] = useState<Joinable[]>([]);
   const [loadErr, setLoadErr] = useState('');
   // Seed the editable state from the stored spec (re-hydration) so an existing Gold
-  // definition opens visible + editable, not blank. A fresh dataset opens empty.
+  // definition opens visible + editable, not blank. A FRESH dataset opens with ALL
+  // base columns kept by default — remove what you don't want (or clear and hand-pick).
   const [joins, setJoins] = useState<JoinRow[]>(() => hydrateJoins(initialSpec));
-  const [dims, setDims] = useState<DimRow[]>(() => hydrateDims(initialSpec));
-  const [measures, setMeasures] = useState<MeasureRow[]>(() => hydrateMeasures(initialSpec));
+  const [dims, setDims] = useState<DimRow[]>(() =>
+    initialSpec?.dimensions?.length
+      ? hydrateDims(initialSpec)
+      : Array.from(new Set(columns.filter(Boolean))).map((c) => ({ source: `0::${c}`, as: '' })),
+  );
   const [showCode, setShowCode] = useState(false);
   const [err, setErr] = useState('');
   const [report, setReport] = useState<BuildReport | null>(null);
@@ -166,7 +157,7 @@ export default function GoldJoinPanel({
     [joins, byId],
   );
 
-  /** Column sources for the dimension/measure pickers, refs aligned with activeJoins. */
+  /** Column sources for the keep-columns pickers, refs aligned with activeJoins. */
   const sources = useMemo(() => {
     const out: { ref: number; label: string; columns: string[] }[] = [
       { ref: 0, label: `${datasetName} (this dataset)`, columns: baseCols },
@@ -225,27 +216,14 @@ export default function GoldJoinPanel({
         return c ? { col: c, ...(d.as.trim() ? { as: d.as.trim() } : {}) } : null;
       })
       .filter((x): x is GoldDimension => x !== null);
-    const gmeasures: GoldMeasure[] = measures
-      .map((m): GoldMeasure | null => {
-        const name = m.name.trim();
-        if (!name) return null;
-        const c = colRef(m.col);
-        if (m.agg === 'count' && !c) return { name, agg: 'count' };
-        if (!c) return null;
-        if (m.op && m.col2) {
-          const right = colRef(m.col2);
-          if (!right) return null;
-          return { name, agg: m.agg, left: c, op: m.op, right };
-        }
-        return { name, agg: m.agg, col: c };
-      })
-      .filter((x): x is GoldMeasure => x !== null);
-    return { source, target, joins: jin, dimensions, measures: gmeasures };
-  }, [tier, owner, domain, datasetName, activeJoins, byId, dims, measures, target]);
+    // Measures are declared in the Publish stage (and the Metrics tab), never here —
+    // Gold is a row-level projection/join, so the spec always carries an empty list.
+    return { source, target, joins: jin, dimensions, measures: [] };
+  }, [tier, owner, domain, datasetName, activeJoins, byId, dims, target]);
 
   // The RAW editable spec to PERSIST (the panel's own vocabulary) — only the active
-  // (fully-specified) joins, so re-hydration reopens exactly what was built. Dims/measures
-  // are stored verbatim (their `ref::column` strings ARE the panel's row format).
+  // (fully-specified) joins, so re-hydration reopens exactly what was built. Dims are
+  // stored verbatim (their `ref::column` strings ARE the panel's row format).
   const rawSpec = useMemo<GoldSpec>(() => ({
     joins: activeJoins.map((j) => ({
       datasetId: j.datasetId,
@@ -256,13 +234,8 @@ export default function GoldJoinPanel({
       ...(j.adaptMode === 'cast' ? { adaptType: j.adaptType } : {}),
     })),
     dimensions: dims.filter((d) => colRef(d.source)).map((d) => ({ source: d.source, ...(d.as.trim() ? { as: d.as.trim() } : {}) })),
-    measures: measures.filter((m) => m.name.trim()).map((m) => ({
-      name: m.name.trim(), agg: m.agg,
-      ...(m.col ? { col: m.col } : {}),
-      ...(m.op ? { op: m.op } : {}),
-      ...(m.op && m.col2 ? { col2: m.col2 } : {}),
-    })),
-  }), [activeJoins, dims, measures]);
+    measures: [],
+  }), [activeJoins, dims]);
 
   // A join is OPTIONAL. With zero joins this compiles a single-table Gold projection of
   // the Silver base — the compiler still requires at least one column or measure, so an
@@ -277,6 +250,16 @@ export default function GoldJoinPanel({
 
   function addJoin() {
     setJoins((j) => [...j, { datasetId: '', type: 'inner', baseCol: '', joinCol: '', adaptMode: 'none', adaptType: 'varchar' }]);
+  }
+
+  /** Fill every column of every current source (the base + each active join) that isn't
+   *  already kept — the "start from everything, then prune" flow, join-aware. */
+  function addAllColumns() {
+    setDims((ds) => {
+      const have = new Set(ds.map((d) => d.source));
+      const missing = sources.flatMap((s) => s.columns.map((c) => `${s.ref}::${c}`)).filter((v) => !have.has(v));
+      return [...ds.filter((d) => d.source), ...missing.map((v) => ({ source: v, as: '' }))];
+    });
   }
   function patchJoin(i: number, patch: Partial<JoinRow>) {
     setJoins((js) => js.map((x, k) => (k === i ? { ...x, ...patch } : x)));
@@ -354,11 +337,12 @@ export default function GoldJoinPanel({
   return (
     <div className="guided-panel">
       <p className="muted" style={{ marginTop: 0 }}>
-        Make it business-ready. Pick the columns you want and name your measures from{' '}
+        Make it business-ready. Keep the columns you want from{' '}
         <code className="mono">silver_{slug(datasetName)}</code> — and, optionally, <strong>reuse</strong> data you
         already trust by joining in other datasets you can see. It writes one governed Gold table
         (<code className="mono">gold_{slug(datasetName)}</code>) that only ever reads what you’re allowed to see.
-        A join is optional; a single-table Gold is fine.
+        A join is optional; a single-table Gold is fine. Measures come later — you define them in
+        the <strong>Publish</strong> stage, on top of this finished table.
       </p>
 
       {loadErr ? <div className="error">{loadErr}</div> : null}
@@ -368,7 +352,7 @@ export default function GoldJoinPanel({
       {joinable.length === 0 && !loadErr ? (
         <div className="hint" style={{ marginTop: 0 }}>
           No shared datasets to reuse yet — that’s fine, you can still build a single-table Gold from your
-          columns and measures below. To join later, ask a colleague to share (promote) one, or promote your own.
+          columns below. To join later, ask a colleague to share (promote) one, or promote your own.
         </div>
       ) : null}
       {joins.map((j, i) => {
@@ -423,8 +407,12 @@ export default function GoldJoinPanel({
       {/* Visual join graph — how the chosen tables interconnect (keys as edges). */}
       <GoldJoinGraph tables={graphTables} edges={graphEdges} />
 
-      {/* Keep columns */}
+      {/* Keep columns — ALL columns are kept by default; remove the ones you don't
+          want, or clear everything and hand-pick. */}
       <div className="section-title" style={{ marginTop: 16 }}>Keep columns</div>
+      <p className="hint" style={{ marginTop: 0 }}>
+        All columns are kept by default — remove the ones you don’t want, or <em>Remove all</em> and add just the ones you do.
+      </p>
       {dims.map((d, i) => (
         <div className="row" key={i} style={{ gap: 8, marginBottom: 8, alignItems: 'center' }}>
           <select value={d.source} onChange={(e) => setDims((ds) => ds.map((x, k) => (k === i ? { ...x, source: e.target.value } : x)))}>
@@ -437,38 +425,11 @@ export default function GoldJoinPanel({
           <button className="btn ghost sm" onClick={() => setDims((ds) => ds.filter((_, k) => k !== i))}>Remove</button>
         </div>
       ))}
-      <button className="btn ghost sm" onClick={() => setDims((ds) => [...ds, { source: NONE, as: '' }])}>+ Add a column</button>
-
-      {/* Measures */}
-      <div className="section-title" style={{ marginTop: 16 }}>Measures</div>
-      <p className="hint" style={{ marginTop: 0 }}>Derived business numbers — a total, an average, a count, or a formula across the joined columns.</p>
-      {measures.map((m, i) => (
-        <div className="row" key={i} style={{ gap: 8, marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <input value={m.name} placeholder="measure name" style={{ maxWidth: 170 }}
-            onChange={(e) => setMeasures((ms) => ms.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))} />
-          <span className="muted">=</span>
-          <select value={m.agg} onChange={(e) => setMeasures((ms) => ms.map((x, k) => (k === i ? { ...x, agg: e.target.value as MeasureAgg } : x)))}>
-            {MEASURE_AGGS.map((a) => <option key={a} value={a}>{a}</option>)}
-          </select>
-          <span className="muted">of</span>
-          <select value={m.col} onChange={(e) => setMeasures((ms) => ms.map((x, k) => (k === i ? { ...x, col: e.target.value } : x)))}>
-            <option value="">{m.agg === 'count' ? 'all rows (count *)' : 'column…'}</option>
-            <SourceOptions />
-          </select>
-          <select value={m.op} onChange={(e) => setMeasures((ms) => ms.map((x, k) => (k === i ? { ...x, op: e.target.value as '' | MeasureOp } : x)))}>
-            <option value="">—</option>
-            {MEASURE_OPS.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-          {m.op ? (
-            <select value={m.col2} onChange={(e) => setMeasures((ms) => ms.map((x, k) => (k === i ? { ...x, col2: e.target.value } : x)))}>
-              <option value="">column…</option>
-              <SourceOptions />
-            </select>
-          ) : null}
-          <button className="btn ghost sm" onClick={() => setMeasures((ms) => ms.filter((_, k) => k !== i))}>Remove</button>
-        </div>
-      ))}
-      <button className="btn ghost sm" onClick={() => setMeasures((ms) => [...ms, { name: '', agg: 'sum', col: NONE, op: '', col2: NONE }])}>+ Add a measure</button>
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn ghost sm" onClick={() => setDims((ds) => [...ds, { source: NONE, as: '' }])}>+ Add a column</button>
+        <button className="btn ghost sm" onClick={addAllColumns}>Add all columns</button>
+        <button className="btn ghost sm" onClick={() => setDims([])} disabled={dims.length === 0}>Remove all</button>
+      </div>
 
       {/* Show the code — the exact governed CTAS this runs. */}
       <div style={{ marginTop: 14 }}>

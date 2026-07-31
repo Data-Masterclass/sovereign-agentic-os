@@ -711,7 +711,10 @@ export function buildGoldJoin(
   const d = editOf(rec, user);
   d.versions.gold = { built: true, passThrough: false, quality: 'unknown', updatedAt: now(), artifact: input.artifact };
   rec.artifacts = { ...(rec.artifacts ?? {}), [input.artifact]: input.body };
-  d.measures = input.measures;
+  // Measures are declared in the PUBLISH stage now (the Gold panel builds a row-level
+  // projection and always sends none) — a gold rebuild must never wipe them. Only a
+  // build that explicitly brings measures (e.g. the MCP tool) replaces the list.
+  if (input.measures.length) d.measures = input.measures;
   d.upstreams = input.upstreams;
   if (input.goldSpec) d.goldSpec = input.goldSpec;
   // Northpeak fix (materialization drift): if this dataset is ALREADY promoted, the

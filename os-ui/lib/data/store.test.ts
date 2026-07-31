@@ -125,6 +125,24 @@ test('SECURITY: listJoinable is ACTIVE-DOMAIN scoped — owner and certified-pro
   assert.ok(listJoinable(boss).some((d) => d.name === 'Kiekert Certified'));
 });
 
+test('buildGoldJoin with NO measures preserves the Publish-defined ones (never wipes)', () => {
+  // Measures live in the Publish stage now — the Gold panel always sends an empty
+  // list, and a gold REBUILD must not clear what defineMeasure already declared.
+  const orders = seedOrders();
+  const goldInput = {
+    measures: [],
+    upstreams: [],
+    artifact: 'gold/mart_orders.sql',
+    body: 'create or replace table iceberg.personal_amir.gold_orders as select 1 as x',
+  };
+  buildGoldJoin(orders, amir, goldInput); // first build (row-level, no measures)
+  transition(orders, sara, 'promote', { visibility: 'domain' }); // metrics need a governed Gold
+  defineMeasure(orders, sara, { name: 'order_count', type: 'count', sql: '' }); // Publish stage
+  const rebuilt = buildGoldJoin(orders, amir, goldInput); // rebuild from the Gold panel
+  assert.equal(rebuilt.versions.gold.built, true);
+  assert.deepEqual(rebuilt.measures.map((m) => m.name), ['order_count']);
+});
+
 test('buildGoldJoin lights Gold + records measures and multi-upstream lineage', () => {
   const orders = seedOrders();
   const updated = buildGoldJoin(orders, amir, {
