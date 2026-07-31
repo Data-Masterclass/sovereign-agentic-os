@@ -145,7 +145,16 @@ export function compileSilver(spec: SilverSpec): string {
       case 'cast': {
         if (!CAST_TYPES.includes(op.type)) throw new TransformError(`unsupported type '${op.type}'`);
         const col = find(op.column);
-        col.expr = `cast(${col.expr} as ${op.type})`;
+        if (op.type === 'boolean') {
+          // Tolerant boolean: real data says yes/no (the original Bronze coercion case),
+          // which Trino's plain varchar→boolean cast rejects. Map the common spellings;
+          // anything else falls through to the strict cast so garbage still fails LOUDLY
+          // (native true/false/t/f/1/0 are handled by that fallback unchanged).
+          const v = `lower(trim(cast(${col.expr} as varchar)))`;
+          col.expr = `(case when ${v} in ('yes', 'y') then true when ${v} in ('no', 'n') then false else cast(${col.expr} as boolean) end)`;
+        } else {
+          col.expr = `cast(${col.expr} as ${op.type})`;
+        }
         break;
       }
       case 'trim': {

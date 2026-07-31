@@ -16,6 +16,7 @@ import {
   type FilterOp,
   type TransformOp,
 } from '@/lib/data/transform';
+import { inferColumnTypes, type TypeSuggestion } from '@/lib/data/infer-types';
 import ExplorePanel from './ExplorePanel';
 
 type Layer = 'silver' | 'gold';
@@ -107,6 +108,32 @@ function SilverBuilder({
 
   const set = (c: string, patch: Partial<ColUI>) => setUi((m) => ({ ...m, [c]: { ...FRESH, ...m[c], ...patch } }));
 
+  // TYPE AUTODETECT — read the governed 50-row Bronze preview once and infer each
+  // column's likely type from the ACTUAL values (deterministic, lib/data/infer-types).
+  // Bronze stays honest all-text; this is the approved-suggestion half: the user SEES
+  // what the data looks like and clicks Apply — nothing is cast without approval.
+  const [typeSuggestions, setTypeSuggestions] = useState<TypeSuggestion[]>([]);
+  const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/data/datasets/${datasetId}/preview?layer=bronze&limit=50`, { cache: 'no-store' });
+        const data = await res.json();
+        if (!live || !res.ok || !data?.available) return;
+        setTypeSuggestions(inferColumnTypes(data.columns ?? [], data.rows ?? []));
+      } catch { /* no preview → no suggestions; the manual dropdowns are unaffected */ }
+    })();
+    return () => { live = false; };
+  }, [datasetId]);
+  // Only suggest what the user hasn't decided: columns still at 'keep' and present.
+  const openSuggestions = typeSuggestions.filter(
+    (s) => cols.includes(s.column) && (ui[s.column] ?? FRESH).type === 'keep' && !(ui[s.column] ?? FRESH).drop,
+  );
+  const applySuggestions = () => {
+    for (const s of openSuggestions) set(s.column, { type: s.type });
+  };
+
   // Apply an AI "Clean it up" proposal into the guided controls when one arrives.
   // Junk-tolerant by construction: unknown columns and unknown casts are ignored, every
   // field falls back to its FRESH default. Fills the editors only — never builds.
@@ -188,6 +215,27 @@ function SilverBuilder({
         keep only the rows you want, and remove duplicates. It writes one governed table
         (<code className="mono">silver_{s}</code>) that only ever reads what you’re allowed to see.
       </p>
+
+      {/* Detected types — data-grounded suggestions, applied only on the user's click. */}
+      {openSuggestions.length > 0 && !suggestionsDismissed ? (
+        <div className="passthrough-note" style={{ marginBottom: 12 }}>
+          <strong>Types detected from your data</strong>{' '}
+          <span className="muted" style={{ fontSize: 13 }}>
+            (from the first 50 Bronze rows — every sampled value matched):
+          </span>
+          <div style={{ margin: '6px 0 0' }}>
+            {openSuggestions.map((s) => (
+              <span key={s.column} className="chip" style={{ marginRight: 8 }}>
+                <code className="mono">{s.column}</code> → {s.type}
+              </span>
+            ))}
+          </div>
+          <div className="row" style={{ marginTop: 10, gap: 8 }}>
+            <button className="btn sm" onClick={applySuggestions}>Apply suggested types</button>
+            <button className="btn ghost sm" onClick={() => setSuggestionsDismissed(true)}>Dismiss</button>
+          </div>
+        </div>
+      ) : null}
 
       {cols.length === 0 ? (
         <div className="hint" style={{ marginTop: 0 }}>No columns yet — add the ones your Bronze table has.</div>
