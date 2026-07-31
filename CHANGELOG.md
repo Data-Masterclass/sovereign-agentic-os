@@ -13,6 +13,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.29] — 2026-07-31
+
+### Security
+- **Gold "JOIN TO" picker leaked datasets across domains.** The join picker was
+  gated only on `canView`, which passes for an owner's assets in their *other*
+  domains and for every certified product tenant-wide — so e.g. Kiekert datasets
+  were offered while operating in agentic-leader. The picker now applies the same
+  active-domain narrowing as the main Data list (My/Domain/Company of the
+  operating domain only; the Marketplace catalog stays the only cross-domain
+  surface). Covered by a regression test that fails on both bypasses.
+
+### Changed
+- **Friendlier duplicate dataset names.** Creating a dataset whose name is taken
+  in this domain no longer just refuses: an inline note explains the clash and
+  offers a one-click **Open** of the existing dataset, or suggests picking a
+  distinguishing name (e.g. "Sales (EMEA)").
+
 ## [os-ui 0.6.28] — 2026-07-31
 
 ### Changed
