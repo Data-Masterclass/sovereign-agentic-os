@@ -122,6 +122,32 @@ export function metricGoldReady(d: Dataset): { ok: boolean; message?: string } {
   return { ok: true };
 }
 
+/**
+ * The ACTUAL columns of the built Gold table. A Gold built through the JOIN builder
+ * projects `goldSpec.dimensions` — its output names (the `as` alias, else the source
+ * column) can DIFFER from `d.columns` (which documents the base/Silver schema): a join
+ * adds columns from other datasets, a projection drops some. Everything that reads the
+ * gold mart (the metric builder's column palette, the Cube dims) must use THIS set, or
+ * a joined column never appears and a dropped one 400s. Falls back to `d.columns` when
+ * no gold spec projects anything (pass-through / single-table gold keeps the base).
+ */
+export function goldOutputColumns(d: Dataset): ColumnDoc[] {
+  const dims = d.goldSpec?.dimensions ?? [];
+  if (!d.versions.gold.built || dims.length === 0) return d.columns;
+  const docOf = new Map(d.columns.map((c) => [c.name, c.description]));
+  const out: ColumnDoc[] = [];
+  const seen = new Set<string>();
+  for (const dim of dims) {
+    const i = dim.source.indexOf('::');
+    const src = i >= 0 ? dim.source.slice(i + 2) : dim.source;
+    const name = dim.as?.trim() || src;
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, description: docOf.get(name) ?? docOf.get(src) ?? '' });
+  }
+  return out.length ? out : d.columns;
+}
+
 /** cube_dbt's dbt data_type → Cube dimension type. We have no live manifest in kind,
  *  so infer the column's type from its documented name the way cube_dbt would from the
  *  mart schema. The first `*_id` (or the first column) becomes the primary key. */
@@ -176,9 +202,10 @@ function measureYaml(m: Measure, knownMembers: Set<string>): string {
  *  slice dimensions against this set (drop non-members) — mirrors the security
  *  scrub in lib/infra/governed.ts. Kept in lockstep with `scaffoldCubeYaml`. */
 export function viewMembers(d: Dataset): Set<string> {
-  const pk = primaryKeyColumn(d.columns);
+  const cols = goldOutputColumns(d);
+  const pk = primaryKeyColumn(cols);
   const measureNames = new Set(d.measures.map((m) => m.name));
-  const dimCols = d.columns.filter((c) => c.name === pk || !measureNames.has(c.name));
+  const dimCols = cols.filter((c) => c.name === pk || !measureNames.has(c.name));
   return new Set<string>([
     ...d.measures.map((m) => m.name),
     ...dimCols.filter((c) => c.name !== pk).map((c) => c.name),
@@ -193,9 +220,10 @@ export function viewMembers(d: Dataset): Set<string> {
  *  palette silently emptying and the group-by being discarded at create time. */
 export function registryDimensionMembers(d: Dataset): { dimensions: string[]; timeDimensions: string[] } {
   const view = cubeViewName(d);
-  const pk = primaryKeyColumn(d.columns);
+  const cols = goldOutputColumns(d);
+  const pk = primaryKeyColumn(cols);
   const measureNames = new Set(d.measures.map((m) => m.name));
-  const dimCols = d.columns.filter((c) => c.name !== pk && !measureNames.has(c.name));
+  const dimCols = cols.filter((c) => c.name !== pk && !measureNames.has(c.name));
   const dimensions: string[] = [];
   const timeDimensions: string[] = [];
   for (const c of dimCols) {
@@ -208,12 +236,13 @@ export function registryDimensionMembers(d: Dataset): { dimensions: string[]; ti
  *  the file the Metric step would hand-write only the `measures:` block of. */
 export function scaffoldCubeYaml(d: Dataset): string {
   const cube = cubeName(d);
-  const pk = primaryKeyColumn(d.columns);
+  const cols = goldOutputColumns(d);
+  const pk = primaryKeyColumn(cols);
   // A measure and a dimension may NOT share a name in a Cube (Cube rejects it with
   // "defined more than once" → the whole schema 500s). When a gold column is also a
   // measure name, the measure wins — skip the colliding dimension (keep the pk).
   const measureNames = new Set(d.measures.map((m) => m.name));
-  const dimCols = d.columns.filter((c) => c.name === pk || !measureNames.has(c.name));
+  const dimCols = cols.filter((c) => c.name === pk || !measureNames.has(c.name));
   const dims = dimCols.map((c) => {
     const type = c.name === pk ? 'number' : inferDimType(c.name);
     const pkLine = c.name === pk ? '\n        primary_key: true' : '';

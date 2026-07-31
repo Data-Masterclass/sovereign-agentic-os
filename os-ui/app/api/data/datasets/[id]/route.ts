@@ -10,6 +10,7 @@ import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, delete
 import { dropPhysicalTables } from '@/lib/data/physical-delete';
 import { executeRun } from '@/lib/infra/governed';
 import { stepperStages } from '@/lib/data/panels';
+import { goldOutputColumns } from '@/lib/data/metrics';
 import { firstOmCatalogFor, omSoftDeleteForConnection, omReactivateForConnection } from '@/lib/connections/openmetadata';
 
 export const dynamic = 'force-dynamic';
@@ -20,8 +21,14 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   const dataset = getDataset(id, user);
   // `archived` is a record-level flag (not in the yaml-derived Dataset), so fold it
   // in here — the detail view needs it to offer Restore instead of Archive.
+  // `goldColumns` = the ACTUAL columns of the built gold table (join output names),
+  // which differ from `columns` (base docs) after a Gold join — the metric builder
+  // and any gold-mart consumer must read these.
   const archived = isDatasetArchived(id, user);
-  return NextResponse.json({ dataset: { ...dataset, archived }, stages: stepperStages(dataset) });
+  return NextResponse.json({
+    dataset: { ...dataset, archived, goldColumns: goldOutputColumns(dataset) },
+    stages: stepperStages(dataset),
+  });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
 /**

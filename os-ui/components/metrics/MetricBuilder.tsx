@@ -151,7 +151,10 @@ function useDataset(datasetId: string): DatasetDetail {
         const data = await res.json();
         if (live && res.ok) {
           const ds = data?.dataset ?? {};
-          const cols = (ds.columns ?? []) as Column[];
+          // Prefer `goldColumns` — the ACTUAL columns of the built gold table (join
+          // output names). `columns` documents the base/Silver schema, which diverges
+          // after a Gold join (joined columns added, unprojected ones gone).
+          const cols = ((ds.goldColumns?.length ? ds.goldColumns : ds.columns) ?? []) as Column[];
           const ms = (ds.measures ?? []) as Measure[];
           const deliverable = ds.tier !== 'dataset' && Boolean(ds?.versions?.gold?.built);
           setState({

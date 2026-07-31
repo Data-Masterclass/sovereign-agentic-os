@@ -6,6 +6,7 @@ import { requirePrincipal } from '@/lib/data/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { getDataset } from '@/lib/data/store';
+import { metricGoldReady } from '@/lib/data/metrics';
 import { delegatedToken } from '@/lib/infra/identity-server';
 import { measureFromForm, sameMeasure, type MetricForm } from '@/lib/metrics/model';
 import { exploreMetric } from '@/lib/metrics/build/explore-server';
@@ -40,6 +41,12 @@ export const POST = withRoute<Record<string, string>, {
   // dataset — never persisted, so a preview can never register a half-formed metric.
   const measure = measureFromForm(body.form);
   const dataset = getDataset(datasetId, user);
+  // Same fail-closed gate as Define: the preview reads the GOVERNED gold mart
+  // (`iceberg.<domain>.gold_<slug>`), which exists only for a promoted dataset. Without
+  // this, a personal dataset surfaces as a raw Trino TABLE_NOT_FOUND instead of the
+  // honest "promote first" answer.
+  const ready = metricGoldReady(dataset);
+  if (!ready.ok) return NextResponse.json({ error: ready.message }, { status: 400 });
   const draft = { ...dataset, measures: [...dataset.measures.filter((m) => m.name !== measure.name), measure] };
   // UNSAVED = no identical persisted measure: Cube can't know this member yet (the
   // sidecar only ships persisted metrics), so exploreMetric previews it via governed

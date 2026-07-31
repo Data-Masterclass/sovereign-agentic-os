@@ -16,6 +16,7 @@ import {
   cubeViewNameMatches,
   CUBE_ARTIFACT,
   goldMartFqn,
+  goldOutputColumns,
   metricGoldReady,
   viewMembers,
   PROMOTE_FIRST_MESSAGE,
@@ -46,6 +47,35 @@ test('cube_dbt scaffolds dimensions from columns; user-named measure is included
   assert.match(yaml, /name: order_id[\s\S]*primary_key: true/); // PK dimension
   assert.match(yaml, /- name: Orders/); // the view
   assert.match(yaml, /includes: \[revenue, order_date, region, net_amount\]/);
+});
+
+test('goldOutputColumns: a Gold JOIN projects its OWN output columns (aliases + joined cols), not the base docs', () => {
+  const d = gold({
+    goldSpec: {
+      joins: [{ datasetId: 'ds_products', type: 'inner', baseCol: 'product_id', joinCol: 'product_id' }],
+      dimensions: [
+        { source: '0::order_id' },                       // base column, name kept
+        { source: '0::net_amount', as: 'net' },          // base column, RENAMED in gold
+        { source: '1::product_name' },                   // JOINED column (not in d.columns)
+      ],
+      measures: [],
+    },
+  });
+  const cols = goldOutputColumns(d);
+  assert.deepEqual(cols.map((c) => c.name), ['order_id', 'net', 'product_name']);
+  assert.equal(cols[0].description, 'Key.'); // base doc carried over by name
+  assert.equal(cols[1].description, 'Value.'); // doc carried via the SOURCE column
+  assert.equal(cols[2].description, ''); // joined column has no base doc
+  // …and the Cube scaffold binds its dimensions to the SAME gold output set.
+  const yaml = scaffoldCubeYaml(d);
+  assert.match(yaml, /- name: product_name/);
+  assert.match(yaml, /- name: net\n/);
+  assert.doesNotMatch(yaml, /- name: region/); // unprojected base column is NOT a dim
+});
+
+test('goldOutputColumns: pass-through / spec-less gold falls back to the documented columns', () => {
+  const d = gold();
+  assert.deepEqual(goldOutputColumns(d).map((c) => c.name), ['order_id', 'order_date', 'region', 'net_amount']);
 });
 
 test('dim types are inferred cube_dbt-style from the column names', () => {
