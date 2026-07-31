@@ -11,10 +11,7 @@ import { getPublicUser } from '@/lib/platform-admin/users';
 import { type AlertRule, evaluateAlert } from '@/lib/metrics/alerts';
 import { deliverAlert } from '@/lib/dashboards/delivery';
 import { saveAlertRule } from '@/lib/metrics/alert-store';
-import { getDataset } from '@/lib/data/store';
-import { delegatedToken } from '@/lib/infra/identity-server';
-import { exploreMetric } from '@/lib/metrics/build/explore-server';
-import { measureFromForm } from '@/lib/metrics/model';
+import { resolveAlertValue } from '@/lib/metrics/build/alert-eval';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,10 +21,12 @@ export const dynamic = 'force-dynamic';
  * is configured, requests an agent run (event → LangGraph) — landed as a Langfuse trace
  * so the alert-triggered run is audited.
  *
- * `value` is now OPTIONAL. When omitted, the route resolves the live metric value from
- * Cube (via exploreMetric) using the rule's member. If the member hasn't synced yet
- * (pending), returns `{ pending: true }` rather than an error. Pass `value` explicitly
- * to override (e.g. from an upstream scheduler that already fetched the value).
+ * `value` is now OPTIONAL. When omitted, the route resolves the live metric value through the
+ * governed-SQL path (exploreMetric — Cube is off the read path, Phase 2), evaluated AS THE
+ * CALLER (who owns the rule they are creating). HONESTY: an unreachable Trino → `{ unavailable:
+ * true }` (evaluation SKIPPED, no fabricated value, no false alarm); a metric with no number
+ * yet → `{ pending: true }`. Pass `value` explicitly to override (e.g. from an upstream
+ * scheduler that already fetched the value).
  *
  * Rules are persisted by default (pass `persist: false` to skip). Governance: only a
  * Builder+ may trigger alert delivery.
@@ -46,40 +45,17 @@ export const POST = withRoute<Record<string, string>, any>(async ({ user, body }
   if (typeof body.value === 'number') {
     resolvedValue = body.value;
   } else {
-    // Resolve the live metric value from Cube via the member string.
-    // member format: "<CubeView>.<measureName>", e.g. "Orders.revenue"
-    // We need to derive the dataset + measure — attempt a governed explore.
-    try {
-      const { token } = await delegatedToken('domain');
-      // Build a minimal synthetic dataset/measure from the member string so
-      // exploreMetric can run — the member is already canonical.
-      const [cubeName, measureName] = body.rule.member.split('.');
-      const lastDot = body.rule.member.lastIndexOf('.');
-      const datasetId = body.rule.member.slice(0, lastDot); // best-effort; may be ds_ id
-      // Try to get the dataset first (may fail if member doesn't map 1:1 to a datasetId)
-      let liveValue: number | null = null;
-      try {
-        const dataset = getDataset(datasetId, user);
-        const measure = dataset.measures.find((m) => m.name === measureName);
-        if (measure) {
-          const result = await exploreMetric(dataset, measure, token, {});
-          const total = result.rows.reduce((sum, row) => sum + Number(row[result.member] ?? 0), 0);
-          liveValue = result.rows.length ? total : null;
-        }
-      } catch {
-        // Dataset lookup failed — try creating a synthetic measure via member
-        void cubeName; // referenced to avoid unused-var
-        const measure = measureFromForm({ name: measureName ?? 'value', aggregation: 'sum', column: '', dimensions: [] });
-        // Without a real dataset we cannot resolve — fall through to pending
-        void measure;
-      }
-      if (liveValue === null) {
-        return NextResponse.json({ pending: true, error: 'Could not resolve live value — pass value explicitly or try again once the metric has synced (~30 s).' });
-      }
-      resolvedValue = liveValue;
-    } catch {
-      return NextResponse.json({ pending: true, error: 'Could not resolve live value — pass value explicitly or try again once the metric has synced (~30 s).' });
+    // Resolve the value through the governed-SQL path AS THE CALLER (the rule's owner). The
+    // member is matched against the caller's visible metrics; a Trino outage skips honestly.
+    const record = { ...body.rule, owner: user.id, domain: user.domains[0] ?? 'default', createdAt: new Date().toISOString() };
+    const resolved = await resolveAlertValue(record);
+    if (resolved.status === 'unavailable') {
+      return NextResponse.json({ unavailable: true, error: resolved.reason });
     }
+    if (resolved.status !== 'ok') {
+      return NextResponse.json({ pending: true, error: resolved.reason ?? 'Could not resolve live value — pass value explicitly or try again once the metric is computable.' });
+    }
+    resolvedValue = resolved.value;
   }
 
   // Persist the rule (default: yes)

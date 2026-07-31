@@ -10,14 +10,19 @@ import { evaluateAlert } from '@/lib/metrics/alerts';
 import { listAlertRules, recordEvaluation, ensureHydrated } from '@/lib/metrics/alert-store';
 import { deliverAlert } from '@/lib/dashboards/delivery';
 import { getPublicUser } from '@/lib/platform-admin/users';
-import { delegatedToken } from '@/lib/infra/identity-server';
-import { getDataset } from '@/lib/data/store';
-import { exploreMetric } from '@/lib/metrics/build/explore-server';
+import { resolveAlertValue } from '@/lib/metrics/build/alert-eval';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Evaluate ALL persisted alert rules against the live Cube metric values.
+ * Evaluate ALL persisted alert rules against the live governed-SQL metric values (Phase 2:
+ * through exploreMetric — Cube is off the read path). Each rule is evaluated AS ITS OWNER
+ * (headless: the owner's delegated identity, per-viewer RLS), so a threshold fires on exactly
+ * the number the owner sees.
+ *
+ * HONESTY: an unreachable Trino makes evaluation SKIP with status 'unavailable' — never a
+ * fabricated value and never a false alarm. A metric with no number yet is 'pending' (skipped,
+ * retried next tick). Only a genuinely computed value is compared to the threshold.
  *
  * Wire this to a Kubernetes CronJob — see
  * charts/sovereign-agentic-os/templates/metrics-alert-cronjob.yaml (chart follow-up).
@@ -31,51 +36,36 @@ export const GET = withRoute(async ({ user }) => {
   }
 
   await ensureHydrated();
-  const { token } = await delegatedToken('domain');
-  const email = (await getPublicUser(user.id))?.email;
   const rules = listAlertRules();
 
   let evaluated = 0;
   let breached = 0;
-  const results: { ruleId: string; member: string; value: number | null; breached: boolean; pending?: boolean; error?: string }[] = [];
+  const results: { ruleId: string; member: string; value: number | null; breached: boolean; status: 'ok' | 'pending' | 'unavailable' | 'error'; reason?: string }[] = [];
 
   for (const rule of rules) {
     try {
-      // Resolve live value for this rule's metric member
-      const lastDot = rule.member.lastIndexOf('.');
-      const datasetId = rule.member.slice(0, lastDot);
-      const measureName = rule.member.slice(lastDot + 1);
-
-      let liveValue: number | null = null;
-      try {
-        const dataset = getDataset(datasetId, user);
-        const measure = dataset.measures.find((m) => m.name === measureName);
-        if (measure) {
-          const result = await exploreMetric(dataset, measure, token, {});
-          const total = result.rows.reduce((sum, row) => sum + Number(row[result.member] ?? 0), 0);
-          liveValue = result.rows.length ? total : null;
-        }
-      } catch {
-        // Dataset not found or not accessible — skip this rule
-      }
-
-      if (liveValue === null) {
-        results.push({ ruleId: rule.id, member: rule.member, value: null, breached: false, pending: true });
+      // Resolve the value AS THE RULE'S OWNER through the governed-SQL path.
+      const resolved = await resolveAlertValue(rule);
+      if (resolved.status !== 'ok') {
+        // Unavailable (Trino outage) or pending (no number yet): SKIP — never fabricate, never
+        // fire. Both are honest non-evaluations; the next tick retries.
+        results.push({ ruleId: rule.id, member: rule.member, value: null, breached: false, status: resolved.status, reason: resolved.reason });
         continue;
       }
 
-      const evald = evaluateAlert(rule, liveValue);
-      recordEvaluation(rule.id, liveValue, evald.breached);
+      const evald = evaluateAlert(rule, resolved.value);
+      recordEvaluation(rule.id, resolved.value, evald.breached);
       evaluated++;
 
       if (evald.breached) {
         breached++;
+        const email = (await getPublicUser(rule.owner))?.email;
         await deliverAlert(evald, rule.member, { userId: rule.owner, email });
       }
 
-      results.push({ ruleId: rule.id, member: rule.member, value: liveValue, breached: evald.breached });
+      results.push({ ruleId: rule.id, member: rule.member, value: resolved.value, breached: evald.breached, status: 'ok' });
     } catch (e) {
-      results.push({ ruleId: rule.id, member: rule.member, value: null, breached: false, error: (e as Error).message });
+      results.push({ ruleId: rule.id, member: rule.member, value: null, breached: false, status: 'error', reason: (e as Error).message });
     }
   }
 
