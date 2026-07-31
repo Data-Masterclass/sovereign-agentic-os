@@ -13,6 +13,38 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.31] — 2026-07-31
+
+### Changed
+- **Metrics are served by direct governed Trino SQL — Cube is off the metric read
+  path.** A metric is now a **virtual declaration** compiled to one governed
+  `SELECT` over the physical Gold mart, run **as the viewer** (Trino/OPA row &
+  column security applies — the same governed path the working "live (sql)"
+  preview already used). Both saved metrics (`/api/metrics/explore`) and unsaved
+  drafts (`/api/metrics/preview`) resolve through this SQL path; every result is
+  honestly labelled `live (sql)`. The **honesty gate is preserved**: if the query
+  backend is unreachable on a real deployment, the metric returns the honest
+  *unavailable* answer — never a fabricated number. Cube stays running for
+  **dashboards only** (Phase 2 migrates those; dashboard/Cube-registration code is
+  untouched — this is a dual-run).
+
+### Added
+- **Metrics on PERSONAL datasets.** Defining, previewing and exploring a metric now
+  require only a **built Gold of any tier** — no promotion. A personal dataset's
+  metric reads the owner's private lane (`iceberg.personal_<owner>.gold_<slug>`) as
+  the owner (OPA `is_owned_personal`); a governed dataset reads the domain mart as
+  before. The gate is split into **`metricSqlReady`** (built Gold, any tier — the
+  define/serve rule) and **`metricCubeReady`** (built Gold **and** a governed tier
+  — the Cube-registration rule); `metricGoldReady` remains a back-compat alias for
+  the Cube rule, so no broken cube is ever registered on personal Gold.
+- **MetricFlow-style semantic declarations.** Defining a metric now emits a
+  portable dbt-MetricFlow YAML (`semantic/<slug>.yml`: `semantic_models:` with the
+  Gold-mart `ref`, primary-key entity, join-aware dimensions with time grains, and
+  measures + `metrics:`) alongside the (Cube-only) cube artifact. It is the
+  tool-agnostic contract our compiler serves as Trino SQL. Rolling-window / running-
+  total measures stay honest: no SQL form yet — they serve via Cube post-Publish
+  (Phase 2).
+
 ## [os-ui 0.6.30] — 2026-07-31
 
 ### Changed
