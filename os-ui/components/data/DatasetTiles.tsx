@@ -167,6 +167,8 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
   //               pointing at the Harmonize stage (where the existing Gold join builder lives)
   const [creating, setCreating] = useState<false | 'choose' | 'ingest' | 'curated'>(false);
   const [newName, setNewName] = useState('');
+  /** A taken name (409): the friendly duplicate notice + one-click open of the existing dataset. */
+  const [dupe, setDupe] = useState<{ name: string; id?: string } | null>(null);
   // Scope switcher — the Files-tab mental model: All · My · Shared · Marketplace.
   const [scope, setScope] = useState<DatasetScope>('all');
   // Folder rail (Wave 1 primitive, mirrors Files): a (root, path) selection filters
@@ -225,6 +227,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
     if (!name || creating === false || creating === 'choose') return;
     const curated = creating === 'curated';
     setErr('');
+    setDupe(null);
     try {
       const res = await fetch('/api/data/datasets', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -232,7 +235,20 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
         body: JSON.stringify({ name, ...(curated ? { origin: 'curated' } : {}) }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Could not create'); return; }
+      if (!res.ok) {
+        // FRIENDLY duplicate handling: names are unique per domain by design (one name =
+        // one gold table + one Cube model). Instead of a raw refusal, point at the
+        // existing dataset with a one-click open — the tiles already carry its id.
+        if (res.status === 409) {
+          const lower = name.toLowerCase();
+          const match = [...(groups?.mine ?? []), ...(groups?.domain ?? [])]
+            .find((t) => t.name.trim().toLowerCase() === lower);
+          setDupe({ name, id: match?.id });
+          return;
+        }
+        setErr(data.error ?? 'Could not create');
+        return;
+      }
       setNewName(''); setCreating(false);
       // The builder lands a fresh dataset at Ingest (its stage derives from real state,
       // no preselect hook exists) — so the curated path gets a clear signpost to the
@@ -242,7 +258,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
       }
       onOpen(data.dataset.id); // navigates to the new dataset's detail view
     } catch (e) { setErr((e as Error).message); }
-  }, [newName, creating, onOpen, toast]);
+  }, [newName, creating, onOpen, toast, groups]);
 
   const importProduct = useCallback(async (id: string) => {
     setErr('');
@@ -482,10 +498,25 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
           </p>
           <div className="row" style={{ gap: 8 }}>
             <input autoFocus value={newName} placeholder="Dataset name" style={{ flex: 1, maxWidth: 380 }}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') create(); if (e.key === 'Escape') setCreating('choose'); }} />
+              onChange={(e) => { setNewName(e.target.value); if (dupe) setDupe(null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') create(); if (e.key === 'Escape') { setDupe(null); setCreating('choose'); } }} />
             <button className="btn" onClick={create} disabled={!newName.trim()}>Create</button>
           </div>
+          {/* Friendly duplicate handling — names are unique per domain by design (one
+              name = one gold table + one Cube model). Point at the existing dataset
+              instead of a raw refusal. */}
+          {dupe ? (
+            <div className="passthrough-note" style={{ marginTop: 10, maxWidth: 520 }}>
+              <span>“{dupe.name}” already exists in this domain — </span>
+              {dupe.id ? (
+                <button className="btn ghost sm" style={{ margin: '0 6px' }}
+                  onClick={() => { const id = dupe.id!; setDupe(null); setNewName(''); setCreating(false); onOpen(id); }}>
+                  Open “{dupe.name}” →
+                </button>
+              ) : null}
+              <span>{dupe.id ? 'or pick a distinguishing name (e.g. “' : 'pick a distinguishing name (e.g. “'}{dupe.name} (EMEA)”).</span>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
