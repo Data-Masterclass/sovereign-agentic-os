@@ -492,7 +492,12 @@ export const config = {
   // The trainer reads Gold via the governed query engine (least-privilege read
   // principal — the SAME Trino/OPA path the `query` tool uses, never a write role).
   trinoHost: env('TRINO_HOST', 'trino'),
-  trinoPort: Number(env('TRINO_PORT', '8080')),
+  // Kubernetes injects docker-link vars for every Service: a Service named `trino`
+  // gives EVERY pod TRINO_PORT="tcp://<ip>:8080", which Number() turns into NaN and
+  // silently breaks every direct-Trino URL (the metric reachability probe fell back
+  // to offline-mock this way). Strip everything up to the last colon so both a plain
+  // port and the k8s link form parse.
+  trinoPort: Number(env('TRINO_PORT', '8080').replace(/^.*:/, '')) || 8080,
   trinoReadUser: env('TRINO_SCIENCE_USER', 'science-reader'),
   trinoCatalog: env('TRINO_CATALOG', 'iceberg'),
 
