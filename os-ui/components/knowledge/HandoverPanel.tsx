@@ -143,7 +143,7 @@ export default function HandoverPanel({
       </div>
       <p className="hint" style={{ marginTop: 8 }}>
         Adding the ref to a consumer&rsquo;s knowledge grants lets its <code>retrieve</code> tool serve
-        this workflow&rsquo;s steps, rules and tacit notes — OPA/DLS-scoped to the user.
+        this workflow&rsquo;s steps, business rules and expert knowledge — OPA/DLS-scoped to the user.
       </p>
 
       <style>{HandoverStyles}</style>

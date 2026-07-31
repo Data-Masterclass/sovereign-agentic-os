@@ -105,6 +105,19 @@ test('previewTrinoSql: aggregations, guided filters and slices compile to one go
   assert.match(countSql, /COUNT\(\*\) FILTER \(WHERE region = 'DE'\) AS "orders"/);
 });
 
+test('previewTrinoSql: emits NO SQL comments — the governed query path rejects them', () => {
+  // Regression (#preview-comments): a plain row-count preview failed at queryRun with
+  // "SQL comments are not allowed on the query path" because the generated SQL carried
+  // a `--` header. The EXECUTED preview SQL must be comment-free; dropToSql (display
+  // only, never executed) keeps its explanatory comment.
+  const d = goldSales();
+  const count = { name: 'row_count', type: 'count' as const, sql: '' };
+  const sql = previewTrinoSql(d, count, exploreSpec(d, count))!;
+  assert.ok(!sql.includes('--'), `executed preview SQL must contain no line comments, got:\n${sql}`);
+  assert.ok(!sql.includes('/*'), `executed preview SQL must contain no block comments, got:\n${sql}`);
+  assert.match(sql, /^SELECT /, 'starts straight at the SELECT');
+});
+
 test('previewTrinoSql: a ratio expands its sibling measures; window shapes return null', () => {
   const d = goldSales({
     measures: [

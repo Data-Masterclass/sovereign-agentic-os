@@ -47,12 +47,20 @@ export type WorkflowReport = {
   workflowRules: { text: string; hard: boolean }[];
   /** Handover / gaps summary — one line per unresolved link, empty when none. */
   gaps: { step: string; kind: string; ref: string }[];
+  /** Data & Metrics — display names of the linked governed datasets / KPIs. */
+  linked: { datasets: string[]; metrics: string[] };
 };
 
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
-/** Map a loaded {@link Workflow} (+ its computed gaps) into a clean WorkflowReport. */
-export function buildWorkflowReport(workflow: Workflow, gaps: Gap[] = []): WorkflowReport {
+/** Map a loaded {@link Workflow} (+ its computed gaps + resolved Data & Metrics
+ *  link names) into a clean WorkflowReport. `linked` is display names — the caller
+ *  resolves ids fail-soft (falling back to the raw id when a lookup fails). */
+export function buildWorkflowReport(
+  workflow: Workflow,
+  gaps: Gap[] = [],
+  linked: { datasets: string[]; metrics: string[] } = { datasets: [], metrics: [] },
+): WorkflowReport {
   const status = workflow.status === 'live' ? 'Live' : 'Draft';
   // Display vocabulary: Shared → "Domain", Marketplace → "Company", Personal → "My".
   const visLabel =
@@ -99,6 +107,7 @@ export function buildWorkflowReport(workflow: Workflow, gaps: Gap[] = []): Workf
     steps,
     workflowRules,
     gaps: gapRows,
+    linked: { datasets: [...linked.datasets], metrics: [...linked.metrics] },
   };
 }
 

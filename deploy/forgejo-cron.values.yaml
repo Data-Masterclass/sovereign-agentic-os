@@ -1,0 +1,13 @@
+# Forgejo package-cleanup cron — passed EXPLICITLY as user values because Helm v4
+# --reuse-values did not surface this new chart-default key into the release
+# (observed 2026-07-31: chart values.yaml had it, computed release values did not).
+# Applying with `-f` persists it in the release's user values, so every future
+# --reuse-values upgrade keeps it. Mirrors charts/sovereign-agentic-os/values.yaml.
+forgejo:
+  gitea:
+    config:
+      "cron.cleanup_packages":
+        ENABLED: true
+        RUN_AT_START: true
+        SCHEDULE: "@midnight"
+        OLDER_THAN: "168h"

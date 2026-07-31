@@ -13,6 +13,49 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.27] — 2026-07-31
+
+### Added
+- **Business Processes: link Data & Metrics to a process.** The workflow detail
+  gains a "Data & Metrics" tab (count badge): link governed datasets and metrics
+  as calm chips (name + My/Domain/Company scope badge) that deep-link to the
+  artifact (`?focus=<id>`), with a viewer-scoped picker; owner/editor manages,
+  viewers read. Ids are re-resolved through the same canView guards as the
+  Data/Metrics tabs (non-visible ids silently dropped — no existence leak);
+  stored nil-safe (`links: {datasets, metrics}`, no migration) and included in
+  the PDF export (fail-soft name resolution).
+
+### Changed
+- **Business Processes renames (display only):** "Tacit" → **"Expert
+  Knowledge"** and "Rules" → **"Business Rules"** across the tab (detail tabs,
+  panels, step inspector, empty states, PDF export). Internal enums/fields/MCP
+  params (`tacit`, `rules`) stay stable per the OS display-rename convention.
+
+### Fixed
+- **Metric Preview no longer fails with "SQL comments are not allowed on the
+  query path".** The pre-save preview (`previewTrinoSql`) prepended a two-line
+  `--` comment header to the generated SQL, which the governed query guard
+  rightly rejects — so every pre-save preview (even a plain count) failed. The
+  executed SQL is now comment-free; the guard is untouched; the "Drop to SQL"
+  display keeps its explanatory comment. Test-pinned (the preview SQL must
+  contain no `--`/`/*` and equal the SQL that actually ran).
+
+## [chart+ops] — 2026-07-31 (afternoon)
+
+### Fixed
+- **Cube memory revert closed for good:** Helm v4 SSA upgrades conflicted with
+  the live kubectl hot-fixes and one upgrade reverted Cube to 768Mi (OOM
+  crash-loop again). Cube's 1Gi/4Gi is now pinned in the RELEASE's user values
+  (`--set`, persisted) as well as the chart, and PVC sizes match live reality.
+- **Forgejo cleanup cron actually live:** Helm v4 `--reuse-values` did not
+  surface the new chart-default `cron.cleanup_packages` into the release;
+  applied explicitly via `deploy/forgejo-cron.values.yaml` (`-f`, persisted) —
+  verified in the running pod's `app.ini` (reclaim on boot + nightly, >7d).
+- Re-materialized cohort dataset gold repair path documented: a Builder+ opens
+  the dataset → Edit data stages → Harmonize → Rebuild (auto-refreshes the
+  domain table); the MCP `rematerializeOnly` arg needs a fresh MCP connection
+  (stale-manifest landmine).
+
 ## [os-ui 0.6.26] — 2026-07-31
 
 ### Added

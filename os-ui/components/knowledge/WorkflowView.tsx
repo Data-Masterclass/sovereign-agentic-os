@@ -11,6 +11,7 @@ import StepInspector from './StepInspector';
 import ActorsPanel from './ActorsPanel';
 import RulesPanel from './RulesPanel';
 import TacitPanel from './TacitPanel';
+import DataMetricsPanel from './DataMetricsPanel';
 import HandoverPanel from './HandoverPanel';
 import { commitWorkflow } from './commitWorkflow';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
@@ -23,6 +24,7 @@ import { addStep } from '@/lib/knowledge/step-edit';
 import { buildWorkflowReport, workflowPdfFilename } from '@/lib/knowledge/workflow-pdf';
 import { renderSwimlaneSvg } from '@/lib/knowledge/swimlane-svg';
 import type { Workflow, ActorType } from '@/lib/knowledge/schema';
+import type { WorkflowLinks } from '@/lib/knowledge/links';
 import type { Gap } from '@/lib/knowledge/gaps';
 
 /**
@@ -52,11 +54,13 @@ type WorkflowData = {
   sha: string;
   workflow: Workflow;
   gaps: Gap[];
+  /** Data & Metrics links (governed dataset + metric ids); server defaults to empty. */
+  links: WorkflowLinks;
   canEdit: boolean;
   canPublish: boolean;
 };
 
-type Panel = 'visual' | 'actors' | 'rules' | 'tacit' | 'handover' | 'markdown' | 'mermaid' | 'gaps';
+type Panel = 'visual' | 'actors' | 'rules' | 'tacit' | 'links' | 'handover' | 'markdown' | 'mermaid' | 'gaps';
 
 const VIS_CLASS: Record<string, string> = {
   Personal: 'vis-personal',
@@ -220,7 +224,28 @@ export default function WorkflowView({
     try {
       const { jsPDF } = await import('jspdf');
       const wf = data.workflow;
-      const report = buildWorkflowReport(wf, data.gaps);
+
+      // Resolve the linked Data & Metrics ids to display names — fail-soft: if a
+      // lookup fails, the raw ids still print so the section never breaks the export.
+      let linked = { datasets: data.links.datasets, metrics: data.links.metrics };
+      if (linked.datasets.length > 0 || linked.metrics.length > 0) {
+        try {
+          const flat = (g: { mine?: { id: string; name: string }[]; domain?: { id: string; name: string }[]; marketplace?: { id: string; name: string }[] }) =>
+            new Map([...(g.mine ?? []), ...(g.domain ?? []), ...(g.marketplace ?? [])].map((x) => [x.id, x.name]));
+          const [dsRes, mRes] = await Promise.all([
+            fetch('/api/data/datasets', { cache: 'no-store' }),
+            fetch('/api/metrics', { cache: 'no-store' }),
+          ]);
+          const dsNames = dsRes.ok ? flat(await dsRes.json()) : new Map<string, string>();
+          const mNames = mRes.ok ? flat(await mRes.json()) : new Map<string, string>();
+          linked = {
+            datasets: linked.datasets.map((id) => dsNames.get(id) ?? id),
+            metrics: linked.metrics.map((id) => mNames.get(id) ?? id),
+          };
+        } catch { /* keep the raw ids */ }
+      }
+
+      const report = buildWorkflowReport(wf, data.gaps, linked);
 
       // Per-step gap counts so the printed swimlane carries the ⚠ markers.
       const gapByStep = new Map<string, number>();
@@ -288,11 +313,17 @@ export default function WorkflowView({
         if (s.tacit) line(`Know-how: ${s.tacit}`, 9.5, false, 13, [120, 90, 20]);
       });
 
-      // ── Workflow rules + Handover / gaps summary ──────────────────────────
+      // ── Business rules + Data & Metrics + Handover / gaps summary ─────────
       if (report.workflowRules.length > 0) {
         space(10);
-        line('Process rules', 14, true, 18);
+        line('Business rules', 14, true, 18);
         for (const r of report.workflowRules) line(`•  ${r.text}${r.hard ? ' (hard)' : ''}`, 10, false, 14);
+      }
+      if (report.linked.datasets.length > 0 || report.linked.metrics.length > 0) {
+        space(10);
+        line('Data & Metrics', 14, true, 18);
+        for (const n of report.linked.datasets) line(`•  Dataset: ${n}`, 10, false, 14);
+        for (const n of report.linked.metrics) line(`•  Metric: ${n}`, 10, false, 14);
       }
       if (report.gaps.length > 0) {
         space(10);
@@ -489,8 +520,13 @@ export default function WorkflowView({
           <button className={panel === 'actors' ? 'active' : ''} onClick={() => setPanel('actors')}>
             Actors {wf.actors.length > 0 && <span className="badge muted" style={{ marginLeft: 6, fontSize: 10 }}>{wf.actors.length}</span>}
           </button>
-          <button className={panel === 'rules' ? 'active' : ''} onClick={() => setPanel('rules')}>Rules</button>
-          <button className={panel === 'tacit' ? 'active' : ''} onClick={() => setPanel('tacit')}>Tacit</button>
+          <button className={panel === 'rules' ? 'active' : ''} onClick={() => setPanel('rules')}>Business Rules</button>
+          <button className={panel === 'tacit' ? 'active' : ''} onClick={() => setPanel('tacit')}>Expert Knowledge</button>
+          <button className={panel === 'links' ? 'active' : ''} onClick={() => setPanel('links')}>
+            Data &amp; Metrics {(data.links.datasets.length + data.links.metrics.length) > 0 && (
+              <span className="badge muted" style={{ marginLeft: 6, fontSize: 10 }}>{data.links.datasets.length + data.links.metrics.length}</span>
+            )}
+          </button>
           <button className={panel === 'handover' ? 'active' : ''} onClick={() => setPanel('handover')}>Handover</button>
           <button className={panel === 'markdown' ? 'active' : ''} onClick={() => setPanel('markdown')}>Markdown</button>
           <button className={panel === 'mermaid' ? 'active' : ''} onClick={() => setPanel('mermaid')}>Diagram (read-only)</button>
@@ -580,7 +616,7 @@ export default function WorkflowView({
             />
           )}
 
-          {/* ── RULES (workflow-level + guardrail apply) ── */}
+          {/* ── BUSINESS RULES (workflow-level + guardrail apply) ── */}
           {panel === 'rules' && (
             <RulesPanel
               workflow={wf}
@@ -590,12 +626,22 @@ export default function WorkflowView({
             />
           )}
 
-          {/* ── TACIT (sibling tacit.md) ── */}
+          {/* ── EXPERT KNOWLEDGE (sibling tacit.md — internal name stays `tacit`) ── */}
           {panel === 'tacit' && (
             <TacitPanel
               workflowId={workflowId}
               initialTacit={data.tacit}
               canEdit={data.canEdit}
+            />
+          )}
+
+          {/* ── DATA & METRICS (linked governed datasets + KPIs) ── */}
+          {panel === 'links' && (
+            <DataMetricsPanel
+              workflowId={workflowId}
+              links={data.links}
+              canEdit={data.canEdit}
+              onChanged={() => void reload()}
             />
           )}
 

@@ -140,12 +140,12 @@ export default function WorkflowsPage() {
 
   return (
     <ConfirmProvider>
-      <PageHeader title="Business Processes" crumb="steps · decision rules · tacit knowledge" tutorial="knowledge" />
+      <PageHeader title="Business Processes" crumb="steps · business rules · expert knowledge" tutorial="knowledge" />
       <div className="content">
 
         <div className="row" style={{ marginTop: 18, justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 10 }}>
           <p className="lead" style={{ margin: 0 }}>
-            One tile per business process — steps, decision rules, and tacit knowledge
+            One tile per business process — steps, business rules, and expert knowledge
             that agents follow.
           </p>
           <div className="row" style={{ gap: 8 }}>

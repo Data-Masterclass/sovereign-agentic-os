@@ -258,9 +258,9 @@ export default function StepInspector({
       )}
 
       {/* Step-level decision rules */}
-      <div className="si-section-label">Step rules — soft guidance; mark hard for an OPA guardrail</div>
+      <div className="si-section-label">Business rules (this step) — soft guidance; mark hard for an OPA guardrail</div>
       {step.rules.length === 0 ? (
-        <div className="muted" style={{ fontSize: 12.5 }}>No step rules yet.</div>
+        <div className="muted" style={{ fontSize: 12.5 }}>No business rules for this step yet.</div>
       ) : (
         <div className="si-rules">
           {step.rules.map((r) => (
@@ -292,7 +292,7 @@ export default function StepInspector({
           }}
         >
           <input type="text" value={newRule} onChange={(e) => setNewRule(e.target.value)}
-            placeholder="Add a decision rule for this step…" style={{ flex: 1 }} />
+            placeholder="Add a business rule for this step…" style={{ flex: 1 }} />
           <label className="si-hard-toggle">
             <input type="checkbox" checked={newRuleHard} onChange={(e) => setNewRuleHard(e.target.checked)} /> hard
           </label>
@@ -300,8 +300,8 @@ export default function StepInspector({
         </form>
       )}
 
-      {/* Inline tacit note */}
-      <div className="si-section-label">Tacit note (inline) — practitioners&rsquo; know-how for this step</div>
+      {/* Inline expert-knowledge note (stored as the step's `tacit` field) */}
+      <div className="si-section-label">Expert knowledge (inline) — practitioners&rsquo; know-how for this step</div>
       <textarea
         rows={2}
         defaultValue={step.tacit}

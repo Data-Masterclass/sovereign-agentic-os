@@ -93,6 +93,15 @@ test('buildWorkflowReport folds gaps into a handover summary', () => {
   assert.equal(report.gaps[0].ref, 'Missing Dataset');
 });
 
+test('buildWorkflowReport defaults linked Data & Metrics to empty and carries names when given', () => {
+  const wf = parseWorkflow(WF);
+  // Nil-safe default — no third arg (old callers / pre-links workflows).
+  assert.deepEqual(buildWorkflowReport(wf, []).linked, { datasets: [], metrics: [] });
+  // Resolved display names ride through untouched for the "Data & Metrics" section.
+  const report = buildWorkflowReport(wf, [], { datasets: ['Orders (Gold)'], metrics: ['Revenue'] });
+  assert.deepEqual(report.linked, { datasets: ['Orders (Gold)'], metrics: ['Revenue'] });
+});
+
 test('workflowPdfFilename is filesystem-safe and stable', () => {
   const name = workflowPdfFilename('Bank Submission!!', Date.parse('2026-06-27T10:30:00Z'));
   assert.match(name, /^workflow-bank-submission-2026-06-27T10-30\.pdf$/);

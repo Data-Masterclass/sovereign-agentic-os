@@ -21,6 +21,7 @@ import {
   unarchiveWorkflow,
   listWorkflowVersions,
   restoreWorkflowVersion,
+  setWorkflowLinks,
   sha,
 } from './store.ts';
 
@@ -397,4 +398,39 @@ test('renameKnowledge: rejects an empty title', () => {
   __resetStore();
   const wf = createWorkflow(participant, { title: 'X', domain: 'sales' });
   assert.throws(() => renameKnowledge(wf.id, participant, '   '), (e) => (e as { status?: number }).status === 400);
+});
+
+// ─────────────────────────────────────────── Data & Metrics links ────────────
+
+test('setWorkflowLinks persists and getWorkflow returns them', () => {
+  __resetStore();
+  const wf = createWorkflow(participant, { title: 'Order Handling', domain: 'sales' });
+  setWorkflowLinks(wf.id, participant, { datasets: ['ds_orders'], metrics: ['ds_orders.revenue'] });
+  const view = getWorkflow(wf.id, participant);
+  assert.deepEqual(view.links, { datasets: ['ds_orders'], metrics: ['ds_orders.revenue'] });
+});
+
+test('links are nil-safe: a record without links reads as empty (no migration)', () => {
+  __resetStore();
+  const wf = createWorkflow(participant, { title: 'Legacy WF', domain: 'sales' });
+  // A pre-links record simply has no `links` field — the view must default it.
+  const view = getWorkflow(wf.id, participant);
+  assert.deepEqual(view.links, { datasets: [], metrics: [] });
+});
+
+test('setWorkflowLinks replaces the whole set (unlink works)', () => {
+  __resetStore();
+  const wf = createWorkflow(participant, { title: 'Order Handling', domain: 'sales' });
+  setWorkflowLinks(wf.id, participant, { datasets: ['a', 'b'], metrics: [] });
+  setWorkflowLinks(wf.id, participant, { datasets: ['b'], metrics: [] });
+  assert.deepEqual(getWorkflow(wf.id, participant).links, { datasets: ['b'], metrics: [] });
+});
+
+test('setWorkflowLinks is edit-scoped: an outsider is denied', () => {
+  __resetStore();
+  const wf = createWorkflow(participant, { title: 'Private WF', domain: 'sales' });
+  assert.throws(
+    () => setWorkflowLinks(wf.id, outsider, { datasets: ['ds_x'], metrics: [] }),
+    (e) => (e as { status?: number }).status === 403,
+  );
 });

@@ -176,7 +176,10 @@ export function previewTrinoSql(dataset: Dataset, measure: Measure, spec: Explor
   const groupBy = groupSelect.length
     ? `\nGROUP BY ${groupSelect.map((_, i) => i + 1).join(', ')}`
     : '';
-  return `-- Pre-save preview via governed SQL (Trino, OPA row-security applies).\n-- The Cube-served member takes over after Publish.\nSELECT ${select}\nFROM ${goldMartFqn(dataset)}${groupBy}\nLIMIT ${spec.limit ?? 100}`;
+  // NO comment header: this SQL is EXECUTED via the governed query path (queryRun),
+  // which rejects any statement containing `--` or `/* */`. Explanatory comments live
+  // only on the display-side dropToSql above, which is never executed.
+  return `SELECT ${select}\nFROM ${goldMartFqn(dataset)}${groupBy}\nLIMIT ${spec.limit ?? 100}`;
 }
 
 /** Map a governed-SQL result (column names + string rows) onto the SAME row shape the

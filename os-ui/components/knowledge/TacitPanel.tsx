@@ -74,7 +74,7 @@ export default function TacitPanel({
       });
       const data = await res.json();
       if (!res.ok) setMsg(`✗ ${data.error ?? 'Save failed'}`);
-      else setMsg('✓ Saved to tacit.md');
+      else setMsg('✓ Expert knowledge saved');
     } catch (e) {
       setMsg(`✗ ${(e as Error).message}`);
     } finally {
@@ -86,24 +86,24 @@ export default function TacitPanel({
     <div className="tacit-panel">
       <p className="hint" style={{ marginTop: 0 }}>
         The practitioners&rsquo; hidden know-how. Capture it any way — paste, upload a transcript,
-        or record — then append it into the tacit.md editor and save.
+        or record — then append it into the expert-knowledge editor and save.
       </p>
 
-      {/* Current tacit.md */}
-      <div className="section-title">Tacit knowledge (tacit.md)</div>
+      {/* Current expert-knowledge doc (stored as the sibling tacit.md) */}
+      <div className="section-title">Expert knowledge</div>
       <textarea
         className="tacit-editor mono"
         rows={10}
         value={tacit}
         disabled={!canEdit}
         onChange={(e) => setTacit(e.target.value)}
-        placeholder="The compressed tacit knowledge lives here. Capture raw notes below and compress them, or edit directly."
+        placeholder="The distilled expert knowledge lives here. Capture raw notes below and compress them, or edit directly."
       />
       {canEdit && (
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
           {msg ? <span className={msg.startsWith('✓') ? 'hint' : 'error'} style={{ margin: 0 }}>{msg}</span> : <span />}
           <button className="btn" onClick={() => void save()} disabled={saving}>
-            {saving ? <span className="spin" /> : 'Save tacit.md'}
+            {saving ? <span className="spin" /> : 'Save expert knowledge'}
           </button>
         </div>
       )}
@@ -132,7 +132,7 @@ export default function TacitPanel({
               onClick={() => { setTacit((t) => (t ? `${t}\n\n${raw}` : raw)); setRaw(''); }}
               disabled={!raw.trim()}
             >
-              Append to tacit.md ↑
+              Append to expert knowledge ↑
             </button>
           </div>
         </>

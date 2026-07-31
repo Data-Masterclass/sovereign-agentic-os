@@ -81,9 +81,9 @@ export default function RulesPanel({
         become enforced guardrails.
       </p>
 
-      <div className="section-title">Workflow rules</div>
+      <div className="section-title">Business rules</div>
       {workflowRules.length === 0 ? (
-        <div className="muted" style={{ fontSize: 13 }}>No workflow-level rules yet.</div>
+        <div className="muted" style={{ fontSize: 13 }}>No workflow-level business rules yet.</div>
       ) : (
         <div className="rp-rules">
           {workflowRules.map((r) => (
@@ -115,7 +115,7 @@ export default function RulesPanel({
           }}
         >
           <input type="text" value={newRule} onChange={(e) => setNewRule(e.target.value)}
-            placeholder="Add a decision rule for the whole workflow…" style={{ flex: 1 }} />
+            placeholder="Add a business rule for the whole workflow…" style={{ flex: 1 }} />
           <label className="rp-hard-toggle">
             <input type="checkbox" checked={newHard} onChange={(e) => setNewHard(e.target.checked)} /> hard
           </label>

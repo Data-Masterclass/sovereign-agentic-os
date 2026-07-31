@@ -19,6 +19,7 @@ import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 import { type ManualScope, resolveManual } from './manual.ts';
+import { EMPTY_LINKS, type WorkflowLinks } from './links.ts';
 
 export type { ArtifactVersion };
 export type { ManualScope };
@@ -60,11 +61,16 @@ export type WorkflowRecord = {
   certifiedBy: string | null;
   /** Soft-archived: hidden from the working lists, reversible, retained. */
   archived?: boolean;
+  /**
+   * Data & Metrics links — governed dataset + metric ids this process runs on.
+   * Optional (nil-safe): old records simply have none; reads default to empty.
+   */
+  links?: WorkflowLinks;
 };
 
 export type WorkflowSummary = Omit<WorkflowRecord, 'md' | 'tacit'>;
 
-export type WorkflowView = WorkflowRecord & { workflow: Workflow; sha: string };
+export type WorkflowView = WorkflowRecord & { workflow: Workflow; sha: string; links: WorkflowLinks };
 
 // ----------------------------------------------------------------- helpers ---
 
@@ -131,6 +137,7 @@ const mirror = osMirror({
         md: { type: 'text', index: false },
         tacit: { type: 'text', index: false },
         archived: { type: 'boolean' },
+        links: { type: 'object', enabled: false },
       },
     },
   },
@@ -301,7 +308,8 @@ export function listWorkflows(user: Principal, opts: { includeArchived?: boolean
 
 export function getWorkflow(id: string, user: Principal): WorkflowView {
   const rec = requireView(id, user);
-  return { ...rec, workflow: parseWorkflow(rec.md), sha: sha(rec.md) };
+  // `links` defaults here so every consumer is nil-safe on pre-links records.
+  return { ...rec, links: rec.links ?? EMPTY_LINKS, workflow: parseWorkflow(rec.md), sha: sha(rec.md) };
 }
 
 export function createWorkflow(
@@ -697,6 +705,22 @@ export function updateTacit(id: string, user: Principal, tacit: string): Workflo
   if (tacit === rec.tacit) return rec; // no-op edit → no version churn
   versions.record(id, user.id, snapshotState(rec), 'edit tacit');
   rec.tacit = tacit;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+// ------------------------------------------- Data & Metrics links ------------
+
+/**
+ * Replace the workflow's Data & Metrics links (dataset + metric ids). Edit-scoped
+ * like every other workflow mutation. The caller (the API route) has ALREADY
+ * dropped ids the user can't view via `filterVisibleLinks` — the store just
+ * persists. Not versioned (metadata like `archived`, not canonical source).
+ */
+export function setWorkflowLinks(id: string, user: Principal, links: WorkflowLinks): WorkflowRecord {
+  const rec = requireEdit(id, user);
+  rec.links = { datasets: [...links.datasets], metrics: [...links.metrics] };
   rec.updatedAt = now();
   writeThrough(rec);
   return rec;
