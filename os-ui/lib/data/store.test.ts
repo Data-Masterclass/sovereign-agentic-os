@@ -90,6 +90,41 @@ test('GOVERNANCE: the Gold join picker (listJoinable) is canView-scoped', () => 
   assert.ok(!listJoinable(bea, orders).some((d) => d.id === orders));
 });
 
+test('SECURITY: listJoinable is ACTIVE-DOMAIN scoped — owner and certified-product bypasses never leak across domains', () => {
+  // Regression for the live leak (2026-07-31): an admin operating agentic-leader saw
+  // Kiekert datasets in the Gold JOIN TO dropdown. canView passes via the OWNER check
+  // (their own other-domain assets) and via tier 'product' (canView-true tenant-wide);
+  // the picker must ALSO narrow to the active domain, like the main list.
+  const boss: Principal = { id: 'boss', domains: ['sales', 'finance'], role: 'admin' };
+  const bossInSales: Principal = { id: 'boss', domains: ['sales'], role: 'admin' }; // operating sales
+  const bossInFinance: Principal = { id: 'boss', domains: ['finance'], role: 'admin' };
+
+  // A promoted FINANCE asset owned by boss (owner bypass)…
+  const finAsset = createDataset(boss, { name: 'Kiekert Cases', domain: 'finance' });
+  buildVersion(finAsset.id, boss, 'bronze', { quality: 'passing', artifact: 'bronze/k.dlt.yml' });
+  buildVersion(finAsset.id, boss, 'silver', { quality: 'passing', artifact: 'silver/k.sql' });
+  transition(finAsset.id, boss, 'promote', { visibility: 'domain' }); // → asset (finance)
+  // …and a CERTIFIED finance product (product bypass: canView-true for everyone).
+  const finProduct = createDataset(boss, { name: 'Kiekert Certified', domain: 'finance' });
+  buildVersion(finProduct.id, boss, 'bronze', { quality: 'passing', artifact: 'bronze/kc.dlt.yml' });
+  buildVersion(finProduct.id, boss, 'silver', { quality: 'passing', artifact: 'silver/kc.sql' });
+  transition(finProduct.id, boss, 'promote', { visibility: 'domain' });
+  transition(finProduct.id, boss, 'certify', { visibility: 'shared' }); // → product (finance)
+
+  // Operating SALES: neither finance dataset may appear — not for the owner-admin,
+  // not for an unrelated sales user (Marketplace is the only cross-domain surface).
+  for (const u of [bossInSales, bea]) {
+    const names = listJoinable(u).map((d) => d.name);
+    assert.ok(!names.includes('Kiekert Cases'), `owner-bypass leak for ${u.id}: ${names}`);
+    assert.ok(!names.includes('Kiekert Certified'), `product-bypass leak for ${u.id}: ${names}`);
+  }
+  // Operating FINANCE (positive control): both are offered.
+  const inFinance = listJoinable(bossInFinance).map((d) => d.name);
+  assert.ok(inFinance.includes('Kiekert Cases') && inFinance.includes('Kiekert Certified'), `expected both in finance, got: ${inFinance}`);
+  // "All domains" session (domains includes finance) also sees them.
+  assert.ok(listJoinable(boss).some((d) => d.name === 'Kiekert Certified'));
+});
+
 test('buildGoldJoin lights Gold + records measures and multi-upstream lineage', () => {
   const orders = seedOrders();
   const updated = buildGoldJoin(orders, amir, {

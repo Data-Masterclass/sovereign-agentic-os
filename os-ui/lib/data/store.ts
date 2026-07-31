@@ -517,11 +517,12 @@ export function datasetsWithSync(): Dataset[] {
 export type JoinableDataset = { id: string; name: string; domain: string; tier: Tier; fqn: string; columns: string[] };
 
 /**
- * The canView-scoped list of OTHER datasets the caller can reuse in a Gold join: only
- * governed tiers (asset/product) they may READ (never a private dataset they don't own)
- * that actually have a physical table (silver/gold built). This is the SAME `canView`
- * gate the catalog/list use — the join picker can never surface a dataset the caller
- * can't see, and the route re-checks `getDataset` per pick as defense in depth.
+ * The canView- AND active-domain-scoped list of OTHER datasets the caller can reuse in
+ * a Gold join: only governed tiers (asset/product) they may READ (never a private
+ * dataset they don't own), narrowed to the operating domain, that actually have a
+ * physical table (silver/gold built). Same gates as the catalog/list — the join picker
+ * can never surface a dataset the caller's active domain doesn't hold, and the route
+ * re-checks `getDataset` per pick as defense in depth.
  */
 export function listJoinable(user: Principal, excludeId?: string): JoinableDataset[] {
   ensureSeeded();
@@ -531,6 +532,14 @@ export function listJoinable(user: Principal, excludeId?: string): JoinableDatas
     if (d.id === excludeId) continue;
     if (d.tier === 'dataset') continue; // private, owner-only — not reusable
     if (!canView(d, user)) continue; // the hard visibility gate
+    // ACTIVE-DOMAIN NARROWING (the same inScope gate the main list applies to all
+    // tiers): canView alone leaks across domains — an owner/admin passes it for their
+    // OTHER domains' assets, and a certified product is canView-true tenant-wide. The
+    // join picker must only offer what the operating domain holds; cross-domain
+    // discovery of a certified product happens ONLY through the Marketplace catalog,
+    // never here. (Leak seen live 2026-07-31: kiekert datasets offered in the JOIN TO
+    // dropdown while operating in agentic-leader.)
+    if (d.domain && !user.domains.includes(d.domain)) continue;
     if (!d.versions.gold.built && !d.versions.silver.built) continue; // must be materialized
     out.push({ id: d.id, name: d.name, domain: d.domain, tier: d.tier, fqn: assetTarget(d), columns: d.columns.map((c) => c.name) });
   }
