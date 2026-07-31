@@ -135,7 +135,16 @@ function trinoAggExpr(m: Measure, siblings: Measure[]): string | null {
     case 'count': return `COUNT(*)${filter}`;
     case 'count_distinct': return `COUNT(DISTINCT ${m.sql})${filter}`;
     case 'count_distinct_approx': return `approx_distinct(${m.sql})${filter}`;
-    case 'sum': case 'avg': case 'min': case 'max':
+    case 'sum': case 'avg':
+      // Explicit numeric cast: a Bronze column that skipped a Silver cast reaches Gold
+      // as VARCHAR, and Trino refuses avg/sum on it (FUNCTION_NOT_FOUND). CAST — not
+      // TRY_CAST — so clean text-typed numbers aggregate correctly, an already-numeric
+      // column is unchanged (avg returns double anyway), and a genuinely non-numeric
+      // value fails LOUDLY naming itself, never silently skipped.
+      return `${m.type.toUpperCase()}(CAST(${m.sql} AS double))${filter}`;
+    case 'min': case 'max':
+      // No cast: min/max are valid on text/date columns and casting would break their
+      // lexicographic/temporal semantics.
       return `${m.type.toUpperCase()}(${m.sql})${filter}`;
     case 'number': {
       // Ratio over sibling measures: `1.0 * {a} / {b}` → each `{x}` becomes x's own

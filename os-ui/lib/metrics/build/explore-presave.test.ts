@@ -55,7 +55,7 @@ test('UNSAVED draft → governed SQL path: queryRun under the viewer, mode live 
   assert.equal(calls.cubeLoad, 0, 'Cube is NEVER queried for a member that cannot exist yet');
   assert.equal(calls.queryRun.length, 1, 'exactly one governed Trino query');
   assert.equal(calls.queryRun[0].principal, 'amir', "runs under the VIEWER's delegated identity (R3)");
-  assert.match(calls.queryRun[0].sql, /SUM\(net_amount\)/);
+  assert.match(calls.queryRun[0].sql, /SUM\(CAST\(net_amount AS double\)\)/);
   assert.match(calls.queryRun[0].sql, /iceberg\.sales\.gold_sales/, 'reads the gold mart directly');
   assert.equal(r.sql, calls.queryRun[0].sql, 'the surfaced SQL is the SQL that actually ran');
   // Rows come back in the SAME member-keyed shape the Cube path returns.
@@ -109,7 +109,7 @@ test('previewTrinoSql: aggregations, guided filters and slices compile to one go
   const d = goldSales();
   const spec = exploreSpec(d, d.measures[0], { dimensions: ['region'], timeDimension: 'order_date', granularity: 'month' });
   const sql = previewTrinoSql(d, d.measures[0], spec)!;
-  assert.match(sql, /SELECT "region", date_trunc\('month', "order_date"\) AS "order_date", SUM\(net_amount\) AS "revenue"/);
+  assert.match(sql, /SELECT "region", date_trunc\('month', "order_date"\) AS "order_date", SUM\(CAST\(net_amount AS double\)\) AS "revenue"/);
   assert.match(sql, /FROM iceberg\.sales\.gold_sales/);
   assert.match(sql, /GROUP BY 1, 2/);
 
@@ -142,7 +142,7 @@ test('previewTrinoSql: a ratio expands its sibling measures; window shapes retur
   });
   const aov = d.measures[2];
   const sql = previewTrinoSql(d, aov, exploreSpec(d, aov))!;
-  assert.match(sql, /1\.0 \* \(SUM\(net_amount\)\) \/ \(COUNT\(\*\)\) AS "aov"/);
+  assert.match(sql, /1\.0 \* \(SUM\(CAST\(net_amount AS double\)\)\) \/ \(COUNT\(\*\)\) AS "aov"/);
 
   const rolling = { name: 'r7', type: 'sum' as const, sql: 'net_amount', rollingWindow: { trailing: '7 day' } };
   assert.equal(previewTrinoSql(d, rolling, exploreSpec(d, rolling)), null);
