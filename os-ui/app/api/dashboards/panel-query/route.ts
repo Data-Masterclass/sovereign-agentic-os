@@ -24,13 +24,14 @@ export const POST = withRoute<Record<string, string>, {
   panel?: Panel;
   viewerRegion?: string;
 }>(async ({ user, body }) => {
-  void user; // gate enforces auth + hydration; delegatedToken resolves viewer identity
   const view = (body.view ?? '').trim();
   const panel = body.panel;
   if (!view) return NextResponse.json({ error: 'view is required' }, { status: 400 });
   if (!panel || typeof panel !== 'object') return NextResponse.json({ error: 'panel is required' }, { status: 400 });
 
+  // The viewer's delegated token drives per-viewer RLS; `user` scopes the registry resolver
+  // (Phase 2: the panel resolves its numbers through the governed-SQL metrics path, not Cube).
   const { token } = await delegatedToken('domain', { region: body.viewerRegion });
-  const result = await runPanelQuery(view, panel, token);
+  const result = await runPanelQuery(view, panel, token, user);
   return NextResponse.json(result);
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, parse: true });

@@ -3,12 +3,15 @@
 # `lib/dashboards` — governed BI on metrics (Dashboards tab)
 
 The viewing/BI layer. **Tier 1 (default):** NATIVE dashboards rendered with **Apache
-ECharts** on the **governed Cube layer** — each panel resolves under the viewer's delegated
-identity, so per-viewer RLS applies (two viewers, different rows) with **no BI tool in the
-loop**. **Tier 2:** Power BI / Tableau connection export + an "Open in Superset" console
-link (connected tools, not embedded). All on **Cube metrics** (defined in the Metrics tab),
-so numbers match the explorer and the agent `metrics` tool. Built on `lib/data` +
-`lib/metrics` **read-only**. Dashboards **consumes** metrics; it never defines them.
+ECharts** — each panel resolves its numbers through the SAME governed **compiled-SQL**
+metrics path the Metrics tab uses (`exploreMetric`, Trino run AS the viewer), so per-viewer
+RLS applies (two viewers, different rows) with **no BI tool in the loop** and a chart's
+number is BY CONSTRUCTION the explorer's number for the same member + slice + viewer.
+**Cube is off the dashboards read path (Phase 2).** **Tier 2:** Power BI / Tableau connection
+export + an "Open in Superset" console link (connected tools, not embedded) — still
+Cube-backed until Phase 3. All on **governed metrics** (defined in the Metrics tab), so
+numbers match the explorer and the agent `metrics` tool. Built on `lib/data` + `lib/metrics`
+**read-only**. Dashboards **consumes** metrics; it never defines them.
 
 Specs: `stackit/dashboards-golden-path.md`, `…/metrics-dashboards-deep-design.md`,
 `…/data-policy-compiler.md`.
@@ -17,8 +20,8 @@ Specs: `stackit/dashboards-golden-path.md`, `…/metrics-dashboards-deep-design.
 | file | role |
 |---|---|
 | `model.ts` | The dashboard spec — a Cube view + `Panel[]`. A `Panel` charts governed metric **members** (`metrics`, with a legacy `metric` alias `normalizePanel` folds in), optionally grouped by dimensions / a time dimension at a grain, optionally filtered. **Dual-mode:** `fromTiles` (drag-drop) and `fromAgent` both produce the SAME normalized, deduped `DashboardSpec`. `buildPanelCubeQuery(panel)` → the exact Cube `load` query the viewer resolves. |
-| `build/panel-query.ts` | **Tier 1 server boundary.** `runPanelQuery(view, panel, token)` resolves one panel's rows via `cubeLoad` under the viewer's `securityContext` (R3 RLS), with the honest offline-mock + Cube sync-lag fail-soft (`pending`). Mirrors `lib/metrics/build/explore-server.ts`. |
-| `cube-meta.ts` | `narrowCubeMeta(members, meta)` — narrows Cube `/meta` to the caller's governed views (the panel builder palette), never exposing a view they can't see. |
+| `build/panel-query.ts` | **Tier 1 server boundary.** `runPanelQuery(view, panel, token, user)` resolves each panel measure to its governed metric (registry resolver, RLS-scoped) and serves it through `exploreMetric` (governed Trino SQL, run AS the viewer) — Cube is off the read path (Phase 2). Honest offline-mock + window-metric pending + LOUD missing/dropped-member warnings all come from `exploreMetric`. |
+| `cube-meta.ts` | `narrowCubeMeta(members, meta)` — narrows Cube `/meta` to the caller's governed views for the **panel-builder palette** (a design-time affordance, not a read path), never exposing a view they can't see. |
 | `alerts.ts` | A threshold on a metric member → **notify** + (optional) **trigger a governed agent run** (`traced: true`). Plus scheduled reports (`dueReports` / `sendReport`). |
 | `governance.ts` | Personal → Domain (Builder) → Marketplace (Admin), reusing `canTransition`. Broadening the tier never broadens the rows — every panel stays per-viewer RLS-scoped at Cube. |
 | `store.ts` | In-memory dashboard registry, principal-scoped like every governed surface (spec-shape-agnostic; reads only `spec.charts.length`). |

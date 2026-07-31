@@ -2,23 +2,25 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { cubeLoad, cubeMeta } from '@/lib/infra/governed';
 import { type DelegatedToken, propagate } from '../../data/identity.ts';
-import { isCubeSyncLag, liveMetricsReachable } from '../../metrics/build/live-clients.ts';
-import { type Panel, buildPanelCubeQuery, missingPanelMembers, panelMetrics } from '../model.ts';
-import { viewOfMember } from '../cube-meta.ts';
+import type { Dataset, Measure } from '../../data/index.ts';
+import { type Principal } from '../../data/store.ts';
+import { exploreMetric } from '../../metrics/build/explore-server.ts';
+import type { Granularity } from '../../metrics/explorer.ts';
+import { getMetric, listMetrics } from '../../metrics/store.ts';
+import { type Panel, normalizePanel, panelMetrics } from '../model.ts';
 
 /**
- * Server boundary for a NATIVE dashboard panel (Tier 1). Resolves the panel's governed
- * Cube query UNDER THE VIEWER'S delegated identity (R3): {@link propagate} derives the
- * viewer's `securityContext`, {@link cubeLoad} forwards it as `x-cube-security-context`
- * so Cube's row-level security applies — two viewers of the SAME shared/certified
- * dashboard see DIFFERENT rows. Mirrors lib/metrics/build/explore-server.ts exactly:
- *   • LIVE Cube when reachable (RLS at Cube);
- *   • an honest offline-MOCK that itself filters by `securityContext.region`, so the
- *     "two viewers, different rows" guarantee holds on a laptop too;
- *   • Cube sidecar sync-lag (a just-defined metric not yet in Cube) degrades to a soft
- *     `pending` (200, no rows) — never a hard error or a blank panel.
+ * Server boundary for a NATIVE dashboard panel (Tier 1). Since Phase 2 a panel resolves its
+ * numbers through the SAME compiled-SQL path the Metrics tab uses ({@link exploreMetric}) —
+ * NOT Cube — so a chart's number is BY CONSTRUCTION the same number the explorer + the agent
+ * `metrics` tool show for the same member, slice and viewer. Each panel measure is resolved to
+ * its governed metric (dataset + measure) via the registry, then served as ONE governed Trino
+ * SELECT run UNDER THE VIEWER'S delegated identity (R3): {@link propagate} inside exploreMetric
+ * asserts the token is user-delegated and threads the viewer principal to Trino, so per-viewer
+ * row/column security applies — two viewers of the SAME shared/certified dashboard see DIFFERENT
+ * rows. The honest offline-mock (laptop, no cluster) and the LOUD honesty gate (a real Trino
+ * outage → no number, never a fabricated one) come straight from exploreMetric.
  */
 
 export type PanelQueryMode = 'live' | 'offline-mock';
@@ -26,142 +28,169 @@ export type PanelQueryMode = 'live' | 'offline-mock';
 export type PanelQueryResult = {
   rows: Record<string, unknown>[];
   mode: PanelQueryMode;
-  /** True when Cube is up but the panel's measure hasn't sync'd yet (soft "syncing…"). */
+  /** True when the metric can't be computed yet (a window measure with no time slice, or a
+   *  sidecar-lag equivalent) — a soft "syncing…", never a hard error or a blank panel. */
   pending?: boolean;
   /** LOUD degradation notice (Northpeak fix): set when the panel requests members the
-   *  SERVED Cube model does not expose — e.g. a group-by dimension that vanished because
-   *  the dataset's domain table is missing/stale and needs re-promotion. The panel renders
-   *  this warning instead of silently collapsing to a single un-grouped bar. */
+   *  governed view does not expose — e.g. a group-by dimension that vanished because the
+   *  dataset's domain table is missing/stale and needs re-promotion — OR when the governed
+   *  lakehouse is unreachable so no number can be computed. The panel renders this warning
+   *  instead of silently collapsing to a single un-grouped bar or a fabricated value. */
   warning?: string;
   /** The members that did not resolve (drives the warning; useful for the dev surface). */
   missingMembers?: string[];
   securityContext: Record<string, unknown>;
-  /** The Cube `load` query body (for the developer surface + honest transparency). */
+  /** The governed SQL the panel ran (for the developer surface + honest transparency). */
   sql: string;
 };
 
-/**
- * The offline-mock executor — a tiny region-partitioned table that ENFORCES the security
- * context exactly like Cube would, so the RLS demo is real offline. Deterministic value
- * per (member, region) so numbers are stable + agree with the metrics explorer mock.
- */
-function mockRows(query: ReturnType<typeof buildPanelCubeQuery>, ctx: Record<string, unknown>): Record<string, unknown>[] {
-  const REGIONS = ['DE', 'FR', 'US'];
-  const valueOf = (member: string, region: string) => {
-    const s = `${member}:${region}`;
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-    return Math.abs(h % 90000) + 10000;
+/** Resolve a governed metric MEMBER (`View.measure`) to its dataset + measure, RLS-scoped
+ *  to the viewer. Registry-derived: the member is matched against the metrics the user can
+ *  see (never a member outside their entitlement), then lifted to the full record. Returns
+ *  null when no visible metric owns the member. */
+export type MemberResolver = (member: string) => { dataset: Dataset; measure: Measure } | null;
+
+/** The store-backed default resolver — pure over the RLS-scoped metric registry. */
+export function registryResolver(user: Principal): MemberResolver {
+  return (member: string) => {
+    const groups = listMetrics(user);
+    const all = [...groups.mine, ...groups.domain, ...groups.marketplace];
+    const summary = all.find((s) => s.member === member);
+    if (!summary) return null;
+    try {
+      const rec = getMetric(summary.id, user);
+      return { dataset: rec.dataset, measure: rec.measure };
+    } catch {
+      return null;
+    }
   };
-  const viewerRegion = ctx.region as string | undefined;
-  const regions = viewerRegion ? REGIONS.filter((r) => r === viewerRegion) : REGIONS;
-  const measures = query.measures ?? [];
-  const regionDim = (query.dimensions ?? []).find((d) => d.endsWith('.region'));
-  const timeDim = query.timeDimensions?.[0]?.dimension;
-  const cell = (region: string) => Object.fromEntries(measures.map((m) => [m, valueOf(m, region)]));
-  if (regionDim) {
-    return regions.map((r) => ({ [regionDim]: r, ...cell(r) }));
-  }
-  if (timeDim) {
-    // A tiny 3-point series so line/area panels have something honest to render offline.
-    const months = ['2026-01-01', '2026-02-01', '2026-03-01'];
-    return months.map((month, i) => {
-      const total = regions.reduce((sum, r) => sum + valueOf(`${measures[0] ?? 'm'}:${month}:${i}`, r), 0);
-      return { [timeDim]: month, ...Object.fromEntries(measures.map((m) => [m, total])) };
-    });
-  }
-  // Scalar total across the viewer's entitled regions.
-  const totals = Object.fromEntries(measures.map((m) => [m, regions.reduce((sum, r) => sum + valueOf(m, r), 0)]));
-  return [totals];
 }
 
-/** The honest degradation notice for members the served model lacks (Northpeak fix). */
-export function missingMembersWarning(missing: string[]): string {
-  const dims = missing.map((m) => `“${m}”`).join(', ');
-  return (
-    `${missing.length === 1 ? 'Member' : 'Members'} ${dims} ${missing.length === 1 ? 'is' : 'are'} not available ` +
-    'in the served model — the dataset’s domain table may be missing or stale and need re-promotion. ' +
-    'The chart is NOT silently un-grouped; fix the model to render it as designed.'
-  );
+/** The bare column name of a panel dimension MEMBER (`View.col` → `col`). The explorer's
+ *  {@link exploreMetric} re-qualifies bare names against the view, so we hand it the leaf. */
+function leaf(member: string): string {
+  const i = member.indexOf('.');
+  return i >= 0 ? member.slice(i + 1) : member;
 }
 
-/** Injectable seams so the missing-member guard is unit-testable without a live Cube. */
+/** The stable dimension/time key of a resolved row — everything except the measure member —
+ *  so a multi-measure panel's per-measure results merge onto one row per slice. */
+function sliceKey(row: Record<string, unknown>, measureMembers: Set<string>): string {
+  const parts: string[] = [];
+  for (const k of Object.keys(row).sort()) {
+    if (measureMembers.has(k)) continue;
+    parts.push(`${k}=${String(row[k])}`);
+  }
+  return parts.join('|');
+}
+
 export type PanelQueryDeps = {
-  reachable?: typeof liveMetricsReachable;
-  load?: typeof cubeLoad;
-  meta?: typeof cubeMeta;
+  /** RLS-scoped member → dataset+measure resolver (defaults to the registry resolver). */
+  resolve?: MemberResolver;
+  /** Injectable explore path (defaults to the governed-SQL {@link exploreMetric}). */
+  explore?: typeof exploreMetric;
 };
 
 /**
- * Run one panel's governed Cube query as the viewer. `token` is the viewer's delegated
- * token (R2/R3) — {@link propagate} asserts it is user-delegated and yields the RLS
- * security context. A panel with no metrics resolves to an empty result (nothing to chart).
+ * Run one panel's governed query as the viewer, resolving numbers through the compiled-SQL
+ * metrics path (Phase 2 — Cube is off the dashboards read path). `token` is the viewer's
+ * delegated token (R2/R3); `user` scopes the registry resolver to what the viewer may see.
+ * A panel with no metrics resolves to an empty result (nothing to chart).
  *
- * LOUD-DEGRADATION contract (Northpeak fix): before running live, the panel's requested
- * members are checked against the SERVED /meta model. A member the served model lacks —
- * the signature of a missing/stale domain table behind the Cube view — returns an explicit
- * `warning` + `missingMembers` (no rows), NEVER a silently de-dimensioned single-bar chart
- * and NEVER a forever-"syncing…" pending. Soft `pending` is reserved for GENUINE sidecar
- * sync lag: Cube errored "not found" but /meta doesn't (yet) contradict the panel.
+ * HONESTY: a member no visible metric owns is reported as a LOUD missing-member warning (never
+ * silently dropped). A slice on a dimension the governed view doesn't expose is dropped BUT
+ * reported (exploreMetric's `droppedMembers` → `warning`). A real Trino outage yields no rows +
+ * an honest warning (never a fabricated number). A window metric with no time slice is a soft
+ * pending. Every measure runs under the SAME viewer identity, so the panel and the Metrics tab
+ * can never disagree on the number.
  */
 export async function runPanelQuery(
   view: string,
   panel: Panel,
   token: DelegatedToken,
+  user: Principal,
   deps: PanelQueryDeps = {},
 ): Promise<PanelQueryResult> {
   const { cube } = propagate(token); // throws if the token isn't user-delegated (R2/R3)
   const securityContext = cube.securityContext;
-  const query = buildPanelCubeQuery(panel);
-  const sql = JSON.stringify(query);
-  const reachable = deps.reachable ?? liveMetricsReachable;
-  const load = deps.load ?? cubeLoad;
-  const meta = deps.meta ?? cubeMeta;
-  // Void reference so `view` stays part of the honest signature (the panel's members already
-  // encode the view; kept explicit so callers pass the bound view for future validation).
-  void view;
+  const resolve = deps.resolve ?? registryResolver(user);
+  const explore = deps.explore ?? exploreMetric;
+  const p = normalizePanel(panel);
+  const members = panelMetrics(p);
+  void view; // the panel's members already encode the view; kept for the honest signature
 
-  if (panelMetrics(panel).length === 0) {
-    return { rows: [], mode: (await reachable()) ? 'live' : 'offline-mock', securityContext, sql };
+  if (members.length === 0) {
+    return { rows: [], mode: 'live', securityContext, sql: '' };
   }
 
-  const live = await reachable();
-  if (!live) {
-    return { rows: mockRows(query, securityContext), mode: 'offline-mock', securityContext, sql };
-  }
+  // The slice the panel asks for, shared across every measure (bare leaf names — the explorer
+  // re-qualifies them against each measure's view and drops non-members loudly).
+  const slice = {
+    dimensions: (p.dimensions ?? []).map(leaf),
+    timeDimension: p.timeDimension ? leaf(p.timeDimension) : undefined,
+    granularity: p.timeGrain as Granularity | undefined,
+  };
 
-  // The served-model guard: resolve what Cube ACTUALLY serves for this panel's view(s).
-  // `served === null` ⇒ /meta unreachable/empty — we can't judge, so don't (fail open to
-  // the query; the sync-lag catch below still applies). A served view missing members ⇒ LOUD.
-  const servedViews = await meta().catch(() => []);
-  const wanted = new Set(panelMetrics(panel).map(viewOfMember));
-  const relevant = servedViews.filter((c) => wanted.has(c.name));
-  if (servedViews.length > 0) {
-    const served = {
-      measures: relevant.flatMap((c) => c.measures),
-      dimensions: relevant.flatMap((c) => c.dimensions),
-      timeDimensions: relevant.flatMap((c) => c.timeDimensions),
-    };
-    const missing = missingPanelMembers(panel, served);
-    if (missing.length > 0) {
-      return {
-        rows: [],
-        mode: 'live',
-        warning: missingMembersWarning(missing),
-        missingMembers: missing,
-        securityContext,
-        sql,
-      };
+  const missing: string[] = [];
+  const droppedMembers = new Set<string>();
+  const dropWarnings: string[] = [];
+  const measureMembers = new Set<string>();
+  // Accumulate one row per slice key, keyed measure-by-measure so a multi-measure panel merges.
+  const byKey = new Map<string, Record<string, unknown>>();
+  let mode: PanelQueryMode = 'live';
+  let pending = false;
+  let unavailableWarning: string | undefined;
+  let sql = '';
+
+  for (const member of members) {
+    const resolved = resolve(member);
+    if (!resolved) {
+      missing.push(member);
+      continue;
+    }
+    measureMembers.add(member);
+    const result = await explore(resolved.dataset, resolved.measure, token, slice);
+    if (result.sql) sql = sql ? `${sql}\n\n${result.sql}` : result.sql;
+    if (result.mode === 'offline-mock') mode = 'offline-mock';
+    if (result.pending) pending = true;
+    if (result.unavailable && result.warning) unavailableWarning = result.warning;
+    for (const d of result.droppedMembers ?? []) droppedMembers.add(d);
+    if (result.droppedMembers?.length && result.warning) dropWarnings.push(result.warning);
+    for (const row of result.rows) {
+      const key = sliceKey(row, measureMembers);
+      const existing = byKey.get(key) ?? {};
+      byKey.set(key, { ...existing, ...row });
     }
   }
 
-  try {
-    const { rows } = await load(query, { securityContext });
-    return { rows, mode: 'live', securityContext, sql };
-  } catch (e) {
-    // Sidecar sync lag: the measure isn't in Cube yet. Soft PENDING (no rows), never a 400.
-    // (A PERMANENTLY missing member was already caught above by the served-model guard.)
-    if (isCubeSyncLag(e)) return { rows: [], mode: 'live', pending: true, securityContext, sql };
-    throw e;
-  }
+  const rows = [...byKey.values()];
+  // Honesty precedence: an outage (no number at all) is the loudest; then unresolved members;
+  // then a dropped slice dimension. Any of these makes the degradation LOUD, never silent.
+  const warning =
+    unavailableWarning ??
+    (missing.length > 0 ? missingMembersWarning(missing) : undefined) ??
+    (droppedMembers.size > 0 ? dropWarnings[0] : undefined);
+
+  const missingMembers = missing.length > 0 ? missing : droppedMembers.size > 0 ? [...droppedMembers] : undefined;
+
+  return {
+    rows: unavailableWarning ? [] : rows,
+    mode,
+    securityContext,
+    sql,
+    ...(pending ? { pending: true } : {}),
+    ...(warning ? { warning } : {}),
+    ...(missingMembers ? { missingMembers } : {}),
+  };
+}
+
+/** The honest degradation notice for members no visible metric owns (Northpeak fix). */
+export function missingMembersWarning(missing: string[]): string {
+  const dims = missing.map((m) => `“${m}”`).join(', ');
+  return (
+    `${missing.length === 1 ? 'Member' : 'Members'} ${dims} ${missing.length === 1 ? 'is' : 'are'} not available ` +
+    'in the governed model — the metric may be undefined, out of your entitlement, or the ' +
+    'dataset’s domain table may be missing/stale and need re-promotion. ' +
+    'The chart is NOT silently un-grouped; fix the model to render it as designed.'
+  );
 }
