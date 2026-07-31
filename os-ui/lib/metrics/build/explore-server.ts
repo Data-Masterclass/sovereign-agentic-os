@@ -3,9 +3,10 @@
  */
 import 'server-only';
 import { config } from '@/lib/core/config';
-import { cubeLoad, queryRun } from '@/lib/infra/governed';
+import { queryRun } from '@/lib/infra/governed';
 import { type DelegatedToken, propagate } from '../../data/identity.ts';
 import type { Dataset, Measure } from '../../data/index.ts';
+import { personalSchema, domainSchema, physicalSlug } from '../../data/store-fqn.ts';
 import {
   type CubeExecutor,
   type Granularity,
@@ -15,38 +16,49 @@ import {
   previewTrinoSql,
   sqlRowsToExploreRows,
 } from '../explorer.ts';
-import { isCubeSyncLag, liveMetricsReachable } from './live-clients.ts';
+import { liveMetricsReachable } from './live-clients.ts';
 
 /**
- * Server boundary for the metric explorer. Runs the explore query UNDER the viewer's
- * delegated identity (R3) against LIVE Cube when reachable (cubeLoad forwards the
- * securityContext so Cube's RLS applies), or an honest offline-MOCK that itself filters
- * by the viewer's `securityContext.region` — so the "two viewers see different rows"
- * guarantee holds on a laptop too, not just on the cluster. Returns the rows + the SQL
- * the analyst would drop to, labelled live/offline-mock.
+ * Server boundary for the metric explorer. Since the metrics→Trino migration (Phase 1) a
+ * metric is a VIRTUAL DECLARATION served as ONE governed Trino SELECT over the physical gold
+ * mart, run UNDER the viewer's delegated identity (R3 — Trino/OPA row/column security). Cube
+ * is OFF the metric read path (it stays on dashboards until Phase 2). On the local/teaching
+ * laptop, where no backend exists, an honest offline-MOCK filters by the viewer's region so
+ * the "two viewers see different rows" guarantee still holds. Returns the rows + the exact
+ * SQL that ran, honestly labelled 'live (sql)' / 'offline-mock' / 'unavailable'.
  */
 
-/** 'live (sql)' = the pre-save preview: the number came from a governed Trino query
- *  (the draft measure isn't in Cube yet), honestly labelled apart from Cube-served.
- *  'unavailable' = a REAL deployment whose Cube semantic layer is unreachable: we
- *  return NO number rather than a fabricated offline-mock one (see metricsMustBeLive). */
+/** 'live (sql)' = the number came from a governed Trino query over the gold mart (the
+ *  metric read path since Phase 1), honestly labelled. 'unavailable' = a REAL deployment
+ *  whose query backend is unreachable: we return NO number rather than a fabricated
+ *  offline-mock one (see metricsMustBeLive). */
 export type ExploreMode = 'live' | 'live (sql)' | 'offline-mock' | 'unavailable';
 
 /**
- * On a real deployment (OS_PROFILE ≠ 'local') the Cube semantic layer is a required
- * backend — if it's unreachable that's an OUTAGE, and a metric must say so, never
- * fabricate a plausible number. The offline-mock resolver (a hash-seeded demo value)
- * is ONLY legitimate on the local/laptop teaching flow, where no cluster exists and
- * the mock is clearly a worked example. This gate is what stops a made-up 286,936
- * from being shown as if it were a real KPI.
+ * On a real deployment (OS_PROFILE ≠ 'local') the governed query backend is required — if
+ * it's unreachable that's an OUTAGE, and a metric must say so, never fabricate a plausible
+ * number. The offline-mock resolver (a hash-seeded demo value) is ONLY legitimate on the
+ * local/laptop teaching flow, where no cluster exists and the mock is clearly a worked
+ * example. This gate is what stops a made-up 286,936 from being shown as if it were a real KPI.
  */
 function metricsMustBeLive(): boolean {
   return config.deploymentProfile !== 'local';
 }
 
-/** The live executor: governed Cube load with the viewer's securityContext (R3 RLS). */
-function liveExecutor(): CubeExecutor {
-  return { load: (query, securityContext) => cubeLoad(query, { securityContext }).then((r) => ({ rows: r.rows })) };
+/**
+ * The TIER-AWARE physical gold FQN a metric read targets — the linchpin of personal-dataset
+ * metrics (metrics→Trino migration, Phase 1). A PERSONAL dataset (tier 'dataset') has its gold
+ * ONLY in the owner's private lane (`iceberg.personal_<owner>.gold_<slug>`); a governed
+ * asset/product has it in the domain schema (`iceberg.<domain>.gold_<slug>` — the same FQN
+ * Cube bound to). The read runs under the delegated token's SUBJECT (R3): for a personal
+ * dataset that subject IS the owner, so Trino/OPA's `is_owned_personal` grants the private
+ * lane; for a governed dataset the subject's groups carry the domain membership OPA gates on.
+ * TIER, not ownership, decides the schema — a governed dataset's owner still reads the shared
+ * domain mart, exactly as every other viewer does (and as the pre-migration preview did).
+ */
+function goldReadTarget(dataset: Dataset, token: DelegatedToken): string {
+  const schema = dataset.tier === 'dataset' ? personalSchema(dataset.owner) : domainSchema(dataset.domain);
+  return `iceberg.${schema}.gold_${physicalSlug(dataset)}`;
 }
 
 /**
@@ -101,10 +113,10 @@ export async function exploreMetric(
   token: DelegatedToken,
   slice: { dimensions?: string[]; timeDimension?: string; granularity?: Granularity; limit?: number } = {},
   opts: {
-    /** True when this measure is NOT yet persisted on the dataset (a pre-save draft):
-     *  Cube cannot know the member (the sidecar only ships persisted metrics), so the
-     *  preview runs as governed SQL through Trino instead — never a Cube query for a
-     *  member that can't exist. Saved + delivered metrics keep the Cube path. */
+    /** LEGACY flag from the Cube era: true when this measure is a pre-save draft. Since the
+     *  metrics→Trino migration (Phase 1) EVERY metric read serves via governed Trino SQL —
+     *  Cube is off the read path — so this no longer decides the read path (the SQL path is
+     *  primary for saved + unsaved alike). Kept for call-site compatibility. */
     unsaved?: boolean;
   } = {},
 ): Promise<ExploreServerResult> {
@@ -138,17 +150,24 @@ export async function exploreMetric(
         }
       : {}),
   };
-  if (live && opts.unsaved) {
-    // PRE-SAVE preview: compute the same number as ONE governed Trino SELECT over the
-    // gold mart, under the viewer's delegated identity (R3 — Trino/OPA row security),
-    // honestly labelled 'live (sql)'. After save/delivery the Cube path takes over.
+  if (live) {
+    // PRIMARY read path (metrics→Trino migration, Phase 1): compute the number as ONE
+    // governed Trino SELECT over the TIER-AWARE physical gold mart, under the viewer's
+    // delegated identity (R3 — Trino/OPA row/column security applies exactly as the working
+    // "live (sql)" preview already did). Cube is off the metric read path — this serves saved
+    // AND unsaved metrics alike, so a personal-dataset metric (read AS its owner from the
+    // personal lane) now works. Honestly labelled 'live (sql)'.
     const identities = propagate(token); // throws if the token isn't user-delegated (R2/R3)
-    const sql = previewTrinoSql(dataset, measure, spec);
+    const readTarget = goldReadTarget(dataset, token);
+    const sql = previewTrinoSql(dataset, measure, spec, readTarget);
     if (!sql) {
-      // No faithful plain-SQL form (rolling window / running total): the value is
-      // computed by Cube after Publish — honest pending, not a fabricated number.
+      // No faithful plain-SQL form (rolling window / running total): the value is computed by
+      // Cube after Publish (Phase 2) — honest pending, never a fabricated number.
       return { ...base, rows: [], securityContext: identities.cube.securityContext, pending: true };
     }
+    // Run AS the delegated token's SUBJECT (R3 — the viewer's uid). For a personal dataset the
+    // subject owns the `personal_<uid>` schema (OPA `is_owned_personal`); for a governed
+    // dataset the subject's groups carry the domain membership OPA gates the domain mart on.
     const result = await queryRun(sql, identities.trino.user);
     return {
       ...base,
@@ -158,13 +177,8 @@ export async function exploreMetric(
       securityContext: identities.cube.securityContext,
     };
   }
-  try {
-    const result = await explore(spec, token, live ? liveExecutor() : mockExecutor());
-    return { ...base, rows: result.rows, securityContext: result.securityContext };
-  } catch (e) {
-    // Sidecar sync lag: the measure isn't in Cube yet. Soft PENDING (200, no rows) so the
-    // preview shows "syncing", never a scary 400. Any other error propagates as an error.
-    if (isCubeSyncLag(e)) return { ...base, rows: [], securityContext: {}, pending: true };
-    throw e;
-  }
+  // Not live: the honest offline-MOCK (local/teaching only — the honesty gate above already
+  // returned 'unavailable' on a real deployment). Cube's in-memory mock enforces the same RLS.
+  const result = await explore(spec, token, mockExecutor());
+  return { ...base, rows: result.rows, securityContext: result.securityContext };
 }

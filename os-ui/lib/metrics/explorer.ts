@@ -156,14 +156,17 @@ function trinoAggExpr(m: Measure, siblings: Measure[]): string | null {
 }
 
 /**
- * The PRE-SAVE preview SQL: the same number the metric will produce, computed as one
- * governed Trino SELECT over the dataset's gold mart. Used when the draft measure is
- * not yet delivered to Cube (nothing to resolve there — the sidecar only ships
- * PERSISTED metrics), so the preview never queries Cube for a member that can't
- * exist. Returns null when the measure has no faithful plain-SQL form (rolling
- * window / running total) — those preview only after Publish.
+ * The metric SERVE SQL (metrics→Trino migration, Phase 1): the number a metric produces,
+ * computed as ONE governed Trino SELECT over the dataset's PHYSICAL gold mart. This is now
+ * the PRIMARY read path for every metric (saved + unsaved) — Cube is off the metric read
+ * path — so it must target the TIER-AWARE physical gold FQN: the caller passes `readTarget`
+ * (personal `iceberg.personal_<owner>.gold_<slug>` for a personal dataset, the domain
+ * `iceberg.<domain>.gold_<slug>` otherwise). The gold FQN's SCHEMA and the Trino session
+ * principal must agree (see exploreMetric) — that is why the target is resolved server-side
+ * and threaded in, not derived here. Returns null when the measure has no faithful plain-SQL
+ * form (rolling window / running total) — those serve via Cube after Publish (Phase 2).
  */
-export function previewTrinoSql(dataset: Dataset, measure: Measure, spec: ExploreSpec): string | null {
+export function previewTrinoSql(dataset: Dataset, measure: Measure, spec: ExploreSpec, readTarget?: string): string | null {
   const agg = trinoAggExpr(measure, dataset.measures);
   if (!agg) return null;
   const dims = spec.dimensions.map((d) => d.split('.')[1]);
@@ -179,7 +182,8 @@ export function previewTrinoSql(dataset: Dataset, measure: Measure, spec: Explor
   // NO comment header: this SQL is EXECUTED via the governed query path (queryRun),
   // which rejects any statement containing `--` or `/* */`. Explanatory comments live
   // only on the display-side dropToSql above, which is never executed.
-  return `SELECT ${select}\nFROM ${goldMartFqn(dataset)}${groupBy}\nLIMIT ${spec.limit ?? 100}`;
+  const from = readTarget ?? goldMartFqn(dataset);
+  return `SELECT ${select}\nFROM ${from}${groupBy}\nLIMIT ${spec.limit ?? 100}`;
 }
 
 /** Map a governed-SQL result (column names + string rows) onto the SAME row shape the

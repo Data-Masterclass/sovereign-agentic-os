@@ -304,23 +304,27 @@ test('a named cross-domain individual grant lets that user view the asset', () =
   assert.doesNotThrow(() => getDataset(id, kenji));
 });
 
-test('define a metric requires a built Gold version on a GOVERNED asset/product', () => {
+test('define a metric requires only a built Gold (any tier) — metrics→Trino migration Phase 1', () => {
   const id = seedOrders();
-  // (1) no Gold yet → blocked on Gold
+  // (1) no Gold yet → still blocked on Gold (the metric serves SQL over the gold mart)
   assert.throws(
     () => defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'net_amount' }),
     /Gold/,
   );
   buildVersion(id, amir, 'gold', { quality: 'passing', artifact: 'gold/mart_orders.sql' });
-  // (2) Gold built but still a private dataset → blocked (Cube reads the Trino mart)
-  assert.throws(
-    () => defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'net_amount' }),
-    /governed/i,
-  );
-  // (3) promote to a governed asset → the metric is allowed; artifacts regenerate
+  // (2) Gold built on a PERSONAL dataset → now ALLOWED (served as governed Trino SQL over the
+  // owner's personal lane). The portable MetricFlow semantic declaration is emitted; the CUBE
+  // artifacts are NOT (a broken cube must never be registered on personal gold — #91 preserved).
+  const personal = defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'net_amount' });
+  assert.equal(personal.measures[0].name, 'revenue');
+  const personalFiles = listFiles(id, amir).files;
+  assert.ok(personalFiles.some((f) => f.startsWith('semantic/')), 'semantic declaration emitted on personal gold');
+  assert.ok(!personalFiles.some((f) => f.endsWith('.cube.yml')), 'no cube artifact on personal gold');
+  // (3) promote to a governed asset → the cube artifacts now regenerate too.
   transition(id, sara, 'promote', { visibility: 'domain' });
-  const d = defineMeasure(id, sara, { name: 'revenue', type: 'sum', sql: 'net_amount' });
-  assert.equal(d.measures[0].name, 'revenue');
+  defineMeasure(id, sara, { name: 'order_count', type: 'count', sql: '' });
+  const governedFiles = listFiles(id, sara).files;
+  assert.ok(governedFiles.some((f) => f.endsWith('.cube.yml')), 'cube artifact regenerates once governed');
 });
 
 test('files: dataset.yaml is editable, native artifacts are Build-materialised', () => {

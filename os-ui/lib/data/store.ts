@@ -30,7 +30,8 @@ import {
   visibilityFor,
 } from './dataset-schema.ts';
 import { transparencyGate, gateReason } from './transparency.ts';
-import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml, metricGoldReady } from './metrics.ts';
+import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml, metricSqlReady, metricCubeReady } from './metrics.ts';
+import { SEMANTIC_ARTIFACT, scaffoldSemanticYaml } from './semantic.ts';
 import { assetTarget, productTarget, personalSchema, domainSchema, physicalSlug, versionTarget } from './store-fqn.ts';
 import { config } from '../core/config.ts';
 import { osMirror } from '../infra/os-mirror.ts';
@@ -939,28 +940,35 @@ function carryQuality(d: Dataset, layer: Layer): Quality {
 }
 
 /**
- * Define a metric on the GOLD version — the Cube handover (data-ui-ux.md). Requires
- * a built Gold version AND a GOVERNED tier (asset/product): Cube reads the Trino
- * mart, so the Gold must already live in Trino (data-architecture-model.md — metrics
- * are on gold assets/products, not personal datasets). Regenerates the cube_dbt Cube
- * model + the dbt exposure artifacts so they always match the measures.
+ * Define a metric on the GOLD version. Since the metrics→Trino migration (Phase 1) a metric
+ * is a VIRTUAL DECLARATION served as governed Trino SQL over the physical gold mart, read AS
+ * the viewer — so defining one requires ONLY a BUILT Gold, of ANY tier (a personal dataset's
+ * metric reads its own personal lane). We always emit the portable MetricFlow-style SEMANTIC
+ * declaration; the Cube model + dbt exposure artifacts are emitted ONLY for a CUBE-ready
+ * (governed) dataset, so a broken cube is never registered on personal gold (#91 preserved).
  */
 export function defineMeasure(id: string, user: Principal, measure: Measure): Dataset {
   const rec = get(id);
   const d = metricScopeOf(rec, user);
-  // FAIL-CLOSED metric gate (#91): a cube can only bind to a governed DOMAIN gold mart.
-  // Registering a metric on un-promoted personal gold builds a broken cube (Cube's
-  // `cube-*` principal can't read the personal lane). Refuse with the clear message.
-  const ready = metricGoldReady(d);
+  // SQL-READY gate: define/serve need only a built Gold (any tier) — the metric serves as
+  // governed Trino SQL run AS the viewer. Refuse a dataset with no built Gold honestly.
+  const ready = metricSqlReady(d);
   if (!ready.ok) fail(ready.message ?? 'This dataset is not ready for a metric', 400);
   if (d.measures.some((m) => m.name === measure.name)) fail(`Measure '${measure.name}' already defined`, 409);
   d.measures.push(measure);
-  // Regenerate the tool-native artifacts from the updated dataset (cube_dbt + exposure).
-  rec.artifacts = {
+  // The portable MetricFlow-style semantic declaration is ALWAYS emitted (it is served as
+  // Trino SQL, works on personal gold). The cube_dbt model + dbt exposure are CUBE artifacts
+  // — emit them ONLY when the dataset is cube-ready (governed), never on personal gold where
+  // the cube's `cube-*` principal can't read the personal lane (#91 fail-closed preserved).
+  const artifacts: Record<string, string> = {
     ...(rec.artifacts ?? {}),
-    [CUBE_ARTIFACT(d)]: scaffoldCubeYaml(d),
-    [EXPOSURE_ARTIFACT]: scaffoldExposureYaml(d),
+    [SEMANTIC_ARTIFACT(d)]: scaffoldSemanticYaml(d),
   };
+  if (metricCubeReady(d).ok) {
+    artifacts[CUBE_ARTIFACT(d)] = scaffoldCubeYaml(d);
+    artifacts[EXPOSURE_ARTIFACT] = scaffoldExposureYaml(d);
+  }
+  rec.artifacts = artifacts;
   persist(rec, d, { author: user.id, summary: `define metric ${measure.name}` });
   return d;
 }
@@ -983,10 +991,15 @@ export function removeMeasure(id: string, user: Principal, measureName: string):
   if (d.measures.length === before) return { removed: false }; // nothing to drop
   const artifacts = { ...(rec.artifacts ?? {}) };
   if (d.measures.length > 0) {
-    artifacts[CUBE_ARTIFACT(d)] = scaffoldCubeYaml(d);
-    artifacts[EXPOSURE_ARTIFACT] = scaffoldExposureYaml(d);
+    artifacts[SEMANTIC_ARTIFACT(d)] = scaffoldSemanticYaml(d);
+    // Cube artifacts only for a cube-ready (governed) dataset — never registered on personal gold.
+    if (metricCubeReady(d).ok) {
+      artifacts[CUBE_ARTIFACT(d)] = scaffoldCubeYaml(d);
+      artifacts[EXPOSURE_ARTIFACT] = scaffoldExposureYaml(d);
+    }
   } else {
     // Last measure gone → the metric artifacts no longer exist for this dataset.
+    delete artifacts[SEMANTIC_ARTIFACT(d)];
     delete artifacts[CUBE_ARTIFACT(d)];
     delete artifacts[EXPOSURE_ARTIFACT];
   }
@@ -1419,8 +1432,13 @@ export function listFiles(id: string, user: Principal): { files: string[]; datas
     const a = d.versions[l].artifact;
     if (a) files.push(a);
   }
-  // Metric artifacts (cube_dbt model + dbt exposure) appear once a measure exists.
-  if (d.measures.length > 0) files.push(CUBE_ARTIFACT(d), EXPOSURE_ARTIFACT);
+  // Metric artifacts appear once a measure exists: the portable MetricFlow semantic
+  // declaration always; the cube_dbt model + dbt exposure only for a cube-ready (governed)
+  // dataset (they aren't emitted on personal gold).
+  if (d.measures.length > 0) {
+    files.push(SEMANTIC_ARTIFACT(d));
+    if (metricCubeReady(d).ok) files.push(CUBE_ARTIFACT(d), EXPOSURE_ARTIFACT);
+  }
   return { files, dataset: d };
 }
 
@@ -1432,7 +1450,7 @@ export function readFile(id: string, user: Principal, path: string): RepoFile {
     return { path, content, sha: sha(content) };
   }
   const isVersion = (['bronze', 'silver', 'gold'] as Layer[]).some((l) => d.versions[l].artifact === path);
-  const isMetric = d.measures.length > 0 && (path === CUBE_ARTIFACT(d) || path === EXPOSURE_ARTIFACT);
+  const isMetric = d.measures.length > 0 && (path === SEMANTIC_ARTIFACT(d) || path === CUBE_ARTIFACT(d) || path === EXPOSURE_ARTIFACT);
   if (!isVersion && !isMetric) fail(`Path '${path}' is not part of this dataset`, 404);
   // The authored/generated body if present; otherwise a stub the live adapter
   // (Phase 6) materialises on Build.

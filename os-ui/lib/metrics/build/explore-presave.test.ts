@@ -2,14 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 /**
- * #142 — the PRE-SAVE preview decision logic in exploreMetric:
- *
- *   • UNSAVED draft + live  → the preview NEVER queries Cube for a member that can't
- *     exist yet; it runs the computed SQL through the governed Trino path (queryRun)
- *     under the viewer's delegated identity, labelled 'live (sql)';
- *   • saved + delivered     → the existing Cube path, unchanged ('live');
- *   • unsaved rolling window → no faithful plain-SQL form: honest pending, no rows
- *     fabricated, and STILL no Cube query.
+ * The metric SERVE logic in exploreMetric — metrics→Trino migration (Phase 1). Cube is OFF
+ * the metric read path: EVERY metric read (saved + unsaved) is served as one governed Trino
+ * SELECT over the TIER-AWARE physical gold mart, run under the viewer's delegated identity
+ * (R3), labelled 'live (sql)'. Personal-dataset metrics read the owner's personal lane; a
+ * rolling-window measure has no faithful SQL form so it is honest-pending (Phase 2 via Cube).
  *
  * We stub the governed helpers (record calls, no network) and force live mode.
  */
@@ -66,15 +63,32 @@ test('UNSAVED draft → governed SQL path: queryRun under the viewer, mode live 
   assert.equal(r.pending, undefined, 'a computable preview genuinely completes');
 });
 
-test('saved + delivered (default) → the Cube path, unchanged', async () => {
+test('SAVED metric → ALSO governed SQL now (Cube off the read path): live (sql), no Cube query', async () => {
+  // The migration's core behaviour change: a saved metric no longer resolves via Cube; it is
+  // served as the SAME governed Trino SELECT as an unsaved draft.
   calls.queryRun = []; calls.cubeLoad = 0;
   const dataset = goldSales();
   const r = await exploreMetric(dataset, dataset.measures[0], domainToken());
 
-  assert.equal(r.mode, 'live');
-  assert.equal(calls.cubeLoad, 1, 'resolved via governed Cube');
-  assert.equal(calls.queryRun.length, 0, 'no Trino detour once Cube serves the member');
-  assert.deepEqual(r.rows, [{ 'Sales.revenue': 999 }]);
+  assert.equal(r.mode, 'live (sql)', 'served directly as governed Trino SQL, not via Cube');
+  assert.equal(calls.cubeLoad, 0, 'Cube is OFF the metric read path (Phase 1)');
+  assert.equal(calls.queryRun.length, 1, 'exactly one governed Trino query');
+  assert.match(calls.queryRun[0].sql, /FROM iceberg\.sales\.gold_sales/, 'reads the DOMAIN gold mart');
+  assert.deepEqual(r.rows, [{ 'Sales.revenue': 123.5 }]);
+});
+
+test('PERSONAL dataset metric → reads the OWNER personal lane, run AS the owner uid', async () => {
+  // The migration ENABLES metrics on personal gold: tier "dataset" → the private lane FQN,
+  // read under the owner's delegated subject (OPA is_owned_personal grants it).
+  calls.queryRun = []; calls.cubeLoad = 0;
+  const dataset = goldSales({ tier: 'dataset', visibility: 'private' });
+  const r = await exploreMetric(dataset, dataset.measures[0], domainToken());
+
+  assert.equal(r.mode, 'live (sql)');
+  assert.equal(calls.cubeLoad, 0);
+  assert.equal(calls.queryRun.length, 1);
+  assert.match(calls.queryRun[0].sql, /FROM iceberg\.personal_amir\.gold_sales/, 'reads the owner private lane');
+  assert.equal(calls.queryRun[0].principal, 'amir', 'runs AS the owner uid (is_owned_personal)');
 });
 
 test('UNSAVED rolling window → honest pending (no SQL form, still no Cube query, no fake rows)', async () => {

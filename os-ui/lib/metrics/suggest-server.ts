@@ -8,7 +8,7 @@ import { listPillars } from '@/lib/strategy/pillars';
 import { resolveManual, type ManualScope } from '@/lib/knowledge/manual';
 import { getDomainKnowledge, listWorkflows, getWorkflow } from '@/lib/knowledge/store';
 import { listDatasets, getDataset } from '@/lib/data/store';
-import { metricGoldReady } from '@/lib/data/metrics';
+import { metricSqlReady } from '@/lib/data/metrics';
 import {
   suggestMetricsMessages,
   parseCandidates,
@@ -95,7 +95,7 @@ function gatherDatasets(user: CurrentUser): SuggestDataset[] {
         description: (d.description ?? '').trim(),
         columns: d.columns.map((c) => ({ name: c.name, description: c.description })),
         measures: d.measures.map((m) => ({ name: m.name, type: m.type })),
-        deliverable: metricGoldReady(d).ok,
+        deliverable: metricSqlReady(d).ok,
       });
     } catch {
       /* dataset unreadable between list + get → skip (fail-closed) */
