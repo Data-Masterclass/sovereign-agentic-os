@@ -18,6 +18,7 @@ import {
   type KeyAdapt,
 } from '@/lib/data/transform';
 import type { GoldSpec } from '@/lib/data/dataset-schema';
+import { domainSchema } from '@/lib/data/store-fqn';
 import GoldJoinGraph, { type JoinGraphTable, type JoinGraphEdge } from './GoldJoinGraph';
 import ExplorePanel from './ExplorePanel';
 
@@ -170,7 +171,8 @@ export default function GoldJoinPanel({
   }, [datasetName, baseCols, activeJoins, byId]);
 
   const target = useMemo(() => {
-    const schema = tier === 'dataset' ? personalSchema(owner) : domain;
+    // domainSchema, not the raw domain id (hyphens → underscores) — see RefinePanel.
+    const schema = tier === 'dataset' ? personalSchema(owner) : domainSchema(domain);
     return `iceberg.${schema}.gold_${slug(datasetName)}`;
   }, [tier, owner, domain, datasetName]);
 
@@ -196,7 +198,7 @@ export default function GoldJoinPanel({
 
   // Assemble the compiler inputs from the guided state (client preview == server plan).
   const spec = useMemo(() => {
-    const schema = tier === 'dataset' ? personalSchema(owner) : domain;
+    const schema = tier === 'dataset' ? personalSchema(owner) : domainSchema(domain);
     const s = slug(datasetName);
     const source = `iceberg.${schema}.silver_${s}`;
     const jin: JoinInput[] = activeJoins.map((j) => {

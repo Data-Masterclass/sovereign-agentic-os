@@ -17,6 +17,7 @@ import {
   type TransformOp,
 } from '@/lib/data/transform';
 import { inferColumnTypes, type TypeSuggestion } from '@/lib/data/infer-types';
+import { domainSchema } from '@/lib/data/store-fqn';
 import ExplorePanel from './ExplorePanel';
 
 type Layer = 'silver' | 'gold';
@@ -158,7 +159,10 @@ function SilverBuilder({
 
   // Target/source FQNs mirror the server's silverPlan (personal schema for an
   // un-promoted dataset, else the domain) so the preview matches what runs.
-  const schema = tier === 'dataset' ? personalSchema(owner) : domain;
+  // domainSchema, not the raw domain id: a hyphenated domain (agentic-leader-…)
+  // maps to an underscored physical schema — the raw id fails the FQN guard and
+  // silently disabled the Build button for every promoted dataset in one.
+  const schema = tier === 'dataset' ? personalSchema(owner) : domainSchema(domain);
   const s = slug(datasetName);
   const source = `iceberg.${schema}.bronze_${s}`;
   const target = `iceberg.${schema}.silver_${s}`;
