@@ -17,10 +17,12 @@ export const GET = withRoute(async ({ user, req }) => {
   return NextResponse.json(listDatasets(user, { includeArchived }));
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
-export const POST = withRoute<Record<string, string>, { name?: string; domain?: string }>(async ({ user, body }) => {
+export const POST = withRoute<Record<string, string>, { name?: string; domain?: string; origin?: string }>(async ({ user, body }) => {
   if (!body.name || !body.name.trim()) {
     return NextResponse.json({ error: 'a dataset needs a name' }, { status: 400 });
   }
-  const d = createDataset(user, { name: body.name, domain: body.domain });
+  // TWO-PATH create: 'curated' marks a dataset born from EXISTING governed datasets
+  // (the Gold join path). Anything else — absent, 'ingest', garbage — is classic ingest.
+  const d = createDataset(user, { name: body.name, domain: body.domain, origin: body.origin === 'curated' ? 'curated' : undefined });
   return NextResponse.json({ dataset: d }, { status: 201 });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

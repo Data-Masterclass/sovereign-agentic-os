@@ -16,6 +16,7 @@ import FolderLayout from '@/components/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@/lib/folders/client';
 import { useFolders } from '@/lib/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
+import { useToast } from '@/components/core/Toast';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility } from '@/lib/core/lifecycle';
@@ -152,13 +153,19 @@ function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomai
 function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
   const { user } = useUser();
   const confirm = useConfirm();
+  const toast = useToast();
   // Importing a marketplace product grants the WHOLE domain read access, so the store
   // gates it to Builder/Admin (store.importProduct 403s others). Only surface Import to
   // those roles — no dead control (mirrors CertifyPanel's "no dead controls").
   const canImport = !!user && roleAtLeast(user.role, 'builder');
   const [groups, setGroups] = useState<Groups | null>(null);
   const [err, setErr] = useState('');
-  const [creating, setCreating] = useState(false);
+  // TWO-PATH create. `+ New dataset` opens a calm two-card chooser FIRST:
+  //   'choose'  — pick a path (📥 ingest new data · 🔗 curate from existing datasets)
+  //   'ingest'  — name it, create, land in the builder at Ingest (today's path, unchanged)
+  //   'curated' — name it, create with origin:'curated', land in the builder with a toast
+  //               pointing at the Harmonize stage (where the existing Gold join builder lives)
+  const [creating, setCreating] = useState<false | 'choose' | 'ingest' | 'curated'>(false);
   const [newName, setNewName] = useState('');
   // Scope switcher — the Files-tab mental model: All · My · Shared · Marketplace.
   const [scope, setScope] = useState<DatasetScope>('all');
@@ -215,19 +222,27 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
 
   const create = useCallback(async () => {
     const name = newName.trim();
-    if (!name) return;
+    if (!name || creating === false || creating === 'choose') return;
+    const curated = creating === 'curated';
     setErr('');
     try {
       const res = await fetch('/api/data/datasets', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name }),
+        // The curated birth is recorded on the record (nil-safe; absent ⇒ ingest).
+        body: JSON.stringify({ name, ...(curated ? { origin: 'curated' } : {}) }),
       });
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Could not create'); return; }
       setNewName(''); setCreating(false);
+      // The builder lands a fresh dataset at Ingest (its stage derives from real state,
+      // no preselect hook exists) — so the curated path gets a clear signpost to the
+      // Harmonize stage, where the existing join-existing-datasets builder lives.
+      if (curated) {
+        toast.info('Curated dataset created — open the Harmonize stage to join existing datasets into it.');
+      }
       onOpen(data.dataset.id); // navigates to the new dataset's detail view
     } catch (e) { setErr((e as Error).message); }
-  }, [newName, onOpen]);
+  }, [newName, creating, onOpen, toast]);
 
   const importProduct = useCallback(async (id: string) => {
     setErr('');
@@ -422,17 +437,57 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
             </button>
           ) : null}
           {creating ? (
-            <div className="row" style={{ gap: 8 }}>
-              <input autoFocus value={newName} placeholder="Dataset name" onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') create(); if (e.key === 'Escape') setCreating(false); }} />
-              <button className="btn" onClick={create} disabled={!newName.trim()}>Create</button>
-              <button className="btn ghost" onClick={() => { setCreating(false); setNewName(''); }}>Cancel</button>
-            </div>
+            <button className="btn ghost" onClick={() => { setCreating(false); setNewName(''); }}>Cancel</button>
           ) : (
-            <button className="btn" onClick={() => setCreating(true)}>+ New dataset</button>
+            <button className="btn" onClick={() => setCreating('choose')}>+ New dataset</button>
           )}
         </div>
       </div>
+
+      {/* TWO-PATH create — the chooser comes FIRST (before any naming). Two big, calm
+          cards on the Agents tmpl-card primitive: bring NEW data in (today's ingest
+          path, unchanged), or CURATE a new dataset from existing governed ones (the
+          reuse path — the Harmonize-stage join builder). Pick one, then name it. */}
+      {creating === 'choose' ? (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3 style={{ marginTop: 0, marginBottom: 2 }}>New dataset</h3>
+          <p className="hint" style={{ marginTop: 0 }}>How should it start?</p>
+          <div className="tmpl-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', maxWidth: 680, gap: 12 }}>
+            <button type="button" className="tmpl-card" style={{ padding: '18px 20px', gap: 6 }} onClick={() => setCreating('ingest')}>
+              <span aria-hidden style={{ fontSize: 24, lineHeight: 1 }}>📥</span>
+              <span className="tmpl-label" style={{ fontSize: 14 }}>Ingest new data</span>
+              <span className="tmpl-blurb" style={{ fontSize: 12 }}>Bring a file or extract in — it lands as raw Bronze you refine through the stages.</span>
+            </button>
+            <button type="button" className="tmpl-card" style={{ padding: '18px 20px', gap: 6 }} onClick={() => setCreating('curated')}>
+              <span aria-hidden style={{ fontSize: 24, lineHeight: 1 }}>🔗</span>
+              <span className="tmpl-label" style={{ fontSize: 14 }}>Create a curated dataset</span>
+              <span className="tmpl-blurb" style={{ fontSize: 12 }}>Combine existing governed datasets you can already read into one new joined dataset.</span>
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Path picked → name it. Same create endpoint for both; the curated path adds
+          origin:'curated' and, on create, a toast signpost to the Harmonize stage. */}
+      {creating === 'ingest' || creating === 'curated' ? (
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+            <button className="btn ghost" onClick={() => setCreating('choose')}>← Back</button>
+            <strong>{creating === 'curated' ? '🔗 Create a curated dataset' : '📥 Ingest new data'}</strong>
+          </div>
+          <p className="hint" style={{ marginTop: 8 }}>
+            {creating === 'curated'
+              ? 'Name it — then join existing datasets into it at the Harmonize stage.'
+              : 'Name it — then bring your file or extract in at the Ingest stage.'}
+          </p>
+          <div className="row" style={{ gap: 8 }}>
+            <input autoFocus value={newName} placeholder="Dataset name" style={{ flex: 1, maxWidth: 380 }}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') create(); if (e.key === 'Escape') setCreating('choose'); }} />
+            <button className="btn" onClick={create} disabled={!newName.trim()}>Create</button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Import from warehouse — materialize a registered warehouse table into a
           governed dataset. Opens the browse → name → import panel; on success it

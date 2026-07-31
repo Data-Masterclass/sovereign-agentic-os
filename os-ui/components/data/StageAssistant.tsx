@@ -12,37 +12,53 @@ export type DefineDraft = {
   checks?: Array<{ rule: string; column: string; values?: string[]; min?: number; max?: number }>;
 };
 
+/** The Clean-stage draft shape — a Silver cleaning proposal the RefinePanel can apply as-is. */
+export type CleanDraft = {
+  columns?: Array<{
+    name: string;
+    cast?: string;
+    clean?: 'trim' | 'normalize';
+    rename?: string;
+    key?: boolean;
+    drop?: boolean;
+  }>;
+  dedupe?: boolean;
+};
+
 /**
- * The per-stage Data assistant slot — a calm, collapsible helper mounted in StageShell's
- * `assistant` render prop. It POSTs the stage + context to
- * /api/data/datasets/[id]/assistant (the ONE governed model) and renders the suggestion.
+ * AiAction — a big, clear per-stage AI button built into each Data stage's natural flow
+ * (top of the stage, next to its heading), replacing the old collapsible bottom
+ * "Assistant" box. It POSTs the stage + context to /api/data/datasets/[id]/assistant
+ * (the ONE governed model) and shows the result inline right below the button.
  * Honest about failure: a 503 (no model configured) or 402 (cost cap) surfaces as the
  * route's own message, never a fake answer.
  *
- * Two shapes: prose stages (Ingest/Refine/Publish) render the returned `text`; Define
- * consumes the returned `draft` via `onDraft` (so the parent can pre-fill the docs +
- * quality-rule editor) and shows a short confirmation instead of prose.
+ * Two shapes: prose stages (ingest/harmonize/validate/publish) render the returned
+ * `text`; draft stages (define/clean) hand the returned `draft` to `onDraft` (the
+ * parent applies it into its editors) and show `successText` as a calm confirmation.
  */
-export default function StageAssistant({
+export default function AiAction<Draft = unknown>({
   datasetId,
-  label,
-  cta,
   stage,
+  cta,
   payload,
   onDraft,
+  successText,
   disabled,
+  title,
 }: {
   datasetId: string;
-  /** One-line "what this helper does here". */
-  label: string;
-  /** The action button text, e.g. "Draft docs & rules". */
+  stage: 'define' | 'clean' | 'ingest' | 'harmonize' | 'validate' | 'publish';
+  /** The action text, e.g. "Draft documentation" — rendered big with a ✨ prefix. */
   cta: string;
-  stage: 'define' | 'ingest' | 'harmonize' | 'validate' | 'publish';
   /** Extra fields merged into the request body (name/prompt/columns/reason/measures). */
   payload: () => Record<string, unknown>;
-  /** Define only — receive the drafted docs + quality rules. */
-  onDraft?: (draft: DefineDraft) => void;
+  /** Draft stages only — receive the structured draft to apply into the stage's editors. */
+  onDraft?: (draft: Draft) => void;
+  /** Draft stages only — the calm confirmation shown once the draft was applied. */
+  successText?: string;
   disabled?: boolean;
+  title?: string;
 }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -60,12 +76,10 @@ export default function StageAssistant({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
-      if (onDraft && (data as { draft?: unknown }).draft && typeof (data as { draft: unknown }).draft === 'object') {
-        const draft = (data as { draft: DefineDraft }).draft;
-        onDraft(draft);
-        const cols = draft.columns?.length ?? 0;
-        const checks = draft.checks?.length ?? 0;
-        setText(`Drafted a description, ${cols} column note${cols === 1 ? '' : 's'} and ${checks} quality rule${checks === 1 ? '' : 's'} — review them below.`);
+      const draft = (data as { draft?: unknown }).draft;
+      if (onDraft && draft && typeof draft === 'object') {
+        onDraft(draft as Draft);
+        setText(successText ?? 'Done — review the result below.');
       } else {
         setText((data as { text?: string }).text ?? '');
       }
@@ -76,19 +90,27 @@ export default function StageAssistant({
     }
   };
 
+  // The status area resets the heading cascade (uppercase/letter-spacing/display font)
+  // so AI prose reads calmly even when the button lives inside a section-title row.
+  const statusReset = {
+    marginTop: 8,
+    maxWidth: 560,
+    textAlign: 'left',
+    textTransform: 'none',
+    letterSpacing: 'normal',
+    fontFamily: 'var(--font-body)',
+    fontWeight: 400,
+  } as const;
+
   return (
-    <div className="passthrough-note" style={{ marginTop: 16 }}>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-        <div>
-          <span style={{ fontWeight: 600 }}>Assistant</span>
-          <div className="hint" style={{ marginTop: 2 }}>{label}</div>
-        </div>
-        <button className="btn ghost sm" onClick={ask} disabled={busy || disabled}>
-          {busy ? <span className="spin" /> : cta}
-        </button>
-      </div>
-      {error ? <div className="error" style={{ marginTop: 10 }}>{error}</div> : null}
-      {text ? <p className="hint" style={{ marginTop: 10, whiteSpace: 'pre-wrap' }}>{text}</p> : null}
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 0 }}>
+      <button className="btn primary" onClick={ask} disabled={busy || disabled} title={title}>
+        {busy ? <span className="spin" /> : <>✨ {cta}</>}
+      </button>
+      {error ? <div className="error" style={statusReset}>{error}</div> : null}
+      {text ? (
+        <p className="hint" style={{ ...statusReset, marginBottom: 0, whiteSpace: 'pre-wrap' }}>{text}</p>
+      ) : null}
     </div>
   );
 }

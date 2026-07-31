@@ -581,7 +581,7 @@ export function listAskable(user: Principal): AskableDataset[] {
 
 // ------------------------------------------------------------- create / edit --
 
-export function createDataset(user: Principal, input: { name: string; domain?: string }): Dataset {
+export function createDataset(user: Principal, input: { name: string; domain?: string; origin?: 'ingest' | 'curated' }): Dataset {
   ensureSeeded();
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0] ?? 'platform';
   const wanted = (input.name.trim() || 'Untitled dataset').toLowerCase();
@@ -615,6 +615,8 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
     // #155: every NEW dataset gets the domain-namespaced cube identity. Existing datasets
     // (no marker) keep their legacy un-namespaced name — so live Cube models are untouched.
     cubeNamespaced: true,
+    // TWO-PATH create: only the curated birth is recorded (absent ⇒ ingest, byte-stable).
+    ...(input.origin === 'curated' ? { origin: 'curated' as const } : {}),
   };
   const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
   ds().store.set(rec.id, rec);

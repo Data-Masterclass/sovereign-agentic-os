@@ -114,6 +114,18 @@ test('folder is byte-stable: omitted at root, round-trips off-root', () => {
   assert.equal(parseDataset(yaml).folder, '/contracts');
 });
 
+test('origin is byte-stable: omitted unless curated, round-trips when curated', () => {
+  // The classic ingest birth serializes EXACTLY as before — no `origin:` key — so no
+  // pre-two-path record churns; even an explicit 'ingest' collapses to absent.
+  const plain = serializeDataset(sample());
+  assert.ok(!/(^|\n)origin:/.test(plain), 'ingest-born dataset must not emit an origin key');
+  assert.equal(serializeDataset(sample({ origin: 'ingest' })), plain);
+  // A curated birth is written and survives a round-trip.
+  const yaml = serializeDataset(sample({ origin: 'curated' }));
+  assert.match(yaml, /(^|\n)origin: curated/);
+  assert.equal(parseDataset(yaml).origin, 'curated');
+});
+
 test('bad shape throws a DatasetError (store never holds garbage)', () => {
   assert.throws(() => parseDataset({ tier: 'nonsense' }), DatasetError);
   assert.throws(() => parseDataset({ grants: [{ grantee: { kind: 'bogus', id: 'x' } }] }), DatasetError);

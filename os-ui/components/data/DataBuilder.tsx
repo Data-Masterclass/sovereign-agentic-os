@@ -14,7 +14,7 @@ import ExplorePanel from './ExplorePanel';
 import BronzePanel from './BronzePanel';
 import SyncPanel from './SyncPanel';
 import QualityFixPanel from './QualityFixPanel';
-import StageAssistant, { type DefineDraft } from './StageAssistant';
+import AiAction, { type CleanDraft, type DefineDraft } from './StageAssistant';
 import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
@@ -445,6 +445,8 @@ export default function DataBuilder({
   const [docsBusy, setDocsBusy] = useState(false);
   const [docsErr, setDocsErr] = useState('');
   const [docsOk, setDocsOk] = useState('');
+  // ---- AI "Clean it up" proposal — filled into the Silver RefinePanel when it arrives ----
+  const [cleanProposal, setCleanProposal] = useState<CleanDraft | null>(null);
 
   // ---- data-quality rules editor ----
   const [ruleKind, setRuleKind] = useState<DataCheckRule>('not_null');
@@ -962,15 +964,18 @@ export default function DataBuilder({
             <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
           </span>
         ) : (
-          <h2 className="stepper-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+          <h2 className="stepper-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', display: 'flex', alignItems: 'center', gap: 10 }}>
             {dataset.name}
+            {/* Rename must be DISCOVERABLE — a labelled button, not a bare glyph
+                (user feedback 2026-07-31: the pencil-only affordance read as missing). */}
             {canEdit ? (
               <button
-                className="rename-pencil"
+                className="btn ghost sm"
+                style={{ flex: 'none' }}
                 onClick={() => { setNameDraft(dataset.name); setRenameErr(''); setRenaming(true); }}
-                title="Rename this dataset"
+                title="Rename this dataset (the physical table slug stays stable)"
                 aria-label="Rename this dataset"
-              >✎</button>
+              >✎ Rename</button>
             ) : null}
           </h2>
         )}
@@ -1052,48 +1057,6 @@ export default function DataBuilder({
         ctx={ctx}
         onState={setStage}
         ariaLabel="Dataset stages"
-        assistant={(st) =>
-          st.id === 'ingest' ? (
-            <StageAssistant
-              datasetId={dataset.id} stage="ingest"
-              label="Explain an ingest error in plain language." cta="Explain the error"
-              payload={() => ({ name: dataset.name, reason: previewErr || (preview && !preview.available ? preview.reason : '') })}
-            />
-          ) : st.id === 'define' ? (
-            <StageAssistant
-              datasetId={dataset.id} stage="define"
-              label="Draft a description and column notes from the schema." cta="Draft docs"
-              disabled={!canEdit}
-              payload={() => ({ name: dataset.name, prompt: desc, columns: colNames.length ? colNames : cols.map((c) => c.name).filter(Boolean) })}
-              onDraft={applyDraft}
-            />
-          ) : st.id === 'harmonize' ? (
-            <StageAssistant
-              datasetId={dataset.id} stage="harmonize"
-              label={`"Clean/join for me" — a proposal, plus a CTAS-error explainer.`} cta="Propose a clean/join"
-              payload={() => ({ name: dataset.name, columns: colNames })}
-            />
-          ) : st.id === 'validate' ? (
-            <StageAssistant
-              datasetId={dataset.id} stage="validate"
-              label={suggestions.length ? 'Explain the checks suggested from the profile.' : 'Suggest quality rules for the documented columns.'}
-              cta={suggestions.length ? 'Explain suggestions' : 'Suggest rules'}
-              payload={() => ({
-                name: dataset.name,
-                columns: colNames,
-                // When we have deterministic profile→rule suggestions, hand them to the
-                // model as rendered lines so it explains WHY each matters (rationale layer).
-                ...(suggestions.length ? { suggestions: suggestions.map((s) => `${suggestionText(s)} — ${s.evidence}`) } : {}),
-              })}
-            />
-          ) : st.id === 'publish' ? (
-            <StageAssistant
-              datasetId={dataset.id} stage="publish"
-              label="Suggest governed measures to define before you promote." cta="Suggest measures"
-              payload={() => ({ name: dataset.name, columns: colNames, measures: dataset.measures.map((m) => m.name) })}
-            />
-          ) : null /* Talk to Data (in Publish) is its own governed NL→SQL surface, not the assistant slot */
-        }
       >
         {/* ─────────────── Ingest ─────────────── */}
         {stage.current === 'ingest' ? (
@@ -1124,6 +1087,18 @@ export default function DataBuilder({
               </>
             ) : null}
 
+            {/* Something went wrong bringing data in → one big AI explainer, right where
+                the error shows (the old bottom "Assistant" box, built into the flow). */}
+            {previewErr || (preview && !preview.available) ? (
+              <div className="row" style={{ justifyContent: 'flex-end', marginTop: 18 }}>
+                <AiAction
+                  datasetId={dataset.id} stage="ingest" cta="Explain this error"
+                  title="AI explains this ingest error in plain language"
+                  payload={() => ({ name: dataset.name, reason: previewErr || (preview && !preview.available ? preview.reason : '') })}
+                />
+              </div>
+            ) : null}
+
             {/* Raw preview of what landed — the governed SELECT * LIMIT 50. */}
             {rowPreviewBlock('Raw preview', 'A read-only scan of the first 50 rows through the governed query path (Trino, OPA-checked). Nothing is previewed until a layer is built.')}
           </div>
@@ -1132,6 +1107,27 @@ export default function DataBuilder({
         {/* ─────────────── Define ─────────────── */}
         {stage.current === 'define' ? (
           <div {...anchorAttr(ANCHORS.data.document)}>
+            {/* AI, built into the flow: two big actions at the top of the stage — draft the
+                documentation, or fill the Silver cleaning plan below ("Clean it up"). */}
+            {canEdit ? (
+              <div className="row" style={{ justifyContent: 'flex-end', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 14 }}>
+                <AiAction<DefineDraft>
+                  datasetId={dataset.id} stage="define" cta="Draft documentation"
+                  title="AI drafts the description, column notes and quality rules from the schema"
+                  payload={() => ({ name: dataset.name, prompt: desc, columns: colNames.length ? colNames : cols.map((c) => c.name).filter(Boolean) })}
+                  onDraft={applyDraft}
+                  successText="Drafted the description, column notes and quality rules — review them below."
+                />
+                <AiAction<CleanDraft>
+                  datasetId={dataset.id} stage="clean" cta="Clean it up"
+                  title={canRefineSilver ? 'AI fills the Silver cleaning plan below — types, trims, key, dedupe' : 'Bring in a Bronze layer first (in Ingest)'}
+                  disabled={!canRefineSilver}
+                  payload={() => ({ name: dataset.name, prompt: desc, columns: colNames })}
+                  onDraft={setCleanProposal}
+                  successText="Cleaning plan filled in below — review it, then Build Silver."
+                />
+              </div>
+            ) : null}
             <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
               Bronze is in — now the columns are real. Describe what each column means, then clean and conform the data into the Silver layer.
             </p>
@@ -1196,6 +1192,7 @@ export default function DataBuilder({
                     owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
                     columns={colNames}
                     silverBuilt={canHarmonizeGold}
+                    proposal={cleanProposal}
                     stage={{ layer: 'silver', copy: { title: 'Clean it up', subtitle: '', tool: '' } }}
                     onCommitted={() => commitStageStay('define')}
                     onContinue={() => continueFrom('define')}
@@ -1214,9 +1211,17 @@ export default function DataBuilder({
             </p>
             {canEdit ? (
               <>
-                <div className="section-title" style={{ marginTop: 0 }} {...anchorAttr(ANCHORS.data.harmonize)}>
+                <div className="section-title" style={{ marginTop: 0, alignItems: 'flex-start', flexWrap: 'wrap' }} {...anchorAttr(ANCHORS.data.harmonize)}>
                   Harmonize — Gold
                   <span className="hint" style={{ margin: '0 0 0 10px' }}>join trusted datasets into one governed Gold table</span>
+                  {/* AI, built into the flow: propose the clean/join right where you build it. */}
+                  <span style={{ marginLeft: 'auto' }}>
+                    <AiAction
+                      datasetId={dataset.id} stage="harmonize" cta="Propose a clean/join"
+                      title="AI proposes how to clean and join this dataset into Gold"
+                      payload={() => ({ name: dataset.name, columns: colNames })}
+                    />
+                  </span>
                 </div>
                 {staleVsBronze(dataset.versions, 'gold') ? (
                   <p className="hint" style={{ margin: '0 0 10px' }}>
@@ -1251,6 +1256,22 @@ export default function DataBuilder({
         {/* ─────────────── Validate ─────────────── */}
         {stage.current === 'validate' ? (
           <div {...anchorAttr(ANCHORS.data.validate)}>
+            {/* AI, built into the flow: one big action at the top — explain the profile's
+                suggested checks, or (none yet) suggest which quality rules to author. */}
+            <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 14 }}>
+              <AiAction
+                datasetId={dataset.id} stage="validate"
+                cta={suggestions.length ? 'Explain suggested checks' : 'Suggest quality rules'}
+                title={suggestions.length ? 'AI explains what each suggested check guards against' : 'AI suggests quality rules for the documented columns'}
+                payload={() => ({
+                  name: dataset.name,
+                  columns: colNames,
+                  // When we have deterministic profile→rule suggestions, hand them to the
+                  // model as rendered lines so it explains WHY each matters (rationale layer).
+                  ...(suggestions.length ? { suggestions: suggestions.map((s) => `${suggestionText(s)} — ${s.evidence}`) } : {}),
+                })}
+              />
+            </div>
             {/* Health — one glanceable 0–100 + trend, computed from real runs (honest 'unknown'
                 when nothing ran, never a fake 100). The exception (failing) is what shouts. */}
             <div className="guided-panel" style={{ padding: '14px 18px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
@@ -1456,6 +1477,15 @@ export default function DataBuilder({
         {/* ─────────────── Publish (Metrics & Usage) ─────────────── */}
         {stage.current === 'publish' ? (
           <div>
+            {/* AI, built into the flow: one big action at the top — suggest the governed
+                measures worth defining before promoting/certifying. */}
+            <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 14 }}>
+              <AiAction
+                datasetId={dataset.id} stage="publish" cta="Suggest measures"
+                title="AI suggests governed measures to define before you promote"
+                payload={() => ({ name: dataset.name, columns: colNames, measures: dataset.measures.map((m) => m.name) })}
+              />
+            </div>
             {/* Sharing / promotion — the governed promote/certify block (moved to the top:
                 deciding who sees this dataset comes before building on it). Logic unchanged. */}
             <div className="section-title" style={{ marginTop: 0 }} {...anchorAttr(ANCHORS.data.publish)}>Sharing</div>

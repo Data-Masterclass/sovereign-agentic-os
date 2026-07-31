@@ -20,8 +20,8 @@ export const dynamic = 'force-dynamic';
  * (Use has no assistant — Talk to Data is its own governed NL→SQL surface.)
  */
 
-type Stage = 'define' | 'ingest' | 'harmonize' | 'validate' | 'publish';
-const STAGES = new Set<Stage>(['define', 'ingest', 'harmonize', 'validate', 'publish']);
+type Stage = 'define' | 'clean' | 'ingest' | 'harmonize' | 'validate' | 'publish';
+const STAGES = new Set<Stage>(['define', 'clean', 'ingest', 'harmonize', 'validate', 'publish']);
 
 /** Build the stage-scoped system + user prompt pair from the request body. */
 function promptFor(stage: Stage, body: Record<string, unknown>): { system: string; user: string; json: boolean } {
@@ -44,6 +44,16 @@ function promptFor(stage: Stage, body: Record<string, unknown>): { system: strin
         system:
           'You help a business user document a new dataset. Given its name and the list of its column names, draft (1) a one-line plain-language description, (2) a short meaning for each column, and (3) a few sensible data-quality rules. Return ONLY a JSON object (no prose, no code fences): {"description": string, "columns": [{"name": string, "description": string}], "checks": [{"rule": one of "not_null"|"not_blank"|"unique"|"accepted_values"|"range", "column": string, "values"?: string[], "min"?: number, "max"?: number}]}. Use only the provided column names. Prefer not_null on identifiers, unique on a primary key, range on obvious numeric bounds. 3-6 checks.',
         user: `Dataset: ${name || '(unnamed)'}\nColumns: ${columns.join(', ') || '(none documented yet)'}\nWhat it is (optional): ${prompt}\nReturn the JSON draft.`,
+      };
+    case 'clean':
+      // Structured Silver-clean proposal — fills the guided RefinePanel controls
+      // ("Clean it up" one-click). Constrained to the REAL columns + the exact op
+      // vocabulary the panel offers, so every suggestion is applyable as-is.
+      return {
+        json: true,
+        system:
+          'You propose how to clean a raw (all-text) Bronze table into a tidy Silver layer. Given the column names, return ONLY a JSON object (no prose, no code fences): {"columns": [{"name": string, "cast"?: one of "varchar"|"integer"|"bigint"|"double"|"boolean"|"date"|"timestamp", "clean"?: "trim"|"normalize", "rename"?: string, "key"?: boolean, "drop"?: boolean}], "dedupe"?: boolean}. Use ONLY the provided column names. Cast obviously-numeric columns (counts, amounts, ids that are purely numeric) and obvious dates/timestamps; mark exactly one likely primary-key column with "key": true; suggest "trim" for free-text columns; rename only to fix clear casing/typo issues (snake_case); "drop" only clearly-useless columns (empty/unnamed). Set "dedupe": true when a primary key is marked. Omit fields you have no opinion on — fewer, confident suggestions beat many weak ones.',
+        user: `Dataset: ${name || '(unnamed)'}\nBronze columns (all text): ${columns.join(', ') || '(none)'}\nWhat it is (optional): ${prompt}\nReturn the JSON clean proposal.`,
       };
     case 'ingest':
       return {

@@ -13,6 +13,37 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.28] — 2026-07-31
+
+### Changed
+- **Data tab: AI is built into each stage's natural flow — the bottom "Assistant"
+  box is gone.** Every stage now carries big, clear ✨ actions at the top instead
+  of a collapsible helper at the bottom:
+  · **Define (Silver):** "✨ Draft documentation" (fills the description, column
+    notes and quality rules) and "✨ Clean it up" — a NEW structured assistant
+    stage that proposes casts/trim/rename/primary-key/drop/dedupe constrained to
+    the real columns and **fills the guided Silver cleaning controls directly**
+    (the user reviews, then builds — the AI never builds on its own).
+  · **Ingest:** "✨ Explain this error" — appears only when an ingest/preview
+    error actually exists, right next to it.
+  · **Harmonize:** "✨ Propose a clean/join" in the section-title row.
+  · **Validate:** "✨ Explain suggested checks" (with profile suggestions) or
+    "✨ Suggest quality rules".
+  · **Publish:** "✨ Suggest measures" before the Sharing section.
+  Same governed, audited, cost-capped assistant model underneath — only the UX
+  moved into the flow.
+
+### Added
+- **Two-path dataset creation.** "+ New dataset" now opens a calm chooser first:
+  **📥 Ingest new data** (bring a file/extract in — raw Bronze) or **🔗 Create a
+  curated dataset** (combine existing governed datasets you can read into one new
+  joined dataset — names it, then guides you to the Harmonize join builder). The
+  long-planned split, finally first-class; `origin: 'curated'` is recorded
+  nil-safely (no migration, byte-stable yaml for existing records).
+- **Dataset rename is now discoverable** — the bare ✎ pencil glyph next to the
+  name is a labelled "✎ Rename" button (the physical table slug stays stable, as
+  before).
+
 ## [os-ui 0.6.27] — 2026-07-31
 
 ### Added

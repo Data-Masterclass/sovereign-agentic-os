@@ -269,6 +269,12 @@ export type Dataset = {
    *  pre-existing datasets stay un-emitted until they are re-promoted (zero migration,
    *  byte-stable). Set at promote time. Omitted from yaml when false. */
   gitBacked?: boolean;
+  /** How the dataset was born (TWO-PATH create). `'curated'` = built from EXISTING
+   *  governed datasets via the Gold join (the reuse path); `'ingest'`/ABSENT = the classic
+   *  bring-a-file/extract path. Only `'curated'` is ever written to the yaml — absent means
+   *  ingest, so every pre-existing record serializes exactly as before (byte-stable, zero
+   *  migration; the `cubeNamespaced` precedent). Purely descriptive: no gate reads it. */
+  origin?: 'ingest' | 'curated';
   /** STALE-DOMAIN-TABLE marker (Northpeak fix). Set true when a PROMOTED dataset's
    *  personal-lane Gold is REBUILT but the governed domain table (`iceberg.<domain>.gold_<slug>`
    *  — the FQN Cube + every consumer reads) was not re-materialized in the same act, so the
@@ -615,6 +621,8 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   const gitBacked = doc.gitBacked === true ? true : undefined;
   // Northpeak fix: absent/false ⇒ the domain table is in sync (or never promoted).
   const domainTableStale = doc.domainTableStale === true ? true : undefined;
+  // TWO-PATH create: only 'curated' is stored; absent ⇒ ingest (every pre-existing record).
+  const origin = doc.origin === 'curated' ? ('curated' as const) : undefined;
 
   return {
     version: doc.version !== undefined ? String(doc.version) : '1',
@@ -643,6 +651,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     ...(cubeNamespaced ? { cubeNamespaced } : {}),
     ...(gitBacked ? { gitBacked } : {}),
     ...(domainTableStale ? { domainTableStale } : {}),
+    ...(origin ? { origin } : {}),
   };
 }
 
@@ -717,6 +726,8 @@ export function serializeDataset(d: Dataset): string {
   // Omit-when-false (byte-stable): only a promoted dataset whose domain table drifted
   // from a rebuild carries this; every in-sync/un-promoted dataset serializes as before.
   if (d.domainTableStale) doc.domainTableStale = true;
+  // Omit-unless-curated (byte-stable): the classic ingest path serializes exactly as before.
+  if (d.origin === 'curated') doc.origin = 'curated';
   return yaml.dump(doc, { lineWidth: 100, noRefs: true });
 }
 

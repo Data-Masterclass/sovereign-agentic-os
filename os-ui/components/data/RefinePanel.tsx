@@ -3,8 +3,9 @@
  */
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '@/components/core/Toast';
+import type { CleanDraft } from './StageAssistant';
 import {
   compileSilver,
   personalSchema,
@@ -68,6 +69,7 @@ function SilverBuilder({
   tier,
   columns,
   silverBuilt,
+  proposal,
   onCommitted,
   onContinue,
 }: {
@@ -80,6 +82,9 @@ function SilverBuilder({
   /** Whether a Silver version already exists. Drives the "already built ✓ — explore /
    *  rebuild" state so cleaning is never a one-shot black box (mirrors the Gold panel). */
   silverBuilt: boolean;
+  /** An AI "Clean it up" proposal — applied into the guided controls when it arrives
+   *  (never auto-builds; the user reviews and clicks Build). */
+  proposal?: CleanDraft | null;
   /** Reload the dataset (record the ✓) WITHOUT auto-advancing — the user stays on the
    *  Silver step to explore the result and chooses when to move on to Gold. */
   onCommitted: (stages: unknown[]) => void;
@@ -101,6 +106,26 @@ function SilverBuilder({
   const toast = useToast();
 
   const set = (c: string, patch: Partial<ColUI>) => setUi((m) => ({ ...m, [c]: { ...FRESH, ...m[c], ...patch } }));
+
+  // Apply an AI "Clean it up" proposal into the guided controls when one arrives.
+  // Junk-tolerant by construction: unknown columns and unknown casts are ignored, every
+  // field falls back to its FRESH default. Fills the editors only — never builds.
+  useEffect(() => {
+    if (!proposal) return;
+    const casts = new Set<string>(CAST_TYPES);
+    for (const p of proposal.columns ?? []) {
+      if (!p || typeof p.name !== 'string' || !cols.includes(p.name)) continue;
+      set(p.name, {
+        type: p.cast && casts.has(p.cast) ? (p.cast as CastType) : 'keep',
+        clean: p.clean === 'trim' || p.clean === 'normalize' ? p.clean : 'none',
+        rename: typeof p.rename === 'string' ? p.rename : '',
+        key: !!p.key,
+        drop: !!p.drop,
+      });
+    }
+    setDedupe(!!proposal.dedupe);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proposal]);
 
   // Target/source FQNs mirror the server's silverPlan (personal schema for an
   // un-promoted dataset, else the domain) so the preview matches what runs.
@@ -329,6 +354,7 @@ export default function RefinePanel({
   tier,
   columns,
   silverBuilt,
+  proposal,
   onCommitted,
   onContinue,
 }: {
@@ -340,6 +366,8 @@ export default function RefinePanel({
   columns: string[];
   silverBuilt: boolean;
   stage: Stage;
+  /** An AI "Clean it up" proposal — filled into the guided controls when it arrives. */
+  proposal?: CleanDraft | null;
   onCommitted: (stages: unknown[]) => void;
   onContinue: () => void;
 }) {
@@ -352,6 +380,7 @@ export default function RefinePanel({
       tier={tier}
       columns={columns}
       silverBuilt={silverBuilt}
+      proposal={proposal}
       onCommitted={onCommitted}
       onContinue={onContinue}
     />
