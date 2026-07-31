@@ -1,0 +1,196 @@
+{{- if .Values.forgejoDiskAlert.enabled }}
+{{- /*
+  Forgejo registry disk-usage alert CronJob (Software-tab reliability follow-up).
+
+  WHY — Forgejo's in-cluster container registry accumulates app-build images on
+  the gitea-shared-storage PVC (/data/packages). With no heads-up, that volume
+  filled silently and every Software-tab app build failed with docker-push 500s.
+  cron.cleanup_packages (values.yaml gitea.config) now reclaims blobs; THIS makes
+  the fill-up loud BEFORE it breaks anything.
+
+  WHAT — daily (default hourly) it READS /data usage inside the forgejo pod
+  (kubectl get pod + exec df — no mutation) and, when usage crosses
+  `thresholdPct`, WARNS: always to its own log, and by email through the SAME
+  in-cluster `mail` submission Service (STARTTLS 587) that every other alert uses
+  (skipped, log-only, when `mail.host` is empty).
+
+  HOW — an initContainer (kubectl image) does the read and drops the usage +
+  a ready-to-send RFC822 message into a shared emptyDir; the main container
+  (curl image) reads that and, on breach, relays the message via curl's SMTP
+  submission (--ssl STARTTLS), matching the maddy relay os-ui uses. Split by
+  image because each job needs a different toolchain, and initContainers give
+  the read-then-mail ordering a plain multi-container pod would not.
+
+  GATED OFF by default (`forgejoDiskAlert.enabled=false`) — mirrors
+  metrics.alerts.cron. `helm template` at defaults emits nothing.
+*/}}
+{{- $a := .Values.forgejoDiskAlert }}
+{{- $m := $a.mail | default dict }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: forgejo-disk-alert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "forgejo-disk-alert") | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: forgejo-disk-alert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  # Read-only: locate the forgejo pod, then read its /data usage via exec.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: forgejo-disk-alert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: forgejo-disk-alert
+subjects:
+  - kind: ServiceAccount
+    name: forgejo-disk-alert
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: forgejo-disk-alert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "forgejo-disk-alert") | nindent 4 }}
+spec:
+  schedule: {{ $a.schedule | default "0 * * * *" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" . "component" "forgejo-disk-alert") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: forgejo-disk-alert
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "soa.podSecurityContext" . | nindent 12 }}
+            runAsUser: 1000
+          initContainers:
+            # 1. Read /data usage inside the forgejo pod and stage a WARN message.
+            - name: measure
+              image: {{ $a.kubectlImage | default "bitnami/kubectl:1.31" | quote }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+                readOnlyRootFilesystem: true
+              env:
+                - name: NS
+                  value: {{ .Release.Namespace | quote }}
+                - name: THRESHOLD
+                  value: {{ $a.thresholdPct | default 80 | quote }}
+                - name: MAIL_FROM
+                  value: {{ $m.from | default "noreply@sovereign-agentic.com" | quote }}
+                - name: MAIL_TO
+                  value: {{ $m.to | default "admin@datamasterclass.com" | quote }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  : > /work/send   # default: nothing to send
+                  POD=$(kubectl -n "$NS" get pod \
+                    -l app.kubernetes.io/name=forgejo \
+                    -o jsonpath='{.items[0].metadata.name}')
+                  if [ -z "$POD" ]; then
+                    echo "FATAL: no forgejo pod found in $NS" >&2
+                    exit 1
+                  fi
+                  # Percent-used integer for /data (strip the trailing %).
+                  USE=$(kubectl -n "$NS" exec "$POD" -c forgejo -- \
+                    df -P /data | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+                  echo "forgejo /data usage: ${USE}% (threshold ${THRESHOLD}%)"
+                  if [ "$USE" -ge "$THRESHOLD" ]; then
+                    echo "WARN: forgejo /data at ${USE}% — registry disk filling; app builds at risk" >&2
+                    {
+                      echo "From: $MAIL_FROM"
+                      echo "To: $MAIL_TO"
+                      echo "Subject: [WARN] Forgejo registry disk at ${USE}% (>= ${THRESHOLD}%)"
+                      echo
+                      echo "Forgejo /data (gitea-shared-storage PVC) is ${USE}% full on pod ${POD}."
+                      echo "This is the container-registry app-build image store (/data/packages)."
+                      echo "cron.cleanup_packages prunes daily; if this persists, grow the PVC or"
+                      echo "shorten OLDER_THAN. A full volume breaks Software-tab builds (push 500s)."
+                    } > /work/send
+                  fi
+              volumeMounts:
+                - { name: work, mountPath: /work }
+          containers:
+            # 2. Relay the staged WARN (if any) through the in-cluster mailer.
+            - name: notify
+              image: {{ $a.image | default "curlimages/curl:8.11.1" | quote }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+                readOnlyRootFilesystem: true
+              env:
+                - name: MAIL_HOST
+                  value: {{ $m.host | default "" | quote }}
+                - name: MAIL_PORT
+                  value: {{ $m.port | default 587 | quote }}
+                - name: MAIL_FROM
+                  value: {{ $m.from | default "noreply@sovereign-agentic.com" | quote }}
+                - name: MAIL_TO
+                  value: {{ $m.to | default "admin@datamasterclass.com" | quote }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  if [ ! -s /work/send ]; then
+                    echo "OK: forgejo /data under threshold — no alert."
+                    exit 0
+                  fi
+                  if [ -z "$MAIL_HOST" ]; then
+                    echo "WARN staged but mail.host empty — log-only. Message:"
+                    cat /work/send
+                    exit 0
+                  fi
+                  echo "Relaying disk WARN via smtp://$MAIL_HOST:$MAIL_PORT (STARTTLS)"
+                  # --ssl = upgrade to STARTTLS on submission; -k = trust the
+                  # mailer's self-signed submission cert (same as os-ui's trust).
+                  curl -sS --ssl -k \
+                    --url "smtp://$MAIL_HOST:$MAIL_PORT" \
+                    --mail-from "$MAIL_FROM" \
+                    --mail-rcpt "$MAIL_TO" \
+                    --upload-file /work/send
+                  echo "sent"
+              volumeMounts:
+                - { name: work, mountPath: /work }
+              resources:
+                requests: { cpu: 25m, memory: 32Mi }
+                limits: { cpu: 200m, memory: 64Mi }
+          volumes:
+            - name: work
+              emptyDir: {}
+{{- end }}

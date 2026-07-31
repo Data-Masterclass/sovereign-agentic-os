@@ -289,7 +289,100 @@ function ciWorkflow(slug: string): string {
     '          echo "${REG_PASS}" | docker login "${REGISTRY}" -u "${OWNER}" --password-stdin\n' +
     '          docker build -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" ./src\n' +
     '          docker push "${IMAGE}:${TAG}"\n' +
-    '          docker push "${IMAGE}:latest"\n'
+    '          docker push "${IMAGE}:latest"\n' +
+    prunePackagesStep()
+  );
+}
+
+/**
+ * How many container image versions to RETAIN per app (the newest N by push
+ * time). The floating `:latest` tag is ALWAYS kept on top of these — it is what
+ * the runner pulls (lib/software/runner.ts appImageRef). Everything older than
+ * the newest N immutable SHA tags is pruned so Forgejo's in-cluster registry
+ * volume (/data/packages) stops growing without bound and filling the disk.
+ */
+export const REGISTRY_KEEP_VERSIONS = 2;
+
+/** One container package version as returned by Forgejo's packages REST API. */
+export type ForgejoPackageVersion = {
+  /** The image tag (a 12-char commit SHA for builds; `latest` for the float). */
+  version: string;
+  /** RFC3339 push time — the newest N are retained. */
+  created_at?: string;
+};
+
+/** Tags that must NEVER be pruned regardless of age (the runner pulls these). */
+const PROTECTED_TAGS = new Set(['latest']);
+
+/**
+ * PURE prune policy (unit-tested): given every container version of ONE app and
+ * how many to keep, return the tags to DELETE — the versions OLDER than the
+ * newest `keep` immutable tags, sorted by push time (newest first; ties broken
+ * by tag so the result is deterministic). Protected floating tags (`latest`)
+ * are never returned. When `keep` or fewer prunable versions exist, returns [].
+ * The CI prune step (prunePackagesStep) implements this exact policy in shell;
+ * this function is the executable spec the test pins.
+ */
+export function containerVersionsToPrune(
+  versions: ForgejoPackageVersion[],
+  keep: number = REGISTRY_KEEP_VERSIONS,
+): string[] {
+  const prunable = versions.filter((v) => v.version && !PROTECTED_TAGS.has(v.version));
+  const sorted = [...prunable].sort((a, b) => {
+    const ta = Date.parse(a.created_at ?? '') || 0;
+    const tb = Date.parse(b.created_at ?? '') || 0;
+    if (tb !== ta) return tb - ta; // newest first
+    return a.version < b.version ? 1 : a.version > b.version ? -1 : 0;
+  });
+  return sorted.slice(Math.max(0, keep)).map((v) => v.version);
+}
+
+/**
+ * The final, FAIL-OPEN CI step that prunes old container versions after a
+ * successful push. Runs the SAME policy as containerVersionsToPrune: list this
+ * app's container versions via Forgejo's packages REST API (same host + same
+ * REGISTRY_PASS basic-auth as the push), keep the newest N SHA tags plus the
+ * protected `latest`, and DELETE the rest. JSON is parsed with `node` — the
+ * ci-builder job image is node:20-based (jq is NOT installed there), so node is
+ * the one parser guaranteed present. Wrapped so ANY failure (API hiccup,
+ * permission) prints a warning and exits 0 — a prune failure must NEVER fail a
+ * green build.
+ */
+function prunePackagesStep(keep: number = REGISTRY_KEEP_VERSIONS): string {
+  // Newest-first sort matches containerVersionsToPrune exactly (created_at desc,
+  // tie-broken by tag desc). The node one-liner avoids single quotes so it can
+  // ride inside the shell's single-quoted -e argument.
+  const nodeSort =
+    'let d="";process.stdin.on("data",(c)=>d+=c).on("end",()=>{try{' +
+    'const n=process.env.REPO;const vs=JSON.parse(d)' +
+    '.filter((p)=>p.name===n&&p.version!=="latest")' +
+    '.sort((a,b)=>((Date.parse(b.created_at||"")||0)-(Date.parse(a.created_at||"")||0))||' +
+    '(a.version<b.version?1:a.version>b.version?-1:0));' +
+    'console.log(vs.map((v)=>v.version).join("\\n"))}catch(e){}})';
+  return (
+    '      - name: Prune old registry versions (keep newest ' + keep + ' + latest)\n' +
+    '        env: { REG_PASS: "${{ secrets.REGISTRY_PASS }}" }\n' +
+    '        run: |\n' +
+    '          set +e\n' +
+    '          KEEP=' + keep + '\n' +
+    '          API="http://${OWNER}:${REG_PASS}@${REGISTRY}/api/v1"\n' +
+    '          # List this app\'s container versions (newest first), drop the\n' +
+    '          # protected `latest` float, then delete everything past the newest KEEP.\n' +
+    '          # JSON parsed with node (the job image is node:20 — jq is not installed).\n' +
+    '          PRUNABLE="$(curl -fsS "${API}/packages/${OWNER}?type=container&q=${REPO}&limit=1000" \\\n' +
+    "            | REPO=\"${REPO}\" node -e '" + nodeSort + "' 2>/dev/null)\"\n" +
+    '          if [ -z "${PRUNABLE}" ]; then echo "prune: nothing to prune"; exit 0; fi\n' +
+    '          # Everything after the newest KEEP immutable tags is deleted.\n' +
+    '          OLD="$(echo "${PRUNABLE}" | tail -n +$((KEEP+1)))"\n' +
+    '          [ -z "${OLD}" ] && { echo "prune: <= ${KEEP} versions — nothing to prune"; exit 0; }\n' +
+    '          echo "${OLD}" | while IFS= read -r V; do\n' +
+    '            [ -z "${V}" ] && continue\n' +
+    '            echo "prune: deleting ${REPO}:${V}"\n' +
+    '            curl -fsS -X DELETE "${API}/packages/${OWNER}/container/${REPO}/${V}" \\\n' +
+    '              || echo "prune: delete of ${V} failed (ignored)"\n' +
+    '          done\n' +
+    '          echo "prune: done (fail-open)"\n' +
+    '          exit 0\n'
   );
 }
 

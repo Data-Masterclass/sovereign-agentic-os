@@ -533,6 +533,34 @@ function dotforgejoWorkflow(slug: string): ScaffoldFile {
       '          docker build -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" ./src',
       '          docker push "${IMAGE}:${TAG}"',
       '          docker push "${IMAGE}:latest"',
+      // Final FAIL-OPEN step: keep only the newest 2 SHA tags (+ the protected
+      // `latest`) so the in-cluster Forgejo registry volume (/data/packages)
+      // never fills. Same policy as apps.ts containerVersionsToPrune; kept inline
+      // here (no import) so this scaffold module stays free of app-server deps.
+      '      - name: Prune old registry versions (keep newest 2 + latest)',
+      '        env: { REG_PASS: "${{ secrets.REGISTRY_PASS }}" }',
+      '        run: |',
+      '          set +e',
+      '          KEEP=2',
+      '          API="http://${OWNER}:${REG_PASS}@${REGISTRY}/api/v1"',
+      // JSON parsed with node — the ci-builder job image is node:20 (jq is NOT installed).
+      "          PRUNABLE=\"$(curl -fsS \"${API}/packages/${OWNER}?type=container&q=${REPO}&limit=1000\" \\",
+      "            | REPO=\"${REPO}\" node -e 'let d=\"\";process.stdin.on(\"data\",(c)=>d+=c).on(\"end\",()=>{try{" +
+        'const n=process.env.REPO;const vs=JSON.parse(d).filter((p)=>p.name===n&&p.version!==\"latest\")' +
+        '.sort((a,b)=>((Date.parse(b.created_at||\"\")||0)-(Date.parse(a.created_at||\"\")||0))||' +
+        '(a.version<b.version?1:a.version>b.version?-1:0));' +
+        "console.log(vs.map((v)=>v.version).join(\"\\n\"))}catch(e){}})' 2>/dev/null)\"",
+      '          if [ -z "${PRUNABLE}" ]; then echo "prune: nothing to prune"; exit 0; fi',
+      '          OLD="$(echo "${PRUNABLE}" | tail -n +$((KEEP+1)))"',
+      '          [ -z "${OLD}" ] && { echo "prune: <= ${KEEP} versions — nothing to prune"; exit 0; }',
+      '          echo "${OLD}" | while IFS= read -r V; do',
+      '            [ -z "${V}" ] && continue',
+      '            echo "prune: deleting ${REPO}:${V}"',
+      '            curl -fsS -X DELETE "${API}/packages/${OWNER}/container/${REPO}/${V}" \\',
+      '              || echo "prune: delete of ${V} failed (ignored)"',
+      '          done',
+      '          echo "prune: done (fail-open)"',
+      '          exit 0',
     ].join('\n') + '\n',
   };
 }

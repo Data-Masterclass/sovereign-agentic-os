@@ -13,6 +13,48 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.26] — 2026-07-31
+
+### Added
+- **App-build registry prune — the Forgejo registry stays near-flat instead of
+  growing forever.** Every generated CI workflow (both the `apps.ts` template
+  seeder and the vite-os/sovereign-app scaffolds) now ends with a FAIL-OPEN
+  "Prune old registry versions" step: after a successful image push it lists the
+  app's container versions via Forgejo's packages REST API (same host + same
+  `REGISTRY_PASS` as the push) and deletes everything older than the **newest 2
+  immutable SHA tags**, never touching the protected `latest` the runner pulls.
+  JSON is parsed with `node` (the ci-builder job image is node:20 — jq is not
+  installed there), and any failure only warns — a prune failure can never fail
+  a green build. The pure policy (`containerVersionsToPrune`, keep-N=2) is
+  unit-tested, and both generated steps are executed end-to-end in tests against
+  a stubbed registry. This is the app-side half of the fix for the Forgejo
+  volume filling up (the accumulated `/data/packages` images that broke all
+  Software-tab builds); the chart-side half is the `cron.cleanup_packages`
+  below. Existing app repos keep their old workflow until their next scaffold;
+  the Forgejo cron covers them.
+
+### Verified
+- **Domain isolation re-audited across Agents · Software · Dashboards ·
+  Science:** all four tabs already narrow My + Domain tiers to the ACTIVE domain
+  (`session.domains` via `resolveDomainScope`) for every role including admin,
+  with Company/Marketplace intentionally tenant-wide; 17/17 domain-scope tests +
+  737/737 tab tests pass. No leak found; no code change needed.
+
+## [chart] — 2026-07-31
+
+### Added
+- **Forgejo package-cleanup cron** (`[cron.cleanup_packages]`: daily @midnight +
+  at start, reclaim blobs unreferenced >7 days) so the in-cluster registry
+  self-manages — the durable chart-side fix for the registry filling
+  `gitea-shared-storage` (95% full → docker-push 500s → every app build red).
+  Takes effect on the next Forgejo pod restart.
+- **Forgejo disk-usage alert CronJob** (`forgejoDiskAlert.*`, default off):
+  hourly read-only `df` on the Forgejo pod's `/data`; ≥80% → WARN log + email
+  via the in-cluster mail smarthost (log-only when no mail host). Turns the
+  silent disk-full failure mode into a heads-up.
+- PVCs expanded live (recorded here for ops history): `gitea-shared-storage`
+  2→20Gi, `ci-runner-data` 1→5Gi.
+
 ## [chart] — 2026-07-30
 
 ### Fixed

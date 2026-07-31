@@ -23,6 +23,8 @@ const {
   listAppVersions,
   restoreAppVersion,
   templateFiles,
+  containerVersionsToPrune,
+  REGISTRY_KEEP_VERSIONS,
 } = await import('./apps.ts');
 
 const APP_KEY = Symbol.for('soa.apps.cache');
@@ -295,4 +297,61 @@ test('active-domain: a My app created in domain A is hidden when domain B is act
   // All Domains (every membership) → shown.
   const allDomains = { ...owner, domains: ['sales', 'finance'] };
   assert.equal((await listAppsForUser(allDomains)).some((a) => a.name === 'SalesApp'), true, 'shown under All Domains');
+});
+
+// -------------------------------------------------------------------- registry prune --
+//
+// The pure prune policy behind the CI "Prune old registry versions" step: keep the
+// newest N immutable SHA tags plus the protected `latest`, DELETE the rest. Proves
+// DELETEs are issued only for versions beyond the newest 2 — and NONE when <= 2 exist.
+
+test('containerVersionsToPrune: deletes versions beyond the newest 2 (by push time)', () => {
+  // Five real builds + the floating latest, given out of order to prove sorting.
+  const versions = [
+    { version: 'latest', created_at: '2026-07-31T10:00:00Z' },
+    { version: 'sha-oldest', created_at: '2026-07-27T09:00:00Z' },
+    { version: 'sha-newest', created_at: '2026-07-31T09:59:00Z' },
+    { version: 'sha-mid1', created_at: '2026-07-29T12:00:00Z' },
+    { version: 'sha-mid2', created_at: '2026-07-30T08:00:00Z' },
+    { version: 'sha-old2', created_at: '2026-07-28T06:00:00Z' },
+  ];
+  const toDelete = containerVersionsToPrune(versions, 2);
+  // Newest 2 SHA tags (sha-newest, sha-mid2) + latest are kept; the 3 older SHA tags go.
+  assert.deepEqual(toDelete, ['sha-mid1', 'sha-old2', 'sha-oldest'], 'deletes exactly the 3 oldest SHA tags');
+  assert.equal(toDelete.includes('latest'), false, 'never deletes the protected latest tag');
+  assert.equal(toDelete.includes('sha-newest'), false, 'keeps the newest');
+  assert.equal(toDelete.includes('sha-mid2'), false, 'keeps the 2nd-newest');
+});
+
+test('containerVersionsToPrune: returns [] when <= keep prunable versions exist', () => {
+  assert.deepEqual(containerVersionsToPrune([], 2), [], 'no versions → nothing to delete');
+  assert.deepEqual(
+    containerVersionsToPrune(
+      [{ version: 'latest', created_at: '2026-07-31T10:00:00Z' }, { version: 'sha-a', created_at: '2026-07-31T09:00:00Z' }],
+      2,
+    ),
+    [],
+    'one SHA tag (+ latest) → nothing to delete',
+  );
+  assert.deepEqual(
+    containerVersionsToPrune(
+      [
+        { version: 'sha-a', created_at: '2026-07-31T09:00:00Z' },
+        { version: 'sha-b', created_at: '2026-07-30T09:00:00Z' },
+      ],
+      2,
+    ),
+    [],
+    'exactly 2 SHA tags → nothing to delete',
+  );
+});
+
+test('containerVersionsToPrune: default keep is REGISTRY_KEEP_VERSIONS (2)', () => {
+  assert.equal(REGISTRY_KEEP_VERSIONS, 2);
+  const versions = [
+    { version: 'a', created_at: '2026-07-31T00:00:00Z' },
+    { version: 'b', created_at: '2026-07-30T00:00:00Z' },
+    { version: 'c', created_at: '2026-07-29T00:00:00Z' },
+  ];
+  assert.deepEqual(containerVersionsToPrune(versions), ['c'], 'default keeps newest 2, deletes 1');
 });

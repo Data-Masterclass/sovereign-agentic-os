@@ -2412,9 +2412,48 @@ forgejo:
         DISABLE_REGISTRATION: true
       cron:
         ENABLED: false
+      # Registry disk hygiene — reclaim unreferenced/expired container-registry
+      # blobs so /data/packages can never silently fill the PVC again. The section
+      # name itself contains a dot ([cron.cleanup_packages]), so the key is quoted;
+      # the Forgejo chart's config renderer turns each `config.<key>` into an
+      # app.ini `[<key>]` section verbatim. Runs daily and once on boot; prunes
+      # blobs older than 168h (7d). Requires a Forgejo pod restart to take effect.
+      cron.cleanup_packages:
+        ENABLED: true
+        RUN_AT_START: true
+        SCHEDULE: "@midnight"
+        OLDER_THAN: "168h"
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 640Mi }
+
+# -----------------------------------------------------------------------------
+# Forgejo registry disk-usage alert. The in-cluster container registry writes
+# app-build images to the gitea-shared-storage PVC (/data/packages). Without a
+# heads-up, that volume can silently fill and break every Software-tab app build
+# with docker-push 500s (it just did). This CronJob is the heads-up: it daily
+# `df`s /data inside the forgejo pod and, when usage crosses `thresholdPct`,
+# WARNS — always to its own log, and (when a mailer is reachable) by email
+# through the SAME in-cluster `mail` submission Service (SMTP 587) every other
+# alert uses. It only READS (kubectl get pod + exec df); it never mutates.
+# Mirrors metrics.alerts.cron: DEFAULT-OFF, gated behind `enabled`, same
+# schedule/image conventions. `helm template` at defaults emits nothing.
+# -----------------------------------------------------------------------------
+forgejoDiskAlert:
+  enabled: false               # operator turns it on
+  schedule: "0 * * * *"        # hourly — a full PVC breaks builds fast
+  thresholdPct: 80             # warn once usage crosses this percent
+  # curl+coreutils image used for the alert email (SMTP submission via curl).
+  image: curlimages/curl:8.11.1
+  # kubectl image used to read the forgejo pod's /data usage (exec df).
+  kubectlImage: bitnami/kubectl:1.31
+  # In-cluster mailer submission endpoint (the `mail` Service, STARTTLS on 587).
+  # Leave host empty to run log-only (no email) — the check still WARNS in-log.
+  mail:
+    host: "mail"               # "" → log-only
+    port: 587
+    from: "noreply@sovereign-agentic.com"
+    to: "admin@datamasterclass.com"
 
 # -----------------------------------------------------------------------------
 # Argo CD — GitOps deploy (Layer 3). Minimal local: no dex/appset/notifications.
