@@ -13,6 +13,26 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.32] — 2026-07-31
+
+### Added
+- **Silver stage: type autodetect with approval.** The Silver panel reads the
+  governed 50-row Bronze preview and deterministically infers each column's
+  likely type from the ACTUAL values (integer/bigint/double/date/timestamp/
+  boolean — including yes/no → boolean, the original Bronze-honesty case). A
+  calm banner shows the detections; **Apply suggested types** fills the type
+  dropdowns — the user approves, then builds. Never auto-applied; columns the
+  user already typed are left alone.
+
+### Fixed
+- **Boolean cast accepts yes/no.** The Silver cast op maps yes/y/no/n
+  explicitly; other values still fall through to the strict Trino cast, so
+  genuine garbage keeps failing loudly.
+- **avg/sum on text-typed numeric columns.** Metric aggregations cast their
+  operand to double explicitly — a Gold column that skipped a Silver cast now
+  aggregates instead of failing with FUNCTION_NOT_FOUND; non-numeric values
+  still fail loudly naming themselves.
+
 ## [os-ui 0.6.31] — 2026-07-31
 
 ### Changed
