@@ -114,6 +114,7 @@ function SilverBuilder({
   // Bronze stays honest all-text; this is the approved-suggestion half: the user SEES
   // what the data looks like and clicks Apply — nothing is cast without approval.
   const [typeSuggestions, setTypeSuggestions] = useState<TypeSuggestion[]>([]);
+  const [detectLoaded, setDetectLoaded] = useState(false);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   useEffect(() => {
     let live = true;
@@ -123,6 +124,7 @@ function SilverBuilder({
         const data = await res.json();
         if (!live || !res.ok || !data?.available) return;
         setTypeSuggestions(inferColumnTypes(data.columns ?? [], data.rows ?? []));
+        setDetectLoaded(true);
       } catch { /* no preview → no suggestions; the manual dropdowns are unaffected */ }
     })();
     return () => { live = false; };
@@ -141,10 +143,28 @@ function SilverBuilder({
   useEffect(() => {
     if (!proposal) return;
     const casts = new Set<string>(CAST_TYPES);
+    // Cross-check AI casts against the DATA (the same detector the suggestions banner
+    // uses). The model proposes from column NAMES — 'customer_id' reads numeric while
+    // the values say 'CUS-2002', and that cast fails the build with a raw Trino
+    // INVALID_CAST_ARGUMENT. A cast the sampled data contradicts falls back to text.
+    // Only enforced once the preview actually loaded (no preview → trust the model,
+    // as before — there is nothing to check against).
+    const detected = new Map(typeSuggestions.map((t) => [t.column, t.type]));
+    const dataAllows = (name: string, cast: CastType): boolean => {
+      if (!detectLoaded || cast === 'varchar') return true;
+      const d = detected.get(name);
+      if (!d) return false; // mixed/text data — no lossless cast exists
+      if (d === cast) return true;
+      if (cast === 'double') return d === 'integer' || d === 'bigint'; // widening is safe
+      if (cast === 'bigint') return d === 'integer';
+      if (cast === 'timestamp') return d === 'date';
+      return false;
+    };
     for (const p of proposal.columns ?? []) {
       if (!p || typeof p.name !== 'string' || !cols.includes(p.name)) continue;
+      const cast = p.cast && casts.has(p.cast) ? (p.cast as CastType) : null;
       set(p.name, {
-        type: p.cast && casts.has(p.cast) ? (p.cast as CastType) : 'keep',
+        type: cast && dataAllows(p.name, cast) ? cast : 'keep',
         clean: p.clean === 'trim' || p.clean === 'normalize' ? p.clean : 'none',
         // Only IDENT-safe renames — a model-proposed name with a space/hyphen would
         // fail the compile and gray the Build button with no visible reason.
