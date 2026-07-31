@@ -2381,8 +2381,12 @@ forgejo:
     tag: "11"
     rootless: true            # chart default registry/repo -> code.forgejo.org/forgejo/forgejo:11-rootless
   persistence:
+    # 20Gi matches the LIVE expansion (2026-07-31): the original 2Gi filled with
+    # app-build registry images (/data/packages) and broke every Software build.
+    # PVCs can only grow — never set below the live size. Pairs with
+    # cron.cleanup_packages below, which keeps usage flat from here on.
     enabled: true
-    size: 2Gi
+    size: 20Gi
   redis-cluster:
     enabled: false
   redis:
@@ -2666,6 +2670,7 @@ ciRunner:
   image: code.forgejo.org/forgejo/runner:6
   dindImage: docker:27-dind
   builderTag: "0.1.0"          # tag for the ci-builder job image (docker CLI + buildx)
+  storage: 5Gi                 # ci-runner-data PVC (matches live 2026-07-31 expansion; grow-only)
 
 # Admin Console — REMOVED. Its functionality (live status, on/off toggling,
 # addresses, logins, per-component docs) is now built NATIVELY into the OS UI's

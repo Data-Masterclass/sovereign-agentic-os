@@ -424,7 +424,10 @@ spec:
   accessModes: ["ReadWriteOnce"]
   resources:
     requests:
-      storage: 1Gi
+      # Nil-safe under --reuse-values: default matches the LIVE 5Gi expansion
+      # (2026-07-31; the original 1Gi filled during app builds). PVCs can only
+      # grow — never set this below the live size or the apply fails.
+      storage: {{ .Values.ciRunner.storage | default "5Gi" }}
   {{- if .Values.global.storageClass }}
   storageClassName: {{ .Values.global.storageClass | quote }}
   {{- end }}
