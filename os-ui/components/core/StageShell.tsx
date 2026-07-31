@@ -57,6 +57,7 @@ export default function StageShell<Id extends string, Ctx>({
   aside,
   showHeader = true,
   showNav = true,
+  hideNextFor,
   assistant,
   children,
 }: {
@@ -76,6 +77,11 @@ export default function StageShell<Id extends string, Ctx>({
   showHeader?: boolean;
   /** Render the standard back/next footer. Off for bespoke per-stage footers. */
   showNav?: boolean;
+  /** Stages whose FORWARD nav is hidden because the stage body owns its own
+   *  "Continue" (shown after the stage's real work succeeds) — a bare "next →"
+   *  there reads as the primary action but does nothing. Back nav stays; the
+   *  rail keeps every stage voluntarily reachable. */
+  hideNextFor?: readonly Id[];
   /** Optional per-stage assistant slot — mount a stage-scoped helper here. */
   assistant?: (stage: StageDef<Id, Ctx>) => ReactNode;
   /** The stage body — plain nodes, or a render prop receiving the nav helpers. */
@@ -95,6 +101,8 @@ export default function StageShell<Id extends string, Ctx>({
     goTo: (id) => onState(goTo(stages, state, id, ctx)),
     markDone: (id) => onState(markDone(state, id)),
   };
+
+  const nextHidden = !!hideNextFor?.includes(state.current);
 
   return (
     <>
@@ -123,12 +131,12 @@ export default function StageShell<Id extends string, Ctx>({
 
       {assistant ? assistant(current) : null}
 
-      {showNav && (prevDef || nextDef) ? (
+      {showNav && (prevDef || (nextDef && !nextHidden)) ? (
         <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
           {prevDef ? (
             <button className="btn ghost sm" onClick={api.back}>← {prevDef.title}</button>
           ) : <span />}
-          {nextDef ? (
+          {nextDef && !nextHidden ? (
             <button
               className="btn"
               onClick={api.next}

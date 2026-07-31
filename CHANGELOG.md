@@ -13,6 +13,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.30] — 2026-07-31
+
+### Changed
+- **Gold stage (Data tab): no more Measures section.** Measures are defined once,
+  in the **Publish** stage (and the Metrics tab) — Gold is now a pure row-level
+  projection/join. A Gold rebuild **never wipes** measures already defined in
+  Publish (guarded in the store + regression-tested).
+- **Gold "Keep columns" starts full.** All columns are kept by default — remove
+  the ones you don't want, or **Remove all** and hand-pick. **Add all columns**
+  fills every column of the base *and* any joined datasets in one click.
+- **One clear build flow on Bronze, Silver and Gold.** Each build stage now has
+  exactly one main action (upload / **Build Silver version** / **Build Gold
+  version**); the result and a big **Continue →** appear only after the work
+  actually succeeded. The always-visible bottom "next stage →" shortcut on those
+  three stages — which looked primary but built nothing — is gone. Stages remain
+  voluntarily skippable via the stage rail on top.
+
 ## [os-ui 0.6.29] — 2026-07-31
 
 ### Security

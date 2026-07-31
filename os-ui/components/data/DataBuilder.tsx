@@ -1057,6 +1057,11 @@ export default function DataBuilder({
         ctx={ctx}
         onState={setStage}
         ariaLabel="Dataset stages"
+        // The three BUILD stages own their continue: Ingest auto-advances on a landed
+        // upload, Silver/Gold show a big "Continue →" only after a successful build.
+        // The shell's bare "next →" there reads as the primary action but builds
+        // nothing — hide it. Stages stay voluntarily skippable via the rail on top.
+        hideNextFor={['ingest', 'define', 'harmonize']}
       >
         {/* ─────────────── Ingest ─────────────── */}
         {stage.current === 'ingest' ? (
