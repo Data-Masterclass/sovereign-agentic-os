@@ -145,7 +145,9 @@ function SilverBuilder({
       set(p.name, {
         type: p.cast && casts.has(p.cast) ? (p.cast as CastType) : 'keep',
         clean: p.clean === 'trim' || p.clean === 'normalize' ? p.clean : 'none',
-        rename: typeof p.rename === 'string' ? p.rename : '',
+        // Only IDENT-safe renames — a model-proposed name with a space/hyphen would
+        // fail the compile and gray the Build button with no visible reason.
+        rename: typeof p.rename === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(p.rename) ? p.rename : '',
         key: !!p.key,
         drop: !!p.drop,
       });
@@ -254,8 +256,10 @@ function SilverBuilder({
                   <tr key={c} style={u.drop ? { opacity: 0.5 } : undefined}>
                     <td className="mono">{c}</td>
                     <td>
+                      {/* Bronze is always all-text — the no-op option says so honestly
+                          instead of an opaque "keep". */}
                       <select value={u.type} onChange={(e) => set(c, { type: e.target.value as ColUI['type'] })} disabled={u.drop}>
-                        <option value="keep">keep</option>
+                        <option value="keep">text</option>
                         {CAST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </td>
@@ -335,6 +339,13 @@ function SilverBuilder({
           )
         ) : null}
       </div>
+
+      {/* A compile problem DISABLES the Build button — say why right here, always
+          (previously the reason hid inside the collapsed "Show the code" section,
+          leaving a dead-looking button). */}
+      {compiled.error && cols.length > 0 ? (
+        <div className="error" style={{ marginTop: 12 }}>Can’t build yet — {compiled.error}</div>
+      ) : null}
 
       {err ? <div className="error" style={{ marginTop: 12 }}>{err}</div> : null}
       {report ? (
