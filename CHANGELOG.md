@@ -13,6 +13,26 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.33] — 2026-07-31
+
+### Fixed
+- **Builds ALWAYS run in the owner's personal lane — the promoted-dataset rebuild
+  hole is closed.** Rebuilding a promoted dataset's Silver targeted the domain
+  schema, whose Bronze never physically exists (promotion copies only the top
+  built layer) → TABLE_NOT_FOUND. The personal lane is now the build workspace
+  for every tier; the governed domain copy is written exclusively by the
+  publish/re-materialize CTAS. A Builder+'s Silver rebuild auto-refreshes the
+  domain copy when Silver is the published layer; with a Gold on top it stays
+  honestly STALE until the Gold rebuild republishes. Seeded governed datasets
+  whose only physical table is the domain copy are still adopted honestly.
+- **A disabled Silver Build button always says why** ("Can't build yet — …") —
+  the reason used to hide inside the collapsed "Show the code" section.
+- **Client preview FQNs match the server exactly** (hyphenated domains map to
+  underscored physical schemas; personal-lane rule mirrored client-side).
+- AI Clean-it-up renames are sanitized to identifier-safe names on apply.
+- The Silver type dropdown's no-op reads **text** (Bronze is all-text) instead
+  of the opaque "keep".
+
 ## [os-ui 0.6.32] — 2026-07-31
 
 ### Added

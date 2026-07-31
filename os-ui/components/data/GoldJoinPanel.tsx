@@ -171,10 +171,11 @@ export default function GoldJoinPanel({
   }, [datasetName, baseCols, activeJoins, byId]);
 
   const target = useMemo(() => {
-    // domainSchema, not the raw domain id (hyphens → underscores) — see RefinePanel.
-    const schema = tier === 'dataset' ? personalSchema(owner) : domainSchema(domain);
+    // Builds ALWAYS run in the owner's personal lane (see RefinePanel) — the domain
+    // copy is refreshed by the publish CTAS after the build.
+    const schema = personalSchema(owner);
     return `iceberg.${schema}.gold_${slug(datasetName)}`;
-  }, [tier, owner, domain, datasetName]);
+  }, [owner, datasetName]);
 
   // Visual join graph: the base + each fully-specified join as nodes, each key as a
   // labelled edge. Pure derivation of the guided state — updates as picks/keys change.
@@ -198,7 +199,7 @@ export default function GoldJoinPanel({
 
   // Assemble the compiler inputs from the guided state (client preview == server plan).
   const spec = useMemo(() => {
-    const schema = tier === 'dataset' ? personalSchema(owner) : domainSchema(domain);
+    const schema = personalSchema(owner);
     const s = slug(datasetName);
     const source = `iceberg.${schema}.silver_${s}`;
     const jin: JoinInput[] = activeJoins.map((j) => {

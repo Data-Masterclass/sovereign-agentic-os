@@ -251,15 +251,17 @@ export function domainSchema(domain: string): string {
 }
 
 /**
- * The schema a Silver build writes into: the dataset's own domain when the dataset is
- * already governed AND the caller is in that domain (the query-tool re-checks the
- * builder role floor); otherwise the caller's personal sandbox schema. This is the
- * ONE place the Silver write-target is chosen — it is always the CALLER's schema,
- * never a literal cross-domain schema.
+ * The schema a guided BUILD writes into: ALWAYS the caller's personal sandbox, for
+ * every tier. The personal lane is the build WORKSPACE — Bronze physically exists
+ * ONLY there (ingest never writes a domain schema), and the store flags an
+ * already-promoted dataset STALE on rebuild precisely because "the rebuild rewrote
+ * only the owner's personal lane". The governed domain copy is written EXCLUSIVELY
+ * by the publish / re-materialize CTAS ({@link publishPlan}). Routing a promoted
+ * dataset's build into the domain schema was a live bug: its Bronze source doesn't
+ * exist there (TABLE_NOT_FOUND on `iceberg.<domain>.bronze_*`).
  */
-export function silverSchema(o: { tier: string; domain: string; uid: string; domains: string[] }): string {
-  if (o.tier !== 'dataset' && Array.isArray(o.domains) && o.domains.includes(o.domain)) return domainSchema(o.domain);
-  return personalSchema(o.uid);
+export function silverSchema(uid: string): string {
+  return personalSchema(uid);
 }
 
 // ================================================================ Gold join =====
@@ -474,7 +476,7 @@ export function silverPlan(
   columns: string[],
   ops: TransformOp[],
 ): SilverPlan {
-  const schema = silverSchema({ tier: dataset.tier, domain: dataset.domain, uid: identity.uid, domains: identity.domains });
+  const schema = silverSchema(identity.uid);
   const s = physicalSlug(dataset);
   const source = `iceberg.${schema}.bronze_${s}`;
   const target = `iceberg.${schema}.silver_${s}`;
@@ -494,7 +496,7 @@ export function layerTarget(
   identity: { uid: string; domains: string[] },
   layer: 'bronze' | 'silver' | 'gold',
 ): string {
-  const schema = silverSchema({ tier: dataset.tier, domain: dataset.domain, uid: identity.uid, domains: identity.domains });
+  const schema = silverSchema(identity.uid);
   return `iceberg.${schema}.${layer}_${physicalSlug(dataset)}`;
 }
 
@@ -512,7 +514,7 @@ export function passThroughPlan(
   identity: { uid: string; domains: string[] },
   layer: 'silver' | 'gold',
 ): PassThroughPlan {
-  const schema = silverSchema({ tier: dataset.tier, domain: dataset.domain, uid: identity.uid, domains: identity.domains });
+  const schema = silverSchema(identity.uid);
   const s = physicalSlug(dataset);
   const prior = layer === 'silver' ? 'bronze' : 'silver';
   const source = `iceberg.${schema}.${prior}_${s}`;
@@ -570,6 +572,15 @@ export async function resolvePassThroughSource(
     }
   }
   if (await probe(target)) return { kind: 'adopt', target };
+  // Seeded-governed fallback: a promoted dataset whose ONLY physical table is the
+  // published DOMAIN copy (e.g. seeded straight into `iceberg.<domain>.gold_*`, no
+  // personal lane at all). Builds resolve to the personal-lane workspace, so the
+  // domain copy is not `target` — but it EXISTS and is the honest thing to adopt.
+  if (dataset.tier !== 'dataset') {
+    const domainCopy = `iceberg.${domainSchema(dataset.domain)}.${layer}_${physicalSlug(dataset)}`;
+    tried.push(domainCopy);
+    if (await probe(domainCopy)) return { kind: 'adopt', target: domainCopy };
+  }
   return { kind: 'none', target, tried };
 }
 
@@ -643,7 +654,7 @@ export function goldJoinPlan(
   dimensions: GoldDimension[],
   measures: GoldMeasure[],
 ): GoldJoinPlan {
-  const schema = silverSchema({ tier: dataset.tier, domain: dataset.domain, uid: identity.uid, domains: identity.domains });
+  const schema = silverSchema(identity.uid);
   const s = physicalSlug(dataset);
   const source = `iceberg.${schema}.silver_${s}`;
   const target = `iceberg.${schema}.gold_${s}`;

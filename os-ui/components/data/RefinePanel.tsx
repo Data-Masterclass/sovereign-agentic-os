@@ -157,12 +157,10 @@ function SilverBuilder({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proposal]);
 
-  // Target/source FQNs mirror the server's silverPlan (personal schema for an
-  // un-promoted dataset, else the domain) so the preview matches what runs.
-  // domainSchema, not the raw domain id: a hyphenated domain (agentic-leader-…)
-  // maps to an underscored physical schema — the raw id fails the FQN guard and
-  // silently disabled the Build button for every promoted dataset in one.
-  const schema = tier === 'dataset' ? personalSchema(owner) : domainSchema(domain);
+  // Target/source FQNs mirror the server's silverPlan: builds ALWAYS run in the
+  // owner's personal lane (Bronze physically lives only there, for every tier); the
+  // governed domain copy is refreshed by the publish CTAS after the build.
+  const schema = personalSchema(owner);
   const s = slug(datasetName);
   const source = `iceberg.${schema}.bronze_${s}`;
   const target = `iceberg.${schema}.silver_${s}`;

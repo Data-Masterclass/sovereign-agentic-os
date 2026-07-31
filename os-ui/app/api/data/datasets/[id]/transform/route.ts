@@ -9,6 +9,8 @@ import { getDataset, buildVersion } from '@/lib/data/store';
 import { stepperStages, stageArtifact, canBuildStage } from '@/lib/data/panels';
 import { buildStage } from '@/lib/data/build/server';
 import { silverPlan, type TransformOp } from '@/lib/data/transform';
+import { rematerializeDomainTableLive } from '@/lib/data/publish-server';
+import { roleAtLeast } from '@/lib/core/session';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
 
 export const dynamic = 'force-dynamic';
@@ -45,10 +47,9 @@ export const POST = withRoute<{ id: string }, { ops?: TransformOp[]; columns?: s
   // Compile server-side (throws TransformError → 400 with the real reason).
   const plan = silverPlan(dataset, identity, columns, ops);
 
-  // Personal-lane builds must run under the UID (not the domain principal) so
-  // Trino→OPA recognises the caller as the `personal_<uid>` owner (the schema-
-  // isolation deny rule keys on the session user). Domain builds keep the domain
-  // principal, which is entitled to the domain's governed sources.
+  // The build ALWAYS runs in the caller's personal lane now (silverSchema): that is
+  // where Bronze physically lives, for every tier. It must run under the UID (not the
+  // domain principal) so Trino→OPA recognises the caller as the `personal_<uid>` owner.
   if (plan.schema.startsWith('personal_')) identity.principal = user.id;
 
   // Execute + verify through the Build adapter (live when reachable, else offline-mock).
@@ -76,5 +77,34 @@ export const POST = withRoute<{ id: string }, { ops?: TransformOp[]; columns?: s
     body: plan.sql,
   });
 
-  return NextResponse.json({ build, sql: plan.sql, target: plan.target, dataset: updated, stages: stepperStages(updated) });
+  // The domain-copy contract (same as the Gold rebuild): buildVersion just flagged an
+  // already-promoted dataset STALE — this rebuild rewrote only the owner's personal
+  // lane. When SILVER is the published layer (no Gold on top) a Builder+'s rebuild
+  // refreshes the governed domain table in the same act. With a Gold on top the
+  // refresh belongs to the Gold rebuild — publishing now would copy the still-stale
+  // personal Gold — so it stays honestly STALE with the reason saying what to do.
+  let domainTable: { state: 'refreshed' | 'stale' | 'not-promoted'; fqn?: string; reason?: string } =
+    { state: 'not-promoted' };
+  if (updated.tier !== 'dataset') {
+    if (!updated.versions.gold.built && roleAtLeast(user.role, 'builder')) {
+      try {
+        const out = await rematerializeDomainTableLive(id, user);
+        domainTable = out.ok
+          ? { state: 'refreshed', fqn: out.fqn }
+          : { state: 'stale', fqn: out.fqn, reason: out.error };
+      } catch (e) {
+        domainTable = { state: 'stale', reason: e instanceof Error ? e.message : String(e) };
+      }
+    } else {
+      domainTable = {
+        state: 'stale',
+        reason: updated.versions.gold.built
+          ? 'Rebuild Gold to refresh the shared domain table (Gold is the published layer).'
+          : 'Rebuilt by a creator — a Builder must re-promote to refresh the shared domain table.',
+      };
+    }
+  }
+
+  const finalDataset = domainTable.state === 'refreshed' ? getDataset(id, user) : updated;
+  return NextResponse.json({ build, sql: plan.sql, target: plan.target, dataset: finalDataset, domainTable, stages: stepperStages(finalDataset) });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

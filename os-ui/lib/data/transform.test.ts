@@ -209,17 +209,12 @@ test('a creator (tier dataset) always targets iceberg.personal_<uid>.silver_* �
   assert.doesNotMatch(plan.sql, /iceberg\.sales\./); // never a literal cross-domain schema
 });
 
-test('a builder on a governed asset in their own domain targets that domain schema', () => {
-  const s = silverSchema({ tier: 'asset', domain: 'sales', uid: 'builder', domains: ['sales'] });
-  assert.equal(s, 'sales');
-  // …but if the dataset is un-promoted, still personal even for a builder
-  const s2 = silverSchema({ tier: 'dataset', domain: 'sales', uid: 'builder', domains: ['sales'] });
-  assert.equal(s2, 'personal_builder');
-});
-
-test('a user NOT in the target domain falls back to their personal schema (guard-safe)', () => {
-  const s = silverSchema({ tier: 'asset', domain: 'finance', uid: 'outsider', domains: ['sales'] });
-  assert.equal(s, 'personal_outsider'); // never someone else's domain
+test('builds ALWAYS run in the caller personal lane — for every tier (the workspace rule)', () => {
+  // Bronze physically exists ONLY in the personal lane; routing a promoted dataset's
+  // build into the domain schema was a live TABLE_NOT_FOUND. The domain copy is
+  // written exclusively by the publish/re-materialize CTAS (publishPlan).
+  assert.equal(silverSchema('builder'), 'personal_builder');
+  assert.equal(silverSchema('creator'), 'personal_creator');
 });
 
 // ================================================================ Gold join =======
@@ -434,7 +429,7 @@ test("goldJoinPlan targets the caller's own personal schema, never a cross-domai
   assert.match(plan.sql, /iceberg\.sales\.gold_northpeak_commerce/);
 });
 
-test('a builder on a governed asset writes the Gold join into their own domain schema', () => {
+test('a Gold join on a governed asset STILL builds in the personal lane (publish copies to the domain)', () => {
   const plan = goldJoinPlan(
     { name: 'Returns', domain: 'sales', tier: 'asset' },
     { uid: 'builder', domains: ['sales'] },
@@ -442,7 +437,7 @@ test('a builder on a governed asset writes the Gold join into their own domain s
     [{ col: { ref: 0, column: 'order_id' } }],
     [],
   );
-  assert.equal(plan.target, 'iceberg.sales.gold_returns');
+  assert.equal(plan.target, 'iceberg.personal_builder.gold_returns');
 });
 
 test('goldJoinPlan builds a single-table Gold (0 joins) from the frozen Silver base into the frozen Gold FQN', () => {
@@ -508,15 +503,17 @@ test('publishPlan sanitizes an email owner into the same personal schema the gua
 
 // ------------------------------------------------ layerTarget / passThroughPlan ---
 
-test('layerTarget resolves tier-aware: personal dataset → personal_<uid>, governed → domain schema', () => {
+test('layerTarget always resolves to the personal-lane workspace — every tier', () => {
   const me = { uid: 'alex', domains: ['sales'] };
   assert.equal(
     layerTarget({ name: 'Web Orders', domain: 'sales', tier: 'dataset' }, me, 'silver'),
     'iceberg.personal_alex.silver_web_orders',
   );
+  // A governed asset BUILDS in the personal lane too — the domain copy is written
+  // only by the publish CTAS (publishPlan), never by a build.
   assert.equal(
     layerTarget({ name: 'Web Orders', domain: 'sales', tier: 'asset' }, me, 'gold'),
-    'iceberg.sales.gold_web_orders',
+    'iceberg.personal_alex.gold_web_orders',
   );
 });
 
@@ -537,25 +534,28 @@ test('passThroughPlan compiles a REAL guard-shaped CTAS copy of the prior layer 
 
 const DS = { name: 'Northpeak Campaign Performance', domain: 'agentic-leader-q3-2026', tier: 'domain' };
 const BUILDER = { uid: 'aborek', domains: ['agentic-leader-q3-2026'] };
-const G = 'iceberg.agentic_leader_q3_2026';
+const P = 'iceberg.personal_aborek'; // builds live in the personal-lane workspace
+const G = 'iceberg.agentic_leader_q3_2026'; // the PUBLISHED domain copy (publish CTAS only)
 
 test('pass-through copies the newest lower layer that physically exists (silver over bronze)', async () => {
-  const present = new Set([`${G}.silver_northpeak_campaign_performance`, `${G}.bronze_northpeak_campaign_performance`]);
+  const present = new Set([`${P}.silver_northpeak_campaign_performance`, `${P}.bronze_northpeak_campaign_performance`]);
   const res = await resolvePassThroughSource(DS, BUILDER, 'gold', async (fqn) => present.has(fqn));
   assert.equal(res.kind, 'copy');
-  assert.equal(res.kind === 'copy' && res.source, `${G}.silver_northpeak_campaign_performance`);
+  assert.equal(res.kind === 'copy' && res.source, `${P}.silver_northpeak_campaign_performance`);
   assert.equal(res.kind === 'copy' && res.sql,
-    `create or replace table ${G}.gold_northpeak_campaign_performance as select * from ${G}.silver_northpeak_campaign_performance`);
+    `create or replace table ${P}.gold_northpeak_campaign_performance as select * from ${P}.silver_northpeak_campaign_performance`);
 });
 
 test('pass-through falls back to bronze when silver is absent', async () => {
-  const present = new Set([`${G}.bronze_northpeak_campaign_performance`]);
+  const present = new Set([`${P}.bronze_northpeak_campaign_performance`]);
   const res = await resolvePassThroughSource(DS, BUILDER, 'gold', async (fqn) => present.has(fqn));
-  assert.equal(res.kind === 'copy' && res.source, `${G}.bronze_northpeak_campaign_performance`);
+  assert.equal(res.kind === 'copy' && res.source, `${P}.bronze_northpeak_campaign_performance`);
 });
 
-test('pass-through ADOPTS an already-materialized target when no lower layer exists (the seeded-gold case)', async () => {
-  const present = new Set([`${G}.gold_northpeak_campaign_performance`]); // only gold — no bronze/silver
+test('pass-through ADOPTS the published DOMAIN copy when it is the ONLY physical table (the seeded-gold case)', async () => {
+  // A seeded governed dataset may have NO personal lane at all — only the published
+  // domain gold. Adopting that copy is the honest resolution, never a raw error.
+  const present = new Set([`${G}.gold_northpeak_campaign_performance`]);
   const res = await resolvePassThroughSource(DS, BUILDER, 'gold', async (fqn) => present.has(fqn));
   assert.equal(res.kind, 'adopt');
   assert.equal(res.target, `${G}.gold_northpeak_campaign_performance`);
@@ -564,5 +564,5 @@ test('pass-through ADOPTS an already-materialized target when no lower layer exi
 test('pass-through reports NONE (never a raw Trino error) when nothing exists to carry or adopt', async () => {
   const res = await resolvePassThroughSource(DS, BUILDER, 'gold', async () => false);
   assert.equal(res.kind, 'none');
-  assert.equal(res.kind === 'none' && res.tried.length, 2); // probed silver then bronze
+  assert.equal(res.kind === 'none' && res.tried.length, 3); // personal silver, personal bronze, domain copy
 });
