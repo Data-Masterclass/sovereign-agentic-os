@@ -124,8 +124,11 @@ export function makeRealMetricClients(): MetricLiveDeps {
   return { cube: realMetricCube() };
 }
 
-/** Cube reachable? The metric build's irreplaceable dependency (the one live can't fake). */
+/** Is the metric READ path's irreplaceable dependency reachable? Since the
+ *  metrics→Trino migration (Phase 1) every metric read serves as governed Trino SQL —
+ *  so the probe targets TRINO, not Cube: a down Cube must no longer report metrics as
+ *  unavailable (it only serves dashboards now), and a down Trino must (honesty gate). */
 export async function liveMetricsReachable(): Promise<boolean> {
-  const res = await withTimeout(`${config.cubeUrl}/cubejs-api/v1/meta`, 2500);
+  const res = await withTimeout(`http://${config.trinoHost}:${config.trinoPort}/v1/info`, 2500);
   return Boolean(res && res.ok);
 }

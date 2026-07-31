@@ -122,7 +122,7 @@ export async function exploreMetric(
 ): Promise<ExploreServerResult> {
   const spec = exploreSpec(dataset, measure, slice);
   const live = await liveMetricsReachable();
-  // HONESTY GATE: on a real deployment, an unreachable Cube is an outage — return no
+  // HONESTY GATE: on a real deployment, an unreachable Trino is an outage — return no
   // number (never the hash-seeded offline-mock, which is what surfaced fabricated KPIs
   // like 286,936). Local/teaching keeps the mock so the laptop flow still runs.
   if (!live && metricsMustBeLive()) {
@@ -134,7 +134,7 @@ export async function exploreMetric(
       mode: 'unavailable',
       unavailable: true,
       warning:
-        'Metric temporarily unavailable — the governed semantic layer (Cube) is unreachable, so this number cannot be computed right now. No value is shown rather than an estimated one. Retry shortly; if it persists, the Cube service needs attention.',
+        'Metric temporarily unavailable — the governed lakehouse (Trino) is unreachable, so this number cannot be computed right now. No value is shown rather than an estimated one. Retry shortly; if it persists, the Trino service needs attention.',
     };
   }
   const base = {
