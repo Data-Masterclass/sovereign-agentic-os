@@ -242,9 +242,11 @@ there.
   Model*, each a fixed set of sections — **General · Strategy · Business · Organization ·
   Architecture · Data · Glossary** — governed per scope (My = owner, Domain = domain_admin+,
   Company = admin). It's the durable, structured backbone agents can be granted as context.
-- **Workflows — the process spine.** A **workflow** per business process (ordered steps · rules ·
-  know-how, each step owned by a Human / Software / Agent / external actor), retrievable and
-  grantable to agents.
+- **Workflows — the process spine.** A **workflow** per business process (ordered steps ·
+  business rules · expert knowledge, each step owned by a Human / Software / Agent / external
+  actor), retrievable and grantable to agents — with a **Data & Metrics** tab that links the
+  governed datasets and KPIs the process runs on, each a scope-badged chip deep-linking to the
+  real artifact.
 - **MCP** *(Builder+)* — the setup surface for connecting external AI clients over MCP.
 - **Tutorials.** An illustrated, hands-on tutorial for every tab — fourteen today, each kept
   in step with its tab's current journey — reached from Home or a tab header, that can
@@ -535,15 +537,15 @@ Northpeak's campaign playbook lives in people's heads. Let's make it retrievable
 
 1. **Author a workflow.** In **Knowledge**, Ben authors a *"Campaign budget decision"*
    workflow: ordered **steps** (each owned by a Human / Software / Agent actor, with
-   inputs/outputs), **rules**, and **tacit** know-how — the gotchas and the "why behind the
-   why," which get indexed as first-class retrieval units.
+   inputs/outputs), **business rules**, and **expert knowledge** — the gotchas and the "why
+   behind the why," which get indexed as first-class retrieval units.
 2. **Mark a hard rule.** *"CAC above target for 14 days ⇒ never INCREASE budget"* is marked
    **hard**, so it compiles into an OPA guardrail an agent must respect.
 3. **Index & verify.** `index_knowledge` chunks and embeds the workflow into OpenSearch; a
    quick `search_knowledge` confirms it surfaces. Indexing is *not* automatic — this step is
    what makes it findable.
 4. **Publish.** A Builder publishes it to **Domain** scope, so every domain agent can ground on
-   it. Tacit notes carry provenance, and agents must cite the source.
+   it. Expert-knowledge notes carry provenance, and agents must cite the source.
 
 ## Golden path 3 — Agents: a governed team with real hands
 
