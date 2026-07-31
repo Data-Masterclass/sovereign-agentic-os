@@ -18,6 +18,8 @@ import {
   goldMartFqn,
   goldOutputColumns,
   metricGoldReady,
+  metricSqlReady,
+  metricCubeReady,
   viewMembers,
   PROMOTE_FIRST_MESSAGE,
 } from './metrics.ts';
@@ -153,6 +155,35 @@ test('#91 metric guard: a governed dataset without a built Gold is rejected', ()
   noGold.versions.gold.built = false;
   assert.equal(metricGoldReady(noGold).ok, false);
   assert.match(metricGoldReady(noGold).message!, /built Gold/);
+});
+
+// -------- metrics→Trino migration (Phase 1): SQL-ready vs Cube-ready gate SPLIT --------
+
+test('metricSqlReady: a PERSONAL built Gold is now READY (define/preview/explore drop promote-first)', () => {
+  // The whole point of Phase 1 — a metric serves as governed Trino SQL over the personal
+  // lane read AS the owner, so no promotion is needed to define or read it.
+  const personal = gold({ tier: 'dataset', visibility: 'private' });
+  assert.deepEqual(metricSqlReady(personal), { ok: true });
+});
+
+test('metricSqlReady: still requires a built Gold (no gold → honest reject)', () => {
+  const noGold = gold();
+  noGold.versions.gold.built = false;
+  assert.equal(metricSqlReady(noGold).ok, false);
+  assert.match(metricSqlReady(noGold).message!, /built Gold/);
+});
+
+test('metricCubeReady: the Cube-registration promote-first rule is PRESERVED for personal gold', () => {
+  const personal = gold({ tier: 'dataset', visibility: 'private' });
+  const r = metricCubeReady(personal);
+  assert.equal(r.ok, false);
+  assert.equal(r.message, PROMOTE_FIRST_MESSAGE);
+  // …and a governed built Gold is cube-ready.
+  assert.deepEqual(metricCubeReady(gold()), { ok: true });
+});
+
+test('metricGoldReady stays a back-compat alias for the Cube rule', () => {
+  assert.equal(metricGoldReady, metricCubeReady);
 });
 
 test('#91 dim reconciliation: drill_members naming a NON-mart column are dropped from the cube', () => {

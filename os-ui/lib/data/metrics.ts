@@ -106,21 +106,44 @@ export const PROMOTE_FIRST_MESSAGE =
   'Promote this dataset to Shared first — a metric needs a governed Gold in the domain schema (Cube reads the domain mart, not your personal lane).';
 
 /**
- * FAIL-CLOSED metric/cube gate (#91): a Cube binds to `iceberg.<domain>.gold_<slug>`
+ * SQL-READY gate (the metrics→Trino migration, Phase 1): a metric now SERVES as governed
+ * Trino SQL over the PHYSICAL gold mart run AS the viewer (OPA row/column security
+ * applies), so define + preview + explore require ONLY a BUILT Gold — of ANY tier. A
+ * personal dataset's gold lives in the owner's `personal_<uid>` lane and the owner reads
+ * it AS themselves (Trino/OPA `is_owned_personal`), so a metric on personal gold is now
+ * possible: no promotion needed to define or read it. Returns `{ ok:false, message }`
+ * (never throws — callers decide 400 vs skip).
+ */
+export function metricSqlReady(d: Dataset): { ok: boolean; message?: string } {
+  if (!d.versions.gold.built) {
+    return { ok: false, message: 'Define a metric only on a built Gold version.' };
+  }
+  return { ok: true };
+}
+
+/**
+ * FAIL-CLOSED metric/CUBE gate (#91): a Cube binds to `iceberg.<domain>.gold_<slug>`
  * — a table that exists ONLY once the dataset is a PROMOTED asset/product (the
  * governed CTAS landed the gold in the domain schema). Cube reads Trino as `cube-sales`,
  * entitled only to governed DOMAIN schemas, so a metric on an un-promoted personal
  * dataset points at a non-existent domain table and the cube can't compile/read.
  * Returns `{ ok:false, message }` (never throws — callers decide 400 vs skip) so a
  * broken cube is NEVER registered. Requires BOTH a built Gold AND a governed tier.
+ *
+ * This is the CUBE-REGISTRATION gate ONLY (scaffold/sidecar). Serving a metric no longer
+ * needs it — see {@link metricSqlReady}. Cube stays on the dashboards path (Phase 2), so
+ * the promote-first rule is preserved wherever a CUBE artifact would be produced.
  */
-export function metricGoldReady(d: Dataset): { ok: boolean; message?: string } {
-  if (!d.versions.gold.built) {
-    return { ok: false, message: 'Define a metric only on a built Gold version.' };
-  }
+export function metricCubeReady(d: Dataset): { ok: boolean; message?: string } {
+  const sql = metricSqlReady(d);
+  if (!sql.ok) return sql;
   if (d.tier === 'dataset') return { ok: false, message: PROMOTE_FIRST_MESSAGE };
   return { ok: true };
 }
+
+/** @deprecated Back-compat alias for {@link metricCubeReady} (the Cube-registration rule).
+ *  Callers on the metric READ/DEFINE path have moved to {@link metricSqlReady}. */
+export const metricGoldReady = metricCubeReady;
 
 /**
  * The ACTUAL columns of the built Gold table. A Gold built through the JOIN builder
