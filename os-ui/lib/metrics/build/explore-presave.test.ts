@@ -144,10 +144,57 @@ test('previewTrinoSql: a ratio expands its sibling measures; window shapes retur
   const sql = previewTrinoSql(d, aov, exploreSpec(d, aov))!;
   assert.match(sql, /1\.0 \* \(SUM\(CAST\(net_amount AS double\)\)\) \/ \(COUNT\(\*\)\) AS "aov"/);
 
+  // A window measure with NO time slice has no series → still null (honest pending).
   const rolling = { name: 'r7', type: 'sum' as const, sql: 'net_amount', rollingWindow: { trailing: '7 day' } };
   assert.equal(previewTrinoSql(d, rolling, exploreSpec(d, rolling)), null);
   const ghostRatio = { name: 'bad', type: 'number' as const, sql: '{nope} / {orders}' };
   assert.equal(previewTrinoSql(d, ghostRatio, exploreSpec(d, ghostRatio)), null);
+});
+
+// -------------------------------------------------- window / running-total SQL ----
+
+test('previewTrinoSql: a TRAILING window (last N days) compiles to a bucketed ROWS frame', () => {
+  const d = goldSales();
+  const r7 = { name: 'r7', type: 'sum' as const, sql: 'net_amount', rollingWindow: { trailing: '7 day', offset: 'end' as const } };
+  const spec = exploreSpec(d, r7, { timeDimension: 'order_date', granularity: 'day' });
+  const sql = previewTrinoSql(d, r7, spec, 'iceberg.sales.gold_sales')!;
+  // Per-bucket base aggregate, then SUM over the trailing 7 buckets (7-1 = 6 preceding).
+  assert.match(sql, /date_trunc\('day', "order_date"\) AS "order_date"/);
+  assert.match(sql, /SUM\(SUM\(CAST\(net_amount AS double\)\)\) OVER \(ORDER BY date_trunc\('day', "order_date"\) ROWS BETWEEN 6 PRECEDING AND CURRENT ROW\) AS "r7"/);
+  assert.match(sql, /GROUP BY 1/);
+  assert.ok(!sql.includes('--') && !sql.includes('/*'), 'no comments in executed window SQL');
+});
+
+test('previewTrinoSql: a RUNNING TOTAL (trailing unbounded) is a cumulative window', () => {
+  const d = goldSales();
+  const cum = { name: 'cum_rev', type: 'sum' as const, sql: 'net_amount', rollingWindow: { trailing: 'unbounded' } };
+  const spec = exploreSpec(d, cum, { timeDimension: 'order_date', granularity: 'month' });
+  const sql = previewTrinoSql(d, cum, spec, 'iceberg.sales.gold_sales')!;
+  assert.match(sql, /SUM\(SUM\(CAST\(net_amount AS double\)\)\) OVER \(ORDER BY date_trunc\('month', "order_date"\) ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\) AS "cum_rev"/);
+});
+
+test('previewTrinoSql: a window grouped by a dimension PARTITIONs the series', () => {
+  const d = goldSales();
+  const cum = { name: 'cum_rev', type: 'sum' as const, sql: 'net_amount', rollingWindow: { trailing: 'unbounded' } };
+  const spec = exploreSpec(d, cum, { dimensions: ['region'], timeDimension: 'order_date', granularity: 'month' });
+  const sql = previewTrinoSql(d, cum, spec, 'iceberg.sales.gold_sales')!;
+  assert.match(sql, /OVER \(PARTITION BY "region" ORDER BY date_trunc\('month', "order_date"\)/);
+  assert.match(sql, /GROUP BY 1, 2/);
+});
+
+test('previewTrinoSql: a window whose unit ≠ the slice granularity is NOT faked → null', () => {
+  // A "1 month" trailing window over a DAY-grained slice has no faithful ROWS-frame form
+  // (a month is not a fixed number of day-buckets) — honest null, never a wrong number.
+  const d = goldSales();
+  const m = { name: 'r1m', type: 'sum' as const, sql: 'net_amount', rollingWindow: { trailing: '1 month' } };
+  const spec = exploreSpec(d, m, { timeDimension: 'order_date', granularity: 'day' });
+  assert.equal(previewTrinoSql(d, m, spec, 'iceberg.sales.gold_sales'), null);
+});
+
+test('previewTrinoSql: a window with NO time dimension is null (unusable without a series)', () => {
+  const d = goldSales();
+  const r7 = { name: 'r7', type: 'sum' as const, sql: 'net_amount', rollingWindow: { trailing: '7 day' } };
+  assert.equal(previewTrinoSql(d, r7, exploreSpec(d, r7), 'iceberg.sales.gold_sales'), null);
 });
 
 test('sqlRowsToExploreRows: SQL columns map onto the SAME member-keyed rows as Cube', () => {

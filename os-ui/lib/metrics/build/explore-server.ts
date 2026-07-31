@@ -161,9 +161,20 @@ export async function exploreMetric(
     const readTarget = goldReadTarget(dataset, token);
     const sql = previewTrinoSql(dataset, measure, spec, readTarget);
     if (!sql) {
-      // No faithful plain-SQL form (rolling window / running total): the value is computed by
-      // Cube after Publish (Phase 2) — honest pending, never a fabricated number.
-      return { ...base, rows: [], securityContext: identities.cube.securityContext, pending: true };
+      // No faithful SQL form for this slice. A rolling-window / running-total measure serves
+      // as governed SQL (Phase 2) but REQUIRES a time dimension + granularity — a window with
+      // no series, or an inexpressible trailing frame, has no honest number, so we return an
+      // explicit pending with a clear reason rather than a fabricated value.
+      const reason = measure.rollingWindow
+        ? 'This is a rolling-window / running-total metric — add a time dimension and a matching granularity (e.g. day) to the slice so the trailing series can be computed.'
+        : undefined;
+      return {
+        ...base,
+        rows: [],
+        securityContext: identities.cube.securityContext,
+        pending: true,
+        ...(reason ? { warning: reason } : {}),
+      };
     }
     // Run AS the delegated token's SUBJECT (R3 — the viewer's uid). For a personal dataset the
     // subject owns the `personal_<uid>` schema (OPA `is_owned_personal`); for a governed

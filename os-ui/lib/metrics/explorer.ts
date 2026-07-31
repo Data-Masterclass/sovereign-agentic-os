@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Dataset, Measure } from '../data/index.ts';
+import type { Dataset, Measure, RollingWindow } from '../data/index.ts';
 import { type DelegatedToken, propagate } from '../data/identity.ts';
 import { dimensionMember, measureMember } from './model.ts';
 import { goldMartFqn, viewMembers } from '../data/metrics.ts';
@@ -121,13 +121,12 @@ export function dropToSql(spec: ExploreSpec): string {
 
 // ------------------------------------------------- pre-save preview (Trino) ----
 
-/** One measure as a Trino aggregate expression over the gold mart. Guided measure
- *  filters become `FILTER (WHERE …)` (the `{CUBE}.` prefix drops — the mart IS the
- *  cube's table); a ratio (`number`) expands its sibling measures ONE level. Returns
- *  null for shapes with no faithful plain-SQL equivalent (rolling windows / running
- *  totals — those need Cube's time-window machinery and are served after Publish). */
-function trinoAggExpr(m: Measure, siblings: Measure[]): string | null {
-  if (m.rollingWindow) return null;
+/** One measure's BASE aggregate expression over the gold mart — the per-row-group
+ *  aggregate, IGNORING any rolling window (the window is layered on top by
+ *  {@link windowTrinoSql}). Guided measure filters become `FILTER (WHERE …)` (the
+ *  `{CUBE}.` prefix drops — the mart IS the cube's table); a ratio (`number`) expands its
+ *  sibling measures ONE level. Returns null for a ratio whose siblings have no SQL form. */
+function baseAggExpr(m: Measure, siblings: Measure[]): string | null {
   const filter = m.filters?.length
     ? ` FILTER (WHERE ${m.filters.map((f) => f.sql.replaceAll('{CUBE}.', '')).join(' AND ')})`
     : '';
@@ -154,7 +153,7 @@ function trinoAggExpr(m: Measure, siblings: Measure[]): string | null {
       let sql = m.sql;
       for (const r of refs) {
         const sib = siblings.find((s) => s.name === r && s.type !== 'number');
-        const expr = sib ? trinoAggExpr(sib, siblings) : null;
+        const expr = sib ? baseAggExpr(sib, siblings) : null;
         if (!expr) return null;
         sql = sql.replaceAll(`{${r}}`, `(${expr})`);
       }
@@ -162,6 +161,82 @@ function trinoAggExpr(m: Measure, siblings: Measure[]): string | null {
     }
     default: return null;
   }
+}
+
+/** One measure as a Trino aggregate expression, honouring the rolling-window guard: a
+ *  window measure has no PLAIN (non-windowed) aggregate form, so this returns null for it
+ *  (the caller layers the window on via {@link windowTrinoSql}). A non-window measure is
+ *  exactly its {@link baseAggExpr}. */
+function trinoAggExpr(m: Measure, siblings: Measure[]): string | null {
+  if (m.rollingWindow) return null;
+  return baseAggExpr(m, siblings);
+}
+
+/** The window frame + accumulator for a rolling-window measure over the BUCKETED series.
+ *  `trailing: 'unbounded'` = a RUNNING TOTAL (cumulative from the first bucket); a finite
+ *  `trailing: 'N unit'` = a TRAILING window of the last N buckets. `null` when the window
+ *  is not expressible as a faithful ROWS frame (see {@link windowTrinoSql} for the rules). */
+function windowFrame(win: RollingWindow, granularity: Granularity): string | null {
+  const trailing = (win.trailing ?? '').trim();
+  if (!trailing) return null;
+  if (trailing === 'unbounded') {
+    // Running total: accumulate every bucket up to and including the current one.
+    return 'ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW';
+  }
+  const m = /^(\d+)\s+(day|week|month|quarter|year)s?$/.exec(trailing);
+  if (!m) return null;
+  const amount = Number(m[1]);
+  const unit = m[2];
+  // A trailing frame is expressed in BUCKETS, so the window's unit must match the slice
+  // granularity — "7 day" trailing over a DAY-bucketed series is 7 buckets. A unit that
+  // differs from the granularity (e.g. a "1 month" window on a day-grained slice) has no
+  // faithful ROWS-frame form here, so we return null → the caller serves an honest pending
+  // with a clear reason rather than a wrong number.
+  if (unit !== granularity || amount < 1) return null;
+  // N buckets trailing (inclusive of the current) = N-1 preceding rows. NOTE (sparse
+  // buckets): the frame counts EXISTING buckets, not calendar units — a series with gaps
+  // (a bucket with no rows produces no row) trails the last N PRESENT buckets, which for a
+  // dense day-grained gold equals the last N days. This is the honest, date-spine-free
+  // choice; a gap-filled spine is deliberately not synthesised.
+  return `ROWS BETWEEN ${amount - 1} PRECEDING AND CURRENT ROW`;
+}
+
+/**
+ * The SERVE SQL for a ROLLING-WINDOW / RUNNING-TOTAL measure (Phase 2). A window measure
+ * aggregates the base measure per time bucket, then runs a window accumulator over that
+ * bucketed series — SUM for a running total / trailing sum, AVG for a trailing average.
+ * Faithful to Cube's `rolling_window`: the frame is over the ORDER BY the time bucket,
+ * partitioned by any group-by dimensions.
+ *
+ * A window measure REQUIRES a time dimension + granularity in the slice (`spec.timeDimension`
+ * + `spec.granularity`) — without one there is no series to accumulate, so this returns null
+ * and the caller serves an honest pending/unusable answer, never a wrong number. Also null
+ * when the base measure has no SQL aggregate (a ratio window), when the accumulator isn't
+ * sum/avg, or when the trailing frame isn't expressible (see {@link windowFrame}).
+ */
+function windowTrinoSql(dataset: Dataset, measure: Measure, spec: ExploreSpec, from: string): string | null {
+  const win = measure.rollingWindow;
+  if (!win) return null;
+  if (!spec.timeDimension || !spec.granularity) return null; // no series → no window
+  // Only sum/avg accumulate meaningfully over a series; a windowed count is a windowed sum.
+  const accumulator = measure.type === 'avg' ? 'AVG' : measure.type === 'sum' || measure.type === 'count' ? 'SUM' : null;
+  if (!accumulator) return null;
+  const base = baseAggExpr(measure, dataset.measures);
+  if (!base) return null;
+  const frame = windowFrame(win, spec.granularity);
+  if (!frame) return null;
+
+  const dims = spec.dimensions.map((d) => d.split('.')[1]);
+  const timeCol = spec.timeDimension.split('.')[1];
+  const bucket = `date_trunc('${spec.granularity}', "${timeCol}")`;
+  const partition = dims.length ? `PARTITION BY ${dims.map((c) => `"${c}"`).join(', ')} ` : '';
+  const over = `OVER (${partition}ORDER BY ${bucket} ${frame})`;
+  // The window accumulates the per-bucket base aggregate: `SUM(SUM(x)) OVER (...)`. Trino
+  // evaluates the inner aggregate under the GROUP BY, then the outer window over the groups.
+  const groupSelect = [...dims.map((c) => `"${c}"`), `${bucket} AS "${timeCol}"`];
+  const select = [...groupSelect, `${accumulator}(${base}) ${over} AS "${measure.name}"`].join(', ');
+  const groupBy = `\nGROUP BY ${dims.map((_, i) => i + 1).concat([dims.length + 1]).join(', ')}`;
+  return `SELECT ${select}\nFROM ${from}${groupBy}\nLIMIT ${spec.limit ?? 100}`;
 }
 
 /**
@@ -172,10 +247,16 @@ function trinoAggExpr(m: Measure, siblings: Measure[]): string | null {
  * (personal `iceberg.personal_<owner>.gold_<slug>` for a personal dataset, the domain
  * `iceberg.<domain>.gold_<slug>` otherwise). The gold FQN's SCHEMA and the Trino session
  * principal must agree (see exploreMetric) — that is why the target is resolved server-side
- * and threaded in, not derived here. Returns null when the measure has no faithful plain-SQL
- * form (rolling window / running total) — those serve via Cube after Publish (Phase 2).
+ * and threaded in, not derived here.
+ *
+ * A ROLLING-WINDOW / RUNNING-TOTAL measure (Phase 2) is compiled by {@link windowTrinoSql}:
+ * it needs a time dimension + granularity in the slice. Returns null only when there is no
+ * faithful SQL form (a window measure with no time slice, an unresolvable ratio, an
+ * inexpressible trailing frame) — the caller then serves an honest pending, never a wrong number.
  */
 export function previewTrinoSql(dataset: Dataset, measure: Measure, spec: ExploreSpec, readTarget?: string): string | null {
+  const from = readTarget ?? goldMartFqn(dataset);
+  if (measure.rollingWindow) return windowTrinoSql(dataset, measure, spec, from);
   const agg = trinoAggExpr(measure, dataset.measures);
   if (!agg) return null;
   const dims = spec.dimensions.map((d) => d.split('.')[1]);
@@ -191,7 +272,6 @@ export function previewTrinoSql(dataset: Dataset, measure: Measure, spec: Explor
   // NO comment header: this SQL is EXECUTED via the governed query path (queryRun),
   // which rejects any statement containing `--` or `/* */`. Explanatory comments live
   // only on the display-side dropToSql above, which is never executed.
-  const from = readTarget ?? goldMartFqn(dataset);
   return `SELECT ${select}\nFROM ${from}${groupBy}\nLIMIT ${spec.limit ?? 100}`;
 }
 
