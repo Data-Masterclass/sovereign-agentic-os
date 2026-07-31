@@ -13,6 +13,46 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.34] — 2026-07-31
+
+### Changed
+- **Dashboards read via governed SQL — Cube is off EVERY read path now.** A native
+  ECharts panel resolves its numbers through the **same compiled-SQL metrics path**
+  the Metrics tab uses (`exploreMetric`), not Cube: each panel measure is resolved
+  to its governed metric (RLS-scoped registry) and served as one governed `SELECT`
+  over the physical Gold mart, run **as the viewer** (Trino/OPA row & column
+  security). A chart's number is therefore **the explorer's number by
+  construction** — same measure member, same slice, same viewer identity, same
+  honesty gate — so the BI layer and the Metrics tab can never disagree. The panel
+  API response shape is unchanged (rows / mode / pending / warning / missingMembers
+  / securityContext / sql), so the UI is untouched — a pure backend resolution swap.
+- **Alerts evaluate via governed SQL, as the rule's owner.** An alert now resolves
+  its metric value through `exploreMetric` (Cube off the read path) evaluated **as
+  the rule's OWNER** — an owner-delegated token minted from the governed user
+  directory (never a service account, never the cron-triggerer's identity) — so the
+  threshold fires on exactly the number the owner sees under their own RLS. This
+  also fixes the prior broken lookup that assumed a member's prefix was the dataset
+  id (it is the cube view name); the member is now resolved through the metrics
+  registry, the same way dashboards resolve it.
+- **Window metrics are served as SQL.** Rolling-window and running-total measures —
+  which used to return "pending, serves via Cube after Publish" — now compile to a
+  faithful Trino window query: the base measure is aggregated per time bucket, then
+  a window accumulator runs over the bucketed series (`SUM(…) OVER (ORDER BY bucket
+  ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` for a running total; a trailing
+  `ROWS BETWEEN n-1 PRECEDING AND CURRENT ROW` frame for a last-n window; a group-by
+  dimension `PARTITION`s the series). A window measure **requires a time dimension +
+  granularity**; without one (or when the trailing unit doesn't match the
+  granularity) it returns the honest pending/unusable answer with a clear reason —
+  never a wrong number. The frame counts existing buckets, not calendar units
+  (documented), and the executed SQL carries no comments.
+
+### Fixed
+- **Alert honesty: an unreachable lakehouse SKIPS, never fires.** When Trino is
+  unreachable, alert evaluation returns status **`unavailable`** and is skipped —
+  never a fabricated value and never a false alarm; an un-computable/empty metric is
+  **`pending`** (skipped, retried next tick). Only a genuinely computed number is
+  compared to the threshold.
+
 ## [os-ui 0.6.33] — 2026-07-31
 
 ### Fixed
