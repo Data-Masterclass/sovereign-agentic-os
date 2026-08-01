@@ -24,7 +24,7 @@ export const dynamic = 'force-dynamic';
 export const GET = withRoute(async ({ user }) => {
   const groups = listMetrics(user);
   const members = [...groups.mine, ...groups.domain, ...groups.marketplace].map((m) => m.member);
-  const meta = await cubeMeta();
+  const meta = [] as Awaited<ReturnType<typeof cubeMeta>>; // registry-only palette since Phase 2 — no Cube dependency
   // Registry fallback (Northpeak fix): the governed datasets' REAL dimension members, so a
   // view Cube doesn't serve still offers its group-bys (flagged `served:false`, warned in the
   // builder) instead of silently emptying the palette. Entitlement unchanged: narrowCubeMeta

@@ -4,7 +4,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser, type CurrentUser } from '@/lib/core/auth';
 import { failResponse, runStageAssistant } from '@/lib/assistant/stage-route';
-import { cubeMeta } from '@/lib/infra/governed';
 import { listMetrics } from '@/lib/metrics/store';
 import { narrowCubeMeta, type RegistryViewDims } from '@/lib/dashboards/cube-meta';
 import { listGovernedDatasets } from '@/lib/data/store';
@@ -39,7 +38,7 @@ async function designDimensionsFor(user: CurrentUser, view: string): Promise<str
     const registryDims: RegistryViewDims = new Map(
       listGovernedDatasets().map((d) => [cubeViewName(d), registryDimensionMembers(d)]),
     );
-    const v = narrowCubeMeta(members, await cubeMeta(), registryDims).find((x) => x.view === view);
+    const v = narrowCubeMeta(members, [], registryDims).find((x) => x.view === view);
     return v ? [...v.dimensions, ...v.timeDimensions] : [];
   } catch {
     return []; // dimension enrichment is additive — never fail the assistant for it
