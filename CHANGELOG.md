@@ -13,6 +13,68 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.39] — 2026-08-01
+
+### Added
+- **Folders + rename across EVERY artifact tab (parity rollout).** Dashboards,
+  Science, Agents, Software, Connections, Big Bets, Pillars and Business
+  Processes/Workflows now have the same governed folders Files and Data already
+  had — a per-domain My/Domain folder tree in the list header, a "Move to
+  folder…" picker on each artifact, and the folder surviving serialization —
+  all through the ONE shared `ArtifactAdapter` registry (`lib/folders`), so the
+  move/archive/restore/delete cascade is written once and can't drift per tab.
+  Folders stay **domain-scoped**: a folder in domain A never shows in domain B.
+- **Rename for Metrics, Dashboards, Science, Agents, Software, Connections, Big
+  Bets, Pillars and Business Processes.** Each artifact's detail header gains a
+  labelled **✎ Rename** button (inline input, Enter/blur to commit, error shown
+  inline) — the same affordance the Data tab has. Rename is **display-name only**
+  and edit-scoped to the same authority as editing the artifact; every rename is
+  snapshotted to the artifact's version log where it has one.
+
+### Changed
+- **Physical identity is frozen across every rename.** Renaming never moves an
+  artifact's derived/physical identity: a dataset's slug, a dashboard's Cube
+  view, a software app's image/repo slug, a connection's Trino catalog + K8s
+  secret name, a science model's serving key, and an agent/bet/pillar/workflow's
+  stable id all stay pinned — so no live table, image, secret or member is ever
+  orphaned by a rename. A **metric** is `dataset.measure`, so renaming writes a
+  new measure **`label`** and freezes the Cube member `${View}.${name}` (the
+  honest analogue of the dataset slug-freeze), keeping its sql/member identity
+  stable everywhere the metric is served.
+
+## [os-ui 0.6.37] — 2026-08-01
+
+### Changed
+- **Metrics builder: AI in the natural flow (the Data-tab pattern).** Define opens
+  with **Metric name** on top and a ✨ **Suggest metric** button right beside it —
+  the name doubles as the goal, and the AI fills aggregation/column/dimensions for
+  review. The separate "Suggest metrics" box, the goal textarea and the boxed
+  Define/Refine assistants are gone; Refine carries one big ✨ **Refine with AI**
+  action at the top instead.
+- **Dashboards: the false "Cube is not serving …" warning is gone.** Panels serve
+  as governed SQL resolved through the registry (Phase 2), so the design-time Cube
+  probe was checking something that no longer decides anything. The panel palette
+  is now registry-only — what it offers is exactly what the executor computes —
+  and the two dashboard meta routes no longer call Cube at all.
+
+## [os-ui 0.6.36] — 2026-08-01
+
+### Added
+- **Central build-result popup (Data tab).** Silver/Gold build outcomes announce
+  as a centered modal with a big **Continue to next stage →** confirmation —
+  replacing the easy-to-miss bottom-right toasts. Failures show the honest error
+  large and central.
+
+### Changed
+- **Pass through Gold** is a top action in the Harmonize stage, same style and
+  left of ✨ **Propose a clean/join** (the bottom pass-through box is gone).
+
+### Fixed
+- **Store writes can no longer vanish across a deploy.** The durability mirror
+  silently dropped writes while marked unhealthy — a freshly defined metric was
+  lost on the next pod rollout. Writes now queue during unhealthy windows and
+  replay on recovery (bounded; overflow drops oldest loudly).
+
 ## [os-ui 0.6.34] — 2026-07-31
 
 ### Changed
