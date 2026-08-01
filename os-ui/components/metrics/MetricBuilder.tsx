@@ -20,7 +20,6 @@ import { useToast } from '@/components/core/Toast';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import type { ViewMode } from '@/lib/core/view-mode';
 import MetricStageAssistant from './MetricStageAssistant';
-import SuggestPanel, { type Candidate } from './SuggestMetrics';
 import ExploreMetric from './ExploreMetric';
 import Alerts from './Alerts';
 import ConnectPowerBI from '@/components/powerbi/ConnectPowerBI';
@@ -297,10 +296,6 @@ export default function MetricBuilder({
   const [datasetId, setDatasetId] = useState(existing ? '' : (initialDatasetId ?? ''));
   const [form, setForm] = useState<Form>(EMPTY_FORM);
   const [usedAgent, setUsedAgent] = useState(false);
-  // P0-1: a real free-text goal the Define assistant proposes from. Separate from
-  // `suggestGoal` (which steers the dataset-free "Suggest metrics" panel).
-  const [goalText, setGoalText] = useState('');
-  const [suggestGoal, setSuggestGoal] = useState('');
   const { columns, columnDocs, measures, description, deliverable } = useDataset(datasetId);
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
 
@@ -356,21 +351,6 @@ export default function MetricBuilder({
     const base = initialStageState(METRIC_STAGES);
     return existing ? { ...base, current: 'monitor' } : base;
   });
-
-  /* ── apply a suggested candidate — one click pre-fills dataset + full form and lands
-        on Refine (the form is already validated server-side against the real columns). */
-  const applyCandidate = useCallback((c: Candidate) => {
-    setDatasetId(c.datasetId);
-    setForm({
-      ...EMPTY_FORM,
-      name: c.form.name,
-      aggregation: c.form.aggregation,
-      column: c.form.column,
-      dimensions: c.form.dimensions,
-    });
-    setUsedAgent(true);
-    setStage((s) => ({ ...s, current: 'refine' }));
-  }, []);
 
   // The "saved" metric — either the pre-existing one or the one we just saved.
   const saved: MetricSummary | null = useMemo(() => {
@@ -465,6 +445,27 @@ export default function MetricBuilder({
   const canApprove = !!user && roleAtLeast(user.role, 'builder');
   const onLifecycle = () => { onChanged(); onBack(); };
 
+  // Inline rename of the DISPLAY name (edit-gated). The metric's physical member
+  // (`saved.member`) is FROZEN — the store writes a `label` and never moves the Cube
+  // member — so renaming is safe. Mirrors the Data tab's labelled "✎ Rename" affordance.
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [renameErr, setRenameErr] = useState('');
+  const renameMetric = async () => {
+    if (!saved) return;
+    const name = nameDraft.trim();
+    setRenameErr('');
+    if (!name) { setRenaming(false); return; }
+    const res = await fetch(`/api/metrics/${saved.id}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'rename', name }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setRenameErr(d.error ?? 'Rename failed'); return; }
+    setRenaming(false);
+    onChanged();
+  };
+
   const previewCols = preview && preview.rows.length ? Object.keys(preview.rows[0]) : [];
 
   /* ── render ── */
@@ -481,10 +482,40 @@ export default function MetricBuilder({
 
       {saved ? (
         <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
-          <h2 style={{ margin: 0 }}>{saved.name}</h2>
+          {renaming ? (
+            <span className="rename-inline">
+              <input
+                className="rename-input"
+                autoFocus
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void renameMetric(); if (e.key === 'Escape') setRenaming(false); }}
+                onBlur={() => void renameMetric()}
+                aria-label="Metric name"
+              />
+              <button className="btn primary sm" onClick={() => void renameMetric()}>Save</button>
+              <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+            </span>
+          ) : (
+            <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+              {saved.name}
+              {/* Rename must be DISCOVERABLE — a labelled button (mirrors the Data tab). The
+                  physical Cube member stays frozen; only the display label changes. */}
+              {canManage ? (
+                <button
+                  className="btn ghost sm"
+                  style={{ flex: 'none' }}
+                  onClick={() => { setNameDraft(saved.name); setRenameErr(''); setRenaming(true); }}
+                  title="Rename this metric (the Cube member stays stable)"
+                  aria-label="Rename this metric"
+                >✎ Rename</button>
+              ) : null}
+            </h2>
+          )}
           <span className={`badge ${TIER_BADGE[saved.tier]}`}>{TIER_WORD[saved.tier]}</span>
           {(saved.tier === 'domain' || saved.tier === 'marketplace') ? <DomainTag domain={saved.domain} /> : null}
           <span className="muted mono" style={{ fontSize: 12 }}>{saved.member}</span>
+          {renameErr ? <span className="error-inline" style={{ fontSize: 12 }}>{renameErr}</span> : null}
           {/* Lifecycle (Archive/Restore/Delete) lives in the persistent detail header so it is
               reachable from ANY stage — not buried in Publish. Governance unchanged (canManage). */}
           {canManage ? (
@@ -514,44 +545,9 @@ export default function MetricBuilder({
         onState={setStage}
         ariaLabel="Metric stages"
         assistant={(st) => {
-          if (st.id === 'define') {
-            return (
-              <MetricStageAssistant
-                stage="define"
-                label="Describe your metric in words — the assistant will fill the form."
-                cta="Propose from goal →"
-                disabled={!datasetId || columns.length === 0 || !goalText.trim()}
-                payload={() => ({
-                  // P0-1: the REAL user goal, not a hardcoded string.
-                  goal: goalText.trim() || 'define a useful metric on this dataset',
-                  columns,
-                  // P0-3: ground the proposal in the documented schema — column docs,
-                  // the dataset description and the measures already defined.
-                  columnDocs: columnDocs.filter((c) => c.description),
-                  datasetDescription: description,
-                  measures,
-                })}
-                onForm={(f) => {
-                  if (f.name) set({ name: f.name });
-                  if (f.aggregation && AGGREGATIONS.some((a) => a.value === f.aggregation)) set({ aggregation: f.aggregation });
-                  if (f.column && columns.includes(f.column)) set({ column: f.column });
-                  if (Array.isArray(f.dimensions)) set({ dimensions: f.dimensions.filter((d) => columns.includes(d)) });
-                  setUsedAgent(true);
-                }}
-              />
-            );
-          }
-          if (st.id === 'refine') {
-            return (
-              <MetricStageAssistant
-                stage="refine"
-                label="Suggest dimensions, filters and time window for this metric."
-                cta="Suggest refinements"
-                disabled={!form.name.trim() || columns.length === 0}
-                payload={() => ({ metricName: form.name, aggregation: form.aggregation, columns })}
-              />
-            );
-          }
+          // Define + Refine carry their AI as big IN-FLOW buttons at the top of the
+          // stage body (the Data-tab pattern) — no boxed assistant for them.
+          if (st.id === 'define' || st.id === 'refine') return null;
           if (st.id === 'preview') {
             return (
               <MetricStageAssistant
@@ -595,16 +591,47 @@ export default function MetricBuilder({
         {/* ── Define ── */}
         {stage.current === 'define' ? (
           <div>
-            <p className="lead" style={{ marginTop: 4 }}>
-              Pick a governed dataset and name your metric. Use the assistant above to
-              describe it in words — the form fills automatically, ready for you to review.
-            </p>
-
-            <SuggestPanel
-              goal={suggestGoal}
-              onGoal={setSuggestGoal}
-              onPick={applyCandidate}
-            />
+            {/* METRIC NAME first, with the AI right beside it (the in-flow pattern):
+                type the name — it doubles as the goal — and ✨ Suggest metric fills
+                the aggregation/column/dimensions for you to review. */}
+            <div className="guided-panel" style={{ marginTop: 4 }}>
+              <span className="comp-label" style={{ margin: 0 }}>Metric name</span>
+              <div className="row" style={{ gap: 10, alignItems: 'flex-start', flexWrap: 'wrap', marginTop: 8 }}>
+                <input
+                  placeholder="e.g. Avg interactions per case"
+                  value={form.name}
+                  onChange={(e) => set({ name: e.target.value })}
+                  style={{ maxWidth: 320 }}
+                />
+                <MetricStageAssistant
+                  compact
+                  stage="define"
+                  label="AI reads this dataset's columns and fills the form from the name — you review before saving."
+                  cta="Suggest metric"
+                  disabled={!datasetId || columns.length === 0 || !form.name.trim()}
+                  payload={() => ({
+                    // The metric NAME is the goal — one field, no separate goal box.
+                    goal: form.name.trim() || 'define a useful metric on this dataset',
+                    columns,
+                    // Ground the proposal in the documented schema — column docs,
+                    // the dataset description and the measures already defined.
+                    columnDocs: columnDocs.filter((c) => c.description),
+                    datasetDescription: description,
+                    measures,
+                  })}
+                  onForm={(f) => {
+                    if (f.name) set({ name: f.name });
+                    if (f.aggregation && AGGREGATIONS.some((a) => a.value === f.aggregation)) set({ aggregation: f.aggregation });
+                    if (f.column && columns.includes(f.column)) set({ column: f.column });
+                    if (Array.isArray(f.dimensions)) set({ dimensions: f.dimensions.filter((d) => columns.includes(d)) });
+                    setUsedAgent(true);
+                  }}
+                />
+              </div>
+              <p className="hint" style={{ marginTop: 6 }}>
+                This becomes the canonical name in the registry, explorer and dashboards.
+              </p>
+            </div>
 
             <div className="guided-panel" style={{ marginTop: 14 }}>
               <div className="row" style={{ gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -621,39 +648,24 @@ export default function MetricBuilder({
               </p>
             </div>
 
-            <div className="guided-panel" style={{ marginTop: 14 }}>
-              <span className="comp-label" style={{ margin: 0 }}>What should this metric measure?</span>
-              <textarea
-                placeholder="e.g. total net revenue by region each month"
-                value={goalText}
-                onChange={(e) => setGoalText(e.target.value)}
-                rows={2}
-                style={{ marginTop: 8, width: '100%', maxWidth: 520, resize: 'vertical' }}
-              />
-              <p className="hint" style={{ marginTop: 6 }}>
-                Describe it in plain words, then use <strong>Propose from goal</strong> above — the
-                assistant reads this dataset&apos;s columns and fills the form for you to review.
-              </p>
-            </div>
-
-            <div className="guided-panel" style={{ marginTop: 14 }}>
-              <span className="comp-label" style={{ margin: 0 }}>Metric name</span>
-              <input
-                placeholder="e.g. Revenue"
-                value={form.name}
-                onChange={(e) => set({ name: e.target.value })}
-                style={{ marginTop: 8, maxWidth: 280 }}
-              />
-              <p className="hint" style={{ marginTop: 6 }}>
-                This becomes the canonical name in the registry, explorer and dashboards.
-              </p>
-            </div>
           </div>
         ) : null}
 
         {/* ── Refine ── */}
         {stage.current === 'refine' ? (
           <div>
+            {/* AI, in the flow: one big action at the top — refine this metric. */}
+            <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 10 }}>
+              <MetricStageAssistant
+                compact
+                stage="refine"
+                label="AI suggests dimensions, filters and a time window for this metric."
+                cta="Refine with AI"
+                disabled={!form.name.trim() || columns.length === 0}
+                payload={() => ({ metricName: form.name, aggregation: form.aggregation, columns })}
+              />
+            </div>
+
             {/* Aggregation + column */}
             <div className="guided-panel" style={{ marginTop: 4 }}>
               <span className="comp-label" style={{ margin: 0 }}>What to measure</span>

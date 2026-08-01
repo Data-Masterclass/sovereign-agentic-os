@@ -5,6 +5,7 @@
 
 import { useCallback, useState } from 'react';
 import type { FolderPathNode } from '@/lib/core/folders';
+import type { FolderTab } from '@/lib/folders';
 
 /**
  * The parallel personal + domain folder fetch shared by every artifact browser
@@ -17,11 +18,11 @@ import type { FolderPathNode } from '@/lib/core/folders';
  * reload wiring and simply invokes the returned `loadFolders`. Fail-soft: a failed
  * request leaves the last good nodes in place (the synthesised rail still renders).
  *
- * @param tab          the folders namespace — 'data' | 'metrics' | 'files'
+ * @param tab          the folders namespace — any registered {@link FolderTab}
  * @param showArchived include archived folders (mirrors the tab's archived view)
  */
 export function useFolders(
-  tab: 'data' | 'metrics' | 'files',
+  tab: FolderTab,
   showArchived: boolean,
 ): {
   personalNodes: FolderPathNode[];

@@ -12,6 +12,7 @@ import {
   archiveMetric,
   unarchiveMetric,
   deleteMetric,
+  renameMetric,
 } from '@/lib/metrics/lifecycle';
 
 export const dynamic = 'force-dynamic';
@@ -28,10 +29,13 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   return NextResponse.json({ metric: { ...metric, archived: isMetricArchived(id) } });
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, hydrate: ensureHydrated });
 
-/** POST → metric lifecycle: `archive` (reversible soft-hide) or `unarchive`. */
-export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user, params, body }) => {
+/** POST → metric lifecycle: `archive` (reversible soft-hide), `unarchive`, or `rename`
+ *  (display-name only — the Cube member is frozen; mirrors the Data tab's rename shape). */
+export const POST = withRoute<{ id: string }, { action?: string; name?: string }>(async ({ user, params, body }) => {
   const { id } = params;
   switch (body.action) {
+    case 'rename':
+      return NextResponse.json({ metric: renameMetric(id, user, body.name ?? '') });
     case 'archive':
       return NextResponse.json({ metric: archiveMetric(id, user) });
     case 'unarchive':

@@ -1008,6 +1008,25 @@ export function removeMeasure(id: string, user: Principal, measureName: string):
   return { removed: true };
 }
 
+/**
+ * Rename a metric's DISPLAY name — set the measure's `label` while FREEZING `measure.name`.
+ * A metric IS a measure on a governed dataset, so its physical identity is the Cube member
+ * `${View}.${measure.name}`; changing `name` would move that member (and its sql/semantic
+ * declaration), orphaning every consumer. So — exactly like a dataset rename freezes its
+ * physical slug — we write only the `label` and leave `name` (hence the member + Cube
+ * artifacts) untouched. No artifact regeneration: the semantic/cube YAML key off `name`,
+ * which is unchanged. Edit-scoped (owner or in-domain admin, via {@link editOf}).
+ */
+export function setMeasureLabel(id: string, user: Principal, measureName: string, label: string): Dataset {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  const m = d.measures.find((x) => x.name === measureName);
+  if (!m) fail(`Measure '${measureName}' not found`, 404);
+  m.label = label;
+  persist(rec, d, { author: user.id, summary: `rename metric ${measureName}` });
+  return d;
+}
+
 // ------------------------------------------------------- lifecycle (role-gated) --
 
 /**

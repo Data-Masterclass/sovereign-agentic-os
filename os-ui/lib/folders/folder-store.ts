@@ -38,7 +38,20 @@ import { versionLog } from '../core/versioning.ts';
  * half of that cascade.
  */
 
-export type FolderTab = 'files' | 'knowledge' | 'data' | 'metrics';
+export type FolderTab =
+  | 'files'
+  | 'knowledge'
+  | 'data'
+  | 'metrics'
+  // Wave-2 parity rollout: every artifact tab is foldered under the same registry.
+  | 'dashboards'
+  | 'science'
+  | 'agents'
+  | 'software'
+  | 'connections'
+  | 'bigbets'
+  | 'pillars'
+  | 'workflows';
 export type FolderScope = 'personal' | 'domain';
 
 /** The acting principal — the id/role/domains the edit-scope gate reads. */

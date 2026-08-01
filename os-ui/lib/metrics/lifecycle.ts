@@ -8,6 +8,7 @@ import {
   defineMeasure,
   removeMeasure,
   requireDatasetEditable,
+  setMeasureLabel,
 } from '../data/store.ts';
 import { MetricError } from './model.ts';
 import { osMirror } from '../infra/os-mirror.ts';
@@ -164,6 +165,27 @@ export function moveMetric(metricId: string, user: Principal, folder: string): {
     }
   }
   return { id: metricId, folder: normalised };
+}
+
+/**
+ * RENAME a metric — change its DISPLAY name ONLY. A metric IS a measure on a governed
+ * dataset, so its physical identity is the Cube member `${View}.${measure.name}`. Renaming
+ * writes the measure's `label` (surfaced everywhere the name shows) and FREEZES `measure.name`
+ * — mirroring how a dataset rename freezes its physical slug — so the member / sql / semantic
+ * declaration never move and no consumer is orphaned. Edit-scoped (owner or in-domain admin,
+ * enforced by `setMeasureLabel` → `editOf`). Snapshots the live measure to the version log
+ * first, so the rename is auditable + reversible. Trims, rejects empty, no-ops when unchanged.
+ */
+export function renameMetric(metricId: string, user: Principal, newName: string): { id: string; label: string } {
+  const { datasetId, measure } = requireMeasure(metricId, user); // authorize + prove it exists
+  const label = newName.trim();
+  if (!label) throw new MetricError('a metric needs a name', 400);
+  const current = measure.label ?? measure.name;
+  if (label === current) return { id: metricId, label }; // no-op → no version churn
+  // Snapshot the live measure BEFORE the label changes, so the rename can be undone.
+  versions.record(metricId, user.id, { measure }, 'rename metric');
+  setMeasureLabel(datasetId, user, measure.name, label);
+  return { id: metricId, label };
 }
 
 /** Resolve the current measure for a metric id, EDIT-scoped (owner or domain admin). */

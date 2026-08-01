@@ -22,7 +22,11 @@ import {
  */
 export const dynamic = 'force-dynamic';
 
-const TABS: FolderTab[] = ['files', 'knowledge', 'data', 'metrics'];
+const TABS: FolderTab[] = [
+  'files', 'knowledge', 'data', 'metrics',
+  // Wave-2 parity: every artifact tab reads/writes its folder rows through this one route.
+  'dashboards', 'science', 'agents', 'software', 'connections', 'bigbets', 'pillars', 'workflows',
+];
 const SCOPES: FolderScope[] = ['personal', 'domain'];
 
 function readTab(v: string | null): FolderTab {

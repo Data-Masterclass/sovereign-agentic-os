@@ -43,7 +43,9 @@ function summariesFor(datasetId: string, user: Principal): MetricSummary[] {
     const id = `${d.id}.${m.name}`;
     return {
       id,
-      name: m.name,
+      // DISPLAY name — the measure's `label` when renamed, else the machine `name`. The
+      // physical member (`m.name`) is frozen across a rename, so only this display shifts.
+      name: m.label ?? m.name,
       datasetId: d.id,
       datasetName: d.name,
       member: measureMember(d, m),

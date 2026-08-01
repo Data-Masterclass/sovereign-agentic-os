@@ -24,7 +24,9 @@ import {
   isMetricArchived,
   moveMetric,
   metricFolder,
+  renameMetric,
 } from './lifecycle.ts';
+import { MetricError } from './model.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'builder' };
 const mallory: Principal = { id: 'mallory', domains: ['ops'], role: 'builder' };
@@ -73,6 +75,35 @@ test('MOVE is edit-scoped — a non-owner from another domain is rejected', () =
     () => moveMetric(`${id}.revenue`, mallory, '/theirs'),
     (e: unknown) => (e as { status?: number }).status === 403 || (e as { status?: number }).status === 404,
   );
+});
+
+test('RENAME changes the DISPLAY name but FREEZES the Cube member + measure.name', () => {
+  const id = seed();
+  const mid = `${id}.revenue`;
+  // Before: the display name is the machine name, and the Cube member is `revenue`.
+  const before = listMetrics(amir);
+  assert.equal([...before.mine, ...before.domain].find((m) => m.id === mid)?.name, 'revenue');
+  assert.deepEqual(cubeMeasuresFor(id), ['revenue'], 'member present before rename');
+
+  const res = renameMetric(mid, amir, 'Net Revenue');
+  assert.equal(res.label, 'Net Revenue');
+
+  // After: the DISPLAY name shifts to the label; the Cube member/measure.name is UNCHANGED.
+  const after = listMetrics(amir);
+  const summary = [...after.mine, ...after.domain, ...after.marketplace].find((m) => m.id === mid);
+  assert.equal(summary?.name, 'Net Revenue', 'display name is the new label');
+  assert.equal(summary?.member.endsWith('.revenue'), true, 'the Cube member is frozen to .revenue');
+  assert.deepEqual(cubeMeasuresFor(id), ['revenue'], 'the Cube measure member never moved');
+});
+
+test('RENAME is edit-scoped (a non-owner from another domain is denied) and rejects an empty name', () => {
+  const id = seed();
+  const mid = `${id}.revenue`;
+  assert.throws(
+    () => renameMetric(mid, mallory, 'Hijack'),
+    (e: unknown) => (e as { status?: number }).status === 403 || (e as { status?: number }).status === 404,
+  );
+  assert.throws(() => renameMetric(mid, amir, '   '), (e) => e instanceof MetricError && e.status === 400);
 });
 
 test('DELETE physically de-registers the measure from the Cube model + honest report', () => {

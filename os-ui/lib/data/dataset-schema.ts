@@ -87,6 +87,11 @@ export type Measure = {
   name: string;
   type: string;
   sql: string;
+  /** DISPLAY name shown wherever the metric's name appears. A metric IS `dataset.measure`,
+   *  so its physical identity is the Cube member `${View}.${name}` — renaming a metric must
+   *  NEVER move that member. So a rename writes THIS label (falls back to `name` when unset)
+   *  and freezes `name`, exactly as a dataset rename freezes its physical slug. */
+  label?: string;
   /** Conditional filters narrowing what the aggregation counts (Cube `filters:`). */
   filters?: MeasureFilter[];
   /** A moving time window — trailing/leading/running total (Cube `rolling_window:`). */
@@ -446,6 +451,9 @@ function parseMeasure(raw: unknown, i: number): Measure {
     if (win.trailing || win.leading || win.offset) m.rollingWindow = win;
   }
   if (typeof raw.format === 'string' && raw.format) m.format = raw.format;
+  // The DISPLAY label a rename writes (freezing `name`); round-trips so a renamed metric
+  // keeps its display name across persist/hydrate.
+  if (typeof raw.label === 'string' && raw.label) m.label = raw.label;
   const dm = (raw.drillMembers ?? (raw as Record<string, unknown>).drill_members) as unknown;
   if (Array.isArray(dm)) {
     const members = dm.map((x) => String(x)).filter(Boolean);
