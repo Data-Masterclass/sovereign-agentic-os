@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
 import { trace } from '@/lib/infra/agent-governed';
-import { setModelArchived, deleteModel, ensureModelsHydrated, type Actor } from '@/lib/science';
+import { setModelArchived, deleteModel, renameModel, ensureModelsHydrated, type Actor } from '@/lib/science';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,7 +40,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ model: 
   const a = await auth();
   if (a.error) return a.error;
   const { model } = await params;
-  let body: { action?: string } = {};
+  let body: { action?: string; name?: string } = {};
   try { body = await req.json(); } catch { return NextResponse.json({ error: 'invalid body' }, { status: 400 }); }
   const actor = actorFrom(a.user!);
   try {
@@ -48,6 +48,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ model: 
     if (body.action === 'archive' || body.action === 'unarchive') {
       const m = setModelArchived(model, actor, body.action === 'archive');
       await trace({ principal: a.user!.id, tool: 'model_archive', input: { model, action: body.action }, output: { archived: !!m.archived }, decision: 'allow' });
+      return NextResponse.json({ ok: true, model: m });
+    }
+    // Rename the DISPLAY name only — `model` (the serving/deploy key) never moves.
+    if (body.action === 'rename') {
+      const m = renameModel(model, actor, body.name ?? '');
+      await trace({ principal: a.user!.id, tool: 'model_rename', input: { model, name: body.name }, output: { name: m.name }, decision: 'allow' });
       return NextResponse.json({ ok: true, model: m });
     }
     return NextResponse.json({ error: `unknown action ${body.action}` }, { status: 400 });

@@ -3,7 +3,9 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __resetDashboards, listDashboards, getDashboard, saveDashboard, setDashboardArchived, deleteDashboard, listDashboardVersions, restoreDashboardVersion, transitionDashboard, type Principal } from './store.ts';
+import { __resetDashboards, listDashboards, getDashboard, saveDashboard, setDashboardArchived, deleteDashboard, listDashboardVersions, restoreDashboardVersion, transitionDashboard, renameDashboard, moveDashboard, type Principal } from './store.ts';
+import { __resetStore as resetFolders, listFolders as folderList } from '../folders/folder-store.ts';
+import { dashboardsAdapter } from './folder-adapter.ts';
 import type { DashboardSpec } from './model.ts';
 
 const admin: Principal = { id: 'sara', domains: ['sales'], role: 'admin' };
@@ -13,7 +15,7 @@ function spec(name = 'My Dash'): DashboardSpec {
   return { name, view: 'mine', charts: [] };
 }
 
-beforeEach(() => __resetDashboards());
+beforeEach(() => { __resetDashboards(); resetFolders(); });
 
 test('fresh store starts empty (SEED is empty)', () => {
   const { mine, domain, marketplace } = listDashboards(admin);
@@ -161,4 +163,96 @@ test('active-domain: the per-tab Company (Marketplace) tier IS narrowed by activ
     'a sales-homed certified dashboard must NOT show in an ops user\'s Company tier');
   assert.ok(listDashboards(userA).marketplace.some((d) => d.id === 'dash_scope_mkt'),
     'it shows under Company for a sales user');
+});
+
+// ------------------------------------------------- rename: display name + FROZEN view --
+
+test('renameDashboard: changes spec.name but spec.view stays FROZEN', () => {
+  saveDashboard(builder, 'dash_rn', { name: 'Sales Overview', view: 'sales__orders', charts: [] });
+  const renamed = renameDashboard('dash_rn', builder, 'Revenue Overview');
+  assert.equal(renamed.spec.name, 'Revenue Overview', 'display name changed');
+  assert.equal(renamed.spec.view, 'sales__orders', 'the Cube view is FROZEN across a rename');
+  // The tile summary carries the new name; the view (physical identity) is unchanged.
+  const d = getDashboard('dash_rn', builder);
+  assert.equal(d.spec.name, 'Revenue Overview');
+  assert.equal(d.spec.view, 'sales__orders');
+});
+
+test('renameDashboard: snapshots the prior name to the version log (restorable); a no-op does not churn', () => {
+  saveDashboard(builder, 'dash_rn2', spec('Before'));
+  const beforeVersions = listDashboardVersions('dash_rn2', builder).length;
+  renameDashboard('dash_rn2', builder, 'After');
+  assert.equal(listDashboardVersions('dash_rn2', builder).length, beforeVersions + 1, 'rename snapshots the prior spec');
+  // A rename to the SAME name is a no-op — no extra version churn.
+  const n = listDashboardVersions('dash_rn2', builder).length;
+  renameDashboard('dash_rn2', builder, 'After');
+  assert.equal(listDashboardVersions('dash_rn2', builder).length, n, 'a no-op rename does not churn the version log');
+});
+
+test('renameDashboard: rejects an empty name (400)', () => {
+  saveDashboard(builder, 'dash_rn3', spec('Named'));
+  assert.throws(() => renameDashboard('dash_rn3', builder, '   '), (e: { status?: number }) => e.status === 400);
+});
+
+test('renameDashboard: owner allowed; a non-owner non-admin denied 403; a SHARED one admits in-domain domain_admin', () => {
+  const ownerBuilder: Principal = { id: 'ivy', domains: ['sales'], role: 'builder' };
+  saveDashboard(ownerBuilder, 'dash_rn4', spec('Owned')); // Personal, owner-only
+  // A non-owner plain creator (no manage rights) is rejected.
+  const intruder: Principal = { id: 'mallory', domains: ['sales'], role: 'creator' };
+  assert.throws(() => renameDashboard('dash_rn4', intruder, 'Hijack'), (e: { status?: number }) => e.status === 403);
+  // A PERSONAL dashboard is owner-only — not even a domain_admin may rename it.
+  const domainAdmin: Principal = { id: 'dana', domains: ['sales'], role: 'domain_admin' };
+  assert.throws(() => renameDashboard('dash_rn4', domainAdmin, 'Nope'), (e: { status?: number }) => e.status === 403);
+  // Promote to Domain (shared) → an in-domain domain_admin may rename it.
+  transitionDashboard('dash_rn4', ownerBuilder, 'promote');
+  assert.equal(renameDashboard('dash_rn4', domainAdmin, 'Shared Renamed').spec.name, 'Shared Renamed');
+});
+
+// ------------------------------------------------------------- folder: move + adapter --
+
+test('FOLDER: moveDashboard sets folder, normalises, and survives on the summary; edit-scoped', () => {
+  saveDashboard(builder, 'dash_fld', spec('Foldered'));
+  const moved = moveDashboard('dash_fld', builder, 'reports/');
+  assert.equal(moved.folder, '/reports');
+  // The tile summary carries the new folder for the rail/grid filter.
+  assert.equal(listDashboards(builder).mine.find((d) => d.id === 'dash_fld')?.folder, '/reports');
+  // A non-owner non-admin cannot move it (fail-closed 403).
+  const intruder: Principal = { id: 'mallory', domains: ['sales'], role: 'creator' };
+  assert.throws(() => moveDashboard('dash_fld', intruder, '/elsewhere'), (e: { status?: number }) => e.status === 403);
+  // Moving back to root yields folder '/'.
+  assert.equal(moveDashboard('dash_fld', builder, '/').folder, '/');
+});
+
+test('FOLDER: moving into a folder upserts an explicit registry row (persists when empty)', () => {
+  saveDashboard(builder, 'dash_fld2', spec('Foldered2'));
+  moveDashboard('dash_fld2', builder, '/reports');
+  const rows = folderList(builder, 'dashboards', 'personal');
+  assert.ok(rows.some((r) => r.path === '/reports'), 'move must upsert the folder row');
+});
+
+const adapterUser = { id: 'amir', role: 'creator', domains: ['sales'] };
+
+test('ADAPTER: a moved personal dashboard is found under its new folder in the PERSONAL scope only', () => {
+  saveDashboard(builder, 'dash_ad1', spec('Adapted'));
+  dashboardsAdapter.moveItem('dash_ad1', adapterUser, '/finance');
+  assert.deepEqual(
+    dashboardsAdapter.itemsUnderFolder(adapterUser, 'personal', '/finance').map((i) => i.id),
+    ['dash_ad1'],
+  );
+  assert.deepEqual(dashboardsAdapter.itemsUnderFolder(adapterUser, 'domain', '/finance').map((i) => i.id), []);
+});
+
+test('ADAPTER: itemsUnderFolder includes ARCHIVED members for the cascade; archive/restore/delete are edit-scoped', () => {
+  saveDashboard(builder, 'dash_ad2', spec('Temp'));
+  dashboardsAdapter.moveItem('dash_ad2', adapterUser, '/keep');
+  dashboardsAdapter.archiveItem('dash_ad2', adapterUser);
+  assert.deepEqual(dashboardsAdapter.itemsUnderFolder(adapterUser, 'personal', '/keep').map((i) => i.id), ['dash_ad2']);
+  // Restore un-hides it; then a non-owner is fail-closed on every op.
+  dashboardsAdapter.restoreItem('dash_ad2', adapterUser);
+  const intruder = { id: 'mallory', role: 'creator', domains: ['sales'] };
+  assert.throws(() => dashboardsAdapter.archiveItem('dash_ad2', intruder), (e: { status?: number }) => e.status === 403);
+  assert.throws(() => dashboardsAdapter.deleteItem('dash_ad2', intruder), (e: { status?: number }) => e.status === 403);
+  // The owner deletes it (archive→delete allowed; adapter delete is physical).
+  dashboardsAdapter.deleteItem('dash_ad2', adapterUser);
+  assert.ok(!listDashboards(builder, { includeArchived: true }).mine.some((d) => d.id === 'dash_ad2'));
 });

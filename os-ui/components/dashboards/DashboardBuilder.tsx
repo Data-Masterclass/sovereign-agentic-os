@@ -105,6 +105,12 @@ export default function DashboardBuilder({
   const [designNote, setDesignNote] = useState('');
   const [viewed, setViewed] = useState(false);
   const [liveRls, setLiveRls] = useState('');
+  // Inline rename (display name only — the Cube view is frozen). `nameOverride` lets the
+  // header reflect the new name immediately without a full re-open of the builder.
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [renameErr, setRenameErr] = useState('');
+  const [nameOverride, setNameOverride] = useState<string | null>(null);
   // An existing dashboard's panels are fetched (the list returns only a count); a fresh one
   // uses the in-progress `charts`. These panels feed the native ECharts grid in View.
   const [fetchedPanels, setFetchedPanels] = useState<Panel[] | null>(null);
@@ -142,6 +148,7 @@ export default function DashboardBuilder({
         tier: 'personal',
         owner: user?.name ?? '',
         charts: build.spec.charts.length,
+        folder: '/',
       };
     }
     return null;
@@ -212,6 +219,27 @@ export default function DashboardBuilder({
   const canManage = !!user && !!built && canManageArtifact(user, { owner: built.owner, domain: built.domain ?? '' });
   const canApprove = !!user && roleAtLeast(user.role, 'builder');
 
+  // The name shown in the header — the local override (post-rename) wins over the record.
+  const displayName = nameOverride ?? built?.name ?? '';
+
+  // Rename the dashboard (display name only). The store freezes the Cube view before the
+  // name changes, so every panel binding stays pinned to the real view.
+  const rename = async () => {
+    if (!built) return;
+    const nn = nameDraft.trim();
+    setRenameErr('');
+    if (!nn) { setRenaming(false); return; }
+    const res = await fetch(`/api/dashboards/${built.id}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'rename', name: nn }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setRenameErr(d.error ?? 'Rename failed'); return; }
+    setNameOverride(nn);
+    setRenaming(false);
+    onChanged();
+  };
+
   return (
     <ConfirmProvider>
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -225,7 +253,35 @@ export default function DashboardBuilder({
 
       {built ? (
         <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
-          <h2 style={{ margin: 0 }}>{built.name}</h2>
+          {renaming ? (
+            <span className="rename-inline">
+              <input
+                className="rename-input"
+                autoFocus
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
+                onBlur={() => void rename()}
+                aria-label="Dashboard name"
+              />
+              <button className="btn primary sm" onClick={() => void rename()}>Save</button>
+              <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+            </span>
+          ) : (
+            <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+              {displayName}
+              {/* Rename must be DISCOVERABLE — a labelled button, not a bare glyph (mirrors Data). */}
+              {canManage ? (
+                <button
+                  className="btn ghost sm"
+                  style={{ flex: 'none' }}
+                  onClick={() => { setNameDraft(displayName); setRenameErr(''); setRenaming(true); }}
+                  title="Rename this dashboard (the Cube view binding stays stable)"
+                  aria-label="Rename this dashboard"
+                >✎ Rename</button>
+              ) : null}
+            </h2>
+          )}
           {(built.tier === 'domain' || built.tier === 'marketplace') ? <DomainTag domain={built.domain} /> : null}
           <span className={`badge ${TIER_BADGE[built.tier]}`}>{TIER_LABEL[built.tier]}</span>
           <span className="muted mono" style={{ fontSize: 12 }}>{built.view}</span>
@@ -236,7 +292,7 @@ export default function DashboardBuilder({
             <div style={{ marginLeft: 'auto' }}>
               <LifecycleActions
                 id={built.id}
-                name={built.name}
+                name={displayName}
                 kind="dashboard"
                 visibility={lcVis(built.tier)}
                 archived={!!built.archived}
@@ -253,6 +309,7 @@ export default function DashboardBuilder({
           ) : null}
         </div>
       ) : null}
+      {renameErr ? <div className="error" style={{ marginBottom: 8 }}>{renameErr}</div> : null}
 
       {viewMode === 'developer' ? (
         <DashboardDeveloperView built={built} build={build} charts={charts} name={name} view={view} liveRls={liveRls} />

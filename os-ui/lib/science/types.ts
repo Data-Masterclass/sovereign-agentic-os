@@ -119,6 +119,9 @@ export type ServiceModel = {
   domain: string; // owning tenant
   tier: ModelTier;
   stage: ModelStage;
+  /** The folder this model lives in (normalised path; `'/'` = root). Models are
+   *  domain-scoped, so a model's folders live in the owning domain's tree. */
+  folder?: string;
   /** Set when an Admin certifies into the Marketplace. */
   consumptionMode?: ConsumptionMode;
   /** Both front doors are auto-registered at the model's CURRENT tier (no publish step). */

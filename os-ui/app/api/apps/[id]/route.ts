@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getAppForUser, updateAppDocs, patchAppDesign, refreshActionsStage, type AppEpic } from '@/lib/software/apps';
+import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, refreshActionsStage, type AppEpic } from '@/lib/software/apps';
 import { normalizeContextGrants } from '@/lib/core/context-grants';
 import { reconcileDeployApproval } from '@/lib/software/review';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
@@ -55,4 +55,24 @@ export const PATCH = withRoute<{ id: string }>(async ({ user, params, req }) => 
     docs: body?.docs !== undefined ? String(body.docs) : undefined,
   });
   return NextResponse.json({ app });
+}, { defaultStatus: 500 });
+
+/**
+ * POST → app actions. Today exactly `rename` (change the DISPLAY name only). The
+ * store freezes the physical `slug` (repo/image/container/CI identity), so no
+ * Forgejo repo, container image, subdomain or CI target ever moves. Edit-scoped
+ * (owner or in-domain admin) — a mere viewer is rejected 403. Mirrors the Data
+ * tab's dataset rename route (parity rollout).
+ */
+export const POST = withRoute<{ id: string }>(async ({ user, params, req }) => {
+  const { id } = params;
+  const body = (await req.json().catch(() => ({}))) as { action?: string; name?: string };
+  switch (body.action) {
+    case 'rename': {
+      const app = await renameApp(id, user, body.name ?? '');
+      return NextResponse.json({ app });
+    }
+    default:
+      return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+  }
 }, { defaultStatus: 500 });

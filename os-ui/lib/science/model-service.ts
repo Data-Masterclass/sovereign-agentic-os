@@ -21,6 +21,11 @@ import type {
 import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 // Durable best-effort mirror (relative import — node-test-safe, no `@/` value chain).
 import { osMirror } from '../infra/os-mirror.ts';
+// The pure folder-path normaliser + the governed folder registry (Wave-2 parity):
+// a moved-into folder is upserted as an explicit row so it persists even when empty.
+// Reused, never forked (mirrors lib/data/store.ts). All relative → node-test-safe.
+import { normaliseFolderPath } from '../core/folders.ts';
+import { createFolder, type Principal as FolderPrincipal } from '../folders/index.ts';
 
 /**
  * Model-as-service governance — the Opus spine of the Science golden path.
@@ -160,6 +165,7 @@ const mirror = osMirror({
         tier: { type: 'keyword' },
         buildState: { type: 'keyword' },
         archived: { type: 'boolean' },
+        folder: { type: 'keyword' },
         updatedAt: { type: 'date' },
         spec: { type: 'object', enabled: false },
         versions: { type: 'object', enabled: false },
@@ -330,6 +336,7 @@ export function createModel(input: CreateModelInput, actor: Actor): ServiceModel
     domain,
     tier: 'Personal',
     stage: 'Staging',
+    folder: '/',
     frontDoors: ['rest', 'mcp'],
     versions: [],
     spec: input.spec,
@@ -748,4 +755,81 @@ export function deleteModel(model: string, actor: Actor): ServiceModel {
   store().delete(m.model);
   mirror.deleteThrough(m.model);
   return m;
+}
+
+// -------------------------------------------------------------- rename / folder ---
+
+/**
+ * Rename a model — change its DISPLAY `name` ONLY. Edit-scoped exactly like every other
+ * mutation (owner always; an in-domain domain_admin / platform admin on a shared/certified
+ * model — the reused edit-scope gate, never an exact role set), agents rejected.
+ *
+ * CRITICAL — the SERVING IDENTITY never moves. `m.model` (the KServe InferenceService +
+ * OPA `predict` tool identity + the registry key + FQN/policy-principal source) is the
+ * dataset-slug-freeze equivalent: it was slugged from the ORIGINAL name ONCE at
+ * {@link createModel} (`slugModel(name)`) and STORED, so it is ALREADY frozen. This is
+ * why — unlike `renameDataset`, which must PIN a slug before the name changes — we do
+ * NOT re-derive anything here: we set `m.name` and leave `m.model` (and `kserveService`)
+ * untouched, so no live serving endpoint, policy principal or FQN is ever orphaned.
+ *
+ * The create-time model-id uniqueness (`createModel` 409s a duplicate slug) is therefore
+ * preserved automatically: a rename never re-runs `slugModel`, so it can never re-collide
+ * `model`. Trim + reject-empty (400) + no-op short-circuit (no churn), matching renameDataset.
+ *
+ * NOTE: Science has NO per-artifact version log (unlike `lib/data/store.ts`, which snapshots
+ * dataset.yaml on rename), so there is no history snapshot to take here — the durable mirror
+ * write-through IS the persistence. If a versionLog is added to Science later, snapshot here.
+ */
+export function renameModel(model: string, actor: Actor, newName: string): ServiceModel {
+  const m = getModel(model);
+  if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
+  assertHuman(actor, 'rename a model');
+  requireEditScope(actor, m, 'rename');
+  const name = newName?.trim();
+  if (!name) throw withStatus(new Error('A model needs a name'), 400);
+  if (name === m.name) return m; // no-op → no churn (and `model` stays frozen regardless)
+  // DISPLAY name only. `m.model` (serving/deploy/registry key) is intentionally NOT touched.
+  m.name = name;
+  m.updatedAt = new Date().toISOString();
+  return persist(m);
+}
+
+/**
+ * Move a model into a folder (edit-scoped, write-through like every other mutation).
+ * Mirrors `lib/data/store.moveDataset`: the folder is a normalised path on the model,
+ * and on move we ALSO upsert an EXPLICIT folder row in the governed registry so the
+ * destination folder persists even when it holds no models. A caller who cannot edit is
+ * rejected 403 and nothing is written. Models are domain-scoped, so the folder row is
+ * always upserted under the owning DOMAIN's tree (scope `'domain'`).
+ */
+export function moveModel(model: string, actor: Actor, folder: string): ServiceModel {
+  const m = getModel(model);
+  if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
+  assertHuman(actor, 'move a model');
+  requireEditScope(actor, m, 'move');
+  m.folder = normaliseFolderPath(folder);
+  m.updatedAt = new Date().toISOString();
+  persist(m);
+  // The move already passed the model's edit-scope gate above, so this same-domain
+  // folder create can only mirror an authorised move (best-effort; never rolls it back).
+  upsertFolderRow(m, actor);
+  return m;
+}
+
+/** Best-effort: mirror a model's folder path into the governed folder registry so an
+ *  empty folder still shows in the rail. The root is implicit (never a row). createFolder
+ *  is idempotent + edit-scoped; any gate failure is swallowed so a successful move is never
+ *  rolled back by a folder-registry hiccup (mirrors lib/data/store.upsertFolderRow). Models
+ *  are domain-scoped, so folders always live in the owning DOMAIN's tree. */
+function upsertFolderRow(m: ServiceModel, actor: Actor): void {
+  const path = normaliseFolderPath(m.folder ?? '/');
+  if (path === '/') return;
+  // Map the science Actor role onto the folder Principal role (creator floor for 'user').
+  const role = actor.role === 'user' ? 'creator' : actor.role;
+  const principal: FolderPrincipal = { id: actor.id, role, domains: actor.domains };
+  try {
+    createFolder(principal, { tab: 'science', scope: 'domain', path, domain: m.domain });
+  } catch {
+    /* folder-registry mirror is best-effort; the model move already succeeded */
+  }
 }

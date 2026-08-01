@@ -101,6 +101,7 @@ function DashboardsTabInner() {
               loading={dashboards.loading}
               error={dashboards.error}
               onOpen={(d) => setView({ kind: 'builder', existing: d })}
+              onReload={() => dashboards.reload()}
               showArchived={showArchived}
             />
           </>

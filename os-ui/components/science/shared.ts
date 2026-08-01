@@ -73,6 +73,8 @@ export type ModelSummary = {
   domain: string;
   tier: ModelTier;
   stage: ModelStage;
+  /** The folder this model lives in (normalised path; `'/'` = root). Domain-scoped tree. */
+  folder?: string;
   frontDoors: ('rest' | 'mcp')[];
   versions: ModelVersion[];
   archived?: boolean;

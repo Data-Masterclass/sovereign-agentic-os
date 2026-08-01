@@ -96,6 +96,7 @@ export default function ScienceTab() {
               loading={models.loading}
               error={models.error}
               onOpen={(m) => setView({ kind: 'detail', model: m })}
+              onChanged={() => models.reload()}
               showArchived={showArchived}
             />
           </>

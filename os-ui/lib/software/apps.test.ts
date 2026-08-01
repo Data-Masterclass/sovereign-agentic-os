@@ -22,6 +22,9 @@ const {
   removeAppInternal,
   listAppVersions,
   restoreAppVersion,
+  renameApp,
+  moveApp,
+  getAppForUser,
   templateFiles,
   containerVersionsToPrune,
   REGISTRY_KEEP_VERSIONS,
@@ -354,4 +357,90 @@ test('containerVersionsToPrune: default keep is REGISTRY_KEEP_VERSIONS (2)', () 
     { version: 'c', created_at: '2026-07-29T00:00:00Z' },
   ];
   assert.deepEqual(containerVersionsToPrune(versions), ['c'], 'default keeps newest 2, deletes 1');
+});
+
+// ------------------------------------------------ rename: display name + FROZEN slug --
+
+const owner = { id: 'ro1', name: 'RO1', domains: ['sales'], role: 'creator' as const };
+
+test('renameApp: the physical slug (repo/image/container/CI identity) stays FROZEN across a rename', async () => {
+  __resetAppsCache();
+  const app = await createApp(owner, { name: 'Renewals Tracker', template: 'service' });
+  const frozenSlug = app.slug;
+  assert.equal(frozenSlug, 'renewals-tracker', 'slug derived from the create-time name');
+  assert.equal(app.subdomain.split('.')[0], frozenSlug, 'subdomain host = slug');
+
+  const renamed = await renameApp(app.id, owner, 'Contract Renewals');
+  assert.equal(renamed.name, 'Contract Renewals', 'DISPLAY name changed');
+  // THE key assertion — nothing physical moved: image/repo/container FQN + subdomain
+  // are all keyed off slug, which is byte-identical to before the rename.
+  assert.equal(renamed.slug, frozenSlug, 'slug FROZEN — image/repo/container identity never moves');
+  assert.equal(renamed.subdomain.split('.')[0], frozenSlug, 'the per-app host is unchanged');
+  assert.equal(renamed.repo.fullName.split('/')[1] || frozenSlug, frozenSlug, 'the CI repo name is unchanged');
+});
+
+test('renameApp: owner allowed; shared admits an in-domain domain_admin; a non-owner non-admin denied; empty rejected', async () => {
+  __resetAppsCache();
+  const promoter = { id: 'padm', name: 'PAdm', domains: ['sales'], role: 'domain_admin' as const };
+  const app = await createApp(owner, { name: 'Private App', template: 'service' });
+
+  // Owner may rename a Personal app.
+  assert.equal((await renameApp(app.id, owner, 'Private Renamed')).name, 'Private Renamed');
+  // A different domain_admin is NOT the owner and cannot manage a PRIVATE (Personal) app.
+  const otherAdmin = { id: 'other', name: 'Other', domains: ['sales'], role: 'domain_admin' as const };
+  await assert.rejects(
+    () => renameApp(app.id, otherAdmin, 'Hijack'),
+    (e: Error & { status?: number }) => e.status === 403,
+  );
+  // Empty / whitespace name → 400.
+  await assert.rejects(
+    () => renameApp(app.id, owner, '   '),
+    (e: Error & { status?: number }) => e.status === 400,
+  );
+
+  // Promote Personal → Shared (domain_admin+ gate), then an in-domain domain_admin may rename it.
+  await promoteApp(app.id, promoter);
+  const shared = await renameApp(app.id, otherAdmin, 'Shared Renamed');
+  assert.equal(shared.name, 'Shared Renamed', 'a Shared app admits an in-domain domain_admin');
+  assert.equal(shared.slug, app.slug, 'still frozen after the shared rename');
+
+  // A bare creator who is not the owner still may not rename the shared app.
+  const stranger = { id: 'nobody', name: 'Nobody', domains: ['sales'], role: 'creator' as const };
+  await assert.rejects(
+    () => renameApp(app.id, stranger, 'Nope'),
+    (e: Error & { status?: number }) => e.status === 403,
+  );
+});
+
+test('renameApp: no-op (same name) does not churn the version log', async () => {
+  __resetAppsCache();
+  const app = await createApp(owner, { name: 'Steady', template: 'service' });
+  const before = (await listAppVersions(app.id, owner)).length;
+  const same = await renameApp(app.id, owner, 'Steady');
+  assert.equal(same.name, 'Steady');
+  assert.equal((await listAppVersions(app.id, owner)).length, before, 'no version churn on a no-op rename');
+  // A real rename records exactly one snapshot.
+  await renameApp(app.id, owner, 'Steady v2');
+  assert.equal((await listAppVersions(app.id, owner)).length, before + 1, 'a real rename snapshots once');
+});
+
+// ---------------------------------------------------------------- move: folder --
+
+test('moveApp: sets the folder (edit-scoped), normalises the path, and is visible in the scope', async () => {
+  __resetAppsCache();
+  const app = await createApp(owner, { name: 'Foldered', template: 'service' });
+  assert.equal(app.folder, '/', 'a fresh app lives at the root');
+
+  const moved = await moveApp(app.id, owner, 'reports/q3');
+  assert.equal(moved.folder, '/reports/q3', 'folder normalised to a leading-slash path');
+  // Re-read through the governed path — the folder persists.
+  const back = await getAppForUser(app.id, owner);
+  assert.equal(back.folder, '/reports/q3');
+
+  // A non-owner non-admin cannot move a Personal app.
+  const stranger = { id: 'nobody', name: 'Nobody', domains: ['sales'], role: 'creator' as const };
+  await assert.rejects(
+    () => moveApp(app.id, stranger, '/elsewhere'),
+    (e: Error & { status?: number }) => e.status === 403,
+  );
 });

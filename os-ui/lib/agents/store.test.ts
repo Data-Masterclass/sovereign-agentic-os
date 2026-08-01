@@ -30,9 +30,12 @@ import {
   deleteSystem,
   listSystemVersions,
   restoreSystemVersion,
+  renameAgentSystem,
+  moveAgentSystem,
   WHITELIST_HINT,
 } from './store.ts';
 import type { Principal, LastBuild, ActivityMarker, LastRun } from './store.ts';
+import { parseSystem } from './system-schema.ts';
 
 // sara is the sales domain owner/approver — a domain_admin, since APPROVING
 // Personal→Shared now requires domain_admin+ (a plain builder can no longer
@@ -780,4 +783,79 @@ test('active-domain: the per-tab Company (Marketplace) tier IS narrowed by activ
   const salesUser: Principal = { id: 'fin', domains: ['sales'], role: 'creator' };
   assert.ok(listSystems(salesUser).marketplace.some((s) => s.id === market.id),
     'a sales-homed Marketplace system shows under Company for a sales user');
+});
+
+// ------------------------------------------------ rename: display name + FROZEN id --
+
+test('renameAgentSystem: display name changes; the record id + yaml identity stay FROZEN', () => {
+  __resetStore();
+  const s = createSystem(amir, { name: 'Foo Agent' });
+  const originalId = s.id;
+  const originalYamlName = parseSystem(s.yaml).system.name;
+
+  const renamed = renameAgentSystem(s.id, amir, 'Bar Agent');
+  assert.equal(renamed.name, 'Bar Agent', 'display name changed');
+  assert.equal(renamed.id, originalId, 'the record id is FROZEN across a rename');
+
+  const after = getSystem(s.id, amir);
+  assert.equal(after.name, 'Bar Agent');
+  assert.equal(after.id, originalId);
+  // The SAFE choice: the canonical yaml's system.name is left frozen (identity is the id).
+  assert.equal(parseSystem(after.yaml).system.name, originalYamlName, 'yaml system.name stays frozen');
+});
+
+test('renameAgentSystem: snapshots to the version log (auditable)', () => {
+  __resetStore();
+  const s = createSystem(amir, { name: 'Alpha' });
+  const before = listSystemVersions(s.id, amir).length;
+  renameAgentSystem(s.id, amir, 'Alpha Renamed');
+  assert.ok(listSystemVersions(s.id, amir).length > before, 'a rename records a version snapshot');
+});
+
+test('renameAgentSystem: owner allowed; a shared system admits in-domain domain_admin; a non-owner non-admin denied', () => {
+  __resetStore();
+  // amir owns a Personal system — owner may rename, but nobody else (private is owner-only).
+  const personal = createSystem(amir, { name: 'Private Foo' });
+  assert.equal(renameAgentSystem(personal.id, amir, 'Private Bar').name, 'Private Bar');
+  // A same-domain creator who is NOT the owner cannot manage a PRIVATE system.
+  assert.throws(() => renameAgentSystem(personal.id, creator, 'Hijack'), /not permitted to edit/i);
+
+  // Promote to Shared so canManageArtifact admits an in-domain domain_admin. sara (a
+  // domain_admin) owns + promotes it — a creator cannot lift their own to Shared.
+  const shared = makeShared(sara, { name: 'Shared Foo' });
+  const domainAdmin: Principal = { id: 'dadmin', domains: ['sales'], role: 'domain_admin' };
+  assert.equal(renameAgentSystem(shared.id, domainAdmin, 'Shared Renamed').name, 'Shared Renamed');
+  // A bare creator who is not the owner still may not.
+  const stranger: Principal = { id: 'nobody', domains: ['sales'], role: 'creator' };
+  assert.throws(() => renameAgentSystem(shared.id, stranger, 'Nope'), /not permitted to edit/i);
+});
+
+test('renameAgentSystem: rejects an empty name (400) and no-ops an unchanged name', () => {
+  __resetStore();
+  const s = createSystem(amir, { name: 'Gamma' });
+  assert.throws(() => renameAgentSystem(s.id, amir, '   '), (e) => (e as { status?: number }).status === 400);
+  const before = listSystemVersions(s.id, amir).length;
+  const same = renameAgentSystem(s.id, amir, 'Gamma'); // no-op
+  assert.equal(same.name, 'Gamma');
+  assert.equal(listSystemVersions(s.id, amir).length, before, 'an unchanged name records no version churn');
+});
+
+// ---------------------------------------------------------------- move: folder field --
+
+test('moveAgentSystem: sets folder + survives a re-read; defaults to root', () => {
+  __resetStore();
+  const s = createSystem(amir, { name: 'Router' });
+  assert.equal(s.folder, '/', 'a fresh system lands at root');
+  moveAgentSystem(s.id, amir, '/ops/agents');
+  assert.equal(getSystem(s.id, amir).folder, '/ops/agents', 'the folder persists on the record');
+  // Reflected on the summary too.
+  const mine = listSystems(amir).mine;
+  assert.equal(mine.find((x) => x.id === s.id)?.folder, '/ops/agents');
+});
+
+test('moveAgentSystem: edit-scoped — a non-owner non-admin is denied 403 and nothing is written', () => {
+  __resetStore();
+  const s = createSystem(amir, { name: 'Owned' });
+  assert.throws(() => moveAgentSystem(s.id, creator, '/hijack'), /not permitted to edit/i);
+  assert.equal(getSystem(s.id, amir).folder, '/', 'a denied move writes nothing');
 });

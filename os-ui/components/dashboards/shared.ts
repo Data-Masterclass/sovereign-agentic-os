@@ -20,6 +20,8 @@ export type DashboardSummary = {
   owner: string;
   domain?: string;
   charts: number;
+  /** The folder this dashboard lives in (normalised path; `'/'` = root). */
+  folder: string;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
 };

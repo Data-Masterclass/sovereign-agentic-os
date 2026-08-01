@@ -18,6 +18,8 @@ import {
   nextTier,
   setModelArchived,
   deleteModel,
+  renameModel,
+  moveModel,
   createModel,
   ensureChurnSeed,
   churnSeedModel,
@@ -391,6 +393,95 @@ test('createModel: a base user (creator) MAY create their own draft in their dom
   const m = createModel({ name: 'My draft', spec: spec() }, { id: 'sara', role: 'user', domains: ['sales'], isAgent: false });
   assert.equal(m.owner, 'sara');
   assert.equal(m.tier, 'Personal');
+});
+
+// ---------------------------------------- rename: DISPLAY name + FROZEN serving key --
+
+test('renameModel: SERVING-KEY STABILITY — a rename changes the display name but NEVER `model`', () => {
+  _resetModels();
+  // Create "Foo" — its serving/deploy key `model` is slugged ONCE at create.
+  const m = createModel({ name: 'Foo', spec: spec() }, builder('sales'));
+  assert.equal(m.model, 'foo');
+  assert.equal(m.kserveService, 'foo');
+
+  // Rename Foo → Bar.
+  const renamed = renameModel('foo', builder('sales'), 'Bar');
+  assert.equal(renamed.name, 'Bar');             // display name changed
+  assert.equal(renamed.model, 'foo');            // serving/deploy key FROZEN
+  assert.equal(renamed.kserveService, 'foo');    // KServe InferenceService unmoved
+
+  // Still keyed + resolvable by the ORIGINAL slug, never by slug("Bar") === "bar".
+  assert.equal(getModel('foo')?.name, 'Bar');
+  assert.equal(getModel('bar'), null, 'no record ever lands under the renamed slug');
+  // The compiled policy principal is derived from `model`, so it stays frozen too.
+  assert.ok(compilePredictPolicy(renamed).allowedPrincipals.includes('foo'));
+});
+
+test('renameModel: a rename does NOT re-derive/re-collide `model` (create-uniqueness preserved)', () => {
+  _resetModels();
+  createModel({ name: 'Alpha', spec: spec() }, builder('sales')); // model 'alpha'
+  const beta = createModel({ name: 'Beta', spec: spec() }, builder('sales')); // model 'beta'
+  // Renaming Beta's DISPLAY name to "Alpha" is fine — `model` stays 'beta', no slug collision.
+  const r = renameModel('beta', builder('sales'), 'Alpha');
+  assert.equal(r.model, 'beta');
+  assert.equal(r.name, 'Alpha');
+  assert.equal(getModel('alpha')?.model, 'alpha', 'the original alpha record is untouched');
+});
+
+test('renameModel: edit-scoped — owner ok; a shared model admits domain_admin; unauthorized 403', () => {
+  _resetModels();
+  // A PERSONAL model is owner-only. Owner (sara) may rename it.
+  upsertModel(personalModel()); // owner sara, sales, Personal
+  const sara: Actor = { id: 'sara', role: 'creator', domains: ['sales'], isAgent: false };
+  assert.equal(renameModel('test_model', sara, 'Renamed').name, 'Renamed');
+  // A non-owner builder cannot manage a PRIVATE model.
+  assert.throws(() => renameModel('test_model', builder('sales'), 'Hijack'), (e) => (e as { status?: number }).status === 403);
+
+  // A SHARED (Domain-tier) model admits an in-domain domain_admin.
+  _resetModels();
+  upsertModel(domainModel());
+  const domainAdmin: Actor = { id: 'dana', role: 'domain_admin', domains: ['sales'], isAgent: false };
+  assert.equal(renameModel('test_model', domainAdmin, 'Shared Renamed').name, 'Shared Renamed');
+  // An out-of-domain admin is denied; an agent is always rejected.
+  assert.throws(() => renameModel('test_model', admin('marketing'), 'Nope'), (e) => (e as { status?: number }).status === 403);
+  assert.throws(() => renameModel('test_model', agentActor('sales'), 'Nope'), /agent cannot/i);
+});
+
+test('renameModel: rejects an empty name (400) and no-ops an unchanged name', () => {
+  _resetModels();
+  const sara: Actor = { id: 'sara', role: 'creator', domains: ['sales'], isAgent: false };
+  upsertModel(personalModel()); // name 'Test'
+  assert.throws(() => renameModel('test_model', sara, '   '), (e) => (e as { status?: number }).status === 400);
+  const before = getModel('test_model')!.updatedAt;
+  const same = renameModel('test_model', sara, 'Test'); // no-op
+  assert.equal(same.name, 'Test');
+  assert.equal(same.updatedAt, before, 'a no-op rename never churns updatedAt');
+});
+
+// -------------------------------------------------------- move into a folder (edit) --
+
+test('moveModel: sets the folder, survives a re-read, and is edit-scoped', () => {
+  _resetModels();
+  upsertModel(domainModel()); // shared Domain model, owner sara, sales
+  const domainAdmin: Actor = { id: 'dana', role: 'domain_admin', domains: ['sales'], isAgent: false };
+  // Default folder is root when never set.
+  const m = moveModel('test_model', domainAdmin, '/Models/Churn');
+  assert.equal(m.folder, '/Models/Churn'); // normalised path
+  assert.equal(getModel('test_model')?.folder, '/Models/Churn', 'survives a registry re-read');
+  // Renaming does NOT disturb the folder; moving does NOT disturb the serving key.
+  assert.equal(m.model, 'test_model');
+  // A non-owner, out-of-domain admin cannot move it.
+  assert.throws(() => moveModel('test_model', admin('marketing'), '/Elsewhere'), (e) => (e as { status?: number }).status === 403);
+  // Agents are always rejected.
+  assert.throws(() => moveModel('test_model', agentActor('sales'), '/Nope'), /agent cannot/i);
+});
+
+test('moveModel: a PERSONAL model is owner-only — a non-owner builder is 403', () => {
+  _resetModels();
+  upsertModel(personalModel()); // Personal, owner sara
+  assert.throws(() => moveModel('test_model', builder('sales'), '/Mine'), (e) => (e as { status?: number }).status === 403);
+  const sara: Actor = { id: 'sara', role: 'creator', domains: ['sales'], isAgent: false };
+  assert.equal(moveModel('test_model', sara, '/Mine').folder, '/Mine');
 });
 
 // ------------------------------------------------------ churn seed (the first model)

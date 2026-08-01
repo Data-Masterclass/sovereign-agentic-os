@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@/lib/data/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { ensureHydrated, setDashboardArchived, deleteDashboard, getDashboard } from '@/lib/dashboards/store';
+import { ensureHydrated, setDashboardArchived, deleteDashboard, getDashboard, renameDashboard } from '@/lib/dashboards/store';
 import { normalizePanel } from '@/lib/dashboards/model';
 
 export const dynamic = 'force-dynamic';
@@ -30,13 +30,19 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
 
 /**
  * Dashboard lifecycle (owner-scoped): POST { action: 'archive' | 'unarchive' }
- * for the reversible soft-hide, DELETE for the permanent removal (which also
- * purges the dashboard's version history).
+ * for the reversible soft-hide, { action: 'rename', name } for the display-name change,
+ * DELETE for the permanent removal (which also purges the dashboard's version history).
  */
-export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user, params, body }) => {
+export const POST = withRoute<{ id: string }, { action?: string; name?: string }>(async ({ user, params, body }) => {
   const { id } = params;
   if (body.action === 'archive' || body.action === 'unarchive') {
     return NextResponse.json({ dashboard: setDashboardArchived(id, user, body.action === 'archive') });
+  }
+  if (body.action === 'rename') {
+    // Display-name change only — spec.view (the frozen Cube identity) never moves, so no
+    // panel binding is ever orphaned. Edit-scoped (owner or in-domain admin).
+    const dash = renameDashboard(id, user, body.name ?? '');
+    return NextResponse.json({ dashboard: { id: dash.id, name: dash.spec.name, view: dash.spec.view, tier: dash.tier } });
   }
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, hydrate: ensureHydrated, parse: true });

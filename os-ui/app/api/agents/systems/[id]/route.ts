@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getSystem, canRunCheck, archiveSystem, unarchiveSystem, deleteSystem, ensureHydrated } from '@/lib/agents/store';
+import { getSystem, canRunCheck, archiveSystem, unarchiveSystem, deleteSystem, renameAgentSystem, ensureHydrated } from '@/lib/agents/store';
 import { purgeSystemResources } from '@/lib/agents/physical-delete';
 import { realForgejo } from '@/lib/agents/build/live-clients';
 import { reconcileScheduleCron } from '@/lib/agents/schedule-cron';
@@ -58,13 +58,19 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
 }, { defaultStatus: 500 });
 
 /**
- * POST → system lifecycle: `archive` (reversible soft-hide + stop) or
- * `unarchive`. Edit-scoped in the store (owner or in-domain Admin), so a mere
- * viewer is rejected 403 — restoring/archiving obeys the same authz as editing.
+ * POST → system lifecycle: `rename` (display name only), `archive` (reversible
+ * soft-hide + stop) or `unarchive`. Edit-scoped in the store (owner or in-domain
+ * Admin), so a mere viewer is rejected 403 — each action obeys the same authz as editing.
  */
-export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user, params, body }) => {
+export const POST = withRoute<{ id: string }, { action?: string; name?: string }>(async ({ user, params, body }) => {
   const { id } = params;
   switch (body.action) {
+    case 'rename': {
+      // Display-name change only — the record `id` (and the yaml's system.name) stay
+      // frozen, so every route/grant/repo/CronJob keyed on the id is undisturbed.
+      const system = renameAgentSystem(id, user, body.name ?? '');
+      return NextResponse.json({ system });
+    }
     case 'archive': {
       // Archive stops the system + suspends its schedule CronJob (reconcile-to-none)
       // but KEEPS the repo + the saved `schedule` record, so unarchive re-provisions.

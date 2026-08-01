@@ -138,6 +138,11 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   const [actErr, setActErr] = useState('');
   const [acting, setActing] = useState(false);
   const [confirmDemote, setConfirmDemote] = useState(false);
+  // Inline rename of the DISPLAY name (edit-gated; the record id + yaml identity are
+  // frozen — see renameAgentSystem). Mirrors the Data tab's header rename affordance.
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [renameErr, setRenameErr] = useState('');
   // Re-entry guard: state is async, so gate concurrent edits through a ref. This
   // serializes mutations so each one builds its diff from the freshly-reloaded
   // source — no stale-base lost update on rapid canvas/chip edits.
@@ -260,6 +265,24 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
     [systemId, reloadAll],
   );
 
+  // Rename the system (display name only). The store freezes the record id + the yaml's
+  // system.name, so every route/grant/repo/CronJob keyed on the id is undisturbed.
+  const rename = useCallback(async () => {
+    const name = nameDraft.trim();
+    setRenameErr('');
+    if (!name) { setRenaming(false); return; }
+    try {
+      const res = await fetch(`/api/agents/systems/${systemId}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'rename', name }),
+      });
+      const b = await res.json().catch(() => ({}));
+      if (!res.ok) { setRenameErr(b.error ?? 'Rename failed'); return; }
+      setRenaming(false);
+      await reloadAll();
+    } catch (e) { setRenameErr((e as Error).message); }
+  }, [nameDraft, systemId, reloadAll]);
+
   if (loading && !data) return <div className="stub-page"><span className="spin" /> Loading system…</div>;
   if (error) return (
     <>
@@ -318,7 +341,36 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       <div className="system-head">
         <button className="btn ghost sm" onClick={onBack}>← All systems</button>
         <div className="system-title-block">
-          <span className="system-title">{data.name}</span>
+          {renaming ? (
+            <span className="rename-inline">
+              <input
+                className="rename-input"
+                autoFocus
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
+                onBlur={() => void rename()}
+                aria-label="System name"
+              />
+              <button className="btn primary sm" onClick={() => void rename()}>Save</button>
+              <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+            </span>
+          ) : (
+            <>
+              <span className="system-title">{data.name}</span>
+              {/* Rename must be DISCOVERABLE — a labelled button, not a bare glyph
+                  (mirrors the Data tab's header affordance). */}
+              {data.canEdit ? (
+                <button
+                  className="btn ghost sm"
+                  onClick={() => { setNameDraft(data.name); setRenameErr(''); setRenaming(true); }}
+                  title="Rename this system (its id and files stay stable)"
+                  aria-label="Rename this system"
+                >✎ Rename</button>
+              ) : null}
+            </>
+          )}
+          {renameErr ? <span className="badge err" style={{ fontSize: 11 }}>{renameErr}</span> : null}
           {(data.visibility === 'Shared' || data.visibility === 'Marketplace') ? <DomainTag domain={data.domain} /> : null}
           <span className={`badge ${visClass(data.visibility)}`}>{visLabel(data.visibility)}</span>
           {data.origin === 'forked' ? <span className="badge muted">forked copy</span> : null}

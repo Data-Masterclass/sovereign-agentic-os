@@ -15,6 +15,10 @@ import { type TemplateKey, templateYaml } from './templates.ts';
 import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
+import { normaliseFolderPath } from '../core/folders.ts';
+// The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
+// explicit row so it persists even when empty. Reused, never forked (mirrors Data).
+import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '../folders/index.ts';
 
 /**
  * The agent-system store — the MOCK Forgejo repo behind the Agents tab (kind-only,
@@ -129,6 +133,8 @@ export type SystemRecord = {
   disabledAgents: string[];
   /** The single source of truth. */
   yaml: string;
+  /** The folder this system lives in (normalised path; `'/'` = root). Mirrors Data. */
+  folder: string;
   updatedAt: string;
   lastActivity: string | null;
   /** Last build outcome. Absent on records created before this field was added. */
@@ -151,6 +157,8 @@ export type SystemSummary = {
   running: boolean;
   scheduled: boolean;
   agentCount: number;
+  /** The folder this system lives in (normalised path; `'/'` = root). */
+  folder: string;
   lastActivity: string | null;
   /**
    * True when a Personal system has a pending Personal→Shared promotion filed
@@ -206,6 +214,7 @@ const mirror = osMirror({
         updatedAt: { type: 'date' },
         lastActivity: { type: 'date' },
         name: { type: 'keyword' },
+        folder: { type: 'keyword' },
         running: { type: 'boolean' },
         yaml: { type: 'text', index: false },
         schedule: { type: 'object', enabled: false },
@@ -313,12 +322,13 @@ function starterYaml(name: string, domain: string, visibility: Visibility): stri
   return serializeSystem(sys);
 }
 
-function record(partial: Omit<SystemRecord, 'updatedAt' | 'lastActivity' | 'running' | 'schedule' | 'disabledAgents' | 'origin'> & Partial<SystemRecord>): SystemRecord {
+function record(partial: Omit<SystemRecord, 'updatedAt' | 'lastActivity' | 'running' | 'schedule' | 'disabledAgents' | 'origin' | 'folder'> & Partial<SystemRecord>): SystemRecord {
   return {
     running: false,
     schedule: { kind: 'manual' },
     disabledAgents: [],
     origin: 'authored',
+    folder: '/',
     updatedAt: now(),
     lastActivity: null,
     ...partial,
@@ -427,6 +437,8 @@ function summarise(rec: SystemRecord): SystemSummary {
     running: rec.running,
     scheduled: rec.schedule.kind !== 'manual',
     agentCount,
+    // Nil-safe: records mirrored before the folder field shipped hydrate without it.
+    folder: normaliseFolderPath(rec.folder ?? '/'),
     lastActivity: rec.lastActivity,
     archived: rec.archived ?? false,
   };
@@ -909,6 +921,79 @@ export function setLastRun(systemId: string, user: Principal, run: LastRun): Sys
   rec.lastRun = run;
   rec.updatedAt = now();
   writeThrough(rec);
+  return rec;
+}
+
+// -------------------------------------------------------------- rename / folder --
+
+/**
+ * Rename an agent system — change its DISPLAY name ONLY. Edit-scoped exactly like every
+ * other mutation ({@link requireEdit}: owner always; an in-domain domain_admin / platform
+ * admin on a Shared/Marketplace system — the reused {@link canManageArtifact} gate).
+ *
+ * FROZEN IDENTITY: the record `id` is the system's permanent identity — every route,
+ * grant, approval, Forgejo repo (`os-<id>`) and schedule CronJob keys off it, so a rename
+ * NEVER touches `id`. The canonical `system.yaml` ALSO embeds `system.name`; the SAFE
+ * choice (documented) is to change the DISPLAY `name` field ONLY and leave the yaml's
+ * `system.name` frozen — the yaml name is cosmetic (scoping/identity read `rec.id` +
+ * `rec.domain`, never the yaml name), so rewriting it would only churn the versioned
+ * source + risk a stale-sha edit conflict for no functional gain.
+ *
+ * Trimmed; empty rejected (400); a no-op (unchanged) returns without version churn. The
+ * prior canonical source is snapshotted to the version log so the rename is auditable.
+ */
+export function renameAgentSystem(systemId: string, user: Principal, newName: string): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  const name = newName.trim();
+  if (!name) fail('a system needs a name', 400);
+  if (name === rec.name) return rec; // no-op → no version churn
+  // Snapshot the canonical source before the (metadata) change, mirroring writeFile —
+  // a rename is a meaningful, restorable edit even though the yaml identity is frozen.
+  versions.record(rec.id, user.id, snapshotState(rec), 'rename');
+  rec.name = name; // DISPLAY name only — `id` (and the yaml's system.name) stay frozen
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/** The folder scope an agent system lives in: a Personal system's folders are the
+ *  owner's PERSONAL tree; a Shared/Marketplace system's folders are the owning DOMAIN's
+ *  tree. Mirrors how {@link listSystems} groups by visibility. */
+function folderScopeOf(rec: SystemRecord): FolderScope {
+  return rec.visibility === 'Personal' ? 'personal' : 'domain';
+}
+
+/** Best-effort: mirror a system's folder path into the governed folder registry so an
+ *  empty folder still shows in the rail. The root is implicit (never a row). createFolder
+ *  is idempotent and edit-scoped; any gate failure is swallowed so a successful move is
+ *  never rolled back by a folder-registry hiccup (mirrors Data's upsertFolderRow). */
+function upsertFolderRow(rec: SystemRecord, user: Principal): void {
+  const path = normaliseFolderPath(rec.folder);
+  if (path === '/') return;
+  const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+  try {
+    createFolder(principal, { tab: 'agents', scope: folderScopeOf(rec), path, domain: rec.domain });
+  } catch {
+    /* folder-registry mirror is best-effort; the system move already succeeded */
+  }
+}
+
+/**
+ * Move an agent system into a folder (edit-scoped, write-through like every other
+ * mutation). Mirrors `lib/data/store.moveDataset`: the folder is a normalised path on
+ * the record; the folder ROOT (personal vs domain tree) is decided by visibility. On
+ * move we also upsert an EXPLICIT folder row in the governed registry so the destination
+ * folder persists even when it holds no systems. A viewer who cannot edit is rejected 403
+ * and nothing is written.
+ */
+export function moveAgentSystem(systemId: string, user: Principal, folder: string): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.folder = normaliseFolderPath(folder);
+  rec.updatedAt = now();
+  writeThrough(rec);
+  // The move already passed the record's edit-scope gate above, so this same-owner
+  // folder create can only mirror an authorised move (best-effort; never rolls it back).
+  upsertFolderRow(rec, user);
   return rec;
 }
 

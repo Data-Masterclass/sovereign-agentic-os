@@ -44,6 +44,8 @@ import { snapshotFiles, getSnapshot } from '@/lib/software/snapshot';
 import { generateAndCompile } from '@/lib/software/auto-mcp';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, resolveSurface } from '@/lib/software/metadata';
 import { osMirror } from '@/lib/infra/os-mirror';
+import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@/lib/folders';
+import { normaliseFolderPath } from '@/lib/core/folders';
 import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
 import { listGitVersions, restoreGitVersion, shaForVersion, type GitVersion } from '@/lib/core/git-versioning';
 import type { ForgejoClient, ForgejoCommit, ForgejoCommitFiles } from '@/lib/infra/forgejo';
@@ -150,6 +152,14 @@ export type App = {
   owner: string;
   domain: string;
   visibility: Visibility;
+  /**
+   * The folder path this app lives under in the Software rail (default '/' = root).
+   * A DISPLAY-only organiser — it NEVER affects the app's frozen `slug` (repo/image/
+   * container/CI identity). Personal apps fold into the owner's personal tree; a
+   * Shared/Certified app folds into the owning domain's tree (see folderScopeOfApp).
+   * Optional-on-load: apps persisted before folders default to '/' in hydrateAppDoc.
+   */
+  folder: string;
   /** 'live' when Forgejo was reachable at create time; 'offline' otherwise. */
   mode: 'live' | 'offline';
   repo: { fullName: string; htmlUrl: string; seeded: string[] };
@@ -875,6 +885,8 @@ function hydrateAppDoc(app: App): App {
   // Back-compat: apps persisted before Define/Design/grants must still load.
   if (typeof app.purpose !== 'string') app.purpose = '';
   if (!Array.isArray(app.epics)) app.epics = [];
+  // Back-compat: apps persisted before folders default to the root.
+  if (typeof app.folder !== 'string') app.folder = '/';
   app.grants = normalizeContextGrants(app.grants);
   // Re-hydrate the in-process MCP grant so agents can call it after a restart.
   // rehydrateConnection is status-aware — it never resurrects an archived app.
@@ -1641,6 +1653,7 @@ export async function createApp(
     owner: user.id,
     domain,
     visibility: 'Personal',
+    folder: '/',
     mode: repo.mode,
     repo: { fullName: repo.fullName, htmlUrl: repo.htmlUrl, seeded: repo.seeded },
     subdomain,
@@ -1859,6 +1872,113 @@ export async function promoteApp(appId: string, user: CurrentUser): Promise<App>
     output: { appId: a.id, visibility: next },
     decision: 'allow',
   });
+  return a;
+}
+
+// ----------------------------------------------------------- Rename / folder ---
+
+/**
+ * Rename an app — change its DISPLAY `name` ONLY. Edit-scoped exactly like every
+ * other mutation (owner always; an in-domain domain_admin / platform admin on a
+ * Shared/Certified app — the reused {@link isOwnerOrAdminApp} gate, which itself
+ * uses roleAtLeast/canManageArtifact, never an exact role set).
+ *
+ * CRITICAL — the physical identity NEVER moves. Mirrors renameDataset's freeze
+ * discipline: `slug` is the FROZEN physical identity (repo name, container image
+ * `<registry>/<slug>:latest`, CI repo). Unlike a dataset — whose physical slug is
+ * derived-from-name and must be PINNED before the first rename — an app's `slug` is
+ * set ONCE at create (`slugify(name)`) and stored as its own field; nothing ever
+ * re-derives it from `name`. So it is already decoupled: renaming leaves `slug`
+ * (and thus image/repo/container FQN + subdomain) byte-identical by construction —
+ * we simply never touch it here. Trim / reject-empty(400) / no-op (no version churn).
+ * A doc-version snapshot is recorded so the rename is auditable + reversible.
+ */
+export async function renameApp(appId: string, user: CurrentUser, newName: string): Promise<App> {
+  const map = await getCache();
+  const a = map.get(appId);
+  if (!a) throw withStatus(new Error('App not found'), 404);
+  if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to rename this app'), 403);
+  const name = (newName ?? '').trim();
+  if (!name) throw withStatus(new Error('An app needs a name'), 400);
+  if (name === a.name) return a; // no-op → no version churn, slug untouched
+  // Snapshot before mutating so the rename can be undone (same log updateAppDocs uses).
+  versions.record(a.id, user.id, snapshotState(a), 'rename');
+  a.name = name; // DISPLAY only — a.slug (frozen physical identity) is NEVER touched
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+  return a;
+}
+
+/** The folder scope an app lives in: a Personal app's folders are the owner's
+ *  PERSONAL tree; a Shared/Certified app's folders are the owning DOMAIN's tree.
+ *  Mirrors how listAppsForUser groups by tier (and Data's folderScopeOf). */
+export function folderScopeOfApp(a: App): FolderScope {
+  return a.visibility === 'Personal' ? 'personal' : 'domain';
+}
+
+/**
+ * SYNC scope-lane listing for the folder ADAPTER's `itemsUnderFolder` (which the
+ * shared cascade calls synchronously). Reads the ALREADY-hydrated in-process cache
+ * directly — every server boundary that runs a folder cascade first hydrates the
+ * apps store (the same /api/folders request path lists apps), so the Map is warm;
+ * if it is somehow cold this returns [] rather than blocking. Personal → the caller's
+ * own Personal-visibility apps; domain → the Shared + Certified apps the caller may
+ * see in a domain they belong to. Includes ARCHIVED (the restore/delete cascade must
+ * find members the archive step already hid). Mirrors Data's itemsInScope lane split.
+ */
+export function listAppsInScopeSync(
+  user: CurrentUser,
+  scope: FolderScope,
+): { id: string; folder: string }[] {
+  const cache = appCacheState().cache;
+  if (!cache) return [];
+  const out: { id: string; folder: string }[] = [];
+  for (const a of cache.values()) {
+    if (!visibleToUser(a, user)) continue;
+    if (a.domain && !user.domains.includes(a.domain)) continue; // domain isolation (as listAppsForUser)
+    const lane: FolderScope = a.visibility === 'Personal' ? 'personal' : 'domain';
+    if (lane !== scope) continue;
+    out.push({ id: a.id, folder: normaliseFolderPath(a.folder) });
+  }
+  return out;
+}
+
+/** Best-effort: mirror an app's folder path into the governed folder registry so an
+ *  empty folder still shows in the rail. The root is implicit (never a row).
+ *  createFolder is idempotent + edit-scoped; any gate failure is swallowed so a
+ *  successful move is never rolled back (mirrors Data's upsertFolderRow). */
+function upsertAppFolderRow(a: App, user: CurrentUser): void {
+  const path = normaliseFolderPath(a.folder);
+  if (path === '/') return;
+  const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+  try {
+    createFolder(principal, { tab: 'software', scope: folderScopeOfApp(a), path, domain: a.domain });
+  } catch {
+    /* folder-registry mirror is best-effort; the app move already succeeded */
+  }
+}
+
+/**
+ * Move an app into a folder (edit-scoped, write-through like every other mutation).
+ * The folder is a normalised path on the app record; the folder ROOT (personal vs
+ * domain tree) is decided by tier. On move we also upsert an EXPLICIT folder row in
+ * the governed registry so the destination folder persists even when it holds no
+ * apps. A viewer who cannot edit is rejected 403 and nothing is written. Mirrors
+ * lib/data/store.moveDataset exactly (parity rollout).
+ */
+export async function moveApp(appId: string, user: CurrentUser, folder: string): Promise<App> {
+  const map = await getCache();
+  const a = map.get(appId);
+  if (!a) throw withStatus(new Error('App not found'), 404);
+  if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to move this app'), 403);
+  a.folder = normaliseFolderPath(folder);
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+  // The move already passed the app's edit-scope gate above, so this same-owner
+  // folder create can only mirror an authorised move (best-effort; never rolls it back).
+  upsertAppFolderRow(a, user);
   return a;
 }
 

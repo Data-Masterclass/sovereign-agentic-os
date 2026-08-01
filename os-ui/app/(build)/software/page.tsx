@@ -3,13 +3,21 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { useApi } from '@/lib/useApi';
-import { SCOPE_GROUPS, groupsFromVisibility, tilesForScope, activeScopeCounts, type ScopeKey } from '@/lib/core/scopes';
-import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import { useUser } from '@/lib/useUser';
+import { roleAtLeast } from '@/lib/core/session';
+import { SCOPE_GROUPS, groupsFromVisibility, tilesForScope, activeScopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@/lib/core/scopes';
+import { itemsUnderFolder, normaliseFolderPath, folderName, type FolderPathNode } from '@/lib/core/folders';
+import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
+import FolderLayout from '@/components/core/FolderLayout';
+import { ensureFolderId, renamedPath } from '@/lib/folders/client';
+import { useFolders } from '@/lib/folders/useFolders';
+import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
+import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import DomainTag from '@/components/DomainTag';
@@ -24,11 +32,19 @@ type AppItem = {
   owner: string;
   domain: string;
   visibility: Visibility;
+  /** The Software rail folder path (default '/'). DISPLAY-only — never the slug. */
+  folder: string;
   status: 'active' | 'archived';
   mode: 'live' | 'offline';
   subdomain: string;
   deploy: { state: 'building' | 'preview' | 'review' | 'live'; releases: number };
 };
+
+/** The folder root an app lives in: a Personal app folds into the owner's PERSONAL
+ *  tree; a Shared/Certified app folds into the owning DOMAIN's tree (parity with Data). */
+function rootOf(a: AppItem): FolderRoot {
+  return a.visibility === 'Personal' ? 'personal' : 'domain';
+}
 
 /** App visibility → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (v: Visibility): LcVisibility =>
@@ -71,12 +87,18 @@ function versionLabel(releases: number): string {
 /**
  * Software — the simple, chat-centric start screen. One page: a big home-style
  * "Create new software app" launcher, then the viewer's own running apps as
- * clean tiles. Create scaffolds a sovereign in-cluster Forgejo repo and drops
- * you straight into the build chat + editor (`/software/{id}?mode=edit`).
+ * clean tiles, organised into FOLDERS (parity with Data / Metrics). Create
+ * scaffolds a sovereign in-cluster Forgejo repo and drops you straight into the
+ * build chat + editor (`/software/{id}?mode=edit`).
+ *
+ * The inner component uses `useConfirm`, so it must render INSIDE the
+ * `<ConfirmProvider>` — the thin default export below provides it.
  */
-export default function SoftwarePage() {
+function SoftwareInner() {
   const router = useRouter();
+  const { user } = useUser();
   const { data, loading, reload } = useApi<AppsData>('/api/apps');
+  const confirm = useConfirm();
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -85,6 +107,12 @@ export default function SoftwarePage() {
   const [error, setError] = useState('');
   const [scope, setScope] = useState<ScopeKey>('all');
   const [showArchived, setShowArchived] = useState(false);
+  // Folder rail state (mirrors DatasetTiles): the selected folder, the app(s) being
+  // moved via the picker, and a folder-move ref for reparenting a folder row.
+  const [sel, setSel] = useState<{ root: FolderRoot; path: string } | null>(null);
+  const [pickerIds, setPickerIds] = useState<string[] | null>(null);
+  const [folderMove, setFolderMove] = useState<FolderRef | null>(null);
+  const { personalNodes, domainNodes, loadFolders } = useFolders('software', showArchived);
 
   async function create() {
     if (!name.trim() || creating) return;
@@ -126,6 +154,132 @@ export default function SoftwarePage() {
   const role = data?.user.role ?? '';
   const canManage = (a: AppItem) => uid !== '' && (a.owner === uid || role === 'admin');
 
+  // ── Folder rail (parity with DatasetTiles) ─────────────────────────────────
+  const visibleRoots = rootsForScope(scope);
+  const active = apps as AppItem[];
+
+  // Move one or many apps into a folder via the edit-gated folder route.
+  const moveInto = useCallback(async (ids: string[], folder: string) => {
+    setError('');
+    for (const id of ids) {
+      try {
+        const res = await fetch(`/api/apps/${id}/folder`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ folder }),
+        });
+        if (!res.ok) { setError((await res.json()).error ?? 'Move failed'); }
+      } catch (e) { setError((e as Error).message); }
+    }
+    reload();
+    loadFolders();
+  }, [reload, loadFolders]);
+
+  // Create a folder row in the registry, then re-load the rail.
+  const createFolder = useCallback(async (root: FolderRoot, parentPath: string) => {
+    const nm = window.prompt('Folder name');
+    if (!nm || !nm.trim()) return;
+    const path = normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${nm.trim()}`);
+    setError('');
+    try {
+      const res = await fetch('/api/folders', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tab: 'software', scope: root, path }),
+      });
+      if (!res.ok) { setError((await res.json()).error ?? 'Could not create folder'); return; }
+      await loadFolders();
+    } catch (e) { setError((e as Error).message); }
+  }, [loadFolders]);
+
+  // Folder lifecycle handlers — archive / restore / delete / rename a folder row via
+  // the governed registry API (identical wiring to DatasetTiles).
+  const countUnder = (ref: FolderRef) =>
+    itemsUnderFolder(ref.path, active.filter((a) => rootOf(a) === ref.scope)).length;
+
+  const handleFolderArchive = useCallback(async (ref: FolderRef) => {
+    const ok = await confirm(archiveFolderCopy(folderName(ref.path), countUnder(ref)));
+    if (!ok) return;
+    setError('');
+    try {
+      const id = await ensureFolderId('software', ref);
+      const res = await fetch(`/api/folders/${id}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'archive' }),
+      });
+      if (!res.ok) { setError((await res.json()).error ?? 'Archive failed'); return; }
+      reload(); loadFolders();
+    } catch (e) { setError((e as Error).message); }
+  }, [confirm, active, reload, loadFolders]);
+
+  const handleFolderRename = useCallback(async (ref: FolderRef, newName: string) => {
+    const path = renamedPath(ref.path, newName);
+    if (!path || path === ref.path) return;
+    setError('');
+    try {
+      const id = await ensureFolderId('software', ref);
+      const res = await fetch(`/api/folders/${id}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      if (!res.ok) { setError((await res.json()).error ?? 'Rename failed'); return; }
+      reload(); loadFolders();
+    } catch (e) { setError((e as Error).message); }
+  }, [reload, loadFolders]);
+
+  const handleFolderRestore = useCallback(async (ref: FolderRef) => {
+    if (!ref.id) return;
+    setError('');
+    try {
+      const res = await fetch(`/api/folders/${ref.id}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'restore' }),
+      });
+      if (!res.ok) { setError((await res.json()).error ?? 'Restore failed'); return; }
+      reload(); loadFolders();
+    } catch (e) { setError((e as Error).message); }
+  }, [reload, loadFolders]);
+
+  const handleFolderDelete = useCallback(async (ref: FolderRef) => {
+    if (!ref.id) return;
+    const ok = await confirm(deleteFolderCopy(folderName(ref.path), countUnder(ref)));
+    if (!ok) return;
+    setError('');
+    try {
+      const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
+      if (!res.ok) { setError((await res.json()).error ?? 'Delete failed'); return; }
+      reload(); loadFolders();
+    } catch (e) { setError((e as Error).message); }
+  }, [confirm, active, reload, loadFolders]);
+
+  // Folder rows = governed registry rows UNIONed with folders synthesised from the
+  // visible apps' own paths (implicit pre-registry folders keep showing). Split by root.
+  const [personalTreeNodes, domainTreeNodes] = useMemo(() => {
+    const synth = (rows: FolderPathNode[], paths: string[]): FolderPathNode[] => {
+      const seen = new Set(rows.map((r) => normaliseFolderPath(r.path)));
+      const out = [...rows];
+      for (const p of paths) {
+        const n = normaliseFolderPath(p);
+        if (n !== '/' && !seen.has(n)) { seen.add(n); out.push({ path: n }); }
+      }
+      return out;
+    };
+    const personalPaths = active.filter((a) => rootOf(a) === 'personal').map((a) => normaliseFolderPath(a.folder));
+    const domainPaths = active.filter((a) => rootOf(a) === 'domain').map((a) => normaliseFolderPath(a.folder));
+    return [synth(personalNodes, personalPaths), synth(domainNodes, domainPaths)];
+  }, [personalNodes, domainNodes, active]);
+
+  const treePersonalNodes = visibleRoots.includes('personal') ? personalTreeNodes : [];
+  const treeDomainNodes = visibleRoots.includes('domain') ? domainTreeNodes : [];
+  const treeItems = useMemo(
+    () => active.map((a) => ({ id: a.id, folder: normaliseFolderPath(a.folder), name: a.name })),
+    [active],
+  );
+
+  // Grid filter: a selected folder shows the apps under it (incl. subfolders) in that
+  // root; else the whole scope list.
+  const shown = sel
+    ? (itemsUnderFolder(sel.path, active.filter((a) => rootOf(a) === sel.root)) as AppItem[])
+    : active;
+
   // ONE tile renderer used by both the active grid and the archived section.
   const appTile = (a: AppItem & { archived: boolean }) => {
     const s = statusBadge(a.deploy.state);
@@ -148,7 +302,14 @@ export default function SoftwarePage() {
           </div>
         </Link>
         {canManage(a) ? (
-          <div className="sw-app-actions">
+          <div className="sw-app-actions" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {!a.archived ? (
+              <button
+                className="btn ghost sm"
+                title="Move this app to a folder"
+                onClick={() => setPickerIds([a.id])}
+              >Move…</button>
+            ) : null}
             <LifecycleActions
               id={a.id}
               name={a.name}
@@ -172,7 +333,7 @@ export default function SoftwarePage() {
   };
 
   return (
-    <ConfirmProvider>
+    <>
       <PageHeader title="Software" crumb="build, chat, deploy — sovereign" tutorial="software" />
       <div className="content sw">
         {/* The big, home-style create launcher. */}
@@ -287,6 +448,65 @@ export default function SoftwarePage() {
           </div>
         ) : null}
 
+        {error ? <div className="error" style={{ marginTop: 12 }}>{error}</div> : null}
+
+        {/* App picker modal — move one/many apps into a folder (scope-valid roots only). */}
+        <FolderPickerModal
+          open={pickerIds !== null}
+          tab="software"
+          roots={visibleRoots}
+          personalNodes={visibleRoots.includes('personal') ? personalTreeNodes : []}
+          domainNodes={visibleRoots.includes('domain') ? domainTreeNodes : []}
+          title={`Move ${pickerIds && pickerIds.length > 1 ? `${pickerIds.length} apps` : 'app'} to folder`}
+          onConfirm={({ path }) => {
+            if (pickerIds) void moveInto(pickerIds, path);
+            setPickerIds(null);
+          }}
+          onCancel={() => setPickerIds(null)}
+          onCreate={async (root, path) => {
+            const res = await fetch('/api/folders', {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ tab: 'software', scope: root, path }),
+            });
+            if (!res.ok) { setError((await res.json()).error ?? 'Could not create folder'); return; }
+            await loadFolders();
+          }}
+        />
+
+        {/* Folder move modal — reparents a folder row via PATCH /api/folders/{id}. */}
+        <FolderPickerModal
+          open={folderMove !== null}
+          tab="software"
+          roots={folderMove ? [folderMove.scope] : visibleRoots}
+          personalNodes={folderMove?.scope === 'personal' ? personalTreeNodes : []}
+          domainNodes={folderMove?.scope === 'domain' ? domainTreeNodes : []}
+          title="Move folder"
+          onConfirm={async ({ path }) => {
+            const ref = folderMove;
+            setFolderMove(null);
+            if (!ref) return;
+            setError('');
+            try {
+              const id = await ensureFolderId('software', ref);
+              const res = await fetch(`/api/folders/${id}`, {
+                method: 'PATCH', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ path }),
+              });
+              if (!res.ok) { setError((await res.json()).error ?? 'Move failed'); return; }
+              reload(); loadFolders();
+            } catch (e) { setError((e as Error).message); }
+          }}
+          onCancel={() => setFolderMove(null)}
+          onCreate={async (root, path) => {
+            const res = await fetch('/api/folders', {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ tab: 'software', scope: root, path }),
+            });
+            if (!res.ok) { setError((await res.json()).error ?? 'Could not create folder'); return; }
+            await loadFolders();
+          }}
+        />
+
         {loading && !data ? (
           <div className="stub-page" style={{ marginTop: 12 }}>Loading your apps…</div>
         ) : apps.length === 0 ? (
@@ -301,7 +521,41 @@ export default function SoftwarePage() {
             </div>
           </div>
         ) : (
-          <div className="sw-apps">{apps.map(appTile)}</div>
+          <div style={{ marginTop: 16 }}>
+            <FolderLayout
+              allLabel="All apps"
+              allCount={active.length}
+              allSelected={sel === null}
+              onSelectAll={() => setSel(null)}
+              rail={
+                <FolderTree
+                  variant="nav"
+                  canCreateDomain={!!user && roleAtLeast(user.role, 'domain_admin')}
+                  roots={visibleRoots}
+                  personalNodes={treePersonalNodes}
+                  domainNodes={treeDomainNodes}
+                  items={treeItems}
+                  personalLabel="My folders"
+                  domainLabel="Domain folders"
+                  selectedPath={sel?.path}
+                  onSelect={(root, path) => setSel({ root, path })}
+                  onCreate={createFolder}
+                  onMove={(ref) => setFolderMove(ref)}
+                  onRename={handleFolderRename}
+                  onArchive={handleFolderArchive}
+                  onRestore={handleFolderRestore}
+                  onDelete={handleFolderDelete}
+                  renderLeaf={(item) => item.name ?? item.id}
+                />
+              }
+            >
+              {shown.length === 0 ? (
+                <div className="stub-page">This folder is empty.</div>
+              ) : (
+                <div className="sw-apps">{(shown as (AppItem & { archived: boolean })[]).map(appTile)}</div>
+              )}
+            </FolderLayout>
+          </div>
         )}
 
         {/* Archived — hidden from the working grid; openable so the detail exposes
@@ -322,6 +576,16 @@ export default function SoftwarePage() {
           )
         ) : null}
       </div>
+    </>
+  );
+}
+
+/** The Software page — wraps the inner surface in the shared ConfirmProvider so the
+ *  folder-lifecycle handlers can use `useConfirm` (parity with the Data tab). */
+export default function SoftwarePage() {
+  return (
+    <ConfirmProvider>
+      <SoftwareInner />
     </ConfirmProvider>
   );
 }

@@ -7,6 +7,10 @@ import { type DashboardSpec } from './model.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
+// The GOVERNED folder registry (Wave-2 parity rollout) — a moved-into folder is upserted
+// as an explicit row so it persists even when empty. Reused, never forked (mirrors Data).
+import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '../folders/index.ts';
+import { normaliseFolderPath } from '../core/folders.ts';
 
 /**
  * A small in-memory dashboard registry (mirrors lib/data/store's shape + discipline:
@@ -18,7 +22,7 @@ import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.
 
 export type Principal = { id: string; domains: string[]; role: Role };
 
-type Stored = DashboardRecord & { domain: string; archived?: boolean };
+type Stored = DashboardRecord & { domain: string; archived?: boolean; folder?: string };
 
 /** The edit-scope arg for a dashboard. A `personal`-tier dashboard is owner-only
  *  (no admin/domain_admin reaches another user's private dashboard). */
@@ -51,6 +55,7 @@ const mirror = osMirror({
         tier: { type: 'keyword' },
         updatedAt: { type: 'date' },
         archived: { type: 'boolean' },
+        folder: { type: 'keyword' },
         spec: { type: 'object', enabled: false },
       },
     },
@@ -111,10 +116,10 @@ export function moveDashboardsDomain(sel: { id?: string; onlyUnassigned?: boolea
   return moved;
 }
 
-export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number; archived?: boolean };
+export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number; folder: string; archived?: boolean };
 
 function summarise(d: Stored): DashboardSummary {
-  return { id: d.id, name: d.spec.name, view: d.spec.view, tier: d.tier, owner: d.owner, charts: d.spec.charts.length, archived: d.archived ?? false };
+  return { id: d.id, name: d.spec.name, view: d.spec.view, tier: d.tier, owner: d.owner, charts: d.spec.charts.length, folder: d.folder ?? '/', archived: d.archived ?? false };
 }
 
 export type DashboardGroups = { mine: DashboardSummary[]; domain: DashboardSummary[]; marketplace: DashboardSummary[] };
@@ -181,6 +186,30 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec):
   return rec;
 }
 
+/**
+ * Rename a dashboard — change its DISPLAY name ONLY. Edit-scoped exactly like every
+ * other mutation (owner always; an in-domain domain_admin / platform admin on a
+ * shared/certified dashboard — the reused {@link canManageArtifact} gate via requireOwned).
+ *
+ * CRITICAL — the physical identity NEVER moves: `spec.view` is the FROZEN Cube view the
+ * dashboard binds to (every panel resolves against it). A rename touches ONLY `spec.name`
+ * and NEVER `spec.view`, so no live Cube binding is ever orphaned. The prior spec is
+ * snapshotted to the version log first (restorable), then the name is set + persisted.
+ * Trim; reject empty (400); no-op (no version churn) when unchanged.
+ */
+export function renameDashboard(id: string, user: Principal, newName: string): Stored {
+  const d = requireOwned(id, user);
+  const name = newName.trim();
+  if (!name) throw status('a dashboard needs a name', 400);
+  if (name === d.spec.name) return d; // no-op → no version churn
+  // Snapshot the PRIOR spec before overwriting so the rename is restorable.
+  versions.record(d.id, user.id, snapshotState(d), 'rename');
+  // DISPLAY name only — spec.view (the frozen Cube identity) is deliberately untouched.
+  d.spec = { ...d.spec, name };
+  writeThrough(d);
+  return d;
+}
+
 /** Promote/certify a dashboard (role-gated, reused from governance). */
 export function transitionDashboard(id: string, approver: Principal, transition: 'promote' | 'certify'): Stored {
   const d = getDashboard(id, approver);
@@ -206,6 +235,45 @@ export function setDashboardArchived(id: string, user: Principal, archived: bool
   d.archived = archived;
   writeThrough(d);
   return d;
+}
+
+/**
+ * Move a dashboard into a folder (edit-scoped, write-through like every other mutation).
+ * Mirrors `lib/data/store.moveDataset`: the folder is a normalised path; the folder ROOT
+ * (personal vs domain tree) is decided by tier. On move we also upsert an EXPLICIT folder
+ * row in the governed registry so the destination folder persists even when it holds no
+ * dashboards. A viewer who cannot edit is rejected 403 and nothing is written.
+ */
+export function moveDashboard(id: string, user: Principal, folder: string): Stored {
+  const d = requireOwned(id, user);
+  d.folder = normaliseFolderPath(folder);
+  writeThrough(d);
+  // The move already passed the dashboard's edit-scope gate above, so this same-owner
+  // folder create can only mirror an authorised move (best-effort; never rolls it back).
+  upsertFolderRow(d, user);
+  return d;
+}
+
+/** The folder scope a dashboard lives in: a personal-tier tile's folders are the owner's
+ *  PERSONAL tree; a domain/marketplace tile's folders are the owning DOMAIN's tree.
+ *  Mirrors how `listDashboards` groups by tier. */
+function folderScopeOf(d: Stored): FolderScope {
+  return d.tier === 'personal' ? 'personal' : 'domain';
+}
+
+/** Best-effort: mirror a dashboard's folder path into the governed folder registry so an
+ *  empty folder still shows in the rail. The root is implicit (never a row). createFolder
+ *  is idempotent and edit-scoped; any gate failure is swallowed so a successful move is
+ *  never rolled back by a folder-registry hiccup (mirrors Data's upsertFolderRow). */
+function upsertFolderRow(d: Stored, user: Principal): void {
+  const path = normaliseFolderPath(d.folder ?? '/');
+  if (path === '/') return;
+  const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+  try {
+    createFolder(principal, { tab: 'dashboards', scope: folderScopeOf(d), path, domain: d.domain });
+  } catch {
+    /* folder-registry mirror is best-effort; the dashboard move already succeeded */
+  }
 }
 
 /** Permanently delete a dashboard + its version history (owner-scoped). */

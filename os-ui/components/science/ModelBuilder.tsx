@@ -137,6 +137,25 @@ export default function ModelBuilder({
 
   const badge = model ? BUILD_STATE[bs] : null;
 
+  // Rename the model's DISPLAY name only. The serving/deploy key (`model.model`) is
+  // FROZEN at create and never moves — the store's `renameModel` enforces it — so a
+  // rename can never orphan the KServe endpoint or the OPA predict principal.
+  const renameModel = useCallback(async () => {
+    if (!model) return;
+    const next = window.prompt('Rename model', model.name);
+    if (next === null) return;
+    const name = next.trim();
+    if (!name || name === model.name) return;
+    try {
+      const res = await fetch(`/api/science/model/${encodeURIComponent(model.model)}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'rename', name }),
+      });
+      if (!res.ok) { window.alert((await res.json().catch(() => ({}))).error ?? 'Rename failed'); return; }
+      await refresh();
+    } catch (e) { window.alert((e as Error).message); }
+  }, [model, refresh]);
+
   return (
     <ConfirmProvider>
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -152,6 +171,11 @@ export default function ModelBuilder({
         <>
           <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <h2 style={{ margin: 0 }}>{model.name}</h2>
+            {canManage ? (
+              <button className="btn ghost sm" title="Rename this model (display name only — its serving key never changes)" onClick={renameModel}>
+                ✎ Rename
+              </button>
+            ) : null}
             {model.tier === 'Domain' || model.tier === 'Marketplace' ? <DomainTag domain={model.domain} /> : null}
             <span className={`badge ${TIER_BADGE[model.tier]}`}>{TIER_LABEL[model.tier]}</span>
             {badge ? (

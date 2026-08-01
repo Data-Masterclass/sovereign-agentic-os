@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
@@ -43,6 +43,26 @@ export default function AppPage() {
     reloadReviews();
   };
 
+  // Rename (DISPLAY name only). The store freezes the physical `slug` before the name
+  // changes, so the app's repo / container image / subdomain / CI target never move —
+  // exactly the Data tab's dataset-rename discipline (parity rollout).
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [renameErr, setRenameErr] = useState('');
+  const rename = async () => {
+    const name = nameDraft.trim();
+    setRenameErr('');
+    if (!name) { setRenaming(false); return; }
+    const res = await fetch(`/api/apps/${id ?? ''}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'rename', name }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setRenameErr(d.error ?? 'Rename failed'); return; }
+    setRenaming(false);
+    reload();
+  };
+
   if (loading && !data) {
     return (
       <>
@@ -64,11 +84,40 @@ export default function AppPage() {
   }
 
   const app = data.app;
+  // Owner or platform admin may rename (the route re-checks the full edit-scope gate,
+  // incl. an in-domain domain_admin on a Shared/Certified app — this only decides the affordance).
+  const canEdit = data.user.id === app.owner || data.user.role === 'admin';
 
   return (
     <ConfirmProvider>
       <PageHeader title={app.name} crumb={`Software · ${app.slug}`} />
       <div className="content sw">
+        {/* Rename — a DISCOVERABLE labelled button (parity with the Data builder). The
+            physical slug (repo/image/container/CI identity) stays frozen. */}
+        <div className="row" style={{ alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          {renaming ? (
+            <span className="rename-inline" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                className="rename-input"
+                autoFocus
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
+                aria-label="App name"
+              />
+              <button className="btn primary sm" onClick={() => void rename()}>Save</button>
+              <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+            </span>
+          ) : canEdit ? (
+            <button
+              className="btn ghost sm"
+              onClick={() => { setNameDraft(app.name); setRenameErr(''); setRenaming(true); }}
+              title="Rename this app (the repo/image/container slug stays stable)"
+              aria-label="Rename this app"
+            >✎ Rename</button>
+          ) : null}
+          {renameErr ? <span className="error" style={{ margin: 0 }}>{renameErr}</span> : null}
+        </div>
         <SoftwareBuilder
           app={app}
           connection={data.connection}
