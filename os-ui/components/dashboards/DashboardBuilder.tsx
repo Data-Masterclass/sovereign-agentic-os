@@ -113,13 +113,23 @@ export default function DashboardBuilder({
     let alive = true;
     fetch(`/api/dashboards/${existing.id}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: DashboardDetail | null) => { if (alive && d) setFetchedPanels(d.panels ?? []); })
+      .then((d: DashboardDetail | null) => {
+        if (!alive || !d) return;
+        const panels = d.panels ?? [];
+        setFetchedPanels(panels);
+        // Seed the EDITABLE draft too (once, never clobbering in-progress edits):
+        // walking back to Design must show the dashboard's real panels — previously
+        // `charts` stayed empty and an existing dashboard's Design opened blank.
+        setCharts((cs) => (cs.length === 0 ? panels : cs));
+      })
       .catch(() => { if (alive) setFetchedPanels([]); });
     return () => { alive = false; };
   }, [existing]);
-  const gridPanels: Panel[] = existing
-    ? (fetchedPanels ?? [])
-    : charts.map((c) => ({ ...c, metrics: c.metrics && c.metrics.length ? c.metrics : (c.metric ? [c.metric] : []) }));
+  // The View grid renders the DRAFT once it exists (so an edited-and-rebuilt existing
+  // dashboard shows its new panels immediately), else the fetched persisted panels.
+  const gridPanels: Panel[] = charts.length > 0 || !existing
+    ? charts.map((c) => ({ ...c, metrics: c.metrics && c.metrics.length ? c.metrics : (c.metric ? [c.metric] : []) }))
+    : (fetchedPanels ?? []);
 
   // The persisted dashboard we govern/view: the freshly-saved one, or the one we opened.
   const built: DashboardSummary | null = useMemo(() => {
@@ -174,8 +184,12 @@ export default function DashboardBuilder({
     if (multiView) return setBuildErr(`A dashboard binds to one Cube view — these panels span ${views.join(', ')}. Keep panels from a single view.`);
     setBuilding(true);
     try {
+      // EDITING keeps the identity: an existing dashboard (or one already saved this
+      // session) rebuilds under its OWN id — the store upserts + version-snapshots.
+      // Only a genuinely new dashboard mints an id (previously every save minted one,
+      // so editing created a duplicate instead of updating).
       const res = await postJson<BuildResponse>('/api/dashboards/build', {
-        id: `${slug(trimmed) || 'dashboard'}-${Math.random().toString(36).slice(2, 8)}`,
+        id: existing?.id ?? build?.id ?? `${slug(trimmed) || 'dashboard'}-${Math.random().toString(36).slice(2, 8)}`,
         name: trimmed,
         view,
         mode: 'drag-drop',
