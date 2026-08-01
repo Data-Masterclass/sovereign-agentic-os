@@ -4,7 +4,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useToast } from '@/components/core/Toast';
 import {
   compileGoldJoin,
   personalSchema,
@@ -21,6 +20,8 @@ import type { GoldSpec } from '@/lib/data/dataset-schema';
 import { domainSchema } from '@/lib/data/store-fqn';
 import GoldJoinGraph, { type JoinGraphTable, type JoinGraphEdge } from './GoldJoinGraph';
 import ExplorePanel from './ExplorePanel';
+import AiAction from './StageAssistant';
+import BuildResultDialog, { type BuildResult } from './BuildResultDialog';
 
 /**
  * Gold JOIN builder — dataset REUSE (data-tab stage 4). Pick 1..n OTHER datasets you
@@ -125,16 +126,19 @@ export default function GoldJoinPanel({
   // `builtOk` shows the SUCCESS state (Gold built ✓ + preview/stats + Continue) — set on
   // a live build in this session, and true on open when a Gold version already exists.
   const [builtOk, setBuiltOk] = useState(goldBuilt);
-  const toast = useToast();
 
-  // ALWAYS surface the build mode on success — a ✓ that silently ran as the
-  // offline mock (no live table) must say so, not just the failure path.
+  // The build OUTCOME announces itself as a CENTRAL modal (BuildResultDialog) —
+  // the old bottom-right toast was easy to miss. Success offers the explicit
+  // "Continue to Validate →" confirmation; failure shows the honest error big.
+  const [buildResult, setBuildResult] = useState<BuildResult | null>(null);
   function announceMode(build: { mode?: string } | undefined, what: string) {
-    if (build?.mode === 'offline-mock') {
-      toast.info(`${what} recorded as an offline preview — no live table was written (cluster unreachable).`);
-    } else {
-      toast.success(`${what} written live to Trino — the table is queryable.`);
-    }
+    setBuildResult({
+      ok: true,
+      what,
+      detail: `${target} is live and queryable — explore it below, or move on.`,
+      offline: build?.mode === 'offline-mock',
+      nextTitle: 'Validate',
+    });
   }
 
   useEffect(() => {
@@ -295,8 +299,16 @@ export default function GoldJoinPanel({
         }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Could not build the Gold join'); return; }
-      if (data.build && !data.build.ok) { setReport(data.build); setErr(data.error ?? 'The join did not pass'); return; }
+      if (!res.ok) {
+        const msg = data.error ?? 'Could not build the Gold join';
+        setErr(msg); setBuildResult({ ok: false, what: 'Gold', detail: msg });
+        return;
+      }
+      if (data.build && !data.build.ok) {
+        const msg = data.error ?? 'The join did not pass';
+        setReport(data.build); setErr(msg); setBuildResult({ ok: false, what: 'Gold', detail: msg });
+        return;
+      }
       announceMode(data.build, 'Gold');
       // SUCCESS — stay on the Gold step (no auto-advance): show the built state + the
       // resulting gold table (preview + stats) so the user can explore, then CHOOSE to
@@ -318,9 +330,18 @@ export default function GoldJoinPanel({
         body: JSON.stringify({ layer: 'gold', passThrough: true }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Could not pass through'); return; }
+      if (!res.ok) {
+        const msg = data.error ?? 'Could not pass through';
+        setErr(msg); setBuildResult({ ok: false, what: 'Gold (pass-through)', detail: msg });
+        return;
+      }
       // A pass-through is a REAL CTAS copy now — an honest ✗ registers nothing.
-      if (data.error || (data.build && !data.build.ok)) { setReport(data.build ?? null); setErr(data.error ?? 'The pass-through did not materialize'); return; }
+      if (data.error || (data.build && !data.build.ok)) {
+        const msg = data.error ?? 'The pass-through did not materialize';
+        setReport(data.build ?? null); setErr(msg);
+        setBuildResult({ ok: false, what: 'Gold (pass-through)', detail: msg });
+        return;
+      }
       announceMode(data.build, 'Gold (pass-through)');
       setBuiltOk(true);
       onCommitted(data.stages ?? []);
@@ -339,6 +360,25 @@ export default function GoldJoinPanel({
 
   return (
     <div className="guided-panel">
+      {/* The stage's two big actions, side by side at the top (the same in-flow pattern
+          as every other stage): the shortcut LEFT, the AI helper right. Pass-through is
+          a real governed CTAS copy — Silver carries forward as Gold unchanged. */}
+      <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginBottom: 10 }}>
+        <button
+          className="btn primary"
+          onClick={passThrough}
+          disabled={busy !== '' || !silverBuilt}
+          title="Already business-ready? Your Silver version carries forward as Gold unchanged (a real governed copy)."
+        >
+          {busy === 'pass' ? <span className="spin" /> : 'Pass through Gold'}
+        </button>
+        <AiAction
+          datasetId={datasetId} stage="harmonize" cta="Propose a clean/join"
+          title="AI proposes how to clean and join this dataset into Gold"
+          payload={() => ({ name: datasetName, columns })}
+        />
+      </div>
+
       <p className="muted" style={{ marginTop: 0 }}>
         Make it business-ready. Keep the columns you want from{' '}
         <code className="mono">silver_{slug(datasetName)}</code> — and, optionally, <strong>reuse</strong> data you
@@ -510,15 +550,14 @@ export default function GoldJoinPanel({
         </div>
       ) : null}
 
-      <div className="passthrough-note">
-        <strong>Already business-ready?</strong>{' '}
-        Pass through — your <em>Silver</em> version carries forward as Gold unchanged.
-        <div className="row" style={{ marginTop: 10 }}>
-          <button className="btn ghost" onClick={passThrough} disabled={busy !== '' || !silverBuilt}>
-            {busy === 'pass' ? <span className="spin" /> : 'Pass through Gold…'}
-          </button>
-        </div>
-      </div>
+      {/* Central build-outcome popup — success confirms the move to Validate. */}
+      {buildResult ? (
+        <BuildResultDialog
+          result={buildResult}
+          onContinue={() => { setBuildResult(null); onContinue(); }}
+          onClose={() => setBuildResult(null)}
+        />
+      ) : null}
     </div>
   );
 }

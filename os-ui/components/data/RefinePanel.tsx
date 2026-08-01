@@ -4,7 +4,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useToast } from '@/components/core/Toast';
 import type { CleanDraft } from './StageAssistant';
 import {
   compileSilver,
@@ -17,8 +16,8 @@ import {
   type TransformOp,
 } from '@/lib/data/transform';
 import { inferColumnTypes, type TypeSuggestion } from '@/lib/data/infer-types';
-import { domainSchema } from '@/lib/data/store-fqn';
 import ExplorePanel from './ExplorePanel';
+import BuildResultDialog, { type BuildResult } from './BuildResultDialog';
 
 type Layer = 'silver' | 'gold';
 type Stage = { layer: Layer; copy: { title: string; subtitle: string; tool: string } };
@@ -105,7 +104,6 @@ function SilverBuilder({
   // `builtOk` shows the SUCCESS state (Silver built ✓ + preview + Continue) — set on a
   // live build in this session, and true on open when a Silver version already exists.
   const [builtOk, setBuiltOk] = useState(silverBuilt);
-  const toast = useToast();
 
   const set = (c: string, patch: Partial<ColUI>) => setUi((m) => ({ ...m, [c]: { ...FRESH, ...m[c], ...patch } }));
 
@@ -202,6 +200,11 @@ function SilverBuilder({
     setNewCol('');
   }
 
+  // The build OUTCOME announces itself as a CENTRAL modal (BuildResultDialog) —
+  // the old bottom-right toast was easy to miss. Success offers the explicit
+  // "Continue to Harmonize →" confirmation; failure shows the honest error big.
+  const [buildResult, setBuildResult] = useState<BuildResult | null>(null);
+
   async function apply() {
     setErr(''); setReport(null); setBusy(true);
     try {
@@ -211,22 +214,34 @@ function SilverBuilder({
         body: JSON.stringify({ ops, columns: cols }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Could not build the Silver version'); return; }
-      if (data.build && !data.build.ok) { setReport(data.build); setErr(data.error ?? 'The transform did not pass'); return; }
-      // ALWAYS surface the build mode on success — a ✓ that silently ran as the
-      // offline mock (no live table) must say so, not just the failure path.
-      if (data.build?.mode === 'offline-mock') {
-        toast.info('Silver recorded as an offline preview — no live table was written (cluster unreachable).');
-      } else {
-        toast.success(`Silver written live — ${data.target ?? target} is queryable.`);
+      if (!res.ok) {
+        const msg = data.error ?? 'Could not build the Silver version';
+        setErr(msg);
+        setBuildResult({ ok: false, what: 'Silver', detail: msg });
+        return;
       }
-      // SUCCESS — stay on the Silver step (no auto-advance): show the built state + the
-      // resulting silver table (preview + stats) so the user can explore, edit above and
-      // Rebuild, then CHOOSE to continue. `onCommitted` reloads + records the ✓ only.
+      if (data.build && !data.build.ok) {
+        const msg = data.error ?? 'The transform did not pass';
+        setReport(data.build); setErr(msg);
+        setBuildResult({ ok: false, what: 'Silver', detail: msg });
+        return;
+      }
+      // SUCCESS — the modal is the loud announcement (incl. the honest offline-preview
+      // note); the panel underneath still shows the built state + preview, and the user
+      // CHOOSES to continue from the modal — no auto-advance, no hunt for a button.
       setBuiltOk(true);
       onCommitted(data.stages ?? []);
+      setBuildResult({
+        ok: true,
+        what: 'Silver',
+        detail: `${data.target ?? target} is live and queryable — explore it below, or move on.`,
+        offline: data.build?.mode === 'offline-mock',
+        nextTitle: 'Harmonize',
+      });
     } catch (e) {
-      setErr((e as Error).message);
+      const msg = (e as Error).message;
+      setErr(msg);
+      setBuildResult({ ok: false, what: 'Silver', detail: msg });
     } finally {
       setBusy(false);
     }
@@ -421,6 +436,15 @@ function SilverBuilder({
             <button className="btn" onClick={onContinue} disabled={busy}>Continue to Harmonize →</button>
           </div>
         </div>
+      ) : null}
+
+      {/* Central build-outcome popup — success confirms the move to Harmonize. */}
+      {buildResult ? (
+        <BuildResultDialog
+          result={buildResult}
+          onContinue={() => { setBuildResult(null); onContinue(); }}
+          onClose={() => setBuildResult(null)}
+        />
       ) : null}
     </div>
   );

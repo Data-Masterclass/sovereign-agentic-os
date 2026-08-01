@@ -193,18 +193,38 @@ export function osMirror(opts: {
     }
   }
 
-  /** Send now if healthy; otherwise lazily re-probe (throttled) and send on heal. */
+  // Writes that arrive while the mirror is unhealthy are QUEUED in order and
+  // replayed on the next successful probe — NEVER silently dropped. The old
+  // throttled path returned without sending, which opened a real write-loss
+  // hole: an edit made during an unhealthy window lived only in this pod's
+  // memory, and the next rollout hydrated the new pod from the mirror WITHOUT
+  // it (seen live: a freshly defined metric vanished after a deploy). Bounded
+  // so a long outage can't grow memory unboundedly; overflow drops the OLDEST
+  // write and says so loudly — an operator signal, not a silent hole.
+  const PENDING_MAX = 1000;
+  const pending: Array<() => void> = [];
+  function flushPending(): void {
+    while (pending.length) pending.shift()!();
+  }
+
+  /** Send now if healthy; otherwise queue + lazily re-probe (throttled), replaying on heal. */
   function sendThrough(send: () => void): void {
     const s = st();
     if (s.probed && s.healthy) {
+      flushPending(); // anything queued during an outage goes first, in order
       send();
       return;
     }
-    // Unhealthy or never probed: re-probe at most once per reprobeMs. A probe
-    // already in flight adopts this write (send on its success).
+    pending.push(send);
+    if (pending.length > PENDING_MAX) {
+      pending.shift();
+      console.warn(`[os-mirror:${index}] pending-write queue overflowed — oldest write dropped (mirror unhealthy too long)`);
+    }
+    // Re-probe at most once per reprobeMs; a probe already in flight (or the one
+    // started here) flushes the whole queue on success.
     if (s.probed && !s.probing && Date.now() - s.lastProbeAt < reprobeMs) return;
     void probe().then((ok) => {
-      if (ok) send();
+      if (ok) flushPending();
     });
   }
 
@@ -236,6 +256,7 @@ export function osMirror(opts: {
       s.probed = false;
       s.lastProbeAt = 0;
       s.probing = null;
+      pending.length = 0;
     },
   };
 }

@@ -1216,17 +1216,11 @@ export default function DataBuilder({
             </p>
             {canEdit ? (
               <>
+                {/* The stage's big actions (Pass through Gold + the AI helper) live inside
+                    GoldJoinPanel's top row now — side by side, same style. */}
                 <div className="section-title" style={{ marginTop: 0, alignItems: 'flex-start', flexWrap: 'wrap' }} {...anchorAttr(ANCHORS.data.harmonize)}>
                   Harmonize — Gold
                   <span className="hint" style={{ margin: '0 0 0 10px' }}>join trusted datasets into one governed Gold table</span>
-                  {/* AI, built into the flow: propose the clean/join right where you build it. */}
-                  <span style={{ marginLeft: 'auto' }}>
-                    <AiAction
-                      datasetId={dataset.id} stage="harmonize" cta="Propose a clean/join"
-                      title="AI proposes how to clean and join this dataset into Gold"
-                      payload={() => ({ name: dataset.name, columns: colNames })}
-                    />
-                  </span>
                 </div>
                 {staleVsBronze(dataset.versions, 'gold') ? (
                   <p className="hint" style={{ margin: '0 0 10px' }}>
