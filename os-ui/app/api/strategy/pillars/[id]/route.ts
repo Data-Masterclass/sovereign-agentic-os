@@ -6,6 +6,7 @@ import { withRoute } from '@/lib/core/route-server';
 import {
   getPillar,
   updatePillar,
+  renamePillar,
   deletePillar,
   archivePillar,
   unarchivePillar,
@@ -47,10 +48,12 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
 /**
  * POST → pillar lifecycle actions (mirrors the Big Bets [id] route so the shared
  * <LifecycleActions> component drives it identically):
- *   { action: 'archive' | 'unarchive' | 'promote' }
- * Edit-scoped in the store (promote additionally role-gated per tier).
+ *   { action: 'archive' | 'unarchive' | 'promote' | 'rename', name? }
+ * Edit-scoped in the store (promote additionally role-gated per tier). `rename`
+ * changes the DISPLAY name only — the pillar `id` is frozen (every reference is keyed
+ * by it), so no reference is ever orphaned.
  */
-export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user, params, body }) => {
+export const POST = withRoute<{ id: string }, { action?: string; name?: string }>(async ({ user, params, body }) => {
   const { id } = params;
   switch (body.action) {
     case 'archive':
@@ -59,6 +62,8 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
       return NextResponse.json({ item: await unarchivePillar(user, id) });
     case 'promote':
       return NextResponse.json({ item: await promotePillar(user, id) });
+    case 'rename':
+      return NextResponse.json({ item: await renamePillar(user, id, body.name ?? '') });
     default:
       return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   }

@@ -4,6 +4,7 @@
 import 'server-only';
 import { osMirror } from '@/lib/infra/os-mirror';
 import type { CurrentUser } from '@/lib/core/auth';
+import type { Role } from '@/lib/core/session';
 import {
   type Pillar,
   type PillarScope,
@@ -28,6 +29,10 @@ import {
 } from '@/lib/strategy/model';
 import { auditStrategy } from '@/lib/strategy/audit';
 import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
+import { normaliseFolderPath } from '@/lib/core/folders';
+// The GOVERNED folder registry — a moved-into folder is upserted as an explicit row
+// so it persists even when empty. Reused, never forked (mirrors Data/Metrics).
+import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@/lib/folders/index';
 import {
   linkBetStub,
   unlinkBetStub,
@@ -300,6 +305,7 @@ export async function createPillar(
       : undefined,
     betIds: [],
     targets: undefined,
+    folder: '/',
     archived: false,
     createdAt: t,
     updatedAt: t,
@@ -344,6 +350,172 @@ export async function updatePillar(
   writeThrough(p);
   await auditStrategy({ action: 'pillar.update', actor: user.id, domain: p.domain, pillarId: p.id, pillarName: p.name });
   return p;
+}
+
+/**
+ * Rename a pillar — change its DISPLAY `name` ONLY. Edit-scoped exactly like every
+ * other mutation ({@link requireEditable} → `canEditPillar`, roleAtLeast semantics).
+ *
+ * CRITICAL — the pillar `id` is the FROZEN identity every reference (a Big Bet's
+ * `pillarId`, the value roll-up, the folder row) is keyed by, so a rename NEVER
+ * touches `id`; only the human-facing `name` moves. Snapshots the PRIOR state to the
+ * version log so the rename is itself reversible. Trim + reject-empty (400) + no-op
+ * short-circuit (no version churn). No name-uniqueness rule exists on create
+ * ({@link createPillar} only rejects empty), so none is invented here.
+ */
+export async function renamePillar(user: CurrentUser, pid: string, newName: string): Promise<Pillar> {
+  const { map, p } = await requireEditable(user, pid);
+  const name = newName.trim();
+  if (!name) throw withStatus(new Error('A pillar name is required'), 400);
+  if (name === p.name) return p; // no-op → no version churn
+  // Snapshot the PRIOR state before overwriting so the rename is restorable. The id
+  // is frozen and NEVER part of the mutation.
+  versions.record(pid, user.id, snapshotState(p), 'rename');
+  p.name = name;
+  p.updatedAt = now();
+  map.set(p.id, p);
+  writeThrough(p);
+  await auditStrategy({ action: 'pillar.rename', actor: user.id, domain: p.domain, pillarId: p.id, pillarName: p.name });
+  return p;
+}
+
+// -------------------------------------------------------------------- folders --
+//
+// PillarScope → FolderScope mapping (folders are personal|domain only; a pillar has
+// a THREE-tier scope). A personal (My) pillar's folders are the owner's PERSONAL
+// tree; a domain OR tenant (Company) pillar's folders are the owning DOMAIN's tree —
+// a tenant pillar is org-wide, so it belongs in the domain tree keyed to the literal
+// 'tenant' domain value it carries. The pillar's `domain` field is passed on the
+// folder row so same-named folders across domains stay distinct.
+
+/** Map a pillar's tier to the two-lane folder scope. */
+export function folderScopeOfPillar(p: Pick<Pillar, 'scope'>): FolderScope {
+  return p.scope === 'personal' ? 'personal' : 'domain';
+}
+
+/** Best-effort: mirror a pillar's folder path into the governed folder registry so an
+ *  empty folder still shows in the rail. The root is implicit (never a row). The move
+ *  already passed the pillar's edit-scope gate, so this same-owner folder create can
+ *  only mirror an authorised move; any gate failure is swallowed so a successful move
+ *  is never rolled back (mirrors Data's `upsertFolderRow`). */
+function upsertPillarFolderRow(p: Pillar, user: { id: string; role: Role; domains: string[] }): void {
+  const path = normaliseFolderPath(p.folder ?? '/');
+  if (path === '/') return;
+  const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+  try {
+    createFolder(principal, { tab: 'pillars', scope: folderScopeOfPillar(p), path, domain: p.domain });
+  } catch {
+    /* folder-registry mirror is best-effort; the pillar move already succeeded */
+  }
+}
+
+/**
+ * Move a pillar into a folder (edit-scoped, write-through like every other mutation).
+ * Mirrors `moveDataset`/`moveMetric`: the folder is a normalised path on the pillar;
+ * the folder ROOT (personal vs domain tree) is decided by tier via
+ * {@link folderScopeOfPillar}. On move we also upsert an EXPLICIT folder row so the
+ * destination persists even when empty. A viewer who cannot edit is rejected 403 and
+ * nothing is written. Folder is a structural placement (not versioned content), so it
+ * is NOT snapshotted — same treatment as `domain`/`scope`.
+ */
+export async function movePillar(user: CurrentUser, pid: string, folder: string): Promise<Pillar> {
+  const { map, p } = await requireEditable(user, pid);
+  // Snapshot the PRIOR placement (mirrors moveDataset's 'edit folder' version) so a
+  // move is auditable + reversible.
+  versions.record(pid, user.id, snapshotState(p), 'edit folder');
+  p.folder = normaliseFolderPath(folder);
+  p.updatedAt = now();
+  map.set(p.id, p);
+  writeThrough(p);
+  // Best-effort folder-row upsert (already edit-authorised above).
+  upsertPillarFolderRow(p, user);
+  await auditStrategy({ action: 'pillar.move', actor: user.id, domain: p.domain, pillarId: p.id, pillarName: p.name, detail: { folder: p.folder } });
+  return p;
+}
+
+/**
+ * SYNC read of the ALREADY-HYDRATED in-memory pillar cache — the seam the folder
+ * adapter needs. The `ArtifactAdapter` contract is synchronous (itemsUnderFolder
+ * returns an array, not a Promise), but this store is async (getCache awaits the
+ * durable mirror on first read). The folder API route hydrates the pillar store
+ * FIRST (`ensureHydrated`) and only THEN runs the cascade, so by the time the adapter
+ * reads, the cache is populated. This helper exposes that cache with NO await — it
+ * never triggers a hydration itself (returns [] if somehow un-hydrated, fail-closed:
+ * an empty snapshot can only ever touch fewer items, never more). Server-only.
+ */
+export function listPillarsSync(): Pillar[] {
+  const s = state();
+  return s.cache ? [...s.cache.values()] : [];
+}
+
+/**
+ * SYNC edit-scoped mutators the folder adapter drives. The shared folder CASCADE
+ * (`lib/folders/folder-lifecycle.ts`) calls each `ArtifactAdapter` op SYNCHRONOUSLY
+ * and relies on a governance throw to surface (fail-closed) — but this store's public
+ * mutators are ASYNC (they await the durable mirror + Langfuse audit). Rather than
+ * fire-and-forget the async ones (which would drop a 403 into an unhandled rejection
+ * and let a denied cascade proceed), these tiny helpers run the SAME `canEditPillar`
+ * gate synchronously against the already-hydrated in-memory cache, mutate the Map, and
+ * ride the store's own fire-and-forget mirror write-through. The version log + audit
+ * are best-effort side effects fired without await. The folder route hydrates the
+ * pillar store (`ensureHydrated`) BEFORE the cascade runs, so the cache is populated.
+ */
+/** The narrow principal the SYNC adapter helpers read (all `canEditPillar` needs).
+ *  Kept looser than `CurrentUser` so the adapter can pass an `AdapterPrincipal`
+ *  straight through — no synthetic `name`/`activeDomain` fields. */
+type EditPrincipal = { id: string; role: Role; domains: string[] };
+
+function requireEditableSync(user: EditPrincipal, pid: string): { map: Map<string, Pillar>; p: Pillar } {
+  const s = state();
+  const map = s.cache;
+  if (!map) throw withStatus(new Error('Pillar store not hydrated'), 500);
+  const p = map.get(pid);
+  if (!p) throw withStatus(new Error('Pillar not found'), 404);
+  if (!canEditPillar(user, p)) {
+    throw withStatus(new Error('Only a Builder (domain) or Admin (tenant) can edit this pillar'), 403);
+  }
+  return { map, p };
+}
+
+/** SYNC folder move — the adapter's `moveItem` (edit-scoped, throws 403 when denied). */
+export function movePillarSync(pid: string, user: EditPrincipal, folder: string): void {
+  const { p } = requireEditableSync(user, pid);
+  p.folder = normaliseFolderPath(folder);
+  p.updatedAt = now();
+  writeThrough(p);
+  versions.record(pid, user.id, snapshotState(p), 'edit folder');
+  upsertPillarFolderRow(p, user);
+}
+
+/** SYNC archive — the adapter's `archiveItem` (edit-scoped, throws 403 when denied). */
+export function archivePillarSync(pid: string, user: EditPrincipal): void {
+  const { p } = requireEditableSync(user, pid);
+  versions.record(pid, user.id, snapshotState(p), 'archive');
+  p.archived = true;
+  p.updatedAt = now();
+  writeThrough(p);
+}
+
+/** SYNC restore — the adapter's `restoreItem` (edit-scoped, throws 403 when denied). */
+export function unarchivePillarSync(pid: string, user: EditPrincipal): void {
+  const { p } = requireEditableSync(user, pid);
+  versions.record(pid, user.id, snapshotState(p), 'restore');
+  p.archived = false;
+  p.updatedAt = now();
+  writeThrough(p);
+}
+
+/** SYNC physical delete — the adapter's `deleteItem` (edit-scoped, throws 403 when denied).
+ *  NOTE: the folder cascade only deletes an ALREADY-ARCHIVED folder's members, so a
+ *  pillar reaching here has been soft-archived first. The linked-bets guard the async
+ *  `deletePillar` enforces is a UI-initiated safety; the cascade path is the folder-
+ *  delete discipline and removes the member row + its version history. */
+export function deletePillarSync(pid: string, user: EditPrincipal): void {
+  const { map, p } = requireEditableSync(user, pid);
+  map.delete(pid);
+  deleteThrough(pid);
+  versions.purge(pid);
+  void p;
 }
 
 // ------------------------------------------------ archive / restore / delete ---

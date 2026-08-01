@@ -16,6 +16,8 @@ import { config } from '@/lib/core/config';
 export type StrategyAuditAction =
   | 'pillar.create'
   | 'pillar.update'
+  | 'pillar.rename'
+  | 'pillar.move'
   | 'pillar.delete'
   | 'pillar.archive'
   | 'pillar.unarchive'

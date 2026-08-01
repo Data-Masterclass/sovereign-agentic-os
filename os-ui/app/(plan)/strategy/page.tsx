@@ -31,6 +31,9 @@ import {
   type PillarScope,
 } from '@/lib/strategy/model';
 import { useTileOrder } from '@/lib/prefs/useTileOrder';
+import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
+import { useFolders } from '@/lib/folders/useFolders';
+import { isUnderFolder, normaliseFolderPath, type FolderPathNode } from '@/lib/core/folders';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import PromoteButton, { type PromoteTier } from '@/components/lifecycle/PromoteButton';
@@ -102,6 +105,15 @@ export default function StrategyPage() {
   // Strategy tier segment (My · Domain · Company) + archived affordance.
   const [tier, setTier] = useState<TierKey>('all');
   const [showArchived, setShowArchived] = useState(false);
+  // Folder rail — the PROPORTIONATE folder surface for this small, flat list: a nav
+  // tree that FILTERS the pillars, plus a per-pillar move picker. No FolderLayout
+  // sidebar (the tab has none). `tab='pillars'`.
+  const { personalNodes, domainNodes, loadFolders } = useFolders('pillars', showArchived);
+  const [activeFolder, setActiveFolder] = useState<{ scope: 'personal' | 'domain'; path: string } | null>(null);
+  // The pillar a "Move to folder…" picker is open for (null = closed).
+  const [movePillarId, setMovePillarId] = useState<string | null>(null);
+
+  useEffect(() => { loadFolders(); }, [loadFolders]);
 
   const reload = useCallback(async () => {
     setError('');
@@ -138,8 +150,60 @@ export default function StrategyPage() {
     (k: TierKey) => orderedCards.filter((c) => !c.pillar.archived && (k === 'all' || c.pillar.scope === k)).length,
     [orderedCards],
   );
-  // The cards shown for the selected tier (My/Domain/Company grouping).
-  const shownCards = orderedCards.filter((c) => tier === 'all' || c.pillar.scope === tier);
+  // The folder lane a pillar lives in (personal for My; domain for Domain/Company),
+  // mirroring the server-side PillarScope→FolderScope mapping.
+  const laneOf = (scope: PillarScope): 'personal' | 'domain' => (scope === 'personal' ? 'personal' : 'domain');
+
+  // The cards shown for the selected tier (My/Domain/Company grouping), then narrowed
+  // to the active folder when one is selected in the rail (same lane + under-path).
+  const shownCards = orderedCards
+    .filter((c) => tier === 'all' || c.pillar.scope === tier)
+    .filter((c) => {
+      if (!activeFolder) return true;
+      if (laneOf(c.pillar.scope) !== activeFolder.scope) return false;
+      return isUnderFolder(activeFolder.path, c.pillar.folder ?? '/');
+    });
+
+  // The pillars as folder-tree items (id + folder + lane) so the rail can render leaves.
+  const folderItems = orderedCards
+    .filter((c) => showArchived || !c.pillar.archived)
+    .map((c) => ({ id: c.pillar.id, folder: c.pillar.folder ?? '/', name: c.pillar.name, scope: laneOf(c.pillar.scope) }));
+
+  // Create a folder row (rail "New folder" + the picker's inline create).
+  const createFolderRow = useCallback(async (scope: 'personal' | 'domain', path: string) => {
+    await fetch('/api/folders', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tab: 'pillars', scope, path }),
+    });
+    await loadFolders();
+  }, [loadFolders]);
+
+  // Folder lifecycle → the shared /api/folders routes (archive/restore/delete cascade
+  // reaches the member pillars through the strategy adapter, server-side).
+  const folderLifecycle = useCallback(async (ref: FolderRef, action: 'archive' | 'restore' | 'delete') => {
+    const url = `/api/folders/${ref.id}`;
+    if (action === 'delete') await fetch(url, { method: 'DELETE' });
+    else {
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+    }
+    await Promise.all([loadFolders(), reload()]);
+  }, [loadFolders, reload]);
+
+  // Move the pillar into the chosen folder, then refresh both the rail + the list.
+  const doMovePillar = useCallback(async (pid: string, dest: { path: string }) => {
+    await fetch(`/api/strategy/pillars/${pid}/folder`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ folder: dest.path }),
+    });
+    setMovePillarId(null);
+    await Promise.all([loadFolders(), reload()]);
+  }, [loadFolders, reload]);
 
   return (
     <ConfirmProvider>
@@ -183,20 +247,59 @@ export default function StrategyPage() {
                 No strategic pillars yet. Anyone can define a My pillar; a Builder (domain) or Admin (company) defines shared ones.
               </div>
             ) : (
-              <div className="strat-pillars" style={{ marginTop: 14 }}>
-                {shownCards.map((card) => (
-                  <PillarColumn
-                    key={card.pillar.id}
-                    card={card}
-                    currency={resp.currency}
-                    onChanged={reload}
-                    onOpenBet={(bet) => setOpen({ card, bet })}
-                    dragProps={itemDragProps(card)}
-                    dragHandleProps={dragHandleProps}
-                  />
-                ))}
-                {canCreate ? <NewPillarColumn resp={resp} initialTier={tier} onCreated={reload} /> : null}
-              </div>
+              <>
+                {/* Folder rail — a compact nav tree that FILTERS the pillars (a small,
+                    flat list doesn't warrant a full FolderLayout sidebar). Selecting a
+                    folder narrows the grid; the ••• menu drives archive/restore/delete. */}
+                {(personalNodes.length > 0 || domainNodes.length > 0 || folderItems.some((i) => i.folder !== '/')) ? (
+                  <div className="strat-folder-rail" style={{ marginTop: 14, maxWidth: 320 }}>
+                    <FolderTree
+                      variant="nav"
+                      personalNodes={personalNodes}
+                      domainNodes={domainNodes}
+                      items={folderItems}
+                      personalLabel="My folders"
+                      domainLabel="Domain folders"
+                      renderLeaf={() => null}
+                      selectedPath={activeFolder?.path}
+                      canCreateDomain={resp.user.role === 'admin' || resp.user.role === 'domain_admin'}
+                      onSelect={(scope, path) =>
+                        setActiveFolder((cur) =>
+                          cur && cur.scope === scope && cur.path === path ? null : { scope, path },
+                        )
+                      }
+                      onCreate={(scope, parentPath) => {
+                        const name = window.prompt('New folder name');
+                        if (name?.trim()) void createFolderRow(scope, normaliseFolderPath(`${parentPath}/${name.trim()}`));
+                      }}
+                      onArchive={(ref) => void folderLifecycle(ref, 'archive')}
+                      onRestore={(ref) => void folderLifecycle(ref, 'restore')}
+                      onDelete={(ref) => void folderLifecycle(ref, 'delete')}
+                    />
+                    {activeFolder ? (
+                      <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => setActiveFolder(null)}>
+                        Clear folder filter
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className="strat-pillars" style={{ marginTop: 14 }}>
+                  {shownCards.map((card) => (
+                    <PillarColumn
+                      key={card.pillar.id}
+                      card={card}
+                      currency={resp.currency}
+                      onChanged={reload}
+                      onOpenBet={(bet) => setOpen({ card, bet })}
+                      onMoveFolder={() => setMovePillarId(card.pillar.id)}
+                      dragProps={itemDragProps(card)}
+                      dragHandleProps={dragHandleProps}
+                    />
+                  ))}
+                  {canCreate ? <NewPillarColumn resp={resp} initialTier={tier} onCreated={reload} /> : null}
+                </div>
+              </>
             )}
           </section>
         ) : null}
@@ -209,6 +312,26 @@ export default function StrategyPage() {
       </div>
 
       {open ? <BetDetail card={open.card} bet={open.bet} onClose={() => setOpen(null)} /> : null}
+
+      {/* Move-to-folder picker — offers only the moved pillar's own lane (personal for
+          a My pillar, domain for a Domain/Company one) so a move never crosses tiers. */}
+      {movePillarId ? (() => {
+        const card = orderedCards.find((c) => c.pillar.id === movePillarId);
+        const lane = card ? laneOf(card.pillar.scope) : 'personal';
+        return (
+          <FolderPickerModal
+            open
+            tab="pillars"
+            personalNodes={lane === 'personal' ? personalNodes : []}
+            domainNodes={lane === 'domain' ? domainNodes : []}
+            roots={[lane]}
+            title="Move pillar to folder"
+            onConfirm={(dest) => void doMovePillar(movePillarId, dest)}
+            onCancel={() => setMovePillarId(null)}
+            onCreate={createFolderRow}
+          />
+        );
+      })() : null}
     </ConfirmProvider>
   );
 }
@@ -293,6 +416,7 @@ function PillarColumn({
   currency,
   onChanged,
   onOpenBet,
+  onMoveFolder,
   dragProps,
   dragHandleProps,
 }: {
@@ -300,11 +424,13 @@ function PillarColumn({
   currency: string;
   onChanged: () => void;
   onOpenBet: (bet: DBet) => void;
+  onMoveFolder?: () => void;
   dragProps?: ItemDragProps;
   dragHandleProps?: DragHandleProps;
 }) {
   const { pillar, rollup, canEdit, canPromote, promoteTo, canDemote, demoteTo } = card;
   const [editing, setEditing] = useState(false);
+  const [renaming, setRenaming] = useState(false);
 
   // Tier badge — My · Domain (its domain) · Company.
   const scopeLabel =
@@ -328,12 +454,34 @@ function PillarColumn({
             </span>
           ) : null}
           {canEdit ? (
-            <button className="strat-icon-btn" onClick={() => setEditing((v) => !v)} aria-label="Edit pillar">
-              {editing ? '×' : '✎'}
-            </button>
+            <>
+              {/* Rename must be DISCOVERABLE — a labelled button, not a bare glyph
+                  (mirrors DataBuilder). Renames the DISPLAY name only; the id is frozen. */}
+              <button
+                className="btn ghost sm"
+                onClick={() => { setRenaming(true); setEditing(false); }}
+                title="Rename this pillar (its identity stays stable)"
+                aria-label="Rename this pillar"
+              >✎ Rename</button>
+              {onMoveFolder ? (
+                <button
+                  className="btn ghost sm"
+                  onClick={onMoveFolder}
+                  title="Move this pillar into a folder"
+                  aria-label="Move to folder"
+                >Move to folder…</button>
+              ) : null}
+              <button className="strat-icon-btn" onClick={() => setEditing((v) => !v)} aria-label="Edit pillar">
+                {editing ? '×' : '✎'}
+              </button>
+            </>
           ) : null}
         </div>
       </div>
+
+      {renaming ? (
+        <RenamePillar card={card} onDone={() => { setRenaming(false); onChanged(); }} onCancel={() => setRenaming(false)} />
+      ) : null}
 
       {editing ? (
         <EditPillar card={card} onDone={() => { setEditing(false); onChanged(); }} onCancel={() => setEditing(false)} />
@@ -687,6 +835,46 @@ function EditPillar({ card, onDone, onCancel }: { card: PillarCard; onDone: () =
       <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
         <button className="btn ghost sm" onClick={onCancel} disabled={busy}>Cancel</button>
         <button className="btn sm" onClick={save} disabled={busy || !name.trim()}>Save</button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Rename a pillar — the DISPLAY name only. Posts `{action:'rename', name}` to the
+ * pillar route; the store freezes the `id` (every reference is keyed by it) so no
+ * bet link or roll-up is ever orphaned. Trim + reject-empty is enforced server-side
+ * (400), surfaced here.
+ */
+function RenamePillar({ card, onDone, onCancel }: { card: PillarCard; onDone: () => void; onCancel: () => void }) {
+  const { pillar } = card;
+  const [name, setName] = useState(pillar.name);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const save = async () => {
+    setBusy(true); setErr('');
+    try {
+      await api(`/api/strategy/pillars/${pillar.id}`, 'POST', { action: 'rename', name });
+      onDone();
+    } catch (e) { setErr((e as Error).message); setBusy(false); }
+  };
+
+  return (
+    <div className="strat-edit">
+      <span className="muted" style={{ fontSize: 11, fontWeight: 600 }}>Rename pillar</span>
+      <input
+        className="strat-edit-title"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Pillar name"
+        autoFocus
+        onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) void save(); }}
+      />
+      {err ? <div className="error" style={{ fontSize: 11.5 }}>{err}</div> : null}
+      <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+        <button className="btn ghost sm" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button className="btn sm" onClick={save} disabled={busy || !name.trim()}>Rename</button>
       </div>
     </div>
   );

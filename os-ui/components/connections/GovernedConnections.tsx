@@ -7,7 +7,7 @@ import Link from 'next/link';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { CAPABILITY_MODES, type CapabilityMode, type ConnectionTemplateKey } from '@/lib/connections/schema';
-import { type Role } from '@/lib/core/session';
+import { type Role, roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts, type ScopeKey } from '@/lib/core/scopes';
 import { providerForTemplate, providerConfig, type OAuthProvider } from '@/lib/oauth/providers';
@@ -22,6 +22,11 @@ import ConnectorWizard, { type WizardStart } from '@/components/connections/Conn
 import InstallationGuide from '@/components/connections/InstallationGuide';
 import { installGuideFor, type InstallGuide } from '@/lib/connections/install-guides';
 import { STACKS, vendorStack, warehousePlatformStack, type StackId } from '@/lib/connections/connector-stacks';
+import { itemsUnderFolder, normaliseFolderPath, folderName } from '@/lib/core/folders';
+import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
+import FolderLayout from '@/components/core/FolderLayout';
+import { ensureFolderId, renamedPath } from '@/lib/folders/client';
+import { useFolders } from '@/lib/folders/useFolders';
 
 /**
  * Governed Connections surface — ONE scroll, no sub-tabs.
@@ -69,6 +74,8 @@ type Conn = {
   visibility: 'Personal' | 'Shared' | 'Certified';
   /** Soft-archived (retained, reversible). */
   archived?: boolean;
+  /** The folder this connection lives in (normalised path; `'/'` = root). */
+  folder?: string;
   mode: string;
   secretRef: { name: string; key: string };
   secretSet: boolean;
@@ -167,6 +174,12 @@ function GovernedConnectionsInner() {
   const [open, setOpen] = useState<string>('');
   const [scope, setScope] = useState<ScopeKey>('all');
   const [showArchived, setShowArchived] = useState(false);
+  // Folder nav (Wave-2 parity): the selected folder filters the list; the picker moves
+  // one connection into a folder. `null` = every connection in the scope.
+  const [sel, setSel] = useState<{ root: 'personal' | 'domain'; path: string } | null>(null);
+  const [pickerId, setPickerId] = useState<string | null>(null);
+  const { personalNodes, domainNodes, loadFolders } = useFolders('connections', showArchived);
+  useEffect(() => { loadFolders(); }, [loadFolders]);
 
   // ?focus=<connectionId> deep-link: once data loads, open (expand) that connection.
   // We do NOT switch scope — the accordion expansion is visible across all scopes, and
@@ -228,6 +241,84 @@ function GovernedConnectionsInner() {
 
   // The Supported Connector whose Installation Guide side-panel is open (null = none).
   const [guide, setGuide] = useState<InstallGuide | null>(null);
+
+  // Move one connection into a folder via the edit-gated folder route (mirrors Data).
+  const moveInto = useCallback(async (id: string, folder: string) => {
+    setError('');
+    try {
+      const res = await fetch(`/api/connections/${id}/folder`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ folder }),
+      });
+      if (!res.ok) { setError((await res.json()).error ?? 'Move failed'); return; }
+      await Promise.all([load(), loadFolders()]);
+    } catch (e) { setError((e as Error).message); }
+  }, [load, loadFolders]);
+
+  // Create a folder row in the registry, then re-load the rail (mirrors Data/Files).
+  const createFolderRow = useCallback(async (root: 'personal' | 'domain', parentPath: string) => {
+    const name = window.prompt('Folder name');
+    if (!name || !name.trim()) return;
+    const path = normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${name.trim()}`);
+    setError('');
+    try {
+      const res = await fetch('/api/folders', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tab: 'connections', scope: root, path }),
+      });
+      if (!res.ok) { setError((await res.json()).error ?? 'Could not create folder'); return; }
+      await loadFolders();
+    } catch (e) { setError((e as Error).message); }
+  }, [loadFolders]);
+
+  // Folder lifecycle — archive / restore / delete a folder row (governed registry API).
+  const refreshAll = useCallback(async () => { await Promise.all([load(), loadFolders()]); }, [load, loadFolders]);
+  const handleFolderArchive = useCallback(async (ref: FolderRef) => {
+    if (!window.confirm(`Archive the folder "${folderName(ref.path)}" and everything in it?`)) return;
+    setError('');
+    try {
+      const id = await ensureFolderId('connections', ref);
+      const res = await fetch(`/api/folders/${id}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'archive' }),
+      });
+      if (!res.ok) { setError((await res.json()).error ?? 'Archive failed'); return; }
+      await refreshAll();
+    } catch (e) { setError((e as Error).message); }
+  }, [refreshAll]);
+  const handleFolderRename = useCallback(async (ref: FolderRef, newName: string) => {
+    const path = renamedPath(ref.path, newName);
+    if (!path || path === ref.path) return;
+    setError('');
+    try {
+      const id = await ensureFolderId('connections', ref);
+      const res = await fetch(`/api/folders/${id}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }),
+      });
+      if (!res.ok) { setError((await res.json()).error ?? 'Rename failed'); return; }
+      await refreshAll();
+    } catch (e) { setError((e as Error).message); }
+  }, [refreshAll]);
+  const handleFolderRestore = useCallback(async (ref: FolderRef) => {
+    if (!ref.id) return;
+    setError('');
+    try {
+      const res = await fetch(`/api/folders/${ref.id}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'restore' }),
+      });
+      if (!res.ok) { setError((await res.json()).error ?? 'Restore failed'); return; }
+      await refreshAll();
+    } catch (e) { setError((e as Error).message); }
+  }, [refreshAll]);
+  const handleFolderDelete = useCallback(async (ref: FolderRef) => {
+    if (!ref.id) return;
+    if (!window.confirm(`Permanently delete the folder "${folderName(ref.path)}"?`)) return;
+    setError('');
+    try {
+      const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
+      if (!res.ok) { setError((await res.json()).error ?? 'Delete failed'); return; }
+      await refreshAll();
+    } catch (e) { setError((e as Error).message); }
+  }, [refreshAll]);
 
   // Supported Connectors: search query + which category groups are collapsed.
   const [connSearch, setConnSearch] = useState('');
@@ -295,12 +386,46 @@ function GovernedConnectionsInner() {
         const aCounts = scopeCounts(groupsFromVisibility(apps), data.user.id);
         const counts = { all: cCounts.all + aCounts.all, mine: cCounts.mine + aCounts.mine, shared: cCounts.shared + aCounts.shared, marketplace: cCounts.marketplace + aCounts.marketplace };
         const empty = scopedConns.length === 0 && scopedApps.length === 0;
+
+        // A connection's folder ROOT: Personal → personal tree; Shared/Certified → domain
+        // tree (mirrors the store's folderScopeOf). App connections have no folder.
+        const connRoot = (v: Conn['visibility']): 'personal' | 'domain' => (v === 'Personal' ? 'personal' : 'domain');
+        // Which roots to surface for the active scope (mine→personal, shared/marketplace→
+        // domain, all→both).
+        const visibleRoots: ('personal' | 'domain')[] =
+          scope === 'mine' ? ['personal'] : scope === 'shared' || scope === 'marketplace' ? ['domain'] : ['personal', 'domain'];
+
+        // Folder rows = registry rows UNIONed with folders synthesised from the visible
+        // connections' own paths, so implicit (pre-registry) folders still show.
+        const synth = (rows: { path: string; id?: string; archived?: boolean }[], paths: string[]) => {
+          const seen = new Set(rows.map((r) => normaliseFolderPath(r.path)));
+          const out = [...rows];
+          for (const p of paths) {
+            const n = normaliseFolderPath(p);
+            if (n !== '/' && !seen.has(n)) { seen.add(n); out.push({ path: n }); }
+          }
+          return out;
+        };
+        const pPaths = scopedConns.filter((c) => connRoot(c.visibility) === 'personal').map((c) => c.folder ?? '/');
+        const dPaths = scopedConns.filter((c) => connRoot(c.visibility) === 'domain').map((c) => c.folder ?? '/');
+        const treePersonal = visibleRoots.includes('personal') ? synth(personalNodes, pPaths) : [];
+        const treeDomain = visibleRoots.includes('domain') ? synth(domainNodes, dPaths) : [];
+        const treeItems = scopedConns.map((c) => ({ id: c.id, folder: normaliseFolderPath(c.folder ?? '/'), name: c.name }));
+
+        // When a folder is selected, filter to connections under it (incl. subfolders) in
+        // the selected root; else the whole scope. App connections show only at root.
+        const shownConns = sel
+          ? scopedConns.filter((c) => connRoot(c.visibility) === sel.root)
+              .filter((c) => itemsUnderFolder(sel.path, [{ id: c.id, folder: normaliseFolderPath(c.folder ?? '/') }]).length > 0)
+          : scopedConns;
+        const shownApps = sel ? [] : scopedApps;
+
         return (
           <>
             {/* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace. */}
             <div className="seg" style={{ marginBottom: 14 }}>
               {SCOPE_GROUPS.map((g) => (
-                <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => setScope(g.key)}>
+                <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => { setScope(g.key); setSel(null); }}>
                   {g.label('Connections')} ({counts[g.key]})
                 </button>
               ))}
@@ -312,8 +437,33 @@ function GovernedConnectionsInner() {
                   : scope === 'shared' ? 'Nothing in Domain yet.' : 'Nothing in Company yet.'}
               </div>
             ) : (
-              <>
-                {scopedConns.map((c) => (
+              <FolderLayout
+                allLabel="All connections"
+                allCount={scopedConns.length + scopedApps.length}
+                allSelected={sel === null}
+                onSelectAll={() => setSel(null)}
+                rail={
+                  <FolderTree
+                    variant="nav"
+                    canCreateDomain={roleAtLeast(data.user.role, 'domain_admin')}
+                    roots={visibleRoots}
+                    personalNodes={treePersonal}
+                    domainNodes={treeDomain}
+                    items={treeItems}
+                    personalLabel="My folders"
+                    domainLabel="Domain folders"
+                    selectedPath={sel?.path}
+                    onSelect={(root, path) => setSel({ root, path })}
+                    onCreate={createFolderRow}
+                    onRename={handleFolderRename}
+                    onArchive={handleFolderArchive}
+                    onRestore={handleFolderRestore}
+                    onDelete={handleFolderDelete}
+                    renderLeaf={(item) => item.name ?? item.id}
+                  />
+                }
+              >
+                {shownConns.map((c) => (
                   <ConnectionCard
                     key={c.id}
                     c={c}
@@ -323,11 +473,36 @@ function GovernedConnectionsInner() {
                     open={open === c.id}
                     onToggle={() => setOpen(open === c.id ? '' : c.id)}
                     onChange={load}
+                    onMove={() => setPickerId(c.id)}
                   />
                 ))}
-                {scopedApps.map((c) => <AppConnectionCard key={c.id} c={c} />)}
-              </>
+                {shownApps.map((c) => <AppConnectionCard key={c.id} c={c} />)}
+              </FolderLayout>
             )}
+
+            {/* Move-to-folder picker — moves ONE connection into a folder (edit-gated). */}
+            <FolderPickerModal
+              open={pickerId !== null}
+              tab="connections"
+              roots={visibleRoots}
+              personalNodes={treePersonal}
+              domainNodes={treeDomain}
+              title="Move connection to folder"
+              onCancel={() => setPickerId(null)}
+              onConfirm={(dest) => {
+                const id = pickerId;
+                setPickerId(null);
+                if (id) void moveInto(id, dest.path);
+              }}
+              onCreate={async (root, path) => {
+                const res = await fetch('/api/folders', {
+                  method: 'POST', headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({ tab: 'connections', scope: root, path }),
+                });
+                if (!res.ok) { setError((await res.json()).error ?? 'Could not create folder'); return; }
+                await loadFolders();
+              }}
+            />
           </>
         );
       })()}
@@ -945,13 +1120,16 @@ function AppConnectionCard({ c }: { c: AppConn }) {
 }
 
 function ConnectionCard({
-  c, role, me, oauthProviders, open, onToggle, onChange,
+  c, role, me, oauthProviders, open, onToggle, onChange, onMove,
 }: {
-  c: Conn; role: Role; me: { id: string; role: Role; domains: string[] }; oauthProviders: OAuthProviderStatus[]; open: boolean; onToggle: () => void; onChange: () => void;
+  c: Conn; role: Role; me: { id: string; role: Role; domains: string[] }; oauthProviders: OAuthProviderStatus[]; open: boolean; onToggle: () => void; onChange: () => void; onMove?: () => void;
 }) {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const [confirmDemote, setConfirmDemote] = useState(false);
+  // Rename: a DISPLAY-name edit only — the store freezes principal/catalog/secret.
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState(c.name);
   const [draft, setDraft] = useState<Tool[]>(c.tools);
   const [approvalState, setApprovalState] = useState<{
     tool: string; args: Record<string, unknown>; preview: ApprovalPreview;
@@ -1088,6 +1266,16 @@ function ConnectionCard({
     if (r.ok) onChange();
   }
 
+  /** Rename — DISPLAY name only. The store never moves the frozen physical identity
+   *  (principal / Trino catalog / K8s secret name); this only changes what's shown. */
+  async function submitRename() {
+    const name = renameDraft.trim();
+    if (!name || name === c.name) { setRenaming(false); return; }
+    const r = await doPost(`/api/connections/${c.id}`, { action: 'rename', name });
+    if (r.ok) { setRenaming(false); onChange(); }
+    else setMsg(`✗ ${(r.data.error as string) ?? 'Rename failed'}`);
+  }
+
   async function saveCaps() {
     const updates = draft.map((t) => ({ name: t.name, mode: t.mode, limits: t.limits }));
     const r = await doPost(`/api/connections/${c.id}/capabilities`, { updates });
@@ -1189,13 +1377,38 @@ function ConnectionCard({
       {/* Header */}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 style={{ margin: 0 }}>
-            {c.name}
-            <span className="badge muted" style={{ marginLeft: 6 }}>{c.type}</span>
-            {c.health === 'healthy' && <span className="badge ok" style={{ marginLeft: 4 }}>healthy</span>}
-            {c.health === 'needs-reconnect' && <span className="badge err" style={{ marginLeft: 4 }}>needs reconnect</span>}
-            {c.health === 'untested' && <span className="badge muted" style={{ marginLeft: 4 }}>untested</span>}
-          </h3>
+          {renaming ? (
+            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+              <input
+                type="text"
+                value={renameDraft}
+                onChange={(e) => setRenameDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void submitRename(); if (e.key === 'Escape') { setRenaming(false); setRenameDraft(c.name); } }}
+                autoFocus
+                style={{ fontSize: 15, fontWeight: 600, minWidth: 220 }}
+              />
+              <button className="btn sm" onClick={() => void submitRename()} disabled={busy !== ''}>Save</button>
+              <button className="btn ghost sm" onClick={() => { setRenaming(false); setRenameDraft(c.name); }}>Cancel</button>
+            </div>
+          ) : (
+            <h3 style={{ margin: 0 }}>
+              {c.name}
+              {canManage ? (
+                <button
+                  className="btn ghost sm"
+                  style={{ marginLeft: 8, padding: '1px 8px', fontSize: 12, verticalAlign: 'middle' }}
+                  title="Rename (display name only — the physical identity is frozen)"
+                  onClick={() => { setRenameDraft(c.name); setRenaming(true); }}
+                >
+                  ✎ Rename
+                </button>
+              ) : null}
+              <span className="badge muted" style={{ marginLeft: 6 }}>{c.type}</span>
+              {c.health === 'healthy' && <span className="badge ok" style={{ marginLeft: 4 }}>healthy</span>}
+              {c.health === 'needs-reconnect' && <span className="badge err" style={{ marginLeft: 4 }}>needs reconnect</span>}
+              {c.health === 'untested' && <span className="badge muted" style={{ marginLeft: 4 }}>untested</span>}
+            </h3>
+          )}
           <div className="muted mono" style={{ marginTop: 6, fontSize: 11.5 }}>
             {c.connector} · {c.auth === 'oauth' ? 'personal OAuth' : 'service creds'} · {c.principal} · {c.owner}/{c.domain} · {c.endpoint}
           </div>
@@ -1322,6 +1535,11 @@ function ConnectionCard({
         <button className="btn ghost" onClick={onToggle}>
           {open ? 'Hide capabilities' : 'Capabilities'}
         </button>
+        {canManage && onMove ? (
+          <button className="btn ghost" onClick={onMove} disabled={busy !== ''} title="Move to folder">
+            Move to folder…
+          </button>
+        ) : null}
         {canManage && c.visibility !== 'Certified' ? (
           <button className="btn ghost" onClick={promote} disabled={busy !== ''}>
             {c.visibility === 'Personal' ? 'Promote to Domain' : 'Certify to Company'}

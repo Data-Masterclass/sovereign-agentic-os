@@ -198,6 +198,10 @@ export type Connection = {
   /** Soft-archived: hidden from the working lists, reversible, retained (the vault
    *  secret + OAuth token are KEPT). Absent/false = live. */
   archived?: boolean;
+  /** The folder this connection lives in (normalised path; `'/'` = root). Absent on a
+   *  connection minted before folders existed → treated as root. Purely organisational:
+   *  it NEVER touches the FROZEN physical identity (`slug`/`principal`/catalog/secret). */
+  folder?: string;
   createdAt: string;
   updatedAt: string;
 };

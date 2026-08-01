@@ -344,6 +344,12 @@ export type Pillar = {
   targets?: TargetSet;
   /** The pillar's headline target (the card's big number); absent until set. */
   headlineTarget?: HorizonTarget;
+  /**
+   * The folder this pillar lives in (normalised path; `'/'` = root). Additive:
+   * legacy pillars without it fall back to root. Mirrors the folder field every
+   * other foldered artifact carries (Data/Metrics/…).
+   */
+  folder?: string;
   /** Soft-archive flag (reversible hide). Absent/false = live. Additive. */
   archived?: boolean;
   createdAt: string;

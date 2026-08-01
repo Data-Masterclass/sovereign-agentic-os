@@ -13,7 +13,8 @@ import {
   type BetSummary, type Pillar, api, eur, fmtDate, problemLine,
 } from './types';
 import { ProgressBar, SignalBadge } from './ui';
-import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
+import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
+import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import DomainTag from '@/components/DomainTag';
@@ -22,6 +23,11 @@ import {
   betTier,
   type PillarScope,
 } from '@/lib/strategy/model';
+import { itemsUnderFolder, normaliseFolderPath, folderName, type FolderPathNode } from '@/lib/core/folders';
+import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
+import FolderLayout from '@/components/core/FolderLayout';
+import { ensureFolderId, renamedPath } from '@/lib/folders/client';
+import { useFolders } from '@/lib/folders/useFolders';
 
 /** A bet's reach → the OS-wide lifecycle visibility (cross-domain bets affect others). */
 const betVisibility = (b: BetSummary): LcVisibility => (b.crossDomain ? 'shared' : 'personal');
@@ -58,7 +64,9 @@ export default function BigBetsPage() {
   // prerender of this route bails out. Wrap the client page.
   return (
     <Suspense fallback={null}>
-      <BigBetsPageInner />
+      <ConfirmProvider>
+        <BigBetsPageInner />
+      </ConfirmProvider>
     </Suspense>
   );
 }
@@ -70,12 +78,20 @@ function BigBetsPageInner() {
   const [error, setError] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const { user } = useUser();
+  const confirm = useConfirm();
   const searchParams = useSearchParams();
   // ?pillar=<id> from a Strategy-tab "New bet under this pillar" link pre-fills
   // the pillar picker and opens the create panel automatically.
   const initPillarId = searchParams.get('pillar') ?? '';
   const [creating, setCreating] = useState(!!initPillarId);
   const [tier, setTier] = useState<TierKey>('all');
+
+  // FOLDERS — a bet has no personal tier, so its folders are all DOMAIN-scoped.
+  // A selected folder path filters the portfolio; the picker moves a bet into one.
+  const { domainNodes, loadFolders } = useFolders('bigbets', showArchived);
+  const [sel, setSel] = useState<{ path: string } | null>(null);
+  const [pickerId, setPickerId] = useState<string | null>(null);
+  const [folderErr, setFolderErr] = useState('');
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -84,6 +100,7 @@ function BigBetsPageInner() {
       const [betsRes, stratRes] = await Promise.all([
         fetch(`/api/big-bets${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' }),
         fetch('/api/big-bets/strategy', { cache: 'no-store' }),
+        loadFolders(),
       ]);
       const betsBody = await betsRes.json();
       if (!betsRes.ok) setError(betsBody.error ?? `Request failed (${betsRes.status})`);
@@ -94,7 +111,7 @@ function BigBetsPageInner() {
     } finally {
       setLoading(false);
     }
-  }, [showArchived]);
+  }, [showArchived, loadFolders]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -146,12 +163,129 @@ function BigBetsPageInner() {
     { groupOf },
   );
 
+  // Folder rows fed to the tree = the governed registry rows UNIONed with folders
+  // synthesised from the visible bets' own paths, so implicit (pre-registry) folders
+  // still show. All bigbet folders live in the single DOMAIN root.
+  const treeDomainNodes = useMemo<FolderPathNode[]>(() => {
+    const seen = new Set(domainNodes.map((r) => normaliseFolderPath(r.path)));
+    const out = [...domainNodes];
+    for (const b of allBets) {
+      const n = normaliseFolderPath(b.folder ?? '/');
+      if (n !== '/' && !seen.has(n)) { seen.add(n); out.push({ path: n }); }
+    }
+    return out;
+  }, [domainNodes, allBets]);
+
+  // The leaves the tree lays out under each folder (used for counts + nav).
+  const treeItems = useMemo(
+    () => bets.map((b) => ({ id: b.id, folder: b.folder ?? '/', name: b.name })),
+    [bets],
+  );
+
+  // When a folder is selected, narrow the portfolio to bets under it (incl. subfolders).
+  const folderShownIds = useMemo(
+    () => (sel ? new Set(itemsUnderFolder(sel.path, bets.map((b) => ({ id: b.id, folder: b.folder ?? '/' }))).map((i) => i.id)) : null),
+    [sel, bets],
+  );
+  const shownBets = useMemo(
+    () => (folderShownIds ? orderedBets.filter((b) => folderShownIds.has(b.id)) : orderedBets),
+    [folderShownIds, orderedBets],
+  );
+
   // Group the portfolio by strategic pillar — each pillar is its own section.
-  // Uses orderedBets so user's drag preference flows into the groups.
-  const groups = useMemo(() => groupByPillar(orderedBets, pillars), [orderedBets, pillars]);
+  // Uses the (folder-filtered) shownBets so the pillar grouping runs within the folder.
+  const groups = useMemo(() => groupByPillar(shownBets, pillars), [shownBets, pillars]);
+
+  // Create a folder row in the registry, then re-load the rail (mirrors DatasetTiles).
+  const createFolder = useCallback(async (_scope: 'domain', parentPath: string) => {
+    const name = window.prompt('Folder name');
+    if (!name || !name.trim()) return;
+    const path = normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${name.trim()}`);
+    setFolderErr('');
+    try {
+      const res = await fetch('/api/folders', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tab: 'bigbets', scope: 'domain', path }),
+      });
+      if (!res.ok) { setFolderErr((await res.json()).error ?? 'Could not create folder'); return; }
+      await loadFolders();
+    } catch (e) { setFolderErr((e as Error).message); }
+  }, [loadFolders]);
+
+  // Move one bet into a folder via the edit-gated folder route.
+  const moveInto = useCallback(async (id: string, folder: string) => {
+    setFolderErr('');
+    try {
+      const res = await fetch(`/api/big-bets/${id}/folder`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ folder }),
+      });
+      if (!res.ok) { setFolderErr((await res.json()).error ?? 'Move failed'); return; }
+    } catch (e) { setFolderErr((e as Error).message); }
+    setPickerId(null);
+    void reload();
+  }, [reload]);
+
+  // Folder lifecycle handlers — archive/rename/restore/delete a folder row via the
+  // governed registry API. All refresh both the portfolio and the rail.
+  const countUnder = useCallback(
+    (path: string) => itemsUnderFolder(path, bets.map((b) => ({ id: b.id, folder: b.folder ?? '/' }))).length,
+    [bets],
+  );
+  const handleFolderArchive = useCallback(async (ref: FolderRef) => {
+    const ok = await confirm(archiveFolderCopy(folderName(ref.path), countUnder(ref.path)));
+    if (!ok) return;
+    setFolderErr('');
+    try {
+      const fid = await ensureFolderId('bigbets', ref);
+      const res = await fetch(`/api/folders/${fid}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'archive' }),
+      });
+      if (!res.ok) { setFolderErr((await res.json()).error ?? 'Archive failed'); return; }
+      await reload();
+    } catch (e) { setFolderErr((e as Error).message); }
+  }, [confirm, countUnder, reload]);
+  const handleFolderRename = useCallback(async (ref: FolderRef, newName: string) => {
+    const path = renamedPath(ref.path, newName);
+    if (!path || path === ref.path) return;
+    setFolderErr('');
+    try {
+      const fid = await ensureFolderId('bigbets', ref);
+      const res = await fetch(`/api/folders/${fid}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      if (!res.ok) { setFolderErr((await res.json()).error ?? 'Rename failed'); return; }
+      await reload();
+    } catch (e) { setFolderErr((e as Error).message); }
+  }, [reload]);
+  const handleFolderRestore = useCallback(async (ref: FolderRef) => {
+    if (!ref.id) return;
+    setFolderErr('');
+    try {
+      const res = await fetch(`/api/folders/${ref.id}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'restore' }),
+      });
+      if (!res.ok) { setFolderErr((await res.json()).error ?? 'Restore failed'); return; }
+      await reload();
+    } catch (e) { setFolderErr((e as Error).message); }
+  }, [reload]);
+  const handleFolderDelete = useCallback(async (ref: FolderRef) => {
+    if (!ref.id) return;
+    const ok = await confirm(deleteFolderCopy(folderName(ref.path), countUnder(ref.path)));
+    if (!ok) return;
+    setFolderErr('');
+    try {
+      const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
+      if (!res.ok) { setFolderErr((await res.json()).error ?? 'Delete failed'); return; }
+      await reload();
+    } catch (e) { setFolderErr((e as Error).message); }
+  }, [confirm, countUnder, reload]);
 
   return (
-    <ConfirmProvider>
+    <>
       <PageHeader title="Big Bets" crumb="initiative roadmaps over real components" tutorial="big-bets" />
       <div className="content">
         <p className="lead">
@@ -202,41 +336,85 @@ function BigBetsPageInner() {
         ) : (
           <>
             {error ? <div className="error" style={{ marginTop: 12 }}>{error}</div> : null}
+            {folderErr ? <div className="error" style={{ marginTop: 12 }}>{folderErr}</div> : null}
             {loading && !data ? <div className="stub-page">Loading bets…</div> : null}
-            {data && bets.length === 0 && !loading ? (
-              <div className="hint" style={{ marginTop: 16 }}>
-                No big bets yet. Start one — name the owner, point it at a pillar, state the problem and your
-                solution idea, set a value target and a go-live, then build the roadmap from real components.
-              </div>
-            ) : null}
 
-            <div className="bb-portfolio">
-              {groups.map((g) => (
-                <section key={g.key} className="bb-group">
-                  <div className="bb-group-head">
-                    <h3 className="bb-group-title">{g.name}</h3>
-                    <span className="count-pill">{g.bets.length}</span>
-                    {g.metricName ? <span className="bb-group-metric">{g.metricName}</span> : null}
+            {/* Non-tile board: keep the folder UI PROPORTIONATE — a folder tree filter
+                in the rail beside the pillar-grouped portfolio, plus a per-bet "move"
+                affordance below. Bigbet folders are all domain-scoped (no personal tier). */}
+            <div style={{ marginTop: 12 }}>
+              <FolderLayout
+                allLabel="All bets"
+                allCount={bets.length}
+                allSelected={sel === null}
+                onSelectAll={() => setSel(null)}
+                rail={
+                  <FolderTree
+                    variant="nav"
+                    personalNodes={[]}
+                    domainNodes={treeDomainNodes}
+                    roots={['domain']}
+                    items={treeItems}
+                    domainLabel="Domain folders"
+                    selectedPath={sel?.path}
+                    onSelect={(_scope, path) => setSel(path === '/' ? null : { path })}
+                    onCreate={(_scope, parentPath) => void createFolder('domain', parentPath)}
+                    onRename={handleFolderRename}
+                    onArchive={handleFolderArchive}
+                    onRestore={handleFolderRestore}
+                    onDelete={handleFolderDelete}
+                  />
+                }
+              >
+                {data && shownBets.length === 0 && !loading ? (
+                  <div className="hint" style={{ marginTop: 4 }}>
+                    {sel ? 'No bets in this folder yet.' : 'No big bets yet. Start one — point it at a pillar, state the problem and your solution idea, set a value target and a go-live, then build the roadmap from real components.'}
                   </div>
-                  <div className="bb-group-bets">
-                    {g.bets.map((b) => (
-                      <BetCard
-                        key={b.id}
-                        b={b}
-                        dragProps={itemDragProps(b)}
-                        dragHandleProps={dragHandleProps}
-                        canManage={canManage(b)}
-                        onChanged={reload}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ))}
+                ) : null}
+
+                <div className="bb-portfolio">
+                  {groups.map((g) => (
+                    <section key={g.key} className="bb-group">
+                      <div className="bb-group-head">
+                        <h3 className="bb-group-title">{g.name}</h3>
+                        <span className="count-pill">{g.bets.length}</span>
+                        {g.metricName ? <span className="bb-group-metric">{g.metricName}</span> : null}
+                      </div>
+                      <div className="bb-group-bets">
+                        {g.bets.map((b) => (
+                          <BetCard
+                            key={b.id}
+                            b={b}
+                            dragProps={itemDragProps(b)}
+                            dragHandleProps={dragHandleProps}
+                            canManage={canManage(b)}
+                            onChanged={reload}
+                            onMove={() => setPickerId(b.id)}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </FolderLayout>
             </div>
           </>
         )}
       </div>
-    </ConfirmProvider>
+
+      {/* Move-to-folder picker — domain root only (a bet has no personal tier). */}
+      <FolderPickerModal
+        open={pickerId !== null}
+        tab="bigbets"
+        personalNodes={[]}
+        domainNodes={treeDomainNodes}
+        roots={['domain']}
+        title="Move bet to folder"
+        onConfirm={(dest) => { if (pickerId) void moveInto(pickerId, dest.path); }}
+        onCancel={() => setPickerId(null)}
+        onCreate={async (_scope, path) => { await createFolder('domain', path); }}
+      />
+    </>
   );
 }
 
@@ -271,12 +449,14 @@ function BetCard({
   dragHandleProps,
   canManage,
   onChanged,
+  onMove,
 }: {
   b: BetSummary;
   dragProps?: ItemDragProps;
   dragHandleProps?: DragHandleProps;
   canManage?: boolean;
   onChanged?: () => void;
+  onMove?: () => void;
 }) {
   const archived = b.status === 'archived';
   return (
@@ -342,6 +522,11 @@ function BetCard({
       </Link>
       {canManage ? (
         <div className="row" style={{ gap: 6, marginTop: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          {onMove ? (
+            <button type="button" className="btn ghost sm" title="Move to folder" onClick={onMove}>
+              Move to folder…
+            </button>
+          ) : null}
           <LifecycleActions
             id={b.id}
             name={b.name}

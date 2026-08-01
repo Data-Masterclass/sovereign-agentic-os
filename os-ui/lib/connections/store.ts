@@ -234,6 +234,10 @@ import {
   type NotionClientReg,
   type McpToolInfo,
 } from '@/lib/oauth/notion-mcp';
+// The GOVERNED folder registry (Wave-2 parity) — a moved-into folder is upserted as an
+// explicit row so it persists even when empty. Reused, never forked (mirrors Data/Metrics).
+import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@/lib/folders/index';
+import { normaliseFolderPath } from '@/lib/core/folders';
 
 /**
  * Connections registry — the home of record for every MANUALLY-credentialed
@@ -325,6 +329,19 @@ async function getCache(): Promise<Map<string, Connection>> {
 }
 
 /**
+ * SYNCHRONOUS accessor to the in-process cache — the already-warm Map or an empty one.
+ * The folder LIFECYCLE (`lib/folders/folder-lifecycle.ts`) + its `ArtifactAdapter` seam
+ * are strictly SYNCHRONOUS, so the connection folder/rename ops (and the adapter that
+ * wraps them) must be sync too — mirroring how the Data/Bigbets stores read their sync
+ * in-process Map. The cache is warmed by the first `getCache()` (every session's
+ * connections list hits it), so by the time a cascade runs it is populated; an unwarmed
+ * cache honestly yields NO members rather than blocking on I/O (same as Bigbets when
+ * un-hydrated). Never triggers hydration itself — a pure read of `connState().cache`. */
+function syncCache(): Map<string, Connection> {
+  return connState().cache ?? new Map<string, Connection>();
+}
+
+/**
  * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
  * Scoping reads the connection's `domain` field (its `principal` is a slug, not
  * domain-derived), so we set the field and write through. `sel.id` moves one;
@@ -376,6 +393,16 @@ export async function listConnectionsForUser(
     .filter((c) => visibleToUser(c, user))
     .filter((c) => opts.includeArchived || !c.archived) // archived soft-hidden by default
     .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt));
+}
+
+/**
+ * SYNCHRONOUS visible-connections list for the folder-lifecycle cascade (the shared
+ * `ArtifactAdapter.itemsUnderFolder` is sync). Same visibility gate as
+ * {@link listConnectionsForUser}, ALWAYS including archived (the restore/delete cascade
+ * must find members the archive step already hid). Reads the already-warm cache via
+ * {@link syncCache} — an unwarmed cache honestly yields none (mirrors Bigbets). */
+export function listConnectionsSync(user: CurrentUser): Connection[] {
+  return [...syncCache().values()].filter((c) => visibleToUser(c, user));
 }
 
 export async function getConnectionForUser(connId: string, user: CurrentUser): Promise<Connection> {
@@ -2435,6 +2462,127 @@ function requireConnEdit(c: Connection | undefined, user: CurrentUser): Connecti
   if (!canManageArtifact(user, manageArg(c))) {
     throw withStatus(new Error('Not permitted to modify this connection'), 403);
   }
+  return c;
+}
+
+// ------------------------------------------------------------------- rename ---
+
+/**
+ * Rename a connection — change its DISPLAY `name` ONLY. Edit-scoped exactly like every
+ * other mutation (owner always; an in-domain domain_admin / platform admin on a
+ * shared/certified connection — the reused {@link canManageArtifact} gate via
+ * {@link requireConnEdit}). Snapshots the prior profile to the version log so the rename
+ * is auditable + reversible. Trims, rejects empty (400), no-ops when unchanged.
+ *
+ * CRITICAL — the FROZEN physical identity NEVER moves. Unlike a dataset (whose physical
+ * slug is DERIVED from its name at build time and so must be pinned before a rename), a
+ * connection's physical identity was FROZEN at CREATE: `slug = slugify(name-owner)` is
+ * baked ONCE into the `principal` (`conn-<slug>`), the Trino `catalog` (a warehouse's
+ * `endpoint: catalog:<cat>` + `warehouse.catalog`) and the vault secret name
+ * (`connection-<slug>` on `secretRef.name`). None of those are name-derived after create,
+ * so a rename that touches ONLY `name` leaves the live Trino catalog + K8s secret identity
+ * untouched by construction — we deliberately DO NOT recompute any of them here. Requiring
+ * this discipline in code: we write `c.name` and NOTHING that feeds the physical identity.
+ */
+export async function renameConnection(connId: string, user: CurrentUser, newName: string): Promise<Connection> {
+  const map = await getCache();
+  const c = requireConnEdit(map.get(connId), user);
+  const name = (newName ?? '').trim();
+  if (!name) throw withStatus(new Error('a connection needs a name'), 400);
+  if (name === c.name) return c; // no-op → no version churn
+  // Snapshot the live profile BEFORE the name changes, so the rename can be undone.
+  versions.record(c.id, user.id, snapshotState(c), 'rename');
+  // DISPLAY-only write: principal / endpoint(catalog) / secretRef.name are FROZEN and are
+  // intentionally NOT touched here — the live Trino catalog + K8s secret keep their identity.
+  c.name = name;
+  c.updatedAt = now();
+  map.set(c.id, c);
+  writeThrough(c);
+  return c;
+}
+
+// -------------------------------------------------------------------- folder ---
+
+/** The folder scope a connection lives in: a Personal connection's folders are the
+ *  owner's PERSONAL tree; a Shared/Certified one's folders are the owning DOMAIN's tree.
+ *  Mirrors `lib/data/store.folderScopeOf` (grouping by tier/visibility). */
+function folderScopeOf(c: Connection): FolderScope {
+  return c.visibility === 'Personal' ? 'personal' : 'domain';
+}
+
+/** Best-effort: mirror a connection's folder path into the governed folder registry so an
+ *  empty folder still shows in the rail. The root is implicit (never a row). createFolder
+ *  is idempotent and edit-scoped; any gate failure is swallowed so a successful move is
+ *  never rolled back by a folder-registry hiccup (mirrors Data's upsertFolderRow). */
+function upsertConnFolderRow(c: Connection, user: CurrentUser): void {
+  const path = normaliseFolderPath(c.folder ?? '/');
+  if (path === '/') return;
+  const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+  try {
+    createFolder(principal, { tab: 'connections', scope: folderScopeOf(c), path, domain: c.domain });
+  } catch {
+    /* folder-registry mirror is best-effort; the connection move already succeeded */
+  }
+}
+
+/**
+ * Move a connection into a folder (edit-scoped, write-through like every other mutation).
+ * Mirrors `lib/data/store.moveDataset`: the folder is a normalised path on the record; the
+ * folder ROOT (personal vs domain tree) is decided by visibility. On move we also upsert an
+ * EXPLICIT folder row in the governed registry so the destination folder persists even when
+ * it holds no connections. A viewer who cannot edit is rejected 403 and nothing is written.
+ *
+ * SYNCHRONOUS by design — the shared folder LIFECYCLE + its `ArtifactAdapter` seam are sync,
+ * so this reads the already-warm cache via {@link syncCache} (like the Data/Bigbets stores).
+ * Purely organisational — it NEVER touches the FROZEN physical identity.
+ */
+export function moveConnection(connId: string, user: CurrentUser, folder: string): Connection {
+  const c = requireConnEdit(syncCache().get(connId), user);
+  c.folder = normaliseFolderPath(folder);
+  c.updatedAt = now();
+  syncCache().set(c.id, c);
+  writeThrough(c);
+  // The move already passed the connection's edit-scope gate above, so this same-owner
+  // folder create can only mirror an authorised move (best-effort; never rolls it back).
+  upsertConnFolderRow(c, user);
+  return c;
+}
+
+// ------------------------------------ sync lifecycle (for the folder cascade) ---
+
+/**
+ * SYNCHRONOUS archive / unarchive / delete used by the folder-lifecycle cascade (the
+ * shared `ArtifactAdapter` is sync). Each is the same edit-scoped, write-through behaviour
+ * as the async {@link setConnectionArchived} / {@link deleteConnection} — reading the
+ * already-warm cache via {@link syncCache} — so a folder archive/restore/delete cascades
+ * over member connections identically to Data/Metrics. Archive KEEPS the vault secret; a
+ * cascade DELETE purges it (the ONE rule: a "deleted" connection whose credential still
+ * lives in Secrets Manager isn't deleted) — the same physical purge the async
+ * {@link deleteConnection} runs, done synchronously here (purgeConnectionSecrets is pure +
+ * injected sync deleteSecret), so a folder-delete cascade never leaves a live secret behind.
+ */
+export function setConnectionArchivedSync(connId: string, user: CurrentUser, archived: boolean): Connection {
+  const c = requireConnEdit(syncCache().get(connId), user);
+  c.archived = archived;
+  c.updatedAt = now();
+  syncCache().set(c.id, c);
+  writeThrough(c);
+  return c;
+}
+
+/** PHYSICAL delete (sync, for the cascade): forget the registry record + OPA profile +
+ *  snapshot history, then purge the vault credential/token best-effort. Edit-scoped.
+ *  Returns the deleted connection so a caller may follow up. */
+export function deleteConnectionSync(connId: string, user: CurrentUser): Connection {
+  const map = syncCache();
+  const c = requireConnEdit(map.get(connId), user);
+  unregisterConnectionProfile(c.principal);
+  map.delete(connId);
+  mirror.deleteThrough(connId);
+  versions.purge(connId);
+  // Physical: purge the credential + OAuth token (+ Notion MCP client) from the vault —
+  // best-effort per target, never silent (mirrors the async deleteConnection's ONE rule).
+  purgeConnectionSecrets(c, hasSecret, deleteSecret);
   return c;
 }
 

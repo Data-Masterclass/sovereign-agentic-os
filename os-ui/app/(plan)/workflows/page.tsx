@@ -3,21 +3,29 @@
  */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import WorkflowTile from '@/components/knowledge/WorkflowTile';
 import WorkflowView from '@/components/knowledge/WorkflowView';
 import type { WorkflowSummary } from '@/lib/knowledge/store';
 import { roleAtLeast, type Role } from '@/lib/core/session';
 import { useTabNavReset } from '@/lib/core/tab-nav';
-import { SCOPE_GROUPS, groupByScope, activeScopeCounts, type ScopeKey } from '@/lib/core/scopes';
+import { SCOPE_GROUPS, groupByScope, activeScopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@/lib/core/scopes';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
+import FolderLayout from '@/components/core/FolderLayout';
+import FolderTree, { FolderPickerModal } from '@/components/core/FolderTree';
+import { useFolders } from '@/lib/folders/useFolders';
+import { itemsUnderFolder, normaliseFolderPath, type FolderPathNode } from '@/lib/core/folders';
 
 /** Workflow visibility → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
   v === 'Shared' ? 'shared' : v === 'Marketplace' ? 'certified' : 'personal';
+
+/** Which folder ROOT a process's folders live in — its private tree (Personal) or the
+ *  domain tree (Shared/Certified). Mirrors how the store groups by visibility. */
+const rootOf = (w: WorkflowSummary): FolderRoot => (w.visibility === 'Personal' ? 'personal' : 'domain');
 
 type WorkflowGroups = {
   mine: WorkflowSummary[];
@@ -39,6 +47,11 @@ export default function WorkflowsPage() {
   const [wfLoading, setWfLoading] = useState(true);
   const [wfError, setWfError] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+  // Folder rail (mirrors the Data tab): a (root, path) selection filters the grid.
+  const [sel, setSel] = useState<{ root: FolderRoot; path: string } | null>(null);
+  // Folder picker modal for a single-process move; null = closed.
+  const [moveId, setMoveId] = useState<string | null>(null);
+  const { personalNodes, domainNodes, loadFolders } = useFolders('workflows', showArchived);
 
   // New workflow form
   const [newTitle, setNewTitle] = useState('');
@@ -53,14 +66,36 @@ export default function WorkflowsPage() {
     setWfError('');
     try {
       const res = await fetch(`/api/knowledge/workflows${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
-      if (res.ok) setGroups(await res.json());
+      if (res.ok) { setGroups(await res.json()); void loadFolders(); }
       else setWfError('Could not load workflows.');
     } catch {
       setWfError('Network error loading workflows.');
     } finally {
       setWfLoading(false);
     }
-  }, [showArchived]);
+  }, [showArchived, loadFolders]);
+
+  // Move one process into a folder via the edit-gated folder route.
+  const moveInto = useCallback(async (id: string, folder: string) => {
+    try {
+      const res = await fetch(`/api/knowledge/workflows/${id}/folder`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ folder }),
+      });
+      if (!res.ok) { setWfError((await res.json()).error ?? 'Move failed'); return; }
+    } catch (e) { setWfError((e as Error).message); }
+    setMoveId(null);
+    await loadWorkflows();
+  }, [loadWorkflows]);
+
+  const createFolderRow = useCallback(async (root: FolderRoot, path: string) => {
+    const res = await fetch('/api/folders', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tab: 'workflows', scope: root, path }),
+    });
+    if (!res.ok) { setWfError((await res.json()).error ?? 'Could not create folder'); return; }
+    await loadFolders();
+  }, [loadFolders]);
 
   useEffect(() => {
     void loadWorkflows();
@@ -106,12 +141,47 @@ export default function WorkflowsPage() {
   const scopedWorkflows = (wfScoped ? wfScoped[wfScope] : []).filter((w) => !w.archived);
   const archivedWorkflows = allWorkflows.filter((w) => w.archived);
 
+  // Folder rail: which roots the current scope surfaces, plus the tree nodes (governed
+  // registry rows UNIONed with folders synthesised from each visible process's own path,
+  // so implicit folders keep showing). Split by root (personal / domain).
+  const visibleRoots = rootsForScope(wfScope);
+  const [treePersonal, treeDomain] = useMemo(() => {
+    const synth = (rows: FolderPathNode[], paths: string[]): FolderPathNode[] => {
+      const seen = new Set(rows.map((r) => normaliseFolderPath(r.path)));
+      const out = [...rows];
+      for (const p of paths) {
+        const n = normaliseFolderPath(p);
+        if (n !== '/' && !seen.has(n)) { seen.add(n); out.push({ path: n }); }
+      }
+      return out;
+    };
+    const pPaths = scopedWorkflows.filter((w) => rootOf(w) === 'personal').map((w) => w.folder ?? '/');
+    const dPaths = scopedWorkflows.filter((w) => rootOf(w) === 'domain').map((w) => w.folder ?? '/');
+    return [synth(personalNodes, pPaths), synth(domainNodes, dPaths)];
+  }, [personalNodes, domainNodes, scopedWorkflows]);
+  const treeItems = scopedWorkflows.map((w) => ({ id: w.id, folder: w.folder ?? '/', name: w.title }));
+  // Grid filter: a folder selection narrows to processes under it (incl. subfolders) in
+  // the selected root; else the whole scoped list.
+  const shownWorkflows = sel
+    ? itemsUnderFolder(sel.path, scopedWorkflows.filter((w) => rootOf(w) === sel.root).map((w) => ({ ...w, folder: w.folder ?? '/' })))
+    : scopedWorkflows;
+  const moveScope: FolderRoot = groups && moveId
+    ? rootOf(allWorkflows.find((w) => w.id === moveId) ?? scopedWorkflows[0] ?? { visibility: 'Personal' } as WorkflowSummary)
+    : 'personal';
+
   const openWorkflow = (id: string) => { setSelectedWorkflowId(id); setView('detail'); };
+
+  // Mirror the detail view's edit heuristic (GET route: owner OR builder+). Move is
+  // re-checked server-side (canManageArtifact), so this only avoids dead controls.
+  const canEditWf = (w: WorkflowSummary) => w.owner === uid || (!!user && roleAtLeast(user.role, 'builder'));
 
   const renderCell = (w: WorkflowSummary) => (
     <div key={w.id} className="k-wf-cell">
       <WorkflowTile workflow={w} onClick={openWorkflow} />
       <div className="k-wf-actions">
+        {!w.archived && canEditWf(w) ? (
+          <button className="btn ghost sm" title="Move to folder" onClick={() => setMoveId(w.id)}>Move…</button>
+        ) : null}
         <LifecycleActions
           id={w.id}
           name={w.title}
@@ -200,14 +270,60 @@ export default function WorkflowsPage() {
             {/* Scope switcher — All · My · Shared · Marketplace. */}
             <div className="seg" style={{ marginTop: 18 }}>
               {SCOPE_GROUPS.map((g) => (
-                <button key={g.key} type="button" className={wfScope === g.key ? 'on' : ''} onClick={() => setWfScope(g.key)}>
+                <button key={g.key} type="button" className={wfScope === g.key ? 'on' : ''} onClick={() => { setWfScope(g.key); setSel(null); }}>
                   {g.label('Business Processes')}{wfCounts ? ` (${wfCounts[g.key]})` : ''}
                 </button>
               ))}
             </div>
 
+            {/* Single-process move modal — scoped to the process's own tier root. */}
+            <FolderPickerModal
+              open={moveId !== null}
+              tab="workflows"
+              roots={[moveScope]}
+              personalNodes={moveScope === 'personal' ? treePersonal : []}
+              domainNodes={moveScope === 'domain' ? treeDomain : []}
+              title="Move business process to folder"
+              onConfirm={({ path }) => { if (moveId) void moveInto(moveId, path); }}
+              onCancel={() => setMoveId(null)}
+              onCreate={createFolderRow}
+            />
+
             {scopedWorkflows.length > 0 ? (
-              <div className="k-workflow-grid" style={{ marginTop: 16 }}>{scopedWorkflows.map(renderCell)}</div>
+              <div style={{ marginTop: 16 }}>
+                <FolderLayout
+                  allLabel="All business processes"
+                  allCount={scopedWorkflows.length}
+                  allSelected={sel === null}
+                  onSelectAll={() => setSel(null)}
+                  rail={
+                    <FolderTree
+                      variant="nav"
+                      canCreateDomain={!!user && roleAtLeast(user.role, 'domain_admin')}
+                      roots={visibleRoots}
+                      personalNodes={visibleRoots.includes('personal') ? treePersonal : []}
+                      domainNodes={visibleRoots.includes('domain') ? treeDomain : []}
+                      items={treeItems}
+                      personalLabel="My folders"
+                      domainLabel="Domain folders"
+                      selectedPath={sel?.path}
+                      onSelect={(root, path) => setSel({ root, path })}
+                      onCreate={(root, parentPath) => {
+                        const name = window.prompt('Folder name');
+                        if (!name || !name.trim()) return;
+                        void createFolderRow(root, normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${name.trim()}`));
+                      }}
+                      renderLeaf={(item) => item.name ?? item.id}
+                    />
+                  }
+                >
+                  {shownWorkflows.length === 0 ? (
+                    <div className="stub-page">This folder is empty.</div>
+                  ) : (
+                    <div className="k-workflow-grid">{shownWorkflows.map(renderCell)}</div>
+                  )}
+                </FolderLayout>
+              </div>
             ) : null}
 
             {scopedWorkflows.length === 0 && !showArchived && (

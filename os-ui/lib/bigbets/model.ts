@@ -245,6 +245,8 @@ export type BigBet = {
   ownerDeclaredValue?: number;
   goLive: string;
   status: 'draft' | 'active' | 'shipped' | 'archived';
+  /** Normalised folder path in the bet's tree (leading slash; `'/'` = root). Default `'/'`. */
+  folder: string;
   components: ComponentRef[];
   /**
    * The solution BLUEPRINT (anchor + interplay edges + canvas layout). Omitted

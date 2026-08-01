@@ -30,6 +30,7 @@ export const GET = withRoute(async ({ user, req }) => {
         solution: bet.solution ?? '',
         goLive: bet.goLive,
         status: bet.status,
+        folder: bet.folder ?? '/',
         components: bet.components.length,
         completion: completion(statuses),
         signal: road.signal,

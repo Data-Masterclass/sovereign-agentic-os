@@ -158,6 +158,31 @@ function HeaderBand({ view, onMutate, onArchived }: { view: BetView; onMutate: (
   const [goLive, setGoLive] = useState(b.goLive);
   const [saving, setSaving] = useState(false);
   const [editErr, setEditErr] = useState('');
+  // Dedicated DISPLAY-name rename (frozen id) — a labelled button, discoverable
+  // like Data's "✎ Rename", distinct from the full "Edit bet" panel.
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState(b.name);
+  const [renameErr, setRenameErr] = useState('');
+
+  const rename = async () => {
+    const nm = nameDraft.trim();
+    setRenameErr('');
+    if (!nm) { setRenaming(false); return; }
+    try {
+      const res = await fetch(`/api/big-bets/${b.id}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'rename', name: nm }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
+      }
+      setRenaming(false);
+      onMutate();
+    } catch (e) {
+      setRenameErr((e as Error).message);
+    }
+  };
 
   const openEdit = () => {
     setName(b.name);
@@ -224,7 +249,17 @@ function HeaderBand({ view, onMutate, onArchived }: { view: BetView; onMutate: (
             // Edit + the OS-wide lifecycle cluster (live → Archive; archived → Restore/Delete).
             <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 8, flexWrap: 'wrap' }}>
               {!archived ? (
-                <button className="btn ghost sm" onClick={openEdit}>Edit bet</button>
+                <>
+                  {/* Rename must be DISCOVERABLE — a labelled button, like Data's.
+                      It changes the DISPLAY name only; the bet's id is frozen. */}
+                  <button
+                    className="btn ghost sm"
+                    onClick={() => { setNameDraft(b.name); setRenameErr(''); setRenaming(true); }}
+                    title="Rename this bet (its id stays frozen)"
+                    aria-label="Rename this bet"
+                  >✎ Rename</button>
+                  <button className="btn ghost sm" onClick={openEdit}>Edit bet</button>
+                </>
               ) : null}
               <LifecycleActions
                 id={b.id}
@@ -239,6 +274,22 @@ function HeaderBand({ view, onMutate, onArchived }: { view: BetView; onMutate: (
               />
             </div>
           ) : null}
+          {renaming ? (
+            <div className="row" style={{ gap: 6, justifyContent: 'flex-end', marginTop: 8, flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                autoFocus
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
+                aria-label="Bet name"
+                style={{ maxWidth: 200 }}
+              />
+              <button className="btn sm" onClick={() => void rename()}>Save</button>
+              <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+            </div>
+          ) : null}
+          {renameErr ? <div className="error" style={{ marginTop: 6, fontSize: 12 }}>{renameErr}</div> : null}
         </div>
       </div>
 

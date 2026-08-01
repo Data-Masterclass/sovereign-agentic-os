@@ -63,7 +63,7 @@ export const PATCH = withRoute<{ id: string }, any>(async ({ user, params, body 
  * POST → workflow lifecycle: `archive` (reversible soft-hide) or `unarchive`.
  * Edit-scoped in the store (owner or same-domain Builder+).
  */
-export const POST = withRoute<{ id: string }, { action?: string; title?: string }>(async ({ user, params, body }) => {
+export const POST = withRoute<{ id: string }, { action?: string; title?: string; name?: string }>(async ({ user, params, body }) => {
     const { id } = params;
     switch (body.action) {
       case 'archive':
@@ -71,7 +71,9 @@ export const POST = withRoute<{ id: string }, { action?: string; title?: string 
       case 'unarchive':
         return NextResponse.json({ workflow: unarchiveWorkflow(id, user) });
       case 'rename': {
-        const rec = renameKnowledge(id, user, body.title ?? '');
+        // Accept `title` (this tab's field) OR `name` (the OS-wide { action:'rename', name }
+        // shape the Data tab uses) so both callers land on the same display-only rename.
+        const rec = renameKnowledge(id, user, body.title ?? body.name ?? '');
         return NextResponse.json({ id: rec.id, title: rec.title, updatedAt: rec.updatedAt });
       }
       default:

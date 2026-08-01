@@ -40,6 +40,8 @@ import { resolveArtifact, resolveArtifactFor, sourceFor } from './sources.ts';
 import { canManageArtifact } from '../governance/edit-scope.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
+import { normaliseFolderPath } from '../core/folders.ts';
+import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '../folders/index.ts';
 
 /**
  * State pinned to `globalThis` so it is a TRUE singleton across all Next.js
@@ -70,6 +72,7 @@ const mirror = osMirror({
         domain: { type: 'keyword' },
         name: { type: 'keyword' },
         status: { type: 'keyword' },
+        folder: { type: 'keyword' },
         pillarId: { type: 'keyword' },
         goLive: { type: 'date' },
         updatedAt: { type: 'date' },
@@ -118,6 +121,8 @@ async function hydrate(): Promise<void> {
   const s = state();
   const docs = (await mirror.hydrate(2000)) ?? [];
   for (const bet of docs as BigBet[]) {
+    // Grandfather bets minted before the folder field existed → root.
+    if (bet && !bet.folder) bet.folder = '/';
     if (bet && bet.id && !s.bets.has(bet.id)) s.bets.set(bet.id, bet);
   }
 }
@@ -282,6 +287,7 @@ export function createBet(user: Principal, input: CreateBetInput): BigBet {
     allocation: input.allocation ?? 'manual',
     goLive: input.goLive,
     status: user.role === 'creator' ? 'draft' : 'active',
+    folder: '/',
     components: [],
     createdBy: user.id,
     createdAt: now(),
@@ -394,6 +400,82 @@ export function updateBet(
   bet.updatedAt = now();
   writeThrough(bet);
   log(user.id, 'bet.update', betId, { fields: Object.keys(clean), ...(opts.note ? { note: opts.note } : {}) });
+  return bet;
+}
+
+// --------------------------------------------------------- rename / folder --
+
+/**
+ * Rename a bet — a DISPLAY-name change ONLY. A bet's `id` is its FROZEN identity:
+ * every component ref, pillar back-link, audit row and cross-tab tag keys off `id`,
+ * never the name, so a rename NEVER touches `id` (there is no slug/physical handle
+ * to re-pin here as there is for a dataset — the id IS the stable handle). Edit-
+ * scoped through the SAME gate as every other edit (owner, in-domain domain_admin
+ * on a shared bet, or admin; cross-domain → admin), snapshotted to the version log,
+ * and written through. A blank name is rejected 400; an unchanged name is a no-op
+ * (no version churn). Big-bet names are NOT unique (no create-time uniqueness rule
+ * exists), so none is invented here.
+ */
+export function renameBet(betId: string, user: Principal, newName: string): BigBet {
+  const bet = requireEdit(betId, user); // owner / domain_admin / admin — throws 403
+  const name = newName.trim();
+  if (!name) throw new BetError('A bet name is required', 400);
+  if (name === bet.name) return bet; // no-op → no version churn, id + everything untouched
+  // Snapshot the PRIOR state so the rename is restorable, then set the display name.
+  // The `id` is deliberately left alone — the frozen identity outlives the label.
+  versions.record(betId, user.id, snapshotState(bet), 'rename');
+  bet.name = name;
+  bet.updatedAt = now();
+  writeThrough(bet);
+  log(user.id, 'bet.rename', betId, { name });
+  return bet;
+}
+
+/**
+ * The folder scope a bet lives in. A big bet has NO owner-private "personal" tier
+ * (its domain peers can view a non-cross-domain bet — see `canView`), so its folders
+ * always live in the owning DOMAIN's tree. Mirrors `lib/data/store.folderScopeOf`.
+ */
+function folderScopeOf(_bet: BigBet): FolderScope {
+  return 'domain';
+}
+
+/**
+ * Best-effort: mirror a bet's folder path into the governed folder registry so an
+ * empty folder still shows in the rail. The root is implicit (never a row).
+ * `createFolder` is idempotent + edit-scoped; any gate failure is swallowed so a
+ * successful move is never rolled back by a folder-registry hiccup (mirrors Data's
+ * `upsertFolderRow`). The bet's domain is passed so the row lands in the right tree.
+ */
+function upsertFolderRow(bet: BigBet, user: Principal): void {
+  const path = normaliseFolderPath(bet.folder);
+  if (path === '/') return;
+  const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+  try {
+    createFolder(principal, { tab: 'bigbets', scope: folderScopeOf(bet), path, domain: bet.domain });
+  } catch {
+    /* folder-registry mirror is best-effort; the bet move already succeeded */
+  }
+}
+
+/**
+ * Move a bet into a folder (edit-scoped, written-through like every other mutation).
+ * Mirrors `lib/data/store.moveDataset`: the folder is a normalised path on the bet;
+ * the folder ROOT (the owning domain's tree) is decided by tier via `folderScopeOf`.
+ * On move we also upsert an EXPLICIT folder row in the governed registry so the
+ * destination folder persists even when it holds no bets. A viewer who cannot edit
+ * is rejected 403 and nothing is written. Folder placement is not versioned content
+ * (it is absent from `snapshotState`), so a move records an audit row, not a version.
+ */
+export function moveBet(betId: string, user: Principal, folder: string): BigBet {
+  const bet = requireEdit(betId, user); // owner / domain_admin / admin — throws 403
+  bet.folder = normaliseFolderPath(folder);
+  bet.updatedAt = now();
+  writeThrough(bet);
+  // The move already passed the bet's edit-scope gate above, so this same-owner
+  // folder create can only mirror an authorised move (best-effort; never rolled back).
+  upsertFolderRow(bet, user);
+  log(user.id, 'bet.folder', betId, { folder: bet.folder });
   return bet;
 }
 

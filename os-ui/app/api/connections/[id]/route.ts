@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getConnectionForUser, deleteConnection, setConnectionArchived } from '@/lib/connections';
+import { getConnectionForUser, deleteConnection, setConnectionArchived, renameConnection } from '@/lib/connections';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,13 +14,17 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
 }, { defaultStatus: 500 });
 
 /**
- * POST → connection lifecycle: `archive` (reversible soft-hide) or `unarchive`.
- * Edit-scoped (owner or domain admin) in the lib. The vault secret + OAuth token are
- * KEPT, so an archived connection reconnects with no re-auth.
+ * POST → connection lifecycle: `archive` (reversible soft-hide), `unarchive`, or
+ * `rename` (DISPLAY name only). Edit-scoped (owner or domain admin) in the lib.
+ * The vault secret + OAuth token are KEPT, so an archived connection reconnects with no
+ * re-auth. A rename NEVER moves the FROZEN physical identity (principal / Trino catalog /
+ * K8s secret name) — the store writes only the display `name`.
  */
-export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user, params, body }) => {
+export const POST = withRoute<{ id: string }, { action?: string; name?: string }>(async ({ user, params, body }) => {
     const { id } = params;
     switch (body.action) {
+      case 'rename':
+        return NextResponse.json({ connection: await renameConnection(id, user, body.name ?? '') });
       case 'archive':
         return NextResponse.json({ connection: await setConnectionArchived(id, user, true) });
       case 'unarchive':

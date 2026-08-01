@@ -19,6 +19,8 @@ export type Problem = { who: string; need: string; obstacle: string; impact: str
 export type BetSummary = {
   id: string; name: string; domain: string; owner: string; crossDomain: boolean;
   pillarId?: string; problem: Problem; solution: string; goLive: string; status: string;
+  /** Normalised folder path in the bet's tree (`'/'` = root). */
+  folder: string;
   components: number; completion: { done: number; total: number; pct: number };
   signal: Readiness; goLiveRealistic: boolean; targetValue: number; realized: number;
 };
@@ -61,6 +63,7 @@ export type BetView = {
     id: string; name: string; domain: string; crossDomain: boolean; owner: string;
     members: string[]; pillarId?: string; metricId?: string; targetValue: number;
     valueBasis: ValueBasis; allocation: AllocationMethod; goLive: string; status: string;
+    folder: string;
     problem: Problem; solution?: string; components: ComponentRef[];
   };
   pillar: { id: string; name: string } | null;

@@ -11,6 +11,7 @@ import {
   updateWorkflow,
   deleteWorkflow,
   renameKnowledge,
+  moveWorkflow,
   publishWorkflow,
   certifyWorkflow,
   getDomainKnowledge,
@@ -24,6 +25,7 @@ import {
   setWorkflowLinks,
   sha,
 } from './store.ts';
+import { listFolders as folderList, __resetStore as resetFolders } from '../folders/index.ts';
 
 const participant = { id: 'amir', domains: ['sales'], role: 'creator' as const };
 const builder = { id: 'bea', domains: ['sales'], role: 'builder' as const };
@@ -371,8 +373,11 @@ test('renameKnowledge: the OWNER renames a draft; title updates in md + record',
   const wf = createWorkflow(participant, { title: 'Bank Submission', domain: 'sales' });
   const renamed = renameKnowledge(wf.id, participant, 'Loan Application');
   assert.equal(renamed.title, 'Loan Application');
+  // The record ID is the FROZEN identity — a rename never changes it.
+  assert.equal(renamed.id, wf.id);
   // The denormalised (indexed) title and the canonical md frontmatter both move.
   const view = getWorkflow(wf.id, participant);
+  assert.equal(view.id, wf.id);
   assert.equal(view.title, 'Loan Application');
   assert.equal(view.workflow.title, 'Loan Application');
 });
@@ -398,6 +403,57 @@ test('renameKnowledge: rejects an empty title', () => {
   __resetStore();
   const wf = createWorkflow(participant, { title: 'X', domain: 'sales' });
   assert.throws(() => renameKnowledge(wf.id, participant, '   '), (e) => (e as { status?: number }).status === 400);
+});
+
+// ------------------------------------------------------------------ folders (move) --
+
+test('FOLDER: a new workflow defaults to root; moveWorkflow normalises + reflects in the summary', () => {
+  __resetStore();
+  resetFolders();
+  const wf = createWorkflow(participant, { title: 'Bank Submission', domain: 'sales' });
+  assert.equal(wf.folder, '/');
+  const moved = moveWorkflow(wf.id, participant, 'contracts/');
+  assert.equal(moved.folder, '/contracts');
+  // The list summary carries the new folder for the rail/grid filter, and it survives a re-read.
+  assert.equal(listWorkflows(participant).mine[0].folder, '/contracts');
+  // Moving back to root is a valid move (folder '/').
+  assert.equal(moveWorkflow(wf.id, participant, '/').folder, '/');
+});
+
+test('FOLDER: moveWorkflow is edit-scoped — a Personal draft is owner-only', () => {
+  __resetStore();
+  resetFolders();
+  const wf = createWorkflow(participant, { title: 'Private WF', domain: 'sales' });
+  assert.throws(() => moveWorkflow(wf.id, builder, '/x'), (e) => (e as { status?: number }).status === 403);
+  assert.throws(() => moveWorkflow(wf.id, dom, '/x'), (e) => (e as { status?: number }).status === 403);
+});
+
+test('FOLDER: a SHARED workflow admits an in-domain admin; an outsider is denied', () => {
+  __resetStore();
+  resetFolders();
+  const wf = createWorkflow(participant, { title: 'Shared WF', domain: 'sales' });
+  publishWorkflow(wf.id, dom); // Personal → Shared
+  assert.equal(moveWorkflow(wf.id, admin, '/ops').folder, '/ops');
+  assert.throws(() => moveWorkflow(wf.id, outsider, '/hijack'), (e) => (e as { status?: number }).status === 403);
+});
+
+test('FOLDER: moving into a folder upserts an explicit registry row (personal tier)', () => {
+  __resetStore();
+  resetFolders();
+  const wf = createWorkflow(participant, { title: 'Bank Submission', domain: 'sales' });
+  moveWorkflow(wf.id, participant, '/contracts');
+  const rows = folderList(participant, 'workflows', 'personal');
+  assert.ok(rows.some((r) => r.path === '/contracts'), 'move must upsert the folder row');
+});
+
+test('FOLDER: a Shared workflow move upserts a DOMAIN-tier folder row', () => {
+  __resetStore();
+  resetFolders();
+  const wf = createWorkflow(participant, { title: 'Shared WF', domain: 'sales' });
+  publishWorkflow(wf.id, dom);
+  moveWorkflow(wf.id, admin, '/ops');
+  const rows = folderList(admin, 'workflows', 'domain');
+  assert.ok(rows.some((r) => r.path === '/ops'), 'a shared move upserts the domain folder row');
 });
 
 // ─────────────────────────────────────────── Data & Metrics links ────────────

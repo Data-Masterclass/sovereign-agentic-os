@@ -18,6 +18,8 @@ import type { Role } from '../core/session.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
 import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
+import { normaliseFolderPath } from '../core/folders.ts';
+import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '../folders/index.ts';
 import { type ManualScope, resolveManual } from './manual.ts';
 import { EMPTY_LINKS, type WorkflowLinks } from './links.ts';
 
@@ -61,6 +63,9 @@ export type WorkflowRecord = {
   certifiedBy: string | null;
   /** Soft-archived: hidden from the working lists, reversible, retained. */
   archived?: boolean;
+  /** Folder path within its tier's tree (personal for a Personal draft; the domain
+   *  tree for a Shared/Certified process). Defaults to root ('/'); nil-safe on old records. */
+  folder: string;
   /**
    * Data & Metrics links — governed dataset + metric ids this process runs on.
    * Optional (nil-safe): old records simply have none; reads default to empty.
@@ -96,10 +101,11 @@ function fail(message: string, status: number): never {
 // --------------------------------------------------------------- seeding -----
 
 function makeRecord(
-  partial: Omit<WorkflowRecord, 'updatedAt' | 'publishedAt' | 'publishedBy' | 'tacit' | 'certifiedAt' | 'certifiedBy'> & Partial<WorkflowRecord>,
+  partial: Omit<WorkflowRecord, 'updatedAt' | 'publishedAt' | 'publishedBy' | 'tacit' | 'certifiedAt' | 'certifiedBy' | 'folder'> & Partial<WorkflowRecord>,
 ): WorkflowRecord {
   return {
     tacit: '',
+    folder: '/',
     updatedAt: now(),
     publishedAt: null,
     publishedBy: null,
@@ -134,6 +140,7 @@ const mirror = osMirror({
         updatedAt: { type: 'date' },
         publishedAt: { type: 'date' },
         certifiedAt: { type: 'date' },
+        folder: { type: 'keyword' },
         md: { type: 'text', index: false },
         tacit: { type: 'text', index: false },
         archived: { type: 'boolean' },
@@ -429,6 +436,39 @@ export function renameKnowledge(id: string, user: Principal, newTitle: string): 
   rec.title = title; // keep the denormalised (indexed) title in lockstep
   rec.updatedAt = now();
   writeThrough(rec);
+  return rec;
+}
+
+/** The folder scope a workflow lives in: a Personal draft's folders are the owner's
+ *  PERSONAL tree; a Shared / Certified process's folders are the owning DOMAIN's tree.
+ *  Mirrors how `listWorkflows` groups by visibility. */
+function folderScopeOf(rec: WorkflowRecord): FolderScope {
+  return rec.visibility === 'Personal' ? 'personal' : 'domain';
+}
+
+/**
+ * Move a workflow into a folder. Edit-scoped exactly like every other mutation
+ * (`requireEdit` → the reused `canManageArtifact` gate). The folder is a normalised
+ * path on the record; its ROOT (personal vs domain tree) is decided by tier. Snapshots
+ * to the version log (auditable + reversible, mirroring `moveKnowledge`), persists, then
+ * upserts an EXPLICIT folder row in the governed registry so the destination folder
+ * persists even when empty (best-effort — a registry hiccup never rolls back the move).
+ */
+export function moveWorkflow(id: string, user: Principal, folder: string): WorkflowRecord {
+  const rec = requireEdit(id, user);
+  const normalised = normaliseFolderPath(folder);
+  versions.record(id, user.id, { ...snapshotState(rec), folder: rec.folder }, 'move');
+  rec.folder = normalised;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  if (normalised !== '/') {
+    const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+    try {
+      createFolder(principal, { tab: 'workflows', scope: folderScopeOf(rec), path: normalised, domain: rec.domain });
+    } catch {
+      /* folder-registry mirror is best-effort; the workflow move already succeeded */
+    }
+  }
   return rec;
 }
 

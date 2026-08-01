@@ -30,6 +30,7 @@ export default function MetricStageAssistant({
   payload,
   onForm,
   disabled,
+  compact,
 }: {
   stage: MetricStageId;
   /** One-line "what this helper does here". */
@@ -41,6 +42,9 @@ export default function MetricStageAssistant({
   /** Define only — receive the proposed form fields to apply into the UI. */
   onForm?: (form: FormProposal) => void;
   disabled?: boolean;
+  /** Render as ONE big in-flow ✨ button (the Data-tab AiAction pattern) instead of
+   *  the boxed assistant panel; `label` becomes the hover title, output shows below. */
+  compact?: boolean;
 }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -71,6 +75,18 @@ export default function MetricStageAssistant({
       setBusy(false);
     }
   };
+
+  if (compact) {
+    return (
+      <span style={{ display: 'inline-block' }}>
+        <button className="btn primary" onClick={ask} disabled={busy || disabled} title={label}>
+          {busy ? <span className="spin" /> : `✨ ${cta}`}
+        </button>
+        {error ? <div className="error" style={{ marginTop: 8 }}>{error}</div> : null}
+        {text ? <p className="hint" style={{ marginTop: 8, whiteSpace: 'pre-wrap' }}>{text}</p> : null}
+      </span>
+    );
+  }
 
   return (
     <div className="passthrough-note" style={{ marginTop: 16 }}>
