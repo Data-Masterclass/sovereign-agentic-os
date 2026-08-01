@@ -6,7 +6,7 @@ import { requireUser, type CurrentUser } from '@/lib/core/auth';
 import { failResponse, runStageAssistant } from '@/lib/assistant/stage-route';
 import { listMetrics } from '@/lib/metrics/store';
 import { narrowCubeMeta, type RegistryViewDims } from '@/lib/dashboards/cube-meta';
-import { listGovernedDatasets } from '@/lib/data/store';
+import { listDatasets, getDataset } from '@/lib/data/store';
 import { cubeViewName, registryDimensionMembers } from '@/lib/data/metrics';
 
 export const dynamic = 'force-dynamic';
@@ -26,18 +26,24 @@ export const dynamic = 'force-dynamic';
 type Stage = 'define' | 'design' | 'build' | 'view' | 'govern';
 const STAGES = new Set<Stage>(['define', 'design', 'build', 'view', 'govern']);
 
-/** The governed dimension members of ONE view the caller may see — served Cube /meta
- *  first, registry fallback otherwise (the same narrowing as /api/dashboards/cube-meta),
- *  so the Design assistant can propose GROUP-BY charts instead of only scalar tiles
- *  (Northpeak fix: a bar with no dimension collapses to a single bar). */
+/** The governed dimension members of ONE view the caller may see (the same registry
+ *  narrowing as /api/dashboards/cube-meta), so the Design assistant can propose
+ *  GROUP-BY charts instead of only scalar tiles (Northpeak fix: a bar with no
+ *  dimension collapses to a single bar). Enumerates EVERY dataset the caller can
+ *  see — personal datasets carry metrics too (Phase 1). */
 async function designDimensionsFor(user: CurrentUser, view: string): Promise<string[]> {
   if (!view) return [];
   try {
     const groups = listMetrics(user);
     const members = [...groups.mine, ...groups.domain, ...groups.marketplace].map((m) => m.member);
-    const registryDims: RegistryViewDims = new Map(
-      listGovernedDatasets().map((d) => [cubeViewName(d), registryDimensionMembers(d)]),
-    );
+    const dsGroups = listDatasets(user);
+    const registryDims: RegistryViewDims = new Map();
+    for (const s of [...dsGroups.mine, ...dsGroups.domain, ...dsGroups.marketplace]) {
+      try {
+        const d = getDataset(s.id, user);
+        registryDims.set(cubeViewName(d), registryDimensionMembers(d));
+      } catch { /* vanished between list and get → skip */ }
+    }
     const v = narrowCubeMeta(members, [], registryDims).find((x) => x.view === view);
     return v ? [...v.dimensions, ...v.timeDimensions] : [];
   } catch {
