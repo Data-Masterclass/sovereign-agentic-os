@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
 import { requireUser } from '@/lib/core/auth';
+import { repoHtmlUrl } from '@/lib/software/apps';
 
 export const dynamic = 'force-dynamic';
 
@@ -297,7 +298,8 @@ export async function POST(req: Request) {
     repo: {
       name,
       fullName,
-      htmlUrl: String(create.data?.html_url ?? `${config.forgejoConsoleUrl}/${fullName}`),
+      // The EXTERNAL browsable URL — never Forgejo's in-cluster `html_url` (404 in a browser).
+      htmlUrl: repoHtmlUrl(fullName),
     },
     seeded,
     seedErrors,

@@ -95,6 +95,53 @@ export function tabToolExecutor(user: CurrentUser, tab: McpTab): ToolExecutor {
   };
 }
 
+/**
+ * Merge the run's server-KNOWN args into one model-issued tool call. The run is
+ * inherently scoped (e.g. a per-app Build chat is bound to ONE `appId`), so the
+ * model should never have to repeat — or be trusted to supply — an id the server
+ * already holds. For each bound key:
+ *   • omitted / empty by the model  → filled in from the bound value (the fix for
+ *     `commit({})` → not_found: an empty-args call now carries the real appId);
+ *   • supplied and EQUAL             → accepted (idempotent);
+ *   • supplied and DIFFERENT         → REJECTED, so a model cannot redirect a write
+ *     at another scope. Returns `{ error }` the caller surfaces as a tool error.
+ * Bound values always win, but a conflict is loud rather than silently overwritten.
+ */
+export function bindToolArgs(
+  args: Record<string, unknown>,
+  bound: Record<string, unknown>,
+): { args: Record<string, unknown>; error?: string } {
+  const merged: Record<string, unknown> = { ...args };
+  for (const [key, value] of Object.entries(bound)) {
+    const supplied = merged[key];
+    const missing = supplied === undefined || supplied === null || supplied === '';
+    if (!missing && supplied !== value) {
+      return {
+        args: merged,
+        error:
+          `this run is scoped to ${key} ${String(value)} — you passed ${key} ` +
+          `${JSON.stringify(supplied)}, which does not match. Drop the ${key} argument ` +
+          `(it is bound automatically) and retry.`,
+      };
+    }
+    merged[key] = value;
+  }
+  return { args: merged };
+}
+
+/**
+ * Wrap a governed `ToolExecutor` so the run's server-known args (see {@link bindToolArgs})
+ * are merged into EVERY call before dispatch, and a conflicting model-supplied value is
+ * rejected as a clean tool error WITHOUT ever reaching the underlying governed function.
+ */
+export function boundExecutor(base: ToolExecutor, bound: Record<string, unknown>): ToolExecutor {
+  return async (name, args) => {
+    const b = bindToolArgs(args, bound);
+    if (b.error) return { text: `Error: ${b.error}`, isError: true };
+    return base(name, b.args);
+  };
+}
+
 const LLM_TIMEOUT_MS = Number(process.env.LLM_CHAT_TIMEOUT_MS ?? '') || 90_000;
 
 /**
@@ -272,6 +319,14 @@ export type RunTabAgentInput = {
    */
   toolNames?: string[];
   /**
+   * Server-KNOWN arguments the run is inherently scoped to (e.g. `{ appId }` for the
+   * per-app Build chat). Bound here so the model never has to repeat an id the server
+   * already knows — every tool call gets these merged in (see {@link bindToolArgs}). A
+   * model-supplied value that MATCHES is accepted; one that CONFLICTS is rejected loudly
+   * (no cross-scope write); an omitted one is filled in (fixes `commit({})` → not_found).
+   */
+  boundArgs?: Record<string, unknown>;
+  /**
    * Progress hook — called once per governed tool step as it executes (the SAME
    * `AgenticStep` the result later carries). The Software Build stage plumbs this
    * to a streaming response so each tool-call surfaces as a live activity line
@@ -280,6 +335,16 @@ export type RunTabAgentInput = {
   onStep?: (step: AgenticStep) => void;
   /** Progress hook — called once with the plan text as soon as PLAN completes. */
   onPlan?: (plan: string) => void;
+  /**
+   * BOUNDED reasoning escalation (opt-in). A LiteLLM model_name (e.g.
+   * `roleModel('reasoning')`) the ACT loop switches to ONCE if a tool keeps failing on
+   * a shape error. The Software Build stage passes it so a STANDARD-tier build that
+   * cannot complete its `commit` gets exactly one reasoning-tier retry — labelled, not
+   * silent. Unset = no escalation (the default for every other assistant).
+   */
+  escalateActModel?: string;
+  /** Called once when escalation fires — the build route renders it as a labelled activity line. */
+  onEscalate?: (info: { tool: string; from: string; to: string; failures: number }) => void;
   /** Injected in tests; defaults to the live LiteLLM caller. */
   llm?: LlmCall;
 };
@@ -299,12 +364,16 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
     ? tabToolSpecs(input.user, input.tab).filter((t) => allow.has(t.name))
     : tabToolSpecs(input.user, input.tab);
   const baseExec = tabToolExecutor(input.user, input.tab);
+  // Bind the run's server-known args (e.g. appId) into EVERY tool call BEFORE the
+  // allowlist/governed dispatch — a run scoped to one app never depends on the model
+  // repeating its id, and a mismatched id is rejected loudly (never a cross-app write).
+  const withBinding = input.boundArgs ? boundExecutor(baseExec, input.boundArgs) : baseExec;
   const callTool = allow
     ? async (name: string, args: Record<string, unknown>) =>
         allow.has(name)
-          ? baseExec(name, args)
+          ? withBinding(name, args)
           : { text: `Error: tool "${name}" is not available in this mode.`, isError: true }
-    : baseExec;
+    : withBinding;
   return runAgentic({
     system: osSystem(input.tab, input.extraContext),
     userMessages: input.messages,
@@ -318,6 +387,8 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
     maxOutputTokens: ctx.reservedOutput,
     onStep: input.onStep,
     onPlan: input.onPlan,
+    escalateActModel: input.escalateActModel,
+    onEscalate: input.onEscalate,
   });
 }
 

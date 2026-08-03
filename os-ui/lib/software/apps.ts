@@ -887,6 +887,10 @@ function hydrateAppDoc(app: App): App {
   if (!Array.isArray(app.epics)) app.epics = [];
   // Back-compat: apps persisted before folders default to the root.
   if (typeof app.folder !== 'string') app.folder = '/';
+  // Heal the repo link: apps scaffolded before repoHtmlUrl persisted Forgejo's
+  // in-cluster `html_url` (http://forgejo-http:3000/…), which 404s in a browser.
+  // Re-derive it from the full name against the EXTERNAL console URL on every load.
+  if (app.repo?.fullName) app.repo.htmlUrl = repoHtmlUrl(app.repo.fullName);
   app.grants = normalizeContextGrants(app.grants);
   // Re-hydrate the in-process MCP grant so agents can call it after a restart.
   // rehydrateConnection is status-aware — it never resurrects an archived app.
@@ -1071,6 +1075,20 @@ async function ensureRepoActionsSecrets(owner: string, repo: string): Promise<bo
 }
 
 /**
+ * The BROWSABLE repo URL for a `owner/slug` full name — ALWAYS built from the
+ * EXTERNAL Forgejo console URL (`FORGEJO_CONSOLE_URL`), never from Forgejo's own
+ * API `html_url`. Forgejo derives its `html_url` from its in-cluster `ROOT_URL`
+ * (`http://forgejo-http:3000/…`), a host a BROWSER cannot resolve — storing that
+ * gave every "open repo" link a 404. This is the ONE source of truth for the repo
+ * link the UI + agents surface, so the external host is used consistently.
+ */
+export function repoHtmlUrl(fullName: string): string {
+  const base = config.forgejoConsoleUrl.replace(/\/+$/, '');
+  const path = String(fullName ?? '').replace(/^\/+/, '');
+  return path ? `${base}/${path}` : base;
+}
+
+/**
  * Best-effort: create the per-app Forgejo repo + seed the template files. Returns
  * a live result when Forgejo is reachable, or an offline shell otherwise — the
  * golden path still works for teaching, honestly labelled.
@@ -1090,7 +1108,9 @@ async function scaffoldRepo(
     default_branch: 'main',
   });
   const fullName = String(create.data?.full_name ?? `${owner}/${slug}`);
-  const htmlUrl = String(create.data?.html_url ?? `${config.forgejoConsoleUrl}/${fullName}`);
+  // ALWAYS the external browsable URL — Forgejo's own `html_url` points at the
+  // in-cluster ROOT_URL the browser can't reach (the "repo link 404" the user hit).
+  const htmlUrl = repoHtmlUrl(fullName);
   if (!create.ok && create.status === 0) {
     // Forgejo unreachable -> offline shell.
     return { mode: 'offline', fullName, htmlUrl, seeded: [] };
@@ -1223,6 +1243,38 @@ export async function listAppFiles(appId: string, user: CurrentUser): Promise<Re
 export async function listAppFilesForViewer(appId: string, user: CurrentUser): Promise<RepoFileMeta> {
   const app = await getAppForUser(appId, user);
   return repoTree(app);
+}
+
+export type DirEntry = { name: string; path: string; type: 'file' | 'dir' };
+
+/**
+ * The IMMEDIATE children of a directory, derived from the app's flat file tree.
+ * Given every file path in the repo and a directory prefix, returns each direct
+ * child once — a file (`type:'file'`) or a subdirectory (`type:'dir'`), never the
+ * whole recursive subtree. `dir` may carry a trailing slash or be '' (the root).
+ * Pure + source-agnostic: works over the live Forgejo tree AND the offline snapshot,
+ * so `read_app_files` can answer a directory path with a listing instead of a dead
+ * end (the build agent passed `src/epics` and hit "not an editable file" live).
+ */
+export function dirListing(files: string[], dir: string): DirEntry[] {
+  const prefix = dir.replace(/^\/+|\/+$/g, '');
+  const base = prefix ? `${prefix}/` : '';
+  const seen = new Map<string, DirEntry>();
+  for (const path of files) {
+    if (base && !path.startsWith(base)) continue;
+    const rest = path.slice(base.length);
+    if (!rest) continue;
+    const slash = rest.indexOf('/');
+    if (slash === -1) {
+      seen.set(rest, { name: rest, path: base + rest, type: 'file' });
+    } else {
+      const name = rest.slice(0, slash);
+      if (!seen.has(name)) seen.set(name, { name, path: base + name, type: 'dir' });
+    }
+  }
+  return [...seen.values()].sort((a, b) =>
+    a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1,
+  );
 }
 
 async function repoTree(app: App): Promise<RepoFileMeta> {
@@ -1364,16 +1416,59 @@ export async function saveAppFile(
 }
 
 /**
+ * PURE guard (unit-tested): is this app's Forgejo repo (owner/slug) still the
+ * home-of-record for a DIFFERENT, LIVE app? App repos key on the frozen `slug`
+ * (repo/image identity), so a delete-then-recreate of "the same app" across
+ * failed sessions can leave TWO app records sharing one `slug`. Deleting the repo
+ * for the record being torn down would then silently wipe the OTHER (still-active)
+ * app's code — exactly the "active app repo vanished, record survived" failure
+ * this investigation traced. Returns the id of the conflicting live app when one
+ * exists (so the caller SKIPS the physical delete), else null. `self` is excluded
+ * (an app never blocks its own delete); archived apps do not count as live
+ * consumers (their repo is meant to persist for unarchive but not to veto a peer).
+ */
+export function repoSharedByLiveApp(
+  self: App,
+  all: Iterable<App>,
+): string | null {
+  const mySlug = repoCoords(self).repo;
+  for (const other of all) {
+    if (other.id === self.id) continue;
+    if (other.status !== 'active') continue;
+    if (repoCoords(other).repo === mySlug) return other.id;
+  }
+  return null;
+}
+
+/**
  * PHYSICALLY delete the app's per-app Forgejo repo (the counterpart of
  * `scaffoldRepo`). Called on app DELETE only — archive keeps the repo so unarchive
  * can re-provision. Best-effort + HONEST: a 404 (already gone / never created) is a
  * benign success; an unreachable Forgejo (`status:0`) or a rejected delete is
  * reported so the delete never silently claims the repo is gone. Idempotent.
+ *
+ * GUARD: never delete a repo whose `slug` is still referenced by another ACTIVE
+ * app record. A delete-then-recreate churn (the multi-session case) can leave a
+ * second app record sharing this slug; physically deleting the repo here would
+ * wipe that live peer's code (the class of failure that left an active app's repo
+ * gone while its record survived). When a live peer shares the slug we SKIP the
+ * delete and report it honestly rather than destroy a repo still in use.
  */
 export async function deleteAppRepo(
   app: App,
 ): Promise<{ ok: boolean; live: boolean; action: 'deleted' | 'noop'; detail: string }> {
   const { owner, repo } = repoCoords(app);
+  // Guard: another live app still owns this slug's repo — do NOT delete it.
+  const map = await getCache();
+  const sharedWith = repoSharedByLiveApp(app, map.values());
+  if (sharedWith) {
+    return {
+      ok: true,
+      live: true,
+      action: 'noop',
+      detail: `Kept Forgejo repo ${owner}/${repo} — still the home of active app ${sharedWith} (shared slug).`,
+    };
+  }
   const res = await forgejoApi('DELETE', `/repos/${owner}/${repo}`);
   if (res.status === 0) {
     return { ok: false, live: false, action: 'noop', detail: 'Forgejo unreachable — repo not deleted (orphan flagged).' };
@@ -1385,6 +1480,82 @@ export async function deleteAppRepo(
   return { ok: false, live: true, action: 'noop', detail: `Forgejo rejected the repo delete (HTTP ${res.status}).` };
 }
 
+/**
+ * SELF-HEAL a MISSING repo for an ACTIVE app. An app record whose Forgejo repo
+ * has vanished (404) — however it went missing (out-of-band delete, a churned
+ * session) — is dead in the water: the code editor 404s, deploy scans read an
+ * empty tree, and CI can never rebuild an image with the app's real pages. This
+ * re-provisions the repo from the SAME scaffold path `createApp` uses (repo +
+ * REGISTRY_PASS secret + seeded template files + CI workflow last), then RE-SEEDS
+ * any files still held in the in-process snapshot on top (a Build that ran this
+ * process but never reached a durable git commit), so the recovered repo carries
+ * as much of the real build as survived. HONEST + idempotent:
+ *   • repo already present (any status but 404 on the existence probe) → no-op;
+ *   • Forgejo unreachable → reported, nothing changed;
+ *   • only fires for an ACTIVE app (archived repos are meant to stay torn down).
+ * Returns what it did; the caller decides whether to bump the pipeline / roll CI.
+ */
+export async function healAppRepo(
+  app: App,
+): Promise<{ ok: boolean; action: 'recreated' | 'noop'; detail: string; seeded: string[] }> {
+  if (app.status !== 'active') {
+    return { ok: true, action: 'noop', detail: 'App is not active — repo heal skipped.', seeded: [] };
+  }
+  const { owner, repo } = repoCoords(app);
+  // Existence probe: only heal a genuine 404. Unreachable (0) is reported, not guessed.
+  const probe = await forgejoApi('GET', `/repos/${owner}/${repo}`);
+  if (probe.status === 0) {
+    return { ok: false, action: 'noop', detail: 'Forgejo unreachable — repo not healed.', seeded: [] };
+  }
+  if (probe.status !== 404) {
+    return { ok: true, action: 'noop', detail: `Repo ${owner}/${repo} already exists — nothing to heal.`, seeded: [] };
+  }
+  // Re-scaffold from the template (same path createApp uses).
+  const tpl = TEMPLATES[app.template] ?? TEMPLATES['sovereign-app'];
+  const scaffold = await scaffoldRepo(app.slug, app.description, tpl, app.name);
+  if (scaffold.mode !== 'live') {
+    return { ok: false, action: 'noop', detail: 'Forgejo unreachable during re-scaffold — repo not healed.', seeded: [] };
+  }
+  // HONESTY: `scaffoldRepo` reports `mode:'live'` whenever Forgejo ANSWERED, even if
+  // the repo-create itself was REJECTED (403 quota/perms) and every seed then 404'd.
+  // The existence probe just confirmed a genuine 404, so a re-provision that seeded
+  // NOTHING truly failed — say so, don't claim a phantom `recreated`. (A create that
+  // hit 409 "already exists" would still seed, so seeded.length>0 there.)
+  if (scaffold.seeded.length === 0) {
+    return { ok: false, action: 'noop', detail: `Re-provisioning ${owner}/${repo} failed — the repo could not be re-created (no files seeded).`, seeded: [] };
+  }
+  // Re-seed anything the in-process snapshot still holds beyond the bare template
+  // (a Build that committed to this process but never reached durable git), so the
+  // recovered repo is as close to the last real build as what survived allows.
+  const seeded = [...scaffold.seeded];
+  const snap = getSnapshot(app.id);
+  if (snap && snap.length > 0) {
+    const seededSet = new Set(seeded);
+    for (const f of snap) {
+      if (seededSet.has(f.path)) continue;
+      const r = await forgejoWrite(`/repos/${owner}/${app.slug}/contents/${encodeRepoPath(f.path)}`, {
+        content: b64(f.content),
+        message: `heal: restore ${f.path} from snapshot`,
+        branch: 'main',
+      });
+      if (r.ok) seeded.push(f.path);
+    }
+  }
+  // Record the recovered repo link on the app (fullName is stable; refresh seeded).
+  app.repo = { fullName: scaffold.fullName, htmlUrl: scaffold.htmlUrl, seeded };
+  app.mode = 'live';
+  app.updatedAt = now();
+  writeThrough(app);
+  void trace({
+    principal: app.mcpPrincipal,
+    tool: 'generate',
+    input: { action: 'heal_app_repo', repo: `${owner}/${repo}` },
+    output: { recreated: true, seeded: seeded.length },
+    decision: 'allow',
+  });
+  return { ok: true, action: 'recreated', detail: `Re-provisioned ${owner}/${repo} (${seeded.length} files seeded).`, seeded };
+}
+
 // ------------------------------------------------------------ Actions health --
 
 /** Throttle live Actions checks per app (the app page GET calls this on load). */
@@ -1392,6 +1563,45 @@ const actionsCheckedAt = new Map<string, number>();
 const ACTIONS_CHECK_TTL_MS = 30_000;
 
 export type ActionsHealth = { status: StageStatus; note: string | null };
+
+/**
+ * SELF-HEAL story built-ness — the honesty floor for the "phantom-built" bug.
+ *
+ * A story's `status:'done'` is a claim that its code was BUILT AND COMMITTED. But the
+ * only writer of that status is a caller passing epics through `patchAppDesign`, and a
+ * build agent used to self-report `done` (via `design_software`) even when its `commit`
+ * failed or was never called — so an app could show "4 stories built" while its repo was
+ * empty/404 and the Test stage (honestly gated on a real commit) stayed disabled.
+ *
+ * This reconciles the CLAIM against REALITY: if the app has NO committed code at all,
+ * NO story can be `done`, so any persisted `done` is demoted to `todo`. "Has committed
+ * code" is read from the honest signals the pipeline already maintains — a green Forgejo
+ * scaffold stage (a real repo with a commit) OR a non-empty committed snapshot (the
+ * offline-mock teaching tree). It never PROMOTES (that stays earned via a real commit),
+ * so it can only make the record MORE honest. Idempotent + write-through; safe to call
+ * on every load. Call AFTER `refreshActionsStage` so `pipeline.forgejo` reflects a 404'd
+ * repo (demoted to 'failing') rather than a stale 'ok'.
+ */
+export function reconcileBuiltStatus(app: App): { demoted: number } {
+  const hasEpicPages = (getSnapshot(app.id) ?? []).some((f) =>
+    /^src\/epics\/[^/]+\/(?!general\/)[^/]+\/[A-Z][A-Za-z0-9]*\.tsx$/.test(f.path),
+  );
+  const hasRealCommit = app.pipeline.forgejo === 'ok' || app.repo.seeded.length > 0 || hasEpicPages;
+  // A real, committed app: trust its per-story status (the earned post-commit flip). Only
+  // an app with demonstrably nothing committed has its phantom `done` claims cleared.
+  if (hasRealCommit) return { demoted: 0 };
+  let demoted = 0;
+  for (const epic of app.epics ?? []) {
+    for (const story of epic.stories ?? []) {
+      if (story.status === 'done' || story.status === 'building') {
+        story.status = 'todo';
+        demoted += 1;
+      }
+    }
+  }
+  if (demoted > 0) writeThrough(app);
+  return { demoted };
+}
 
 /**
  * Recompute the pipeline `actions` stage HONESTLY from live Forgejo — and
@@ -1430,7 +1640,23 @@ export async function refreshActionsStage(app: App, opts?: { force?: boolean }):
     }
     return { status, note };
   };
-  if (!repoRes.ok) return { status: app.pipeline.actions, note: `Forgejo error reading the repo (HTTP ${repoRes.status}).` };
+  if (!repoRes.ok) {
+    // HONEST: a repo that 404s no longer exists — the whole pipeline is broken, not
+    // "ok". Downgrade BOTH the `forgejo` (scaffold) stage AND `actions` to a failing
+    // state so the status card stops claiming a green scaffold for a vanished repo
+    // (the "forgejo: ok while repo 404" dishonesty). `healAppRepo` can re-provision it.
+    if (repoRes.status === 404) {
+      let changed = false;
+      if (app.pipeline.forgejo !== 'failing') { app.pipeline.forgejo = 'failing'; changed = true; }
+      if (app.pipeline.actions !== 'failing') { app.pipeline.actions = 'failing'; changed = true; }
+      if (changed) writeThrough(app);
+      return {
+        status: 'failing',
+        note: `The app's Forgejo repo ${owner}/${repo} no longer exists (HTTP 404) — CI cannot build. Re-provision the repo (heal) and push to rebuild.`,
+      };
+    }
+    return { status: app.pipeline.actions, note: `Forgejo error reading the repo (HTTP ${repoRes.status}).` };
+  }
 
   const hasActions = (repoRes.data as { has_actions?: boolean } | null)?.has_actions;
   if (hasActions === false) {
@@ -1810,7 +2036,27 @@ export async function patchAppDesign(
   if (!a) throw withStatus(new Error('App not found'), 404);
   if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to edit this app'), 403);
   if (patch.purpose !== undefined) a.purpose = patch.purpose.slice(0, 2000);
-  if (patch.epics !== undefined) a.epics = normalizeEpicSpecs(patch.epics);
+  if (patch.epics !== undefined) {
+    // EARNED built-ness: a caller (esp. a build agent via design_software) must not flip a
+    // story to `done` on an app with no committed code — that was the phantom-built lie. If
+    // there is no real commit, force every incoming `done`/`building` back to `todo` before
+    // persist. A genuinely-committed app trusts the incoming status (the post-commit flip).
+    const hasRealCommit =
+      a.pipeline.forgejo === 'ok' ||
+      a.repo.seeded.length > 0 ||
+      (getSnapshot(a.id) ?? []).some((f) =>
+        /^src\/epics\/[^/]+\/(?!general\/)[^/]+\/[A-Z][A-Za-z0-9]*\.tsx$/.test(f.path),
+      );
+    const epics = normalizeEpicSpecs(patch.epics);
+    a.epics = hasRealCommit
+      ? epics
+      : epics.map((e) => ({
+          ...e,
+          stories: (e.stories ?? []).map((s) =>
+            s.status === 'done' || s.status === 'building' ? { ...s, status: 'todo' as const } : s,
+          ),
+        }));
+  }
   if (patch.grants !== undefined) a.grants = normalizeContextGrants(patch.grants);
   a.updatedAt = now();
   map.set(a.id, a);

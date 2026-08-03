@@ -507,3 +507,132 @@ test('trackUsage stays undefined when NO call reported usage (never fabricates 0
   assert.equal(tracked.usage(), undefined);
   assert.deepEqual(tracked.models(), ['m']);
 });
+
+// --------------------------------------- bounded reasoning escalation (build) ---
+
+test('a corrective tool error is fed back and the loop RETRIES (self-correction)', async () => {
+  // The commit tool returns a corrective shape-error once; the model reads it, fixes
+  // the call, and the retry succeeds. The loop must feed the error back and continue —
+  // a corrective error is NOT terminal.
+  const { llm } = scriptLlm([
+    { content: 'plan' },
+    { content: '', toolCalls: [{ id: 'c1', name: 'commit', args: {} }] }, // empty commit — errors
+    { content: '', toolCalls: [{ id: 'c2', name: 'commit', args: { files: [{ path: 'p', content: 'x' }] } }] }, // fixed
+    { content: 'Committed the page.' },
+  ]);
+  let n = 0;
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'build it' }],
+    tools: TOOLS,
+    callTool: async () => {
+      n += 1;
+      return n === 1 ? { text: 'commit needs at least one file', isError: true } : { text: 'committed 1 file', isError: false };
+    },
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+    maxIterations: 8,
+  });
+  assert.equal(n, 2, 'the corrective error was fed back and the fixed call re-ran');
+  assert.equal(res.steps[0].isError, true);
+  assert.equal(res.steps[1].isError, false);
+  assert.match(res.finalText, /Committed/);
+});
+
+test('a tool that keeps shape-erroring escalates to the reasoning model ONCE, labelled', async () => {
+  // commit errors twice → after the 2nd failure the ACT model switches to the escalation
+  // model, fired once via onEscalate. We assert the escalated model actually served the
+  // NEXT act call (so the switch is real, not cosmetic).
+  const calls: string[] = [];
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    calls.push(req.model);
+    // Always ask for the same failing commit (distinct-enough to re-run each time).
+    return { content: '', toolCalls: [{ id: `c${calls.length}`, name: 'commit', args: { n: calls.length } }] };
+  };
+  const escalations: { tool: string; from: string; to: string }[] = [];
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'build it' }],
+    tools: TOOLS,
+    callTool: async () => ({ text: 'commit needs at least one file', isError: true }),
+    llm,
+    planModel: 'r',
+    actModel: 'standard-x',
+    escalateActModel: 'reasoning-y',
+    onEscalate: (info) => escalations.push(info),
+    maxIterations: 6,
+  });
+  assert.equal(escalations.length, 1, 'escalation fires exactly once');
+  assert.equal(escalations[0].tool, 'commit');
+  assert.equal(escalations[0].from, 'standard-x');
+  assert.equal(escalations[0].to, 'reasoning-y');
+  // First two act calls on standard, then the switch: a later act call is on reasoning.
+  assert.equal(calls[0], 'standard-x');
+  assert.equal(calls[1], 'standard-x');
+  assert.ok(calls.slice(2).every((m) => m === 'reasoning-y'), 'after escalation every act call is on the reasoning model');
+  assert.ok(res.steps.length >= 2);
+});
+
+test('escalation NEVER fires on the happy path (no error → standard tier throughout)', async () => {
+  const calls: string[] = [];
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    calls.push(req.model);
+    return calls.length === 1
+      ? { content: '', toolCalls: [{ id: 'c1', name: 'commit', args: { files: [{ path: 'p', content: 'x' }] } }] }
+      : { content: 'Done.', toolCalls: [] };
+  };
+  let escalated = false;
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'build it' }],
+    tools: TOOLS,
+    callTool: async () => ({ text: 'committed 1 file', isError: false }),
+    llm,
+    planModel: 'r',
+    actModel: 'standard-x',
+    escalateActModel: 'reasoning-y',
+    onEscalate: () => { escalated = true; },
+    maxIterations: 6,
+  });
+  assert.equal(escalated, false, 'no escalation without a failure');
+  assert.ok(calls.every((m) => m === 'standard-x'), 'the whole happy path stays on the standard tier');
+  assert.match(res.finalText, /Done/);
+});
+
+test('BUDGET exhaustion retries ONCE on the reasoning model, then finishes', async () => {
+  // The standard model burns its whole step budget on distinct successful tool calls
+  // without ever producing a final answer (the "ran out of steps → plan essay" case).
+  // With an escalation model wired, the run must retry ONCE on reasoning and let it
+  // produce the real final answer.
+  let n = 0;
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) {
+      // PLAN (first no-tools call). The escalated model, once it decides to finish,
+      // emits a no-tools final too — recognise it by the escalation nudge in-transcript.
+      const escalating = req.messages.some((m) => m.role === 'user' && m.content.includes('reached its tool-step budget'));
+      return { content: escalating ? 'Committed everything on the reasoning model.' : 'plan', toolCalls: [] };
+    }
+    if (req.model === 'reasoning-y') return { content: 'Committed everything on the reasoning model.', toolCalls: [] };
+    // standard tier: never finishes, always another distinct tool call (burns the budget)
+    return { content: '', toolCalls: [{ id: `x${n}`, name: 'commit', args: { i: n++ } }] };
+  };
+  const escalations: string[] = [];
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'build the epic' }],
+    tools: TOOLS,
+    callTool: async () => ({ text: 'ok', isError: false }),
+    llm,
+    planModel: 'r',
+    actModel: 'standard-x',
+    escalateActModel: 'reasoning-y',
+    onEscalate: (i) => escalations.push(i.tool),
+    maxIterations: 3,
+  });
+  assert.equal(escalations.length, 1, 'exactly one budget-exhaustion escalation');
+  assert.equal(escalations[0], 'run', 'a run-level (budget) escalation, not a tool-shape one');
+  assert.match(res.finalText, /reasoning model/, 'the reasoning model produced the final answer');
+});

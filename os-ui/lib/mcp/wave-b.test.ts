@@ -371,6 +371,36 @@ test('read_app_files: the committed tree + one file’s content, honestly labell
   assert.equal(missing.code, 'not_found');
 });
 
+test('read_app_files: a DIRECTORY path returns its listing (not the "not an editable file" dead end)', async () => {
+  resetAll();
+  // The build agent passed a directory path (src/epics) live and hit a dead-end 400.
+  // A directory must now return its entries so the agent can drill down, not fail.
+  const app = payload<{ id: string }>(await call(builder, 'create_software', { name: 'Dir listing', template: 'sovereign-app' }));
+
+  const dir = payload<{ mode: string; path: string; kind: string; entries: { name: string; path: string; type: string }[] }>(
+    await call(builder, 'read_app_files', { appId: app.id, path: 'src/template' }),
+  );
+  assert.equal(dir.kind, 'dir', 'a directory path is reported as a directory, not an error');
+  assert.equal(dir.path, 'src/template');
+  const names = dir.entries.map((e) => e.name);
+  // Immediate children only (files AND subdirs), never the whole recursive tree.
+  assert.ok(names.includes('shell.tsx'), 'a file child is listed');
+  assert.ok(names.includes('pages'), 'a subdirectory child is listed');
+  const pages = dir.entries.find((e) => e.name === 'pages');
+  assert.equal(pages?.type, 'dir', 'a subdirectory is typed dir');
+  assert.equal(dir.entries.find((e) => e.name === 'shell.tsx')?.type, 'file');
+  // A trailing slash resolves to the same directory.
+  const withSlash = payload<{ kind: string }>(await call(builder, 'read_app_files', { appId: app.id, path: 'src/template/' }));
+  assert.equal(withSlash.kind, 'dir');
+});
+
+test('read_app_files: an empty/no path returns the ROOT file tree (unchanged behavior)', async () => {
+  resetAll();
+  const app = payload<{ id: string }>(await call(builder, 'create_software', { name: 'Root tree', template: 'sovereign-app' }));
+  const tree = payload<{ files: string[] }>(await call(builder, 'read_app_files', { appId: app.id, path: '' }));
+  assert.ok(Array.isArray(tree.files) && tree.files.length > 0, 'empty path → the whole tree, not an error');
+});
+
 test('read_app_files: an app the caller cannot see → typed not_found (no existence leak)', async () => {
   resetAll();
   const app = payload<{ id: string }>(await call(builder, 'create_software', { name: 'Ben private' }));

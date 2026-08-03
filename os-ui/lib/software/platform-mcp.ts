@@ -68,7 +68,7 @@ export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boo
   // ---- Design ----
   { name: 'design_software', description: "STAGE 2 · DESIGN. Author or update the app's specification tree — `purpose`, `epics` (each with user stories and per-story `spec` of features / non-functional requirements / rules), and governed context `grants`. This is the SAME governed write the UI Design stage uses (patchAppDesign): owner / owning-domain admin / platform admin only. A story must have a spec here before build_software will build it (the design-before-build gate). Next: build_software.", write: true },
   // ---- Build ----
-  { name: 'build_software', description: "STAGE 3 · BUILD. Build a SPECIFIC unit — the whole app, one `epic`, or one `story` (pass `target`) — from its FINALIZED Design spec. Enforces the design-before-build gate (refuses stories with no spec, naming them), pins the STANDARD model tier, and returns the governed BUILD directive + Define context + the target's spec + the code-structure convention (write each story under epics/<epic>/<story>/, app/ stays thin) + the current committed files and honest built-vs-pending progress. You then author the code and call `commit`, then mark built stories done via design_software (status:'done'). Next: verify_software.", write: false },
+  { name: 'build_software', description: "STAGE 3 · BUILD. Build a SPECIFIC unit — the whole app, one `epic`, or one `story` (pass `target`) — from its FINALIZED Design spec. Enforces the design-before-build gate (refuses stories with no spec, naming them), pins the STANDARD model tier, and returns the governed BUILD directive + Define context + the target's spec + the code-structure convention (write each story under epics/<epic>/<story>/, app/ stays thin) + the current committed files and honest built-vs-pending progress. You then author the code and call `commit` — a story counts as BUILT only after its files land in a SUCCESSFUL commit (an empty/failed commit builds nothing), never from a status you set by hand. Next: verify_software.", write: false },
   // ---- Test ----
   { name: 'verify_software', description: "STAGE 4 · TEST. Verify a built unit against its Design spec across the FIVE dimensions (Functionality · User Experience · Code Structure · Security · Documentation). Returns the governed TEST directive + spec + committed files to verify against (read-only). Report PASS/FAIL per dimension; pass any shortfalls as `findings` (each { storyId, note, dimension }) and they are normalized into dimension-tagged REFINEMENTS via the SAME refinement model the UI uses — a missed-spec item is a rebuild, a requirement change routes to Design first. Next (if PASS): request_deploy.", write: false },
   // ---- Publish ----
@@ -188,7 +188,7 @@ export async function callPlatformMcp(
         directive: stageDirective(app, target, 'build'),
         progress: targetProgress(app, target),
         code: await committedFiles(appId, user),
-        next: "Author the code per the directive, then `commit`; mark completed stories done with design_software (set the story's status to 'done'). Then verify_software.",
+        next: "Author the code per the directive, then `commit` — the story is marked built by the SUCCESSFUL commit itself (files landed), not by a status you set. Then verify_software.",
       };
       break;
     }
@@ -234,12 +234,34 @@ export async function callPlatformMcp(
           403,
         );
       }
+      // Validate REQUIRED args at the tool layer — a corrective, machine-actionable 400
+      // the agent loop can self-correct on, NEVER the confusing `not_found: App not found`
+      // that an empty `appId` produced live (the build agent's `commit({})` empty-args call).
+      // In the per-app Build run the appId is bound server-side, so a well-behaved agent
+      // never trips this; the raw Platform MCP path still needs the id + at least one file.
+      if (!appId) {
+        throw withStatus(
+          new Error('commit needs an `appId` (from list_software). In the per-app Build chat the appId is bound automatically — just pass the files.'),
+          400,
+        );
+      }
+      const files = Array.isArray(args.files) ? (args.files as { path: string; content: string }[]) : [];
+      if (files.length === 0) {
+        throw withStatus(
+          new Error(
+            'commit needs at least one file: an empty commit writes nothing. Do NOT write the code as prose in your reply — the server only receives what you pass in `files`. Author the code, then call commit with the EXACT shape: ' +
+              'commit({ files: [{ path: "src/epics/<epic>/<story>/Page.tsx", content: "<the full file source>" }] }). ' +
+              'Retry now with the files array populated.',
+          ),
+          400,
+        );
+      }
       const authored = await authorThroughFrontDoor('platform-mcp', {
         name: str(args.name),
         owner: user.id,
         description: str(args.description),
         message: str(args.message) || 'commit via Platform MCP (developer mode)',
-        files: Array.isArray(args.files) ? (args.files as { path: string; content: string }[]) : [],
+        files,
       });
       result = await commitToApp(appId, user, authored.files, authored.message);
       break;

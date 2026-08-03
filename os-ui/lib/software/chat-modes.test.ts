@@ -85,6 +85,21 @@ test('modeDirective(build): injects BUILD_PRINCIPLES + the code-structure conven
   assert.match(b, /epics\/<epic>\/<story>/, 'tells the model where story code goes');
 });
 
+test('modeDirective(build): carries the EXACT commit signature + worked example', () => {
+  // Hardening for the file-less-commit failure: the model must see the exact shape and
+  // that code goes in `files`, not prose. A terse worked example rides every build turn.
+  const b = modeDirective('build', 'app_1').join('\n');
+  assert.match(b, /commit\(\{ files: \[\{ path:/, 'the exact commit({ files: [{ path, content }] }) template is present');
+  assert.match(b, /NOT in your prose/i, 'tells the model the source goes in files, not prose');
+  assert.match(b, /BUILT[\s\S]*SUCCESSFUL commit/i, 'built-ness is earned by a real commit, not a claim');
+});
+
+test('modeDirective(build): forbids ending a failed build with an instructions essay', () => {
+  const b = modeDirective('build', 'app_1').join('\n');
+  assert.match(b, /do NOT write a step-by-step.*essay|essay/i, 'forbids the plan-essay wrap-up');
+  assert.match(b, /honestly marked failed|marked failed/i, 'a turn that cannot commit is marked failed, not disguised');
+});
+
 // ------------------------------------ PLAN (Design draft) injects principles --
 
 test('modeDirective(plan): the Design drafting prompt carries the build principles', () => {

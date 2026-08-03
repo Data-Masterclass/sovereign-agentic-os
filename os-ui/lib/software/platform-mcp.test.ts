@@ -83,6 +83,27 @@ test('DEVELOPER MODE: commit is role-gated to builder/admin AND labelled — a C
   assert.match(commit?.description ?? '', /BYPASS/i);
 });
 
+test('commit with NO appId returns a corrective 400 (not a confusing not_found)', async () => {
+  // The build agent (standard model) emitted `commit({})` live — empty args. Without a
+  // guard this reached the store as a lookup for an empty id and answered `not_found:
+  // App not found`, a dead end. It must instead be a machine-actionable 400 that names
+  // what to fix (the appId is bound in the build run; supply files in the raw MCP path).
+  await expectStatus(callPlatformMcp(builder, 'commit', {}), 400);
+  await assert.rejects(
+    callPlatformMcp(builder, 'commit', {}),
+    (e: Error) => /commit needs an `appId`/.test(e.message),
+  );
+});
+
+test('commit with an appId but NO files returns a corrective 400 (an empty commit is a no-op)', async () => {
+  const app = (await callPlatformMcp(builder, 'create_software', { name: 'Empty commit app', template: 'sovereign-app' })) as App;
+  await expectStatus(callPlatformMcp(builder, 'commit', { appId: app.id }), 400);
+  await assert.rejects(
+    callPlatformMcp(builder, 'commit', { appId: app.id }),
+    (e: Error) => /commit needs at least one file/.test(e.message),
+  );
+});
+
 test('BUILD GATE: build_software enforces the design-before-build gate (no spec → 409), passes once designed', async () => {
   const app = (await callPlatformMcp(creator, 'create_software', { name: 'Gated app', template: 'sovereign-app' })) as App;
   // Author an epic with ONE story but NO spec yet.

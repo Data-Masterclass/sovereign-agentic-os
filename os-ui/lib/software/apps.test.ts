@@ -28,7 +28,20 @@ const {
   templateFiles,
   containerVersionsToPrune,
   REGISTRY_KEEP_VERSIONS,
+  dirListing,
+  repoHtmlUrl,
+  repoSharedByLiveApp,
+  patchAppDesign,
+  reconcileBuiltStatus,
 } = await import('./apps.ts');
+const { snapshotFiles } = await import('./snapshot.ts');
+import type { App, AppEpic } from './apps.ts';
+const { config } = await import('../core/config.ts');
+
+/** Minimal App stub — only the fields repoSharedByLiveApp reads matter. */
+function appStub(id: string, slug: string, status: 'active' | 'archived'): App {
+  return { id, slug, status, repo: { fullName: `gitea_admin/${slug}`, htmlUrl: '', seeded: [] } } as unknown as App;
+}
 
 const APP_KEY = Symbol.for('soa.apps.cache');
 const user = { id: 'u1', name: 'U1', domains: ['sales'], role: 'admin' as const };
@@ -443,4 +456,132 @@ test('moveApp: sets the folder (edit-scoped), normalises the path, and is visibl
     () => moveApp(app.id, stranger, '/elsewhere'),
     (e: Error & { status?: number }) => e.status === 403,
   );
+});
+
+test('repoHtmlUrl: the EXTERNAL browsable URL, not Forgejo’s in-cluster html_url (the repo-404 fix)', () => {
+  const base = config.forgejoConsoleUrl.replace(/\/+$/, '');
+  // Built from the external console URL + full name — never the internal ROOT_URL.
+  assert.equal(repoHtmlUrl('gitea_admin/my-app'), `${base}/gitea_admin/my-app`);
+  // No double slash when the full name carries a leading slash.
+  assert.equal(repoHtmlUrl('/gitea_admin/my-app'), `${base}/gitea_admin/my-app`);
+  // A cluster-internal host is NEVER produced from a well-formed full name.
+  assert.doesNotMatch(repoHtmlUrl('gitea_admin/my-app'), /forgejo-http:3000/);
+  // Empty full name degrades to the base console URL, not a dangling slash.
+  assert.equal(repoHtmlUrl(''), base);
+});
+
+test('dirListing: immediate children only, dirs before files, deduped', () => {
+  const files = [
+    'src/App.tsx',
+    'src/epics/README.md',
+    'src/epics/sales/lead/Lead.tsx',
+    'src/epics/sales/general/util.ts',
+    'src/template/shell.tsx',
+    'README.md',
+  ];
+  // Root: top-level files + top-level dirs, dirs first.
+  const root = dirListing(files, '');
+  assert.deepEqual(
+    root.map((e) => `${e.type}:${e.name}`),
+    ['dir:src', 'file:README.md'],
+  );
+  // A directory: its direct entries, with subdirs as `dir` (not recursed).
+  const epics = dirListing(files, 'src/epics');
+  assert.deepEqual(
+    epics.map((e) => `${e.type}:${e.name}`),
+    ['dir:sales', 'file:README.md'],
+  );
+  assert.equal(epics.find((e) => e.name === 'sales')?.path, 'src/epics/sales');
+  // A trailing slash resolves to the same directory.
+  assert.deepEqual(dirListing(files, 'src/epics/'), epics);
+  // A path matching nothing → empty (the tool turns this into a 404).
+  assert.deepEqual(dirListing(files, 'src/nope'), []);
+  // A deeper dir with only files.
+  assert.deepEqual(
+    dirListing(files, 'src/epics/sales/lead').map((e) => `${e.type}:${e.name}`),
+    ['file:Lead.tsx'],
+  );
+});
+
+// -------------------------------------------- repo-delete guard (shared slug) --
+
+test('repoSharedByLiveApp: another ACTIVE app on the same slug blocks the delete', () => {
+  const self = appStub('app_new', 'northpeak-products', 'active');
+  const peer = appStub('app_old', 'northpeak-products', 'active');
+  assert.equal(
+    repoSharedByLiveApp(self, [self, peer]),
+    'app_old',
+    'a live peer sharing the slug is returned (delete must be skipped)',
+  );
+});
+
+test('repoSharedByLiveApp: self is excluded and no peer → null (delete proceeds)', () => {
+  const self = appStub('app_solo', 'solo-app', 'active');
+  assert.equal(repoSharedByLiveApp(self, [self]), null, 'an app never blocks its own delete');
+  const other = appStub('app_other', 'a-different-slug', 'active');
+  assert.equal(repoSharedByLiveApp(self, [self, other]), null, 'a different slug does not block');
+});
+
+test('repoSharedByLiveApp: an ARCHIVED peer on the same slug does NOT block', () => {
+  const self = appStub('app_new', 'shared-slug', 'active');
+  const archived = appStub('app_arch', 'shared-slug', 'archived');
+  assert.equal(
+    repoSharedByLiveApp(self, [self, archived]),
+    null,
+    'archived peers do not veto a delete — only live apps count',
+  );
+});
+
+// -------------------------------------------- earned built-ness (phantom fix) --
+
+const epicsWithStory = (status: 'todo' | 'building' | 'done'): AppEpic[] => [
+  {
+    id: 'e1',
+    title: 'Admin',
+    stories: [
+      { id: 's1', title: 'Tenant mgmt', asA: 'a', iWant: 'b', soThat: 'c', acceptance: 'ok', status },
+    ],
+  } as unknown as AppEpic,
+];
+
+test('patchAppDesign REFUSES to flip a story to done on an app with NO committed code', async () => {
+  __resetAppsCache();
+  const owner = { id: 'eb1', name: 'EB1', domains: ['sales'], role: 'admin' as const };
+  const app = await createApp(owner, { name: 'PhantomGuard', template: 'sovereign-app' });
+  // No real commit: offline scaffold, empty seeded repo, no snapshot pages.
+  assert.notEqual(app.pipeline.forgejo, 'ok');
+  const after = await patchAppDesign(app.id, owner, { epics: epicsWithStory('done') });
+  assert.equal(after.epics?.[0].stories[0].status, 'todo', 'a self-reported done is forced back to todo — built-ness is earned');
+});
+
+test('patchAppDesign KEEPS done when the app has a real commit (forgejo ok)', async () => {
+  __resetAppsCache();
+  const owner = { id: 'eb2', name: 'EB2', domains: ['sales'], role: 'admin' as const };
+  const app = await createApp(owner, { name: 'RealCommit', template: 'sovereign-app' });
+  app.pipeline.forgejo = 'ok'; // a real repo with a landed commit
+  const after = await patchAppDesign(app.id, owner, { epics: epicsWithStory('done') });
+  assert.equal(after.epics?.[0].stories[0].status, 'done', 'a genuinely-committed app trusts the earned status');
+});
+
+test('reconcileBuiltStatus demotes phantom done/building when nothing is committed', async () => {
+  __resetAppsCache();
+  const owner = { id: 'eb3', name: 'EB3', domains: ['sales'], role: 'admin' as const };
+  const app = await createApp(owner, { name: 'HealMe', template: 'sovereign-app' });
+  // Simulate the live lie: status already persisted done, but no repo/commit exists.
+  app.epics = epicsWithStory('done');
+  const r = reconcileBuiltStatus(app);
+  assert.equal(r.demoted, 1);
+  assert.equal(app.epics?.[0].stories[0].status, 'todo', 'the phantom-built story self-corrects to its true state');
+});
+
+test('reconcileBuiltStatus is a NO-OP when the committed snapshot has story pages', async () => {
+  __resetAppsCache();
+  const owner = { id: 'eb4', name: 'EB4', domains: ['sales'], role: 'admin' as const };
+  const app = await createApp(owner, { name: 'TrulyBuilt', template: 'sovereign-app' });
+  app.epics = epicsWithStory('done');
+  // A real committed page under the story-folder convention → built-ness is genuine.
+  snapshotFiles(app.id, [{ path: 'src/epics/admin/tenant/Page.tsx', content: 'export default () => null;' }]);
+  const r = reconcileBuiltStatus(app);
+  assert.equal(r.demoted, 0, 'a real committed page is left alone');
+  assert.equal(app.epics?.[0].stories[0].status, 'done');
 });

@@ -117,3 +117,29 @@ test('globalThis pin: create survives a fresh cards() call', async () => {
   const { getReviewCard } = await import('./review.ts');
   assert.ok(getReviewCard(res.card.id) !== null);
 });
+
+test('HONESTY: a card whose app no longer exists → actionable 409 (not bare "App not found"), and the stale card is auto-retired', async () => {
+  const app = await createApp(creator, { name: 'Ghost App', template: 'nextjs-supabase' });
+  const res = await requestDeploy(app.id, creator);
+  assert.equal(res.kind, 'review');
+  if (res.kind !== 'review') return;
+
+  // Simulate the multi-session churn: the app record is gone (deleted/re-created
+  // with a new id) but this review card + its governance approval survive.
+  const { removeAppInternal } = await import('./apps.ts');
+  await removeAppInternal(app.id);
+
+  // Deciding now must NOT leak the bare "App not found" the UI showed verbatim; it
+  // must explain the app is gone and tell the user to re-request on the current app.
+  await expectStatus(
+    decideDeploy(res.card.id, builder, 'approve'),
+    409,
+    /no longer exists|re-created|Approve & go live/i,
+  );
+
+  // The stale card is auto-retired (decided), so a second press does not re-run the
+  // dead lookup — it reports the already-decided state instead of blocking forever.
+  const { getReviewCard } = await import('./review.ts');
+  const card = getReviewCard(res.card.id);
+  assert.ok(card && card.decision !== 'pending', 'orphaned card is auto-retired (no longer pending)');
+});

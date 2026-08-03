@@ -7,6 +7,7 @@ import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
+import BusyProgress from '@/components/core/BusyProgress';
 import { useApi } from '@/lib/useApi';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
@@ -413,6 +414,19 @@ function SoftwareInner() {
                   {creating ? <span className="spin" /> : 'Create & build'}
                 </button>
               </div>
+              {/* While the create runs, mirror the OS-wide core progress surface (as on a
+                  metric/dashboard save): one honest live step + elapsed. The route is a
+                  single request that provisions the app's Forgejo repo, sets the registry
+                  secret and seeds the scaffold server-side — there are no streamed
+                  sub-milestones to observe, so we name what the server is doing rather than
+                  fake checkmarks. */}
+              {creating ? (
+                <BusyProgress
+                  label={`Creating ${name.trim() || 'your app'}`}
+                  detail="Provisioning its in-cluster Forgejo repository, wiring the build pipeline and seeding the scaffold"
+                  typicalSeconds={20}
+                />
+              ) : null}
               <p className="sw-create-note">
                 The template only sets the starting point — describe the rest in chat and the build
                 agent takes it from there. A sovereign Forgejo repo is created in-cluster; if git

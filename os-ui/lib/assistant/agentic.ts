@@ -145,6 +145,18 @@ const DEFAULT_MAX_REPEATED_CALLS = 4;
 const DEFAULT_MAX_CONSECUTIVE_TOOL_ERRORS = 4;
 
 /**
+ * How many times a single tool may return a TOOL-SHAPE error (a machine-actionable
+ * 400 the loop already feeds back — e.g. `commit` with no `files`) before, if a
+ * bounded reasoning-tier escalation is wired, we retry the run ONCE on that stronger
+ * model. This is the "standard model could not complete the commit" case: the exec
+ * tier keeps emitting the same malformed call despite the corrective feedback, so we
+ * escalate once — honestly labelled, never silent, never for the happy path, never
+ * more than once per run. Below the errorStreak break so a genuinely-stuck loop still
+ * stops gracefully if escalation is unavailable or already spent.
+ */
+const DEFAULT_ESCALATE_AFTER_TOOL_ERRORS = 2;
+
+/**
  * Deterministic signature for a tool call: name + args with keys sorted (so arg
  * order never matters) and string values whitespace-normalized. Only EXACT repeats
  * collide; genuinely-distinct calls keep their own signature and run normally.
@@ -396,6 +408,20 @@ export async function runAgentic(opts: {
   onStep?: (step: AgenticStep) => void;
   /** Optional hook — called once with the plan text as soon as PLAN completes. */
   onPlan?: (plan: string) => void;
+  /**
+   * BOUNDED reasoning escalation (opt-in). When a single tool returns a TOOL-SHAPE
+   * error {@link DEFAULT_ESCALATE_AFTER_TOOL_ERRORS} times in this run and this model
+   * is set, the ACT loop switches to it for the rest of the run — ONCE, never for the
+   * happy path. Unset (the default) = no escalation, exactly the prior behaviour.
+   */
+  escalateActModel?: string;
+  /**
+   * Called once, the moment escalation fires, with the tool that kept failing and the
+   * model being escalated to. The build route plumbs this to a labelled activity line
+   * ("standard model could not complete the commit — retrying once on the reasoning
+   * model") so the switch is always visible, never silent.
+   */
+  onEscalate?: (info: { tool: string; from: string; to: string; failures: number }) => void;
 }): Promise<AgenticResult> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const budget = opts.budget ?? DEFAULT_MESSAGE_BUDGET;
@@ -436,14 +462,31 @@ export async function runAgentic(opts: {
   let errorStreakTool = '';
   let errorStreak = 0;
 
+  // Bounded reasoning escalation state. `actModel` starts on the injected exec tier and
+  // is swapped ONCE to `escalateActModel` when a tool has failed on a shape error enough
+  // times. `toolErrorCounts` counts TOTAL (not just consecutive) errors per tool this run
+  // so the trigger survives an interleaved success — the point is "this write kept failing
+  // despite the corrective feedback", not "failed N in a row".
+  let actModel = opts.actModel;
+  let escalated = false;
+  const toolErrorCounts = new Map<string, number>();
+
   let iterations = 0;
   let finalText = '';
   let forcedStop = false;
+  // OUTER retry: normally runs the ACT loop once. If it exhausts its step budget (cap or
+  // forcedStop) WITHOUT a final answer and a bounded reasoning escalation is wired+unused,
+  // we escalate the model, reset the per-attempt counters, and give the stronger model ONE
+  // fresh pass over the SAME transcript — the "standard model ran out of steps, retry once
+  // on reasoning" path from the coordinator's budget-exhaustion evidence. At most one such
+  // retry per run (guarded by `escalated`).
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
   while (iterations < maxIterations) {
     let completion: LlmCompletion;
     try {
       completion = await opts.llm({
-        model: opts.actModel,
+        model: actModel,
         messages: budgetMessages(messages, budget),
         tools: react ? undefined : wire,
         temperature: 0.2,
@@ -525,6 +568,26 @@ export async function runAgentic(opts: {
       steps.push(step);
       opts.onStep?.(step);
 
+      // BOUNDED reasoning escalation: if a tool keeps returning a shape error despite the
+      // corrective feedback we already fed back, retry the run ONCE on the stronger model.
+      // Fires at most once per run, only when an escalation model is wired, and is always
+      // surfaced via `onEscalate` so the tier switch is labelled — never silent.
+      if (out.isError) {
+        const failures = (toolErrorCounts.get(call.name) ?? 0) + 1;
+        toolErrorCounts.set(call.name, failures);
+        if (
+          !escalated &&
+          opts.escalateActModel &&
+          opts.escalateActModel !== actModel &&
+          failures >= DEFAULT_ESCALATE_AFTER_TOOL_ERRORS
+        ) {
+          escalated = true;
+          const from = actModel;
+          actModel = opts.escalateActModel;
+          opts.onEscalate?.({ tool: call.name, from, to: actModel, failures });
+        }
+      }
+
       // Track a CONSECUTIVE same-tool error streak (varied-args error loop). A success,
       // or a switch to a different tool, resets it. On the Nth in a row, inject a firm
       // note as the tool result so the model sees a stop instruction, then break to the
@@ -557,6 +620,33 @@ export async function runAgentic(opts: {
     }
   }
 
+  // BUDGET-EXHAUSTION escalation: the standard tier ran out of steps (or was force-stopped)
+  // without finishing. If a reasoning tier is wired and we have NOT yet escalated, retry the
+  // whole ACT loop ONCE on it — a fresh step budget over the same transcript, with a nudge to
+  // finish the buildable work (commit) rather than narrate. Bounded: `escalated` guards it to
+  // one retry. Otherwise fall through to the honest cap synthesis.
+  if (!finalText && opts.escalateActModel && !escalated && opts.escalateActModel !== actModel) {
+    escalated = true;
+    const from = actModel;
+    actModel = opts.escalateActModel;
+    opts.onEscalate?.({ tool: 'run', from, to: actModel, failures: iterations });
+    messages.push({
+      role: 'user',
+      content:
+        'The previous model reached its tool-step budget WITHOUT completing the build. Do NOT ' +
+        'write a plan or instructions essay. Finish the buildable work now: author the code and ' +
+        'call `commit` with the files this turn. If you genuinely cannot commit, say so in one line.',
+    });
+    iterations = 0;
+    forcedStop = false;
+    repeatedCalls = 0;
+    errorStreak = 0;
+    errorStreakTool = '';
+    continue; // re-enter the inner ACT loop on the escalated model
+  }
+  break; // outer retry done
+  }
+
   if (!finalText && (iterations >= maxIterations || forcedStop)) {
     // Cap hit mid-work: don't leave the node with a bare notice. Ask the model for
     // ONE final no-tools synthesis of everything it already gathered (the transcript
@@ -564,7 +654,7 @@ export async function runAgentic(opts: {
     // real, useful answer — a downstream teammate/user gets a conclusion, not a stub.
     try {
       const synth = await opts.llm({
-        model: opts.actModel,
+        model: actModel,
         messages: budgetMessages(
           [
             ...messages,

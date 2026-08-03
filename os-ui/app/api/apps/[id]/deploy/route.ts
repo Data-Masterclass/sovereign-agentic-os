@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { startPreview, requestDeploy, reconcileDeployStatus } from '@/lib/software/review';
+import { getEditableAppForUser, healAppRepo } from '@/lib/software/apps';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +36,14 @@ export const POST = withRoute<{ id: string }, { target?: { epicId?: string; stor
   if (action === 'preview') {
     const { app, runnerNote } = await startPreview(id, user);
     return NextResponse.json({ app, runnerNote });
+  }
+  if (action === 'heal-repo') {
+    // Explicit, audited recovery for an app whose Forgejo repo vanished (404):
+    // re-provision it from the scaffold + any surviving snapshot so CI can rebuild.
+    // Edit-gated (owner or in-domain domain_admin+) — repo mutation, not a read.
+    const app = await getEditableAppForUser(id, user);
+    const heal = await healAppRepo(app);
+    return NextResponse.json({ app, heal }, { status: heal.ok ? 200 : 502 });
   }
   const result = await requestDeploy(id, user);
   return NextResponse.json(result);

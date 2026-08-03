@@ -118,7 +118,7 @@ test('identical content is SKIPPED and the step says no push → no CI run', asy
   }
 });
 
-test('a rejected write is reported as a FAILURE — 422 is never success', async () => {
+test('a rejected write is reported as a FAILURE — 422 is never success (commitToApp THROWS)', async () => {
   const app = await createApp(dev, { name: 'Honest Fail', template: 'nextjs-supabase' });
   const fake = fakeForgejo((method, url) => {
     if (url.endsWith('/api/v1/version')) return { status: 200, json: { version: '11.0.0' } };
@@ -129,9 +129,14 @@ test('a rejected write is reported as a FAILURE — 422 is never success', async
     return undefined;
   });
   try {
-    const { step } = await commitToApp(app.id, dev, [{ path: 'README.md', content: 'new' }], 'try');
-    assert.equal(step.ok, false, 'a 422 write must fail the step (the old code counted it as success)');
-    assert.match(step.detail, /FAILED: README\.md/);
+    // A backend-rejected commit must NOT masquerade as success: commitToApp now THROWS
+    // (502) so the agent loop sees a real tool error and NOTHING phantom-persists — the
+    // "story shows built but nothing landed" root fix. The old code returned {step.ok:false}
+    // but still snapshotted/persisted, which fed the phantom-built diff.
+    await assert.rejects(
+      commitToApp(app.id, dev, [{ path: 'README.md', content: 'new' }], 'try'),
+      /commit did not land.*FAILED: README\.md/,
+    );
   } finally {
     fake.restore();
   }
@@ -180,6 +185,26 @@ test('actions unit disabled AND heal rejected → explicit disabled + repair hin
     assert.equal(r.status, 'disabled');
     assert.match(r.note ?? '', /Settings → Units/, 'the failure must carry a repair hint');
     assert.equal(app.pipeline.actions, 'disabled');
+  } finally {
+    fake.restore();
+  }
+});
+
+test('repo 404 (vanished) → forgejo AND actions downgraded to failing; no green claimed', async () => {
+  const app = await liveApp('Vanished Repo');
+  // Precondition: a live app starts with forgejo 'ok' (the lie we are fixing).
+  app.pipeline.forgejo = 'ok';
+  app.pipeline.actions = 'ok';
+  const fake = fakeForgejo((method, url) => {
+    if (method === 'GET' && url.endsWith(repoUrl(app))) return { status: 404, json: { message: 'not found' } };
+    return undefined;
+  });
+  try {
+    const r = await refreshActionsStage(app, { force: true });
+    assert.equal(r.status, 'failing', 'a 404 repo cannot be ok');
+    assert.match(r.note ?? '', /no longer exists|404|heal/i, 'the note names the missing repo + the fix');
+    assert.equal(app.pipeline.forgejo, 'failing', 'the scaffold stage stops claiming ok for a gone repo');
+    assert.equal(app.pipeline.actions, 'failing', 'actions is failing too — CI cannot build');
   } finally {
     fake.restore();
   }
@@ -351,6 +376,140 @@ test('latest run SKIPPED → pending (honest in-progress note, not ok)', async (
     assert.match(r.note ?? '', /not finished/, 'the note must surface the status so the operator knows');
     assert.equal(app.pipeline.actions, 'pending');
     assert.ok(!fake.calls.some((c) => c.method === 'PUT' && c.url.includes('/actions/secrets/')), 'no heal for a skipped run');
+  } finally {
+    fake.restore();
+  }
+});
+
+// -------------------------------------------- 3. commit auto-heal (repo vanished)
+
+/**
+ * The honest-failure LOOP fix: when the app's Forgejo repo has VANISHED (a
+ * repo-level 404), a commit fails honestly ("committed 0/N … the app is
+ * unchanged") but nothing re-provisions the repo, so every retry fails the same
+ * way. `commitToApp` now distinguishes a repo-level 404 (heal-able) from a
+ * per-file 404 / sha conflict (never heal), self-heals the repo ONCE via
+ * `healAppRepo`, and RETRIES the commit once.
+ */
+
+const versionOk = (url: string) => url.endsWith('/api/v1/version');
+const repoRoot = (slug: string) => new RegExp(`/api/v1/repos/[^/]+/${slug}$`);
+
+test('commit into a VANISHED repo → auto-heal + retry lands (repo-404 ≠ file-404)', async () => {
+  const app = await createApp(dev, { name: 'Heal Then Commit', template: 'sovereign-app' });
+  // Model the repo coming into existence via heal: the repo-create POST flips it on.
+  let repoExists = false;
+  const fake = fakeForgejo((method, url) => {
+    if (versionOk(url)) return { status: 200, json: { version: '11.0.0' } };
+    // Repo-existence probe (both the backend's classifier and healAppRepo use it).
+    if (method === 'GET' && repoRoot(app.slug).test(url)) {
+      return repoExists ? { status: 200, json: { full_name: app.repo.fullName, has_actions: true } } : { status: 404, json: { message: 'not found' } };
+    }
+    // healAppRepo re-creates the repo (POST /user/repos) — flip existence on.
+    if (method === 'POST' && url.endsWith('/api/v1/user/repos')) {
+      repoExists = true;
+      return { status: 201, json: { full_name: app.repo.fullName } };
+    }
+    // Content reads/writes: 404 while the repo is gone, succeed once it exists.
+    if (contentsOf(url) && method === 'GET') {
+      return repoExists ? { status: 404, json: { message: 'file not found' } } : { status: 404, json: { message: 'repo not found' } };
+    }
+    if (contentsOf(url) && (method === 'POST' || method === 'PUT')) {
+      return repoExists ? { status: 201, json: { commit: { sha: 'c-heal' } } } : { status: 404, json: { message: 'repo not found' } };
+    }
+    return undefined; // actions-secret PUTs etc. default to 200
+  });
+  try {
+    const { app: after, step } = await commitToApp(
+      app.id,
+      dev,
+      [{ path: 'README.md', content: 'healed then committed' }],
+      'rebuild story',
+    );
+    // The repo was re-created exactly once, then the commit succeeded on retry.
+    assert.ok(fake.calls.some((c) => c.method === 'POST' && c.url.endsWith('/api/v1/user/repos')), 'heal re-provisioned the vanished repo');
+    assert.equal(step.ok, true, 'the retried commit lands');
+    assert.match(step.detail, /committed \d+\/\d+/);
+    assert.ok(after, 'the app record is returned (commit persisted)');
+  } finally {
+    fake.restore();
+  }
+});
+
+test('heal that FAILS names the true state — never a bare per-file FAILED list', async () => {
+  const app = await createApp(dev, { name: 'Heal Fails', template: 'sovereign-app' });
+  const fake = fakeForgejo((method, url) => {
+    if (versionOk(url)) return { status: 200, json: { version: '11.0.0' } };
+    if (method === 'GET' && repoRoot(app.slug).test(url)) return { status: 404, json: { message: 'not found' } };
+    // Re-provision is DENIED (e.g. quota / perms) — heal cannot recover the repo.
+    if (method === 'POST' && url.endsWith('/api/v1/user/repos')) return { status: 403, json: { message: 'forbidden' } };
+    if (contentsOf(url)) return { status: 404, json: { message: 'repo not found' } };
+    return undefined;
+  });
+  try {
+    await assert.rejects(
+      commitToApp(app.id, dev, [{ path: 'README.md', content: 'x' }], 'try'),
+      (e: Error) => {
+        assert.match(e.message, /repository is missing and could not be re-provisioned/, 'the error names the TRUE state');
+        assert.doesNotMatch(e.message, /^commit did not land/, 'not a bare per-file FAILED list');
+        return true;
+      },
+    );
+  } finally {
+    fake.restore();
+  }
+});
+
+test('a per-file SHA CONFLICT (422) does NOT trigger heal — repo is fine', async () => {
+  const app = await createApp(dev, { name: 'Sha Not Heal', template: 'sovereign-app' });
+  const fake = fakeForgejo((method, url) => {
+    if (versionOk(url)) return { status: 200, json: { version: '11.0.0' } };
+    // The repo EXISTS; the file exists with a sha; the UPDATE is rejected 422.
+    if (method === 'GET' && repoRoot(app.slug).test(url)) return { status: 200, json: { has_actions: true } };
+    if (contentsOf(url) && method === 'GET') {
+      return { status: 200, json: { type: 'file', sha: 'blob-stale', encoding: 'base64', content: b64('old') } };
+    }
+    if (contentsOf(url) && method === 'PUT') return { status: 422, json: { message: 'sha mismatch' } };
+    return undefined;
+  });
+  try {
+    await assert.rejects(
+      commitToApp(app.id, dev, [{ path: 'README.md', content: 'new' }], 'try'),
+      (e: Error) => {
+        assert.match(e.message, /commit did not land/, 'a sha conflict is an honest per-file failure, not a heal');
+        assert.match(e.message, /sha conflict/, 'the reason names the sha conflict so the agent can re-read + retry');
+        return true;
+      },
+    );
+    // Heal must NOT have fired — no repo re-create for a healthy repo.
+    assert.ok(!fake.calls.some((c) => c.method === 'POST' && c.url.endsWith('/api/v1/user/repos')), 'no re-provision for a sha conflict');
+  } finally {
+    fake.restore();
+  }
+});
+
+test('empty-snapshot heal still seeds the FULL scaffold incl. the CI workflow', async () => {
+  // For an app whose in-process snapshot died with an old pod, healAppRepo has
+  // nothing to restore beyond the template — it MUST re-seed the whole scaffold
+  // (Dockerfile, app.yaml, AND `.forgejo/workflows/ci.yml`) so the next commit +
+  // CI build works from a clean base.
+  const { healAppRepo } = await import('@/lib/software/apps');
+  const app = await createApp(dev, { name: 'Empty Snap Heal', template: 'sovereign-app' });
+  app.mode = 'live'; // clusterless createApp lands offline; heal needs a live repo
+  const fake = fakeForgejo((method, url) => {
+    if (versionOk(url)) return { status: 200, json: { version: '11.0.0' } };
+    if (method === 'GET' && repoRoot(app.slug).test(url)) return { status: 404, json: { message: 'not found' } };
+    if (method === 'POST' && url.endsWith('/api/v1/user/repos')) return { status: 201, json: { full_name: app.repo.fullName } };
+    // Every seed contents-POST succeeds.
+    if (contentsOf(url)) return { status: 201, json: { content: {} } };
+    return undefined;
+  });
+  try {
+    const heal = await healAppRepo(app);
+    assert.equal(heal.ok, true);
+    assert.equal(heal.action, 'recreated');
+    assert.ok(heal.seeded.includes('.forgejo/workflows/ci.yml'), 'the CI workflow must be seeded so a later commit can build');
+    assert.ok(heal.seeded.length > 1, 'the FULL scaffold is seeded, not a bare README');
   } finally {
     fake.restore();
   }

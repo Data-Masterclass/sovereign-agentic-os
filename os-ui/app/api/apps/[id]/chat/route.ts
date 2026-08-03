@@ -10,7 +10,7 @@ import { diffTrees, type FileChange } from '@/lib/software/build-changeset';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
 import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
 import { toolCallToLine, committedSummaryLine, type ActivityLine } from '@/lib/software/build-activity';
-import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, READ_ONLY_MODE_TOOLS, type ChatRunMode } from '@/lib/software/chat-modes';
+import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, type ChatRunMode } from '@/lib/software/chat-modes';
 import { defineContextBlock, specPromptLines as specLines } from '@/lib/software/define-context';
 import type { BuildTarget } from '@/lib/software/build-target';
 
@@ -281,14 +281,35 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       // persistence + backward-compat.
       let finalText = '';
       let changes: FileChange[] = [];
+      // The tier this turn ran on for the UI note — starts at the mode's tier and is
+      // upgraded to reasoning if a bounded escalation fires (honestly reflected).
+      let ranRole = modelRoleForMode(mode);
       try {
         const result = await runTabAgent({
           user,
           tab: 'software',
           messages: clean,
           extraContext: appContext(app, mode, target),
+          // This run is scoped to THIS app: bind its appId into every tool call so the
+          // model never has to repeat it (an omitted/empty id is filled in, not 404'd —
+          // the `commit({})` → not_found fix) and a mismatched id is rejected loudly.
+          boundArgs: { appId: app.id },
           // Plan/test/review are read-only — enforced by the harness, not just the prompt.
           toolNames: isReadOnlyMode(mode) ? READ_ONLY_MODE_TOOLS : undefined,
+          // BUILD only: if the STANDARD tier cannot complete its commit (a repeated
+          // tool-shape error), retry ONCE on the reasoning model — bounded, labelled.
+          escalateActModel: mode === 'build' ? roleModel('reasoning') : undefined,
+          onEscalate: ({ tool }) => {
+            ranRole = 'reasoning';
+            send({
+              type: 'activity',
+              line: {
+                tool,
+                text: `standard model could not complete the ${tool} — retrying once on the reasoning model`,
+                isError: false,
+              },
+            });
+          },
           onPlan: (plan) => send({ type: 'plan', text: plan }),
           onStep: (step) => {
             const line: ActivityLine = toolCallToLine(step);
@@ -332,6 +353,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         content: content || '(no content)',
         finalText: finalText || content || '(no content)',
         model,
+        // The tier that ACTUALLY ran this turn — reasoning if a bounded escalation fired,
+        // else the mode's tier. Honest, not the pre-run assumption.
+        tier: tierNote(ranRole),
         mode,
         changes,
       });

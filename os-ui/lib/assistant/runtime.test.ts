@@ -5,8 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { toolsForTab } from '@/lib/mcp/server';
-import { runTabAgent, parseLlmMessage, parseLlmUsage, parseHarmonyToolCall, renderAssistantText } from './runtime.ts';
-import type { LlmCall } from './agentic.ts';
+import { runTabAgent, parseLlmMessage, parseLlmUsage, parseHarmonyToolCall, renderAssistantText, bindToolArgs, boundExecutor } from './runtime.ts';
+import type { LlmCall, ToolExecutor } from './agentic.ts';
 
 const participant: CurrentUser = { id: 'u-part', name: 'Pat', domains: ['sales'], role: 'creator' };
 
@@ -90,6 +90,59 @@ test('a Builder-only tool is role-gated for a participant (surfaced as a tool er
   assert.equal(res.steps.length, 1);
   assert.equal(res.steps[0].tool, 'decide_deploy');
   assert.equal(res.steps[0].isError, true);
+});
+
+test('bindToolArgs fills in an OMITTED bound arg (the commit({}) empty-args fix)', () => {
+  // The model issues commit({}) with no appId; the run is scoped to one app, so the
+  // bound appId is filled in server-side instead of reaching the store as an empty id.
+  const b = bindToolArgs({ files: [] }, { appId: 'app_bound' });
+  assert.equal(b.error, undefined);
+  assert.deepEqual(b.args, { files: [], appId: 'app_bound' });
+});
+
+test('bindToolArgs fills in an EMPTY-STRING bound arg too', () => {
+  const b = bindToolArgs({ appId: '' }, { appId: 'app_bound' });
+  assert.equal(b.error, undefined);
+  assert.equal(b.args.appId, 'app_bound');
+});
+
+test('bindToolArgs accepts a MATCHING model-supplied value (idempotent)', () => {
+  const b = bindToolArgs({ appId: 'app_bound', path: 'x' }, { appId: 'app_bound' });
+  assert.equal(b.error, undefined);
+  assert.deepEqual(b.args, { appId: 'app_bound', path: 'x' });
+});
+
+test('bindToolArgs REJECTS a mismatched value loudly (no cross-scope write)', () => {
+  const b = bindToolArgs({ appId: 'app_OTHER' }, { appId: 'app_bound' });
+  assert.match(String(b.error), /scoped to appId app_bound/);
+  assert.match(String(b.error), /app_OTHER/);
+});
+
+test('boundExecutor fills an empty-args call with the bound id before the governed dispatch', async () => {
+  // The model calls read_app_files({}); the wrapped executor must reach the base
+  // (governed) dispatch WITH the bound appId — not an empty one that 404s.
+  let dispatched: Record<string, unknown> | null = null;
+  const base: ToolExecutor = async (_name, args) => {
+    dispatched = args;
+    return { text: 'ok', isError: false };
+  };
+  const exec = boundExecutor(base, { appId: 'app_bound' });
+  const out = await exec('read_app_files', {});
+  assert.equal(out.isError, false);
+  assert.deepEqual(dispatched, { appId: 'app_bound' });
+});
+
+test('boundExecutor rejects a mismatched id BEFORE the governed dispatch (no cross-app write)', async () => {
+  let reached = false;
+  const base: ToolExecutor = async () => {
+    reached = true;
+    return { text: 'ok', isError: false };
+  };
+  const exec = boundExecutor(base, { appId: 'app_bound' });
+  const out = await exec('commit', { appId: 'app_OTHER', files: [] });
+  assert.equal(out.isError, true);
+  assert.match(out.text, /scoped to appId app_bound/i);
+  assert.equal(reached, false); // the guard short-circuited the base executor
 });
 
 test('renderAssistantText assembles plan → actions → result for the chat UI', () => {

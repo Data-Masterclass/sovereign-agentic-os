@@ -390,6 +390,26 @@ export default function SoftwareBuilder({
     }
   }
 
+  // Manual recovery for an app whose Forgejo repo vanished (pipeline.forgejo ===
+  // 'failing', the honest repo-404 signal). Calls the existing audited heal endpoint;
+  // a normal build then commits + rebuilds from the re-provisioned scaffold.
+  async function healRepo() {
+    if (busy) return;
+    setBusy(true);
+    setDeployMsg('');
+    try {
+      const res = await fetch(`/api/apps/${app.id}/deploy?action=heal-repo`, { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) setDeployMsg(`✗ ${body.error ?? body.heal?.detail ?? 'Heal failed.'}`);
+      else setDeployMsg(`✓ ${body.heal?.detail ?? 'Repository re-provisioned.'} Re-run your build to rebuild from the recovered scaffold.`);
+      onReload();
+    } catch (e) {
+      setDeployMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function promote() {
     if (busy) return;
     setBusy(true);
@@ -581,11 +601,17 @@ export default function SoftwareBuilder({
               publishLabel={publishLabel} publishDisabled={publishDisabled} inReview={inReview}
               onPublish={() => deployAction()} deployMsg={deployMsg}
               toolOut={toolOut} toolNote={toolNote} onCallTool={callTool}
-              onOpenRepo={() => app.repo.fullName && openTool('forgejo', `${app.name} · repo`, app.repo.fullName)}
+              onOpenRepo={() => {
+                // Open the EXTERNAL browsable repo URL directly — Forgejo's console is a
+                // full app whose root-relative assets/redirects break inside the embedding
+                // proxy (the 404 the user hit). The htmlUrl is now the external host.
+                if (app.repo.htmlUrl) window.open(app.repo.htmlUrl, '_blank', 'noreferrer');
+                else if (app.repo.fullName) openTool('forgejo', `${app.name} · repo`, app.repo.fullName);
+              }}
               canPromoteUI={canPromoteUI} onPromote={promote}
               canDemoteUI={canDemoteUI} demoteLabel={demoteLabel} confirmDemoteLabel={confirmDemoteLabel}
               confirmDemote={confirmDemote} setConfirmDemote={setConfirmDemote} onDemote={demote}
-              busy={busy} onLifecycle={lifecycle} msg={msg}
+              busy={busy} onLifecycle={lifecycle} msg={msg} onHealRepo={healRepo}
             />
           ) : null}
         </StageShell>
@@ -1584,7 +1610,7 @@ function PublishStage({
   publishLabel, publishDisabled, inReview, onPublish, deployMsg,
   toolOut, toolNote, onCallTool, onOpenRepo,
   canPromoteUI, onPromote, canDemoteUI, demoteLabel, confirmDemoteLabel,
-  confirmDemote, setConfirmDemote, onDemote, busy, onLifecycle, msg,
+  confirmDemote, setConfirmDemote, onDemote, busy, onLifecycle, msg, onHealRepo,
 }: {
   app: SoftwareApp;
   surface: { ui: boolean; api: boolean };
@@ -1612,6 +1638,7 @@ function PublishStage({
   busy: boolean;
   onLifecycle: (action: string) => void;
   msg: string;
+  onHealRepo: () => void;
 }) {
   const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
   const dep = deployBadge(app.deploy.state);
@@ -1742,6 +1769,17 @@ function PublishStage({
                 </div>
               </div>
 
+              {/* HONEST "no app link yet" reason — a UI app with no served URL is not a
+                  silent blank: say WHY (the image build/runner hasn't produced a URL) and
+                  point at the pipeline below, so Publish never looks broken when it's pending. */}
+              {surface.ui && !app.deploy.previewUrl ? (
+                <p className="hint" style={{ marginTop: 6 }}>
+                  {app.deploy.state === 'live'
+                    ? 'Published — no live app URL yet: the container image build must succeed and the runner start serving before the link appears. Track the stages below (a failed stage shows the reason).'
+                    : 'No app link yet — the app goes live after Publish is approved and the image build succeeds. Track progress in the stages below.'}
+                </p>
+              ) : null}
+
               {/* ── Live DEPLOY stepper — the SAME shared pipeline-view derivation Test reads,
                    rendered on the core ProgressStepper so a deploy/go-live is VISIBLE as it
                    runs (Scaffold → Build image → Registry → Deploy → Live), never a silent
@@ -1755,6 +1793,18 @@ function PublishStage({
                   commentary={pipe.commentary}
                 />
               </div>
+
+              {/* REPO MISSING → manual heal. `pipeline.forgejo === 'failing'` is the honest
+                  repo-404 signal (refreshActionsStage downgrades a vanished repo). Re-provisions
+                  the scaffold so a subsequent build commits + rebuilds from a clean base. */}
+              {app.pipeline.forgejo === 'failing' ? (
+                <div className="hint" style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span>The app’s repository is missing (404) — CI cannot build until it is re-provisioned.</span>
+                  <button className="btn ghost sm" onClick={onHealRepo} disabled={busy} title="Re-provision the missing repo from the scaffold + any surviving snapshot">
+                    {busy ? <span className="spin" /> : 'Heal repository'}
+                  </button>
+                </div>
+              ) : null}
             </div>
 
             {/* ── Governed tool-call surface — the app's MCP capabilities + real call output ── */}

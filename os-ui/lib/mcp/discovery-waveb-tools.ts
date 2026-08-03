@@ -26,6 +26,7 @@ import {
   readAppFileForViewer,
   templateFiles,
   refreshActionsStage,
+  dirListing,
 } from '@/lib/software/apps';
 import { forgejoReachable, getSnapshot } from '@/lib/software/server';
 import { getReviewCard, listReviewCards, PREVIEW_PENDING_NOTE } from '@/lib/software/review';
@@ -305,12 +306,12 @@ export const waveBReadTools: McpTool[] = [
     tab: 'software',
     minRole: 'creator',
     description:
-      'Read an app’s FILE TREE — or one file’s content when `path` is given. The read-back counterpart of `commit`: what you committed is what you read. Purpose: iterate on the real code instead of re-guessing it. Before: list_software / get_software (you must be able to SEE the app — the same gate). After: commit changed files, start_preview, get_software_status. Governance: read-only under YOUR identity; an unseeable app is a typed not_found (no existence leak). Honesty: reads the live Forgejo repo when reachable (mode "live"); otherwise the last tree committed through the governed commit door — or the template seed for a fresh app — honestly labelled mode "offline-mock". Large files are truncated at ~24k characters with an explicit note.',
+      'Read an app’s FILE TREE — or, when `path` is given, one FILE’s content (kind "file") OR a DIRECTORY’s immediate entries (kind "dir"). The read-back counterpart of `commit`: what you committed is what you read. Purpose: iterate on the real code instead of re-guessing it. Before: list_software / get_software (you must be able to SEE the app — the same gate). After: commit changed files, start_preview, get_software_status. Governance: read-only under YOUR identity; an unseeable app is a typed not_found (no existence leak). Honesty: reads the live Forgejo repo when reachable (mode "live"); otherwise the last tree committed through the governed commit door — or the template seed for a fresh app — honestly labelled mode "offline-mock". Large files are truncated at ~24k characters with an explicit note.',
     inputSchema: {
       type: 'object',
       properties: {
         appId: { type: 'string', description: 'App id from list_software.' },
-        path: { type: 'string', description: 'Optional file path — returns that file’s content instead of the tree.' },
+        path: { type: 'string', description: 'Optional. A FILE path returns its content; a DIRECTORY path returns its entries (drill down); omit it for the whole tree.' },
       },
       required: ['appId'],
       examples: [{ appId: 'app_ab12cd34' }, { appId: 'app_ab12cd34', path: 'app.yaml' }],
@@ -318,16 +319,21 @@ export const waveBReadTools: McpTool[] = [
     call: async (user, args) => {
       const appId = str(args.appId).trim();
       if (!appId) fail('read_app_files needs an `appId` (from list_software)', 400);
-      const path = str(args.path).trim();
+      const path = str(args.path).trim().replace(/\/+$/, ''); // tolerate a trailing slash
       const app = await getAppForUser(appId, user); // visibility guard (404)
       if (await forgejoReachable()) {
-        if (!path) {
-          const t = await listAppFilesForViewer(appId, user);
-          return { appId, mode: 'live', branch: t.branch, files: t.files };
+        const tree = await listAppFilesForViewer(appId, user);
+        if (!path) return { appId, mode: 'live', branch: tree.branch, files: tree.files };
+        // A DIRECTORY path returns its immediate children (never "not an editable file",
+        // the dead end the build agent hit on `src/epics`) — check the tree BEFORE the
+        // file read so a directory is answered with a listing, not a 400.
+        const dir = dirListing(tree.files, path);
+        if (dir.length > 0 && !tree.files.includes(path)) {
+          return { appId, mode: 'live', branch: tree.branch, kind: 'dir', path, entries: dir };
         }
         const f = await readAppFileForViewer(appId, user, path);
         const body = truncated(f.content, APP_FILE_CAP);
-        return { appId, mode: 'live', path: f.path, content: body.text, contentNote: body.note, sha: f.sha };
+        return { appId, mode: 'live', kind: 'file', path: f.path, content: body.text, contentNote: body.note, sha: f.sha };
       }
       // Offline: the last tree committed through the governed commit door (or the
       // template seed for a fresh app) — labelled honestly, never a fabrication.
@@ -337,9 +343,15 @@ export const waveBReadTools: McpTool[] = [
         return { appId, mode: 'offline-mock', branch: 'main', files: tree.map((f) => f.path).sort((a, b) => a.localeCompare(b)), note };
       }
       const f = tree.find((x) => x.path === path);
-      if (!f) fail(`File not found in the app tree: ${path}`, 404);
+      if (!f) {
+        // Not a file — is it a directory? Return its listing instead of a bare 404 so
+        // the agent can drill down. Only a path matching NOTHING is a true not_found.
+        const dir = dirListing(tree.map((x) => x.path), path);
+        if (dir.length > 0) return { appId, mode: 'offline-mock', branch: 'main', kind: 'dir', path, entries: dir, note };
+        fail(`Path not found in the app tree: ${path}`, 404);
+      }
       const body = truncated(f.content, APP_FILE_CAP);
-      return { appId, mode: 'offline-mock', path: f.path, content: body.text, contentNote: body.note, note };
+      return { appId, mode: 'offline-mock', kind: 'file', path: f.path, content: body.text, contentNote: body.note, note };
     },
   },
   {
@@ -404,6 +416,8 @@ export const waveBReadTools: McpTool[] = [
           pipeline: app.pipeline,
           ...(actions.note ? { actionsNote: actions.note } : {}),
           repo: app.repo.fullName,
+          // htmlUrl is healed to the EXTERNAL browsable URL on load (hydrateAppDoc),
+          // so even apps scaffolded before the fix surface a link that resolves.
           repoUrl: app.repo.htmlUrl,
           lastCommit: lastCommit ? { message: lastCommit.content, at: lastCommit.at } : null,
           updatedAt: app.updatedAt,

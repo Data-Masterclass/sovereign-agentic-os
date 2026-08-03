@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { createApp, getAppForUser, persistApp } from '@/lib/software/apps';
-import { requestDeploy, reconcileDeployApproval } from './review.ts';
+import { requestDeploy, reconcileDeployApproval, reconcileDeployStatus } from './review.ts';
+import type { RunnerK8s } from './runner.ts';
 import { decide, listApprovals, __resetApprovals } from '@/lib/governance/approvals';
 
 /**
@@ -84,6 +85,71 @@ test('RECONCILE: no-op when the approval is still pending (stays in review)', as
   assert.equal(healed, false, 'a pending approval does not heal');
   assert.equal(loaded.deploy.state, 'review', 'left in review');
   assert.equal(loaded.deploy.reviewCardId, res.card.id);
+});
+
+// -------------------------------------------------- Self-heal a missing runner --
+
+/**
+ * The runner NAMESPACE + object paths the status reconcile touches (explicit so
+ * the mock is config-independent). A recording k8s mock whose GET on the app's
+ * Deployment starts as 404 (`absent`) and — after a re-provision (POST-create) —
+ * reports a running pod, exactly like a healed transient-unreachable orphan.
+ */
+const HEAL_OPTS = { namespace: 'agentic-apps', ingressClass: 'nginx', tlsIssuer: 'letsencrypt-prod' };
+
+/** A stateful mock: the Deployment is ABSENT until it is POSTed, then RUNNING. */
+function healMockK8s(depPath: string) {
+  const calls: { method: string; path: string }[] = [];
+  let created = false;
+  const running = { spec: { replicas: 1 }, status: { readyReplicas: 1 } };
+  const client: RunnerK8s = async (method, path) => {
+    calls.push({ method, path });
+    if (method === 'GET' && path === `/api/v1/namespaces/${HEAL_OPTS.namespace}`) return { status: 200, body: {} };
+    if (method === 'POST') { if (path.endsWith('/deployments')) created = true; return { status: 201, body: {} }; }
+    if (method === 'PUT') return { status: 200, body: {} };
+    if (method === 'GET' && path === depPath) {
+      return created ? { status: 200, body: running } : { status: 404, body: {} };
+    }
+    if (method === 'GET') return { status: 404, body: {} }; // svc/ingress absent → POST-create
+    return { status: 0, body: {} };
+  };
+  return { client, calls };
+}
+
+test('SELF-HEAL: a live app whose runner is ABSENT is re-provisioned on status poll', async () => {
+  __resetApprovals();
+  // Drive an app to genuinely-live (approved) via the reconcile seam.
+  const appId = await orphanStuckApp('Self Heal Missing Runner', 'approve');
+  let app = await getAppForUser(appId, creator);
+  await reconcileDeployApproval(app);
+  assert.equal(app.deploy.state, 'live', 'app is approved-live');
+
+  const depPath = `/apis/apps/v1/namespaces/${HEAL_OPTS.namespace}/deployments/app-${app.slug}`;
+  const { client, calls } = healMockK8s(depPath);
+
+  const { status } = await reconcileDeployStatus(appId, creator, { ...HEAL_OPTS, k8s: client });
+
+  // It saw the absent runner and re-provisioned it (POSTed a Deployment), then the
+  // re-read reports the now-running pod — no fabricated URL, a real served state.
+  assert.ok(calls.some((c) => c.method === 'POST' && c.path.endsWith('/deployments')), 're-provisioned the Deployment');
+  assert.equal(status.phase, 'running', 're-read sees the healed pod running');
+  app = await getAppForUser(appId, creator);
+  assert.equal(app.pipeline.live, 'ok', 'pipeline.live flips to ok once the pod runs');
+  assert.ok(app.deploy.previewUrl, 'a served URL is now recorded');
+});
+
+test('SELF-HEAL: offline cluster (status 0) is NOT healed — stays honestly pending', async () => {
+  __resetApprovals();
+  const appId = await orphanStuckApp('Self Heal Offline', 'approve');
+  let app = await getAppForUser(appId, creator);
+  await reconcileDeployApproval(app);
+
+  // Every k8s call resolves offline (status 0) → never claims a heal or a URL.
+  const offline: RunnerK8s = async () => ({ status: 0, body: {} });
+  const { status } = await reconcileDeployStatus(appId, creator, { ...HEAL_OPTS, k8s: offline });
+  assert.equal(status.phase, 'offline');
+  app = await getAppForUser(appId, creator);
+  assert.equal(app.deploy.previewUrl ?? null, null, 'no fabricated URL when unreachable');
 });
 
 test('RECONCILE: no-op when there is NO matching approval (left unchanged)', async () => {

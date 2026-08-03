@@ -13,6 +13,92 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.55] — 2026-08-03
+
+### Fixed
+- **A commit into a vanished repository heals itself.** Per-file write failures
+  are now classified (sha-conflict / unreachable / backend); only when the
+  whole changeset failed on plain backend errors is the repo probed — a
+  repo-level 404 triggers one audited re-provision (full scaffold incl. the CI
+  workflow, even with an empty snapshot) and one retry. Sha conflicts and
+  outages can never be papered over by a heal. Errors now name the cause per
+  file instead of a bare FAILED list.
+- **"Heal repository" button** on the Publish surface when the pipeline
+  reports the repo missing — the manual fallback for the same governed heal.
+
+## [os-ui 0.6.54] — 2026-08-03
+
+### Fixed
+- **Story "built" status is now EARNED, never self-reported.** A story flips to
+  done only on an app with real committed code; a backend-rejected commit
+  throws instead of phantom-persisting; a reconcile demotes existing
+  phantom-built stories to their true state on load. The disabled Test button
+  was the honest signal all along — the badges now match it.
+- **Build turns can no longer end as an apology essay.** A file-less commit
+  gets a corrective error carrying the exact call template; the BUILD directive
+  shows the commit signature and forbids the "here's a plan you can copy"
+  wrap-up — if the agent cannot commit, the turn fails plainly with Retry.
+
+### Added
+- **Bounded reasoning escalation in Build.** If the standard model keeps
+  shape-erroring on tools or exhausts its step budget, the turn retries ONCE
+  on the reasoning model — labelled honestly in the activity feed, never
+  silent, never on the happy path.
+
+## [os-ui 0.6.53] — 2026-08-03
+
+### Fixed
+- **Orphaned deploy-approval cards self-clear.** "Approve & go live" on a card
+  whose app no longer exists (deleted/re-created across sessions) returned a
+  bare "App not found" — it now answers with an actionable message and retires
+  the stale card and its governance approval.
+- **Pipeline status can't claim "ok" on a missing repo.** A 404 repo downgrades
+  both the Forgejo and Actions stages to failing (the note said 404 while the
+  stage stayed green).
+
+### Added
+- **Repo heal + delete guard.** `POST /api/apps/[id]/deploy?action=heal-repo`
+  re-provisions a vanished Forgejo repo from scaffold + snapshot (edit-gated,
+  audited, idempotent); repo deletion now refuses to remove a repo that is
+  still the home of another active app record.
+
+## [os-ui 0.6.52] — 2026-08-03
+
+### Fixed
+- **Orphaned app runners self-heal.** If `deployApp` ran while the cluster was
+  transiently unreachable, the app stayed image-built + approved but WITHOUT a
+  runner forever ("runner unreachable"). The status reconcile now re-applies
+  the deployment idempotently when the runner is absent and the cluster is
+  reachable — never touching a running/deploying/failed runner, and never
+  "healing" what is actually offline.
+
+## [os-ui 0.6.51] — 2026-08-03
+
+### Fixed
+- **Build-stage tool ergonomics (three live failures, one root class).**
+  (1) `commit({})` no longer answers "App not found": the run's app id is now
+  BOUND server-side into every build tool call (empty → filled, mismatched →
+  rejected loudly), and a commit without files gets a corrective error the
+  agent can act on. Cross-replica ruled out (single replica + durable-mirror
+  re-hydration). (2) `read_app_files` on a directory returns the directory
+  listing (files + subdirs) instead of a dead-end rejection; empty path lists
+  the root. (3) The app's Repo link is now always built from the external
+  Forgejo URL — the API's `html_url` carried the cluster-internal host, which
+  404s in a browser; persisted apps heal on load. The repos were always there.
+- **Publish surface says why there is no app link.** The "open app" link is
+  gated on a served preview; when the app's image/runner isn't serving yet the
+  surface now states that honestly instead of showing nothing.
+
+## [os-ui 0.6.50] — 2026-08-03
+
+### Changed
+- **Creating a software app shows honest progress.** The create form now mounts
+  the core BusyProgress the moment you click — one live step naming the real
+  work (Forgejo repo provisioning, scaffold seeding, MCP profile compile) with
+  an elapsed counter — instead of a silently disabled button. The request stays
+  a single round-trip, so no fabricated checkmarks; streamed per-file
+  milestones would need an SSE create route (noted, not done).
+
 ## [os-ui 0.6.49] — 2026-08-03
 
 ### Added

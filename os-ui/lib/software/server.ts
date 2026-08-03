@@ -5,6 +5,7 @@ import 'server-only';
 import { config } from '@/lib/core/config';
 import {
   getAppByIdInternal,
+  healAppRepo,
   persistApp,
   templateFiles,
   withStatus,
@@ -107,6 +108,20 @@ function liveBackend(): PipelineBackend {
     }
   }
   /**
+   * WHY a single write failed — so the commit summary can name the true cause and
+   * `commitToApp` can tell the ONE self-healable case (the whole repo vanished)
+   * apart from a per-file problem it must NOT paper over with a re-provision:
+   *   • 'unreachable'  — Forgejo did not answer (status 0). Never guess.
+   *   • 'sha-conflict' — a PUT was rejected (422/409): stale blob sha, not repo loss.
+   *   • 'backend'      — any other non-2xx (perms, validation, 5xx).
+   * The repo-missing case is NOT decided here (one file's 404 is ambiguous — it is
+   * a brand-new file just as often as a gone repo); `putAll` confirms it once, for
+   * the whole changeset, against a repo-existence probe.
+   */
+  type WriteFail = { kind: 'unreachable' | 'sha-conflict' | 'backend'; status: number };
+  type WriteResult = 'committed' | 'unchanged' | WriteFail;
+  const isFail = (r: WriteResult): r is WriteFail => typeof r === 'object';
+  /**
    * Create-or-update ONE file as its own commit — the sha dance Forgejo requires.
    * The contents API needs the current blob `sha` on UPDATE: a PUT without it
    * fails request binding with 422 before Forgejo even looks at the file. The
@@ -115,10 +130,10 @@ function liveBackend(): PipelineBackend {
    * push, NO CI RUN, while the step still reported ok. Identical content is
    * skipped honestly (no empty commit → no phantom Actions task).
    */
-  async function put(slug: string, f: ScaffoldFile, message: string): Promise<'committed' | 'unchanged' | 'failed'> {
+  async function put(slug: string, f: ScaffoldFile, message: string): Promise<WriteResult> {
     const enc = f.path.split('/').map(encodeURIComponent).join('/');
     const cur = await api('GET', `/repos/${owner}/${slug}/contents/${enc}?ref=main`);
-    if (cur.status === 0) return 'failed'; // unreachable — never guess
+    if (cur.status === 0) return { kind: 'unreachable', status: 0 };
     const d = cur.ok
       ? (cur.data as { type?: string; sha?: string; content?: string; encoding?: string } | null)
       : null;
@@ -137,44 +152,75 @@ function liveBackend(): PipelineBackend {
         branch: 'main',
         sha,
       });
-      return res.ok ? 'committed' : 'failed';
+      if (res.ok) return 'committed';
+      // A rejected UPDATE with a sha in hand is a sha conflict (422/409), not a
+      // gone repo — the blob moved under us. Distinguish it so heal never fires.
+      const kind = res.status === 422 || res.status === 409 ? 'sha-conflict' : 'backend';
+      return { kind, status: res.status };
     }
     const res = await api('POST', `/repos/${owner}/${slug}/contents/${enc}`, {
       content: Buffer.from(f.content, 'utf8').toString('base64'),
       message,
       branch: 'main',
     });
-    return res.ok ? 'committed' : 'failed';
+    if (res.ok) return 'committed';
+    return { kind: res.status === 0 ? 'unreachable' : 'backend', status: res.status };
+  }
+  /** Does the repo itself exist? A repo-level 404 is the one heal-able cause. */
+  async function repoMissing(slug: string): Promise<boolean> {
+    const probe = await api('GET', `/repos/${owner}/${slug}`);
+    return probe.status === 404;
   }
   async function putAll(slug: string, files: ScaffoldFile[], message: (f: ScaffoldFile) => string) {
     let committed = 0;
     let unchanged = 0;
-    const failed: string[] = [];
+    const failed: { path: string; fail: WriteFail }[] = [];
     for (const f of files) {
       const r = await put(slug, f, message(f));
       if (r === 'committed') committed++;
       else if (r === 'unchanged') unchanged++;
-      else failed.push(f.path);
+      else if (isFail(r)) failed.push({ path: f.path, fail: r });
     }
-    return { committed, unchanged, failed };
+    // Classify the changeset ONCE: only a genuine repo-level 404 is repo-missing.
+    // A write that saw a 404/backend error while the repo still exists is a file/
+    // backend problem heal must NOT mask. Probe only when something failed and no
+    // failure was a definite non-repo cause (sha-conflict/unreachable are decisive).
+    let missing = false;
+    if (failed.length > 0 && failed.every((x) => x.fail.kind === 'backend')) {
+      missing = await repoMissing(slug);
+    }
+    return { committed, unchanged, failed, missing };
   }
+  /** One human line per failed file naming the cause (so build agent + human can act). */
+  const reason = (kind: WriteFail['kind'], status: number, missing: boolean): string =>
+    kind === 'unreachable'
+      ? 'Forgejo unreachable'
+      : kind === 'sha-conflict'
+        ? `sha conflict (HTTP ${status}) — the file changed under this commit; re-read and retry`
+        : missing
+          ? 'the repository is missing (HTTP 404)'
+          : `backend error (HTTP ${status})`;
+  const failList = (
+    failed: { path: string; fail: WriteFail }[],
+    missing: boolean,
+  ): string => failed.map((x) => `${x.path} (${reason(x.fail.kind, x.fail.status, missing)})`).join(', ');
   return {
     mode,
     async scaffoldRepo(slug, files) {
-      const { committed, unchanged, failed } = await putAll(slug, files, (f) => `seed ${f.path}`);
+      const { committed, unchanged, failed, missing } = await putAll(slug, files, (f) => `seed ${f.path}`);
       const n = committed + unchanged;
       const detail =
         `live: seeded ${n}/${files.length} files into ${slug}` +
-        (failed.length > 0 ? ` — FAILED: ${failed.join(', ')}` : '');
-      return { ok: n > 0, mode, detail };
+        (failed.length > 0 ? ` — FAILED: ${failList(failed, missing)}` : '');
+      return { ok: n > 0, mode, detail, repoMissing: missing };
     },
     async commit(slug, files, message) {
-      const { committed, unchanged, failed } = await putAll(slug, files, () => message);
+      const { committed, unchanged, failed, missing } = await putAll(slug, files, () => message);
       const parts = [`live: committed ${committed}/${files.length} files to ${slug}`];
       if (unchanged > 0) parts.push(`${unchanged} unchanged (skipped)`);
-      if (failed.length > 0) parts.push(`FAILED: ${failed.join(', ')}`);
+      if (failed.length > 0) parts.push(`FAILED: ${failList(failed, missing)}`);
       else if (committed === 0) parts.push('nothing changed — no push, so no CI run');
-      return { ok: failed.length === 0, mode, detail: parts.join('; ') };
+      return { ok: failed.length === 0, mode, detail: parts.join('; '), repoMissing: missing };
     },
     async preview(slug) {
       // Argo CD ApplicationSet PR/branch generator spins this up on a cluster;
@@ -240,7 +286,45 @@ export async function commitToApp(
   // for live Forgejo) and parse against the full tree.
   const prior = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
   const toCommit = ensureSectionsRegistered(prior, files, app.template);
-  const step = await backend.commit(app.slug, toCommit, message);
+  let step = await backend.commit(app.slug, toCommit, message);
+  // AUTO-HEAL the ONE self-healable failure: the app's Forgejo repo VANISHED (a
+  // repo-level 404, distinguished from a per-file 404/sha conflict by the backend's
+  // `repoMissing` flag). Re-provision it from the scaffold + any surviving snapshot
+  // (`healAppRepo`, audited + idempotent), then RETRY the commit ONCE against the
+  // fresh repo. Both are audited. A sha conflict / backend error / unreachable
+  // Forgejo is NOT healed — heal must never paper over a per-file problem. If heal
+  // or the retried commit still fails, we throw naming the TRUE state below.
+  if (!step.ok && step.repoMissing) {
+    const heal = await healAppRepo(app);
+    if (!heal.ok) {
+      throw withStatus(
+        new Error(`the app's repository is missing and could not be re-provisioned: ${heal.detail} — commit unchanged (${step.mode}).`),
+        502,
+      );
+    }
+    step = await backend.commit(app.slug, toCommit, message);
+    if (!step.ok) {
+      throw withStatus(
+        new Error(`the app's repository was re-provisioned but the retried commit still did not land: ${step.detail} (${step.mode}). The app is unchanged.`),
+        502,
+      );
+    }
+  }
+  // HONESTY GATE: a commit the backend REJECTED (live Forgejo unreachable, a 404/422
+  // on the repo, or a partial write with failures) must NOT masquerade as success — we
+  // do NOT snapshot or persist it, and we THROW so the caller/agent-loop sees a real
+  // tool error (which feeds the corrective loop + bounded escalation). Persisting a
+  // rejected commit was the root of "story shows built but nothing landed": the diff
+  // read the phantom snapshot even though the repo got nothing. A no-op (nothing
+  // changed) is NOT a failure — `ok` stays true there, so this only fires on real loss.
+  // The per-file reasons in `step.detail` now name WHY each file failed (repo missing /
+  // sha conflict / backend error) so both the build agent and the human can act.
+  if (!step.ok) {
+    throw withStatus(
+      new Error(`commit did not land: ${step.detail} (${step.mode}). Nothing was written — fix the error and retry; the app is unchanged.`),
+      502,
+    );
+  }
   const tree = mergeTree(prior, toCommit);
 
   // Metadata fidelity: parse the convention over the WHOLE tree on every commit.

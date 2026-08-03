@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, refreshActionsStage, type AppEpic } from '@/lib/software/apps';
+import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, refreshActionsStage, reconcileBuiltStatus, type AppEpic } from '@/lib/software/apps';
 import { normalizeContextGrants } from '@/lib/core/context-grants';
 import { reconcileDeployApproval } from '@/lib/software/review';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
@@ -23,6 +23,10 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   // TTL) — 'ok' only when the latest push really produced an Actions run, and a
   // disabled repo Actions unit is auto-enabled. Same in-cache mutate as above.
   await refreshActionsStage(app);
+  // SELF-HEAL 3: story built-ness must be EARNED — demote any `done`/`building` claim on
+  // an app with no committed code (heals the "N stories built but repo empty / Test
+  // disabled" phantom). Runs AFTER refreshActionsStage so a 404'd repo reads as failing.
+  reconcileBuiltStatus(app);
   const connection = getConnectionByApp(app.id);
   return NextResponse.json({ user, app, connection });
 }, { defaultStatus: 500 });
