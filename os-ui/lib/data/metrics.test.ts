@@ -80,6 +80,31 @@ test('goldOutputColumns: pass-through / spec-less gold falls back to the documen
   assert.deepEqual(goldOutputColumns(d).map((c) => c.name), ['order_id', 'order_date', 'region', 'net_amount']);
 });
 
+test('goldOutputColumns: derived field names appear in the output set (dims + derived)', () => {
+  const d = gold({
+    goldSpec: {
+      joins: [],
+      dimensions: [{ source: '0::order_id' }],
+      derived: [{ name: 'margin', left: '0::net_amount', op: '-', right: '0::region' }],
+      measures: [],
+    },
+  });
+  assert.deepEqual(goldOutputColumns(d).map((c) => c.name), ['order_id', 'margin']);
+  // …and the Cube scaffold binds a dimension to the derived output column.
+  assert.match(scaffoldCubeYaml(d), /- name: margin/);
+});
+
+test('goldOutputColumns: a derived-only spec (no dims) still surfaces the derived column', () => {
+  const d = gold({
+    goldSpec: {
+      joins: [], dimensions: [],
+      derived: [{ name: 'margin', left: '0::net_amount', op: '*', rightValue: 2 }],
+      measures: [],
+    },
+  });
+  assert.deepEqual(goldOutputColumns(d).map((c) => c.name), ['margin']);
+});
+
 test('dim types are inferred cube_dbt-style from the column names', () => {
   assert.equal(inferDimType('order_date'), 'time');
   assert.equal(inferDimType('created_at'), 'time');

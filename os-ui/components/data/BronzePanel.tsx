@@ -91,11 +91,6 @@ export default function BronzePanel({
 
   return (
     <div className="guided-panel">
-      <p className="muted" style={{ marginTop: 0 }}>
-        Bring your data in exactly as it is. Upload a file, or pull a slice of a governed
-        product — it arrives already masked to what you’re allowed to see.
-      </p>
-
       <div className="seg">
         <button className={source === 'upload' ? 'on' : ''} onClick={() => { setSource('upload'); setPreview(null); setLanded(null); }}>Upload a file</button>
         <button className={source === 'extract' ? 'on' : ''} onClick={() => { setSource('extract'); setPreview(null); setLanded(null); }}>Pull from a product</button>
@@ -138,8 +133,10 @@ export default function BronzePanel({
             ) : (
               <>
                 <button className="btn ghost" onClick={() => { setPreview(null); setExtractId(''); }}>Discard</button>
-                <button className="btn" onClick={commit} disabled={committing || !extractId}>
-                  {committing ? <span className="spin" /> : 'Confirm — this is my Bronze'}
+                {/* Section primary action — "Save Data" closes Ingestion. Same governed
+                    land-bronze behavior; renamed to the plain-language section verb. */}
+                <button className="btn primary" onClick={commit} disabled={committing || !extractId}>
+                  {committing ? <span className="spin" /> : 'Save Data'}
                 </button>
               </>
             )}

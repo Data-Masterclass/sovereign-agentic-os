@@ -14,8 +14,8 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Send a scheduled report now (the demo/manual trigger; the scheduler calls the same
- * path on cadence). Advances `lastSentAt` AND actually delivers: emails the recipient
- * when a mailer is configured, else persists an in-app notification (never a no-op).
+ * path on cadence). Advances `lastSentAt` AND actually delivers: persists an in-app
+ * notification the recipient reads via the bell (in-app is the one delivery surface).
  * Governance: only a Builder+ may trigger a send (same rank that may promote/build).
  */
 export const POST = withRoute<Record<string, string>, { report?: ScheduledReport }>(async ({ user, body }) => {

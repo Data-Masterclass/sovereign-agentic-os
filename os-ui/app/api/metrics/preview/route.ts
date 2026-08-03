@@ -39,8 +39,9 @@ export const POST = withRoute<Record<string, string>, {
 
   // Build the candidate measure (validates the form) and splice it onto a transient
   // dataset — never persisted, so a preview can never register a half-formed metric.
-  const measure = measureFromForm(body.form);
   const dataset = getDataset(datasetId, user);
+  // Siblings validate a composite formula's references (clear 400, never a silent null-SQL).
+  const measure = measureFromForm(body.form, dataset.measures);
   // SQL-READY gate (metrics→Trino migration, Phase 1): the preview serves the metric as
   // governed Trino SQL over the TIER-AWARE physical gold mart, read AS the viewer — so a
   // BUILT gold of ANY tier is enough (a personal dataset reads its own personal lane). We

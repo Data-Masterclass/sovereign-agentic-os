@@ -45,6 +45,8 @@ export type MetricGroups = { mine: MetricSummary[]; domain: MetricSummary[]; mar
 
 export type VizType = 'big_number_total' | 'big_number' | 'line' | 'area' | 'bar' | 'pie' | 'table';
 export type PanelFilter = { member: string; operator: string; values: string[] };
+/** A panel's position on the 12-col grid (Superset-style units). Mirrors lib model GridPos. */
+export type GridPos = { x: number; y: number; w: number; h: number };
 /** A native dashboard panel (Tier 1 — ECharts on the governed Cube layer). `metric` is the
  *  legacy single-member alias; `metrics` is authoritative. */
 export type Panel = {
@@ -56,6 +58,8 @@ export type Panel = {
   timeDimension?: string;
   timeGrain?: 'day' | 'week' | 'month' | 'quarter' | 'year';
   filters?: PanelFilter[];
+  /** Optional grid position — drives the panel's column span in View (P1-2). Absent = ½. */
+  gridPos?: GridPos;
 };
 /** Back-compat alias — many call-sites still say `ChartSpec`. */
 export type ChartSpec = Panel;
@@ -72,8 +76,9 @@ export function panelMetrics(p: Panel): string[] {
 export type PanelViewMeta = { view: string; measures: string[]; dimensions: string[]; timeDimensions: string[]; served?: boolean };
 export type CubeMetaResponse = { views: PanelViewMeta[] };
 
-/** GET /api/dashboards/[id] — the panels + binding for an existing dashboard. */
-export type DashboardDetail = { id: string; name: string; view: string; tier: DashTier; panels: Panel[] };
+/** GET /api/dashboards/[id] — the panels + binding for an existing dashboard. `filters` are
+ *  the default cross-filter chips saved with it (P1-3); absent on legacy specs. */
+export type DashboardDetail = { id: string; name: string; view: string; tier: DashTier; panels: Panel[]; filters?: PanelFilter[] };
 
 /** POST /api/dashboards/panel-query — one panel's governed rows, resolved as the viewer. */
 export type PanelQueryResponse = {
@@ -96,7 +101,8 @@ export type EmbedMode = 'live' | 'offline-mock';
 export type BuildResponse = { id: string; spec: { name: string; view: string; charts: Panel[] } };
 
 export type Comparator = 'lt' | 'lte' | 'gt' | 'gte';
-export type Channel = 'email' | 'slack' | 'in_app';
+/** In-app is the only delivery channel for alerts and reports (email/Slack were UI fiction). */
+export type Channel = 'in_app';
 export type AlertRule = {
   id: string;
   member: string;
@@ -146,8 +152,9 @@ export function flatMetrics(g: MetricGroups | null): MetricSummary[] {
   return [...g.mine, ...g.domain, ...g.marketplace];
 }
 
-export const VIZ_TYPES: VizType[] = ['big_number', 'line', 'area', 'bar', 'pie', 'table'];
-export const CHANNELS: Channel[] = ['email', 'slack', 'in_app'];
+// Dropdown order: pie + bar first (the most-reached-for panel shapes), then the rest.
+export const VIZ_TYPES: VizType[] = ['pie', 'bar', 'table', 'big_number', 'line', 'area'];
+export const CHANNELS: Channel[] = ['in_app'];
 export const TIER_LABEL: Record<DashTier, string> = { personal: 'Personal', domain: 'Domain', marketplace: 'Company' };
 // Badge CLASS per tier is OS-wide (lib/core/scopes); map this tab's vocabulary onto it.
 export const TIER_BADGE: Record<DashTier, string> = {

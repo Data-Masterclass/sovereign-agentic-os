@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { claimsFromUser, delegate } from '../data/identity.ts';
-import { type CubeExecutor, exploreSpec, buildCubeQuery, explore, dropToSql } from './explorer.ts';
+import { type CubeExecutor, exploreSpec, buildCubeQuery, explore, dropToSql, previewTrinoSql } from './explorer.ts';
 import { measureFromForm, type MetricForm } from './model.ts';
 import { goldSales } from './fixtures.ts';
 
@@ -81,4 +81,23 @@ test('dropToSql exposes the same governed member as a SQL table', () => {
   assert.match(sql, /FROM "Sales"/);
   assert.match(sql, /"revenue"/);
   assert.match(sql, /"region"/);
+});
+
+test('drill-down filters compile to a WHERE over CAST(col AS varchar) — before GROUP BY', () => {
+  const d = goldSales();
+  const m = measureFromForm(FORM);
+  const spec = exploreSpec(d, m, { dimensions: ['region'], filters: [{ column: 'region', values: ["DE", "O'Neil"] }] });
+  const sql = previewTrinoSql(d, m, spec)!;
+  assert.match(sql, /WHERE CAST\("region" AS varchar\) IN \('DE', 'O''Neil'\)/, 'quoted + escaped IN list');
+  assert.ok(sql.indexOf('WHERE') < sql.indexOf('GROUP BY'), 'WHERE narrows rows BEFORE aggregation');
+});
+
+test('a filter on a non-view member is dropped LOUDLY (never a silently unnarrowed drill)', () => {
+  const d = goldSales();
+  const m = measureFromForm(FORM);
+  const spec = exploreSpec(d, m, { filters: [{ column: 'order_id', values: ['1'] }] });
+  assert.equal(spec.filters, undefined, 'the non-member filter is not in the query');
+  assert.deepEqual(spec.dropped, ['order_id'], 'and it is REPORTED');
+  const sql = previewTrinoSql(d, m, spec)!;
+  assert.ok(!sql.includes('WHERE'), 'no partial filtering');
 });

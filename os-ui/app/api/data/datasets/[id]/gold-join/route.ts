@@ -17,6 +17,7 @@ import {
   type ResolvedJoin,
   type GoldDimension,
   type GoldMeasure,
+  type GoldDerived,
   type JoinType,
 } from '@/lib/data/transform';
 import type { DatasetUpstream } from '@/lib/data';
@@ -69,12 +70,28 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
     return NextResponse.json({ dataset: getDataset(id, user), domainTable }, { status: out.ok ? 200 : 502 });
   }
 
-  if (!canBuildStage(dataset.versions, 'gold')) {
+  // CURATED base (ref 0): a curated dataset has no own Silver — it composes from existing
+  // governed datasets — so its base is an EXPLICIT dataset, re-checked here through
+  // `getDataset` (entitlement + active domain, exactly like a join partner). Its physical
+  // table (gold, else silver — `assetTarget`) becomes the compile source. Absent ⇒ the
+  // dataset's own Silver is the base (byte-stable for every ingested/pre-curated dataset).
+  const rawBaseId = typeof body?.baseDatasetId === 'string' ? body.baseDatasetId.trim() : '';
+  let baseSource: string | undefined;
+  let baseUpstream: DatasetUpstream | undefined;
+  if (rawBaseId && rawBaseId !== id) {
+    const base = getDataset(rawBaseId, user); // throws 403/404 — same guard as a join partner
+    baseSource = assetTarget(base);
+    baseUpstream = { datasetId: base.id, name: base.name, fqn: baseSource, joinType: 'inner' };
+  }
+
+  // The Silver-first gate applies only to an ingested dataset (Gold is materialized from
+  // its own Silver). A curated compose with a resolved base skips it — the base IS ref 0.
+  if (!baseSource && !canBuildStage(dataset.versions, 'gold')) {
     return NextResponse.json({ error: 'Bring in the Silver version before joining it' }, { status: 400 });
   }
 
-  // A join is OPTIONAL: 0 picks builds a single-table Gold projection of the Silver
-  // base; the compiler then requires at least one dimension or measure to select.
+  // A join is OPTIONAL: 0 picks builds a single-table Gold projection of the base
+  // source; the compiler then requires at least one dimension or measure to select.
   const rawPicks = Array.isArray(body.picks) ? body.picks : [];
 
   const identity: ExecuteIdentity = {
@@ -87,6 +104,8 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
   // Resolve each pick to a physical FQN through the canView guard (403 if not visible).
   const joins: ResolvedJoin[] = [];
   const upstreams: DatasetUpstream[] = [];
+  // The curated base is an upstream too (ref 0) — record its lineage first.
+  if (baseUpstream) upstreams.push(baseUpstream);
   for (const p of rawPicks) {
     const up = getDataset(String(p?.datasetId ?? ''), user); // throws 403/404
     const fqn = assetTarget(up);
@@ -98,9 +117,13 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
 
   const dimensions = Array.isArray(body.dimensions) ? body.dimensions as GoldDimension[] : [];
   const measures = Array.isArray(body.measures) ? body.measures as GoldMeasure[] : [];
+  // Row-level derived columns (optional). Never trusted: the compiler validates every ref,
+  // operator and constant (via qref/IDENT/finite-number), so a bad shape surfaces a 400.
+  const derived = Array.isArray(body.derived) ? body.derived as GoldDerived[] : [];
 
-  // Compile server-side (throws TransformError → 400 with the real reason).
-  const plan = goldJoinPlan(dataset, identity, joins, dimensions, measures);
+  // Compile server-side (throws TransformError → 400 with the real reason). `baseSource`
+  // (curated only) overrides ref 0 with the resolved base table; absent ⇒ own-silver.
+  const plan = goldJoinPlan(dataset, identity, joins, dimensions, measures, derived, baseSource);
 
   // Personal-lane builds must run under the UID (not the domain principal) so
   // Trino→OPA recognises the caller as the `personal_<uid>` owner — the same
@@ -119,13 +142,19 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
 
   // ✓ only: record the Gold version + its compiled CTAS, the measures (feed the Cube
   // scaffold at promotion) and the multi-upstream lineage edges (the reuse).
+  // Sanitize the raw spec server-side (never trusted; stored verbatim for re-hydration),
+  // then pin `baseDatasetId` to the ACTUALLY-resolved base (not the client copy) so the
+  // panel re-hydrates the true base; absent when own-silver (byte-stable).
+  const parsedSpec = parseGoldSpec(body.goldSpec);
+  const goldSpec = parsedSpec
+    ? (baseSource ? { ...parsedSpec, baseDatasetId: rawBaseId } : (() => { const { baseDatasetId: _drop, ...rest } = parsedSpec; return rest; })())
+    : undefined;
   const updated = buildGoldJoin(id, user, {
     measures: measures.map(goldMeasureToCube),
     upstreams,
     artifact: stageArtifact(dataset.name, 'gold'),
     body: plan.sql,
-    // Sanitize the raw spec server-side (never trusted; stored verbatim for re-hydration).
-    goldSpec: parseGoldSpec(body.goldSpec),
+    goldSpec,
   });
 
   // Northpeak fix — MATERIALIZATION DRIFT. If the rebuilt dataset is ALREADY promoted, its

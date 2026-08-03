@@ -3,11 +3,11 @@
  */
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { previewText } from '@/lib/files/preview';
-import { reuploadVersion } from '@/lib/files/upload-client';
+import { reuploadVersion, saveTextVersion } from '@/lib/files/upload-client';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
@@ -70,6 +70,20 @@ function viewerMode(contentType: string | undefined | null, name: string): Viewe
   return null;
 }
 
+/** Whether a file's content can be edited INLINE as text (an honest text editor) —
+ *  plain text / markdown / code-ish files, driven by the stored content-type with a
+ *  name-suffix fallback. Binary files (image/pdf/video/audio/archive/office) get
+ *  Replace-file instead of a fake editor. CSV/table stays download-only for now (a
+ *  free-text edit of a CSV is a footgun; Replace is the honest path). */
+function isTextEditable(contentType: string | undefined | null, name: string, kind: Asset['kind']): boolean {
+  if (kind === 'image' || kind === 'video' || kind === 'audio' || kind === 'archive') return false;
+  const t = (contentType ?? '').toLowerCase();
+  if (t === 'application/pdf' || /\.pdf$/i.test(name)) return false;
+  if (t === 'text/csv' || /\.csv$/i.test(name)) return false;
+  if (t.startsWith('text/') || /json|markdown|xml|yaml/.test(t)) return true;
+  return /\.(txt|md|markdown|json|log|xml|yaml|yml|tsv|sql|sh|env|ini|conf|toml)$/i.test(name);
+}
+
 /** Parse a small CSV preview into rows/cells (naive split — good enough for a calm
  *  glance; the file is downloadable for the real thing). Capped so a huge CSV never
  *  blows up the pane. */
@@ -81,17 +95,7 @@ function csvRows(text: string, maxRows = 30, maxCols = 12): string[][] {
     .map((line) => line.split(',').slice(0, maxCols).map((c) => c.trim()));
 }
 
-/** Full-screen Quick Look shell: a dimmed backdrop over the grid + a centered panel.
- *  Clicking the backdrop (not the panel) closes. Content is the hero, big and legible. */
-function QuickLook({ onClose, children }: { onClose: () => void; children: ReactNode }) {
-  return (
-    <div className="ql-backdrop" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="ql-panel">{children}</div>
-    </div>
-  );
-}
-
-export default function FilePreview({ id, onMutated, onClose }: { id: string; onMutated: () => void; onClose: () => void }) {
+export default function FilePreview({ id, onMutated, onClose, startInEdit }: { id: string; onMutated: () => void; onClose: () => void; startInEdit?: boolean }) {
   const { user, isAdmin } = useUser();
   const { notifyApprovalFiled } = useApprovalNotifier();
   const [view, setView] = useState<View | null>(null);
@@ -114,6 +118,12 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
   // Inline rename of the filename (edit-gated, mirrors the other tabs).
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
+  // View ⇄ Edit — a file opens in VIEW (read the content); "✎ Edit" (edit-gated) reveals
+  // the inline text editor (text/markdown) or Replace-file (binary). Save returns to View.
+  const [editMode, setEditMode] = useState<'view' | 'edit'>(startInEdit ? 'edit' : 'view');
+  const [bodyDraft, setBodyDraft] = useState('');
+  const [savingBody, setSavingBody] = useState(false);
+  const [bodyErr, setBodyErr] = useState('');
 
   const load = useCallback(async () => {
     setErr('');
@@ -145,14 +155,13 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
     ...(view ? { extra: { kind: view.asset.kind } } : {}),
   });
 
-  // Esc closes the full-screen Quick Look; lock body scroll while it's open so the
-  // dimmed grid underneath doesn't scroll away.
+  // The file detail is now a FULL-PAGE surface that replaces the browser (it scrolls with
+  // the page, no inner scroll container). Esc returns to the file list — the same "← All
+  // files" back affordance, from the keyboard. No body-scroll lock: the page owns the scroll.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prevOverflow; };
+    return () => { window.removeEventListener('keydown', onKey); };
   }, [onClose]);
 
   const loadFolders = useCallback(async () => {
@@ -251,6 +260,19 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
     onMutated();
   }, [id, load, onMutated]);
 
+  // Save an INLINE text/markdown edit as a new version — through the honest text path
+  // (rewriteBytes) so /raw, /download, the extracted text and search all stay in step.
+  // Success returns to View (the read home of a saved file).
+  const saveBody = useCallback(async () => {
+    setBodyErr(''); setSavingBody(true);
+    const failure = await saveTextVersion(id, bodyDraft, view?.asset.name ?? 'file');
+    setSavingBody(false);
+    if (failure) { setBodyErr(failure); return; }
+    setEditMode('view');
+    await load();
+    onMutated();
+  }, [id, bodyDraft, view?.asset.name, load, onMutated]);
+
   // Delete goes through the shared ConfirmDialog (danger, physical); on success we
   // also close the now-orphaned preview pane.
   const onDeleted = useCallback(async () => {
@@ -259,8 +281,22 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
     onMutated(); onClose();
   }, [id, onMutated, onClose]);
 
-  if (err && !view) return <QuickLook onClose={onClose}><div className="files-preview"><div className="error">{err}</div><button className="btn ghost" onClick={onClose}>Close</button></div></QuickLook>;
-  if (!view) return <QuickLook onClose={onClose}><div className="files-preview"><span className="spin" /></div></QuickLook>;
+  if (err && !view) return (
+    <div className="file-page">
+      <div className="row" style={{ marginBottom: 14 }}>
+        <button className="btn ghost sm" onClick={onClose}>← All files</button>
+      </div>
+      <div className="error">{err}</div>
+    </div>
+  );
+  if (!view) return (
+    <div className="file-page">
+      <div className="row" style={{ marginBottom: 14 }}>
+        <button className="btn ghost sm" onClick={onClose}>← All files</button>
+      </div>
+      <div className="stub-page"><span className="spin" /> Loading file…</div>
+    </div>
+  );
 
   const a = view.asset;
   const isOwner = user?.id === a.owner;
@@ -291,10 +327,23 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
   const mode = rawMode && rawMode !== 'csv' && !view.object ? null : rawMode;
   const csvPreview = mode === 'csv' && view.text ? csvRows(view.text) : null;
 
+  // Is this file editable inline as text? (drives which Edit surface shows). Binary
+  // files get Replace-file instead of a fake editor — never a fake editor.
+  const textEditable = isTextEditable(view.object?.contentType, a.name, a.kind);
+  // Enter Edit: seed the draft from the current extracted text (the honest source for a
+  // text file — /raw of a text file is the same bytes). Save writes a new version.
+  const enterEdit = () => { setBodyDraft(view.text); setBodyErr(''); setEditMode('edit'); };
+  const inEdit = editMode === 'edit';
+
   return (
     <ConfirmProvider>
-    <QuickLook onClose={onClose}>
-    <div className="files-preview ql-body">
+    <div className="file-page">
+      {/* Full-page detail — this REPLACES the browser (it does not float over it). The
+          content is the page and scrolls with the page scrollbar; "← All files" returns
+          to the drive. Mirrors Metrics / Data. */}
+      <div className="row" style={{ marginBottom: 14 }}>
+        <button className="btn ghost sm" onClick={onClose}>← All files</button>
+      </div>
       <div className="preview-head">
         <div className="preview-head-title">
           <div className="preview-row">
@@ -335,20 +384,53 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
           </div>
         </div>
         <div className="preview-head-actions">
+          {/* View ⇄ Edit — edit-gated. text/markdown → inline editor; binary → Replace/rename/move
+              (both live in the Edit surface below). The read view is always the default. */}
+          {canManage ? (
+            inEdit ? (
+              <button className="btn ghost sm" onClick={() => { setEditMode('view'); setBodyErr(''); }} title="Back to the read view">View</button>
+            ) : (
+              <button className="btn ghost sm" onClick={enterEdit} title={textEditable ? 'Edit this file inline' : 'Replace, rename or move this file'}>✎ Edit</button>
+            )
+          ) : null}
           {view.object ? (
             <a className="btn ghost sm" href={rawSrc} target="_blank" rel="noreferrer" title="Open in a new tab">Open ↗</a>
           ) : null}
           <a className="btn ghost sm" href={`/api/files/${id}/download`} download={a.name}>Download</a>
-          <button className="preview-close" onClick={onClose} aria-label="Close preview">×</button>
         </div>
       </div>
+
+      {/* ---- EDIT (text/markdown): an honest inline editor. Saving writes a NEW version
+              through the /version endpoint with rewriteBytes, so /raw, /download, the
+              extracted text and search all stay in step. Binary files never reach this
+              branch — they get Replace-file below instead of a fake editor. ---- */}
+      {inEdit && textEditable ? (
+        <div className="file-editor">
+          <label className="rail-group-title">{/\.(md|markdown)$/i.test(a.name) ? 'Markdown' : 'Text'}</label>
+          <textarea
+            className="mono"
+            rows={18}
+            value={bodyDraft}
+            onChange={(e) => setBodyDraft(e.target.value)}
+            aria-label="File content"
+            style={{ width: '100%', resize: 'vertical' }}
+          />
+          <div className="preview-row" style={{ marginTop: 8 }}>
+            <button className="btn primary sm" onClick={() => void saveBody()} disabled={savingBody || bodyDraft === view.text}>
+              {savingBody ? <><span className="spin" /> Saving…</> : 'Save new version'}
+            </button>
+            <button className="btn ghost sm" onClick={() => { setEditMode('view'); setBodyErr(''); }} disabled={savingBody}>Cancel</button>
+          </div>
+          {bodyErr ? <div className="error" style={{ marginTop: 8 }}>{bodyErr}</div> : null}
+        </div>
+      ) : null}
 
       {/* ---- Quick Look: render the ACTUAL file inline (the content is the hero).
               Original bytes stream from /raw with Content-Disposition: inline. CSV is
               rendered from the extracted text as a light table (no byte fetch needed).
               Below the viewer, the extracted text / transcript / caption stays for docs
               and media (searchable body); governance lives under the disclosure. ---- */}
-      {mode && mode !== 'csv' ? (
+      {!inEdit && mode && mode !== 'csv' ? (
         <div className="file-viewer">
           {mode === 'image' ? (
             /* eslint-disable-next-line @next/next/no-img-element */
@@ -374,7 +456,7 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         </div>
       ) : null}
 
-      {mode === 'csv' && csvPreview ? (
+      {!inEdit && mode === 'csv' && csvPreview ? (
         <div className="viewer-table-wrap">
           <table className="viewer-table">
             <tbody>
@@ -388,11 +470,12 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         </div>
       ) : null}
 
-      {view.text ? (
+      {inEdit ? null : view.text ? (
         <div>
           {mode ? <label className="rail-group-title">{isMedia ? 'Transcript' : 'Extracted text'}</label> : null}
-          {/* `expanded` drops the fixed max-height so "Show all" actually reveals the
-              full text (the box otherwise just scrolls inside a 240px clamp). */}
+          {/* Primary content — flows top-to-bottom with the PAGE scrollbar (no inner scroll
+              box). "Show all" expands the DOM (previewText truncates the string for very
+              long bodies); it is not a scroll clamp. */}
           <div className={`preview-text${showFullText ? ' expanded' : ''}`}>{textToShow}{textIsTruncated ? '…' : ''}</div>
           {preview.canToggle ? (
             <button className="btn ghost sm" style={{ marginTop: 4 }}
@@ -405,24 +488,34 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
         <div className="media-stage">No preview — download to view the original file.</div>
       )}
 
-      {/* Re-upload lives directly under the viewer; Download / Open live in the header.
-          A new version streams over the shared XHR transport with inline progress. */}
-      <div className="preview-actions">
-        <div className="preview-row">
-          <button className="btn ghost sm" disabled={reupPct !== null} aria-busy={reupPct !== null}
-            onClick={() => reuploadRef.current?.click()}>
-            {reupPct !== null ? <><span className="spin" /> Uploading… {reupPct}%</> : 'Re-upload (new version)'}
-          </button>
-          <input ref={reuploadRef} type="file" hidden
-            onChange={(e) => { const f = e.target.files?.[0]; if (f && reupPct === null) reupload(f); e.target.value = ''; }} />
-        </div>
-        {reupPct !== null ? (
-          <div className="upload-bar" style={{ marginTop: 6 }}>
-            <div className="upload-bar-fill" style={{ width: `${reupPct}%` }} />
+      {/* Replace file (new version) — the honest Edit path for BINARY files (and a valid
+          option for text files too). Edit-gated + shown only in Edit. A new version
+          streams over the shared XHR transport with inline progress. For a binary file
+          this is the whole Edit surface: Replace here, rename in the header, move below.
+          Never a fake editor. */}
+      {inEdit && canManage ? (
+        <div className="preview-actions">
+          {!textEditable ? (
+            <p className="hint" style={{ marginTop: 0 }}>
+              No inline text — replace, rename or move it instead.
+            </p>
+          ) : null}
+          <div className="preview-row">
+            <button className="btn ghost sm" disabled={reupPct !== null} aria-busy={reupPct !== null}
+              onClick={() => reuploadRef.current?.click()}>
+              {reupPct !== null ? <><span className="spin" /> Uploading… {reupPct}%</> : 'Replace file (new version)'}
+            </button>
+            <input ref={reuploadRef} type="file" hidden
+              onChange={(e) => { const f = e.target.files?.[0]; if (f && reupPct === null) reupload(f); e.target.value = ''; }} />
           </div>
-        ) : null}
-        {reupErr ? <div className="error" style={{ marginTop: 6 }}>{reupErr}</div> : null}
-      </div>
+          {reupPct !== null ? (
+            <div className="upload-bar" style={{ marginTop: 6 }}>
+              <div className="upload-bar-fill" style={{ width: `${reupPct}%` }} />
+            </div>
+          ) : null}
+          {reupErr ? <div className="error" style={{ marginTop: 6 }}>{reupErr}</div> : null}
+        </div>
+      ) : null}
 
       {/* Primary manage actions — ALWAYS VISIBLE (not buried in the disclosure): move
           the file to a folder + the archive/restore/delete cluster. Edit-gated. The
@@ -570,7 +663,6 @@ export default function FilePreview({ id, onMutated, onClose }: { id: string; on
 
       </details>
     </div>
-    </QuickLook>
     </ConfirmProvider>
   );
 }

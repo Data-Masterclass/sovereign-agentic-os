@@ -150,7 +150,7 @@ export default function QualityFixPanel({
             {busy === 'propose' ? <span className="spin" /> : 'Propose fixes'}
           </button>
           <span className="hint" style={{ margin: 0 }}>
-            Runs this rule, shows the failing rows, and asks the assistant for the safest fix. Nothing is changed until you apply.
+            Nothing is changed until you apply.
           </span>
         </div>
       </div>

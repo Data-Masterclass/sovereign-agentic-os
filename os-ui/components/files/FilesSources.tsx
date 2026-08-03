@@ -65,12 +65,6 @@ export default function FilesSources({ onSynced }: { onSynced: () => void }) {
 
   return (
     <div style={{ maxWidth: 760 }}>
-      <p className="lead" style={{ marginTop: 0 }}>
-        Connect <strong>Google Drive</strong> or <strong>OneDrive</strong> and add a folder or the whole
-        drive. Files sync into your governed store and index automatically — the first pass runs overnight,
-        then changes flow in incrementally. Permissions follow <em>your</em> tiers, not the source.
-      </p>
-
       {err ? <div className="error">{err}</div> : null}
 
       <div className="section-title">Connect a source</div>

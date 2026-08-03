@@ -84,11 +84,6 @@ export default function TacitPanel({
 
   return (
     <div className="tacit-panel">
-      <p className="hint" style={{ marginTop: 0 }}>
-        The practitioners&rsquo; hidden know-how. Capture it any way — paste, upload a transcript,
-        or record — then append it into the expert-knowledge editor and save.
-      </p>
-
       {/* Current expert-knowledge doc (stored as the sibling tacit.md) */}
       <div className="section-title">Expert knowledge</div>
       <textarea

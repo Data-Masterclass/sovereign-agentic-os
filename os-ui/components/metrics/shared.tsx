@@ -30,6 +30,11 @@ export type MetricSummary = {
   folder: string;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
+  /** COMPOSITE metric (a formula over other metrics) — the transparency badge. */
+  composite?: boolean;
+  /** Plain-language "what does this metric mean?" — a muted line under the member on the
+   *  tile. Absent ⇒ no line (layout unchanged). */
+  description?: string;
   /** FAIL-SOFT: set when this metric's model couldn't load — rendered inline so the
    *  rest of the registry still shows (one bad cube never 500s the whole surface). */
   error?: string;
@@ -114,7 +119,8 @@ export function leaf(member: string): string {
 // An alert is a threshold on a governed metric member — it lives with Metrics.
 
 export type Comparator = 'lt' | 'lte' | 'gt' | 'gte';
-export type Channel = 'email' | 'slack' | 'in_app';
+/** In-app is the only alert channel (email/Slack were UI fiction with no delivery path). */
+export type Channel = 'in_app';
 export type Notification = { channel: Channel; message: string };
 export type AgentRun = { systemId: string; agent: string; preset: string; reason: string; traced: true };
 export type AlertResponse = {
@@ -125,7 +131,7 @@ export type AlertResponse = {
   traced: boolean;
 };
 
-export const CHANNELS: Channel[] = ['email', 'slack', 'in_app'];
+export const CHANNELS: Channel[] = ['in_app'];
 
 /** Flatten the grouped metric payload into one palette (member pickers). */
 export function flatMetrics(g: MetricGroups | null): MetricSummary[] {

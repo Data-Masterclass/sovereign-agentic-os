@@ -14,7 +14,8 @@
  *   Define (Silver)              — now columns are real: document + clean/conform into Silver
  *   Harmonize (Gold)             — join/aggregate into the Gold business mart + explore result
  *   Validate (Data Quality & Lineage) — author DQ rules + run checks + badge + lineage trace
- *   Publish (Metrics & Usage)    — Talk-to-Data + doorways THEN promote/certify (usage before promote)
+ *   View (Talk · Stats · Preview · Quality) — talk to it, see its shape + rows, check its quality
+ *                                (promotion moved to the detail header, beside the lifecycle controls)
  *
  * STAGES ARE VOLUNTARILY SKIPPABLE. Every stage is always reachable — you can move
  * straight from Bronze to Publish without doing Silver/Gold first (a single-table or
@@ -47,6 +48,8 @@ export type DataCtx = {
   refined: boolean;
   /** At least one medallion layer is materialized (there is something to query/lineage). */
   materialized: boolean;
+  /** At least one column carries a description (drives the curated flow's Document ✓). */
+  documented?: boolean;
 };
 
 /**
@@ -81,9 +84,39 @@ export const DATA_STAGES: StageDef<DataStageId, DataCtx>[] = [
     completed: (c) => c.materialized,
   },
   {
+    // Internal id stays 'publish' so stored stage state, anchors and the promote/certify
+    // routes never move — only the user-facing title/hint change to "View".
     id: 'publish',
-    title: 'Publish (Metrics & Usage)',
-    hint: 'Preview and talk to your data in plain language, jump to Metrics or Dashboards, then promote it to your domain or certify it as a data product.',
+    title: 'View',
+    hint: 'Talk to your data in plain language, see its shape and rows, and check its quality. Promotion lives in the header — promote to your domain or certify as a data product from any stage.',
     completed: (c) => c.refined,
   },
 ];
+
+/**
+ * The stages a dataset's ORIGIN actually walks. A CURATED dataset is born from existing
+ * governed datasets — there is no raw file to ingest and nothing of its own to clean
+ * (cleaning belongs to the SOURCES; fixing data in two places forks the truth) — so its
+ * flow is Compose · Document · Validate · View. Ids stay stable (stored stage anchors and
+ * routes never move); only the visible set, order, titles and ✓-conditions change.
+ * An ingested dataset keeps the full 5-stage medallion path unchanged.
+ */
+export function stagesForOrigin(origin?: 'ingest' | 'curated'): StageDef<DataStageId, DataCtx>[] {
+  if (origin !== 'curated') return DATA_STAGES;
+  const byId = new Map(DATA_STAGES.map((s) => [s.id, s] as const));
+  return [
+    {
+      ...byId.get('harmonize')!,
+      title: 'Compose (Gold)',
+      hint: 'Join existing governed datasets into this one — pick the base, join others in, choose the output columns. This IS the curated build; ingesting and cleaning happened at the sources.',
+    },
+    {
+      ...byId.get('define')!,
+      title: 'Document',
+      hint: 'Describe the composed dataset and what each output column means — required before it can be promoted.',
+      completed: (c) => !!c.documented,
+    },
+    byId.get('validate')!,
+    byId.get('publish')!,
+  ];
+}

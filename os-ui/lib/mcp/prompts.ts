@@ -71,7 +71,7 @@ export const PROMPTS: McpPrompt[] = [
   {
     name: 'build_data_product',
     title: 'Build a data product',
-    description: 'Bronze→Silver→Gold dataset, documented, ready to promote to a governed domain asset.',
+    description: 'An ingested (or curated) dataset, documented, with its business layer materialized, ready to promote to a governed domain asset.',
     arguments: [arg('name', 'Dataset name', true), arg('domain', 'Your domain'), arg('source_description', 'What the source data is')],
     tab: 'data',
     minRole: 'creator',
@@ -83,11 +83,12 @@ export const PROMPTS: McpPrompt[] = [
       '1. whoami — confirm your role + domains.',
       '2. list_datasets — reuse/extend an existing spine before creating a new one.',
       `3. create_dataset(name: "${a.name || '<name>'}"${a.domain ? `, domain: "${a.domain}"` : ''}).`,
-      '4. Guided physical path (preferred): ingest_dataset (Bronze) → profile_dataset → transform_silver(columns, ops) → build_gold_join(picks, dimensions, measures). Mismatched join keys? set the key’s adapt: {mode:"text"} (case/whitespace/format) or {mode:"cast",type} (coerce both sides to one Trino type). Authored alternative: add_dataset_version(layer: "bronze") → silver (authored dbt SQL + not_null/unique tests) → gold.',
+      '4a. INGESTED (a single source, no joins): ingest_dataset → profile_dataset → transform_silver(columns, ops) is OPTIONAL cleanup. A clean ingested dataset PASSES THROUGH — the business (Gold) layer materializes automatically, no build_gold_join step. Authored alternative: add_dataset_version(layer: "bronze") → silver (authored dbt SQL + not_null/unique tests).',
+      '4b. CURATED (a NEW table composed from datasets you already trust): build_gold_join(base, joins, kept/renamed columns, derived fields, measures). Mismatched join keys? set the key’s adapt: {mode:"text"} (case/whitespace/format) or {mode:"cast",type} (coerce both sides to one Trino type). Ingested datasets never join — use the curated path for that.',
       '5. document_dataset — description + column docs. (Docs are the PROMOTION GATE.)',
       '6. request_promotion(kind: "dataset", id) — file the promotion request.',
       '⛔ Builder+ only: approve_promotion(approvalId) applies it into Trino. A creator STOPS here and hands off.',
-      '7. Optional: define_metric on the gold version.',
+      '7. Optional: define_metric on the materialized business layer.',
     ].filter(Boolean).join('\n'),
   },
   {

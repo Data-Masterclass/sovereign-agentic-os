@@ -26,7 +26,7 @@ const connections: TutorialDef = {
     {
       illustration: 'connect',
       title: 'Add a connection',
-      body: 'Browse the "Supported connectors" gallery — grouped by vendor, searchable by name — and "Connect →", or use "＋ New connector" for a custom REST/GraphQL API or MCP server. Credentials go straight to Secrets Manager, never echoed.',
+      body: '"＋ New" opens two doors: "Use a connector" browses the Supported connectors gallery (grouped by vendor, searchable by name), or "Build a custom connector" wires a custom REST/GraphQL API or MCP server. Credentials go straight to Secrets Manager, never echoed.',
     },
     {
       illustration: 'governance',
@@ -62,7 +62,7 @@ const connections: TutorialDef = {
       anchor: ANCHORS.connections.add,
       sandboxAnchor: ANCHORS.connections.sandbox,
       title: 'Add a connection',
-      body: 'Search the Supported connectors by name or vendor and "Connect →" — or "＋ New connector" for a custom API or MCP server. The credential goes straight to Secrets Manager; it never appears in the UI or logs.',
+      body: '"＋ New" → "Use a connector" to search the Supported connectors by name or vendor, or "Build a custom connector" for a custom API or MCP server. The credential goes straight to Secrets Manager; it never appears in the UI or logs.',
       route: '/connections',
     },
     {

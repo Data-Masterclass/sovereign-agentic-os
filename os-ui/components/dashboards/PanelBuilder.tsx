@@ -4,7 +4,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { postJson, VIZ_TYPES } from './shared';
+import { postJson, VIZ_TYPES, panelMetrics } from './shared';
 import type { CubeMetaResponse, MetricSummary, Panel, PanelQueryResponse, PanelViewMeta, VizType } from './shared';
 import PanelChart from './PanelChart';
 
@@ -13,6 +13,14 @@ const viewOf = (member: string) => (member.includes('.') ? member.slice(0, membe
 const leaf = (member: string) => (member.includes('.') ? member.slice(member.lastIndexOf('.') + 1) : member);
 
 const GRAINS = ['day', 'week', 'month', 'quarter', 'year'] as const;
+
+/** The three panel widths (P1-2) — 12-col units: ⅓ · ½ (default) · full. */
+const WIDTHS = [
+  { w: 4, label: '⅓' },
+  { w: 6, label: '½' },
+  { w: 12, label: 'full' },
+] as const;
+type PanelWidth = (typeof WIDTHS)[number]['w'];
 
 /**
  * The native panel designer (Tier 1). Pick one-or-more governed metric members from the
@@ -28,19 +36,52 @@ export default function PanelBuilder({
   view,
   palette,
   onAdd,
+  editing,
+  editKey,
+  onCancelEdit,
+  initialMetrics,
 }: {
   /** The bound Cube view (empty until the first metric is chosen). */
   view: string;
   /** The metric registry palette (MetricSummary[]) already fetched by DashboardsTab. */
   palette: MetricSummary[];
   onAdd: (panel: Panel) => void;
+  /** When set, the builder is EDITING this panel — its spec seeds the controls and the
+   *  add button reads "Update panel". `onAdd` replaces the original panel in the host list. */
+  editing?: Panel | null;
+  /** A stable key that changes each time a NEW edit begins, so the seed effect re-runs even
+   *  if the same panel object is re-selected. */
+  editKey?: number;
+  /** Clear the edit selection (host drops it; the builder returns to add-mode). */
+  onCancelEdit?: () => void;
+  /** Pre-select these metric members (Metric View → "Add to a dashboard" deep-link). */
+  initialMetrics?: string[];
 }) {
   const [name, setName] = useState('');
   const [vizType, setVizType] = useState<VizType>('big_number');
-  const [metrics, setMetrics] = useState<string[]>([]);
+  const [metrics, setMetrics] = useState<string[]>(initialMetrics ?? []);
   const [dimension, setDimension] = useState('');
   const [timeDimension, setTimeDimension] = useState('');
   const [timeGrain, setTimeGrain] = useState<(typeof GRAINS)[number]>('month');
+  // Panel width (P1-2) — ½ by default; when editing, seed from the panel's gridPos (absent = ½).
+  const [width, setWidth] = useState<PanelWidth>(6);
+
+  // Seed the controls from the panel being edited (once per edit — keyed by editKey).
+  useEffect(() => {
+    if (!editing) return;
+    setName(editing.name);
+    setVizType(editing.vizType);
+    setMetrics(panelMetrics(editing));
+    setDimension(editing.dimensions?.[0] ?? '');
+    setTimeDimension(editing.timeDimension ?? '');
+    if (editing.timeGrain && (GRAINS as readonly string[]).includes(editing.timeGrain)) {
+      setTimeGrain(editing.timeGrain as (typeof GRAINS)[number]);
+    }
+    // Seed the width from the panel's authored gridPos — absent (or a non-standard w) = ½.
+    const w = editing.gridPos?.w;
+    setWidth(w === 4 || w === 12 ? w : 6);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editKey]);
 
   // The governed cube-meta for the caller's views (narrowed server-side).
   const [meta, setMeta] = useState<PanelViewMeta[] | null>(null);
@@ -56,16 +97,21 @@ export default function PanelBuilder({
   const inView = useMemo(() => palette.filter((m) => !view || viewOf(m.member) === view), [palette, view]);
   const viewMeta = useMemo(() => meta?.find((v) => v.view === view), [meta, view]);
 
-  const needsDimension = vizType === 'bar' || vizType === 'pie';
-  const isTimeSeries = vizType === 'line' || vizType === 'area';
+  // Bar/pie REQUIRE a dimension to chart; a table can OPTIONALLY group by one (and trend
+  // over time), so it too offers the group-by control. Big-number stays scalar.
+  const needsDimension = vizType === 'bar' || vizType === 'pie' || vizType === 'table';
+  // Line/area trend over time by design; a table may optionally carry a time column too.
+  const isTimeSeries = vizType === 'line' || vizType === 'area' || vizType === 'table';
 
   const draft: Panel | null = useMemo(() => {
     if (metrics.length === 0) return null;
     const p: Panel = { name: name.trim() || leaf(metrics[0]), vizType, metrics };
     if (needsDimension && dimension) p.dimensions = [dimension];
     if (isTimeSeries && timeDimension) { p.timeDimension = timeDimension; p.timeGrain = timeGrain; }
+    // Panel width (P1-2) — the grid lays out by w; x/y unused by the flow renderer, h:1.
+    p.gridPos = { x: 0, y: 0, w: width, h: 1 };
     return p;
-  }, [name, vizType, metrics, needsDimension, dimension, isTimeSeries, timeDimension, timeGrain]);
+  }, [name, vizType, metrics, needsDimension, dimension, isTimeSeries, timeDimension, timeGrain, width]);
 
   // Live preview — the exact panel-query the grid will run (per-viewer RLS).
   const [preview, setPreview] = useState<PanelQueryResponse | null>(null);
@@ -87,9 +133,12 @@ export default function PanelBuilder({
     if (!draft) return;
     onAdd(draft);
     setName('');
+    setVizType('big_number');
     setMetrics([]);
     setDimension('');
     setTimeDimension('');
+    setWidth(6);
+    onCancelEdit?.();
   };
 
   return (
@@ -141,7 +190,31 @@ export default function PanelBuilder({
           </>
         ) : null}
 
-        <button className="btn" style={{ marginLeft: 'auto' }} onClick={add} disabled={!draft}>＋ Add panel</button>
+        {/* Panel width (P1-2) — how many columns the tile spans in View. Default ½. */}
+        <span className="seg" title="Panel width on the dashboard grid" style={{ marginLeft: 'auto' }}>
+          {WIDTHS.map((x) => (
+            <button
+              key={x.w}
+              className={width === x.w ? 'on' : ''}
+              onClick={() => setWidth(x.w)}
+              title={`${x.label} width`}
+              aria-label={`${x.label} width`}
+            >{x.label}</button>
+          ))}
+        </span>
+
+        <button className="btn" onClick={add} disabled={!draft}>
+          {editing ? 'Update panel' : '＋ Add panel'}
+        </button>
+        {editing ? (
+          <button
+            className="btn ghost"
+            onClick={() => {
+              setName(''); setVizType('big_number'); setMetrics([]); setDimension(''); setTimeDimension(''); setWidth(6);
+              onCancelEdit?.();
+            }}
+          >Cancel</button>
+        ) : null}
       </div>
 
       {/* Panels serve as governed SQL resolved through the registry (Phase 2) — the

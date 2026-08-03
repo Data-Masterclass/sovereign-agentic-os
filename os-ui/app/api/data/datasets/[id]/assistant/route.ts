@@ -20,8 +20,8 @@ export const dynamic = 'force-dynamic';
  * (Use has no assistant — Talk to Data is its own governed NL→SQL surface.)
  */
 
-type Stage = 'define' | 'clean' | 'ingest' | 'harmonize' | 'validate' | 'publish';
-const STAGES = new Set<Stage>(['define', 'clean', 'ingest', 'harmonize', 'validate', 'publish']);
+type Stage = 'define' | 'clean' | 'ingest' | 'harmonize' | 'validate' | 'publish' | 'describe-checks';
+const STAGES = new Set<Stage>(['define', 'clean', 'ingest', 'harmonize', 'validate', 'publish', 'describe-checks']);
 
 /** Build the stage-scoped system + user prompt pair from the request body. */
 function promptFor(stage: Stage, body: Record<string, unknown>): { system: string; user: string; json: boolean } {
@@ -35,6 +35,14 @@ function promptFor(stage: Stage, body: Record<string, unknown>): { system: strin
   // rendered as human-readable lines so the model explains WHY each is worth adding.
   const suggestions = Array.isArray(body.suggestions)
     ? body.suggestions.filter((x): x is string => typeof x === 'string')
+    : [];
+  // describe-checks stage: the authored rules the model should write plain descriptions for,
+  // keyed by a stable index so the client can map each description back to its rule.
+  const rules = Array.isArray(body.rules)
+    ? (body.rules as unknown[])
+        .map((r) => (r && typeof r === 'object' ? (r as Record<string, unknown>) : {}))
+        .map((r) => ({ index: typeof r.index === 'number' ? r.index : -1, text: s(r.text).trim() }))
+        .filter((r) => r.index >= 0 && r.text)
     : [];
 
   switch (stage) {
@@ -90,6 +98,16 @@ function promptFor(stage: Stage, body: Record<string, unknown>): { system: strin
           'You suggest governed BI measures to define on a refined (Gold) dataset before it is promoted or certified. Given its columns and any measures already defined, propose 3-5 useful aggregate measures (count, sum, average, distinct-count) in plain language, naming the column each reads. One short paragraph plus a bullet list. Use only the provided columns.',
         user: `Dataset: ${name || '(unnamed)'}\nColumns: ${columns.join(', ') || '(none)'}\nMeasures already defined: ${measures.join(', ') || '(none)'}\nSuggest measures to define.`,
       };
+    case 'describe-checks':
+      // Turn each technical data-quality rule into ONE calm plain-language sentence a
+      // non-technical colleague can read. Keyed by the rule's index so the client maps each
+      // description back to its rule. A DRAFT the user reviews and edits before saving.
+      return {
+        json: true,
+        system:
+          'You write plain-language descriptions for data-quality checks on a dataset. You are given a numbered list of technical rules. For EACH rule, write ONE short calm sentence (no jargon) that explains, in business terms, what the check guards against. Return ONLY a JSON object (no prose, no code fences): {"descriptions": [{"index": number, "description": string}]}. Include exactly one entry per rule given, using the SAME index. Keep each description to a single sentence.',
+        user: `Dataset: ${name || '(unnamed)'}\nRules to describe:\n${rules.map((r) => `${r.index}. ${r.text}`).join('\n') || '(none)'}\nReturn the JSON descriptions.`,
+      };
   }
 }
 
@@ -106,7 +124,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const stage = body.stage as Stage;
     if (!STAGES.has(stage)) {
-      return NextResponse.json({ error: 'A valid stage is required (define|ingest|harmonize|validate|publish).' }, { status: 400 });
+      return NextResponse.json({ error: 'A valid stage is required (define|clean|ingest|harmonize|validate|publish|describe-checks).' }, { status: 400 });
     }
 
     return await runStageAssistant({

@@ -67,7 +67,7 @@ function promptFor(
       return {
         json: true,
         system:
-          'You help a business user define a governed metric on a data table. Given their goal, the table\'s real columns (with any documentation) and its dataset description, propose ONE metric as a JSON object: {"name": string, "aggregation": one of "count"|"count_distinct"|"sum"|"avg"|"min"|"max", "column": string or "", "dimensions": string[]}. Use ONLY columns from the provided list; let the column docs and dataset description guide which column and aggregation genuinely answer the goal. For count, column is "". Be concise — no prose, just the JSON object.',
+          'You help a business user define a governed metric on a data table. Given their goal, the table\'s real columns (with any documentation) and its dataset description, propose ONE metric as a JSON object: {"name": string, "aggregation": one of "count"|"count_distinct"|"sum"|"avg"|"min"|"max", "column": string or "", "dimensions": string[], "description": string}. Use ONLY columns from the provided list; let the column docs and dataset description guide which column and aggregation genuinely answer the goal. For count, column is "". The "description" is a plain-language "what does this metric mean?" — one or two calm sentences a non-technical colleague can read, no jargon; it is a DRAFT the user reviews and edits before saving. Be concise — no prose outside the JSON object.',
         user: `Goal: ${goal || '(none given)'}\nAvailable columns: ${columns.join(', ') || '(none)'}${docs}${about}${ms}\nReturn the JSON metric definition.`,
       };
     }

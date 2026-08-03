@@ -578,8 +578,8 @@ export default function WorkflowView({
           <button className={panel === 'actors' ? 'active' : ''} onClick={() => setPanel('actors')}>
             Actors {wf.actors.length > 0 && <span className="badge muted" style={{ marginLeft: 6, fontSize: 10 }}>{wf.actors.length}</span>}
           </button>
-          <button className={panel === 'rules' ? 'active' : ''} onClick={() => setPanel('rules')}>Business Rules</button>
-          <button className={panel === 'tacit' ? 'active' : ''} onClick={() => setPanel('tacit')}>Expert Knowledge</button>
+          <button className={panel === 'rules' ? 'active' : ''} onClick={() => setPanel('rules')}>Business rules</button>
+          <button className={panel === 'tacit' ? 'active' : ''} onClick={() => setPanel('tacit')}>Expert knowledge</button>
           <button className={panel === 'links' ? 'active' : ''} onClick={() => setPanel('links')}>
             Data &amp; Metrics {(data.links.datasets.length + data.links.metrics.length) > 0 && (
               <span className="badge muted" style={{ marginLeft: 6, fontSize: 10 }}>{data.links.datasets.length + data.links.metrics.length}</span>
@@ -659,9 +659,6 @@ export default function WorkflowView({
                 spellCheck={false}
                 rows={24}
               />
-              <p className="hint" style={{ marginTop: 8 }}>
-                The same source the visual flow + diagram render from. Edits here commit to one source.
-              </p>
             </div>
           )}
 
@@ -719,8 +716,7 @@ export default function WorkflowView({
               ) : (
                 <>
                   <p className="hint" style={{ marginTop: 0 }}>
-                    These step links reference an entity that doesn&rsquo;t exist yet. Jump to the right
-                    tab to build it — the workflow context travels with you. Nothing is auto-created.
+                    These step links reference an entity that doesn&rsquo;t exist yet — jump to the right tab to build it.
                   </p>
                   {data.gaps.map((g, i) => (
                     <div key={`${g.stepId}-${g.link.type}-${g.link.ref}-${i}`} className="k-gap-row">

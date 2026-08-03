@@ -111,7 +111,15 @@ export async function exploreMetric(
   dataset: Dataset,
   measure: Measure,
   token: DelegatedToken,
-  slice: { dimensions?: string[]; timeDimension?: string; granularity?: Granularity; limit?: number } = {},
+  slice: {
+    dimensions?: string[];
+    timeDimension?: string;
+    granularity?: Granularity;
+    limit?: number;
+    /** Equality filters (bare column names) — the drill-down shape; reconciled + WHERE'd
+     *  by the explorer (a filter on a non-member is dropped LOUDLY, never silently). */
+    filters?: { column: string; values: string[] }[];
+  } = {},
   opts: {
     /** LEGACY flag from the Cube era: true when this measure is a pre-save draft. Since the
      *  metrics→Trino migration (Phase 1) EVERY metric read serves via governed Trino SQL —

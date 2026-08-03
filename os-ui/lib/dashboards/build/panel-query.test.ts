@@ -85,6 +85,44 @@ test('group-by on a non-view member → dropped-but-reported (LOUD, not silent)'
   assert.deepEqual(res.missingMembers, ['order_id']);
 });
 
+// P1-6: a multi-measure panel runs its explores CONCURRENTLY (Promise.all) but must still
+// merge per-measure results onto one row per slice key — deterministically, in member order.
+test('multi-measure panel merges per-measure rows onto one row per slice (P1-6 concurrency)', async () => {
+  const ds = goldSales();
+  const revenue: Measure = ds.measures[0];
+  // Two governed members on the same view; each explore returns its own measure keyed by slice.
+  const twoResolve: MemberResolver = (member) =>
+    member === 'Sales.revenue' || member === 'Sales.orders' ? { dataset: ds, measure: revenue } : null;
+  // A fake explore that returns per-region rows for whichever measure it was asked for. The
+  // measure member is derived from the dataset+measure pair — here we key by call order.
+  const calls: string[] = [];
+  const fakeExplore = (async (_d: unknown, _m: unknown, _t: unknown, _s: unknown) => {
+    const member = calls.length === 0 ? 'Sales.revenue' : 'Sales.orders';
+    calls.push(member);
+    return {
+      member,
+      rows: [
+        { region: 'DE', [member]: member === 'Sales.revenue' ? 100 : 5 },
+        { region: 'FR', [member]: member === 'Sales.revenue' ? 200 : 9 },
+      ],
+      securityContext: {}, sql: `SELECT ${member}`, mode: 'live (sql)' as const,
+    };
+  }) as unknown as Parameters<typeof runPanelQuery>[4] extends { explore?: infer E } ? E : never;
+
+  const panel: Panel = { name: 'Rev+Orders by region', vizType: 'bar', metrics: ['Sales.revenue', 'Sales.orders'], dimensions: ['Sales.region'] };
+  const res = await runPanelQuery('Sales', panel, viewerToken('DE'), asUser('DE'), { resolve: twoResolve, explore: fakeExplore });
+
+  assert.equal(res.rows.length, 2, 'one merged row per region (not four)');
+  const de = res.rows.find((r) => r.region === 'DE')!;
+  const fr = res.rows.find((r) => r.region === 'FR')!;
+  assert.equal(de['Sales.revenue'], 100);
+  assert.equal(de['Sales.orders'], 5, 'both measures land on the same DE row');
+  assert.equal(fr['Sales.revenue'], 200);
+  assert.equal(fr['Sales.orders'], 9);
+  assert.match(res.sql, /Sales\.revenue/);
+  assert.match(res.sql, /Sales\.orders/);
+});
+
 // A panel resolves its number through the SAME path as the explorer: injecting a fake explore
 // proves the panel is a thin pass-through over exploreMetric under the viewer's token.
 test('the panel number IS the exploreMetric number (one-number-everywhere by construction)', async () => {

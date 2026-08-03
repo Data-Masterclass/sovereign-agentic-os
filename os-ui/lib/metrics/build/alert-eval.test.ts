@@ -25,7 +25,7 @@ const { resolveAlertValue } = await import('./alert-eval.ts');
 const dataset = goldSales();
 const measure = dataset.measures[0];
 const resolve = () => ({ dataset, measure });
-const rule = { id: 'ds_sales.revenue', member: 'Sales.revenue', comparator: 'lt' as const, threshold: 50000, notify: ['email' as const], owner: 'amir', domain: 'sales', createdAt: '2026-07-31T00:00:00Z' };
+const rule = { id: 'ds_sales.revenue', member: 'Sales.revenue', comparator: 'lt' as const, threshold: 50000, notify: ['in_app' as const], owner: 'amir', domain: 'sales', createdAt: '2026-07-31T00:00:00Z' };
 
 function explored(over: Partial<ExploreServerResult>): ExploreServerResult {
   return { member: 'Sales.revenue', rows: [], securityContext: {}, sql: 'SELECT 1', mode: 'live (sql)', ...over };

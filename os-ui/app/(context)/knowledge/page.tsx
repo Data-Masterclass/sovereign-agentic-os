@@ -4,9 +4,11 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
+import Markdown from '@/components/Markdown';
 import { roleAtLeast, type Role } from '@/lib/core/session';
+import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
 import { useTabNavReset } from '@/lib/core/tab-nav';
 import { SCOPE_GROUPS, type ScopeKey } from '@/lib/core/scopes';
 import type { PersonalKnowledgeSummary } from '@/lib/knowledge/personal-store';
@@ -27,6 +29,11 @@ import { isUnderFolder, itemsUnderFolder, folderName, type FolderPathNode } from
 /** Knowledge visibility (Personal/Shared/Marketplace) → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
   v === 'Shared' ? 'shared' : v === 'Marketplace' ? 'certified' : 'personal';
+
+/** Knowledge visibility → the fail-closed edit-scope tier (mirrors the store's
+ *  `canManageEntry`): Personal is owner-only, Shared is domain, Marketplace is company. */
+const scopeOf = (v: 'Personal' | 'Shared' | 'Marketplace'): ArtifactScope =>
+  v === 'Personal' ? 'personal' : v === 'Marketplace' ? 'certified' : 'shared';
 
 /**
  * Knowledge tab — reference knowledge (markdown) added by users.
@@ -59,25 +66,30 @@ export default function KnowledgePage() {
 
 function KnowledgePageInner() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { notifyApprovalFiled } = useApprovalNotifier();
   const confirm = useConfirm();
-  // Clicking the Knowledge sidebar link returns to this page root.
-  useTabNavReset(() => {});
+  // Clicking the Knowledge sidebar link returns to this page root (and closes any open detail).
+  useTabNavReset(() => { setPkOpenId(null); });
 
   // Knowledge scope (My · Shared · Marketplace).
   const [kScope, setKScope] = useState<ScopeKey>('all');
 
   // Personal general-knowledge entries ("My knowledge").
   const [personal, setPersonal] = useState<PersonalGroups | null>(null);
-  const [pkNewTitle, setPkNewTitle] = useState('');
   const [pkCreating, setPkCreating] = useState(false);
+  // Which entry's DETAIL is open (null = the list). Opening a tile lands in VIEW;
+  // a fresh entry lands in EDIT (the OS-wide View/Edit artifact model).
   const [pkOpenId, setPkOpenId] = useState<string | null>(null);
+  const [pkMode, setPkMode] = useState<'view' | 'edit'>('view');
   const [pkDraft, setPkDraft] = useState<{ title: string; md: string }>({ title: '', md: '' });
   const [pkSaving, setPkSaving] = useState(false);
   const [pkMsg, setPkMsg] = useState('');
   const [pkPromoting, setPkPromoting] = useState(false);
   const [confirmDemoteId, setConfirmDemoteId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  // "＋ New knowledge" type chooser (General knowledge · Workflow); null = closed.
+  const [chooserOpen, setChooserOpen] = useState(false);
 
   // Folder navigation state for "My knowledge"
   const [pkFolder, setPkFolder] = useState<string>('/');
@@ -172,6 +184,8 @@ function KnowledgePageInner() {
     if (!target) return; // unknown id — no-op
     focusApplied.current = true;
     setKScope('all');
+    // A ?focus= deep-link opens the entry's detail in View; the ✎ Edit button
+    // switches to editing (edit-scope gated), matching the OS-wide artifact model.
     void openPersonal(focusId);
   // openPersonal is defined below — safe to omit from deps (stable function reference in closure)
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -180,8 +194,11 @@ function KnowledgePageInner() {
   // ── Personal knowledge ("My knowledge") ──────────────────────────────────
 
   async function createPersonal() {
-    const title = pkNewTitle.trim();
-    if (!title || pkCreating) return;
+    if (pkCreating) return;
+    // The type chooser mints the note with a placeholder title, then opens it in Edit
+    // where the title field is the first thing shown — the OS-wide "new artifact opens
+    // in Edit" flow (Metrics/Dashboards), so there is no separate title prompt.
+    const title = 'New note';
     setPkCreating(true);
     setPkMsg('');
     try {
@@ -192,22 +209,26 @@ function KnowledgePageInner() {
       });
       const d = await res.json();
       if (!res.ok) { setPkMsg(d.error ?? 'Could not create.'); return; }
-      setPkNewTitle('');
+      setChooserOpen(false);
       await loadPersonal();
-      // Open the fresh entry for immediate editing.
+      // A NEW entry opens DIRECTLY in Edit (the OS-wide artifact model).
       setPkOpenId(d.id);
+      setPkMode('edit');
       setPkDraft({ title: d.title, md: '' });
     } catch (e) { setPkMsg((e as Error).message); }
     finally { setPkCreating(false); }
   }
 
-  async function openPersonal(id: string) {
+  // Open an entry's DETAIL. `mode` lets a deep-link jump straight to Edit; a plain
+  // tile click lands in VIEW (rendered markdown), then a ✎ Edit button switches.
+  async function openPersonal(id: string, mode: 'view' | 'edit' = 'view') {
     setPkMsg('');
     try {
       const res = await fetch(`/api/knowledge/personal/${id}`, { cache: 'no-store' });
       if (!res.ok) { setPkMsg('Could not open entry.'); return; }
       const d = await res.json();
       setPkOpenId(id);
+      setPkMode(mode);
       setPkDraft({ title: d.title, md: d.md });
     } catch (e) { setPkMsg((e as Error).message); }
   }
@@ -225,6 +246,8 @@ function KnowledgePageInner() {
       if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Could not save.'); return; }
       setPkMsg('Saved.');
       setTimeout(() => setPkMsg(''), 2000);
+      // Save returns to VIEW (the rendered note), matching Metrics/Dashboards.
+      setPkMode('view');
       await loadPersonal();
     } catch (e) { setPkMsg((e as Error).message); }
     finally { setPkSaving(false); }
@@ -274,48 +297,81 @@ function KnowledgePageInner() {
 
   const canPublish = !!user && roleAtLeast(user.role, 'builder');
   const canCertify = !!user && roleAtLeast(user.role, 'admin');
-  const uid = user?.id ?? '';
 
-  // One personal ("My knowledge") entry — header + open/close, and when open the
-  // full detail: title/body editor, the OS-wide lifecycle cluster, the promotion
-  // ladder control, and a source-domain tag once it is Shared/Marketplace.
-  const renderPersonalEntry = (e: PersonalKnowledgeSummary, editable: boolean) => {
-    const open = pkOpenId === e.id;
+  // Edit-scope, the OS-wide fail-closed rule (mirrors the store's `canManageEntry`):
+  // owner always; a Personal note is owner-only; Shared/Company admits an in-domain
+  // domain_admin or a platform admin. Used to gate the ✎ Edit button and the header
+  // controls — the server re-checks on every mutation, so this only hides dead affordances.
+  const canManageEntry = (e: PersonalKnowledgeSummary): boolean =>
+    !!user && canManageArtifact(user, { owner: e.owner, domain: e.domain, scope: scopeOf(e.visibility) });
+
+  // A LIST TILE — click opens the entry's detail in View (rendered markdown). Tiles
+  // carry no inline editor now; the detail surface owns View/Edit (matches Metrics).
+  const renderTile = (e: PersonalKnowledgeSummary) => {
     const shared = e.visibility === 'Shared' || e.visibility === 'Marketplace';
     return (
-      <div key={e.id} className="k-section">
-        <div className="k-section-head">
-          <span className="k-section-label">{e.title}</span>
-          <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-            {e.archived && <span className="badge muted">archived</span>}
-            {shared && <DomainTag domain={e.domain} />}
-            {e.visibility === 'Shared' && <span className="badge vis-shared">Domain</span>}
-            {e.visibility === 'Marketplace' && <span className="badge vis-certified">Company</span>}
-            <button className="btn ghost sm" onClick={() => void (open ? setPkOpenId(null) : openPersonal(e.id))}>
-              {open ? 'Close' : 'Open'}
-            </button>
-          </div>
+      <button key={e.id} type="button" className="k-tile" onClick={() => void openPersonal(e.id)}>
+        <span className="k-tile-title">{e.title}</span>
+        <span className="k-tile-meta">
+          {e.archived && <span className="badge muted">archived</span>}
+          {shared && <DomainTag domain={e.domain} />}
+          {e.visibility === 'Personal' && <span className="badge vis-personal">My</span>}
+          {e.visibility === 'Shared' && <span className="badge vis-shared">Domain</span>}
+          {e.visibility === 'Marketplace' && <span className="badge vis-certified">Company</span>}
+        </span>
+      </button>
+    );
+  };
+
+  // The DETAIL surface for one open entry — the OS-wide View/Edit artifact model.
+  // VIEW renders the note's markdown; a ✎ Edit button (edit-scope gated) switches to
+  // the markdown editor; Save returns to View. Promote + lifecycle live in the header.
+  const renderDetail = (e: PersonalKnowledgeSummary) => {
+    const editable = canManageEntry(e);
+    const shared = e.visibility === 'Shared' || e.visibility === 'Marketplace';
+    return (
+      <div style={{ marginTop: 20 }}>
+        <div className="row" style={{ marginBottom: 14 }}>
+          <button className="btn ghost sm" onClick={() => { setPkOpenId(null); setPkMsg(''); }}>← All knowledge</button>
         </div>
-        {open ? (
-          <>
-            <input
-              style={{ width: '100%', marginBottom: 8 }}
-              value={pkDraft.title}
-              disabled={!editable}
-              onChange={(ev) => setPkDraft((d) => ({ ...d, title: ev.target.value }))}
-            />
-            <textarea
-              className="k-section-editor"
-              rows={6}
-              value={pkDraft.md}
-              disabled={!editable}
-              onChange={(ev) => setPkDraft((d) => ({ ...d, md: ev.target.value }))}
-              placeholder="Free-form markdown about you — your role, preferences, working style…"
-              autoFocus
-            />
-            <div className="row" style={{ gap: 8, marginTop: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-              {/* Lifecycle lives inside the opened detail: live → Archive + Version;
-                  archived → Restore + Delete + Version. */}
+
+        {/* Detail HEADER — title, scope badges, and (edit-scoped) Promote + lifecycle. */}
+        <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+          <h2 style={{ margin: 0 }}>{pkDraft.title || e.title}</h2>
+          {e.archived && <span className="badge muted">archived</span>}
+          {shared && <DomainTag domain={e.domain} />}
+          {e.visibility === 'Personal' && <span className="badge vis-personal">My</span>}
+          {e.visibility === 'Shared' && <span className="badge vis-shared">Domain</span>}
+          {e.visibility === 'Marketplace' && <span className="badge vis-certified">Company</span>}
+          {editable ? (
+            <div className="row" style={{ marginLeft: 'auto', gap: 8, alignItems: 'center' }}>
+              {/* Promotion ladder — Personal → Shared → (Company). Unchanged governance. */}
+              {!e.archived && e.visibility !== 'Marketplace' && (
+                <button className="btn" onClick={() => void promotePersonal(e.id)} disabled={pkPromoting} title="Share this note along the governed promotion ladder">
+                  {pkPromoting ? <span className="spin" /> : (
+                    e.visibility === 'Shared'
+                      ? (canCertify ? 'Certify to Company' : 'Request certification')
+                      : (canPublish ? 'Promote to Domain' : 'Request promotion')
+                  )}
+                </button>
+              )}
+              {/* Revoke sharing — Company → Domain (Admin) / Domain → My (owner or Builder+). */}
+              {!e.archived &&
+                ((e.visibility === 'Marketplace' && canCertify) || e.visibility === 'Shared') &&
+                (confirmDemoteId === e.id ? (
+                  <>
+                    <button className="btn sm" onClick={() => { setConfirmDemoteId(null); void demotePersonal(e.id); }} disabled={pkPromoting} style={{ background: 'var(--danger, #b42318)' }}>
+                      {pkPromoting ? <span className="spin" /> : (e.visibility === 'Marketplace' ? 'Confirm revoke → Domain' : 'Confirm unshare → My')}
+                    </button>
+                    <button className="btn ghost sm" onClick={() => setConfirmDemoteId(null)} disabled={pkPromoting}>Cancel</button>
+                  </>
+                ) : (
+                  <button className="btn ghost sm" onClick={() => setConfirmDemoteId(e.id)} disabled={pkPromoting} title="Revoke sharing one governed rung">
+                    {e.visibility === 'Marketplace' ? 'Revoke from Company' : 'Unshare'}
+                  </button>
+                ))}
+              <button className="btn ghost sm" onClick={() => setPkMoveId(e.id)} title="Move to a folder">Move…</button>
+              {/* Lifecycle: live → Archive + Version; archived → Restore + Delete + Version. */}
               <LifecycleActions
                 id={e.id}
                 name={e.title}
@@ -326,89 +382,79 @@ function KnowledgePageInner() {
                 onChanged={() => { setPkOpenId(null); void loadPersonal(); }}
                 compact
               />
-              <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                {pkMsg === 'Saved.' ? <span className="hint" style={{ color: 'var(--teal)' }}>Saved.</span> : null}
-                {/* Promotion ladder — Personal → Shared → (Marketplace). */}
-                {editable && !e.archived && e.visibility !== 'Marketplace' && (
-                  <button className="btn ghost sm" onClick={() => void promotePersonal(e.id)} disabled={pkPromoting} title="Share this note along the governed promotion ladder">
-                    {pkPromoting ? <span className="spin" /> : (
-                      e.visibility === 'Shared'
-                        ? (canCertify ? 'Certify to Company' : 'Request certification')
-                        : (canPublish ? 'Promote to Domain' : 'Request promotion')
-                    )}
-                  </button>
-                )}
-                {/* Revoke sharing — Marketplace → Shared (Admin) / Shared → Personal (owner or Builder+). */}
-                {!e.archived &&
-                  ((e.visibility === 'Marketplace' && canCertify) ||
-                    (e.visibility === 'Shared' && editable)) &&
-                  (confirmDemoteId === e.id ? (
-                    <>
-                      <button className="btn sm" onClick={() => { setConfirmDemoteId(null); void demotePersonal(e.id); }} disabled={pkPromoting} style={{ background: 'var(--danger, #b42318)' }}>
-                        {pkPromoting ? <span className="spin" /> : (e.visibility === 'Marketplace' ? 'Confirm revoke → Shared' : 'Confirm unshare → Personal')}
-                      </button>
-                      <button className="btn ghost sm" onClick={() => setConfirmDemoteId(null)} disabled={pkPromoting}>Cancel</button>
-                    </>
-                  ) : (
-                    <button className="btn ghost sm" onClick={() => setConfirmDemoteId(e.id)} disabled={pkPromoting} title="Revoke sharing one governed rung">
-                      {e.visibility === 'Marketplace' ? 'Revoke from Company' : 'Unshare'}
-                    </button>
-                  ))}
-                {editable && (
-                  <button className="btn ghost sm" onClick={() => setPkMoveId(e.id)}
-                    title="Move to a folder">
-                    Move…
-                  </button>
-                )}
-                {editable && (
-                  <button className="btn sm" onClick={() => void savePersonal()} disabled={pkSaving}>
-                    {pkSaving ? <span className="spin" /> : 'Save'}
-                  </button>
-                )}
-              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {(pkMsg === 'Promoted.' || pkMsg.startsWith('Requested') || pkMsg === 'Revoked.') ? (
+          <div className="hint" style={{ marginTop: 6, color: 'var(--teal)' }}>{pkMsg}</div>
+        ) : null}
+        {pkMsg && pkMsg !== 'Saved.' && pkMsg !== 'Promoted.' && pkMsg !== 'Revoked.' && !pkMsg.startsWith('Requested') ? (
+          <div className="error" style={{ marginTop: 6 }}>{pkMsg}</div>
+        ) : null}
+
+        {/* View ⇄ Edit toggle — Edit is edit-scope gated (server re-checks on save). */}
+        <div className="row" style={{ gap: 8, margin: '12px 0' }}>
+          <button className={`btn ${pkMode === 'view' ? 'primary' : 'ghost'} sm`} onClick={() => setPkMode('view')}>View</button>
+          {editable ? (
+            <button className={`btn ${pkMode === 'edit' ? 'primary' : 'ghost'} sm`} onClick={() => setPkMode('edit')}>✎ Edit</button>
+          ) : null}
+        </div>
+
+        {pkMode === 'edit' && editable ? (
+          <>
+            <label className="comp-label">Title</label>
+            <input
+              style={{ width: '100%', marginBottom: 10 }}
+              value={pkDraft.title}
+              onChange={(ev) => setPkDraft((d) => ({ ...d, title: ev.target.value }))}
+            />
+            <label className="comp-label">Note (markdown)</label>
+            <textarea
+              className="k-section-editor"
+              rows={16}
+              value={pkDraft.md}
+              onChange={(ev) => setPkDraft((d) => ({ ...d, md: ev.target.value }))}
+              placeholder="Free-form markdown about you — your role, preferences, working style…"
+              autoFocus
+            />
+            <div className="row" style={{ gap: 8, marginTop: 10, justifyContent: 'flex-end', alignItems: 'center' }}>
+              {pkMsg === 'Saved.' ? <span className="hint" style={{ color: 'var(--teal)' }}>Saved.</span> : null}
+              <button className="btn ghost sm" onClick={() => setPkMode('view')} disabled={pkSaving}>Cancel</button>
+              <button className="btn primary" onClick={() => void savePersonal()} disabled={pkSaving}>
+                {pkSaving ? <span className="spin" /> : 'Save'}
+              </button>
             </div>
           </>
-        ) : null}
+        ) : (
+          <div className="k-detail-body">
+            {pkDraft.md.trim()
+              ? <Markdown>{pkDraft.md}</Markdown>
+              : <p className="hint">This note is empty.{editable ? ' Click ✎ Edit to add content.' : ''}</p>}
+          </div>
+        )}
       </div>
     );
   };
+
+  // The entry whose DETAIL is open (across every lane, incl. archived); null = the list.
+  const openEntry = pkOpenId
+    ? [...(personal?.mine ?? []), ...(personal?.domain ?? []), ...(personal?.marketplace ?? [])]
+        .find((e) => e.id === pkOpenId) ?? null
+    : null;
 
   return (
     <>
       <PageHeader title="Knowledge" crumb="personal notes · domain · company" tutorial="knowledge" />
       <div className="content">
 
-        <p className="lead" style={{ marginTop: 18 }}>
-          Reference knowledge (markdown) that grounds your agents. <strong>My knowledge</strong> is
-          personal context about how you work; <strong>Domain</strong> are notes promoted
-          by domain members; <strong>Company</strong> is certified knowledge from across the org.
-          The <strong>Domain Operating Manual</strong> (overview / glossary / goals / context) lives
-          at the top of the <strong>Business Processes</strong> tab.
-        </p>
+        {openEntry ? renderDetail(openEntry) : (<>
 
-        {/* ── CREATE — capture a note in one line. ── */}
-        <div className="k-create">
-          <div className="k-create-lead">
-            <div className="k-create-title">New knowledge</div>
-            <p className="hint" style={{ margin: 0 }}>
-              Jot a personal note about how you work — it grounds your own agents and
-              can be promoted to the domain later.
-            </p>
-          </div>
-          <form
-            onSubmit={(ev) => { ev.preventDefault(); setKScope('mine'); void createPersonal(); }}
-            className="k-create-form"
-          >
-            <input
-              value={pkNewTitle}
-              onChange={(ev) => setPkNewTitle(ev.target.value)}
-              placeholder="e.g. How I like reports, key contacts, my domain…"
-              aria-label="New knowledge note title"
-            />
-            <button className="btn" type="submit" disabled={pkCreating || !pkNewTitle.trim()}>
-              {pkCreating ? <span className="spin" /> : 'Add note'}
-            </button>
-          </form>
+        <div className="row" style={{ marginTop: 18, justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+          <p className="lead" style={{ margin: 0, maxWidth: 720 }}>
+            Reference knowledge (markdown) that grounds your agents.
+          </p>
+          <button className="btn" onClick={() => { setPkMsg(''); setChooserOpen(true); }}>＋ New knowledge</button>
         </div>
 
         {/* Scope switcher — the OS-wide four groups. */}
@@ -439,8 +485,6 @@ function KnowledgePageInner() {
             : kScope === 'shared' ? (personal?.domain ?? [])
             : kScope === 'marketplace' ? (personal?.marketplace ?? [])
             : [...(personal?.mine ?? []), ...(personal?.domain ?? []), ...(personal?.marketplace ?? [])];
-          const editableOf = (e: PersonalKnowledgeSummary) =>
-            e.visibility === 'Personal' ? true : (e.owner === uid || canPublish);
 
           const active = lane
             .filter((e) => !e.archived)
@@ -450,15 +494,11 @@ function KnowledgePageInner() {
           const emptyCopy =
             kScope === 'shared' ? 'No shared notes yet. Promote a personal note to share it with your domain.'
             : kScope === 'marketplace' ? 'Nothing certified yet. Admins certify general knowledge to Company.'
-            : 'No personal knowledge yet. Add a note above — it stays private to you.';
+            : 'No personal knowledge yet. Use ＋ New knowledge to add one — it stays private to you.';
 
           return (
             <div style={{ marginTop: 20 }}>
-              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-                <p className="hint" style={{ margin: 0, maxWidth: 620 }}>
-                  Notes are grounded reference for your agents. Organise <strong>My knowledge</strong> in
-                  folders on the left; the scope tabs above switch between My, Domain and Company.
-                </p>
+              <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'baseline', marginBottom: 8 }}>
                 <button
                   className="btn ghost sm"
                   style={{ opacity: showArchived ? 1 : 0.7 }}
@@ -535,8 +575,8 @@ function KnowledgePageInner() {
                 ) : active.length === 0 ? (
                   <div className="stub-page">{emptyCopy}</div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {active.map((e) => renderPersonalEntry(e, editableOf(e)))}
+                  <div className="k-tile-grid">
+                    {active.map((e) => renderTile(e))}
                   </div>
                 )}
 
@@ -545,10 +585,10 @@ function KnowledgePageInner() {
                     <>
                       <div className="section-title" style={{ marginTop: 20, fontSize: 12 }}>Archived</div>
                       <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
-                        Archived notes are hidden from your agents. Open one to Restore it or Delete it permanently.
+                        Hidden from your agents — open one to restore or delete it.
                       </p>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {archived.map((e) => renderPersonalEntry(e, editableOf(e)))}
+                      <div className="k-tile-grid">
+                        {archived.map((e) => renderTile(e))}
                       </div>
                     </>
                   ) : (
@@ -569,7 +609,51 @@ function KnowledgePageInner() {
             </div>
           );
         })()}
+
+        </>)}
       </div>
+
+      {/* ＋ New knowledge — the OS-wide TYPE chooser. General knowledge is authored
+          here; a Workflow (business process) is authored on its own tab, which already
+          carries the full steps/rules/swimlane editor + PDF export. */}
+      {chooserOpen ? (
+        <div className="k-chooser-backdrop" role="dialog" aria-modal="true" aria-label="New knowledge" onClick={() => setChooserOpen(false)}>
+          <div className="k-chooser" onClick={(ev) => ev.stopPropagation()}>
+            <div className="k-chooser-head">
+              <span className="k-chooser-title">New knowledge</span>
+              <button className="btn ghost sm" onClick={() => setChooserOpen(false)}>✕</button>
+            </div>
+            <p className="hint" style={{ marginTop: 0 }}>What kind of knowledge do you want to add?</p>
+
+            <button
+              type="button"
+              className="k-chooser-option"
+              onClick={() => { setKScope('mine'); void createPersonal(); }}
+              disabled={pkCreating}
+            >
+              <span className="k-chooser-option-title">{pkCreating ? <span className="spin" /> : 'General knowledge'}</span>
+              <span className="k-chooser-option-desc">
+                A free-form markdown note — how you work, key contacts, context.
+              </span>
+            </button>
+
+            <button
+              type="button"
+              className="k-chooser-option"
+              onClick={() => { setChooserOpen(false); router.push('/workflows'); }}
+            >
+              <span className="k-chooser-option-title">Workflow →</span>
+              <span className="k-chooser-option-desc">
+                A business process — steps, rules and expert knowledge. Authored on the <strong>Business Processes</strong> tab.
+              </span>
+            </button>
+
+            {pkCreating ? null : (
+              <div className="hint" style={{ marginTop: 4 }}>General knowledge opens straight in the editor.</div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {/* Folder picker modal — used by the "Move…" button on any knowledge entry. */}
       <FolderPickerModal
@@ -633,58 +717,42 @@ function KnowledgePageInner() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const KnowledgeStyles = `
-/* Create call-to-action — a quiet gold-lined panel. */
-.k-create {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  flex-wrap: wrap;
-  margin-top: 18px;
-  padding: 16px 20px;
-  border: 1px solid var(--gold-line);
-  border-radius: var(--radius);
-  background: linear-gradient(180deg, rgba(200,162,74,0.05), transparent);
+/* List tiles — one per note; click opens the View/Edit detail. */
+.k-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(256px, 1fr));
+  gap: 14px;
+  margin-top: 4px;
 }
-.k-create-lead { min-width: 220px; flex: 1 1 260px; }
-.k-create-title {
+.k-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  font-family: var(--font-body);
+  width: 100%;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+.k-tile:hover {
+  border-color: var(--gold-line);
+  box-shadow: 0 0 0 1px var(--gold-line), 0 4px 14px rgba(200,162,74,0.07);
+}
+.k-tile-title {
   font-family: var(--font-head);
   font-weight: 600;
   font-size: 15px;
   letter-spacing: 0.3px;
-  margin-bottom: 2px;
+  line-height: 1.25;
 }
-.k-create-form {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex: 1 1 340px;
-  min-width: 260px;
-}
-.k-create-form input { flex: 1; min-width: 0; }
+.k-tile-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
-/* Domain knowledge sections */
-.k-section {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 20px;
-  margin-top: 14px;
-  background: var(--panel);
-}
-.k-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-.k-section-label {
-  font-family: var(--font-head);
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--gold-text);
-}
+/* Detail — the markdown editor (Edit) reuses this; View renders <Markdown>. */
 .k-section-editor {
   width: 100%;
   font-family: var(--font-body);
@@ -697,14 +765,64 @@ const KnowledgeStyles = `
   padding: 10px 12px;
   resize: vertical;
 }
-.k-section-body { margin-top: 2px; }
-.k-prose {
-  font-family: var(--font-body);
-  font-size: 13.5px;
-  line-height: 1.65;
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin: 0;
-  color: var(--text);
+.k-detail-body {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 22px;
+  background: var(--panel);
 }
+
+/* ＋ New knowledge — the type chooser (General knowledge · Workflow). */
+.k-chooser-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 60;
+}
+.k-chooser {
+  width: min(460px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+}
+.k-chooser-head { display: flex; align-items: center; justify-content: space-between; }
+.k-chooser-title {
+  font-family: var(--font-head);
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: 0.3px;
+}
+.k-chooser-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+.k-chooser-option:hover:not(:disabled) {
+  border-color: var(--gold-line);
+  box-shadow: 0 0 0 1px var(--gold-line);
+}
+.k-chooser-option:disabled { opacity: 0.7; cursor: default; }
+.k-chooser-option-title {
+  font-family: var(--font-head);
+  font-weight: 600;
+  font-size: 14px;
+}
+.k-chooser-option-desc { font-size: 12.5px; line-height: 1.5; color: var(--text-muted); }
 `;

@@ -67,17 +67,17 @@ test('TAB-SET Plan group is Strategy, Big Bets, Operating Model, Business Proces
   );
 });
 
-test('TAB-SET Context group is Knowledge, Files, Data, Connections, Metrics', () => {
+test('TAB-SET Context group is Data, Metrics, Files, Knowledge, Connections (usage order)', () => {
   assert.deepEqual(
     CONTEXT_GROUP.tabs.map((t) => t.label),
-    ['Knowledge', 'Files', 'Data', 'Connections', 'Metrics'],
+    ['Data', 'Metrics', 'Files', 'Knowledge', 'Connections'],
   );
 });
 
-test('TAB-SET Build group is Agents, Software, Science, Dashboards, Console', () => {
+test('TAB-SET Build group is Agents, Dashboards, Software, Science, Console', () => {
   assert.deepEqual(
     BUILD_GROUP.tabs.map((t) => t.label),
-    ['Agents', 'Software', 'Science', 'Dashboards', 'Console'],
+    ['Agents', 'Dashboards', 'Software', 'Science', 'Console'],
   );
 });
 

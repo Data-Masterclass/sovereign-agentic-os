@@ -29,6 +29,8 @@ My  →[Promote to Domain: domain-admin gate]→  Domain  →[Promote to Company
 
 Documentation is a hard prerequisite before a promotion request can be filed — an undocumented asset returns `bad_request` at `request_promotion`. Moving up the ladder never widens row-level access — DLS is enforced independently of scope.
 
+The ladder also runs down, on every artifact type: **Unshare** returns a Domain artifact to My (owner or in-domain Domain admin), **Revoke from Company** returns a certified one to Domain (Admin). Demoting a metric moves its dataset and every metric on it together, since a metric shares its dataset's tier.
+
 ## How agents inherit this — the scope-aware write gate
 
 An agent system runs **AS its builder**, so it has exactly the builder's rights and no more. The write gate is **scope-aware**, not a blanket hold:

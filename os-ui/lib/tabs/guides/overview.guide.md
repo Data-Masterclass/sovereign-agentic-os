@@ -8,13 +8,13 @@ The Sovereign Agentic OS is a single governed operating system for your data, kn
 
 | Tab | What lives here |
 |---|---|
-| **Data** | Governed datasets: Bronze → Silver → Gold tier ladder |
+| **Data** | Governed datasets — ingested or curated; the business layer materializes automatically |
 | **Knowledge** | Canonical steps, rules, and tacit know-how |
 | **Connections** | Named credentials consumed by reference, never exposed |
 | **Agents** | Agent systems grounded in knowledge, built and run here |
 | **Software** | Apps and services wired to governed deps |
 | **Metrics** | Canonical metric definitions backed by gold data |
-| **Dashboards** | Per-viewer charts bound to governed metrics, embedded live |
+| **Dashboards** | Per-viewer charts bound to governed metrics, rendered natively (ECharts on Cube) |
 | **Big Bets** | Strategic initiatives referencing real OS components |
 | **Files** | Binary and document assets, promotable to shared |
 | **Science** | Governed predict door into ML models |

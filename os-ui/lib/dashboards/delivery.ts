@@ -2,7 +2,6 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { mailerConfigured, sendNotificationEmail } from '../infra/mailer.ts';
 import { addNotification } from '../notifications/store.ts';
 import type { AlertEvaluation } from '../metrics/alerts.ts';
 import type { Cadence, Channel, ScheduledReport } from './reports.ts';
@@ -13,36 +12,32 @@ import type { Cadence, Channel, ScheduledReport } from './reports.ts';
  * `notifications[]` that died in the JSON response — nothing was ever sent. This wires
  * the pure decision to actual delivery:
  *
- *   1. If a mailer is configured AND we have a recipient email → send the email.
- *   2. Otherwise → persist an in-app notification the recipient can read back
- *      (GET /api/notifications). Never a silent no-op.
+ * ALERTS, DATA-QUALITY alerts AND scheduled REPORTS all land as an in-app notification —
+ * in-app is the ONE delivery surface (email/Slack were UI fiction with no real path). The
+ * recipient reads it via the notification bell (GET /api/notifications). Never a silent no-op.
  *
- * The email `to` is resolved by the route from the authenticated principal (their own
- * inbox), so a send always has an owner. Governance (who may trigger a send) is enforced
- * at the route, before this is called.
+ * The `userId` is resolved by the route from the authenticated principal (their own inbox),
+ * so a send always has an owner. Governance (who may trigger a send) is enforced at the
+ * route, before this is called.
  */
 
-export type DeliveryChannel = 'email' | 'in_app';
+export type DeliveryChannel = 'in_app';
 export type DeliveryResult = {
   channel: DeliveryChannel;
   delivered: boolean;
-  /** Email address (email) or user id (in_app) the message went to. */
+  /** The user id (in_app) the message went to. */
   to: string;
-  /** Set when it landed as an in-app notification. */
+  /** The stored in-app notification id. */
   notificationId?: string;
 };
 
-async function deliver(
+function deliver(
   recipient: { userId: string; email?: string },
   kind: 'report' | 'alert',
   title: string,
   bodyLines: string[],
-): Promise<DeliveryResult> {
-  if (recipient.email && mailerConfigured()) {
-    const ok = await sendNotificationEmail(recipient.email, title, bodyLines);
-    if (ok) return { channel: 'email', delivered: true, to: recipient.email };
-  }
-  // Fallback: a durable, readable in-app notification (never a silent drop).
+): DeliveryResult {
+  // In-app is the only channel: a durable, readable notification (never a silent drop).
   const n = addNotification({ userId: recipient.userId, kind, title, body: bodyLines.join('\n') });
   return { channel: 'in_app', delivered: true, to: recipient.userId, notificationId: n.id };
 }
@@ -56,7 +51,7 @@ export async function deliverReport(
   const title = `Scheduled report: ${report.dashboardId}`;
   const bodyLines = [
     `Your ${report.cadence} snapshot of dashboard "${report.dashboardId}" is ready.`,
-    `Delivered ${new Date(sentAt).toISOString()} on the ${report.channel} channel.`,
+    `Delivered ${new Date(sentAt).toISOString()} in-app.`,
   ];
   return deliver(recipient, 'report', title, bodyLines);
 }
@@ -71,7 +66,7 @@ export async function deliverAlert(
   const results: DeliveryResult[] = [];
   for (const note of evaluation.notifications) {
     const title = `Alert fired: ${member}`;
-    const bodyLines = [note.message, `Current value: ${evaluation.value}.`, `Requested channel: ${note.channel}.`];
+    const bodyLines = [note.message, `Current value: ${evaluation.value}.`];
     results.push(await deliver(recipient, 'alert', title, bodyLines));
   }
   return results;
@@ -79,9 +74,9 @@ export async function deliverAlert(
 
 /**
  * Deliver a DATA-QUALITY failure notice to its recipient (the dataset owner). Reuses the
- * exact real delivery boundary the metric alerts use (email if configured, else a durable
- * in-app notification — never a silent drop). The scheduled DQ cron calls this ONLY on a
- * new failure (see `isNewFailure`), so a dataset doesn't re-notify while it stays broken.
+ * exact in-app delivery boundary the metric alerts use (a durable in-app notification —
+ * never a silent drop). The scheduled DQ cron calls this ONLY on a new failure (see
+ * `isNewFailure`), so a dataset doesn't re-notify while it stays broken.
  */
 export async function deliverDqAlert(
   input: { datasetName: string; healthScore: number | null; failingLabels: string[] },

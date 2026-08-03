@@ -17,7 +17,7 @@ type View =
   | { kind: 'list' }
   // ONE guided flow for both creating and viewing: `existing` = null → a new dashboard
   // starting on Define; a summary → an already-built dashboard opening at View.
-  | { kind: 'builder'; existing: DashboardSummary | null; initialDatasetId?: string };
+  | { kind: 'builder'; existing: DashboardSummary | null; initialDatasetId?: string; initialMetric?: string };
 
 /**
  * The Dashboards experience — the OS's ONE-view pattern, mirroring Data + Metrics but now
@@ -40,17 +40,33 @@ function DashboardsTabInner() {
   const dashboards = useApi<DashboardGroups>(`/api/dashboards${showArchived ? '?archived=1' : ''}`);
   const metrics = useApi<MetricGroups>('/api/metrics');
 
-  // ?new=1&dataset=<id> deep-link (from the Data tab's Publish stage): open the create
-  // flow with the palette pre-filtered to that dataset's metrics. One-shot.
+  // ?new=1&dataset=<id>[&metric=<member>] deep-link (Data tab's Publish stage / Metric
+  // View's "Add to a dashboard"): open the create flow with the palette pre-filtered to
+  // that dataset's metrics and, when given, that metric pre-selected. One-shot.
   const newApplied = useRef(false);
   const newDataset = searchParams.get('new') === '1'
     ? (searchParams.get('dataset') ? decodeURIComponent(searchParams.get('dataset')!) : '')
     : null;
+  const newMetric = searchParams.get('metric') ? decodeURIComponent(searchParams.get('metric')!) : undefined;
   useEffect(() => {
     if (newDataset === null || newApplied.current) return;
     newApplied.current = true;
-    setView({ kind: 'builder', existing: null, initialDatasetId: newDataset || undefined });
+    setView({ kind: 'builder', existing: null, initialDatasetId: newDataset || undefined, initialMetric: newMetric });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newDataset]);
+
+  // ?focus=<dashboardId> deep-link: once dashboards load, open that dashboard at View
+  // (mirrors the Metrics tab's focus handler). One-shot; unknown id = no-op.
+  const focusApplied = useRef(false);
+  const focusId = searchParams.get('focus') ? decodeURIComponent(searchParams.get('focus')!) : null;
+  useEffect(() => {
+    if (!focusId || focusApplied.current || !dashboards.data) return;
+    const g = dashboards.data;
+    const target = [...g.mine, ...g.domain, ...g.marketplace].find((d) => d.id === focusId);
+    if (!target) return;
+    focusApplied.current = true;
+    setView({ kind: 'builder', existing: target });
+  }, [focusId, dashboards.data]);
 
   // Clicking the Dashboards sidebar link returns to the list from the builder.
   useTabNavReset(() => setView({ kind: 'list' }));
@@ -63,6 +79,7 @@ function DashboardsTabInner() {
           <DashboardBuilder
             existing={view.existing}
             initialDatasetId={view.initialDatasetId}
+            initialMetric={view.initialMetric}
             metrics={metrics.data}
             metricsLoading={metrics.loading}
             onBack={() => setView({ kind: 'list' })}

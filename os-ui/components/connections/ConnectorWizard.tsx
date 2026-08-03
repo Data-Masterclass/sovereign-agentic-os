@@ -219,9 +219,7 @@ export default function ConnectorWizard({
       {onChoose ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Connect an external system as a governed connection. Pick its type — the next steps adapt
-            to it. Each stores only a token <em>reference</em> (never the value); external endpoints are
-            checked against the egress allowlist.
+            Pick a connector type — the next steps adapt to it.
           </p>
           <select value={template} onChange={(e) => setTemplate(e.target.value)} style={{ width: '100%' }}>
             {pickable.map((o) => <option key={o.key} value={o.key}>{o.label} · {o.type}</option>)}
@@ -233,9 +231,7 @@ export default function ConnectorWizard({
       {!onChoose && isWarehouse && wh && whProvider && s === 0 ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Federate an external lakehouse as ONE governed Trino catalog. <strong>Secret</strong> fields
-            go to Secrets Manager, the rest onto the record. Registration is finished on the card
-            (Register → Test → Browse).
+            Federate an external lakehouse as one Trino catalog. Finish on the card: Register → Test → Browse.
           </p>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Connection name (e.g. Sales warehouse)" />
           <select
@@ -274,9 +270,8 @@ export default function ConnectorWizard({
       {!onChoose && isOAuth && s === 0 ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Name this connection, then click <strong>Connect</strong> on its card to sign in through
-            {tpl ? ` ${tpl.label}` : ' the provider'} and authorize your own account. OAuth completes
-            server-side; the token goes to Secrets Manager — never the browser. Private to you (<strong>Personal</strong>).
+            Name this connection, then <strong>Connect</strong> on its card to authorize your own
+            {tpl ? ` ${tpl.label}` : ' provider'} account. Private to you (<strong>Personal</strong>).
           </p>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={`Connection name (e.g. My ${tpl?.label ?? 'account'})`} />
         </>
@@ -286,8 +281,7 @@ export default function ConnectorWizard({
       {!onChoose && isApiConnector && s === 0 ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Connect an outbound <strong>{tpl?.type ?? 'API'}</strong>. Give it a name and its endpoint URL.
-            The host must be on the egress allowlist.
+            Name it and give its endpoint URL. The host must be on the egress allowlist.
           </p>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Connection name (e.g. Salesforce API)" />
           <input
@@ -303,10 +297,6 @@ export default function ConnectorWizard({
       {/* ── API/MCP: Auth (s === 1) ── */}
       {!onChoose && isApiConnector && s === 1 ? (
         <>
-          <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            The credential is stored once in <strong>Secrets Manager</strong> — never in the record or the
-            browser. Only a reference is kept.
-          </p>
           <input
             type="password"
             value={credential}
@@ -321,9 +311,7 @@ export default function ConnectorWizard({
       {!onChoose && isApiConnector && s === 2 ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Optional: paste an OpenAPI spec and the governed tools this connector exposes are generated from
-            it. Each becomes a per-tool capability you tune (Read / Write-bounded / Write-approval / Blocked)
-            on the connection&apos;s card after it&apos;s created.
+            Optional: paste an OpenAPI spec to generate tools — tune each (Read / Write-bounded / Write-approval / Blocked) on the card after.
           </p>
           <textarea
             value={openApiSpec}
@@ -337,9 +325,6 @@ export default function ConnectorWizard({
       {/* ── SERVICE (non-API, non-OAuth): endpoint + credential (s === 0) ── */}
       {!onChoose && !isOAuth && !isWarehouse && !isApiConnector && s === 0 ? (
         <>
-          <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            The credential is stored once in <strong>Secrets Manager</strong> — never in the record or the browser.
-          </p>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Connection name" />
           <input
             type="text"
@@ -365,8 +350,7 @@ export default function ConnectorWizard({
         <div style={{ marginTop: 4 }}>
           {isWarehouse ? (
             <p className="hint" style={{ marginTop: 0 }}>
-              Create the connection, then finish on its card: <strong>Register</strong> the Trino catalog
-              (one click — a rolling restart), <strong>Test</strong> (SHOW SCHEMAS), then <strong>Browse</strong>.
+              Create it, then finish on its card: <strong>Register</strong> (a rolling restart) → <strong>Test</strong> → <strong>Browse</strong>.
             </p>
           ) : isOAuth ? (
             <p className="hint" style={{ marginTop: 0 }}>

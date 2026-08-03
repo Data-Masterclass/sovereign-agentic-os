@@ -10,6 +10,7 @@ import { queryRun } from '@/lib/infra/governed';
 import { ensureHydrated, healthTrend, latestRun } from '@/lib/data/dq-results';
 import { suggestChecks } from '@/lib/data/dq-suggest';
 import { MONITOR_KINDS, monitorEnabled, type MonitorConfig, type MonitorKind } from '@/lib/data/dq-monitors';
+import { isNotMaterialized } from '@/lib/data/materialized';
 import {
   assembleProfile,
   parseDescribe,
@@ -62,10 +63,15 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
     enabled: monitorEnabled(dataset.monitors as MonitorConfig | undefined, kind),
   }));
 
-  // Suggestions need a materialised layer to profile. No layer ⇒ honest empty.
+  // Suggestions need a materialised, queryable layer to profile. When there's nothing to
+  // profile we still answer 200 with `profiled: false` — but ALSO carry a machine-readable
+  // `reason` so the Validate UI can show ONE honest line instead of a blank void (the empty
+  // state that made curated datasets look "silently broken": their single composed Gold is
+  // the ONLY layer — no bronze/silver fallback — so before that build lands there is no
+  // table to profile, and the bare catch used to swallow the WHY).
   const resolved = builtLayerFqn(dataset, user);
   if (!resolved) {
-    return NextResponse.json({ suggestions: [], trend, latest, monitors, profiled: false });
+    return NextResponse.json({ suggestions: [], trend, latest, monitors, profiled: false, reason: 'no built layer' });
   }
 
   let profile: Profile | null = null;
@@ -82,9 +88,12 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
       }
     }
     profile = assembleProfile({ fqn: resolved.fqn, layer: resolved.layer, columns, statsRes, topRes, previewRes });
-  } catch {
-    // The layer isn't queryable yet — answer calmly with no suggestions, not a 5xx.
-    return NextResponse.json({ suggestions: [], trend, latest, monitors, profiled: false });
+  } catch (e) {
+    // The layer's table isn't materialised/queryable yet — answer calmly with no
+    // suggestions (never a 5xx), but distinguish "registered, not built yet" from a real
+    // engine fault so the UI can say the right honest thing.
+    const reason = isNotMaterialized(e) ? 'layer not queryable' : 'profile failed';
+    return NextResponse.json({ suggestions: [], trend, latest, monitors, profiled: false, reason });
   }
 
   const suggestions = suggestChecks(profile, dataset.checks ?? []);

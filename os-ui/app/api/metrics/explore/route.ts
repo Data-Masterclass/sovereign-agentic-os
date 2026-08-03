@@ -24,6 +24,9 @@ export const POST = withRoute<Record<string, string>, {
   timeDimension?: string;
   granularity?: Granularity;
   viewerRegion?: string;
+  /** Equality cross-filters (P1-4) — the chip vocabulary; reconciled loudly by exploreMetric
+   *  (a non-view column is dropped + reported, never silently applied). */
+  filters?: { column: string; values: string[] }[];
 }>(async ({ user, body }) => {
   const metricId = (body.metricId ?? '').trim();
   if (!metricId) return NextResponse.json({ error: 'metricId is required' }, { status: 400 });
@@ -34,6 +37,7 @@ export const POST = withRoute<Record<string, string>, {
     dimensions: body.dimensions,
     timeDimension: body.timeDimension,
     granularity: body.granularity,
+    filters: body.filters,
   });
   return NextResponse.json({ metricId, ...result });
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, parse: true });

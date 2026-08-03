@@ -7,6 +7,7 @@ import { useUser } from '@/lib/useUser';
 import { emitTabNav } from '@/lib/core/tab-nav';
 import { DomainSwitcher } from '@/components/core/DomainSwitcher';
 import { DomainStartPrompt } from '@/components/core/DomainStartPrompt';
+import NotificationBell from '@/components/core/NotificationBell';
 // Static import so the brand mark is emitted into .next/static (served in the
 // standalone container, where public/ is not copied).
 import lotus from './lotus.svg';
@@ -103,6 +104,7 @@ export default function Sidebar() {
             <div className="who">
               <span className="who-name">{user.name}</span>
               <span className={`badge ${user.role === 'admin' ? 'ok' : 'muted'}`}>{user.role}</span>
+              <NotificationBell />
             </div>
             {multiDomain ? (
               <DomainSwitcher

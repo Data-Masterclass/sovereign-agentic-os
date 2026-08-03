@@ -18,6 +18,7 @@ import {
   TransformError,
   type SilverSpec,
   type TransformOp,
+  type GoldDerived,
 } from './transform.ts';
 
 /**
@@ -454,6 +455,225 @@ test('goldJoinPlan builds a single-table Gold (0 joins) from the frozen Silver b
   // reads only the caller's own Silver base — no cross-table join
   assert.match(plan.sql, /from iceberg\.personal_creator\.silver_returns t0/);
   assert.doesNotMatch(plan.sql, / join /);
+});
+
+// ---- curated base: an EXPLICIT base source overrides ref 0 (the own-silver default) ----
+
+test('goldJoinPlan with a curated baseSource reads that base as ref 0 (not the own silver)', () => {
+  const BASE_TABLE = 'iceberg.sales.gold_northpeak_commerce';
+  const plan = goldJoinPlan(
+    { name: 'Blend', domain: 'sales', tier: 'dataset', slug: 'blend' },
+    { uid: 'creator', domains: ['sales'] },
+    [], // single-table compose off the explicit base
+    [{ col: { ref: 0, column: 'region' } }],
+    [{ name: 'orders', agg: 'count' }],
+    [], // no derived
+    BASE_TABLE, // the curated base
+  );
+  // TARGET is always the caller's own schema (composed table lands in the personal lane).
+  assert.equal(plan.target, 'iceberg.personal_creator.gold_blend');
+  // SOURCE (ref 0) is the explicit base, NOT the dataset's own silver_blend.
+  assert.equal(plan.source, BASE_TABLE);
+  assert.match(plan.sql, /from iceberg\.sales\.gold_northpeak_commerce t0/);
+  assert.doesNotMatch(plan.sql, /silver_blend/);
+});
+
+test('goldJoinPlan with a curated baseSource can still JOIN in other datasets (base = ref 0)', () => {
+  const BASE_TABLE = 'iceberg.sales.gold_orders';
+  const plan = goldJoinPlan(
+    { name: 'Blend', domain: 'sales', tier: 'dataset', slug: 'blend' },
+    { uid: 'creator', domains: ['sales'] },
+    [{ table: NP, type: 'inner', on: KEY }],
+    [{ col: { ref: 0, column: 'order_id' } }, { col: { ref: 1, column: 'region' } }],
+    [],
+    [],
+    BASE_TABLE,
+  );
+  assert.equal(plan.source, BASE_TABLE);
+  assert.match(plan.sql, /from iceberg\.sales\.gold_orders t0 inner join iceberg\.sales\.gold_northpeak_commerce t1/);
+});
+
+test('goldJoinPlan rejects a non-iceberg curated baseSource (never a phantom cross-catalog read)', () => {
+  assert.throws(
+    () => goldJoinPlan(
+      { name: 'Blend', domain: 'sales', tier: 'dataset', slug: 'blend' },
+      { uid: 'creator', domains: ['sales'] },
+      [], [{ col: { ref: 0, column: 'region' } }], [], [],
+      'hive.sales.gold_orders', // wrong catalog
+    ),
+    /curated base source must be iceberg/,
+  );
+});
+
+test('goldJoinPlan WITHOUT a baseSource is byte-identical to before (own-silver base default)', () => {
+  const args = [
+    { name: 'Returns', domain: 'sales', tier: 'dataset', slug: 'returns' },
+    { uid: 'creator', domains: ['sales'] },
+    [] as never[],
+    [{ col: { ref: 0, column: 'region' } }],
+    [{ name: 'orders', agg: 'count' as const }],
+  ] as const;
+  // Omitting the new arg (and passing it undefined) both resolve to the own-silver base.
+  const a = goldJoinPlan(args[0], args[1], args[2], args[3], args[4]);
+  const b = goldJoinPlan(args[0], args[1], args[2], args[3], args[4], [], undefined);
+  assert.equal(a.source, 'iceberg.personal_creator.silver_returns');
+  assert.equal(a.sql, b.sql);
+});
+
+// ---- derived fields (row-level output columns computed from joined columns) -------
+
+test('a derived col-op-col compiles to a row-level SELECT expression aliased to its name', () => {
+  const sql = compileGoldJoin({
+    source: BASE,
+    joins: [{ table: NP, type: 'inner', on: KEY }],
+    dimensions: [{ col: { ref: 0, column: 'order_id' } }],
+    derived: [{ name: 'margin', left: { ref: 1, column: 'price' }, op: '-', right: { ref: 1, column: 'cost' } }],
+    measures: [],
+    target: GOLD,
+  });
+  assertGuardShape(sql);
+  assert.match(sql, /\(t1\."price" - t1\."cost"\) as "margin"/);
+  assert.doesNotMatch(sql, /group by/); // no measures ⇒ plain row-level projection
+});
+
+test('a derived col-op-constant compiles with a bare numeric literal', () => {
+  const sql = compileGoldJoin({
+    source: BASE,
+    joins: [],
+    dimensions: [{ col: { ref: 0, column: 'order_id' } }],
+    derived: [{ name: 'vat', left: { ref: 0, column: 'price' }, op: '*', right: { value: 0.19 } }],
+    measures: [],
+    target: GOLD,
+  });
+  assertGuardShape(sql);
+  assert.match(sql, /\(t0\."price" \* 0\.19\) as "vat"/);
+});
+
+test('derived division is null-safe: divisor wrapped in NULLIF(x, 0)', () => {
+  const colDiv = compileGoldJoin({
+    source: BASE, joins: [], dimensions: [{ col: { ref: 0, column: 'order_id' } }],
+    derived: [{ name: 'unit_price', left: { ref: 0, column: 'total' }, op: '/', right: { ref: 0, column: 'qty' } }],
+    measures: [], target: GOLD,
+  });
+  assertGuardShape(colDiv);
+  assert.match(colDiv, /\(t0\."total" \/ nullif\(t0\."qty", 0\)\) as "unit_price"/);
+  const constDiv = compileGoldJoin({
+    source: BASE, joins: [], dimensions: [{ col: { ref: 0, column: 'order_id' } }],
+    derived: [{ name: 'per_two', left: { ref: 0, column: 'total' }, op: '/', right: { value: 2 } }],
+    measures: [], target: GOLD,
+  });
+  assert.match(constDiv, /\(t0\."total" \/ nullif\(2, 0\)\) as "per_two"/);
+});
+
+test('a derived column joins the GROUP BY (alongside dims) when measures are present', () => {
+  const sql = compileGoldJoin({
+    source: BASE,
+    joins: [{ table: NP, type: 'inner', on: KEY }],
+    dimensions: [{ col: { ref: 1, column: 'region' } }],
+    derived: [{ name: 'margin', left: { ref: 1, column: 'price' }, op: '-', right: { ref: 1, column: 'cost' } }],
+    measures: [{ name: 'orders', agg: 'count' }],
+    target: GOLD,
+  });
+  assertGuardShape(sql);
+  // both the dimension AND the derived expression are grouping keys (row-level, not aggregated)
+  assert.match(sql, /group by t1\."region", \(t1\."price" - t1\."cost"\)$/);
+  assert.match(sql, /count\(\*\) as "orders"/);
+});
+
+test('a Gold with ONLY derived fields (no dims/measures) still compiles', () => {
+  const sql = compileGoldJoin({
+    source: BASE, joins: [], dimensions: [],
+    derived: [{ name: 'margin', left: { ref: 0, column: 'price' }, op: '-', right: { ref: 0, column: 'cost' } }],
+    measures: [], target: GOLD,
+  });
+  assertGuardShape(sql);
+  assert.match(sql, /select \(t0\."price" - t0\."cost"\) as "margin" from/);
+  assert.doesNotMatch(sql, /group by/);
+});
+
+test('a derived name colliding with a dimension is rejected', () => {
+  assert.throws(
+    () => compileGoldJoin({
+      source: BASE, joins: [], dimensions: [{ col: { ref: 0, column: 'margin' } }],
+      derived: [{ name: 'margin', left: { ref: 0, column: 'price' }, op: '-', right: { ref: 0, column: 'cost' } }],
+      measures: [], target: GOLD,
+    }),
+    /both named 'margin'/,
+  );
+});
+
+test('a derived name colliding with a measure is rejected', () => {
+  assert.throws(
+    () => compileGoldJoin({
+      source: BASE, joins: [], dimensions: [{ col: { ref: 0, column: 'region' } }],
+      derived: [{ name: 'total', left: { ref: 0, column: 'price' }, op: '+', right: { ref: 0, column: 'tax' } }],
+      measures: [{ name: 'total', agg: 'sum', col: { ref: 0, column: 'amount' } }], target: GOLD,
+    }),
+    /both named 'total'/,
+  );
+});
+
+test('an unsafe derived name (SQL meta) is rejected', () => {
+  assert.throws(
+    () => compileGoldJoin({
+      source: BASE, joins: [], dimensions: [{ col: { ref: 0, column: 'region' } }],
+      derived: [{ name: 'bad;drop', left: { ref: 0, column: 'price' }, op: '-', right: { ref: 0, column: 'cost' } }],
+      measures: [], target: GOLD,
+    }),
+    /invalid derived field name/,
+  );
+});
+
+test('a derived ref to a table outside the join is rejected', () => {
+  assert.throws(
+    () => compileGoldJoin({
+      source: BASE, joins: [], dimensions: [{ col: { ref: 0, column: 'region' } }],
+      derived: [{ name: 'margin', left: { ref: 3, column: 'price' }, op: '-', right: { ref: 0, column: 'cost' } }],
+      measures: [], target: GOLD,
+    }),
+    /not part of this join/,
+  );
+});
+
+test('an unsupported derived operator is rejected', () => {
+  assert.throws(
+    () => compileGoldJoin({
+      source: BASE, joins: [], dimensions: [{ col: { ref: 0, column: 'region' } }],
+      derived: [{ name: 'margin', left: { ref: 0, column: 'price' }, op: '%' as unknown as '+', right: { ref: 0, column: 'cost' } }],
+      measures: [], target: GOLD,
+    }),
+    /unsupported operator/,
+  );
+});
+
+test('a non-finite derived constant (NaN/Infinity) is rejected loudly', () => {
+  for (const bad of [NaN, Infinity, -Infinity]) {
+    assert.throws(
+      () => compileGoldJoin({
+        source: BASE, joins: [], dimensions: [{ col: { ref: 0, column: 'region' } }],
+        derived: [{ name: 'x', left: { ref: 0, column: 'price' }, op: '*', right: { value: bad } }],
+        measures: [], target: GOLD,
+      }),
+      /must be a finite number/,
+    );
+  }
+});
+
+test('an all-empty spec (no dims, derived or measures) is still rejected honestly', () => {
+  assert.throws(
+    () => compileGoldJoin({ source: BASE, joins: [], dimensions: [], derived: [], measures: [], target: GOLD }),
+    /at least one column or measure/,
+  );
+});
+
+test('goldJoinPlan threads derived fields through to the compiled CTAS', () => {
+  const derived: GoldDerived[] = [{ name: 'margin', left: { ref: 0, column: 'price' }, op: '-', right: { ref: 0, column: 'cost' } }];
+  const plan = goldJoinPlan(
+    { name: 'Returns', domain: 'sales', tier: 'dataset', slug: 'returns' },
+    { uid: 'creator', domains: ['sales'] },
+    [], [{ col: { ref: 0, column: 'order_id' } }], [], derived,
+  );
+  assert.match(plan.sql, /\(t0\."price" - t0\."cost"\) as "margin"/);
 });
 
 test('goldMeasureToCube maps aggregates to a re-aggregatable Cube measure over the gold column', () => {

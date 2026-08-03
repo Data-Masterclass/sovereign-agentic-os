@@ -18,13 +18,13 @@ const files: TutorialDef = {
   steps: [
     {
       illustration: 'load',
-      title: 'Upload anything',
-      body: 'Drag files in or click Upload — any type works, with a live progress bar per file. Text is extracted in the background; the status chip flips from "Processing…" to "Searchable ✓" when a file is ready to find.',
+      title: 'Add anything',
+      body: '"＋ New" offers two doors — "Upload a file" (drag any type in, a live progress bar per file) or "New note (markdown)" to write one in place. Text is extracted in the background; the status chip flips from "Processing…" to "Searchable ✓" when a file is ready to find.',
     },
     {
       illustration: 'document',
-      title: 'Preview and manage',
-      body: 'Click a file for a full-screen quick look — PDFs carry their own badge. The manage row is always at hand: "Move to folder…", Archive, and the Sharing row. Files live in folders under "My folders" and "Domain folders", just like the other tabs.',
+      title: 'Read and manage',
+      body: 'Click a file to open it as a full-page reading surface — PDFs carry their own badge. The manage row is always at hand: "Move to folder…", Archive, and the Sharing row. Files live in folders under "My folders" and "Domain folders", just like the other tabs.',
     },
     {
       illustration: 'knowledge',
@@ -54,8 +54,8 @@ const files: TutorialDef = {
       anchor: ANCHORS.files.upload,
       sandboxAnchor: ANCHORS.files.sandbox,
       route: '/unstructured',
-      title: 'Upload a file',
-      body: 'Click Upload or drag files anywhere onto the grid — a progress bar tracks each one. Watch the chip: "Processing…" means the text is being extracted; "Searchable ✓" means it is indexed and findable.',
+      title: 'Add a file or a note',
+      body: '"＋ New" → "Upload a file" (or drag files onto the grid), or "New note (markdown)" to write one in place — a progress bar tracks each upload. Watch the chip: "Processing…" means the text is being extracted; "Searchable ✓" means it is indexed and findable.',
     },
     {
       anchor: ANCHORS.files.search,
@@ -69,7 +69,7 @@ const files: TutorialDef = {
       route: '/unstructured',
       governedWrite: true,
       title: 'Propose to share',
-      body: 'Open a file: the quick look shows its Sharing row alongside "Move to folder…" and Archive. Add the description it asks for, then "Propose to Domain →" — a domain admin approves it, the deliberate yes that makes sharing safe. Many files? "Select all" and promote or archive in bulk.',
+      body: 'Open a file to its full-page view: the Sharing row sits alongside "Move to folder…" and Archive. Add the description it asks for, then "Propose to Domain →" — a domain admin approves it, the deliberate yes that makes sharing safe. Many files? "Select all" and promote or archive in bulk.',
     },
   ],
   sandbox: {

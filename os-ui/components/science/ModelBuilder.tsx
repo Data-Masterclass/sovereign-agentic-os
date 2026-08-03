@@ -13,6 +13,7 @@ import DomainTag from '@/components/DomainTag';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import PromoteButton, { type PromoteTier } from '@/components/lifecycle/PromoteButton';
+import DemoteButton from '@/components/lifecycle/DemoteButton';
 import StageShell from '@/components/core/StageShell';
 import { initialStageState, markDone, goTo, type StageState } from '@/lib/core/stages';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
@@ -462,14 +463,22 @@ function MonitorStage({
                   compiled policy. No separate publish step.
                 </p>
               </div>
-              <PromoteButton
-                id={model.model}
-                kind="model"
-                tier={ladderTier(model.tier)}
-                promoteUrl={`/api/science/model/${encodeURIComponent(model.model)}/promote`}
-                canApprove={canApprove}
-                onDone={onChanged}
-              />
+              <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <PromoteButton
+                  id={model.model}
+                  kind="model"
+                  tier={ladderTier(model.tier)}
+                  promoteUrl={`/api/science/model/${encodeURIComponent(model.model)}/promote`}
+                  canApprove={canApprove}
+                  onDone={onChanged}
+                />
+                <DemoteButton
+                  kind="model"
+                  tier={model.tier === 'Marketplace' ? 'Marketplace' : model.tier === 'Domain' ? 'Shared' : 'Personal'}
+                  demoteUrl={`/api/science/model/${encodeURIComponent(model.model)}/demote`}
+                  onDone={onChanged}
+                />
+              </div>
             </div>
             {/* Archive / Restore / Delete now live in the persistent detail header (reachable
                 from any stage). Only Promote remains here as a stage-specific action. */}

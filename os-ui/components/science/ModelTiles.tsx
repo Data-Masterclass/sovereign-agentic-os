@@ -98,7 +98,9 @@ function ModelTilesInner({
   }, [domainNodes, visible]);
 
   const treeItems = useMemo(
-    () => visible.map((m) => ({ id: m.model, folder: m.folder ?? '/', name: m.name })),
+    // Models are domain-scoped only (no personal root), so every item pins to 'domain' —
+    // keeps them out of the personal tree per the FolderTreeItem.scope contract.
+    () => visible.map((m) => ({ id: m.model, folder: m.folder ?? '/', name: m.name, scope: 'domain' as const })),
     [visible],
   );
 

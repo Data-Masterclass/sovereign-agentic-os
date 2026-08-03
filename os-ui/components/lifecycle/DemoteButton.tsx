@@ -29,6 +29,7 @@ export default function DemoteButton({
   demoteUrl,
   onDone,
   label,
+  body,
 }: {
   /** Human noun for confirm copy, e.g. 'pillar', 'connection'. */
   kind: string;
@@ -40,6 +41,9 @@ export default function DemoteButton({
   onDone?: () => void;
   /** Override the default button label. */
   label?: string;
+  /** Override the confirm-dialog body — for kinds whose demotion reaches wider
+   *  than the artifact itself (e.g. a metric moves its dataset too). */
+  body?: string;
 }) {
   const confirm = useConfirm();
   const toast = useToast();
@@ -54,9 +58,9 @@ export default function DemoteButton({
     setErr('');
     const ok = await confirm({
       title: isRevokeCert ? `Revoke this ${kind} from Company?` : `Unshare this ${kind}?`,
-      body: isRevokeCert
+      body: body ?? (isRevokeCert
         ? `This lowers the ${kind} from Company back to Domain — it stops being available across every domain. It is not deleted; you can promote it again later.`
-        : `This lowers the ${kind} from Domain back to My — it stops being visible to your domain. It is not deleted; you can promote it again later.`,
+        : `This lowers the ${kind} from Domain back to My — it stops being visible to your domain. It is not deleted; you can promote it again later.`),
       confirmLabel: verb,
       danger: true,
     });
@@ -80,7 +84,7 @@ export default function DemoteButton({
     } finally {
       setBusy(false);
     }
-  }, [confirm, isRevokeCert, kind, verb, demoteUrl, onDone, toast]);
+  }, [confirm, isRevokeCert, kind, verb, body, demoteUrl, onDone, toast]);
 
   // Personal/My is the bottom of the ladder — nothing to revoke.
   if (tier === 'Personal') return null;

@@ -22,8 +22,9 @@ import { useFolders } from '@/lib/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
 import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
-import { uploadRawFile } from '@/lib/files/upload-client';
+import { uploadRawFile, createNoteFile } from '@/lib/files/upload-client';
 import FilePreview from './FilePreview';
+import NoteEditor from './NoteEditor';
 
 type Summary = {
   id: string; name: string; owner: string; domain: string;
@@ -219,6 +220,10 @@ function FilesBrowserInner() {
     setViewMode(v);
     try { localStorage.setItem(VIEW_KEY, v); } catch { /* ignore */ }
   }, []);
+
+  // "＋ New" type chooser (Upload a file · New note) + the note editor overlay.
+  const [newOpen, setNewOpen] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
 
   // upload / drag-drop
   const [drag, setDrag] = useState(false);
@@ -522,6 +527,16 @@ function FilesBrowserInner() {
     );
   };
 
+  // ── Open file → a full-page detail that REPLACES the browser (mirrors Metrics / Data).
+  // It is not an overlay: the file content IS the page and scrolls with the page. The
+  // ?focus= deep-link sets `selected`, so it lands here too. "← All files" (in FilePreview)
+  // clears it and returns to the drive. ──
+  if (selected) {
+    return (
+      <FilePreview id={selected} onMutated={refresh} onClose={() => setSelected(null)} />
+    );
+  }
+
   return (
     <>
       <div className="files-bar">
@@ -563,10 +578,36 @@ function FilesBrowserInner() {
         >
           {showArchived ? 'Hide archived' : 'Show archived'}
         </button>
-        <button className="btn" onClick={() => fileRef.current?.click()} disabled={uploading}
-          aria-busy={uploading} {...anchorAttr(ANCHORS.files.upload)}>
-          {uploading ? <><span className="spin" /> Uploading…</> : 'Upload'}
-        </button>
+        {/* ＋ New — a TYPE chooser (OS-wide pattern): "Upload a file" (the existing
+            uploader) or "New note (markdown)" (a markdown editor that saves through the
+            SAME raw-upload path, so no new storage plumbing). Both land in an Edit
+            surface; opening the created file lands you in View. */}
+        <div className="files-new" style={{ position: 'relative' }}>
+          <button className="btn" onClick={() => setNewOpen((v) => !v)} disabled={uploading}
+            aria-busy={uploading} aria-haspopup="menu" aria-expanded={newOpen} {...anchorAttr(ANCHORS.files.upload)}>
+            {uploading ? <><span className="spin" /> Uploading…</> : '＋ New'}
+          </button>
+          {newOpen ? (
+            <>
+              {/* Click-away backdrop closes the menu without blocking the page. */}
+              <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setNewOpen(false)} aria-hidden />
+              <div
+                role="menu"
+                className="guided-panel"
+                style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 41, minWidth: 240, padding: 8, display: 'flex', flexDirection: 'column', gap: 4 }}
+              >
+                <button className="btn ghost sm" role="menuitem" style={{ justifyContent: 'flex-start' }}
+                  onClick={() => { setNewOpen(false); fileRef.current?.click(); }}>
+                  Upload a file
+                </button>
+                <button className="btn ghost sm" role="menuitem" style={{ justifyContent: 'flex-start' }}
+                  onClick={() => { setNewOpen(false); setNoteOpen(true); }}>
+                  New note (markdown)
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
         <input ref={fileRef} type="file" multiple hidden
           onChange={(e) => { if (!uploading && e.target.files?.length) upload(e.target.files); e.target.value = ''; }} />
       </div>
@@ -850,10 +891,21 @@ function FilesBrowserInner() {
           )}
       </FolderLayout>
 
-      {/* ---- Quick Look: a full-screen overlay over the (dimmed) grid. The file content
-              is the hero; governance lives in a disclosure below. ---- */}
-      {selected ? (
-        <FilePreview id={selected} onMutated={refresh} onClose={() => setSelected(null)} />
+      {/* ---- New note: the markdown Edit surface. On save it creates a text/markdown
+              file through the SAME raw-upload path, then we open it in View (focus). ---- */}
+      {noteOpen ? (
+        <NoteEditor
+          folder={sel && sel.root === 'personal' ? sel.path : '/'}
+          onClose={() => setNoteOpen(false)}
+          onCreated={(newId) => {
+            setNoteOpen(false);
+            refresh();
+            setScope('all');
+            setSel(null);
+            setTag(null);
+            setSelected(newId); // opens the new note in View (read-first)
+          }}
+        />
       ) : null}
     </>
   );

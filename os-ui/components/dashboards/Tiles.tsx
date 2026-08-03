@@ -96,7 +96,9 @@ function DashboardsInner({
   }, [personalNodes, domainNodes, active]);
 
   const treeItems = useMemo(
-    () => active.map((d) => ({ id: d.id, folder: d.folder, name: d.name })),
+    // `scope` pins each item to its own root so a root-level dashboard shows under My OR
+    // Domain folders, never BOTH (FolderTreeItem.scope contract).
+    () => active.map((d) => ({ id: d.id, folder: d.folder, name: d.name, scope: rootOf(d) })),
     [active],
   );
 

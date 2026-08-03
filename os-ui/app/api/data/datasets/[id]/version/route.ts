@@ -27,10 +27,19 @@ export const POST = withRoute<{ id: string }, { layer?: string; quality?: Qualit
     return NextResponse.json({ error: `layer must be one of ${LAYERS.join('|')}` }, { status: 400 });
   }
   const current = getDataset(id, user);
-  if (!canBuildStage(current.versions, layer)) {
+  const passThrough = Boolean(body.passThrough);
+  // A pass-through carries the newest LOWER layer forward (resolvePassThroughSource probes
+  // silver→bronze for gold), so a Gold pass-through is valid whenever ANY lower layer
+  // exists — not only when the immediate prior (silver) is built. This is what lets an
+  // ingested dataset auto-materialize `gold_<slug>` straight off a raw Bronze ingest (the
+  // simplified Data Edit surface, which removed the manual Gold UI). An AUTHORED build still
+  // needs its immediate prior via canBuildStage.
+  const priorPresent = passThrough
+    ? current.versions.bronze.built || current.versions.silver.built
+    : canBuildStage(current.versions, layer);
+  if (!priorPresent) {
     return NextResponse.json({ error: `bring in the prior layer before building ${layer}` }, { status: 400 });
   }
-  const passThrough = Boolean(body.passThrough);
   if (passThrough && !canPassThrough(layer)) {
     return NextResponse.json({ error: 'Bronze is the entry point — there is nothing to pass through' }, { status: 400 });
   }

@@ -13,6 +13,7 @@ import {
   inCallableScope,
   authorizePredict,
   promoteModel,
+  demoteModel,
   goLive,
   certifyModel,
   nextTier,
@@ -682,4 +683,38 @@ test('active-domain: the per-tab Company (Marketplace) tier IS narrowed by activ
     'a sales-homed Marketplace model must NOT show for a finance user');
   assert.ok(listModelsForUser({ id: 'bob', domains: ['sales'] }).some((m) => m.model === 'test_model'),
     'it shows for a sales user');
+});
+
+// ------------------------------------------------------------- demoteModel (revoke sharing)
+
+test('demoteModel: Domain -> Personal by the owner; Marketplace -> Domain is Admin-only', () => {
+  const owner = builder('sales');
+  const m = createModel({ name: 'Demote me', description: 'd', spec: spec() }, owner);
+  promoteModel(m.model, owner);
+  assert.equal(demoteModel(m.model, owner).tier, 'Personal');
+
+  const a = admin('sales');
+  const m2 = createModel({ name: 'Certify me', description: 'd', spec: spec() }, a);
+  promoteModel(m2.model, a);
+  certifyModel(m2.model, a, 'read_in_place');
+  // A non-admin (even the in-domain builder) cannot revoke a certification.
+  assert.throws(() => demoteModel(m2.model, owner), /requires an Admin/);
+  const back = demoteModel(m2.model, a);
+  assert.equal(back.tier, 'Domain');
+  assert.equal(back.consumptionMode, undefined, 'the certification-time consumption mode is cleared');
+});
+
+test('demoteModel: gates — stranger denied, agent denied, Personal is a no-op error', () => {
+  const owner = builder('sales');
+  const m = createModel({ name: 'Guarded', description: 'd', spec: spec() }, owner);
+  promoteModel(m.model, owner);
+  // A different non-admin builder in the same domain is NOT the manage scope.
+  const stranger: Actor = { id: 'x', role: 'builder', domains: ['sales'], isAgent: false };
+  assert.throws(() => demoteModel(m.model, stranger), /Only the owner/);
+  // An agent can never demote.
+  const agent: Actor = { id: 'bot', role: 'admin', domains: ['sales'], isAgent: true };
+  assert.throws(() => demoteModel(m.model, agent));
+  // Back to Personal, then nothing to revoke.
+  demoteModel(m.model, owner);
+  assert.throws(() => demoteModel(m.model, owner), /already personal/);
 });

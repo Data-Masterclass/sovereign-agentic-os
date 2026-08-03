@@ -13,6 +13,8 @@ import {
   setDocs,
   renameFile,
   addVersion,
+  attachObject,
+  objectKeyForAsset,
   setIndexingMode,
   deleteFile,
   searchFiles,
@@ -171,6 +173,40 @@ test('re-upload bumps the version and keeps history', () => {
   const got = getFile(a.id, amir);
   assert.equal(got.text, 'draft 2');
   assert.ok(got.history.length >= 2, 'history records both versions');
+});
+
+test('inline text edit: a new version + re-attached bytes stay consistent (the honesty invariant)', () => {
+  // The version route runs this exact sequence for an inline text/markdown edit of a
+  // file that HAS stored bytes: addVersion(text) then re-attach the object bytes so
+  // /raw + /download never fall out of step with the edited text.
+  const a = createFile(amir, { name: 'readme.md', folder: '/', text: '# draft one', bytes: 11 });
+  const key0 = objectKeyForAsset(a);
+  assert.ok(key0, 'a normally-created file has an object-store key');
+  // Record the original bytes as attached (mirrors the upload route's attachObject).
+  attachObject(a.id, amir, { contentType: 'text/markdown', bytes: 11 });
+
+  const newText = '# draft two — much longer body';
+  const v2 = addVersion(a.id, amir, { text: newText });
+  assert.equal(v2.version, 'v2');
+  // The route re-writes the object bytes from the new text (rewriteBytes) — same key,
+  // updated byte length + content-type preserved.
+  const key1 = objectKeyForAsset(v2);
+  assert.equal(key1, key0, 'the object key is STABLE across a text edit (bytes never move)');
+  const newBytes = Buffer.from(newText, 'utf8').length;
+  attachObject(a.id, amir, { contentType: 'text/markdown', bytes: newBytes });
+
+  const got = getFile(a.id, amir);
+  assert.equal(got.text, newText, 'the extracted text reflects the edit');
+  assert.equal(got.object?.bytes, newBytes, 'the stored object bytes track the edited text (no split brain)');
+  assert.equal(got.object?.contentType, 'text/markdown', 'the content-type is preserved');
+  assert.equal(got.object?.key, key0, 'the stored object key is unchanged');
+});
+
+test('inline text edit is edit-scoped: a non-owner viewer cannot re-attach bytes', () => {
+  const a = createFile(amir, { name: 'private.md', text: 'secret note' });
+  attachObject(a.id, amir, { contentType: 'text/markdown', bytes: 11 });
+  // kenji (outside sales) may not edit amir's private file — the store's edit gate throws.
+  assert.throws(() => addVersion(a.id, kenji, { text: 'tampered' }));
 });
 
 test('the owner can opt a file out of indexing (stored-only)', () => {

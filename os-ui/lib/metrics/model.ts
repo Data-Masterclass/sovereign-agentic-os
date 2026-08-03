@@ -4,6 +4,7 @@
 import yaml from 'js-yaml';
 import type { Dataset, Measure, MeasureFilter, RollingWindow } from '../data/index.ts';
 import { MEASURE_TYPES, type MeasureType, cubeViewName, slug } from '../data/metrics.ts';
+import { assertFormulaRefs, compileFormula } from './formula.ts';
 
 /**
  * The Metrics tab owns the FULL "define a measure" experience (Data's Gold step is a
@@ -61,10 +62,17 @@ export type MetricForm = {
   rollingWindow?: GuidedWindow;
   /** Optional ratio — for `aggregation: 'number'`, the derived measure a/b. */
   ratio?: GuidedRatio;
+  /** Optional COMPOSITE formula — for `aggregation: 'number'`, arithmetic over other
+   *  basic metrics (`([revenue] - [cost]) / [orders]`); see lib/metrics/formula. Wins
+   *  over `ratio` when both are set (the ratio is just the two-term special case). */
+  formula?: string;
   /** Optional display format (Cube `format:` — e.g. `currency`, `percent`, `number`). */
   format?: string;
   /** Optional drill-down members exposed for exploration. */
   drillMembers?: string[];
+  /** Optional plain-language "what does this metric mean?" sentence — rides onto the
+   *  measure so the View/tile can show it. Absent ⇒ no description (byte-stable). */
+  description?: string;
 };
 
 export class MetricError extends Error {
@@ -135,10 +143,31 @@ function windowFor(form: MetricForm): RollingWindow | undefined {
 }
 
 /** FORM → the canonical Measure. A plain form yields exactly `{name,type,sql}`; the
- *  optional groups add filters / rolling_window / format / drill_members / a ratio sql. */
-export function measureFromForm(form: MetricForm): Measure {
+ *  optional groups add filters / rolling_window / format / drill_members / a ratio sql.
+ *  A COMPOSITE formula (`form.formula`, aggregation 'number') compiles to the same
+ *  `{measure}`-reference sql the ratio uses; pass `siblings` (the dataset's existing
+ *  measures) to validate its references — refs must exist and be basic metrics. */
+export function measureFromForm(form: MetricForm, siblings?: Measure[]): Measure {
   if (!form.name.trim()) throw new MetricError('a metric needs a name');
   if (!isMeasureType(form.aggregation)) throw new MetricError(`unknown aggregation '${form.aggregation}'`);
+
+  // Composite formula — the general case of the two-term ratio below.
+  if (form.formula && form.formula.trim()) {
+    if (form.aggregation !== 'number') {
+      throw new MetricError("a formula metric must use aggregation 'number'");
+    }
+    const compiled = compileFormula(form.formula);
+    if (siblings) assertFormulaRefs(compiled.refs, siblings);
+    const m: Measure = {
+      name: measureName(form.name),
+      type: 'number',
+      sql: compiled.sql,
+      formula: form.formula.trim(),
+    };
+    if (form.format) m.format = form.format;
+    if (form.description && form.description.trim()) m.description = form.description.trim();
+    return m;
+  }
 
   const isRatio = form.aggregation === 'number';
   if (isRatio) {
@@ -164,7 +193,59 @@ export function measureFromForm(form: MetricForm): Measure {
   if (form.drillMembers && form.drillMembers.length > 0) {
     m.drillMembers = form.drillMembers.filter((d) => d.trim());
   }
+  if (form.description && form.description.trim()) m.description = form.description.trim();
   return m;
+}
+
+/** Inverse of {@link filterSql} — parses back exactly the predicate shapes it emits. */
+function parseFilterSql(sql: string): GuidedFilter | null {
+  let m = /^\{CUBE\}\.(\w+) IS NOT NULL$/.exec(sql);
+  if (m) return { column: m[1], operator: 'set', value: '' };
+  m = /^\{CUBE\}\.(\w+) IS NULL$/.exec(sql);
+  if (m) return { column: m[1], operator: 'notSet', value: '' };
+  m = /^\{CUBE\}\.(\w+) (=|<>|>=|<=|>|<) (.+)$/.exec(sql);
+  if (!m) return null;
+  const OP: Record<string, FilterOperator> = { '=': 'equals', '<>': 'notEquals', '>': 'gt', '>=': 'gte', '<': 'lt', '<=': 'lte' };
+  const raw = m[3];
+  const value = raw.startsWith("'") && raw.endsWith("'") ? raw.slice(1, -1).replace(/''/g, "'") : raw;
+  return { column: m[1], operator: OP[m[2]], value };
+}
+
+/**
+ * MEASURE → the guided form (inverse of {@link measureFromForm}) — hydrates the Edit
+ * surface for an EXISTING metric. `name` is the FROZEN measure name (not the display
+ * label): slug() is idempotent on it, so a re-save lands on the SAME member instead of
+ * minting a sibling; display renames stay a header-only `label` write. Total for every
+ * measure this OS generates; a hand-authored sql that doesn't match the generated
+ * shapes hydrates as far as it can (the raw YAML stays visible in Developer view).
+ */
+export function formFromMeasure(m: Measure): MetricForm {
+  const isRatio = m.type === 'number';
+  const form: MetricForm = {
+    name: m.name,
+    aggregation: isMeasureType(m.type) ? m.type : 'count',
+    column: isRatio || m.type === 'count' ? '' : m.sql,
+    dimensions: [],
+  };
+  if (m.formula) {
+    // Composite metric — the SOURCE formula rides on the measure, so it round-trips
+    // verbatim (never inverse-compiled from the NULLIF'd sql).
+    form.formula = m.formula;
+  } else if (isRatio) {
+    const ratio = /\{([^}]+)\}\s*\/\s*\{([^}]+)\}/.exec(m.sql);
+    if (ratio) form.ratio = { numerator: ratio[1], denominator: ratio[2] };
+  }
+  const filter = m.filters?.[0]?.sql ? parseFilterSql(m.filters[0].sql) : null;
+  if (filter) form.filter = filter;
+  if (m.rollingWindow?.trailing === 'unbounded') form.runningTotal = true;
+  else if (m.rollingWindow?.trailing) {
+    const w = /^(\d+) (day|week|month|quarter|year)$/.exec(m.rollingWindow.trailing);
+    if (w) form.rollingWindow = { amount: Number(w[1]), unit: w[2] as WindowUnit };
+  }
+  if (m.format) form.format = m.format;
+  if (m.drillMembers && m.drillMembers.length > 0) form.drillMembers = m.drillMembers;
+  if (m.description) form.description = m.description;
+  return form;
 }
 
 /**

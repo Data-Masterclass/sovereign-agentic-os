@@ -266,9 +266,8 @@ export default function WarehouseImportPanel({
         <div>
           <h3 style={{ margin: 0 }}>Import from warehouse</h3>
           <p className="hint" style={{ marginTop: 6, marginBottom: 0, maxWidth: 520 }}>
-            Materialize a table from a registered warehouse into your lakehouse — it becomes a
-            normal governed dataset you can refine <strong>Bronze → Silver → Gold</strong>. The
-            catalog wiring stays in the engine room.
+            Materialize a warehouse table into a governed dataset you can refine{' '}
+            <strong>Bronze → Silver → Gold</strong>.
           </p>
         </div>
         <button className="btn ghost" onClick={onClose}>Close</button>

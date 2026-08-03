@@ -3,7 +3,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __resetDashboards, listDashboards, getDashboard, saveDashboard, setDashboardArchived, deleteDashboard, listDashboardVersions, restoreDashboardVersion, transitionDashboard, renameDashboard, moveDashboard, type Principal } from './store.ts';
+import { __resetDashboards, listDashboards, getDashboard, saveDashboard, setDashboardArchived, deleteDashboard, listDashboardVersions, restoreDashboardVersion, transitionDashboard, demoteDashboard, renameDashboard, moveDashboard, type Principal } from './store.ts';
 import { __resetStore as resetFolders, listFolders as folderList } from '../folders/folder-store.ts';
 import { dashboardsAdapter } from './folder-adapter.ts';
 import type { DashboardSpec } from './model.ts';
@@ -255,4 +255,37 @@ test('ADAPTER: itemsUnderFolder includes ARCHIVED members for the cascade; archi
   // The owner deletes it (archive→delete allowed; adapter delete is physical).
   dashboardsAdapter.deleteItem('dash_ad2', adapterUser);
   assert.ok(!listDashboards(builder, { includeArchived: true }).mine.some((d) => d.id === 'dash_ad2'));
+});
+
+// ------------------------------------------------- demote (revoke sharing) --
+
+test('demoteDashboard: domain -> personal by the owner; marketplace -> domain is Admin-only', () => {
+  const ownerBuilder: Principal = { id: 'ivy', domains: ['sales'], role: 'builder' };
+  saveDashboard(ownerBuilder, 'dash_dem1', spec('Shared KPIs'));
+  transitionDashboard('dash_dem1', ownerBuilder, 'promote');
+  assert.equal(getDashboard('dash_dem1', ownerBuilder).tier, 'domain');
+  // The owner unshares their own domain dashboard back to personal.
+  assert.equal(demoteDashboard('dash_dem1', ownerBuilder).tier, 'personal');
+
+  // Certified: only an Admin may revoke from the marketplace.
+  const salesAdmin: Principal = { id: 'sara', domains: ['sales'], role: 'admin' };
+  saveDashboard(salesAdmin, 'dash_dem2', spec('Company KPIs'));
+  transitionDashboard('dash_dem2', salesAdmin, 'promote');
+  transitionDashboard('dash_dem2', salesAdmin, 'certify');
+  const domainAdmin: Principal = { id: 'dana', domains: ['sales'], role: 'domain_admin' };
+  assert.throws(() => demoteDashboard('dash_dem2', domainAdmin), (e: { status?: number }) => e.status === 403);
+  assert.equal(demoteDashboard('dash_dem2', salesAdmin).tier, 'domain');
+});
+
+test('demoteDashboard: a non-owner creator cannot unshare; personal is a 400 no-op', () => {
+  const ownerBuilder: Principal = { id: 'ivy', domains: ['sales'], role: 'builder' };
+  saveDashboard(ownerBuilder, 'dash_dem3', spec('Shared KPIs'));
+  transitionDashboard('dash_dem3', ownerBuilder, 'promote');
+  const stranger: Principal = { id: 'sam', domains: ['sales'], role: 'creator' };
+  assert.throws(() => demoteDashboard('dash_dem3', stranger), (e: { status?: number }) => e.status === 403);
+  // An in-domain domain_admin MAY unshare (manage scope), same rule as archive.
+  const domainAdmin: Principal = { id: 'dana', domains: ['sales'], role: 'domain_admin' };
+  assert.equal(demoteDashboard('dash_dem3', domainAdmin).tier, 'personal');
+  // Already personal -> nothing to revoke.
+  assert.throws(() => demoteDashboard('dash_dem3', ownerBuilder), (e: { status?: number }) => e.status === 400);
 });

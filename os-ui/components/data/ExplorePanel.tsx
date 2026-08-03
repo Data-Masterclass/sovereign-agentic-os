@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import QueryError from './QueryError';
 
 type Layer = 'bronze' | 'silver' | 'gold';
 
@@ -92,10 +93,7 @@ export default function ExplorePanel({ datasetId, builtLayers, showPreview = tru
 
   return (
     <div className="guided-panel">
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-        <p className="muted" style={{ margin: 0 }}>
-          A quiet look at what you actually have — rows, completeness, spread and range, all masked to what you can see.
-        </p>
+      <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'center', gap: 10 }}>
         {layers.length > 1 ? (
           <div className="bsg-seg" role="group" aria-label="Layer">
             {layers.map((l) => (
@@ -130,7 +128,7 @@ export default function ExplorePanel({ datasetId, builtLayers, showPreview = tru
         .bsg-tier.on.bsg-gold   { background: var(--gold, #d4af37); border-color: var(--gold, #d4af37); color: #1a1205; }
       `}</style>
 
-      {err ? <div className="error" style={{ marginTop: 12 }}>{err}</div> : null}
+      {err ? <QueryError error={err} style={{ marginTop: 12 }} /> : null}
 
       {busy && !profile ? (
         <div className="row" style={{ marginTop: 16, alignItems: 'center', gap: 8 }}>

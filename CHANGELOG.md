@@ -13,6 +13,357 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.49] — 2026-08-03
+
+### Added
+- **Demote everywhere.** Metrics, Dashboards and Science models gained the way
+  back down the governance ladder (every other tab already had it): "Unshare"
+  on Domain artifacts (owner / in-domain Domain admin) and "Revoke from
+  Company" on certified ones (Admin). A metric shares its tier with its
+  dataset, so demoting a metric moves the dataset and every metric on it — the
+  confirm dialog says so explicitly.
+- **Metric creation type chooser.** ＋ Metric first asks "Simple metric or
+  Complex metric?" on the same two-card picker the Data tab uses. The complex
+  path is a first-class formula editor: the dataset's existing metrics as
+  clickable [name] chips, live validation, honest empty state. The formula
+  option left the aggregation dropdown (it was buried third and undiscoverable).
+- **Dashboard panels expand.** Every panel opens full-screen (title or ⤢) —
+  the chart large, and below it the same rows as a table with ⬇ CSV. The table
+  appears only for graph panels; a table panel renders once, large.
+- **Notification bell.** In-app notifications now have a real surface: a bell
+  with an unread badge in the sidebar foot, newest-first panel, mark-read.
+  This is the single delivery surface for metric alerts, DQ alerts and
+  scheduled reports.
+
+### Changed
+- **Alerts and scheduled reports deliver in-app only.** Email and Slack options
+  removed — Slack never had a delivery path (the checkbox was fiction) and
+  email silently depended on a mailer. Legacy rules/configs coerce safely.
+  "Trigger a governed agent on breach" renamed to "Trigger an Agent".
+- **Talk-to always on top of View, never in Edit.** Metric View's duplicate
+  Talk-to removed; every context-tab View leads with its Talk-to; Edit keeps
+  only stage-assist AI.
+- **Lifecycle from View.** Promote/Demote/Archive/Version history are reachable
+  from an artifact's View (like Knowledge) — Data no longer hides them in Edit.
+- **Context tabs de-cluttered.** ~40 explanatory paragraphs removed and ~40
+  compressed to one clause across Data, Metrics, Files, Knowledge and
+  Connections; headings normalized to short sentence-case.
+
+### Fixed
+- **Raw Trino errors translated.** "Cannot apply operator: varchar * integer"
+  now reads "This calculation mixes text and numbers — cast the column or fix
+  its type in Transformation", raw error behind Show details; wired at every
+  Data-tab query-error site. Derived fields state "Numeric columns only" upfront.
+- **Curated quality suggestions: silence explained.** The DQ pipeline was
+  correct (live repro produced 9 suggestions on the curated dataset) — but a
+  failed/unbuilt Gold returned an empty list with the reason swallowed. The
+  route now reports why and the Checks section says it honestly.
+- **Outdated metric hint corrected.** A metric serves from any dataset with
+  built Gold — even personal, no promotion needed; the old "promote to Shared
+  first" hint misdescribed the system.
+
+## [os-ui 0.6.48] — 2026-08-02
+
+### Added
+- **Metric descriptions.** Every metric can carry a plain-language "what does
+  this metric mean?" sentence — written right under the name when creating,
+  proposed by ✨ Suggest-with-AI, editable any time, shown as the lead line in
+  the metric's View and as a quiet line on its tile.
+- **Human-readable data-quality rule descriptions.** Each rule has an editable
+  description; one "✨ Describe checks with AI" drafts descriptions for every
+  rule missing one (always a draft you review — never auto-saved). The View
+  quality scorecard leads with them.
+- **Dataset demote is back**: "Demote to My" on Domain datasets (edit-scoped)
+  and "Demote to Domain" on certified products (admin) — with confirmation;
+  the store's protection gates (named grants, domain imports) still apply.
+
+### Changed
+- **Dataset detail's technical strip moved to a bottom "About this dataset"
+  footer** — owner, ids, table name, and status chips; the top keeps just the
+  name, tier badge and the ✎ Edit dataset button.
+- **Tile polish**: metric names truncate before the domain/tier badges;
+  the dataset select-checkbox no longer overlays the title.
+
+### Fixed
+- **Composite metrics no longer lose their formula on reload** — the source
+  formula now round-trips through the store (the Edit box re-hydrated empty
+  before; the compiled SQL was never affected).
+
+## [os-ui 0.6.47] — 2026-08-02
+
+### Changed
+- **Dataset Edit speaks plain language: Ingestion → Documentation →
+  Transformation → Checks** (curated: Composition → Documentation → Checks),
+  each section closing with its own action — Save Data, Save Documentation,
+  Save Transformations, Save Data Quality Checks, Save Composition. No
+  Bronze/Silver/Gold words in Edit; no layer previews or stats (View owns
+  those); no "Continue to …" remnants. Lineage moves to the Developer view.
+  Keep-columns + derived fields live only in curated Composition; legacy
+  datasets with stored joins keep their join editor.
+- **Gold materializes automatically for ingested datasets** — after every
+  successful ingest or transformation build, the governed pass-through runs
+  behind the scenes ("…served for metrics automatically"); the manual button
+  is gone. Failures surface loudly.
+- **Checks unifies Default checks** (freshness/volume/schema monitors) **and
+  Custom checks** (authored rules + AI suggest + Run) in one section.
+- **Opening a file is a full-page reading surface** — the half-screen overlay
+  with its own scrollbar is gone; long text flows with the page (CSV keeps
+  horizontal scroll only). Knowledge and Connections verified already correct.
+- **Tile lists group by kind**: "Ingested Data" / "Curated Data" and
+  "Simple Metrics" / "Complex Metrics" (headers only when both kinds exist).
+- **Nav order**: Context = Data, Metrics, Files, Knowledge, Connections;
+  Build = Agents, Dashboards, Software, Science, Console.
+- **MCP guides, tutorials and the user guide are truth-synced** to the whole
+  0.6.40→0.6.47 redesign — golden paths describe ingested-vs-curated with
+  auto-gold, tutorials anchor only to UI that exists, the guide's journeys
+  use the same vocabulary as the screens.
+
+## [os-ui 0.6.46] — 2026-08-02
+
+### Changed
+- **Dataset View reads in usage order: Talk to Data → data preview →
+  statistics → data quality → configuration.** The Talk box drops its example
+  chips; the bronze·silver·gold layer toggle moves into the preview heading
+  (Gold default).
+- **The data-quality section is a scorecard**: pass-rate hero + colored bar +
+  one bordered card per rule with ✓/✗ and real violation counts — unrun rules
+  show as unrun, never as passing.
+- **Dataset View header is calm: one big "✎ Edit dataset" button.** The
+  promote/certify, archive and version-history controls move to the EDIT
+  header — governance itself is unchanged, it just lives where changing
+  things is the point.
+- **The dataset header chip "not published" is renamed "not certified"** — it
+  reports certification (the Company-tier trust badge), not whether the data
+  is built or shared; the tooltip now says so.
+
+## [os-ui 0.6.45] — 2026-08-02
+
+### Changed
+- **Dataset Edit is calm: layer previews are opt-in.** The Bronze/Silver/Gold
+  statistics and previews no longer render inline in Edit — each stage shows a
+  "👁 Preview …" button that fetches the governed rows on demand.
+- **Dataset View shows Gold by default** (the highest built layer) with a
+  bronze · silver · gold toggle at the top of the data preview; only built
+  layers are offered.
+
+### Fixed
+- **Domain datasets/metrics no longer appear under "My folders".** The folder
+  tree renders any item without an explicit scope under BOTH roots; Data and
+  Metrics were the last two tabs passing unpinned items (the same leak fixed
+  for the other tabs in 0.6.40). Every item is now pinned to its own root.
+
+## [os-ui 0.6.44] — 2026-08-02
+
+### Changed
+- **Every context tab now speaks ONE artifact language: create with a type →
+  land in Edit; tiles in folders; click a tile → View; ✎ Edit to change.**
+  Metrics and Dashboards already worked this way — Knowledge, Files,
+  Connections and Data now join them.
+- **Knowledge**: ＋ New offers *General knowledge* (opens the markdown editor)
+  or *Workflow* (routes to the Business Processes editor). A tile opens the
+  RENDERED markdown in View; ✎ Edit (edit-scope gated) opens the editor.
+  Promote/demote, Move and lifecycle live in the detail header.
+- **Files**: ＋ New offers *Upload a file* or *New note (markdown)*. A tile
+  opens the inline preview (text/markdown/CSV/media rendered; honest
+  "no inline preview" + Download for binaries); ✎ Edit gives a real text
+  editor for text files (saving a proper new version) or Replace/rename/move
+  for binaries.
+- **Connections**: ＋ New offers the two doors — *Use a connector* (the
+  grouped, searchable template gallery) or *Build a custom connector*. A tile
+  opens View: live health, Test connection, what it connects to and the
+  capabilities it exposes; ✎ Edit opens configuration (secrets stay
+  write-only).
+- **Data — the ingested vs curated split lands.** An INGESTED dataset's Edit
+  is the full journey in one surface: ingest → clean into Silver → bring to
+  Gold as a single-table projection (columns + derived fields) → quality
+  rules — the "Join to" section is gone; combining datasets is now
+  exclusively a curated-dataset capability. A CURATED dataset's Edit picks an
+  EXPLICIT base dataset and composes: joins, kept/renamed columns, derived
+  fields, then documentation and quality. Both open in View (talk ·
+  statistics · preview · quality). Legacy datasets with stored joins keep
+  their join editor — nothing breaks. The staged walk retires for Data.
+
+### Fixed
+- **File text edits no longer leave stale bytes behind.** Editing a text file
+  previously updated the reader but left `/raw` and `/download` serving the
+  old content; a version rewrite now keeps bytes, extracted text and the
+  search index consistent.
+
+## [os-ui 0.6.43] — 2026-08-02
+
+### Changed
+- **Curated datasets walk their own path: Compose (Gold) · Document · Validate ·
+  View.** A dataset born curated (composed from existing governed datasets) no
+  longer shows the Ingest stage or the Silver cleaning tooling — there is
+  nothing to ingest, and cleaning belongs to the source datasets. It opens
+  straight in Compose (the join builder, now billed as the curated build
+  itself), then Document (describe the composed output — still required for
+  promotion), quality checks, View. Ingested datasets keep the full 5-stage
+  medallion path unchanged.
+- **Composite metrics are findable.** *Formula — combine other metrics* moves
+  up to third in the aggregation dropdown, and the metric-name step carries a
+  one-line signpost to it.
+
+### Added
+- **Derived fields in the Gold builder.** Define new row-level columns computed
+  from the joined data — `margin = price − cost`, `total = price × quantity`
+  (column-op-column or column-op-constant; division is null-safe). Compiled
+  through the same guarded SQL compiler as everything else (no free-text SQL),
+  persisted with the dataset spec, re-editable on reopen, and the new columns
+  flow into the metric builder and dashboard palettes automatically.
+- **Transparency badges on tiles**: curated datasets show a quiet *curated*
+  badge; composite metrics show *formula* instead of the opaque "number" type.
+
+## [os-ui 0.6.42] — 2026-08-02
+
+### Added
+- **Viewer-side time drilling.** Any panel that trends over time gets a quiet
+  day · week · month · quarter · year switcher in its header — drill the time
+  hierarchy up and down without editing the dashboard; every re-query runs
+  under your row-level security.
+- **Panel sizes.** Each panel can be ⅓, ½ or full width (12-column grid) —
+  a KPI tile can sit beside a full-width trend, the Power BI/Tableau layout
+  feel without a drag canvas. Dashboards saved before this keep their layout
+  until a panel size is touched.
+- **Default filters that survive reload.** Saving a dashboard with active
+  filter chips persists them as its defaults; View opens with them applied.
+- **Filter chips in the Metrics explorer** (same vocabulary as dashboards) and
+  an **"Open in Metrics ↗"** link from the drill drawer.
+- **Live formula validation.** The composite-metric editor validates as you
+  type: position-anchored errors inline, resolved `[metric] ✓` chips when
+  valid. The server stays authoritative.
+- **⬇ CSV on every table panel** — downloads exactly the rendered rows (your
+  governed, row-level-secured result), including the drill drawer's table.
+- **BusyProgress — the OS-wide progress surface for long saves.** The ~30 s
+  metric save and the dashboard save now show the shared progress bar with a
+  plain-language sentence naming what the server is doing and a live elapsed
+  counter — never a silently disabled button, never fabricated step progress.
+
+### Changed
+- **Viz dropdown order: pie · bar · table first.**
+- **Panel queries are resilient**: a panel's measures now query the governed
+  engine in parallel, and a query that exceeds 30 s shows an honest
+  "engine may be busy — Retry" state instead of an infinite spinner (never a
+  stale or mock fallback).
+
+### Removed
+- **Connected tools (dashboards View) and Connect Power BI (metric View)** are
+  unmounted until each connection is verified working; the components stay in
+  the tree for one-line restoration.
+
+### Fixed
+- **Talk-to-Data cited datasets from every domain while one domain was
+  active.** Its dataset enumeration applied only the entitlement gate (which
+  the owner passes for their other domains' datasets, and certified products
+  pass tenant-wide); it now applies the same active-domain narrowing as the
+  catalog and JOIN picker, with regression tests across all three tiers.
+
+## [os-ui 0.6.41] — 2026-08-02
+
+### Added
+- **Cross-filtering (the Power BI page interaction).** Clicking a bar, pie
+  slice or table row filters the WHOLE dashboard: a chip bar appears above the
+  grid (`region = DE ×`) and every panel re-queries with the filter pushed into
+  its governed SQL `WHERE` — same viewer identity, same row-level security.
+  One value per member (slicer behavior); click the same value again to clear;
+  `▸` on a chip opens the drill drawer for that slice; a KPI click opens its
+  breakdown directly.
+- **Metrics ⇄ Dashboards are one system now.** Every panel's measure label
+  links to the metric's definition (`/metrics?focus=`), and a metric's View
+  gains **"On dashboards"** — tiles of every visible dashboard charting this
+  metric's view, plus **＋ Add to a dashboard**, which opens the builder with
+  the metric pre-selected. Dashboards now supports the `?focus=<id>` deep-link.
+
+### Fixed
+- **Two panels charting the same metrics DIFFERENT ways no longer silently
+  collapse into one on save.** The panel identity key now includes dimensions,
+  time grain and filters — "revenue by region" and "revenue by product" are
+  two panels, as designed.
+- **The dashboard's live/mock badge is honest about mixed states.** It now
+  aggregates every panel's resolution mode and shows a loud
+  `mixed · N live / M mock` instead of whichever panel happened to resolve last.
+
+## [os-ui 0.6.40] — 2026-08-02
+
+### Changed
+- **Metrics builder is now a plain View/Edit surface too — the 5-stage flow is
+  gone.** A NEW metric opens in **Edit** (source dataset → name → AI-fillable
+  form → Save); an EXISTING metric opens in **View**: the definition in plain
+  terms, the governed Trino SQL it compiles to, the data underneath, the
+  dimensions it can slice by, the live explorer preview, Talk to Metrics and
+  Alerts. Promote moves into the detail header left of Archive, with a
+  View⇄Edit toggle. Editing an existing metric hydrates the saved definition
+  (new tested `formFromMeasure` inverse) and re-saves **onto the same member**
+  — dashboards and alerts keep working.
+- **Data tab: the Publish stage becomes View.** Talk to Data on top, then
+  statistics, the (layer-named) data preview, and a data-quality dashboard
+  built from the dataset's rules; Promote moves to the header. Stage previews
+  are framed per layer (Bronze/Silver/Gold Data Preview) and Harmonize no
+  longer shows the preview twice.
+- **Metrics Define reads naturally: pick the dataset first, then the name;
+  ✨ Suggest with AI moves to the form it fills** (it needs the dataset's
+  columns, so its old placement was always disabled).
+
+### Added
+- **Composite metrics — formulas over other metrics (the Power BI
+  "measures reference measures" pattern).** A new *Formula (other metrics)*
+  option defines e.g. `([revenue] - [cost]) / [orders]` over the dataset's
+  existing basic metrics, with click-to-insert metric chips. Compiled to the
+  same governed serve path as every metric; division is null-safe
+  (÷0 → empty, DAX-DIVIDE style) and integer counts divide correctly. The
+  grammar is a strict DAX subset, so a future one-way Power BI export can
+  compile these metrics to DAX measures.
+- **Dashboards drill-down.** Click a bar, pie slice or table row to drill into
+  that category — the same governed metrics narrowed to the clicked value
+  (pushed into the SQL `WHERE`, under your row-level security) and broken down
+  by another dimension of your choice; click a KPI number for its breakdown.
+  A filter on a member the governed view doesn't expose is dropped LOUDLY,
+  never a silently unnarrowed number.
+
+### Fixed
+- **Dashboard charts no longer overlap themselves.** Multi-measure legends get
+  their own scrolling band above the plot, the pie sits clear of a one-line
+  scrolling bottom legend with overlap-hiding slice labels, and long bar
+  category labels rotate + truncate instead of colliding.
+
+### Changed
+- **Dashboards builder is now a plain View/Edit surface — the 5-stage flow is
+  gone.** A NEW dashboard opens in **Edit** (name + panel builder + Save); an
+  EXISTING dashboard opens in **View** — the native ECharts grid — with a clear
+  **✎ Edit** button that switches to Edit, and Save returns to View. Save stays
+  an **upsert under the existing id** (editing updates in place, never
+  duplicates). The `StageShell`/`DASH_STAGES` machinery (and its unit tests) is
+  deleted; the per-stage assistant slot is removed with it.
+- **The Govern stage is dropped.** Its two real actions move to sensible homes:
+  **Promote** now sits in the detail **header** next to the Archive/lifecycle
+  controls (mirrors the Metrics builder), and **Reports** + **Connected tools**
+  (Power BI / Tableau / Superset) fold into a calm section **below the grid** in
+  View — reachable, but no longer a whole stage.
+
+### Removed
+- **The "View as" viewer-region dropdown (DE/FR/US) is gone from the dashboard
+  view.** It was a Cube-era per-viewer-region RLS demo affordance; on the
+  governed-SQL path RLS comes from OPA identity, so the dropdown was misleading.
+  The panel-query request no longer sends `viewerRegion` (the server stays
+  tolerant of the field).
+
+### Added
+- **Existing panels are editable, not just deletable.** In Edit, each panel has
+  an **Edit** button that loads its spec (metric, viz, group-by, time) back into
+  the panel builder — the add button reads **"Update panel"** — and replaces the
+  panel in place on confirm.
+- **Table panels can group by a dimension (and optionally time).** The panel
+  builder's group-by/time controls now apply to `table` too; the governed-SQL
+  resolution path already handled a dimensioned slice and the table renders the
+  dimension column.
+
+### Fixed
+- **Folder-tree scope leak on the new foldered tabs.** `FolderTreeItem.scope` is
+  optional; when omitted an item rendered under BOTH "My folders" and "Domain
+  folders" roots. Every nav list rail now pins each item to its own root:
+  Dashboards, Agents, Connections and Science (models → domain-only) pass an
+  explicit `scope`, so a root-level item shows in exactly one tree.
+
 ## [os-ui 0.6.39] — 2026-08-01
 
 ### Added

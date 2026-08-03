@@ -21,6 +21,10 @@ import { goldMartFqn, viewMembers } from '../data/metrics.ts';
 
 export type Granularity = 'day' | 'week' | 'month' | 'quarter' | 'year';
 
+/** An equality/IN filter on a dimension member — the drill-down shape ("only rows where
+ *  region ∈ {DE}"). Values are matched as-is; numeric-looking values compare unquoted. */
+export type ExploreFilter = { member: string; values: string[] };
+
 export type ExploreSpec = {
   /** The canonical measure member to chart (the single source of the number). */
   member: string;
@@ -30,6 +34,8 @@ export type ExploreSpec = {
   timeDimension?: string;
   granularity?: Granularity;
   limit?: number;
+  /** Equality filters narrowing the rows BEFORE aggregation (drill-down). */
+  filters?: ExploreFilter[];
   /** LOUD-degradation record (Northpeak fix): slice members the view does NOT expose,
    *  dropped from the query so Cube doesn't 400 — but REPORTED, never silent. A non-empty
    *  list means the rendered result is NOT sliced the way the caller asked. */
@@ -40,7 +46,14 @@ export type ExploreSpec = {
 export function exploreSpec(
   dataset: Dataset,
   measure: Measure,
-  slice: { dimensions?: string[]; timeDimension?: string; granularity?: Granularity; limit?: number } = {},
+  slice: {
+    dimensions?: string[];
+    timeDimension?: string;
+    granularity?: Granularity;
+    limit?: number;
+    /** Equality filters (bare column names, like `dimensions`) — the drill-down shape. */
+    filters?: { column: string; values: string[] }[];
+  } = {},
 ): ExploreSpec {
   // Reconcile against the view's member set: a slice on a non-member (classically the
   // dataset PRIMARY KEY, which is a cube dimension but excluded from the view) would 400
@@ -52,13 +65,21 @@ export function exploreSpec(
   const droppedDims = (slice.dimensions ?? []).filter((d) => !members.has(d));
   const timeOk = slice.timeDimension && members.has(slice.timeDimension) ? slice.timeDimension : undefined;
   const droppedTime = slice.timeDimension && !timeOk ? [slice.timeDimension] : [];
-  const dropped = [...droppedDims, ...droppedTime];
+  // Filters reconcile like dimensions: a filter on a non-member is dropped LOUDLY — a
+  // silently unfiltered drill-down would show the wrong (unnarrowed) number.
+  const filtersIn = (slice.filters ?? []).filter((f) => f.values.length > 0);
+  const filtersOk = filtersIn.filter((f) => members.has(f.column));
+  const droppedFilters = filtersIn.filter((f) => !members.has(f.column)).map((f) => f.column);
+  const dropped = [...droppedDims, ...droppedTime, ...droppedFilters];
   return {
     member: measureMember(dataset, measure),
     dimensions: dims.map((d) => dimensionMember(dataset, d)),
     timeDimension: timeOk ? dimensionMember(dataset, timeOk) : undefined,
     granularity: timeOk ? slice.granularity : undefined,
     limit: slice.limit,
+    ...(filtersOk.length > 0
+      ? { filters: filtersOk.map((f) => ({ member: dimensionMember(dataset, f.column), values: f.values })) }
+      : {}),
     ...(dropped.length > 0 ? { dropped } : {}),
   };
 }
@@ -163,6 +184,21 @@ function baseAggExpr(m: Measure, siblings: Measure[]): string | null {
   }
 }
 
+/** The WHERE clause for the spec's equality filters ('' when none). Values compare on
+ *  `CAST(col AS varchar)` — drill values originate from RENDERED rows (always strings),
+ *  so a text compare is faithful for varchar, numeric and date columns alike and can
+ *  never hit a Trino type-mismatch. Single quotes escape as ''. */
+function filterWhereSql(spec: ExploreSpec): string {
+  const filters = spec.filters ?? [];
+  if (filters.length === 0) return '';
+  const preds = filters.map((f) => {
+    const col = f.member.split('.')[1] ?? f.member;
+    const vals = f.values.map((v) => `'${v.replace(/'/g, "''")}'`).join(', ');
+    return `CAST("${col}" AS varchar) IN (${vals})`;
+  });
+  return `\nWHERE ${preds.join(' AND ')}`;
+}
+
 /** One measure as a Trino aggregate expression, honouring the rolling-window guard: a
  *  window measure has no PLAIN (non-windowed) aggregate form, so this returns null for it
  *  (the caller layers the window on via {@link windowTrinoSql}). A non-window measure is
@@ -236,7 +272,7 @@ function windowTrinoSql(dataset: Dataset, measure: Measure, spec: ExploreSpec, f
   const groupSelect = [...dims.map((c) => `"${c}"`), `${bucket} AS "${timeCol}"`];
   const select = [...groupSelect, `${accumulator}(${base}) ${over} AS "${measure.name}"`].join(', ');
   const groupBy = `\nGROUP BY ${dims.map((_, i) => i + 1).concat([dims.length + 1]).join(', ')}`;
-  return `SELECT ${select}\nFROM ${from}${groupBy}\nLIMIT ${spec.limit ?? 100}`;
+  return `SELECT ${select}\nFROM ${from}${filterWhereSql(spec)}${groupBy}\nLIMIT ${spec.limit ?? 100}`;
 }
 
 /**
@@ -272,7 +308,7 @@ export function previewTrinoSql(dataset: Dataset, measure: Measure, spec: Explor
   // NO comment header: this SQL is EXECUTED via the governed query path (queryRun),
   // which rejects any statement containing `--` or `/* */`. Explanatory comments live
   // only on the display-side dropToSql above, which is never executed.
-  return `SELECT ${select}\nFROM ${from}${groupBy}\nLIMIT ${spec.limit ?? 100}`;
+  return `SELECT ${select}\nFROM ${from}${filterWhereSql(spec)}${groupBy}\nLIMIT ${spec.limit ?? 100}`;
 }
 
 /** Map a governed-SQL result (column names + string rows) onto the SAME row shape the

@@ -32,6 +32,11 @@ export type MetricSummary = {
   folder: string;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
+  /** COMPOSITE metric (a formula over other metrics) — the transparency badge. */
+  composite?: boolean;
+  /** Plain-language "what does this metric mean?" — shown as a muted line on the tile.
+   *  Absent ⇒ no line (layout unchanged). */
+  description?: string;
   /** FAIL-SOFT (#91): set when this one metric/model couldn't be loaded — the tile
    *  renders its reason inline while the rest of the registry stays live. */
   error?: string;
@@ -55,6 +60,8 @@ function summariesFor(datasetId: string, user: Principal): MetricSummary[] {
       domain: d.domain || undefined,
       folder: metricFolder(id),
       archived: isMetricArchived(id),
+      ...(m.formula ? { composite: true } : {}),
+      ...(m.description ? { description: m.description } : {}),
     };
   });
 }

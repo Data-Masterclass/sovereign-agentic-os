@@ -4,49 +4,53 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import PromoteButton, { type PromoteTier } from '@/components/lifecycle/PromoteButton';
+import DemoteButton from '@/components/lifecycle/DemoteButton';
 import type { Visibility } from '@/lib/core/lifecycle';
 import { visibilityForTier } from '@/lib/core/artifact-model';
 import DomainTag from '@/components/DomainTag';
-import StageShell from '@/components/core/StageShell';
-import { initialStageState, markDone, type StageState } from '@/lib/core/stages';
-import { METRIC_STAGES, type MetricCtx, type MetricStageId } from '@/lib/metrics/stages';
 import { useToast } from '@/components/core/Toast';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import type { ViewMode } from '@/lib/core/view-mode';
+import TalkTo from '@/components/talk/TalkTo';
+import { TALK_PRESENTATION } from '@/lib/talk/schema';
+import BusyProgress from '@/components/core/BusyProgress';
 import MetricStageAssistant from './MetricStageAssistant';
 import ExploreMetric from './ExploreMetric';
 import Alerts from './Alerts';
-import ConnectPowerBI from '@/components/powerbi/ConnectPowerBI';
+import { formFromMeasure, type MetricForm } from '@/lib/metrics/model';
+import { compileFormula, assertFormulaRefs, FormulaError } from '@/lib/metrics/formula';
+import type { MetricKind } from './MetricTypeChooser';
 import {
   type DatasetGroups,
   type DatasetTile,
   type DefineResult,
   type MetricGroups,
   type MetricSummary,
-  BuildRowsView,
-  ChecksList,
   TIER_BADGE,
   TIER_WORD,
   datasetLayerLabel,
-  leaf,
 } from './shared';
 
 const METRIC_MODE_KEY = 'metrics.viewMode';
 
 /* ─────────────────────────────── constants ─────────────────────────────── */
 
+// The SIMPLE-path aggregations. The composite 'formula' path is NO LONGER an entry here —
+// the type chooser (Simple vs Complex) owns that decision, so nobody has to hunt a buried
+// dropdown item to reach a composite metric.
 const AGGREGATIONS: { value: string; label: string; hint: string }[] = [
   { value: 'count', label: 'Count of rows', hint: 'how many records' },
-  { value: 'count_distinct', label: 'Count of unique values', hint: 'distinct values in a column' },
-  { value: 'count_distinct_approx', label: 'Count of unique (fast, approximate)', hint: 'HyperLogLog — huge datasets' },
   { value: 'sum', label: 'Sum', hint: 'total of a numeric column' },
   { value: 'avg', label: 'Average', hint: 'mean of a numeric column' },
+  { value: 'count_distinct', label: 'Count of unique values', hint: 'distinct values in a column' },
+  { value: 'count_distinct_approx', label: 'Count of unique (fast, approximate)', hint: 'HyperLogLog — huge datasets' },
   { value: 'min', label: 'Minimum', hint: 'smallest value' },
   { value: 'max', label: 'Maximum', hint: 'largest value' },
   { value: 'number', label: 'Ratio (a ÷ b)', hint: 'divide one measure by another' },
@@ -76,6 +80,8 @@ type WindowMode = 'none' | 'running' | 'trailing';
 
 type Form = {
   name: string;
+  /** Plain-language "what does this metric mean?" — a one-to-two-line note authored up front. */
+  description: string;
   aggregation: string;
   column: string;
   dimensions: string[];
@@ -84,6 +90,8 @@ type Form = {
   windowAmount: number;
   windowUnit: (typeof WINDOW_UNITS)[number];
   ratio: { numerator: string; denominator: string };
+  /** Composite formula over other metrics (UI aggregation 'formula' → payload 'number'). */
+  formula: string;
   format: string;
   timeDimension: string;
   granularity: (typeof GRAINS)[number];
@@ -91,6 +99,7 @@ type Form = {
 
 const EMPTY_FORM: Form = {
   name: '',
+  description: '',
   aggregation: 'sum',
   column: '',
   dimensions: [],
@@ -99,6 +108,7 @@ const EMPTY_FORM: Form = {
   windowAmount: 7,
   windowUnit: 'day',
   ratio: { numerator: '', denominator: '' },
+  formula: '',
   format: '',
   timeDimension: '',
   granularity: 'month',
@@ -116,6 +126,8 @@ type PreviewResult = {
   /** LOUD degradation notice: requested slice members not exposed on the governed view
    *  were dropped — the preview is NOT sliced as asked (never a silent de-dimension). */
   warning?: string;
+  /** The governed Trino SQL the number came from — View's "how it is calculated". */
+  sql?: string;
 };
 
 /** Metric tier → lifecycle visibility (drives delete gate) — OS-wide mapping. */
@@ -136,8 +148,11 @@ type DatasetDetail = {
   measures: Measure[];
   description: string;
   deliverable: boolean;
+  /** The dataset's governed layer/tier (e.g. 'asset', 'product', 'dataset') — feeds View's
+   *  "data underneath" section via {@link datasetLayerLabel}. */
+  tier: string;
 };
-const EMPTY_DETAIL: DatasetDetail = { columns: [], columnDocs: [], measures: [], description: '', deliverable: true };
+const EMPTY_DETAIL: DatasetDetail = { columns: [], columnDocs: [], measures: [], description: '', deliverable: true, tier: '' };
 
 function useDataset(datasetId: string): DatasetDetail {
   const [state, setState] = useState<DatasetDetail>(EMPTY_DETAIL);
@@ -153,15 +168,33 @@ function useDataset(datasetId: string): DatasetDetail {
           // Prefer `goldColumns` — the ACTUAL columns of the built gold table (join
           // output names). `columns` documents the base/Silver schema, which diverges
           // after a Gold join (joined columns added, unprojected ones gone).
-          const cols = ((ds.goldColumns?.length ? ds.goldColumns : ds.columns) ?? []) as Column[];
+          let cols = ((ds.goldColumns?.length ? ds.goldColumns : ds.columns) ?? []) as Column[];
+          // UNDOCUMENTED dataset fallback: no documented columns at all left the AI
+          // button dead with no way forward. The governed row preview knows the REAL
+          // columns of the built table — use their names (no docs, honestly bare).
+          if (cols.length === 0 && ds?.versions?.gold?.built) {
+            try {
+              const p = await fetch(`/api/data/datasets/${datasetId}/preview?limit=1`, { cache: 'no-store' });
+              const pd = await p.json();
+              if (p.ok && pd?.available) cols = (pd.columns as string[]).map((name) => ({ name }));
+            } catch { /* preview unreachable → stay with the documented (empty) set */ }
+          }
           const ms = (ds.measures ?? []) as Measure[];
-          const deliverable = ds.tier !== 'dataset' && Boolean(ds?.versions?.gold?.built);
+          // SERVABLE = a built Gold, of ANY tier. Since the metrics→Trino migration a
+          // metric serves as governed SQL over the physical gold mart read AS the viewer
+          // (metricSqlReady, lib/data/metrics.ts) — a PERSONAL dataset with built Gold
+          // serves metrics with no promotion. The only thing that blocks defining a metric
+          // is an UNBUILT Gold. (Cube semantic-layer registration additionally needs a
+          // governed tier — metricCubeReady — but that's the dashboards path, not serving.)
+          const deliverable = Boolean(ds?.versions?.gold?.built);
+          if (!live) return;
           setState({
             columns: cols.map((c) => c.name).filter(Boolean),
             columnDocs: cols.filter((c) => c.name),
             measures: ms,
             description: typeof ds.description === 'string' ? ds.description : '',
             deliverable,
+            tier: typeof ds.tier === 'string' ? ds.tier : '',
           });
         }
       } catch { if (live) setState(EMPTY_DETAIL); }
@@ -224,9 +257,7 @@ function DatasetPicker({
       </select>
       {value && selectedDeliverable === false ? (
         <p className="hint" style={{ margin: 0 }}>
-          Heads up: this dataset isn&apos;t a governed <strong>Gold</strong> asset yet, so its
-          metrics won&apos;t reach the query engine. Promote it to <strong>Shared</strong> and build
-          Gold in Data to serve it — you can still define now.
+          No <strong>Gold</strong> built yet — build Gold in <strong>Data</strong> first, or the metric can&apos;t serve.
         </p>
       ) : null}
     </div>
@@ -234,12 +265,15 @@ function DatasetPicker({
 }
 
 function toPayload(form: Form) {
+  const isFormula = form.aggregation === 'formula';
   const payload: Record<string, unknown> = {
+    // 'formula' is UI-only — the wire aggregation is 'number' with a formula field.
     name: form.name.trim(),
-    aggregation: form.aggregation,
-    column: form.column.trim(),
+    aggregation: isFormula ? 'number' : form.aggregation,
+    column: isFormula ? '' : form.column.trim(),
     dimensions: form.dimensions,
   };
+  if (isFormula) payload.formula = form.formula.trim();
   if (form.filter.on && form.filter.column) {
     payload.filter = { column: form.filter.column, operator: form.filter.operator, value: form.filter.value };
   }
@@ -247,30 +281,56 @@ function toPayload(form: Form) {
   else if (form.windowMode === 'trailing') payload.rollingWindow = { amount: form.windowAmount, unit: form.windowUnit };
   if (form.aggregation === 'number') payload.ratio = { numerator: form.ratio.numerator.trim(), denominator: form.ratio.denominator.trim() };
   if (form.format) payload.format = form.format;
+  if (form.description.trim()) payload.description = form.description.trim();
   return payload;
+}
+
+/** The definition in PLAIN TERMS for View — "Sum of net_amount · only rows where … · trailing 7 days". */
+function describeDefinition(form: Form): string {
+  const parts: string[] = [];
+  if (form.aggregation === 'formula' || form.formula.trim()) parts.push(`Formula: ${form.formula.trim() || '…'}`);
+  else if (form.aggregation === 'number') parts.push(`${form.ratio.numerator || '…'} ÷ ${form.ratio.denominator || '…'}`);
+  else if (form.aggregation === 'count') parts.push('Count of rows');
+  else parts.push(`${AGGREGATIONS.find((a) => a.value === form.aggregation)?.label ?? form.aggregation} of ${form.column || '…'}`);
+  if (form.filter.on && form.filter.column) {
+    const op = OPERATORS.find((o) => o.value === form.filter.operator)?.label ?? form.filter.operator;
+    const bare = form.filter.operator === 'set' || form.filter.operator === 'notSet';
+    parts.push(`only rows where ${form.filter.column} ${op}${bare ? '' : ` ${form.filter.value}`}`);
+  }
+  if (form.windowMode === 'running') parts.push('running total');
+  else if (form.windowMode === 'trailing') parts.push(`trailing ${form.windowAmount} ${form.windowUnit}${form.windowAmount === 1 ? '' : 's'}`);
+  if (form.format) parts.push(`shown as ${(FORMATS.find((f) => f.value === form.format)?.label ?? form.format).toLowerCase()}`);
+  return parts.join(' · ');
 }
 
 /* ──────────────────────────── main component ───────────────────────────── */
 
 /**
- * The Metrics guided builder — Define · Refine · Preview · Publish · Monitor on the
- * OS-wide staged primitive (lib/core/stages.ts + StageShell). Creating AND viewing a
- * metric share ONE flow: a fresh metric starts at Define and walks forward as state
- * settles; an existing metric opens at Monitor. Reuses existing pieces as stage bodies
- * (ExploreMetric, Alerts, PromoteButton, LifecycleActions) without rewriting them.
+ * The Metrics builder — a plain View/Edit surface (no staged flow). A NEW metric opens in
+ * EDIT (source dataset + name + the full refine form + Save). An EXISTING metric opens in
+ * VIEW: a read-first walk-through (definition in plain terms · the governed SQL it compiles
+ * to · the source dataset + layer · usable dimensions · the live preview · Talk to Metric ·
+ * Alerts). Save is the SAME define/validation flow — it lands you in View. Promotion +
+ * lifecycle live in the detail HEADER. Reuses existing pieces (ExploreMetric, Alerts,
+ * TalkTo, PromoteButton, LifecycleActions) without rewriting them.
  */
 export default function MetricBuilder({
   existing,
   initialDatasetId,
+  metricKind,
   metrics,
   metricsLoading,
   onBack,
   onChanged,
 }: {
-  /** Open an existing saved metric (lands at Monitor), or null to create a new one (Define). */
+  /** Open an existing saved metric (lands at View), or null to create a new one (Edit). */
   existing: MetricSummary | null;
   /** Preselect this dataset when creating a new metric (Data tab → "＋ New metric" deep-link). */
   initialDatasetId?: string;
+  /** The path picked in the type chooser for a NEW metric — 'complex' opens the formula
+   *  editor first-class; 'simple' opens the aggregation form. Ignored for an existing metric
+   *  (its kind is derived from its saved measure). */
+  metricKind?: MetricKind;
   metrics: MetricGroups | null;
   metricsLoading: boolean;
   onBack: () => void;
@@ -292,15 +352,80 @@ export default function MetricBuilder({
   };
 
   /* ── form state ── */
-  // Seed from the deep-link (create-with-dataset) when creating; existing metrics ignore it.
-  const [datasetId, setDatasetId] = useState(existing ? '' : (initialDatasetId ?? ''));
-  const [form, setForm] = useState<Form>(EMPTY_FORM);
+  // An existing metric binds to ITS dataset; a new one seeds from the deep-link
+  // (Data tab → "＋ New metric") when present.
+  const [datasetId, setDatasetId] = useState(existing ? existing.datasetId : (initialDatasetId ?? ''));
+  // A NEW metric seeds its aggregation from the chooser path: 'complex' opens the formula
+  // editor (UI aggregation 'formula'), 'simple' opens the aggregation form (default sum).
+  // An existing metric hydrates from its saved measure, so this seed is irrelevant there.
+  const [form, setForm] = useState<Form>(
+    () => (!existing && metricKind === 'complex' ? { ...EMPTY_FORM, aggregation: 'formula' } : EMPTY_FORM),
+  );
   const [usedAgent, setUsedAgent] = useState(false);
-  const { columns, columnDocs, measures, description, deliverable } = useDataset(datasetId);
+  const { columns, columnDocs, measures, description, deliverable, tier: datasetTier } = useDataset(datasetId);
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
 
+  // View ⇄ Edit: a NEW metric opens in Edit; an EXISTING one opens in View.
+  const [mode, setMode] = useState<'view' | 'edit'>(existing ? 'view' : 'edit');
+
+  // Hydrate the form from the SAVED measure (formFromMeasure — the tested inverse of the
+  // define builder), so View can describe the definition and Edit edits IN PLACE: the
+  // hydrated `name` is the frozen measure name, so a re-save lands on the same member.
+  useEffect(() => {
+    if (!existing) return;
+    let live = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/metrics/${existing.id}`, { cache: 'no-store' });
+        const d = await res.json();
+        if (!live || !res.ok) return;
+        const f: MetricForm = formFromMeasure(d.metric.measure);
+        setForm({
+          name: f.name,
+          description: f.description ?? '',
+          // A composite metric re-opens as the 'formula' option (wire type is 'number').
+          aggregation: f.formula ? 'formula' : f.aggregation,
+          column: f.column,
+          dimensions: f.dimensions,
+          filter: f.filter
+            ? { on: true, column: f.filter.column, operator: f.filter.operator, value: f.filter.value }
+            : EMPTY_FORM.filter,
+          windowMode: f.runningTotal ? 'running' : f.rollingWindow ? 'trailing' : 'none',
+          windowAmount: f.rollingWindow?.amount ?? EMPTY_FORM.windowAmount,
+          windowUnit: f.rollingWindow?.unit ?? EMPTY_FORM.windowUnit,
+          ratio: f.ratio ?? EMPTY_FORM.ratio,
+          formula: f.formula ?? '',
+          format: f.format ?? '',
+          timeDimension: '',
+          granularity: 'month',
+        });
+      } catch { /* form stays empty — Edit still works from scratch */ }
+    })();
+    return () => { live = false; };
+  }, [existing?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const isRatio = form.aggregation === 'number';
-  const needsColumn = !isRatio && form.aggregation !== 'count';
+  const isFormula = form.aggregation === 'formula';
+  const needsColumn = !isRatio && !isFormula && form.aggregation !== 'count';
+  // The chips a formula can reference — BASIC sibling metrics only (never another formula/ratio).
+  const basicMeasures = useMemo(() => measures.filter((m) => m.type !== 'number'), [measures]);
+
+  // Live formula validation (P1-5) — the Power BI formula-bar feel. Compiles as you type and
+  // checks the refs against basicMeasures; PREVIEW feedback only (server stays authoritative).
+  // Empty formula = no message. `{ error }` shows the FormulaError inline; `{ refs }` shows the
+  // resolved [ref] ✓ ok-chips. This never blocks Save — canSubmit only checks non-emptiness.
+  const formulaCheck = useMemo((): { error?: string; refs?: string[] } => {
+    if (!isFormula) return {};
+    const src = form.formula.trim();
+    if (!src) return {};
+    try {
+      const { refs } = compileFormula(src);
+      assertFormulaRefs(refs, basicMeasures);
+      return { refs };
+    } catch (e) {
+      return { error: e instanceof FormulaError ? e.message : (e as Error).message };
+    }
+  }, [isFormula, form.formula, basicMeasures]);
 
   const sliceMembers = useMemo(() => {
     const pk = columns.find((c) => /(^|_)id$/.test(c.toLowerCase())) ?? columns[0];
@@ -335,22 +460,11 @@ export default function MetricBuilder({
     !busy && datasetId !== '' && form.name.trim() !== '' &&
     (form.aggregation === 'count'
       ? true
-      : isRatio
-        ? form.ratio.numerator.trim() !== '' && form.ratio.denominator.trim() !== ''
-        : form.column.trim() !== '');
-
-  /* ── stage state ── */
-  const ctx: MetricCtx = {
-    defined: datasetId !== '' && form.name.trim() !== '',
-    refined: canSubmit,
-    previewed: !!preview && !preview.pending && preview.rows.length > 0,
-    saved: !!existing || !!result,
-  };
-
-  const [stage, setStage] = useState<StageState<MetricStageId>>(() => {
-    const base = initialStageState(METRIC_STAGES);
-    return existing ? { ...base, current: 'monitor' } : base;
-  });
+      : isFormula
+        ? form.formula.trim() !== ''
+        : isRatio
+          ? form.ratio.numerator.trim() !== '' && form.ratio.denominator.trim() !== ''
+          : form.column.trim() !== '');
 
   // The "saved" metric — either the pre-existing one or the one we just saved.
   const saved: MetricSummary | null = useMemo(() => {
@@ -393,12 +507,8 @@ export default function MetricBuilder({
       });
       const data = await res.json();
       if (!res.ok) { setPreviewErr(data.error ?? 'Preview failed'); setPreview(null); return; }
-      const p: PreviewResult = { member: data.member, rows: data.rows ?? [], mode: data.mode, pending: data.pending, warning: data.warning };
+      const p: PreviewResult = { member: data.member, rows: data.rows ?? [], mode: data.mode, pending: data.pending, warning: data.warning, sql: data.sql };
       setPreview(p);
-      // Mark preview done in-stage once we get a live non-pending result.
-      if (!p.pending && p.rows.length > 0) {
-        setStage((s) => markDone(s, 'preview'));
-      }
     } catch (e) { setPreviewErr((e as Error).message); setPreview(null); } finally { setPreviewBusy(false); }
   }, [canSubmit, datasetId, form]);
 
@@ -418,6 +528,13 @@ export default function MetricBuilder({
     return () => clearInterval(id);
   }, [preview?.pending, saved, runPreview]);
 
+  // View resolves the metric's number + governed SQL automatically (once the form is
+  // hydrated enough to be valid) — "how it is calculated" needs no button press.
+  useEffect(() => {
+    if (mode === 'view' && saved && canSubmit && !preview && !previewBusy) void runPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, saved, canSubmit]);
+
   /* ── save ── */
   const submit = useCallback(async () => {
     setSaveErr(''); setBusy(true); setResult(null);
@@ -435,7 +552,8 @@ export default function MetricBuilder({
       }
       setResult(data);
       toast.success(`Metric "${form.name || 'metric'}" saved`);
-      setStage((s) => markDone(s, 'publish'));
+      setMode('view'); // saving lands you in View — the read-first home of a saved metric
+      setPreview(null); // the saved definition may differ — View re-resolves it
       onChanged();
     } catch (e) { const msg = (e as Error).message; setSaveErr(msg); toast.error(msg); } finally { setBusy(false); }
   }, [datasetId, form, usedAgent, onChanged, toast]);
@@ -465,8 +583,6 @@ export default function MetricBuilder({
     setRenaming(false);
     onChanged();
   };
-
-  const previewCols = preview && preview.rows.length ? Object.keys(preview.rows[0]) : [];
 
   /* ── render ── */
   return (
@@ -516,10 +632,34 @@ export default function MetricBuilder({
           {(saved.tier === 'domain' || saved.tier === 'marketplace') ? <DomainTag domain={saved.domain} /> : null}
           <span className="muted mono" style={{ fontSize: 12 }}>{saved.member}</span>
           {renameErr ? <span className="error-inline" style={{ fontSize: 12 }}>{renameErr}</span> : null}
-          {/* Lifecycle (Archive/Restore/Delete) lives in the persistent detail header so it is
-              reachable from ANY stage — not buried in Publish. Governance unchanged (canManage). */}
+          {/* Header actions: View⇄Edit toggle · Promote (left of Archive, per the OS-wide
+              pattern) · lifecycle (Archive/Restore/Delete). Governance unchanged (canManage). */}
           {canManage ? (
-            <div style={{ marginLeft: 'auto' }}>
+            <div className="row" style={{ marginLeft: 'auto', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {mode === 'view' ? (
+                <button className="btn ghost sm" onClick={() => setMode('edit')} title="Edit this metric's definition">✎ Edit</button>
+              ) : (
+                <button className="btn ghost sm" onClick={() => setMode('view')} title="Back to the read view">View</button>
+              )}
+              <PromoteButton
+                id={saved.id}
+                kind="metric"
+                tier={ladderTier(saved.tier)}
+                promoteUrl={`/api/metrics/${saved.id}/promote`}
+                canApprove={canApprove}
+                onDone={onChanged}
+              />
+              {/* A metric's tier is DERIVED from its dataset, so revoking moves the
+                  dataset AND every metric on it — the confirm copy says so honestly. */}
+              <DemoteButton
+                kind="metric"
+                tier={saved.tier === 'marketplace' ? 'Marketplace' : saved.tier === 'domain' ? 'Shared' : 'Personal'}
+                demoteUrl={`/api/metrics/${saved.id}/demote`}
+                onDone={onChanged}
+                body={saved.tier === 'marketplace'
+                  ? 'A metric shares its tier with its dataset: this lowers the underlying dataset — and every metric defined on it — from Company back to Domain. Nothing is deleted; you can promote again later.'
+                  : 'A metric shares its tier with its dataset: this lowers the underlying dataset — and every metric defined on it — from Domain back to My. Nothing is deleted; you can promote again later.'}
+              />
               <LifecycleActions
                 id={saved.id}
                 name={saved.name}
@@ -537,103 +677,15 @@ export default function MetricBuilder({
 
       {viewMode === 'developer' ? (
         <MetricDeveloperView result={result} form={form} datasetId={datasetId} />
-      ) : (
-      <StageShell
-        stages={METRIC_STAGES}
-        state={stage}
-        ctx={ctx}
-        onState={setStage}
-        ariaLabel="Metric stages"
-        assistant={(st) => {
-          // Define + Refine carry their AI as big IN-FLOW buttons at the top of the
-          // stage body (the Data-tab pattern) — no boxed assistant for them.
-          if (st.id === 'define' || st.id === 'refine') return null;
-          if (st.id === 'preview') {
-            return (
-              <MetricStageAssistant
-                stage="preview"
-                label="Explain a preview error or pending state in plain language."
-                cta="Explain the status"
-                disabled={!previewErr && !preview?.pending}
-                payload={() => ({
-                  error: previewErr || (preview?.pending
-                    ? (saved
-                      ? 'The metric is still syncing to the query engine.'
-                      : 'This rolling-window definition is computed by the query engine after Publish — it has no pre-save preview.')
-                    : ''),
-                })}
-              />
-            );
-          }
-          if (st.id === 'publish') {
-            return (
-              <MetricStageAssistant
-                stage="publish"
-                label="Draft a promotion justification for this metric."
-                cta="Draft justification"
-                disabled={!saved}
-                payload={() => ({ metricName: saved?.name ?? form.name, tier: saved ? TIER_WORD[saved.tier] : 'Personal' })}
-              />
-            );
-          }
-          // monitor
-          return (
-            <MetricStageAssistant
-              stage="monitor"
-              label="Suggest an alert threshold based on what this metric measures."
-              cta="Suggest threshold"
-              disabled={!saved}
-              payload={() => ({ metricName: saved?.name ?? '', historyHint: '' })}
-            />
-          );
-        }}
-      >
-        {/* ── Define ── */}
-        {stage.current === 'define' ? (
-          <div>
-            {/* METRIC NAME first, with the AI right beside it (the in-flow pattern):
-                type the name — it doubles as the goal — and ✨ Suggest metric fills
-                the aggregation/column/dimensions for you to review. */}
+      ) : mode === 'edit' ? (
+        /* ── Edit — Define + Refine combined: source → name → AI-fillable form → Save ── */
+        <div>
+          {/* An EXISTING metric is bound to its dataset and its frozen member — the
+              dataset can't move and the display name renames in the header — so the
+              source + name panels only show when creating a NEW metric. */}
+          {!saved ? (
+            <>
             <div className="guided-panel" style={{ marginTop: 4 }}>
-              <span className="comp-label" style={{ margin: 0 }}>Metric name</span>
-              <div className="row" style={{ gap: 10, alignItems: 'flex-start', flexWrap: 'wrap', marginTop: 8 }}>
-                <input
-                  placeholder="e.g. Avg interactions per case"
-                  value={form.name}
-                  onChange={(e) => set({ name: e.target.value })}
-                  style={{ maxWidth: 320 }}
-                />
-                <MetricStageAssistant
-                  compact
-                  stage="define"
-                  label="AI reads this dataset's columns and fills the form from the name — you review before saving."
-                  cta="Suggest metric"
-                  disabled={!datasetId || columns.length === 0 || !form.name.trim()}
-                  payload={() => ({
-                    // The metric NAME is the goal — one field, no separate goal box.
-                    goal: form.name.trim() || 'define a useful metric on this dataset',
-                    columns,
-                    // Ground the proposal in the documented schema — column docs,
-                    // the dataset description and the measures already defined.
-                    columnDocs: columnDocs.filter((c) => c.description),
-                    datasetDescription: description,
-                    measures,
-                  })}
-                  onForm={(f) => {
-                    if (f.name) set({ name: f.name });
-                    if (f.aggregation && AGGREGATIONS.some((a) => a.value === f.aggregation)) set({ aggregation: f.aggregation });
-                    if (f.column && columns.includes(f.column)) set({ column: f.column });
-                    if (Array.isArray(f.dimensions)) set({ dimensions: f.dimensions.filter((d) => columns.includes(d)) });
-                    setUsedAgent(true);
-                  }}
-                />
-              </div>
-              <p className="hint" style={{ marginTop: 6 }}>
-                This becomes the canonical name in the registry, explorer and dashboards.
-              </p>
-            </div>
-
-            <div className="guided-panel" style={{ marginTop: 14 }}>
               <div className="row" style={{ gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                 <span className="comp-label" style={{ margin: 0, marginTop: 6 }}>Source dataset</span>
                 <DatasetPicker
@@ -643,32 +695,82 @@ export default function MetricBuilder({
                 />
               </div>
               <p className="hint" style={{ marginTop: 8 }}>
-                A metric lives on a governed Gold <strong>asset</strong> or <strong>product</strong>.
-                Pick a private dataset and promote it in Data first.
+                A metric lives on a built Gold table — My, Domain or Company.
               </p>
             </div>
 
-          </div>
-        ) : null}
+            <div className="guided-panel" style={{ marginTop: 14 }}>
+              <span className="comp-label" style={{ margin: 0 }}>Metric name</span>
+              <input
+                placeholder="e.g. Avg interactions per case"
+                value={form.name}
+                onChange={(e) => set({ name: e.target.value })}
+                style={{ marginTop: 8, maxWidth: 320 }}
+              />
 
-        {/* ── Refine ── */}
-        {stage.current === 'refine' ? (
-          <div>
-            {/* AI, in the flow: one big action at the top — refine this metric. */}
+              {/* A plain-language note captured up front, so the metric arrives with its
+                  meaning already written. Optional; shown on the tile and in the Definition
+                  panel. Suggest with AI proposes a draft here too. */}
+              <span className="comp-label" style={{ margin: 0, marginTop: 14 }}>What does this metric mean?</span>
+              <textarea
+                placeholder="One or two plain sentences — e.g. Average number of agent interactions to resolve a case."
+                value={form.description}
+                onChange={(e) => set({ description: e.target.value })}
+                rows={2}
+                aria-label="Metric description"
+                style={{ marginTop: 8, width: '100%', resize: 'vertical' }}
+              />
+              <p className="hint" style={{ marginTop: 6 }}>Optional.</p>
+            </div>
+            </>
+          ) : null}
+
+            {/* AI, in the flow: ONE big action — reads the dataset's columns and FILLS
+                the form below from the metric name; you review, adjust and continue.
+                Hidden for a COMPLEX metric — it fills the aggregation form, not a formula,
+                which you author from the metric chips below. */}
+            {isFormula ? null : (
             <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 10 }}>
               <MetricStageAssistant
                 compact
-                stage="refine"
-                label="AI suggests dimensions, filters and a time window for this metric."
-                cta="Refine with AI"
-                disabled={!form.name.trim() || columns.length === 0}
-                payload={() => ({ metricName: form.name, aggregation: form.aggregation, columns })}
+                stage="define"
+                label="AI reads this dataset's columns and fills the form from the metric name — you review before saving."
+                cta="Suggest with AI"
+                disabled={!datasetId || columns.length === 0 || !(saved?.name ?? form.name).trim()}
+                payload={() => ({
+                  // The metric NAME is the goal — one field, no separate goal box. An
+                  // existing metric's goal is its DISPLAY name (the form holds the frozen member name).
+                  goal: (saved?.name ?? form.name).trim() || 'define a useful metric on this dataset',
+                  columns,
+                  // Ground the proposal in the documented schema — column docs,
+                  // the dataset description and the measures already defined.
+                  columnDocs: columnDocs.filter((c) => c.description),
+                  datasetDescription: description,
+                  measures,
+                })}
+                onForm={(f) => {
+                  // NEVER overwrite an existing metric's frozen name — a changed name
+                  // would slug to a NEW member on save instead of editing in place.
+                  if (f.name && !saved) set({ name: f.name });
+                  if (f.aggregation && AGGREGATIONS.some((a) => a.value === f.aggregation)) set({ aggregation: f.aggregation });
+                  if (f.column && columns.includes(f.column)) set({ column: f.column });
+                  if (Array.isArray(f.dimensions)) set({ dimensions: f.dimensions.filter((d) => columns.includes(d)) });
+                  // A proposed plain-language description fills the note — the user reviews
+                  // and edits it before saving (nil-safe: absent leaves the field untouched).
+                  if (typeof f.description === 'string' && f.description.trim()) set({ description: f.description.trim() });
+                  setUsedAgent(true);
+                }}
               />
             </div>
+            )}
 
-            {/* Aggregation + column */}
+            {/* What to measure — a SIMPLE metric picks an aggregation + column; a COMPLEX
+                metric (isFormula) leads with the formula editor instead (the aggregation
+                dropdown is hidden — the type chooser already made that decision). */}
             <div className="guided-panel" style={{ marginTop: 4 }}>
-              <span className="comp-label" style={{ margin: 0 }}>What to measure</span>
+              <span className="comp-label" style={{ margin: 0 }}>{isFormula ? 'Formula' : 'What to measure'}</span>
+              {!isFormula ? (
+              <>
               <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
                 <select value={form.aggregation} onChange={(e) => set({ aggregation: e.target.value })} style={{ minWidth: 220 }}>
                   {AGGREGATIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
@@ -694,10 +796,10 @@ export default function MetricBuilder({
                   join here. Shown when an aggregation needs a column the dataset lacks. */}
               {needsColumn && datasetId && columns.length === 0 ? (
                 <p className="hint" style={{ marginTop: 6 }}>
-                  This dataset has no documented columns to measure. If the number you need lives
-                  across tables, build a <strong>curated dataset</strong> in Data (a governed join)
-                  and define the metric on that.
+                  No documented columns here — build a <strong>curated dataset</strong> in Data and define the metric on that.
                 </p>
+              ) : null}
+              </>
               ) : null}
 
               {isRatio ? (
@@ -715,9 +817,65 @@ export default function MetricBuilder({
                   {measures.length === 0 ? <span className="hint" style={{ margin: 0 }}>define the two base measures first</span> : null}
                 </div>
               ) : null}
+
+              {isFormula ? (
+                !datasetId ? (
+                  <p className="hint" style={{ marginTop: 10 }}>Choose a source dataset first.</p>
+                ) : basicMeasures.length === 0 ? (
+                  /* Honest empty state — a formula has nothing to reference until this
+                     dataset has at least one basic metric. Don't offer a dead editor. */
+                  <p className="hint" style={{ marginTop: 10 }}>
+                    This dataset has no metrics yet — create a <strong>simple metric</strong> first, then combine them here.
+                  </p>
+                ) : (
+                <div style={{ marginTop: 10 }}>
+                  {/* The dataset's EXISTING basic metrics — click a chip to insert [name];
+                      free typing works too. */}
+                  <span className="hint" style={{ display: 'block' }}>
+                    Click a metric to insert it — <code>+ - * /</code> and parentheses; division is null-safe (÷0 → empty, never an error).
+                  </span>
+                  <div className="chip-row" style={{ marginTop: 6 }}>
+                    {basicMeasures.map((m) => (
+                      <button
+                        key={m.name}
+                        type="button"
+                        className="chip"
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => set({ formula: `${form.formula}${form.formula && !form.formula.endsWith(' ') ? ' ' : ''}[${m.name}]` })}
+                        title={`Insert [${m.name}] (${m.type})`}
+                      >
+                        [{m.name}] <span className="mono" style={{ opacity: 0.7 }}>{m.type}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    className="mono"
+                    rows={2}
+                    placeholder="([revenue] - [cost]) / [orders]"
+                    value={form.formula}
+                    onChange={(e) => set({ formula: e.target.value })}
+                    style={{ width: '100%', resize: 'vertical', marginTop: 8 }}
+                    aria-label="Composite metric formula"
+                  />
+                  {/* Live validation — inline error as you type, or the resolved refs as
+                      ok-chips when valid. Preview only; the server stays authoritative. */}
+                  {formulaCheck.error ? (
+                    <span className="error-inline" role="alert" style={{ display: 'block', marginTop: 6 }}>{formulaCheck.error}</span>
+                  ) : formulaCheck.refs?.length ? (
+                    <div className="chip-row" style={{ marginTop: 6 }}>
+                      {formulaCheck.refs.map((r) => (
+                        <span key={r} className="chip ok" title={`[${r}] resolves to a basic metric on this dataset`}>[{r}] ✓</span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                )
+              ) : null}
             </div>
 
-            {/* Filter */}
+            {/* Filter — not applicable to a composite formula (its parts carry their own
+                filters); hidden rather than silently dropped on save. */}
+            {isFormula ? null : (
             <div className="guided-panel" style={{ marginTop: 14 }}>
               <span className="comp-label" style={{ margin: 0 }}>Filter (optional)</span>
               <div style={{ marginTop: 10 }}>
@@ -741,8 +899,10 @@ export default function MetricBuilder({
                 ) : null}
               </div>
             </div>
+            )}
 
-            {/* Time window */}
+            {/* Time window — likewise not carried by a formula; hidden, not dropped. */}
+            {isFormula ? null : (
             <div className="guided-panel" style={{ marginTop: 14 }}>
               <span className="comp-label" style={{ margin: 0 }}>Time window</span>
               <div className="seg" style={{ marginTop: 8 }}>
@@ -762,6 +922,7 @@ export default function MetricBuilder({
                 <p className="hint" style={{ marginTop: 6 }}>Cumulative from the beginning of time.</p>
               ) : null}
             </div>
+            )}
 
             {/* Format + slice */}
             <div className="guided-panel" style={{ marginTop: 14 }}>
@@ -800,180 +961,162 @@ export default function MetricBuilder({
                 </div>
               ) : null}
             </div>
-          </div>
-        ) : null}
 
-        {/* ── Preview ── */}
-        {stage.current === 'preview' ? (
-          <div>
-            <div className="guided-panel" style={{ marginTop: 4 }}>
-              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
-                <div>
-                  <span className="comp-label" style={{ margin: 0 }}>Live number</span>
-                  <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
-                    {saved
-                      ? 'Resolves the exact governed query-engine member your metric serves, under your own identity. Row-level security applies.'
-                      : 'Computed via a governed SQL query under your own identity — row-level security applies. The query-engine-served value appears after Publish. Nothing is saved yet.'}
-                  </p>
-                </div>
-                <button className="btn ghost" onClick={runPreview} disabled={previewBusy || !canSubmit} style={{ marginLeft: 12 }}>
-                  {previewBusy ? <span className="spin" /> : preview ? 'Re-run preview' : 'Preview →'}
-                </button>
-              </div>
-
-              {previewErr ? <div className="error" style={{ marginTop: 10 }}>{previewErr}</div> : null}
-              {/* Honest slice warning (Northpeak fix): a dropped slice member is never silent. */}
-              {preview?.warning ? <div className="error" role="alert" style={{ marginTop: 10 }}>⚠ {preview.warning}</div> : null}
-
-              {preview ? (
-                preview.pending ? (
-                  <div className="stub-page" style={{ marginTop: 10 }}>
-                    {saved
-                      ? 'Syncing — the live value appears within ~30 s as the query engine picks up this metric. Re-run preview shortly, or wait for the auto-refresh.'
-                      : 'This shape (rolling window / running total) is computed by the query engine, so it has no pre-save preview — the live value appears after Publish.'}
-                  </div>
-                ) : preview.rows.length === 0 ? (
-                  <div className="stub-page" style={{ marginTop: 10 }}>
-                    No rows for you under the current filter.
-                  </div>
-                ) : (
-                  <>
-                    <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 10 }}>
-                      <span className={`badge ${preview.mode.startsWith('live') ? 'ok' : 'muted'}`}>{preview.mode}</span>
-                      <span className="muted mono" style={{ fontSize: 12 }}>{preview.member}</span>
-                      {preview.mode === 'live (sql)' ? (
-                        <span className="hint" style={{ margin: 0 }}>
-                          governed SQL preview — the query engine serves this number after Publish
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="table-wrap" style={{ marginTop: 10 }}>
-                      <table>
-                        <thead><tr>{previewCols.map((c) => <th key={c}>{leaf(c)}</th>)}</tr></thead>
-                        <tbody>
-                          {preview.rows.slice(0, 20).map((r, i) => (
-                            <tr key={i}>{previewCols.map((c) => <td key={c}>{String(r[c] ?? '')}</td>)}</tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
-                )
-              ) : (
-                <div className="stub-page" style={{ marginTop: 10 }}>
-                  Click Preview → to see the live value.
-                </div>
-              )}
+          {/* Save — the SAME define/validation flow; success lands you in View. While the
+              save runs, the OS-wide BusyProgress names what the server is doing (persist →
+              convergence proof → live build + verify) instead of a silently disabled button. */}
+          <div className="guided-panel" style={{ marginTop: 14 }}>
+            <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button className="btn primary" onClick={submit} disabled={!canSubmit || busy}>
+                {busy ? <span className="spin" /> : saved ? 'Save changes' : 'Save metric'}
+              </button>
+              <span className="hint" style={{ margin: 0 }}>
+                {saved ? 'Updates in place — dashboards and alerts keep working.' : 'Serves within ~30 s.'}
+              </span>
             </div>
+            {busy ? (
+              <BusyProgress
+                label={saved ? 'Saving changes' : 'Saving metric'}
+                detail="Persisting the definition, proving the define paths converge, then building and verifying it against the live query engine"
+                typicalSeconds={30}
+              />
+            ) : null}
+            {saveErr ? <div className="error" style={{ marginTop: 10 }}>{saveErr}</div> : null}
           </div>
-        ) : null}
+        </div>
 
-        {/* ── Publish ── */}
-        {stage.current === 'publish' ? (
-          <div>
-            {!saved ? (
+      ) : saved ? (
+        /* ── View — read-first, LEADING with Talk (the OS-wide contract, mirroring Data):
+              Talk to Metrics · definition · governed SQL · data underneath · usable
+              dimensions · live preview · Alerts ── */
+        <div>
+          {/* 1. Talk to this metric — the primary way to USE it, at the very top of View. */}
+          <div className="section-title" style={{ marginTop: 4 }}>{TALK_PRESENTATION.metrics.title}</div>
+          <TalkTo tab="metrics" {...TALK_PRESENTATION.metrics} />
+
+          {/* Definition in plain terms + the data underneath */}
+          <div className="guided-panel" style={{ marginTop: 28 }}>
+            <span className="comp-label" style={{ margin: 0 }}>Definition</span>
+            {/* The author's plain-language meaning leads when present; the technical
+                one-liner (aggregation · filter · window) then supports it underneath. */}
+            {form.description.trim() ? (
+              <p className="lead" style={{ marginTop: 8, marginBottom: 0 }}>{form.description.trim()}</p>
+            ) : null}
+            <p className={form.description.trim() ? 'hint' : 'lead'} style={{ marginTop: form.description.trim() ? 10 : 8, marginBottom: 0 }}>{describeDefinition(form)}</p>
+            <p className="hint" style={{ marginTop: 10, marginBottom: 0 }}>
+              On <strong>{saved.datasetName || saved.datasetId}</strong>
+              {datasetTier ? <> · {datasetLayerLabel(datasetTier)}</> : null} — served as <code>{saved.member}</code>.
+            </p>
+            {sliceMembers.length > 0 ? (
               <>
-                <div className="guided-panel" style={{ marginTop: 4 }}>
-                  <p className="hint" style={{ marginTop: 0 }}>
-                    Ready to save <strong>{form.name || 'this metric'}</strong>? The definition will be
-                    persisted and the query engine will pick it up within ~30 s.
-                  </p>
-
-                  {/* Cube config preview */}
-                  <div className="section-title" style={{ marginTop: 10 }}>Cube measure config</div>
-                  <pre className="codeblock">{JSON.stringify(toPayload(form), null, 2)}</pre>
-
-                  <div className="row" style={{ marginTop: 14 }}>
-                    <button className="btn" onClick={submit} disabled={!canSubmit || busy}>
-                      {busy ? <span className="spin" /> : 'Save metric'}
-                    </button>
-                  </div>
-                  {saveErr ? <div className="error" style={{ marginTop: 10 }}>{saveErr}</div> : null}
+                <span className="hint" style={{ marginTop: 12, display: 'block' }}>Dimensions you can slice by</span>
+                <div className="chip-row" style={{ marginTop: 6 }}>
+                  {sliceMembers.map((c) => <span key={c} className="chip">{c}</span>)}
                 </div>
-
-                {result ? (
-                  <div style={{ marginTop: 14 }}>
-                    {result.pending ? (
-                      <div className="stub-page" style={{ marginBottom: 14 }}>
-                        ✓ Metric saved — its live value appears within ~30 s as the query engine syncs.
-                      </div>
-                    ) : null}
-                    <div className="section-title">Convergence · form and agent resolve to one measure</div>
-                    <ChecksList rows={result.convergence.rows} />
-                    <div className="section-title">Build · apply → verify</div>
-                    <BuildRowsView build={result.build} />
-                    <p className="hint" style={{ marginTop: 8 }}>
-                      Canonical member <code>{result.member}</code> — the single number the explorer,
-                      dashboards and the assistant all resolve.
-                    </p>
-                  </div>
-                ) : null}
               </>
+            ) : null}
+          </div>
+
+          {/* How it is calculated — the governed Trino SQL the number comes from */}
+          <div className="guided-panel" style={{ marginTop: 14 }}>
+            <span className="comp-label" style={{ margin: 0 }}>How it is calculated</span>
+            {preview?.sql ? (
+              <pre className="codeblock" style={{ marginTop: 10 }}>{preview.sql}</pre>
+            ) : preview?.pending ? (
+              <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
+                Syncing — the query engine picks this metric up within ~30 s.
+              </p>
             ) : (
-              <>
-                {/* Saved metric — show promote/lifecycle */}
-                <div className="guided-panel" style={{ marginTop: 4 }}>
-                  <p className="hint" style={{ marginTop: 0 }}>
-                    <strong>{saved.name}</strong> is saved as <strong>{TIER_WORD[saved.tier]}</strong>.
-                    Promote it to make it available to your domain.
-                  </p>
-
-                  {canManage ? (
-                    <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
-                      <PromoteButton
-                        id={saved.id}
-                        kind="metric"
-                        tier={ladderTier(saved.tier)}
-                        promoteUrl={`/api/metrics/${saved.id}/promote`}
-                        canApprove={canApprove}
-                        onDone={onChanged}
-                      />
-                      {/* Archive/Restore/Delete now live in the persistent detail header (reachable
-                          from any stage); Publish keeps only Promote. */}
-                    </div>
-                  ) : (
-                    <p className="hint" style={{ marginTop: 10 }}>
-                      You can view this metric. Promotion and archiving are limited to its owner and domain admins.
-                    </p>
-                  )}
-                </div>
-              </>
+              <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
+                {previewBusy ? 'Resolving the governed SQL…' : previewErr || 'The governed SQL appears once the metric resolves.'}
+              </p>
             )}
           </div>
-        ) : null}
 
-        {/* ── Monitor ── */}
-        {stage.current === 'monitor' ? (
-          saved ? (
-            <div>
-              {/* Explore */}
-              <div style={{ marginTop: 4 }}>
-                <ExploreMetric metric={saved} />
-              </div>
+          {/* Live preview — the number itself, explorable (slice, trend) */}
+          <div style={{ marginTop: 14 }}>
+            <ExploreMetric metric={saved} />
+          </div>
 
-              {/* Alerts */}
-              <div className="section-title" style={{ marginTop: 28 }}>Alerts</div>
-              <p className="lead" style={{ marginTop: 0 }}>
-                Notify me when <strong>{saved.member}</strong> crosses a threshold — and optionally
-                trigger a governed agent to respond.
-              </p>
-              <Alerts metrics={metrics} loading={metricsLoading} presetMember={saved.member} />
+          {/* On dashboards — where this metric APPEARS (the Power BI pin-visual loop):
+              every visible dashboard bound to this metric's view, plus the one-click
+              "Add to a dashboard" that opens the builder with this metric pre-selected. */}
+          <OnDashboards metric={saved} />
 
-              {/* Power BI — one-click connect via Cube SQL API + domain-level RLS */}
-              {saved.domain ? (
-                <>
-                  <div className="section-title" style={{ marginTop: 28 }}>Connect Power BI</div>
-                  <ConnectPowerBI domain={saved.domain} />
-                </>
-              ) : null}
-            </div>
-          ) : (
-            <div className="chat-empty">Save the metric first — there is nothing to monitor yet.</div>
-          )
-        ) : null}
-      </StageShell>
+          {/* Alerts */}
+          <div className="section-title" style={{ marginTop: 28 }}>Alerts</div>
+          <Alerts metrics={metrics} loading={metricsLoading} presetMember={saved.member} />
+
+          {/* Connect Power BI is REMOVED from View for now — the connection is unverified;
+              restore <ConnectPowerBI domain={saved.domain} /> once it is proven working. */}
+        </div>
+      ) : (
+        <div className="chat-empty">Nothing to view yet — define the metric first.</div>
       )}
     </ConfirmProvider>
+  );
+}
+
+/* ─────────────────────────── On dashboards ─────────────────────────── */
+
+/** The dashboards list shape this section needs (kept local — no cross-tab import). */
+type DashListItem = { id: string; name: string; view: string; charts: number };
+type DashList = { mine: DashListItem[]; domain: DashListItem[]; marketplace: DashListItem[] };
+
+/**
+ * Where this metric APPEARS — every dashboard the viewer can see that binds this
+ * metric's view (RLS-scoped by the /api/dashboards route), each a click away — plus
+ * "＋ Add to a dashboard", which opens the Dashboards builder with this metric
+ * pre-selected in a fresh panel. Closes the metric ⇄ dashboard loop both ways.
+ */
+function OnDashboards({ metric }: { metric: MetricSummary }) {
+  const [dashboards, setDashboards] = useState<DashListItem[] | null>(null);
+  const view = metric.member.split('.')[0];
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/dashboards', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((g: DashList | null) => {
+        if (!alive) return;
+        const all = g ? [...g.mine, ...g.domain, ...g.marketplace] : [];
+        setDashboards(all.filter((d) => d.view === view));
+      })
+      .catch(() => { if (alive) setDashboards([]); });
+    return () => { alive = false; };
+  }, [view]);
+
+  const addHref = `/dashboards?new=1&dataset=${encodeURIComponent(metric.datasetId)}&metric=${encodeURIComponent(metric.member)}`;
+
+  return (
+    <div className="guided-panel" style={{ marginTop: 14 }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+        <span className="comp-label" style={{ margin: 0 }}>On dashboards</span>
+        <Link className="btn ghost sm" href={addHref} title="Open the Dashboards builder with this metric pre-selected">
+          ＋ Add to a dashboard
+        </Link>
+      </div>
+      {dashboards === null ? (
+        <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>Loading dashboards…</p>
+      ) : dashboards.length === 0 ? (
+        <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
+          No dashboard charts this metric yet — add it to one to see it live alongside its siblings.
+        </p>
+      ) : (
+        <div className="chip-row" style={{ marginTop: 8 }}>
+          {dashboards.map((d) => (
+            <Link
+              key={d.id}
+              className="chip"
+              href={`/dashboards?focus=${encodeURIComponent(d.id)}`}
+              title={`Open ${d.name}`}
+              style={{ cursor: 'pointer' }}
+            >
+              {d.name} <span className="mono" style={{ opacity: 0.7 }}>{d.charts} panel{d.charts === 1 ? '' : 's'}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -999,11 +1142,7 @@ function MetricDeveloperView({
     return (
       <div className="grant-block" style={{ marginTop: 4 }}>
         <div className="comp-label">Cube model YAML</div>
-        <p className="hint" style={{ marginTop: 4 }}>
-          Read-only — the generated Cube.js measure block persisted to the data
-          layer. This is the single artifact the query engine, explorer and
-          dashboards all resolve.
-        </p>
+        <p className="hint" style={{ marginTop: 4 }}>Read-only — the generated measure block.</p>
         <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
           {result.cube}
         </pre>
@@ -1026,11 +1165,7 @@ function MetricDeveloperView({
   return (
     <div className="grant-block" style={{ marginTop: 4 }}>
       <div className="comp-label">Cube measure payload (preview)</div>
-      <p className="hint" style={{ marginTop: 4 }}>
-        The metric hasn&apos;t been saved yet — complete the Simple flow through
-        Publish to generate the Cube YAML. This is the measure config that will
-        be submitted:
-      </p>
+      <p className="hint" style={{ marginTop: 4 }}>Not saved yet — the config that will be submitted:</p>
       {preview ? (
         <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
           {JSON.stringify(preview, null, 2)}

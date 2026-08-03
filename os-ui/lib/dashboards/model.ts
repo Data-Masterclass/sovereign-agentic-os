@@ -89,6 +89,11 @@ export type DashboardSpec = {
    *  the ONLY endpoint that actually serves the Cube view's rows (Trino has no such view).
    *  When absent (legacy), the bundle falls back to the direct-Trino shape (no rows). */
   domain?: string;
+  /** Default cross-filter chips saved WITH the dashboard: View opens narrowed to these
+   *  (the same equality shape every panel pushes into its governed WHERE), Edit shows them
+   *  as the authored defaults. Optional + verbatim — absent means today's behaviour (no
+   *  default filter), so legacy specs are unchanged. */
+  filters?: PanelFilter[];
 };
 
 /** The Cube view a dashboard is built on (one per gold dataset). */
@@ -96,12 +101,26 @@ export function viewFor(dataset: Dataset): string {
   return cubeViewName(dataset);
 }
 
-/** A panel's dedupe/identity key: viz type + the metric members it charts (order-stable). */
+/** A panel's dedupe/identity key: viz type + metric members + the FULL slice (dimensions,
+ *  time, filters). The old vizType+metrics key silently collapsed "revenue by region" and
+ *  "revenue by product" into one panel on save — two panels are duplicates only when they
+ *  chart the same members the same WAY. */
 function panelKey(p: Panel): string {
-  return `${p.vizType}:${panelMetrics(p).join(',')}`;
+  const filters = (p.filters ?? [])
+    .map((f) => `${f.member}${f.operator}${[...f.values].sort().join('|')}`)
+    .sort()
+    .join(';');
+  return [
+    p.vizType,
+    panelMetrics(p).join(','),
+    (p.dimensions ?? []).join(','),
+    p.timeDimension ?? '',
+    p.timeGrain ?? '',
+    filters,
+  ].join(':');
 }
 
-function normalize(name: string, view: string, charts: Panel[], domain?: string): DashboardSpec {
+function normalize(name: string, view: string, charts: Panel[], domain?: string, filters?: PanelFilter[]): DashboardSpec {
   // Coerce legacy `{metric}` panels to `{metrics}` and dedupe by (vizType, metrics) so the
   // two build modes can't double-add a tile.
   const seen = new Set<string>();
@@ -114,22 +133,25 @@ function normalize(name: string, view: string, charts: Panel[], domain?: string)
     deduped.push(c);
   }
   const d = (domain ?? '').trim();
-  return { name: name.trim(), view, charts: deduped, ...(d ? { domain: d } : {}) };
+  // Default filters pass through VERBATIM — absent stays absent (legacy behaviour unchanged);
+  // an empty array is treated as "no defaults" so a cleared chip bar never persists as [].
+  const f = filters && filters.length ? filters : undefined;
+  return { name: name.trim(), view, charts: deduped, ...(d ? { domain: d } : {}), ...(f ? { filters: f } : {}) };
 }
 
 /** DRAG-AND-DROP → the spec (the user dropped these chart tiles). */
-export function fromTiles(name: string, view: string, charts: ChartSpec[], domain?: string): DashboardSpec {
-  return normalize(name, view, charts, domain);
+export function fromTiles(name: string, view: string, charts: ChartSpec[], domain?: string, filters?: PanelFilter[]): DashboardSpec {
+  return normalize(name, view, charts, domain, filters);
 }
 
 /**
  * AGENT → the spec. The dashboard agent proposes the SAME chart list (a structured
  * plan), routed through the same normalizer, so agent + drag-drop converge on one spec.
  */
-export type AgentDashboardPlan = { name: string; view: string; charts: ChartSpec[]; domain?: string };
+export type AgentDashboardPlan = { name: string; view: string; charts: ChartSpec[]; domain?: string; filters?: PanelFilter[] };
 
 export function fromAgent(plan: AgentDashboardPlan): DashboardSpec {
-  return normalize(plan.name, plan.view, plan.charts, plan.domain);
+  return normalize(plan.name, plan.view, plan.charts, plan.domain, plan.filters);
 }
 
 /** Two specs are the same dashboard iff name+view+panel-set match (order-independent). */

@@ -50,8 +50,7 @@ export default function MarketplaceDataProducts() {
         Data products<span className="count-pill">{items?.length ?? 0}</span>
       </div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Certified, governed datasets published from any domain. Import one to query it (row/column-scoped to
-        your entitlements), or <Link href="/data">open the Data tab</Link> to manage your own.
+        Import one to query it, or <Link href="/data">open the Data tab</Link> to manage your own.
       </p>
       {err ? <div className="error">{err}</div> : null}
       {!items ? (

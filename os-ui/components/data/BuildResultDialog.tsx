@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { friendlyTrinoError } from '@/lib/data/friendly-error';
 
 export type BuildResult = {
   ok: boolean;
@@ -39,6 +40,13 @@ export default function BuildResultDialog({
   onClose: () => void;
 }) {
   const primaryRef = useRef<HTMLButtonElement>(null);
+  // A FAILURE detail may arrive as a raw Trino string — lead with the plain sentence,
+  // keep the raw (query_id and all) behind "Show details". A success detail is our own
+  // copy and passes through untouched.
+  const { friendly, raw } = result.ok
+    ? { friendly: result.detail, raw: result.detail }
+    : friendlyTrinoError(result.detail);
+  const hasDetail = !result.ok && raw.trim() !== friendly.trim();
   useEffect(() => { primaryRef.current?.focus(); }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -61,8 +69,14 @@ export default function BuildResultDialog({
           {result.ok ? `${result.what} built ✓` : `${result.what} build failed`}
         </h3>
         <p className={result.ok ? 'muted' : 'error'} style={{ fontSize: 15, lineHeight: 1.5 }}>
-          {result.detail}
+          {friendly}
         </p>
+        {hasDetail ? (
+          <details style={{ marginTop: -4, marginBottom: 4 }}>
+            <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>Show details</summary>
+            <pre className="mono" style={{ margin: '6px 0 0', fontSize: 12, whiteSpace: 'pre-wrap' }}>{raw}</pre>
+          </details>
+        ) : null}
         {result.offline ? (
           <p className="hint">
             Recorded as an offline preview — no live table was written (cluster unreachable).

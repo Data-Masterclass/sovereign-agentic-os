@@ -2,7 +2,7 @@
 
 ## What this is
 
-The Dashboards tab composes governed metrics into visual surfaces. Every chart in a dashboard binds to a canonical metric member — no chart queries raw data. `create_dashboard` imports the dashboard into Superset and **embeds it live end-to-end** — the chart renders in the OS, no offline placeholder. Dashboards are delivered with per-viewer guest tokens that enforce row-level security: two users viewing the same dashboard see only the rows their DLS grants allow. In the cross-tab spine, dashboards sit downstream of metrics and upstream of big bets: metrics → dashboards → big bets.
+The Dashboards tab composes governed metrics into visual surfaces. Every chart in a dashboard binds to a canonical metric member — no chart queries raw data. `create_dashboard` persists the spec; panels **render natively at View time — Apache ECharts on the governed Cube layer, no Superset import step**. Each panel queries AS THE VIEWER, so per-viewer row-level security is enforced live: two users viewing the same dashboard see only the rows their DLS grants allow. In the UI, dashboards follow the same artifact model as every context tab — ＋ New (a type chooser) lands in Edit, a tile opens a full-page View, ✎ Edit re-opens it; there is no staged flow. The viewer surface adds cross-filter chips (click a bar or slice to filter the whole dashboard through a governed WHERE), a drill-down drawer, a time-grain switcher, per-panel widths (⅓ / ½ / full), persisted default filters, and ⬇ CSV on table panels; any panel also expands full-screen (title or ⤢) — for a graph the chart large with its rows as a table and ⬇ CSV beneath, a table panel simply rendered large. The viz-type dropdown leads with pie · bar · table. In the cross-tab spine, dashboards sit downstream of metrics and upstream of big bets: metrics → dashboards → big bets.
 
 ## How to build it
 
@@ -19,12 +19,12 @@ The Dashboards tab composes governed metrics into visual surfaces. Every chart i
 
 4. **Read it back.** Call `get_dashboard` with the dashboard id to read back its charts and their governed metric members, the view they bind to, scope and owner — iterate by calling `create_dashboard` again with the same `id` (it replaces a dashboard you own).
 
-That is the complete build flow. The dashboard is imported into Superset and embedded live; a guest token is issued per viewer at render time, enforcing their DLS scope.
+That is the complete build flow. The dashboard renders natively at View time (ECharts on the governed Cube layer); each panel query runs as the viewer, enforcing their DLS scope live — there is no Superset import and no guest-token round-trip.
 
 ## What to consider
 
 - **Every chart must bind a metric member.** A chart that references a raw dataset column rather than a governed `metric` member returns `bad_request`. Define the metric first.
-- **DLS is enforced at guest token time.** Promoting a dashboard to a higher scope never widens the rows a viewer sees. DLS is a separate enforcement layer. Do not assume that a Domain dashboard gives viewers access to all rows.
+- **DLS is enforced per-viewer at query time.** Promoting a dashboard to a higher scope never widens the rows a viewer sees — every panel re-queries the Cube layer as the viewer. DLS is a separate enforcement layer. Do not assume that a Domain dashboard gives viewers access to all rows.
 - **list_metrics before create_dashboard.** Building a dashboard with metric IDs you have not verified exist will cause `not_found` errors inside the `charts` array. Always inventory first.
 - **list_dashboards before creating a new one.** Call `list_dashboards` to confirm you are not duplicating an existing view of the same metrics.
 - **Filters are additive.** Chart-level `filters` narrow the metric query further. They do not override DLS — they compose with it.
@@ -39,7 +39,7 @@ That is the complete build flow. The dashboard is imported into Superset and emb
 | Promote to Domain | Domain admin |
 | Promote to Company (certify) | Admin |
 
-OPA enforces metric read access at dashboard creation time. Guest tokens are issued with the viewer's DLS scope baked in — the dashboard server never issues a widened token. Langfuse traces every dashboard render.
+OPA enforces metric read access at dashboard creation time. Every panel resolves through Cube as the viewer, with the viewer's DLS scope applied on each query — the server never widens a viewer's rows. Langfuse traces every dashboard render.
 
 **Worked example:**
 
@@ -59,7 +59,7 @@ create_dashboard({
       dimensions: ["Orders.region"] }
   ]
 })
-→ { id: "dash_sales_overview_ab12cd", tier: "personal", build: { embedded: true } }
+→ { id: "dash_sales_overview_ab12cd", tier: "personal", build: { native: true } }
 ```
 
-The dashboard is imported to Superset and embeds live immediately. A domain admin then promotes it to Domain; each viewer receives a guest token scoped to their own DLS.
+The dashboard renders natively at View time (ECharts on the governed Cube layer). A domain admin then promotes it to Domain; each panel re-queries as its viewer, scoped to that viewer's own DLS.

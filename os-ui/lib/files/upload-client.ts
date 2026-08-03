@@ -86,3 +86,52 @@ export function reuploadVersion(
   const body = JSON.stringify({ text, bytes: file.size });
   return runXhr(`/api/files/${id}/version`, body, 'application/json', file.name, onPct);
 }
+
+/**
+ * Save an INLINE text/markdown edit as a NEW VERSION. Goes through the SAME
+ * /version endpoint, but sets `rewriteBytes` so the server ALSO re-writes the stored
+ * ORIGINAL bytes from the edited text — keeping /raw, /download, the extracted text
+ * and search all in step (never a split brain where the reader shows new text while
+ * the download serves the old bytes). Returns a friendly error string or null.
+ */
+export function saveTextVersion(id: string, text: string, label = 'file'): Promise<string | null> {
+  const body = JSON.stringify({ text, bytes: new TextEncoder().encode(text).length, rewriteBytes: true });
+  return runXhr(`/api/files/${id}/version`, body, 'application/json', label, () => {});
+}
+
+/**
+ * Create a NEW markdown note. There is no separate "note" storage — a note is just a
+ * text/markdown file, so it rides the EXACT raw-upload path an uploaded file uses
+ * (POST /api/files?upload=raw): the bytes are stored, the extracted text is kept (a
+ * .md name is text-like), and it is indexed like any other file. Resolves with either
+ * the created asset id (on success) or a friendly error string.
+ */
+export async function createNoteFile(
+  name: string,
+  markdown: string,
+  folder: string,
+): Promise<{ id: string } | { error: string }> {
+  const safeName = /\.(md|markdown)$/i.test(name) ? name : `${name}.md`;
+  const file = new File([markdown], safeName, { type: 'text/markdown' });
+  const qs = new URLSearchParams({ upload: 'raw', name: safeName, folder });
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/files?${qs.toString()}`);
+    xhr.setRequestHeader('Content-Type', 'text/markdown');
+    xhr.timeout = TIMEOUT_MS;
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText) as { asset?: { id?: string } };
+          if (data.asset?.id) { resolve({ id: data.asset.id }); return; }
+        } catch { /* fall through to the generic error */ }
+        resolve({ error: 'Note saved, but the server returned an unexpected response.' });
+        return;
+      }
+      resolve({ error: friendlyError(xhr, name) });
+    };
+    xhr.onerror = () => resolve({ error: `${name} failed to save — check your connection and try again.` });
+    xhr.ontimeout = () => resolve({ error: `${name} failed to save — check your connection and try again.` });
+    xhr.send(file);
+  });
+}

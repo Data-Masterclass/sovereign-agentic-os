@@ -5,10 +5,9 @@
 
 import { useState } from 'react';
 import { postJson } from './shared';
-import type { Cadence, Channel, DashboardSummary, ReportResponse } from './shared';
+import type { Cadence, DashboardSummary, ReportResponse } from './shared';
 
 const CADENCES: Cadence[] = ['daily', 'weekly', 'monthly'];
-const CHANNEL_OPTS: Channel[] = ['email', 'slack', 'in_app'];
 
 /**
  * Scheduled reports — deliver a dashboard snapshot on a cadence. "Send now" is the manual
@@ -17,7 +16,6 @@ const CHANNEL_OPTS: Channel[] = ['email', 'slack', 'in_app'];
  */
 export default function Reports({ dashboard }: { dashboard: DashboardSummary }) {
   const [cadence, setCadence] = useState<Cadence>('weekly');
-  const [channel, setChannel] = useState<Channel>('email');
   const [result, setResult] = useState<ReportResponse | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -31,7 +29,7 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
         id: `${dashboard.id}-${cadence}`,
         dashboardId: dashboard.id,
         cadence,
-        channel,
+        channel: 'in_app',
         lastSentAt: 0,
       };
       const res = await postJson<ReportResponse>('/api/dashboards/reports', { report });
@@ -55,13 +53,9 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
             {CADENCES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </label>
-        <label>
-          <span className="comp-label">Channel</span>
-          <select value={channel} onChange={(e) => setChannel(e.target.value as Channel)} style={{ width: '100%' }}>
-            {CHANNEL_OPTS.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </label>
       </div>
+
+      <p className="hint" style={{ marginTop: 12 }}>Delivered to you in-app.</p>
 
       <div className="row" style={{ marginTop: 16 }}>
         <button className="btn" onClick={sendNow} disabled={busy}>
@@ -73,7 +67,7 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
 
       {result ? (
         <div className="passthrough-note" style={{ marginTop: 14 }}>
-          ✓ Sent <strong>{dashboard.name}</strong> via <strong>{result.send.channel}</strong> at{' '}
+          ✓ Sent <strong>{dashboard.name}</strong> <strong>in-app</strong> at{' '}
           {new Date(result.send.sentAt).toLocaleString()} — cadence <strong>{result.report.cadence}</strong>.
         </div>
       ) : null}

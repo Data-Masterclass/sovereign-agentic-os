@@ -139,7 +139,7 @@ export const dashboardWriteTools: McpTool[] = [
     tab: 'dashboards',
     minRole: 'creator',
     description:
-      'Create (or replace) a dashboard (also called: report, business intelligence (BI), data visualization) you own — tiles/charts that reference GOVERNED metric members. Runs in YOUR My scope with no approval, and imports to Superset so it EMBEDS LIVE end-to-end (no offline placeholder; a best-effort offline-mock only if Superset is unreachable). Same governed path as the Dashboards tab. Sharing it wider is the separate governed promote ladder (owner files request_promotion → a domain admin approves).',
+      'Create (or replace) a dashboard (also called: report, business intelligence (BI), data visualization) you own — tiles/charts that reference GOVERNED metric members. Runs in YOUR My scope with no approval; this call PERSISTS the spec. Panels render NATIVELY at View time (Apache ECharts on the governed Cube layer) — there is no Superset import step, and every panel re-queries AS THE VIEWER so per-viewer row-level security is enforced live (a best-effort offline-mock only if Cube is unreachable). Same governed path as the Dashboards tab. Sharing it wider is the separate governed promote ladder (owner files request_promotion → a domain admin approves).',
     inputSchema: {
       type: 'object',
       properties: {

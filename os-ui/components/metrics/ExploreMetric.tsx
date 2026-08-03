@@ -69,11 +69,16 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [result, setResult] = useState<ExploreResult | null>(null);
+  // Cross-filter chips (P1-4) — clicking a category value in the result table narrows the
+  // explore to it (the SAME equals shape the governed query pushes into the WHERE). One value
+  // per column (Power BI slicer behaviour); session state only, never persisted.
+  const [chips, setChips] = useState<{ column: string; value: string }[]>([]);
 
   // When sliceMembers load, seed a sensible default (first non-time column)
   useEffect(() => {
     setSelectedDims([]);
     setSelectedTime('');
+    setChips([]);
   }, [metric?.id]);
 
   const metricId = metric?.id ?? null;
@@ -81,6 +86,16 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
   const toggleDim = (col: string) =>
     setSelectedDims((ds) => ds.includes(col) ? ds.filter((d) => d !== col) : [...ds, col]);
 
+  // Click a category value → add/replace/clear its chip (one value per column).
+  const toggleChip = (column: string, value: string) =>
+    setChips((cs) => {
+      const same = cs.find((c) => c.column === column);
+      if (same && same.value === value) return cs.filter((c) => c.column !== column); // click again = clear
+      return [...cs.filter((c) => c.column !== column), { column, value }];
+    });
+
+  // Serialize chips so the fetch re-runs when they change (stable key, not identity).
+  const chipsKey = JSON.stringify(chips);
   const run = useCallback(async () => {
     if (!metricId) return;
     setErr(''); setBusy(true);
@@ -94,13 +109,16 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
           timeDimension: selectedTime || undefined,
           granularity: selectedTime ? granularity : undefined,
           viewerRegion: viewer === 'me' ? undefined : viewer,
+          filters: chips.length ? chips.map((c) => ({ column: c.column, values: [c.value] })) : undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Explore failed'); setResult(null); return; }
       setResult(data);
     } catch (e) { setErr((e as Error).message); setResult(null); } finally { setBusy(false); }
-  }, [metricId, selectedDims, selectedTime, granularity, viewer]);
+    // chips are captured via chipsKey (stable string) to re-run on change without identity churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metricId, selectedDims, selectedTime, granularity, viewer, chipsKey]);
 
   // Re-run whenever the slice or the viewer changes — switching viewer is the RLS demo.
   useEffect(() => { run(); }, [run]);
@@ -118,11 +136,7 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
 
   return (
     <>
-      <p className="lead" style={{ marginTop: 4 }}>
-        Slice <strong>{metric.name}</strong> — no SQL. The query runs under <em>your</em>
-        delegated identity, so the rows are row-level filtered to the viewer. Change
-        <strong> View as</strong> and watch the numbers change: that is Cube RLS, live.
-      </p>
+      <div className="section-title" style={{ marginTop: 4 }}>Explore</div>
 
       <div className="guided-panel">
         <div className="row" style={{ gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -163,6 +177,24 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
         </div>
       </div>
 
+      {/* Cross-filter chips (P1-4) — the explorer narrows to these; every re-runs under RLS. */}
+      {chips.length > 0 ? (
+        <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}>
+          <span className="hint" style={{ margin: 0 }}>Filtered to</span>
+          {chips.map((c) => (
+            <span key={c.column} className="chip ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {leaf(c.column)} = {c.value}
+              <button
+                className="chip-x"
+                onClick={() => setChips((cs) => cs.filter((x) => x.column !== c.column))}
+                aria-label={`Clear filter ${leaf(c.column)}`}
+              >×</button>
+            </span>
+          ))}
+          {chips.length > 1 ? <button className="btn ghost sm" onClick={() => setChips([])}>Clear all</button> : null}
+        </div>
+      ) : null}
+
       {err ? <div className="error" style={{ marginTop: 14 }}>{err}</div> : null}
 
       {result?.warning ? (
@@ -177,9 +209,6 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
             Security context
             <ModeBadge mode={result.mode} />
           </div>
-          <p className="hint" style={{ marginTop: 0 }}>
-            Identity drives the filter — these claims are what Cube applies as RLS for this viewer.
-          </p>
           <div className="chip-row">
             {ctx.length ? ctx.map(([k, v]) => (
               <span key={k} className="chip">{k}: {String(v)}</span>
@@ -204,7 +233,25 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
                 <thead><tr>{cols.map((c) => <th key={c}>{leaf(c)}</th>)}</tr></thead>
                 <tbody>
                   {result.rows.map((r, i) => (
-                    <tr key={i}>{cols.map((c) => <td key={c}>{String(r[c] ?? '')}</td>)}</tr>
+                    <tr key={i}>{cols.map((c) => {
+                      const raw = r[c];
+                      const text = String(raw ?? '');
+                      // A CATEGORY cell (not the measure member, non-empty) is clickable — it
+                      // adds a cross-filter chip and re-runs the explore narrowed to it (P1-4).
+                      const filterable = c !== result.member && text !== '';
+                      return filterable ? (
+                        <td key={c}>
+                          <button
+                            className="linklike"
+                            onClick={() => toggleChip(c, text)}
+                            title={`Filter to ${leaf(c)} = ${text}`}
+                            style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', color: 'inherit', font: 'inherit', textDecoration: 'underline dotted' }}
+                          >{text}</button>
+                        </td>
+                      ) : (
+                        <td key={c}>{text}</td>
+                      );
+                    })}</tr>
                   ))}
                 </tbody>
               </table>

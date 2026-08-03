@@ -38,6 +38,8 @@ type Tile = {
   storage: string;
   /** Soft-archived (retained, reversible). */
   archived?: boolean;
+  /** Born curated (composed from existing datasets) — the transparency badge. */
+  curated?: boolean;
 };
 type Groups = { mine: Tile[]; domain: Tile[]; marketplace: Tile[] };
 
@@ -93,6 +95,7 @@ function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomai
         <span className="tile-name">{t.name}</span>
         <div className="row" style={{ gap: 6, alignItems: 'center' }}>
           {t.archived ? <span className="badge muted">archived</span> : null}
+          {t.curated ? <span className="badge muted" title="Composed from existing governed datasets (no own ingestion)">curated</span> : null}
           <span className={`badge ${TIER_BADGE[t.tier]}`}>{TIER_WORD[t.tier]}</span>
         </div>
       </div>
@@ -419,8 +422,11 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
   const treeDomainNodes = visibleRoots.includes('domain') ? domainTreeNodes : [];
 
   // The items the tree lays out under each root (leaves live inside their folder).
+  // Each item PINNED to its own root (the 0.6.40 folder-scope rule): without an explicit
+  // scope, FolderTree renders the item under BOTH "My folders" and "Domain folders" —
+  // the leak seen live 2026-08-02 (domain datasets under My folders in the All scope).
   const treeItems = useMemo(
-    () => active.map((t) => ({ id: t.id, folder: t.folder, name: t.name })),
+    () => active.map((t) => ({ id: t.id, folder: t.folder, name: t.name, scope: rootOf(t) })),
     [active],
   );
 
@@ -435,8 +441,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
     <>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
         <p className="lead" style={{ margin: 0, maxWidth: 560 }}>
-          Your datasets. Open one to refine it through <strong>Bronze → Silver → Gold</strong>,
-          define a metric, and share it — the tools stay in the engine room.
+          Open one to refine it through <strong>Bronze → Silver → Gold</strong>, define a metric, and share it.
         </p>
         <div className="row" style={{ gap: 8 }}>
           <button
@@ -657,9 +662,14 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
                 ) : null}
                 {shown.length === 0 ? (
                   <div className="stub-page">This folder is empty.</div>
-                ) : (
-                  <div className="tile-grid">
-                    {shown.map((t) => (
+                ) : (() => {
+                  // Ingested vs Curated SUBSECTIONS (the origin split, visible in the list).
+                  // Headers only when both kinds are present — a single-kind list stays flat.
+                  const curatedTiles = shown.filter((t) => t.curated);
+                  const ingestedTiles = shown.filter((t) => !t.curated);
+                  const renderGrid = (list: Tile[]) => (
+                    <div className="tile-grid">
+                    {list.map((t) => (
                       <div key={t.id} style={{ position: 'relative' }}>
                         {canManage(t) ? (
                           <input
@@ -674,9 +684,11 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
                                 return next;
                               });
                             }}
-                            style={{ position: 'absolute', top: 12, left: 12, zIndex: 2, accentColor: 'var(--gold-deep)', cursor: 'pointer' }}
+                            style={{ position: 'absolute', top: 14, left: 12, zIndex: 2, accentColor: 'var(--gold-deep)', cursor: 'pointer' }}
                           />
                         ) : null}
+                        {/* Reserve room for the checkbox so it never sits ON the title. */}
+                        <div style={canManage(t) ? { paddingLeft: 26 } : undefined} className="tile-pick-pad">
                         <TileCard
                           t={t}
                           onOpen={onOpen}
@@ -687,10 +699,21 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
                           onChanged={refresh}
                           showDomain={showDomain}
                         />
+                        </div>
                       </div>
                     ))}
                   </div>
-                )}
+                  );
+                  if (curatedTiles.length === 0 || ingestedTiles.length === 0) return renderGrid(shown);
+                  return (
+                    <>
+                      <div className="section-title" style={{ marginTop: 4 }}>Ingested data</div>
+                      {renderGrid(ingestedTiles)}
+                      <div className="section-title" style={{ marginTop: 18 }}>Curated data</div>
+                      {renderGrid(curatedTiles)}
+                    </>
+                  );
+                })()}
               </FolderLayout>
             </div>
           ) : null}
@@ -700,8 +723,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
               <>
                 <div className="section-title">Archived<span className="count-pill">{scoped.archived.length}</span></div>
                 <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-                  Archived datasets are hidden from the working lists (their tables are retained).
-                  Restore brings one back; Delete removes it permanently — including its physical tables.
+                  Delete removes a dataset permanently, including its physical tables.
                 </p>
                 <div className="tile-grid">
                   {scoped.archived.map((t) => <TileCard key={t.id} t={t} onOpen={onOpen} canManage={canManage(t)} onChanged={refresh} showDomain={showDomain} />)}

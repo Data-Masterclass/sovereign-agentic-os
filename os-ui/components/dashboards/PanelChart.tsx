@@ -41,6 +41,30 @@ function cssVar(name: string, fallback: string): string {
 
 type Row = Record<string, unknown>;
 
+/** RFC-4180-ish CSV of the RENDERED rows — leaf-named headers, quoted/escaped fields.
+ *  Exactly what the table shows (the governed, RLS-scoped result), nothing recomputed. */
+function toCsv(cols: string[], rows: Row[]): string {
+  const esc = (v: unknown) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return [
+    cols.map((c) => esc(leaf(c))).join(','),
+    ...rows.map((r) => cols.map((c) => esc(r[c])).join(',')),
+  ].join('\n');
+}
+
+function downloadCsv(name: string, cols: string[], rows: Row[]) {
+  const file = `${(name || 'table').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'table'}.csv`;
+  const blob = new Blob([toCsv(cols, rows)], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = file;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /** The first dimension member present on the rows that isn't one of the measures. */
 function dimOf(rows: Row[], measures: string[]): string | undefined {
   const first = rows[0] ?? {};
@@ -57,9 +81,14 @@ const num = (v: unknown) => {
 function chartOption(panel: Panel, rows: Row[], colors: { teal: string; gold: string; ink: string; line: string }): EChartsOption | null {
   const measures = panelMetrics(panel);
   const palette = [colors.teal, colors.gold, '#7c6cc4', '#c46c8a', '#6ca3c4'];
-  const grid = { left: 8, right: 12, top: 24, bottom: 8, containLabel: true };
   const axisText = { color: colors.ink, fontSize: 11 };
   const splitLine = { lineStyle: { color: colors.line } };
+  // A multi-measure legend gets ITS OWN top band (scroll, one line) and the plot grid
+  // starts below it — the legend can never sit on top of the chart again.
+  const legend = measures.length > 1
+    ? ({ type: 'scroll', top: 0, itemGap: 12, textStyle: { color: colors.ink, fontSize: 11 } } as const)
+    : undefined;
+  const grid = { left: 8, right: 12, top: legend ? 34 : 24, bottom: 8, containLabel: true };
 
   if (panel.vizType === 'pie') {
     const dim = dimOf(rows, measures);
@@ -67,13 +96,19 @@ function chartOption(panel: Panel, rows: Row[], colors: { teal: string; gold: st
     if (!dim || !measure) return null;
     return {
       tooltip: { trigger: 'item' },
-      legend: { bottom: 0, textStyle: { color: colors.ink } },
+      // ONE scrolling legend line at the bottom — many categories used to wrap over the pie.
+      legend: { type: 'scroll', bottom: 0, itemGap: 10, textStyle: { color: colors.ink, fontSize: 11 } },
       color: palette,
       series: [{
         type: 'pie',
-        radius: ['42%', '68%'],
+        // The pie sits above the legend band (center y 44%) so the two never collide.
+        center: ['50%', '44%'],
+        radius: ['36%', '60%'],
         itemStyle: { borderColor: cssVar('--panel', '#fff'), borderWidth: 2 },
-        label: { color: colors.ink },
+        label: { color: colors.ink, fontSize: 11, overflow: 'truncate', width: 90 },
+        labelLine: { length: 8, length2: 6 },
+        // Colliding slice labels HIDE instead of overlapping (the tooltip still names them).
+        labelLayout: { hideOverlap: true },
         data: rows.map((r) => ({ name: String(r[dim] ?? ''), value: num(r[measure]) })),
       }],
     };
@@ -84,10 +119,15 @@ function chartOption(panel: Panel, rows: Row[], colors: { teal: string; gold: st
     const cats = rows.map((r) => String((time && r[time]) ?? ''));
     return {
       tooltip: { trigger: 'axis' },
-      legend: measures.length > 1 ? { top: 0, textStyle: { color: colors.ink } } : undefined,
+      legend,
       color: palette,
       grid,
-      xAxis: { type: 'category', data: cats, axisLabel: axisText, axisLine: { lineStyle: { color: colors.line } } },
+      xAxis: {
+        type: 'category',
+        data: cats,
+        axisLabel: { ...axisText, hideOverlap: true, width: 90, overflow: 'truncate' },
+        axisLine: { lineStyle: { color: colors.line } },
+      },
       yAxis: { type: 'value', axisLabel: axisText, splitLine },
       series: measures.map((m) => ({
         name: leaf(m),
@@ -101,15 +141,21 @@ function chartOption(panel: Panel, rows: Row[], colors: { teal: string; gold: st
     };
   }
 
-  // bar — grouped by the first dimension.
+  // bar — grouped by the first dimension. Long/many category names rotate + truncate
+  // instead of overlapping each other under the bars.
   const dim = dimOf(rows, measures);
   const cats = rows.map((r) => String((dim && r[dim]) ?? ''));
   return {
     tooltip: { trigger: 'axis' },
-    legend: measures.length > 1 ? { top: 0, textStyle: { color: colors.ink } } : undefined,
+    legend,
     color: palette,
     grid,
-    xAxis: { type: 'category', data: cats, axisLabel: axisText, axisLine: { lineStyle: { color: colors.line } } },
+    xAxis: {
+      type: 'category',
+      data: cats,
+      axisLabel: { ...axisText, hideOverlap: true, rotate: cats.length > 6 ? 30 : 0, width: 100, overflow: 'truncate' },
+      axisLine: { lineStyle: { color: colors.line } },
+    },
     yAxis: { type: 'value', axisLabel: axisText, splitLine },
     series: measures.map((m) => ({
       name: leaf(m),
@@ -121,18 +167,33 @@ function chartOption(panel: Panel, rows: Row[], colors: { teal: string; gold: st
   };
 }
 
-function EchartsCanvas({ option, height }: { option: EChartsOption; height: number }) {
+function EchartsCanvas({
+  option,
+  height,
+  onPointClick,
+}: {
+  option: EChartsOption;
+  height: number;
+  /** Datapoint click (drill-down) — receives the clicked category name. */
+  onPointClick?: (name: string) => void;
+}) {
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
     const chart = echarts.init(node, undefined, { renderer: 'canvas' });
     chart.setOption(option);
+    if (onPointClick) {
+      chart.on('click', (params) => {
+        const name = String((params as { name?: unknown }).name ?? '');
+        if (name) onPointClick(name);
+      });
+    }
     const ro = new ResizeObserver(() => chart.resize());
     ro.observe(node);
     return () => { ro.disconnect(); chart.dispose(); };
-  }, [option]);
-  return <div ref={ref} style={{ width: '100%', height }} />;
+  }, [option, onPointClick]);
+  return <div ref={ref} style={{ width: '100%', height, cursor: onPointClick ? 'pointer' : undefined }} />;
 }
 
 /**
@@ -141,12 +202,17 @@ function EchartsCanvas({ option, height }: { option: EChartsOption; height: numb
  * governed Cube layer (per-viewer RLS applied server-side). Degrades gracefully: a syncing
  * panel shows "syncing…", an empty result shows a quiet "no rows", never a hard error.
  */
+/** The drill request a click produces: a category filter (`region = DE`), or `null` for
+ *  an unfiltered breakdown (clicking a KPI number → "break this total down by …"). */
+export type DrillRequest = { member: string; value: string } | null;
+
 export default function PanelChart({
   panel,
   rows,
   pending,
   warning,
   height = 240,
+  onDrill,
 }: {
   panel: Panel;
   rows: Record<string, unknown>[];
@@ -155,6 +221,9 @@ export default function PanelChart({
    *  model — rendered as an inline warning, never a silently de-dimensioned chart. */
   warning?: string;
   height?: number;
+  /** When set, datapoints become clickable: a bar/slice/table-row click drills into that
+   *  category; a KPI click asks for an unfiltered breakdown. Absent = static chart. */
+  onDrill?: (drill: DrillRequest) => void;
 }) {
   const colors = useMemo(
     () => ({
@@ -193,11 +262,18 @@ export default function PanelChart({
   }
 
   // big number KPI — sum the first measure across the returned rows (a scalar total).
+  // With a drill handler, clicking the number asks for its breakdown.
   if (panel.vizType === 'big_number' || panel.vizType === 'big_number_total') {
     const measure = measures[0];
     const total = rows.reduce((s, r) => s + num(r[measure]), 0);
     return (
-      <div className="panel-kpi" style={{ height }}>
+      <div
+        className="panel-kpi"
+        style={{ height, cursor: onDrill ? 'pointer' : undefined }}
+        onClick={onDrill ? () => onDrill(null) : undefined}
+        title={onDrill ? 'Click to break this number down' : undefined}
+        role={onDrill ? 'button' : undefined}
+      >
         <div className="panel-kpi-value">{fmtCompact(total)}</div>
         <div className="panel-kpi-label">{measure ? leaf(measure) : ''}</div>
       </div>
@@ -205,19 +281,40 @@ export default function PanelChart({
   }
 
   // table — a plain, calm result table (reuses the metrics explorer table styling).
+  // A row click drills into that row's first dimension value.
   if (panel.vizType === 'table') {
     const cols: string[] = [];
     for (const r of rows) for (const k of Object.keys(r)) if (!cols.includes(k)) cols.push(k);
+    const dimCol = cols.find((c) => !measures.includes(c) && c !== panel.timeDimension);
+    const rowDrill = onDrill && dimCol
+      ? (r: Record<string, unknown>) => onDrill({ member: dimCol, value: String(r[dimCol] ?? '') })
+      : undefined;
     return (
-      <div className="table-wrap" style={{ maxHeight: height, overflow: 'auto' }}>
-        <table>
-          <thead><tr>{cols.map((c) => <th key={c}>{leaf(c)}</th>)}</tr></thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i}>{cols.map((c) => <td key={c}>{String(r[c] ?? '')}</td>)}</tr>
-            ))}
-          </tbody>
-        </table>
+      <div>
+        <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 4 }}>
+          <button
+            className="btn ghost sm"
+            onClick={() => downloadCsv(panel.name, cols, rows)}
+            title="Download these rows (your governed, row-level-secured result) as CSV"
+          >⬇ CSV</button>
+        </div>
+        <div className="table-wrap" style={{ maxHeight: height, overflow: 'auto' }}>
+          <table>
+            <thead><tr>{cols.map((c) => <th key={c}>{leaf(c)}</th>)}</tr></thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr
+                  key={i}
+                  onClick={rowDrill ? () => rowDrill(r) : undefined}
+                  style={rowDrill ? { cursor: 'pointer' } : undefined}
+                  title={rowDrill ? 'Click to drill into this row' : undefined}
+                >
+                  {cols.map((c) => <td key={c}>{String(r[c] ?? '')}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   }
@@ -225,5 +322,13 @@ export default function PanelChart({
   if (!option) {
     return <div className="panel-state" style={{ height }}><span className="hint">Pick a dimension to chart this panel.</span></div>;
   }
-  return <EchartsCanvas option={option} height={height} />;
+  // Category drill: a bar/slice click narrows to that category. Only a PLAIN dimension
+  // drills (a time bucket's rendered label can't faithfully filter the raw column).
+  const drillDim = (panel.vizType === 'bar' || panel.vizType === 'pie')
+    ? dimOf(rows, measures)
+    : undefined;
+  const pointDrill = onDrill && drillDim && drillDim !== panel.timeDimension
+    ? (name: string) => onDrill({ member: drillDim, value: name })
+    : undefined;
+  return <EchartsCanvas option={option} height={height} onPointClick={pointDrill} />;
 }

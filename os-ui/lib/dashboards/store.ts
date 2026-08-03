@@ -220,6 +220,30 @@ export function transitionDashboard(id: string, approver: Principal, transition:
   return d;
 }
 
+/**
+ * Demotion (revoke sharing) — the reverse of `transitionDashboard`, one step down:
+ *   marketplace ──(Admin)──▶ domain ──(owner | in-domain Domain admin | Admin)──▶ personal
+ * Mirrors `demoteSystem` (agents): Marketplace→Domain is Admin-only (only an Admin
+ * certified it); Domain→Personal is the manage scope. Never deletes — only lowers
+ * the tier. The gate lives here (the store is the boundary) so it holds regardless
+ * of the client.
+ */
+export function demoteDashboard(id: string, user: Principal): Stored {
+  const d = getDashboard(id, user);
+  if (!user.domains.includes(d.domain)) throw status('you can only revoke sharing on dashboards in a domain you belong to', 403);
+  if (d.tier === 'marketplace') {
+    if (user.role !== 'admin') throw status('revoking a dashboard from the Marketplace requires an Admin', 403);
+    d.tier = 'domain';
+  } else if (d.tier === 'domain') {
+    if (!canManageArtifact(user, manageArg(d))) throw status('unsharing requires the owner, an in-domain Domain admin, or an Admin', 403);
+    d.tier = 'personal';
+  } else {
+    throw status('this dashboard is already personal — nothing to revoke', 400);
+  }
+  writeThrough(d);
+  return d;
+}
+
 /** The store's edit authority: only the owner may archive/delete/restore. */
 function requireOwned(id: string, user: Principal): Stored {
   const d = dashState().dashboards.find((x) => x.id === id);

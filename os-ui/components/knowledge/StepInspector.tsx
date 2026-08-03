@@ -202,7 +202,7 @@ export default function StepInspector({
       </div>
 
       {/* Links */}
-      <div className="si-section-label">Links — the entities this step touches</div>
+      <div className="si-section-label">Links</div>
       {step.links.length === 0 ? (
         <div className="muted" style={{ fontSize: 12.5 }}>No links yet.</div>
       ) : (
@@ -258,7 +258,7 @@ export default function StepInspector({
       )}
 
       {/* Step-level decision rules */}
-      <div className="si-section-label">Business rules (this step) — soft guidance; mark hard for an OPA guardrail</div>
+      <div className="si-section-label">Business rules (this step)</div>
       {step.rules.length === 0 ? (
         <div className="muted" style={{ fontSize: 12.5 }}>No business rules for this step yet.</div>
       ) : (
@@ -301,7 +301,7 @@ export default function StepInspector({
       )}
 
       {/* Inline expert-knowledge note (stored as the step's `tacit` field) */}
-      <div className="si-section-label">Expert knowledge (inline) — practitioners&rsquo; know-how for this step</div>
+      <div className="si-section-label">Expert knowledge (inline)</div>
       <textarea
         rows={2}
         defaultValue={step.tacit}

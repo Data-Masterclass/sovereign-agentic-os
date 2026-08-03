@@ -280,7 +280,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
 
   const treePersonalNodes = visibleRoots.includes('personal') ? personalTreeNodes : [];
   const treeDomainNodes = visibleRoots.includes('domain') ? domainTreeNodes : [];
-  const treeItems = useMemo(() => visible.map((s) => ({ id: s.id, folder: s.folder ?? '/', name: s.name })), [visible]);
+  const treeItems = useMemo(() => visible.map((s) => ({ id: s.id, folder: s.folder ?? '/', name: s.name, scope: rootOf(s) })), [visible]);
 
   // Grid filter: when a folder is selected, show the systems under it (incl. subfolders)
   // that live in the selected root. Else the whole scope list.

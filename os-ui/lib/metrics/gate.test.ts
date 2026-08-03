@@ -112,12 +112,12 @@ test('GATE 7 — native panels: two viewers resolve DIFFERENT rows under their o
 
 test('GATE 8+9 — alert notifies AND triggers a traced agent run; a scheduled report sends', () => {
   const d = goldSales();
-  const rule = alertOn(d, d.measures[0], { id: 'a1', comparator: 'lt', threshold: 50000, notify: ['email', 'slack'], triggerAgent: { systemId: 'sales', agent: 'sales-agent', preset: 'recovery' } });
+  const rule = alertOn(d, d.measures[0], { id: 'a1', comparator: 'lt', threshold: 50000, notify: ['in_app'], triggerAgent: { systemId: 'sales', agent: 'sales-agent', preset: 'recovery' } });
   const evald = evaluateAlert(rule, 42000);
-  assert.ok(evald.breached && evald.notifications.length === 2 && evald.agentRun?.traced === true);
+  assert.ok(evald.breached && evald.notifications.length === 1 && evald.agentRun?.traced === true);
 
   const now = 10_000_000_000_000;
-  const reports: ScheduledReport[] = [{ id: 'r1', dashboardId: 'sales-overview', cadence: 'weekly', channel: 'email', lastSentAt: now - 8 * 24 * 3600 * 1000 }];
+  const reports: ScheduledReport[] = [{ id: 'r1', dashboardId: 'sales-overview', cadence: 'weekly', channel: 'in_app', lastSentAt: now - 8 * 24 * 3600 * 1000 }];
   const due = dueReports(reports, now);
   assert.equal(due.length, 1);
   assert.equal(sendReport(due[0], now).send.dashboardId, 'sales-overview');

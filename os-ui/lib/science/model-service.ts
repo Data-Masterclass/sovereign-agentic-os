@@ -704,6 +704,33 @@ export function certifyModel(model: string, actor: Actor, mode: ConsumptionMode)
   return m;
 }
 
+/**
+ * Demotion (revoke sharing) — the reverse of promote/certify, one step down:
+ *   Marketplace ──(Admin)──▶ Domain ──(owner | in-domain Domain admin | Admin)──▶ Personal
+ * Mirrors the OS-wide demote rule (agents/dashboards): revoking a certification is
+ * Admin-only (only an Admin certified it); unsharing is the manage scope. Lowering
+ * the tier narrows who may call `predict` automatically via the compiled policy —
+ * the model itself is never deleted.
+ */
+export function demoteModel(model: string, actor: Actor): ServiceModel {
+  const m = getModel(model);
+  if (!m) throw withStatus(new Error(`unknown model ${model}`), 404);
+  assertHuman(actor, 'revoke sharing on a model');
+  requireDomain(actor, m);
+  if (m.tier === 'Marketplace') {
+    if (actor.role !== 'admin') throw withStatus(new Error('Revoking a model from the Marketplace requires an Admin'), 403);
+    m.tier = 'Domain';
+    delete m.consumptionMode;
+  } else if (m.tier === 'Domain') {
+    requireEditScope(actor, m, 'unshare');
+    m.tier = 'Personal';
+  } else {
+    throw withStatus(new Error('This model is already personal — nothing to revoke'), 400);
+  }
+  persist(m);
+  return m;
+}
+
 /** The next tier a human could move the model to, or null at the top. */
 export function nextTier(t: ModelTier): ModelTier | null {
   const i = ORDER.indexOf(t);

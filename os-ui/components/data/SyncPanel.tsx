@@ -259,8 +259,7 @@ export default function SyncPanel({
           {isKafka ? (
             <p className="hint" style={{ margin: 0 }}>
               Streaming source — new messages are <strong>appended</strong>, tracked by Kafka
-              partition offsets (no cursor column to pick). Full refresh and update-by-key are not
-              available for streams; de-duplicate downstream if producers retry.
+              partition offsets. No cursor to pick; de-duplicate downstream if producers retry.
             </p>
           ) : (
             <>

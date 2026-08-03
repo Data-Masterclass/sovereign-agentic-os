@@ -15,7 +15,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { __resetStore, createDataset, buildVersion, transition, listDatasets, type Principal } from './store.ts';
+import { __resetStore, createDataset, buildVersion, transition, listAskable, listDatasets, type Principal } from './store.ts';
 
 // One admin who belongs to BOTH sales + finance; auth.ts narrows domains to the active one.
 const uAll: Principal = { id: 'u1', domains: ['sales', 'finance'], role: 'admin' };
@@ -57,3 +57,13 @@ test('an owned promoted asset groups under Domain; an owned certified product un
   assert.ok(g.marketplace.some((s) => s.id === product), 'owned product under Company');
   assert.ok(!g.mine.some((s) => s.id === product), 'owned product NOT under My');
 });
+
+for (const [label, tier] of [['My', 0], ['Domain', 1], ['Company', 2]] as const) {
+  test(`Talk-to-Data evidence (listAskable): ${label} sales dataset never cited under another active domain`, () => {
+    const id = seedSales(tier);
+    const askable = (u: Principal) => new Set(listAskable(u).map((d) => d.id));
+    assert.ok(!askable(uFinance).has(id), `${label} sales dataset NOT askable when finance is active`);
+    assert.ok(askable(uSales).has(id), `${label} sales dataset askable when sales is active`);
+    assert.ok(askable(uAll).has(id), `${label} sales dataset askable under All Domains`);
+  });
+}

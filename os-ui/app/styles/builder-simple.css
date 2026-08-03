@@ -749,3 +749,94 @@
   color: var(--text-muted);
   text-transform: lowercase;
 }
+
+/* Clickable panel title — looks like the title, behaves like a button (opens the expanded
+   view). Reset the native button chrome so it reads as text with a quiet hover. */
+.panel-card-title-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.panel-card-title-btn:hover { color: var(--teal); }
+
+/* The ⤢ expand affordance — a quiet glyph in the card's top-right corner. Fades up on
+   card hover so the grid stays calm, always reachable on focus for keyboard users. */
+.panel-expand-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.14s, color 0.14s, border-color 0.14s;
+}
+.panel-card:hover .panel-expand-btn { opacity: 0.85; }
+.panel-expand-btn:hover,
+.panel-expand-btn:focus-visible { opacity: 1; color: var(--teal); border-color: var(--gold-line); }
+
+/* Expanded panel — a near-full-viewport view over a dark scrim. */
+.panel-expand-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 18, 12, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: 3vh 3vw;
+  animation: panel-expand-fade 0.16s ease-out;
+}
+.panel-expand {
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, 94vw);
+  max-height: 94vh;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  animation: panel-expand-rise 0.18s ease-out;
+}
+.panel-expand-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-expand-head h3 { font-family: var(--font-head); }
+.panel-expand-body {
+  padding: 18px 20px 22px;
+  overflow: auto;
+}
+.panel-expand-table {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+@keyframes panel-expand-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes panel-expand-rise {
+  from { transform: translateY(8px) scale(0.99); opacity: 0.6; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}

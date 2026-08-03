@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { domainSchema, assetTarget, versionTarget, personalSchema, readPrincipalFor, physicalSlug, bronzeTarget } from './store-fqn.ts';
+import { goldJoinPlan } from './transform.ts';
 import { emptyVersions, type Dataset } from './dataset-schema.ts';
 
 // A HYPHENATED domain (the live cohort `agentic-leader-q3-2026`) must never reach Trino
@@ -98,6 +99,34 @@ test('readPrincipalFor: ANOTHER user personal schema is NOT impersonated (stays 
 
 test('readPrincipalFor: with no domains, falls back to the caller id', () => {
   assert.equal(readPrincipalFor('select 1', { id: 'solo', domains: [] }), 'solo');
+});
+
+// CURATED CONVERGENCE (the "Suggest Quality Rules finds nothing for curated" root cause):
+// a curated dataset has NO bronze/silver — its Gold is composed straight into the OWNER's
+// personal lane by `goldJoinPlan` (target = iceberg.personal_<owner>.gold_<slug>). The
+// profile/preview/dq resolver reads the OWNER's built Gold via `versionTarget`. If those two
+// FQNs ever diverged, `describe`/stats would hit a non-existent table → an EMPTY (but silent)
+// suggestion list. This pins the invariant: the resolver targets EXACTLY what the build wrote.
+test('curated Gold: builtLayerFqn resolver (versionTarget) == the FQN goldJoinPlan writes', () => {
+  const curated = ds({ name: 'Curated Service Data', tier: 'dataset', visibility: 'private', slug: undefined });
+  const owner = { id: 'aborek', domains: ['agentic-leader-q3-2026'] };
+
+  // What the curated build path physically CTAS-es (base overrides ref 0; own-silver unused).
+  const plan = goldJoinPlan(
+    { name: curated.name, domain: curated.domain, tier: curated.tier, slug: curated.slug },
+    { uid: owner.id, domains: owner.domains },
+    [], // no joins — a curated single-base projection (ref 0 = the resolved base)
+    [{ col: { ref: 0, column: 'partner_name' } }], // one dimension off the base
+    [],
+    [],
+    'iceberg.agentic_leader_q3_2026.gold_northpeak_logistics_partners', // resolved base
+  );
+
+  // What the profile/dq resolver reads as (the OWNER, furthest built = gold).
+  const resolved = versionTarget(curated, 'gold', { id: owner.id });
+
+  assert.equal(plan.target, 'iceberg.personal_aborek.gold_curated_service_data');
+  assert.equal(resolved, plan.target, 'the dq/profile resolver must target the exact table the curated build wrote');
 });
 
 // ---------------------------------------------- FROZEN slug — physical-identity stability --

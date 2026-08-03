@@ -124,11 +124,17 @@ export async function runPanelQuery(
   }
 
   // The slice the panel asks for, shared across every measure (bare leaf names — the explorer
-  // re-qualifies them against each measure's view and drops non-members loudly).
+  // re-qualifies them against each measure's view and drops non-members loudly). Panel filters
+  // thread through as equality filters (the drill-down shape) — only `equals` is servable on
+  // the governed-SQL path; any other operator would silently under-filter, so it is dropped
+  // via the explorer's loud reconciliation by mapping ONLY the equals ones here.
   const slice = {
     dimensions: (p.dimensions ?? []).map(leaf),
     timeDimension: p.timeDimension ? leaf(p.timeDimension) : undefined,
     granularity: p.timeGrain as Granularity | undefined,
+    filters: (p.filters ?? [])
+      .filter((f) => f.operator === 'equals' && (f.values ?? []).length > 0)
+      .map((f) => ({ column: leaf(f.member), values: f.values })),
   };
 
   const missing: string[] = [];
@@ -142,14 +148,24 @@ export async function runPanelQuery(
   let unavailableWarning: string | undefined;
   let sql = '';
 
+  // Resolve every member first (pure, cheap) so the full measure-member set is known before we
+  // build slice keys — then run the explore calls CONCURRENTLY (P1-6 resilience: one slow
+  // measure no longer serializes the whole panel). Unresolved members are recorded loudly.
+  type Resolved = { member: string; dataset: Dataset; measure: Measure };
+  const resolvedMembers: Resolved[] = [];
   for (const member of members) {
-    const resolved = resolve(member);
-    if (!resolved) {
-      missing.push(member);
-      continue;
-    }
+    const r = resolve(member);
+    if (!r) { missing.push(member); continue; }
     measureMembers.add(member);
-    const result = await explore(resolved.dataset, resolved.measure, token, slice);
+    resolvedMembers.push({ member, dataset: r.dataset, measure: r.measure });
+  }
+
+  // Await all explores, THEN fold the results in the ORIGINAL member order so the merge into
+  // byKey stays deterministic (same warning/mode/pending/sql accumulation as the old loop).
+  const results = await Promise.all(
+    resolvedMembers.map((rm) => explore(rm.dataset, rm.measure, token, slice)),
+  );
+  for (const result of results) {
     if (result.sql) sql = sql ? `${sql}\n\n${result.sql}` : result.sql;
     if (result.mode === 'offline-mock') mode = 'offline-mock';
     if (result.pending) pending = true;

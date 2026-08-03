@@ -100,6 +100,14 @@ export type Measure = {
   format?: string;
   /** Drill-down members exposed for exploration (Cube `drill_members:`). */
   drillMembers?: string[];
+  /** COMPOSITE metric only: the SOURCE formula the user wrote (`([revenue]-[cost])/[orders]`).
+   *  `sql` holds its compiled `{measure}`-reference form; this round-trips the human-readable
+   *  original for Edit/View. Absent on every non-formula measure. */
+  formula?: string;
+  /** A plain-language sentence — "what does this metric mean?" — shown in the View
+   *  Definition panel and on the metric tile. Absent on every measure created before this
+   *  field existed (byte-stable, exactly like `label`/`formula`); `sameMeasure` ignores it. */
+  description?: string;
 };
 
 /** A documented column (the documentation form). At least one with a non-empty
@@ -140,10 +148,23 @@ export type GoldSpecJoin = {
 };
 export type GoldSpecDimension = { source: string; as?: string };
 export type GoldSpecMeasure = { name: string; agg: string; col?: string; op?: string; col2?: string };
+/** A row-level DERIVED output column in the panel's own `ref::column` vocabulary: a
+ *  new column `name` = `left` `op` (`right` column | `rightValue` constant). Exactly ONE
+ *  of `right`/`rightValue` is set. Stored verbatim, never trusted — the server recompiles
+ *  from the resolved refs. ABSENT on every dataset built before derived fields existed
+ *  (byte-stable). */
+export type GoldSpecDerived = { name: string; left: string; op: string; right?: string; rightValue?: number };
 export type GoldSpec = {
   joins: GoldSpecJoin[];
   dimensions: GoldSpecDimension[];
+  derived?: GoldSpecDerived[];
   measures: GoldSpecMeasure[];
+  /** The EXPLICIT base dataset a CURATED compose builds from (its physical gold/silver
+   *  becomes the compile `source`, ref 0). ABSENT on every ingested dataset and on every
+   *  dataset built before curated compose existed — absent means "own-silver base", which
+   *  is byte-stable for every existing record. Stored verbatim, never trusted: the route
+   *  re-resolves it through `getDataset` (entitlement + active domain) before compiling. */
+  baseDatasetId?: string;
 };
 
 /** The dropdown-driven data-quality rule kinds the DQ editor offers. Each compiles
@@ -454,6 +475,13 @@ function parseMeasure(raw: unknown, i: number): Measure {
   // The DISPLAY label a rename writes (freezing `name`); round-trips so a renamed metric
   // keeps its display name across persist/hydrate.
   if (typeof raw.label === 'string' && raw.label) m.label = raw.label;
+  // The plain-language "what does this metric mean?" sentence. Absent on every measure
+  // created before this field existed (byte-stable, like `label`).
+  if (typeof raw.description === 'string' && raw.description) m.description = raw.description;
+  // COMPOSITE metric source formula — without this parse the human-readable formula was
+  // LOST on store reload (sql survived; Edit hydration fell back to nothing). Latent gap
+  // found during the description work; round-trips byte-stably like label/description.
+  if (typeof raw.formula === 'string' && raw.formula) m.formula = raw.formula;
   const dm = (raw.drillMembers ?? (raw as Record<string, unknown>).drill_members) as unknown;
   if (Array.isArray(dm)) {
     const members = dm.map((x) => String(x)).filter(Boolean);
@@ -511,8 +539,26 @@ export function parseGoldSpec(raw: unknown): GoldSpec | undefined {
       ...(typeof m.op === 'string' && m.op ? { op: m.op } : {}),
       ...(typeof m.col2 === 'string' && m.col2 ? { col2: m.col2 } : {}),
     }));
-  if (joins.length === 0 && dimensions.length === 0 && measures.length === 0) return undefined;
-  return { joins, dimensions, measures };
+  // Derived fields: absent stays absent (byte-stable for every pre-derived record). A
+  // row keeps a `right` column OR a finite `rightValue` constant — never both; when
+  // both appear the column ref wins (deterministic re-hydration).
+  const derived = (Array.isArray(raw.derived) ? raw.derived : [])
+    .filter(isRecord)
+    .map((d): GoldSpecDerived => ({
+      name: typeof d.name === 'string' ? d.name : '',
+      left: typeof d.left === 'string' ? d.left : '',
+      op: typeof d.op === 'string' ? d.op : '',
+      ...(typeof d.right === 'string' && d.right
+        ? { right: d.right }
+        : typeof d.rightValue === 'number' && Number.isFinite(d.rightValue)
+          ? { rightValue: d.rightValue }
+          : {}),
+    }));
+  // The explicit curated base (nil-safe): absent stays absent — byte-stable for every
+  // ingested dataset and every pre-curated record (absent ⇒ own-silver base).
+  const baseDatasetId = typeof raw.baseDatasetId === 'string' && raw.baseDatasetId ? raw.baseDatasetId : undefined;
+  if (joins.length === 0 && dimensions.length === 0 && derived.length === 0 && measures.length === 0 && !baseDatasetId) return undefined;
+  return { joins, dimensions, ...(derived.length > 0 ? { derived } : {}), measures, ...(baseDatasetId ? { baseDatasetId } : {}) };
 }
 
 /** Re-hydrate the sync block. Tolerant like `parseGoldSpec`: a record missing its
@@ -698,8 +744,14 @@ export function serializeDataset(d: Dataset): string {
   if (d.upstreams && d.upstreams.length > 0) doc.upstreams = d.upstreams;
   // Omit-when-empty (byte-stable): a Gold spec is written only once a Gold build stores
   // one; every dataset without a stored spec serializes exactly as before.
-  if (d.goldSpec && (d.goldSpec.joins.length > 0 || d.goldSpec.dimensions.length > 0 || d.goldSpec.measures.length > 0)) {
-    doc.goldSpec = d.goldSpec;
+  if (d.goldSpec && (d.goldSpec.joins.length > 0 || d.goldSpec.dimensions.length > 0 || (d.goldSpec.derived?.length ?? 0) > 0 || d.goldSpec.measures.length > 0 || !!d.goldSpec.baseDatasetId)) {
+    // Omit an EMPTY `derived` array so a spec with no derived fields serializes exactly
+    // as it did before derived fields existed (byte-stable — no prior record churns).
+    // Likewise drop a falsy `baseDatasetId` so an ingested spec never emits an empty-string
+    // key (byte-stable — a curated base only writes when actually set).
+    const { derived, baseDatasetId, ...rest } = d.goldSpec;
+    const withDerived = derived && derived.length > 0 ? { ...rest, derived } : rest;
+    doc.goldSpec = baseDatasetId ? { ...withDerived, baseDatasetId } : withDerived;
   }
   if (d.checks && d.checks.length > 0) doc.checks = d.checks;
   // Only persist explicitly-disabled monitors (default-ON); an all-on dataset omits the

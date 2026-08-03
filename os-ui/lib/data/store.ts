@@ -97,6 +97,9 @@ export type DatasetSummary = {
   /** VISIBLE STALE STATE (Northpeak fix): the promoted domain table holds a prior
    *  snapshot (source rebuilt, publish CTAS not yet re-run). Absent = in sync. */
   domainTableStale?: boolean;
+  /** Born curated (composed from existing datasets) — drives the tile's transparency
+   *  badge. Absent = ingested. */
+  curated?: boolean;
 };
 
 type DataStoreState = {
@@ -384,6 +387,7 @@ function summarise(d: Dataset, archived = false): DatasetSummary {
     storage: storageFor(d.tier),
     archived,
     ...(d.domainTableStale ? { domainTableStale: true } : {}),
+    ...(d.origin === 'curated' ? { curated: true } : {}),
   };
 }
 
@@ -573,6 +577,12 @@ export function listAskable(user: Principal): AskableDataset[] {
   for (const rec of ds().store.values()) {
     const d = parseDataset(rec.yaml);
     if (!canView(d, user)) continue; // the hard visibility gate
+    // ACTIVE-DOMAIN NARROWING (the same inScope gate listDatasets/listJoinable apply):
+    // canView alone leaks across domains — the owner passes it for their OTHER domains'
+    // datasets, and a certified product is canView-true tenant-wide. Talk-to-Data's
+    // evidence must only cite what the operating domain holds (leak seen live
+    // 2026-08-02: all-domain datasets listed as evidence under a single active domain).
+    if (d.domain && !user.domains.includes(d.domain)) continue;
     const f = furthest(d);
     if (!f.layer) continue; // nothing materialized — nothing to query
     const schema = d.tier === 'dataset' ? personalSchema(user.id) : domainSchema(d.domain);
@@ -868,6 +878,24 @@ export function removeCheck(id: string, user: Principal, checkId: string): Datas
   const d = editOf(rec, user);
   d.checks = (d.checks ?? []).filter((c) => c.id !== checkId);
   persist(rec, d, { author: user.id, summary: 'remove check' });
+  return d;
+}
+
+/** Set the human-readable DESCRIPTIONS of existing checks by id (Creator+ on a dataset
+ *  you can edit). Only the description text is touched — the executable rule (rule/column/
+ *  args) is never changed here. Unknown ids are ignored; a trimmed-empty description clears
+ *  the field. This is the persist path behind "Save Data Quality Checks" for edited or
+ *  AI-drafted descriptions. */
+export function updateCheckDescriptions(
+  id: string,
+  user: Principal,
+  updates: { id: string; description: string }[],
+): Dataset {
+  const rec = get(id);
+  const d = editOf(rec, user);
+  const byId = new Map(updates.map((u) => [u.id, (u.description ?? '').trim()]));
+  d.checks = (d.checks ?? []).map((c) => (byId.has(c.id) ? { ...c, description: byId.get(c.id)! } : c));
+  persist(rec, d, { author: user.id, summary: 'describe checks' });
   return d;
 }
 

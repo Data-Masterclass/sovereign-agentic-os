@@ -10,12 +10,12 @@ import { record as auditRecord } from '@/lib/governance/audit';
 import { publishPromotionLive } from '@/lib/data/publish-server';
 import { getWorkflow } from '@/lib/knowledge';
 import { getPersonalKnowledge, decertifyPersonalKnowledge, unsharePersonalKnowledge } from '@/lib/knowledge/personal-store';
-import { getDashboard } from '@/lib/dashboards';
+import { getDashboard, demoteDashboard } from '@/lib/dashboards';
 import { getConnectionForUser, promoteConnection, demoteConnection } from '@/lib/connections';
 import { resolveOmCatalog, applyOmSyncForConnection, applyDqSyncForConnection } from '@/lib/connections/openmetadata';
 import { applyCatalogIngest } from '@/lib/connections/openmetadata-ingest';
 import { getDataset } from '@/lib/data';
-import { getModel } from '@/lib/science';
+import { getModel, demoteModel } from '@/lib/science';
 import { getArtifact, promoteArtifact, demoteArtifact } from '@/lib/core/artifacts';
 import { getAppForUser, promoteApp } from '@/lib/software/apps';
 import { demoteApp } from '@/lib/software/lifecycle';
@@ -344,8 +344,8 @@ export async function promoteOrRequest(
 
 /** The ladder kinds a DEMOTE (revoke sharing) is wired for — the reverse of the
  *  UI direct-promote buttons. dataset/file keep their own lifecycle/transition rails. */
-export type DemotableKind = Extract<LadderKind, 'artifact' | 'app' | 'connection' | 'personal_knowledge' | 'agent_system'>;
-const DEMOTABLE: readonly DemotableKind[] = ['artifact', 'app', 'connection', 'personal_knowledge', 'agent_system'] as const;
+export type DemotableKind = Extract<LadderKind, 'artifact' | 'app' | 'connection' | 'personal_knowledge' | 'agent_system' | 'dashboard' | 'model'>;
+const DEMOTABLE: readonly DemotableKind[] = ['artifact', 'app', 'connection', 'personal_knowledge', 'agent_system', 'dashboard', 'model'] as const;
 export function isDemotableKind(x: string): x is DemotableKind {
   return (DEMOTABLE as readonly string[]).includes(x);
 }
@@ -406,6 +406,18 @@ export async function demoteThroughSeam(
     case 'agent_system': {
       const rec = demoteSystem(id, p);
       result = { id: rec.id, name: rec.name, visibility: rec.visibility };
+      break;
+    }
+    case 'dashboard': {
+      const d = demoteDashboard(id, p);
+      result = { id: d.id, name: d.spec.name, visibility: d.tier };
+      break;
+    }
+    case 'model': {
+      // The science Actor role: a creator maps to 'user' (no manage rights); the
+      // isAgent:false invariant holds — only humans reach this seam.
+      const m = demoteModel(id, { id: user.id, role: user.role === 'creator' ? 'user' : user.role, domains: user.domains, isAgent: false });
+      result = { id: m.model, name: m.name, visibility: m.tier };
       break;
     }
     default:

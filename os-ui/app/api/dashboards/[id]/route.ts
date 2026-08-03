@@ -25,6 +25,9 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
     view: dash.spec.view,
     tier: dash.tier,
     panels: dash.spec.charts.map(normalizePanel),
+    // Default cross-filter chips saved with the dashboard (P1-3) — View opens narrowed to
+    // these. Absent on legacy specs, so the field is only present when defaults were saved.
+    ...(dash.spec.filters?.length ? { filters: dash.spec.filters } : {}),
   });
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, hydrate: ensureHydrated });
 

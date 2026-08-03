@@ -4,8 +4,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CHANNELS, flatMetrics, postJson, slug } from './shared';
-import type { AlertResponse, Channel, Comparator, MetricGroups } from './shared';
+import { flatMetrics, postJson, slug } from './shared';
+import type { AlertResponse, Comparator, MetricGroups } from './shared';
 
 const COMPARATORS: { key: Comparator; label: string }[] = [
   { key: 'lt', label: '<' },
@@ -13,13 +13,12 @@ const COMPARATORS: { key: Comparator; label: string }[] = [
   { key: 'gt', label: '>' },
   { key: 'gte', label: '≥' },
 ];
-const CHANNEL_LABEL: Record<Channel, string> = { email: 'Email', slack: 'Slack', in_app: 'In-app' };
 
 type AgentSystemSummary = { id: string; name: string };
 
 /**
- * Alerts — a threshold on a governed metric member. On breach the route NOTIFIES the
- * chosen channels AND, if a governed agent is wired, triggers a Langfuse-traced agent run
+ * Alerts — a threshold on a governed metric member. On breach the route NOTIFIES you
+ * in-app AND, if a governed agent is wired, triggers a Langfuse-traced agent run
  * (event → LangGraph).
  *
  * The live metric value is resolved by the server (via Cube) — no hand-typed demo
@@ -43,7 +42,6 @@ export default function Alerts({
   const [member, setMember] = useState(presetMember ?? '');
   const [comparator, setComparator] = useState<Comparator>('lt');
   const [threshold, setThreshold] = useState('1000');
-  const [notify, setNotify] = useState<Channel[]>(['email']);
   const [agentOn, setAgentOn] = useState(false);
   const [systemId, setSystemId] = useState('');
   const [agent, setAgent] = useState('revenue-watch');
@@ -73,14 +71,10 @@ export default function Alerts({
 
   const effectiveMember = presetMember || member || palette[0]?.member || '';
 
-  const toggleChannel = (c: Channel) =>
-    setNotify((ns) => (ns.includes(c) ? ns.filter((x) => x !== c) : [...ns, c]));
-
   const evaluate = async () => {
     setError('');
     setResult(null);
     if (!effectiveMember) return setError('Pick a metric member.');
-    if (notify.length === 0) return setError('Choose at least one notification channel.');
     setBusy(true);
     try {
       const rule = {
@@ -88,7 +82,7 @@ export default function Alerts({
         member: effectiveMember,
         comparator,
         threshold: Number(threshold),
-        notify,
+        notify: ['in_app'],
         triggerAgent: agentOn ? { systemId, agent, preset } : undefined,
       };
       // No `value` — the route resolves the live Cube number
@@ -107,12 +101,7 @@ export default function Alerts({
 
   return (
     <div className="agent-editor" style={{ marginTop: 18 }}>
-      <div className="agent-editor-title">Metric alert</div>
-      <p className="hint" style={{ marginTop: 4 }}>
-        A threshold on a governed metric member — notifies, and optionally triggers a traced agent run.
-        The rule evaluates against the <strong>live Cube metric value</strong> and is saved for
-        continuous monitoring (batch-evaluate via the alerts/run endpoint or wire to a CronJob).
-      </p>
+      <div className="agent-editor-title">Alerts</div>
 
       <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginTop: 12 }}>
         <label>
@@ -139,19 +128,11 @@ export default function Alerts({
         </label>
       </div>
 
-      <label className="comp-label" style={{ marginTop: 14 }}>Notify</label>
-      <div className="chk-grid">
-        {CHANNELS.map((c) => (
-          <label key={c} className="chk">
-            <input type="checkbox" checked={notify.includes(c)} onChange={() => toggleChannel(c)} />
-            {CHANNEL_LABEL[c]}
-          </label>
-        ))}
-      </div>
+      <p className="hint" style={{ marginTop: 14 }}>Notifies you in-app on breach.</p>
 
       <label className="chk" style={{ marginTop: 12, maxWidth: 320 }}>
         <input type="checkbox" checked={agentOn} onChange={(e) => setAgentOn(e.target.checked)} />
-        Trigger a governed agent on breach
+        Trigger an Agent
       </label>
       {agentOn ? (
         <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginTop: 10 }}>
@@ -183,13 +164,13 @@ export default function Alerts({
           <div className="row" style={{ alignItems: 'center' }}>
             <span className={`badge ${result.breached ? 'err' : 'ok'}`}>{result.breached ? 'Breached' : 'OK'}</span>
             <span className="muted">value {result.value}</span>
-            <span className="hint" style={{ marginLeft: 8 }}>Rule saved — evaluates against live Cube value</span>
+            <span className="hint" style={{ marginLeft: 8 }}>Rule saved</span>
           </div>
           {result.breached ? (
             <>
               {result.notifications.map((n, i) => (
                 <div key={i} className="build-row ok">
-                  <span className="build-tool">{n.channel}</span>
+                  <span className="build-tool">In-app</span>
                   <span>{n.message}</span>
                 </div>
               ))}

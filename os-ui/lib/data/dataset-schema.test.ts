@@ -162,6 +162,43 @@ test('round-trip: a legacy record with no slug parses to undefined slug', () => 
   assert.equal(parseDataset(yaml).slug, undefined);
 });
 
+// ---- Measure.description ("what does this metric mean?"): nil-safe, byte-stable ----
+
+test('measure description round-trips through serialize/parse', () => {
+  const d = sample({ measures: [{ name: 'revenue', type: 'sum', sql: 'net_amount', description: 'Total money billed to customers, net of refunds.' }] });
+  const round = parseDataset(serializeDataset(d));
+  assert.equal(round.measures[0].description, 'Total money billed to customers, net of refunds.');
+});
+
+test('measure description is byte-stable: absent when unset, so no prior record churns', () => {
+  const bare = sample({ measures: [{ name: 'revenue', type: 'sum', sql: 'net_amount' }] });
+  const yaml = serializeDataset(bare);
+  // A measure with no description emits no `description:` key on the measure — byte-identical
+  // to before the field existed (the measure builder only ever sets it when non-empty).
+  assert.ok(!/description:/.test(yaml.split('measures:')[1] ?? ''), 'a measure with no description must not emit a description key');
+  assert.equal(parseDataset(yaml).measures[0].description, undefined);
+  // Parse is tolerant: an empty-string description on disk hydrates back to absent.
+  const round = parseDataset({ name: 'X', owner: 'a', domain: 'sales', measures: [{ name: 'revenue', type: 'sum', sql: 'net_amount', description: '' }] });
+  assert.equal(round.measures[0].description, undefined);
+});
+
+// ---- DataCheck.description (human-readable rule note): round-trips, empty stays empty ----
+
+test('a data check\'s human description round-trips through serialize/parse', () => {
+  const d = sample({ checks: [{
+    id: 'chk_1', name: 'not_null(order_id)', description: 'Every order must have an id.',
+    createdBy: 'amir', createdAt: '2026-01-01T00:00:00Z', rule: 'not_null', column: 'order_id',
+  }] });
+  const round = parseDataset(serializeDataset(d));
+  assert.equal(round.checks?.[0].description, 'Every order must have an id.');
+  // A check with no authored description round-trips as the empty string (never lost/undefined).
+  const bare = sample({ checks: [{
+    id: 'chk_2', name: 'unique(order_id)', description: '',
+    createdBy: 'amir', createdAt: '2026-01-01T00:00:00Z', rule: 'unique', column: 'order_id',
+  }] });
+  assert.equal(parseDataset(serializeDataset(bare)).checks?.[0].description, '');
+});
+
 // ---- Gold spec (stage-4) re-hydration: the raw editable spec is a durable, byte-stable field ----
 
 test('goldSpec round-trips through serialize/parse (the Gold panel re-hydrates from it)', () => {
@@ -191,6 +228,92 @@ test('parseGoldSpec sanitizes loose input and drops an all-empty spec', () => {
   assert.equal(s?.joins[0].type, 'inner'); // unknown join type coerced to inner
   assert.equal(s?.dimensions[0].as, undefined); // blank alias dropped
   assert.equal(s?.measures[0].col, '0::y');
+});
+
+test('goldSpec derived fields round-trip through serialize/parse (col ref + constant)', () => {
+  const goldSpec = {
+    joins: [],
+    dimensions: [{ source: '0::order_id' }],
+    derived: [
+      { name: 'margin', left: '0::price', op: '-', right: '0::cost' },
+      { name: 'vat', left: '0::price', op: '*', rightValue: 0.19 },
+    ],
+    measures: [],
+  };
+  const round = parseDataset(serializeDataset(sample({ goldSpec })));
+  assert.deepEqual(round.goldSpec, goldSpec);
+});
+
+test('goldSpec derived is byte-stable: absent when no derived fields, so no prior record churns', () => {
+  const withDims = { joins: [], dimensions: [{ source: '0::order_id' }], measures: [] };
+  const noDerived = serializeDataset(sample({ goldSpec: withDims }));
+  // adding an EMPTY derived array serializes identically (absent stays absent)
+  assert.equal(serializeDataset(sample({ goldSpec: { ...withDims, derived: [] } })), noDerived);
+  assert.equal(parseDataset(noDerived).goldSpec?.derived, undefined);
+});
+
+// ---- curated base (goldSpec.baseDatasetId): the EXPLICIT ref-0 base a curated compose builds from ----
+
+test('goldSpec.baseDatasetId round-trips through serialize/parse (curated compose re-hydrates its base)', () => {
+  const goldSpec = {
+    joins: [],
+    dimensions: [{ source: '0::region' }],
+    measures: [],
+    baseDatasetId: 'ds_orders',
+  };
+  const round = parseDataset(serializeDataset(sample({ goldSpec })));
+  assert.deepEqual(round.goldSpec, goldSpec);
+});
+
+test('goldSpec.baseDatasetId is byte-stable: absent for an ingested dataset, so no prior record churns', () => {
+  const ingested = { joins: [], dimensions: [{ source: '0::order_id' }], measures: [] };
+  const noBase = serializeDataset(sample({ goldSpec: ingested }));
+  // Adding an EMPTY/absent baseDatasetId serializes identically to before the field existed.
+  assert.equal(serializeDataset(sample({ goldSpec: { ...ingested, baseDatasetId: '' } })), noBase);
+  assert.equal(parseDataset(noBase).goldSpec?.baseDatasetId, undefined);
+});
+
+test('legacy grandfathering: an INGESTED dataset keeps its stored joins on round-trip (join editor stays visible)', () => {
+  // The UI reads `goldSpec.joins.length > 0` to keep the join editor visible for an
+  // INGESTED dataset (grandfathering — nothing breaks). Assert the data contract that
+  // drives it: an ingest-born dataset can carry joins in its stored spec, byte-stably.
+  const goldSpec = {
+    joins: [{ datasetId: 'ds_np', type: 'left' as const, baseCol: 'order_id', joinCol: 'order_id' }],
+    dimensions: [{ source: '0::order_id' }, { source: '1::region' }],
+    measures: [],
+  };
+  const round = parseDataset(serializeDataset(sample({ origin: 'ingest', goldSpec })));
+  assert.equal(round.origin, undefined); // ingest birth still omits origin (byte-stable)
+  assert.equal((round.goldSpec?.joins.length ?? 0), 1); // joins survive → legacy editor shows
+  assert.deepEqual(round.goldSpec, goldSpec);
+});
+
+test('parseGoldSpec keeps a curated base-ONLY spec (a base picked before columns are chosen)', () => {
+  const s = parseGoldSpec({ joins: [], dimensions: [], measures: [], baseDatasetId: 'ds_orders' });
+  assert.equal(s?.baseDatasetId, 'ds_orders');
+  // A truly empty spec (no base, no joins/dims/measures) still collapses to undefined.
+  assert.equal(parseGoldSpec({ joins: [], dimensions: [], measures: [], baseDatasetId: '' }), undefined);
+});
+
+test('parseGoldSpec parses derived tolerantly: col ref wins over constant; bad constant dropped', () => {
+  const s = parseGoldSpec({
+    joins: [], dimensions: [{ source: '0::x' }], measures: [],
+    derived: [
+      { name: 'both', left: '0::a', op: '/', right: '0::b', rightValue: 5 }, // col ref wins
+      { name: 'nan', left: '0::a', op: '*', rightValue: Number.NaN }, // non-finite dropped → neither right set
+      { name: 'k', left: '0::a', op: '+', rightValue: 2 },
+    ],
+  });
+  assert.equal(s?.derived?.[0].right, '0::b');
+  assert.equal(s?.derived?.[0].rightValue, undefined);
+  assert.equal(s?.derived?.[1].right, undefined);
+  assert.equal(s?.derived?.[1].rightValue, undefined);
+  assert.equal(s?.derived?.[2].rightValue, 2);
+});
+
+test('parseGoldSpec keeps a derived-only spec (no dims, no measures)', () => {
+  const s = parseGoldSpec({ joins: [], dimensions: [], measures: [], derived: [{ name: 'm', left: '0::a', op: '-', right: '0::b' }] });
+  assert.equal(s?.derived?.length, 1);
 });
 
 // ------------------------------------------------------- scheduled sync block --
@@ -241,4 +364,12 @@ test('sync block: a malformed record parses to undefined (tolerant, never bricks
     serializeDataset(sample()).concat('sync:\n  source: { schema: public, table: orders }\n  mode: append\n  schedule: { cron: nonsense }\n  enabled: true\n'),
   );
   assert.equal(d.sync, undefined);
+});
+
+test('a composite measure FORMULA survives the serialize→parse round-trip (latent-gap fix)', () => {
+  const back = parseDataset(serializeDataset(sample({
+    measures: [{ name: 'margin', type: 'number', sql: '1.0 * ({revenue} - {cost})', formula: '[revenue] - [cost]' }],
+  })));
+  assert.equal(back.measures[0].formula, '[revenue] - [cost]', 'the source formula round-trips');
+  assert.equal(back.measures[0].sql, '1.0 * ({revenue} - {cost})');
 });

@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { osMirror } from '../infra/os-mirror.ts';
-import type { AlertRule } from './alerts.ts';
+import { coerceChannels, type AlertRule } from './alerts.ts';
 
 /**
  * Durable alert-rule registry — mirrors the dashboards store pattern (osMirror
@@ -65,7 +65,9 @@ async function hydrate(): Promise<void> {
   const s = alertStoreState();
   const docs = (await mirror.hydrate(1000)) ?? [];
   for (const rec of docs as AlertRuleRecord[]) {
-    if (rec.id) s.rules.set(rec.id, rec);
+    // Coerce legacy 'email'/'slack' channels to the only supported one ('in_app') so old
+    // persisted rules keep firing — never crash on legacy data.
+    if (rec.id) s.rules.set(rec.id, { ...rec, notify: coerceChannels(rec.notify) });
   }
 }
 
@@ -74,6 +76,7 @@ export function saveAlertRule(rule: AlertRule, owner: string, domain = 'default'
   const existing = s.rules.get(rule.id);
   const rec: AlertRuleRecord = {
     ...rule,
+    notify: coerceChannels(rule.notify),
     owner,
     domain,
     createdAt: existing?.createdAt ?? new Date().toISOString(),

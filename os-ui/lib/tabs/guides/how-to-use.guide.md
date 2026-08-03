@@ -16,7 +16,7 @@ The Sovereign Agentic OS MCP is the **same governed front door as the UI** — e
 |---|---|
 | `overview` | OS surfaces and the cross-tab spine |
 | `governance` | Roles, tier ladder, promotion gates |
-| `data` | Ingest → Bronze → Silver → Gold datasets |
+| `data` | Ingested or curated datasets; business layer auto-materializes |
 | `knowledge` | Canonical steps, rules, tacit know-how |
 | `connections` | Named credentials consumed by reference |
 | `agents` | Agent systems grounded in knowledge |

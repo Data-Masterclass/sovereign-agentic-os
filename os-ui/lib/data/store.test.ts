@@ -24,6 +24,8 @@ import {
   moveDataset,
   setDocs,
   setDatasetSync,
+  addCheck,
+  updateCheckDescriptions,
   renameDataset,
   listDatasetVersions,
   restoreDatasetVersion,
@@ -704,4 +706,29 @@ test('setDatasetSync validates, persists, and clears; edit-gated', async () => {
 
   // Clearing removes the block.
   assert.equal(setDatasetSync(id, amir, null).sync, undefined);
+});
+
+test('updateCheckDescriptions sets rule descriptions by id, leaves the rule untouched', () => {
+  const id = seedOrders();
+  addCheck(id, amir, { name: 'not_null(order_id)', rule: 'not_null', column: 'order_id' });
+  addCheck(id, amir, { name: 'unique(order_id)', rule: 'unique', column: 'order_id' });
+  const before = getDataset(id, amir).checks ?? [];
+  assert.equal(before.length, 2);
+  assert.equal(before[0].description, ''); // no description authored yet
+
+  const updated = updateCheckDescriptions(id, amir, [
+    { id: before[0].id, description: '  Every order must have an id.  ' }, // trimmed on save
+    { id: 'chk_missing', description: 'ignored — unknown id' },
+  ]);
+  const c0 = updated.checks!.find((c) => c.id === before[0].id)!;
+  assert.equal(c0.description, 'Every order must have an id.');
+  // The executable rule itself is never changed by a description edit.
+  assert.equal(c0.rule, 'not_null');
+  assert.equal(c0.column, 'order_id');
+  // The untouched rule keeps its empty description; the unknown id was ignored (still 2 checks).
+  assert.equal(updated.checks!.find((c) => c.id === before[1].id)!.description, '');
+  assert.equal(updated.checks!.length, 2);
+
+  // A non-owner peer cannot rewrite descriptions on a private dataset.
+  assert.throws(() => updateCheckDescriptions(id, kenji, [{ id: before[0].id, description: 'x' }]), DatasetError);
 });

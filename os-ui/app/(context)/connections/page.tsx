@@ -9,14 +9,17 @@ import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
 
 /**
- * The Connections page — one scroll, no sub-tabs. Four sections, top → bottom:
+ * The Connections page — the OS-wide View/Edit artifact model.
  *
- *   1. Connections list — governed connections grouped All · My · Shared · Marketplace,
- *      with App-MCP connections folded in by scope (header: scope segment · Show archived
- *      · ＋ New connector). Both create paths open the shared ConnectorWizard.
- *   2. Supported Connectors — a gallery of connector types (dynamic, from the registry).
- *   3. Outbound access — egress allowlist requests (Builder/Admin).
- *   4. Talk to Connectors — the metadata-grounded copilot for this tab.
+ *   • list   — governed connections as tiles-in-folders, grouped All · My · Domain · Company,
+ *              with App-MCP connections folded in by scope (header: scope segment · Show
+ *              archived · ＋ New connection). Clicking a tile opens it in View.
+ *   • builder — ＋ New connection opens a two-door TYPE CHOOSER ("Use a connector" gallery ·
+ *              "Build a custom connector"), both landing in the configure (Edit) surface.
+ *              An existing connection opens in VIEW (real status · what it connects to ·
+ *              exposed capabilities · usage · Test), with Promote + lifecycle in the detail
+ *              header and ✎ Edit (edit-scope gated) for the configure surface.
+ *   • Talk to Connections — the metadata-grounded copilot for this tab, below.
  */
 export default function ConnectionsPage() {
   const talk = TALK_PRESENTATION.connections;

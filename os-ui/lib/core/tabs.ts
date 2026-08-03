@@ -80,23 +80,23 @@ export const TAB_GROUPS: TabGroup[] = [
   {
     heading: 'Context',
     tabs: [
-      { label: 'Knowledge', icon: '❦', href: '/knowledge' },
-      { label: 'Files', icon: '❏', href: '/unstructured' },
       { label: 'Data', icon: '▤', href: '/data' },
-      { label: 'Connections', icon: '⇄', href: '/connections' },
       { label: 'Metrics', icon: '∑', href: '/metrics' },
+      { label: 'Files', icon: '❏', href: '/unstructured' },
+      { label: 'Knowledge', icon: '❦', href: '/knowledge' },
+      { label: 'Connections', icon: '⇄', href: '/connections' },
     ],
   },
   {
     heading: 'Build',
     tabs: [
       { label: 'Agents', icon: '✦', href: '/agents' },
+      { label: 'Dashboards', icon: '▦', href: '/dashboards' },
       { label: 'Software', icon: '⌘', href: '/software' },
       // Science only exists where the domain's optional Science layer (layers.ml,
       // toggled in Admin → Domains) is on — hidden from the nav when it is
       // explicitly off for the active domain (see tabVisible).
       { label: 'Science', icon: '∿', href: '/science', requiresLayer: 'ml' },
-      { label: 'Dashboards', icon: '▦', href: '/dashboards' },
       // Console merges the former Terminal (/terminal) and Query (/admin-query)
       // operator tools into one page with a Shell | Query switch. The tab is
       // builder-visible so course participants get the GOVERNED Query surface

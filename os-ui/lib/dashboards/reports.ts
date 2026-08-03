@@ -4,15 +4,26 @@
 
 /**
  * Scheduled reports on governed dashboards. A report sends a dashboard snapshot on a
- * cadence to a channel. Pure: this decides which reports are DUE and records a send; the
- * live wiring (render the PDF, deliver) is injected at the route (lib/dashboards/delivery).
+ * cadence — delivered in-app (the ONE delivery surface). Pure: this decides which reports
+ * are DUE and records a send; the live wiring (render the PDF, deliver) is injected at the
+ * route (lib/dashboards/delivery).
  *
  * (Metric ALERTS moved to lib/metrics/alerts.ts — a threshold on a metric belongs with
  * Metrics; reports, which snapshot a dashboard, stay here with Dashboards.)
  */
 
-export type Channel = 'email' | 'slack' | 'in_app';
+/** In-app is the only delivery channel (email/Slack were UI fiction, no real path). */
+export type Channel = 'in_app';
 export type Cadence = 'daily' | 'weekly' | 'monthly';
+
+/**
+ * Coerce a report config's persisted `channel` to the only supported one. Legacy configs
+ * (from a client cache or older store) may carry 'email'/'slack'; collapse them to 'in_app'
+ * so an old report keeps delivering, never crashes on legacy data.
+ */
+export function coerceChannel(_channel?: unknown): Channel {
+  return 'in_app';
+}
 
 export type ScheduledReport = {
   id: string;
@@ -38,8 +49,10 @@ export type ReportSend = { reportId: string; dashboardId: string; channel: Chann
 
 /** Mark a report sent (the route renders the snapshot + delivers; this records it). */
 export function sendReport(report: ScheduledReport, now: number): { report: ScheduledReport; send: ReportSend } {
+  // Coerce so a config with a legacy 'email'/'slack' channel still delivers in-app.
+  const channel = coerceChannel(report.channel);
   return {
-    report: { ...report, lastSentAt: now },
-    send: { reportId: report.id, dashboardId: report.dashboardId, channel: report.channel, sentAt: now },
+    report: { ...report, channel, lastSentAt: now },
+    send: { reportId: report.id, dashboardId: report.dashboardId, channel, sentAt: now },
   };
 }

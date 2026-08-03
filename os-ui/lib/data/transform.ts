@@ -320,6 +320,16 @@ export type GoldMeasure =
   | { name: string; agg: MeasureAgg; col: ColRef }
   | { name: string; agg: MeasureAgg; left: ColRef; op: MeasureOp; right: ColRef };
 
+/** A ROW-LEVEL derived output column: a new column computed per row from two joined
+ *  columns (`margin = price - cost`) or a column and a constant (`vat = price * 0.19`).
+ *  Unlike a {@link GoldMeasure} it does NOT aggregate — it is a plain SELECT expression
+ *  `(<left> <op> <right>) as "name"`. When measures are present it is a grouping key
+ *  (it is row-level, so it must appear in the GROUP BY alongside the dimensions).
+ *  Division is null-safe (`/ NULLIF(<right>, 0)`), matching the composite-metric
+ *  convention; a constant right-hand side must be a FINITE number (NaN/Infinity are
+ *  rejected loudly — never a silently-wrong statement). */
+export type GoldDerived = { name: string; left: ColRef; op: MeasureOp; right: ColRef | { value: number } };
+
 export type GoldJoinSpec = {
   /** The caller's Silver base — `iceberg.<caller-schema>.silver_<slug>` (alias `t0`). */
   source: string;
@@ -327,7 +337,9 @@ export type GoldJoinSpec = {
   joins: JoinInput[];
   /** Projected columns (the joined shape). */
   dimensions: GoldDimension[];
-  /** Derived measures. When present, the query GROUPs BY the dimensions. */
+  /** Row-level derived output columns (optional). Absent ⇒ today's behavior. */
+  derived?: GoldDerived[];
+  /** Derived measures. When present, the query GROUPs BY the dimensions (+ derived). */
   measures: GoldMeasure[];
   /** The caller's Gold target — `iceberg.<caller-schema>.gold_<slug>`. */
   target: string;
@@ -379,6 +391,32 @@ function measureExpr(m: GoldMeasure, maxRef: number): string {
   return m.agg === 'count_distinct' ? `count(distinct ${inner})` : `${m.agg}(${inner})`;
 }
 
+/** A finite-number SQL literal for a derived constant. NaN/Infinity are rejected LOUDLY
+ *  (they'd emit `nan`/`infinity` and silently corrupt the column) — never a
+ *  silently-wrong statement. Emits a bare numeric token (no quotes, no meta). */
+function numberLiteral(n: number, what: string): string {
+  if (typeof n !== 'number' || !Number.isFinite(n)) {
+    throw new TransformError(`${what}: the constant must be a finite number`);
+  }
+  return String(n);
+}
+
+/** Compile ONE row-level derived column to `(<left> <op> <right>)`. `right` is either a
+ *  qualified column or a finite constant. Division is null-safe (`/ NULLIF(<r>, 0)`) so a
+ *  zero denominator yields NULL rather than erroring — the composite-metric convention. */
+function derivedExpr(d: GoldDerived, maxRef: number): string {
+  if (!d || typeof d.name !== 'string') throw new TransformError('a derived field needs a name');
+  if (!IDENT.test(d.name)) throw new TransformError(`invalid derived field name '${d.name}'`);
+  if (!MEASURE_OPS.includes(d.op)) throw new TransformError(`derived field '${d.name}': unsupported operator '${d.op}'`);
+  const l = qref(d.left, maxRef, `derived field '${d.name}'`);
+  const r = d.right && 'value' in d.right
+    ? numberLiteral(d.right.value, `derived field '${d.name}'`)
+    : qref(d.right as ColRef, maxRef, `derived field '${d.name}'`);
+  // Null-safe division: a zero denominator → NULL (never a divide-by-zero error).
+  if (d.op === '/') return `(${l} / nullif(${r}, 0))`;
+  return `(${l} ${d.op} ${r})`;
+}
+
 /**
  * Compile a join spec into ONE guard-passing CTAS. Throws {@link TransformError} on any
  * invalid input (bad FQN/column, unknown table ref, no join key, duplicate output) so a
@@ -413,8 +451,9 @@ export function compileGoldJoin(spec: GoldJoinSpec): string {
   });
 
   const dims = Array.isArray(spec.dimensions) ? spec.dimensions : [];
+  const derived = Array.isArray(spec.derived) ? spec.derived : [];
   const measures = Array.isArray(spec.measures) ? spec.measures : [];
-  if (dims.length === 0 && measures.length === 0) {
+  if (dims.length === 0 && derived.length === 0 && measures.length === 0) {
     throw new TransformError('pick at least one column or measure for the Gold table');
   }
 
@@ -425,13 +464,22 @@ export function compileGoldJoin(spec: GoldJoinSpec): string {
     outNames.add(name);
   };
 
-  const dimExprs: string[] = [];
+  // Group-by keys = every non-aggregated output expression (dimensions + derived), so
+  // a measure spec keeps derived columns row-level correct instead of collapsing them.
+  const groupExprs: string[] = [];
   const dimSelect = dims.map((d) => {
     const expr = qref(d.col, maxRef, 'dimension');
     const out = d.as && d.as.trim() ? d.as.trim() : d.col.column;
     claim(out);
-    dimExprs.push(expr);
+    groupExprs.push(expr);
     return `${expr} as ${qcol(out)}`;
+  });
+
+  const derivedSelect = derived.map((d) => {
+    const expr = derivedExpr(d, maxRef);
+    claim(d.name);
+    groupExprs.push(expr);
+    return `${expr} as ${qcol(d.name)}`;
   });
 
   const measureSelect = measures.map((m) => {
@@ -440,10 +488,11 @@ export function compileGoldJoin(spec: GoldJoinSpec): string {
     return `${expr} as ${qcol(m.name)}`;
   });
 
-  const selectList = [...dimSelect, ...measureSelect].join(', ');
-  // Aggregating measures require a GROUP BY of the (non-aggregated) dimensions; an
-  // all-measure spec (no dims) is a single grand-total row.
-  const groupBy = measures.length > 0 && dimExprs.length > 0 ? ` group by ${dimExprs.join(', ')}` : '';
+  const selectList = [...dimSelect, ...derivedSelect, ...measureSelect].join(', ');
+  // Aggregating measures require a GROUP BY of the (non-aggregated) dimensions AND
+  // derived expressions (both are row-level); an all-measure spec (nothing row-level)
+  // is a single grand-total row.
+  const groupBy = measures.length > 0 && groupExprs.length > 0 ? ` group by ${groupExprs.join(', ')}` : '';
   // With zero joins `joinSql` is empty — a single-table projection from the base alone.
   const from = joinSql.length ? `${spec.source} ${tableAlias(0)} ${joinSql.join(' ')}` : `${spec.source} ${tableAlias(0)}`;
   const body = `select ${selectList} from ${from}${groupBy}`;
@@ -641,11 +690,19 @@ export type ResolvedJoin = { table: string; type: JoinType; on: JoinCond[] };
 export type GoldJoinPlan = { source: string; target: string; schema: string; sql: string };
 
 /**
- * Resolve the caller's Silver base + Gold target FQNs and compile the Gold CTAS.
+ * Resolve the base source + Gold target FQNs and compile the Gold CTAS.
  * Server-authoritative (the route calls this, never a client-sent SQL): the target is
  * ALWAYS the caller's own schema — never a literal cross-domain schema — exactly like
- * {@link silverPlan}. `joins` may be EMPTY (a single-table Gold projection of the Silver
- * base) or 1..n pre-resolved tables visible to the caller (dataset reuse).
+ * {@link silverPlan}. `joins` may be EMPTY (a single-table Gold projection of the base)
+ * or 1..n pre-resolved tables visible to the caller (dataset reuse).
+ *
+ * The base source (ref 0) is normally the dataset's OWN frozen Silver
+ * (`iceberg.<caller-schema>.silver_<slug>`). A CURATED dataset has no own Silver — it is
+ * composed purely from existing governed datasets — so the route resolves an EXPLICIT
+ * base dataset's physical table (its gold, else silver — via `assetTarget`) and passes it
+ * as `baseSource`. When present, `baseSource` becomes ref 0; the Gold TARGET is always the
+ * caller's own schema regardless (the composed table is written into the caller's lane and
+ * a publish CTAS copies it to the domain). `baseSource` is validated as an iceberg FQN.
  */
 export function goldJoinPlan(
   dataset: { name: string; domain: string; tier: string; slug?: string },
@@ -653,11 +710,16 @@ export function goldJoinPlan(
   joins: ResolvedJoin[],
   dimensions: GoldDimension[],
   measures: GoldMeasure[],
+  derived: GoldDerived[] = [],
+  baseSource?: string,
 ): GoldJoinPlan {
   const schema = silverSchema(identity.uid);
   const s = physicalSlug(dataset);
-  const source = `iceberg.${schema}.silver_${s}`;
+  // Own frozen Silver is the default base (ref 0); a curated dataset overrides it with an
+  // explicit, pre-resolved base FQN (own-silver base stays byte-stable when absent).
+  const source = baseSource ? baseSource : `iceberg.${schema}.silver_${s}`;
+  if (baseSource) assertFqn(baseSource, 'curated base source');
   const target = `iceberg.${schema}.gold_${s}`;
-  const sql = compileGoldJoin({ source, joins, dimensions, measures, target });
+  const sql = compileGoldJoin({ source, joins, dimensions, derived, measures, target });
   return { source, target, schema, sql };
 }

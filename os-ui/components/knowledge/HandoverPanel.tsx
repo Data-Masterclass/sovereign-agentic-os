@@ -72,8 +72,7 @@ export default function HandoverPanel({
       {/* ── Build an agent ── */}
       <div className="section-title" style={{ marginTop: 0 }}>Build an agent from this workflow</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Choose how each step is handled. Augment/automate steps become agents; the rest stay
-        human/software handoffs. The whole workflow attaches as the agent&rsquo;s governed context.
+        Augment/automate steps become agents; the rest stay human/software handoffs.
       </p>
 
       {workflow.steps.length === 0 ? (
@@ -129,8 +128,7 @@ export default function HandoverPanel({
       {/* ── Attach as context ── */}
       <div className="section-title" style={{ marginTop: 28 }}>Attach as context</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        When you build a data product, agent, or app, the OS auto-suggests relevant workflows —
-        attach this one to give that build the workflow as governed AI context. The reference:
+        Attach this workflow to a data product, agent, or app build to give it the workflow as governed context.
       </p>
       <div className="ho-attach">
         <code className="mono">{attachRef}</code>
@@ -141,10 +139,6 @@ export default function HandoverPanel({
           Copy ref
         </button>
       </div>
-      <p className="hint" style={{ marginTop: 8 }}>
-        Adding the ref to a consumer&rsquo;s knowledge grants lets its <code>retrieve</code> tool serve
-        this workflow&rsquo;s steps, business rules and expert knowledge — OPA/DLS-scoped to the user.
-      </p>
 
       <style>{HandoverStyles}</style>
     </div>

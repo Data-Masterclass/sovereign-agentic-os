@@ -35,13 +35,6 @@ export default function ActorsPanel({
 
   return (
     <div className="actors-panel">
-      <p className="hint" style={{ marginTop: 0 }}>
-        The people, systems, agents and outside parties this workflow involves. Each is a
-        described entity — give it a clear name and a one-line description of its role.
-        <strong> Customer</strong> and <strong>Partner</strong> are <em>external</em> actors
-        (outside the organisation); they show as distinct lanes in the visual flow.
-      </p>
-
       <div className="section-title">Actors</div>
       {actors.length === 0 ? (
         <div className="muted" style={{ fontSize: 13 }}>No actors yet — add the first one below.</div>

@@ -6,7 +6,7 @@ import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { requirePrincipal, errorResponse } from '@/lib/data/server';
 import { requireUser } from '@/lib/core/auth';
-import { getDataset, addCheck, removeCheck, builtLayerFqn } from '@/lib/data/store';
+import { getDataset, addCheck, removeCheck, updateCheckDescriptions, builtLayerFqn } from '@/lib/data/store';
 import { queryRun } from '@/lib/infra/governed';
 import { runAndRecord } from '@/lib/data/dq-run-server';
 import { omDqAppenderFor } from '@/lib/connections/openmetadata';
@@ -52,6 +52,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       values?: unknown;
       min?: number;
       max?: number;
+      descriptions?: unknown;
     };
 
     // ── Run the checks + monitors: compile → governed SELECT AS the owner → pass/fail ──
@@ -80,6 +81,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         results: outcome.results,
         health: outcome.health,
       });
+    }
+
+    // ── Save edited/AI-drafted rule DESCRIPTIONS (text only; never the rule itself) ──
+    if (body.action === 'describe') {
+      const updates = Array.isArray(body.descriptions)
+        ? (body.descriptions as unknown[])
+            .map((u) => (u && typeof u === 'object' ? (u as Record<string, unknown>) : {}))
+            .map((u) => ({ id: String(u.id ?? '').trim(), description: typeof u.description === 'string' ? u.description : '' }))
+            .filter((u) => u.id)
+        : [];
+      const dataset = updateCheckDescriptions(id, user, updates);
+      return NextResponse.json({ checks: dataset.checks ?? [] });
     }
 
     // ── Add a check (structured rule or legacy free-text) ──

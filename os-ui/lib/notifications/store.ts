@@ -85,6 +85,29 @@ export function listNotifications(userId: string): OsNotification[] {
   return notifState().items.filter((n) => n.userId === userId).sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/** How many of the user's notifications are unread. */
+export function unreadCount(userId: string): number {
+  return notifState().items.filter((n) => n.userId === userId && !n.read).length;
+}
+
+/**
+ * Mark notifications read for a user. Pass `ids` to mark a specific subset, or omit to mark
+ * ALL of the user's notifications read. Returns how many transitioned unread → read. Only
+ * the owner's own rows are touched (a caller can never mark another user's inbox).
+ */
+export function markRead(userId: string, ids?: string[]): number {
+  const idSet = ids ? new Set(ids) : null;
+  let changed = 0;
+  for (const n of notifState().items) {
+    if (n.userId !== userId || n.read) continue;
+    if (idSet && !idSet.has(n.id)) continue;
+    n.read = true;
+    changed++;
+    mirror.writeThrough(n.id, n);
+  }
+  return changed;
+}
+
 export function __resetNotifications(): void {
   const s = notifState();
   s.items = [];

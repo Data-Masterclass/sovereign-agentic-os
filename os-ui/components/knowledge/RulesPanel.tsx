@@ -76,9 +76,7 @@ export default function RulesPanel({
   return (
     <div className="rules-panel">
       <p className="hint" style={{ marginTop: 0 }}>
-        How the process should be judged and how an agent should move through it.
-        <strong> Soft</strong> rules are guidance the agent follows; <strong>hard</strong> rules
-        become enforced guardrails.
+        <strong>Soft</strong> rules are guidance the agent follows; <strong>hard</strong> rules become enforced guardrails.
       </p>
 
       <div className="section-title">Business rules</div>

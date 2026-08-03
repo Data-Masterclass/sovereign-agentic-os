@@ -26,7 +26,7 @@ const knowledge: TutorialDef = {
     {
       illustration: 'knowledge',
       title: 'Write it down as a note',
-      body: 'On Knowledge, "Add note" creates free-form markdown — your role, preferences, working style, key context. My knowledge is personal; Domain holds notes promoted by domain members; Company holds certified knowledge from across the org.',
+      body: 'On Knowledge, "＋ New" opens the "New knowledge" chooser — pick "General knowledge" to write a free-form markdown note (your role, preferences, working style, key context) straight in Edit, or "Workflow →" to map a business process. My knowledge is personal; Domain holds notes promoted by domain members; Company holds certified knowledge from across the org.',
     },
     {
       illustration: 'build',
@@ -62,7 +62,7 @@ const knowledge: TutorialDef = {
       anchor: ANCHORS.knowledge.add,
       sandboxAnchor: ANCHORS.knowledge.sandbox,
       title: 'Add a note',
-      body: 'Give it a title — "How I like reports", "Key contacts" — and "Add note". Then write free-form markdown and Save. Short, honest notes beat long perfect ones.',
+      body: '"＋ New" → "General knowledge" opens a note in Edit — give it a title ("How I like reports", "Key contacts"), write free-form markdown, and Save. Short, honest notes beat long perfect ones.',
       route: '/knowledge',
     },
     {

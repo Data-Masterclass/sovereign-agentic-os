@@ -21,6 +21,8 @@ type FormProposal = {
   aggregation?: string;
   column?: string;
   dimensions?: string[];
+  /** A proposed plain-language "what does this metric mean?" note (draft the user reviews). */
+  description?: string;
 };
 
 export default function MetricStageAssistant({

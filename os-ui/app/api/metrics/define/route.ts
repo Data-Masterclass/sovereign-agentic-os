@@ -29,7 +29,9 @@ export const POST = withRoute<Record<string, string>, { datasetId?: string; form
   if (!datasetId) return NextResponse.json({ error: 'datasetId is required' }, { status: 400 });
   if (!body.form) return NextResponse.json({ error: 'a metric form is required' }, { status: 400 });
 
-  const measure = measureFromForm(body.form);
+  // A composite formula validates against the dataset's EXISTING measures — a clear
+  // 400 naming the missing/non-basic reference, never a downstream no-SQL pending.
+  const measure = measureFromForm(body.form, getDataset(datasetId, user).measures);
 
   // Persist on the governed Gold dataset (throws a helpful 400 if it isn't ready).
   const dataset = defineMeasure(datasetId, user, measure);

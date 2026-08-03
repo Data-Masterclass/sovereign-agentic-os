@@ -35,6 +35,24 @@ test('domain does not change dashboard identity (view belongs to one domain)', (
   assert.equal(withDomain.domain, 'sales');
 });
 
+test('default filters round-trip on the spec (P1-3); absent on legacy specs', () => {
+  const view = viewFor(goldSales());
+  const defaults = [{ member: 'Sales.region', operator: 'equals', values: ['DE'] }];
+  const withFilters = fromTiles('Sales Overview', view, charts, 'sales', defaults);
+  assert.deepEqual(withFilters.filters, defaults, 'default filters persist verbatim');
+
+  // Absent (legacy) → the field stays absent, not [], so today's behaviour is unchanged.
+  const without = fromTiles('Sales Overview', view, charts, 'sales');
+  assert.equal('filters' in without, false, 'no filters key on a spec built without defaults');
+
+  // An empty array is treated as "no defaults" — a cleared chip bar never persists as [].
+  const cleared = fromAgent({ name: 'Sales Overview', view, charts, filters: [] });
+  assert.equal('filters' in cleared, false, 'empty filters collapse to absent');
+
+  // Default filters do NOT change dashboard identity (name+view+panel-set decide that).
+  assert.ok(sameDashboard(withFilters, without), 'filters are page state, not identity');
+});
+
 test('legacy coercion: a `{metric}` panel normalizes to `{metrics:[metric]}` (back-compat)', () => {
   const legacy: Panel = { name: 'Revenue', vizType: 'big_number', metric: 'Sales.revenue' };
   const norm = normalizePanel(legacy);
@@ -114,4 +132,15 @@ test('missingPanelMembers: an entirely unserved view reports EVERY requested mem
     missingPanelMembers(p, { measures: [], dimensions: [], timeDimensions: [] }),
     ['Cases.avg_interactions', 'Cases.brand'],
   );
+});
+
+test('same members, DIFFERENT slice = two distinct panels (the silent-collapse fix)', () => {
+  const view = viewFor(goldSales());
+  const byRegion: Panel = { name: 'By region', vizType: 'bar', metric: 'Sales.revenue', dimensions: ['Sales.region'] };
+  const byDate: Panel = { name: 'By date', vizType: 'bar', metric: 'Sales.revenue', dimensions: ['Sales.order_date'] };
+  const filtered: Panel = { name: 'DE only', vizType: 'bar', metric: 'Sales.revenue', dimensions: ['Sales.region'], filters: [{ member: 'Sales.region', operator: 'equals', values: ['DE'] }] };
+  const spec = fromTiles('S', view, [byRegion, byDate, filtered]);
+  assert.equal(spec.charts.length, 3, 'distinct slices never collapse');
+  // True duplicates (same viz, members AND slice) still dedupe.
+  assert.equal(fromTiles('S', view, [byRegion, { ...byRegion, name: 'Copy' }]).charts.length, 1);
 });

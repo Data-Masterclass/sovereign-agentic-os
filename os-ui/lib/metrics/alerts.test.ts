@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alertOn, evaluateAlert } from './alerts.ts';
+import { alertOn, coerceChannels, evaluateAlert } from './alerts.ts';
 import { measureFromForm } from './model.ts';
 import { goldSales } from './fixtures.ts';
 import { saveAlertRule, listAlertRules, recordEvaluation, __resetAlertStore } from './alert-store.ts';
@@ -11,18 +11,28 @@ import { saveAlertRule, listAlertRules, recordEvaluation, __resetAlertStore } fr
 const measure = measureFromForm({ name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: [] });
 
 test('alert is built on the canonical metric member', () => {
-  const rule = alertOn(goldSales(), measure, { id: 'a1', comparator: 'lt', threshold: 50000, notify: ['email'] });
+  const rule = alertOn(goldSales(), measure, { id: 'a1', comparator: 'lt', threshold: 50000, notify: ['in_app'] });
   assert.equal(rule.member, 'Sales.revenue');
 });
 
-test('breach notifies AND triggers a governed agent run (traced)', () => {
+test('alert always notifies in-app only (legacy email/slack coerced away)', () => {
+  // A rule built with legacy channels collapses to exactly ['in_app'].
+  const rule = alertOn(goldSales(), measure, { id: 'a1', comparator: 'lt', threshold: 50000, notify: ['email', 'slack'] });
+  assert.deepEqual(rule.notify, ['in_app']);
+  // The pure coercer is idempotent and always returns ['in_app'].
+  assert.deepEqual(coerceChannels(['email', 'slack', 'in_app']), ['in_app']);
+  assert.deepEqual(coerceChannels(undefined), ['in_app']);
+});
+
+test('breach notifies in-app AND triggers a governed agent run (traced)', () => {
   const rule = alertOn(goldSales(), measure, {
-    id: 'a1', comparator: 'lt', threshold: 50000, notify: ['email', 'slack'],
+    id: 'a1', comparator: 'lt', threshold: 50000, notify: ['in_app'],
     triggerAgent: { systemId: 'sales', agent: 'sales-agent', preset: 'recovery-note' },
   });
   const breached = evaluateAlert(rule, 42000);
   assert.ok(breached.breached);
-  assert.equal(breached.notifications.length, 2);
+  assert.equal(breached.notifications.length, 1);
+  assert.equal(breached.notifications[0].channel, 'in_app');
   assert.ok(breached.agentRun);
   assert.equal(breached.agentRun?.traced, true);
   assert.match(breached.agentRun?.reason ?? '', /Sales.revenue = 42000 lt 50000/);
@@ -69,6 +79,14 @@ test('alert-store: recordEvaluation updates lastValue and lastBreached', () => {
   const updated2 = recordEvaluation('eval-test-1', 60000, false);
   assert.equal(updated2!.lastBreached, false);
   assert.equal(updated2!.lastValue, 60000);
+});
+
+test('alert-store: saveAlertRule coerces a legacy email/slack rule to in_app', () => {
+  __resetAlertStore();
+  // A legacy rule shape carrying email/slack (bypassing alertOn's coercion).
+  const legacy = { id: 'legacy-1', member: 'Sales.revenue', comparator: 'lt' as const, threshold: 50000, notify: ['email', 'slack'] as unknown as ('in_app')[] };
+  const saved = saveAlertRule(legacy, 'alice', 'sales');
+  assert.deepEqual(saved.notify, ['in_app'], 'persisted rule notifies in-app only');
 });
 
 test('alert-store: recordEvaluation returns null for unknown rule id', () => {

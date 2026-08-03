@@ -48,7 +48,7 @@ export default function AiAction<Draft = unknown>({
   title,
 }: {
   datasetId: string;
-  stage: 'define' | 'clean' | 'ingest' | 'harmonize' | 'validate' | 'publish';
+  stage: 'define' | 'clean' | 'ingest' | 'harmonize' | 'validate' | 'publish' | 'describe-checks';
   /** The action text, e.g. "Draft documentation" — rendered big with a ✨ prefix. */
   cta: string;
   /** Extra fields merged into the request body (name/prompt/columns/reason/measures). */

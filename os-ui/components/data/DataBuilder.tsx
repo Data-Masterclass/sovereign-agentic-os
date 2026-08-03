@@ -14,19 +14,21 @@ import ExplorePanel from './ExplorePanel';
 import BronzePanel from './BronzePanel';
 import SyncPanel from './SyncPanel';
 import QualityFixPanel from './QualityFixPanel';
+import BuildResultDialog, { type BuildResult } from './BuildResultDialog';
+import QueryError from './QueryError';
+import { shouldAutoGold } from '@/lib/data/auto-gold';
 import AiAction, { type CleanDraft, type DefineDraft } from './StageAssistant';
 import TalkTo from '@/components/talk/TalkTo';
 import { TALK_PRESENTATION } from '@/lib/talk/schema';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
+import DemoteButton from '@/components/lifecycle/DemoteButton';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
 import type { FiledApproval } from '@/lib/governance/approval-notice';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility } from '@/lib/core/lifecycle';
-import StageShell from '@/components/core/StageShell';
 import { usePublishPageContext } from '@/components/core/PageContext';
-import { initialStageState, markDone, advance, type StageState } from '@/lib/core/stages';
-import { DATA_STAGES, type DataStageId, type DataCtx } from '@/lib/data/stages';
+import { type DataCtx } from '@/lib/data/stages';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import type { ViewMode } from '@/lib/core/view-mode';
 import { TIER_BADGE_CLASS } from '@/lib/core/scopes';
@@ -89,6 +91,19 @@ function suggestionText(s: SuggestedCheck): string {
   }
 }
 
+/** Turn the dq route's machine `reason` (no built layer / layer not queryable / profile
+ *  failed) into ONE calm sentence. Curated datasets compose straight to Gold with no
+ *  bronze/silver fallback, so "build the dataset first" is the honest, common cause. */
+function profileReasonText(reason: string): string {
+  switch (reason) {
+    case 'no built layer':
+    case 'layer not queryable':
+      return 'Quality suggestions need a built, queryable table — build the dataset first.';
+    default:
+      return 'Could not profile this dataset just now — try again once its table is built.';
+  }
+}
+
 /**
  * A tiny inline health-trend sparkline over the persisted runs. Pure SVG, no deps. A run
  * that measured nothing (score null) is drawn as a gap, never a fake 0 — the honesty
@@ -141,6 +156,8 @@ type Dataset = {
   owner: string;
   domain: string;
   tier: 'dataset' | 'asset' | 'product';
+  /** How the dataset was born — 'curated' walks Compose·Document·Validate·View. */
+  origin?: 'ingest' | 'curated';
   visibility: string;
   description: string;
   versions: { bronze: VersionState; silver: VersionState; gold: VersionState };
@@ -395,16 +412,25 @@ function ConnectedBuild({ datasetId }: { datasetId: string }) {
 }
 
 /**
- * The Data guided builder — Ingest · Define · Harmonize · Validate · Publish (5 stages) on
- * the OS-wide staged primitive (lib/core/stages.ts + components/core/StageShell.tsx; the
- * Agents SimpleBuilder is the reference adoption, Dashboards the closest sibling). This
- * REPLACES the old 1114-line single-scroll DatasetDetail: every one of its bodies (row
- * preview, docs + quality editor, BronzePanel, RefinePanel, GoldJoinPanel, ExplorePanel,
- * MetricsPanel, the sharing/promote block, LineagePanel) is re-hosted UNCHANGED under the
- * stage it belongs to — nothing is rewritten, only re-arranged behind the stepper in
- * medallion order. Opening a dataset lands it at the right stage on REAL state: a raw
- * dataset opens at Ingest, a Bronze one at Define, a Silver one at Harmonize, a materialized
- * one at Validate (the natural "check quality then query" entry).
+ * The Data builder — a plain View⇄Edit surface (the OS-wide contract, mirroring
+ * MetricBuilder/DashboardBuilder). The staged StageShell walk retired (0.6.44): the same
+ * bodies (BronzePanel, RefinePanel, GoldJoinPanel, docs + quality editor, ExplorePanel,
+ * LineagePanel, TalkTo, the DQ dashboard) are re-hosted UNCHANGED as flat Edit/View
+ * sections rather than behind a stepper.
+ *
+ *   VIEW (tile click lands here) — Talk to Data · statistics · layer-named preview · the
+ *     data-quality dashboard. The calm home to USE the data.
+ *   EDIT — origin-shaped:
+ *     · INGESTED — the full journey in one surface: ingest source → clean/conform into
+ *       Silver → bring to Gold as a SINGLE-TABLE projection (keep/rename + derived fields)
+ *       → quality rules. Combining datasets is NOT here — that's a curated capability
+ *       (the "Join to" section is hidden unless a stored spec has legacy joins).
+ *     · CURATED — no ingestion, no Silver tooling: pick the EXPLICIT base + join in other
+ *       datasets → columns + derived fields → document → quality rules.
+ *
+ * A fresh dataset (nothing materialized) opens in Edit; a materialized one opens in View.
+ * View⇄Edit + Promote + lifecycle live in the detail header. Legacy grandfathering: any
+ * dataset whose stored goldSpec has joins keeps the join editor visible regardless of origin.
  */
 export default function DataBuilder({
   datasetId,
@@ -428,10 +454,6 @@ export default function DataBuilder({
     if (typeof window !== 'undefined') window.localStorage.setItem(DATA_MODE_KEY, m);
   };
 
-  /* ── Published landing: a published dataset (shared to Domain or certified to Company)
-     opens in a calm PREVIEW + TALK-TO-DATA view — most people want to USE it, not rebuild
-     it. A prominent "Edit data stages" button drops into the full 5-stage builder. */
-  const [builderOpen, setBuilderOpen] = useState(false);
 
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [checks, setChecks] = useState<DataCheck[]>([]);
@@ -456,18 +478,35 @@ export default function DataBuilder({
   const [ruleMax, setRuleMax] = useState('');
   const [checksBusy, setChecksBusy] = useState(false);
   const [checksErr, setChecksErr] = useState('');
+  // In-progress plain-language descriptions per check id — the editable text (typed or
+  // AI-drafted) before "Save Data Quality Checks" persists them. Seeded from the loaded
+  // checks so an existing description shows for editing; a missing key falls back to the
+  // check's stored description at render time.
+  const [descDrafts, setDescDrafts] = useState<Record<string, string>>({});
+  // Confirming note for the Checks section's primary "Save Data Quality Checks" action —
+  // rules + monitor toggles already persist on edit through their governed routes, so this
+  // flushes any half-filled rule in the editor and confirms the saved state honestly.
+  const [checksSavedNote, setChecksSavedNote] = useState('');
   // ---- run results ----
   const [results, setResults] = useState<Record<string, CheckResult>>({});
   const [badge, setBadge] = useState<QualityBadge | null>(null);
   const [ranAt, setRanAt] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runErr, setRunErr] = useState('');
+  // DQ-dashboard counters (View stage): how the authored checks split on their latest
+  // run this session. `results` fills on runChecks; unrun checks stay honest dots.
+  const dqRan = checks.filter((c) => results[c.id]).length;
+  const dqPassing = checks.filter((c) => results[c.id]?.status === 'pass').length;
+  const dqFailing = checks.filter((c) => results[c.id]?.status === 'fail').length;
   // ---- AI-proposed remediations: which failing rule's fix panel is open ----
   const [fixOpen, setFixOpen] = useState<string | null>(null);
   // ---- health score + persisted trend + profile-driven suggestions (Validate) ----
   const [health, setHealth] = useState<HealthScore | null>(null);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [suggestions, setSuggestions] = useState<SuggestedCheck[]>([]);
+  // Why the profile produced no suggestions, when it produced none for a structural
+  // reason (no built layer / table not queryable) rather than "columns are all clean".
+  const [profileReason, setProfileReason] = useState<string | null>(null);
   const [suggestBusy, setSuggestBusy] = useState(false);
   const [acceptingAll, setAcceptingAll] = useState(false);
   // ---- heuristic monitors (freshness/volume/schema), on by default (Validate) ----
@@ -481,6 +520,13 @@ export default function DataBuilder({
 
   // ---- configuration drawer (dbt SQL / dataset.yaml) ----
   const [showCode, setShowCode] = useState(false);
+
+  // ---- auto-Gold: the central honest outcome of the automatic pass-through Gold that
+  //      fires after an ingested bronze/silver build (the Gold UI is gone from Edit, but
+  //      metrics/dashboards require a built Gold). Same governed route the old manual
+  //      "Pass through Gold" button used; never silent, never faked. ----
+  const [autoGold, setAutoGold] = useState<BuildResult | null>(null);
+  const [autoGolding, setAutoGolding] = useState(false);
 
   // ---- inline rename of the display name (edit-gated; the physical slug is frozen
   //      server-side so no Iceberg/Cube/dbt table ever moves) ----
@@ -632,6 +678,33 @@ export default function DataBuilder({
     if (!checksErr) { setRuleColumn(''); setRuleValues(''); setRuleMin(''); setRuleMax(''); }
   }, [ruleKind, ruleColumn, ruleValues, ruleMin, ruleMax, addRuleWith, checksErr]);
 
+  // The Checks section's primary "Save Data Quality Checks" action. Authored rules and
+  // monitor toggles ALREADY persist the instant they change (POST /checks, POST /dq —
+  // their own governed routes), so this is the one obvious closing action: it flushes any
+  // half-filled rule still sitting in the "Add a custom check" editor, then confirms the
+  // saved state honestly. It never invents a new write path.
+  const saveChecks = useCallback(async () => {
+    setChecksSavedNote('');
+    if (ruleColumn.trim()) await addRule();
+    // Persist any edited/AI-drafted rule descriptions (text only — the rule itself is
+    // untouched). Only send the ones that actually changed from what's stored.
+    const changed = checks
+      .filter((c) => descDrafts[c.id] !== undefined && descDrafts[c.id].trim() !== (c.description ?? '').trim())
+      .map((c) => ({ id: c.id, description: descDrafts[c.id].trim() }));
+    if (changed.length > 0) {
+      try {
+        const res = await fetch(`/api/data/datasets/${datasetId}/checks`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'describe', descriptions: changed }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) setChecks(data.checks ?? checks);
+        else { setChecksErr(data.error ?? 'Could not save descriptions'); return; }
+      } catch (e) { setChecksErr((e as Error).message); return; }
+    }
+    setChecksSavedNote('✓ checks saved');
+  }, [ruleColumn, addRule, checks, descDrafts, datasetId]);
+
   const deleteRule = useCallback(async (checkId: string) => {
     try {
       const res = await fetch(`/api/data/datasets/${datasetId}/checks`, {
@@ -653,6 +726,11 @@ export default function DataBuilder({
       if (!res.ok) return; // no DQ surface (not materialised / not a viewer) — stay quiet
       const data = await res.json();
       setSuggestions((data.suggestions ?? []) as SuggestedCheck[]);
+      // Honest empty-state: when nothing could be profiled, keep the reason so the Checks
+      // panel shows one quiet line instead of a blank void (curated datasets have only
+      // their composed Gold — no bronze/silver fallback — so this is where "build it first"
+      // must be said out loud, not swallowed).
+      setProfileReason(data.profiled === false ? (data.reason as string | undefined) ?? null : null);
       setTrend((data.trend ?? []) as TrendPoint[]);
       setMonitors((data.monitors ?? []) as MonitorToggle[]);
       const latest = data.latest as { badge?: QualityBadge; healthScore?: number | null; ranAt?: string } | null;
@@ -739,11 +817,17 @@ export default function DataBuilder({
     }
   }, [datasetId, loadDq]);
 
-  // Governed 50-row preview — the SAME OPA-checked read path.
-  const loadPreview = useCallback(async () => {
+  // Governed 50-row preview — the SAME OPA-checked read path. A stage names the LAYER it
+  // wants (`?layer=`); omitting it lets the server pick the highest built layer. The
+  // requested layer is remembered so "Refresh preview" re-reads the same one.
+  const [previewLayer, setPreviewLayer] = useState<Layer | null>(null);
+  const loadPreview = useCallback(async (which?: Layer | null) => {
+    const layerParam = typeof which === 'undefined' ? previewLayer : which;
+    setPreviewLayer(layerParam ?? null);
     setPreviewErr(''); setPreviewing(true);
     try {
-      const res = await fetch(`/api/data/datasets/${datasetId}/preview?limit=50`, { cache: 'no-store' });
+      const qs = layerParam ? `layer=${layerParam}&limit=50` : 'limit=50';
+      const res = await fetch(`/api/data/datasets/${datasetId}/preview?${qs}`, { cache: 'no-store' });
       const data = await res.json();
       if (!res.ok) { setPreviewErr(data.error ?? 'Could not preview rows'); return; }
       setPreview(data as RowPreview);
@@ -752,23 +836,43 @@ export default function DataBuilder({
     } finally {
       setPreviewing(false);
     }
-  }, [datasetId]);
-  useEffect(() => { void loadPreview(); }, [loadPreview]);
+  }, [datasetId, previewLayer]);
+  useEffect(() => { void loadPreview(null); }, [datasetId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The governed 50-row data preview, as a reusable block so EVERY stage can show
-  // "what's in the table right now" — Bronze/Silver had it; Gold, Validate and Publish
-  // now get the same view. It always reads the highest built layer through the governed
-  // Trino path (OPA-checked); nothing is shown until a layer is built.
-  const rowPreviewBlock = (heading: string, subtitle: string) => (
+  // "what's in the table right now". Each stage frames it to ITS OWN layer: `layer` names
+  // which medallion table to read (Bronze/Silver/Gold), and `built` says whether that layer
+  // exists yet — an unbuilt layer shows an honest "not built yet" note instead of silently
+  // falling back to a different layer's rows. Omit `layer` to read the highest built layer.
+  // View's data preview defaults to the HIGHEST built layer (Gold when it exists) with a
+  // Bronze·Silver·Gold toggle; only built layers are offered. null = follow the default.
+  // (Edit no longer has opt-in "👁 Preview" buttons — the simplified surface leaves the
+  // full preview, with its layer toggle, to View.)
+  const [viewLayer, setViewLayer] = useState<Layer | null>(null);
+
+  const rowPreviewBlock = (
+    heading: string,
+    subtitle: string,
+    opts: { layer?: Layer; built?: boolean; unbuiltNote?: string; extra?: React.ReactNode } = {},
+  ) => {
+    const { layer, built = true, unbuiltNote, extra } = opts;
+    return (
     <>
       <div className="section-title" style={{ marginTop: 22 }}>
         {heading}
-        <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={loadPreview} disabled={previewing}>
-          {previewing ? <span className="spin" /> : 'Refresh preview'}
-        </button>
+        {built ? (
+          <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={() => loadPreview(layer ?? null)} disabled={previewing}>
+            {previewing ? <span className="spin" /> : 'Refresh preview'}
+          </button>
+        ) : null}
+        {extra}
       </div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>{subtitle}</p>
-      {previewErr ? <div className="error" style={{ marginBottom: 10 }}>{previewErr}</div> : null}
+      {!built ? (
+        <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{unbuiltNote ?? 'This layer isn’t built yet.'}</p>
+      ) : (
+      <>
+      {previewErr ? <QueryError error={previewErr} style={{ marginBottom: 10 }} /> : null}
       {preview ? (
         preview.available ? (
           <>
@@ -786,8 +890,11 @@ export default function DataBuilder({
           </>
         ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{preview.reason}</p>
       ) : null}
+      </>
+      )}
     </>
-  );
+    );
+  };
 
   // Apply an assistant Define draft into the docs + quality-rule editors (never auto-saves).
   const applyDraft = useCallback((draft: DefineDraft) => {
@@ -820,47 +927,40 @@ export default function DataBuilder({
       goldBuilt: v.gold.built,
       refined: v.silver.built || v.gold.built,
       materialized: v.bronze.built || v.silver.built || v.gold.built,
+      documented: dataset.columns.some((c) => !!c.description?.trim()),
     };
   }, [dataset]);
 
-  // Open on the first REACHABLE stage from real state, nothing pre-marked: a fresh dataset
-  // opens at Ingest; a Bronze-only one at Define; a Silver-only one at Harmonize; a
-  // materialized one at Validate (the natural "check quality then query" entry).
-  const [stage, setStage] = useState<StageState<DataStageId>>(() => initialStageState(DATA_STAGES));
+  // The staged StageShell walk RETIRES for Data (0.6.44): the detail is now a plain
+  // View⇄Edit surface, mirroring MetricBuilder/DashboardBuilder — the OS-wide contract.
+  //   • curated = composed from existing governed datasets (Compose editor, no Ingest/Silver).
+  //   • legacy grandfathering = an INGESTED dataset whose stored goldSpec already has joins
+  //     keeps the join editor visible (nothing breaks).
+  const curated = dataset?.origin === 'curated';
+  const legacyJoins = (dataset?.goldSpec?.joins?.length ?? 0) > 0;
 
-  // Ground "Ask the OS" on the dataset + stage currently open here, so a request like
-  // "document the columns" acts on THIS dataset at THIS stage without asking for an id.
+  // View ⇄ Edit. A dataset with nothing materialized (fresh, just-created — the "new"
+  // signal, no new prop needed) opens in EDIT (the natural build entry); anything with a
+  // built layer opens in VIEW (its calm home to talk to / see / quality-check the data).
+  // Once the user is here, the header toggle switches freely (edit-gated).
+  const [mode, setMode] = useState<'view' | 'edit'>('view');
+  const [landed, setLanded] = useState(false);
+  useEffect(() => {
+    if (landed || !dataset) return;
+    setMode(ctx.materialized ? 'view' : 'edit');
+    setLanded(true);
+  }, [dataset, ctx, landed]);
+
+  // Ground "Ask the OS" on the dataset + mode currently open here, so a request like
+  // "document the columns" acts on THIS dataset without asking for an id. The internal
+  // stage id stays 'publish' (View) / 'harmonize' (Edit) so stored anchors + routes never move.
   usePublishPageContext({
     tab: 'data',
-    stage: stage.current,
+    stage: mode === 'view' ? 'publish' : 'harmonize',
     artifactType: 'dataset',
     artifactId: datasetId,
     artifactName: dataset?.name,
   });
-  const [landed, setLanded] = useState(false);
-  useEffect(() => {
-    if (landed || !dataset) return;
-    const start: DataStageId =
-      ctx.materialized ? 'validate'
-      : ctx.silverBuilt ? 'harmonize'
-      : ctx.bronzeBuilt ? 'define'
-      : 'ingest';
-    setStage((s) => ({ ...s, current: start }));
-    setLanded(true);
-  }, [dataset, ctx, landed]);
-
-  // When a guided panel COMMITS its layer (onCommitted), it requests an advance to
-  // the next stage. The build is async (reload → fresh ctx), so we advance in an
-  // EFFECT once the committed stage's condition is met — this is what makes the
-  // panel's "Continue" actually move the stepper forward (markDone only sets the ✓).
-  const [pendingAdvance, setPendingAdvance] = useState<DataStageId | null>(null);
-  useEffect(() => {
-    if (!pendingAdvance) return;
-    const def = DATA_STAGES.find((d) => d.id === pendingAdvance);
-    if (!def?.completed || !def.completed(ctx)) return; // wait for the reload to reflect the build
-    setStage((s) => (s.current === pendingAdvance ? advance(DATA_STAGES, s, ctx) : s));
-    setPendingAdvance(null);
-  }, [ctx, pendingAdvance]);
 
   if (loadErr) {
     return (
@@ -876,11 +976,6 @@ export default function DataBuilder({
   const fqn = layer ? physicalFqn(dataset, layer) : null;
   const cubeReady = isCubeReady(dataset);
   const published = !!dataset.certification;
-  // "Published" for the landing view = shared beyond the owner's private space (promoted
-  // to Domain = asset, or certified to Company = product). Such a dataset opens in the
-  // preview+talk landing until the user clicks "Edit data stages".
-  const isPublished = dataset.tier === 'asset' || dataset.tier === 'product';
-  const showLanding = isPublished && !builderOpen;
   const canEdit = !!user && canManageArtifact(user, { owner: dataset.owner, domain: dataset.domain });
   const isAdmin = user?.role === 'admin';
 
@@ -890,19 +985,166 @@ export default function DataBuilder({
   const canHarmonizeGold = dataset.versions.silver.built;
   const talk = TALK_PRESENTATION.data;
 
-  // A build committed → reload the honest built state (advances the gates).
+  // The governed promote/certify affordance — in the detail HEADER (beside the lifecycle
+  // controls), so promotion is reachable from both View and Edit, mirroring the
+  // Metrics/Dashboards header pattern. The gating is UNCHANGED: the
+  // transparency gate (promote.gate), the pending-request pill, the role floors (canEdit /
+  // isAdmin) and the Bronze-can't-promote rule all read the SAME state and handlers as
+  // before — this is a relocation, not a reimplementation. `compact` trims the copy for the
+  // header row (the full explanatory sentences belonged to the stage body).
+  const promoteBlock = (compact = false) => {
+    if (dataset.tier === 'dataset') {
+      if (!canHarmonizeGold) {
+        // Bronze-only: can't promote until refined to Silver/Gold.
+        return (
+          <span className="gate-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span className="badge vis-personal">Personal</span>
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              Raw <strong>Bronze</strong> — refine to Silver/Gold before promoting.
+            </span>
+          </span>
+        );
+      }
+      if (promote?.request?.status === 'pending') {
+        return (
+          <span className="gate-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span className="badge vis-personal">Personal</span>
+            <span className="muted" style={{ fontSize: 12.5 }}>Promotion requested — a domain <strong>Builder</strong> approves it in <strong>Governance</strong>.</span>
+          </span>
+        );
+      }
+      if (!canEdit) {
+        return (
+          <span className="gate-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span className="badge vis-personal">Personal</span>
+            <span className="muted" style={{ fontSize: 12.5 }}>Private to {dataset.owner}.</span>
+          </span>
+        );
+      }
+      const gateBlocked = !!(promote && !promote.gate.ok);
+      return (
+        <span className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {!compact ? <span className="badge vis-personal">Personal</span> : null}
+          <button className="btn" disabled={shareBusy || gateBlocked} onClick={requestPromote}
+            title={gateBlocked ? `Complete the transparency gate first — add ${promote!.gate.missing.join(', ')}` : 'A domain Builder approves this and moves it into Trino'}>
+            {shareBusy ? <span className="spin" /> : 'Promote to Domain →'}
+          </button>
+          {gateBlocked && !compact ? <span className="hint" style={{ margin: 0 }}>To share, add {promote!.gate.missing.join(', ')}.</span> : null}
+        </span>
+      );
+    }
+    if (dataset.tier === 'asset') {
+      if (certifyPending) {
+        return (
+          <span className="gate-check gate-ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span className="badge vis-shared">Domain</span>
+            <span className="muted" style={{ fontSize: 12.5 }}>Certification requested — a platform <strong>Admin</strong> approves it in <strong>Governance</strong>.</span>
+          </span>
+        );
+      }
+      return (
+        <span className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {!compact ? <span className="badge vis-shared">Domain</span> : null}
+          {isAdmin ? (
+            <button className="btn" disabled={shareBusy} onClick={() => certifyAsset('certify')} title="Certify this asset as a data product and list it in the marketplace">
+              {shareBusy ? <span className="spin" /> : 'Certify to Company →'}
+            </button>
+          ) : canEdit ? (
+            <button className="btn ghost" disabled={shareBusy} onClick={() => certifyAsset('request')} title="Ask a platform Admin to certify this as a marketplace data product">
+              {shareBusy ? <span className="spin" /> : 'Request certification →'}
+            </button>
+          ) : <span className="muted" style={{ fontSize: 12.5 }}>An Admin certifies it as a data product.</span>}
+          {/* REVERSE move (restored): Domain → My. Confirm dialog + role/lineage gates
+              re-enforced by the store (blocked while named individuals hold grants). */}
+          {canEdit ? (
+            <DemoteButton
+              kind="dataset"
+              tier="Shared"
+              demoteUrl={`/api/data/datasets/${dataset.id}/lifecycle`}
+              onDone={() => { void Promise.all([loadPromote(), load()]); }}
+              label="Demote to My"
+            />
+          ) : null}
+        </span>
+      );
+    }
+    if (dataset.tier === 'product') {
+      return (
+        <span className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span className="badge vis-certified">Company</span>
+          <span className="muted" style={{ fontSize: 12.5 }}>Certified data product.</span>
+          {/* REVERSE move: Company → Domain (admin only; blocked while domains import it). */}
+          {isAdmin ? (
+            <DemoteButton
+              kind="dataset"
+              tier="Marketplace"
+              demoteUrl={`/api/data/datasets/${dataset.id}/lifecycle`}
+              onDone={() => { void Promise.all([loadPromote(), load()]); }}
+              label="Demote to Domain"
+            />
+          ) : null}
+        </span>
+      );
+    }
+    return null;
+  };
+
+  // A build committed → reload the honest built state (the flat Edit sections re-derive
+  // from the fresh dataset). The staged advance/✓ machinery is gone with the stepper —
+  // in a single-scroll Edit surface every section is already visible; a commit just
+  // reloads. `onContinue` from a panel (its old "Continue to Validate →") reloads too:
+  // the Checks section sits right below, no navigation needed.
   const onBuilt = () => { void load(); };
-  // Record a stage's ✓ when its work settles in-stage (gated on the live condition).
-  const settle = (id: DataStageId) => setStage((s) => markDone(s, id));
-  // A panel committed its layer: reload the real state, record the ✓, and REQUEST
-  // an advance to the next stage (the effect moves the stepper once the build lands).
-  const commitStage = (id: DataStageId) => { onBuilt(); settle(id); setPendingAdvance(id); };
-  // Like commitStage but STAYS on the current step (no auto-advance): reload + record the
-  // ✓ so the built state shows, and let the user explore the result and choose to move on.
-  // The Gold step uses this so building Gold no longer throws the user into Data Quality.
-  const commitStageStay = (id: DataStageId) => { onBuilt(); settle(id); };
-  // The user explicitly chose to move on from a settled step → advance the stepper.
-  const continueFrom = (id: DataStageId) => setPendingAdvance(id);
+
+  // Auto-Gold: after an INGESTED bronze/silver build, automatically fire the SAME governed
+  // pass-through Gold the old manual button used (POST /version {layer:'gold',
+  // passThrough:true}) — the Gold UI is gone from Edit, but metrics/dashboards require a
+  // built Gold (metricSqlReady). We reload from the FRESH dataset first (so the decision +
+  // the route see the just-committed layer), decide with the pure rule, then fire and
+  // surface the honest outcome in a central dialog. A pass-through failure shows the real
+  // error; it is never silent, never faked. Curated is excluded (it composes its own Gold).
+  const buildThenAutoGold = async (just: 'bronze' | 'silver') => {
+    const res = await fetch(`/api/data/datasets/${datasetId}`, { cache: 'no-store' });
+    const data = await res.json().catch(() => null);
+    const fresh = res.ok ? (data?.dataset as Dataset | undefined) : undefined;
+    if (fresh) {
+      // Reflect the just-committed layer immediately (the Edit sections re-derive from this).
+      setDataset(fresh);
+      setDesc(fresh.description ?? '');
+      setCols(fresh.columns?.length ? fresh.columns : [{ name: '', description: '' }]);
+    } else {
+      void load();
+    }
+    if (!fresh || !shouldAutoGold(fresh, just)) return;
+    setAutoGolding(true);
+    try {
+      const gRes = await fetch(`/api/data/datasets/${datasetId}/version`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ layer: 'gold', passThrough: true }),
+      });
+      const gData = await gRes.json().catch(() => ({}));
+      if (!gRes.ok || gData.error || (gData.build && !gData.build.ok)) {
+        setAutoGold({
+          ok: false,
+          what: 'Gold (served for metrics)',
+          detail: gData.error ?? 'The automatic Gold build did not materialize — metrics need it; try again or check the source.',
+        });
+        return;
+      }
+      // Honest success: name the automatic step so the user knows Gold was served for them.
+      setAutoGold({
+        ok: true,
+        what: 'Gold',
+        detail: 'Your data is built and served for metrics automatically — dashboards and metrics can read it now.',
+        offline: gData.build?.mode === 'offline-mock',
+      });
+      await load();
+    } catch (e) {
+      setAutoGold({ ok: false, what: 'Gold (served for metrics)', detail: (e as Error).message });
+    } finally {
+      setAutoGolding(false);
+    }
+  };
 
   // Rename the dataset (display name only). The store freezes the physical slug before
   // the name changes, so every FQN/Cube/dbt identity stays pinned to the real table.
@@ -924,28 +1166,13 @@ export default function DataBuilder({
     <ConfirmProvider>
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
         <button className="btn ghost" onClick={onBack}>← Datasets</button>
-        {showLanding ? (
-          // The published landing: one prominent doorway into the full pipeline.
-          <button className="btn primary" onClick={() => setBuilderOpen(true)} title="Open the 5-stage builder to edit this dataset's pipeline">
-            ✎ Edit data stages
-          </button>
-        ) : isPublished ? (
-          // Editing a published dataset — offer the way back to its calm landing, plus the mode toggle.
-          <div className="row" style={{ alignItems: 'center', gap: 10 }}>
-            <button className="btn ghost sm" onClick={() => setBuilderOpen(false)}>← Done editing</button>
-            <BuilderModeToggle
-              mode={viewMode}
-              onChange={setModePersisted}
-              developerHint="The raw technical surface — dbt/Cube artifacts, FQNs, RLS summary"
-            />
-          </div>
-        ) : (
-          <BuilderModeToggle
-            mode={viewMode}
-            onChange={setModePersisted}
-            developerHint="The raw technical surface — dbt/Cube artifacts, FQNs, RLS summary"
-          />
-        )}
+        {/* One surface: a published dataset lands on the View stage (its calm home) with the
+            stepper right there to edit earlier stages — no separate landing variant to keep. */}
+        <BuilderModeToggle
+          mode={viewMode}
+          onChange={setModePersisted}
+          developerHint="The raw technical surface — dbt/Cube artifacts, FQNs, RLS summary"
+        />
       </div>
 
       {/* ── Header + status chips (always visible, above the stepper) ── */}
@@ -980,18 +1207,33 @@ export default function DataBuilder({
           </h2>
         )}
         <span className={`badge ${TIER_BADGE[dataset.tier]}`}>{TIER_WORD[dataset.tier]}</span>
-        <span className="muted" style={{ fontSize: 13 }}>{dataset.owner} · {dataset.domain}</span>
-        {/* Stable ID + physical (frozen) table slug — the display-name vs physical-name
-            distinction, so two same-named datasets are distinguishable and the physical
-            table is transparent even after a rename. */}
-        <span className="mono muted" style={{ fontSize: 11 }} title="Dataset ID">{dataset.id}</span>
-        <span className="mono muted" style={{ fontSize: 11 }} title="Physical table name (frozen — unaffected by rename)">table: {physicalSlug(dataset)}</span>
         {renameErr && <span className="badge err" style={{ fontSize: 11 }}>{renameErr}</span>}
-        {dataset.tier !== 'dataset' ? <DomainTag domain={dataset.domain} /> : null}
-        {/* Lifecycle (Archive/Restore/Delete/Versions) lives in the persistent detail header so
-            it is reachable from ANY stage — not buried in Publish. Governance unchanged (canEdit). */}
-        {canEdit ? (
-          <div style={{ marginLeft: 'auto' }}>
+        {/* Header actions: the lifecycle/governance cluster (promote/certify +
+            archive/versions) is reachable from BOTH View and Edit — once you press View of
+            an artifact you can Promote/Archive/see Versions without entering Edit (the
+            OS-wide rule the Metrics/Knowledge/Connections tabs already follow). Only the
+            View⇄Edit toggle itself changes between modes. Governance is UNCHANGED: same
+            promoteBlock, same LifecycleActions, same canEdit/isAdmin gates. */}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          {mode === 'view' ? (
+            canEdit && viewMode === 'simple' ? (
+              <button
+                className="btn ghost sm"
+                onClick={() => setMode('edit')}
+                title={curated ? 'Compose this dataset — base, joins, columns, quality' : 'Ingest, clean, shape and quality-check this dataset'}
+              >✎ Edit dataset</button>
+            ) : null
+          ) : (
+            canEdit && viewMode === 'simple' ? (
+              <button
+                className="btn ghost sm"
+                onClick={() => setMode('view')}
+                title="Back to the read view — talk to the data, see its shape and quality"
+              >‹ View</button>
+            ) : null
+          )}
+          {promoteBlock(true)}
+          {canEdit ? (
             <LifecycleActions
               id={dataset.id}
               name={dataset.name}
@@ -1003,93 +1245,36 @@ export default function DataBuilder({
               showVersions
               compact
             />
-          </div>
-        ) : null}
-      </div>
-
-      <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 18 }}>
-        {layer ? (
-          <span className="status-chip s-searchable" title={`Physical table: ${fqn}`} style={{ cursor: 'default' }}>
-            ✓ materialized · {layer} · <span className="mono" style={{ fontSize: 10 }}>{fqn}</span>
-          </span>
-        ) : (
-          <span className="status-chip s-stored" title="No medallion layer built yet — Ingest a file or extract" style={{ cursor: 'default' }}>
-            not materialized — no layer built yet
-          </span>
-        )}
-        <span className={`badge ${TIER_BADGE[dataset.tier]}`} style={{ alignSelf: 'center' }} title={`Tier: ${dataset.tier} · Visibility: ${dataset.visibility}`}>
-          {VIS_WORD[dataset.visibility] ?? dataset.visibility}
-        </span>
-        {cubeReady ? (
-          <span className="status-chip s-searchable" title="Gold table governed + built — Cube model sync can deliver it" style={{ cursor: 'default' }}>✓ Cube model ready</span>
-        ) : (
-          <span className="status-chip s-stored" title={dataset.tier === 'dataset' ? 'Cube model: promote to a data asset and build Gold first' : 'Cube model: build the Gold layer first'} style={{ cursor: 'default' }}>Cube model not ready</span>
-        )}
-        {omUrl ? (
-          <a className="status-chip s-searchable" href={omUrl} target="_blank" rel="noopener noreferrer" title="Open this dataset's entity in the OpenMetadata catalog">catalog · OpenMetadata ↗</a>
-        ) : null}
-        {published ? (
-          <span className={`badge cert-${dataset.certification!.level}`} title={`Certified ${dataset.certification!.level} by ${dataset.certification!.by} on ${formatDate(dataset.certification!.at)}`} style={{ cursor: 'default' }}>
-            ✓ certified data product · {dataset.certification!.level}
-          </span>
-        ) : (
-          <span className="status-chip s-stored" title={dataset.tier === 'product' ? 'Certification badge present' : 'Not yet a certified data product'} style={{ cursor: 'default' }}>not published</span>
-        )}
-      </div>
-
-      {showLanding ? (
-        // ── Published landing: preview + Talk to Data (use it, don't rebuild it) ──
-        <div>
-          <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
-            This dataset is <strong>published</strong>. Preview it and ask it questions below — or use <strong>✎ Edit data stages</strong> (top-right) to open the full 5-stage pipeline.
-          </p>
-          {rowPreviewBlock('Data preview', 'The first 50 rows of the published table, read through the governed Trino path under your own row security.')}
-          <div style={{ marginTop: 24 }}>
-            <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
-          </div>
-          {/* What's already built on this data — metrics, dashboards, agent systems. */}
-          <ConnectedBuild datasetId={dataset.id} />
+          ) : null}
         </div>
-      ) : viewMode === 'simple' ? (
-      <StageShell
-        stages={DATA_STAGES}
-        state={stage}
-        ctx={ctx}
-        onState={setStage}
-        ariaLabel="Dataset stages"
-        // The three BUILD stages own their continue: Ingest auto-advances on a landed
-        // upload, Silver/Gold show a big "Continue →" only after a successful build.
-        // The shell's bare "next →" there reads as the primary action but builds
-        // nothing — hide it. Stages stay voluntarily skippable via the rail on top.
-        hideNextFor={['ingest', 'define', 'harmonize']}
-      >
-        {/* ─────────────── Ingest ─────────────── */}
-        {stage.current === 'ingest' ? (
-          <div {...anchorAttr(ANCHORS.data.load)}>
+      </div>
+      {shareErr ? <div className="error" style={{ marginTop: -6, marginBottom: 12 }}>{shareErr}</div> : null}
+
+
+      {viewMode === 'simple' ? (
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {/* ─────────────── Ingestion (Edit · ingested only) ───────────────
+            Bring the source data in. A curated dataset has no source of its own — no
+            Ingestion, no Transformation (those belong to the source datasets); it starts
+            at Composition. Plain-language: no Bronze/Silver/Gold words. The full preview
+            (with the layer toggle) lives in View — Edit stays calm. Internal anchor +
+            route ids (data.load / bronze layer) are UNCHANGED. */}
+        {mode === 'edit' && !curated ? (
+          <div {...anchorAttr(ANCHORS.data.load)} style={{ order: 1 }}>
+            <div className="section-title" style={{ marginTop: 0 }}>Ingestion</div>
             {canEdit ? (
               <BronzePanel
                 datasetId={dataset.id}
                 datasetName={dataset.name}
-                onCommitted={() => commitStage('ingest')}
+                onCommitted={() => { void buildThenAutoGold('bronze'); }}
               />
             ) : (
               <p className="muted" style={{ fontSize: 13 }}>Only the owner and domain admins can bring in data.</p>
             )}
 
-            {/* Keep this in sync — schedule + history for a warehouse-synced Bronze. */}
+            {/* Keep this in sync — schedule + history for a warehouse-synced source. */}
             {dataset.sync ? (
               <SyncPanel datasetId={dataset.id} canEdit={canEdit} columns={colNames} />
-            ) : null}
-
-            {/* Raw shape — the SAME governed rows/columns statistics treatment the Silver
-                and Gold builders show (ExplorePanel: row/column counts, completeness,
-                distinct, range), honestly labeled Bronze. Stats only here — the governed
-                50-row preview below stays the raw-rows view. */}
-            {dataset.versions.bronze?.built ? (
-              <>
-                <div className="section-title" style={{ marginTop: 22 }}>Your Bronze table</div>
-                <ExplorePanel datasetId={dataset.id} builtLayers={['bronze']} showPreview={false} />
-              </>
             ) : null}
 
             {/* Something went wrong bringing data in → one big AI explainer, right where
@@ -1103,17 +1288,18 @@ export default function DataBuilder({
                 />
               </div>
             ) : null}
-
-            {/* Raw preview of what landed — the governed SELECT * LIMIT 50. */}
-            {rowPreviewBlock('Raw preview', 'A read-only scan of the first 50 rows through the governed query path (Trino, OPA-checked). Nothing is previewed until a layer is built.')}
           </div>
         ) : null}
 
-        {/* ─────────────── Define ─────────────── */}
-        {stage.current === 'define' ? (
-          <div {...anchorAttr(ANCHORS.data.document)}>
-            {/* AI, built into the flow: two big actions at the top of the stage — draft the
-                documentation, or fill the Silver cleaning plan below ("Clean it up"). */}
+        {/* ─────────────── Documentation (both origins) ───────────────
+            Describe the dataset and what each column means. Docs ONLY — the data-shaping
+            (Transformation) lives in its own section below. Plain-language section title.
+            Internal anchor id (data.document) is UNCHANGED. Curated renders this AFTER
+            Composition (order 2 vs Composition's 1); ingested renders it after Ingestion. */}
+        {mode === 'edit' ? (
+          <div {...anchorAttr(ANCHORS.data.document)} style={{ order: 2 }}>
+            <div className="section-title" style={{ marginTop: 0 }}>Documentation</div>
+            {/* AI, built into the flow: draft the documentation from the schema. */}
             {canEdit ? (
               <div className="row" style={{ justifyContent: 'flex-end', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 14 }}>
                 <AiAction<DefineDraft>
@@ -1123,19 +1309,8 @@ export default function DataBuilder({
                   onDraft={applyDraft}
                   successText="Drafted the description, column notes and quality rules — review them below."
                 />
-                <AiAction<CleanDraft>
-                  datasetId={dataset.id} stage="clean" cta="Clean it up"
-                  title={canRefineSilver ? 'AI fills the Silver cleaning plan below — types, trims, key, dedupe' : 'Bring in a Bronze layer first (in Ingest)'}
-                  disabled={!canRefineSilver}
-                  payload={() => ({ name: dataset.name, prompt: desc, columns: colNames })}
-                  onDraft={setCleanProposal}
-                  successText="Cleaning plan filled in below — review it, then Build Silver."
-                />
               </div>
             ) : null}
-            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-              Bronze is in — now the columns are real. Describe what each column means, then clean and conform the data into the Silver layer.
-            </p>
             {canEdit ? (
               <div className="guided-panel" style={{ marginBottom: 16 }}>
                 <label className="muted" style={{ fontSize: 12.5 }}>What is this dataset?</label>
@@ -1152,11 +1327,12 @@ export default function DataBuilder({
                 ))}
                 <button className="btn ghost sm" onClick={() => setCols((cs) => [...cs, { name: '', description: '' }])}>+ Column</button>
                 {docsErr ? <div className="error" style={{ marginTop: 8 }}>{docsErr}</div> : null}
-                <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center' }}>
-                  <button className="btn" onClick={() => { void saveDocs().then(() => settle('define')); }} disabled={docsBusy}>
-                    {docsBusy ? <span className="spin" /> : 'Save documentation'}
+                {/* Section primary action: the one obvious way to close Documentation. */}
+                <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
+                  {docsOk ? <span className="ok-note" style={{ fontSize: 12.5, marginRight: 'auto' }}>{docsOk}</span> : null}
+                  <button className="btn primary" onClick={() => { void saveDocs(); }} disabled={docsBusy}>
+                    {docsBusy ? <span className="spin" /> : 'Save Documentation'}
                   </button>
-                  {docsOk ? <span className="ok-note" style={{ fontSize: 12.5 }}>{docsOk}</span> : null}
                 </div>
               </div>
             ) : (
@@ -1178,55 +1354,68 @@ export default function DataBuilder({
                 ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>No column docs yet.</p>}
               </>
             )}
-
-            {/* Silver build — clean and conform Bronze into Silver. */}
-            {canEdit ? (
-              <>
-                <div className="section-title" style={{ marginTop: 4 }} {...anchorAttr(ANCHORS.data.clean)}>
-                  Clean it up — Silver
-                  <span className="hint" style={{ margin: '0 0 0 10px' }}>dbt transformations on your Bronze data</span>
-                </div>
-                {staleVsBronze(dataset.versions, 'silver') ? (
-                  <p className="hint" style={{ margin: '0 0 10px' }}>
-                    Bronze has newer data than Silver ({fmtDate(dataset.versions.bronze.updatedAt)} vs {fmtDate(dataset.versions.silver.updatedAt)}) — rebuild below to catch it up.
-                  </p>
-                ) : null}
-                {canRefineSilver ? (
-                  <RefinePanel
-                    datasetId={dataset.id} datasetName={dataset.name}
-                    owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
-                    columns={colNames}
-                    silverBuilt={canHarmonizeGold}
-                    proposal={cleanProposal}
-                    stage={{ layer: 'silver', copy: { title: 'Clean it up', subtitle: '', tool: '' } }}
-                    onCommitted={() => commitStageStay('define')}
-                    onContinue={() => continueFrom('define')}
-                  />
-                ) : <p className="muted" style={{ fontSize: 13 }}>Bring in a Bronze layer first (in Ingest).</p>}
-              </>
-            ) : null}
           </div>
         ) : null}
 
-        {/* ─────────────── Harmonize ─────────────── */}
-        {stage.current === 'harmonize' ? (
-          <div>
-            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-              Silver is clean — join and aggregate it into the Gold business mart, then explore the result.
-            </p>
+        {/* ─────────────── Transformation (Edit · ingested only) ───────────────
+            Clean and conform the ingested data — the Silver build. A CURATED dataset has
+            no source of its own (its inputs are already-refined datasets), so there is no
+            Transformation — cleaning belongs to the sources. Plain-language section title.
+            Internal anchor id (data.clean) + the silver layer/route are UNCHANGED. After a
+            successful build the pass-through Gold fires automatically (metrics need Gold).
+            Sits AFTER Documentation (order 3), before Checks. */}
+        {mode === 'edit' && canEdit && !curated ? (
+          <div {...anchorAttr(ANCHORS.data.clean)} style={{ order: 3 }}>
+            <div className="section-title" style={{ marginTop: 0 }}>Transformation</div>
+            {/* AI, built into the flow: fill the cleaning plan below ("Clean it up"). */}
+            <div className="row" style={{ justifyContent: 'flex-end', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 14 }}>
+              <AiAction<CleanDraft>
+                datasetId={dataset.id} stage="clean" cta="Clean it up"
+                title={canRefineSilver ? 'AI fills the cleaning plan below — types, trims, key, dedupe' : 'Bring your data in first (Ingestion)'}
+                disabled={!canRefineSilver}
+                payload={() => ({ name: dataset.name, prompt: desc, columns: colNames })}
+                onDraft={setCleanProposal}
+                successText="Cleaning plan filled in below — review it, then Save Transformations."
+              />
+            </div>
+            {staleVsBronze(dataset.versions, 'silver') ? (
+              <p className="hint" style={{ margin: '0 0 10px' }}>
+                Newer data has arrived since the last transformation ({fmtDate(dataset.versions.bronze.updatedAt)} vs {fmtDate(dataset.versions.silver.updatedAt)}) — save again to catch it up.
+              </p>
+            ) : null}
+            {canRefineSilver ? (
+              <RefinePanel
+                datasetId={dataset.id} datasetName={dataset.name}
+                owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
+                columns={colNames}
+                silverBuilt={canHarmonizeGold}
+                proposal={cleanProposal}
+                saveLabel="Save Transformations"
+                stage={{ layer: 'silver', copy: { title: 'Transformation', subtitle: '', tool: '' } }}
+                onCommitted={() => { void buildThenAutoGold('silver'); }}
+                onContinue={onBuilt}
+              />
+            ) : <p className="muted" style={{ fontSize: 13 }}>Bring your data in first (Ingestion).</p>}
+          </div>
+        ) : null}
+
+        {/* ─────────────── Composition (curated) / legacy joins (grandfathered ingested) ─
+            CURATED: the CORE editor — pick the base, join in others, keep columns + derived
+            fields. That IS curated's purpose, so it renders FIRST (order 1). For an ingested
+            dataset this section is GONE (its Gold is served automatically via the pass-through
+            after Transformation) — the ONE exception is legacy grandfathering: an ingested
+            dataset whose STORED goldSpec already has joins keeps its join editor visible so
+            nothing breaks. Internal anchor id (data.harmonize) is UNCHANGED. */}
+        {mode === 'edit' && (curated || legacyJoins) ? (
+          <div style={{ order: curated ? 1 : 3 }}>
             {canEdit ? (
               <>
-                {/* The stage's big actions (Pass through Gold + the AI helper) live inside
-                    GoldJoinPanel's top row now — side by side, same style. */}
                 <div className="section-title" style={{ marginTop: 0, alignItems: 'flex-start', flexWrap: 'wrap' }} {...anchorAttr(ANCHORS.data.harmonize)}>
-                  Harmonize — Gold
-                  <span className="hint" style={{ margin: '0 0 0 10px' }}>join trusted datasets into one governed Gold table</span>
+                  Composition
+                  <span className="hint" style={{ margin: '0 0 0 10px' }}>
+                    {curated ? 'combine trusted datasets into one governed table' : 'this dataset carries legacy joins — kept editable'}
+                  </span>
                 </div>
-                {staleVsBronze(dataset.versions, 'gold') ? (
-                  <p className="hint" style={{ margin: '0 0 10px' }}>
-                    Bronze has newer data than Gold ({fmtDate(dataset.versions.bronze.updatedAt)} vs {fmtDate(dataset.versions.gold.updatedAt)}) — rebuild below to catch it up.
-                  </p>
-                ) : null}
                 <GoldJoinPanel
                   datasetId={dataset.id} datasetName={dataset.name}
                   owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
@@ -1234,27 +1423,24 @@ export default function DataBuilder({
                   silverBuilt={canHarmonizeGold}
                   goldBuilt={dataset.versions.gold.built}
                   initialSpec={dataset.goldSpec}
-                  onCommitted={() => commitStageStay('harmonize')}
-                  onContinue={() => continueFrom('harmonize')}
+                  curated={curated}
+                  legacyJoins={legacyJoins}
+                  saveLabel={curated ? 'Save Composition' : undefined}
+                  onCommitted={onBuilt}
+                  onContinue={onBuilt}
                 />
               </>
-            ) : <p className="muted" style={{ fontSize: 13 }}>Only the owner and domain admins can harmonize this dataset.</p>}
-
-            {builtLayers.length > 0 ? (
-              <>
-                <div className="section-title" style={{ marginTop: 22 }}>Explore</div>
-                <ExplorePanel datasetId={dataset.id} builtLayers={builtLayers} showPreview={false} />
-              </>
-            ) : null}
-
-            {/* See the result — the first 50 rows of the highest built layer (Gold if built). */}
-            {rowPreviewBlock('Data preview', 'The first 50 rows of your highest built layer — Gold if built, otherwise Silver or Bronze — read through the governed Trino path.')}
+            ) : <p className="muted" style={{ fontSize: 13 }}>Only the owner and domain admins can shape this dataset.</p>}
           </div>
         ) : null}
 
-        {/* ─────────────── Validate ─────────────── */}
-        {stage.current === 'validate' ? (
-          <div {...anchorAttr(ANCHORS.data.validate)}>
+        {/* ─────────────── Checks (Edit · both origins, last) ───────────────
+            Both the default heuristic monitors ("Default checks") and the authored rules
+            ("Custom checks") live here. Plain-language section title. Internal anchor id
+            (data.validate) is UNCHANGED. */}
+        {mode === 'edit' ? (
+          <div {...anchorAttr(ANCHORS.data.validate)} style={{ order: 4 }}>
+            <div className="section-title" style={{ marginTop: 0 }}>Checks</div>
             {/* AI, built into the flow: one big action at the top — explain the profile's
                 suggested checks, or (none yet) suggest which quality rules to author. */}
             <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 14 }}>
@@ -1323,25 +1509,98 @@ export default function DataBuilder({
               </div>
             ) : null}
 
-            {/* Quality checks — author rules + run them for real against the built table. */}
-            <div className="section-title" style={{ marginTop: 0 }}>
-              Your checks
+            {/* Honest empty-state: no deterministic suggestions AND a structural reason
+                (unbuilt / unqueryable table — the curated "no bronze/silver fallback" case).
+                One quiet line, never a blank void. */}
+            {suggestions.length === 0 && profileReason ? (
+              <p className="hint" style={{ marginTop: 0, marginBottom: 16 }}>{profileReasonText(profileReason)}</p>
+            ) : null}
+
+            {/* Default checks — heuristic freshness/volume/schema monitors, on by default.
+                Monte-Carlo's lesson: coverage without writing rules. Each is explainable
+                (mean±kσ / cadence / column-set), contributes to the health score, and honours
+                the honesty contract (too little history ⇒ "not run", never a fake pass). These
+                come FIRST — a dataset has sensible checks the moment it exists. */}
+            {monitors.length > 0 ? (
+              <>
+                <div className="section-title" style={{ marginTop: 0 }}>
+                  Default checks
+                  <span className="muted" style={{ fontSize: 12, marginLeft: 8, fontWeight: 400 }}>on by default</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
+                  {monitors.map((m) => (
+                    <div key={m.kind} className="guided-panel" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13.5 }}>{MONITOR_LABELS[m.kind].label}</div>
+                        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{MONITOR_LABELS[m.kind].hint}</div>
+                      </div>
+                      {canEdit ? (
+                        <button
+                          className={`btn ghost sm ${m.enabled ? '' : 'off'}`}
+                          onClick={() => toggleMonitor(m.kind, !m.enabled)}
+                          disabled={monitorBusy === m.kind}
+                          aria-pressed={m.enabled}
+                        >
+                          {monitorBusy === m.kind ? <span className="spin" /> : m.enabled ? 'On' : 'Off'}
+                        </button>
+                      ) : (
+                        <span className="muted" style={{ fontSize: 12.5 }}>{m.enabled ? 'On' : 'Off'}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            {/* Custom checks — author rules + run them for real against the built table. */}
+            <div className="section-title" style={{ marginTop: 20 }}>
+              Custom checks
               <span className="count-pill">{checks.length}</span>
               {badge ? (
                 <span className={`badge ${badge === 'passing' ? 'vis-shared' : badge === 'failing' ? 'vis-personal' : ''}`} style={{ marginLeft: 10 }} title={ranAt ? `Last run ${formatDate(ranAt)}` : undefined}>
                   {badge === 'passing' ? '✓ passing' : badge === 'failing' ? '✗ failing' : 'not run'}
                 </span>
               ) : null}
-              {checks.length > 0 ? (
-                <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={runChecks} disabled={running}>
-                  {running ? <span className="spin" /> : 'Run checks'}
-                </button>
-              ) : null}
             </div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-              Author the rules this dataset must meet, then run them against the built table — a real pass/fail per rule through the governed query path. Nothing runs until a layer is materialized.
+              Author the rules this dataset must meet, then run them against the built table. Nothing runs until the data is built.
             </p>
-            {runErr ? <div className="error" style={{ marginBottom: 10 }}>{runErr}</div> : null}
+            {/* One AI action: draft a plain-language description for every rule missing one.
+                The text lands in each rule's editable field as a DRAFT — nothing saves until
+                you review and press Save Data Quality Checks. */}
+            {canEdit && checks.length > 0 ? (
+              <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 10 }}>
+                <AiAction<{ descriptions?: Array<{ index: number; description: string }> }>
+                  datasetId={dataset.id} stage="describe-checks"
+                  cta="Describe checks with AI"
+                  title="AI drafts a plain-language description for each rule missing one — you review and edit before saving"
+                  successText="Drafted — review and edit each description, then Save Data Quality Checks."
+                  payload={() => ({
+                    name: dataset.name,
+                    // Only the rules that still need a description; keyed by array index so the
+                    // draft maps back exactly. Executable rules only (a bare intention has no ruleText).
+                    rules: checks
+                      .map((c, index) => ({ index, text: ruleText(c), has: !!(descDrafts[c.id] ?? c.description ?? '').trim() }))
+                      .filter((r) => r.text && !r.has)
+                      .map((r) => ({ index: r.index, text: r.text })),
+                  })}
+                  onDraft={(draft) => {
+                    const items = Array.isArray(draft.descriptions) ? draft.descriptions : [];
+                    setDescDrafts((m) => {
+                      const next = { ...m };
+                      for (const it of items) {
+                        const chk = checks[it.index];
+                        if (chk && typeof it.description === 'string' && it.description.trim()) {
+                          next[chk.id] = it.description.trim();
+                        }
+                      }
+                      return next;
+                    });
+                  }}
+                />
+              </div>
+            ) : null}
+            {runErr ? <QueryError error={runErr} style={{ marginBottom: 10 }} /> : null}
             {checks.length > 0 ? (
               <div className="table-wrap" style={{ marginBottom: 14 }}>
                 <table>
@@ -1374,6 +1633,23 @@ export default function DataBuilder({
                             </td>
                             {canEdit ? <td><button className="btn ghost sm" onClick={() => deleteRule(chk.id)} aria-label="Remove rule">×</button></td> : null}
                           </tr>
+                          {/* Plain-language description — editable per rule (typed or AI-drafted);
+                              persisted on Save Data Quality Checks. Read-only viewers see the text. */}
+                          <tr>
+                            <td colSpan={canEdit ? 4 : 3} style={{ paddingTop: 0 }}>
+                              {canEdit ? (
+                                <input
+                                  aria-label={`Description for ${ruleText(chk)}`}
+                                  placeholder="Describe this check in plain language (optional)"
+                                  value={descDrafts[chk.id] ?? chk.description ?? ''}
+                                  onChange={(e) => setDescDrafts((m) => ({ ...m, [chk.id]: e.target.value }))}
+                                  style={{ width: '100%', fontSize: 13 }}
+                                />
+                              ) : (chk.description ? (
+                                <span className="muted" style={{ fontSize: 12.5 }}>{chk.description}</span>
+                              ) : null)}
+                            </td>
+                          </tr>
                           {failing && fixOpen === chk.id ? (
                             <tr>
                               <td colSpan={canEdit ? 4 : 3} style={{ background: 'var(--panel)', paddingTop: 0 }}>
@@ -1403,7 +1679,7 @@ export default function DataBuilder({
 
             {canEdit ? (
               <div className="guided-panel" style={{ padding: '12px 16px' }}>
-                <div className="muted" style={{ fontSize: 12.5, marginBottom: 8 }}>Add a rule</div>
+                <div className="muted" style={{ fontSize: 12.5, marginBottom: 8 }}>Add a custom check</div>
                 <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <select value={ruleKind} onChange={(e) => setRuleKind(e.target.value as DataCheckRule)} style={{ maxWidth: 170 }}>
                     {(Object.keys(RULE_LABELS) as DataCheckRule[]).map((k) => <option key={k} value={k}>{RULE_LABELS[k]}</option>)}
@@ -1422,141 +1698,148 @@ export default function DataBuilder({
                     </>
                   ) : null}
                   <button className="btn" onClick={addRule} disabled={checksBusy || !ruleColumn.trim()}>
-                    {checksBusy ? <span className="spin" /> : 'Add rule'}
+                    {checksBusy ? <span className="spin" /> : 'Add check'}
                   </button>
                 </div>
                 {checksErr ? <div className="error" style={{ marginTop: 8 }}>{checksErr}</div> : null}
               </div>
             ) : null}
 
-            {/* Auto-monitors — heuristic freshness/volume/schema, on by default. Monte-Carlo's
-                lesson: coverage without writing rules. Each is explainable (mean±kσ / cadence /
-                column-set), contributes to the health score, and honours the honesty contract
-                (too little history ⇒ "not run", never a fake pass). */}
-            {monitors.length > 0 ? (
-              <>
-                <div className="section-title" style={{ marginTop: 20 }}>
-                  Auto-monitors
-                  <span className="muted" style={{ fontSize: 12, marginLeft: 8, fontWeight: 400 }}>on by default</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {monitors.map((m) => (
-                    <div key={m.kind} className="guided-panel" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13.5 }}>{MONITOR_LABELS[m.kind].label}</div>
-                        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{MONITOR_LABELS[m.kind].hint}</div>
-                      </div>
-                      {canEdit ? (
-                        <button
-                          className={`btn ghost sm ${m.enabled ? '' : 'off'}`}
-                          onClick={() => toggleMonitor(m.kind, !m.enabled)}
-                          disabled={monitorBusy === m.kind}
-                          aria-pressed={m.enabled}
-                        >
-                          {monitorBusy === m.kind ? <span className="spin" /> : m.enabled ? 'On' : 'Off'}
-                        </button>
-                      ) : (
-                        <span className="muted" style={{ fontSize: 12.5 }}>{m.enabled ? 'On' : 'Off'}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </>
+            {/* Section primary action: one obvious way to close Checks. Rules + monitor
+                toggles already persist on edit, so Save flushes any half-filled check and
+                confirms. "Run checks" is the secondary action beside it (a real pass/fail). */}
+            {canEdit ? (
+              <div className="row" style={{ marginTop: 14, gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
+                {checksSavedNote ? <span className="ok-note" style={{ fontSize: 12.5, marginRight: 'auto' }}>{checksSavedNote}</span> : null}
+                {checks.length > 0 ? (
+                  <button className="btn ghost" onClick={runChecks} disabled={running}>
+                    {running ? <span className="spin" /> : 'Run checks'}
+                  </button>
+                ) : null}
+                <button className="btn primary" onClick={() => { void saveChecks(); }} disabled={checksBusy}>
+                  {checksBusy ? <span className="spin" /> : 'Save Data Quality Checks'}
+                </button>
+              </div>
             ) : null}
-
-            {/* Lineage — refinement + consumption chain, moved here from the old Use stage. */}
-            <div className="section-title" style={{ marginTop: 24 }}>Lineage</div>
-            <LineagePanel datasetId={dataset.id} />
-
-            {/* The rows the checks ran against — same governed preview as every other stage. */}
-            {rowPreviewBlock('Data preview', 'The first 50 rows the quality checks run against — read through the governed Trino path.')}
           </div>
         ) : null}
 
-        {/* ─────────────── Publish (Metrics & Usage) ─────────────── */}
-        {stage.current === 'publish' ? (
+        {/* ─────────────── View (Talk · Stats · Preview · Quality) ───────────────
+            The calm home to USE the data — tile click lands here. Reuses the existing
+            View/publish content unchanged. */}
+        {mode === 'view' ? (
           <div>
-            {/* AI, built into the flow: one big action at the top — suggest the governed
-                measures worth defining before promoting/certifying. */}
-            <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 14 }}>
-              <AiAction
-                datasetId={dataset.id} stage="publish" cta="Suggest measures"
-                title="AI suggests governed measures to define before you promote"
-                payload={() => ({ name: dataset.name, columns: colNames, measures: dataset.measures.map((m) => m.name) })}
-              />
+            {/* 1. Talk to Data — the primary way to USE the data (no example chips: the
+                   viewer knows their own questions; the surface stays calm). */}
+            <div {...anchorAttr(ANCHORS.data.query)} style={{ marginTop: 0 }}>
+              <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={[]} />
             </div>
-            {/* Sharing / promotion — the governed promote/certify block (moved to the top:
-                deciding who sees this dataset comes before building on it). Logic unchanged. */}
-            <div className="section-title" style={{ marginTop: 0 }} {...anchorAttr(ANCHORS.data.publish)}>Sharing</div>
-            {dataset.tier === 'dataset' ? (
-              canHarmonizeGold ? (
-                <div className="gate-check" style={{ marginTop: 4 }}>
-                  <span className="badge vis-personal">Personal</span>{' '}
-                  {promote?.request?.status === 'pending' ? (
-                    <span className="muted" style={{ fontSize: 13 }}>
-                      Promotion requested — a domain <strong>Builder</strong> approves it in the <strong>Governance</strong> tab, which moves it into Trino.
-                    </span>
-                  ) : canEdit ? (
-                    <>
-                      <span className="muted" style={{ fontSize: 13 }}>In your private space — only you can see it. Promote it to share with your domain.</span>
-                      {promote && !promote.gate.ok ? <div className="hint" style={{ margin: '6px 0 0' }}>To share, add {promote.gate.missing.join(', ')}.</div> : null}
-                      <div className="row" style={{ marginTop: 8 }}>
-                        <button className="btn" disabled={shareBusy || !!(promote && !promote.gate.ok)} onClick={requestPromote}
-                          title={promote && !promote.gate.ok ? 'Complete the transparency gate first' : 'A domain Builder approves this and moves it into Trino'}>
-                          {shareBusy ? <span className="spin" /> : 'Promote to Domain →'}
-                        </button>
-                      </div>
-                    </>
-                  ) : <span className="muted" style={{ fontSize: 13 }}>Private to {dataset.owner}.</span>}
-                </div>
-              ) : (
-                <div className="gate-check" style={{ marginTop: 4 }}>
-                  <span className="badge vis-personal">Personal</span>{' '}
-                  <span className="muted" style={{ fontSize: 13 }}>
-                    This raw <strong>Bronze</strong> dataset can&apos;t be shared yet — <strong>promote after refining to Silver/Gold</strong>.
-                    {canEdit ? <> Refine it in the <strong>Define</strong> or <strong>Harmonize</strong> stage first.</> : null}
-                  </span>
-                </div>
-              )
-            ) : dataset.tier === 'asset' ? (
-              <div className="gate-check gate-ok" style={{ marginTop: 4 }}>
-                <span className="badge vis-shared">Domain</span>{' '}
-                <span className="muted" style={{ fontSize: 13 }}>Promoted data asset in <strong>Trino/Iceberg</strong> ({dataset.domain} domain).</span>
-                {certifyPending ? (
-                  <div className="hint" style={{ marginTop: 6 }}>Certification requested — a platform <strong>Admin</strong> approves it in the <strong>Governance</strong> tab.</div>
-                ) : (
-                  <div className="row" style={{ marginTop: 8 }}>
-                    {isAdmin ? (
-                      <button className="btn" disabled={shareBusy} onClick={() => certifyAsset('certify')} title="Certify this asset as a data product and list it in the marketplace">
-                        {shareBusy ? <span className="spin" /> : 'Certify to Company →'}
-                      </button>
-                    ) : canEdit ? (
-                      <button className="btn ghost" disabled={shareBusy} onClick={() => certifyAsset('request')} title="Ask a platform Admin to certify this as a marketplace data product">
-                        {shareBusy ? <span className="spin" /> : 'Request certification →'}
-                      </button>
-                    ) : <span className="muted" style={{ fontSize: 13 }}>An Admin certifies it as a marketplace data product.</span>}
-                  </div>
-                )}
-              </div>
-            ) : dataset.tier === 'product' ? (
-              <div className="gate-check gate-ok" style={{ marginTop: 4 }}>
-                <span className="badge vis-certified">Company</span>{' '}
-                <span className="muted" style={{ fontSize: 13 }}>Certified data product — discoverable across the marketplace.</span>
-              </div>
+
+            {/* 2. Data preview — Gold by default (the highest built layer); the
+                   bronze·silver·gold toggle lives IN the preview heading. */}
+            {(() => {
+              const shownLayer = viewLayer ?? layer;
+              const layerToggle = builtLayers.length > 1 ? (
+                <span className="seg" style={{ marginLeft: 10 }}>
+                  {(['bronze', 'silver', 'gold'] as Layer[]).filter((l) => builtLayers.includes(l)).map((l) => (
+                    <button
+                      key={l}
+                      className={shownLayer === l ? 'on' : ''}
+                      onClick={() => { setViewLayer(l); void loadPreview(l); }}
+                    >{l}</button>
+                  ))}
+                </span>
+              ) : undefined;
+              return rowPreviewBlock(
+                shownLayer ? `${shownLayer[0].toUpperCase()}${shownLayer.slice(1)} data preview` : 'Data preview',
+                `The first 50 rows of this dataset${shownLayer ? ` — the ${shownLayer} layer` : ''}.`,
+                { layer: shownLayer ?? undefined, built: !!shownLayer, unbuiltNote: 'No layer built yet — build Bronze/Silver/Gold first.', extra: layerToggle },
+              );
+            })()}
+
+            {/* 3. Statistics — the descriptive profile of the highest built layer (per-column
+                   type/completeness/distinct/range/top values). Reuses ExplorePanel, stats only. */}
+            {builtLayers.length > 0 ? (
+              <>
+                <div className="section-title" style={{ marginTop: 24 }}>Statistics</div>
+                <ExplorePanel datasetId={dataset.id} builtLayers={builtLayers} showPreview={false} />
+              </>
             ) : null}
-            {shareErr ? <div className="error" style={{ marginTop: 8 }}>{shareErr}</div> : null}
 
-            {/* Preview what you're publishing — the same governed 50-row view as every stage. */}
-            {rowPreviewBlock('Data preview', 'The first 50 rows of what you are publishing — read through the governed Trino path, under your own row security.')}
-
-            {/* Talk to Data — governed NL→SQL over what the viewer can see (usage before promote). */}
-            <div {...anchorAttr(ANCHORS.data.query)} style={{ marginTop: 24 }}>
-              <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
+            {/* 4. Data-quality SCORECARD — the authored rules + their latest REAL run, made
+                   glanceable: pass-rate hero + bar, then one card per rule. Nothing invented:
+                   every number comes from the same checks/results state the Validate editor
+                   drives; an unrun rule shows as unrun, never as passing. */}
+            <div className="section-title" style={{ marginTop: 26 }}>
+              Data quality
+              {checks.length > 0 ? (
+                <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={runChecks} disabled={running}>
+                  {running ? <span className="spin" /> : 'Run checks'}
+                </button>
+              ) : null}
             </div>
-
-            {/* Build on this data — the metrics, dashboards and agent systems already connected
-                to this dataset, each linking out + offering an inline create pre-scoped to it. */}
-            <ConnectedBuild datasetId={dataset.id} />
+            {checks.length === 0 ? (
+              <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
+                No quality rules yet — author them in <strong>Edit</strong>.
+              </p>
+            ) : (
+              <>
+                {runErr ? <QueryError error={runErr} style={{ marginBottom: 10 }} /> : null}
+                <div className="guided-panel" style={{ marginBottom: 12 }}>
+                  <div className="row" style={{ gap: 18, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 120 }}>
+                      <div style={{ fontSize: 34, fontWeight: 700, lineHeight: 1.1, color: dqRan === 0 ? 'var(--text-faint, #999)' : dqFailing > 0 ? 'var(--danger, #d64545)' : 'var(--ok, #2e9e6b)' }}>
+                        {dqRan === 0 ? '—' : `${Math.round((dqPassing / dqRan) * 100)}%`}
+                      </div>
+                      <div className="hint" style={{ margin: 0 }}>
+                        {dqRan === 0 ? 'not yet run' : `${dqPassing} of ${dqRan} checks passing`}
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 220 }}>
+                      <div style={{ height: 8, borderRadius: 4, background: 'var(--border, rgba(0,0,0,0.08))', overflow: 'hidden' }}>
+                        {dqRan > 0 ? (
+                          <div style={{ height: '100%', width: `${Math.round((dqPassing / dqRan) * 100)}%`, background: dqFailing > 0 ? 'var(--danger, #d64545)' : 'var(--ok, #2e9e6b)', transition: 'width .4s ease' }} />
+                        ) : null}
+                      </div>
+                      <div className="hint" style={{ margin: '6px 0 0' }}>
+                        {checks.length} rule{checks.length === 1 ? '' : 's'} authored
+                        {dqRan < checks.length ? ` · ${checks.length - dqRan} not yet run` : ''}
+                        {ranAt ? ` · last run ${formatDate(ranAt)}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 8, marginBottom: 8 }}>
+                  {checks.map((chk) => {
+                    const r = results[chk.id];
+                    const state = r?.status === 'pass' ? { c: 'var(--ok, #2e9e6b)', g: '✓', label: 'pass' }
+                      : r?.status === 'fail' ? { c: 'var(--danger, #d64545)', g: '✗', label: `${r.violations} violating row${r.violations === 1 ? '' : 's'}` }
+                        : { c: 'var(--text-faint, #999)', g: '•', label: 'not yet run' };
+                    // Lead with the plain-language description when present; fall back to the
+                    // technical rule text so a card is NEVER blank. The technical text stays
+                    // on hover for provenance.
+                    const desc = (chk.description ?? '').trim();
+                    const primary = desc || ruleText(chk);
+                    return (
+                      <div key={chk.id} className="guided-panel" style={{ padding: '10px 12px', borderLeft: `3px solid ${state.c}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ color: state.c, fontWeight: 700, fontSize: 15 }} aria-hidden>{state.g}</span>
+                        <span
+                          className={desc ? undefined : 'mono'}
+                          style={{ fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          title={desc ? `${desc}\n${ruleText(chk)}` : ruleText(chk)}
+                        >
+                          {primary}
+                        </span>
+                        <span className="muted" style={{ fontSize: 12, color: state.c, whiteSpace: 'nowrap' }}>{state.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {dqRan === 0 ? (
+                  <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>Run the checks to see a real pass/fail per rule.</p>
+                ) : null}
+              </>
+            )}
 
             {/* Configuration drawer (dbt SQL / dataset.yaml) — the technical surface, kept last. */}
             {canEdit ? (
@@ -1569,7 +1852,6 @@ export default function DataBuilder({
                 </div>
                 {showCode ? (
                   <div style={{ marginBottom: 14 }}>
-                    <p className="hint" style={{ marginTop: 0 }}>dataset.yaml is the single source — the panels and the data agent all read and write these files.</p>
                     <CodeDrawer datasetId={dataset.id} />
                   </div>
                 ) : null}
@@ -1577,10 +1859,62 @@ export default function DataBuilder({
             ) : null}
           </div>
         ) : null}
-      </StageShell>
+      </div>
       ) : (
         <DataDeveloperView dataset={dataset} datasetId={datasetId} />
       )}
+
+      {/* Auto-Gold outcome — the honest central announcement of the automatic pass-through
+          Gold that runs after an ingested bronze/silver build (the Gold UI is gone from Edit,
+          but metrics/dashboards require a built Gold). Success says it was served for metrics
+          automatically; a failure shows the real error. Never silent, never faked. */}
+      {autoGold ? (
+        <BuildResultDialog
+          result={autoGold}
+          onContinue={() => setAutoGold(null)}
+          onClose={() => setAutoGold(null)}
+        />
+      ) : null}
+
+      {/* ── About this dataset — the technical strip, moved to the BOTTOM so the top of
+            the page stays calm (owner/ids/status read when you scroll for them). ── */}
+      <div style={{ marginTop: 28, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+        <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+          <span className="muted" style={{ fontSize: 13 }}>{dataset.owner} · {dataset.domain}</span>
+          {dataset.tier !== 'dataset' ? <DomainTag domain={dataset.domain} /> : null}
+          <span className="mono muted" style={{ fontSize: 11 }} title="Dataset ID">{dataset.id}</span>
+          <span className="mono muted" style={{ fontSize: 11 }} title="Physical table name (frozen — unaffected by rename)">table: {physicalSlug(dataset)}</span>
+        </div>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+        {layer ? (
+          <span className="status-chip s-searchable" title={`Physical table: ${fqn}`} style={{ cursor: 'default' }}>
+            ✓ materialized · {layer} · <span className="mono" style={{ fontSize: 10 }}>{fqn}</span>
+          </span>
+        ) : (
+          <span className="status-chip s-stored" title="No medallion layer built yet — Ingest a file or extract" style={{ cursor: 'default' }}>
+            not materialized — no layer built yet
+          </span>
+        )}
+        <span className={`badge ${TIER_BADGE[dataset.tier]}`} style={{ alignSelf: 'center' }} title={`Tier: ${dataset.tier} · Visibility: ${dataset.visibility}`}>
+          {VIS_WORD[dataset.visibility] ?? dataset.visibility}
+        </span>
+        {cubeReady ? (
+          <span className="status-chip s-searchable" title="Gold table governed + built — Cube model sync can deliver it" style={{ cursor: 'default' }}>✓ Cube model ready</span>
+        ) : (
+          <span className="status-chip s-stored" title={dataset.tier === 'dataset' ? 'Cube model: promote to a data asset and build Gold first' : 'Cube model: build the Gold layer first'} style={{ cursor: 'default' }}>Cube model not ready</span>
+        )}
+        {omUrl ? (
+          <a className="status-chip s-searchable" href={omUrl} target="_blank" rel="noopener noreferrer" title="Open this dataset's entity in the OpenMetadata catalog">catalog · OpenMetadata ↗</a>
+        ) : null}
+        {published ? (
+          <span className={`badge cert-${dataset.certification!.level}`} title={`Certified ${dataset.certification!.level} by ${dataset.certification!.by} on ${formatDate(dataset.certification!.at)}`} style={{ cursor: 'default' }}>
+            ✓ certified data product · {dataset.certification!.level}
+          </span>
+        ) : (
+          <span className="status-chip s-stored" title="Not yet a CERTIFIED data product — an admin certifies a promoted dataset to the Company tier with a trust badge. Says nothing about whether the data is built or shared." style={{ cursor: 'default' }}>not certified</span>
+        )}
+      </div>
+      </div>
     </ConfirmProvider>
   );
 }
@@ -1659,10 +1993,6 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
       {/* 1 ── Medallion FQNs */}
       <div className="grant-block" style={{ marginBottom: 16 }}>
         <div className="comp-label">Medallion layer FQNs</div>
-        <p className="hint" style={{ marginTop: 4 }}>
-          Read-only — the physical Iceberg tables this dataset materialises in Trino.
-          Each FQN is the single address the query engine, Cube and OPA all use.
-        </p>
         {builtLayers.length > 0 ? (
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
             {builtLayers.map((l) => {
@@ -1684,14 +2014,17 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
         )}
       </div>
 
+      {/* 1b ── Lineage — refinement + consumption chain + the transparency gate. Moved
+          out of the (simplified) Edit surface into the Developer view, where the raw
+          technical picture belongs. */}
+      <div className="grant-block" style={{ marginBottom: 16 }}>
+        <div className="comp-label">Lineage &amp; transparency</div>
+        <LineagePanel datasetId={datasetId} />
+      </div>
+
       {/* 2 ── dbt SQL artifacts */}
       <div className="grant-block" style={{ marginBottom: 16 }}>
         <div className="comp-label">dbt SQL artifacts</div>
-        <p className="hint" style={{ marginTop: 4 }}>
-          Read-only — the generated dbt model SQL files. These are the same files
-          the &ldquo;Show the code&rdquo; drawer in Publish exposes; authored here for
-          inspection without switching mode.
-        </p>
         {sqlErr ? <div className="error" style={{ marginTop: 8 }}>{sqlErr}</div> : null}
         {sqlFiles.length > 0 ? (
           sqlFiles.map(({ path, content }) => (
@@ -1712,10 +2045,6 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
       {/* 3 ── Cube model YAML */}
       <div className="grant-block" style={{ marginBottom: 16 }}>
         <div className="comp-label">Cube model YAML</div>
-        <p className="hint" style={{ marginTop: 4 }}>
-          Read-only — the generated Cube.js model delivered to the semantic layer.
-          Available only when Gold is built and the dataset is a governed asset or product.
-        </p>
         {cubeErr ? <div className="error" style={{ marginTop: 8 }}>{cubeErr}</div> : null}
         {cubeReady && cubeYaml ? (
           <pre className="codeblock" style={{ marginTop: 8, fontSize: 11, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
@@ -1736,10 +2065,6 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
       {/* 4 ── Governance / RLS summary */}
       <div className="grant-block">
         <div className="comp-label">Governance &amp; RLS summary</div>
-        <p className="hint" style={{ marginTop: 4 }}>
-          Read-only — the tier, visibility, ownership and certification that OPA enforces
-          on every query through Trino and Cube.
-        </p>
         <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 16px', fontSize: 13 }}>
           <span className="muted">Tier</span>
           <span><span className={`badge ${TIER_BADGE[dataset.tier]}`}>{TIER_WORD[dataset.tier]}</span></span>

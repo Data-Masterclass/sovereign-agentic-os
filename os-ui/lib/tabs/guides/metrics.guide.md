@@ -2,7 +2,9 @@
 
 ## What this is
 
-The Metrics tab is the OS's single source of truth for business numbers. A metric is a canonical Cube member — a named, governed definition of how a number is computed from a gold dataset. Metrics are the input to dashboards; no chart is permitted to query raw data directly. In the cross-tab spine, metrics sit between gold data and dashboards: data (Gold) → metrics → dashboards → big bets.
+The Metrics tab is the OS's single source of truth for business numbers. A metric is a canonical Cube member — a named, governed definition of how a number is computed from a dataset's business layer. Metrics are the input to dashboards; no chart is permitted to query raw data directly. In the cross-tab spine, metrics sit between the business (Gold) data layer and dashboards: data (Gold) → metrics → dashboards → big bets.
+
+In the UI, ＋ New first asks **Simple or Complex** on a two-card chooser (the formula is no longer buried in the aggregation dropdown); the pick lands in Edit, a tile opens a full-page View, ✎ Edit re-opens it. Tiles group into **Simple Metrics** (a single aggregation over a dataset) and **Complex Metrics** (a formula over this dataset's existing metrics with `[metric]` references and null-safe division, e.g. `([revenue] - [cost]) / [orders]`). Complex metrics work on any dataset with built Gold, including personal ones — no promotion needed. A metric's View shows where it is already charted — an **On dashboards** section with an **＋ Add to a dashboard** shortcut. (Via this MCP the same one-definition discipline holds; `define_metric` covers the aggregation model below, and composite formulas are authored in the Metrics tab.)
 
 ## How to build it
 

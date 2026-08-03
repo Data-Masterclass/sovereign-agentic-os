@@ -94,7 +94,7 @@ export default function LineagePanel({ datasetId }: { datasetId: string }) {
 
       {versions[0]?.columns?.length ? (
         <p className="hint" style={{ marginTop: 12 }}>
-          Column-level lineage: <span className="mono">{versions[0].columns.join(', ')}</span> flow through every layer.
+          Columns: <span className="mono">{versions[0].columns.join(', ')}</span>
         </p>
       ) : null}
 

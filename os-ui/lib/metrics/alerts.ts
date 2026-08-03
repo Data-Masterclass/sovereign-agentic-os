@@ -6,7 +6,7 @@ import type { Dataset, Measure } from '../data/index.ts';
 
 /**
  * Alerts on governed metrics. An alert sets a THRESHOLD on a metric member; on breach it
- * NOTIFIES (email/Slack/in-app) AND can TRIGGER a governed agent — an event → a LangGraph
+ * NOTIFIES (in-app) AND can TRIGGER a governed agent — an event → a LangGraph
  * run (Langfuse-traced). An alert evaluates the SAME member the explorer/dashboard/agent
  * resolve, through the SAME governed-SQL path (exploreMetric — Cube is off the read path,
  * Phase 2), AS the rule's OWNER, so it fires on exactly the number that owner sees. The
@@ -19,7 +19,9 @@ import type { Dataset, Measure } from '../data/index.ts';
  */
 
 export type Comparator = 'lt' | 'lte' | 'gt' | 'gte';
-export type Channel = 'email' | 'slack' | 'in_app';
+/** In-app is the only alert channel — email/Slack were UI fiction (no delivery path).
+ *  Legacy persisted rules carrying 'email'/'slack' are coerced to 'in_app' on load. */
+export type Channel = 'in_app';
 
 export type AlertRule = {
   id: string;
@@ -27,18 +29,28 @@ export type AlertRule = {
   member: string;
   comparator: Comparator;
   threshold: number;
+  /** Delivery channels — always ['in_app']. Kept as an array for storage compat. */
   notify: Channel[];
   /** Optional: a governed agent to trigger on breach (event → LangGraph run). */
   triggerAgent?: { systemId: string; agent: string; preset: string };
 };
 
+/**
+ * Coerce a rule's persisted `notify` to the only supported channel. Legacy rules may carry
+ * 'email'/'slack' (former UI fiction — no delivery path ever existed for them); those collapse
+ * to 'in_app'. Always returns exactly ['in_app'] so old rules keep firing, never crash.
+ */
+export function coerceChannels(_notify?: unknown): Channel[] {
+  return ['in_app'];
+}
+
 /** Build an alert on a defined metric (so the member is always the canonical one). */
 export function alertOn(
   dataset: Dataset,
   measure: Measure,
-  opts: { id: string; comparator: Comparator; threshold: number; notify: Channel[]; triggerAgent?: AlertRule['triggerAgent'] },
+  opts: { id: string; comparator: Comparator; threshold: number; notify?: readonly string[]; triggerAgent?: AlertRule['triggerAgent'] },
 ): AlertRule {
-  return { id: opts.id, member: measureMember(dataset, measure), comparator: opts.comparator, threshold: opts.threshold, notify: opts.notify, triggerAgent: opts.triggerAgent };
+  return { id: opts.id, member: measureMember(dataset, measure), comparator: opts.comparator, threshold: opts.threshold, notify: coerceChannels(opts.notify), triggerAgent: opts.triggerAgent };
 }
 
 function breaches(value: number, comparator: Comparator, threshold: number): boolean {
@@ -71,7 +83,8 @@ export function evaluateAlert(rule: AlertRule, value: number): AlertEvaluation {
   const breached = breaches(value, rule.comparator, rule.threshold);
   if (!breached) return { breached: false, value, notifications: [], agentRun: null };
   const reason = `${rule.member} = ${value} ${rule.comparator} ${rule.threshold}`;
-  const notifications = rule.notify.map((channel) => ({ channel, message: `Alert: ${reason}` }));
+  // Coerce so a legacy rule persisted with 'email'/'slack' still fires exactly one in-app note.
+  const notifications = coerceChannels(rule.notify).map((channel) => ({ channel, message: `Alert: ${reason}` }));
   const agentRun: AgentRunRequest | null = rule.triggerAgent
     ? { systemId: rule.triggerAgent.systemId, agent: rule.triggerAgent.agent, preset: rule.triggerAgent.preset, reason, traced: true }
     : null;

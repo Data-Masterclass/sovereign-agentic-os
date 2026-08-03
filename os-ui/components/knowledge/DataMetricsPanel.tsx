@@ -143,11 +143,6 @@ export default function DataMetricsPanel({
 
   return (
     <div className="dm-panel">
-      <p className="hint" style={{ marginTop: 0 }}>
-        The governed data and KPIs this business process runs on. Each link opens the
-        artifact in its own tab{canEdit ? '; link only what the process really reads or moves' : ''}.
-      </p>
-
       {section('datasets', 'Datasets', datasets, (id) => `/data?focus=${encodeURIComponent(id)}`,
         pickDataset, setPickDataset, 'No datasets linked yet.')}
       {section('metrics', 'Metrics', metrics, (id) => `/metrics?focus=${encodeURIComponent(id)}`,

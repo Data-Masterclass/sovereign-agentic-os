@@ -86,7 +86,7 @@ function MetricCard({
       title="Open this metric — explore, govern, or set an alert"
     >
       <div className="tile-top">
-        <div className="row" style={{ gap: 6, alignItems: 'center', minWidth: 0 }}>
+        <div className="row" style={{ gap: 6, alignItems: 'center', minWidth: 0, flex: 1 }}>
           {onPick ? (
             // Multi-select for bulk archive. Stop the click so ticking a card
             // doesn't also open it.
@@ -97,20 +97,31 @@ function MetricCard({
               onChange={(e) => onPick(e.target.checked)}
             />
           ) : null}
-          <span className="tile-name">{m.name}</span>
+          <span className="tile-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.name}>{m.name}</span>
         </div>
-        <div className="row" style={{ gap: 4, alignItems: 'center' }}>
+        <div className="row" style={{ gap: 4, alignItems: 'center', flex: 'none' }}>
           {showDomain ? <DomainTag domain={m.domain} /> : null}
           <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_WORD[m.tier]}</span>
         </div>
       </div>
       <div className="muted mono" style={{ fontSize: 12 }}>{m.member}</div>
+      {/* Plain-language meaning, one truncated line (full text on hover). Absent ⇒ no line,
+          so a metric without a description keeps the exact prior tile layout. */}
+      {m.description ? (
+        <div
+          className="muted"
+          style={{ fontSize: 12, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          title={m.description}
+        >
+          {m.description}
+        </div>
+      ) : null}
       <div className="tile-meta" style={{ marginTop: 'auto' }}>
         <span className="muted">{m.owner}</span>
         <span className="dot-sep">·</span>
         <span className="muted">{m.datasetName}</span>
         <span className="dot-sep">·</span>
-        <span className="badge muted">{m.type}</span>
+        <span className="badge muted" title={m.composite ? 'A formula over other metrics' : undefined}>{m.composite ? 'formula' : m.type}</span>
       </div>
       {canManage && onMove ? (
         <div className="row" style={{ gap: 6, marginTop: 4, justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
@@ -193,7 +204,9 @@ function MetricsRegistryInner({
   }, [personalNodes, domainNodes, active]);
 
   const treeItems = useMemo(
-    () => active.map((m) => ({ id: m.id, folder: m.folder, name: m.name })),
+    // Pinned to its own root (0.6.40 folder-scope rule) — without an explicit scope the
+    // tree renders each metric under BOTH roots (the Data-tab leak's sibling).
+    () => active.map((m) => ({ id: m.id, folder: m.folder, name: m.name, scope: rootOf(m) })),
     [active],
   );
 
@@ -295,9 +308,7 @@ function MetricsRegistryInner({
     <>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
         <p className="lead" style={{ marginTop: 4, flex: 1, minWidth: 280 }}>
-          Every business metric, defined once. Each card carries its single canonical
-          definition — the Cube <strong>member</strong> the explorer, dashboards and the agent
-          all resolve. Open one to explore it under your own identity, govern its tier, or set an alert.
+          Every business metric, defined once. Open one to explore, govern its tier, or set an alert.
         </p>
         <div className="row" style={{ gap: 8, marginTop: 4 }}>
           {onToggleArchived ? (
@@ -445,8 +456,14 @@ function MetricsRegistryInner({
                   ) : bulkNotice ? (
                     <div className="files-bulk"><span className="muted">{bulkNotice}</span></div>
                   ) : null}
-                  <div className="tile-grid">
-                    {shown.map((m) => (
+                  {(() => {
+                    // Simple vs Complex SUBSECTIONS: composite (formula) metrics group last.
+                    // Headers only when both kinds are present — a single-kind list stays flat.
+                    const complexMetrics = shown.filter((m) => m.composite);
+                    const simpleMetrics = shown.filter((m) => !m.composite);
+                    const renderGrid = (list: MetricSummary[]) => (
+                                        <div className="tile-grid">
+                    {list.map((m) => (
                       <MetricCard
                         key={m.id} m={m} onOpen={onOpen} scope={scope}
                         canManage={canManage(m)}
@@ -460,6 +477,17 @@ function MetricsRegistryInner({
                       />
                     ))}
                   </div>
+                    );
+                    if (complexMetrics.length === 0 || simpleMetrics.length === 0) return renderGrid(shown);
+                    return (
+                      <>
+                        <div className="section-title" style={{ marginTop: 4 }}>Simple metrics</div>
+                        {renderGrid(simpleMetrics)}
+                        <div className="section-title" style={{ marginTop: 18 }}>Complex metrics</div>
+                        {renderGrid(complexMetrics)}
+                      </>
+                    );
+                  })()}
                 </>
               )}
             </FolderLayout>
@@ -475,8 +503,7 @@ function MetricsRegistryInner({
               Archived<span className="count-pill">{archived.length}</span>
             </div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-              Archived metrics are hidden from the working registry (their definitions are retained).
-              Open one to Restore it, or Delete it permanently.
+              Hidden from the working registry — open one to Restore or Delete.
             </p>
             <div className="tile-grid">
               {archived.map((m) => <MetricCard key={m.id} m={m} onOpen={onOpen} scope={scope} canManage={false} />)}

@@ -8,6 +8,7 @@ import { goldSales } from './fixtures.ts';
 import {
   measureFromForm,
   measureFromYaml,
+  formFromMeasure,
   sameMeasure,
   filterSql,
   type MetricForm,
@@ -78,6 +79,26 @@ test('format + drill members ride onto the measure', () => {
   });
   assert.equal(m.format, 'currency');
   assert.deepEqual(m.drillMembers, ['order_id', 'region']);
+});
+
+test('a description rides onto the measure and round-trips through the form', () => {
+  const desc = 'Total money billed to customers, net of refunds.';
+  const m = measureFromForm({
+    name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: [], description: desc,
+  });
+  assert.equal(m.description, desc);
+  // Edit re-hydrates the same text.
+  assert.equal(formFromMeasure(m).description, desc);
+  // A blank/whitespace description collapses to absent (never a hollow field).
+  const bare = measureFromForm({ name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: [], description: '  ' });
+  assert.equal(bare.description, undefined);
+  assert.equal(formFromMeasure(bare).description, undefined);
+});
+
+test('sameMeasure IGNORES the description (a doc-only field, like label)', () => {
+  const withDesc = measureFromForm({ name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: [], description: 'One thing' });
+  const noDesc = measureFromForm({ name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: [] });
+  assert.ok(sameMeasure(withDesc, noDesc), 'description is documentation, not part of the artifact identity');
 });
 
 test('sameMeasure distinguishes measures that differ only in a rich field', () => {
