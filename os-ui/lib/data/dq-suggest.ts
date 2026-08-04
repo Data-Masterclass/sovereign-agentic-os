@@ -23,6 +23,12 @@ import type { ColumnProfile, Profile } from './profile.ts';
  * descriptions/rationale; this module works with no model at all (deterministic first).
  * Suggestions that duplicate a rule the dataset already has are dropped, so "Accept all"
  * is idempotent.
+ *
+ * Every suggestion also carries a DETERMINISTIC plain-language `description` — one clear
+ * sentence turned straight from the rule kind + the profile evidence (see
+ * {@link describeSuggestion}). Accepting a suggestion persists that sentence into the
+ * check's `description`, so an AI-suggested rule lands documented with no extra step and no
+ * model call. The ✨ describe-checks assistant stage still covers custom/manual rules.
  */
 
 export type SuggestedCheck = {
@@ -35,7 +41,40 @@ export type SuggestedCheck = {
   max?: number;
   /** One plain sentence citing the profile statistic that justifies the rule. */
   evidence: string;
+  /**
+   * A plain-language, human-readable description derived DETERMINISTICALLY from the rule
+   * kind + the profile evidence. Present for every kind `suggestChecks` proposes; a kind
+   * with no honest deterministic sentence leaves it absent (the ✨ describe-checks stage
+   * covers those). Persisted onto the check's `description` when the suggestion is accepted.
+   */
+  description?: string;
 };
+
+/**
+ * One clear plain-language sentence per suggested rule, derived from the rule kind + the
+ * profile evidence that justified it — no model call, no jargon. This is the honest,
+ * instant "why we suggest this" turned into documentation. A kind with no good
+ * deterministic sentence returns undefined (never filler); today every kind
+ * `suggestChecks` proposes has one.
+ */
+export function describeSuggestion(s: SuggestedCheck): string | undefined {
+  switch (s.rule) {
+    case 'not_null':
+      return `Every row must have a value in ${s.column} — the profile found no missing values.`;
+    case 'unique':
+      return `Every value in ${s.column} must be unique — the profile saw no duplicates.`;
+    case 'accepted_values': {
+      const vals = s.values ?? [];
+      if (vals.length === 0) return undefined;
+      return `Values in ${s.column} must be one of ${vals.join(', ')} — the only categories the profile observed.`;
+    }
+    case 'range':
+      if (typeof s.min !== 'number' || typeof s.max !== 'number') return undefined;
+      return `Values in ${s.column} must stay between ${s.min} and ${s.max} — the observed range.`;
+    default:
+      return undefined; // not_blank + any future kind: the ✨ describe stage covers it.
+  }
+}
 
 // A category set counts as "closed" only when it's small AND approx_distinct agrees the
 // column is low-cardinality — so a free-text column with a handful of sampled top values
@@ -126,7 +165,10 @@ export function suggestChecks(profile: Profile, existing: DataCheck[] = []): Sug
       const key = checkKey(s.rule, s.column);
       if (have.has(key) || seen.has(key)) continue; // don't re-suggest an existing/dup rule.
       seen.add(key);
-      out.push(s);
+      // Attach the deterministic description here (one place) so the accept path can persist
+      // it straight onto the check — an AI-suggested rule lands documented, no extra step.
+      const description = describeSuggestion(s);
+      out.push(description ? { ...s, description } : s);
     }
   }
   return out;

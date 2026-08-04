@@ -5,13 +5,15 @@ import { NextResponse } from 'next/server';
 import { roleModel } from '@/lib/models/roles';
 import { requireUser } from '@/lib/core/auth';
 import { getAppForUser, saveChat } from '@/lib/software/apps';
+import { scheduleRepairCheck } from '@/lib/software/ci-repair';
 import { getSnapshot } from '@/lib/software/snapshot';
 import { diffTrees, type FileChange } from '@/lib/software/build-changeset';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
 import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
-import { toolCallToLine, committedSummaryLine, type ActivityLine } from '@/lib/software/build-activity';
+import { toolCallToLine, gateLineFromStep, committedSummaryLine, type ActivityLine } from '@/lib/software/build-activity';
 import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, type ChatRunMode } from '@/lib/software/chat-modes';
 import { defineContextBlock, specPromptLines as specLines } from '@/lib/software/define-context';
+import { resolveGrantedContext } from '@/lib/software/grants-context';
 import type { BuildTarget } from '@/lib/software/build-target';
 
 export const dynamic = 'force-dynamic';
@@ -92,6 +94,7 @@ function appContext(
   },
   mode: ChatRunMode,
   target: BuildTarget | null,
+  grantedContext: string,
 ): string {
   // Governed OS frontends: every Vite-based scaffold (vite-os, sovereign-app,
   // website, empty) — the vendored SDK/UI brief applies to all of them.
@@ -113,6 +116,11 @@ function appContext(
     '',
     defineContextBlock(app),
   ];
+
+  // The REAL granted context (DLS-scoped): the granted datasets' columns, knowledge,
+  // metrics, files and connections, so generated code targets the real data plane —
+  // exact column names + metric members, never invented. Empty grants ⇒ '' (skipped).
+  if (grantedContext) lines.push('', grantedContext);
 
   // Governed-frontend apps talk to the OS only through the OS-client SDK — teach
   // the harness the real SDK surface + scaffold conventions so generated code is
@@ -245,6 +253,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // before/after changeset a Build turn produced (the harness commits through
   // `commitToApp`, which updates this same per-app snapshot).
   const before = getSnapshot(app.id);
+  // Resolve the app's granted context ONCE (async, DLS-scoped as the caller) before the
+  // streamed run, so the build agent gets the real data plane it was granted. Empty ⇒ ''.
+  const grantedContext = await resolveGrantedContext(app.grants, user);
   // Per-stage MODEL TIER (Software tab policy): plan (Design) / test / review run on the
   // REASONING model — the spec-drafting, verification and review reasoning; build (code
   // GENERATION) runs on STANDARD — the standard model does the bulk file writing and is
@@ -289,7 +300,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           user,
           tab: 'software',
           messages: clean,
-          extraContext: appContext(app, mode, target),
+          extraContext: appContext(app, mode, target, grantedContext),
           // This run is scoped to THIS app: bind its appId into every tool call so the
           // model never has to repeat it (an omitted/empty id is filled in, not 404'd —
           // the `commit({})` → not_found fix) and a mismatched id is rejected loudly.
@@ -312,6 +323,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           },
           onPlan: (plan) => send({ type: 'plan', text: plan }),
           onStep: (step) => {
+            // The verify-before-commit COMPILE GATE runs inside commitToApp, so it is
+            // not its own tool call — surface its recorded outcome as its OWN feed step
+            // ("compile check ✓ / ✗ N errors / skipped") before the commit line.
+            const gateLine = gateLineFromStep(step);
+            if (gateLine) send({ type: 'activity', line: gateLine });
             const line: ActivityLine = toolCallToLine(step);
             // `raw` carries the real tool I/O for the Builders-only "show details"
             // affordance; the client keeps it hidden by default.
@@ -325,6 +341,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         // A closing activity line summarizing the real committed changeset.
         const summary = mode === 'build' ? committedSummaryLine(app.name, changes) : null;
         if (summary) send({ type: 'activity', line: { tool: 'commit', text: summary, isError: false } });
+        // PHASE C — if this build turn committed, schedule a ONE-SHOT best-effort CI check
+        // ~2.5 min out (no cron here). Its failing branch fires the bounded auto-repair.
+        // A pod restart loses the pending timer — acceptable (the next on-load refresh
+        // re-detects any failure). Skipped for a no-op turn or a non-live app.
+        if (mode === 'build' && changes.length > 0 && app.mode === 'live') {
+          scheduleRepairCheck(app.id);
+        }
       } catch (e) {
         if (e instanceof AssistantNotConfiguredError) {
           content = `(${e.message})`;

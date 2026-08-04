@@ -31,6 +31,7 @@ Two design rules hold throughout:
 | `lifecycle.ts` | Archive, lineage-aware delete, Use-as-Data, consume a granted resource (no raw creds). | `archiveApp`, `unarchiveApp`, `deleteApp`, `dependentsOf`, `useAsData`, `consumeResource` |
 | `server.ts` | The live/offline-mock dual + the single convergent commit + the four front-door authors. | `pickBackend`, `forgejoReachable`, `commitToApp`, `authorThroughFrontDoor`, `snapshotFiles`/`getSnapshot` |
 | `platform-mcp.ts` | Front door #2 — full UI parity, delegated identity, never a back door. | `callPlatformMcp`, `PLATFORM_MCP_TOOLS`, `platformMcpToolNames`, `mcpGetApp` |
+| `ci-repair.ts` | Redesign Phase C — the bounded CI→repair feedback loop. On a recorded FAILED run it fetches the log tail + failing changeset and opens ONE reasoning-tier repair turn (fix only what the log names, `repair(ci):` commit, compile gate still applies). At most once per run; a re-fail of the repaired commit surfaces honestly, never loops. | `cleanCiLog`, `repairSeed`, `maybeAutoRepair`, `scheduleRepairCheck` |
 
 The home-of-record `App` (`lib/apps.ts`) carries the fields this module reads and
 writes: `status`, `deploy` (`{ state, previewUrl, approved, reviewCardId }`),

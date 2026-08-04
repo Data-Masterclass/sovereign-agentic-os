@@ -11,7 +11,8 @@ import { roleModel } from '@/lib/models/roles';
 import { availableContext, type AvailableContext } from '@/lib/software/available-context';
 import { normalizeAssistantReply } from '@/lib/software/assistant-suggestions';
 import { defineContextBlock } from '@/lib/software/define-context';
-import { CONTEXT_KINDS, type ContextKind } from '@/lib/core/context-grants';
+import { resolveGrantedContext } from '@/lib/software/grants-context';
+import { CONTEXT_KINDS, type ContextGrants, type ContextKind } from '@/lib/core/context-grants';
 
 export const dynamic = 'force-dynamic';
 
@@ -176,6 +177,7 @@ function contextBlock(
     mcpTools: { name: string; write: boolean }[];
   },
   available: AvailableContext | null,
+  grantedContext: string,
 ): string {
   const surface = [app.surface.ui ? 'UI' : '', app.surface.api ? 'API' : ''].filter(Boolean).join(' + ') || 'unknown';
   const pipeline = Object.entries(app.pipeline).map(([k, v]) => `${k}=${v}`).join(', ') || '(no pipeline yet)';
@@ -192,9 +194,12 @@ function contextBlock(
       return [
         head,
         defineContextBlock({ name: app.name, description: app.description, template: app.template, purpose: app.purpose }),
+        // The REAL granted artifacts (DLS-scoped) so specs reference real columns/members,
+        // never invented ones. Empty grants ⇒ '' (filtered out, zero prompt cost).
+        grantedContext,
         'Current epics:',
         epicsDigest(app.epics),
-      ].join('\n');
+      ].filter(Boolean).join('\n');
     case 'build':
       return head;
     case 'test':
@@ -241,9 +246,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const available =
       stage === 'define' ? await availableContext(user, SW_GRANT_KINDS) : null;
 
+    // Design grounds the spec in the REAL granted context (data schema, knowledge, metrics,
+    // files, connections), resolved AS the caller so it never leaks anything they can't see.
+    const grantedContext =
+      stage === 'design' ? await resolveGrantedContext(app.grants as ContextGrants, user) : '';
+
     const messages = [
       { role: 'system' as const, content: systemFor(stage) },
-      { role: 'user' as const, content: contextBlock(stage, app, available) },
+      { role: 'user' as const, content: contextBlock(stage, app, available, grantedContext) },
       ...turns,
     ];
 

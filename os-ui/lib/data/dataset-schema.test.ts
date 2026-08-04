@@ -126,6 +126,17 @@ test('origin is byte-stable: omitted unless curated, round-trips when curated', 
   assert.equal(parseDataset(yaml).origin, 'curated');
 });
 
+test('docsProvenance is byte-stable: omitted unless ai-auto, round-trips when set', () => {
+  // Human-authored/empty docs serialize EXACTLY as before — no `docsProvenance:` key — so
+  // no pre-existing record churns.
+  const plain = serializeDataset(sample());
+  assert.ok(!/(^|\n)docsProvenance:/.test(plain), 'human/empty docs must not emit docsProvenance');
+  // An auto-drafted doc is written and survives a round-trip.
+  const yaml = serializeDataset(sample({ docsProvenance: 'ai-auto' }));
+  assert.match(yaml, /(^|\n)docsProvenance: ai-auto/);
+  assert.equal(parseDataset(yaml).docsProvenance, 'ai-auto');
+});
+
 test('bad shape throws a DatasetError (store never holds garbage)', () => {
   assert.throws(() => parseDataset({ tier: 'nonsense' }), DatasetError);
   assert.throws(() => parseDataset({ grants: [{ grantee: { kind: 'bogus', id: 'x' } }] }), DatasetError);

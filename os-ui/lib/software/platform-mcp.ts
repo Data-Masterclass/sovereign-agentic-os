@@ -23,6 +23,7 @@ import { archiveApp, deleteApp, useAsData, consumeResource } from './lifecycle.t
 import { authorThroughFrontDoor, commitToApp } from './server.ts';
 import type { ConsumedResource, SurfaceDeclaration } from './model.ts';
 import { asBuildTarget, buildGate, stageDirective, targetProgress, resolveTarget } from './mcp-stages.ts';
+import { resolveGrantedContext } from './grants-context.ts';
 import { normalizeImprovement, type Improvement } from './improvements.ts';
 
 /**
@@ -179,13 +180,14 @@ export async function callPlatformMcp(
       if (resolved.notFound) throw withStatus(new Error(`No epic/story matches that target on ${app.name}.`), 404);
       const gate = buildGate(app, target);
       if (!gate.ok) throw withStatus(new Error(gate.reason), 409);
+      const buildGrants = await resolveGrantedContext(app.grants, user);
       result = {
         stage: 'build',
         appId: app.id,
         target,
         tier: 'standard',
         gate: 'passed',
-        directive: stageDirective(app, target, 'build'),
+        directive: stageDirective(app, target, 'build', buildGrants),
         progress: targetProgress(app, target),
         code: await committedFiles(appId, user),
         next: "Author the code per the directive, then `commit` — the story is marked built by the SUCCESSFUL commit itself (files landed), not by a status you set. Then verify_software.",
@@ -210,12 +212,13 @@ export async function callPlatformMcp(
             .map((f) => normalizeImprovement(f, validStory))
             .filter((r): r is Improvement => r !== null)
         : [];
+      const testGrants = await resolveGrantedContext(app.grants, user);
       result = {
         stage: 'test',
         appId: app.id,
         target,
         tier: 'reasoning',
-        directive: stageDirective(app, target, 'test'),
+        directive: stageDirective(app, target, 'test', testGrants),
         code: await committedFiles(appId, user),
         refinements,
         refinementsNote:

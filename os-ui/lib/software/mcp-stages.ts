@@ -140,10 +140,19 @@ function storyLines(epic: AppEpic, story: AppStory): string[] {
  * build-chat route assembles, so an external agent builds/verifies IDENTICALLY. `mode`
  * is 'build' (Build stage) or 'test' (Test stage); the tier note is derived, not set.
  */
-export function stageDirective(app: App, target: BuildTarget, mode: 'build' | 'test'): string {
+export function stageDirective(
+  app: App,
+  target: BuildTarget,
+  mode: 'build' | 'test',
+  grantedContext = '',
+): string {
   const resolved = resolveTarget(app, target);
   const lines: string[] = [
     defineContextBlock(app),
+    // The REAL granted context (data schema / knowledge / metrics / files / connections),
+    // resolved DLS-scoped as the caller by the tool, so an external agent builds/verifies
+    // against the real data plane — exact column names + members, never invented. Empty ⇒ skip.
+    ...(grantedContext ? ['', grantedContext] : []),
     '',
     ...modeDirective(mode as ChatRunMode, app.id),
     '',

@@ -301,6 +301,15 @@ export type Dataset = {
    *  ingest, so every pre-existing record serializes exactly as before (byte-stable, zero
    *  migration; the `cubeNamespaced` precedent). Purely descriptive: no gate reads it. */
   origin?: 'ingest' | 'curated';
+  /** DOCS PROVENANCE marker: `'ai-auto'` when the dataset's documentation (description +
+   *  column notes) was DRAFTED automatically after ingestion (background LLM, grounded in
+   *  the real schema/profile) and NOT yet touched by a human. The Documentation section
+   *  shows a subtle "AI-drafted — review in Edit → Documentation" note while this is set.
+   *  CLEARED the moment a human saves the Documentation section (`setDocs` from the docs
+   *  route), so a reviewed/edited doc drops the marker. ABSENT ⇒ human-authored or empty
+   *  docs (every dataset before this field existed) — omitted from the yaml (byte-stable,
+   *  zero migration; the `origin`/`gitBacked` precedent). */
+  docsProvenance?: 'ai-auto';
   /** STALE-DOMAIN-TABLE marker (Northpeak fix). Set true when a PROMOTED dataset's
    *  personal-lane Gold is REBUILT but the governed domain table (`iceberg.<domain>.gold_<slug>`
    *  — the FQN Cube + every consumer reads) was not re-materialized in the same act, so the
@@ -677,6 +686,8 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   const domainTableStale = doc.domainTableStale === true ? true : undefined;
   // TWO-PATH create: only 'curated' is stored; absent ⇒ ingest (every pre-existing record).
   const origin = doc.origin === 'curated' ? ('curated' as const) : undefined;
+  // Auto-docs: only 'ai-auto' is stored; absent ⇒ human-authored/empty (every pre-existing record).
+  const docsProvenance = doc.docsProvenance === 'ai-auto' ? ('ai-auto' as const) : undefined;
 
   return {
     version: doc.version !== undefined ? String(doc.version) : '1',
@@ -706,6 +717,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     ...(gitBacked ? { gitBacked } : {}),
     ...(domainTableStale ? { domainTableStale } : {}),
     ...(origin ? { origin } : {}),
+    ...(docsProvenance ? { docsProvenance } : {}),
   };
 }
 
@@ -788,6 +800,8 @@ export function serializeDataset(d: Dataset): string {
   if (d.domainTableStale) doc.domainTableStale = true;
   // Omit-unless-curated (byte-stable): the classic ingest path serializes exactly as before.
   if (d.origin === 'curated') doc.origin = 'curated';
+  // Omit-unless-ai-auto (byte-stable): human-authored/empty docs serialize exactly as before.
+  if (d.docsProvenance === 'ai-auto') doc.docsProvenance = 'ai-auto';
   return yaml.dump(doc, { lineWidth: 100, noRefs: true });
 }
 

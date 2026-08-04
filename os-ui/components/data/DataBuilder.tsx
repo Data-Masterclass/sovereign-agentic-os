@@ -51,8 +51,9 @@ type QualityBadge = 'passing' | 'failing' | 'unknown';
 type HealthScore = { score: number | null; status: QualityBadge; passing: number; failing: number; notRun: number };
 /** One persisted run's health point — mirrors healthTrend from lib/data/dq-results. */
 type TrendPoint = { ranAt: string; score: number | null; badge: QualityBadge };
-/** A deterministic profile→rule proposal — mirrors SuggestedCheck from lib/data/dq-suggest. */
-type SuggestedCheck = { rule: DataCheckRule; column: string; values?: string[]; min?: number; max?: number; evidence: string };
+/** A deterministic profile→rule proposal — mirrors SuggestedCheck from lib/data/dq-suggest.
+ *  `description` is the deterministic plain-language sentence that lands on the check when accepted. */
+type SuggestedCheck = { rule: DataCheckRule; column: string; values?: string[]; min?: number; max?: number; evidence: string; description?: string };
 /** A heuristic-monitor toggle — mirrors MonitorKind from lib/data/dq-monitors. */
 type MonitorKind = 'freshness' | 'volume' | 'schema';
 type MonitorToggle = { kind: MonitorKind; enabled: boolean };
@@ -172,6 +173,9 @@ type Dataset = {
   certification?: Certification;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
+  /** 'ai-auto' when the documentation was AUTO-DRAFTED after ingestion and not yet reviewed
+   *  by a human — drives the subtle "AI-drafted — review…" note. Cleared on a human save. */
+  docsProvenance?: 'ai-auto';
 };
 
 /** Tile tier → the OS-wide lifecycle visibility (drives the delete gate). */
@@ -646,7 +650,7 @@ export default function DataBuilder({
 
   const addRuleWith = useCallback(async (
     kind: DataCheckRule, column: string,
-    extra: { values?: string[]; min?: number; max?: number } = {},
+    extra: { values?: string[]; min?: number; max?: number; description?: string } = {},
   ) => {
     if (!column.trim()) { setChecksErr('Pick a column for the rule.'); return; }
     setChecksErr(''); setChecksBusy(true);
@@ -750,9 +754,10 @@ export default function DataBuilder({
   const acceptSuggestion = useCallback(async (s: SuggestedCheck) => {
     setSuggestBusy(true);
     try {
-      const extra: { values?: string[]; min?: number; max?: number } = {};
+      const extra: { values?: string[]; min?: number; max?: number; description?: string } = {};
       if (s.rule === 'accepted_values' && s.values) extra.values = s.values;
       if (s.rule === 'range') { if (typeof s.min === 'number') extra.min = s.min; if (typeof s.max === 'number') extra.max = s.max; }
+      if (s.description) extra.description = s.description; // land documented — no extra step.
       await addRuleWith(s.rule, s.column, extra);
       setSuggestions((prev) => prev.filter((x) => !(x.rule === s.rule && x.column === s.column)));
     } finally {
@@ -765,9 +770,10 @@ export default function DataBuilder({
     setAcceptingAll(true);
     try {
       for (const s of suggestions) {
-        const extra: { values?: string[]; min?: number; max?: number } = {};
+        const extra: { values?: string[]; min?: number; max?: number; description?: string } = {};
         if (s.rule === 'accepted_values' && s.values) extra.values = s.values;
         if (s.rule === 'range') { if (typeof s.min === 'number') extra.min = s.min; if (typeof s.max === 'number') extra.max = s.max; }
+        if (s.description) extra.description = s.description; // land documented — no extra step.
         await addRuleWith(s.rule, s.column, extra);
       }
       setSuggestions([]);
@@ -1299,6 +1305,13 @@ export default function DataBuilder({
         {mode === 'edit' ? (
           <div {...anchorAttr(ANCHORS.data.document)} style={{ order: 2 }}>
             <div className="section-title" style={{ marginTop: 0 }}>Documentation</div>
+            {/* Provenance: docs auto-drafted after ingestion, awaiting a human review. Cleared
+                the moment anyone saves the section (the write drops docsProvenance). */}
+            {dataset.docsProvenance === 'ai-auto' ? (
+              <p className="muted" style={{ fontSize: 12.5, margin: '0 0 12px', fontStyle: 'italic' }}>
+                ✨ AI-drafted from the data — review{canEdit ? ' and save' : ''} to confirm.
+              </p>
+            ) : null}
             {/* AI, built into the flow: draft the documentation from the schema. */}
             {canEdit ? (
               <div className="row" style={{ justifyContent: 'flex-end', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 14 }}>

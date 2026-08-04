@@ -28,7 +28,7 @@ import {
   refreshActionsStage,
   dirListing,
 } from '@/lib/software/apps';
-import { forgejoReachable, getSnapshot } from '@/lib/software/server';
+import { forgejoReachable, getSnapshot, hydrateSnapshot } from '@/lib/software/server';
 import { getReviewCard, listReviewCards, PREVIEW_PENDING_NOTE } from '@/lib/software/review';
 import {
   listConnectionsForUser,
@@ -337,6 +337,9 @@ export const waveBReadTools: McpTool[] = [
       }
       // Offline: the last tree committed through the governed commit door (or the
       // template seed for a fresh app) — labelled honestly, never a fabrication.
+      // Hydrate the durable mirror first so this survives a pod restart (the tree is
+      // no longer lost when the process that committed it is gone).
+      await hydrateSnapshot(app.id);
       const tree = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
       const note = 'Forgejo is unreachable — this is the app’s last governed-commit tree (or the template seed for a fresh app), labelled offline-mock.';
       if (!path) {

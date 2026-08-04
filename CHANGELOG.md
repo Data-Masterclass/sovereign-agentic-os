@@ -13,6 +13,112 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.60] — 2026-08-03
+
+### Added
+- **Bounded CI auto-repair (redesign Phase C).** The compile gate (Phase A)
+  stops compile errors pre-commit, but a build can still go red in CI for a
+  build-env-only reason (a missing asset, a dependency that won't install, an
+  imported-repo dep the gate honestly skips). Those failures used to just sit
+  there — honest but inert. Now, when the pipeline records a FAILED run, the OS
+  fetches the failing run's log tail (timestamps + docker layer noise stripped,
+  error-dense tail capped) plus the failing commit's changed-file list, and
+  opens exactly ONE bounded REPAIR build turn (reasoning model) instructed to
+  fix ONLY what the log names, then commit — the compile gate still applies and
+  the commit is prefixed `repair(ci):`. Bounds are strict: at most one
+  auto-repair per failed run, and if the repaired commit fails CI again it does
+  NOT loop — the surface says so plainly ("auto-repair attempted, CI still
+  failing — needs a human/build turn"). Every surface labels the spend
+  honestly ("auto-repair turn (reasoning model)"); an app-level opt-out
+  (default on) turns it off. Detection rides the existing status refresh (any
+  app view) plus a best-effort in-process one-shot check ~2.5 min after a build
+  commit — no cron, so a pod restart simply defers to the next on-load refresh.
+
+## [os-ui 0.6.59] — 2026-08-03
+
+### Added
+- **Verify-before-commit (redesign Phase A).** Every build commit is compiled
+  IN-PROCESS before anything is written: TypeScript against the real vendored
+  @sovereign-os/ui + app-sdk types, then an esbuild bundle pass — ~0.4-0.7s.
+  A red check rejects the commit with exact file:line diagnostics fed back
+  into the same build turn (and counts toward the bounded reasoning
+  escalation). Non-compiling app code can no longer be committed, from the UI
+  or MCP. CI becomes confirmation, not discovery.
+- **App membership (least-privilege).** The generated app's Admin page listed
+  the entire domain directory as if it belonged to the app. Apps now carry
+  explicit membership: the creator is the sole implicit admin; app admins add
+  users by name (admin | member) through a governed route. Entry to deployed
+  apps remains domain-wide by design — now stated honestly.
+
+## [os-ui 0.6.58] — 2026-08-03
+
+### Fixed
+- **"Repository missing" banner clears after a recovery.** The pipeline's
+  forgejo flag downgraded honestly on a 404 but nothing upgraded it back when
+  the repo answered again — Publish kept claiming the repo was missing while
+  commits, CI and the live app were all green. The status refresh now flips
+  the flag symmetrically.
+
+## [os-ui 0.6.57] — 2026-08-03
+
+### Added
+- **Suggested quality checks arrive documented.** Accepting an AI-suggested
+  rule persists a plain-language description derived deterministically from
+  the profile evidence ("Every row must have a value in <col> — the profile
+  found no missing values."). No model call, no extra step; the ✨ describe
+  stage remains for custom rules.
+- **Datasets document themselves after ingestion.** On the first successful
+  Bronze, an AI draft (grounded in the real landed schema + preview) fills the
+  EMPTY description and column notes in the background — never overwriting
+  human words, marked "✨ AI-drafted from the data — review to confirm" until
+  a human save clears it; an unreachable model skips silently.
+
+### Fixed
+- **Heal adopts orphaned repositories.** When a repo's files exist on
+  Forgejo's disk but its database record is gone (disk/DB desync), Heal now
+  ADOPTS the repo — preserving every commit — instead of failing to create
+  over the existing files; re-scaffold only when truly absent; specific
+  errors for credential or unadoptable states. Auto-heal-on-commit and the
+  durable file mirror inherit this.
+
+### Changed
+- **Build progress lives under the button.** The live stepper (Plan →
+  Generate → Commit → Preview), current-step line and STOP moved to a fixed
+  panel under the Build button — no longer scrolling away with the chat; the
+  transcript keeps the messages, plan and activity feed.
+
+## [os-ui 0.6.56] — 2026-08-03
+
+### Added
+- **Context grants are now real.** Granting data, knowledge, files, metrics or
+  connections to a software app finally does what the panel implies: the
+  Design assistant and every Build agent receive a "Granted context" block
+  with the ACTUAL content — dataset schemas and measures, knowledge text,
+  file bodies, metric definitions, connection descriptors (never secrets) —
+  resolved as you, DLS-scoped, token-budgeted with loud truncation, and the
+  directive to build against the real names instead of inventing fields. At
+  deploy, grants compile into the app's OPA tool access (read-only data-plane
+  tools added to the template baseline; recompiled the moment grants change;
+  fail-closed with no grants).
+
+### Fixed
+- **App source code is now durably mirrored — a lost repo is fully recoverable.**
+  Previously an app's file tree lived only in Forgejo plus an in-process
+  `globalThis` snapshot that died on every pod restart; the app record stored
+  file NAMES only, so a vanished repo meant unrecoverable source (two built
+  stories were lost live on northpeak-products). Every verified commit now
+  write-throughs the app's FULL current tree (path + content) to a durable
+  OpenSearch mirror (`os-app-files`, one doc per app), on the SAME best-effort
+  mirror infrastructure the app record uses. The offline `read_app_files` tree,
+  the deploy security scan's offline fallback, the instant preview and
+  `healAppRepo`'s restore source all hydrate from this mirror, so a pod restart
+  no longer loses the tree. `healAppRepo` now restores every mirrored file on top
+  of the scaffold — a lost repo comes back with its real code, even after the
+  process that built it is gone. Legacy apps with no mirror doc are lazily
+  backfilled from the next successful live-tree read or commit; an app whose repo
+  AND mirror are both gone stays honestly template-only (no fabrication). Respects
+  the honest-commit contract: a rejected commit persists no mirror doc.
+
 ## [os-ui 0.6.55] — 2026-08-03
 
 ### Fixed

@@ -587,6 +587,22 @@ test('VERSIONS: a missing version number is refused (404)', () => {
   assert.throws(() => restoreDatasetVersion(d.id, amir, 99), (e: DatasetError) => e.status === 404);
 });
 
+// ------------------------------------------------- auto-docs provenance (setDocs) ---
+
+test('AUTO-DOCS: setDocs with provenance ai-auto marks the dataset; a human save clears it', () => {
+  const d = createDataset(amir, { name: 'Orders' });
+  // An auto-doc write stamps the provenance marker.
+  const drafted = setDocs(d.id, amir, { description: 'AI drafted' }, { provenance: 'ai-auto' });
+  assert.equal(drafted.docsProvenance, 'ai-auto');
+  assert.equal(getDataset(d.id, amir).docsProvenance, 'ai-auto');
+  // The auto write is attributed 'ai-auto-docs' in the version history (honest audit).
+  assert.equal(listDatasetVersions(d.id, amir)[0].author, 'ai-auto-docs');
+  // A human save (no provenance option) CLEARS the marker.
+  const human = setDocs(d.id, amir, { description: 'human reviewed' });
+  assert.equal(human.docsProvenance, undefined);
+  assert.equal(getDataset(d.id, amir).docsProvenance, undefined);
+});
+
 // ------------------------------------------------------ #155 domain-namespaced cube ---
 
 test('#155 same dataset name is still BLOCKED within a domain (409)', () => {

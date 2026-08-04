@@ -36,9 +36,14 @@ function esbuildWasmDir(): string {
   return dirname(require.resolve('esbuild-wasm/package.json'));
 }
 
-/** One lazy esbuild-wasm init for the process (Node mode: uses the bundled wasm). */
+/**
+ * One lazy esbuild-wasm init for the process (Node mode: uses the bundled wasm).
+ * EXPORTED so the commit-path compile gate (compile-gate.ts) shares the SAME
+ * initialised instance instead of paying a second wasm compile — esbuild-wasm
+ * throws on a duplicate `initialize()`, so one memo must own it process-wide.
+ */
 let initPromise: Promise<typeof import('esbuild-wasm')> | null = null;
-function esbuild(): Promise<typeof import('esbuild-wasm')> {
+export function getEsbuild(): Promise<typeof import('esbuild-wasm')> {
   if (!initPromise) {
     initPromise = (async () => {
       const mod = await import('esbuild-wasm');
@@ -58,7 +63,7 @@ let corePromise: Promise<string> | null = null;
 function buildCore(): Promise<string> {
   if (!corePromise) {
     corePromise = (async () => {
-      const esb = await esbuild();
+      const esb = await getEsbuild();
       const entry = [
         "import * as React from 'react';",
         "import * as JsxRuntime from 'react/jsx-runtime';",

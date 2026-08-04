@@ -3,9 +3,11 @@
  */
 import 'server-only';
 import { queryRun } from '@/lib/infra/governed';
+import { assistantComplete } from '@/lib/assistant/complete';
 import type { Role } from '@/lib/core/session';
 import { emptyVersions, type Dataset } from './dataset-schema.ts';
 import { getDataset, buildVersion, setDocs } from './store.ts';
+import { autoDocumentAfterIngest, type IngestGrounding } from './auto-docs.ts';
 import { stageArtifact } from './panels.ts';
 import { personalSchema, bronzeTarget } from './store-fqn.ts';
 import { putObject, uploadObjectKey } from './object-store.ts';
@@ -157,7 +159,28 @@ export async function ingestAndRegisterBronze(
     updated.columns.length === 0 && report.columns.length > 0
       ? setDocs(datasetId, user, { columns: report.columns.map((c) => ({ name: c.name, description: '' })) })
       : updated;
+  // AUTO-DOCUMENT after the FIRST successful Bronze: draft the description + column notes
+  // from the REAL landed schema + preview, grounded + honest, and fill ONLY empty fields
+  // (never a human's words). NON-BLOCKING — the ingest response never waits on the LLM: we
+  // fire-and-forget so `final` is returned immediately; the docs land a moment later and the
+  // Documentation section refreshes to show them (marked "AI-drafted — review…"). Skips
+  // silently when the model is unreachable or the docs are already written.
+  void autoDocumentAfterIngest(
+    final,
+    ingestGrounding(final.name, report),
+    {
+      complete: (messages) => assistantComplete(messages, { user: { id: user.id, domains: user.domains } }),
+      // Persist through the SAME governed docs write, attributed 'ai-auto-docs' + marked
+      // provenance so the UI can show the review note (cleared when a human saves).
+      persist: (docs) => { setDocs(datasetId, user, docs, { provenance: 'ai-auto' }); },
+    },
+  ).catch(() => { /* fire-and-forget: never surface an auto-doc failure to the ingest caller */ });
   return { ok: true, report, dataset: final };
+}
+
+/** Shape the ingest report into the grounding the auto-docs draft reads (real schema + preview). */
+function ingestGrounding(name: string, report: IngestReport): IngestGrounding {
+  return { name, columns: report.columns, preview: report.preview };
 }
 
 /** Serialize a preview grid to CSV bytes (RFC-4180 quoting) so an in-session extract

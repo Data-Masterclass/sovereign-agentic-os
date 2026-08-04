@@ -9,7 +9,8 @@
  *  2. AppShell layout — src/App.tsx wears @sovereign-os/ui AppShell with a nav.
  *  3. OS-delegated identity — whoami-based provider, signed-out screen, no local auth.
  *  4. Domain/tenancy — owning-domain derivation + My/Domain scope helpers.
- *  5. Admin section — domain_admin-gated, read-only OS user list from /api/users/domain.
+ *  5. Admin section — domain_admin-gated; lists THIS app's membership (owner + added
+ *     users) from /api/apps/by-slug/<slug>/members, with add/remove for app admins.
  *  6. MCP top-bar link — deterministic /connections?focus=app-<slug> deep link.
  *  Plus: the README guide doubles as build-assistant docs, and infra parity with vite-os.
  */
@@ -126,11 +127,18 @@ test('sovereign-app scaffold: scope helpers mirror My/Domain and stamp owner+dom
 
 // ---------------------------------------------------------------- 4. Admin section --
 
-test('sovereign-app scaffold: admin section is role-gated and read-only over the OS', () => {
+test('sovereign-app scaffold: admin section is role-gated and lists THIS app\'s membership (not the OS directory)', () => {
   const admin = byPath('src/template/pages/Admin.tsx');
   assert.match(admin, /roleAtLeast\(role, 'domain_admin'\)/, 'domain_admin floor (roleAtLeast, not an exact set)');
-  assert.match(admin, /\/api\/users\/domain/, 'lists users from the governed OS directory route');
-  assert.match(admin, /managed in the Sovereign OS/, 'says management stays in the OS');
+  // The membership surface is the app's OWN members route, keyed by the baked slug —
+  // NEVER the whole-domain user directory that leaked every cohort account.
+  assert.match(admin, /\/api\/apps\/by-slug\/\$\{encodeURIComponent\(APP_SLUG\)\}\/members/, 'lists the app\'s own membership');
+  assert.doesNotMatch(admin, /\/api\/users\/domain/, 'does NOT list the whole OS domain directory');
+  assert.match(admin, /App members/, 'the section is the app\'s members, not "who can access"');
+  // App admins can add/remove — gated client-side by canManage (the route re-checks).
+  assert.match(admin, /canManage/, 'add/remove affordances gate on canManage');
+  assert.match(admin, /method: 'POST'/, 'can add a member');
+  assert.match(admin, /method: 'DELETE'/, 'can remove a member');
   const shell = byPath('src/template/shell.tsx');
   assert.match(shell, /roleAtLeast\(user\.role, 'domain_admin'\)/, 'nav gates Admin at domain_admin+');
 });

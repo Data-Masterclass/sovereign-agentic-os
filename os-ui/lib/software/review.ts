@@ -22,7 +22,7 @@ import {
 } from '@/lib/governance/approvals';
 import { securityScan } from './scan.ts';
 import { resolveSurface } from './metadata.ts';
-import { getSnapshot, snapshotFiles } from './snapshot.ts';
+import { getSnapshot, snapshotFiles, hydrateSnapshot } from './snapshot.ts';
 import { deployApp, runnerStatus, type RunnerApp, type RunnerOpts, type RunnerOutcome, type RunnerStatus } from './runner.ts';
 import { roleAtLeast } from '@/lib/core/session';
 import { config } from '@/lib/core/config';
@@ -201,9 +201,13 @@ function diffFromFiles(files: ScaffoldFile[], changed?: DiffSummary['files']): D
 async function appFilesForScan(app: App): Promise<{ files: ScaffoldFile[]; source: 'live-repo' | 'snapshot' }> {
   const live = await liveRepoFiles(app);
   if (live) {
+    // Also durably backfills the mirror (heal-forward for legacy apps).
     snapshotFiles(app.id, live); // keep the offline fallback in step with reality
     return { files: live, source: 'live-repo' };
   }
+  // Offline: hydrate the durable mirror first so a scan after a restart sees the
+  // app's REAL last committed tree, not just the template seed.
+  await hydrateSnapshot(app.id);
   return { files: getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug), source: 'snapshot' };
 }
 

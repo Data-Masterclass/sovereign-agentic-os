@@ -745,6 +745,7 @@ export function setDocs(
   id: string,
   user: Principal,
   docs: { description?: string; columns?: ColumnDoc[] },
+  opts: { provenance?: 'ai-auto' } = {},
 ): Dataset {
   const rec = get(id);
   const d = editOf(rec, user);
@@ -752,7 +753,12 @@ export function setDocs(
   if (docs.columns !== undefined) {
     d.columns = docs.columns.filter((c) => c.name.trim()).map((c) => ({ name: c.name.trim(), description: c.description ?? '' }));
   }
-  persist(rec, d, { author: user.id, summary: 'edit docs' });
+  // PROVENANCE: an AI auto-doc write STAMPS 'ai-auto' (so the UI shows "AI-drafted —
+  // review…"). Any OTHER setDocs — every human save through the docs route — CLEARS the
+  // marker, so a reviewed/edited doc drops it. Attribute the auto write in the audit log
+  // ('ai-auto-docs') so the version history reads honestly.
+  d.docsProvenance = opts.provenance === 'ai-auto' ? 'ai-auto' : undefined;
+  persist(rec, d, { author: opts.provenance === 'ai-auto' ? 'ai-auto-docs' : user.id, summary: 'edit docs' });
   return d;
 }
 

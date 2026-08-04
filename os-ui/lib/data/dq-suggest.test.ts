@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { suggestChecks } from './dq-suggest.ts';
+import { suggestChecks, describeSuggestion, type SuggestedCheck } from './dq-suggest.ts';
 import type { ColumnProfile, Profile } from './profile.ts';
 import type { DataCheck } from './dataset-schema.ts';
 
@@ -85,6 +85,60 @@ test('a numeric column with observed min/max ⇒ range', () => {
 
 test('an empty table proves nothing — no suggestions', () => {
   assert.deepEqual(suggestChecks(profile(0, [col({ name: 'x', nulls: 0, distinct: 0 })])), []);
+});
+
+// ── Deterministic descriptions: each rule kind lands with its own plain-language sentence ──
+
+test('not_null suggestion carries a deterministic description naming the column', () => {
+  const s = suggestChecks(profile(100, [col({ name: 'order_id', nulls: 0, distinct: 50 })]));
+  const nn = s.find((x) => x.rule === 'not_null')!;
+  assert.equal(nn.description, 'Every row must have a value in order_id — the profile found no missing values.');
+});
+
+test('unique suggestion carries a deterministic description', () => {
+  const s = suggestChecks(profile(100, [col({ name: 'order_id', nulls: 0, distinct: 100 })]));
+  const u = s.find((x) => x.rule === 'unique')!;
+  assert.equal(u.description, 'Every value in order_id must be unique — the profile saw no duplicates.');
+});
+
+test('accepted_values suggestion carries a deterministic description listing the observed set', () => {
+  const s = suggestChecks(profile(100, [
+    col({ name: 'status', kind: 'string', nulls: 0, distinct: 3, top: [
+      { value: 'new', count: 40 }, { value: 'paid', count: 40 }, { value: 'shipped', count: 20 },
+    ] }),
+  ]));
+  const av = s.find((x) => x.rule === 'accepted_values')!;
+  assert.equal(av.description, 'Values in status must be one of new, paid, shipped — the only categories the profile observed.');
+});
+
+test('range suggestion carries a deterministic description naming the observed bounds', () => {
+  const s = suggestChecks(profile(100, [
+    col({ name: 'amount', kind: 'numeric', type: 'double', nulls: 0, distinct: 80, min: '0', max: '1000' }),
+  ]));
+  const r = s.find((x) => x.rule === 'range')!;
+  assert.equal(r.description, 'Values in amount must stay between 0 and 1000 — the observed range.');
+});
+
+test('describeSuggestion returns undefined for a kind with no honest deterministic sentence', () => {
+  // not_blank is never produced by suggestChecks; the ✨ describe stage covers it.
+  const notBlank: SuggestedCheck = { rule: 'not_blank', column: 'note', evidence: '' };
+  assert.equal(describeSuggestion(notBlank), undefined);
+  // accepted_values with no values ⇒ no filler sentence.
+  const emptyEnum: SuggestedCheck = { rule: 'accepted_values', column: 'x', values: [], evidence: '' };
+  assert.equal(describeSuggestion(emptyEnum), undefined);
+  // range missing a bound ⇒ no filler sentence.
+  const halfRange: SuggestedCheck = { rule: 'range', column: 'x', min: 0, evidence: '' };
+  assert.equal(describeSuggestion(halfRange), undefined);
+});
+
+test('every suggestChecks output carries a non-empty description (accept lands documented)', () => {
+  const s = suggestChecks(profile(100, [
+    col({ name: 'order_id', kind: 'string', nulls: 0, distinct: 100 }),
+    col({ name: 'status', kind: 'string', nulls: 0, distinct: 2, top: [{ value: 'a', count: 60 }, { value: 'b', count: 40 }] }),
+    col({ name: 'amount', kind: 'numeric', type: 'double', nulls: 0, distinct: 80, min: '0', max: '9' }),
+  ]));
+  assert.ok(s.length > 0);
+  for (const x of s) assert.ok(x.description && x.description.length > 0, `${x.rule}(${x.column}) has a description`);
 });
 
 test('suggestions dedupe against rules the dataset already has (Accept-all is idempotent)', () => {

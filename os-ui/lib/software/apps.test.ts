@@ -33,8 +33,15 @@ const {
   repoSharedByLiveApp,
   patchAppDesign,
   reconcileBuiltStatus,
+  normalizeAppMembers,
+  listAppMembers,
+  addAppMember,
+  removeAppMember,
+  getAppBySlugForUser,
 } = await import('./apps.ts');
+const { __resetUsers, createUser } = await import('../platform-admin/users.ts');
 const { snapshotFiles } = await import('./snapshot.ts');
+const { exposedConnectionTools } = await import('../infra/agent-governed.ts');
 import type { App, AppEpic } from './apps.ts';
 const { config } = await import('../core/config.ts');
 
@@ -584,4 +591,166 @@ test('reconcileBuiltStatus is a NO-OP when the committed snapshot has story page
   const r = reconcileBuiltStatus(app);
   assert.equal(r.demoted, 0, 'a real committed page is left alone');
   assert.equal(app.epics?.[0].stories[0].status, 'done');
+});
+
+// ------------------------------------------------- grants → runtime OPA profile --
+
+test('grants recompile: patching grants adds the data-plane tools to the app OPA profile', async () => {
+  __resetAppsCache();
+  const owner = { id: 'gr1', name: 'GR1', domains: ['sales'], role: 'admin' as const };
+  const app = await createApp(owner, { name: 'GrantsApp', template: 'sovereign-app' });
+
+  // Baseline: the app's OPA profile carries its TEMPLATE tools; no data-plane grant tools yet.
+  const before = exposedConnectionTools(app.mcpPrincipal);
+  assert.equal(before.includes('query_data'), false, 'no granted data tool before any grant');
+
+  // Patch a DATA + KNOWLEDGE grant → recompile must fold in their data-plane tools.
+  await patchAppDesign(app.id, owner, {
+    grants: {
+      connections: [],
+      data: [{ id: 'ds_x', access: 'read-only' }],
+      knowledge: [{ id: 'wf_y', access: 'read-only' }],
+      files: [],
+      metrics: [],
+    },
+  });
+  const after = exposedConnectionTools(app.mcpPrincipal);
+  assert.ok(after.includes('query_data'), 'granted data ⇒ query_data now exposed');
+  assert.ok(after.includes('get_dataset'), 'discovery companion exposed');
+  assert.ok(after.includes('search_knowledge'), 'granted knowledge ⇒ search_knowledge exposed');
+  // Template tools remain the baseline surface (grants only ADD).
+  assert.ok(after.length >= before.length, 'grants add to, never remove, the template surface');
+});
+
+test('grants recompile: clearing grants fails closed — data-plane tools drop back to template default', async () => {
+  __resetAppsCache();
+  const owner = { id: 'gr2', name: 'GR2', domains: ['sales'], role: 'admin' as const };
+  const app = await createApp(owner, { name: 'GrantsApp2', template: 'sovereign-app' });
+  await patchAppDesign(app.id, owner, {
+    grants: { connections: [], data: [{ id: 'ds_z', access: 'read-only' }], knowledge: [], files: [], metrics: [] },
+  });
+  assert.ok(exposedConnectionTools(app.mcpPrincipal).includes('query_data'), 'granted');
+  // Revoke every grant → recompile removes the data-plane tools (fail-closed).
+  await patchAppDesign(app.id, owner, {
+    grants: { connections: [], data: [], knowledge: [], files: [], metrics: [] },
+  });
+  assert.equal(
+    exposedConnectionTools(app.mcpPrincipal).includes('query_data'),
+    false,
+    'revoking the grant removes runtime access',
+  );
+});
+
+// --------------------------------------------------------------- Membership --
+
+test('membership: normalizeAppMembers is deterministic, drops junk, excludes owner', () => {
+  const owner = 'ownerX';
+  const out = normalizeAppMembers(
+    [
+      { id: 'zeb', role: 'member' },
+      { id: 'ann', role: 'admin' },
+      { id: 'ownerX', role: 'admin' }, // owner is implicit — dropped
+      { id: 'ann', role: 'member' }, // dup — first role wins
+      { id: 'bad', role: 'nope' }, // unknown role — dropped
+      { role: 'member' }, // no id — dropped
+      null,
+      'x',
+    ] as unknown,
+    owner,
+  );
+  assert.deepEqual(out, [
+    { id: 'ann', role: 'admin' },
+    { id: 'zeb', role: 'member' },
+  ], 'sorted by id, junk removed, owner excluded, dedup first-wins');
+  // Absent/invalid list ⇒ owner-only ([]) — the nil-safe default old records rely on.
+  assert.deepEqual(normalizeAppMembers(undefined, owner), []);
+  assert.deepEqual(normalizeAppMembers({} as unknown, owner), []);
+});
+
+test('membership: a fresh app defaults to OWNER-ONLY (no other accounts appear)', async () => {
+  __resetAppsCache();
+  __resetUsers();
+  const owner = { id: 'own1', name: 'Owner One', domains: ['sales'], role: 'builder' as const };
+  await createUser({ id: 'own1', name: 'Owner One', password: 'x', domains: ['sales'], role: 'builder', email: 'own1@example.com' });
+  const app = await createApp(owner, { name: 'Members Default', template: 'sovereign-app' });
+  assert.deepEqual(app.members, [], 'no explicit members on create');
+  const { members, canManage } = await listAppMembers(app.id, owner);
+  assert.equal(members.length, 1, 'only the owner is listed by default');
+  assert.equal(members[0].id, 'own1');
+  assert.equal(members[0].isOwner, true);
+  assert.equal(members[0].role, 'admin', 'owner is the implicit admin');
+  assert.equal(canManage, true, 'owner may manage membership');
+});
+
+test('membership: old records with no members list are nil-safe (owner-only after hydrate)', async () => {
+  __resetAppsCache();
+  __resetUsers();
+  const owner = { id: 'own2', name: 'Owner Two', domains: ['sales'], role: 'admin' as const };
+  await createUser({ id: 'own2', name: 'Owner Two', password: 'x', domains: ['sales'], role: 'admin', email: 'own2@example.com' });
+  const app = await createApp(owner, { name: 'Legacy App', template: 'sovereign-app' });
+  // Simulate a pre-membership persisted record.
+  (app as unknown as { members?: unknown }).members = undefined;
+  const { members } = await listAppMembers(app.id, owner);
+  assert.equal(members.length, 1, 'absent list ⇒ owner-only, never a crash');
+  assert.equal(members[0].isOwner, true);
+});
+
+test('membership: an app admin can add + remove a named member; non-admin is denied', async () => {
+  __resetAppsCache();
+  __resetUsers();
+  const owner = { id: 'own3', name: 'Owner Three', domains: ['sales'], role: 'builder' as const };
+  const outsider = { id: 'out3', name: 'Outsider', domains: ['sales'], role: 'builder' as const };
+  await createUser({ id: 'own3', name: 'Owner Three', password: 'x', domains: ['sales'], role: 'builder', email: 'own3@example.com' });
+  await createUser({ id: 'out3', name: 'Outsider', password: 'x', domains: ['sales'], role: 'builder', email: 'out3@example.com' });
+  await createUser({ id: 'mem3', name: 'New Member', password: 'x', domains: ['sales'], role: 'creator', email: 'mem3@example.com' });
+  const app = await createApp(owner, { name: 'Add Remove', template: 'sovereign-app' });
+
+  // Owner adds a member.
+  await addAppMember(app.id, owner, 'mem3', 'member');
+  let view = await listAppMembers(app.id, owner);
+  assert.equal(view.members.length, 2, 'owner + the added member');
+  assert.ok(view.members.some((m) => m.id === 'mem3' && m.role === 'member' && !m.isOwner));
+
+  // A non-owner, non-admin (Personal app) may NOT add.
+  await assert.rejects(
+    () => addAppMember(app.id, outsider, 'out3', 'member'),
+    (e: unknown) => (e as { status?: number }).status === 403,
+    'a non-admin cannot manage membership',
+  );
+
+  // Adding an unknown OS user fails 404 (must be a real account).
+  await assert.rejects(
+    () => addAppMember(app.id, owner, 'ghost', 'member'),
+    (e: unknown) => (e as { status?: number }).status === 404,
+    'cannot add a non-existent OS user',
+  );
+
+  // Owner removes the member.
+  await removeAppMember(app.id, owner, 'mem3');
+  view = await listAppMembers(app.id, owner);
+  assert.equal(view.members.length, 1, 'back to owner-only after removal');
+
+  // The owner can never be removed (the app cannot go admin-less).
+  await assert.rejects(
+    () => removeAppMember(app.id, owner, 'own3'),
+    (e: unknown) => (e as { status?: number }).status === 400,
+    'the owner cannot be removed',
+  );
+});
+
+test('membership: getAppBySlugForUser resolves the deployed app for a viewer, honours visibility', async () => {
+  __resetAppsCache();
+  __resetUsers();
+  const owner = { id: 'own4', name: 'Owner Four', domains: ['sales'], role: 'builder' as const };
+  const stranger = { id: 'str4', name: 'Stranger', domains: ['ops'], role: 'builder' as const };
+  await createUser({ id: 'own4', name: 'Owner Four', password: 'x', domains: ['sales'], role: 'builder', email: 'own4@example.com' });
+  const app = await createApp(owner, { name: 'Slug App', template: 'sovereign-app' });
+
+  const bySlug = await getAppBySlugForUser(app.slug, owner);
+  assert.ok(bySlug && bySlug.id === app.id, 'owner resolves their app by slug');
+  // Personal app: a stranger in another domain sees nothing.
+  const denied = await getAppBySlugForUser(app.slug, stranger);
+  assert.equal(denied, null, 'a non-visible app is not resolvable by slug');
+  // Unknown slug ⇒ null (a deleted deploy degrades honestly).
+  assert.equal(await getAppBySlugForUser('no-such-slug', owner), null);
 });

@@ -209,4 +209,12 @@ export type AdapterStep = {
    * this to auto-heal (re-provision + retry) exactly once; nothing else consults it.
    */
   repoMissing?: boolean;
+  /**
+   * VERIFY-BEFORE-COMMIT outcome recorded on the commit (compile-gate.ts). A commit
+   * that reaches the caller either COMPILED (`{ gated: true, ok: true }` — a red gate
+   * throws before any write, so it never lands here) or was honestly passed through
+   * ungated (`{ gated: false, reason }` — a legacy/non-Vite shape the gate cannot
+   * check). Absent on scaffold/preview/deploy steps.
+   */
+  gate?: { gated: true; ok: true } | { gated: false; reason: string };
 };

@@ -246,9 +246,10 @@ export async function pickBackend(): Promise<PipelineBackend> {
 // The latest committed files per app (moved to ./snapshot.ts so the editor save
 // path in apps.ts can update it too, without an import cycle). Re-exported here
 // for existing importers.
-import { snapshotFiles, getSnapshot } from './snapshot.ts';
+import { snapshotFiles, getSnapshot, hydrateSnapshot } from './snapshot.ts';
 import { ensureSectionsRegistered } from './sections-registry.ts';
-export { snapshotFiles, getSnapshot };
+import { compileGate, formatGateError, gateActivityNote } from './compile-gate.ts';
+export { snapshotFiles, getSnapshot, hydrateSnapshot };
 
 /**
  * A commit is a CHANGESET, not the whole tree. Merge the changed files over the
@@ -284,8 +285,25 @@ export async function commitToApp(
   // built page can never be left unregistered/invisible (sovereign-app only; a
   // no-op for other templates; fail-open). Then push only the changeset (correct
   // for live Forgejo) and parse against the full tree.
+  // Hydrate the prior tree from the DURABLE mirror on a cold-process miss so a
+  // commit after a pod restart merges the changeset over the app's REAL last tree
+  // (not the bare template seed) — the whole-tree metadata parse + scan stay honest.
+  await hydrateSnapshot(app.id);
   const prior = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
   const toCommit = ensureSectionsRegistered(prior, files, app.template);
+  const tree = mergeTree(prior, toCommit);
+  // COMPILE GATE (verify-before-commit, redesign Week 1): the MERGED tree — including
+  // the just-regenerated sections.tsx above — must COMPILE against the vendored
+  // @sovereign-os/ui + @sovereign-os/app-sdk before ANY write (no Forgejo PUT, no
+  // mirror write, no snapshot). A red gate throws the exact diagnostics as a typed,
+  // corrective tool error, so the same build turn fixes them and re-commits; the
+  // rejection also counts toward the bounded reasoning escalation like every other
+  // commit tool error. Non-Vite/legacy shapes are honestly passed through ungated
+  // (`gated: false`, recorded on the step) — the gate never blocks what it cannot check.
+  const gate = await compileGate(tree);
+  if (gate.gated && !gate.ok) {
+    throw withStatus(new Error(formatGateError(gate)), 422);
+  }
   let step = await backend.commit(app.slug, toCommit, message);
   // AUTO-HEAL the ONE self-healable failure: the app's Forgejo repo VANISHED (a
   // repo-level 404, distinguished from a per-file 404/sha conflict by the backend's
@@ -325,7 +343,14 @@ export async function commitToApp(
       502,
     );
   }
-  const tree = mergeTree(prior, toCommit);
+  // Record the gate outcome ON the commit (audited surface): the step carries a typed
+  // `gate` field + a human note in `detail`, so the activity feed / MCP result / audit
+  // all see "compile check ✓" or the honest "skipped (ungated shape)" — never silence.
+  step = {
+    ...step,
+    detail: `${gateActivityNote(gate)}; ${step.detail}`,
+    gate: gate.gated ? { gated: true, ok: true } : { gated: false, reason: gate.reason },
+  };
 
   // Metadata fidelity: parse the convention over the WHOLE tree on every commit.
   const manifest = parseAppManifest(tree, { name: app.name, owner: app.owner, description: app.description });

@@ -62,6 +62,29 @@ export function errorReason(result: string): string {
 }
 
 /**
+ * The COMPILE-GATE line for a `commit` step, or null when the step carries no gate
+ * outcome. The gate runs INSIDE commitToApp (verify-before-commit), so it is not its
+ * own tool call — this reads the outcome the server recorded on the commit result
+ * ("compile check ✓ / skipped (ungated shape)" in the step detail; "commit rejected:
+ * N compile error(s)" in a gate rejection) and renders it as its OWN feed step, in
+ * the existing activity-line language. Emitted BEFORE the commit line by the route.
+ */
+export function gateLineFromStep(step: ActivityStep): ActivityLine | null {
+  if (step.tool !== 'commit') return null;
+  const result = step.result ?? '';
+  if (step.isError) {
+    const m = /commit rejected: (\d+) compile error/.exec(result);
+    if (m) return { tool: step.tool, text: `compile check ✗ ${m[1]} error${m[1] === '1' ? '' : 's'}`, isError: true };
+    return null; // a non-gate commit failure — the ⚠ commit line names it
+  }
+  if (result.includes('compile check ✓')) return { tool: step.tool, text: 'compile check ✓', isError: false };
+  if (result.includes('compile check skipped (ungated shape)')) {
+    return { tool: step.tool, text: 'compile check skipped (ungated shape)', isError: false };
+  }
+  return null;
+}
+
+/**
  * Map ONE governed tool step to a single human-readable activity line. Driven by the
  * tool NAME + its args (robust — never depends on the exact JSON result body). An
  * errored step always renders as a warning line with the real reason, never a fake

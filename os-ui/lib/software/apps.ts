@@ -40,10 +40,12 @@ import { apiServiceFiles, apiServiceGuide } from '@/lib/software/scaffolds/api-s
 import { emptyAppFiles, emptyAppGuide } from '@/lib/software/scaffolds/empty-app';
 import { vendorSdkForRepo, applySdkFileDep } from '@/lib/software/app-sdk-vendor';
 import { vendorUiForRepo, applyUiFileDep } from '@/lib/software/app-ui-vendor';
-import { snapshotFiles, getSnapshot } from '@/lib/software/snapshot';
+import { snapshotFiles, getSnapshot, hydrateSnapshot, deleteSnapshot } from '@/lib/software/snapshot';
 import { generateAndCompile } from '@/lib/software/auto-mcp';
+import { dataPlaneToolsFromGrants } from '@/lib/software/grant-tools';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, resolveSurface } from '@/lib/software/metadata';
 import { osMirror } from '@/lib/infra/os-mirror';
+import { getPublicUser, type PublicUser } from '@/lib/platform-admin/users';
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@/lib/folders';
 import { normaliseFolderPath } from '@/lib/core/folders';
 import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
@@ -75,6 +77,29 @@ import type { ForgejoClient, ForgejoCommit, ForgejoCommitFiles } from '@/lib/inf
  */
 
 export type PipelineStage = 'forgejo' | 'actions' | 'harbor' | 'argocd' | 'live';
+
+/**
+ * Phase C — per-app bounded CI-repair bookkeeping (see ci-repair.ts). Persisted on the
+ * App so the "at most one auto-repair per failed run" + "no loop" bounds survive across
+ * requests/instances. The TYPE lives here (with the App type) to avoid a runtime import
+ * cycle between apps.ts and ci-repair.ts; the loop logic lives in ci-repair.ts.
+ */
+export type CiRepairState = {
+  /** The failed-run id we already opened an auto-repair for — the at-most-once guard. */
+  repairedRunId: string | null;
+  /** The head sha the repair commit produced — a re-fail of THIS sha must not re-repair. */
+  repairCommitSha: string | null;
+  /** ISO of the last repair attempt (visibility). */
+  lastAttemptAt: string | null;
+  /** The outcome of the last attempt, honestly labelled. */
+  outcome: 'repaired' | 'attempted-still-failing' | 'skipped' | null;
+  /** Owner opt-out (default ON). false ⇒ never auto-repair this app. */
+  autoRepairEnabled: boolean;
+};
+
+export function defaultCiRepairState(): CiRepairState {
+  return { repairedRunId: null, repairCommitSha: null, lastAttemptAt: null, outcome: null, autoRepairEnabled: true };
+}
 export type StageStatus = 'ok' | 'pending' | 'offline' | 'disabled' | 'stalled' | 'failing';
 
 export type AppFile = {
@@ -84,6 +109,16 @@ export type AppFile = {
 };
 
 export type AppChatMessage = { role: 'user' | 'assistant'; content: string; at: string };
+
+/**
+ * One EXPLICIT app membership — an OS user the app owner has added to this app.
+ * The OWNER is always an admin and is NEVER stored here (they are implicit), so an
+ * app with an empty/absent list is OWNER-ONLY. `role` is the minimal two-value
+ * ladder: `admin` (reaches the in-app Admin area + may manage membership) or
+ * `member` (a named collaborator). Managing membership stays edit-scoped in the OS.
+ */
+export type AppMemberRole = 'admin' | 'member';
+export type AppMember = { id: string; role: AppMemberRole };
 
 /**
  * A DESIGN user story under an EPIC (Software golden path — Design stage). Plain
@@ -153,6 +188,16 @@ export type App = {
   domain: string;
   visibility: Visibility;
   /**
+   * EXPLICIT app membership (least-privilege). The owner is the sole admin by
+   * default and is implicit (never listed here), so an absent/empty list means
+   * OWNER-ONLY — no other account has app-admin standing. Adding a user here grants
+   * them `admin` (in-app Admin area) or `member` standing. This does NOT gate ENTRY
+   * to the deployed app (identity is delegated to the OS session, domain-wide); it
+   * is the app's own membership/admin model, replacing the old "whole domain
+   * directory" display. Optional-on-load: pre-membership apps default to `[]`.
+   */
+  members: AppMember[];
+  /**
    * The folder path this app lives under in the Software rail (default '/' = root).
    * A DISPLAY-only organiser — it NEVER affects the app's frozen `slug` (repo/image/
    * container/CI identity). Personal apps fold into the owner's personal tree; a
@@ -213,6 +258,12 @@ export type App = {
   consumes: ConsumedResource[];
   /** Whether "Use as Data" has snapshotted app data into a Bronze dataset. */
   usedAsData: boolean;
+  /**
+   * Phase C bounded CI-repair bookkeeping (ci-repair.ts). Optional-on-load: apps
+   * persisted before auto-repair default to an enabled, never-attempted state in
+   * hydrateAppDoc. Enforces "at most one auto-repair per failed run" + "no loop".
+   */
+  ciRepair?: CiRepairState;
   createdAt: string;
   updatedAt: string;
 };
@@ -870,6 +921,30 @@ function isOwnerOrAdminApp(a: App, user: CurrentUser): boolean {
   return canManageArtifact(user, { owner: a.owner, domain: a.domain, scope });
 }
 
+/**
+ * Normalise an app's explicit membership to a DETERMINISTIC, byte-stable shape:
+ *   • drop malformed / non-object rows and rows with an unknown role,
+ *   • drop the OWNER (they are always an implicit admin — never doubly listed),
+ *   • de-duplicate by id (first role wins),
+ *   • sort by id so serialisation is stable regardless of insertion order.
+ * A missing/invalid list collapses to `[]` (owner-only). Pure — unit-testable.
+ */
+export function normalizeAppMembers(raw: unknown, owner: string): AppMember[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>([owner]);
+  const out: AppMember[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue;
+    const id = (r as { id?: unknown }).id;
+    const role = (r as { role?: unknown }).role;
+    if (typeof id !== 'string' || !id || seen.has(id)) continue;
+    if (role !== 'admin' && role !== 'member') continue;
+    seen.add(id);
+    out.push({ id, role });
+  }
+  return out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
 /** Apply the back-compat normalisation + in-process connection re-hydration a
  *  persisted app doc needs on load. Shared by the bulk hydrate AND the by-id mirror
  *  fallback so both paths yield an identical, ready-to-use App. */
@@ -885,8 +960,13 @@ function hydrateAppDoc(app: App): App {
   // Back-compat: apps persisted before Define/Design/grants must still load.
   if (typeof app.purpose !== 'string') app.purpose = '';
   if (!Array.isArray(app.epics)) app.epics = [];
+  // Back-compat: apps persisted before explicit membership default to OWNER-ONLY.
+  app.members = normalizeAppMembers(app.members, app.owner);
   // Back-compat: apps persisted before folders default to the root.
   if (typeof app.folder !== 'string') app.folder = '/';
+  // Back-compat: apps persisted before Phase C CI-repair default to enabled + unattempted.
+  if (!app.ciRepair || typeof app.ciRepair !== 'object') app.ciRepair = defaultCiRepairState();
+  else if (typeof app.ciRepair.autoRepairEnabled !== 'boolean') app.ciRepair.autoRepairEnabled = true;
   // Heal the repo link: apps scaffolded before repoHtmlUrl persisted Forgejo's
   // in-cluster `html_url` (http://forgejo-http:3000/…), which 404s in a browser.
   // Re-derive it from the full name against the EXTERNAL console URL on every load.
@@ -1098,7 +1178,7 @@ async function scaffoldRepo(
   description: string,
   tpl: Template,
   name: string,
-): Promise<{ mode: 'live' | 'offline'; fullName: string; htmlUrl: string; seeded: string[] }> {
+): Promise<{ mode: 'live' | 'offline'; fullName: string; htmlUrl: string; seeded: string[]; createStatus: number; filesOnDisk: boolean }> {
   const owner = config.forgejoRepoOwner;
   const create = await forgejoWrite('/user/repos', {
     name: slug,
@@ -1111,9 +1191,15 @@ async function scaffoldRepo(
   // ALWAYS the external browsable URL — Forgejo's own `html_url` points at the
   // in-cluster ROOT_URL the browser can't reach (the "repo link 404" the user hit).
   const htmlUrl = repoHtmlUrl(fullName);
+  // Forgejo refuses to create a repo when its files ALREADY EXIST on disk (an
+  // orphaned/unadopted repo). It answers 500 with a message naming the disk-path
+  // collision. Surface that distinctly so heal can report "files on disk, not
+  // adoptable" instead of a generic failure.
+  const createMsg = String((create.data as { message?: unknown })?.message ?? '').toLowerCase();
+  const filesOnDisk = !create.ok && /already exist|repository files|is not empty|directory already/.test(createMsg);
   if (!create.ok && create.status === 0) {
     // Forgejo unreachable -> offline shell.
-    return { mode: 'offline', fullName, htmlUrl, seeded: [] };
+    return { mode: 'offline', fullName, htmlUrl, seeded: [], createStatus: 0, filesOnDisk: false };
   }
   // The CI workflow logs in to the registry with the REGISTRY_PASS Actions
   // secret; set it before seeding the workflow so the first push can build.
@@ -1147,7 +1233,7 @@ async function scaffoldRepo(
     });
     if (r.ok) seeded.push(f.path);
   }
-  return { mode: 'live', fullName, htmlUrl, seeded };
+  return { mode: 'live', fullName, htmlUrl, seeded, createStatus: create.status, filesOnDisk };
 }
 
 // ------------------------------------------------------------- Code editor ----
@@ -1225,6 +1311,34 @@ async function forgejoApi(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Is `{owner}/{repo}` an UNADOPTED repository — files present on disk with NO DB
+ * record? This is the DB/disk-desync state (the northpeak-products loss): the repo
+ * API-404s yet its bare git dir still holds every commit. Forgejo's admin API lists
+ * exactly these so an admin can re-register them.
+ *
+ * Uses the SAME admin credential (`config.forgejoUser`/`forgejoPassword`) that the
+ * server already uses for `POST /api/v1/admin/users` + token minting — a Forgejo
+ * SITE ADMIN, so the `/admin/unadopted` endpoints are in reach. `pattern` narrows the
+ * scan server-side; we still confirm the exact `owner/repo` in the returned list.
+ *
+ * `reachable:false` means Forgejo answered non-2xx (or was unreachable) — the caller
+ * must NOT treat that as "not unadopted"; a 401/403 there means the token can't call
+ * the admin API and heal should say so rather than blindly re-scaffold.
+ */
+async function isUnadopted(owner: string, repo: string): Promise<{ reachable: boolean; listed: boolean; status: number }> {
+  const res = await forgejoApi(
+    'GET',
+    `/admin/unadopted?pattern=${encodeURIComponent(repo)}&page=1&limit=50`,
+  );
+  if (!res.ok) return { reachable: false, listed: false, status: res.status };
+  // The endpoint returns a JSON array of "owner/repo" strings.
+  const list = Array.isArray(res.data) ? (res.data as unknown[]) : [];
+  const target = `${owner}/${repo}`.toLowerCase();
+  const listed = list.some((e) => typeof e === 'string' && e.toLowerCase() === target);
+  return { reachable: true, listed, status: res.status };
 }
 
 /** Flat, recursive list of the app repo's files (blobs) on the default branch. */
@@ -1335,7 +1449,14 @@ export async function previewFilesForApp(
 ): Promise<{ files: ScaffoldFile[]; template: AppTemplateKey; mode: 'live' | 'snapshot' }> {
   const app = await getAppForUser(appId, user);
   const live = await liveRepoFiles(app);
-  if (live && live.length > 0) return { files: live, template: app.template, mode: 'live' };
+  if (live && live.length > 0) {
+    // BACKFILL/heal-forward: a successful live tree read durably seeds the mirror
+    // (idempotent), so a legacy app with no mirror doc gets one from real code.
+    snapshotFiles(app.id, live);
+    return { files: live, template: app.template, mode: 'live' };
+  }
+  // Cold-process fallback survives a restart: hydrate the durable mirror first.
+  await hydrateSnapshot(app.id);
   const snap = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
   return { files: snap, template: app.template, mode: 'snapshot' };
 }
@@ -1401,6 +1522,9 @@ export async function saveAppFile(
   const d = res.data as { content?: { sha?: string }; commit?: { html_url?: string } };
   // Keep the scan/diff snapshot in step with the editor save — without this, a
   // secret pasted here was INVISIBLE to the deploy security scan when offline.
+  // Hydrate the durable mirror first so a save after a pod restart merges over the
+  // app's REAL tree, not the bare template seed.
+  await hydrateSnapshot(app.id);
   const prior = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
   snapshotFiles(app.id, [...prior.filter((f) => f.path !== clean), { path: clean, content: input.content }]);
   app.updatedAt = now();
@@ -1497,7 +1621,7 @@ export async function deleteAppRepo(
  */
 export async function healAppRepo(
   app: App,
-): Promise<{ ok: boolean; action: 'recreated' | 'noop'; detail: string; seeded: string[] }> {
+): Promise<{ ok: boolean; action: 'adopted' | 'recreated' | 'noop'; detail: string; seeded: string[] }> {
   if (app.status !== 'active') {
     return { ok: true, action: 'noop', detail: 'App is not active — repo heal skipped.', seeded: [] };
   }
@@ -1509,6 +1633,64 @@ export async function healAppRepo(
   }
   if (probe.status !== 404) {
     return { ok: true, action: 'noop', detail: `Repo ${owner}/${repo} already exists — nothing to heal.`, seeded: [] };
+  }
+  // ADOPT BEFORE CREATE — the DB/disk-desync recovery (the northpeak-products loss).
+  // The repo API-404s because its DATABASE record vanished, but the bare repo may
+  // still exist ON DISK (a DB restore/rollback while the repo PVC kept newer state).
+  // Forgejo calls this an "unadopted" repository and can RE-REGISTER it in the DB with
+  // every commit intact. Creating over it would be REJECTED (files already on disk) and
+  // even if it weren't we'd overwrite the real build with a bare scaffold. So: if the
+  // disk repo is listed unadopted, ADOPT it (preserving all history) and STOP — never
+  // re-seed the scaffold on top of the recovered tree.
+  const unadopted = await isUnadopted(owner, repo);
+  if (unadopted.reachable && unadopted.listed) {
+    const adopt = await forgejoApi('POST', `/admin/unadopted/${owner}/${repo}`);
+    if (adopt.ok) {
+      // VERIFY the adopt actually re-registered the repo — only claim success on a
+      // fresh API-200 (never trust the POST's status alone).
+      const recheck = await forgejoApi('GET', `/repos/${owner}/${repo}`);
+      if (recheck.ok) {
+        app.mode = 'live';
+        app.pipeline.forgejo = 'ok';
+        app.updatedAt = now();
+        writeThrough(app);
+        void trace({
+          principal: app.mcpPrincipal,
+          tool: 'generate',
+          input: { action: 'repo-adopted', repo: `${owner}/${repo}` },
+          output: { adopted: true },
+          decision: 'allow',
+        });
+        return {
+          ok: true,
+          action: 'adopted',
+          detail: `Adopted the orphaned repo ${owner}/${repo} from disk — its full history was recovered (no re-seed).`,
+          seeded: [],
+        };
+      }
+      return {
+        ok: false,
+        action: 'noop',
+        detail: `Adopted ${owner}/${repo} but it still does not answer (HTTP ${recheck.status}) — admin attention needed.`,
+        seeded: [],
+      };
+    }
+    // Adopt call itself was rejected (403 = token lacks admin; otherwise a real error).
+    const why = adopt.status === 403 || adopt.status === 401
+      ? `the server's Forgejo credential cannot call the admin adopt API (HTTP ${adopt.status}) — admin attention needed.`
+      : `Forgejo rejected the adopt (HTTP ${adopt.status}) — admin attention needed.`;
+    return { ok: false, action: 'noop', detail: `The orphaned repo ${owner}/${repo} exists on disk but ${why}`, seeded: [] };
+  }
+  // The unadopted PROBE itself was denied (401/403) — the token can't call the admin
+  // API, so we CANNOT know if the repo is orphaned on disk. Re-scaffolding blindly
+  // risks a rejected create OR (worse) creating a bare shell — report honestly instead.
+  if (!unadopted.reachable && (unadopted.status === 401 || unadopted.status === 403)) {
+    return {
+      ok: false,
+      action: 'noop',
+      detail: `Cannot heal ${owner}/${repo}: the server's Forgejo credential cannot query unadopted repositories (HTTP ${unadopted.status}) — an orphaned-on-disk repo can only be recovered by an admin.`,
+      seeded: [],
+    };
   }
   // Re-scaffold from the template (same path createApp uses).
   const tpl = TEMPLATES[app.template] ?? TEMPLATES['sovereign-app'];
@@ -1522,11 +1704,27 @@ export async function healAppRepo(
   // NOTHING truly failed — say so, don't claim a phantom `recreated`. (A create that
   // hit 409 "already exists" would still seed, so seeded.length>0 there.)
   if (scaffold.seeded.length === 0) {
+    // The specific dead-end: the repo files EXIST on disk (create rejected for that
+    // reason) but the unadopted list didn't offer them for adoption — Forgejo won't
+    // adopt AND won't create over them. Name that exact state; don't hide it behind a
+    // generic "missing repo" message the user can't act on.
+    if (scaffold.filesOnDisk) {
+      return {
+        ok: false,
+        action: 'noop',
+        detail: `The repository files for ${owner}/${repo} exist on disk but Forgejo won't adopt them (not listed unadopted) and won't create over them — admin attention needed.`,
+        seeded: [],
+      };
+    }
     return { ok: false, action: 'noop', detail: `Re-provisioning ${owner}/${repo} failed — the repo could not be re-created (no files seeded).`, seeded: [] };
   }
-  // Re-seed anything the in-process snapshot still holds beyond the bare template
-  // (a Build that committed to this process but never reached durable git), so the
-  // recovered repo is as close to the last real build as what survived allows.
+  // Re-seed the app's FULL last committed tree beyond the bare template so a lost
+  // repo becomes FULLY recoverable. The tree comes from the DURABLE mirror (which
+  // survives pod restarts) — hydrated first so heal works even after the process
+  // that built the app is long gone (the northpeak-products loss). A legacy app
+  // with no mirror doc falls back to whatever the in-process snapshot still holds;
+  // an app with neither honestly restores just the template (no fabrication).
+  await hydrateSnapshot(app.id);
   const seeded = [...scaffold.seeded];
   const snap = getSnapshot(app.id);
   if (snap && snap.length > 0) {
@@ -1535,7 +1733,7 @@ export async function healAppRepo(
       if (seededSet.has(f.path)) continue;
       const r = await forgejoWrite(`/repos/${owner}/${app.slug}/contents/${encodeRepoPath(f.path)}`, {
         content: b64(f.content),
-        message: `heal: restore ${f.path} from snapshot`,
+        message: `heal: restore ${f.path} from mirror`,
         branch: 'main',
       });
       if (r.ok) seeded.push(f.path);
@@ -1640,6 +1838,13 @@ export async function refreshActionsStage(app: App, opts?: { force?: boolean }):
     }
     return { status, note };
   };
+  // SYMMETRIC honesty: the 404 branch below downgrades `forgejo` to failing — so a
+  // repo that answers again must upgrade it back, or the card stays stuck claiming
+  // "repository missing" forever after a recovery (seen live on northpeak-products).
+  if (repoRes.ok && app.pipeline.forgejo === 'failing') {
+    app.pipeline.forgejo = 'ok';
+    writeThrough(app);
+  }
   if (!repoRes.ok) {
     // HONEST: a repo that 404s no longer exists — the whole pipeline is broken, not
     // "ok". Downgrade BOTH the `forgejo` (scaffold) stage AND `actions` to a failing
@@ -1689,7 +1894,7 @@ export async function refreshActionsStage(app: App, opts?: { force?: boolean }):
   if (!tasks.ok) {
     return apply('pending', `Could not read Actions tasks (HTTP ${tasks.status}) — not claiming a build that is unverified.`);
   }
-  const runs = ((tasks.data as { workflow_runs?: { head_sha?: string; status?: string }[] } | null)?.workflow_runs ?? []).filter(
+  const runs = ((tasks.data as { workflow_runs?: { id?: number | string; head_sha?: string; status?: string }[] } | null)?.workflow_runs ?? []).filter(
     (r) => r && typeof r === 'object',
   );
   // Newest-first: the FIRST run for the head sha is the one that counts (re-runs).
@@ -1709,9 +1914,21 @@ export async function refreshActionsStage(app: App, opts?: { force?: boolean }):
         output: { healed },
         decision: 'allow',
       });
+      // PHASE C — bounded CI-repair: this is the single place a failed run is RECORDED.
+      // Fire the at-most-once auto-repair (fire-and-forget: it must never block or break
+      // the status refresh it rides on). Re-asserting the secret above covers the ONE
+      // self-healable dependency; the repair turn handles the build-env/asset/import
+      // failures the compile gate cannot catch pre-commit. Skipped for non-live apps.
+      const runId = String(headRun.id ?? '');
+      if (runId) void triggerAutoRepair(app, { id: runId, headSha: head });
+      // Always-honest, always-labelled visibility of the auto-repair on the SAME status
+      // note the card/`get_software_status` read — so "CI failed → auto-repair (reasoning
+      // model)" and its outcome are visible without a separate feed. Never claims a repair
+      // that did not happen (driven by the persisted ciRepair state, not a hopeful guess).
+      const repairNote = autoRepairNote(app, runId, head);
       return apply(
         'failing',
-        `The latest CI run for ${head.slice(0, 10)} FAILED (status: ${st}). Re-asserted the repo's REGISTRY_PASS Actions secret${healed ? '' : ' (re-assert also failed)'} — check the run log in Forgejo (${owner}/${repo} → Actions), fix the cause, then push again to rebuild.`,
+        `The latest CI run for ${head.slice(0, 10)} FAILED (status: ${st}). Re-asserted the repo's REGISTRY_PASS Actions secret${healed ? '' : ' (re-assert also failed)'}.${repairNote} Check the run log in Forgejo (${owner}/${repo} → Actions), fix the cause, then push again to rebuild.`,
       );
     }
     if (st && st !== 'success') {
@@ -1725,7 +1942,149 @@ export async function refreshActionsStage(app: App, opts?: { force?: boolean }):
   );
 }
 
+// -------------------------------------------------------- Phase C CI-repair I/O --
+
+/**
+ * The always-honestly-labelled auto-repair clause appended to the failing-CI status note
+ * (consent + visibility). Reads ONLY the persisted `ciRepair` state — never claims a
+ * repair that did not happen. Cases:
+ *   • opted out          → says auto-repair is off.
+ *   • repaired THIS run  → "auto-repair turn (reasoning model) committed a fix".
+ *   • repaired commit re-failing → the honest terminal "still failing — needs a human".
+ *   • attempted, no fix  → said as such.
+ *   • not yet attempted  → "auto-repair (reasoning model) starting" (the fire-and-forget
+ *                          turn was just kicked off on this same refresh).
+ */
+function autoRepairNote(app: App, runId: string, head: string): string {
+  const s = app.ciRepair;
+  if (!s || s.autoRepairEnabled === false) return ' Auto-repair is turned off for this app.';
+  if (s.repairCommitSha && s.repairCommitSha === head) {
+    return ' Auto-repair was attempted (reasoning model) but the repaired commit still fails CI — this needs a human or a fresh build turn.';
+  }
+  if (s.repairedRunId === runId) {
+    if (s.outcome === 'repaired') return ' Auto-repair turn (reasoning model) committed a fix — CI will re-run on the new commit.';
+    return ' Auto-repair turn (reasoning model) ran but found no safe fix to commit.';
+  }
+  return ' Auto-repair turn (reasoning model) is starting — it will fix only what the log names, then commit.';
+}
+
+/**
+ * Public write-through so ci-repair.ts can persist its bounds state through the SAME
+ * durable path every mutator here uses (no second store, no divergence).
+ */
+export function writeThroughApp(app: App): void {
+  writeThrough(app);
+}
+
+/**
+ * Owner/admin toggle for the app-level auto-repair opt-out (default ON). Edit-scoped
+ * (owner or in-domain admin — same gate as docs edits). Turning it OFF stops any future
+ * bounded CI auto-repair for THIS app; the per-run/no-loop bounds are untouched.
+ */
+export async function setAutoRepairEnabled(appId: string, user: CurrentUser, enabled: boolean): Promise<App> {
+  const app = await getEditableAppForUser(appId, user);
+  const state = app.ciRepair ?? defaultCiRepairState();
+  app.ciRepair = { ...state, autoRepairEnabled: enabled };
+  writeThrough(app);
+  return app;
+}
+
+/**
+ * Synthesize the CurrentUser an auto-repair build turn runs AS — the app's OWNER,
+ * scoped to the app's domain, at the `builder` role (needs the commit/build tool
+ * surface). This is a SERVER-INITIATED turn (no request session), so there is no
+ * ambient user; the governed tool calls still run through authorize→trace as the
+ * app's mcpPrincipal via boundArgs. Kept minimal + honest — it is not a login.
+ */
+export function systemUserForApp(app: App): CurrentUser {
+  return {
+    id: app.owner,
+    name: app.owner,
+    domains: [app.domain],
+    allDomains: [app.domain],
+    activeDomain: app.domain,
+    role: 'builder',
+  };
+}
+
+/**
+ * Fetch + concatenate the failing run's job logs from Forgejo, returning the RAW text
+ * (the caller cleans + caps it). Uses the admin credential already in `forgejoApi`.
+ * Best-effort: any unreachable/absent log yields '' so the repair turn still runs off
+ * the changed-file list. Forgejo exposes per-job logs under the Actions runs API; we
+ * read the run's jobs, then each job's log, newest job last (errors sit at the end).
+ */
+export async function fetchRunLogTail(app: App, runId: string): Promise<string> {
+  const { owner, repo } = repoCoords(app);
+  // The run's jobs. Forgejo mirrors GitHub's Actions API shape here.
+  const jobsRes = await forgejoApi('GET', `/repos/${owner}/${repo}/actions/runs/${encodeURIComponent(runId)}/jobs`);
+  const jobs = (jobsRes.data as { jobs?: { id?: number | string }[] } | null)?.jobs;
+  const jobIds = Array.isArray(jobs)
+    ? jobs.map((j) => String(j?.id ?? '')).filter(Boolean)
+    : [];
+  const parts: string[] = [];
+  for (const jobId of jobIds) {
+    // The logs endpoint returns plain text (not JSON) — forgejoApi falls back to the
+    // raw string in `data` when the body is not JSON, so we read it as such.
+    const logRes = await forgejoApi('GET', `/repos/${owner}/${repo}/actions/jobs/${encodeURIComponent(jobId)}/logs`);
+    if (logRes.ok && typeof logRes.data === 'string' && logRes.data.trim()) parts.push(logRes.data);
+  }
+  return parts.join('\n');
+}
+
+/** The current head sha of the app repo's `main` branch, or '' when unavailable. */
+export async function latestMainSha(app: App): Promise<string> {
+  const { owner, repo } = repoCoords(app);
+  const res = await forgejoApi('GET', `/repos/${owner}/${repo}/commits?sha=main&limit=1`);
+  if (res.ok && Array.isArray(res.data) && res.data[0]) {
+    return String((res.data[0] as { sha?: string }).sha ?? '');
+  }
+  return '';
+}
+
+/**
+ * The list of file PATHS a commit changed (the failing commit's changeset), from the
+ * Forgejo commit API. Best-effort: [] when the commit or endpoint is unavailable.
+ */
+export async function fetchCommitFiles(app: App, sha: string): Promise<string[]> {
+  if (!sha) return [];
+  const { owner, repo } = repoCoords(app);
+  const res = await forgejoApi('GET', `/repos/${owner}/${repo}/git/commits/${encodeURIComponent(sha)}`);
+  if (!res.ok) return [];
+  const files = (res.data as { files?: { filename?: string }[] } | null)?.files;
+  if (!Array.isArray(files)) return [];
+  return files.map((f) => String(f?.filename ?? '')).filter(Boolean);
+}
+
+/**
+ * Fire the bounded auto-repair for a freshly-recorded failed run — fire-and-forget so
+ * it never blocks or breaks the status refresh it rides on. Dynamically imports the
+ * loop (ci-repair.ts) to keep the apps.ts ↔ ci-repair.ts import graph acyclic at load.
+ */
+function triggerAutoRepair(app: App, failedRun: { id: string; headSha: string }): void {
+  if (app.mode !== 'live') return;
+  void import('@/lib/software/ci-repair')
+    .then((m) => m.maybeAutoRepair(app, failedRun))
+    .catch(() => {
+      /* best-effort — the next refresh re-detects the same failure */
+    });
+}
+
 // ----------------------------------------------------------------- MCP wiring --
+
+/**
+ * Compile the app's OPA capability profile from its TEMPLATE tools UNIONED with the
+ * data-plane tools its `grants` imply (grant-tools.ts) — the single place grants become
+ * runtime tool access. Template tools are the baseline surface; grants ADD data-plane
+ * access (granted data ⇒ query/dataset tools, knowledge ⇒ knowledge tools, etc.). Every
+ * granted-context tool is compiled read-only under the reads-on/writes-off preset, so a
+ * grant widens WHICH tools are exposed, never the identity a call runs as (still run-as-user,
+ * still DLS/RLS-scoped at call time). Fail-closed: no grants ⇒ [] extras ⇒ template default only.
+ */
+export function compileAppProfile(app: App): void {
+  const grantTools = dataPlaneToolsFromGrants(app.grants);
+  generateAndCompile(app.mcpPrincipal, { tools: [...app.mcpTools, ...grantTools] });
+}
 
 export function rehydrateConnection(app: App): void {
   // NEVER resurrect an archived app: archiveApp() intentionally drops its grant +
@@ -1735,7 +2094,8 @@ export function rehydrateConnection(app: App): void {
   if (app.status === 'archived') return;
   // Re-arm the auto-MCP capability profile in OPA (reads-on/writes-off) so the
   // governed gate works after a restart, not just the static app-registry grant.
-  generateAndCompile(app.mcpPrincipal, { tools: app.mcpTools });
+  // Grants are folded in so a restart re-derives the granted data-plane tools too.
+  compileAppProfile(app);
   if (getConnectionByApp(app.id)) return;
   registerConnection({
     id: app.connectionId ?? id('conn'),
@@ -1879,6 +2239,9 @@ export async function createApp(
     owner: user.id,
     domain,
     visibility: 'Personal',
+    // Least-privilege: the creator is the sole (implicit) admin; no other account
+    // has app-admin standing until explicitly added via addAppMember.
+    members: [],
     folder: '/',
     mode: repo.mode,
     repo: { fullName: repo.fullName, htmlUrl: repo.htmlUrl, seeded: repo.seeded },
@@ -2000,6 +2363,114 @@ export async function updateAppDocs(
   return a;
 }
 
+// -------------------------------------------------------------- Membership ---
+
+/**
+ * One row of the app's membership as shown to a client — the OWNER first (implicit
+ * admin), then each explicitly added user, resolved to their OS name/domains.
+ * A member whose OS account no longer exists still lists (id only) so an admin can
+ * see + remove a stale grant. `isOwner` marks the implicit-admin creator.
+ */
+export type AppMemberView = {
+  id: string;
+  name: string;
+  role: AppMemberRole;
+  domains: string[];
+  isOwner: boolean;
+};
+
+/** Resolve one id to a display row (name/domains), or a stale-account fallback. */
+function memberViewOf(id: string, role: AppMemberRole, isOwner: boolean, u: PublicUser | null): AppMemberView {
+  return { id, name: u?.name || id, role, domains: u?.domains ?? [], isOwner };
+}
+
+/**
+ * The app's ACTUAL membership — the owner (implicit admin) plus every explicitly
+ * added user, resolved to OS display rows. This is what the deployed app's Admin
+ * area lists ("who administers / can be a member of THIS app"), NOT the whole
+ * domain directory. Readable by anyone who can see the app (viewers included); the
+ * add/remove routes are the edit-scoped mutations. No email or account flags leave.
+ */
+export async function listAppMembers(appId: string, user: CurrentUser): Promise<{ app: App; members: AppMemberView[]; canManage: boolean }> {
+  const app = await getAppForUser(appId, user);
+  const ownerUser = await getPublicUser(app.owner);
+  const rows: AppMemberView[] = [memberViewOf(app.owner, 'admin', true, ownerUser)];
+  // Defensive re-normalise: never trust the persisted field is a well-formed array
+  // (a pre-membership record read straight from a store may carry undefined).
+  for (const m of normalizeAppMembers(app.members, app.owner)) {
+    rows.push(memberViewOf(m.id, m.role, false, await getPublicUser(m.id)));
+  }
+  return { app, members: rows, canManage: isOwnerOrAdminApp(app, user) };
+}
+
+/**
+ * Add (or re-role) an explicit app member. Edit-scoped: only the app owner, an
+ * in-domain domain_admin, or a platform admin may mutate membership (same
+ * canManageArtifact gate every ownable artifact uses). The user must be a real OS
+ * account. Adding the OWNER is a no-op (they are always an implicit admin). Fails
+ * closed: 403 for a non-admin, 404 for an unknown OS user. Byte-stable persist.
+ */
+export async function addAppMember(
+  appId: string,
+  user: CurrentUser,
+  memberId: string,
+  role: AppMemberRole,
+): Promise<App> {
+  const map = await getCache();
+  const a = map.get(appId) ?? (await getAppByIdWithMirror(appId));
+  if (!a) throw withStatus(new Error('App not found'), 404);
+  if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to manage this app'), 403);
+  const id = (memberId ?? '').trim();
+  if (!id) throw withStatus(new Error('A user id is required'), 400);
+  const memberRole: AppMemberRole = role === 'admin' ? 'admin' : 'member';
+  // The owner is always an implicit admin — never listed.
+  if (id === a.owner) return a;
+  const target = await getPublicUser(id);
+  if (!target) throw withStatus(new Error('No such OS user'), 404);
+  const next = normalizeAppMembers(a.members, a.owner).filter((m) => m.id !== id);
+  next.push({ id, role: memberRole });
+  a.members = normalizeAppMembers(next, a.owner);
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+  return a;
+}
+
+/**
+ * Remove an explicit app member. Edit-scoped (owner / in-domain domain_admin /
+ * admin). Removing the OWNER is refused (they are the sole implicit admin — the app
+ * can never be admin-less). Removing an id that is not a member is a quiet no-op.
+ */
+export async function removeAppMember(appId: string, user: CurrentUser, memberId: string): Promise<App> {
+  const map = await getCache();
+  const a = map.get(appId) ?? (await getAppByIdWithMirror(appId));
+  if (!a) throw withStatus(new Error('App not found'), 404);
+  if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to manage this app'), 403);
+  const id = (memberId ?? '').trim();
+  if (id === a.owner) throw withStatus(new Error('The owner cannot be removed'), 400);
+  a.members = normalizeAppMembers(a.members, a.owner).filter((m) => m.id !== id);
+  a.updatedAt = now();
+  map.set(a.id, a);
+  writeThrough(a);
+  return a;
+}
+
+/**
+ * Resolve an app by its frozen SLUG within the caller's visible set — the deployed
+ * app knows only its baked-in `APP_SLUG`, not the OS app id. Runs AS the caller so
+ * a user who cannot see the app gets nothing. Returns null when no visible app owns
+ * the slug (a deployed app whose OS record was deleted degrades honestly).
+ */
+export async function getAppBySlugForUser(slug: string, user: CurrentUser): Promise<App | null> {
+  const s = (slug ?? '').trim();
+  if (!s) return null;
+  const map = await getCache();
+  for (const a of map.values()) {
+    if (a.slug === s && visibleToUser(a, user)) return a;
+  }
+  return null;
+}
+
 /**
  * Sanitise every story's Design SPEC before persist — normalises the three lists and
  * DROPS an empty/garbage spec so the field stays absent (byte-stable) for stories the
@@ -2057,7 +2528,13 @@ export async function patchAppDesign(
           ),
         }));
   }
-  if (patch.grants !== undefined) a.grants = normalizeContextGrants(patch.grants);
+  if (patch.grants !== undefined) {
+    a.grants = normalizeContextGrants(patch.grants);
+    // GRANTS → RUNTIME TRUTH: a grant change re-derives the app's data-plane tools and
+    // re-compiles its OPA capability profile immediately, so the deployed app can actually
+    // use what it was just granted (and loses access the moment a grant is revoked).
+    compileAppProfile(a);
+  }
   a.updatedAt = now();
   map.set(a.id, a);
   writeThrough(a);
@@ -2407,6 +2884,7 @@ export async function removeAppInternal(appId: string): Promise<void> {
   const map = await getCache();
   map.delete(appId);
   mirror.deleteThrough(appId);
+  deleteSnapshot(appId); // drop the durable source-file mirror doc too
   versions.purge(appId);
 }
 

@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, refreshActionsStage, reconcileBuiltStatus, type AppEpic } from '@/lib/software/apps';
+import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, refreshActionsStage, reconcileBuiltStatus, setAutoRepairEnabled, type AppEpic } from '@/lib/software/apps';
 import { normalizeContextGrants } from '@/lib/core/context-grants';
 import { reconcileDeployApproval } from '@/lib/software/review';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
@@ -40,6 +40,13 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
 export const PATCH = withRoute<{ id: string }>(async ({ user, params, req }) => {
   const { id } = params;
   const body = await req.json();
+
+  // The app-level auto-repair opt-out toggle (Phase C). A dedicated boolean field so a
+  // simple settings switch flips it without touching docs/design — edit-scoped in the lib.
+  if (typeof body?.autoRepairEnabled === 'boolean') {
+    const app = await setAutoRepairEnabled(id, user, body.autoRepairEnabled);
+    return NextResponse.json({ app });
+  }
 
   // Define/Design fields, when present, persist through patchAppDesign.
   const hasDesign =

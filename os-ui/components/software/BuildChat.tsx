@@ -284,30 +284,17 @@ export default function BuildChat({
           ))
         )}
         {/* LIVE ACTIVITY FEED — the plan + each governed tool step as it happens,
-            so the run is legible while it works instead of a silent spinner. */}
+            so the run is legible while it works instead of a silent spinner. The live
+            BUILD stepper + current-step line + STOP live UNDER the Build button (below
+            the form), not here — so the running status stays put while the transcript
+            (plan text + activity lines) scrolls in the log. */}
         {loading || feed.length > 0 || planText ? (
           <div className="bubble assistant">
             <div className="bubble-role row" style={{ gap: 8, alignItems: 'center' }}>
               <span>{label}</span>
               {loading ? <span className="spin" style={{ width: 12, height: 12 }} /> : null}
-              {loading ? (
-                <button type="button" className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={stop}>Stop</button>
-              ) : null}
             </div>
             <div className="bubble-body">
-              {showBuildStepper ? (
-                <ProgressStepper
-                  steps={buildProgress.steps}
-                  active={buildProgress.active}
-                  done={buildProgress.done}
-                  ok={buildProgress.ok}
-                  commentary={
-                    error ? 'Build stopped — see the error below.'
-                      : loading ? (planText && feed.length === 0 ? 'Planning the change…' : 'Generating & committing code…')
-                        : lastChanges.length > 0 ? 'Build committed.' : undefined
-                  }
-                />
-              ) : null}
               {planText ? (
                 <div style={{ marginBottom: feed.length ? 10 : 0 }}>
                   <div className="section-title" style={{ fontSize: 11, marginBottom: 4 }}>Plan</div>
@@ -358,6 +345,42 @@ export default function BuildChat({
           )}
         </div>
       </form>
+
+      {/* LIVE BUILD STATUS — directly under the Build button, fixed (does not scroll with
+          the chat). The Plan → Generate → Commit → Preview stepper, the current-step line,
+          and the STOP control live here while a build RUN is active, then briefly settle to
+          "Build committed." and clear when the run is fully idle. The transcript (plan text,
+          activity lines, the reasoning-escalation label) stays in the chat log above. */}
+      {showBuildStepper ? (
+        <div
+          className="sw-build-live"
+          style={{
+            marginTop: 12,
+            padding: '10px 14px',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            background: 'var(--panel)',
+          }}
+        >
+          <div className="row" style={{ gap: 8, alignItems: 'center', marginBottom: 4 }}>
+            <span className="comp-label" style={{ fontSize: 11 }}>Build status</span>
+            {loading ? (
+              <button type="button" className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={stop}>Stop</button>
+            ) : null}
+          </div>
+          <ProgressStepper
+            steps={buildProgress.steps}
+            active={buildProgress.active}
+            done={buildProgress.done}
+            ok={buildProgress.ok}
+            commentary={
+              error ? 'Build stopped — see the error above.'
+                : loading ? (planText && feed.length === 0 ? 'Planning the change…' : 'Generating & committing code…')
+                  : lastChanges.length > 0 ? 'Build committed.' : undefined
+            }
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

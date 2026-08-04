@@ -179,6 +179,13 @@ export const config = {
   // App registry index (Software golden path). Best-effort durable mirror of the
   // in-process app store; the OS UI degrades to in-memory when OpenSearch is off.
   appsIndex: env('APPS_INDEX', 'os-apps'),
+  // App SOURCE-FILE index (Software golden path). Durable mirror of each app's full
+  // committed file tree (path + content), keyed by appId — one doc per app. The app
+  // RECORD (appsIndex) stores file NAMES only, so a lost repo used to be unrecoverable
+  // source (two built stories were lost live). This mirror survives pod restarts so
+  // the offline tree, before/after changesets and repo-heal restore FULL source.
+  // Degrades to the in-process snapshot when OpenSearch is off.
+  appFilesIndex: env('APP_FILES_INDEX', 'os-app-files'),
   // Dataset registry index (Data tab). Best-effort durable mirror of the
   // in-process dataset store so seeded datasets/metrics survive an os-ui restart;
   // degrades to in-memory when OpenSearch is off.
