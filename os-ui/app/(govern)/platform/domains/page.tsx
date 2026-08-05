@@ -13,10 +13,8 @@ type Domain = {
   owner: string;
   archived: boolean;
   layers: { ml: boolean };
-  template: string;
   createdAt: string;
 };
-type Template = { id: string; name: string; description: string; layers: { ml: boolean } };
 
 export default function DomainsPage() {
   return (
@@ -29,14 +27,12 @@ export default function DomainsPage() {
 function DomainsInner() {
   const confirm = useConfirm();
   const [domains, setDomains] = useState<Domain[]>([]);
-  const [templates, setTemplates] = useState<Template[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
 
   // Create form state
   const [name, setName] = useState('');
   const [owner, setOwner] = useState('');
-  const [template, setTemplate] = useState('');
 
   // Inline rename state: domain id → draft name
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -57,15 +53,11 @@ function DomainsInner() {
       const res = await fetch('/api/platform-admin/domains', { cache: 'no-store' });
       const body = await res.json();
       if (!res.ok) setError(body.error ?? 'Failed to load');
-      else {
-        setDomains(body.domains ?? []);
-        setTemplates(body.templates ?? []);
-        if (!template && body.templates?.length) setTemplate(body.templates[0].id);
-      }
+      else setDomains(body.domains ?? []);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [template]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -77,7 +69,7 @@ function DomainsInner() {
       const res = await fetch('/api/platform-admin/domains', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, owner, template }),
+        body: JSON.stringify({ name, owner }),
       });
       const body = await res.json();
       if (!res.ok) setError(body.error ?? 'Create failed');
@@ -85,7 +77,7 @@ function DomainsInner() {
     } finally {
       setBusy('');
     }
-  }, [name, owner, template, load]);
+  }, [name, owner, load]);
 
   const patch = useCallback(async (d: Domain, body: Record<string, unknown>) => {
     setBusy(d.id);
@@ -217,18 +209,13 @@ function DomainsInner() {
           <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <input style={{ flex: '1 1 160px' }} value={name} onChange={(e) => setName(e.target.value)} placeholder="domain name (e.g. Sales Analytics)" />
             <input style={{ flex: '1 1 140px' }} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="owner (login)" />
-            <select value={template} onChange={(e) => setTemplate(e.target.value)}>
-              {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
             <button className="btn" onClick={create} disabled={busy === 'create' || !name.trim() || !owner.trim()}>
               {busy === 'create' ? <span className="spin" /> : 'Create domain'}
             </button>
           </div>
-          {templates.length ? (
-            <div className="hint" style={{ marginTop: 8 }}>
-              {templates.find((t) => t.id === template)?.description ?? 'Templates preset which optional layers start enabled.'}
-            </div>
-          ) : null}
+          <div className="hint" style={{ marginTop: 8 }}>
+            A new domain starts with the Science layer off — toggle it on per domain below when a team does data science.
+          </div>
         </div>
 
         <div className="section-title">Reassign artifact domain</div>
@@ -281,7 +268,7 @@ function DomainsInner() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Domain</th><th>Owner</th><th>Template</th><th>Science layer</th><th></th></tr>
+              <tr><th>Domain</th><th>Owner</th><th>Science layer</th><th></th></tr>
             </thead>
             <tbody>
               {domains.map((d) => (
@@ -329,7 +316,6 @@ function DomainsInner() {
                     )}
                   </td>
                   <td>{d.owner}</td>
-                  <td><span className="pa-tag">{d.template}</span></td>
                   <td>
                     <button
                       className={'switch' + (d.layers.ml ? ' on' : '')}

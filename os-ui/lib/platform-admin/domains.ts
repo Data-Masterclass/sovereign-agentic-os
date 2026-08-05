@@ -3,9 +3,9 @@
  */
 /**
  * Domain adapter — the structural map of the tenant. Admins create / rename /
- * archive / transfer domains, set an owner + defaults, and toggle each domain's
- * OPTIONAL ML layer (`ml.enabled`) — so enabling Science/ML in a domain is a
- * click here, not a Helm edit. Domain templates seed sensible defaults.
+ * archive / transfer domains, set an owner, and toggle each domain's OPTIONAL
+ * ML layer (`ml.enabled`) — so enabling Science/ML in a domain is a click here,
+ * not a Helm edit. A new domain starts with the Science layer off.
  *
  * The ML layer toggle only flips a governed flag on an ALREADY-provisioned
  * layer (no prod provisioning from the UI). The flag compiles through the
@@ -28,24 +28,11 @@ export type Domain = {
   owner: string;
   archived: boolean;
   layers: DomainLayers;
-  /** Which template seeded it (audit/provenance). */
-  template: string;
   createdAt: string;
 };
 
-export type DomainTemplate = {
-  id: string;
-  name: string;
-  description: string;
-  layers: DomainLayers;
-};
-
-export const TEMPLATES: DomainTemplate[] = [
-  { id: 'blank', name: 'Blank', description: 'Core data + agents only.', layers: { ml: false } },
-  { id: 'analytics', name: 'Analytics', description: 'Core + dashboards; no heavy ML.', layers: { ml: false } },
-  { id: 'science', name: 'Data Science', description: 'Adds the Science layer (Layer 4).', layers: { ml: true } },
-  { id: 'big-data', name: 'Big Data', description: 'Core data + agents; large-batch processing.', layers: { ml: false } },
-];
+/** A fresh domain has every optional layer off; enable per-domain in Admin. */
+const DEFAULT_LAYERS: DomainLayers = { ml: false };
 
 function now(): string {
   return new Date().toISOString();
@@ -94,7 +81,6 @@ const mirror = osMirror({
         name: { type: 'text' },
         owner: { type: 'keyword' },
         archived: { type: 'boolean' },
-        template: { type: 'keyword' },
         createdAt: { type: 'date' },
         layers: { type: 'object', enabled: false },
       },
@@ -107,19 +93,18 @@ function writeThrough(d: Domain): void {
 }
 
 /**
- * Seed any MISSING domains from a set of names (default template), leaving
- * existing (possibly admin-edited) domains untouched. Pure + sync — the building
- * block the async {@link ensureHydrated} uses for the derive-from-users merge.
- * Returns the ids actually created.
+ * Seed any MISSING domains from a set of names, leaving existing (possibly
+ * admin-edited) domains untouched. Pure + sync — the building block the async
+ * {@link ensureHydrated} uses for the derive-from-users merge. Returns the ids
+ * actually created.
  */
-export function hydrateDomains(names: string[], opts: { owner?: string; template?: string } = {}): string[] {
-  const tpl = TEMPLATES.find((t) => t.id === opts.template) ?? TEMPLATES[0];
+export function hydrateDomains(names: string[], opts: { owner?: string } = {}): string[] {
   const owner = (opts.owner ?? 'admin').trim() || 'admin';
   const created: string[] = [];
   for (const name of names) {
     const id = slug(name);
     if (!id || domainsState().store.has(id)) continue;
-    domainsState().store.set(id, { id, name: name.trim() || id, owner, archived: false, layers: { ...tpl.layers }, template: tpl.id, createdAt: now() });
+    domainsState().store.set(id, { id, name: name.trim() || id, owner, archived: false, layers: { ...DEFAULT_LAYERS }, createdAt: now() });
     created.push(id);
   }
   return created;
@@ -185,19 +170,17 @@ export function activeDomainIds(ids: string[]): string[] {
   });
 }
 
-export function createDomain(input: { name: string; owner: string; template?: string }): Domain {
+export function createDomain(input: { name: string; owner: string }): Domain {
   seed();
   const id = slug(input.name);
   if (!id) throw fail('A domain name is required', 400);
   if (domainsState().store.has(id)) throw fail('That domain already exists', 409);
-  const tpl = TEMPLATES.find((t) => t.id === input.template) ?? TEMPLATES[0];
   const d: Domain = {
     id,
     name: input.name.trim(),
     owner: input.owner.trim(),
     archived: false,
-    layers: { ...tpl.layers },
-    template: tpl.id,
+    layers: { ...DEFAULT_LAYERS },
     createdAt: now(),
   };
   domainsState().store.set(id, d);

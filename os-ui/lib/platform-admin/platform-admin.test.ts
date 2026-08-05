@@ -76,17 +76,45 @@ test('policy compiler: archived domain drops its grants', () => {
 });
 
 // ------------------------------------------------------------------ domains --
-test('domains: create from template, toggle a layer, archive guards layers', () => {
+test('domains: create starts Science off, toggle a layer, archive guards layers', () => {
   resetDomains();
-  const d = createDomain({ name: 'Marketing', owner: 'sara', template: 'science' });
+  const d = createDomain({ name: 'Marketing', owner: 'sara' });
   assert.equal(d.id, 'marketing');
-  assert.equal(d.layers.ml, true); // science template enables ML
-  setLayer('marketing', 'ml', false);
-  assert.equal(listDomains().find((x) => x.id === 'marketing')?.layers.ml, false);
+  assert.equal(d.layers.ml, false); // a new domain starts with the Science layer off
+  setLayer('marketing', 'ml', true);
+  assert.equal(listDomains().find((x) => x.id === 'marketing')?.layers.ml, true);
   setArchived('marketing', true);
   assert.throws(() => setLayer('marketing', 'ml', false), (e: { status?: number }) => e.status === 409);
   // compiler view reflects archived + layers
   assert.equal(compilerView().find((x) => x.id === 'marketing')?.archived, true);
+});
+
+test('domains: create takes no template and writes no template field', () => {
+  resetDomains();
+  // Creation succeeds with just name + owner — no template concept.
+  const d = createDomain({ name: 'Ops', owner: 'sara' });
+  assert.equal(d.id, 'ops');
+  assert.equal((d as Record<string, unknown>).template, undefined); // no template field written
+});
+
+test('domains: legacy records carrying template/layers still load (reads tolerant)', async () => {
+  resetDomains();
+  const os = fakeOpenSearch();
+  try {
+    // A record persisted by an OLDER release still carries the dropped `template`
+    // field (and layers). It must hydrate cleanly — the stale field is ignored,
+    // the ml layer still gates.
+    os.docs.set('legacy', {
+      id: 'legacy', name: 'Legacy', owner: 'sara', archived: false,
+      layers: { ml: true }, template: 'science', createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    await ensureDomainsHydrated(async () => []);
+    const d = listDomains().find((x) => x.id === 'legacy');
+    assert.ok(d, 'the legacy domain loaded despite its stale template field');
+    assert.equal(d!.layers.ml, true, 'its Science layer still gates');
+  } finally {
+    os.restore();
+  }
 });
 
 test('domains: activeDomainIds drops archived, keeps active + unknown scopes', () => {
@@ -138,7 +166,7 @@ test('domains: listDomains yields the user-derived domains when the store is emp
     const ids = listDomains().map((d) => d.id);
     assert.deepEqual(ids, ['marketing', 'ops', 'platform', 'sales']); // sorted, all present
     assert.ok(listDomains().every((d) => !d.archived));
-    assert.equal(listDomains().find((d) => d.id === 'sales')?.template, 'blank');
+    assert.equal(listDomains().find((d) => d.id === 'sales')?.layers.ml, false); // Science off by default
   } finally {
     globalThis.fetch = orig;
   }
@@ -163,7 +191,8 @@ test('domains: derivation never clobbers an admin edit, and edits persist across
 
 test('domains: hydrateDomains is pure and only fills MISSING domains', () => {
   resetDomains();
-  createDomain({ name: 'Sales', owner: 'sara', template: 'science' }); // pre-existing, edited
+  createDomain({ name: 'Sales', owner: 'sara' }); // pre-existing
+  setLayer('sales', 'ml', true); // admin edit
   const created = hydrateDomains(['sales', 'platform']); // sales already there
   assert.deepEqual(created, ['platform']); // only the missing one is added
   assert.equal(listDomains().find((d) => d.id === 'sales')?.layers.ml, true); // untouched

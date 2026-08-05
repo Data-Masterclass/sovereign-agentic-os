@@ -13,6 +13,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.68] — 2026-08-05
+
+### Removed
+- **Domain templates.** Dropped the create-domain template dropdown
+  (Blank / Analytics / Data Science / Big Data) and all its plumbing: the
+  `DomainTemplate` type + `TEMPLATES` array, the `template` provenance field on
+  the `Domain` type, and the `template` param on `createDomain` /
+  `hydrateDomains` and the `POST /api/platform-admin/domains` route
+  (`lib/platform-admin/domains.ts`, `app/(govern)/platform/domains/page.tsx`,
+  `app/api/platform-admin/domains/route.ts`). The concept was dead — a template
+  only ever preset one flag (`layers.ml`), which is already an independent
+  per-domain Science-layer toggle. A new domain now starts with the Science
+  layer off; enable it per domain in Admin → Domains as before. The per-domain
+  Science gate (`layers.ml`, `requiresLayer: 'ml'`, policy-compiler `ml` grant)
+  is unchanged. Legacy persisted domain records that still carry `template` load
+  silently — the stale field is ignored, never migrated.
+
 ## [os-ui 0.6.67] — 2026-08-05
 
 ### Added
