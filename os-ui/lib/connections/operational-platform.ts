@@ -1,0 +1,40 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+/**
+ * PURE, client-safe operational-platform identity (no secrets, no server imports) — the
+ * one place the api-batch platform label and the template↔platform map live, shared by the
+ * server registry (`operational-registry.ts`), the client cursor-honesty (`operational-cursor.ts`),
+ * and the UI. Kept separate from the server registry so the UI can import it without
+ * dragging the slice runners / connector clients into the client bundle.
+ */
+import type { ConnectionTemplateKey } from './schema.ts';
+
+/** The api-batch platform label the sync executor dispatches on (its slice runner).
+ *  'odata' backs BOTH `sap-odata` and `odata-v4` (one generic core); 'workday' backs the
+ *  RaaS report-as-entity source. */
+export type OperationalPlatform = 'salesforce' | 'kajabi' | 'odata' | 'workday';
+
+/** template → operational platform. Absent ⇒ not an operational api-batch source. */
+const TEMPLATE_PLATFORM: Partial<Record<ConnectionTemplateKey, OperationalPlatform>> = {
+  'salesforce-api': 'salesforce',
+  'kajabi-api': 'kajabi',
+  'sap-odata': 'odata',
+  'odata-v4': 'odata',
+  'workday-raas': 'workday',
+};
+
+/** The operational platform for a template, or undefined when it is not operational. */
+export function operationalPlatformFor(template: ConnectionTemplateKey): OperationalPlatform | undefined {
+  return TEMPLATE_PLATFORM[template];
+}
+
+/** True when a template is an operational api-batch source. */
+export function isOperationalTemplate(template: ConnectionTemplateKey): boolean {
+  return TEMPLATE_PLATFORM[template] !== undefined;
+}
+
+/** Every operational template key (for widening the exposed-tables / expose gates). */
+export function operationalTemplates(): ConnectionTemplateKey[] {
+  return Object.keys(TEMPLATE_PLATFORM) as ConnectionTemplateKey[];
+}

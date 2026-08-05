@@ -13,6 +13,121 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.77] — 2026-08-05
+
+### Added
+- **Operational system connections — Phases 4–6 (final wave)**
+  (operational-system-connections.md). SAP (generic OData core), Workday RaaS, and
+  the MCP/assistant/quota parity that finishes the operational journey.
+  - **Generic OData core** (`lib/connections/odata/`) — a pure, heavily-tested EDMX
+    `$metadata` parser (V2 + V4: entity sets, entity types, properties with
+    name/type/nullable/keys, and SAP annotations `sap:label`/`sap:creatable`/
+    `sap:updatable`/`sap:pageable` where present; nav properties, complex/enum types,
+    functions and non-Nullable facets deliberately ignored — a catalog reader, not a
+    full CSDL); V2/V4 dialect objects (`$inlinecount=allpages`/`__next` vs
+    `$count=true`/`@odata.nextLink`, date literals); a server-only client (Basic
+    communication-user or OAuth2 client-credentials, `fetchMetadata`, dialect-honoring
+    `pullPage`, all through `fetchWithBackoff`); and a page-streaming slice runner that
+    lands to `/ingest-rows` with timestamp-cursor support ONLY where a change-timestamp
+    property is detected in `$metadata` (never guessed), else full-refresh-only.
+  - **Two OData templates** — branded `sap-odata` (S/4HANA Cloud communication
+    arrangement; honest v1 caveat: cloud-reachable only, on-prem behind the SAP Cloud
+    Connector NOT supported) and unbranded `odata-v4` (Dynamics 365 / Business
+    Central) — both registered in the operational registry (discover from `$metadata`
+    with `sap:label` labels, cursorFor from detection), with a real `$metadata`
+    health probe, install guides, and egress-allowlist hosts. NO action tools this
+    wave (SAP actions are a later decision).
+  - **Workday RaaS** (`lib/connections/workday-raas.ts` + `workday-raas` template) —
+    reports-as-entities (the admin registers report URLs; there is no cheap global
+    describe, said plainly), fields inferred from a sampled first page and labeled
+    "inferred from a sample", record counts omitted; full-refresh-only by default with
+    an optional incremental window on an admin-configured report date prompt; ISU Basic
+    auth. Install guide states the SOAP WWS punt (true incremental = v2) plainly.
+  - **MCP action-adoption parity** — `adopt_entity_actions { exposureId, entities[] }`
+    + `list_adoptable_actions` (domain_admin; thin delegates over `action-adoptions.ts`,
+    governance re-resolved server-side); exposure CRUD tools (`create_exposure_set` /
+    `update_exposure_set`) gain the `actions` arg validated exactly like the routes
+    (write actions trigger the same `exposure_action_enable` approval).
+  - **ExposeChat** grounding gains operational-source + action-scope + cursor honesty,
+    a new starter ("Expose Accounts and Opportunities to Commerce, with read actions
+    for agents"), and exposure cards may carry `actions` (validated server-side; write
+    actions render with "requires admin approval to enable").
+  - **Salesforce quota surfacing** — a `/limits` (DailyApiRequests) pre-flight in the
+    sync path: near quota, the run skips honestly ("throttled — resuming next window")
+    with the real numbers in the Developer view and the cursor unadvanced — never a
+    hard 429 mid-slice. Nil-safe: absent `/limits` data changes nothing.
+
+## [os-ui 0.6.76] — 2026-08-05
+
+### Added
+- **Operational system connections — Phase 3, the action surface**
+  (operational-system-connections.md). Salesforce operational connections gain
+  real, entity-generic action tools behind a four-layer fail-closed intersection,
+  two-layer write approvals, and domain action adoption — all inert behind
+  `OPERATIONAL_ACTIONS_ENABLED` (default OFF, nil-safe).
+  - **Entity-generic Salesforce tools** (`lib/connections/salesforce-tools.ts`)
+    replace the hardcoded per-object preset: `sf_get_record` /
+    `sf_search` (Read; `sf_search` bounded to LIMIT ≤ 200 with a `truncated`
+    flag), `sf_create_record` / `sf_update_record` (Write-approval; bounded
+    variant via the connection's `argConstraints`), `sf_delete_record` (Blocked).
+    SOQL is built server-side from validated parts only (`buildSearchSoql` +
+    `safeSObjectName` + record-id validation) — raw user input is never
+    interpolated into SOQL (single-quoted, escaped, control-char-stripped).
+  - **Real executor** in `CONNECTION_EXECUTORS['salesforce-api']` (was the
+    `executeMock` gap): never throws (`{ ok:false, reason }`), secret injected
+    server-side, `fetchWithBackoff` for honest 429/503, and every result envelope
+    carries the service-account identity label ("as the integration account —
+    records it cannot see are absent").
+  - **The four-layer intersection**, recomputed FRESH per call (no cache outlives
+    a revoke): capability profile ∩ non-revoked exposure actions (write needs
+    admin approval) ∩ non-revoked domain adoption ∩ agent/app grant. No exposure /
+    no adoption / flag off ⇒ the tool is invisible AND uncallable (fail closed).
+  - **Two-layer write approval.** Enable-time: create/update on an exposure's
+    `actions` enqueue an admin `exposure_action_enable` approval; write scopes stay
+    compiled-out (`writeApproved`) until approved; read/search activate
+    immediately; a broadening edit re-triggers approval. Runtime: writes flow
+    through the existing held-with-preview `Write-approval` gate.
+  - **Domain action adoption** (`lib/connections/action-adoptions.ts`,
+    `os-action-adoptions` mirror + `POST /api/connections/[id]/action-adoptions`):
+    a `domain_admin` adopts an exposure's entity actions into their domain — the
+    consent step that keeps an exposure from silently arming another domain's
+    agents; audit `entity_actions_adopted`; soft revoke kills the tools at once.
+  - **UI**: the Expose "Assign" stage gains a collapsed "Agent actions (optional)"
+    section (per-entity read/search/create/update, all off by default; Developer
+    shows the compiled tool names); the Review impact card states the action grant
+    plainly; the Adopt panel gains an "Adopt actions" affordance; agent run results
+    render the service-account label.
+
+## [os-ui 0.6.75] — 2026-08-05
+
+### Added
+- **Operational system connections — Phases 0–2** (operational-system-connections.md):
+  operational (Salesforce/Kajabi) API connections become a snapshot/expose/adopt data source
+  alongside warehouses.
+  - **Registries (Phase 0, no behavior change).** New `lib/connections/operational-registry.ts`
+    (with pure, client-safe `operational-platform.ts` + `operational-cursor.ts`) replaces the
+    two hardcoded seams: the `liveApiPlatform` `salesforce|kajabi` switch in
+    `sync-run-server.ts` (now `platformForTemplate` + `pullOperationalSlice`) and the
+    warehouse-only discovery in `buildCatalogSnapshot` (now dispatched per template). Existing
+    warehouse/Salesforce/Kajabi syncs + snapshots stay byte-identical.
+  - **Salesforce entity catalog (Phase 1).** A `salesforce-api` connection gets a real catalog
+    snapshot through the registry (honest "snapshot from <takenAt>"; unreachable never
+    fabricated). The `describe` route dispatches per template — Salesforce returns
+    `{name, type, label}` per field (business label alongside the API name); a new on-demand
+    `count` route surfaces a REAL `SELECT COUNT()` only on row expand (absent, never estimated).
+    Browse rows carry a cursor-honesty chip ("Incremental (SystemModstamp)" / "Full refresh
+    only") derived from the registry, never guessed. Smart-seed already defaults to Starter for
+    a single-schema source.
+  - **Operational expose + adopt (Phase 2).** `exposed-tables.ts` widens past warehouse to
+    operational templates (`catalog:null`, `operational` flag, per-entity cursor honesty); an
+    operational exposure is forced to sync and an explicit `live` is refused ("Operational
+    sources sync; there is no live mode"). The staged ExposePanel + adopt dialog work for a
+    `salesforce-api` connection with Sync locked on; adopt records `connected.source` with the
+    platform pseudo-catalog (byte-consistent with the snapshot + api-batch sync source) and
+    locks cursor options to what the registry says the entity supports (full-refresh-only
+    entities refuse an incremental mode honestly; merge is unavailable). Landing/schedule/
+    quarantine/freshness/revocation reuse the existing sync engine verbatim.
+
 ## [os-ui 0.6.74] — 2026-08-05
 
 ### Added

@@ -9,6 +9,7 @@ import { queryRun } from '@/lib/infra/governed';
 import { discoverWarehouse, getConnectionForUser } from '@/lib/connections/store';
 import { providerFor } from '@/lib/connections/warehouse/registry';
 import { toWarehouseSource } from '@/lib/connections/warehouse/connection';
+import { operationalEntry } from '@/lib/connections/operational-registry';
 
 /**
  * Per-connection CATALOG SNAPSHOT — the cached, honest listing the Expose UI browses
@@ -164,6 +165,29 @@ export async function refreshCatalogSnapshot(
   deps: { discover?: DiscoverFn } = {},
 ): Promise<CatalogSnapshot> {
   const c = await getConnectionForUser(connId, user); // 404s if not visible
+
+  // OPERATIONAL sources (Salesforce / Kajabi / …) discover their ENTITIES through the
+  // operational registry instead of `discoverWarehouse` (Trino cannot reach them). The
+  // entity catalog rides the SAME snapshot machinery: the registry returns the flat
+  // entity list under ONE pseudo-schema ('salesforce'/'kajabi'), which we adapt to the
+  // build loop's `{schemas}` then `{schema→tables}` contract. Snapshot honesty
+  // (status/takenAt/prevDiff) is identical to the warehouse path.
+  const op = operationalEntry(c.template);
+  if (op) {
+    const catalog = op.platform; // the pseudo-catalog identity (no Trino catalog exists)
+    // One real discovery call; cached so the two build-loop hops don't double-fetch.
+    let cached: Awaited<ReturnType<typeof op.discover>> | null = null;
+    const discoverOnce = async () => (cached ??= await op.discover(connId, user));
+    const boundOp: BoundDiscover = async (opts) => {
+      const res = await discoverOnce();
+      if (!res.ok) return { ok: false, schemas: [], tables: [] };
+      return opts.schema
+        ? { ok: true, schemas: [], tables: res.tables }
+        : { ok: true, schemas: res.schemas, tables: [] };
+    };
+    return buildSnapshot(connId, catalog, boundOp);
+  }
+
   const discover = deps.discover ?? discoverWarehouse;
   const catalog = c.warehouse?.catalog ?? c.endpoint;
   return buildSnapshot(connId, catalog, (opts) => discover(connId, user, opts));
@@ -222,7 +246,7 @@ export async function getCatalogSnapshot(connId: string, user: CurrentUser): Pro
 /** One table's columns, from a governed `DESCRIBE`. Shaped for a lazy per-table expand.
  *  `comment` is Trino's per-column doc string (empty when the metastore carries none);
  *  the Phase-B classifier reads it, so the describe path returns it additively. */
-export type TableColumn = { name: string; type: string; comment?: string };
+export type TableColumn = { name: string; type: string; comment?: string; label?: string };
 
 /**
  * LAZY per-table column expansion — a governed `DESCRIBE <catalog>.<schema>.<table>` AS
@@ -266,6 +290,86 @@ export async function describeTable(
       return { name: String(r[0]), type: String(r[1] ?? ''), ...(comment ? { comment } : {}) };
     })
     .filter((x) => x.name);
+}
+
+/**
+ * DISPATCH describe per connection template (operational-system-connections.md, Phase 1).
+ * A warehouse connection describes through the governed Trino `DESCRIBE`
+ * ({@link describeTable}); an operational connection describes its ENTITY's fields through
+ * the connector's own API (Salesforce field describe → {name, type, label}). The route +
+ * CatalogBrowser consume the ONE `TableColumn[]` shape: the business `label` rides the
+ * `comment` slot (rendered as the human name next to the API name), plus an additive
+ * `label` field for consumers that want it explicitly. `input.schema` is the pseudo-schema
+ * ('salesforce'); `input.table` is the entity (SObject). Honest: an unreachable source
+ * throws (folded to 4xx/5xx), never a fabricated field list.
+ */
+export async function describeEntity(
+  connId: string,
+  user: CurrentUser,
+  input: { schema: string; table: string },
+): Promise<TableColumn[]> {
+  const c = await getConnectionForUser(connId, user);
+  const op = operationalEntry(c.template);
+  if (!op) return describeTable(connId, user, input); // warehouse (or honest 400 within)
+  if (op.platform === 'salesforce') {
+    const { describeSalesforceObject } = await import('@/lib/connections/salesforce');
+    const fields = await describeSalesforceObject(connId, user, input.table);
+    return fields.map((f) => ({
+      name: f.name,
+      type: f.type,
+      ...(f.label && f.label !== f.name ? { comment: f.label } : {}),
+      label: f.label,
+    }));
+  }
+  if (op.platform === 'odata') {
+    // OData describes an entity set's scalar properties from $metadata (name/type/label —
+    // sap:label where present, never invented).
+    const { describeODataEntity } = await import('@/lib/connections/odata/client');
+    const fields = await describeODataEntity(connId, user, input.table);
+    return fields.map((f) => ({
+      name: f.name,
+      type: f.type,
+      ...(f.label && f.label !== f.name ? { comment: f.label } : {}),
+      label: f.label,
+    }));
+  }
+  if (op.platform === 'workday') {
+    // Workday RaaS has no describe — fields are INFERRED from a sampled first page and
+    // labeled "inferred from a sample" (honest, never claimed as authoritative metadata).
+    const { describeWorkdayReport } = await import('@/lib/connections/workday-raas');
+    const fields = await describeWorkdayReport(connId, user, input.table);
+    return fields.map((f) => ({ name: f.name, type: f.type, comment: f.label, label: f.label }));
+  }
+  // Other operational templates (Kajabi) have no field-describe endpoint — honest empty
+  // (the browser shows "No columns reported"), never fabricated.
+  return [];
+}
+
+/**
+ * A REAL, cheap row count for ONE operational entity, on demand (Phase 1). Surfaced ONLY
+ * where cheaply real: Salesforce → `SELECT COUNT()`. A warehouse or count-less operational
+ * template returns `null` (absent > estimated — the design forbids fabricated counts). An
+ * unreachable source THROWS (never a zero or a guess). Re-resolves FOR THE CALLER (DLS).
+ */
+export async function countEntity(
+  connId: string,
+  user: CurrentUser,
+  input: { table: string },
+): Promise<number | null> {
+  const c = await getConnectionForUser(connId, user);
+  const op = operationalEntry(c.template);
+  if (op?.platform === 'salesforce') {
+    const { countSalesforceObject } = await import('@/lib/connections/salesforce');
+    return countSalesforceObject(connId, user, input.table);
+  }
+  if (op?.platform === 'odata') {
+    // OData $count / $inlinecount is a cheap real count — surfaced when the service inlines
+    // it; null when it omits it (absent > fabricated).
+    const { countODataEntity } = await import('@/lib/connections/odata/client');
+    return countODataEntity(connId, user, input.table);
+  }
+  // Workday RaaS + Kajabi counts are not cheaply real → absent, honestly (never estimated).
+  return null;
 }
 
 /** Test seam — forget the in-process cache (mirrors the store's `__resetConnections`). */

@@ -152,6 +152,7 @@ test('context.md and guide.md files reference only real MCP tool names (drift tr
     'gross_revenue', 'order_count',                       // example metric names in guide worked examples
     'big_number_total',                                   // dashboard vizType enum value (create_dashboard charts[].vizType)
     'binary_classification', 'multiclass_classification', // model taskType enum values (create_model), not tools
+    'exposure_action_enable',                             // approval kind (operational action enablement), not a tool
   ]);
 
   const tabsDir = join(process.cwd(), 'lib', 'tabs');

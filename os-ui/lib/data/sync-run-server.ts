@@ -5,6 +5,9 @@ import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { SalesforceSliceArgs } from '../connections/salesforce.ts';
 import type { KajabiSliceArgs } from '../connections/kajabi.ts';
+import type { ODataSliceArgs } from '../connections/odata/sync.ts';
+import type { WorkdaySliceArgs } from '../connections/workday-raas.ts';
+import type { OperationalPlatform } from '../connections/operational-platform.ts';
 import { config } from '../core/config.ts';
 import { executeRun, queryRun, type ExecuteIdentity } from '../infra/governed.ts';
 import type { Dataset, DatasetSyncMode, Layer } from './dataset-schema.ts';
@@ -126,7 +129,7 @@ export type SyncDeps = {
   /** Which API-BATCH platform a NON-catalog connection is. Defaults to
    *  'salesforce' when unresolvable so the Salesforce slice runner surfaces its
    *  honest "not an available sync source" error (never a silent success). */
-  apiPlatform?: (connId: string, user: CurrentUser) => Promise<'salesforce' | 'kajabi'>;
+  apiPlatform?: (connId: string, user: CurrentUser) => Promise<OperationalPlatform>;
   /** The API-BATCH slice runner (Salesforce): pulls the slice via the REST API and
    *  streams it to the data-runner. The live impl resolves + validates the
    *  connection itself and throws an honest error when it is no sync source. */
@@ -137,6 +140,17 @@ export type SyncDeps = {
   kajabiSlice?: (
     args: KajabiSliceArgs,
   ) => Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }>;
+  /** The API-BATCH slice runner (OData — sap-odata / odata-v4). */
+  odataSlice?: (
+    args: ODataSliceArgs,
+  ) => Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }>;
+  /** The API-BATCH slice runner (Workday RaaS). */
+  workdaySlice?: (
+    args: WorkdaySliceArgs,
+  ) => Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }>;
+  /** The Salesforce `/limits` pre-flight (DailyApiRequests usage). Null ⇒ no signal
+   *  (proceed unchanged). Injected for tests; the live impl reads AS the sync owner. */
+  apiUsage?: (connId: string, user: CurrentUser) => Promise<{ max: number; remaining: number } | null>;
   query?: (sql: string, principal?: string) => Promise<{ rows: string[][] }>;
   execute?: (sql: string, identity: ExecuteIdentity) => Promise<{ rowsAffected: number | null }>;
   /** Marks Bronze rebuilt (lights freshness — Monitoring reads versions.bronze.updatedAt). */
@@ -185,14 +199,38 @@ async function liveKajabiSlice(
   return runKajabiSlice(args);
 }
 
-/** Which api-batch platform a non-catalog connection is. 'salesforce' on any
- *  failure — the Salesforce slice runner then re-resolves and throws the honest
- *  "not an available sync source" error under the caller's identity. */
-async function liveApiPlatform(connId: string, user: CurrentUser): Promise<'salesforce' | 'kajabi'> {
+async function liveODataSlice(
+  args: ODataSliceArgs,
+): Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }> {
+  const { runODataSlice } = await import('../connections/odata/sync.ts');
+  return runODataSlice(args);
+}
+
+async function liveWorkdaySlice(
+  args: WorkdaySliceArgs,
+): Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }> {
+  const { runWorkdaySlice } = await import('../connections/workday-raas.ts');
+  return runWorkdaySlice(args);
+}
+
+/** The live Salesforce `/limits` pre-flight — resolves + reads AS the sync owner. Never
+ *  throws (a limits hiccup never fails an otherwise-fine sync); null ⇒ proceed unchanged. */
+async function liveApiUsage(connId: string, user: CurrentUser): Promise<{ max: number; remaining: number } | null> {
+  const { salesforceApiUsage } = await import('../connections/salesforce.ts');
+  return salesforceApiUsage(connId, user);
+}
+
+/** Which api-batch platform a non-catalog connection is — now resolved through the
+ *  operational registry (`platformForTemplate`), so a new operational template appends
+ *  there only. 'salesforce' on any failure / unknown template — the Salesforce slice
+ *  runner then re-resolves and throws the honest "not an available sync source" error
+ *  under the caller's identity (byte-identical to the prior hardcoded switch's default). */
+async function liveApiPlatform(connId: string, user: CurrentUser): Promise<OperationalPlatform> {
   try {
     const { getConnectionForUser } = await import('../connections/store.ts');
+    const { platformForTemplate } = await import('../connections/operational-registry.ts');
     const c = await getConnectionForUser(connId, user);
-    return c.template === 'kajabi-api' ? 'kajabi' : 'salesforce';
+    return platformForTemplate(c.template);
   } catch {
     return 'salesforce';
   }
@@ -417,12 +455,25 @@ export async function runDatasetSync(
     };
 
     if (!catalog) {
-      // ---- api-batch (Salesforce / Kajabi) ----
+      // ---- api-batch (Salesforce / Kajabi / OData / Workday) ----
       const platform = await (deps.apiPlatform ?? liveApiPlatform)(sync.connectionId, owner);
       if (mode === 'merge') {
-        throw new Error(
-          `${platform === 'kajabi' ? 'Kajabi' : 'Salesforce'} sync supports append or full-refresh only (merge needs a federated SQL source)`,
-        );
+        const label = platform === 'kajabi' ? 'Kajabi' : platform === 'odata' ? 'OData' : platform === 'workday' ? 'Workday RaaS' : 'Salesforce';
+        throw new Error(`${label} sync supports append or full-refresh only (merge needs a federated SQL source)`);
+      }
+      // QUOTA PRE-FLIGHT (Salesforce): read the org's real DailyApiRequests before pulling
+      // pages. Near quota ⇒ SKIP honestly ("throttled — resuming next window") with the
+      // real numbers in the reason (Developer view) and the cursor UNADVANCED — never a
+      // hard 429 mid-slice. Nil-safe: absent /limits data (null) changes NOTHING.
+      if (platform === 'salesforce') {
+        const usage = await (deps.apiUsage ?? liveApiUsage)(sync.connectionId, owner).catch(() => null);
+        const { nearApiQuota } = await import('../connections/salesforce.ts');
+        if (nearApiQuota(usage)) {
+          const reason =
+            `throttled — resuming next window (Salesforce DailyApiRequests ${usage!.remaining}/${usage!.max} remaining, below the safety floor)`;
+          const run = record({ datasetId, startedAt, finishedAt: now(), status: 'skipped', mode, cursorBefore, ranBy: owner.id, error: reason });
+          return { ok: true, skipped: true, reason, run };
+        }
       }
       // Both runners share the executor contract: probe/reuse the window, delete
       // the deterministic batch, stream pages to the data-runner, return the hw.
@@ -446,10 +497,17 @@ export async function runDatasetSync(
         },
         startedAt,
       };
-      const sliced =
-        platform === 'kajabi'
-          ? await (deps.kajabiSlice ?? liveKajabiSlice)({ ...common, resource: sync.source.table })
-          : await (deps.salesforceSlice ?? liveSalesforceSlice)({ ...common, object: sync.source.table });
+      // Slice dispatch through the operational registry — the same disjoint-branch
+      // registry the discovery/cursor seams use. The test injection seams
+      // (deps.salesforceSlice/kajabiSlice) forward straight through, so the executor's
+      // fakes still bind; the live path resolves the platform runner lazily.
+      const { pullOperationalSlice } = await import('../connections/operational-registry.ts');
+      const sliced = await pullOperationalSlice(platform, common, sync.source.table, {
+        salesforceSlice: deps.salesforceSlice ?? liveSalesforceSlice,
+        kajabiSlice: deps.kajabiSlice ?? liveKajabiSlice,
+        odataSlice: deps.odataSlice ?? liveODataSlice,
+        workdaySlice: deps.workdaySlice ?? liveWorkdaySlice,
+      });
       rowsAffected = sliced.rowsAffected;
       batchId = sliced.batchId;
       highWatermark = sliced.highWatermark;

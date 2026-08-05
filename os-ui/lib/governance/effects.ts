@@ -99,6 +99,14 @@ export type EffectDeps = {
     approver: { id: string; role: Principal['role']; domains: string[] },
     decision: 'approve' | 'deny',
   ) => Promise<{ appName: string; state: string; live: boolean }>;
+  /** Approve an operational exposure's WRITE actions (`exposure_action_enable`):
+   *  flips the exposure's `writeApproved` so the create/update action tools compile
+   *  onto the connection's capability profile. Injected by the route so this module
+   *  (and its tests) stay free of the server-only exposures store. */
+  enableExposureActions?: (
+    exposureId: string,
+    approver: { id: string; role: Principal['role']; domains: string[] },
+  ) => Promise<{ exposureId: string; connectionName: string }>;
 };
 
 /** The model-service Actor for a human approver (agents can never decide — the
@@ -213,6 +221,28 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
           subject: endpoint,
           reason: `Egress request approved by ${who}`,
           detail: { endpoint, allowed: isEgressAllowed(endpoint) },
+        },
+      };
+    }
+    case 'exposure_action_enable': {
+      // Approval IS the action: flip the exposure's `writeApproved` so its create/
+      // update action tools compile onto the connection profile (read/search were
+      // already live). Recomputed server-side AS the approver via the injected dep —
+      // the held item cannot smuggle a wider grant.
+      const exposureId = s(p.exposureId);
+      if (!exposureId) throw new Error('exposure_action_enable requires payload.exposureId');
+      if (!deps.enableExposureActions) throw new Error('exposure_action_enable requires the injected enableExposureActions applier (not injected)');
+      const approverA = approverPrincipal(approver, 'admin', a.domain);
+      const out = await deps.enableExposureActions(exposureId, approverA);
+      return {
+        ok: true,
+        applied: `Write actions enabled on exposure “${out.connectionName}” — create/update tools now compiled.`,
+        live: true,
+        audit: {
+          action: 'approve',
+          subject: out.exposureId,
+          reason: `Exposure write-action enablement approved by ${who}`,
+          detail: { exposureId: out.exposureId, connection: out.connectionName },
         },
       };
     }

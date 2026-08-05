@@ -297,6 +297,71 @@ const KAJABI: InstallGuide = {
   caveat: 'HONEST LIMITS: only **purchases** documents an update cursor (updated_at) — contacts/customers/orders/form_submissions sync **new records only** (created_at; edits need a full refresh), and transactions/offers/products/courses/forms/tags are **full-refresh only**. Deletes are never detected. Kajabi publishes **no rate-limit contract** — 429s surface honestly and the next run re-covers the slice. Multi-site accounts sync all sites (filter on the `site_id` column downstream). Reachability and credentials are only confirmed against your live account at Test time.',
 };
 
+const SAP_ODATA: InstallGuide = {
+  key: 'sap-odata',
+  title: 'SAP S/4HANA Cloud (OData)',
+  summary: 'Connect an SAP S/4HANA Cloud OData service via a communication arrangement. $metadata drives entity discovery; entity sets sync via a generic OData core (V2 + V4).',
+  prerequisites: [
+    'An SAP S/4HANA Cloud **communication arrangement** exposing the OData service you want (e.g. `API_BUSINESS_PARTNER`), with a **communication user** (least privilege: read on the entity sets you sync).',
+    'The **OData service ROOT** URL (e.g. `https://my999999.s4hana.cloud.sap/sap/opu/odata/sap/API_BUSINESS_PARTNER`) — the host on the **egress allowlist** (`*.s4hana.cloud.sap` is in the default list).',
+    'The credential as ONE value: `user:password` for a communication user (**Basic**), or `client_id:client_secret` for **OAuth2 client-credentials** (plus the token URL) — stored in Secrets Manager, **never** on the record.',
+    'Builder/Admin rights (service-credential connector, not personal OAuth).',
+  ],
+  steps: [
+    'On the SAP S/4HANA Cloud card, click **Connect**.',
+    'Name the connection; enter the **OData service root** as the endpoint.',
+    'Pick **Basic** (communication user) or **OAuth client-credentials** (add the token URL); paste the credential — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real `$metadata` round-trip parsed to EDMX).',
+    'To land an entity in the lakehouse: create a dataset with a **scheduled sync** on this connection (discovery lists the service’s entity sets from `$metadata`) — the first run creates the Bronze copy; later runs pull incrementally where the entity exposes a change-timestamp property (detected from `$metadata`), else full refresh.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound OData connection. Discovery + field labels come from the service’s own `$metadata` (V2 or V4, `sap:label` where present). Scheduled syncs run **as the dataset owner**: pages stream to the lakehouse over REST (following the server’s `__next`/`@odata.nextLink` paging) with `_loaded_at`/`_batch_id` lineage. No write/action tools in this wave — the profile is read-only.',
+  caveat: 'v1 supports **cloud-reachable services only** — an on-prem service behind the **SAP Cloud Connector** is NOT supported (its virtual host is not directly reachable from the OS; a Cloud Connector bridge is a later phase). Incremental sync turns on only when an entity exposes a documented change-timestamp property (e.g. `LastChangeDateTime`) — detected from `$metadata`, never guessed; otherwise full refresh. Deletes are not detected. Reachability + credentials are only confirmed against your live service at Test time.',
+};
+
+const ODATA_V4: InstallGuide = {
+  key: 'odata-v4',
+  title: 'OData V4 (Dynamics 365 / Business Central)',
+  summary: 'Connect any OData V4 service (Microsoft Dynamics 365, Business Central, or a custom V4 API) via the SAME generic OData core as SAP — $metadata-driven discovery + entity-set sync.',
+  prerequisites: [
+    'An OData **V4 service root** URL (e.g. `https://host/api/data/v9.2`) — the host on the **egress allowlist** (`*.dynamics.com` / Business Central are in the default list; a custom host needs an Admin-approved egress request).',
+    'The credential as ONE value: `user:password` (**Basic**) or `client_id:client_secret` (**OAuth2 client-credentials**, plus the token URL) — stored in Secrets Manager, **never** on the record.',
+    'Builder/Admin rights (service-credential connector, not personal OAuth).',
+  ],
+  steps: [
+    'On the OData V4 card, click **Connect**.',
+    'Name the connection; enter the **service root** as the endpoint.',
+    'Pick **Basic** or **OAuth client-credentials** (add the token URL); paste the credential — stored once in Secrets Manager.',
+    'Create the connection, then **Test** on its card (a real `$metadata` round-trip).',
+    'To land an entity: create a dataset with a **scheduled sync** (discovery lists entity sets from `$metadata`) — first run creates the Bronze copy; later runs sync incrementally where a change-timestamp property exists, else full refresh.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound OData V4 connection using the SAME generic core as the SAP template. Discovery + labels come from `$metadata`. Scheduled syncs stream pages to the lakehouse honoring the V4 `@odata.nextLink` paging, with lineage on every row. Read-only profile (no write/action tools this wave).',
+  caveat: 'Incremental sync depends on a detected change-timestamp property in `$metadata` — otherwise full refresh (never guessed). Deletes are not detected. A custom (non-allowlisted) host needs an Admin-approved egress request first. Reachability + credentials are only confirmed at Test time.',
+};
+
+const WORKDAY: InstallGuide = {
+  key: 'workday-raas',
+  title: 'Workday (RaaS reports)',
+  summary: 'Connect a Workday tenant via RaaS (Reports-as-a-Service). Configured custom reports ARE the entities — there is no global describe, so you register the report URLs.',
+  prerequisites: [
+    'An **Integration System User (ISU)** in Workday with a security group granting access to the reports you register (least privilege). The credential is ONE value `isu_user:password` — stored in Secrets Manager, **never** on the record.',
+    'The tenant **RaaS base URL** (e.g. `https://wd2-impl-services1.workday.com/ccx/service/customreport2/<tenant>`) — the host on the **egress allowlist** (`*.workday.com` / `*.myworkday.com` are in the default list).',
+    'For EACH report: its **RaaS report URL** (enabled for web service / RaaS). There is no cheap global describe, so you paste and manage these — each report becomes one entity.',
+    'Builder/Admin rights (service-credential connector, not personal OAuth).',
+  ],
+  steps: [
+    'On the Workday card, click **Connect**.',
+    'Name the connection; enter the **RaaS base URL** as the endpoint; paste the ISU credential.',
+    'Add each **report URL** you want as an entity (optionally a friendly label). If a report exposes a date **prompt** you want to window on, name its prompt parameter for the optional incremental window.',
+    'Create the connection, then **Test** on its card (a real sample fetch of the first configured report with `format=json`).',
+    'To land a report: create a dataset with a **scheduled sync** on this connection (discovery lists your configured reports) — the fields are inferred from a sampled first page; each run replaces the Bronze copy (full refresh), unless the report has a configured date prompt for an incremental window.',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound Workday RaaS connection. Each configured report is an entity; fields are **inferred from a sampled first page** (labeled as such — not authoritative metadata); record counts are omitted (no honest cheap count in RaaS). Scheduled syncs run **as the dataset owner**: the report’s `format=json` rows stream to the lakehouse with lineage. Read-only profile (no write/action tools this wave).',
+  caveat: 'v1 is **full-refresh-only by default** — an incremental window applies ONLY when you configured a report **date prompt** (otherwise every run replaces the copy). Fields are a **sample inference**, not authoritative metadata. **True incremental entity sync arrives with the SOAP WWS integration — v2.** Reachability, report access + credentials are only confirmed against your live tenant at Test time.',
+};
+
 
 const GDRIVE: InstallGuide = {
   key: 'gdrive',
@@ -713,6 +778,7 @@ const GUIDES: InstallGuide[] = [
   POSTGRESQL, MYSQL, SQLSERVER, MONGODB, KAFKA,
   GDRIVE, ONEDRIVE, NOTION, AIRFLOW, OM_CATALOG,
   GITHUB, SUPABASE, ATLASSIAN, SALESFORCE, KAJABI,
+  SAP_ODATA, ODATA_V4, WORKDAY,
   SLACK, GMAIL, GCAL, OUTLOOK, TEAMS,
   ENTRA, PURVIEW, AI_FOUNDRY, SAGEMAKER,
   GCP_IDENTITY, GCP_DIRECTORY, SNOWFLAKE_GOVERNANCE,

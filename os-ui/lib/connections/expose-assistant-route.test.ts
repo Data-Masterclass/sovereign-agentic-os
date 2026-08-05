@@ -36,7 +36,7 @@ mock.module('@/lib/core/auth', {
 
 mock.module('@/lib/connections/store', {
   namedExports: {
-    getConnectionForUser: async () => ({ id: 'conn_1', warehouse: { catalog: 'glue' }, endpoint: 'glue' }),
+    getConnectionForUser: async () => ({ id: 'conn_1', template: 'warehouse', warehouse: { catalog: 'glue' }, endpoint: 'glue' }),
   },
 });
 
@@ -61,7 +61,10 @@ mock.module('@/lib/connections/warehouse/catalog-classification', {
   },
 });
 mock.module('@/lib/connections/exposures', {
-  namedExports: { listExposureSets: async () => [] },
+  namedExports: {
+    listExposureSets: async () => [],
+    entityActionKey: (e: string) => String(e ?? '').trim().toLowerCase(),
+  },
 });
 mock.module('@/lib/platform-admin/domains', {
   namedExports: {

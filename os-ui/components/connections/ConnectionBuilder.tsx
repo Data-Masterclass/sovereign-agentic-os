@@ -31,6 +31,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CAPABILITY_MODES, type CapabilityMode, type ConnectionTemplateKey } from '@/lib/connections/schema';
+import { isOperationalTemplate, operationalPlatformFor } from '@/lib/connections/operational-platform';
 import { type Role, roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { providerForTemplate, providerConfig, type OAuthProvider } from '@/lib/oauth/providers';
@@ -118,6 +119,7 @@ export default function ConnectionBuilder({
       c={existing}
       user={data.user}
       oauthProviders={data.oauthProviders ?? []}
+      actionsEnabled={data.operationalActionsEnabled ?? false}
       onBack={onBack}
       onChanged={onChanged}
     />
@@ -331,11 +333,12 @@ function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCrea
  * · Unshare · lifecycle. Every handler + route is unchanged from the old inline card.
  */
 function ConnectionDetail({
-  c, user, oauthProviders, onBack, onChanged,
+  c, user, oauthProviders, actionsEnabled, onBack, onChanged,
 }: {
   c: Conn;
   user: { id: string; role: Role; domains: string[] };
   oauthProviders: OAuthProviderStatus[];
+  actionsEnabled: boolean;
   onBack: () => void;
   onChanged: () => void;
 }) {
@@ -369,6 +372,7 @@ function ConnectionDetail({
   const exposed = c.tools.filter((t) => t.mode === 'Read' || t.mode === 'Write-approval' || t.mode === 'Write-bounded');
   const isDrive = c.connector === 'drive' || c.type === 'Drive';
   const isWarehouse = c.template === 'warehouse';
+  const isOperational = isOperationalTemplate(c.template as ConnectionTemplateKey);
   const isNotion = c.template === 'notion-mcp';
 
   const notionStatus = driveConnectionStatus(c);
@@ -812,6 +816,12 @@ function ConnectionDetail({
             each listed table to an OPA governance entry shared with the chosen domains. */}
         {isWarehouse && c.warehouse && role === 'admin' ? (
           <ExposePanel connectionId={c.id} catalog={c.warehouse.catalog} />
+        ) : null}
+
+        {/* Expose operational ENTITIES (Salesforce/Kajabi) — same admin gate; the panel
+            locks mode to Sync (no Trino catalog exists to federate a live read). */}
+        {isOperational && role === 'admin' ? (
+          <ExposePanel connectionId={c.id} catalog={operationalPlatformFor(c.template as ConnectionTemplateKey) ?? c.template} operational actionsEnabled={actionsEnabled} />
         ) : null}
 
         {/* Data-source toggle */}

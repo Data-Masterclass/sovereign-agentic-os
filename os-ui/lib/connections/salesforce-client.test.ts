@@ -9,6 +9,8 @@ import {
   safeSObjectName,
   sfDescribeFields,
   sfDescribeGlobal,
+  sfLimits,
+  nearApiQuota,
   sfToken,
   soqlDatetime,
   splitClientCredential,
@@ -345,4 +347,27 @@ test('runSalesforceSlice incremental retry reuses the given window; dispatch mar
   assert.match(executed[0], /_batch_id/, 'delete-by-batch-id ran before the re-pull');
   const soql = decodeURIComponent(calls.map((c) => c.url).join(' '));
   assert.match(soql, /SystemModstamp <= 2026-06-15T00:00:00.000Z/, 'the slice is bounded to the reused window');
+});
+
+// ---- /limits quota pre-flight (Phase 6) -------------------------------------
+
+test('sfLimits reads DailyApiRequests (Max + Remaining); omission ⇒ null (never fabricated)', async () => {
+  const { fetchImpl } = fakeFetch([
+    ['/limits', () => mkRes(200, { DailyApiRequests: { Max: 100000, Remaining: 4200 } })],
+  ]);
+  const res = await sfLimits(conn(fetchImpl), 'tok');
+  assert.ok(res.ok && res.data);
+  assert.deepEqual(res.data, { max: 100000, remaining: 4200 });
+
+  // A body without DailyApiRequests ⇒ ok with null (absent > fabricated).
+  const { fetchImpl: f2 } = fakeFetch([['/limits', () => mkRes(200, { Other: { Max: 1 } })]]);
+  const res2 = await sfLimits(conn(f2), 'tok');
+  assert.ok(res2.ok && res2.data === null);
+});
+
+test('nearApiQuota: pure — near-quota true, healthy false, absent ⇒ false (no signal)', () => {
+  assert.equal(nearApiQuota({ max: 100000, remaining: 5000 }), true); // 5% left → skip
+  assert.equal(nearApiQuota({ max: 100000, remaining: 50000 }), false); // 50% left → proceed
+  assert.equal(nearApiQuota(null), false); // no signal → proceed unchanged (nil-safe)
+  assert.equal(nearApiQuota({ max: 0, remaining: 0 }), false); // guard against div-by-zero
 });

@@ -29,21 +29,31 @@ import Markdown from '@/components/Markdown';
 
 /** A validated selection suggestion: real `schema.table` keys to merge into the selection. */
 export type SelectionSuggestion = { tables: string[] };
-/** A validated exposure suggestion: real domains + tables, ready to prefill Assign. */
+/** A validated exposure suggestion: real domains + tables, ready to prefill Assign.
+ *  `actions` (operational sources only) carries the per-entity agent-action grant — write
+ *  actions (create/update) render with the "requires admin approval to enable" note. */
 export type ExposureSuggestion = {
   name?: string;
   domains: string[];
   mode?: 'live' | 'sync';
   tier?: 'silver' | 'gold';
   tables: string[];
+  actions?: Record<string, { read?: boolean; search?: boolean; create?: boolean; update?: boolean }>;
 };
 
 type Turn = { role: 'user' | 'assistant'; content: string };
 type Suggestions = { classify?: boolean; selection?: SelectionSuggestion; exposure?: ExposureSuggestion };
 
+/** True when any entity's action grant requests a write (create/update) — the card then
+ *  shows the "requires admin approval to enable" note. */
+function exposureHasWrite(actions: ExposureSuggestion['actions']): boolean {
+  return Object.values(actions ?? {}).some((g) => g.create || g.update);
+}
+
 const STARTERS = [
   'Organize this catalog with AI',
   'Expose everything in Customer and Orders to Commerce as gold, live',
+  'Expose Accounts and Opportunities to Commerce, with read actions for agents',
   'What changed since the last snapshot?',
 ];
 
@@ -175,7 +185,13 @@ export default function ExposeChat({
                 <li><span className="muted">Domains:</span> {s.exposure.domains.join(', ')}</li>
                 <li><span className="muted">Mode · Tier:</span> {s.exposure.mode ?? 'live'} · {s.exposure.tier ?? 'silver'}</li>
                 <li><span className="muted">Tables:</span> {s.exposure.tables.length}</li>
+                {s.exposure.actions && Object.keys(s.exposure.actions).length > 0 ? (
+                  <li><span className="muted">Agent actions:</span> {Object.entries(s.exposure.actions).map(([e, g]) => `${e} (${(['read', 'search', 'create', 'update'] as const).filter((k) => g[k]).join('/')})`).join(', ')}</li>
+                ) : null}
               </ul>
+              {exposureHasWrite(s.exposure.actions) ? (
+                <p className="muted" style={{ fontSize: 11.5, margin: '4px 0 0' }}>Write actions (create/update) <strong>require admin approval to enable</strong> before agents can call them. Read/search go live on Apply.</p>
+              ) : null}
               <p className="muted" style={{ fontSize: 11.5, margin: '4px 0 0' }}>Applied to the form — you still click Create in Review.</p>
             </SuggestionCard>
           ) : null}

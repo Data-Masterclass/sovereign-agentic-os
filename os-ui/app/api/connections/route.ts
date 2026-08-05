@@ -62,7 +62,7 @@ export const GET = withRoute(async ({ user, req }) => {
     // honest "an administrator must configure this first" state (never a secret).
     await ensureOAuthAppsHydrated();
     const oauthProviders = providerCatalog().map((p) => ({ provider: p.provider, label: p.label, configured: p.configured }));
-    return NextResponse.json({ user, connections, templates, warehouse, canCreate, canCreatePersonal, oauthProviders });
+    return NextResponse.json({ user, connections, templates, warehouse, canCreate, canCreatePersonal, oauthProviders, operationalActionsEnabled: config.operationalActionsEnabled });
 }, { defaultStatus: 500 });
 
 /**

@@ -101,6 +101,21 @@ export function soqlDatetime(value: string): string {
   return new Date(t).toISOString();
 }
 
+/** Escape a value for a single-quoted SOQL string literal. Salesforce SOQL escapes
+ *  the backslash and single-quote; we ALSO strip control chars (incl. the newline a
+ *  SOQL injection would need to smuggle a second clause) so a value can never break
+ *  out of its quotes. The result is returned WITHOUT the surrounding quotes — the
+ *  caller wraps it — so this is only ever used to build the inside of `'...'`. */
+export function soqlStringLiteral(value: string): string {
+  return String(value ?? '')
+    // Strip ASCII control chars (incl. the newline/CR a second-clause injection
+    // would need) BEFORE escaping, so a value can never break out of its quotes.
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f]/g, ' ')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'");
+}
+
 function base(conn: SfConn): string {
   return conn.instanceUrl.replace(/\/$/, '');
 }
@@ -161,6 +176,30 @@ async function sfGet<T>(conn: SfConn, token: string, path: string): Promise<SfRe
   }
 }
 
+/** The org's DailyApiRequests limit — the real numbers from `/limits` (Max + Remaining).
+ *  Absent-safe: a missing/blank `/limits` yields null, and the pre-flight then changes
+ *  NOTHING (the sync proceeds as before). NEVER fabricated. */
+export type SfApiUsage = { max: number; remaining: number };
+
+/**
+ * Read the org's `/limits` and return the DailyApiRequests usage (Max + Remaining) — the
+ * cheap governor read (one GET, no rows) the sync path pre-flights so a near-quota org can
+ * record the honest "throttled — resuming next window" skip instead of hammering into a
+ * hard 429. Returns null when the endpoint is unreachable or omits DailyApiRequests
+ * (absent > fabricated — the caller treats null as "no signal, proceed").
+ */
+export async function sfLimits(conn: SfConn, token: string): Promise<SfRead<SfApiUsage | null>> {
+  const res = await sfGet<Record<string, { Max?: number; Remaining?: number }>>(
+    conn, token, `/services/data/${SF_API_VERSION}/limits`,
+  );
+  if (!res.ok) return res;
+  const daily = res.data?.DailyApiRequests;
+  if (!daily || typeof daily.Max !== 'number' || typeof daily.Remaining !== 'number') {
+    return { ok: true, data: null };
+  }
+  return { ok: true, data: { max: daily.Max, remaining: daily.Remaining } };
+}
+
 /** Run one SOQL query (first page). */
 export function sfQuery(conn: SfConn, token: string, soql: string): Promise<SfRead<SfQueryPage>> {
   return sfGet<SfQueryPage>(conn, token, `/services/data/${SF_API_VERSION}/query?q=${encodeURIComponent(soql)}`);
@@ -169,6 +208,149 @@ export function sfQuery(conn: SfConn, token: string, soql: string): Promise<SfRe
 /** Follow a `nextRecordsUrl` to the next page. */
 export function sfQueryMore(conn: SfConn, token: string, nextRecordsUrl: string): Promise<SfRead<SfQueryPage>> {
   return sfGet<SfQueryPage>(conn, token, nextRecordsUrl);
+}
+
+// ------------------------------------------- record-level action client (Phase 3) -
+
+/** A safe Salesforce record id: 15- or 18-char base-62. Rejects anything else so an
+ *  id can never smuggle path segments or SOQL. */
+export function safeSalesforceId(id: string): string {
+  const s = (id ?? '').trim();
+  if (!/^[A-Za-z0-9]{15,18}$/.test(s)) {
+    throw Object.assign(new Error(`salesforce: unsafe record id '${id ?? ''}'`), { status: 400 });
+  }
+  return s;
+}
+
+/** The hard cap on a `sf_search` LIMIT — the bounded-read ceiling. A caller may ask
+ *  for fewer; anything above (or absent) clamps to this and the result carries a
+ *  `truncated` flag when it fills the page. */
+export const SF_SEARCH_MAX_LIMIT = 200;
+
+/**
+ * Build a bounded, INJECTION-SAFE SOQL SELECT from validated parts. Object + every
+ * field name go through {@link safeSObjectName} (identifier-only). `where` clauses
+ * are structured `{ field, value }` equality pairs — the field is an identifier, the
+ * value is escaped into a single-quoted string literal ({@link soqlStringLiteral}) —
+ * so raw user input is NEVER interpolated into SOQL. `term` adds a name-LIKE filter
+ * against the standard `Name` field (also escaped). The LIMIT is clamped to
+ * {@link SF_SEARCH_MAX_LIMIT}. Returns the SOQL and the effective limit.
+ */
+export function buildSearchSoql(input: {
+  object: string;
+  fields: string[];
+  where?: { field: string; value: string }[];
+  term?: string;
+  limit?: number;
+}): { soql: string; limit: number } {
+  const obj = safeSObjectName(input.object);
+  const fields = (input.fields.length ? input.fields : ['Id']).map(safeSObjectName);
+  const select = [...new Set(['Id', ...fields])].join(', ');
+  const clauses: string[] = [];
+  for (const w of input.where ?? []) {
+    const field = safeSObjectName(w.field);
+    clauses.push(`${field} = '${soqlStringLiteral(w.value)}'`);
+  }
+  if (input.term && input.term.trim()) {
+    clauses.push(`Name LIKE '%${soqlStringLiteral(input.term.trim())}%'`);
+  }
+  const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
+  const n = Number(input.limit);
+  const limit = Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), SF_SEARCH_MAX_LIMIT) : SF_SEARCH_MAX_LIMIT;
+  return { soql: `SELECT ${select} FROM ${obj}${where} LIMIT ${limit}`, limit };
+}
+
+/** Read ONE record by id, optionally a `fields` projection (validated). Returns the
+ *  record map (no `attributes` envelope), or the honest failure. */
+export async function sfGetRecord(
+  conn: SfConn,
+  token: string,
+  object: string,
+  id: string,
+  fields?: string[],
+): Promise<SfRead<Record<string, unknown>>> {
+  const obj = safeSObjectName(object);
+  const rid = safeSalesforceId(id);
+  const proj = (fields ?? []).map(safeSObjectName);
+  const q = proj.length ? `?fields=${encodeURIComponent(proj.join(','))}` : '';
+  const res = await sfGet<Record<string, unknown> & { attributes?: unknown }>(
+    conn, token, `/services/data/${SF_API_VERSION}/sobjects/${obj}/${rid}${q}`,
+  );
+  if (!res.ok) return res;
+  const { attributes: _attributes, ...rest } = res.data;
+  return { ok: true, data: rest };
+}
+
+/** Write helper (POST create / PATCH update) — same never-throw contract as sfGet;
+ *  429 surfaces the honest rate-limit reason. Body is the caller's validated values. */
+async function sfWrite<T>(
+  conn: SfConn,
+  token: string,
+  method: 'POST' | 'PATCH',
+  path: string,
+  body: Record<string, unknown>,
+): Promise<SfRead<T>> {
+  try {
+    const res = await withTimeout(conn, `${base(conn)}${path}`, {
+      method,
+      headers: { authorization: `Bearer ${token}`, accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 429) {
+      return { ok: false, reason: `Salesforce rate-limited; retry after ${res.headers.get('retry-after') ?? '?'}s` };
+    }
+    const text = await res.text();
+    if (!res.ok) return { ok: false, reason: `Salesforce ${res.status}: ${text.slice(0, 240)}` };
+    // PATCH returns 204 No Content on success; POST returns the created id.
+    return { ok: true, data: (text ? JSON.parse(text) : {}) as T };
+  } catch {
+    return { ok: false, reason: 'Salesforce unreachable' };
+  }
+}
+
+/** Only assignable string field names → their values reach the write body (field
+ *  names validated as identifiers; a bad field name fails the whole write, honestly). */
+function safeFieldValues(values: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(values ?? {})) {
+    out[safeSObjectName(k)] = v;
+  }
+  return out;
+}
+
+/** CREATE one record. Returns `{ id }` on success (Salesforce's created id). */
+export async function sfCreateRecord(
+  conn: SfConn,
+  token: string,
+  object: string,
+  values: Record<string, unknown>,
+): Promise<SfRead<{ id: string }>> {
+  const obj = safeSObjectName(object);
+  const body = safeFieldValues(values);
+  const res = await sfWrite<{ id?: string; success?: boolean }>(
+    conn, token, 'POST', `/services/data/${SF_API_VERSION}/sobjects/${obj}`, body,
+  );
+  if (!res.ok) return res;
+  if (!res.data.id) return { ok: false, reason: 'Salesforce create returned no id' };
+  return { ok: true, data: { id: res.data.id } };
+}
+
+/** UPDATE one record by id (PATCH). Returns `{ id }` on success. */
+export async function sfUpdateRecord(
+  conn: SfConn,
+  token: string,
+  object: string,
+  id: string,
+  values: Record<string, unknown>,
+): Promise<SfRead<{ id: string }>> {
+  const obj = safeSObjectName(object);
+  const rid = safeSalesforceId(id);
+  const body = safeFieldValues(values);
+  const res = await sfWrite<Record<string, unknown>>(
+    conn, token, 'PATCH', `/services/data/${SF_API_VERSION}/sobjects/${obj}/${rid}`, body,
+  );
+  if (!res.ok) return res;
+  return { ok: true, data: { id: rid } };
 }
 
 /** List the org's SObjects (describeGlobal) — the object-discovery read. Only
@@ -199,6 +381,53 @@ export async function sfDescribeFields(conn: SfConn, token: string, object: stri
     .filter((n) => /^[A-Za-z][A-Za-z0-9_]*$/.test(n));
   if (fields.length === 0) return { ok: false, reason: `object '${obj}' has no queryable scalar fields` };
   return { ok: true, data: fields };
+}
+
+/** One Salesforce field, described for the catalog browser: the API name, the SOAP
+ *  type, and the human business `label` (Salesforce's field label — real metadata,
+ *  never fabricated). Compound/blob fields are skipped like {@link sfDescribeFields}. */
+export type SfFieldDetail = { name: string; type: string; label: string };
+
+/**
+ * The queryable scalar fields of one object WITH their business labels (describe) — the
+ * lazy per-entity column expansion for the catalog browser (Phase 1). Same skip rules as
+ * {@link sfDescribeFields} (address/location/base64 are not flat lakehouse columns); the
+ * `label` is Salesforce's own field label (honest metadata, absent-safe → falls back to
+ * the API name, never invented).
+ */
+export async function sfDescribeFieldsDetailed(
+  conn: SfConn,
+  token: string,
+  object: string,
+): Promise<SfRead<SfFieldDetail[]>> {
+  const obj = safeSObjectName(object);
+  const res = await sfGet<{ fields?: { name?: string; type?: string; label?: string }[] }>(
+    conn, token, `/services/data/${SF_API_VERSION}/sobjects/${obj}/describe`,
+  );
+  if (!res.ok) return res;
+  const fields = (res.data.fields ?? [])
+    .filter((f) => typeof f.name === 'string' && !['address', 'location', 'base64'].includes(String(f.type)))
+    .filter((f) => /^[A-Za-z][A-Za-z0-9_]*$/.test(String(f.name)))
+    .map((f) => ({
+      name: f.name as string,
+      type: String(f.type ?? ''),
+      label: (typeof f.label === 'string' && f.label.trim()) || (f.name as string),
+    }));
+  if (fields.length === 0) return { ok: false, reason: `object '${obj}' has no queryable scalar fields` };
+  return { ok: true, data: fields };
+}
+
+/**
+ * A cheap, REAL row count for one object — `SELECT COUNT() FROM <Object>` (aggregate
+ * count, returns `totalSize` with no rows). Bounded (one query, no pages); the catalog
+ * browser calls it only on row expand, on demand. Honest failure surfaces the reason;
+ * an absent count is NEVER estimated.
+ */
+export async function sfCountRecords(conn: SfConn, token: string, object: string): Promise<SfRead<number>> {
+  const obj = safeSObjectName(object);
+  const res = await sfQuery(conn, token, `SELECT COUNT() FROM ${obj}`);
+  if (!res.ok) return res;
+  return { ok: true, data: res.data.totalSize ?? 0 };
 }
 
 /**
@@ -297,6 +526,57 @@ export async function discoverSalesforceObjects(
     tables: objects.data.map((o) => o.name),
     detail: `${objects.data.length} queryable object(s) via REST describe.`,
   };
+}
+
+/** Describe ONE object's fields for the catalog browser — resolve the connection UNDER
+ *  THE CALLER'S IDENTITY (DLS), mint a token, and return {name, type, label} per field.
+ *  The catalog browser renders `label` (the business name) alongside the API `name`. */
+export async function describeSalesforceObject(
+  connId: string,
+  user: CurrentUser,
+  object: string,
+): Promise<SfFieldDetail[]> {
+  const conn = await resolveSalesforce(connId, user);
+  const token = await sfToken(conn);
+  if (!token.ok) throw Object.assign(new Error(token.reason), { status: 502 });
+  const fields = await sfDescribeFieldsDetailed(conn, token.data, object);
+  if (!fields.ok) throw Object.assign(new Error(fields.reason), { status: 502 });
+  return fields.data;
+}
+
+/** True when the org is within `floor` fraction of its DailyApiRequests limit (near
+ *  quota) — a PURE predicate over the real numbers so a slice can be skipped honestly
+ *  before it hammers into a hard 429. Default floor 0.1 (skip with <10% budget left).
+ *  Absent usage ⇒ false (no signal, proceed). */
+export function nearApiQuota(usage: SfApiUsage | null, floor = 0.1): boolean {
+  if (!usage || usage.max <= 0) return false;
+  return usage.remaining / usage.max <= floor;
+}
+
+/** Read the org's DailyApiRequests usage AS the sync's identity — a cheap `/limits` GET.
+ *  Returns null on any failure/omission (absent > fabricated); the caller then proceeds
+ *  unchanged. Never throws — a limits hiccup must never fail an otherwise-fine sync. */
+export async function salesforceApiUsage(connId: string, user: CurrentUser): Promise<SfApiUsage | null> {
+  try {
+    const conn = await resolveSalesforce(connId, user);
+    const token = await sfToken(conn);
+    if (!token.ok) return null;
+    const limits = await sfLimits(conn, token.data);
+    return limits.ok ? limits.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A REAL on-demand row count for one object (SELECT COUNT()) — resolved AS the caller.
+ *  Returns the number, or throws the honest reason (never an estimate). */
+export async function countSalesforceObject(connId: string, user: CurrentUser, object: string): Promise<number> {
+  const conn = await resolveSalesforce(connId, user);
+  const token = await sfToken(conn);
+  if (!token.ok) throw Object.assign(new Error(token.reason), { status: 502 });
+  const count = await sfCountRecords(conn, token.data, object);
+  if (!count.ok) throw Object.assign(new Error(count.reason), { status: 502 });
+  return count.data;
 }
 
 /** The honest health probe (CONNECTION_HEALTH entry): a REAL token round-trip plus

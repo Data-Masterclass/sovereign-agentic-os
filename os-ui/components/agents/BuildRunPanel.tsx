@@ -658,6 +658,11 @@ function TeamStepByStep({
                                     <div>
                                       <div className="hint" style={{ fontSize: 11 }}>result (output)</div>
                                       <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 200, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '6px 8px' }}>{s.result}</pre>
+                                      {/* Service-account identity label (operational action tools run AS the
+                                          integration account, not the human) — self-labeled from the envelope. */}
+                                      {s.result.includes('"asServiceAccount":true') || s.result.includes('as the integration account') ? (
+                                        <div className="hint" style={{ fontSize: 10.5, marginTop: 4, opacity: 0.75 }}>as the integration account — records it cannot see are absent</div>
+                                      ) : null}
                                     </div>
                                   ) : null}
                                 </div>

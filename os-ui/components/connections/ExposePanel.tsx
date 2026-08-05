@@ -33,6 +33,8 @@ import { initialStageState, goTo, markDone, type StageState } from '@/lib/core/s
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import type { ViewMode } from '@/lib/core/view-mode';
 import CatalogBrowser, { keyOf, type TableRef, type CatalogClassification } from './CatalogBrowser';
+import { cursorSupportForPlatform } from '@/lib/connections/operational-cursor';
+import type { ReactNode } from 'react';
 import type { Placement } from './category-tree';
 import { EXPOSE_STAGES, type ExposeStageId, type ExposeCtx } from './expose/stages';
 import ExposeChat, { type SelectionSuggestion, type ExposureSuggestion } from './expose/ExposeChat';
@@ -47,6 +49,8 @@ type Snapshot = {
   prevDiff: { added: TableRef[]; removed: TableRef[] };
   detail: string;
 };
+/** Per-entity agent-action grant (Phase 3), keyed by lowercased entity name. */
+type ActionGrant = { read?: boolean; search?: boolean; create?: boolean; update?: boolean };
 type ExposureSet = {
   id: string;
   name: string;
@@ -56,6 +60,8 @@ type ExposureSet = {
   tables: TableRef[];
   note?: string;
   syncDefaults?: { schedule?: string; fullRefresh?: boolean };
+  actions?: Record<string, ActionGrant>;
+  writeApproved?: boolean;
   revoked?: boolean;
   updatedAt: string;
 };
@@ -84,7 +90,21 @@ function suggestName(tables: TableRef[]): string {
   return `${tables.length} tables${topSchema ? ` (mostly ${topSchema})` : ''}`;
 }
 
-export default function ExposePanel({ connectionId, catalog }: { connectionId: string; catalog: string }) {
+export default function ExposePanel({
+  connectionId,
+  catalog,
+  operational = false,
+  actionsEnabled = false,
+}: {
+  connectionId: string;
+  /** The warehouse Trino catalog, or the operational platform label ('salesforce') — a
+   *  human identity for the header; operational exposures carry no federated catalog. */
+  catalog: string;
+  /** True for an operational (Salesforce/Kajabi) source — the mode is locked to Sync. */
+  operational?: boolean;
+  /** OPERATIONAL_ACTIONS_ENABLED — gates the "Agent actions (optional)" section. */
+  actionsEnabled?: boolean;
+}) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [sets, setSets] = useState<ExposureSet[]>([]);
   const [domains, setDomains] = useState<DomainOpt[]>([]);
@@ -105,6 +125,19 @@ export default function ExposePanel({ connectionId, catalog }: { connectionId: s
   };
   const developer = viewMode === 'developer';
 
+  // The cursor-honesty chip for an operational entity row (Phase 1) — real, from the
+  // client-safe registry, never guessed. `catalog` carries the platform label when
+  // operational. Absent (undefined) for warehouse rows, which have no cursor semantics.
+  const opPlatform = operational ? (catalog === 'salesforce' || catalog === 'kajabi' ? catalog : undefined) : undefined;
+  const renderRowExtras = opPlatform
+    ? (t: TableRef): ReactNode => {
+        const cur = cursorSupportForPlatform(opPlatform, t.table);
+        return (
+          <span className="badge muted" style={{ fontSize: 10.5 }} title={cur.note}>{cur.chip}</span>
+        );
+      }
+    : undefined;
+
   // --- the flow ---------------------------------------------------------------
   const [flowOpen, setFlowOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -116,11 +149,14 @@ export default function ExposePanel({ connectionId, catalog }: { connectionId: s
   const [editingId, setEditingId] = useState<string | null>(null); // null = create
   const [name, setName] = useState('');
   const [pickedDomains, setPickedDomains] = useState<Set<string>>(new Set());
-  const [mode, setMode] = useState<'live' | 'sync'>('live');
+  const [mode, setMode] = useState<'live' | 'sync'>(operational ? 'sync' : 'live');
   const [tier, setTier] = useState<'silver' | 'gold'>('silver');
   const [note, setNote] = useState('');
   const [syncSchedule, setSyncSchedule] = useState('0 * * * *');
   const [fullRefresh, setFullRefresh] = useState(false);
+  // Agent actions (operational exposures only, Phase 3): per-entity read/search/create/
+  // update toggles, keyed by the lowercased entity (table) name. Defaults all off.
+  const [actions, setActions] = useState<Record<string, ActionGrant>>({});
 
   const load = useCallback(async () => {
     const [snapRes, setsRes, domRes, clsRes] = await Promise.all([
@@ -226,10 +262,12 @@ export default function ExposePanel({ connectionId, catalog }: { connectionId: s
     setPickedDomains(next);
   }
 
+  const showActions = operational && actionsEnabled;
+
   function resetForm() {
     setEditingId(null); setName(''); setNameTouched(false); setPickedDomains(new Set());
-    setMode('live'); setTier('silver'); setNote(''); setFullRefresh(false); setSelected(new Set());
-    setDriftOnly(false); setSearch('');
+    setMode(operational ? 'sync' : 'live'); setTier('silver'); setNote(''); setFullRefresh(false); setSelected(new Set());
+    setDriftOnly(false); setSearch(''); setActions({});
   }
 
   // --- stage state (owned here, ctx derived fresh each render) ----------------
@@ -258,6 +296,7 @@ export default function ExposePanel({ connectionId, catalog }: { connectionId: s
     setName(s.name); setNameTouched(true);
     setPickedDomains(new Set(s.domains));
     setMode(s.mode); setTier(s.tier); setNote(s.note ?? '');
+    setActions(s.actions ?? {});
     setFullRefresh(!!s.syncDefaults?.fullRefresh);
     if (s.syncDefaults?.schedule) setSyncSchedule(s.syncDefaults.schedule);
     const sel = new Set(s.tables.map(keyOf));
@@ -286,6 +325,15 @@ export default function ExposePanel({ connectionId, catalog }: { connectionId: s
         tables: selectedTables,
         ...(mode === 'sync'
           ? { syncDefaults: { schedule: syncSchedule.trim() || undefined, fullRefresh: fullRefresh || undefined } }
+          : {}),
+        // Agent actions (operational + flag on): only entities that are still selected,
+        // keyed by lowercased entity name, with any true flag.
+        ...(showActions
+          ? { actions: Object.fromEntries(
+              selectedTables
+                .map((t) => [t.table.toLowerCase(), actions[t.table.toLowerCase()]] as const)
+                .filter(([, g]) => g && (g.read || g.search || g.create || g.update)),
+            ) }
           : {}),
       };
       const r = editingId
@@ -364,8 +412,10 @@ export default function ExposePanel({ connectionId, catalog }: { connectionId: s
         />
       </div>
       <p className="hint" style={{ marginTop: 8, marginBottom: 10 }}>
-        Choose tables from <span className="mono">{catalog}</span> and the domains that may use them.
-        Exposure compiles straight to policy — an unexposed external table reads zero rows for everyone.
+        Choose {operational ? 'entities' : 'tables'} from <span className="mono">{catalog}</span> and the domains that may use them.
+        {operational
+          ? ' Operational sources sync a governed copy into each domain — there is no live federation.'
+          : ' Exposure compiles straight to policy — an unexposed external table reads zero rows for everyone.'}
       </p>
 
       {/* Landing collection — the exposure-set list ABOVE the rail. */}
@@ -451,6 +501,7 @@ export default function ExposePanel({ connectionId, catalog }: { connectionId: s
                 tables={browserTables}
                 selection={selected}
                 onSelection={setSelected}
+                renderRowExtras={renderRowExtras}
               />
             ) : null}
 
@@ -458,6 +509,7 @@ export default function ExposePanel({ connectionId, catalog }: { connectionId: s
               <OrganizeStage
                 connectionId={connectionId}
                 tables={browserTables}
+                renderRowExtras={renderRowExtras}
                 selection={selected}
                 onSelection={setSelected}
                 search={search}
@@ -483,12 +535,22 @@ export default function ExposePanel({ connectionId, catalog }: { connectionId: s
                 domains={domains}
                 picked={pickedDomains}
                 onToggleDomain={togglePickedDomain}
+                operational={operational}
                 mode={mode} onMode={setMode}
                 tier={tier} onTier={setTier}
                 note={note} onNote={setNote}
                 syncSchedule={syncSchedule} onSyncSchedule={setSyncSchedule}
                 fullRefresh={fullRefresh} onFullRefresh={setFullRefresh}
                 selectedCount={selectedTables.length}
+                showActions={showActions}
+                selectedTables={selectedTables}
+                actions={actions}
+                onToggleAction={(entity, kind) => setActions((prev) => {
+                  const k = entity.toLowerCase();
+                  const cur = { ...(prev[k] ?? {}) };
+                  cur[kind] = !cur[kind];
+                  return { ...prev, [k]: cur };
+                })}
                 onEditSelection={() => setStage((s) => goTo(EXPOSE_STAGES, s, 'catalog', ctx))}
               />
             ) : null}
@@ -504,6 +566,8 @@ export default function ExposePanel({ connectionId, catalog }: { connectionId: s
                 removedDrift={snapshot?.prevDiff.removed ?? []}
                 busy={busy}
                 editing={!!editingId}
+                showActions={showActions}
+                actions={actions}
                 onSave={save}
                 onEditSelection={() => setStage((s) => goTo(EXPOSE_STAGES, s, 'catalog', ctx))}
               />
@@ -521,7 +585,7 @@ export default function ExposePanel({ connectionId, catalog }: { connectionId: s
 
 function CatalogStage({
   snapshot, busy, onRefresh, search, onSearch, driftOnly, onDriftOnly, driftCount,
-  connectionId, tables, selection, onSelection,
+  connectionId, tables, selection, onSelection, renderRowExtras,
 }: {
   snapshot: Snapshot | null;
   busy: string;
@@ -535,6 +599,7 @@ function CatalogStage({
   tables: TableRef[];
   selection: Set<string>;
   onSelection: (next: Set<string>) => void;
+  renderRowExtras?: (t: TableRef) => ReactNode;
 }) {
   const unreachable = snapshot?.status === 'unreachable';
   return (
@@ -588,6 +653,7 @@ function CatalogStage({
             onSelection={onSelection}
             mode="schema"
             search={search}
+            renderRowExtras={renderRowExtras}
           />
         </>
       )}
@@ -607,7 +673,7 @@ const SEED_OPTIONS: { id: 'source' | 'os-domains' | 'starter' | 'empty'; title: 
 function OrganizeStage({
   connectionId, tables, selection, onSelection, search, onSearch,
   classification, browserClassification, developer, busy, organizeErr, unclassifiedCount,
-  snapshotUnreachable, onChooseSeed, onOrganize, onMove,
+  snapshotUnreachable, onChooseSeed, onOrganize, onMove, renderRowExtras,
 }: {
   connectionId: string;
   tables: TableRef[];
@@ -625,6 +691,7 @@ function OrganizeStage({
   onChooseSeed: (seed: string) => void;
   onOrganize: (mode: 'run' | 'run-new') => void;
   onMove: (fqn: string, category: string) => void;
+  renderRowExtras?: (t: TableRef) => ReactNode;
 }) {
   // No seed chosen yet → the "how should folders be organized?" chooser (owner-designed).
   const needsSeed = !classification?.seed;
@@ -706,6 +773,7 @@ function OrganizeStage({
             classification={browserClassification}
             onMove={onMove}
             developer={developer}
+            renderRowExtras={renderRowExtras}
           />
         </>
       )}
@@ -716,10 +784,12 @@ function OrganizeStage({
 /* ─────────────────────────── Assign ─────────────────────────── */
 
 function AssignStage({
-  developer, name, onName, domains, picked, onToggleDomain, mode, onMode, tier, onTier,
+  developer, operational, name, onName, domains, picked, onToggleDomain, mode, onMode, tier, onTier,
   note, onNote, syncSchedule, onSyncSchedule, fullRefresh, onFullRefresh, selectedCount, onEditSelection,
+  showActions, selectedTables, actions, onToggleAction,
 }: {
   developer: boolean;
+  operational: boolean;
   name: string;
   onName: (v: string) => void;
   domains: DomainOpt[];
@@ -736,6 +806,10 @@ function AssignStage({
   fullRefresh: boolean;
   onFullRefresh: (v: boolean) => void;
   selectedCount: number;
+  showActions: boolean;
+  selectedTables: TableRef[];
+  actions: Record<string, ActionGrant>;
+  onToggleAction: (entity: string, kind: keyof ActionGrant) => void;
   onEditSelection: () => void;
 }) {
   return (
@@ -763,10 +837,21 @@ function AssignStage({
       <div className="row" style={{ gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
         <div>
           <label className="hint" style={{ fontSize: 11.5 }}>Mode</label>
-          <select value={mode} onChange={(e) => onMode(e.target.value as 'live' | 'sync')} style={{ display: 'block' }}>
-            <option value="live">Live (federated)</option>
-            <option value="sync">Sync (copy)</option>
-          </select>
+          {operational ? (
+            <>
+              <select value="sync" disabled style={{ display: 'block' }}>
+                <option value="sync">Sync (copy)</option>
+              </select>
+              <p className="hint" style={{ fontSize: 11, marginTop: 4 }}>
+                Operational sources sync; there is no live mode.
+              </p>
+            </>
+          ) : (
+            <select value={mode} onChange={(e) => onMode(e.target.value as 'live' | 'sync')} style={{ display: 'block' }}>
+              <option value="live">Live (federated)</option>
+              <option value="sync">Sync (copy)</option>
+            </select>
+          )}
         </div>
         <div>
           <label className="hint" style={{ fontSize: 11.5 }}>Tier</label>
@@ -792,6 +877,42 @@ function AssignStage({
         )
       ) : null}
 
+      {showActions ? (
+        <details style={{ marginBottom: 8 }}>
+          <summary className="hint" style={{ fontSize: 11.5, cursor: 'pointer' }}>
+            Agent actions (optional)
+          </summary>
+          {developer ? (
+            <p className="hint" style={{ fontSize: 11, marginTop: 6 }}>
+              Compiles to <span className="mono">sf_get_record</span> · <span className="mono">sf_search</span> (read),
+              <span className="mono"> sf_create_record</span> · <span className="mono">sf_update_record</span> (write-approval).
+              Writes stay compiled-out until an admin approves.
+            </p>
+          ) : (
+            <p className="hint" style={{ fontSize: 11, marginTop: 6 }}>read · search · create · update</p>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+            {selectedTables.length === 0 ? (
+              <span className="muted" style={{ fontSize: 12 }}>No entities selected.</span>
+            ) : selectedTables.map((t) => {
+              const k = t.table.toLowerCase();
+              const g = actions[k] ?? {};
+              return (
+                <div key={k} className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span className="mono" style={{ fontSize: 12, minWidth: 120 }}>{t.table}</span>
+                  {(['read', 'search', 'create', 'update'] as const).map((kind) => (
+                    <label key={kind} className="row" style={{ gap: 4, alignItems: 'center', fontSize: 11.5 }}>
+                      <input type="checkbox" checked={!!g[kind]} onChange={() => onToggleAction(t.table, kind)} />
+                      {kind}
+                    </label>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      ) : null}
+
       <label className="hint" style={{ fontSize: 11.5 }}>Note (optional)</label>
       <textarea rows={2} value={note} onChange={(e) => onNote(e.target.value)} style={{ width: '100%', marginBottom: 4 }} />
     </div>
@@ -801,7 +922,8 @@ function AssignStage({
 /* ─────────────────────────── Review ─────────────────────────── */
 
 function ReviewStage({
-  catalog, developer, name, pickedDomains, mode, tier, selectedTables, removedDrift, busy, editing, onSave, onEditSelection,
+  catalog, developer, name, pickedDomains, mode, tier, selectedTables, removedDrift, busy, editing,
+  showActions, actions, onSave, onEditSelection,
 }: {
   catalog: string;
   developer: boolean;
@@ -813,9 +935,29 @@ function ReviewStage({
   removedDrift: TableRef[];
   busy: string;
   editing: boolean;
+  showActions: boolean;
+  actions: Record<string, ActionGrant>;
   onSave: () => void;
   onEditSelection: () => void;
 }) {
+  // The plain-English action grant line for the impact card (Phase 3).
+  const actionImpact = useMemo(() => {
+    if (!showActions) return '';
+    const reads = new Set<string>();
+    const writes = new Set<string>();
+    for (const t of selectedTables) {
+      const g = actions[t.table.toLowerCase()];
+      if (!g) continue;
+      if (g.read || g.search) reads.add(t.table);
+      if (g.create || g.update) writes.add(t.table);
+    }
+    if (reads.size === 0 && writes.size === 0) return 'Agents gain no actions (data-only).';
+    const readPart = reads.size ? `READ ${[...reads].join(', ')}` : '';
+    const writePart = writes.size
+      ? `WRITE ${[...writes].join(', ')} (held for admin approval)`
+      : 'no writes';
+    return `Agents in ${pickedDomains.join(', ') || 'the assigned domains'} may ${[readPart, writePart].filter(Boolean).join('; ')}.`;
+  }, [showActions, selectedTables, actions, pickedDomains]);
   const grouped = useMemo(() => {
     const bySchema = new Map<string, TableRef[]>();
     for (const t of selectedTables) {
@@ -841,6 +983,9 @@ function ReviewStage({
           <strong>{domainWord}</strong>, {mode === 'live' ? 'live' : 'as a synced copy'}, at the <strong>{tier}</strong> tier.
           Everyone else stays at zero rows.
         </p>
+        {actionImpact ? (
+          <p style={{ margin: '6px 0 0', fontSize: 12.5 }}>{actionImpact}</p>
+        ) : null}
       </div>
 
       {selectedRemoved.length > 0 ? (

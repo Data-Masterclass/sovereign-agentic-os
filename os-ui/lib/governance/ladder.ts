@@ -12,6 +12,7 @@ import { getWorkflow } from '@/lib/knowledge';
 import { getPersonalKnowledge, decertifyPersonalKnowledge, unsharePersonalKnowledge } from '@/lib/knowledge/personal-store';
 import { getDashboard, demoteDashboard } from '@/lib/dashboards';
 import { getConnectionForUser, promoteConnection, demoteConnection } from '@/lib/connections';
+import { approveExposureActions } from '@/lib/connections/exposures';
 import { resolveOmCatalog, applyOmSyncForConnection, applyDqSyncForConnection } from '@/lib/connections/openmetadata';
 import { applyCatalogIngest } from '@/lib/connections/openmetadata-ingest';
 import { getDataset } from '@/lib/data';
@@ -208,6 +209,7 @@ export function buildEffectDeps(): EffectDeps {
       const { app } = await decideDeploy(cardId, asCurrentUser(approver), decision);
       return { appName: app.name, state: app.deploy.state, live: app.pipeline.live === 'ok' };
     },
+    enableExposureActions: (exposureId, approver) => approveExposureActions(exposureId, asCurrentUser(approver)),
     applyOmSync: async (payload, approver) => {
       const user = asCurrentUser(approver);
       const c = await resolveOmCatalog(payload.connId, user); // DLS guard (404)

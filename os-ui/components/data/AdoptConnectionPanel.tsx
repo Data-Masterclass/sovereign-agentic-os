@@ -22,7 +22,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import CatalogBrowser, { keyOf, type TableRef, type CatalogClassification } from '@/components/connections/CatalogBrowser';
 
-type ExposedTable = { schema: string; table: string };
+type EntityCursor = { incremental: boolean; column: string | null; chip: string; note: string };
+type ExposedTable = { schema: string; table: string; cursor?: EntityCursor };
 type ExposedSyncDefaults = { schedule?: string; fullRefresh?: boolean };
 type ExposedExposure = {
   exposureId: string;
@@ -34,6 +35,9 @@ type ExposedExposure = {
   domains: string[];
   tables: ExposedTable[];
   syncDefaults?: ExposedSyncDefaults;
+  /** Per-entity agent actions (Phase 3, flag-gated) + admin write-approval flag. */
+  actions?: Record<string, { read?: boolean; search?: boolean; create?: boolean; update?: boolean }>;
+  writeApproved?: boolean;
   note?: string;
 };
 
@@ -53,8 +57,9 @@ const SYNC_MODE_LABELS: Record<SyncMode, string> = {
 type ExposedConnection = {
   connectionId: string;
   connectionName: string;
-  catalog: string;
+  catalog: string | null;
   platform: string;
+  operational?: boolean;
   exposures: ExposedExposure[];
 };
 
@@ -87,6 +92,29 @@ export default function AdoptConnectionPanel({
   const [cursorKind, setCursorKind] = useState<'timestamp' | 'number'>('timestamp');
   const [mergeKeys, setMergeKeys] = useState('');
   const [cron, setCron] = useState('0 6 * * *');
+  // Action-adoption (Phase 3): the per-pick message after adopting an exposure's actions.
+  const [actionMsg, setActionMsg] = useState('');
+
+  /** Adopt ALL of the picked exposure's action-bearing entities into the caller's granted
+   *  domain for this exposure — the domain consent step that arms the domain's agents. */
+  const adoptActions = useCallback(async () => {
+    if (!pick) return;
+    const domain = pick.exposure.domains[0];
+    const entities = Object.keys(pick.exposure.actions ?? {});
+    if (!domain || entities.length === 0) return;
+    setActionMsg('');
+    try {
+      const res = await fetch(`/api/connections/${pick.connection.connectionId}/action-adoptions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ exposureId: pick.exposure.exposureId, domain, entities }),
+      });
+      const data = await res.json();
+      setActionMsg(res.ok ? `✓ Adopted ${entities.length} entity action set(s) for ${domain}.` : `✗ ${data.error ?? 'Adoption failed'}`);
+    } catch (e) {
+      setActionMsg(`✗ ${(e as Error).message}`);
+    }
+  }, [pick]);
 
   useEffect(() => {
     (async () => {
@@ -124,8 +152,17 @@ export default function AdoptConnectionPanel({
     // Prefill sync config from the exposure's declared defaults (SyncPanel vocabulary).
     if (exposure.mode === 'sync') {
       setDeveloper(false);
-      setSyncMode(exposure.syncDefaults?.fullRefresh === false ? 'append' : 'full-refresh');
-      setCursorColumn('');
+      // Operational entities: the cursor is registry-locked (never the caller's to type).
+      // A full-refresh-only entity is pinned to full-refresh; a cursor-bearing one prefills
+      // 'append' with the registry cursor column (still editable to full refresh).
+      if (table.cursor) {
+        const inc = table.cursor.incremental && !!table.cursor.column;
+        setSyncMode(inc ? 'append' : 'full-refresh');
+        setCursorColumn(inc ? (table.cursor.column as string) : '');
+      } else {
+        setSyncMode(exposure.syncDefaults?.fullRefresh === false ? 'append' : 'full-refresh');
+        setCursorColumn('');
+      }
       setCursorKind('timestamp');
       setMergeKeys('');
       setCron(exposure.syncDefaults?.schedule ?? '0 6 * * *');
@@ -194,7 +231,7 @@ export default function AdoptConnectionPanel({
       ) : empty ? (
         <div className="stub-page" style={{ marginTop: 12 }}>
           No tables are exposed to your domain yet — a platform admin exposes them from a
-          warehouse connection.
+          warehouse or operational connection.
         </div>
       ) : !pick ? (
         <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -220,10 +257,13 @@ export default function AdoptConnectionPanel({
           <div className="row" style={{ gap: 10, alignItems: 'center', marginBottom: 8 }}>
             <button className="btn ghost sm" onClick={() => setPick(null)}>← Back</button>
             <span className="mono" style={{ fontSize: 12 }}>
-              {pick.connection.catalog}.{pick.table.schema}.{pick.table.table}
+              {pick.connection.catalog ? `${pick.connection.catalog}.` : ''}{pick.table.schema}.{pick.table.table}
             </span>
             <span className="badge vis-shared">{pick.exposure.mode === 'sync' ? 'Synced copy' : 'Live'}</span>
             <span className="badge muted">{pick.exposure.tier}</span>
+            {pick.table.cursor ? (
+              <span className="badge muted" title={pick.table.cursor.note}>{pick.table.cursor.chip}</span>
+            ) : null}
           </div>
           <label className="hint" style={{ fontSize: 11.5 }}>Dataset name</label>
           <input value={name} onChange={(e) => setName(e.target.value)} style={{ width: '100%', maxWidth: 420, marginBottom: 8 }} />
@@ -251,12 +291,30 @@ export default function AdoptConnectionPanel({
 
               {developer ? (
                 <>
-                  <div className="seg" style={{ marginBottom: 6 }}>
-                    {(Object.keys(SYNC_MODE_LABELS) as SyncMode[]).map((m) => (
-                      <button key={m} className={syncMode === m ? 'on' : ''} onClick={() => setSyncMode(m)}>{SYNC_MODE_LABELS[m]}</button>
-                    ))}
-                  </div>
-                  {syncMode !== 'full-refresh' ? (
+                  {(() => {
+                    const cur = pick.table.cursor;
+                    // Operational entities: modes are what the REGISTRY says the entity
+                    // supports — merge is never available (api-batch); a full-refresh-only
+                    // entity offers full refresh alone. The cursor column is registry-locked.
+                    const opModes: SyncMode[] | null = cur
+                      ? cur.incremental && cur.column
+                        ? ['full-refresh', 'append']
+                        : ['full-refresh']
+                      : null;
+                    const modes = opModes ?? (Object.keys(SYNC_MODE_LABELS) as SyncMode[]);
+                    return (
+                      <div className="seg" style={{ marginBottom: 6 }}>
+                        {modes.map((m) => (
+                          <button key={m} className={syncMode === m ? 'on' : ''} onClick={() => setSyncMode(m)}>{SYNC_MODE_LABELS[m]}</button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  {syncMode !== 'full-refresh' && pick.table.cursor ? (
+                    <p className="hint" style={{ margin: '0 0 6px', fontSize: 11.5 }}>
+                      Change tracking uses <span className="mono">{pick.table.cursor.column}</span> — set automatically from the source, nothing to pick.
+                    </p>
+                  ) : syncMode !== 'full-refresh' ? (
                     <div className="row" style={{ gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
                       <input
                         type="text"
@@ -272,7 +330,7 @@ export default function AdoptConnectionPanel({
                       </select>
                     </div>
                   ) : null}
-                  {syncMode === 'merge' ? (
+                  {syncMode === 'merge' && !pick.table.cursor ? (
                     <input
                       type="text"
                       value={mergeKeys}
@@ -301,6 +359,21 @@ export default function AdoptConnectionPanel({
                   for a large table, switch to “Add new rows” with a date/id cursor (turn on Developer).
                 </p>
               ) : null}
+            </div>
+          ) : null}
+
+          {pick.exposure.actions && Object.keys(pick.exposure.actions).length > 0 ? (
+            <div className="card" style={{ marginBottom: 8 }}>
+              <div className="comp-label" style={{ margin: 0 }}>Agent actions</div>
+              <p className="hint" style={{ fontSize: 12, marginTop: 4 }}>
+                This exposure grants agent actions on{' '}
+                <strong>{Object.keys(pick.exposure.actions).join(', ')}</strong>. Adopting arms your
+                domain’s agents for them{pick.exposure.writeApproved ? '' : ' (writes await admin approval)'}.
+              </p>
+              <button className="btn ghost sm" onClick={adoptActions}>
+                Adopt actions for {pick.exposure.domains[0] ?? 'your domain'}
+              </button>
+              {actionMsg ? <p className={actionMsg.startsWith('✗') ? 'error' : 'answer'} style={{ fontSize: 12, marginTop: 6 }}>{actionMsg}</p> : null}
             </div>
           ) : null}
 

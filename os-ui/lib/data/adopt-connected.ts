@@ -8,6 +8,7 @@ import { config } from '@/lib/core/config';
 import { trace } from '@/lib/infra/agent-governed';
 import { adoptConnectedDataset } from '@/lib/data/store';
 import { resolveAdoptableExposure } from '@/lib/connections/exposed-tables';
+import { cursorSupportForPlatform } from '@/lib/connections/operational-cursor';
 import { parseSyncBlock, DATASET_SYNC_MODES, type DatasetSync } from '@/lib/data/dataset-schema';
 import { reconcileSyncCron } from '@/lib/data/sync-cron';
 import type { Dataset } from '@/lib/data/dataset-schema';
@@ -86,12 +87,34 @@ export async function adoptExposedTable(user: CurrentUser, input: AdoptExposedIn
   if (mode === 'sync') {
     const s = input.sync ?? {};
     const wantMode = typeof s.mode === 'string' && (DATASET_SYNC_MODES as string[]).includes(s.mode) ? s.mode : 'full-refresh';
+
+    // OPERATIONAL sources: the cursor is not the caller's to name — the registry OWNS the
+    // honest cursor for each entity (never guessed). Merge is unsupported (api-batch);
+    // an incremental mode over a full-refresh-only entity is refused honestly; an
+    // incremental mode over a cursor-bearing entity locks to the registry's cursor column.
+    let opCursor: { kind: 'timestamp'; column: string } | undefined;
+    if (resolved.operational && resolved.platform) {
+      const support = cursorSupportForPlatform(resolved.platform, table);
+      if (wantMode === 'merge') fail('Operational sources support full refresh or add-new-rows only (no update-by-key).', 400);
+      if (wantMode !== 'full-refresh') {
+        if (!support || !support.incremental || !support.cursorColumn) {
+          fail(`This entity is full refresh only — ${support?.note ?? 'it exposes no incremental cursor'}.`, 400);
+        }
+        opCursor = { kind: 'timestamp', column: support!.cursorColumn! };
+      }
+    }
+
     const cron = (s.schedule?.cron ?? resolved.exposure.syncDefaults?.schedule ?? '0 6 * * *').trim();
     const candidate = {
       connectionId: resolved.exposure.connectionId,
       source: { schema, table },
       mode: wantMode,
-      ...(s.cursor?.column ? { cursor: { kind: s.cursor.kind ?? 'timestamp', column: s.cursor.column } } : {}),
+      // Operational cursor is registry-locked; warehouse cursor comes from the input.
+      ...(opCursor
+        ? { cursor: opCursor }
+        : s.cursor?.column
+          ? { cursor: { kind: s.cursor.kind ?? 'timestamp', column: s.cursor.column } }
+          : {}),
       ...(s.mergeKeys && s.mergeKeys.length > 0 ? { mergeKeys: s.mergeKeys } : {}),
       ...(typeof s.lookbackMinutes === 'number' ? { lookbackMinutes: s.lookbackMinutes } : {}),
       schedule: { cron },

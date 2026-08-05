@@ -10,8 +10,10 @@ import { assistantComplete } from '@/lib/assistant/complete';
 import { getConnectionForUser } from '@/lib/connections/store';
 import { getCatalogSnapshot } from '@/lib/connections/warehouse/catalog-snapshot';
 import { getMergedClassification } from '@/lib/connections/warehouse/catalog-classification';
-import { listExposureSets } from '@/lib/connections/exposures';
+import { listExposureSets, entityActionKey } from '@/lib/connections/exposures';
 import { listDomains } from '@/lib/platform-admin/domains';
+import { isOperationalTemplate } from '@/lib/connections/operational-platform';
+import { config } from '@/lib/core/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,13 +62,16 @@ const systemPrompt = [
   '{ "message": string (markdown; a short, friendly explanation),',
   '  "classify"?: true  (include ONLY when the user asks to organize/classify the catalog with AI),',
   '  "selection"?: { "tables": ["schema.table", ...] }  (real tables from the snapshot to select),',
-  '  "exposure"?: { "name"?: string, "domains": ["domain-id", ...], "mode"?: "live"|"sync", "tier"?: "silver"|"gold", "tables": ["schema.table", ...] } }',
+  '  "exposure"?: { "name"?: string, "domains": ["domain-id", ...], "mode"?: "live"|"sync", "tier"?: "silver"|"gold", "tables": ["schema.table", ...],',
+  '    "actions"?: { "<entity>": { "read"?: true, "search"?: true, "create"?: true, "update"?: true } } } }',
   'Use ONLY schema.table names present in the "Catalog snapshot" list and ONLY domain ids from the "Domains" list — never invent a table or a domain. If you are missing them, ask a clarifying question in "message" and omit the structured suggestion.',
+  'ACTIONS are ONLY for an OPERATIONAL source (the grounding says when this connection is one) — keyed by the entity/object name (lowercased), each entity a subset of read/search/create/update. read/search go live on Apply; create/update are HELD for admin approval (say so in "message"). Omit "actions" for a warehouse source or when the user only wants data.',
+  'CURSOR HONESTY: an operational exposure always SYNCS (there is no live mode) and its cursor honesty is per-entity — never promise incremental where the grounding does not confirm it.',
   'Prefer ONE suggestion per turn (classify OR selection OR exposure).',
 ].join('\n');
 
 /** A compact, real grounding block for the turn. */
-async function contextBlock(connId: string, user: CurrentUser, catalog: string): Promise<{ block: string; tableKeys: Set<string>; domainIds: Set<string> }> {
+async function contextBlock(connId: string, user: CurrentUser, catalog: string, operational: boolean): Promise<{ block: string; tableKeys: Set<string>; domainIds: Set<string> }> {
   const [snapshot, classification, sets] = await Promise.all([
     getCatalogSnapshot(connId, user),
     getMergedClassification(connId, user),
@@ -111,6 +116,16 @@ async function contextBlock(connId: string, user: CurrentUser, catalog: string):
       : 'Existing exposure sets: none yet.',
   );
 
+  // Operational source + action honesty (Phase 6). Only when this is an operational
+  // connection AND the operational-actions flag is on may an exposure carry agent actions.
+  if (operational) {
+    lines.push(
+      config.operationalActionsEnabled
+        ? 'This is an OPERATIONAL source: exposures SYNC (no live mode), and an exposure MAY grant per-entity agent actions (read/search/create/update). read/search go live on Apply; create/update are held for admin approval. Cursor honesty is per-entity — do not promise incremental unless a table lists an incremental cursor.'
+        : 'This is an OPERATIONAL source: exposures SYNC (no live mode). Agent actions are NOT enabled on this deployment — do NOT suggest an "actions" grant (data-only).',
+    );
+  }
+
   return { block: lines.join('\n'), tableKeys, domainIds };
 }
 
@@ -125,13 +140,40 @@ function validateSelection(raw: unknown, tableKeys: Set<string>): { tables: stri
   return { tables: real };
 }
 
-/** Validate an exposure suggestion — real domains + real tables, else refuse with a reason. */
+/** Per-entity agent-action grant (validated for the exposure card). */
+type ValidActions = Record<string, { read?: boolean; search?: boolean; create?: boolean; update?: boolean }>;
+
+/** Validate a suggested `actions` map (OPERATIONAL sources only). Keys are lowercased
+ *  entity names that must appear as a table in the snapshot (bare table name, any schema);
+ *  only known flags survive. Returns undefined when nothing valid remains. Also reports
+ *  whether any create/update is requested (the card flags "requires admin approval"). */
+function validateActions(raw: unknown, tableNames: Set<string>): { actions?: ValidActions; hasWrite: boolean } {
+  if (!raw || typeof raw !== 'object') return { hasWrite: false };
+  const out: ValidActions = {};
+  let hasWrite = false;
+  for (const [rawKey, rawVal] of Object.entries(raw as Record<string, unknown>)) {
+    const key = entityActionKey(rawKey);
+    if (!key || !tableNames.has(key) || !rawVal || typeof rawVal !== 'object') continue;
+    const g = rawVal as Record<string, unknown>;
+    const grant: { read?: boolean; search?: boolean; create?: boolean; update?: boolean } = {};
+    if (g.read) grant.read = true;
+    if (g.search) grant.search = true;
+    if (g.create) { grant.create = true; hasWrite = true; }
+    if (g.update) { grant.update = true; hasWrite = true; }
+    if (grant.read || grant.search || grant.create || grant.update) out[key] = grant;
+  }
+  return { ...(Object.keys(out).length ? { actions: out } : {}), hasWrite };
+}
+
+/** Validate an exposure suggestion — real domains + real tables, else refuse with a reason.
+ *  `allowActions` gates the (operational-only) agent-action grant. */
 function validateExposure(
   raw: unknown,
   tableKeys: Set<string>,
   domainIds: Set<string>,
-): { name?: string; domains: string[]; mode?: 'live' | 'sync'; tier?: 'silver' | 'gold'; tables: string[] } | { error: string } {
-  const o = raw as { name?: unknown; domains?: unknown; mode?: unknown; tier?: unknown; tables?: unknown };
+  allowActions: boolean,
+): { name?: string; domains: string[]; mode?: 'live' | 'sync'; tier?: 'silver' | 'gold'; tables: string[]; actions?: ValidActions; writeNote?: boolean } | { error: string } {
+  const o = raw as { name?: unknown; domains?: unknown; mode?: unknown; tier?: unknown; tables?: unknown; actions?: unknown };
   const askedDomains = Array.isArray(o?.domains) ? o.domains.map((d) => String(d).trim()).filter(Boolean) : [];
   const askedTables = Array.isArray(o?.tables) ? o.tables.map((t) => String(t).trim()).filter(Boolean) : [];
   const domains = askedDomains.filter((d) => domainIds.has(d));
@@ -146,7 +188,17 @@ function validateExposure(
   const mode = o.mode === 'sync' ? 'sync' : o.mode === 'live' ? 'live' : undefined;
   const tier = o.tier === 'gold' ? 'gold' : o.tier === 'silver' ? 'silver' : undefined;
   const name = typeof o.name === 'string' && o.name.trim() ? o.name.trim() : undefined;
-  return { ...(name ? { name } : {}), domains, ...(mode ? { mode } : {}), ...(tier ? { tier } : {}), tables };
+  // Actions only for an operational source with the flag on; validated against the bare
+  // table names of the chosen tables (an entity the exposure lists).
+  let actions: ValidActions | undefined;
+  let writeNote = false;
+  if (allowActions) {
+    const tableNames = new Set(tables.map((t) => entityActionKey(t.split('.').pop() ?? t)));
+    const v = validateActions(o.actions, tableNames);
+    actions = v.actions;
+    writeNote = v.hasWrite;
+  }
+  return { ...(name ? { name } : {}), domains, ...(mode ? { mode } : {}), ...(tier ? { tier } : {}), tables, ...(actions ? { actions } : {}), ...(writeNote ? { writeNote: true } : {}) };
 }
 
 export const POST = withRoute<{ id: string }, Record<string, unknown>>(async ({ user, params, body }) => {
@@ -157,11 +209,13 @@ export const POST = withRoute<{ id: string }, Record<string, unknown>>(async ({ 
       return NextResponse.json({ error: 'The Expose assistant is available to platform admins.' }, { status: 403 });
     }
     const catalog = c.warehouse?.catalog ?? c.endpoint;
+    const operational = isOperationalTemplate(c.template);
+    const allowActions = operational && config.operationalActionsEnabled;
 
     const turns = readTurns(body ?? {});
     if (turns.length === 0) turns.push({ role: 'user', content: 'Help me expose tables from this catalog.' });
 
-    const { block, tableKeys, domainIds } = await contextBlock(id, user, catalog);
+    const { block, tableKeys, domainIds } = await contextBlock(id, user, catalog, operational);
     const messages = [
       { role: 'system' as const, content: systemPrompt },
       { role: 'user' as const, content: block },
@@ -173,7 +227,7 @@ export const POST = withRoute<{ id: string }, Record<string, unknown>>(async ({ 
     const obj = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
     let message = (obj && typeof obj.message === 'string' && obj.message) || content || 'The assistant did not return a usable result — try rephrasing.';
 
-    type ValidExposure = { name?: string; domains: string[]; mode?: 'live' | 'sync'; tier?: 'silver' | 'gold'; tables: string[] };
+    type ValidExposure = { name?: string; domains: string[]; mode?: 'live' | 'sync'; tier?: 'silver' | 'gold'; tables: string[]; actions?: ValidActions };
     const suggestions: { classify?: boolean; selection?: { tables: string[] }; exposure?: ValidExposure } = {};
 
     if (obj?.classify === true) suggestions.classify = true;
@@ -185,9 +239,15 @@ export const POST = withRoute<{ id: string }, Record<string, unknown>>(async ({ 
     }
 
     if (obj?.exposure && typeof obj.exposure === 'object') {
-      const v = validateExposure(obj.exposure, tableKeys, domainIds);
+      const v = validateExposure(obj.exposure, tableKeys, domainIds, allowActions);
       if ('error' in v) message += `\n\n_I can’t offer that exposure as a one-click apply — it ${v.error}. Pick real domains and tables and I’ll prefill it._`;
-      else suggestions.exposure = v;
+      else {
+        const { writeNote, ...exposure } = v;
+        suggestions.exposure = exposure;
+        if (writeNote) {
+          message += '\n\n_This exposure includes **write actions** (create/update) — they require **admin approval** to enable before agents can call them. Read/search go live on Apply._';
+        }
+      }
     }
 
     return NextResponse.json({ message, suggestions });

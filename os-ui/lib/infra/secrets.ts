@@ -128,6 +128,18 @@ const DEFAULT_ALLOWLIST = [
   // API share the one host (also added to the chart egressProxy.allowlist +
   // deploy/egress-connectors-overlay.yaml).
   'api.kajabi.com',
+  // Operational systems wave — SAP S/4HANA Cloud OData + generic OData V4 (Dynamics 365 /
+  // Business Central) + Workday RaaS. Cloud-reachable services only; a customer-specific
+  // host not covered here still passes via an Admin-approved egress request. (Also add to
+  // the chart egressProxy.allowlist + Cilium FQDN policy on a real deploy.)
+  's4hana.cloud.sap', // SAP S/4HANA Cloud (<tenant>.s4hana.cloud.sap via subdomain rule)
+  'sap-oauth.cloud.sap', // SAP BTP OAuth token endpoints (client-credentials)
+  'ondemand.com', // SAP BTP / Business Technology Platform hosts (*.ondemand.com)
+  'sandbox.api.sap.com', // SAP API Business Hub sandbox (public-sandbox verification)
+  'api.businesscentral.dynamics.com', // Microsoft Dynamics 365 Business Central OData
+  'dynamics.com', // Microsoft Dynamics 365 (<org>.crm.dynamics.com via subdomain rule)
+  'workday.com', // Workday RaaS tenant hosts (*.workday.com via subdomain rule)
+  'myworkday.com', // Workday RaaS tenant hosts (*.myworkday.com via subdomain rule)
 ];
 
 function allowlist(): string[] {

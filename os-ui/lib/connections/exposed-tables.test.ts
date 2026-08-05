@@ -35,6 +35,15 @@ async function glueConn() {
   });
 }
 
+async function salesforceConn() {
+  return createConnection(admin, {
+    name: 'Salesforce prod',
+    template: 'salesforce-api',
+    endpoint: 'https://acme.my.salesforce.com',
+    credential: 'ck:cs',
+  });
+}
+
 function reset() {
   __resetConnections();
   __resetExposures();
@@ -121,5 +130,61 @@ test('resolveAdoptableExposure: resolves a sync-mode exposure (Phase 3 — adopt
     assert.equal(res.exposure.mode, 'sync');
     assert.equal(res.catalog, 'glue_sales');
     assert.equal(res.domain, 'commerce');
+  }
+});
+
+// -------------------------------------------------- operational (Phase 2) --------
+
+test('createExposureSet: an operational source is FORCED to sync; explicit live is refused', async () => {
+  reset();
+  const c = await salesforceConn();
+  // Explicit live → honest refusal.
+  await assert.rejects(
+    () => createExposureSet(c.id, admin, {
+      name: 'SF → Commerce', domains: ['commerce'], mode: 'live', tier: 'silver',
+      tables: [{ schema: 'salesforce', table: 'Account' }],
+    }),
+    /Operational sources sync; there is no live mode/,
+  );
+  // Omitted mode (default) → forced to sync (never live).
+  const e = await createExposureSet(c.id, admin, {
+    name: 'SF → Commerce', domains: ['commerce'], tier: 'silver',
+    tables: [{ schema: 'salesforce', table: 'Account' }],
+  });
+  assert.equal(e.mode, 'sync');
+});
+
+test('listExposedTablesForUser: an operational connection resolves with catalog:null + cursor honesty', async () => {
+  reset();
+  const c = await salesforceConn();
+  await createExposureSet(c.id, admin, {
+    name: 'SF → Commerce', domains: ['commerce'], mode: 'sync', tier: 'silver',
+    tables: [{ schema: 'salesforce', table: 'Account' }],
+  });
+  const out = await listExposedTablesForUser(commerceAdmin);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].catalog, null);
+  assert.equal(out[0].operational, true);
+  assert.equal(out[0].platform, 'salesforce');
+  const t = out[0].exposures[0].tables[0];
+  assert.equal(t.cursor?.incremental, true);
+  assert.equal(t.cursor?.column, 'SystemModstamp');
+  assert.equal(t.cursor?.chip, 'Incremental (SystemModstamp)');
+});
+
+test('resolveAdoptableExposure: operational resolves with the platform pseudo-catalog', async () => {
+  reset();
+  const c = await salesforceConn();
+  const e = await createExposureSet(c.id, admin, {
+    name: 'SF → Commerce', domains: ['commerce'], mode: 'sync', tier: 'gold',
+    tables: [{ schema: 'salesforce', table: 'Account' }],
+  });
+  const res = await resolveAdoptableExposure(e.id, commerceAdmin);
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.operational, true);
+    assert.equal(res.platform, 'salesforce');
+    assert.equal(res.catalog, 'salesforce'); // pseudo-catalog = platform name
+    assert.equal(res.exposure.mode, 'sync');
   }
 });

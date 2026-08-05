@@ -549,6 +549,17 @@ export const config = {
   // least-privilege writer bot. See docs/research/data-quality-plan.md (D4).
   openmetadataDqWritebackEnabled: env('OPENMETADATA_DQ_WRITEBACK_ENABLED', '').toLowerCase() === 'true',
 
+  // ---- Operational-system ACTION tools (operational-system-connections.md,
+  // Phase 3). GATED OFF by default: the entity-generic Salesforce action tools
+  // (sf_get_record/sf_search/sf_create_record/sf_update_record/sf_delete_record),
+  // the `ExposureSet.actions` toggles + `exposure_action_enable` write-enable
+  // approval, the domain action-adoption record, and the real
+  // `salesforce-api` executor are ALL inert until an operator turns this on.
+  // When OFF: no action tools compile onto an operational connection's profile,
+  // the executor is not registered (calls fall to the labelled offline mock), and
+  // the action toggles never render. Nil-safe (an unset/empty value ⇒ OFF).
+  operationalActionsEnabled: env('OPERATIONAL_ACTIONS_ENABLED', '').toLowerCase() === 'true',
+
   // ---- Analytics-monorepo APPLY (#146 Phase 1). GATED OFF by default: the
   // registry-apply enforcement point — THE only door from git into compute
   // (plan §3 step 6). When OFF, `POST/GET /api/analytics/apply` reports it

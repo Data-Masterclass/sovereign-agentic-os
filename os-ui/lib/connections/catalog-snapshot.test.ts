@@ -133,3 +133,24 @@ test('describeTable rejects a non-identifier schema/table (SQL-injection guard)'
     /Invalid schema\/table identifier/,
   );
 });
+
+// -------------------------------------------- operational dispatch (Phase 0/1) ----
+
+async function salesforceConn() {
+  return createConnection(admin, {
+    name: 'Salesforce prod', template: 'salesforce-api',
+    endpoint: 'https://acme.my.salesforce.com', credential: 'ck:cs',
+  });
+}
+
+test('operational snapshot dispatches through the registry — honest unreachable offline (never fabricated)', async () => {
+  reset();
+  const c = await salesforceConn();
+  // No discover injection: the registry path calls the REAL Salesforce discover, which is
+  // offline (fetch stub throws) → an honest 'unreachable' snapshot, empty tables, real
+  // pseudo-catalog. This proves the dispatch routed to the operational path, not warehouse.
+  const snap = await refreshCatalogSnapshot(c.id, admin);
+  assert.equal(snap.catalog, 'salesforce'); // the operational pseudo-catalog
+  assert.equal(snap.status, 'unreachable');
+  assert.deepEqual(snap.tables, []); // nothing invented when the source is unreachable
+});

@@ -18,6 +18,8 @@ import { getCatalogSnapshot, refreshCatalogSnapshot } from '@/lib/connections/wa
 import { getMergedClassification, runClassification, UNSORTED } from '@/lib/connections/warehouse/catalog-classification';
 import { listExposedTablesForUser } from '@/lib/connections/exposed-tables';
 import { adoptExposedTable, type AdoptSyncInput } from '@/lib/data/adopt-connected';
+import { adoptActions } from '@/lib/connections/action-adoptions';
+import { entityActionKey } from '@/lib/connections/exposures';
 import { roleAtLeast } from '@/lib/core/session';
 
 /**
@@ -63,6 +65,39 @@ const TABLES_SCHEMA = {
   },
 };
 
+/** Coerce a raw agent-actions map to the ExposureActions shape (per-entity read/search/
+ *  create/update flags). Only for OPERATIONAL exposures; the lib re-gates on the flag +
+ *  template and enqueues the `exposure_action_enable` approval on any create/update. */
+function readActions(v: unknown): Record<string, { read?: boolean; search?: boolean; create?: boolean; update?: boolean }> | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const out: Record<string, { read?: boolean; search?: boolean; create?: boolean; update?: boolean }> = {};
+  for (const [rawKey, rawVal] of Object.entries(v as Record<string, unknown>)) {
+    const key = entityActionKey(rawKey);
+    if (!key || !rawVal || typeof rawVal !== 'object') continue;
+    const g = rawVal as Record<string, unknown>;
+    const grant: { read?: boolean; search?: boolean; create?: boolean; update?: boolean } = {};
+    if (g.read) grant.read = true;
+    if (g.search) grant.search = true;
+    if (g.create) grant.create = true;
+    if (g.update) grant.update = true;
+    if (grant.read || grant.search || grant.create || grant.update) out[key] = grant;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+const ACTIONS_SCHEMA = {
+  type: 'object',
+  description:
+    'OPERATIONAL sources only (Salesforce, …): optional per-entity agent-action grant, keyed by the entity/object name (lowercased), each with read/search/create/update booleans. Absent = data-only (the safe default). read/search activate immediately; create/update enqueue an admin `exposure_action_enable` approval (they compile only once approved). Ignored for warehouse exposures and when the operational-actions flag is off.',
+  additionalProperties: {
+    type: 'object',
+    properties: {
+      read: { type: 'boolean' }, search: { type: 'boolean' },
+      create: { type: 'boolean' }, update: { type: 'boolean' },
+    },
+  },
+};
+
 export const exposureWriteTools: McpTool[] = [
   // ─────────────────────────── Exposure CRUD (admin) ───────────────────────────
   {
@@ -94,10 +129,14 @@ export const exposureWriteTools: McpTool[] = [
         mode: { type: 'string', enum: ['live', 'sync'], description: "'live' federates every read (default); 'sync' lands a scheduled copy." },
         tier: { type: 'string', enum: ['silver', 'gold'], description: 'Curation tier the tables are declared at (default silver).' },
         tables: TABLES_SCHEMA,
+        actions: ACTIONS_SCHEMA,
         note: { type: 'string', description: 'Optional note stored on the set.' },
       },
       required: ['connId', 'name', 'domains', 'tables'],
-      examples: [{ connId: 'conn_ab12cd', name: 'Sales → Commerce', domains: ['commerce'], mode: 'live', tier: 'gold', tables: [{ schema: 'sales', table: 'orders' }] }],
+      examples: [
+        { connId: 'conn_ab12cd', name: 'Sales → Commerce', domains: ['commerce'], mode: 'live', tier: 'gold', tables: [{ schema: 'sales', table: 'orders' }] },
+        { connId: 'conn_sf01', name: 'SF read actions', domains: ['commerce'], mode: 'sync', tables: [{ schema: 'salesforce', table: 'Account' }], actions: { account: { read: true, search: true } } },
+      ],
     },
     call: async (user, args) => {
       const id = str(args.connId).trim();
@@ -109,6 +148,7 @@ export const exposureWriteTools: McpTool[] = [
         mode: str(args.mode) === 'sync' ? 'sync' : str(args.mode) === 'live' ? 'live' : undefined,
         tier: str(args.tier) === 'gold' ? 'gold' : str(args.tier) === 'silver' ? 'silver' : undefined,
         tables,
+        actions: readActions(args.actions),
         note: str(args.note) || undefined,
       });
       const policy = await recompileExposures();
@@ -130,6 +170,7 @@ export const exposureWriteTools: McpTool[] = [
         mode: { type: 'string', enum: ['live', 'sync'] },
         tier: { type: 'string', enum: ['silver', 'gold'] },
         tables: TABLES_SCHEMA,
+        actions: ACTIONS_SCHEMA,
         note: { type: 'string' },
       },
       required: ['exposureId'],
@@ -144,6 +185,9 @@ export const exposureWriteTools: McpTool[] = [
       if (args.mode !== undefined) input.mode = str(args.mode) === 'sync' ? 'sync' : 'live';
       if (args.tier !== undefined) input.tier = str(args.tier) === 'gold' ? 'gold' : 'silver';
       if (args.tables !== undefined) input.tables = readTables(args.tables);
+      // Editing actions re-runs the same broadening/approval discipline as the route:
+      // a create/update NOT already present clears writeApproved + re-enqueues the enable.
+      if (args.actions !== undefined) input.actions = readActions(args.actions) ?? {};
       if (args.note !== undefined) input.note = str(args.note);
       return updateExposureAndRecompile(exposureId, user, input);
     },
@@ -291,6 +335,80 @@ export const exposureWriteTools: McpTool[] = [
       const sync = (args.sync && typeof args.sync === 'object' ? (args.sync as AdoptSyncInput) : undefined);
       const { dataset, cron } = await adoptExposedTable(user, { exposureId, schema, table, name: str(args.name), description, sync });
       return { dataset, ...(cron ? { cron } : {}) };
+    },
+  },
+
+  // ─────────────────────── Entity-action adoption (domain_admin) ───────────────────────
+  {
+    name: 'list_adoptable_actions',
+    tab: 'connections',
+    minRole: 'domain_admin',
+    description:
+      'List the OPERATIONAL exposures shared with YOUR domain(s) that carry AGENT ACTIONS you may adopt — grouped connection → exposure, with each entity\'s granted actions (read/search/create/update) and whether the exposure\'s write actions are admin-approved yet. Adoption is the CONSENT step: an exposure never silently arms your domain\'s agents; a `domain_admin` must adopt the entities first (the third of the four fail-closed layers: capability ∩ exposure ∩ ADOPTION ∩ grant). Before: this. After: ⛔ domain_admin adopt_entity_actions. Governance: read-only, scoped to your domains; only exposures that actually carry actions appear (data-only exposures are omitted).',
+    inputSchema: { type: 'object', properties: {}, examples: [{}] },
+    call: async (user) => {
+      const connections = await listExposedTablesForUser(user);
+      const adoptable = connections
+        .filter((c) => c.operational)
+        .map((c) => ({
+          connectionId: c.connectionId,
+          connectionName: c.connectionName,
+          platform: c.platform,
+          exposures: c.exposures
+            .filter((e) => e.actions && Object.keys(e.actions).length > 0)
+            .map((e) => ({
+              exposureId: e.exposureId,
+              name: e.name,
+              domains: e.domains,
+              actions: e.actions,
+              writeApproved: e.writeApproved ?? false,
+            })),
+        }))
+        .filter((c) => c.exposures.length > 0);
+      return { connections: adoptable };
+    },
+  },
+  {
+    name: 'adopt_entity_actions',
+    tab: 'connections',
+    minRole: 'domain_admin',
+    description:
+      'ADOPT an operational exposure\'s ENTITY ACTIONS into your domain (⛔ domain_admin — the action-adoption gate) so your domain\'s agents can be granted them. The exposure is RE-RESOLVED server-side (active, shared with one of your domains) and the connection\'s DOMAIN + id are taken from it — never trusted from the args. This is a thin delegate over the SAME `adoptActions` lib the Adopt panel runs: it supersedes any prior adoption for this exposure+domain and audit-traces `entity_actions_adopted`. Read/search become callable immediately; create/update additionally require the exposure\'s admin `exposure_action_enable` approval to have cleared. Adopting nothing is a no-op error. Before: list_adoptable_actions. After: ⛔ Builder+ grants the connection\'s action tools to an agent. Governance: domain_admin re-gated in-lib; the four-layer intersection re-checks every call, so a later revoke narrows immediately.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        exposureId: { type: 'string', description: 'Exposure id from list_adoptable_actions.' },
+        entities: { type: 'array', items: { type: 'string' }, description: 'Entity/object names (lowercased) whose actions to adopt — each must be one the exposure grants actions for.' },
+      },
+      required: ['exposureId', 'entities'],
+      examples: [{ exposureId: 'exp_ab12cd', entities: ['account', 'opportunity'] }],
+    },
+    call: async (user, args) => {
+      const exposureId = str(args.exposureId).trim();
+      const entities = strArr(args.entities);
+      if (!exposureId) fail('adopt_entity_actions needs an `exposureId`', 400);
+      if (entities.length === 0) fail('adopt_entity_actions needs at least one entity', 400);
+      // Re-resolve the exposure server-side to find the connection + the caller-domain it
+      // grants to — governance is NEVER trusted from the args.
+      const connections = await listExposedTablesForUser(user);
+      let connectionId: string | undefined;
+      let domain: string | undefined;
+      let granted: Set<string> | undefined;
+      for (const c of connections) {
+        const e = c.exposures.find((x) => x.exposureId === exposureId && x.actions);
+        if (e) {
+          connectionId = c.connectionId;
+          domain = e.domains.find((d) => user.domains.includes(d)) ?? e.domains[0];
+          granted = new Set(Object.keys(e.actions ?? {}));
+          break;
+        }
+      }
+      if (!connectionId || !domain) fail('That exposure carries no adoptable actions for your domain(s).', 404);
+      // Keep only entities the exposure actually grants actions for (honest, fail-closed).
+      const wanted = entities.map(entityActionKey).filter((k) => granted!.has(k));
+      if (wanted.length === 0) fail('None of the named entities are granted actions by this exposure.', 400);
+      const adoption = await adoptActions(connectionId!, user, { exposureId, domain: domain!, entities: wanted });
+      return { adoption };
     },
   },
 ];

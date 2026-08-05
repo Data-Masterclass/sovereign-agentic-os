@@ -85,6 +85,8 @@ export type Data = {
   canCreate: boolean;
   canCreatePersonal: boolean;
   oauthProviders?: OAuthProviderStatus[];
+  /** OPERATIONAL_ACTIONS_ENABLED — gates the Phase-3 agent-action toggles (default off). */
+  operationalActionsEnabled?: boolean;
 };
 export type ApprovalDiff = { field: string; before: unknown; after: unknown };
 export type ApprovalPreview = {

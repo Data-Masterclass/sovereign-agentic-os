@@ -20,6 +20,9 @@ import {
   type AirflowAuthType,
   type AtlassianConnectionConfig,
   type AtlassianAuthKind,
+  type ODataConnectionConfig,
+  type ODataAuthType,
+  type WorkdayConnectionConfig,
   templateByKey,
   isPersonalConnectable,
 } from '@/lib/connections/schema';
@@ -211,6 +214,15 @@ import {
   type ConnToolPolicy,
 } from '@/lib/infra/agent-governed';
 import { enqueue } from '@/lib/governance/approvals';
+import {
+  isSalesforceActionTool,
+  decideActionTool,
+  actionToolLimits,
+  exposedActionTools,
+  executeSalesforceAction,
+} from '@/lib/connections/salesforce-tools';
+import { allActiveExposures } from '@/lib/connections/exposures';
+import { allActiveAdoptions } from '@/lib/connections/action-adoptions';
 import { adapterFor } from '@/lib/connections/connection-adapters';
 import {
   buildPreview,
@@ -467,9 +479,46 @@ export type AtlassianCreateInput = {
   email?: string;
 };
 
+/** The non-secret OData config on the create input (only for `sap-odata` / `odata-v4`). */
+export type ODataCreateInput = {
+  /** 'basic' = communication user; 'oauth-cc' = OAuth2 client-credentials. */
+  authType: ODataAuthType;
+  /** OAuth-CC token endpoint (non-secret); empty for Basic. */
+  tokenUrl?: string;
+};
+
+/** The non-secret Workday config on the create input (only for `workday-raas`). */
+export type WorkdayCreateInput = {
+  /** The admin-registered RaaS report catalog (each report is an entity). */
+  reports?: { key?: string; path: string; label?: string; incrementalParam?: string }[];
+};
+
+/** Normalize a raw Workday report list from the wizard into the record's report catalog:
+ *  a well-formed `path` is required; the key is slugified (falling back to the last path
+ *  segment); rows are deduped by key. Pure. */
+export function sanitizeWorkdayReports(
+  raw: { key?: string; path: string; label?: string; incrementalParam?: string }[] | undefined,
+): WorkdayConnectionConfig['reports'] {
+  if (!Array.isArray(raw)) return [];
+  const out: WorkdayConnectionConfig['reports'] = [];
+  const seen = new Set<string>();
+  for (const r of raw) {
+    const path = String(r?.path ?? '').trim();
+    if (!path) continue;
+    const rawKey = String(r?.key ?? '').trim() || path.split(/[/?]/).filter(Boolean).pop() || 'report';
+    const key = rawKey.replace(/[^A-Za-z0-9_]/g, '_').replace(/^([0-9])/, '_$1').toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const label = String(r?.label ?? '').trim() || undefined;
+    const incrementalParam = String(r?.incrementalParam ?? '').trim() || undefined;
+    out.push({ key, path, ...(label ? { label } : {}), ...(incrementalParam ? { incrementalParam } : {}) });
+  }
+  return out;
+}
+
 export async function createConnection(
   user: CurrentUser,
-  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown; warehouse?: WarehouseCreateInput; omService?: string; airflow?: AirflowCreateInput; atlassian?: AtlassianCreateInput },
+  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown; warehouse?: WarehouseCreateInput; omService?: string; airflow?: AirflowCreateInput; atlassian?: AtlassianCreateInput; odata?: ODataCreateInput; workday?: WorkdayCreateInput },
 ): Promise<Connection> {
   const tpl = templateByKey(input.template);
   if (!tpl) throw withStatus(new Error('Unknown connection template'), 400);
@@ -643,6 +692,25 @@ export async function createConnection(
           } satisfies AtlassianConnectionConfig,
         }
       : {}),
+    // For an OData connection (sap-odata / odata-v4), stamp the non-secret auth config
+    // (Basic vs OAuth-CC + the OAuth-CC token URL). The credential stays in the vault.
+    ...(tpl.key === 'sap-odata' || tpl.key === 'odata-v4'
+      ? {
+          odata: {
+            authType: (input.odata?.authType ?? 'basic') as ODataAuthType,
+            tokenUrl: (input.odata?.tokenUrl ?? '').trim() || undefined,
+          } satisfies ODataConnectionConfig,
+        }
+      : {}),
+    // For a Workday RaaS connection, stamp the admin-registered report catalog (each
+    // report is an entity — no cheap global describe). The ISU credential stays vaulted.
+    ...(tpl.key === 'workday-raas'
+      ? {
+          workday: {
+            reports: sanitizeWorkdayReports(input.workday?.reports),
+          } satisfies WorkdayConnectionConfig,
+        }
+      : {}),
     createdAt: t,
     updatedAt: t,
   };
@@ -803,6 +871,38 @@ const CONNECTION_HEALTH: Partial<Record<ConnectionTemplateKey, HealthFn>> = {
     return h.ok
       ? { ok: true, mode: 'live', detail: `Kajabi is reachable (${h.detail}) The credential never leaves the server.` }
       : { ok: false, mode: 'offline', detail: `Kajabi is unreachable or refused the credential (${h.detail}) — check the Public API key + egress, then re-test.` };
+  },
+  // SAP S/4HANA Cloud + generic OData V4: a real `$metadata` round-trip parsed to EDMX.
+  // A refused credential / unreachable service is an honest x. The credential never
+  // leaves the server (lib/connections/odata/client.ts).
+  'sap-odata': async (c) => {
+    const { odataHealth } = await import('./odata/client.ts');
+    const h = await odataHealth(c);
+    c.mode = h.ok ? 'live' : 'offline';
+    c.health = h.ok ? 'healthy' : 'needs-reconnect';
+    return h.ok
+      ? { ok: true, mode: 'live', detail: `SAP OData is reachable (${h.detail}) The credential never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `SAP OData is unreachable or refused the credential (${h.detail}) — cloud-reachable services only (on-prem behind SAP Cloud Connector is not supported in v1). Check the service root + egress, then re-test.` };
+  },
+  'odata-v4': async (c) => {
+    const { odataHealth } = await import('./odata/client.ts');
+    const h = await odataHealth(c);
+    c.mode = h.ok ? 'live' : 'offline';
+    c.health = h.ok ? 'healthy' : 'needs-reconnect';
+    return h.ok
+      ? { ok: true, mode: 'live', detail: `OData service is reachable (${h.detail}) The credential never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `OData service is unreachable or refused the credential (${h.detail}) — check the service root + egress, then re-test.` };
+  },
+  // Workday RaaS: a real sample fetch of the FIRST configured report (or honest "no
+  // reports configured"). The ISU credential never leaves the server (workday-raas.ts).
+  'workday-raas': async (c) => {
+    const { workdayHealth } = await import('./workday-raas.ts');
+    const h = await workdayHealth(c);
+    c.mode = h.ok ? 'live' : 'offline';
+    c.health = h.ok ? 'healthy' : 'needs-reconnect';
+    return h.ok
+      ? { ok: true, mode: 'live', detail: `Workday RaaS is reachable (${h.detail}) The ISU credential never leaves the server.` }
+      : { ok: false, mode: 'offline', detail: `Workday RaaS is unreachable or refused the credential (${h.detail}) — check the RaaS base URL, report URLs, ISU + egress, then re-test.` };
   },
   github: async (c) => {
     const h = await githubHealth(githubConnFrom(c));
@@ -1418,9 +1518,15 @@ export async function grantToAgent(
   }
 
   // The grant can only narrow: read-only -> the Read tools; full -> all EXPOSED tools.
+  // Operational ACTION tools (sf_*) live outside the static bundle: fold the currently-
+  // exposed ones (the exposure+adoption intersection) in so a `full` grant can carry
+  // them, and a `read-only` grant carries only their read/search tools. The runtime
+  // intersection still re-checks per call, so a later revoke narrows a stale grant.
   const exposed = exposedConnectionTools(c.principal);
-  const readTools = c.tools.filter((t) => t.mode === 'Read').map((t) => t.name);
-  const allowedTools = scope === 'read-only' ? readTools : exposed;
+  const actionExposed = await exposedActionTools(c);
+  const readActionTools = actionExposed.filter((t) => t === 'sf_get_record' || t === 'sf_search');
+  const readTools = [...c.tools.filter((t) => t.mode === 'Read').map((t) => t.name), ...readActionTools];
+  const allowedTools = scope === 'read-only' ? readTools : [...exposed, ...actionExposed];
 
   restrictConnectionForAgent(agentPrincipal, c.principal, allowedTools);
   c.grants = c.grants.filter((g) => g.agent !== agentPrincipal);
@@ -1439,6 +1545,62 @@ export async function grantToAgent(
 }
 
 // ----------------------------------------------------------- Governed tool call --
+
+/**
+ * The FOUR-LAYER INTERSECTION authz for an operational action tool (sf_*), recomputed
+ * fresh over the live exposure + adoption stores. Returns the SAME `{effect, reason,
+ * mode}` shape as `authorizeConnectionCall` so the downstream gate is unchanged:
+ *   • no exposure / no adoption / flag off / no valid object ⇒ deny (fail closed),
+ *   • delete ⇒ deny (Blocked),
+ *   • read/search ⇒ allow,
+ *   • create/update ⇒ requires_approval (or Write-bounded allow within the bound / deny
+ *     over it),
+ *   • an `asAgent` grant that excludes the tool ⇒ deny (layer 4, restrict-only).
+ */
+async function authorizeActionCall(
+  c: Connection,
+  tool: string,
+  args: Record<string, unknown>,
+  asAgent?: string,
+): Promise<{ effect: 'allow' | 'deny' | 'requires_approval'; reason: string; mode?: CapabilityMode }> {
+  // Layer 4 (grant, restrict-only): a per-agent grant that does not list this tool denies.
+  if (asAgent) {
+    const grant = c.grants.find((g) => g.agent === asAgent);
+    if (grant && !grant.tools.includes(tool)) {
+      return { effect: 'deny', reason: `agent ${asAgent} is granted a narrower scope; ${tool} is not in the grant` };
+    }
+  }
+  const object = String(args.object ?? '');
+  const [exposures, adoptions] = await Promise.all([allActiveExposures(), allActiveAdoptions()]);
+  const decision = decideActionTool(c, tool, object, exposures, adoptions);
+  if (decision.mode === null) return { effect: 'deny', reason: decision.reason };
+  switch (decision.mode) {
+    case 'Blocked':
+    case 'Off':
+      return { effect: 'deny', reason: decision.reason, mode: decision.mode };
+    case 'Read':
+      return { effect: 'allow', reason: decision.reason, mode: 'Read' };
+    case 'Write-approval':
+      return { effect: 'requires_approval', reason: decision.reason, mode: 'Write-approval' };
+    case 'Write-bounded': {
+      const limits = actionToolLimits(c, tool);
+      const boundArg = limits?.boundArg ?? 'amount';
+      if (limits?.maxAmount !== undefined) {
+        const amount = Number((args.values as Record<string, unknown> | undefined)?.[boundArg] ?? args[boundArg]);
+        if (!Number.isFinite(amount)) {
+          return { effect: 'deny', reason: `bounded write requires a numeric ${boundArg} <= ${limits.maxAmount}`, mode: 'Write-bounded' };
+        }
+        if (amount > limits.maxAmount) {
+          return { effect: 'deny', reason: `${boundArg} ${amount} exceeds the bound (<= ${limits.maxAmount})`, mode: 'Write-bounded' };
+        }
+        return { effect: 'allow', reason: `within bound (<= ${limits.maxAmount})`, mode: 'Write-bounded' };
+      }
+      return { effect: 'allow', reason: 'within bound', mode: 'Write-bounded' };
+    }
+    default:
+      return { effect: 'deny', reason: 'unknown mode' };
+  }
+}
 
 export type WritePreviewDTO = {
   action: string;
@@ -1481,7 +1643,12 @@ export async function callConnectionTool(
   const tool = String(input.tool ?? '');
   const args = input.args ?? {};
   const reason = input.reason ?? 'tool call';
-  const authz = authorizeConnectionCall(c.principal, tool, args, input.asAgent);
+  // Operational action tools (sf_*) are NOT in the static bundle: their authz is the
+  // four-layer intersection, recomputed FRESH here over the live exposure/adoption
+  // stores (no cache outlives a revoke). Everything else uses the compiled profile.
+  const authz = isSalesforceActionTool(tool)
+    ? await authorizeActionCall(c, tool, args, input.asAgent)
+    : authorizeConnectionCall(c.principal, tool, args, input.asAgent);
 
   // Hard deny (Off / Blocked / over-bound / out-of-grant) — same in both modes.
   if (authz.effect === 'deny') {
@@ -1567,6 +1734,18 @@ const CONNECTION_EXECUTORS: Partial<Record<ConnectionTemplateKey, Executor>> = {
   'gcp-identity': (c, tool, args) => executeGcpIdentity(c, tool, args),
   'gcp-directory': (c, tool, args) => executeGcpDirectory(c, tool, args),
   'snowflake-governance': (c, tool, args) => executeSnowflakeGov(c, tool, args),
+  // Operational action tools (Phase 3). Registered but INERT unless the flag is on:
+  // executeSalesforceAction dispatches the entity-generic sf_* tools; the sync-only
+  // capability tools of a salesforce-api connection never reach here (the profile has
+  // no other exposed write tool, and reads on the legacy preset fall to executeMock).
+  // When the flag is OFF, no sf_* call is ever ALLOWED upstream (the intersection
+  // denies), so this executor stays unreached.
+  'salesforce-api': async (c, tool, args) => {
+    if (config.operationalActionsEnabled && isSalesforceActionTool(tool)) {
+      return executeSalesforceAction(c, tool, args);
+    }
+    return executeMock(c, tool, args, true);
+  },
 };
 
 /** Execute an allowed call: inject the secret SERVER-SIDE (never logged), trace + log egress. */

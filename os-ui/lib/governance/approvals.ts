@@ -38,6 +38,12 @@ export type ApprovalKind =
   | 'autonomous_out_of_policy'
   | 'access_request'
   | 'egress_request'
+  // Operational-connection write-action ENABLEMENT (operational-system-connections.md,
+  // Phase 3): adding/broadening create/update on an exposure's `actions` holds the
+  // WRITE scopes until an Admin approves. Read/search activate immediately; the
+  // effect flips the exposure's `writeApproved` so the write tools compile. Approver
+  // `admin`, tenant scope.
+  | 'exposure_action_enable'
   // Rung-1 promotion (Personal→Domain) for the ladder kinds that were formerly
   // one-step DIRECT (knowledge/connection/model/artifact/dashboard/app). The
   // payload carries `{ artifactKind, id }`; the effect dispatches per-kind.
