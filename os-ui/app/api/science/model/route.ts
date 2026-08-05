@@ -9,7 +9,6 @@ import {
   listModelsForUser,
   getModel,
   createModel,
-  ensureChurnSeed,
   ensureModelsHydrated,
   compilePredictPolicy,
   goLive,
@@ -22,7 +21,7 @@ import {
   CHURN,
   type Actor,
   type ConsumptionMode,
-  type ModelSpec,
+  type ModelSpecInput,
   type ServiceModel,
 } from '@/lib/science';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
@@ -31,7 +30,7 @@ export const dynamic = 'force-dynamic';
 
 function disabled() {
   return NextResponse.json(
-    { mlEnabled: false, models: [], mine: [], domain: [], marketplace: [], adapters: [], drift: null },
+    { mlEnabled: false, models: [], mine: [], domain: [], marketplace: [], adapters: [] },
     { status: 200 },
   );
 }
@@ -53,8 +52,8 @@ function actorFrom(user: { id: string; role: string; domains: string[] }): Actor
  * entitled to (RLS-scoped via `listModelsForUser` — their Personal models + their
  * domains' Domain models + Marketplace-published models, never another domain's or
  * another user's Personal model), each with its compiled callable-scope policy
- * (proving promotion/certification widens reach), the 5 adapter liveness probes,
- * and the churn drift series for the monitoring view. Off when `ml.enabled=false`.
+ * (proving promotion/certification widens reach) and the adapter liveness probes.
+ * Real per-model prediction usage rides on each model record. Off when `ml.enabled=false`.
  */
 export async function GET(request: Request) {
   if (!config.mlEnabled) return disabled();
@@ -64,19 +63,16 @@ export async function GET(request: Request) {
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
-  // Durable registry: hydrate persisted models BEFORE seeding, so the churn seed
-  // (FIXED system/sales identity — never the first viewer) only lands on a truly
-  // empty fresh tenant and a deleted model stays deleted across pod rolls.
+  // Durable registry: hydrate persisted models. A fresh tenant is EMPTY — there is no
+  // fabricated churn seed (removed in Phase A); models are earned via create/train.
   await ensureModelsHydrated();
-  ensureChurnSeed();
 
-  const [features, train, registry, deploy, mon, drift] = await Promise.all([
+  const [features, train, registry, deploy, mon] = await Promise.all([
     featuresAdapter.probe(),
     trainTrackAdapter.probe(),
     registryAdapter.probe(),
     deployAdapter.probe(),
     monitoringAdapter.probe(),
-    monitoringAdapter.drift(),
   ]);
   const withPolicy = (m: ServiceModel) => ({ ...m, policy: compilePredictPolicy(m) });
   // ?archived=1 additionally returns soft-archived models (their own section).
@@ -92,9 +88,8 @@ export async function GET(request: Request) {
   return NextResponse.json({
     mlEnabled: true,
     gpuEnabled: false, // CPU default; GPU behind Builder/Admin approval + quota
-    models, // flat (back-compat: existing consumers read models[0])
+    models, // flat (back-compat: existing consumers read models[0]); each carries real `usage`
     ...groups, // grouped (the tab's scope switcher)
-    drift,
     adapters: [
       { name: featuresAdapter.name, kind: 'features', live: features },
       { name: trainTrackAdapter.name, kind: 'train/track', live: train },
@@ -130,7 +125,8 @@ export async function POST(req: Request) {
     mode?: ConsumptionMode;
     name?: string;
     description?: string;
-    spec?: ModelSpec;
+    // Simple-mode: algorithm/optimizeMetric/trainTestSplit optional (server fills defaults).
+    spec?: ModelSpecInput;
   } = {};
   try {
     body = await req.json();
@@ -184,9 +180,13 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true, import: r });
       }
       case 'retrain': {
-        const r = await monitoringAdapter.triggerRetrain(model);
-        await trace({ principal: user.id, tool: 'model_retrain', input: { model }, output: { runId: r.runId }, decision: 'allow' });
-        return NextResponse.json({ ok: true, retrain: r });
+        // Retrain is NOT wired. The old path returned a FABRICATED `dagster-retrain-<ts>` runId
+        // WITHOUT ever calling Dagster (traced as allow) — an honesty violation, removed. A real
+        // governed retrain trigger is Phase-B work. Answer honestly rather than invent a run.
+        return NextResponse.json(
+          { error: 'Retrain is not wired yet — no Dagster retrain is triggered. This will return once a real, governed retrain trigger ships.' },
+          { status: 410 },
+        );
       }
       default:
         return NextResponse.json({ error: `unknown op ${body.op}` }, { status: 400 });

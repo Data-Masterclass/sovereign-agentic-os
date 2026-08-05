@@ -13,9 +13,15 @@ import type {
   Caller,
   CompiledPredictPolicy,
   ConsumptionMode,
+  LaunchStatus,
+  LaunchStep,
+  LaunchStepState,
   ModelSpec,
+  ModelSpecInput,
   ModelTier,
+  ModelUsage,
   ServiceModel,
+  TaskType,
 } from '@/lib/science/types';
 // Pure edit-scope helper (type-only dep chain — safe under `node --test`).
 import { canManageArtifact, type ArtifactScope } from '../governance/edit-scope.ts';
@@ -44,8 +50,8 @@ import { createFolder, type Principal as FolderPrincipal } from '../folders/inde
  *      front doors evaluate the SAME compiled policy, so REST and MCP cannot drift
  *      (the same guarantee `data-policy-compiler.md` makes for Trino-vs-Cube).
  *   2. Certify, go-live, and promotion are ALWAYS performed by a human Builder/
- *      Admin. An agent actor is rejected by `assertHuman()` — the ML agent
- *      proposes, a human ships (see `agent-control.ts`).
+ *      Admin. An agent actor is rejected by `assertHuman()` — an agent proposes,
+ *      a human ships.
  *   3. The owner picks the Marketplace consumption mode (read-in-place vs
  *      fork-allowed) AT certify time, per artifact.
  *
@@ -67,72 +73,15 @@ function withStatus(err: Error, status: number): Error {
 // --------------------------------------------------------- The model registry ---
 
 /**
- * Seed: the churn model — owned by Sales, deployed (Production stage) but its
- * SERVICE visibility starts at **Personal** (owner-only), so the UI/gate can walk
- * the FULL ladder: Personal (owner only) → Builder promote → Domain (the Sales
- * app + agent can call) → Admin certify → Marketplace (a second domain can call).
- * Stage (MLflow lifecycle) and tier (who-may-call) are orthogonal.
+ * A fresh tenant starts EMPTY. Models are registered only through the builder's
+ * Define → Train & launch flow (or the platform's own promote/certify flows, e.g.
+ * the Northpeak e-commerce seed). There is NO fabricated seed model: the removed
+ * churn seed used to plant invented facts (auc 0.871, runId 'mlf-run-2a9c') a fresh
+ * tenant never earned — an honesty violation. Existing tenants that already persisted
+ * the seed keep their record (no migration); this only stops CREATING new ones.
  */
 function seedModels(): ServiceModel[] {
-  // A fresh tenant starts EMPTY. Models are registered only through the
-  // platform's own promote/certify flows (e.g. the Northpeak e-commerce seed).
   return [];
-}
-
-/**
- * The churn/KServe slice as a FULL model artifact — the one live backend, wrapped
- * as the first `trained`+`deployed` model so the Science tab is never empty and has
- * a real thing to open/predict/promote. Seeded with a FIXED identity (the platform
- * `system` owner, `sales` domain) — never the first viewer, so ownership is stable
- * across pods and users. Domain tier so the owning domain can see + call it out of
- * the box (and the Domain→Marketplace certify rung stays walkable); Production
- * stage + a certified v2 version mirror the live MLflow registry. Tests seed their
- * own churn variants explicitly via `upsertModel`.
- */
-export function churnSeedModel(owner = 'system', domain = 'sales'): ServiceModel {
-  const now = new Date().toISOString();
-  return {
-    id: 'svc_churn_model',
-    model: 'churn_model',
-    name: 'Churn model',
-    owner,
-    domain,
-    tier: 'Domain',
-    stage: 'Production',
-    frontDoors: ['rest', 'mcp'],
-    versions: [{ version: 'v2', stage: 'Production', auc: 0.871, certified: true, runId: 'mlf-run-2a9c' }],
-    spec: {
-      sourceDataProductFqn: 'sales.customer_360',
-      targetColumn: 'churned',
-      taskType: 'binary_classification',
-      algorithm: 'xgboost',
-      features: ['recency_days', 'order_frequency', 'monetary_value', 'tenure_months'],
-      trainTestSplit: 0.8,
-      optimizeMetric: 'auc',
-    },
-    buildState: 'deployed',
-    description: 'Predicts customer churn from RFM + tenure features. Served by KServe; the live Layer-4 slice.',
-    metrics: { primary: 0.871, primaryMetric: 'auc' },
-    mlflowRunId: 'mlf-run-2a9c',
-    kserveService: 'churn_model',
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
-/**
- * Ensure the wrapped churn model exists (idempotent) — the route calls this so a
- * fresh tenant's Science tab opens on the live model rather than an empty grid.
- * Seeds ONLY into an EMPTY registry (call it AFTER `ensureModelsHydrated()`): once
- * any model exists — including a durably deleted churn model with other survivors —
- * the seed never resurrects. Returns the churn model now in the registry, or null
- * when it is absent and the registry is non-empty.
- */
-export function ensureChurnSeed(owner?: string, domain?: string): ServiceModel | null {
-  const existing = getModel('churn_model');
-  if (existing) return existing;
-  if (store().size > 0) return null;
-  return upsertModel(churnSeedModel(owner, domain));
 }
 
 // The registry state is pinned to globalThis so all separately-bundled Next.js
@@ -305,8 +254,74 @@ function slugModel(name: string): string {
 export type CreateModelInput = {
   name: string;
   description?: string;
-  spec: ModelSpec;
+  /** Simple-mode: `algorithm`/`optimizeMetric`/`trainTestSplit` may be omitted (server fills defaults). */
+  spec: ModelSpecInput;
 };
+
+/**
+ * The learners the training runtime can ACTUALLY train, per task. This is the honest
+ * supported set — a caller who asks for anything else is REFUSED by name, never silently
+ * given a different learner (the old `resolveAlgorithm` quietly trained logistic when the
+ * user typed "xgboost" — an honesty violation this replaces). Keep in lockstep with the
+ * trainer image's real capabilities.
+ */
+const SUPPORTED_ALGORITHMS: Record<TaskType, string[]> = {
+  binary_classification: ['logistic'],
+  multiclass_classification: ['logistic'],
+  regression: ['linear'],
+  forecast: ['linear'],
+  clustering: ['kmeans'],
+};
+
+/** The default learner + optimize metric for a task (the real learner the trainer runs). */
+function taskDefaults(task: TaskType): { algorithm: string; optimizeMetric: string } {
+  switch (task) {
+    case 'binary_classification':
+    case 'multiclass_classification':
+      return { algorithm: 'logistic', optimizeMetric: 'auc' };
+    case 'regression':
+    case 'forecast':
+      return { algorithm: 'linear', optimizeMetric: 'rmse' };
+    case 'clustering':
+      return { algorithm: 'kmeans', optimizeMetric: 'silhouette' };
+  }
+}
+
+/**
+ * Fill Simple-mode defaults into a spec and VALIDATE the learner honestly. `algorithm`,
+ * `optimizeMetric` and `trainTestSplit` default per task when omitted; a supplied algorithm
+ * the runtime cannot train is REFUSED (400) naming the supported set — NEVER substituted.
+ * Exported so the create route (and tests) can normalize the same way.
+ */
+export function normalizeSpec(input: ModelSpecInput): ModelSpec {
+  const task = input.taskType;
+  const defaults = taskDefaults(task);
+  const supported = SUPPORTED_ALGORITHMS[task];
+  const algorithm = input.algorithm?.trim() || defaults.algorithm;
+  if (!supported.includes(algorithm)) {
+    throw withStatus(
+      new Error(
+        `Algorithm "${algorithm}" is not supported for ${task}. Supported: ${supported.join(', ')}. ` +
+          `Pick a supported learner (or omit it to use the default "${defaults.algorithm}").`,
+      ),
+      400,
+    );
+  }
+  const split = typeof input.trainTestSplit === 'number' ? input.trainTestSplit : 0.8;
+  if (!(split > 0 && split < 1)) {
+    throw withStatus(new Error('trainTestSplit must be a fraction in (0,1)'), 400);
+  }
+  return {
+    sourceDataProductFqn: input.sourceDataProductFqn,
+    sourceDatasetId: input.sourceDatasetId,
+    targetColumn: input.targetColumn,
+    taskType: task,
+    algorithm,
+    features: input.features,
+    trainTestSplit: split,
+    optimizeMetric: input.optimizeMetric?.trim() || defaults.optimizeMetric,
+  };
+}
 
 /**
  * Register a NEW model as a `draft` artifact, owned by the actor in their domain
@@ -326,6 +341,8 @@ export function createModel(input: CreateModelInput, actor: Actor): ServiceModel
   const modelId = slugModel(name);
   if (!modelId) throw withStatus(new Error('The model name must contain letters or digits'), 400);
   if (getModel(modelId)) throw withStatus(new Error(`A model named ${modelId} already exists`), 409);
+  // Simple-mode: fill task defaults + REFUSE an unsupported algorithm (never substitute).
+  const spec = normalizeSpec(input.spec);
 
   const now = new Date().toISOString();
   const m: ServiceModel = {
@@ -339,7 +356,7 @@ export function createModel(input: CreateModelInput, actor: Actor): ServiceModel
     folder: '/',
     frontDoors: ['rest', 'mcp'],
     versions: [],
-    spec: input.spec,
+    spec,
     buildState: 'draft',
     description: input.description?.trim() || undefined,
     kserveService: modelId,
@@ -398,7 +415,10 @@ export function completeTraining(
   const version = `v${m.versions.length + 1}`;
   const metricName = result.metricName ?? m.spec?.optimizeMetric ?? 'metric';
   const value = typeof result.metric === 'number' ? result.metric : 0;
-  m.versions.push({ version, stage: 'Staging', auc: value, certified: false, runId: result.runId });
+  // Metric-NAME-correct version: carry both the value AND its real name (auc / rmse / …),
+  // so a regression version reads "rmse 12.3" not a mislabeled AUC. `auc` is the deprecated
+  // back-compat mirror of the value (Phase B removes it) — never a fabricated number.
+  m.versions.push({ version, stage: 'Staging', metric: value, metricName, auc: value, certified: false, runId: result.runId });
   m.buildState = 'trained';
   m.mlflowRunId = result.runId;
   m.metrics = { primary: value, primaryMetric: metricName };
@@ -488,6 +508,123 @@ export function failDeploy(model: string, actor: Actor, reason: string): Service
   m.buildState = 'deploy_failed';
   m.lastDeployError = reason;
   m.updatedAt = new Date().toISOString();
+  persist(m);
+  return m;
+}
+
+// -------------------------------------------------- Fused "Train & launch" status ---
+
+const LAUNCH_LABELS: Record<LaunchStep['key'], string> = {
+  read: 'Reading data',
+  train: 'Training',
+  publish: 'Publishing',
+};
+
+/** One step, with its state + real detail. */
+function step(key: LaunchStep['key'], state: LaunchStepState, detail?: string): LaunchStep {
+  return { key, label: LAUNCH_LABELS[key], state, detail };
+}
+
+/**
+ * Derive the coherent fused Train & launch status a timeline renders, PURELY from the model's
+ * `buildState` + its in-flight handles. "Read" and "Train" are ONE training Job (the runner reads
+ * the governed Gold product through Trino, then fits) so they advance together; "Publish" is the
+ * deploy. `phaseDetail` (optional) is the live poll detail (job phase / ISVC reason) the route
+ * threads in for the Developer view. This is a mapping, not a mutation — safe to call on any read.
+ */
+export function computeLaunchStatus(m: ServiceModel, phaseDetail?: string): LaunchStatus {
+  const bs = m.buildState ?? 'draft';
+  const jobDetail = m.trainingJob ? `job ${m.trainingJob}` : undefined;
+  const isvcDetail = m.kserveService ? `InferenceService ${m.kserveService}` : undefined;
+  let steps: LaunchStep[];
+  switch (bs) {
+    case 'draft':
+      steps = [step('read', 'pending'), step('train', 'pending'), step('publish', 'pending')];
+      break;
+    case 'training':
+      steps = [
+        step('read', 'done'),
+        step('train', 'running', phaseDetail ?? jobDetail),
+        step('publish', 'pending'),
+      ];
+      break;
+    case 'trained':
+      // Trained but not yet publishing — in the fused flow this is a transient handoff.
+      steps = [step('read', 'done'), step('train', 'done'), step('publish', 'pending')];
+      break;
+    case 'deploying':
+      steps = [step('read', 'done'), step('train', 'done'), step('publish', 'running', phaseDetail ?? isvcDetail)];
+      break;
+    case 'deployed':
+      steps = [step('read', 'done'), step('train', 'done'), step('publish', 'done', isvcDetail)];
+      break;
+    case 'deploy_failed':
+      steps = [step('read', 'done'), step('train', 'done'), step('publish', 'failed', m.lastDeployError)];
+      break;
+    case 'archived':
+      steps = [step('read', 'done'), step('train', 'done'), step('publish', 'done')];
+      break;
+  }
+  // A failed training run resets to draft with lastTrainingError set — surface it on the train step.
+  if (bs === 'draft' && m.lastTrainingError) {
+    steps = [step('read', 'done'), step('train', 'failed', m.lastTrainingError), step('publish', 'pending')];
+  }
+  const error =
+    bs === 'deploy_failed' ? m.lastDeployError : steps.some((s) => s.key === 'train' && s.state === 'failed') ? m.lastTrainingError : undefined;
+  return { phase: bs, launched: bs === 'deployed', steps, error };
+}
+
+// --------------------------------------------------------------- Usage recording ---
+
+/** Local YYYY-MM-DD day key for a bucket (the histogram's time axis). */
+function dayKey(at: Date): string {
+  return at.toISOString().slice(0, 10);
+}
+
+/** The band key for a scored ALLOWED call: score deciles for classification, coarse
+ *  value bands otherwise. Deciles clamp to d0..d9; value bands hash the value into b0..b9. */
+function bandKey(kind: ModelUsage['bandKind'], score: number): string {
+  if (kind === 'decile') {
+    const d = Math.min(9, Math.max(0, Math.floor(score * 10)));
+    return `d${d}`;
+  }
+  // value-band: split the value across b0..b9 by its integer-ish magnitude (no fabricated range —
+  // just a stable coarse bucketing; a real range calibration is Phase-B chart work).
+  const b = Math.min(9, Math.max(0, Math.floor(Math.abs(score) % 10)));
+  return `b${b}`;
+}
+
+/**
+ * Record ONE predict against a model's durable usage — called on EVERY predict (allow AND deny).
+ * Cheap + real: bumps `count`, `denied` (when denied), `lastCalledAt`, and (for an ALLOWED, scored
+ * call) the day×band histogram. Persists through the same registry write-through the model uses, so
+ * usage survives a pod roll. A denied/unscored call still counts (so the count is honest) but does
+ * not touch the score histogram. Unknown model → no-op (nothing to attribute usage to).
+ */
+export function recordUsage(
+  model: string,
+  ev: { allowed: boolean; score?: number; taskType?: TaskType; at?: Date },
+): ServiceModel | null {
+  const m = getModel(model);
+  if (!m) return null;
+  const at = ev.at ?? new Date();
+  const bandKind: ModelUsage['bandKind'] =
+    (ev.taskType ?? m.spec?.taskType) === 'regression' || (ev.taskType ?? m.spec?.taskType) === 'forecast'
+      ? 'value-band'
+      : 'decile';
+  const u: ModelUsage = m.usage ?? { count: 0, denied: 0, bandKind, buckets: {} };
+  // Keep bandKind consistent with the model's current task (first write wins the scheme).
+  u.count += 1;
+  if (!ev.allowed) u.denied += 1;
+  u.lastCalledAt = at.toISOString();
+  if (ev.allowed && typeof ev.score === 'number' && Number.isFinite(ev.score)) {
+    const day = dayKey(at);
+    const key = bandKey(u.bandKind, ev.score);
+    const dayBuckets = (u.buckets[day] ??= {});
+    dayBuckets[key] = (dayBuckets[key] ?? 0) + 1;
+  }
+  m.usage = u;
+  m.updatedAt = at.toISOString();
   persist(m);
   return m;
 }

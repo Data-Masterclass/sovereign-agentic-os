@@ -13,6 +13,284 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.67] — 2026-08-05
+
+### Added
+- **Science Phase D — MCP parity for the full model journey.** Three new governed write tools
+  (`lib/mcp/science-write-tools.ts`, `minRole: 'creator'`, same edit-scope + Langfuse tracing as
+  every sibling write tool) let an external agent carry a model from data to live predictions
+  WITHOUT the UI: `create_model { name, goal?, dataset, target, features?, taskType? }` applies the
+  Simple defaults and VALIDATES the dataset/target/features against the caller's real, RLS-scoped
+  data (a hallucinated dataset/column is refused by name via `validateDefinition`, never invented);
+  `train_model { model }` is the fused "Train & launch" (submits training, auto-deploys on success)
+  returning a run handle + the read→train→publish `LaunchStatus`; `get_model_status { model }` is
+  the poll that ADVANCES the same state machine the UI does (training→trained→deploying→deployed),
+  returning the phase, a plain-language reason and the real trained metric once produced. Honest:
+  all 404 when `ml.enabled=false`; a metric is stated only once a run actually produced it; an
+  unreachable cluster is a real error, never a fake success.
+
+### Changed
+- **Richer `get_model` card** (MCP): now includes `buildState`, real `usage` (count/denied/
+  lastCalledAt), `lastErrors` (training/deploy), and the headline metric NAME + value (auc/rmse,
+  never a mislabeled AUC) — previously omitted.
+- **Science guide + context truth-sync** (`lib/tabs/guides/science.guide.md`,
+  `lib/tabs/science.context.md`, `lib/mcp/prompts.ts`): rewritten from score-and-wire only to the
+  full Simple-first journey (goal → create_model → train_model → get_model_status → science_predict
+  → promote), with the honest capability statement (classification + regression on CPU; algorithm,
+  metric and split chosen automatically; no forecasting/clustering).
+- **Shared MLflow metric reader** (`readMlflowMetric` extracted to `lib/science/training.ts`): the
+  train route and the new MCP status poll now read the real trained metric through ONE function, so
+  both front doors record the same honest (or honestly-untracked) value.
+
+### Monitoring
+- No new Monitoring wiring: model health is ALREADY surfaced there via the real `model_train` /
+  `model_deploy` / `predict` Langfuse traces the science paths emit (which `list_runs` /
+  `get_run_trace` read). The Monitoring overview spine reads traces, not the `ModelUsage` histogram,
+  so feeding that histogram in would be a new signal source rather than a thin, real fit — skipped.
+
+## [os-ui 0.6.66] — 2026-08-05
+
+### Changed
+- **Science Phases B+C — Design·Launch·Monitor Simple UI + a persistent, grounded assistant.**
+  The Science tab's 5-stage builder (Define·Train·Deploy·Predict·Monitor) collapses to three
+  plain-language stages a business user reads: **Design** (a prompt-first chat is the primary
+  surface; the manual form — dataset browser + target/features as COLUMN PICKERS from the real
+  dataset profile — is progressive disclosure; the free-text FQN override / algorithm / metric /
+  split are gone from Simple, and forecast/clustering are dropped), **Launch** (one "Train &
+  launch" button rendering the fused `LaunchStatus` timeline verbatim; the real trained metric is
+  phrased in business language — auc → "ranked positives above negatives NN%", rmse → "typical
+  error ±NN" — computed only from the real value and hidden when absent; `deploy_failed` retries
+  the deploy route; the plain-language failure explanation auto-fetches), and **Monitor** (a
+  governed-preview ROW PICKER to try the model on a real example → plain verdict; live health;
+  the real `ModelUsage` count/denied/last-called + a score-distribution chart from `buckets`
+  (honest empty state when nothing has been scored; no fabricated drift badges); Govern
+  unchanged). Developer mode re-exposes everything that exists today (algorithm/metric/split, the
+  raw feature-vector predict + JSON + traceId, job/ISVC/MLflow handles, the spec+policy JSON).
+- **AI-first Science assistant.** ONE persistent, governed, multi-turn chat (`ScienceChat`)
+  replaces the five one-shot StageAssistant buttons, mounted across all three stages. Each turn
+  is grounded in the model's real state, the caller's VISIBLE datasets + the selected dataset's
+  real column profile, and the honest capability statement. Structured **one-click Apply**
+  suggestion cards (Design → create a draft; Launch → start training & launch; Monitor → score a
+  real example) — the assistant only proposes; every mutation runs through the existing governed
+  routes on explicit click. A Design suggestion naming a dataset/column is VALIDATED server-side
+  against the real feed (`validateDefinition`) and refused-with-reason if hallucinated, so no
+  Apply card can reference a dataset/column the user can't see or that doesn't exist. Honest
+  503/402 surfacing preserved. Removed the Science DevConsole's Featureform tile (not wired) and
+  the "model-as-a-service" jargon crumb.
+- **`parseJsonReply` fix for ALL stage assistants.** `lib/assistant/stage-route.ts`'s
+  `parseStageJson` now delegates to the tolerant `parseJsonReply` (object stages) and a new
+  `extractJsonArray`/`parseJsonArrayReply` (array stages), so a reasoning model that wraps its
+  JSON in preamble prose or a ```json fence still yields structured suggestions instead of an
+  empty result across Data · Metrics · Dashboards · Science · Software. The object/array shape
+  guard contract is unchanged.
+
+### Removed
+- **The inert `monitored` build state.** Dropped the `monitored` `ModelBuildState` union member
+  (types + UI mirror) and every `=== 'monitored'` comparison (`computeLaunchStatus`, the stages,
+  the predict/launch surfaces) — `deployed` is terminal-live and monitoring rides on the deployed
+  model. Deleted the old `builder/TrainStep`, `builder/DeployStep` (absorbed by `LaunchStep`) and
+  the one-shot `StageAssistant` (replaced by `ScienceChat`).
+
+## [os-ui 0.6.65] — 2026-08-05
+
+### Changed
+- **Science Phase A — fused "Train & launch" orchestration (server).** On a successful
+  training run the train poll route now auto-submits the deploy (`trained → deploying`),
+  so "Train & launch" is ONE action (auto-deploy is the Simple default). The deploy poll
+  carries `deploying → deployed` honestly. Both train and deploy routes expose ONE coherent
+  `launch` status a timeline renders: ordered steps (reading data → training → publishing),
+  each with a coarse `state` plus the real underlying `detail` (job name / ISVC phase+reason)
+  for the Developer view (`computeLaunchStatus`, `LaunchStatus`/`LaunchStep` in
+  `lib/science/types.ts`). The standalone two-step Deploy route + `deploy_failed` retry path
+  are unchanged. If the cluster refuses the fused deploy submit, training's success stands and
+  the model rests at `trained` with the deploy error recorded — never a faked deploy.
+- **Science Simple-mode server defaults + honest algorithm refusal.** `algorithm`,
+  `optimizeMetric` and `trainTestSplit` are now OPTIONAL in the create/spec input
+  (`ModelSpecInput`); when omitted the server fills task defaults (classification: the real
+  default learner + auc; regression: linear/rmse; split 0.8) via `normalizeSpec`. An algorithm
+  the runtime cannot actually train is REFUSED (400) naming the supported set — fixing the old
+  lie where typing "xgboost" silently trained logistic.
+- **Metric-name-correct model versions.** `ModelVersion` now carries `metric` + `metricName`
+  (e.g. `rmse 12.3`), so a regression version is no longer mislabeled "AUC". The old `auc`
+  field is retained as a deprecated back-compat mirror of the value (Phase B removes it).
+
+### Added
+- **Real per-model prediction usage.** `servePredict` records usage on EVERY predict (allow
+  AND deny): `count`, `denied`, `lastCalledAt`, and a day×band score histogram (score deciles
+  for classification, coarse value bands for regression) — enough for a
+  score-distribution-over-time chart later. Persisted on the model registry record through the
+  existing durable mirror; exposed on each model in `GET /api/science/model`. Cheap and real,
+  no new infra (`recordUsage`, `ModelUsage`).
+
+### Removed
+- **Science fabrications removed (honesty).** Deleted the churn SEED model that planted invented
+  facts a fresh tenant never earned (`auc 0.871`, `runId 'mlf-run-2a9c'`, `kserveService
+  'churn_model'`) — fresh tenants start EMPTY; existing persisted seed records are left alone
+  (no migration). Removed `monitoringAdapter.triggerRetrain()` (it fabricated a
+  `dagster-retrain-<ts>` runId without ever calling Dagster) and the `op:'retrain'` route path
+  (now an honest 410 "not wired"). Removed the placeholder `drift()`/`DriftPoint`/`driftSeed`
+  plumbing and the dead `drift` payload on the model GET (no UI consumed it; the Monitor stage
+  already renders an honest "not yet monitored" placeholder from `model.metrics`). Removed the
+  orphan `lib/science/agent-control.ts` (exported but unconsumed) + its barrel export + tests.
+  Gutted the dead-in-Science `featuresAdapter` to an honest `probe(): false` stub (Featureform
+  is not wired — training reads Gold through Trino; the DevConsole tile is Phase B's deletion).
+
+## [os-ui 0.6.64] — 2026-08-05
+
+### Security
+- **Grant-scoped "ask your data" for app origins (replaces the 0.6.63 blanket deny).**
+  0.6.63 denied the free-form NL→SQL surface (`/api/data/ask`) to any app origin outright,
+  because it scoped to every dataset the user could see with no way to cap it. It now
+  NARROWS the askable set to (user access ∩ the app's `grants.data` ids) instead: the same
+  filtered list is used for BOTH the model's prompt context AND — since the only tables the
+  model is shown are the ones it can target — the executable SQL scope. An app origin with
+  ZERO dataset grants gets an honest 403 ("no dataset grants — grant one in the OS Software
+  tab → <app> → Context"); an unknown slug fails closed (empty grant set → the same 403);
+  non-app (OS UI) requests are completely unchanged (`appSlugFromRequest` → null, no I/O).
+  This fixes the live incident where a Software-tab BUILD-generated app Search page hit the
+  deny when querying its single granted dataset via the ask surface.
+
+### Changed
+- **BUILD assistant grounded in granted-dataset schemas + a spec-vs-schema rule.** The
+  build directive already injects each granted dataset's REAL columns via the grants-context
+  block; 0.6.64 adds explicit SDK ground rules to the data-plane contract: the dataset schema
+  is AUTHORITATIVE over story-spec field names (do NOT invent `status`/`tenant`/`SKU` fields
+  the schema lacks — build with the real columns and note the gap); read granted datasets via
+  `os.datasets.query('<id>', { limit })` (returns `{ columns, rows }` where rows are ARRAYS in
+  column order — zip before use); `os.datasets.query(id, { nl })` is scoped to THIS app's
+  granted datasets only; and the app can only reach artifacts in its grants (never list the
+  user's full catalog). This closes the other half of the incident, where the generated page
+  re-invented columns the dataset (`northpeak-products`) does not have because the spec text
+  mentioned them.
+
+## [os-ui 0.6.63] — 2026-08-04
+
+### Security
+- **Least-privilege data plane for app origins (governed reads).** Generated apps run
+  under the user's ambient `soa_session`, so an app could read ANY dataset / knowledge /
+  file / metric the USER can see — regardless of what the app was granted. A new helper
+  (`lib/software/app-origin.ts`) attributes a request to an app by its `Origin`/`Referer`
+  (`<slug>.<domain>.<appsBaseDomain>`, reusing the SAME `isAllowedAppOrigin` source of
+  truth as CORS) — and, for the same-origin runtime serve mode, by the
+  `/api/apps/runtime/<slug>` referer path. When a governed read comes from an app origin
+  it is capped at (user access ∩ app grants):
+  - list routes (`/api/data/datasets`, `/api/metrics`, `/api/knowledge/docs`,
+    `/api/files`) FILTER to the app's granted ids (the `total` count follows suit);
+  - single-artifact routes (`/api/data/datasets/[id]`, `…/preview`,
+    `/api/metrics/explore`, `/api/files/[id]`) return **403** with an honest, actionable
+    reason naming the app + artifact and pointing at the Software tab grant flow;
+  - the free-form NL→SQL surface (`/api/data/ask`) spans every dataset the user can see
+    with no dataset-id to scope it, so it is **denied outright for app origins** (the
+    simplest safe behavior) — apps query a specific granted dataset via
+    `os.datasets.query` instead;
+  - an unknown slug from an app origin fails **closed** (denied). Requests with NO app
+    origin (the OS UI itself) are COMPLETELY unaffected — the helper does no I/O on the
+    non-app path.
+
+### Fixed
+- **Honest app "Granted context".** The scaffold surfaced `os.context()`, whose SDK
+  composed from `/api/context/available` — which returns everything the SIGNED-IN USER
+  can see, not what the APP was granted; labelling that "Granted context" was a lie. New
+  app-scoped route `GET /api/apps/by-slug/{slug}/context` returns ONLY the app's actual
+  grants (`app.grants`) resolved to display names from the same canView/RLS-scoped stores
+  the grant picker uses (an artifact that no longer resolves is kept honestly as
+  `name: id`, never dropped). The vendored SDK's `context()` now hits this endpoint when
+  an `appSlug` is set (the scaffold sets it), and keeps its legacy five-feed behavior when
+  it is not (the OS UI). The `OsClient` interface is unchanged (its closed-interface
+  regression stays green).
+- **Scaffold nginx cache bug — stale bundle after every deploy.** The Vite scaffold's
+  `nginx.conf` set no cache headers, so browsers heuristically cached `index.html` and
+  users kept running an old bundle after a deploy. It now sends `Cache-Control: no-cache`
+  for `/index.html` (via the `= /index.html` location the SPA `try_files` redirects into)
+  and `public, max-age=31536000, immutable` for the content-hashed `/assets/`.
+
+### Changed
+- **Granted context moved from Overview → Admin (scaffold).** The starter Overview page
+  is now a plain honest landing (app name + the OS-delegated signed-in user); the
+  app-scoped "Granted context" panel now lives in the Admin section below "App members"
+  (zero grants → "No context granted yet — grant datasets, knowledge or metrics to this
+  app in the OS Software tab.").
+- **"Refresh SDK" action in the Software tab.** The `POST /api/apps/{id}/refresh-sdk`
+  route (re-vendors `@sovereign-os/app-sdk` into an existing app) had no UI. A small
+  owner/in-domain-admin "Refresh SDK" button now sits in the app-detail header with honest
+  result feedback (re-vendored / no-op for a non-frontend template / gate rejection).
+
+## [os-ui 0.6.62] — 2026-08-04
+
+### Added
+- **Generated-app WRITE SDK — `os.records.*` (the bridge, not an invention).**
+  The vendored app SDK (`lib/app-sdk`) was read-only, so the build assistant kept
+  hallucinating `os.datasets.update` / `os.files.create` — methods that never
+  existed. It now has the real write door: `os.records.list/get/add/export`, the
+  SECOND door onto the SAME governed store the app's MCP tools already reach.
+  New governed routes `GET/POST /api/apps/by-slug/{slug}/records`,
+  `GET …/records/{id}`, `POST …/records/export` run AS the signed-in user, gated on
+  (a) the app's visibility/entry rule (404 when not visible) and (b) the app's
+  Builder-APPROVED deploy envelope's `writeTools` (403 with an honest, governance-
+  naming reason when a write is not approved; reads are always-on). Both the MCP
+  tool route and these routes call ONE shared executor (`executeAppTool`,
+  `app-records.ts`) — one store, two doors. Datasets/metrics/knowledge/files stay
+  read-only; the `OsClient` interface is closed, so a hallucinated `os.datasets.update`
+  is a TS2339 the compile gate catches. Existing apps pick up the new SDK via
+  `refreshVendoredSdk` (`POST /api/apps/{id}/refresh-sdk`) or the next re-scaffold;
+  new scaffolds get it automatically. The BUILD directive now names the true surface.
+
+### Fixed
+- **The compile gate no longer fails OPEN on a missing esbuild wasm.** The
+  `esbuild-wasm` binary is loaded at runtime (never require()'d), so standalone
+  packaging dropped it — the bundle pass threw and the WHOLE gate skipped
+  ("gate error — skipped, fail-open") on real commits, letting bad trees through.
+  The image now ships `esbuild.wasm`; when it is ever missing again, the
+  authoritative **tsc** pass STILL gates (catching hallucinated members / import
+  depth) and only the bundle net is skipped, honestly ("bundle check skipped —
+  asset missing"), instead of the whole gate failing open.
+
+## [os-ui 0.6.61] — 2026-08-04
+
+### Added
+- **Direct build service + digest-pinned runners (redesign Phase B).** The
+  serving image comes off the Forgejo-Actions critical path. After a gated live
+  commit, os-ui submits an in-cluster **Kaniko** `batch/v1` Job (daemonless —
+  no DIND, passes the apps namespace's `baseline` PSS) that builds the app's
+  committed Dockerfile straight from its Forgejo git tree at the exact commit
+  SHA (Kaniko's native git context — no tarball, no ConfigMap size limit),
+  pushes an immutable `:sha12` tag to the in-cluster registry, and writes the
+  pushed **digest** to the pod's termination message, where os-ui captures it
+  with plain pod reads. The runner Deployment then serves that app
+  **digest-pinned**: a new digest IS the pod-template change, so Kubernetes
+  rolls honestly — the `deployed-at` roll-on-same-tag hack and the
+  `imagePullPolicy: Always` reliance are deleted for pinned images (`:latest`
+  fallback keeps both, unchanged). The pipeline's `harbor` (image-build) stage
+  now narrates WHICH system built, truthfully: "OS build service" submit /
+  build / digest-pin notes vs the Forgejo-Actions notes, and
+  `get_software_status` reports `builtBy` + an `osBuildNote`. Feature-flagged
+  end-to-end: chart `softwareBuild.enabled` grants the build-Job RBAC
+  (namespaced batch Jobs + pod/log reads, nil-safe under `--reuse-values`) and
+  sets `SOFTWARE_BUILD_SERVICE`; when OFF — or when the submit hits missing
+  RBAC/namespace — the pipeline says so specifically and Forgejo Actions keeps
+  building exactly as before. `ci.yml` stays in every scaffold as the
+  export/CI-confirmation path (demoted, not deleted), and the Phase C repair
+  loop keeps riding its unchanged Actions detection.
+
+### Fixed
+- **The compile gate no longer false-rejects in production.** The deployed
+  standalone image was missing the TypeScript lib .d.ts files and @types/react
+  (never require()'d, so packaging dropped them) — every tree looked like
+  hundreds of errors and GOOD commits were rejected ("342 compile errors" on a
+  one-page change). The image now ships the type assets, and the gate
+  self-checks its environment first — if the assets ever go missing again it
+  skips honestly ("compile check skipped, CI will verify") instead of
+  fabricating diagnostics.
+
+### Added
+- **Runtime serving (beta, redesign Phase D — opt-in per app).** Flip
+  "Runtime serving" on a Vite-shaped app and the OS serves it directly from
+  the committed tree in a sandboxed, strict-CSP iframe — no image build, no
+  CI, no pod. Only compile-green trees serve; a red tree shows its
+  diagnostics honestly. The status card says "OS runtime serving — no image
+  build required" with image stages marked n/a. Image serving stays the
+  default.
+
 ## [os-ui 0.6.60] — 2026-08-03
 
 ### Added

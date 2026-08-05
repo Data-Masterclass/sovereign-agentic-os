@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_PRINCIPLES, CODE_STRUCTURE_CONVENTION } from './chat-modes.ts';
+import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_PRINCIPLES, CODE_STRUCTURE_CONVENTION, DATA_PLANE_CONTRACT } from './chat-modes.ts';
 
 test('tier policy: plan (Design) / test / review run on reasoning; build codegen on standard', () => {
   assert.equal(modelRoleForMode('plan'), 'reasoning');
@@ -63,6 +63,31 @@ test('BUILD_PRINCIPLES: exactly five one-line principles, one per Test dimension
   assert.match(BUILD_PRINCIPLES, /Code Structure/);
   assert.match(BUILD_PRINCIPLES, /Security/);
   assert.match(BUILD_PRINCIPLES, /Documentation/);
+});
+
+// --------------------------------------------- data-plane contract (write SDK) --
+
+test('DATA_PLANE_CONTRACT: names the TRUE write surface (os.records.*) and forbids the hallucinations', () => {
+  // The one real write door.
+  assert.match(DATA_PLANE_CONTRACT, /os\.records\.add\(record\)/);
+  assert.match(DATA_PLANE_CONTRACT, /os\.records\.export\(\)/);
+  // Datasets/metrics/knowledge/files are READS.
+  assert.match(DATA_PLANE_CONTRACT, /datasets are READ-ONLY/);
+  // The hallucinated methods are explicitly ruled out.
+  assert.match(DATA_PLANE_CONTRACT, /NO os\.datasets\.update/);
+  assert.match(DATA_PLANE_CONTRACT, /no\s*\n?\s*os\.files\.create|os\.files\.create/);
+  // The exact import-depth contract from a story folder.
+  assert.match(DATA_PLANE_CONTRACT, /import \{ os \} from '\.\.\/\.\.\/\.\.\/core\/store'/);
+  // The multi-file gate rule.
+  assert.match(DATA_PLANE_CONTRACT, /fix EVERY listed file/);
+  // Envelope-gated writes are called out.
+  assert.match(DATA_PLANE_CONTRACT, /APPROVED deploy envelope/);
+});
+
+test('modeDirective(build): carries the data-plane contract (the write SDK)', () => {
+  const b = modeDirective('build', 'app_1').join('\n');
+  assert.match(b, /os\.records\.add/);
+  assert.match(b, /NO os\.datasets\.update/);
 });
 
 // --------------------------------------------- code-structure convention --

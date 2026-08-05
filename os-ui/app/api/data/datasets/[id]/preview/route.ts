@@ -9,6 +9,7 @@ import { getDataset, builtLayerFqn } from '@/lib/data/store';
 import { queryRun } from '@/lib/infra/governed';
 import { runPreview } from '@/lib/data/preview';
 import type { Layer } from '@/lib/data';
+import { appSlugFromRequest, checkAppGrant } from '@/lib/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,12 @@ export const dynamic = 'force-dynamic';
  */
 export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
   const { id } = params;
+  // LEAST-PRIVILEGE for app origins: cap the preview to datasets the app was granted.
+  const slug = appSlugFromRequest(req);
+  if (slug) {
+    const check = await checkAppGrant(slug, 'data', id);
+    if (!check.allowed) return NextResponse.json({ error: check.reason }, { status: 403 });
+  }
   const dataset = getDataset(id, user); // 403 for a non-viewer (canView guard)
 
   const url = new URL(req.url);

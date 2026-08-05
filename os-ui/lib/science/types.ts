@@ -5,7 +5,7 @@
  * Science (Layer 4 / ML) shared types — PURE types only (no secrets, no server
  * imports) so both client components and server routes can import them. The
  * server logic lives in the `server-only` siblings (`model-service.ts`,
- * `agent-control.ts`, `marketplace.ts`, `adapters.ts`).
+ * `marketplace.ts`, `adapters.ts`).
  *
  * The spine these types describe is "model-as-service, tier-gated": a deployed
  * KServe model is exposed two ways from ONE endpoint — a governed REST `predict`
@@ -34,6 +34,17 @@ export type ConsumptionMode = 'read-in-place' | 'fork-allowed';
 export type ModelVersion = {
   version: string;
   stage: ModelStage;
+  /** The primary metric's VALUE for this version (e.g. 0.871 for auc, 12.3 for rmse). */
+  metric: number;
+  /** WHICH metric `metric` is — mirrors `spec.optimizeMetric` (auc / rmse / f1 …). So a
+   *  regression version reads "rmse 12.3", never a mislabeled "AUC". */
+  metricName: string;
+  /**
+   * @deprecated Use `metric` + `metricName`. Kept during Phase A only so the current UI,
+   * which still reads `.auc`, does not break. For a non-classification version this equals
+   * `metric` (the primary value) but the label is WRONG — read `metricName` for the label.
+   * Phase B removes this field.
+   */
   auc: number;
   certified: boolean;
   runId: string;
@@ -65,7 +76,7 @@ export type ModelSpec = {
   /** The label column to predict; null for unsupervised tasks (clustering). */
   targetColumn: string | null;
   taskType: TaskType;
-  /** The learner, e.g. `xgboost`, `linear`, `kmeans`. */
+  /** The learner, e.g. `logistic`, `linear`, `kmeans`. */
   algorithm: string;
   /** The input feature columns/feature-set members. */
   features: string[];
@@ -76,11 +87,25 @@ export type ModelSpec = {
 };
 
 /**
+ * The Simple-mode create input for a spec: everything the builder MUST know (the
+ * source, target and task) is required, but the three tuning knobs — `algorithm`,
+ * `optimizeMetric`, `trainTestSplit` — are OPTIONAL. When omitted the server fills
+ * honest task defaults (`normalizeSpec`), so "Train & launch" needs no tuning. A
+ * supplied `algorithm` the runtime cannot actually train is REFUSED (never silently
+ * substituted).
+ */
+export type ModelSpecInput = Omit<ModelSpec, 'algorithm' | 'optimizeMetric' | 'trainTestSplit'> & {
+  algorithm?: string;
+  optimizeMetric?: string;
+  trainTestSplit?: number;
+};
+
+/**
  * The MLOps build lifecycle of a model — orthogonal to the visibility `tier` and
- * the registry `stage`. Phase 1 ships `draft` (just created) and `deployed`
- * (the wrapped churn/KServe slice); `training`/`trained`/`deploy_failed`/
- * `monitored`/`archived` are the honest states the guided train/deploy (Phase 2/3)
- * and monitoring (Phase 4) fill in.
+ * the registry `stage`: `draft` (just created) → `training` → `trained` →
+ * `deploying` → `deployed` (serving), with `deploy_failed` and `archived` as the
+ * off-path states. `deployed` is terminal-live; monitoring rides on the deployed
+ * model (real usage + ISVC readiness), so there is no separate `monitored` state.
  */
 export type ModelBuildState =
   | 'draft'
@@ -89,7 +114,6 @@ export type ModelBuildState =
   | 'deploying'
   | 'deploy_failed'
   | 'deployed'
-  | 'monitored'
   | 'archived';
 
 /** Headline evaluation metrics for the current version (nullable until trained). */
@@ -104,6 +128,70 @@ export type ModelMetrics = {
 
 /** A Featureform feature row (offline=Iceberg, online=Valkey) — shared by churn + adapters. */
 export type FeatureRow = { name: string; entity: string; offline: string; online: string };
+
+// ------------------------------------------------------- Fused "Train & launch" ---
+
+/** One step's state in the fused Train & launch timeline. */
+export type LaunchStepState = 'pending' | 'running' | 'done' | 'failed';
+
+/**
+ * ONE step of the fused Train & launch timeline (Simple: "Train & launch" is a single
+ * action that reads → trains → publishes). Each step carries its coarse `state` (for the
+ * Simple timeline) plus the REAL underlying `detail` (job name, ISVC status) the Developer
+ * view surfaces. Phase B renders this verbatim.
+ */
+export type LaunchStep = {
+  /** Stable key the UI maps to an icon/label. */
+  key: 'read' | 'train' | 'publish';
+  /** Human label for the Simple timeline (e.g. "Reading data", "Training", "Publishing"). */
+  label: string;
+  state: LaunchStepState;
+  /** The real underlying detail — job name / ISVC phase+reason — for the Developer view. */
+  detail?: string;
+};
+
+/**
+ * The coherent status a fused Train & launch exposes — ONE shape a timeline renders,
+ * derived from the model's `buildState` and its in-flight train/deploy handles. Ordered
+ * steps + an overall `phase` mirroring the underlying lifecycle so a caller can drive the
+ * poll loop from a single field, and the real `error` (training or deploy) when a step fails.
+ */
+export type LaunchStatus = {
+  /** The overall build phase (mirrors `ServiceModel.buildState`). */
+  phase: ModelBuildState;
+  /** Whether the whole fused launch reached `deployed` (the terminal success). */
+  launched: boolean;
+  /** The three ordered steps: reading data → training → publishing. */
+  steps: LaunchStep[];
+  /** The honest failure reason when a step failed (training or deploy), else undefined. */
+  error?: string;
+};
+
+// --------------------------------------------------------------- Usage recording ---
+
+/**
+ * Per-model prediction USAGE — real, recorded on EVERY `predict` (allow AND deny). Cheap and
+ * durable (persisted on the registry record via the same mirror the model uses); enough to draw
+ * a score-distribution-over-time chart later without new infra. NOT fabricated: absent until the
+ * model is actually called.
+ *
+ * Buckets are keyed by DAY (`YYYY-MM-DD`), then by BAND. For a classification model the bands are
+ * score deciles `d0`..`d9` (d0 = [0,0.1), d9 = [0.9,1]); for a regression model they are coarse
+ * value bands `b0`..`b9` over the observed range — the chart reads whichever `bandKind` says.
+ */
+export type UsageBucketKind = 'decile' | 'value-band';
+export type ModelUsage = {
+  /** Total predict calls seen (allow + deny). */
+  count: number;
+  /** How many of those were denied by governance (tier scope / tool grant). */
+  denied: number;
+  /** ISO timestamp of the most recent predict call. */
+  lastCalledAt?: string;
+  /** Which band scheme the histogram uses (decile for classification, value-band otherwise). */
+  bandKind: UsageBucketKind;
+  /** day (`YYYY-MM-DD`) → band key (`d0`..`d9` / `b0`..`b9`) → count of ALLOWED scored calls. */
+  buckets: Record<string, Record<string, number>>;
+};
 
 /**
  * A deployed model exposed as a governed service. The `tier` is the security
@@ -133,7 +221,7 @@ export type ServiceModel = {
   // --- Phase-1 artifact-model additions (all optional → back-compatible) --------
   /** The build-time spec (what to learn from what). Absent on legacy seed rows. */
   spec?: ModelSpec;
-  /** The MLOps build lifecycle state (draft → … → deployed → monitored). */
+  /** The MLOps build lifecycle state (draft → … → deployed). */
   buildState?: ModelBuildState;
   /** A short human description shown on the tile/detail. */
   description?: string;
@@ -151,6 +239,8 @@ export type ServiceModel = {
   lastTrainingError?: string;
   /** The last deploy failure reason (set on failDeploy; shown in the builder). */
   lastDeployError?: string;
+  /** Real per-model prediction usage — recorded on every predict (absent until first called). */
+  usage?: ModelUsage;
   /** ISO timestamps (creation / last mutation). */
   createdAt?: string;
   updatedAt?: string;

@@ -5,12 +5,18 @@ import 'server-only';
 import { config } from '@/lib/core/config';
 import {
   getAppByIdInternal,
+  getEditableAppForUser,
   healAppRepo,
   persistApp,
   templateFiles,
   withStatus,
+  latestMainSha,
+  triggerOsBuild,
+  GOVERNED_FRONTEND_TEMPLATES,
   type App,
 } from '@/lib/software/apps';
+import { vendorSdkForRepo } from './app-sdk-vendor.ts';
+import type { CurrentUser } from '@/lib/core/auth';
 import { generateAndCompile } from './auto-mcp.ts';
 import { parseAppManifest, parseOpenApi, resolveSurface, reconcileKnowledgeConsumes } from './metadata.ts';
 import type { PipelineBackend, AuthorInput, AuthorResult, FrontDoorKey } from './adapters.ts';
@@ -379,7 +385,42 @@ export async function commitToApp(
   app.chat.push({ role: 'assistant', content: `Committed: ${message} (${step.mode})`, at: new Date().toISOString() });
   snapshotFiles(app.id, tree);
   await persistApp(app);
+  // PHASE B — DIRECT BUILD SERVICE: on a LIVE commit, take the serving image off Forgejo
+  // Actions by submitting an in-cluster Kaniko build for the just-landed head commit.
+  // Fire-and-forget (best-effort: it must never block or fail the commit); it no-ops
+  // unless the build service is enabled (flag + chart RBAC). The Forgejo Actions path
+  // stays in the scaffold as the export/CI-confirmation path either way.
+  if (step.mode === 'live') {
+    void latestMainSha(app)
+      .then((sha) => { if (sha) triggerOsBuild(app, sha); })
+      .catch(() => { /* best-effort — a poll/next commit re-covers it */ });
+  }
   return { app, step };
+}
+
+/**
+ * Re-vendor the OS-client SDK into an EXISTING governed-frontend app so it picks up
+ * a newer `lib/app-sdk` (e.g. the `os.records.*` write surface) without a full
+ * re-scaffold. New scaffolds get it automatically; existing apps froze a copy under
+ * `vendor/@sovereign-os/app-sdk/` at seed time, so this commits the CURRENT source
+ * over it through the SAME governed commit path (`commitToApp`) — which re-runs the
+ * compile gate, so the refresh can never land a tree that does not build. Edit-scoped
+ * (owner / in-domain admin) via `getEditableAppForUser`. Returns the commit outcome.
+ *
+ * This is the cheap path the app-detail "refresh" wires to. A non-governed-frontend
+ * template has no vendored SDK to refresh, so it is a no-op (honest, not an error).
+ */
+export async function refreshVendoredSdk(
+  appId: string,
+  user: CurrentUser,
+): Promise<{ app: App; step: AdapterStep } | { skipped: true; reason: string }> {
+  // Edit-scope gate (throws 403/404 as the other edit paths do).
+  const app = await getEditableAppForUser(appId, user);
+  if (!GOVERNED_FRONTEND_TEMPLATES.has(app.template)) {
+    return { skipped: true, reason: `template '${app.template}' has no vendored SDK to refresh` };
+  }
+  const files = vendorSdkForRepo(); // fresh vendor/@sovereign-os/app-sdk/* from disk
+  return commitToApp(app.id, user, files, 'chore: refresh vendored @sovereign-os/app-sdk (os.records.* write surface)');
 }
 
 // ------------------------------------------------------- Front-door adapters ---

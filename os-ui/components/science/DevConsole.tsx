@@ -27,11 +27,19 @@ type GateData = { mlEnabled: boolean; services: Svc[]; up: number; total: number
 
 // Layer-4 tools embeddable same-origin (lib/tool-proxy.ts). JupyterHub needs
 // WebSockets (kernels) and KServe has no human UI, so those keep native links.
-const EMBEDDABLE_SCIENCE: Record<string, string> = { mlflow: 'MLflow', featureform: 'Featureform' };
+const EMBEDDABLE_SCIENCE: Record<string, string> = { mlflow: 'MLflow' };
+
+// Featureform is NOT wired for Science (training reads Gold through Trino; the featuresAdapter
+// is an honest probe():false stub). Drop its tile from this console — the Govern → components
+// page keeps its own. Filtering here keeps the change surgical (no server /api/science edit).
+const HIDDEN_SCIENCE_SERVICES = new Set(['featureform']);
 
 export default function DevConsole({ onBack }: { onBack: () => void }) {
   const { data, loading, error } = useApi<GateData>('/api/science');
   const { openTool } = useToolWindow();
+
+  const services = (data?.services ?? []).filter((s) => !HIDDEN_SCIENCE_SERVICES.has(s.key));
+  const up = services.filter((s) => s.up).length;
 
   return (
     <>
@@ -39,8 +47,8 @@ export default function DevConsole({ onBack }: { onBack: () => void }) {
       <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0 }}>Developer console</h2>
         {data ? (
-          <span className={`count-pill${data.up === data.total ? ' ok' : ' warn'}`}>
-            {data.up}/{data.total} reachable
+          <span className={`count-pill${up === services.length ? ' ok' : ' warn'}`}>
+            {up}/{services.length} reachable
           </span>
         ) : null}
       </div>
@@ -55,7 +63,7 @@ export default function DevConsole({ onBack }: { onBack: () => void }) {
 
       {data ? (
         <div className="grid" style={{ marginTop: 16 }}>
-          {data.services.map((s) => (
+          {services.map((s) => (
             <div className="card launch-card" key={s.key}>
               <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
                 <div className="row" style={{ alignItems: 'center', gap: 9 }}>

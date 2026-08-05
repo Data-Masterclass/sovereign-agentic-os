@@ -12,12 +12,21 @@ import { executeRun } from '@/lib/infra/governed';
 import { stepperStages } from '@/lib/data/panels';
 import { goldOutputColumns } from '@/lib/data/metrics';
 import { firstOmCatalogFor, omSoftDeleteForConnection, omReactivateForConnection } from '@/lib/connections/openmetadata';
+import { appSlugFromRequest, checkAppGrant } from '@/lib/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 
 /** One logical dataset, opened as its Bronze→Silver→Gold stepper. */
-export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
   const { id } = params;
+  // LEAST-PRIVILEGE for app origins: a deployed app may only read a dataset it was
+  // granted, even though the user's own session could see more. Non-app requests
+  // (the OS UI) skip this entirely (appSlugFromRequest returns null, no I/O).
+  const slug = appSlugFromRequest(req);
+  if (slug) {
+    const check = await checkAppGrant(slug, 'data', id);
+    if (!check.allowed) return NextResponse.json({ error: check.reason }, { status: 403 });
+  }
   const dataset = getDataset(id, user);
   // `archived` is a record-level flag (not in the yaml-derived Dataset), so fold it
   // in here — the detail view needs it to offer Restore instead of Archive.

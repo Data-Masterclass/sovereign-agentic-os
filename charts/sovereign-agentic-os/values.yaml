@@ -1901,6 +1901,23 @@ softwareRunner:
     enabled: true
     ingressNamespace: ingress-nginx
 
+# Software DIRECT BUILD SERVICE (deploy redesign Phase B). When enabled, os-ui
+# submits an in-cluster Kaniko batch/v1 Job per app commit — building the app's
+# Dockerfile from its Forgejo git tree at the committed SHA and pushing a
+# DIGEST-tagged image the runner serves PINNED (no `:latest` on the serving
+# path, no roll-on-same-tag hack). Forgejo Actions ci.yml stays in every app
+# repo as the export/CI-confirmation path, off the serving critical path.
+# NIL-SAFE under --reuse-values: every read is `(.Values.softwareBuild | default
+# dict)`, so upgrading a release that predates this block changes nothing — the
+# flag stays off and the os-ui pipeline states that honestly.
+#   namespace — where the build Jobs run; "" ⇒ softwareRunner.namespace (its PSS
+#     is `baseline`, which Kaniko passes; see the note in apps-build.yaml).
+#   kanikoImage — the pinned daemonless executor.
+softwareBuild:
+  enabled: false
+  namespace: ""
+  kanikoImage: "gcr.io/kaniko-project/executor:v1.23.2"
+
 # -----------------------------------------------------------------------------
 # Connections golden path — manually-credentialed Connections (API/MCP/Database/
 # SaaS) a Builder/Admin creates. The connection RECORD holds metadata + a Secrets

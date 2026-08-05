@@ -118,6 +118,64 @@ test('files.list / get build the governed file routes', async () => {
   assert.equal(calls[1].url, '/api/files/f1');
 });
 
+// ── records (the app's OWN data — the governed WRITE surface) ───────────────────
+
+test('records.list GETs the app-slug records route and unwraps { result }', async () => {
+  const { fn, calls } = stubFetch(() => ({ body: { result: { source: 'demo-seed', items: [] } } }));
+  const os = createOsClient({ appSlug: 'northpeak-products', fetch: fn });
+  const out = await os.records.list();
+  assert.equal(calls[0].url, '/api/apps/by-slug/northpeak-products/records');
+  assert.equal((calls[0].init as RequestInit).method ?? 'GET', 'GET');
+  assert.equal(out.source, 'demo-seed');
+});
+
+test('records.add POSTs the record under { record } and unwraps { result }', async () => {
+  const { fn, calls } = stubFetch(() => ({ body: { result: { source: 'live-app', added: { id: 'r9' } } } }));
+  const os = createOsClient({ appSlug: 'northpeak-products', fetch: fn });
+  const out = await os.records.add({ name: 'Widget', amount: 12 });
+  assert.equal(calls[0].url, '/api/apps/by-slug/northpeak-products/records');
+  assert.equal((calls[0].init as RequestInit).method, 'POST');
+  assert.deepEqual(JSON.parse(String((calls[0].init as RequestInit).body)), { record: { name: 'Widget', amount: 12 } });
+  assert.equal(out.source, 'live-app');
+});
+
+test('records.get URL-encodes the id and hits /records/{id}', async () => {
+  const { fn, calls } = stubFetch(() => ({ body: { result: { source: 'demo-seed', item: null } } }));
+  const os = createOsClient({ appSlug: 'app one', fetch: fn });
+  await os.records.get('r 1/x');
+  assert.equal(calls[0].url, '/api/apps/by-slug/app%20one/records/r%201%2Fx');
+});
+
+test('records.export POSTs to /records/export', async () => {
+  const { fn, calls } = stubFetch(() => ({ body: { result: { source: 'demo-seed', file: 'demo-export.csv' } } }));
+  const os = createOsClient({ appSlug: 'northpeak-products', fetch: fn });
+  const out = await os.records.export();
+  assert.equal(calls[0].url, '/api/apps/by-slug/northpeak-products/records/export');
+  assert.equal((calls[0].init as RequestInit).method, 'POST');
+  assert.equal(out.file, 'demo-export.csv');
+});
+
+test('records.* without an appSlug throw a clear local error — never a mystery request', async () => {
+  const { fn, calls } = stubFetch(() => ({ body: {} }));
+  const os = createOsClient({ fetch: fn }); // no appSlug
+  await assert.rejects(() => os.records.list(), (e: unknown) => {
+    assert.ok(e instanceof OsError);
+    assert.match((e as Error).message, /appSlug/);
+    return true;
+  });
+  assert.equal(calls.length, 0, 'no request is made when the slug is missing');
+});
+
+test('records write refusal surfaces the OS 403 reason verbatim as Forbidden', async () => {
+  const { fn } = stubFetch(() => ({ status: 403, body: { error: "'add_record' is not in this app's approved deploy envelope" } }));
+  const os = createOsClient({ appSlug: 'northpeak-products', fetch: fn });
+  await assert.rejects(() => os.records.add({ x: 1 }), (e: unknown) => {
+    assert.ok(e instanceof Forbidden);
+    assert.match((e as Forbidden).reason, /approved deploy envelope/);
+    return true;
+  });
+});
+
 // ── context composition ─────────────────────────────────────────────────────────
 
 test('context composes the five governed per-kind feeds client-side', async () => {
@@ -134,6 +192,37 @@ test('context composes the five governed per-kind feeds client-side', async () =
   assert.equal(ctx.knowledge[0].id, 'knowledge-1');
   assert.equal(ctx.files[0].id, 'files-1');
   assert.equal(ctx.connections[0].id, 'connections-1');
+});
+
+test('context WITH an appSlug hits the app-scoped endpoint and groups by kind', async () => {
+  const { fn, calls } = stubFetch(() => ({
+    body: {
+      items: [
+        { kind: 'data', id: 'ds_1', name: 'Orders', access: 'read-only' },
+        { kind: 'metrics', id: 'm_1', name: 'Revenue', access: 'read-only' },
+        { kind: 'knowledge', id: 'k_1', name: 'Playbook', access: 'read-only' },
+      ],
+    },
+  }));
+  const os = createOsClient({ appSlug: 'northpeak-products', fetch: fn });
+  const ctx = await os.context();
+  // ONE app-scoped call — not five generic available-context feeds.
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/apps/by-slug/northpeak-products/context');
+  assert.equal(ctx.data[0].id, 'ds_1');
+  assert.equal(ctx.metrics[0].name, 'Revenue');
+  assert.equal(ctx.knowledge[0].id, 'k_1');
+  // Kinds with no grant stay empty (honest — the app was not granted them).
+  assert.deepEqual(ctx.files, []);
+  assert.deepEqual(ctx.connections, []);
+});
+
+test('context WITH an appSlug on an app with zero grants returns all-empty kinds', async () => {
+  const { fn, calls } = stubFetch(() => ({ body: { items: [] } }));
+  const os = createOsClient({ appSlug: 'fresh-app', fetch: fn });
+  const ctx = await os.context();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(ctx, { connections: [], data: [], knowledge: [], files: [], metrics: [] });
 });
 
 // ── knowledge search ranking (governed feed, client-side rank) ──────────────────

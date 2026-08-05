@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractJsonObject, parseJsonReply } from './json-reply.ts';
+import { extractJsonObject, extractJsonArray, parseJsonReply, parseJsonArrayReply } from './json-reply.ts';
 
 test('parses a clean JSON object (fast path)', () => {
   assert.deepEqual(parseJsonReply('{"message":"hi","suggestedEpics":[]}'), { message: 'hi', suggestedEpics: [] });
@@ -31,4 +31,24 @@ test('returns null when there is no usable object', () => {
   assert.equal(parseJsonReply('sorry, I could not do that'), null);
   assert.equal(extractJsonObject('no braces here'), null);
   assert.equal(extractJsonObject('{ unterminated'), null); // no closing brace → null
+});
+
+test('extractJsonArray finds a balanced top-level array (string-safe)', () => {
+  assert.equal(extractJsonArray('prefix [1, 2, "]"] suffix'), '[1, 2, "]"]');
+  assert.equal(extractJsonArray('no array here'), null);
+  assert.equal(extractJsonArray('[ unterminated'), null);
+});
+
+test('parseJsonArrayReply parses a clean array (fast path)', () => {
+  assert.deepEqual(parseJsonArrayReply('[{"name":"A"},{"name":"B"}]'), [{ name: 'A' }, { name: 'B' }]);
+});
+
+test('parseJsonArrayReply recovers an array wrapped in reasoning preamble + fence', () => {
+  const reply = 'Here are the charts:\n```json\n[{"viz":"bar"}]\n```\nHope that helps.';
+  assert.deepEqual(parseJsonArrayReply(reply), [{ viz: 'bar' }]);
+});
+
+test('parseJsonArrayReply returns null for an object or junk', () => {
+  assert.equal(parseJsonArrayReply('{"not":"an array"}'), null);
+  assert.equal(parseJsonArrayReply('nope'), null);
 });

@@ -754,3 +754,17 @@ test('membership: getAppBySlugForUser resolves the deployed app for a viewer, ho
   // Unknown slug ⇒ null (a deleted deploy degrades honestly).
   assert.equal(await getAppBySlugForUser('no-such-slug', owner), null);
 });
+
+test('Phase B flag OFF: refreshBuildStage says WHY honestly and leaves Actions authoritative', async () => {
+  // SOFTWARE_BUILD_SERVICE is unset in this file's process → the build service is OFF.
+  __resetAppsCache();
+  const { refreshBuildStage } = await import('./apps.ts');
+  const { BUILD_SERVICE_OFF_NOTE } = await import('./build-service.ts');
+  const app = await createApp(user, { name: 'Off Flag App', template: 'vite-os' });
+  const before = app.pipeline.harbor;
+  const out = await refreshBuildStage(app);
+  assert.ok(out, 'the OFF state is still reported, never silent');
+  assert.equal(out.status, before, 'the stage is untouched — Forgejo Actions stays authoritative');
+  assert.equal(out.note, BUILD_SERVICE_OFF_NOTE, 'the note states the flag/RBAC cause + the Actions fallback');
+  assert.equal(app.runImageDigest, undefined, 'no digest is ever pinned while the service is off');
+});

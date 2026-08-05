@@ -17,7 +17,7 @@ import {
   type DeployRuntime,
   type DeployStatus,
 } from '@/lib/science/deploy';
-import type { FeatureRow, ModelSpec, ModelVersion } from '@/lib/science/types';
+import type { ModelSpec, ModelVersion } from '@/lib/science/types';
 
 /**
  * The five Science adapters (Science golden path §"Build the needed adapters").
@@ -54,18 +54,18 @@ async function reachable(url: string): Promise<boolean> {
 
 // -------------------------------------------------------------- 1. features ---
 
-// A fresh tenant has no offline-seeded feature rows — the live Featureform
-// backend (or the Northpeak seed) supplies them.
-const FEATURE_SEED: FeatureRow[] = [];
-
+/**
+ * Featureform is NOT wired into the Science golden path — the training runner reads the
+ * governed Gold product directly through Trino (see `training.ts`), it does not go through a
+ * feature store. This adapter was probe/seed plumbing for a DevConsole tile Phase B deletes;
+ * gutted to an HONEST 'not wired' stub (no fabricated feature rows, no misleading liveness) so
+ * the (soon-to-be-removed) tile renders truthfully until then. `probe()` always returns false —
+ * there is no Featureform to be live.
+ */
 export const featuresAdapter = {
   name: 'Featureform',
   async probe(): Promise<boolean> {
-    return reachable(`${config.featureformUrl}/`);
-  },
-  /** Register/materialize the RFM+tenure feature set. Live = Featureform; else seed. */
-  async describe(): Promise<{ live: boolean; featureSet: string; rows: FeatureRow[] }> {
-    return { live: await this.probe(), featureSet: CHURN.featureSet, rows: FEATURE_SEED };
+    return false; // not wired into Science — training reads Gold through Trino, not a feature store
   },
 };
 
@@ -173,22 +173,13 @@ export const deployAdapter = {
 
 // ----------------------------------------------------------- 5. monitoring ----
 
-export type DriftPoint = { week: string; auc: number; psi: number; predictions: number };
-
 /**
- * Deterministic 8-week drift series for the Science monitoring view + the
- * cross-cutting Monitoring tab (same signals, no duplicate plumbing). PSI rising
- * past 0.2 = the retrain threshold; AUC sagging confirms it. Seeded so the chart
- * never jitters between renders; the live path reads MLflow/KServe telemetry.
+ * Monitoring liveness ONLY. Drift telemetry and the retrain trigger are NOT wired to a real
+ * monitor — the previous `drift()` returned a fabricated-shaped empty series and `triggerRetrain()`
+ * invented a `dagster-retrain-<ts>` runId WITHOUT ever calling Dagster (an honesty violation). Both
+ * are removed. `probe()` remains a real liveness check for the adapter status grid; real input/label
+ * drift + a governed retrain trigger are Phase-B work (a serving-side feature/label monitor).
  */
-function driftSeed(): DriftPoint[] {
-  // A fresh tenant has no drift history — the live MLflow/KServe telemetry
-  // supplies the series once the model is serving.
-  return [];
-}
-
-export const PSI_RETRAIN_THRESHOLD = 0.2;
-
 export const monitoringAdapter = {
   name: 'MLflow · KServe · Dagster',
   async probe(): Promise<boolean> {
@@ -197,34 +188,6 @@ export const monitoringAdapter = {
       reachable(`${config.kserveUrl}/`),
     ]);
     return mlf || ks;
-  },
-  /** Per-model metric history + feature/prediction drift; flags when retrain is due. */
-  async drift(): Promise<{
-    live: boolean;
-    series: DriftPoint[];
-    threshold: number;
-    retrainDue: boolean;
-    latestPsi: number;
-    latestAuc: number;
-  }> {
-    const series = driftSeed();
-    // A fresh tenant has no drift history yet — report an honest empty state
-    // rather than dereferencing a missing latest point (would 500 the surface).
-    const latest = series[series.length - 1];
-    return {
-      live: await this.probe(),
-      series,
-      threshold: PSI_RETRAIN_THRESHOLD,
-      retrainDue: latest ? latest.psi >= PSI_RETRAIN_THRESHOLD : false,
-      latestPsi: latest?.psi ?? 0,
-      latestAuc: latest?.auc ?? 0,
-    };
-  },
-  /** Trigger a Dagster retrain run (live) or stage one offline. Caller governs it. */
-  async triggerRetrain(model: string): Promise<{ live: boolean; runId: string; job: string }> {
-    const live = await reachable(`${config.dagsterUrl}/`);
-    const runId = `dagster-retrain-${model}-${Date.now().toString(36)}`;
-    return { live, runId, job: `retrain_${model}` };
   },
 };
 

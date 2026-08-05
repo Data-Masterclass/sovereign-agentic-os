@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import {
   runnerName,
   appImageRef,
+  isDigestRef,
+  pullPolicyFor,
   runnerSpec,
   buildDeploymentManifest,
   buildServiceManifest,
@@ -55,6 +57,17 @@ test('appImageRef: explicit runImage wins; else the registry convention', () => 
   assert.equal(appImageRef({ slug: 'shop', runImage: 'ghcr.io/acme/shop:v2' }), 'ghcr.io/acme/shop:v2');
   // No explicit image + no SOFTWARE_RUNNER_IMAGE env → the CI registry convention.
   assert.match(appImageRef({ slug: 'shop' }), /\/shop:latest$/);
+});
+
+test('appImageRef: the OS build service DIGEST wins over runImage AND the :latest convention', () => {
+  const digest = 'forgejo-http:3000/gitea_admin/shop@sha256:' + 'a'.repeat(64);
+  // Digest wins even with an explicit mutable runImage present.
+  assert.equal(appImageRef({ slug: 'shop', runImage: 'ghcr.io/acme/shop:v2', runImageDigest: digest }), digest);
+  // A malformed "digest" is ignored (falls back to runImage) — never serve garbage.
+  assert.equal(
+    appImageRef({ slug: 'shop', runImage: 'ghcr.io/acme/shop:v2', runImageDigest: 'not-a-digest' }),
+    'ghcr.io/acme/shop:v2',
+  );
 });
 
 // ------------------------------------------------------------- Manifests -------
@@ -117,6 +130,33 @@ test('deployment manifest: deployedAt stamps the pod template so a re-deploy ROL
   const bare = buildDeploymentManifest(spec, NS) as any;
   assert.equal(bare.spec.template.metadata.annotations, undefined);
   assert.equal(bare.spec.template.spec.containers[0].imagePullPolicy, 'Always');
+});
+
+test('deployment manifest: a DIGEST-pinned image drops the roll hack + Always-pull reliance', () => {
+  const digest = 'forgejo-http:3000/gitea_admin/shop@sha256:' + 'b'.repeat(64);
+  const spec = runnerSpec({ ...APP, runImageDigest: digest });
+  assert.equal(spec.image, digest, 'the runner serves the exact captured digest');
+  const m = buildDeploymentManifest(spec, NS, '2026-08-04T00:00:00.000Z') as any;
+  const c = m.spec.template.spec.containers[0];
+  assert.equal(c.image, digest);
+  // Immutable content: never re-pull the same digest.
+  assert.equal(c.imagePullPolicy, 'IfNotPresent');
+  // The deployed-at stamp (the roll-on-same-tag hack) is GONE for digest refs — a new
+  // digest IS the pod-template change, so Kubernetes rolls honestly on its own.
+  assert.equal(m.spec.template.metadata.annotations, undefined, 'no roll-hack stamp on a digest-pinned deploy');
+  // A mutable :latest spec still keeps both (unchanged behaviour for the fallback path).
+  const latest = buildDeploymentManifest(runnerSpec(APP), NS, '2026-08-04T00:00:00.000Z') as any;
+  assert.equal(latest.spec.template.spec.containers[0].imagePullPolicy, 'Always');
+  assert.ok(latest.spec.template.metadata.annotations['soa.sovereign-os/deployed-at']);
+});
+
+test('isDigestRef + pullPolicyFor distinguish immutable digests from mutable tags', () => {
+  const digest = 'reg/owner/app@sha256:' + 'c'.repeat(64);
+  assert.equal(isDigestRef(digest), true);
+  assert.equal(isDigestRef('reg/owner/app:latest'), false);
+  assert.equal(isDigestRef('reg/owner/app@sha256:short'), false);
+  assert.equal(pullPolicyFor(digest), 'IfNotPresent');
+  assert.equal(pullPolicyFor('reg/owner/app:latest'), 'Always');
 });
 
 test('deployApp stamps every applied Deployment with a fresh deployed-at annotation', async () => {

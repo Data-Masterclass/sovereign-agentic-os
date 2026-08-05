@@ -20,10 +20,40 @@ export interface OsClientOptions {
    */
   baseUrl?: string;
   /**
+   * The app's frozen slug (the `APP_SLUG` the scaffold bakes in). Required ONLY for
+   * `os.records.*` — the app's own records routes are keyed by slug (the deployed app
+   * never knows the OS app id). The scaffold passes it; omit it and `os.records.*`
+   * throw a clear local error instead of hitting a mystery 404. Reads/knowledge/etc.
+   * do not need it.
+   */
+  appSlug?: string;
+  /**
    * fetch implementation. Defaults to the ambient global `fetch`. Injectable so the
    * SDK is testable (stub it) and portable (pass a polyfill in exotic runtimes).
    */
   fetch?: typeof fetch;
+}
+
+/**
+ * One of the app's OWN records. The app defines its own schema (its committed
+ * `/records` OpenAPI), so this is an open shape — the SDK is an honest pass-through,
+ * never reshaping or inventing fields.
+ */
+export type AppRecord = Record<string, unknown>;
+
+/**
+ * A record-op result. The OS labels every result with its SOURCE so an app can be
+ * honest in its UI: `'live-app'` (proxied to the deployed app's real service) or
+ * `'demo-seed'` (deterministic seed with a `note`, when the app runner is not live).
+ * The remaining fields are the app's own payload, passed through unchanged.
+ */
+export interface RecordResult {
+  /** `'live-app'` when the deployed app answered; `'demo-seed'` when it is not live. */
+  source: 'live-app' | 'demo-seed';
+  /** Present on a demo-seed result — the honest "this is illustrative data" note. */
+  note?: string;
+  /** Anything else the app's endpoint returned (items/item/added/file/… ), unshaped. */
+  [k: string]: unknown;
 }
 
 /** The signed-in principal, from the OS session route (`/api/auth/me`). */

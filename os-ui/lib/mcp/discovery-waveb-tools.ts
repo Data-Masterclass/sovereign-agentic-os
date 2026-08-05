@@ -26,6 +26,7 @@ import {
   readAppFileForViewer,
   templateFiles,
   refreshActionsStage,
+  refreshBuildStage,
   dirListing,
 } from '@/lib/software/apps';
 import { forgejoReachable, getSnapshot, hydrateSnapshot } from '@/lib/software/server';
@@ -379,6 +380,9 @@ export const waveBReadTools: McpTool[] = [
       // read — 'ok' only when the latest push on main actually produced a run;
       // a disabled repo Actions unit is auto-healed (see refreshActionsStage).
       const actions = await refreshActionsStage(app, { force: true });
+      // Phase B: poll the OS build service's in-flight build too (digest capture +
+      // honest harbor stage). Null-ish/OFF states still yield an honest note.
+      const osBuild = await refreshBuildStage(app).catch(() => null);
       const openCard = app.deploy.reviewCardId ? await getReviewCard(app.deploy.reviewCardId) : null;
       const latest = openCard ?? (await listReviewCards({ domain: app.domain })).find((c) => c.appId === app.id) ?? null;
       const isLive = app.deploy.state === 'live';
@@ -418,6 +422,10 @@ export const waveBReadTools: McpTool[] = [
         build: {
           pipeline: app.pipeline,
           ...(actions.note ? { actionsNote: actions.note } : {}),
+          ...(osBuild?.note ? { osBuildNote: osBuild.note } : {}),
+          // WHICH system produced the SERVING image — truthful, never inferred:
+          // 'os-build-service' only when a captured digest actually pins the runner.
+          builtBy: app.runImageDigest ? 'os-build-service' : 'forgejo-actions',
           repo: app.repo.fullName,
           // htmlUrl is healed to the EXTERNAL browsable URL on load (hydrateAppDoc),
           // so even apps scaffolded before the fix surface a link that resolves.

@@ -11,15 +11,47 @@ import {
   startTraining,
   completeTraining,
   failTraining,
+  startDeploy,
+  computeLaunchStatus,
   ensureModelsHydrated,
   trainTrackAdapter,
+  deployAdapter,
+  readMlflowMetric,
   type Actor,
+  type ServiceModel,
 } from '@/lib/science';
 
 export const dynamic = 'force-dynamic';
 
 /** A Job whose POD has not started after this long is failed honestly (ImagePullBackOff etc). */
 const PENDING_DEADLINE_MS = 10 * 60_000;
+
+/**
+ * FUSED "Train & launch": on a successful training run, auto-submit the deploy so the model
+ * flows trained → deploying WITHOUT a second user action (auto-deploy is the Simple default).
+ * The deploy poll (GET .../deploy) then carries deploying → deployed honestly. A cluster that
+ * refuses the deploy submit does NOT fail the training result — training genuinely succeeded;
+ * the model rests at `trained` with the deploy error recorded, so Developer view can retry the
+ * standalone deploy. Returns the model AFTER the (attempted) fusion.
+ */
+async function fuseDeploy(model: string, actor: Actor, trained: ServiceModel, principal: string): Promise<ServiceModel> {
+  try {
+    const deploy = await deployAdapter.submit(trained.model);
+    const deploying = startDeploy(model, actor, deploy.isvc);
+    await trace({
+      principal,
+      tool: 'model_deploy',
+      input: { model, storageUri: deploy.storageUri, fused: true },
+      output: { isvc: deploy.isvc, buildState: deploying.buildState },
+      decision: 'allow',
+    });
+    return deploying;
+  } catch {
+    // Honest: training succeeded; the deploy submit did not. Leave the model `trained`
+    // (the standalone Deploy route + Developer retry path handles it) — never fake a deploy.
+    return getModel(model) ?? trained;
+  }
+}
 
 /** A human (never an agent) Actor from the session, preserving domain_admin. */
 function actorFrom(user: { id: string; role: string; domains: string[] }): Actor {
@@ -64,7 +96,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ model: string
       output: { jobName: run.jobName, buildState: updated.buildState },
       decision: 'allow',
     });
-    return NextResponse.json({ ok: true, run, model: updated });
+    return NextResponse.json({ ok: true, run, model: updated, launch: computeLaunchStatus(updated) });
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;
     return NextResponse.json({ error: (e as Error).message }, { status });
@@ -93,7 +125,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ model: string 
     await ensureModelsHydrated(); // durable registry: act on the persisted state
     const m = assertCanTrain(model, actor);
     if (m.buildState !== 'training' || !m.trainingJob || !m.trainingNamespace) {
-      return NextResponse.json({ ok: true, phase: m.buildState ?? 'draft', model: m });
+      // Not polling a live run: report the fused launch status derived from the settled state.
+      return NextResponse.json({ ok: true, phase: m.buildState ?? 'draft', model: m, launch: computeLaunchStatus(m) });
     }
     const status = await trainTrackAdapter.poll(m.trainingJob, m.trainingNamespace);
     // HONEST endings for "pending forever": a Job that vanished (TTL/manual delete)
@@ -102,63 +135,34 @@ export async function GET(_req: Request, ctx: { params: Promise<{ model: string 
     // spinning. `cluster unreachable` keeps polling (no false failure).
     if (status.phase === 'unknown' && status.reason === 'job not found') {
       const updated = failTraining(model, actor, 'training job not found on the cluster (deleted or expired) — re-run Train');
-      return NextResponse.json({ ok: true, phase: 'failed', status, model: updated });
+      return NextResponse.json({ ok: true, phase: 'failed', status, model: updated, launch: computeLaunchStatus(updated) });
     }
     if (status.phase === 'pending' && status.createdAt) {
       const age = Date.now() - Date.parse(status.createdAt);
       if (Number.isFinite(age) && age > PENDING_DEADLINE_MS) {
         const why = status.reason && status.reason !== 'pending' ? ` — ${status.reason}` : '';
         const updated = failTraining(model, actor, `training pod did not start within ${Math.round(PENDING_DEADLINE_MS / 60000)} minutes${why}`);
-        return NextResponse.json({ ok: true, phase: 'failed', status, model: updated });
+        return NextResponse.json({ ok: true, phase: 'failed', status, model: updated, launch: computeLaunchStatus(updated) });
       }
     }
     if (status.phase === 'succeeded') {
-      const metric = await readMlflowMetric(m.trainingJob, m.spec?.optimizeMetric);
-      const updated = completeTraining(model, actor, {
+      const metric = await readMlflowMetric(m.trainingJob, m.spec?.optimizeMetric, config.mlflowUrl);
+      const trained = completeTraining(model, actor, {
         runId: metric.runId ?? m.trainingJob,
         metric: metric.value,
         metricName: m.spec?.optimizeMetric,
       });
-      return NextResponse.json({ ok: true, phase: 'succeeded', status, model: updated });
+      // FUSED launch: auto-submit the deploy so "Train & launch" is ONE action (Simple default).
+      const updated = await fuseDeploy(model, actor, trained, user.id);
+      return NextResponse.json({ ok: true, phase: 'succeeded', status, model: updated, launch: computeLaunchStatus(updated) });
     }
     if (status.phase === 'failed') {
       const updated = failTraining(model, actor, status.reason);
-      return NextResponse.json({ ok: true, phase: 'failed', status, model: updated });
+      return NextResponse.json({ ok: true, phase: 'failed', status, model: updated, launch: computeLaunchStatus(updated) });
     }
-    return NextResponse.json({ ok: true, phase: status.phase, status, model: m });
+    return NextResponse.json({ ok: true, phase: status.phase, status, model: m, launch: computeLaunchStatus(m, `${status.phase}${status.reason ? ` — ${status.reason}` : ''}`) });
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;
     return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}
-
-/**
- * Best-effort MLflow metric read for a completed run. The trainer tags its run
- * with the job name (run_name); we look it up and pull the optimize metric. When
- * MLflow is unreachable we return no value so `completeTraining` records an honest
- * untracked version rather than inventing a number.
- */
-async function readMlflowMetric(
-  jobName: string,
-  metricName?: string,
-): Promise<{ runId?: string; value?: number }> {
-  if (!metricName) return {};
-  try {
-    const res = await fetch(`${config.mlflowUrl}/api/2.0/mlflow/runs/search`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ filter: `tags.mlflow.runName = '${jobName}'`, max_results: 1 }),
-      cache: 'no-store',
-      signal: AbortSignal.timeout(2500),
-    });
-    if (!res.ok) return {};
-    const data = (await res.json()) as {
-      runs?: { info?: { run_id?: string }; data?: { metrics?: { key: string; value: number }[] } }[];
-    };
-    const run = data.runs?.[0];
-    const value = run?.data?.metrics?.find((mm) => mm.key === metricName)?.value;
-    return { runId: run?.info?.run_id, value: typeof value === 'number' ? value : undefined };
-  } catch {
-    return {};
   }
 }

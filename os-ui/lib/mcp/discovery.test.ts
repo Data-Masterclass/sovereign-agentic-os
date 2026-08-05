@@ -131,7 +131,7 @@ const PATH_PRIMARY: Partial<Record<GuidePath, string[]>> = {
   dashboards: ['create_dashboard', 'get_dashboard'],
   bigbets: ['create_big_bet', 'get_big_bet', 'attach_component', 'update_big_bet'],
   files: ['upload_file', 'request_promotion', 'get_file'],
-  science: ['science_predict', 'list_models', 'get_model'],
+  science: ['science_predict', 'list_models', 'get_model', 'create_model', 'train_model', 'get_model_status'],
 };
 
 test('every guide invokes ONLY tools that exist, and each pathway guide names its core tools', () => {

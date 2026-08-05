@@ -119,6 +119,41 @@ export const CODE_STRUCTURE_CONVENTION = [
 ].join('\n');
 
 /**
+ * The TRUE governed data plane the app SDK exposes — reads AND the one real write
+ * surface. Replaces the weeks of hallucinated `os.datasets.update` / `os.files.create`
+ * (no such methods exist; those commits are rejected TS2339 by the compile gate).
+ */
+export const DATA_PLANE_CONTRACT = [
+  '## Governed data plane — the ONLY `os` methods that exist (anything else fails the compile gate)',
+  'Import the shared client once, then call it from your story code:',
+  "  import { os } from '../../../core/store'   // exact depth from src/epics/<epic>/<story>/ (3 up, then core/store)",
+  '',
+  'READS (always available, run as the signed-in user under OPA + RLS/DLS):',
+  '  • os.datasets.list() · os.datasets.get(id) · os.datasets.query(id, { nl })   // datasets are READ-ONLY',
+  '  • os.metrics.list()  · os.metrics.query(id, { dimensions, granularity })',
+  '  • os.knowledge.search(q) · os.files.list() · os.files.get(id) · os.whoami() · os.context()',
+  'WRITES — the ONE write surface is os.records.* (the app\'s OWN records), and ONLY these:',
+  '  • os.records.list() · os.records.get(id) · os.records.add(record) · os.records.export()',
+  '  add/export run live ONLY when this app\'s APPROVED deploy envelope permits them; otherwise the OS',
+  '  answers 403 and the SDK throws Forbidden with the reason. There is NO os.datasets.update, no',
+  '  os.files.create, no os.knowledge.write — datasets/metrics/knowledge/files are reads. Do not invent methods.',
+  '',
+  'GROUND RULES — this app can only reach the artifacts in its grants (see "## Granted context"):',
+  '  • The granted dataset SCHEMA above is AUTHORITATIVE over the story-spec field names: if the',
+  '    spec mentions fields the schema lacks (status, tenant, SKU, …), do NOT invent them — build with',
+  '    the real columns and note the gap in your result.',
+  '  • Read a granted dataset via os.datasets.query(\'<granted id>\', { limit: n }) — the governed',
+  '    preview. It returns { columns: string[], rows: string[][] }; rows are ARRAYS in column order —',
+  '    zip each row with `columns` before use (do NOT assume object keys).',
+  '  • os.datasets.query(id, { nl }) routes to the ask surface, which is scoped to THIS app\'s granted',
+  '    datasets ONLY; a natural-language query about anything else is refused.',
+  '  • Never call list routes expecting the user\'s full catalog — the app sees only its grants.',
+  '',
+  'A gate rejection lists errors across ALL files in the merged tree — fix EVERY listed file, not only',
+  'the one you just wrote, then re-commit.',
+].join('\n');
+
+/**
  * The `## Mode: …` directive lines the route prepends to the app context.
  * `appId` lets the BUILD directive name the exact commit target.
  */
@@ -162,6 +197,8 @@ export function modeDirective(mode: ChatRunMode, appId: string): string[] {
         BUILD_PRINCIPLES,
         '',
         CODE_STRUCTURE_CONVENTION,
+        '',
+        DATA_PLANE_CONTRACT,
       ];
     case 'test':
       return [

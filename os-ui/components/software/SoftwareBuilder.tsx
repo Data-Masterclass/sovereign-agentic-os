@@ -101,6 +101,8 @@ export type SoftwareApp = {
   domain: string;
   visibility: Visibility;
   mode: 'live' | 'offline';
+  /** Phase D: 'image' (default) served by a per-app image, or 'runtime' served by the OS. */
+  serveMode?: 'image' | 'runtime';
   repo: { fullName: string; htmlUrl: string; seeded: string[] };
   subdomain: string;
   pipeline: Record<string, string>;
@@ -352,6 +354,32 @@ export default function SoftwareBuilder({
     }
   }
 
+  /**
+   * Phase D — flip the app between image and OS runtime serving. Edit-scoped in the
+   * lib (owner / in-domain admin); the server ALSO refuses 'runtime' for a non-Vite
+   * shape (400), whose message we surface honestly here.
+   */
+  async function setServeMode(mode: 'image' | 'runtime'): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    setDeployMsg('');
+    try {
+      const res = await fetch(`/api/apps/${app.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ serveMode: mode }),
+      });
+      const body = await res.json();
+      if (!res.ok) setDeployMsg(`✗ ${body.error}`);
+      else setDeployMsg(mode === 'runtime' ? '✓ Runtime serving enabled — the OS serves this app directly.' : '✓ Image serving restored.');
+      onReload();
+    } catch (e) {
+      setDeployMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deployAction(action?: 'preview') {
     if (busy) return;
     setBusy(true);
@@ -442,6 +470,30 @@ export default function SoftwareBuilder({
     }
   }
 
+  /**
+   * Re-vendor the OS-client SDK into this EXISTING app (owner / in-domain admin) so it
+   * gains the latest governed surface (e.g. `os.records.*` + app-scoped `os.context()`).
+   * Honest feedback: re-vendored (files committed), no-op (skipped/non-frontend), or a
+   * gate rejection — surfaced verbatim from the server, never a fake success.
+   */
+  async function refreshSdk() {
+    if (busy) return;
+    setBusy(true);
+    setMsg('');
+    try {
+      const res = await fetch(`/api/apps/${app.id}/refresh-sdk`, { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) setMsg(`✗ ${body.error}`);
+      else if (body.skipped) setMsg(`• No-op: ${body.reason}`);
+      else setMsg(body.ok ? `✓ SDK refreshed — ${body.detail}` : `✗ ${body.detail}`);
+      onReload();
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function callTool(tool: string) {
     setToolOut('');
     setToolNote('');
@@ -488,8 +540,8 @@ export default function SoftwareBuilder({
   // can never disagree. A live/serving app shows all upstream stages complete;
   // a real failure surfaces the same marked stage in both surfaces.
   const pipe = useMemo(
-    () => derivePipelineView(app.pipeline, { state: app.deploy.state, releases: app.deploy.releases }),
-    [app.pipeline, app.deploy.state, app.deploy.releases],
+    () => derivePipelineView(app.pipeline, { state: app.deploy.state, releases: app.deploy.releases, serveMode: app.serveMode }),
+    [app.pipeline, app.deploy.state, app.deploy.releases, app.serveMode],
   );
 
   return (
@@ -516,6 +568,16 @@ export default function SoftwareBuilder({
             onChange={setModePersisted}
             developerHint="The raw app files + build/deploy console"
           />
+          {canEdit ? (
+            <button
+              className="btn sm"
+              onClick={refreshSdk}
+              disabled={busy}
+              title="Re-vendor the OS-client SDK into this app (latest governed surface)"
+            >
+              {busy ? <span className="spin" /> : 'Refresh SDK'}
+            </button>
+          ) : null}
           {canEdit ? (
             <LifecycleActions
               id={app.id}
@@ -612,6 +674,7 @@ export default function SoftwareBuilder({
               canDemoteUI={canDemoteUI} demoteLabel={demoteLabel} confirmDemoteLabel={confirmDemoteLabel}
               confirmDemote={confirmDemote} setConfirmDemote={setConfirmDemote} onDemote={demote}
               busy={busy} onLifecycle={lifecycle} msg={msg} onHealRepo={healRepo}
+              canEdit={canEdit} onSetServeMode={setServeMode}
             />
           ) : null}
         </StageShell>
@@ -1611,6 +1674,7 @@ function PublishStage({
   toolOut, toolNote, onCallTool, onOpenRepo,
   canPromoteUI, onPromote, canDemoteUI, demoteLabel, confirmDemoteLabel,
   confirmDemote, setConfirmDemote, onDemote, busy, onLifecycle, msg, onHealRepo,
+  canEdit, onSetServeMode,
 }: {
   app: SoftwareApp;
   surface: { ui: boolean; api: boolean };
@@ -1639,9 +1703,14 @@ function PublishStage({
   onLifecycle: (action: string) => void;
   msg: string;
   onHealRepo: () => void;
+  canEdit: boolean;
+  onSetServeMode: (mode: 'image' | 'runtime') => void;
 }) {
   const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
   const dep = deployBadge(app.deploy.state);
+  const isRuntime = app.serveMode === 'runtime';
+  // The OS runtime can only serve Vite-shaped SPAs — the same scope the server enforces.
+  const runtimeEligible = app.template === 'sovereign-app' || app.template === 'vite-os' || app.template === 'empty' || app.template === 'website';
 
   // Structure — the governed control surface for the deployed app: publish a release, the
   // in-review card, and the promotion + lifecycle rungs. These are the direct-manipulation
@@ -1674,6 +1743,30 @@ function PublishStage({
           <Link className="sw-quiet-link" href="/software/reviews">Deploy reviews →</Link>
           {app.repo.htmlUrl ? <a className="sw-quiet-link" href={app.repo.htmlUrl} target="_blank" rel="noreferrer">Native ↗</a> : null}
           <span className="muted" style={{ fontSize: 12 }}>{app.deploy.releases > 0 ? `${app.deploy.releases} release${app.deploy.releases === 1 ? '' : 's'} shipped` : 'No releases yet'}</span>
+        </div>
+
+        {/* ── Phase D: OS runtime serving (beta) — honest, minimal opt-in ── */}
+        <div className="row" style={{ marginTop: 12, gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label className="row" style={{ gap: 8, alignItems: 'center', margin: 0 }}>
+            <input
+              type="checkbox"
+              checked={isRuntime}
+              disabled={!canEdit || busy || (!isRuntime && !runtimeEligible)}
+              onChange={(e) => onSetServeMode(e.target.checked ? 'runtime' : 'image')}
+            />
+            <span style={{ fontSize: 13 }}>Runtime serving (beta)</span>
+          </label>
+          <span className="hint" style={{ margin: 0, fontSize: 12 }}>
+            Served by the OS from the app&apos;s committed tree — no image build. Vite-shaped apps only.
+          </span>
+          {isRuntime ? (
+            <a className="sw-quiet-link" href={`/api/apps/runtime/${app.slug}`} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+              Open runtime app ↗
+            </a>
+          ) : null}
+          {!isRuntime && !runtimeEligible ? (
+            <span className="muted" style={{ fontSize: 12 }}>This app&apos;s shape can&apos;t be runtime-served.</span>
+          ) : null}
         </div>
       </div>
 

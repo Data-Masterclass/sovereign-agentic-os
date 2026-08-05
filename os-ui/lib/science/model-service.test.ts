@@ -22,8 +22,9 @@ import {
   renameModel,
   moveModel,
   createModel,
-  ensureChurnSeed,
-  churnSeedModel,
+  normalizeSpec,
+  recordUsage,
+  computeLaunchStatus,
   assertCanTrain,
   startTraining,
   completeTraining,
@@ -33,12 +34,6 @@ import {
   completeDeploy,
   failDeploy,
 } from './model-service.ts';
-import {
-  proposePlan,
-  authorizeAgentStep,
-  assertAgentCannotCertify,
-  type PlanStep,
-} from './agent-control.ts';
 import { importModel } from './marketplace.ts';
 import type { Actor, Caller, ServiceModel } from './types.ts';
 
@@ -59,7 +54,7 @@ function personalModel(): ServiceModel {
   return {
     id: 'svc_test', model: 'test_model', name: 'Test', owner: 'sara', domain: 'sales',
     tier: 'Personal', stage: 'Staging', frontDoors: ['rest', 'mcp'],
-    versions: [{ version: 'v1', stage: 'Staging', auc: 0.8, certified: false, runId: 'r1' }],
+    versions: [{ version: 'v1', stage: 'Staging', metric: 0.8, metricName: 'auc', auc: 0.8, certified: false, runId: 'r1' }],
   };
 }
 
@@ -76,7 +71,7 @@ function churnModel(): ServiceModel {
   return {
     id: 'svc_churn_model', model: 'churn_model', name: 'Churn model', owner: 'sara', domain: 'sales',
     tier: 'Personal', stage: 'Production', frontDoors: ['rest', 'mcp'],
-    versions: [{ version: 'v2', stage: 'Production', auc: 0.871, certified: true, runId: 'mlf-run-2a9c' }],
+    versions: [{ version: 'v2', stage: 'Production', metric: 0.871, metricName: 'auc', auc: 0.871, certified: true, runId: 'mlf-run-2a9c' }],
   };
 }
 function resetWithChurn(): void {
@@ -234,38 +229,6 @@ test('nextTier ladder', () => {
   assert.equal(nextTier('Marketplace'), null);
 });
 
-// ----------------------------------------------------------- ML agent (two-mode)
-
-test('the agent plan stops at Staging — it never proposes certify / go-live', () => {
-  const plan = proposePlan('build a churn model from the sales data');
-  assert.ok(plan.steps.every((s) => s.kind !== 'certify'));
-  assert.equal(plan.steps[plan.steps.length - 1].key, 'deploy-staging');
-});
-
-test('assertAgentCannotCertify throws on a forged certify/governance step', () => {
-  const forged: PlanStep = { key: 'x', label: 'certify', kind: 'certify', adapter: 'governance' };
-  assert.throws(() => assertAgentCannotCertify(forged), /human Builder\/Admin/i);
-});
-
-test('two-mode step governance: in-tab approves writes inline, autonomous bounds them', () => {
-  const write: PlanStep = { key: 'features', label: 'register features', kind: 'write', adapter: 'features' };
-  const read: PlanStep = { key: 'explore', label: 'explore', kind: 'read', adapter: 'features' };
-  const gpu: PlanStep = { key: 'train', label: 'train on GPU', kind: 'gpu-spend', adapter: 'train' };
-
-  assert.equal(authorizeAgentStep(read, { mode: 'in-tab', gpuQuotaRemaining: 0 }).decision, 'allow');
-  assert.equal(authorizeAgentStep(write, { mode: 'in-tab', gpuQuotaRemaining: 0 }).decision, 'requires_approval');
-  assert.equal(
-    authorizeAgentStep(write, { mode: 'autonomous', preset: 'read-propose', gpuQuotaRemaining: 0 }).decision,
-    'blocked',
-  );
-  assert.equal(
-    authorizeAgentStep(write, { mode: 'autonomous', preset: 'bounded-writes', gpuQuotaRemaining: 0 }).decision,
-    'allow',
-  );
-  assert.equal(authorizeAgentStep(gpu, { mode: 'autonomous', preset: 'bounded-writes', gpuQuotaRemaining: 0 }).decision, 'blocked');
-  assert.equal(authorizeAgentStep(gpu, { mode: 'autonomous', preset: 'bounded-writes', gpuQuotaRemaining: 5 }).decision, 'allow');
-});
-
 // ------------------------------------------------ marketplace consumption at certify
 
 test('read-in-place import grants predict without copying the model', () => {
@@ -353,7 +316,7 @@ const spec = () => ({
   sourceDataProductFqn: 'sales.customer_360',
   targetColumn: 'churned',
   taskType: 'binary_classification' as const,
-  algorithm: 'xgboost',
+  algorithm: 'logistic', // the supported classification learner (xgboost is refused, by design)
   features: ['recency_days', 'tenure_months'],
   trainTestSplit: 0.8,
   optimizeMetric: 'auc',
@@ -485,39 +448,12 @@ test('moveModel: a PERSONAL model is owner-only — a non-owner builder is 403',
   assert.equal(moveModel('test_model', sara, '/Mine').folder, '/Mine');
 });
 
-// ------------------------------------------------------ churn seed (the first model)
+// ------------------------------------------- no fabricated seed (fresh tenant is EMPTY)
 
-test('ensureChurnSeed wraps the live churn/KServe slice as the first trained+deployed model', () => {
+test('a fresh tenant registry is EMPTY — no fabricated churn seed is ever planted', () => {
   _resetModels();
-  assert.equal(getModel('churn_model'), null, 'registry starts empty');
-  const m = ensureChurnSeed('sara', 'sales');
-  assert.equal(m.model, 'churn_model');
-  assert.equal(m.buildState, 'deployed');
-  assert.equal(m.spec?.taskType, 'binary_classification');
-  assert.equal(m.kserveService, 'churn_model');
-  assert.ok(m.versions.some((v) => v.stage === 'Production' && v.certified));
-  // Idempotent — a second call does not duplicate or clobber.
-  const again = ensureChurnSeed('someone-else', 'other');
-  assert.equal(again.owner, 'sara', 'pre-existing model is returned unchanged');
-  assert.equal(listModels().filter((x) => x.model === 'churn_model').length, 1);
-  // The churn seed appears in its owner's RLS-scoped list.
-  assert.ok(listModelsForUser({ id: 'sara', domains: ['sales'] }).some((x) => x.model === 'churn_model'));
-});
-
-test('churnSeedModel has a FIXED identity (system/sales, Domain tier) — never the first viewer', () => {
-  const m = churnSeedModel();
-  assert.equal(m.owner, 'system'); // stable across pods/users — not whoever opened the tab
-  assert.equal(m.domain, 'sales');
-  assert.equal(m.tier, 'Domain'); // the owning domain can see + call it out of the box
-  assert.equal(nextTier(m.tier), 'Marketplace'); // certify rung still walkable
-  assert.deepEqual(compilePredictPolicy(m).allowedDomains, ['sales']);
-});
-
-test('ensureChurnSeed only seeds an EMPTY registry — a deleted model stays deleted', () => {
-  _resetModels();
-  upsertModel(personalModel()); // a user model already exists (e.g. hydrated back)
-  assert.equal(ensureChurnSeed(), null, 'non-empty registry: churn is NOT resurrected');
-  assert.equal(getModel('churn_model'), null);
+  assert.equal(getModel('churn_model'), null, 'no invented churn model in a fresh registry');
+  assert.equal(listModels().length, 0, 'registry ships empty — models are earned via create/train');
 });
 
 // ------------------------------------------------------------ train transitions ---
@@ -565,6 +501,10 @@ test('completeTraining registers a Staging version + metric and lands trained', 
   assert.equal(m.versions[0].version, 'v1');
   assert.equal(m.versions[0].stage, 'Staging');
   assert.equal(m.versions[0].certified, false);
+  // Metric-name-correct version: value + real name (auc kept as deprecated back-compat mirror).
+  assert.equal(m.versions[0].metric, 0.83);
+  assert.equal(m.versions[0].metricName, 'auc');
+  assert.equal(m.versions[0].auc, 0.83); // deprecated mirror equals the value
   assert.equal(m.metrics?.primary, 0.83);
   assert.equal(m.mlflowRunId, 'mlf-run-1');
   assert.equal(m.trainingJob, undefined); // handle cleared on completion
@@ -717,4 +657,158 @@ test('demoteModel: gates — stranger denied, agent denied, Personal is a no-op 
   // Back to Personal, then nothing to revoke.
   demoteModel(m.model, owner);
   assert.throws(() => demoteModel(m.model, owner), /already personal/);
+});
+
+// ---------------------------------------------- Phase A: Simple-mode spec defaults --
+
+test('normalizeSpec fills task defaults when the tuning knobs are omitted', () => {
+  // Classification → the real default learner + auc, split 0.8.
+  const c = normalizeSpec({
+    sourceDataProductFqn: 'sales.customer_360', targetColumn: 'churned',
+    taskType: 'binary_classification', features: ['recency_days'],
+  });
+  assert.equal(c.algorithm, 'logistic');
+  assert.equal(c.optimizeMetric, 'auc');
+  assert.equal(c.trainTestSplit, 0.8);
+  // Regression → linear/rmse.
+  const r = normalizeSpec({
+    sourceDataProductFqn: 'sales.orders', targetColumn: 'ltv',
+    taskType: 'regression', features: ['tenure_months'],
+  });
+  assert.equal(r.algorithm, 'linear');
+  assert.equal(r.optimizeMetric, 'rmse');
+});
+
+test('normalizeSpec REFUSES an unsupported algorithm by name — never silently substitutes', () => {
+  // The old lie: typing "xgboost" quietly trained logistic. Now it is an honest 400.
+  assert.throws(
+    () => normalizeSpec({
+      sourceDataProductFqn: 'sales.customer_360', targetColumn: 'churned',
+      taskType: 'binary_classification', algorithm: 'xgboost', features: ['recency_days'],
+    }),
+    (e: any) => e.status === 400 && /not supported/i.test(e.message) && /logistic/.test(e.message),
+  );
+});
+
+test('createModel accepts a Simple spec (no algorithm) and refuses an unsupported one', () => {
+  _resetModels();
+  const m = createModel(
+    { name: 'Simple churn', spec: { sourceDataProductFqn: 'sales.customer_360', targetColumn: 'churned', taskType: 'binary_classification', features: ['recency_days'] } },
+    builder('sales'),
+  );
+  assert.equal(m.spec?.algorithm, 'logistic'); // default filled
+  assert.equal(m.spec?.optimizeMetric, 'auc');
+  assert.throws(
+    () => createModel(
+      { name: 'Bad algo', spec: { sourceDataProductFqn: 'x', targetColumn: 'y', taskType: 'regression', algorithm: 'prophet', features: ['a'] } },
+      builder('sales'),
+    ),
+    (e: any) => e.status === 400 && /not supported/i.test(e.message),
+  );
+});
+
+// ---------------------------------------------- Phase A: metric-name-correct versions --
+
+test('completeTraining records the REAL metric name for a regression model (rmse, not AUC)', () => {
+  _resetModels();
+  createModel(
+    { name: 'LTV model', spec: { sourceDataProductFqn: 'sales.orders', targetColumn: 'ltv', taskType: 'regression', features: ['tenure_months'] } },
+    owner(),
+  );
+  startTraining('ltv_model', owner(), { jobName: 'j', namespace: 'ns' });
+  const m = completeTraining('ltv_model', owner(), { runId: 'r1', metric: 12.3, metricName: 'rmse' });
+  assert.equal(m.versions[0].metric, 12.3);
+  assert.equal(m.versions[0].metricName, 'rmse'); // NOT mislabeled 'auc'
+  assert.equal(m.versions[0].auc, 12.3); // deprecated mirror carries the value
+  assert.equal(m.metrics?.primaryMetric, 'rmse');
+});
+
+// ---------------------------------------------- Phase A: fused Train & launch status --
+
+test('computeLaunchStatus maps buildState onto ordered read→train→publish steps', () => {
+  _resetModels();
+  createModel({ name: 'Fused', spec: spec() }, owner());
+  // draft → all pending
+  let s = computeLaunchStatus(getModel('fused')!);
+  assert.deepEqual(s.steps.map((x) => x.key), ['read', 'train', 'publish']);
+  assert.deepEqual(s.steps.map((x) => x.state), ['pending', 'pending', 'pending']);
+  assert.equal(s.launched, false);
+
+  // training → read done, train running
+  startTraining('fused', owner(), { jobName: 'train-fused-x', namespace: 'ns' });
+  s = computeLaunchStatus(getModel('fused')!, 'succeeded');
+  assert.deepEqual(s.steps.map((x) => x.state), ['done', 'running', 'pending']);
+  assert.match(s.steps[1].detail ?? '', /succeeded|train-fused-x/);
+
+  // trained → train done, publish pending
+  completeTraining('fused', owner(), { runId: 'r1', metric: 0.8, metricName: 'auc' });
+  s = computeLaunchStatus(getModel('fused')!);
+  assert.deepEqual(s.steps.map((x) => x.state), ['done', 'done', 'pending']);
+
+  // deploying → publish running
+  startDeploy('fused', owner(), 'fused');
+  s = computeLaunchStatus(getModel('fused')!, 'progressing');
+  assert.deepEqual(s.steps.map((x) => x.state), ['done', 'done', 'running']);
+
+  // deployed → launched, all done
+  completeDeploy('fused', owner());
+  s = computeLaunchStatus(getModel('fused')!);
+  assert.deepEqual(s.steps.map((x) => x.state), ['done', 'done', 'done']);
+  assert.equal(s.launched, true);
+  assert.equal(s.phase, 'deployed');
+});
+
+test('computeLaunchStatus surfaces an honest failure on the failing step', () => {
+  _resetModels();
+  createModel({ name: 'Fails', spec: spec() }, owner());
+  startTraining('fails', owner(), { jobName: 'j', namespace: 'ns' });
+  failTraining('fails', owner(), 'BackoffLimitExceeded');
+  let s = computeLaunchStatus(getModel('fails')!);
+  assert.equal(s.steps[1].state, 'failed');
+  assert.equal(s.error, 'BackoffLimitExceeded');
+
+  // deploy_failed carries the deploy error on publish.
+  completeTraining('fails', owner(), { runId: 'r1', metric: 0.8 });
+  startDeploy('fails', owner(), 'fails');
+  failDeploy('fails', owner(), 'model load failed (BlockedByFailedLoad)');
+  s = computeLaunchStatus(getModel('fails')!);
+  assert.equal(s.steps[2].state, 'failed');
+  assert.match(s.error ?? '', /BlockedByFailedLoad/);
+});
+
+// ---------------------------------------------- Phase A: real per-model usage recording --
+
+test('recordUsage counts allow + deny, stamps lastCalledAt, and buckets scored calls by day×decile', () => {
+  _resetModels();
+  createModel({ name: 'Used', spec: spec() }, owner()); // binary_classification → decile bands
+  const day = new Date('2026-06-27T10:00:00Z');
+  recordUsage('used', { allowed: true, score: 0.72, at: day }); // d7
+  recordUsage('used', { allowed: true, score: 0.75, at: day }); // d7 again
+  recordUsage('used', { allowed: true, score: 0.10, at: day }); // d1
+  recordUsage('used', { allowed: false, at: day });             // denied → counts, no bucket
+  const u = getModel('used')!.usage!;
+  assert.equal(u.count, 4);
+  assert.equal(u.denied, 1);
+  assert.equal(u.lastCalledAt, day.toISOString());
+  assert.equal(u.bandKind, 'decile');
+  assert.equal(u.buckets['2026-06-27'].d7, 2);
+  assert.equal(u.buckets['2026-06-27'].d1, 1);
+  // A second day opens a new bucket key (time axis for the chart).
+  recordUsage('used', { allowed: true, score: 0.5, at: new Date('2026-06-28T09:00:00Z') }); // d5
+  assert.equal(getModel('used')!.usage!.buckets['2026-06-28'].d5, 1);
+  assert.equal(getModel('used')!.usage!.count, 5);
+});
+
+test('recordUsage uses value-band buckets for a regression model and no-ops an unknown model', () => {
+  _resetModels();
+  createModel(
+    { name: 'Reg', spec: { sourceDataProductFqn: 'x', targetColumn: 'y', taskType: 'regression', features: ['a'] } },
+    owner(),
+  );
+  recordUsage('reg', { allowed: true, score: 123.4, at: new Date('2026-06-27T00:00:00Z') });
+  const u = getModel('reg')!.usage!;
+  assert.equal(u.bandKind, 'value-band');
+  assert.ok(Object.keys(u.buckets['2026-06-27']).some((k) => k.startsWith('b')));
+  // Unknown model → no throw, no record.
+  assert.equal(recordUsage('nope', { allowed: true, score: 0.5 }), null);
 });

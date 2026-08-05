@@ -6,7 +6,7 @@ import ts from 'typescript';
 import { readUiSource } from './app-ui-vendor.ts';
 import { readSdkSource } from './app-sdk-vendor.ts';
 import { detectPreviewShape } from './preview-shape.ts';
-import { getEsbuild } from './preview-runtime.ts';
+import { getEsbuild, esbuildWasmReady } from './preview-runtime.ts';
 import type { ScaffoldFile } from './model.ts';
 
 /**
@@ -56,8 +56,10 @@ export type CompileDiagnostic = {
 };
 
 export type CompileGateResult =
-  /** The shape is checkable and compiled cleanly. */
-  | { gated: true; ok: true }
+  /** The shape is checkable and compiled cleanly. `bundleSkipped` is set (with an
+   *  honest reason) when tsc gated but the esbuild BUNDLE pass could not run because
+   *  its wasm asset is missing — tsc is authoritative, so the commit still passes. */
+  | { gated: true; ok: true; bundleSkipped?: string }
   /** The shape is checkable and FAILED — diagnostics name file+line (capped). */
   | { gated: true; ok: false; diagnostics: CompileDiagnostic[]; total: number }
   /** The shape is not checkable (legacy/other) — passed through, honestly noted. */
@@ -406,7 +408,56 @@ function bundleMessageToDiagnostic(m: import('esbuild-wasm').Message): CompileDi
  * `gated: false` (fail-open on our error, never a false rejection of the user's code;
  * the downstream CI still confirms).
  */
-export async function compileGate(tree: ScaffoldFile[]): Promise<CompileGateResult> {
+/**
+ * ENVIRONMENT SELF-CHECK — the gate judges app code against the default TS libs and
+ * the real React types ON DISK. In the deployed Next standalone image those .d.ts
+ * assets are NOT traced (they are never require()'d), so without this check every
+ * tree looked like hundreds of false errors and the gate rejected GOOD commits
+ * (seen live: "342 compile errors" on a one-page change). If the environment is
+ * incomplete the only honest answer is gated:false — never fabricated diagnostics.
+ * The Dockerfile now ships these assets; this guard keeps any future packaging
+ * regression from turning the gate into a wall again.
+ */
+export function gateEnvironmentReady(): { ok: true } | { ok: false; missing: string } {
+  const libPath = ts.getDefaultLibFilePath({});
+  if (!ts.sys.fileExists(libPath)) return { ok: false, missing: `default TS libs (${libPath})` };
+  const reactTypes = `${rootDir()}/node_modules/@types/react/index.d.ts`;
+  if (!ts.sys.fileExists(reactTypes)) return { ok: false, missing: '@types/react' };
+  return { ok: true };
+}
+
+/**
+ * Is the BUNDLE pass's environment ready? The esbuild-wasm binary is loaded at
+ * runtime (never `require()`'d), so the Next standalone tracer can drop it from the
+ * image — same packaging class as the tsc type-libs above. When it is missing the
+ * gate must NOT fail open on the whole tree: tsc (which catches import-depth /
+ * hallucinated members like `os.datasets.update`) still gates; only the bundle net
+ * is skipped, honestly. The Dockerfile ships the wasm; this keeps a future regression
+ * from silently disabling the bundle net without anyone knowing.
+ */
+export function gateBundleAssetReady(): { ok: true } | { ok: false; missing: string } {
+  return esbuildWasmReady() ? { ok: true } : { ok: false, missing: 'esbuild-wasm binary (esbuild.wasm)' };
+}
+
+/**
+ * Test seam: force the bundle-asset readiness so the degradation path is exercisable
+ * without deleting the real wasm from disk. Production callers omit it and the real
+ * `gateBundleAssetReady()` on-disk check is used.
+ */
+export type CompileGateOpts = { bundleAsset?: { ok: true } | { ok: false; missing: string } };
+
+export async function compileGate(tree: ScaffoldFile[], opts: CompileGateOpts = {}): Promise<CompileGateResult> {
+  const env = gateEnvironmentReady();
+  if (!env.ok) {
+    return {
+      gated: false,
+      reason: `compile-gate environment incomplete (missing ${env.missing}) — compile check skipped, CI will verify`,
+    };
+  }
+  // tsc is ready. The BUNDLE pass has its OWN asset (the esbuild wasm). If that is
+  // missing we still run the authoritative tsc pass and only SKIP the bundle net —
+  // degrading one pass honestly instead of failing the whole gate open.
+  const bundleAsset = opts.bundleAsset ?? gateBundleAssetReady();
   const shape = detectPreviewShape(tree.map((f) => f.path));
   if (shape.kind !== 'vite') {
     return {
@@ -430,7 +481,15 @@ export async function compileGate(tree: ScaffoldFile[]): Promise<CompileGateResu
         total: tsDiags.length,
       };
     }
-    // 2. esbuild bundle — the net for what the tsc shims cannot see.
+    // 2. esbuild bundle — the net for what the tsc shims cannot see. Skipped
+    //    HONESTLY when its wasm asset is missing (tsc already gated above).
+    if (!bundleAsset.ok) {
+      return {
+        gated: true,
+        ok: true,
+        bundleSkipped: `bundle check skipped — ${bundleAsset.missing} missing; tsc gated, CI will bundle-verify`,
+      };
+    }
     const bundleDiags = await bundleDiagnostics(tree, shape.entry.replace(/^\/+/, ''), deps);
     if (bundleDiags.length > 0) {
       return { gated: true, ok: false, diagnostics: bundleDiags.slice(0, MAX_DIAGNOSTICS), total: bundleDiags.length };
@@ -468,6 +527,6 @@ export function formatGateError(result: Extract<CompileGateResult, { gated: true
 /** A one-line activity-feed note for a gate outcome (reuses the existing line pattern). */
 export function gateActivityNote(result: CompileGateResult): string {
   if (!result.gated) return 'compile check skipped (ungated shape)';
-  if (result.ok) return 'compile check ✓';
+  if (result.ok) return result.bundleSkipped ? 'compile check ✓ (bundle skipped — asset missing)' : 'compile check ✓';
   return `compile check ✗ ${result.total} error${result.total === 1 ? '' : 's'}`;
 }

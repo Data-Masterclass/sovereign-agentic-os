@@ -33,6 +33,7 @@ import type {
   SurfaceDeclaration,
 } from '@/lib/software/model';
 import { normalizeSpec, type StorySpec } from '@/lib/software/story-spec';
+import { detectPreviewShape } from '@/lib/software/preview-shape';
 import { viteOsFiles } from '@/lib/software/scaffolds/vite-os';
 import { sovereignAppFiles, sovereignAppGuide } from '@/lib/software/scaffolds/sovereign-app';
 import { websiteFiles, websiteGuide } from '@/lib/software/scaffolds/website';
@@ -100,6 +101,31 @@ export type CiRepairState = {
 export function defaultCiRepairState(): CiRepairState {
   return { repairedRunId: null, repairCommitSha: null, lastAttemptAt: null, outcome: null, autoRepairEnabled: true };
 }
+
+/**
+ * Phase B — OS BUILD SERVICE bookkeeping (see build-service.ts). Persisted on the App
+ * so the in-flight build (which system, which commit, which Job) survives across
+ * requests/instances and the status card can narrate it HONESTLY. The build itself
+ * runs as an in-cluster Kaniko batch/v1 Job os-ui submits + polls; this records only
+ * WHICH commit is building and its last-observed outcome. Absent ⇒ no OS build has run
+ * for this app (the Forgejo Actions path is serving), which the status note says plainly.
+ */
+export type OsBuildState = {
+  /** The commit SHA the last OS build was submitted for. */
+  sha: string | null;
+  /** The build Job name (poll handle). */
+  jobName: string | null;
+  /** Last-observed phase, honestly labelled (never claims success it did not see). */
+  phase: 'pending' | 'running' | 'succeeded' | 'failed' | 'unknown' | null;
+  /** ISO of the last submit/poll. */
+  updatedAt: string | null;
+  /** The captured digest ref of the last SUCCESSFUL OS build (mirrors app.runImageDigest). */
+  digest: string | null;
+};
+
+export function defaultOsBuildState(): OsBuildState {
+  return { sha: null, jobName: null, phase: null, updatedAt: null, digest: null };
+}
 export type StageStatus = 'ok' | 'pending' | 'offline' | 'disabled' | 'stalled' | 'failing';
 
 export type AppFile = {
@@ -160,6 +186,26 @@ export type AppEpic = {
   stories: AppStory[];
 };
 
+/**
+ * How an app is served (Phase D). The DEFAULT + every legacy record is 'image' (the
+ * per-app container path); 'runtime' opts into the OS no-image runtime serving.
+ */
+export type ServeMode = 'image' | 'runtime';
+
+/**
+ * The ONE coercion for a persisted/incoming `serveMode`: only the explicit string
+ * 'runtime' opts in; anything else (undefined on a legacy record, garbage, or the
+ * explicit 'image') resolves to 'image'. Keeps the field byte-stable + nil-safe.
+ */
+export function normalizeServeMode(raw: unknown): ServeMode {
+  return raw === 'runtime' ? 'runtime' : 'image';
+}
+
+/** The app's effective serve mode (nil-safe read for a possibly-legacy record). */
+export function serveModeOf(app: Pick<App, 'serveMode'>): ServeMode {
+  return normalizeServeMode(app.serveMode);
+}
+
 export type App = {
   id: string;
   slug: string;
@@ -207,6 +253,19 @@ export type App = {
   folder: string;
   /** 'live' when Forgejo was reachable at create time; 'offline' otherwise. */
   mode: 'live' | 'offline';
+  /**
+   * HOW this app is served (Phase D — no-image runtime, behind the flag):
+   *   • 'image'   (DEFAULT, and the value every legacy record loads as) — the app is
+   *     served by a per-app container image the CI pipeline builds/pushes and the
+   *     in-cluster runner pulls. The historic, unchanged path.
+   *   • 'runtime' — the OS serves the app's committed tree DIRECTLY: it bundles the
+   *     durable file mirror with esbuild (the Instant-Preview machinery) and serves
+   *     the SPA from one platform surface in a sandboxed iframe. No per-app CI /
+   *     image / registry / pod is needed; the repo/image become export products.
+   * Optional-on-load so pre-flag records stay byte-stable — hydrateAppDoc defaults it
+   * to 'image', and normalizeServeMode is the ONE coercion (only 'runtime' opts in).
+   */
+  serveMode?: ServeMode;
   repo: { fullName: string; htmlUrl: string; seeded: string[] };
   subdomain: string;
   /**
@@ -216,6 +275,15 @@ export type App = {
    * We NEVER build images in-cluster — this is a reference to an already-built one.
    */
   runImage?: string;
+  /**
+   * The DIGEST-pinned image ref (`<registry>/<slug>@sha256:…`) the OS build service
+   * (Phase B, build-service.ts) captured from its last SUCCESSFUL in-cluster build.
+   * When set it is the AUTHORITATIVE serving ref: the runner pins to this exact
+   * digest (no floating `:latest`, no roll hack), and a NEW digest is a real template
+   * change that rolls the pods honestly. Unset ⇒ the runner falls back to the CI
+   * `:latest` convention (the Forgejo Actions path), so this is purely additive.
+   */
+  runImageDigest?: string;
   pipeline: Record<PipelineStage, StageStatus>;
   /** Markdown captured from the build chat + the template. */
   designDecisions: string;
@@ -264,6 +332,13 @@ export type App = {
    * hydrateAppDoc. Enforces "at most one auto-repair per failed run" + "no loop".
    */
   ciRepair?: CiRepairState;
+  /**
+   * Phase B OS-build-service bookkeeping (build-service.ts). Optional-on-load: apps
+   * built before the build service default to a never-run state. Records which commit
+   * the last in-cluster Kaniko build was submitted for + its outcome, so the status
+   * card is truthful about WHICH system built (OS build service vs Forgejo Actions).
+   */
+  osBuild?: OsBuildState;
   createdAt: string;
   updatedAt: string;
 };
@@ -964,9 +1039,15 @@ function hydrateAppDoc(app: App): App {
   app.members = normalizeAppMembers(app.members, app.owner);
   // Back-compat: apps persisted before folders default to the root.
   if (typeof app.folder !== 'string') app.folder = '/';
+  // Back-compat: apps persisted before the Phase D serve-mode flag default to 'image'
+  // (the historic per-app-image path). Only an explicit 'runtime' opts into the OS
+  // no-image runtime; normalizeServeMode collapses anything else to 'image'.
+  app.serveMode = normalizeServeMode(app.serveMode);
   // Back-compat: apps persisted before Phase C CI-repair default to enabled + unattempted.
   if (!app.ciRepair || typeof app.ciRepair !== 'object') app.ciRepair = defaultCiRepairState();
   else if (typeof app.ciRepair.autoRepairEnabled !== 'boolean') app.ciRepair.autoRepairEnabled = true;
+  // Back-compat: apps built before Phase B OS-build-service default to never-run.
+  if (!app.osBuild || typeof app.osBuild !== 'object') app.osBuild = defaultOsBuildState();
   // Heal the repo link: apps scaffolded before repoHtmlUrl persisted Forgejo's
   // in-cluster `html_url` (http://forgejo-http:3000/…), which 404s in a browser.
   // Re-derive it from the full name against the EXTERNAL console URL on every load.
@@ -1990,6 +2071,42 @@ export async function setAutoRepairEnabled(appId: string, user: CurrentUser, ena
 }
 
 /**
+ * Phase D: flip an app between the historic per-app-image serving and OS runtime
+ * serving. Edit-scoped (owner / in-domain domain_admin / admin — `getEditableAppForUser`).
+ *
+ * SCOPE LIMIT, stated honestly: the OS runtime can only serve a Vite-shaped
+ * sovereign-app/vite-os SPA (the one the Instant-Preview bundler + compile gate
+ * understand). Opting a non-Vite shape into 'runtime' is REFUSED (400) rather than
+ * silently accepted — the runtime surface could never bundle it. Switching BACK to
+ * 'image' is always allowed (it just restores the historic path). Byte-stable no-op
+ * when the mode is unchanged.
+ */
+export async function setAppServeMode(appId: string, user: CurrentUser, mode: ServeMode): Promise<App> {
+  const app = await getEditableAppForUser(appId, user);
+  const next = normalizeServeMode(mode);
+  if (next === serveModeOf(app)) return app; // no-op — nothing to write
+  if (next === 'runtime') {
+    // Only a Vite-shaped SPA can be runtime-served. Detect off the CURRENT tree so
+    // this reflects what would actually be bundled, not just the template label.
+    const { files } = await previewFilesForApp(appId, user);
+    const shape = detectPreviewShape(files.map((f) => f.path));
+    if (shape.kind !== 'vite') {
+      throw withStatus(
+        new Error(
+          'Runtime serving supports only Vite-shaped sovereign-app / vite-os apps ' +
+            '(an src/main.tsx SPA). This app is a different shape, so it must keep image serving.',
+        ),
+        400,
+      );
+    }
+  }
+  app.serveMode = next;
+  app.updatedAt = now();
+  writeThrough(app);
+  return app;
+}
+
+/**
  * Synthesize the CurrentUser an auto-repair build turn runs AS — the app's OWNER,
  * scoped to the app's domain, at the `builder` role (needs the commit/build tool
  * surface). This is a SERVER-INITIATED turn (no request session), so there is no
@@ -2068,6 +2185,152 @@ function triggerAutoRepair(app: App, failedRun: { id: string; headSha: string })
     .catch(() => {
       /* best-effort — the next refresh re-detects the same failure */
     });
+}
+
+// ----------------------------------------------------- Phase B OS build service --
+
+/**
+ * Assemble the injected `BuildRuntime` from `config` — the ONLY place the build
+ * service's live wiring (registry host/owner, git host, admin credential, OS API URL)
+ * is read. Kept here (server-side, has secrets) so build-service.ts stays pure/testable.
+ * `harborRegistry` is `<host>/<owner>` (e.g. `forgejo-http:3000/gitea_admin`).
+ */
+function buildRuntimeFromConfig(): import('@/lib/software/build-service').BuildRuntime {
+  const [registryHost, registryOwner] = config.harborRegistry.split('/');
+  const gitHost = config.forgejoUrl.replace(/^https?:\/\//, '');
+  return {
+    namespace: config.softwareBuildNamespace,
+    kanikoImage: config.kanikoImage,
+    registryHost: registryHost || 'forgejo-http:3000',
+    registryOwner: registryOwner || config.forgejoRepoOwner,
+    gitHost,
+    authUser: config.forgejoUser,
+    authPassword: config.forgejoPassword,
+    osApiUrl: config.osPublicUrl,
+  };
+}
+
+/**
+ * After a successful gated build-mode commit (Phase A), submit the in-cluster Kaniko
+ * build for the app's new head commit and record the `harbor` (image build) stage
+ * HONESTLY as "OS build service". Fire-and-forget: it must never block or break the
+ * commit path it rides on. When the build service is OFF (flag/RBAC), it does NOTHING
+ * — the Forgejo Actions path still serves — and the harbor stage note says so. Skipped
+ * for a non-live app (no cluster/registry to build against).
+ */
+export function triggerOsBuild(app: App, sha: string): void {
+  if (app.mode !== 'live') return;
+  void submitOsBuild(app, sha).catch(() => {
+    /* best-effort — the next refresh re-submits/re-polls */
+  });
+}
+
+/**
+ * The awaitable core of `triggerOsBuild` (tests + any caller that wants the outcome).
+ * Submits the Kaniko build Job for `sha`, records the app's `osBuild` state, and flips
+ * the `harbor` (image-build) pipeline stage HONESTLY: `pending` while the Job runs,
+ * `failing` when the submit was rejected (RBAC/namespace absent — named specifically),
+ * `offline` when the cluster was unreachable. A disabled build service is a NO-OP
+ * (`submitted: false`) — the Forgejo Actions path still builds the serving image.
+ */
+export async function submitOsBuild(
+  app: App,
+  sha: string,
+  client?: import('@/lib/software/build-service').K8sClient,
+): Promise<{ submitted: boolean; ok: boolean; detail: string }> {
+  const m = await import('@/lib/software/build-service');
+  if (!m.buildServiceEnabled(config)) {
+    return { submitted: false, ok: false, detail: m.BUILD_SERVICE_OFF_NOTE };
+  }
+  const rt = buildRuntimeFromConfig();
+  const res = await m.submitBuildJob(app.slug, sha, rt, client);
+  const state = app.osBuild ?? defaultOsBuildState();
+  app.osBuild = {
+    ...state,
+    sha,
+    jobName: res.run.jobName,
+    phase: res.ok ? 'pending' : 'failed',
+    updatedAt: new Date().toISOString(),
+  };
+  // The harbor (image-build) stage reflects the OS build service submission
+  // honestly: pending while the Job runs, failing when we could not even submit
+  // (RBAC/namespace/unreachable) — the Forgejo Actions path remains the fallback.
+  const next: StageStatus = res.ok ? 'pending' : (res.reachable ? 'failing' : 'offline');
+  if (app.pipeline.harbor !== next) app.pipeline.harbor = next;
+  writeThrough(app);
+  void trace({
+    principal: app.mcpPrincipal,
+    tool: 'generate',
+    input: { action: 'os_build_submit', slug: app.slug, sha: sha.slice(0, 12), jobName: res.run.jobName },
+    output: { ok: res.ok, reachable: res.reachable, detail: res.detail },
+    decision: 'allow',
+  });
+  return { submitted: true, ok: res.ok, detail: res.detail };
+}
+
+/**
+ * Poll the app's in-flight OS build (Phase B) and reconcile it onto the pipeline +
+ * runner HONESTLY. When the build SUCCEEDS and its pushed digest is captured, pin the
+ * app's serving image to that digest (`app.runImageDigest`) and re-deploy the runner
+ * digest-pinned — a new digest is a real template change, so the roll is honest (no
+ * `:latest` hack). Returns a short note for the status card, or null when there is no
+ * OS build to report. Never throws — a down cluster leaves the state untouched.
+ */
+export async function refreshBuildStage(
+  app: App,
+  /** Injected k8s client (tests); defaults to the live in-cluster client. */
+  client?: import('@/lib/software/build-service').K8sClient,
+): Promise<{ status: StageStatus; note: string | null } | null> {
+  const m = await import('@/lib/software/build-service');
+  if (!m.buildServiceEnabled(config)) {
+    return { status: app.pipeline.harbor, note: m.BUILD_SERVICE_OFF_NOTE };
+  }
+  const state = app.osBuild;
+  if (!state?.jobName || !state.sha) {
+    return { status: app.pipeline.harbor, note: 'OS build service is ON — no in-cluster build has been submitted for this app yet.' };
+  }
+  const rt = buildRuntimeFromConfig();
+  const st = await m.readBuildJob(app.slug, state.jobName, rt, client);
+  const now = new Date().toISOString();
+  let changed = false;
+  const setStage = (next: StageStatus) => {
+    if (app.pipeline.harbor !== next) { app.pipeline.harbor = next; changed = true; }
+  };
+  if (st.phase === 'unknown') {
+    // Cluster unreachable / job reaped — do not overwrite a real prior state; report honestly.
+    return { status: app.pipeline.harbor, note: `OS build service: ${st.reason}.` };
+  }
+  if (st.phase === 'succeeded' && st.imageDigest) {
+    // PIN the runner to the pushed digest and roll it honestly.
+    app.runImageDigest = st.imageDigest;
+    app.osBuild = { ...state, phase: 'succeeded', digest: st.imageDigest, updatedAt: now };
+    setStage('ok');
+    changed = true;
+    let rollNote = '';
+    try {
+      // Re-provision through review.ts's shared runner entry (single-sourced footprint +
+      // runner shape) so the pod re-pins to the just-built digest. `app.runImageDigest`
+      // was set above, so `runnerAppFor` picks it up.
+      const review = await import('@/lib/software/review');
+      const out = await review.redeployRunnerForApp(app);
+      rollNote = out.live ? ' Runner re-pinned to the new digest.' : ' Runner not reachable to re-pin (will pin on next deploy).';
+    } catch {
+      rollNote = '';
+    }
+    if (changed) writeThrough(app);
+    return { status: 'ok', note: `OS build service built + pushed ${state.sha.slice(0, 10)} (digest pinned).${rollNote}` };
+  }
+  if (st.phase === 'failed') {
+    app.osBuild = { ...state, phase: 'failed', updatedAt: now };
+    setStage('failing');
+    if (changed) writeThrough(app);
+    return { status: 'failing', note: `OS build service build for ${state.sha.slice(0, 10)} FAILED (${st.reason}). Forgejo Actions remains available as the fallback build path.` };
+  }
+  // pending / running
+  app.osBuild = { ...state, phase: st.phase, updatedAt: now };
+  setStage('pending');
+  if (changed) writeThrough(app);
+  return { status: 'pending', note: `OS build service is building ${state.sha.slice(0, 10)} (${st.phase}${st.reason && st.reason !== st.phase ? `: ${st.reason}` : ''}).` };
 }
 
 // ----------------------------------------------------------------- MCP wiring --
@@ -2244,6 +2507,9 @@ export async function createApp(
     members: [],
     folder: '/',
     mode: repo.mode,
+    // Phase D: a fresh app is served the historic way (per-app image) until the
+    // owner explicitly opts into OS runtime serving on the Publish surface.
+    serveMode: 'image',
     repo: { fullName: repo.fullName, htmlUrl: repo.htmlUrl, seeded: repo.seeded },
     subdomain,
     pipeline,
@@ -2871,6 +3137,22 @@ export async function restoreAppGitVersion(
 /** Raw app fetch by id (no visibility filter) — for governed server orchestration. */
 export async function getAppByIdInternal(appId: string): Promise<App | null> {
   return getAppByIdWithMirror(appId);
+}
+
+/**
+ * Internal by-slug lookup with NO visibility filter — for the least-privilege
+ * origin cap (app-origin.ts), which reads an app's grants to DENY artifacts, never
+ * to widen access (the governed route already enforced the user's own canView). An
+ * unknown slug returns null so the caller can fail closed for app origins.
+ */
+export async function getAppBySlugInternal(slug: string): Promise<App | null> {
+  const s = (slug ?? '').trim();
+  if (!s) return null;
+  const map = await getCache();
+  for (const a of map.values()) {
+    if (a.slug === s) return a;
+  }
+  return null;
 }
 
 /** Every app in the store (no visibility filter) — for the lineage check. */

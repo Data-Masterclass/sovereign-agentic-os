@@ -3,12 +3,14 @@
  */
 import { Forbidden, NotAuthenticated, OsError, UnsupportedQuery } from './errors.ts';
 import type {
+  AppRecord,
   ContextItem,
   DatasetQuery,
   KnowledgeHit,
   MetricQuery,
   OsClientOptions,
   OsContext,
+  RecordResult,
   WhoAmI,
 } from './types.ts';
 
@@ -65,6 +67,20 @@ export interface OsClient {
     list(): Promise<unknown>;
     get(id: string): Promise<unknown>;
   };
+  /**
+   * The app's OWN records — the governed WRITE surface (plus reads of the same
+   * store). Reads (`list`/`get`) are always-on; writes (`add`/`export`) run live
+   * only when the app's Builder-APPROVED deploy envelope permits them (else the OS
+   * answers 403 → `Forbidden` carrying the honest governance reason). Requires
+   * `appSlug` on `createOsClient` (the scaffold sets it); without it these throw a
+   * clear local error, never a mystery 404.
+   */
+  records: {
+    list(): Promise<RecordResult>;
+    add(record: AppRecord): Promise<RecordResult>;
+    get(id: string): Promise<RecordResult>;
+    export(): Promise<RecordResult>;
+  };
 }
 
 /** The five context kinds the governed available-context feed exposes. */
@@ -72,9 +88,22 @@ const CONTEXT_KINDS = ['connections', 'data', 'knowledge', 'files', 'metrics'] a
 
 export function createOsClient(opts: OsClientOptions = {}): OsClient {
   const baseUrl = opts.baseUrl ?? '';
+  const appSlug = opts.appSlug ?? '';
   const doFetch = opts.fetch ?? globalThis.fetch;
   if (typeof doFetch !== 'function') {
     throw new OsError('No fetch available: pass one via createOsClient({ fetch })', 0);
+  }
+
+  /** The app's own records base path — requires the baked-in app slug. */
+  function recordsBase(): string {
+    if (!appSlug) {
+      throw new OsError(
+        'os.records needs the app slug: create the client with createOsClient({ appSlug }). ' +
+          'The scaffold sets this from APP_SLUG; records routes are keyed by slug.',
+        0,
+      );
+    }
+    return `/api/apps/by-slug/${encodeURIComponent(appSlug)}/records`;
   }
 
   /** One governed request. Sends the ambient session cookie, maps failures to
@@ -162,9 +191,29 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
     // (this route answers 200 with user:null rather than 401, so surface it as-is).
     whoami: () => request<WhoAmI>('/api/auth/me'),
 
-    // The app's granted/grantable context, composed CLIENT-SIDE from the existing
-    // governed per-kind feed. No new route: each kind is one canView/RLS-scoped GET.
+    // The context this app can reach.
+    //
+    // • WITH an `appSlug` (the scaffold sets it) — the app's ACTUAL grants, from the
+    //   app-scoped endpoint. This is the HONEST "Granted context": only what the app
+    //   was granted, NOT everything the signed-in user can see. One GET, grouped by kind.
+    // • WITHOUT an `appSlug` (e.g. the OS UI using the SDK) — the legacy behavior: the
+    //   generic per-kind available-context feed (five canView/RLS-scoped GETs).
     async context(): Promise<OsContext> {
+      const empty = (): OsContext => ({ connections: [], data: [], knowledge: [], files: [], metrics: [] });
+
+      if (appSlug) {
+        const r = await request<{
+          items?: { kind: (typeof CONTEXT_KINDS)[number]; id: string; name: string; access?: string }[];
+        }>(`/api/apps/by-slug/${encodeURIComponent(appSlug)}/context`);
+        const out = empty();
+        for (const it of r?.items ?? []) {
+          if (it && (CONTEXT_KINDS as readonly string[]).includes(it.kind)) {
+            out[it.kind].push({ id: it.id, name: it.name, scope: it.access });
+          }
+        }
+        return out;
+      }
+
       const entries = await Promise.all(
         CONTEXT_KINDS.map(async (kind) => {
           const r = await request<{ items?: ContextItem[] }>(
@@ -256,6 +305,38 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
     files: {
       list: () => request('/api/files'),
       get: (id: string) => request(`/api/files/${encodeURIComponent(id)}`),
+    },
+
+    // ── records (the app's OWN data — the governed WRITE surface) ───────────────
+    // Second door onto the SAME governed store the app's MCP tools reach. The OS
+    // executes AS the signed-in user; writes are held to the app's approved deploy
+    // envelope server-side (a refusal surfaces as Forbidden with the reason). Each
+    // route answers `{ result }`; we return the result payload directly.
+    records: {
+      async list(): Promise<RecordResult> {
+        const r = await request<{ result: RecordResult }>(recordsBase());
+        return r.result;
+      },
+      async add(record: AppRecord): Promise<RecordResult> {
+        const r = await request<{ result: RecordResult }>(recordsBase(), {
+          method: 'POST',
+          body: { record },
+        });
+        return r.result;
+      },
+      async get(id: string): Promise<RecordResult> {
+        const r = await request<{ result: RecordResult }>(
+          `${recordsBase()}/${encodeURIComponent(id)}`,
+        );
+        return r.result;
+      },
+      async export(): Promise<RecordResult> {
+        const r = await request<{ result: RecordResult }>(`${recordsBase()}/export`, {
+          method: 'POST',
+          body: {},
+        });
+        return r.result;
+      },
     },
   };
 }

@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
@@ -18,43 +18,40 @@ import StageShell from '@/components/core/StageShell';
 import { initialStageState, markDone, goTo, type StageState } from '@/lib/core/stages';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import type { ViewMode } from '@/lib/core/view-mode';
+import { phraseMetric } from '@/lib/science/ui-format';
 import { SCI_STAGES, atLeast, type SciStageId, type SciCtx } from './stages';
 import NewModel from './NewModel';
-import TrainStep from './builder/TrainStep';
-import DeployStep from './builder/DeployStep';
+import LaunchStep from './builder/LaunchStep';
 import PredictPanel from './PredictPanel';
-import StageAssistant, { type ModelDefinition } from './StageAssistant';
+import UsageChart from './UsageChart';
+import ScienceChat, { type ModelDefinition } from './ScienceChat';
+import { postJson } from './shared';
 import {
   TIER_BADGE, TIER_LABEL, TASK_LABEL, BUILD_STATE,
-  type ModelSummary, type ModelGroups, type ModelBuildState, type PredictResult,
+  type ModelSummary, type ModelGroups, type ModelBuildState, type PredictResult, type ModelSpec,
 } from './shared';
 
 const SCI_MODE_KEY = 'science.viewMode';
 
-/** Model tier → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (tier: ModelSummary['tier']): Visibility => visibilityForTier(tier);
-/** Model tier → the shared ladder tier the PromoteButton speaks. */
 const ladderTier = (tier: ModelSummary['tier']): PromoteTier =>
   tier === 'Domain' ? 'Shared' : tier === 'Marketplace' ? 'Marketplace' : 'Personal';
 
 /** The reachable stage that matches a persisted buildState (open an existing model there). */
 function openStageFor(bs: ModelBuildState | undefined): SciStageId {
-  if (!bs) return 'define';
-  if (bs === 'deployed' || bs === 'monitored') return 'monitor';
-  if (atLeast(bs, 'trained')) return 'deploy';
-  if (bs === 'training') return 'train';
-  return 'define';
+  if (!bs) return 'design';
+  if (bs === 'deployed') return 'monitor';
+  return 'launch'; // training / trained / deploying / deploy_failed / archived all live in Launch
 }
 
 /**
- * The Science guided builder — Define · Train · Deploy · Predict · Monitor on the OS-wide
- * staged primitive (lib/core/stages.ts + components/core/StageShell.tsx; the Dashboards
- * builder is the reference adoption). Creating AND operating a model are ONE flow: a fresh
- * model starts on Define (registers a draft), then walks forward as its REAL persisted
- * `buildState` settles (draft → training → trained → deploying → deployed); an EXISTING
- * model opens at the stage matching its state. Each stage reuses the tab's existing bodies
- * as-is (NewModel, the P0 TrainStep + DeployStep, the generic PredictPanel, PromoteButton,
- * LifecycleActions) — nothing is rewritten, only re-hosted. Gating reads buildState directly.
+ * The Science guided builder — Design · Launch · Monitor on the OS-wide staged primitive
+ * (lib/core/stages.ts + components/core/StageShell.tsx). A fresh model starts on Design (a
+ * prompt-first chat with a manual form behind progressive disclosure), walks to Launch (one
+ * fused "Train & launch"), then Monitor (try it on a real row, health, real usage, govern). An
+ * existing model opens at the stage matching its state. ONE persistent assistant chat is mounted
+ * across every stage; it only proposes — every mutation goes through the governed routes on an
+ * explicit Apply.
  */
 export default function ModelBuilder({
   existing,
@@ -62,16 +59,13 @@ export default function ModelBuilder({
   onChanged,
   onOpenConsole,
 }: {
-  /** Open an already-built model, or null to create a new one (starts on Define). */
   existing: ModelSummary | null;
   onBack: () => void;
-  /** Refresh the tab's list after any lifecycle change. */
   onChanged: () => void;
   onOpenConsole: () => void;
 }) {
   const { user } = useUser();
 
-  // Simple ⇄ Developer view mode (persisted per user, defaults to Simple).
   const [viewMode, setViewMode] = useState<ViewMode>('simple');
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -82,17 +76,20 @@ export default function ModelBuilder({
     setViewMode(m);
     if (typeof window !== 'undefined') window.localStorage.setItem(SCI_MODE_KEY, m);
   };
+  const developer = viewMode === 'developer';
 
-  // The model we operate on: the one opened, or the draft just created. Refreshed from the
-  // governed list after train/deploy/lifecycle so buildState (the gate source) stays live.
   const [model, setModel] = useState<ModelSummary | null>(existing);
   const [predicted, setPredicted] = useState(false);
-  const [lastResult, setLastResult] = useState<PredictResult | null>(null);
-  const [defColumns, setDefColumns] = useState<string[]>([]);
+  const [, setLastResult] = useState<PredictResult | null>(null);
   const [defPrefill, setDefPrefill] = useState<ModelDefinition | null>(null);
-  const [defPrompt, setDefPrompt] = useState('');
+  const [manualOpen, setManualOpen] = useState(false);
+  const [pickedDataset, setPickedDataset] = useState<{ id: string; fqn: string; name: string } | null>(null);
+  const [createErr, setCreateErr] = useState('');
+  // Bumped by the Launch chat card's Apply → LaunchStep starts the fused train.
+  const [launchNonce, setLaunchNonce] = useState(0);
+  // Monitor try-it focus signal (the chat's "score an example" card scrolls to it).
+  const tryItRef = useRef<HTMLDivElement | null>(null);
 
-  // Re-fetch this model from the governed list (single source of truth for buildState).
   const refresh = useCallback(async () => {
     onChanged();
     const id = model?.model;
@@ -107,40 +104,59 @@ export default function ModelBuilder({
   }, [model?.model, onChanged]);
 
   const bs: ModelBuildState = model?.buildState ?? 'draft';
+  const ctx: SciCtx = { hasSpec: !!model?.spec, buildState: bs, predicted };
 
-  const ctx: SciCtx = {
-    hasSpec: !!model?.spec,
-    buildState: bs,
-    predicted,
-  };
-
-  // Open on the stage matching the model's state: a new model on Define, an existing one
-  // at the furthest reached stage. Nothing pre-marked (the core primitive's rule).
   const [stage, setStage] = useState<StageState<SciStageId>>(() => {
     const base = initialStageState(SCI_STAGES);
     return existing ? { ...base, current: openStageFor(existing.buildState) } : base;
   });
 
-  // Once a train/deploy transition lands the model in a new state, record the stage ✓ so the
-  // rail reflects real progress (gated on the live condition by the core primitive).
   useEffect(() => {
-    if (atLeast(bs, 'trained')) setStage((s) => markDone(s, 'train'));
-    if (bs === 'deployed' || bs === 'monitored') setStage((s) => markDone(markDone(s, 'deploy'), 'monitor'));
+    if (atLeast(bs, 'trained')) setStage((s) => markDone(s, 'launch'));
+    if (bs === 'deployed') setStage((s) => markDone(markDone(s, 'launch'), 'monitor'));
   }, [bs]);
 
   const canManage = !!user && !!model && canManageArtifact(user, { owner: model.owner, domain: model.domain });
   const canApprove = !!user && roleAtLeast(user.role, 'builder');
 
-  const lastMetric = useMemo(() => {
-    if (typeof model?.metrics?.primary !== 'number') return '';
-    return `${model.metrics.primaryMetric ?? model.spec?.optimizeMetric ?? 'metric'} ${model.metrics.primary.toFixed(3)}`;
-  }, [model?.metrics, model?.spec?.optimizeMetric]);
+  const lastMetric = useMemo(
+    () => phraseMetric(model?.metrics?.primaryMetric ?? model?.spec?.optimizeMetric, model?.metrics?.primary),
+    [model?.metrics, model?.spec?.optimizeMetric],
+  );
 
   const badge = model ? BUILD_STATE[bs] : null;
 
-  // Rename the model's DISPLAY name only. The serving/deploy key (`model.model`) is
-  // FROZEN at create and never moves — the store's `renameModel` enforces it — so a
-  // rename can never orphan the KServe endpoint or the OPA predict principal.
+  // Create a draft from a validated chat definition (Design → Apply). Goes through the SAME
+  // governed create route the manual form uses — the assistant never mutates directly.
+  const createFromDefinition = useCallback(async (def: ModelDefinition) => {
+    setCreateErr('');
+    if (!def.datasetFqn || !def.targetColumn || !def.features?.length) {
+      // Not enough to create outright → drop it into the manual form for the user to complete.
+      setDefPrefill(def);
+      setManualOpen(true);
+      return;
+    }
+    const spec = {
+      sourceDataProductFqn: def.datasetFqn,
+      sourceDatasetId: def.datasetId,
+      targetColumn: def.targetColumn,
+      taskType: def.taskType ?? 'binary_classification',
+      features: def.features,
+    } as unknown as ModelSpec;
+    try {
+      const res = await postJson<{ model: ModelSummary; policy: ModelSummary['policy'] }>('/api/science/model', {
+        op: 'create',
+        name: def.datasetName ? `${def.datasetName} — ${def.targetColumn}` : def.targetColumn,
+        spec,
+      });
+      const created = { ...res.model, policy: res.policy };
+      setModel(created);
+      setStage((s) => goTo(SCI_STAGES, markDone(s, 'design'), 'launch', { ...ctx, hasSpec: true }));
+    } catch (e) {
+      setCreateErr((e as Error).message);
+    }
+  }, [ctx]);
+
   const renameModel = useCallback(async () => {
     if (!model) return;
     const next = window.prompt('Rename model', model.name);
@@ -157,6 +173,10 @@ export default function ModelBuilder({
     } catch (e) { window.alert((e as Error).message); }
   }, [model, refresh]);
 
+  const focusTryIt = useCallback(() => {
+    tryItRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
+
   return (
     <ConfirmProvider>
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -164,7 +184,7 @@ export default function ModelBuilder({
         <BuilderModeToggle
           mode={viewMode}
           onChange={setModePersisted}
-          developerHint="The raw model training/serving spec for this model"
+          developerHint="The raw model training/serving spec + handles for this model"
         />
       </div>
 
@@ -173,9 +193,7 @@ export default function ModelBuilder({
           <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <h2 style={{ margin: 0 }}>{model.name}</h2>
             {canManage ? (
-              <button className="btn ghost sm" title="Rename this model (display name only — its serving key never changes)" onClick={renameModel}>
-                ✎ Rename
-              </button>
+              <button className="btn ghost sm" title="Rename this model (display name only — its serving key never changes)" onClick={renameModel}>✎ Rename</button>
             ) : null}
             {model.tier === 'Domain' || model.tier === 'Marketplace' ? <DomainTag domain={model.domain} /> : null}
             <span className={`badge ${TIER_BADGE[model.tier]}`}>{TIER_LABEL[model.tier]}</span>
@@ -185,9 +203,6 @@ export default function ModelBuilder({
                 <span className="muted">{badge.label}</span>
               </span>
             ) : null}
-            {/* Lifecycle (Archive/Restore/Delete) lives in the persistent detail header so it is
-                reachable from ANY stage — not buried in Monitor. Governance unchanged (canManage).
-                PromoteButton stays in the Monitor stage (stage-specific action). */}
             {canManage ? (
               <div style={{ marginLeft: 'auto' }}>
                 <LifecycleActions
@@ -220,152 +235,105 @@ export default function ModelBuilder({
         <h2 style={{ marginTop: 0 }}>New model</h2>
       )}
 
-      {viewMode === 'developer' ? (
+      {developer && model ? (
         <ScienceDeveloperView model={model} />
-      ) : (
+      ) : null}
+
       <StageShell
         stages={SCI_STAGES}
         state={stage}
         ctx={ctx}
         onState={setStage}
         ariaLabel="Model stages"
-        assistant={(st) =>
-          st.id === 'define' && !model ? (
-            <StageAssistant
-              stage="define"
-              label="Describe your goal — I’ll suggest a trainable task, target and features from the dataset’s columns."
-              cta="Suggest a definition"
-              disabled={defColumns.length === 0}
-              payload={() => ({ prompt: defPrompt, columns: defColumns })}
-              onDefinition={(def) => setDefPrefill(def)}
-            />
-          ) : st.id === 'train' ? (
-            <StageAssistant
-              stage="train"
-              label="Explain a training failure in plain language."
-              cta="Explain the failure"
-              disabled={bs !== 'draft' && !model?.lastTrainingError}
-              payload={() => ({ reason: model?.lastTrainingError ?? '' })}
-            />
-          ) : st.id === 'deploy' ? (
-            <StageAssistant
-              stage="deploy"
-              label="Explain why the model couldn’t deploy."
-              cta="Explain the failure"
-              disabled={bs !== 'deploy_failed'}
-              payload={() => ({ reason: model?.lastDeployError ?? '' })}
-            />
-          ) : st.id === 'predict' ? (
-            <StageAssistant
-              stage="predict"
-              label="Interpret the last score against its risk band."
-              cta="Interpret the score"
-              disabled={!predicted || !lastResult}
-              payload={() => ({ score: lastResult?.score, band: lastResult?.band, metric: model?.metrics?.primaryMetric })}
-            />
-          ) : st.id === 'monitor' ? (
-            <StageAssistant
-              stage="monitor"
-              label="Interpret the model’s current health."
-              cta="Interpret health"
-              payload={() => ({ metric: lastMetric, drift: '' })}
-            />
-          ) : null
-        }
+        assistant={(st) => (
+          <ScienceChat
+            key={st.id}
+            stage={st.id}
+            modelId={model?.model}
+            datasetId={st.id === 'design' ? pickedDataset?.id : undefined}
+            starters={
+              st.id === 'design'
+                ? ['Which customers will churn', 'Expected order value next month']
+                : st.id === 'launch'
+                ? ['What happens when I launch?']
+                : ['How is this model doing?']
+            }
+            onApplyDefinition={st.id === 'design' && !model ? createFromDefinition : undefined}
+            onApplyLaunch={st.id === 'launch' && canManage ? () => setLaunchNonce((n) => n + 1) : undefined}
+            onApplyScoreExample={st.id === 'monitor' ? focusTryIt : undefined}
+          />
+        )}
       >
-        {stage.current === 'define' ? (
+        {stage.current === 'design' ? (
           model ? (
             <div className="card">
               <div className="muted">
                 This model is defined — <code>{model.spec?.sourceDataProductFqn}</code>,{' '}
-                {model.spec ? TASK_LABEL[model.spec.taskType] : 'task'}. Continue to <strong>Train</strong> →.
+                {model.spec ? TASK_LABEL[model.spec.taskType] : 'task'}. Continue to <strong>Launch</strong> →.
               </div>
             </div>
           ) : (
-            <>
-              <div style={{ marginBottom: 10 }}>
-                <label className="comp-label" htmlFor="mb-goal" style={{ display: 'block', marginBottom: 4 }}>Goal (optional — powers the assistant)</label>
-                <input
-                  id="mb-goal"
-                  value={defPrompt}
-                  onChange={(e) => setDefPrompt(e.target.value)}
-                  placeholder="Predict which customers will churn next quarter"
-                  style={{ width: '100%', maxWidth: 720 }}
-                />
+            <div>
+              <div className="card" style={{ borderLeft: '3px solid var(--gold)' }}>
+                <div className="section-title" style={{ marginTop: 0 }}>Describe what you want to predict</div>
+                <p className="muted" style={{ marginTop: -4, marginBottom: 0 }}>
+                  Tell the assistant below your goal in plain words — it names a real dataset and the exact
+                  columns, and you create the model with one click. Prefer to do it by hand?{' '}
+                  <button
+                    type="button"
+                    onClick={() => setManualOpen((o) => !o)}
+                    style={{ background: 'none', border: 'none', padding: 0, color: 'var(--teal)', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
+                  >
+                    {manualOpen ? 'Hide the manual form' : 'Pick a dataset and columns yourself'}
+                  </button>.
+                </p>
               </div>
-              <NewModel
-                prefill={defPrefill}
-                onColumns={setDefColumns}
-                onCreated={(m) => { setModel(m); setStage((s) => goTo(SCI_STAGES, markDone(s, 'define'), 'train', { ...ctx, hasSpec: true })); }}
-              />
-            </>
+              {createErr ? <div className="error" style={{ marginTop: 10 }}>{createErr}</div> : null}
+              {manualOpen ? (
+                <div style={{ marginTop: 12 }}>
+                  <NewModel
+                    prefill={defPrefill}
+                    developer={developer}
+                    onDataset={setPickedDataset}
+                    onCreated={(m) => { setModel(m); setStage((s) => goTo(SCI_STAGES, markDone(s, 'design'), 'launch', { ...ctx, hasSpec: true })); }}
+                  />
+                </div>
+              ) : null}
+            </div>
           )
         ) : null}
 
-        {stage.current === 'train' ? (
+        {stage.current === 'launch' ? (
           model?.spec ? (
-            <TrainStep model={model} canManage={canManage} onChanged={refresh} />
+            <LaunchStep model={model} canManage={canManage} developer={developer} startNonce={launchNonce} onChanged={refresh} />
           ) : (
-            <div className="card"><div className="muted">Define a build spec before training this model.</div></div>
+            <div className="card"><div className="muted">Design the model before launching it.</div></div>
           )
-        ) : null}
-
-        {stage.current === 'deploy' ? (
-          model?.spec ? (
-            <DeployStep model={model} canManage={canManage} onChanged={refresh} />
-          ) : (
-            <div className="card"><div className="muted">Train the model before deploying it.</div></div>
-          )
-        ) : null}
-
-        {stage.current === 'predict' ? (
-          model ? (
-            <PredictPanel
-              model={model}
-              onResult={(r) => { setLastResult(r); setPredicted(true); setStage((s) => markDone(s, 'predict')); }}
-            />
-          ) : null
         ) : null}
 
         {stage.current === 'monitor' && model ? (
           <MonitorStage
             model={model}
+            developer={developer}
             lastMetric={lastMetric}
             canManage={canManage}
             canApprove={canApprove}
             onChanged={refresh}
             onOpenConsole={onOpenConsole}
+            tryItRef={tryItRef}
+            onPredicted={(r) => { setLastResult(r); setPredicted(true); setStage((s) => markDone(s, 'monitor')); }}
           />
         ) : stage.current === 'monitor' ? (
-          <div className="chat-empty">Deploy the model first — there is nothing to monitor yet.</div>
+          <div className="chat-empty">Launch the model first — there is nothing to monitor yet.</div>
         ) : null}
       </StageShell>
-      )}
     </ConfirmProvider>
   );
 }
 
 /* ─────────────────────────── Developer surface ─────────────────────────── */
 
-/**
- * The Science Developer view — shows the real model training/serving spec (`model.spec`)
- * as JSON, plus the compiled predict policy, build state, metrics and runtime references.
- * Everything shown is real data from ModelSummary — nothing is fabricated. Read-only.
- * When no model exists yet (new, un-saved draft), a note explains what will appear here.
- */
-function ScienceDeveloperView({ model }: { model: ModelSummary | null }) {
-  if (!model) {
-    return (
-      <div className="grant-block" style={{ marginTop: 4 }}>
-        <div className="comp-label">Model spec (JSON)</div>
-        <p className="hint" style={{ marginTop: 4 }}>
-          Define and save a model in the Simple flow — the training spec appears here once
-          it&apos;s registered.
-        </p>
-      </div>
-    );
-  }
-
+function ScienceDeveloperView({ model }: { model: ModelSummary }) {
   const raw = {
     model: model.model,
     buildState: model.buildState ?? 'draft',
@@ -375,17 +343,16 @@ function ScienceDeveloperView({ model }: { model: ModelSummary | null }) {
     mlflowRunId: model.mlflowRunId ?? null,
     versions: model.versions,
     policy: model.policy,
+    usage: model.usage ?? null,
     lastTrainingError: model.lastTrainingError ?? null,
     lastDeployError: model.lastDeployError ?? null,
   };
-
   return (
-    <div className="grant-block" style={{ marginTop: 4 }}>
+    <div className="grant-block" style={{ marginTop: 4, marginBottom: 4 }}>
       <div className="comp-label">Model spec &amp; policy (JSON)</div>
       <p className="hint" style={{ marginTop: 4 }}>
-        Read-only — the training/serving spec registered in the science registry, plus the
-        compiled OPA predict policy. Build state:{' '}
-        <span className="mono">{model.buildState ?? 'draft'}</span>
+        Read-only — the training/serving spec registered in the science registry, plus the compiled OPA
+        predict policy and real usage. Build state: <span className="mono">{model.buildState ?? 'draft'}</span>
         {model.kserveService ? <> · serving: <span className="mono">{model.kserveService}</span></> : null}
         {model.mlflowRunId ? <> · MLflow run: <span className="mono">{model.mlflowRunId}</span></> : null}
       </p>
@@ -399,37 +366,49 @@ function ScienceDeveloperView({ model }: { model: ModelSummary | null }) {
 /* ─────────────────────────── Monitor ─────────────────────────── */
 
 /**
- * The Monitor stage — the model's live health + its governance controls, all on a DEPLOYED
- * model. Metrics are the real registered headline number; drift telemetry is not wired to a
- * real monitor yet, so it is an HONEST placeholder (no fabricated drift charts). Lifecycle
- * reuses the shared PromoteButton — Archive/Restore/Delete moved to the persistent detail header.
+ * The Monitor stage of a DEPLOYED model — (a) Try it on a real row, (b) live Health (ISVC ready
+ * + the real registered metric), (c) real Usage (count/denied/last-called + a score-distribution
+ * chart from `buckets`; honest empty state when nothing has been scored), (d) Govern (promote /
+ * demote / lifecycle). No fabricated drift badges — monitoring is what actually exists.
  */
 function MonitorStage({
-  model, lastMetric, canManage, canApprove, onChanged, onOpenConsole,
+  model, developer, lastMetric, canManage, canApprove, onChanged, onOpenConsole, tryItRef, onPredicted,
 }: {
   model: ModelSummary;
-  lastMetric: string;
+  developer: boolean;
+  lastMetric: string | null;
   canManage: boolean;
   canApprove: boolean;
   onChanged: () => void;
   onOpenConsole: () => void;
+  tryItRef: React.RefObject<HTMLDivElement | null>;
+  onPredicted: (r: PredictResult) => void;
 }) {
+  const usage = model.usage;
+  const scored = usage ? Object.values(usage.buckets).reduce((n, day) => n + Object.values(day).reduce((a, b) => a + b, 0), 0) : 0;
+
   return (
     <div>
-      <div className="section-title" style={{ marginTop: 4 }}>Metrics</div>
+      <div className="section-title" style={{ marginTop: 4 }}>Try it</div>
+      <div ref={tryItRef}>
+        <PredictPanel model={model} developer={developer} onResult={onPredicted} />
+      </div>
+
+      <div className="section-title">Health</div>
       <div className="card">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-          <Kv k="Headline metric" v={lastMetric || '— not recorded yet'} />
+          <Kv k="Status" v={model.buildState === 'deployed' ? 'Live and serving' : (BUILD_STATE[model.buildState ?? 'draft'].label)} />
+          <Kv k="Accuracy on held-back data" v={lastMetric ?? '— not recorded yet'} />
           <Kv k="Serving endpoint" v={model.kserveService ?? '—'} mono />
           <Kv k="Latest version" v={model.versions[0]?.version ?? '— none registered'} mono />
         </div>
-        {model.versions.length ? (
+        {developer && model.versions.length ? (
           <>
             <div className="comp-label" style={{ marginTop: 16 }}>Versions</div>
             <div className="tile-meta muted" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
               {model.versions.map((v) => (
                 <span key={v.version}>
-                  <code>{v.version}</code> · {v.stage} · AUC {v.auc.toFixed(3)}
+                  <code>{v.version}</code> · {v.stage} · {v.metricName ?? 'metric'} {(v.metric ?? v.auc).toFixed(3)}
                   {v.certified ? <span className="badge ok" style={{ marginLeft: 6 }}>certified</span> : null}
                 </span>
               ))}
@@ -438,29 +417,43 @@ function MonitorStage({
         ) : null}
       </div>
 
-      <div className="section-title">Drift</div>
-      <div className="card" style={{ borderLeft: '3px solid var(--gold)' }}>
-        <p style={{ marginTop: 0 }} className="muted">
-          Live drift telemetry isn’t wired to a real monitor for this model yet — no fabricated
-          charts here. Once a serving-side feature/label monitor is in place, input drift and
-          prediction drift will render inline. The metric above is the model’s real registered score.
-        </p>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <span className="badge muted">Input drift — not yet monitored</span>
-          <span className="badge muted">Prediction drift — not yet monitored</span>
-        </div>
+      <div className="section-title">Usage</div>
+      <div className="card">
+        {usage && usage.count > 0 ? (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+              <Kv k="Predictions" v={String(usage.count)} />
+              <Kv k="Denied by governance" v={String(usage.denied)} />
+              <Kv k="Last called" v={usage.lastCalledAt ? new Date(usage.lastCalledAt).toLocaleString() : '—'} />
+            </div>
+            {scored > 0 ? (
+              <>
+                <div className="comp-label" style={{ marginTop: 16 }}>Score distribution</div>
+                <UsageChart usage={usage} />
+              </>
+            ) : (
+              <p className="hint" style={{ marginTop: 12 }}>
+                Calls recorded, but none returned a score to chart yet (denied or unscored).
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="muted" style={{ margin: 0 }}>
+            No predictions yet. Once this model is called — from Try it above, an app, or an agent — its usage
+            and score distribution appear here.
+          </p>
+        )}
       </div>
 
       {canManage ? (
         <>
-          <div className="section-title">Lifecycle</div>
+          <div className="section-title">Govern</div>
           <div className="card">
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <div>
                 <div className="comp-label">Promote up the ladder</div>
                 <p className="hint" style={{ marginTop: 0 }}>
-                  Promoting/certifying widens who can call <code>predict</code> — automatically, via the
-                  compiled policy. No separate publish step.
+                  Promoting/certifying widens who can call <code>predict</code> — automatically, via the compiled policy.
                 </p>
               </div>
               <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -480,22 +473,21 @@ function MonitorStage({
                 />
               </div>
             </div>
-            {/* Archive / Restore / Delete now live in the persistent detail header (reachable
-                from any stage). Only Promote remains here as a stage-specific action. */}
           </div>
         </>
       ) : null}
 
-      <div className="section-title">Developer</div>
-      <div className="card">
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <span className="muted">
-            Drop into the raw Layer-4 stack — notebooks, the experiment registry, the feature store and the
-            serving runtime.
-          </span>
-          <button className="btn ghost" onClick={onOpenConsole}>Open console →</button>
-        </div>
-      </div>
+      {developer ? (
+        <>
+          <div className="section-title">Developer</div>
+          <div className="card">
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <span className="muted">Drop into the raw Layer-4 stack — notebooks, the experiment registry and the serving runtime.</span>
+              <button className="btn ghost" onClick={onOpenConsole}>Open console →</button>
+            </div>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

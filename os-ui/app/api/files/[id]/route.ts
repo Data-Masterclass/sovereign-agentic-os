@@ -15,12 +15,20 @@ import { purgeFileObjects } from '@/lib/files/physical-delete';
 import { deleteBlob } from '@/lib/files/object-store';
 import '@/lib/files/object-store-server'; // registers the durable MinIO backend
 import type { IndexingMode, Sensitivity } from '@/lib/files/asset-schema';
+import { appSlugFromRequest, checkAppGrant } from '@/lib/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 
 /** GET one file (envelope + preview text + version history). */
-export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
   const { id } = params;
+  // LEAST-PRIVILEGE for app origins: a deployed app may only read a file it was
+  // granted. Non-app requests (the OS UI) skip this (appSlugFromRequest → null).
+  const slug = appSlugFromRequest(req);
+  if (slug) {
+    const check = await checkAppGrant(slug, 'files', id);
+    if (!check.allowed) return NextResponse.json({ error: check.reason }, { status: 403 });
+  }
   return NextResponse.json(getFile(id, user));
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
 

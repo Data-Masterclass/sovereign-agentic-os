@@ -6,6 +6,7 @@ import { config } from '@/lib/core/config';
 import { requireUser } from '@/lib/core/auth';
 import { errorResponse } from '@/lib/data/server';
 import { dlsFilter } from '@/lib/knowledge/retrieve';
+import { appSlugFromRequest, grantedIdSet } from '@/lib/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +30,7 @@ const base = () => `${config.opensearchUrl}/${config.knowledgeIndex}`;
 
 type Doc = { id: string; title: string; excerpt: string; source: string; ingestedAt: string | null };
 
-export async function GET() {
+export async function GET(req: Request) {
   let principal;
   try {
     const u = await requireUser();
@@ -74,9 +75,20 @@ export async function GET() {
         ingestedAt: src.ingested_at ? String(src.ingested_at) : null,
       };
     });
-    const total =
-      typeof data?.hits?.total?.value === 'number' ? data.hits.total.value : docs.length;
-    return NextResponse.json({ index: config.knowledgeIndex, total, docs });
+    // LEAST-PRIVILEGE for app origins: narrow the DLS-scoped docs to (user access ∩
+    // app grants). The OS UI is untouched (appSlugFromRequest → null, no I/O). `total`
+    // reflects the docs actually returned so the app never sees a phantom count.
+    const slug = appSlugFromRequest(req);
+    const shown = slug
+      ? await (async () => {
+          const granted = await grantedIdSet(slug, 'knowledge');
+          return docs.filter((d) => granted.has(d.id));
+        })()
+      : docs;
+    const total = slug
+      ? shown.length
+      : typeof data?.hits?.total?.value === 'number' ? data.hits.total.value : docs.length;
+    return NextResponse.json({ index: config.knowledgeIndex, total, docs: shown });
   } catch (e) {
     return NextResponse.json(
       { error: `Could not reach OpenSearch: ${(e as Error).message}` },

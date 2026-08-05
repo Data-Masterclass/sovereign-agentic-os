@@ -9,6 +9,7 @@ import { delegatedToken } from '@/lib/infra/identity-server';
 import { getMetric } from '@/lib/metrics/store';
 import { exploreMetric } from '@/lib/metrics/build/explore-server';
 import type { Granularity } from '@/lib/metrics/explorer';
+import { appSlugFromRequest, checkAppGrant } from '@/lib/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,9 +28,17 @@ export const POST = withRoute<Record<string, string>, {
   /** Equality cross-filters (P1-4) — the chip vocabulary; reconciled loudly by exploreMetric
    *  (a non-view column is dropped + reported, never silently applied). */
   filters?: { column: string; values: string[] }[];
-}>(async ({ user, body }) => {
+}>(async ({ user, body, req }) => {
   const metricId = (body.metricId ?? '').trim();
   if (!metricId) return NextResponse.json({ error: 'metricId is required' }, { status: 400 });
+
+  // LEAST-PRIVILEGE for app origins: a deployed app may only explore a metric it was
+  // granted. Non-app requests (the OS UI) skip this (appSlugFromRequest → null).
+  const slug = appSlugFromRequest(req);
+  if (slug) {
+    const check = await checkAppGrant(slug, 'metrics', metricId);
+    if (!check.allowed) return NextResponse.json({ error: check.reason }, { status: 403 });
+  }
 
   const record = getMetric(metricId, user);
   const { token } = await delegatedToken('domain', { region: body.viewerRegion });

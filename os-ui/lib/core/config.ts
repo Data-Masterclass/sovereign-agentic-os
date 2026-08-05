@@ -278,6 +278,19 @@ export const config = {
   appsIngressClass: env('OS_APPS_INGRESS_CLASS', 'nginx'),
   appsTlsIssuer: env('OS_APPS_TLS_ISSUER', 'letsencrypt-prod'),
 
+  // Software golden path — Phase B DIRECT BUILD SERVICE (lib/software/build-service.ts).
+  // Instead of the Forgejo Actions DIND runner producing the serving image off-thread,
+  // os-ui submits an in-cluster KANIKO batch/v1 Job that builds the app's Dockerfile
+  // from its Forgejo git tree at the committed SHA and pushes a DIGEST-tagged image to
+  // the in-cluster registry — which the runner then serves digest-pinned (no `:latest`
+  // roll dance). Gated ON only when the chart grants the build-Job RBAC + namespace
+  // (softwareBuild.enabled → SOFTWARE_BUILD_SERVICE=true); OFF everywhere else, where
+  // the pipeline says so specifically and the Forgejo Actions path still serves. The
+  // kaniko executor image is pinned (no daemon, runs under the apps-namespace PSS).
+  softwareBuildEnabled: env('SOFTWARE_BUILD_SERVICE', '') === 'true',
+  softwareBuildNamespace: env('SOFTWARE_BUILD_NAMESPACE', 'agentic-apps'),
+  kanikoImage: env('KANIKO_IMAGE', 'gcr.io/kaniko-project/executor:v1.23.2'),
+
   // Hermes autonomous runtime (Layer 1, opt-in). GATED OFF by default — the chart
   // sets HERMES_ENABLED=true only when `hermes.enabled` is on (never in base/kind).
   // When off the Agent tab still SHOWS the runtime option (documented) but the

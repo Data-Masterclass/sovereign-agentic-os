@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { trace } from '@/lib/infra/agent-governed';
-import { authorizePredict, ensureModelsHydrated, getModel } from './model-service.ts';
+import { authorizePredict, ensureModelsHydrated, getModel, recordUsage } from './model-service.ts';
 import { predictTool, CHURN, DEFAULT_FEATURES, type ChurnFeatures } from './churn.ts';
 import { isvcServiceUrl } from './deploy.ts';
 import type { ServiceModel } from './types.ts';
@@ -101,10 +101,12 @@ export async function servePredict(opts: {
   };
 
   if (authz.decision === 'deny') {
+    recordUsage(modelId, { allowed: false }); // real usage: a denied call still counts (honest total)
     const tr = await trace({ principal: opts.principal, tool: 'predict', input: { account, model: modelId, frontDoor: authz.frontDoor }, output: { denied: authz.reason }, decision: 'deny' });
     return { status: 403, body: { ...common, traceId: tr.id } };
   }
   if (authz.decision === 'requires_approval') {
+    recordUsage(modelId, { allowed: false }); // held (not scored) → counts, no score bucket
     const tr = await trace({ principal: opts.principal, tool: 'predict', input: { account, model: modelId, frontDoor: authz.frontDoor }, output: { held: authz.reason }, decision: 'requires_approval' });
     return { status: 202, body: { ...common, traceId: tr.id } };
   }
@@ -114,6 +116,7 @@ export async function servePredict(opts: {
   if (modelId === CHURN.model) {
     const features: ChurnFeatures = { ...DEFAULT_FEATURES, ...(opts.features ?? {}) } as ChurnFeatures;
     const r = await predictTool(account, features);
+    recordUsage(modelId, { allowed: true, score: r.score, taskType: 'binary_classification' });
     const tr = await trace({
       principal: opts.principal,
       tool: 'predict',
@@ -132,6 +135,7 @@ export async function servePredict(opts: {
     const reason = !m.spec
       ? 'this model has no spec — define + train it first'
       : `model is not deployed (buildState ${m.buildState ?? 'draft'}) — deploy it to enable predict`;
+    recordUsage(modelId, { allowed: true }); // governance allowed but nothing scored → count, no score bucket
     const tr = await trace({ principal: opts.principal, tool: 'predict', input: { account, model: modelId, frontDoor: authz.frontDoor }, output: { error: reason }, decision: 'allow' });
     return { status: 409, body: { ...common, error: reason, traceId: tr.id } };
   }
@@ -140,11 +144,13 @@ export async function servePredict(opts: {
   if (!r.ok) {
     // HONEST failure — a deployed model whose endpoint does not answer is a 502,
     // never a fabricated score.
+    recordUsage(modelId, { allowed: true }); // allowed but the endpoint failed → count, no score bucket
     const tr = await trace({ principal: opts.principal, tool: 'predict', input: { account, model: modelId, frontDoor: authz.frontDoor, features }, output: { error: r.reason }, decision: 'allow' });
     return { status: 502, body: { ...common, error: r.reason, traceId: tr.id } };
   }
   const isBinary = m.spec.taskType === 'binary_classification';
   const score = isBinary ? Math.min(0.999, Math.max(0.001, r.score)) : r.score;
+  recordUsage(modelId, { allowed: true, score, taskType: m.spec.taskType });
   const tr = await trace({
     principal: opts.principal,
     tool: 'predict',

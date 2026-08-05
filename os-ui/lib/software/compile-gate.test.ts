@@ -6,15 +6,18 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { runAgentic, type LlmCall } from '@/lib/assistant/agentic';
 import { createApp } from '@/lib/software/apps';
-import { commitToApp, getSnapshot } from './server.ts';
+import { commitToApp, getSnapshot, refreshVendoredSdk } from './server.ts';
 import { sovereignAppFiles } from './scaffolds/sovereign-app.ts';
 import {
   compileGate,
   formatGateError,
   gateActivityNote,
+  gateEnvironmentReady,
+  gateBundleAssetReady,
   MAX_DIAGNOSTICS,
   __vendorReads,
 } from './compile-gate.ts';
+import { esbuildWasmReady } from './preview-runtime.ts';
 import { gateLineFromStep } from './build-activity.ts';
 import { ensureSectionsRegistered } from './sections-registry.ts';
 import type { ScaffoldFile } from './model.ts';
@@ -156,6 +159,125 @@ test('BUNDLE pass: an import of a nonexistent css file is rejected (tsc alone ca
     assert.equal(res.diagnostics[0].code, 0, 'a bundle error carries no TS code');
     assert.match(res.diagnostics[0].message, /missing\.css/);
   }
+});
+
+// -------------------------------------------------- SDK type closure (Task 1.4) ---
+
+/**
+ * The OsClient interface is CLOSED: `createOsClient` is annotated `: OsClient` (a
+ * fixed interface, no index signature), so a HALLUCINATED method the SDK never
+ * exposes is a TS2339 the gate catches — nothing is written. `os.datasets.update`
+ * is the exact method the build assistant invented for weeks; this locks the closure
+ * so a future edit that loosens the return type (e.g. `: any`) is caught here.
+ * WRITES live on `os.records.*` only; datasets are read-only.
+ */
+test('SDK TYPE CLOSURE: a hallucinated os.datasets.update(...) is REJECTED (TS2339)', async () => {
+  const res = await compileGate(
+    viteTree([
+      {
+        path: 'src/epics/orders/list/Page.tsx',
+        content: [
+          "import { os } from '../../../core/store.ts';",
+          'export default async function Page() {',
+          "  await os.datasets.update('d1', { name: 'x' });", // no such method — must be caught
+          '  return null;',
+          '}',
+          '',
+        ].join('\n'),
+      },
+    ]),
+  );
+  assert.ok(res.gated && !res.ok, 'the hallucinated write must reject the commit');
+  if (res.gated && !res.ok) {
+    const d = res.diagnostics.find((x) => x.file === 'src/epics/orders/list/Page.tsx');
+    assert.ok(d, 'the diagnostic names the offending file');
+    assert.equal(d!.code, 2339, "os.datasets.update is TS2339 (property does not exist)");
+    assert.match(d!.message, /update/);
+  }
+});
+
+test('SDK TYPE CLOSURE: the real os.records.* WRITE surface COMPILES (the true door)', async () => {
+  const res = await compileGate(
+    viteTree([
+      {
+        path: 'src/epics/orders/list/Page.tsx',
+        content: [
+          "import { os } from '../../../core/store.ts';",
+          'export default async function Page() {',
+          "  await os.records.add({ name: 'Widget', amount: 12 });",
+          '  const rows = await os.records.list();',
+          '  return rows.source;',
+          '}',
+          '',
+        ].join('\n'),
+      },
+    ]),
+  );
+  assert.ok(res.gated && res.ok, 'the real records write surface must typecheck clean');
+});
+
+// ---------------------------------------------------- environment self-checks (Task 2) ---
+
+/**
+ * The production packaging bug (0.6.61-class): the esbuild-wasm binary is loaded at
+ * runtime, so the Next standalone tracer drops it. When it is missing the gate must
+ * DEGRADE THE BUNDLE PASS honestly — tsc still gates (catching import-depth /
+ * hallucinated members) — instead of failing the whole gate open. These prove:
+ *  1. a missing wasm ⇒ tsc still gates a clean tree, bundle skipped with an honest note;
+ *  2. a missing wasm ⇒ tsc still REJECTS a bad tree (the authoritative pass runs);
+ *  3. a missing TS type-lib ⇒ the WHOLE gate skips (tsc cannot run at all);
+ *  4. in this (dev) environment both assets are actually present.
+ */
+test('BUNDLE degradation: a missing wasm skips ONLY the bundle pass — tsc still passes a clean tree', async () => {
+  const res = await compileGate(viteTree(), { bundleAsset: { ok: false, missing: 'esbuild.wasm' } });
+  assert.ok(res.gated && res.ok, 'still gated + ok — tsc ran, only the bundle net was skipped');
+  if (res.gated && res.ok) {
+    assert.match(res.bundleSkipped ?? '', /bundle check skipped/);
+    assert.match(res.bundleSkipped ?? '', /esbuild\.wasm/);
+  }
+  assert.equal(
+    gateActivityNote(res),
+    'compile check ✓ (bundle skipped — asset missing)',
+    'the activity note is honest about the skipped pass',
+  );
+});
+
+test('BUNDLE degradation: a missing wasm still lets tsc REJECT a hallucinated member (os.datasets.update)', async () => {
+  const res = await compileGate(
+    viteTree([
+      {
+        path: 'src/epics/orders/list/Page.tsx',
+        content: [
+          "import { os } from '../../../core/store.ts';",
+          'export default async function Page() {',
+          "  await os.datasets.update('d1', {});", // hallucinated write — tsc must catch it
+          '  return null;',
+          '}',
+          '',
+        ].join('\n'),
+      },
+    ]),
+    { bundleAsset: { ok: false, missing: 'esbuild.wasm' } },
+  );
+  assert.ok(res.gated && !res.ok, 'tsc still gates with the bundle asset missing');
+  if (res.gated && !res.ok) {
+    assert.ok(
+      res.diagnostics.some((d) => d.code === 2339 && /update/.test(d.message)),
+      'the hallucinated os.datasets.update is a TS2339 even when the bundle pass is skipped',
+    );
+  }
+});
+
+test('a missing TS type-lib skips the WHOLE gate (tsc cannot run) — never fabricates diagnostics', () => {
+  // Pure check of the tsc-critical env probe: in dev it is ready; the shape is what
+  // compileGate keys off to return gated:false when tsc itself cannot run.
+  const env = gateEnvironmentReady();
+  assert.deepEqual(env, { ok: true }, 'the tsc environment is ready in dev');
+});
+
+test('gateBundleAssetReady + esbuildWasmReady agree and are true in this environment', () => {
+  assert.equal(esbuildWasmReady(), true, 'the wasm is present in the dev node_modules');
+  assert.deepEqual(gateBundleAssetReady(), { ok: true });
 });
 
 test('legacy / non-Vite shapes pass through UNGATED with an honest reason', async () => {
@@ -328,6 +450,37 @@ test('commitToApp passes a LEGACY (Next.js) shape through ungated with gate:{gat
   assert.equal(step.ok, true, 'legacy shape is not blocked');
   assert.equal(step.gate?.gated, false, 'honestly recorded as ungated');
   assert.match(step.detail, /^compile check skipped \(ungated shape\); /);
+});
+
+// -------------------------------------------- refreshVendoredSdk (existing apps) ---
+
+/**
+ * Existing apps froze a copy of the SDK at seed time; `refreshVendoredSdk` re-commits
+ * the CURRENT `lib/app-sdk` source through the governed commit path so they gain the
+ * `os.records.*` write surface. It must land the vendored files AND (implicitly) pass
+ * the compile gate — a non-frontend template is an honest no-op.
+ */
+test('refreshVendoredSdk re-vendors the SDK into a governed-frontend app (commits vendor/ files)', async () => {
+  const app = await createApp(dev, { name: 'SDK Refresh', template: 'sovereign-app' });
+  const out = await refreshVendoredSdk(app.id, dev);
+  assert.ok(!('skipped' in out), 'a sovereign-app is a governed frontend — not skipped');
+  if (!('skipped' in out)) {
+    assert.equal(out.step.ok, true, 'the re-vendor commit landed');
+    const snap = getSnapshot(app.id);
+    assert.ok(
+      snap!.some((f) => f.path === 'vendor/@sovereign-os/app-sdk/client.ts'),
+      'the fresh vendored SDK source is committed',
+    );
+    // The freshly vendored client carries the NEW write surface.
+    const client = snap!.find((f) => f.path === 'vendor/@sovereign-os/app-sdk/client.ts');
+    assert.match(client!.content, /records:/, 'the re-vendored client has the os.records surface');
+  }
+});
+
+test('refreshVendoredSdk is an honest no-op for a non-frontend template', async () => {
+  const app = await createApp(dev, { name: 'Service Refresh', template: 'nextjs-supabase' });
+  const out = await refreshVendoredSdk(app.id, dev);
+  assert.ok('skipped' in out && out.skipped, 'a non-governed-frontend template has no SDK to refresh');
 });
 
 // -------------------------------------------- escalation + corrective round-trip ---

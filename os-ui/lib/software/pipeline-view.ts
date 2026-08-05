@@ -44,7 +44,23 @@ export const PIPELINE_STAGE_LABEL: Record<PipelineStageId, string> = {
 export type DeployFacts = {
   state: 'building' | 'preview' | 'review' | 'live';
   releases: number;
+  /**
+   * Phase D: how the app is served. In 'runtime' mode the OS serves the committed
+   * tree directly (no image build), so the image stages (Build image / Publish to
+   * registry / Deploy) are NOT-APPLICABLE — shown as skipped, never failing. Optional
+   * + defaults to 'image' so every existing caller keeps the historic image view.
+   */
+  serveMode?: 'image' | 'runtime';
 };
+
+/**
+ * The stages that only exist in the per-app-IMAGE path. In runtime serving these are
+ * not-applicable (the OS bundles + serves the tree itself), so they render as skipped.
+ */
+const IMAGE_ONLY_STAGES: ReadonlySet<PipelineStageId> = new Set(['actions', 'harbor', 'argocd']);
+
+/** The commentary shown for a runtime-served app — no image build is involved. */
+export const RUNTIME_SERVE_MSG = 'OS runtime serving — no image build required.';
 
 /**
  * A LIVE, SERVING app: the reconciled deploy state is `live` AND a release has
@@ -96,6 +112,13 @@ export const PIPELINE_MSG = {
  * still-incomplete stage is the 'active' one; a failed stage marks the run failed.
  */
 export function derivePipelineView(pipeline: Record<string, string>, deploy: DeployFacts): PipelineView {
+  // Phase D: a runtime-served app has NO image pipeline. The image-only stages are
+  // not-applicable (rendered as complete + re-labelled "(n/a)", never failing), the
+  // scaffold + live/health stages reflect real state, and the commentary states the
+  // OS is serving directly. This is its own honest view — not a force-green of a
+  // failed image build (there is no image build to fail).
+  if (deploy.serveMode === 'runtime') return runtimeServeView(pipeline);
+
   const serving = isServingLive(deploy);
   let firstPendingSeen = false;
   const steps: Step[] = PIPELINE_STAGES.map((s) => {
@@ -127,5 +150,36 @@ export function derivePipelineView(pipeline: Record<string, string>, deploy: Dep
   else if (serving) commentary = `${PIPELINE_MSG.staleLivePrefix}: ${failedStep!.label}.`;
   else commentary = `${PIPELINE_MSG.incompletePrefix}: ${failedStep!.label}.`;
 
+  return { steps, active: !done, done, ok, commentary };
+}
+
+/**
+ * The Phase-D runtime-serving pipeline view. The image-only stages (Build image /
+ * Publish to registry / Deploy) are NOT-APPLICABLE — the OS bundles + serves the tree
+ * itself — so they render as complete and RE-LABELLED "(n/a)" (honest: skipped, never
+ * failing). The scaffold + live/health stages reflect real recorded state so a genuine
+ * problem still surfaces; a runtime app is "live" once its tree exists (scaffold ok).
+ * The commentary is the single runtime line — identical in Test and Publish.
+ */
+function runtimeServeView(pipeline: Record<string, string>): PipelineView {
+  const steps: Step[] = PIPELINE_STAGES.map((s) => {
+    if (IMAGE_ONLY_STAGES.has(s)) {
+      // Not-applicable: complete + relabelled so it reads as skipped, never as a failure.
+      return { key: s, label: `${PIPELINE_STAGE_LABEL[s]} (n/a — runtime)`, state: 'done' as StepState };
+    }
+    // Scaffold + live: the tree existing IS the runtime app being served — the scaffold
+    // stage's real status carries; the live stage is done once the repo/tree is present.
+    const raw = pipeline[s] ?? 'pending';
+    if (s === 'live') {
+      const scaffoldOk = rawStageState(pipeline.forgejo ?? 'pending') === 'done';
+      return { key: s, label: PIPELINE_STAGE_LABEL[s], state: (scaffoldOk ? 'done' : 'pending') as StepState };
+    }
+    return { key: s, label: PIPELINE_STAGE_LABEL[s], state: rawStageState(raw) };
+  });
+  const failedStep = steps.find((st) => st.state === 'fail');
+  const anyPending = steps.some((st) => st.state === 'active' || st.state === 'pending');
+  const done = !!failedStep || !anyPending;
+  const ok = !failedStep;
+  const commentary = ok ? RUNTIME_SERVE_MSG : `${RUNTIME_SERVE_MSG} A stage needs attention: ${failedStep!.label}.`;
   return { steps, active: !done, done, ok, commentary };
 }

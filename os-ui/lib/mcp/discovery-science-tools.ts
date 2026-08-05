@@ -93,6 +93,10 @@ import { CHURN, DEFAULT_FEATURES } from '@/lib/science/churn';
 /** The model card shape both science tools return (never the raw model). */
 function modelCard(m: ReturnType<typeof listModelsForUser>[number]) {
   const production = m.versions.find((v) => v.stage === 'Production') ?? m.versions[0];
+  // The metric NAME + VALUE for the headline version — auc/rmse/… (never a mislabeled AUC).
+  // Prefer the model's recorded metrics; fall back to the version's own name/value.
+  const metricName = m.metrics?.primaryMetric ?? production?.metricName ?? m.spec?.optimizeMetric;
+  const metricValue = typeof m.metrics?.primary === 'number' ? m.metrics.primary : production?.metric ?? production?.auc;
   return {
     model: m.model,
     name: m.name,
@@ -100,10 +104,23 @@ function modelCard(m: ReturnType<typeof listModelsForUser>[number]) {
     domain: m.domain,
     tier: m.tier,
     stage: m.stage,
+    // The MLOps build lifecycle (draft → training → … → deployed) — what state the model is really in.
+    buildState: m.buildState ?? 'draft',
     frontDoors: m.frontDoors,
     consumptionMode: m.consumptionMode,
     versions: m.versions,
-    metrics: production ? { version: production.version, auc: production.auc, certified: production.certified } : null,
+    metrics: production
+      ? { version: production.version, metricName, metric: metricValue, auc: production.auc, certified: production.certified }
+      : null,
+    // Real prediction usage recorded on every predict (absent until first called) — never fabricated.
+    usage: m.usage
+      ? { count: m.usage.count, denied: m.usage.denied, lastCalledAt: m.usage.lastCalledAt ?? null }
+      : null,
+    // The honest last failure reasons, when any (so an agent can interpret + retry).
+    lastErrors: {
+      training: m.lastTrainingError ?? null,
+      deploy: m.lastDeployError ?? null,
+    },
     // The churn model's serving contract (features + score bands) — stated only for
     // the model it is true of; other models carry their own cards as they register.
     ...(m.model === CHURN.model
@@ -141,7 +158,7 @@ export const scienceTools: McpTool[] = [
     tab: 'science',
     minRole: 'creator',
     description:
-      'Read one model’s card: features, default feature vector, score bands/threshold, registry versions + metrics (AUC), tier (who may call it) and serving status (stage, front doors, ml.enabled). Path: step 2 of the Science golden path. Before: list_models. After: science_predict with the card’s feature names. Governance: read-only; a model outside your tier scope → not_found (no existence leak) — the same visibility rule `science_predict`’s gate enforces.',
+      'Read one model’s full card: features, default feature vector, score bands/threshold, registry versions + the headline metric (name + value — auc/rmse, never a mislabeled AUC), the build lifecycle state (draft → training → … → deployed), real prediction usage (count / denied / last called), the last training/deploy error (if any), tier (who may call it) and serving status (stage, front doors, ml.enabled). Path: step 2 of the Science golden path. Before: list_models. After: train_model / get_model_status while it is being built, or science_predict once deployed. Governance: read-only; a model outside your tier scope → not_found (no existence leak) — the same visibility rule `science_predict`’s gate enforces.',
     inputSchema: {
       type: 'object',
       properties: { model: { type: 'string', description: 'Registry model name from list_models, e.g. "churn_model".' } },

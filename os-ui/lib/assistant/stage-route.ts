@@ -5,6 +5,7 @@ import 'server-only';
 import { NextResponse } from 'next/server';
 import { assistantComplete } from '@/lib/assistant/complete';
 import { completeWithEscalation } from '@/lib/assistant/escalate';
+import { parseJsonReply, extractJsonArray } from '@/lib/assistant/json-reply';
 
 /**
  * Shared scaffolding for the per-STAGE tab assistants (Data · Metrics · Dashboards ·
@@ -55,23 +56,38 @@ export type StageAssistantOptions = {
 };
 
 /**
- * Strip stray code fences, parse defensively, and guard the expected shape. Returns the
- * parsed value when it matches (`expectArray` ⇒ array, else a plain object), else null.
- * This is the ONE JSON shape guard for a stage — used BOTH as the cost-routing
- * escalation validator and to build the final response, so the two never diverge.
+ * Parse a stage reply TOLERANTLY and guard the expected shape. Returns the parsed value when
+ * it matches (`expectArray` ⇒ array, else a plain object), else null. This is the ONE JSON
+ * shape guard for a stage — used BOTH as the cost-routing escalation validator and to build
+ * the final response, so the two never diverge.
+ *
+ * The tolerant path ({@link parseJsonReply} / {@link extractJsonArray}) recovers the payload
+ * even when a reasoning-tier model wraps it in preamble prose or a stray ```json fence — the
+ * naive `JSON.parse` this replaced returned null on any of that, so a wrapped-but-valid reply
+ * read as "no suggestions" (the Software Design "poorly formatted markdown, no epics" bug).
  */
-function parseStageJson(content: string, expectArray?: boolean): unknown {
-  const cleaned = content.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch {
+export function parseStageJson(content: string, expectArray?: boolean): unknown {
+  if (expectArray) {
+    const cleaned = content.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    try {
+      const whole = JSON.parse(cleaned);
+      if (Array.isArray(whole)) return whole;
+    } catch {
+      /* recover an array embedded in prose below */
+    }
+    const span = extractJsonArray(cleaned);
+    if (span) {
+      try {
+        const arr = JSON.parse(span);
+        if (Array.isArray(arr)) return arr;
+      } catch {
+        /* extracted span still invalid — honest null */
+      }
+    }
     return null;
   }
-  const ok = expectArray
-    ? Array.isArray(parsed)
-    : !!parsed && typeof parsed === 'object' && !Array.isArray(parsed);
-  return ok ? parsed : null;
+  const parsed = parseJsonReply(content);
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
 }
 
 /**

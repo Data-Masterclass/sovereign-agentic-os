@@ -4,7 +4,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { servePredict } from './serve.ts';
-import { _resetModels, upsertModel, churnSeedModel, createModel, type Actor } from './model-service.ts';
+import { _resetModels, upsertModel, getModel, createModel, type Actor } from './model-service.ts';
+import type { ServiceModel } from './types.ts';
+
+/** The churn slice registered as a Domain(sales) model — the tests register it explicitly
+ *  (no fabricated platform seed exists; this is a test fixture, not production state). */
+function churnFixture(): ServiceModel {
+  return {
+    id: 'svc_churn_model', model: 'churn_model', name: 'Churn model', owner: 'system', domain: 'sales',
+    tier: 'Domain', stage: 'Production', frontDoors: ['rest', 'mcp'],
+    versions: [{ version: 'v2', stage: 'Production', metric: 0.871, metricName: 'auc', auc: 0.871, certified: true, runId: 'r' }],
+    spec: {
+      sourceDataProductFqn: 'sales.customer_360', targetColumn: 'churned', taskType: 'binary_classification',
+      algorithm: 'logistic', features: ['recency_days'], trainTestSplit: 0.8, optimizeMetric: 'auc',
+    },
+    buildState: 'deployed', kserveService: 'churn_model',
+  };
+}
 
 /**
  * The GENERIC predict door: `model` selects any registered model (churn stays the
@@ -49,7 +65,7 @@ test('back-compat: no `model` arg scores the churn slice (offline seed) for a gr
   const f = fakeFetch({});
   try {
     _resetModels();
-    upsertModel(churnSeedModel()); // Domain(sales) seed
+    upsertModel(churnFixture()); // Domain(sales) churn slice (test fixture)
     const r = await servePredict({
       account: 'acme',
       principal: 'sales-assistant', // LOCAL_GRANTS carries predict (OPA offline mirror)
@@ -140,6 +156,29 @@ test('an unknown model is a 403 deny (tier scope fails closed) with the model na
     const r = await servePredict({ model: 'nope', principal: 'user:sara', domains: ['sales'], isAgent: false });
     assert.equal(r.status, 403);
     assert.match(String(r.body.reason), /unknown model nope/);
+  } finally {
+    f.restore();
+    _resetModels();
+  }
+});
+
+test('servePredict records REAL usage on both an allowed scored call AND a denied call', async () => {
+  const f = fakeFetch({ predictorScore: 0.42 });
+  try {
+    _resetModels();
+    const m = createModel({ name: 'Lead scoring', spec: spec() }, sara);
+    upsertModel({ ...m, tier: 'Domain', buildState: 'deployed', kserveService: 'lead-scoring' });
+    // Allowed, scored (owner self-consumption) → count + a score bucket.
+    await servePredict({ model: 'lead_scoring', principal: 'user:sara', domains: ['sales'], isAgent: false, features: { recency_days: 1, tenure_months: 2 } });
+    // Denied (out-of-domain caller, tier scope fails) → still counts, denied++.
+    await servePredict({ model: 'lead_scoring', principal: 'mkt-app', domains: ['marketing'], isAgent: false });
+    const u = getModel('lead_scoring')!.usage!;
+    assert.equal(u.count, 2);
+    assert.equal(u.denied, 1);
+    assert.ok(u.lastCalledAt, 'lastCalledAt is stamped');
+    // The allowed 0.42 score landed in a decile bucket (d4) on today's day key.
+    const buckets = Object.values(u.buckets)[0];
+    assert.equal(buckets.d4, 1);
   } finally {
     f.restore();
     _resetModels();

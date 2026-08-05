@@ -27,8 +27,18 @@ export type ModelBuildState =
   | 'deploying'
   | 'deploy_failed'
   | 'deployed'
-  | 'monitored'
   | 'archived';
+
+/** Real per-model prediction usage — recorded on every predict (absent until first called). */
+export type UsageBucketKind = 'decile' | 'value-band';
+export type ModelUsage = {
+  count: number;
+  denied: number;
+  lastCalledAt?: string;
+  bandKind: UsageBucketKind;
+  /** day (`YYYY-MM-DD`) → band key (`d0`..`d9` / `b0`..`b9`) → count of ALLOWED scored calls. */
+  buckets: Record<string, Record<string, number>>;
+};
 
 export type ModelSpec = {
   sourceDataProductFqn: string;
@@ -50,6 +60,11 @@ export type ModelMetrics = {
 export type ModelVersion = {
   version: string;
   stage: ModelStage;
+  /** The primary metric's VALUE for this version (e.g. 0.871 for auc, 12.3 for rmse). */
+  metric: number;
+  /** WHICH metric `metric` is (auc / rmse / f1 …) — so a regression version reads "rmse 12.3". */
+  metricName: string;
+  /** @deprecated back-compat mirror of the value (label may be wrong for non-classification). */
   auc: number;
   certified: boolean;
   runId: string;
@@ -84,8 +99,12 @@ export type ModelSummary = {
   metrics?: ModelMetrics;
   mlflowRunId?: string;
   kserveService?: string;
+  /** The in-flight training Job name (set while training) — shown in the Developer view. */
+  trainingJob?: string;
   lastTrainingError?: string;
   lastDeployError?: string;
+  /** Real per-model prediction usage (absent until the model is first called). */
+  usage?: ModelUsage;
   createdAt?: string;
   updatedAt?: string;
   consumptionMode?: 'read-in-place' | 'fork-allowed';
@@ -100,6 +119,23 @@ export type ModelGroups = {
   mine: ModelSummary[];
   domain: ModelSummary[];
   marketplace: ModelSummary[];
+};
+
+// --- Fused "Train & launch" status (mirrors lib/science/types.ts, rendered verbatim) ---
+
+export type LaunchStepState = 'pending' | 'running' | 'done' | 'failed';
+export type LaunchStep = {
+  key: 'read' | 'train' | 'publish';
+  label: string;
+  state: LaunchStepState;
+  /** The real underlying detail (job name / ISVC phase+reason) — shown in Developer view. */
+  detail?: string;
+};
+export type LaunchStatus = {
+  phase: ModelBuildState;
+  launched: boolean;
+  steps: LaunchStep[];
+  error?: string;
 };
 
 export type PredictResult = {
@@ -148,7 +184,6 @@ export const BUILD_STATE: Record<ModelBuildState, { label: string; dot: string }
   deploying: { label: 'Deploying', dot: 'warn' },
   deploy_failed: { label: 'Deploy failed', dot: 'down' },
   deployed: { label: 'Deployed', dot: 'up' },
-  monitored: { label: 'Monitored', dot: 'up' },
   archived: { label: 'Archived', dot: 'muted' },
 };
 

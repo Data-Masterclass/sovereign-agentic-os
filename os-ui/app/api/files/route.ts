@@ -12,6 +12,7 @@ import { reindexFile } from '@/lib/files/pipeline-server';
 import { truncationError } from '@/lib/files/integrity';
 import { config } from '@/lib/core/config';
 import type { Sensitivity, Storage } from '@/lib/files/asset-schema';
+import { appSlugFromRequest, grantedIdSet } from '@/lib/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +22,16 @@ export const GET = withRoute(async ({ user, req }) => {
   // ?archived=1 additionally returns soft-archived files (their own section), so an
   // archived file stays openable → its preview exposes Restore + Delete (OS-wide rule).
   const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
-  return NextResponse.json(listFiles(user, { includeArchived }));
+  const groups = listFiles(user, { includeArchived });
+  // LEAST-PRIVILEGE for app origins: narrow to (user access ∩ app grants); `facets`
+  // (aggregate counts) is passed through. The OS UI is untouched (slug === null).
+  const slug = appSlugFromRequest(req);
+  if (slug) {
+    const granted = await grantedIdSet(slug, 'files');
+    const keep = <T extends { id: string }>(xs: T[]) => xs.filter((f) => granted.has(f.id));
+    return NextResponse.json({ ...groups, mine: keep(groups.mine), domain: keep(groups.domain), marketplace: keep(groups.marketplace) });
+  }
+  return NextResponse.json(groups);
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
 /** True when a file's bytes should also be kept as indexable extracted text. */

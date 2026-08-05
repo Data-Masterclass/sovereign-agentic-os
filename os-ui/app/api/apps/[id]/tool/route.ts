@@ -3,11 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { getAppForUser, templateFiles } from '@/lib/software/apps';
-import { getSnapshot } from '@/lib/software/snapshot';
-import { runnerStatus, runnerName } from '@/lib/software/runner';
-import { resolveToolOperation, fillPathParams, seedToolResult } from '@/lib/software/tool-exec';
-import { config } from '@/lib/core/config';
+import { getAppForUser } from '@/lib/software/apps';
+import { executeAppTool } from '@/lib/software/app-records';
 import { authorizeAppTool, authorizeConnectionCall, trace } from '@/lib/infra/agent-governed';
 import { enqueue } from '@/lib/governance/approvals';
 
@@ -23,45 +20,10 @@ export const dynamic = 'force-dynamic';
  * EXECUTION honesty: when the app's runner pod is actually RUNNING, the call is
  * proxied to the app's real in-cluster Service per its committed OpenAPI and
  * labelled `source:'live-app'`. Otherwise deterministic seed data keeps the flow
- * demonstrable — ALWAYS labelled `source:'demo-seed'` with a visible note.
+ * demonstrable — ALWAYS labelled `source:'demo-seed'` with a visible note. That
+ * live-or-seed execution is the SHARED executor (`executeAppTool`, app-records.ts)
+ * the app's own by-slug records routes also call — one store, two doors.
  */
-
-/** Proxy the tool call to the app's real in-cluster Service (`http://app-<slug>.<ns>`). */
-async function callLiveApp(
-  slug: string,
-  op: { method: string; path: string },
-  args: Record<string, unknown>,
-): Promise<Record<string, unknown> | null> {
-  const path = fillPathParams(op.path, args);
-  const base = `http://${runnerName(slug)}.${config.softwareRunnerNamespace}`;
-  const isGet = op.method === 'GET' || op.method === 'HEAD';
-  const query = isGet && Object.keys(args).length > 0
-    ? '?' + new URLSearchParams(Object.entries(args).map(([k, v]) => [k, String(v)])).toString()
-    : '';
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 5000);
-  try {
-    const res = await fetch(`${base}${path}${query}`, {
-      method: op.method,
-      headers: { accept: 'application/json', ...(isGet ? {} : { 'content-type': 'application/json' }) },
-      body: isGet ? undefined : JSON.stringify(args),
-      cache: 'no-store',
-      signal: ctrl.signal,
-    });
-    const raw = await res.text();
-    let body: unknown;
-    try {
-      body = raw ? JSON.parse(raw) : null;
-    } catch {
-      body = raw.slice(0, 2000);
-    }
-    return { source: 'live-app', endpoint: `${op.method} ${path}`, status: res.status, body };
-  } catch {
-    return null; // service unreachable despite a running pod → honest demo fallback
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   let user;
@@ -124,16 +86,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     );
   }
 
-  // Execute: proxy to the REAL app when its runner pod is running, else demo seed.
+  // Execute: proxy to the REAL app when its runner pod is running, else demo seed —
+  // the SHARED executor the app's own records routes also use (one store, two doors).
   const args = (body.args ?? {}) as Record<string, unknown>;
-  let result: Record<string, unknown> | null = null;
-  const status = await runnerStatus({ slug: app.slug });
-  if (status.live && status.phase === 'running') {
-    const files = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
-    const op = resolveToolOperation(files, tool);
-    if (op) result = await callLiveApp(app.slug, op, args);
-  }
-  if (!result) result = seedToolResult(tool, args);
+  const result = await executeAppTool(app, tool, args);
 
   const tr = await trace({ principal, tool, input: body.args ?? {}, output: result, decision: 'allow', costUsd: 0.0004 });
   return NextResponse.json({ tool, principal, decision: 'allow', policy: authz.policy, traceId: tr.id, result });

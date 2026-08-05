@@ -122,12 +122,25 @@ function isBuilder(user: CurrentUser): boolean {
   return roleAtLeast(user.role, 'builder');
 }
 
+/**
+ * Re-provision the app's runner from its CURRENT record (esp. `runImageDigest`) —
+ * the shared entry the Phase B build service calls to re-pin the pod to a freshly
+ * built digest, so the footprint table + runner shape stay SINGLE-SOURCED here (no
+ * duplicate FOOTPRINT in apps.ts, no import cycle: apps.ts dynamic-imports this).
+ */
+export async function redeployRunnerForApp(app: App): Promise<RunnerOutcome> {
+  return deployApp(runnerAppFor(app));
+}
+
 /** The minimal runnable shape the in-cluster runner needs, derived from an app. */
 function runnerAppFor(app: App): RunnerApp {
   return {
     slug: app.slug,
     host: appHost(app),
     runImage: app.runImage,
+    // The OS build service's captured digest (Phase B) pins the serving image; when
+    // unset the runner keeps the `:latest`/CI convention (purely additive).
+    runImageDigest: app.runImageDigest,
     footprint: FOOTPRINT[app.template] ?? FOOTPRINT['nextjs-supabase'],
   };
 }

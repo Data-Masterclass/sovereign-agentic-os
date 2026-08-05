@@ -12,6 +12,7 @@ import {
   startDeploy,
   completeDeploy,
   failDeploy,
+  computeLaunchStatus,
   deployAdapter,
   type Actor,
 } from '@/lib/science';
@@ -60,7 +61,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ model: string
       output: { isvc: deploy.isvc, buildState: updated.buildState },
       decision: 'allow',
     });
-    return NextResponse.json({ ok: true, deploy, model: updated });
+    return NextResponse.json({ ok: true, deploy, model: updated, launch: computeLaunchStatus(updated) });
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;
     return NextResponse.json({ error: (e as Error).message }, { status });
@@ -89,18 +90,18 @@ export async function GET(_req: Request, ctx: { params: Promise<{ model: string 
     await ensureModelsHydrated();
     const m = assertDeployScope(model, actor);
     if (m.buildState !== 'deploying') {
-      return NextResponse.json({ ok: true, phase: m.buildState ?? 'draft', model: m });
+      return NextResponse.json({ ok: true, phase: m.buildState ?? 'draft', model: m, launch: computeLaunchStatus(m) });
     }
     const status = await deployAdapter.poll(model);
     if (status.phase === 'ready') {
       const updated = completeDeploy(model, actor);
-      return NextResponse.json({ ok: true, phase: 'deployed', status, model: updated });
+      return NextResponse.json({ ok: true, phase: 'deployed', status, model: updated, launch: computeLaunchStatus(updated) });
     }
     if (status.phase === 'failed') {
       const updated = failDeploy(model, actor, status.reason);
-      return NextResponse.json({ ok: true, phase: 'deploy_failed', status, model: updated });
+      return NextResponse.json({ ok: true, phase: 'deploy_failed', status, model: updated, launch: computeLaunchStatus(updated) });
     }
-    return NextResponse.json({ ok: true, phase: 'deploying', status, model: m });
+    return NextResponse.json({ ok: true, phase: 'deploying', status, model: m, launch: computeLaunchStatus(m, `${status.phase}${status.reason ? ` — ${status.reason}` : ''}`) });
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;
     return NextResponse.json({ error: (e as Error).message }, { status });

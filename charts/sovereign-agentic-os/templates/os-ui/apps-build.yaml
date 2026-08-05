@@ -1,0 +1,66 @@
+{{- if (.Values.softwareBuild | default dict).enabled }}
+{{- /*
+  Software DIRECT BUILD SERVICE (deploy redesign Phase B). The os-ui submits an
+  in-cluster Kaniko batch/v1 Job per app commit (lib/software/build-service.ts):
+  it clones the app's Forgejo git tree at the committed SHA, builds the scaffold
+  Dockerfile daemonlessly, pushes an immutable `:sha12` tag to the in-cluster
+  registry, and writes the pushed DIGEST to the pod's termination message — which
+  os-ui captures with plain pod reads and pins the runner Deployment to.
+
+  This grants the os-ui ServiceAccount exactly the extra verbs that needs, in the
+  BUILD namespace only (default: the softwareRunner namespace, which the
+  apps-runner template already declares): manage batch Jobs + read pods/logs.
+  Least privilege — no cluster-wide power, no secrets access (the registry
+  credential is injected by os-ui into the Job's ephemeral pod, not read here).
+
+  NIL-SAFE under --reuse-values: the whole file is gated on
+  `softwareBuild.enabled` via `(.Values.softwareBuild | default dict)`, so a
+  release upgraded without the new block renders nothing and the os-ui pipeline
+  honestly reports the build service as OFF (Forgejo Actions keeps building).
+
+  NOTE (operator): Kaniko runs unprivileged (no daemon, no /var/run/docker.sock)
+  and passes the apps namespace's `baseline` Pod Security Standard. It does run
+  as root INSIDE its own container (needed to assemble layers), so it will not
+  pass a `restricted` PSS namespace — if you raise softwareRunner
+  .podSecurityStandard to `restricted`, point softwareBuild.namespace at a
+  separate baseline namespace you create.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui-apps-build
+  namespace: {{ (.Values.softwareBuild | default dict).namespace | default .Values.softwareRunner.namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  # Submit + poll + reap the per-commit Kaniko build Jobs. `delete` lets os-ui
+  # clear a stuck Job; finished Jobs self-reap via ttlSecondsAfterFinished.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # Read the Job's pod: the pushed digest is captured from the kaniko container's
+  # termination message, and pending reasons (ImagePullBackOff, unschedulable)
+  # are surfaced from pod status. Logs read = the build log for the status card.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui-apps-build
+  namespace: {{ (.Values.softwareBuild | default dict).namespace | default .Values.softwareRunner.namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: os-ui-apps-build
+subjects:
+  - kind: ServiceAccount
+    name: os-ui
+    namespace: {{ .Release.Namespace }}
+{{- end }}

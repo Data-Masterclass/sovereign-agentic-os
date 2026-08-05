@@ -15,6 +15,7 @@ import { dashboardWriteTools } from './dashboard-write-tools';
 import { bigbetWriteTools } from './bigbet-write-tools';
 import { agentWriteTools } from './agent-write-tools';
 import { softwareWriteTools } from './software-write-tools';
+import { scienceWriteTools } from './science-write-tools';
 
 /**
  * The GOVERNED WRITE tools of the OS MCP — one per authoring action a case study
@@ -44,6 +45,7 @@ export { dashboardWriteTools } from './dashboard-write-tools';
 export { bigbetWriteTools } from './bigbet-write-tools';
 export { agentWriteTools, __setRunOsTeamForTests } from './agent-write-tools';
 export { softwareWriteTools } from './software-write-tools';
+export { scienceWriteTools } from './science-write-tools';
 
 export const ALL_WRITE_TOOLS: McpTool[] = [
   ...dataWriteTools,
@@ -53,6 +55,8 @@ export const ALL_WRITE_TOOLS: McpTool[] = [
   ...dashboardWriteTools,
   ...bigbetWriteTools,
   ...agentWriteTools,
+  // Science (Phase D): the full journey from an agent — create_model / train_model / get_model_status.
+  ...scienceWriteTools,
   ...promotionTools,
   // Software design fields (set_app_design via patchAppDesign — governed path).
   ...softwareWriteTools,

@@ -6,6 +6,7 @@ import { requirePrincipal } from '@/lib/data/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { listMetrics } from '@/lib/metrics/store';
+import { appSlugFromRequest, grantedIdSet } from '@/lib/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,5 +20,14 @@ export const GET = withRoute(async ({ user, req }) => {
   // ?archived=1 additionally returns soft-archived metrics (their own section),
   // so an archived metric stays openable → its detail exposes Restore + Delete.
   const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
-  return NextResponse.json(listMetrics(user, { includeArchived }));
+  const groups = listMetrics(user, { includeArchived });
+  // LEAST-PRIVILEGE for app origins: narrow to (user access ∩ app grants). The OS UI
+  // is untouched (appSlugFromRequest returns null with no I/O).
+  const slug = appSlugFromRequest(req);
+  if (slug) {
+    const granted = await grantedIdSet(slug, 'metrics');
+    const keep = <T extends { id: string }>(xs: T[]) => xs.filter((m) => granted.has(m.id));
+    return NextResponse.json({ ...groups, mine: keep(groups.mine), domain: keep(groups.domain), marketplace: keep(groups.marketplace) });
+  }
+  return NextResponse.json(groups);
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

@@ -27,4 +27,6 @@ export type {
   KnowledgeHit,
   DatasetQuery,
   MetricQuery,
+  AppRecord,
+  RecordResult,
 } from './types.ts';

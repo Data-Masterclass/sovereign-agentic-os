@@ -41,7 +41,7 @@ export default function ScienceTab() {
 
   return (
     <>
-      <PageHeader title="Science" crumb="model-as-a-service — define · predict · promote · govern (ML, not LLMs)" tutorial="science" />
+      <PageHeader title="Science" crumb="Build a model that predicts from your data" tutorial="science" />
       <div className="content">
         {view.kind === 'console' ? (
           <DevConsole onBack={() => setView({ kind: 'list' })} />
@@ -66,10 +66,9 @@ export default function ScienceTab() {
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: 280 }}>
                 <p className="lead" style={{ marginTop: 4 }}>
-                  Traditional ML as a <strong>governed service</strong>. Define a model over your governed
-                  data, open one to try its <strong>predict</strong> front door, then promote it up the
-                  <em> same</em> visibility ladder that governs every other artifact. This is the{' '}
-                  <strong>Layer-4</strong> capability — off by default and GPU-cost-gated.
+                  Build a model that <strong>predicts from your data</strong> — describe what you want to
+                  know, launch it in one step, then try it on real examples and share it with your team. It
+                  runs on governed infrastructure, as you.
                 </p>
                 <p className="hint" style={{ marginTop: 0 }}>
                   Need the raw stack? Open the{' '}

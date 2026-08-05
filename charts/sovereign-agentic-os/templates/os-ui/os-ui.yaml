@@ -264,6 +264,21 @@ spec:
             - name: OS_APPS_TLS_ISSUER
               value: {{ .Values.softwareRunner.tlsIssuer | default .Values.ingress.tlsIssuer | quote }}
             {{- end }}
+            {{- if (.Values.softwareBuild | default dict).enabled }}
+            # ---- Software DIRECT BUILD SERVICE (deploy redesign Phase B). os-ui submits
+            # an in-cluster Kaniko batch/v1 Job per app commit (RBAC in
+            # templates/os-ui/apps-build.yaml) that builds the app's Dockerfile from its
+            # Forgejo git tree at the commit SHA and pushes a DIGEST the runner then
+            # serves pinned (no :latest on the serving path). NIL-SAFE under
+            # --reuse-values: an absent softwareBuild block renders nothing, the flag
+            # stays off, and the pipeline says so honestly (Forgejo Actions still builds). ----
+            - name: SOFTWARE_BUILD_SERVICE
+              value: "true"
+            - name: SOFTWARE_BUILD_NAMESPACE
+              value: {{ (.Values.softwareBuild | default dict).namespace | default .Values.softwareRunner.namespace | quote }}
+            - name: KANIKO_IMAGE
+              value: {{ (.Values.softwareBuild | default dict).kanikoImage | default "gcr.io/kaniko-project/executor:v1.23.2" | quote }}
+            {{- end }}
             # ---- Data-tab ingest (T3). os-ui streams an uploaded file to MinIO
             # (uploads/<uid>/) with a SigV4 PUT, then calls the data-runner /ingest —
             # which writes the physical Iceberg Bronze table. Reuses the SAME

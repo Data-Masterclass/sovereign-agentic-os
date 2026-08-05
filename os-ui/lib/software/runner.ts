@@ -36,8 +36,19 @@ export type RunnerApp = {
   host: string;
   /** Explicit prebuilt image ref; when unset the registry convention is used. */
   runImage?: string;
+  /**
+   * The DIGEST-pinned image ref (`<registry>/<slug>@sha256:…`) from the OS build
+   * service's last successful build (Phase B). When set it WINS over `runImage`/`:latest`
+   * and the runner serves this exact, immutable digest — deleting the `:latest` roll hack.
+   */
+  runImageDigest?: string;
   footprint: ResourceFootprint;
 };
+
+/** True for an immutable, content-addressed image ref (`…@sha256:…`). */
+export function isDigestRef(image: string): boolean {
+  return /@sha256:[a-f0-9]{64}$/i.test(image.trim());
+}
 
 /** The concrete runnable spec derived from an app (image + host + resources). */
 export type RunnerSpec = {
@@ -109,7 +120,12 @@ export function runnerName(slug: string): string {
  * placeholder (SOFTWARE_RUNNER_IMAGE=traefik/whoami) shadowed every real image, so
  * all apps ran the whoami stub on port 80 and never passed the 8080 readiness probe.
  */
-export function appImageRef(app: { slug: string; runImage?: string }): string {
+export function appImageRef(app: { slug: string; runImage?: string; runImageDigest?: string }): string {
+  // A digest from the OS build service is the AUTHORITATIVE serving ref — immutable,
+  // unambiguous, and it makes every deploy a real (digest-changed) rollout. It wins
+  // over an explicit `runImage` and the `:latest` convention alike.
+  const digest = (app.runImageDigest ?? '').trim();
+  if (digest && isDigestRef(digest)) return digest;
   const explicit = (app.runImage ?? '').trim();
   if (explicit) return explicit;
   if (config.harborRegistry) return `${config.harborRegistry}/${app.slug}:latest`;
@@ -126,6 +142,16 @@ export function runnerSpec(app: RunnerApp): RunnerSpec {
     memory: app.footprint.memory,
     port: 8080,
   };
+}
+
+/**
+ * The pull policy for a serving image. A DIGEST ref is content-addressed and immutable,
+ * so `IfNotPresent` is correct AND cheaper (never re-pulls the same digest); a mutable
+ * `:latest` still needs `Always` to defeat the node cache after a CI push. This is what
+ * lets the digest path DROP the `imagePullPolicy: Always` reliance for pinned images.
+ */
+export function pullPolicyFor(image: string): 'IfNotPresent' | 'Always' {
+  return isDigestRef(image) ? 'IfNotPresent' : 'Always';
 }
 
 function labels(spec: RunnerSpec): Record<string, string> {
@@ -151,6 +177,12 @@ function labels(spec: RunnerSpec): Record<string, string> {
 export function buildDeploymentManifest(spec: RunnerSpec, namespace: string, deployedAt?: string): Record<string, unknown> {
   const name = runnerName(spec.slug);
   const sel = { app: name };
+  const digestPinned = isDigestRef(spec.image);
+  // For a DIGEST-pinned image the image ref itself changes on every new build, so the
+  // pod template already changes → Kubernetes rolls honestly WITHOUT the `deployed-at`
+  // stamp. Only a mutable-tag (`:latest`) serving ref still needs the stamp to force a
+  // roll on a same-tag re-deploy (the hack the digest path deletes).
+  const stamp = digestPinned ? undefined : deployedAt;
   return {
     apiVersion: 'apps/v1',
     kind: 'Deployment',
@@ -161,17 +193,17 @@ export function buildDeploymentManifest(spec: RunnerSpec, namespace: string, dep
       template: {
         metadata: {
           labels: { ...labels(spec), ...sel },
-          ...(deployedAt ? { annotations: { 'soa.sovereign-os/deployed-at': deployedAt } } : {}),
+          ...(stamp ? { annotations: { 'soa.sovereign-os/deployed-at': stamp } } : {}),
         },
         spec: {
           containers: [
             {
               name: 'app',
               image: spec.image,
-              // Always re-pull: the runner serves mutable tags (`:latest`), so a
-              // restarted pod must fetch the image CI just published, not reuse
-              // the node's stale cache.
-              imagePullPolicy: 'Always',
+              // Digest refs are immutable → `IfNotPresent` (never re-pull the same
+              // content); a mutable `:latest` still needs `Always` so a restarted pod
+              // fetches the image CI just published, not the node's stale cache.
+              imagePullPolicy: pullPolicyFor(spec.image),
               ports: [{ containerPort: spec.port }],
               resources: {
                 requests: { cpu: spec.cpu, memory: spec.memory },

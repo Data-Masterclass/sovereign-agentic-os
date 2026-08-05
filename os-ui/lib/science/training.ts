@@ -329,3 +329,36 @@ export async function readTrainingJob(
   }
   return { jobName, phase, active: phase === 'running' || phase === 'pending', reason, createdAt: meta?.creationTimestamp };
 }
+
+/**
+ * Best-effort MLflow metric read for a COMPLETED run (the honest post-train value). The trainer
+ * tags its MLflow run with the Job name (run_name); we look it up and pull the optimize metric.
+ * When MLflow is unreachable — or the metric absent — we return {} so `completeTraining` records
+ * an honest UNTRACKED version (never invents a number). `mlflowUrl` is injected (no config import
+ * here) so this stays test-safe and is shared by BOTH front doors (the train route + the MCP tool).
+ */
+export async function readMlflowMetric(
+  jobName: string,
+  metricName: string | undefined,
+  mlflowUrl: string,
+): Promise<{ runId?: string; value?: number }> {
+  if (!metricName || !mlflowUrl) return {};
+  try {
+    const res = await fetch(`${mlflowUrl}/api/2.0/mlflow/runs/search`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filter: `tags.mlflow.runName = '${jobName}'`, max_results: 1 }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!res.ok) return {};
+    const data = (await res.json()) as {
+      runs?: { info?: { run_id?: string }; data?: { metrics?: { key: string; value: number }[] } }[];
+    };
+    const run = data.runs?.[0];
+    const value = run?.data?.metrics?.find((mm) => mm.key === metricName)?.value;
+    return { runId: run?.info?.run_id, value: typeof value === 'number' ? value : undefined };
+  } catch {
+    return {};
+  }
+}

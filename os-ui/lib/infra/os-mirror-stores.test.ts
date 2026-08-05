@@ -778,8 +778,6 @@ test('science models (os-science-models): fresh-boot bootstrap + round-trip hydr
     assert.equal(back!.name, 'Lead scoring');
     assert.equal(back!.owner, 'sara');
     assert.equal(back!.spec?.targetColumn, 'churned');
-    // And the churn seed does NOT fire on a non-empty (hydrated) registry.
-    assert.equal(svc.ensureChurnSeed(), null);
 
     // Delete writes through — after another roll the model stays deleted.
     svc.setModelArchived('lead_scoring', sara, true);
