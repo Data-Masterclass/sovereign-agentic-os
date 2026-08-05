@@ -232,6 +232,33 @@ export type DatasetSync = {
   enabled: boolean;
 };
 
+/** Sharing/refinement TIER a connected (adopted) dataset carries — the curated
+ *  silver/gold an exposure declares. Kept in lockstep with `ExposureTier` (this base
+ *  module stays import-light so client bundles never drag the connections registry in). */
+export type ConnectedTier = 'silver' | 'gold';
+/** How an adopted dataset reads its source: `live` federates every read straight through
+ *  to the external FQN (Phase 2); `sync` lands a governed copy (Phase 3). */
+export type ConnectedMode = 'live' | 'sync';
+/** The honesty state of a connected dataset's bond to its source exposure. `ok` reads
+ *  normally; `drifted` = the catalog snapshot removed/changed the bound table (warn, still
+ *  readable); `source-revoked` = the exposure was revoked (no data shown, reads disabled). */
+export type ConnectedStatus = 'ok' | 'drifted' | 'source-revoked';
+
+/** ADOPTED-FROM-A-CONNECTION provenance (lakehouse-import-exposure.md, Phase 2). Present
+ *  ONLY when `origin:'connected'`: the dataset IS an exposed external table, not an
+ *  ingested/curated one. `source` is the verbatim external `catalog.schema.table` the
+ *  live FQN seam resolves to (`store-fqn.ts versionTarget`, `store.ts builtLayerFqn`);
+ *  `exposureId` binds it to the ExposureSet so revocation/drift can find it. ABSENT on
+ *  every non-connected dataset (byte-stable, zero migration — the `sync`/`origin` precedent). */
+export type ConnectedSource = {
+  connectionId: string;
+  exposureId: string;
+  source: { catalog: string; schema: string; table: string };
+  mode: ConnectedMode;
+  tier: ConnectedTier;
+  status: ConnectedStatus;
+};
+
 export type Dataset = {
   version: string;
   id: string;
@@ -295,12 +322,18 @@ export type Dataset = {
    *  pre-existing datasets stay un-emitted until they are re-promoted (zero migration,
    *  byte-stable). Set at promote time. Omitted from yaml when false. */
   gitBacked?: boolean;
-  /** How the dataset was born (TWO-PATH create). `'curated'` = built from EXISTING
-   *  governed datasets via the Gold join (the reuse path); `'ingest'`/ABSENT = the classic
-   *  bring-a-file/extract path. Only `'curated'` is ever written to the yaml — absent means
-   *  ingest, so every pre-existing record serializes exactly as before (byte-stable, zero
-   *  migration; the `cubeNamespaced` precedent). Purely descriptive: no gate reads it. */
-  origin?: 'ingest' | 'curated';
+  /** How the dataset was born (create paths). `'curated'` = built from EXISTING governed
+   *  datasets via the Gold join (the reuse path); `'connected'` = ADOPTED from a warehouse
+   *  connection's exposure (lakehouse-import-exposure.md — the dataset IS an external table,
+   *  see `connected`); `'ingest'`/ABSENT = the classic bring-a-file/extract path. Only
+   *  `'curated'`/`'connected'` are ever written to the yaml — absent means ingest, so every
+   *  pre-existing record serializes exactly as before (byte-stable, zero migration; the
+   *  `cubeNamespaced` precedent). Purely descriptive: no gate reads it. */
+  origin?: 'ingest' | 'curated' | 'connected';
+  /** ADOPTED-FROM-A-CONNECTION block — present ONLY with `origin:'connected'`. Binds this
+   *  dataset to the ExposureSet + external source it federates (live) or copies (sync).
+   *  ABSENT on every non-connected dataset (byte-stable; the `sync`/`goldSpec` precedent). */
+  connected?: ConnectedSource;
   /** DOCS PROVENANCE marker: `'ai-auto'` when the dataset's documentation (description +
    *  column notes) was DRAFTED automatically after ingestion (background LLM, grounded in
    *  the real schema/profile) and NOT yet touched by a human. The Documentation section
@@ -609,6 +642,26 @@ export function parseSyncBlock(raw: unknown): DatasetSync | undefined {
   return out;
 }
 
+/** Re-hydrate the `connected` block. Tolerant like `parseSyncBlock`: a record missing its
+ *  essentials (connection, exposure, a full catalog.schema.table) parses to undefined
+ *  rather than bricking the dataset. `mode`/`tier`/`status` fall back to safe defaults so
+ *  an older/partial record still opens (live · silver · ok). */
+export function parseConnectedBlock(raw: unknown): ConnectedSource | undefined {
+  if (!isRecord(raw)) return undefined;
+  const src = isRecord(raw.source) ? raw.source : {};
+  const connectionId = typeof raw.connectionId === 'string' ? raw.connectionId : '';
+  const exposureId = typeof raw.exposureId === 'string' ? raw.exposureId : '';
+  const catalog = typeof src.catalog === 'string' ? src.catalog : '';
+  const schema = typeof src.schema === 'string' ? src.schema : '';
+  const table = typeof src.table === 'string' ? src.table : '';
+  if (!connectionId || !exposureId || !catalog || !schema || !table) return undefined;
+  const mode: ConnectedMode = raw.mode === 'sync' ? 'sync' : 'live';
+  const tier: ConnectedTier = raw.tier === 'gold' ? 'gold' : 'silver';
+  const status: ConnectedStatus =
+    raw.status === 'drifted' ? 'drifted' : raw.status === 'source-revoked' ? 'source-revoked' : 'ok';
+  return { connectionId, exposureId, source: { catalog, schema, table }, mode, tier, status };
+}
+
 function parseCheck(raw: unknown, i: number): DataCheck {
   if (!isRecord(raw)) throw new DatasetError(`dataset.yaml: checks[${i}] must be a mapping`);
   const base: DataCheck = {
@@ -684,8 +737,16 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   const gitBacked = doc.gitBacked === true ? true : undefined;
   // Northpeak fix: absent/false ⇒ the domain table is in sync (or never promoted).
   const domainTableStale = doc.domainTableStale === true ? true : undefined;
-  // TWO-PATH create: only 'curated' is stored; absent ⇒ ingest (every pre-existing record).
-  const origin = doc.origin === 'curated' ? ('curated' as const) : undefined;
+  // Create paths: only 'curated'/'connected' are stored; absent ⇒ ingest (every pre-existing
+  // record). A 'connected' record must carry a valid `connected` block; a malformed block
+  // downgrades the origin to ingest so nothing half-connected leaks into the FQN seam.
+  const connected = parseConnectedBlock(doc.connected);
+  const origin =
+    doc.origin === 'connected' && connected
+      ? ('connected' as const)
+      : doc.origin === 'curated'
+        ? ('curated' as const)
+        : undefined;
   // Auto-docs: only 'ai-auto' is stored; absent ⇒ human-authored/empty (every pre-existing record).
   const docsProvenance = doc.docsProvenance === 'ai-auto' ? ('ai-auto' as const) : undefined;
 
@@ -717,6 +778,9 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     ...(gitBacked ? { gitBacked } : {}),
     ...(domainTableStale ? { domainTableStale } : {}),
     ...(origin ? { origin } : {}),
+    // Only carry `connected` when the origin is genuinely connected (a stray block on a
+    // non-connected record is dropped — byte-stable, and the FQN seam only trusts origin).
+    ...(origin === 'connected' && connected ? { connected } : {}),
     ...(docsProvenance ? { docsProvenance } : {}),
   };
 }
@@ -798,8 +862,21 @@ export function serializeDataset(d: Dataset): string {
   // Omit-when-false (byte-stable): only a promoted dataset whose domain table drifted
   // from a rebuild carries this; every in-sync/un-promoted dataset serializes as before.
   if (d.domainTableStale) doc.domainTableStale = true;
-  // Omit-unless-curated (byte-stable): the classic ingest path serializes exactly as before.
+  // Omit-unless-curated/connected (byte-stable): the classic ingest path serializes exactly
+  // as before. A connected dataset writes its origin + the `connected` block together (the
+  // block is meaningless without the origin, and vice versa).
   if (d.origin === 'curated') doc.origin = 'curated';
+  else if (d.origin === 'connected' && d.connected) {
+    doc.origin = 'connected';
+    doc.connected = {
+      connectionId: d.connected.connectionId,
+      exposureId: d.connected.exposureId,
+      source: { catalog: d.connected.source.catalog, schema: d.connected.source.schema, table: d.connected.source.table },
+      mode: d.connected.mode,
+      tier: d.connected.tier,
+      status: d.connected.status,
+    };
+  }
   // Omit-unless-ai-auto (byte-stable): human-authored/empty docs serialize exactly as before.
   if (d.docsProvenance === 'ai-auto') doc.docsProvenance = 'ai-auto';
   return yaml.dump(doc, { lineWidth: 100, noRefs: true });

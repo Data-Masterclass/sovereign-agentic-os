@@ -67,6 +67,29 @@ test('versionTarget: a NON-owner NEVER gets a personal_<owner> FQN (fail-closed)
   }
 });
 
+// CONNECTED · LIVE (lakehouse-import-exposure.md, Phase 2): the FQN is the verbatim
+// external `catalog.schema.table` — for EVERYONE, at EVERY layer, no personal lane, no
+// iceberg prefix. It is NOT the owner's personal table and NOT the domain schema.
+function connectedDs(over: Partial<Dataset> = {}): Dataset {
+  return ds({
+    origin: 'connected',
+    connected: {
+      connectionId: 'conn_1', exposureId: 'exp_1',
+      source: { catalog: 'glue_sales', schema: 'public', table: 'orders' },
+      mode: 'live', tier: 'silver', status: 'ok',
+    },
+    ...over,
+  });
+}
+
+test('versionTarget: a LIVE connected dataset resolves to the verbatim external FQN', () => {
+  const d = connectedDs();
+  // Owner and non-owner alike get the exact external table — no personal/domain rewriting.
+  assert.equal(versionTarget(d, 'silver', { id: 'aborek' }), 'glue_sales.public.orders');
+  assert.equal(versionTarget(d, 'gold', { id: 'someone_else' }), 'glue_sales.public.orders');
+  assert.doesNotMatch(versionTarget(d, 'silver', { id: 'aborek' }), /iceberg\.|personal_/);
+});
+
 test('personalSchema stays owner-keyed + sanitized', () => {
   assert.equal(personalSchema('aborek'), 'personal_aborek');
   assert.equal(personalSchema('a.b@x.com'), 'personal_a_b_x_com');

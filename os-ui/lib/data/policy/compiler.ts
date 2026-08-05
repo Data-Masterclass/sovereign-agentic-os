@@ -144,3 +144,55 @@ export type CompiledPolicy = { opa: OpaBundle; cube: CubeAccessPolicy[] };
 export function compilePolicy(datasets: Dataset[], roster: Roster): CompiledPolicy {
   return { opa: compileOpa(datasets, roster), cube: compileCube(datasets) };
 }
+
+// ------------------------------------------- compile target — EXPOSURE SETS ---
+
+/**
+ * The minimal, pure view of a non-revoked exposure the compiler needs: the connection's
+ * owning domain, the domains it is shared with, the catalog, and the listed tables. Kept
+ * decoupled from the connections store's `ExposureSet` so this module stays pure/testable
+ * (the server resolves connection.domain + catalog and passes this in).
+ */
+export type ExposureGovernanceInput = {
+  /** The connection's OWNING domain — the exposed table's `domain` in governance. */
+  domain: string;
+  /** The registered Trino catalog the tables live in (e.g. `glue_sales`). */
+  catalog: string;
+  /** Domains the exposure grants the tables to. */
+  domains: string[];
+  tables: { schema: string; table: string }[];
+};
+
+/**
+ * Compile a set of exposures into `data.governance.tables` entries — EXACTLY the shape
+ * `compileOpa` emits for a dataset, so the rego's `table_entitled` reads them identically:
+ *
+ *   tables["<catalog>.<schema>.<table>"] = {
+ *     domain, visibility:'shared', shared_with: <exposure.domains>,
+ *     shared_with_users: [], sensitive_columns: {}
+ *   }
+ *
+ * With the new fail-closed floor in `policies/trino.rego`, a table WITHOUT such an entry
+ * (in a non-`iceberg`/non-internal catalog) reads zero rows for everyone — so this
+ * function is the ONE thing that opens a live external catalog, and only to the assigned
+ * domains. Later exposures for the same FQN win (last one compiled). Returns the
+ * per-key `tables` map; the server pushes each key to `governance/tables/<key>` so it is
+ * additive to the dataset entries (which are pushed wholesale under the same subtree).
+ */
+export function compileExposures(exposures: ExposureGovernanceInput[]): Record<string, Omit<TableGovernance, 'fqn'>> {
+  const tables: Record<string, Omit<TableGovernance, 'fqn'>> = {};
+  for (const e of exposures) {
+    const shared = [...new Set(e.domains)].sort();
+    for (const t of e.tables) {
+      const fqn = `${e.catalog}.${t.schema}.${t.table}`;
+      tables[fqn] = {
+        domain: e.domain,
+        visibility: 'shared',
+        shared_with: shared,
+        shared_with_users: [],
+        sensitive_columns: {},
+      };
+    }
+  }
+  return tables;
+}

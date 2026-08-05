@@ -13,6 +13,223 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.74] — 2026-08-05
+
+### Added
+- **Lakehouse finale — Expose Phase C+D + lakehouse Phase 4** (lakehouse-expose-experience.md,
+  lakehouse-import-exposure.md): the AI assistant across the Expose flow, MCP parity for the
+  whole expose/adopt journey, and the shared classified folder tree on the adopt side.
+  - **ExposeChat** (`components/connections/expose/ExposeChat.tsx`) — ONE persistent, governed,
+    multi-turn assistant mounted across all four Expose stages (Catalog · Organize · Assign ·
+    Review), following the ScienceChat `.sac-*` pattern. Its one-turn route
+    (`app/api/connections/[id]/expose-assistant`, on the shared model — honest 503/402
+    passthrough, admin-gated like the mutations) grounds each turn in the REAL snapshot summary
+    (schema/table counts, takenAt, drift), the classification state (category counts +
+    lastRunDetail), the current selection, the REAL domain list, and the existing exposure sets.
+    Suggestion cards are VALIDATED SERVER-SIDE before an Apply renders: `classify` runs the
+    classifier; `selection {tables[]}` merges real tables into the selection Set and jumps to
+    Organize; `exposure {name, domains[], mode, tier, tables[]}` prefills Assign and jumps to
+    Review — the admin still clicks Create. A hallucinated table/domain is refused with the
+    honest reason and no card (only the prose stands). Starters: "Organize this catalog with
+    AI", "Expose everything in Customer and Orders to Commerce as gold, live", "What changed
+    since the last snapshot?".
+  - **MCP parity** (`lib/mcp/exposure-write-tools.ts`) — the expose/adopt journey through the
+    front door, each tool a thin adapter over the EXACT lib the UI calls: exposure CRUD
+    (`list_exposure_sets`, `create_exposure_set`, `update_exposure_set`, `revoke_exposure_set`
+    — admin); catalog (`get_catalog_snapshot`, `refresh_connection_catalog` — admin,
+    `get_catalog_classification`, `classify_catalog` — admin, returning honest counts +
+    lastRunDetail); adopt (`list_exposed_tables` — domain-scoped read, `adopt_exposed_table` —
+    roleAtLeast domain_admin, live and sync). `get_dataset` gains a `connected` block (mode,
+    tier, status, source, real freshness — null for live, last successful sync landing else).
+    `import_warehouse_table` stays; its description now points at expose→adopt.
+  - **Shared seams (front-door invariant)** — the revoke propagation (recompile OPA → freeze
+    bound datasets → tear down each sync CronJob → notify each owner → trace per dataset) is
+    factored into `lib/connections/exposure-propagation.ts` and the adopt validation/creation
+    into `lib/data/adopt-connected.ts`, so the UI routes (`/exposures/[exposureId]` DELETE/PATCH,
+    `/api/data/adopt`) and the MCP tools run byte-identical logic instead of duplicating it.
+  - **Adopt browser shares the classified tree** — `AdoptConnectionPanel` now mounts the shared
+    `CatalogBrowser` with `readOnlyCategories` + the classification GET, so a domain admin sees
+    the same AI folders/labels as the platform admin (corrections stay admin-side). All adopt
+    behaviour (gating, sync config, required description) is unchanged.
+- **Docs truth-sync** — `lib/tabs/connections.context.md` + `connections.guide.md` document the
+  full journey (connect → snapshot → organize → expose per domain → adopt → live/sync → honest
+  revocation); `lib/tabs/data.context.md` documents the from-a-connection ingestion path
+  (pull-from-product retired); `lib/mcp/prompts.ts` points the connect pathway at expose→adopt.
+
+## [os-ui 0.6.73] — 2026-08-05
+
+### Added
+- **Lakehouse Expose experience — Phase B** (lakehouse-expose-experience.md): AI catalog
+  classification + the Organize category tree. The Organize stage now groups the same
+  selection by an admin-owned folder taxonomy the AI fills — never a fabricated placement.
+  - **Taxonomy seed chooser** (owner-designed) — on first entering Organize, a "How should
+    folders be organized?" chooser with four sources: **mirror the source structure** (folders
+    from the snapshot's schemas), **mirror the OS domains** (folders from the tenant's real
+    non-archived domains), **starter set** (the 10 categories), or **empty** (admin builds
+    folders, AI classifies only into them). Smart default: ≥3 meaningfully-named source schemas
+    → pre-select "source", else "starter". Invariants regardless of seed: taxonomy stays
+    admin-extensible (add/rename via a taxonomy PATCH); the AI only ever places into the CURRENT
+    taxonomy (never invents a folder); a human move is stored as an override that permanently
+    wins; Unsorted always exists.
+  - **Classification engine** (`lib/connections/warehouse/catalog-classification.ts`) — Pass 1
+    names-only, batched 100 tables/call at concurrency 2, run standard-first with one reasoning
+    escalation per malformed batch (`completeWithEscalation`; models via the role resolver,
+    never hardcoded). A validator drops hallucinated table keys (counted), degrades unknown
+    category ids to Unsorted (never invented), and rejects out-of-range confidence; a table no
+    batch answered is retried once, then lands in Unsorted `not-classified`. Pass 2 (capped 50
+    lazy column DESCRIBEs + one enrichment call) re-places sub-threshold tables (threshold 0.7).
+    `run-new` classifies only added/missing tables; overrides are never touched by any run.
+  - **Honest degradation** — a 503/402/gateway failure stops the run and is reported in the
+    run detail ("132 classified, 12 unsorted, 3 of 8 batches escalated, stopped early after 144
+    of 200 (Cost cap reached)"); the Organize UI falls back to the schema view with a plain
+    notice and never blocks exposure. Every AI placement carries an "AI" chip + hover-why; a
+    moved table shows no chip (a human fact). Header: "Organized by AI — suggested, not verified".
+  - **`GET/POST/PATCH /api/connections/[id]/classification`** — merged read (override ?? AI ??
+    Unsorted) under the same visibility gate as the snapshot route; POST actions
+    `run | run-new | override | seed` and the taxonomy PATCH are admin-only and audit-traced
+    (`catalog_classified`). The run executes server-side; progress is the polled run detail.
+  - **Organize category tree** — one folder level, count-sorted with Unsorted last, tri-state
+    folder checkboxes feeding the shared selection Set, per-row "⋯ → Move to" and bulk
+    "Move N selected to", search matching names + folder names + why text, and Simple/Developer
+    (Developer surfaces confidence, model id, and re-run controls).
+
+## [os-ui 0.6.72] — 2026-08-05
+
+### Added
+- **Lakehouse Expose experience — Phase A** (lakehouse-expose-experience.md). The admin-only
+  Expose surface on a warehouse connection is now a staged flow on the OS-wide StageShell:
+  **Catalog → Organize → Assign → Review**. The exposure-set list stays the landing
+  collection above the rail — New enters at Catalog, Edit loads the set and enters at Review
+  (all gated stages reachable to walk back), Revoke keeps its confirm. Selection is one
+  `Set<'schema.table'>` shared across Catalog + Organize with a persistent "N tables selected"
+  badge in the rail aside.
+  - **Shared `CatalogBrowser`** — one browse component (schema mode fully implemented:
+    schema-grouped, tri-state schema checkboxes, instant client-side search over ≤ ~1k rows;
+    category mode falls back to schema grouping with a quiet "AI organization arrives with the
+    next release" note in Phase A). Row click expands → **lazy governed column DESCRIBE** with
+    honest loading/error states (an unreachable catalog shows the real error — never fabricated
+    columns).
+  - **`GET /api/connections/[id]/describe`** — wraps the governed `describeTable` (same
+    auth/visibility gate as the sibling snapshot route). `describeTable` now returns Trino's
+    per-column **Comment** additively (empty when the metastore carries none) for the Phase-B
+    classifier.
+  - Catalog stage: snapshot health line, Refresh / "Take a snapshot", a drift chip that filters
+    to added/removed tables, honest refreshing/unreachable/empty states. Assign stage: name
+    auto-suggested from the selection (editable), domain chips, Live/Sync (default Live), tier,
+    note — Simple hides cron with a one-line hourly note; Developer shows cron + full-refresh.
+    Review stage: a human-impact card, a grouped read-only list, drift warnings for selected
+    tables removed since the last snapshot, and (Developer) the compiled governance preview.
+  - No AI in this phase (Organize's AI classification + the ExposeChat assistant ship in
+    Phases B–C).
+## [os-ui 0.6.71] — 2026-08-05
+
+### Added
+- **Adopt "From a connection" — Sync mode** (lakehouse import & exposure, Phase 3).
+  Sync-mode exposures are now adoptable: scheduled incremental replication of an exposed
+  table into the adopting domain's schema at the curated tier
+  (`iceberg.<domain>.<tier>_<slug>`), running as the domain principal (entitled by the
+  Trino-OPA write floor). The proven sync engine — watermark-before-write, `_batch_id`
+  idempotency, quarantine, Iceberg maintenance — is retargeted verbatim from the personal
+  bronze lane to the domain copy; the tier version lights (earned) only after the first
+  successful landing verifies. Preview / profile / DQ / Talk / metrics read the local copy
+  through the one FQN seam with no special-casing.
+- **Metrics on synced copies.** The Phase 2 metric-source exclusion now applies only to
+  LIVE connected datasets; a synced copy with a built Gold defines metrics like any native
+  gold dataset (Cube handover via the normal governed registration path).
+- **Adopt dialog sync setup.** When the exposure is sync-mode, the adopt dialog shows sync
+  configuration prefilled from the exposure's `syncDefaults` (mode, cursor, schedule) in the
+  SyncPanel vocabulary — Simple keeps it minimal (defaults + schedule), Developer exposes
+  the full config. Full-refresh of a large table is warned honestly (15 s governed-statement
+  ceiling) and steered to a cursor.
+- **Source stage for synced datasets.** The connected Source card gains a Sync face:
+  mode badge, freshness = last successful sync run (real, from sync-runs), next-run schedule,
+  run-history summary, and drift flags — with the SyncPanel available to adjust cadence /
+  "Sync now".
+
+### Changed
+- **Frozen-copy revocation.** Revoking an exposure now freezes bound SYNC datasets instead
+  of blanking them: sync is disabled, the per-dataset CronJob is removed
+  (`reconcileSyncCron(id, null)`), but the last-landed copy is KEPT (sovereign data) and
+  stays fully queryable — the Source stage banners "copy frozen as of <last successful run>".
+  Live datasets keep the Phase 2 behavior (no data shown until re-adopted).
+
+## [os-ui 0.6.70] — 2026-08-05
+
+### Added
+- **Adopt "From a connection" — Live/federated datasets** (lakehouse import & exposure,
+  Phase 2). A domain admin can now adopt a table a platform admin exposed to their
+  domain into a governed dataset. `+ New dataset` gains a third card ("From a
+  connection", `components/data/AdoptConnectionPanel.tsx`) — visible only when
+  `EXTERNAL_CONNECTORS_ENABLED` and the caller is `roleAtLeast domain_admin` and a table
+  is actually exposed. A new server helper (`lib/connections/exposed-tables.ts`) resolves
+  the exposures whose domains intersect the caller's, grouped connection → exposure set,
+  served by `GET /api/data/exposed-tables`; adoption (`POST /api/data/adopt`) re-resolves
+  governance server-side, requires a short description, and creates the dataset at
+  **Domain tier** with `origin:'connected'`.
+- **Connected datasets read live through one FQN seam.** The `connected` block on the
+  dataset schema (`{ connectionId, exposureId, source:{catalog,schema,table}, mode, tier,
+  status }`, byte-stable/back-compat) drives `versionTarget`/`builtLayerFqn`: a live
+  connected dataset resolves to the verbatim `<catalog>.<schema>.<table>` read as the
+  viewer's domain principal (never a personal lane); only `versions[tier].built` is true
+  and bronze never exists. Preview/profile/DQ/Talk/`query_data` inherit through that seam.
+- **Source stage** (`components/data/ConnectedSourcePanel.tsx`) replaces Ingest/Refine for
+  connected datasets in `DataBuilder`: connection link, source FQN, Live/tier badges,
+  snapshot freshness ("snapshot from <takenAt>"), drift flag, and the honest guardrail
+  notes (preview LIMIT; profile sampled).
+- **Honest sampling labels.** A live profile computes stats/top-values over a bounded
+  sample subquery (`lib/data/profile.ts sampledSource`) and the payload is labeled
+  "sampled, approximate — computed on ~N rows"; executable DQ on a live table now asks for
+  explicit confirmation and recommends a synced copy.
+- **Revocation & drift propagate honestly.** Revoking an exposure flips every bound
+  dataset to `connected.status='source-revoked'` (no data shown, preview/Talk disabled with
+  an explicit banner), notifies each owner, and traces `dataset_source_revoked`; a catalog
+  snapshot that removes a bound table flags the dataset `drifted` and notifies its owner.
+- **Metrics are excluded on live connected datasets** (v1): `metricSqlReady` and the metric
+  source picker steer to "define metrics on a synced copy".
+
+## [os-ui 0.6.69] — 2026-08-05
+
+### Changed
+- **Data ingestion is upload-only** (lakehouse import & exposure, Phase 0). Retired
+  the Data tab's "Pull from a product" free-SQL Trino extract from the Ingestion
+  stage (`components/data/BronzePanel.tsx`) and its tutorial copy
+  (`lib/tutorials/content/data.ts`): the section now only uploads a file, and the
+  guidance says external lakehouse data arrives governed, via a connection. The
+  governed `pull-extract` server action (`/api/data/sandbox`) is unchanged and stays
+  for Developer/personal-lane use.
+
+### Added
+- **Exposure sets + catalog snapshot + fail-closed external-catalog policy floor**
+  (lakehouse import & exposure, Phase 1 — security-critical, shipped as one unit).
+  - **Fail-closed floor** (`charts/sovereign-agentic-os/policies/trino.rego`): a table
+    in a NON-internal catalog (not `iceberg`/`system`) with no `data.governance.tables`
+    entry now reads zero rows for everyone and cannot be written — closing the gap
+    where a live-registered external warehouse catalog was readable by every
+    authenticated principal. Additive; iceberg/internal access unchanged. Rego-bundle
+    tests in `tests/policies/trino_test.rego`.
+  - **Exposure sets** (`lib/connections/exposures.ts`): admin-only CRUD
+    (`roleAtLeast 'admin'`), persisted via the registry mirror (`os-exposures`),
+    audit-traced (`exposure_set_created/updated/revoked`). Each non-revoked set
+    compiles to a `data.governance.tables` shared-with entry per table
+    (`compileExposures` in `lib/data/policy/compiler.ts`), pushed per-key to OPA
+    (`lib/connections/exposure-policy.ts`) so it is additive to dataset governance and
+    durable across a pod roll; create/update/revoke recompile immediately.
+  - **Catalog snapshot** (`lib/connections/warehouse/catalog-snapshot.ts`): per-connection
+    cached listing built by looping the governed `discoverWarehouse`
+    (`SHOW SCHEMAS` + per-schema `SHOW TABLES`) as the connection's domain; columns
+    served lazily via a governed `DESCRIBE`; consecutive-snapshot drift diff; honest
+    `live`/`stale`/`unreachable` status; never fabricated freshness.
+  - **API + UI**: `GET/POST /api/connections/[id]/exposures`, `PATCH/DELETE
+    …/exposures/[exposureId]`, `GET/POST …/snapshot`, and a service
+    `POST /api/connections/catalog-refresh` sweep. Admin-only Expose section on the
+    warehouse connection detail (`components/connections/ExposePanel.tsx`): snapshot
+    browser (search, group-by-schema, multi-select, select-whole-schema, Refresh) +
+    exposure form (name, domains, mode Live/Sync, tier silver/gold, note) + existing
+    sets with Edit/Revoke and a Developer view of the compiled governance entries.
+  - **Chart**: optional `connections.catalogRefresh` CronJob
+    (`templates/connections/catalog-refresh-cronjob.yaml`) — nil-safe under
+    `--reuse-values`, default OFF.
+
 ## [os-ui 0.6.68] — 2026-08-05
 
 ### Removed

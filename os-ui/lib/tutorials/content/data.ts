@@ -26,7 +26,7 @@ const data: TutorialDef = {
     {
       illustration: 'load',
       title: 'New — pick the type',
-      body: 'Start with "＋ New". Choose "📥 Ingest new data" to bring a file (CSV, Parquet, JSON…) or pull from a product you trust, or "🔗 Create a curated dataset" to compose a new table from datasets you already have. Either way you land in Edit, and tiles group into Ingested Data and Curated Data.',
+      body: 'Start with "＋ New". Choose "📥 Ingest new data" to bring in a file (CSV, Parquet, JSON…), or "🔗 Create a curated dataset" to compose a new table from datasets you already have. Either way you land in Edit, and tiles group into Ingested Data and Curated Data. (Data from an external lakehouse arrives governed, via a connection — not by ingest.)',
     },
     {
       illustration: 'clean',
@@ -70,7 +70,7 @@ const data: TutorialDef = {
       anchor: ANCHORS.data.load,
       sandboxAnchor: ANCHORS.data.sandbox,
       title: 'New — ingest the data',
-      body: 'Start with "＋ New" and pick a type. "📥 Ingest new data" lands you in Edit on the Ingestion section — upload a file or pull from a product, check the preview, and your data lands as a versioned table ready to shape.',
+      body: 'Start with "＋ New" and pick a type. "📥 Ingest new data" lands you in Edit on the Ingestion section — upload a file, check the preview, and your data lands as a versioned table ready to shape. External lakehouse data comes in a different way: governed, via a connection.',
       route: '/data',
     },
     {

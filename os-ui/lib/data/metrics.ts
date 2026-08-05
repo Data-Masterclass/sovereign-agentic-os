@@ -115,6 +115,13 @@ export const PROMOTE_FIRST_MESSAGE =
  * (never throws — callers decide 400 vs skip).
  */
 export function metricSqlReady(d: Dataset): { ok: boolean; message?: string } {
+  // Metrics are NOT offered on a LIVE connected dataset (lakehouse-import-exposure.md,
+  // Phase 2 v1): a live-federated external table has no governed gold mart to bind a Cube
+  // to, and honest sampling makes an aggregate approximate. Steer to a synced copy — the
+  // ONE message the picker + define route both surface.
+  if (d.connected && d.connected.mode === 'live') {
+    return { ok: false, message: 'Define metrics on a synced copy — not a live connected dataset.' };
+  }
   if (!d.versions.gold.built) {
     return { ok: false, message: 'Define a metric only on a built Gold version.' };
   }

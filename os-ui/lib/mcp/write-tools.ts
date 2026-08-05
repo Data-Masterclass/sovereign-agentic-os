@@ -16,6 +16,7 @@ import { bigbetWriteTools } from './bigbet-write-tools';
 import { agentWriteTools } from './agent-write-tools';
 import { softwareWriteTools } from './software-write-tools';
 import { scienceWriteTools } from './science-write-tools';
+import { exposureWriteTools } from './exposure-write-tools';
 
 /**
  * The GOVERNED WRITE tools of the OS MCP — one per authoring action a case study
@@ -46,6 +47,7 @@ export { bigbetWriteTools } from './bigbet-write-tools';
 export { agentWriteTools, __setRunOsTeamForTests } from './agent-write-tools';
 export { softwareWriteTools } from './software-write-tools';
 export { scienceWriteTools } from './science-write-tools';
+export { exposureWriteTools } from './exposure-write-tools';
 
 export const ALL_WRITE_TOOLS: McpTool[] = [
   ...dataWriteTools,
@@ -60,6 +62,9 @@ export const ALL_WRITE_TOOLS: McpTool[] = [
   ...promotionTools,
   // Software design fields (set_app_design via patchAppDesign — governed path).
   ...softwareWriteTools,
+  // Lakehouse expose/adopt parity (Phase 4): exposure CRUD + catalog snapshot/classify
+  // (connections) + list_exposed_tables/adopt_exposed_table (data) — same libs as the UI.
+  ...exposureWriteTools,
   // mcp-v2 surfaces wave — Strategy (pillar CRUD) + Marketplace (rate) writes.
   ...strategyWriteTools,
   ...marketplaceWriteTools,

@@ -13,8 +13,10 @@ import {
   assembleProfile,
   parseDescribe,
   previewSql,
+  sampledSource,
   statsSql,
   topValuesSql,
+  LIVE_PROFILE_SAMPLE_ROWS,
   type Profile,
   type ProfileColumn,
 } from '@/lib/data/profile';
@@ -101,13 +103,20 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
     });
   }
 
-  const statsRes = await queryRun(statsSql(fqn, columns), principal);
+  // HONEST SAMPLING for a LIVE connected table (lakehouse-import-exposure.md): a federated
+  // external table can be petabyte-scale, so the stats/top-values scans run over a BOUNDED
+  // sample subquery (not the whole table) and the result is labeled "sampled, approximate".
+  // The preview is already LIMIT-bounded. Non-connected datasets are unchanged (whole table).
+  const isLiveConnected = dataset.connected?.mode === 'live';
+  const statsFrom = isLiveConnected ? sampledSource(fqn) : fqn;
+
+  const statsRes = await queryRun(statsSql(statsFrom, columns), principal);
   const previewRes = await queryRun(previewSql(fqn, 50), principal);
   // Top values are best-effort: a wide table or a heavy scan must not fail the
   // whole profile (the count + null% acceptance rides on stats/preview).
   let topRes = null;
   if (columns.length > 0 && columns.length <= MAX_TOPVALUE_COLUMNS) {
-    const sql = topValuesSql(fqn, columns, 5);
+    const sql = topValuesSql(statsFrom, columns, 5);
     if (sql) {
       try {
         topRes = await queryRun(sql, principal);
@@ -117,7 +126,15 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
     }
   }
 
-  const profile = assembleProfile({ fqn, layer, columns, statsRes, topRes, previewRes });
+  const profile = assembleProfile({
+    fqn,
+    layer,
+    columns,
+    statsRes,
+    topRes,
+    previewRes,
+    ...(isLiveConnected ? { sampledRows: LIVE_PROFILE_SAMPLE_ROWS } : {}),
+  });
   cache().set(key, profile);
   return NextResponse.json({ datasetId: id, name: dataset.name, available: true, cached: false, ...profile });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

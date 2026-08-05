@@ -196,6 +196,45 @@ principal := object.get(data.governance.principals, [user], {"domains": [], "cle
 # Fully-qualified table name from a table or column resource.
 table_key(r) := sprintf("%s.%s.%s", [r.catalogName, r.schemaName, r.tableName])
 
+# --- External-catalog fail-closed floor (lakehouse Expose — ADDITIVE hard floor) -----
+# A live-registered EXTERNAL warehouse catalog (Glue/Databricks/Snowflake/…) is mounted
+# straight into Trino, so WITHOUT an explicit governance entry every authenticated
+# principal could read it — the compiler only ever emitted entries for governed
+# `iceberg.*` marts. This floor closes that gap: any table whose catalog is NOT one of the
+# INTERNAL catalogs (the OS's own `iceberg` lakehouse + Trino's built-in `system`) AND
+# which carries NO `data.governance.tables` entry reads ZERO rows for everyone and cannot
+# be written. An EXPOSED external table DOES carry an entry (the compiler emits
+# `visibility:'shared', shared_with:[<domains>]` from each non-revoked ExposureSet), so the
+# domain-based `table_entitled` above governs it exactly like a shared mart — the assigned
+# domain reads it, everyone else gets the `false` filter. Revoking an exposure withdraws
+# the entry, and this floor re-closes the table.
+#
+# Purely ADDITIVE: it only ever DENIES, and only for a NON-internal catalog with no entry.
+# `iceberg`/`system` tables are untouched (internal), and any table WITH an entry is
+# governed by the existing rules — so no existing access breaks.
+internal_catalogs := {"iceberg", "system"}
+
+is_internal_catalog(cat) if cat in internal_catalogs
+
+# A table in an external catalog that the governance model does not know about.
+ungoverned_external(t) if {
+	not is_internal_catalog(t.catalogName)
+	not data.governance.tables[table_key(t)]
+}
+
+# Zero rows for an ungoverned external table — for EVERY principal (fail closed).
+rowFilters contains {"expression": "false"} if {
+	t := input.action.resource.table
+	ungoverned_external(t)
+}
+
+# Deny writes to an ungoverned external catalog (no CTAS/insert into an unexposed table).
+allow := false if {
+	is_write_op
+	t := input.action.resource.table
+	ungoverned_external(t)
+}
+
 # --- Row filtering (by domain) ----------------------------------------------
 # A principal NOT entitled to a table's domain gets a `false` row filter (no
 # rows). The owning domain — and any `public`/`shared`-to-them table — is

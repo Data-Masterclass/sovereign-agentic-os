@@ -98,6 +98,22 @@ export function previewSql(fqn: string, limit = 50): string {
   return `select * from ${fqn} limit ${Math.max(1, Math.floor(limit))}`;
 }
 
+/** The default row budget a LIVE connected (potentially petabyte) table is profiled over. */
+export const LIVE_PROFILE_SAMPLE_ROWS = 10_000;
+
+/**
+ * A SAMPLE-BOUNDED source expression for profiling a LIVE connected table (honest sampling,
+ * lakehouse-import-exposure.md). An unbounded `count(*) … from <fqn>` over a federated
+ * petabyte table would scan the whole thing; instead we profile over a bounded subquery
+ * `(select * from <fqn> limit N) as t` — portable across every connector (no reliance on
+ * TABLESAMPLE, which many federated catalogs don't support). Pass the RESULT to `statsSql`/
+ * `topValuesSql` in place of the raw FQN; the numbers are then "approximate — computed on
+ * ~N rows" and MUST be labeled as such in the payload. Governance still applies: the inner
+ * `select *` runs through the same governed principal, so row filters/masks ride along. */
+export function sampledSource(fqn: string, rows = LIVE_PROFILE_SAMPLE_ROWS): string {
+  return `(select * from ${fqn} limit ${Math.max(1, Math.floor(rows))}) as _sample`;
+}
+
 // ------------------------------------------------------------- result parsing --
 
 export type ColumnProfile = {
@@ -119,6 +135,13 @@ export type Profile = {
   columns: ColumnProfile[];
   preview: { columns: string[]; rows: string[][] };
   generatedAt: string;
+  /** Set when the stats were computed over a BOUNDED sample of a live connected table
+   *  (not the whole table). The UI renders "sampled, approximate — computed on ~N rows". */
+  sampled?: boolean;
+  /** The row budget the sample was bounded to (only when `sampled`). */
+  sampledRows?: number;
+  /** A ready-to-render honest label (only when `sampled`). */
+  sampleNote?: string;
 };
 
 /** Parse `DESCRIBE <fqn>` output (columns: Column, Type, …) into ProfileColumns. */
@@ -155,6 +178,8 @@ export function assembleProfile(input: {
   topRes: QueryResult | null;
   previewRes: QueryResult;
   generatedAt?: string;
+  /** When set, the stats came from a bounded sample of a live table — labeled honestly. */
+  sampledRows?: number;
 }): Profile {
   const { fqn, layer, columns, statsRes, topRes, previewRes } = input;
   const rowCount = toInt(cellByAlias(statsRes, ROW_COUNT_ALIAS));
@@ -194,5 +219,12 @@ export function assembleProfile(input: {
     columns: cols,
     preview: { columns: previewRes.columns, rows: previewRes.rows },
     generatedAt: input.generatedAt ?? new Date().toISOString(),
+    ...(input.sampledRows
+      ? {
+          sampled: true,
+          sampledRows: input.sampledRows,
+          sampleNote: `sampled, approximate — computed on ~${input.sampledRows.toLocaleString()} rows`,
+        }
+      : {}),
   };
 }

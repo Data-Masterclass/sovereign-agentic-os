@@ -11,6 +11,7 @@ import {
 
 // --- Governed read/list lib functions (the EXACT same the UI + /api call) ------
 import { listDatasets, getDataset } from '@/lib/data/store';
+import type { Dataset } from '@/lib/data/dataset-schema';
 import { listWorkflows, getWorkflow } from '@/lib/knowledge/store';
 import { listFiles, searchFiles, getFile } from '@/lib/files/store';
 import { listMetrics } from '@/lib/metrics/store';
@@ -90,9 +91,35 @@ import {
   ensureSyncRunsHydrated,
   isQuarantined,
   lastMaintenanceAt,
+  latestSyncRun,
   listSyncRuns,
 } from '@/lib/data/sync-runs';
 import { nextCronRun } from '@/lib/data/sync-next-run';
+
+/**
+ * The `connected` summary a get_dataset returns for a dataset adopted from a warehouse
+ * exposure (lakehouse-import-exposure.md Phase 4). Null for every non-connected dataset.
+ * Freshness is HONEST: a LIVE dataset federates every read (no cached copy, so `freshness`
+ * is `null` — it's always current); a SYNC dataset's freshness is its LAST SUCCESSFUL landing
+ * (`null` until one lands) — never a fabricated timestamp.
+ */
+async function connectedBlock(d: Dataset): Promise<{
+  mode: 'live' | 'sync';
+  tier: 'silver' | 'gold';
+  status: 'ok' | 'drifted' | 'source-revoked';
+  source: { catalog: string; schema: string; table: string };
+  freshness: string | null;
+} | null> {
+  if (d.origin !== 'connected' || !d.connected) return null;
+  const c = d.connected;
+  let freshness: string | null = null;
+  if (c.mode === 'sync') {
+    await ensureSyncRunsHydrated();
+    const run = latestSyncRun(d.id);
+    freshness = run && run.status === 'ok' ? run.finishedAt : null;
+  }
+  return { mode: c.mode, tier: c.tier, status: c.status, source: c.source, freshness };
+}
 
 // ================================ READ / LIST =================================
 export const readTools: McpTool[] = [
@@ -137,6 +164,10 @@ export const readTools: McpTool[] = [
       return {
         ...d,
         queryable,
+        // ADOPTED-FROM-A-CONNECTION provenance (lakehouse-import-exposure.md Phase 4): a
+        // dataset born `origin:'connected'` carries a `connected` block naming its mode,
+        // tier, honesty status, external source + real freshness (never fabricated).
+        connected: await connectedBlock(d),
         cube: {
           ready,
           view: ready ? cubeViewName(d) : null,

@@ -76,6 +76,34 @@ test('append run: probe → delete-batch → insert, cursor advances only after 
   assert.equal(currentWatermark('ds1'), '100');
 });
 
+test('connected-sync run: lands into the DOMAIN schema at the tier, not the personal bronze lane', async () => {
+  // A connected-sync dataset: the copy lands in iceberg.<domain>.<tier>_<slug>, read/written
+  // AS the domain principal (the exposure grants the domain — never the personal lane).
+  const connectedSync = dataset({}, {
+    domain: 'sales',
+    origin: 'connected',
+    connected: {
+      connectionId: 'conn1', exposureId: 'exp1',
+      source: { catalog: 'glue', schema: 'public', table: 'orders' },
+      mode: 'sync', tier: 'gold', status: 'ok',
+    },
+  });
+  let freshnessMarked = false;
+  const { deps, executed, queried } = fakes({
+    dataset: () => connectedSync,
+    // The freshness hook fires for a connected-sync too (lights the tier — earned status).
+    markBronzeBuilt: () => { freshnessMarked = true; },
+  });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && !out.skipped && out.run!.status === 'ok');
+  // The source probe still reads the external table (catalog resolved live via the connection)…
+  assert.match(queried[0].sql, /FROM pg_shop\.public\.orders/);
+  // …but the DELETE + INSERT target the DOMAIN-schema gold copy, never personal_lena.bronze.
+  assert.match(executed[0].sql, /^DELETE FROM iceberg\.sales\.gold_orders WHERE _batch_id = '/);
+  assert.match(executed[1].sql, /^INSERT INTO iceberg\.sales\.gold_orders SELECT \*, /);
+  assert.equal(freshnessMarked, true, 'freshness marking fired (lights the tier — earned status)');
+});
+
 test('failed write: honest error row, cursor does NOT advance', async () => {
   const { deps } = fakes({ execute: async () => { throw new Error('Trino down'); } });
   const out = await runDatasetSync('ds1', 'schedule', deps);

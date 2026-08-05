@@ -13,6 +13,7 @@ import GoldJoinPanel from './GoldJoinPanel';
 import ExplorePanel from './ExplorePanel';
 import BronzePanel from './BronzePanel';
 import SyncPanel from './SyncPanel';
+import ConnectedSourcePanel from './ConnectedSourcePanel';
 import QualityFixPanel from './QualityFixPanel';
 import BuildResultDialog, { type BuildResult } from './BuildResultDialog';
 import QueryError from './QueryError';
@@ -157,8 +158,18 @@ type Dataset = {
   owner: string;
   domain: string;
   tier: 'dataset' | 'asset' | 'product';
-  /** How the dataset was born — 'curated' walks Compose·Document·Validate·View. */
-  origin?: 'ingest' | 'curated';
+  /** How the dataset was born — 'curated' walks Compose·Document·Validate·View;
+   *  'connected' is an adopted external table (Source stage, no Ingest/Refine). */
+  origin?: 'ingest' | 'curated' | 'connected';
+  /** ADOPTED-FROM-A-CONNECTION block (present only with origin:'connected'). */
+  connected?: {
+    connectionId: string;
+    exposureId: string;
+    source: { catalog: string; schema: string; table: string };
+    mode: 'live' | 'sync';
+    tier: 'silver' | 'gold';
+    status: 'ok' | 'drifted' | 'source-revoked';
+  };
   visibility: string;
   description: string;
   versions: { bronze: VersionState; silver: VersionState; gold: VersionState };
@@ -802,6 +813,14 @@ export default function DataBuilder({
   }, [datasetId]);
 
   const runChecks = useCallback(async () => {
+    // Executable DQ on a LIVE connected table scans the source (bounded, but real). Confirm
+    // first and steer to a synced copy — honest about running a real query on live data.
+    if (dataset?.origin === 'connected' && dataset.connected?.mode === 'live') {
+      const ok = typeof window === 'undefined' || window.confirm(
+        'Running these checks executes real queries against the live source table. For repeatable, cheaper quality runs, use a synced copy instead. Run against the live source now?',
+      );
+      if (!ok) return;
+    }
     setRunErr(''); setRunning(true);
     try {
       const res = await fetch(`/api/data/datasets/${datasetId}/checks`, {
@@ -821,7 +840,7 @@ export default function DataBuilder({
     } finally {
       setRunning(false);
     }
-  }, [datasetId, loadDq]);
+  }, [datasetId, loadDq, dataset?.origin, dataset?.connected?.mode]);
 
   // Governed 50-row preview — the SAME OPA-checked read path. A stage names the LAYER it
   // wants (`?layer=`); omitting it lets the server pick the highest built layer. The
@@ -944,6 +963,15 @@ export default function DataBuilder({
   //     keeps the join editor visible (nothing breaks).
   const curated = dataset?.origin === 'curated';
   const legacyJoins = (dataset?.goldSpec?.joins?.length ?? 0) > 0;
+  // CONNECTED (adopted from a warehouse exposure) — like curated, it has no Ingest/Refine;
+  // it shows a Source stage instead. `connectedInfo` present ⇒ the dataset IS an external
+  // table (live-federated). A revoked source disables preview/Talk (no data shown).
+  const connectedInfo = dataset?.origin === 'connected' ? dataset.connected : undefined;
+  const isConnected = !!connectedInfo;
+  const sourceRevoked = connectedInfo?.status === 'source-revoked';
+  // A revoked LIVE source has NO data (suppress Talk/preview/stats). A revoked SYNC source
+  // keeps its last-landed copy — frozen but fully queryable — so data stays available.
+  const dataSuppressed = sourceRevoked && connectedInfo?.mode === 'live';
 
   // View ⇄ Edit. A dataset with nothing materialized (fresh, just-created — the "new"
   // signal, no new prop needed) opens in EDIT (the natural build entry); anything with a
@@ -1265,13 +1293,29 @@ export default function DataBuilder({
             at Composition. Plain-language: no Bronze/Silver/Gold words. The full preview
             (with the layer toggle) lives in View — Edit stays calm. Internal anchor +
             route ids (data.load / bronze layer) are UNCHANGED. */}
-        {mode === 'edit' && !curated ? (
+        {/* ─────────────── Source (Edit · connected only) ───────────────
+            A connected dataset is an adopted external table — no Ingest/Refine; this Source
+            card (connection, FQN, mode/tier, snapshot freshness, drift/revoked, guardrails)
+            takes their place, at the same order-1 slot. */}
+        {mode === 'edit' && isConnected && connectedInfo ? (
+          <div style={{ order: 1 }}>
+            <ConnectedSourcePanel connected={connectedInfo} datasetId={dataset.id} />
+            {/* A SYNC-mode connected dataset owns a schedule + run history — the same SyncPanel
+                the warehouse import uses, so the owner can adjust cadence / "Sync now". A live
+                connected dataset has no sync. A frozen (revoked) copy keeps the panel read-only-ish
+                (the CronJob is gone; the panel still surfaces the honest run history). */}
+            {connectedInfo.mode === 'sync' ? (
+              <SyncPanel datasetId={dataset.id} canEdit={canEdit && !sourceRevoked} columns={colNames} />
+            ) : null}
+          </div>
+        ) : null}
+
+        {mode === 'edit' && !curated && !isConnected ? (
           <div {...anchorAttr(ANCHORS.data.load)} style={{ order: 1 }}>
             <div className="section-title" style={{ marginTop: 0 }}>Ingestion</div>
             {canEdit ? (
               <BronzePanel
                 datasetId={dataset.id}
-                datasetName={dataset.name}
                 onCommitted={() => { void buildThenAutoGold('bronze'); }}
               />
             ) : (
@@ -1377,7 +1421,7 @@ export default function DataBuilder({
             Internal anchor id (data.clean) + the silver layer/route are UNCHANGED. After a
             successful build the pass-through Gold fires automatically (metrics need Gold).
             Sits AFTER Documentation (order 3), before Checks. */}
-        {mode === 'edit' && canEdit && !curated ? (
+        {mode === 'edit' && canEdit && !curated && !isConnected ? (
           <div {...anchorAttr(ANCHORS.data.clean)} style={{ order: 3 }}>
             <div className="section-title" style={{ marginTop: 0 }}>Transformation</div>
             {/* AI, built into the flow: fill the cleaning plan below ("Clean it up"). */}
@@ -1742,6 +1786,17 @@ export default function DataBuilder({
             View/publish content unchanged. */}
         {mode === 'view' ? (
           <div>
+            {/* Connected datasets show their Source card first (connection, FQN, freshness,
+                drift/revoked, guardrails). A revoked source shows the banner and NO data —
+                Talk + preview + stats are suppressed with the honest reason. */}
+            {isConnected && connectedInfo ? <ConnectedSourcePanel connected={connectedInfo} datasetId={dataset?.id} /> : null}
+
+            {dataSuppressed ? (
+              <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>
+                Talk, preview and statistics are unavailable while the source is revoked.
+              </p>
+            ) : (
+            <>
             {/* 1. Talk to Data — the primary way to USE the data (no example chips: the
                    viewer knows their own questions; the surface stays calm). */}
             <div {...anchorAttr(ANCHORS.data.query)} style={{ marginTop: 0 }}>
@@ -1852,6 +1907,8 @@ export default function DataBuilder({
                   <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>Run the checks to see a real pass/fail per rule.</p>
                 ) : null}
               </>
+            )}
+            </>
             )}
 
             {/* Configuration drawer (dbt SQL / dataset.yaml) — the technical surface, kept last. */}

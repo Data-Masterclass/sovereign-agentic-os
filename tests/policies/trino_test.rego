@@ -262,3 +262,111 @@ test_release_owner_still_owns if {
 	allow with input as personal_read_input("alex", "alex") with data.governance as release_data
 	allow with input as personal_write_input("alex", "alex") with data.governance as release_data
 }
+
+# --- Lakehouse Expose: external-catalog fail-closed floor -------------------------------
+# An external warehouse catalog (e.g. Glue `glue_sales`) is mounted live into Trino. The
+# floor: a table there with NO governance entry reads zero rows for everyone; an EXPOSED
+# table (compiler emits visibility:'shared', shared_with:[<domains>]) is governed exactly
+# like a shared mart — the assigned domain reads it, others get the false filter.
+
+# Governance data that ALSO carries one EXPOSED external table (glue_sales.public.orders
+# shared to marketing) and leaves glue_sales.public.customers UNEXPOSED.
+expose_data := object.union(mock_data, {"tables": {
+	"iceberg.sales.mart_sales": mock_data.tables["iceberg.sales.mart_sales"],
+	"iceberg.sales.gold_northpeak_commerce": mock_data.tables["iceberg.sales.gold_northpeak_commerce"],
+	"glue_sales.public.orders": {
+		"domain": "sales",
+		"visibility": "shared",
+		"shared_with": ["marketing"],
+		"shared_with_users": [],
+		"sensitive_columns": {},
+	},
+}})
+
+ext_row_input(user, tbl) := {
+	"context": {"identity": {"user": user}},
+	"action": {
+		"operation": "GetRowFilters",
+		"resource": {"table": {
+			"catalogName": "glue_sales",
+			"schemaName": "public",
+			"tableName": tbl,
+		}},
+	},
+}
+
+ext_write_input(user, tbl) := {
+	"context": {"identity": {"user": user}},
+	"action": {
+		"operation": "CreateTableAsSelect",
+		"resource": {"table": {
+			"catalogName": "glue_sales",
+			"schemaName": "public",
+			"tableName": tbl,
+		}},
+	},
+}
+
+# UNEXPOSED external table -> zero rows for EVERYONE (fail closed), even an admin/creator.
+test_unexposed_external_zero_rows_for_all if {
+	rowFilters == {{"expression": "false"}} with input as ext_row_input("sales-agent", "customers")
+		with data.governance as expose_data
+	rowFilters == {{"expression": "false"}} with input as ext_row_input("marketing-agent", "customers")
+		with data.governance as expose_data
+}
+
+# ...and writes to an unexposed external table are DENIED.
+test_unexposed_external_write_denied if {
+	not allow with input as ext_write_input("sales-agent", "customers")
+		with data.governance as expose_data
+}
+
+# EXPOSED external table -> a member of an assigned domain (marketing) reads it (no filter).
+test_exposed_external_allows_assigned_domain if {
+	count(rowFilters) == 0 with input as ext_row_input("marketing-agent", "orders")
+		with data.governance as expose_data
+}
+
+# ...and the owning domain (sales) reads its own exposed external table too.
+test_exposed_external_allows_owner_domain if {
+	count(rowFilters) == 0 with input as ext_row_input("sales-agent", "orders")
+		with data.governance as expose_data
+}
+
+# ...but a NON-member domain still gets the false filter (governed like a shared mart).
+test_exposed_external_masks_non_member if {
+	rowFilters == {{"expression": "false"}} with input as ext_row_input("cube-sales-other", "orders")
+		with data.governance as object.union(expose_data, {"principals": {"cube-sales-other": {"domains": ["finance"], "clearances": []}}})
+}
+
+# INTERNAL catalogs are UNAFFECTED by the floor: an ungoverned `iceberg` table (e.g. a
+# personal-lane or not-yet-governed table) is NOT force-filtered by this rule — the
+# existing iceberg/personal rules govern it exactly as before.
+test_internal_iceberg_unaffected_by_floor if {
+	# An iceberg table with no governance entry gets no floor filter from THIS rule.
+	count(rowFilters) == 0 with input as {
+		"context": {"identity": {"user": "sales-agent"}},
+		"action": {"operation": "GetRowFilters", "resource": {"table": {
+			"catalogName": "iceberg", "schemaName": "sales", "tableName": "ungoverned_scratch",
+		}}},
+	}
+		with data.governance as expose_data
+
+	# The Trino built-in `system` catalog is likewise untouched.
+	count(rowFilters) == 0 with input as {
+		"context": {"identity": {"user": "sales-agent"}},
+		"action": {"operation": "GetRowFilters", "resource": {"table": {
+			"catalogName": "system", "schemaName": "runtime", "tableName": "queries",
+		}}},
+	}
+		with data.governance as expose_data
+}
+
+# Missing identity fails CLOSED for an unexposed external table (zero rows).
+test_unexposed_external_missing_identity_zero_rows if {
+	rowFilters == {{"expression": "false"}} with input as {"action": {
+		"operation": "GetRowFilters",
+		"resource": {"table": {"catalogName": "glue_sales", "schemaName": "public", "tableName": "customers"}},
+	}}
+		with data.governance as expose_data
+}

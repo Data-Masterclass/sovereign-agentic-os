@@ -1,0 +1,90 @@
+{{- /* nil-safe under --reuse-values: traverse with default-guarded lookups so an upgrade
+       that never carried the new connections.catalogRefresh block won't nil-deref. */ -}}
+{{- if (((.Values.connections).catalogRefresh).enabled) }}
+{{- /*
+  Catalog-refresh sweep CronJob (lakehouse Expose, Phase 1).
+
+  Re-snapshots every warehouse connection's catalog on a cadence by POSTing the governed
+  route (`POST /api/connections/catalog-refresh`), which runs `SHOW SCHEMAS`/`SHOW TABLES`
+  through the SAME governed query path AS each connection's domain and diffs against the
+  previous snapshot (drift). Refresh is otherwise on-demand (the Expose UI's Refresh
+  button); this sweep is the optional scheduled leg.
+
+  AUTH — the shared agent-runtime bearer (the SAME Secret-mounted token the agent-schedule
+  + data-sync sweeps present; `runtimeTokenOk` on the route). No credentials are baked in.
+  GATED OFF by default (connections.catalogRefresh.enabled=false) and NIL-SAFE: every value
+  lookup is default-guarded, so `helm template` without this block (e.g. --reuse-values from
+  an older release) emits nothing and errors nowhere. Cloned from data-sync-cronjob.yaml.
+*/}}
+{{- $r := .Values.connections.catalogRefresh }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: connections-catalog-refresh
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "connections-catalog-refresh") | nindent 4 }}
+spec:
+  schedule: {{ $r.schedule | default "23 * * * *" | quote }}
+  timeZone: UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" . "component" "connections-catalog-refresh") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "soa.podSecurityContext" . | nindent 12 }}
+            runAsUser: 1000
+          containers:
+            - name: sweep
+              image: curlimages/curl:8.11.1
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+                readOnlyRootFilesystem: true
+              env:
+                - name: OS_UI
+                  value: {{ $r.osUiUrl | default "http://os-ui:3000" | quote }}
+                - name: RUNTIME_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $r.tokenSecret | default "os-ui" | quote }}
+                      key: {{ $r.tokenSecretKey | default "agent-runtime-token" | quote }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  CODE=$(curl -s -o /tmp/run.json -w "%{http_code}" \
+                    -X POST "$OS_UI/api/connections/catalog-refresh" \
+                    -H "Authorization: Bearer $RUNTIME_TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d "{}")
+                  echo "connections/catalog-refresh -> $CODE"
+                  cat /tmp/run.json 2>/dev/null || true
+                  echo
+                  if [ "$CODE" != "200" ]; then
+                    echo "FATAL: connections/catalog-refresh returned $CODE" >&2
+                    exit 1
+                  fi
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+              resources:
+                requests: { cpu: 25m, memory: 32Mi }
+                limits: { cpu: 200m, memory: 64Mi }
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

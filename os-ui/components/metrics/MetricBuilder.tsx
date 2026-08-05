@@ -234,14 +234,24 @@ function DatasetPicker({
     })();
   }, []);
 
-  const group = (label: string, tiles: DatasetTile[]) =>
-    tiles.length ? (
+  // LIVE connected datasets are NOT metric sources (lakehouse-import-exposure.md, v1) —
+  // a live-federated external table has no governed gold mart to bind a metric to, so it is
+  // excluded from the picker with a plain steer to a synced copy (no dead option).
+  const notLive = (tiles: DatasetTile[]) => tiles.filter((d) => d.connected?.mode !== 'live');
+  const group = (label: string, tiles: DatasetTile[]) => {
+    const usable = notLive(tiles);
+    return usable.length ? (
       <optgroup key={label} label={label}>
-        {tiles.map((d) => (
+        {usable.map((d) => (
           <option key={d.id} value={d.id}>{d.name} · {datasetLayerLabel(d.tier)}</option>
         ))}
       </optgroup>
     ) : null;
+  };
+
+  // Do any live connected datasets exist that we excluded? Show the honest steer.
+  const hasHiddenLive = !!groups && [...groups.mine, ...groups.domain, ...groups.marketplace]
+    .some((d) => d.connected?.mode === 'live');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -255,6 +265,11 @@ function DatasetPicker({
           </>
         ) : null}
       </select>
+      {hasHiddenLive ? (
+        <p className="hint" style={{ margin: 0 }}>
+          Live connected datasets aren&apos;t shown — <strong>define metrics on a synced copy</strong>.
+        </p>
+      ) : null}
       {value && selectedDeliverable === false ? (
         <p className="hint" style={{ margin: 0 }}>
           No <strong>Gold</strong> built yet — build Gold in <strong>Data</strong> first, or the metric can&apos;t serve.

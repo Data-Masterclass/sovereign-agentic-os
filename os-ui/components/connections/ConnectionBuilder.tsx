@@ -41,6 +41,7 @@ import DomainTag from '@/components/DomainTag';
 import { WarehouseBrowser } from '@/components/data/WarehouseImportPanel';
 import ConnectorWizard, { type WizardStart, type WizardData } from '@/components/connections/ConnectorWizard';
 import ConnectorGallery from '@/components/connections/ConnectorGallery';
+import ExposePanel from '@/components/connections/ExposePanel';
 import {
   type Conn, type Tool, type Data, type EgressRequest, type ApprovalPreview, type OAuthProviderStatus,
   badge, modeBadge, visWord, connVisibility, ladderTier, postJSON,
@@ -805,6 +806,12 @@ function ConnectionDetail({
             <span className="comp-label" style={{ margin: 0 }}>Warehouse catalog</span>
             <WarehouseControls c={c} canManage={canManage} onChange={onChanged} />
           </div>
+        ) : null}
+
+        {/* Expose to domains — admin-only (exposure is a Company-tier act). Compiles
+            each listed table to an OPA governance entry shared with the chosen domains. */}
+        {isWarehouse && c.warehouse && role === 'admin' ? (
+          <ExposePanel connectionId={c.id} catalog={c.warehouse.catalog} />
         ) : null}
 
         {/* Data-source toggle */}

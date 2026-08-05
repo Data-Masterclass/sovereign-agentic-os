@@ -198,6 +198,18 @@ test('metricSqlReady: still requires a built Gold (no gold → honest reject)', 
   assert.match(metricSqlReady(noGold).message!, /built Gold/);
 });
 
+test('metricSqlReady: a LIVE connected dataset is EXCLUDED as a metric source (synced-copy steer)', () => {
+  // Even with a "built" gold layer, a live-federated external table has no governed gold
+  // mart to bind a metric to — the picker + define route both surface this steer.
+  const live = gold({
+    origin: 'connected',
+    connected: { connectionId: 'c', exposureId: 'e', source: { catalog: 'g', schema: 's', table: 't' }, mode: 'live', tier: 'gold', status: 'ok' },
+  });
+  const r = metricSqlReady(live);
+  assert.equal(r.ok, false);
+  assert.match(r.message!, /synced copy/i);
+});
+
 test('metricCubeReady: the Cube-registration promote-first rule is PRESERVED for personal gold', () => {
   const personal = gold({ tier: 'dataset', visibility: 'private' });
   const r = metricCubeReady(personal);

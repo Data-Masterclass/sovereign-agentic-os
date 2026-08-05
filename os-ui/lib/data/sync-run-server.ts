@@ -9,7 +9,7 @@ import { config } from '../core/config.ts';
 import { executeRun, queryRun, type ExecuteIdentity } from '../infra/governed.ts';
 import type { Dataset, DatasetSyncMode, Layer } from './dataset-schema.ts';
 import { buildVersion, datasetForScheduler } from './store.ts';
-import { personalSchema, physicalSlug } from './store-fqn.ts';
+import { domainSchema, personalSchema, physicalSlug } from './store-fqn.ts';
 import { parseDescribe } from './profile.ts';
 import {
   appendSql,
@@ -198,6 +198,24 @@ async function liveApiPlatform(connId: string, user: CurrentUser): Promise<'sale
   }
 }
 
+/**
+ * The Iceberg TARGET a sync run lands into — the ONE seam that differs between an
+ * ingest/curated sync and an adopted CONNECTED · SYNC dataset (lakehouse-import-exposure.md,
+ * Phase 3). PURE (no session, no network) so the executor and its tests share it:
+ *   • a CONNECTED · SYNC dataset lands its GOVERNED COPY straight into the DOMAIN schema at
+ *     the declared tier — `iceberg.<domainSchema>.<tier>_<slug>` — matching the FQN seam
+ *     (`store-fqn.versionTarget`) preview/profile/DQ/Talk/metrics read. It runs AS the
+ *     adopting domain's principal, entitled to its own domain schema (trino.rego write floor).
+ *   • every OTHER sync (the classic warehouse/API import) keeps landing in the owner's
+ *     PERSONAL lane at bronze — `iceberg.personal_<owner>.bronze_<slug>` — unchanged.
+ */
+export function syncTargetFor(d: Dataset, owner: { id: string }): SyncTarget {
+  if (d.connected && d.connected.mode === 'sync') {
+    return { schema: domainSchema(d.domain), table: `${d.connected.tier}_${physicalSlug(d)}` };
+  }
+  return { schema: personalSchema(owner.id), table: `bronze_${physicalSlug(d)}` };
+}
+
 /** A deterministic, guard-safe per-slice batch id (same slice ⇒ same id, so a retry
  *  deletes exactly what its previous attempt landed). */
 export function sliceBatchId(datasetId: string, highWatermark: string): string {
@@ -278,8 +296,18 @@ export async function runDatasetSync(
   const execute =
     deps.execute ??
     ((sql: string, identity: ExecuteIdentity) => executeRun(sql, identity, undefined, config.syncStatementTimeoutMs));
-  const identity: ExecuteIdentity = { principal: owner.id, uid: owner.id, domains: owner.domains, role: owner.role };
-  const target: SyncTarget = { schema: personalSchema(owner.id), table: `bronze_${physicalSlug(d)}` };
+  // A CONNECTED · SYNC dataset lands its governed copy AS its adopting DOMAIN principal
+  // (entitled to its domain schema by the trino.rego write floor); every other sync lands
+  // in the owner's personal lane AS the owner. The identity's principal must own the target
+  // schema (personal ⇒ owner id; domain ⇒ the domain), so the two never drift.
+  const connectedSync = !!(d.connected && d.connected.mode === 'sync');
+  const target: SyncTarget = syncTargetFor(d, owner);
+  const writePrincipal = connectedSync ? (owner.domains[0] ?? owner.id) : owner.id;
+  const identity: ExecuteIdentity = { principal: writePrincipal, uid: owner.id, domains: owner.domains, role: owner.role };
+  // Governed READS of the source. A connected-sync source is an EXPOSED external table —
+  // the exposure grants the adopting DOMAIN, so the watermark probe / describe read AS the
+  // domain principal (matching the write). Every other sync reads AS the owner (personal lane).
+  const readPrincipal = writePrincipal;
   const targetFqn = `iceberg.${target.schema}.${target.table}`;
 
   // The DISPATCH-marker row id ('running' → finalized in place to ok/error).
@@ -335,15 +363,22 @@ export async function runDatasetSync(
       }).id;
     };
 
-    // Shared SUCCESS tail — cursor advance, Bronze freshness, stale flags, Iceberg
+    // Shared SUCCESS tail — cursor advance, freshness marking, stale flags, Iceberg
     // maintenance, the ok run row. BOTH strategies end here (steps 3 + 4).
     const finish = async (): Promise<SyncOutcome> => {
-      // 3. Write confirmed → NOW the cursor may advance, Bronze freshness lights, and
-      //    already-built downstream layers are flagged stale (v1 never auto-rebuilds).
+      // 3. Write confirmed → NOW the cursor may advance, the landed layer's freshness
+      //    lights (EARNED status — the tier version only turns `built` after a real landing),
+      //    and already-built downstream layers are flagged stale (v1 never auto-rebuilds).
       const cursorAfter = cursor ? (highWatermark ?? cursorBefore) : null;
-      const staleDownstream = (['silver', 'gold'] as const).filter((l: Layer) => d.versions[l].built) as ('silver' | 'gold')[];
+      // A connected-sync dataset lights the DECLARED TIER (its copy IS that tier); every
+      // other sync lights bronze (the personal-lane landing). Downstream-stale is only
+      // meaningful for the bronze→silver→gold chain, which a connected-sync dataset lacks.
+      const landedLayer: Layer = connectedSync ? d.connected!.tier : 'bronze';
+      const staleDownstream = connectedSync
+        ? []
+        : ((['silver', 'gold'] as const).filter((l: Layer) => d.versions[l].built) as ('silver' | 'gold')[]);
       try {
-        (deps.markBronzeBuilt ?? ((id: string, u: CurrentUser) => void buildVersion(id, u, 'bronze', {})))(datasetId, owner);
+        (deps.markBronzeBuilt ?? ((id: string, u: CurrentUser) => void buildVersion(id, u, landedLayer, {})))(datasetId, owner);
       } catch {
         /* freshness marking is additive — the landed data is already real */
       }
@@ -429,7 +464,7 @@ export async function runDatasetSync(
       if (staleWindow) {
         highWatermark = staleWindow.highWatermark; // re-cover the unconfirmed slice
       } else {
-        const probe = await query(highWatermarkProbeSql(source, cursor), owner.id);
+        const probe = await query(highWatermarkProbeSql(source, cursor), readPrincipal);
         highWatermark = normaliseProbe(probe.rows?.[0]?.[0]);
       }
     }
@@ -450,7 +485,7 @@ export async function runDatasetSync(
       let highs: KafkaOffsets | null =
         before !== null && staleWindow ? parseKafkaOffsets(staleWindow.highWatermark) : null;
       if (!highs) {
-        const probe = await query(kafkaOffsetsProbeSql(source), owner.id);
+        const probe = await query(kafkaOffsetsProbeSql(source), readPrincipal);
         highs = {};
         for (const row of probe.rows ?? []) {
           const pid = normaliseProbe(row?.[0]);
@@ -504,7 +539,7 @@ export async function runDatasetSync(
     } else {
       // merge: discover the target's columns (minus our lineage columns — the source
       // doesn't carry them) so the MERGE has an explicit, correct column list.
-      const desc = await query(`describe ${targetFqn}`, owner.id);
+      const desc = await query(`describe ${targetFqn}`, readPrincipal);
       const columns = parseDescribe({ engine: '', tables: [], columns: [], rows: desc.rows, rowCount: desc.rows.length })
         .map((c) => c.name)
         .filter((n) => n !== '_loaded_at' && n !== '_batch_id');

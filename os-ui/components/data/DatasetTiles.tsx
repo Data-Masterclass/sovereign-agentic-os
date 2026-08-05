@@ -22,6 +22,7 @@ import DomainTag from '@/components/DomainTag';
 import type { Visibility } from '@/lib/core/lifecycle';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
 import WarehouseImportPanel, { type WarehouseConn } from './WarehouseImportPanel';
+import AdoptConnectionPanel from './AdoptConnectionPanel';
 
 /** Mirrors lib/data/store `DatasetSummary`. */
 type Tile = {
@@ -40,6 +41,8 @@ type Tile = {
   archived?: boolean;
   /** Born curated (composed from existing datasets) — the transparency badge. */
   curated?: boolean;
+  /** Adopted from a warehouse connection — drives the "connected" badge + live status. */
+  connected?: { mode: 'live' | 'sync'; status: 'ok' | 'drifted' | 'source-revoked' };
 };
 type Groups = { mine: Tile[]; domain: Tile[]; marketplace: Tile[] };
 
@@ -96,6 +99,13 @@ function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomai
         <div className="row" style={{ gap: 6, alignItems: 'center' }}>
           {t.archived ? <span className="badge muted">archived</span> : null}
           {t.curated ? <span className="badge muted" title="Composed from existing governed datasets (no own ingestion)">curated</span> : null}
+          {t.connected ? (
+            t.connected.status === 'source-revoked'
+              ? <span className="badge" style={{ background: 'var(--danger, #a44)' }} title="The source exposure was revoked — no data is shown">source revoked</span>
+              : t.connected.status === 'drifted'
+                ? <span className="badge" style={{ background: 'var(--warn, #a86)' }} title="The source table changed in the latest catalog snapshot">drifted</span>
+                : <span className="badge muted" title="Adopted from a warehouse connection — reads live from the source">connected</span>
+          ) : null}
           <span className={`badge ${TIER_BADGE[t.tier]}`}>{TIER_WORD[t.tier]}</span>
         </div>
       </div>
@@ -168,8 +178,14 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
   //   'ingest'  — name it, create, land in the builder at Ingest (today's path, unchanged)
   //   'curated' — name it, create with origin:'curated', land in the builder with a toast
   //               pointing at the Harmonize stage (where the existing Gold join builder lives)
-  const [creating, setCreating] = useState<false | 'choose' | 'ingest' | 'curated'>(false);
+  const [creating, setCreating] = useState<false | 'choose' | 'ingest' | 'curated' | 'connected'>(false);
   const [newName, setNewName] = useState('');
+  // "From a connection" adopt path (lakehouse-import-exposure.md, Phase 2): available only
+  // when the caller is domain_admin AND there is at least one table exposed to their
+  // domain(s). The endpoint itself gates the flag + role and returns [] otherwise, so this
+  // single fetch decides whether the third card is offered (no dead affordance).
+  const [adoptAvailable, setAdoptAvailable] = useState(false);
+  const canAdopt = !!user && roleAtLeast(user.role, 'domain_admin');
   /** A taken name (409): the friendly duplicate notice + one-click open of the existing dataset. */
   const [dupe, setDupe] = useState<{ name: string; id?: string } | null>(null);
   // Scope switcher — the Files-tab mental model: All · My · Shared · Marketplace.
@@ -212,6 +228,20 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
     return () => { cancelled = true; };
   }, [canImportWarehouse]);
 
+  useEffect(() => {
+    if (!canAdopt) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/data/exposed-tables', { cache: 'no-store' });
+        if (!res.ok) return;
+        const body = await res.json() as { connections?: unknown[] };
+        if (!cancelled) setAdoptAvailable((body.connections ?? []).length > 0);
+      } catch { /* the card just stays hidden */ }
+    })();
+    return () => { cancelled = true; };
+  }, [canAdopt]);
+
   const refresh = useCallback(async () => {
     setErr('');
     try {
@@ -227,7 +257,9 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
 
   const create = useCallback(async () => {
     const name = newName.trim();
-    if (!name || creating === false || creating === 'choose') return;
+    // Only the ingest/curated naming path uses this create endpoint; 'connected' adopts
+    // through its own panel (AdoptConnectionPanel → /api/data/adopt), never here.
+    if (!name || (creating !== 'ingest' && creating !== 'curated')) return;
     const curated = creating === 'curated';
     setErr('');
     setDupe(null);
@@ -484,8 +516,27 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
               <span className="tmpl-label" style={{ fontSize: 14 }}>Create a curated dataset</span>
               <span className="tmpl-blurb" style={{ fontSize: 12 }}>Combine existing governed datasets you can already read into one new joined dataset.</span>
             </button>
+            {/* Third card — adopt an exposed table from a warehouse connection (Phase 2).
+                Only when the caller is domain_admin AND a table is actually exposed to their
+                domain (adoptAvailable), so it never appears as a dead affordance. */}
+            {canAdopt && adoptAvailable ? (
+              <button type="button" className="tmpl-card" style={{ padding: '18px 20px', gap: 6 }} onClick={() => setCreating('connected')}>
+                <span aria-hidden style={{ fontSize: 24, lineHeight: 1 }}>🛰️</span>
+                <span className="tmpl-label" style={{ fontSize: 14 }}>From a connection</span>
+                <span className="tmpl-blurb" style={{ fontSize: 12 }}>Adopt a table a platform admin exposed to your domain — governed, reads live from the source.</span>
+              </button>
+            ) : null}
           </div>
         </div>
+      ) : null}
+
+      {/* Adopt-from-connection flow — browse exposed tables, name + describe, adopt.
+          Creates the dataset at Domain tier (origin:'connected') and opens it. */}
+      {creating === 'connected' ? (
+        <AdoptConnectionPanel
+          onClose={() => setCreating('choose')}
+          onAdopted={(datasetId) => { setCreating(false); refresh(); onOpen(datasetId); }}
+        />
       ) : null}
 
       {/* Path picked → name it. Same create endpoint for both; the curated path adds

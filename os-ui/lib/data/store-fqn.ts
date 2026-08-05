@@ -119,6 +119,26 @@ export function productTarget(d: Dataset): string {
  *     someone who isn't the owner (OPA would deny it anyway; we don't even construct it).
  */
 export function versionTarget(d: Dataset, layer: Layer, viewer: { id: string }): string {
+  // CONNECTED · LIVE branch FIRST (lakehouse-import-exposure.md, Phase 2): an adopted
+  // live dataset IS the external table — its FQN is the verbatim `catalog.schema.table`
+  // the exposure opened, for EVERYONE (there is no personal lane, no domain copy, no
+  // medallion materialization). Governance rides on the exposure's OPA entry keyed on this
+  // exact FQN; the read runs as the viewer's DOMAIN principal (see readPrincipalFor /
+  // builtLayerFqn — never the personal lane). Sync mode is Phase 3 (falls through to the
+  // domain/personal resolution below until it lands its own copy).
+  if (d.connected && d.connected.mode === 'live') {
+    const s = d.connected.source;
+    return `${s.catalog}.${s.schema}.${s.table}`;
+  }
+  // CONNECTED · SYNC branch (lakehouse-import-exposure.md, Phase 3): an adopted sync
+  // dataset holds a GOVERNED COPY the sync engine lands into the domain schema at the
+  // declared tier — `iceberg.<domainSchema>.<tier>_<slug>` for EVERYONE (owner included:
+  // there is no personal lane, the landing writes straight to the domain schema). Preview/
+  // profile/DQ/Talk/metrics then work on this local copy with no special-casing. The read
+  // runs AS the viewer's domain principal (see builtLayerFqn), matching this schema.
+  if (d.connected && d.connected.mode === 'sync') {
+    return `iceberg.${domainSchema(d.domain)}.${d.connected.tier}_${physicalSlug(d)}`;
+  }
   // FAIL-CLOSED: only the OWNER resolves to the personal lane. Everyone else resolves to
   // the domain schema — never `personal_<otherUser>` (see readPrincipalFor: the schema and
   // the read principal must be the identity that owns the schema).

@@ -412,6 +412,27 @@ export async function getConnectionForUser(connId: string, user: CurrentUser): P
   return c;
 }
 
+/**
+ * SERVER-SIDE, NON-user-scoped by-id lookup — for the policy compiler, which recompiles
+ * the WHOLE governed registry (exposures) irrespective of any one caller's visibility,
+ * exactly as the dataset governance compile runs over every governed dataset. Hydrates
+ * the cache so a fresh pod resolves persisted connections. Returns null when absent.
+ */
+export async function getConnectionById(connId: string): Promise<Connection | null> {
+  const map = await getCache();
+  return map.get(connId) ?? null;
+}
+
+/**
+ * SERVER-SIDE list of every non-archived warehouse connection — for the catalog-refresh
+ * sweep (the optional `connections.catalogRefresh` CronJob), which re-snapshots each
+ * warehouse's catalog on a cadence. Not user-scoped: the sweep runs as a service.
+ */
+export async function listWarehouseConnections(): Promise<Connection[]> {
+  const map = await getCache();
+  return [...map.values()].filter((c) => c.template === 'warehouse' && c.warehouse && !c.archived);
+}
+
 function assertBuilderOrAdmin(user: CurrentUser): void {
   if (!roleAtLeast(user.role, 'builder')) {
     throw withStatus(new Error('Creating connections requires a Builder or Administrator'), 403);

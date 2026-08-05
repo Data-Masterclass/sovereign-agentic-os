@@ -22,7 +22,7 @@
 
 /** The minimal shape the decision reads — mirrors DataBuilder's Dataset. */
 export type AutoGoldInput = {
-  origin?: 'ingest' | 'curated';
+  origin?: 'ingest' | 'curated' | 'connected';
   versions: {
     bronze: { built: boolean; updatedAt: string | null };
     silver: { built: boolean; updatedAt: string | null };
@@ -42,7 +42,14 @@ export type AutoGoldInput = {
  *     trigger idempotent: re-opening a fully-built dataset never re-fires a redundant copy.
  */
 export function shouldAutoGold(d: AutoGoldInput, just: 'bronze' | 'silver'): boolean {
-  if (d.origin === 'curated') return false;
+  // A connected dataset never auto-materializes a UI pass-through Gold: a LIVE one is an
+  // external table (no medallion build), and a SYNC one has its Gold LANDED DIRECTLY by the
+  // sync engine (`iceberg.<domain>.gold_<slug>`, earned `versions.gold.built`) — there is no
+  // bronze/silver to carry forward. A curated dataset composes its own Gold. The synced
+  // Gold copy is still registered for Cube handover through the NORMAL governed path
+  // (`cubeDeliverable` = governed tier + built Gold, `metricCubeReady`) — it needs no
+  // pass-through here. So all connected/curated origins stay out of this UI trigger.
+  if (d.origin === 'curated' || d.origin === 'connected') return false;
   const v = d.versions;
   // The layer we just built must actually be present (the caller only fires on ✓, but be
   // defensive — a decision on an absent source would 400 at the route).

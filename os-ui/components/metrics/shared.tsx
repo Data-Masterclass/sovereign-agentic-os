@@ -83,7 +83,7 @@ export type GovernResult = {
 /** A dataset summary as the Data tab serves it — only Gold asset/product may host a metric.
  *  `tier` is typed tolerantly (any string) so a future dataset kind (e.g. "curated") can be
  *  served without breaking the picker — {@link datasetLayerLabel} degrades to the raw kind. */
-export type DatasetTile = { id: string; name: string; tier: string; owner: string };
+export type DatasetTile = { id: string; name: string; tier: string; owner: string; connected?: { mode: 'live' | 'sync'; status: string } };
 export type DatasetGroups = { mine: DatasetTile[]; domain: DatasetTile[]; marketplace: DatasetTile[] };
 
 /**

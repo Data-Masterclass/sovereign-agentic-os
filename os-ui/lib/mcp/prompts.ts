@@ -127,6 +127,7 @@ export const PROMPTS: McpPrompt[] = [
       '4. test_connection(connId) — expect live | offline.',
       '⛔ Builder+ only: promote_connection(connId) → Domain source. A creator STOPS here.',
       '5. Consume it from an app with use_connection(appId, ref) — BY REFERENCE, never raw creds.',
+      'WAREHOUSE tables (Glue/Databricks/Snowflake/BigQuery/OneLake): do NOT import raw. Register + refresh_connection_catalog, optionally classify_catalog, then ⛔ admin create_exposure_set(domains, mode, tier, tables) → ⛔ domain_admin adopt_exposed_table (list_exposed_tables) makes a governed live/synced dataset. An unexposed external table reads zero rows for everyone; revoke propagates honestly.',
     ].join('\n'),
   },
   {

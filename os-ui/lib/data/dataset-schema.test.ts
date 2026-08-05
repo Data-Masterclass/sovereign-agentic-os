@@ -93,6 +93,61 @@ test('grant cardinality is tagged at the source (R1) and defaults to low', () =>
   assert.deepEqual(d.grants[0].scope.rows, ['region = $region']);
 });
 
+// ----------------------------------------------- connected (Phase 2) back-compat ---
+
+test('back-compat: a legacy dataset.yaml WITHOUT connected loads with no origin/connected', () => {
+  const d = parseDataset({ name: 'Orders', owner: 'amir', domain: 'sales', tier: 'asset' });
+  assert.equal(d.origin, undefined);
+  assert.equal(d.connected, undefined);
+  // And it serializes without ever emitting a connected key (byte-stable).
+  assert.equal(serializeDataset(d).includes('connected'), false);
+});
+
+test('connected block round-trips (origin + source + mode/tier/status)', () => {
+  const d = sample({
+    tier: 'asset',
+    visibility: 'domain',
+    origin: 'connected',
+    connected: {
+      connectionId: 'conn_1',
+      exposureId: 'exp_1',
+      source: { catalog: 'glue_sales', schema: 'public', table: 'orders' },
+      mode: 'live',
+      tier: 'silver',
+      status: 'ok',
+    },
+  });
+  const round = parseDataset(serializeDataset(d));
+  assert.equal(round.origin, 'connected');
+  assert.deepEqual(round.connected, d.connected);
+});
+
+test('a connected origin WITHOUT a valid block downgrades to ingest (no half-connected leak)', () => {
+  const round = parseDataset({ name: 'X', owner: 'a', domain: 'sales', tier: 'asset', origin: 'connected' });
+  assert.equal(round.origin, undefined);
+  assert.equal(round.connected, undefined);
+});
+
+test('a stray connected block on a non-connected origin is dropped', () => {
+  const round = parseDataset({
+    name: 'X', owner: 'a', domain: 'sales', tier: 'asset',
+    // origin absent → ingest; the connected block must not survive
+    connected: { connectionId: 'c', exposureId: 'e', source: { catalog: 'g', schema: 's', table: 't' }, mode: 'live', tier: 'silver', status: 'ok' },
+  });
+  assert.equal(round.origin, undefined);
+  assert.equal(round.connected, undefined);
+});
+
+test('revoked status round-trips on a connected dataset', () => {
+  const d = sample({
+    tier: 'asset', visibility: 'domain', origin: 'connected',
+    connected: { connectionId: 'c', exposureId: 'e', source: { catalog: 'g', schema: 's', table: 't' }, mode: 'live', tier: 'gold', status: 'source-revoked' },
+  });
+  const round = parseDataset(serializeDataset(d));
+  assert.equal(round.connected?.status, 'source-revoked');
+  assert.equal(round.connected?.tier, 'gold');
+});
+
 test('folder defaults to root and is normalised on parse', () => {
   // Absent → root (old datasets parse unchanged at root).
   assert.equal(parseDataset({ name: 'X', owner: 'a', domain: 'sales' }).folder, '/');

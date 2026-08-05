@@ -1930,6 +1930,17 @@ softwareBuild:
 # -----------------------------------------------------------------------------
 connections:
   enabled: true
+  # Optional scheduled catalog-refresh sweep (lakehouse Expose). OFF by default; refresh
+  # is otherwise on-demand via the Expose UI's Refresh button. When enabled, a CronJob
+  # POSTs /api/connections/catalog-refresh with the agent-runtime bearer, re-snapshotting
+  # every warehouse connection's catalog through the governed path. Nil-safe under
+  # --reuse-values (the template default-guards every lookup).
+  catalogRefresh:
+    enabled: false
+    schedule: "23 * * * *"        # hourly, offset from the other sweeps
+    osUiUrl: "http://os-ui:3000"
+    tokenSecret: "os-ui"
+    tokenSecretKey: "agent-runtime-token"
   externalSecrets:
     enabled: false             # turn on once the External Secrets Operator + a
                                # STACKIT Secrets Manager SecretStore are installed
