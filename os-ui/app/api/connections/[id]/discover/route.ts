@@ -18,19 +18,16 @@ async function discover(id: string, schema: string | undefined) {
   try {
     return await discoverWarehouse(id, user, { schema });
   } catch (e) {
-    // Not a warehouse catalog -> an api-batch sync source discovers its resources
-    // instead (same response shape, read-only): Salesforce lists queryable SObjects
-    // via REST describe; Kajabi lists its curated documented resources after a real
-    // token round-trip. Dispatch on the connection's template (DLS-scoped read).
+    // Not a warehouse catalog -> an api-batch sync source discovers its resources instead
+    // (same response shape, read-only). Dispatch through the OPERATIONAL REGISTRY (M11) so
+    // sap-odata / odata-v4 / workday-raas resolve to their real discover — the old inline
+    // kajabi-vs-salesforce fork mis-dispatched every non-kajabi operational template to the
+    // Salesforce describe. The registry is the ONE source of truth for per-template discovery.
     if ((e as { status?: number }).status === 400 && /Not a warehouse connection/i.test((e as Error).message)) {
       const { getConnectionForUser } = await import('@/lib/connections/store');
-      const c = await getConnectionForUser(id, user);
-      if (c.template === 'kajabi-api') {
-        const { discoverKajabiResources } = await import('@/lib/connections/kajabi');
-        return discoverKajabiResources(id, user);
-      }
-      const { discoverSalesforceObjects } = await import('@/lib/connections/salesforce');
-      return discoverSalesforceObjects(id, user);
+      const c = await getConnectionForUser(id, user); // DLS-scoped read (404 if unseeable)
+      const { discoverOperational } = await import('@/lib/connections/operational-registry');
+      return discoverOperational(c.template, id, user);
     }
     throw e;
   }

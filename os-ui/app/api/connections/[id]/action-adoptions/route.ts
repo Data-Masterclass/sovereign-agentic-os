@@ -4,6 +4,8 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { adoptActions, revokeActionAdoption, listAdoptions } from '@/lib/connections/action-adoptions';
+import { getConnectionForUser } from '@/lib/connections/store';
+import { listExposureSets } from '@/lib/connections/exposures';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,12 +17,22 @@ type AdoptActionsBody = {
   revoke?: string;
 };
 
-/** List the action adoptions for an exposure (the adopt-panel state). Requires the
- *  caller to be able to see the connection (enforced in the lib). */
-export const GET = withRoute<{ id: string }>(async ({ req }) => {
+/**
+ * List the action adoptions for an exposure (the adopt-panel state). DLS-scoped (M10):
+ * the route now resolves the connection AS the caller (404 if they cannot see it — no
+ * existence leak) and verifies the requested `exposureId` actually belongs to THAT
+ * connection before listing — the GET previously ignored `params.id` entirely, so any
+ * caller could read any exposure's adoptions by id.
+ */
+export const GET = withRoute<{ id: string }>(async ({ req, user, params }) => {
   const url = new URL(req.url);
   const exposureId = (url.searchParams.get('exposureId') ?? '').trim();
   if (!exposureId) return NextResponse.json({ adoptions: [] });
+  await getConnectionForUser(params.id, user); // 404s if the caller can't see the connection
+  const owns = (await listExposureSets(params.id, user)).some((e) => e.id === exposureId);
+  if (!owns) {
+    return NextResponse.json({ error: 'exposure does not belong to this connection' }, { status: 404 });
+  }
   return NextResponse.json({ adoptions: await listAdoptions(exposureId) });
 }, { defaultStatus: 500 });
 

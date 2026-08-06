@@ -263,3 +263,76 @@ export async function applyLiveRegistration(
       : `Catalog '${catalog}' props + secret applied, but the Trino rollout patch failed (HTTP ${rollout.status}) — restart Trino manually to load it.`,
   };
 }
+
+export type RemoveK8sOutcome = {
+  ok: boolean;
+  /** True only when a real cluster answered (status !== 0). */
+  live: boolean;
+  catalog: string;
+  steps: {
+    configMap: { removed: boolean; status: number };
+    secret: { removed: boolean; status: number };
+    rollout: { applied: boolean; status: number };
+  };
+  detail: string;
+};
+
+/** A 404 is a SUCCESSFUL removal (the object is already gone) — idempotent teardown. */
+function removedOk(status: number): boolean {
+  return okStatus(status) || status === 404;
+}
+
+/**
+ * REMOVE a catalog's LIVE registration — the exact inverse of {@link applyLiveRegistration},
+ * for connection teardown (C1). A deleted warehouse connection whose catalog is still merged
+ * into `trino-catalog` (and whose `trino-ext-<catalog>` Secret still holds a LIVE credential
+ * COPY) is NOT deleted — Trino would keep federating it, and the delete report would falsely
+ * claim the credential purged. Three idempotent steps against the SAME objects the chart
+ * renders (a 404 counts as success — already gone):
+ *
+ *   (a) DROP the `<catalog>.properties` key from the `trino-catalog` ConfigMap (a JSON
+ *       merge-patch with the key set to null removes exactly that catalog; other catalogs
+ *       untouched).
+ *   (b) DELETE the `trino-ext-<catalog>` k8s Secret (the materialized credential copy). The
+ *       Deployment env still names the removed VAR via secretKeyRef, but with the Secret gone
+ *       that ref resolves to nothing — the catalog is already dropped, so it is never read.
+ *   (c) TRIGGER a Trino rollout so the pod re-reads the ConfigMap without the dropped catalog.
+ *
+ * Ordered ConfigMap → Secret → rollout so we never roll Trino into a state where a catalog
+ * still points at a just-deleted Secret. Never throws — network/credential failure resolves
+ * to `{ status: 0 }` and an honest `ok:false, live:false` (nothing was confirmed removed).
+ */
+export async function removeLiveRegistration(
+  catalog: string,
+  opts: { namespace: string; k8s?: RegK8s },
+): Promise<RemoveK8sOutcome> {
+  const k8s = opts.k8s ?? (liveK8s as RegK8s);
+  const ns = opts.namespace;
+  const key = `${catalog}.properties`;
+
+  // (a) Drop the catalog key from the ConfigMap (merge-patch null removes it).
+  const cmRes = await k8s('PATCH', cmPath(ns), { data: { [key]: null } });
+  const configMap = { removed: removedOk(cmRes.status), status: cmRes.status };
+
+  // (b) Delete the materialized credential-copy Secret (idempotent; 404 = already gone).
+  const secName = extSecretName(catalog);
+  const secRes = await k8s('DELETE', secretPath(ns, secName));
+  const secret = { removed: removedOk(secRes.status), status: secRes.status };
+
+  // (c) Roll Trino so it re-reads the ConfigMap without the dropped catalog.
+  const rollout = await triggerRollout(k8s, ns, catalog);
+
+  const reachable = cmRes.status !== 0;
+  const ok = configMap.removed && secret.removed && rollout.applied;
+  return {
+    ok,
+    live: reachable,
+    catalog,
+    steps: { configMap, secret, rollout },
+    detail: !reachable
+      ? `Could not reach the Kubernetes API to remove catalog '${catalog}' — its ConfigMap entry + '${secName}' Secret may still be live; remove them manually or re-run in-cluster.`
+      : ok
+        ? `Removed catalog '${catalog}' live: dropped its .properties from ${CATALOG_CM}, deleted the '${secName}' credential Secret, and rolled Trino.`
+        : `Partial removal of catalog '${catalog}': configMap ${configMap.removed ? 'dropped' : `FAILED (HTTP ${configMap.status})`}, secret ${secret.removed ? 'deleted' : `FAILED (HTTP ${secret.status})`}, rollout ${rollout.applied ? 'triggered' : `FAILED (HTTP ${rollout.status})`} — resolve any leftover manually.`,
+  };
+}

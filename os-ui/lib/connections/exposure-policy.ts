@@ -62,7 +62,9 @@ export async function activeExposureGovernanceInputs(): Promise<ExposureGovernan
   const out: ExposureGovernanceInput[] = [];
   for (const e of exposures) {
     const c = await getConnectionById(e.connectionId);
-    if (!c || c.template !== 'warehouse' || !c.warehouse) continue;
+    // Skip a gone OR ARCHIVED connection (M3): an archived connection's exposures are
+    // frozen, so its FQNs fall back to the fail-closed floor (zero rows) on recompile.
+    if (!c || c.archived || c.template !== 'warehouse' || !c.warehouse) continue;
     out.push({
       domain: c.domain,
       catalog: c.warehouse.catalog,

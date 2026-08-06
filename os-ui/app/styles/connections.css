@@ -1,0 +1,327 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * Connections tab — the create-doors + connector gallery as a showcase.
+ * Reuses the OS gold/black tokens (never a new palette): the doors are two
+ * generous choice cards; the gallery tiles lead with a monogram mark + the
+ * connector's business value, protocol detail demoted to a quiet meta line.
+ * No cards-in-cards — every surface here is a single elevation.
+ */
+
+/* ============================================================================
+   Create doors — the "New connection" chooser (Door A / Door B).
+   Two confident, equal-weight cards; one carries a gold cast (the ready-made
+   path), the other a teal cast (build-from-scratch), so the choice reads at a
+   glance without shouting.
+   ========================================================================== */
+.conn-doors {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.conn-door {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 210px;
+  padding: 24px 24px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  overflow: hidden;
+  transition: border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+/* A soft accent wash in the top-right corner — brand-tinted, never a flat gradient card. */
+.conn-door::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  transition: opacity 0.18s ease;
+  background: radial-gradient(220px 150px at 100% 0%, var(--door-wash, transparent), transparent 70%);
+}
+.conn-door:hover,
+.conn-door:focus-visible {
+  border-color: var(--door-line, var(--gold-line));
+  transform: translateY(-2px);
+  box-shadow: 0 16px 40px -24px rgba(0, 0, 0, 0.7);
+}
+.conn-door:hover::before,
+.conn-door:focus-visible::before { opacity: 0.9; }
+.conn-door:focus-visible { outline: 2px solid var(--door-accent, var(--gold)); outline-offset: 3px; }
+
+.conn-door--gold { --door-wash: rgba(200, 162, 74, 0.16); --door-line: var(--gold-line); --door-accent: var(--gold); }
+.conn-door--teal { --door-wash: rgba(31, 143, 136, 0.15); --door-line: rgba(31, 143, 136, 0.4); --door-accent: var(--teal); }
+
+.conn-door-mark {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  border: 1px solid var(--door-line, var(--gold-line));
+  background: var(--door-wash, var(--gold-soft));
+  color: var(--door-accent, var(--gold-text));
+  margin-bottom: 16px;
+}
+
+.conn-door-eyebrow {
+  position: relative;
+  font-family: var(--font-sub);
+  font-size: 10.5px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+
+.conn-door-title {
+  position: relative;
+  font-family: var(--font-head);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--text);
+  margin: 0 0 8px;
+}
+
+.conn-door-sub {
+  position: relative;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  margin: 0;
+  max-width: 34ch;
+}
+
+.conn-door-cta {
+  position: relative;
+  margin-top: auto;
+  padding-top: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-head);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--door-accent, var(--gold-text));
+}
+.conn-door-cta .arr { transition: transform 0.16s ease; }
+.conn-door:hover .conn-door-cta .arr,
+.conn-door:focus-visible .conn-door-cta .arr { transform: translateX(4px); }
+
+/* ============================================================================
+   Connector gallery — the crown-jewel showcase.
+   ========================================================================== */
+.conn-search {
+  position: relative;
+  max-width: 440px;
+}
+.conn-search input[type='search'] {
+  width: 100%;
+  padding: 11px 14px 11px 38px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 13.5px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+.conn-search input[type='search']:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-soft);
+}
+.conn-search .conn-search-ico {
+  position: absolute;
+  left: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 14px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+/* Stack jump-links (vendor chips under the search). */
+.conn-jump {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.conn-jump-chip {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  letter-spacing: 0.2px;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.conn-jump-chip:hover,
+.conn-jump-chip:focus-visible { color: var(--text); background: var(--bg-elevated); }
+.conn-jump-chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.conn-jump-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+
+/* Stack section header — accent bar + label + count, collapsible. */
+.conn-stack { margin-bottom: 28px; }
+.conn-stack-head {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 0 2px;
+}
+.conn-stack-head:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 6px; }
+.conn-stack-bar { width: 3px; height: 16px; border-radius: 2px; flex: none; }
+.conn-stack-label {
+  font-family: var(--font-head);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text);
+}
+.conn-stack-caret { font-size: 10px; color: var(--text-faint); transition: transform 0.16s ease; }
+.conn-stack-count {
+  font-family: var(--font-head);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--text-faint);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.conn-stack-rule { flex: 1; height: 1px; background: linear-gradient(90deg, var(--border), transparent); }
+
+/* The tile grid — tuned for scanning 30–50 connectors comfortably. */
+.conn-tiles {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  margin-top: 14px;
+}
+
+/* One connector tile — monogram + business-first copy, protocol demoted. */
+.conn-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+  transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+}
+/* A hair-thin accent lives at the very top; it brightens on hover (the crown-jewel lift). */
+.conn-tile::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--tile-accent, var(--gold));
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+.conn-tile:hover { border-color: var(--tile-line, var(--gold-line)); transform: translateY(-2px); box-shadow: 0 14px 34px -22px rgba(0, 0, 0, 0.7); }
+.conn-tile:hover::before { opacity: 0.85; }
+
+.conn-tile-top { display: flex; align-items: flex-start; gap: 12px; }
+
+/* Monogram mark — consistent geometry, per-service accent tint. Refined, not a logo. */
+.conn-mono {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-head);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--mono-fg, #1a1813);
+  background: var(--mono-bg, var(--gold-soft));
+  border: 1px solid var(--mono-line, var(--gold-line));
+}
+/* Compact monogram for a header/detail context. */
+.conn-mono.sm { width: 34px; height: 34px; border-radius: 10px; font-size: 13px; }
+
+.conn-tile-heading { min-width: 0; flex: 1; }
+.conn-tile-name {
+  font-family: var(--font-head);
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text);
+  margin: 1px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn-tile-value {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+/* Protocol/auth — the demoted technical line, quiet and mono. */
+.conn-tile-meta {
+  margin-top: 10px;
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.2px;
+}
+.conn-tile-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* A tiny "ready" dot in the tile corner — calm, honest availability signal. */
+.conn-tile-ready {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+.conn-tile-ready .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 7px var(--teal); }
+
+@media (prefers-reduced-motion: reduce) {
+  .conn-door, .conn-tile, .conn-door-cta .arr, .conn-stack-caret { transition: none; }
+  .conn-door:hover, .conn-tile:hover, .conn-door:focus-visible { transform: none; }
+}

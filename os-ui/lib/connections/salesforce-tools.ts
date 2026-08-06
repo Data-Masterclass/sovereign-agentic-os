@@ -130,6 +130,7 @@ export function decideActionTool(
   object: string,
   exposures: ExposureSet[],
   adoptions: ActionAdoption[],
+  callerDomains: string[],
 ): ActionDecision {
   // Layer 0: flag + operational source. Off ⇒ inert.
   if (!operationalActionsActive(c)) {
@@ -149,27 +150,33 @@ export function decideActionTool(
     return { mode: null, reason: 'action call is missing a valid object' };
   }
 
-  // The exposures OF THIS CONNECTION that grant this entity's action, to a domain the
-  // connection belongs to. Create/update additionally require the exposure's write to
-  // be admin-approved (`writeApproved`).
+  // Layers 2+3 are keyed on the CALLER'S domains, NOT the connection's (C4). A connection
+  // in Sales exposed to Commerce arms a COMMERCE caller (exposure grant = `e.domains ∩
+  // callerDomains ≠ ∅`); adoption is checked for the caller domain that the exposure
+  // targets. Keying on `c.domain` made cross-domain exposure impossible — the flagship
+  // consent flow was dead. Create/update additionally require the exposure's `writeApproved`.
+  const caller = new Set(callerDomains);
   const wantsWrite = kind === 'create' || kind === 'update';
   const relevant = exposures.filter((e) => {
     if (e.revoked || e.connectionId !== c.id) return false;
-    if (!e.domains.includes(c.domain)) return false;
+    if (!e.domains.some((d) => caller.has(d))) return false;
     const grant = e.actions?.[entityKey];
     if (!grant || !grant[kind]) return false;
     if (wantsWrite && !e.writeApproved) return false;
     return true;
   });
   if (relevant.length === 0) {
-    return { mode: null, reason: `no exposure grants ${kind} on ${entityKey} to this domain` };
+    return { mode: null, reason: `no exposure grants ${kind} on ${entityKey} to any of the caller's domains` };
   }
 
-  // Layer 3: domain adoption — the connection's domain must have adopted this entity's
-  // actions for at least one of the relevant exposures. Fail closed with no adoption.
-  const adopted = relevant.some((e) => adoptionCovers(adoptions, e.id, c.domain, entityKey));
+  // Layer 3: domain adoption — a caller domain the exposure targets must have adopted this
+  // entity's actions for at least one relevant exposure. Fail closed with no adoption (an
+  // un-adopted caller domain is denied).
+  const adopted = relevant.some((e) =>
+    e.domains.some((d) => caller.has(d) && adoptionCovers(adoptions, e.id, d, entityKey)),
+  );
   if (!adopted) {
-    return { mode: null, reason: `domain ${c.domain} has not adopted ${entityKey} actions` };
+    return { mode: null, reason: `no caller domain has adopted ${entityKey} actions on this exposure` };
   }
 
   // Layer 1: the capability mode. Read/search auto-allow; create/update are Write-
@@ -212,14 +219,19 @@ export function actionToolLimits(c: Connection, tool: string): { maxAmount?: num
  * or search is granted+adopted; write tools list when create/update is granted (with
  * `writeApproved`) + adopted.
  */
-export async function exposedActionTools(c: Connection): Promise<string[]> {
+export async function exposedActionTools(c: Connection, callerDomains: string[]): Promise<string[]> {
   if (!operationalActionsActive(c)) return [];
+  const caller = new Set(callerDomains);
   const [exposures, adoptions] = await Promise.all([allActiveExposures(), allActiveAdoptions()]);
   const out = new Set<string>();
   for (const e of exposures) {
-    if (e.revoked || e.connectionId !== c.id || !e.domains.includes(c.domain)) continue;
+    // Grant listing is keyed on the CALLER'S domains (C4): a Sales connection exposed to
+    // Commerce lists its action tools for a Commerce caller, not for a Sales one.
+    if (e.revoked || e.connectionId !== c.id) continue;
+    const targeted = e.domains.filter((d) => caller.has(d));
+    if (targeted.length === 0) continue;
     for (const [entityKey, grant] of Object.entries(e.actions ?? {})) {
-      if (!adoptionCovers(adoptions, e.id, c.domain, entityKey)) continue;
+      if (!targeted.some((d) => adoptionCovers(adoptions, e.id, d, entityKey))) continue;
       if (grant.read) out.add(SF_ACTION_TOOLS.get);
       if (grant.search) out.add(SF_ACTION_TOOLS.search);
       if (grant.create && e.writeApproved) out.add(SF_ACTION_TOOLS.create);

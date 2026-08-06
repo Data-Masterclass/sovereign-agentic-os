@@ -66,6 +66,9 @@ import {
   archiveWorkflow,
   deleteWorkflow,
 } from '@/lib/knowledge/store';
+import { exportWorkflowBundle, exportAndValidate } from '@/lib/knowledge/okf-export';
+import { importOkfZip } from '@/lib/knowledge/okf-import';
+import { zipBundle, OkfZipError, OKF_MAX_UNPACKED_BYTES } from '@/lib/knowledge/okf-zip';
 import { knowledgeConsumers } from '@/lib/knowledge/consumers';
 import { fileArtifactPromotion, promoteThroughSeam, isLadderKind, type LadderKind } from '@/lib/governance/ladder';
 import { pendingHandle } from '@/lib/mcp/pending';
@@ -350,6 +353,96 @@ export const knowledgeWriteTools: McpTool[] = [
       deleteWorkflow(id, p);
       const indexPurged = await purgeKnowledgeUnits(id);
       return { id, title: view.title, action: 'delete', deleted: true, indexPurged, reversible: false };
+    },
+  },
+  {
+    name: 'export_okf_bundle',
+    tab: 'knowledge',
+    minRole: 'creator',
+    description:
+      'Export a knowledge business process you can see as an OKF (Open Knowledge Format) v0.2 bundle — a portable, human-readable directory of markdown + YAML frontmatter (the interchange format; the retrieval engine is untouched). The bundle is zipped and written as a governed Files-tab artifact (MCP cannot return a zip inline), and this tool returns its file `id` + `deepLink` so you can Download it or share it. Round-trip is lossless for our own artifacts (steps/actors/rules/tacit + tier/owner survive), and conformance is validated on export. Governance: read-scoped on the source process; the bundle file is created AS YOU at Personal tier.',
+    inputSchema: {
+      type: 'object',
+      properties: { workflowId: { type: 'string', description: 'The business process id to export (from list_knowledge).' } },
+      required: ['workflowId'],
+      examples: [{ workflowId: 'wf_ab12cd' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.workflowId).trim();
+      if (!id) fail('export_okf_bundle needs a `workflowId`', 400);
+      const p = P(user);
+      const view = getWorkflow(id, p); // view-scoped; unseeable → not_found
+      // Build + validate the bundle (validation runs on every export — decision #7).
+      const { bundle, validation } = exportAndValidate(exportWorkflowBundle(view));
+      const zip = zipBundle(bundle);
+      // Write the zip as a governed Files artifact — identical path to upload_file.
+      const name = `${slug(view.title) || 'workflow'}.okf.zip`;
+      const asset = createFile(p, {
+        name,
+        text: `OKF v0.2 export of the “${view.title}” business process.`,
+        bytes: zip.length,
+        tags: ['okf', 'knowledge-export'],
+        domain: view.domain,
+      });
+      const key = objectKeyForAsset(asset);
+      if (key) {
+        await putBlob(key, zip, 'application/zip');
+        attachObject(asset.id, p, { contentType: 'application/zip', bytes: zip.length });
+      }
+      return {
+        fileId: asset.id,
+        name: asset.name,
+        deepLink: asset.deepLink,
+        bytes: zip.length,
+        files: bundle.files.length,
+        conformant: validation.ok,
+        notes: validation.notes.map((n) => n.message),
+      };
+    },
+  },
+  {
+    name: 'import_okf_bundle',
+    tab: 'knowledge',
+    minRole: 'creator',
+    description:
+      'Import an OKF (Open Knowledge Format) v0.2 bundle (a zip of markdown + YAML frontmatter) into the Knowledge tab. The bundle is validated for conformance, then its concepts land as GOVERNED artifacts at PERSONAL tier with YOU as owner, through the normal author ladder (never a governance bypass) — publish/certify them afterwards as usual. Idempotent: a concept whose `resource` matches an artifact you already own becomes a NEW VERSION (no silent duplicates). Unknown types + unknown fields + broken links are ACCEPTED (an unknown type is kept + shown, mapped to a general knowledge doc); only a truly malformed bundle (unparseable frontmatter, missing `type`) is rejected, with an honest reason. SECURITY: paths are zip-slip-sanitised and hard caps (≤ 50 MB unpacked, ≤ 2,000 files) are enforced. Provide the zip as standard base64 in `base64Content` (~4 MB MCP in-band limit; larger bundles import through the Knowledge tab UI).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        base64Content: { type: 'string', description: "The OKF bundle .zip encoded as standard base64." },
+        domain: { type: 'string', description: 'One of YOUR domains to home the imported artifacts in; defaults to your first.' },
+      },
+      required: ['base64Content'],
+      examples: [{ base64Content: 'UEsDBBQAAAAI…' }],
+    },
+    call: async (user, args) => {
+      const b64 = typeof args.base64Content === 'string' ? args.base64Content : '';
+      if (!b64) fail('import_okf_bundle needs `base64Content` (the bundle zip as base64)', 400);
+      let zip: Buffer;
+      try {
+        zip = Buffer.from(b64, 'base64');
+      } catch {
+        return fail('import_okf_bundle: `base64Content` is not valid base64', 400);
+      }
+      if (zip.length > OKF_MAX_UNPACKED_BYTES) {
+        fail(`import_okf_bundle: bundle is ${(zip.length / 1048576).toFixed(1)} MB — over the ${OKF_MAX_UNPACKED_BYTES / 1048576} MB cap`, 400);
+      }
+      const p = P(user);
+      try {
+        const result = importOkfZip(zip, p, { domain: str(args.domain) || undefined });
+        if (!result.ok) {
+          fail(`import_okf_bundle: bundle rejected — ${result.rejected}`, 422);
+        }
+        return {
+          imported: result.imported,
+          skipped: result.skipped,
+          notes: result.validation.notes.map((n) => n.message),
+          count: result.imported.length,
+        };
+      } catch (e) {
+        if (e instanceof OkfZipError) fail(`import_okf_bundle: ${e.message}`, 400);
+        throw e;
+      }
     },
   },
 ];

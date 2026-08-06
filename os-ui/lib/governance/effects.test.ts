@@ -108,6 +108,49 @@ test('autonomous + promote effects run and audit correctly', async () => {
   assert.match(p.applied, /certified/);
 });
 
+// ---- C3: a held connection_write EXECUTES on approval (never "applied (mock)") -----
+
+test('C3: approving a held connection write EXECUTES it through the injected applier', async () => {
+  let got: { connId: string; tool: string; args: Record<string, unknown> } | null = null;
+  const r = await applyEffect(
+    appr({
+      kind: 'connection_write',
+      tool: 'sf_update_record',
+      domain: 'sales',
+      payload: { connId: 'conn_1', preview: { action: 'sf_update_record', args: { object: 'Account', id: '001', values: { Name: 'Y' } } } },
+    }),
+    { id: 'bea', role: 'builder', domains: ['sales'] },
+    {
+      applyConnectionWrite: async (payload) => {
+        got = payload;
+        return { ok: true, reason: 'record updated' };
+      },
+    },
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.live, true, 'a real execution is live, not mock');
+  assert.doesNotMatch(r.applied, /mock/i, 'never "applied (mock)"');
+  assert.match(r.applied, /executed/i);
+  assert.deepEqual(got, { connId: 'conn_1', tool: 'sf_update_record', args: { object: 'Account', id: '001', values: { Name: 'Y' } } });
+});
+
+test('C3: an executor failure is honest (ok:false + reason), never a mock success', async () => {
+  const r = await applyEffect(
+    appr({
+      kind: 'connection_write',
+      tool: 'sf_update_record',
+      domain: 'sales',
+      payload: { connId: 'conn_1', preview: { action: 'sf_update_record', args: { object: 'Account', id: '001' } } },
+    }),
+    'bea',
+    { applyConnectionWrite: async () => ({ ok: false, reason: 'Salesforce 400: bad field' }) },
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.live, false);
+  assert.match(r.applied, /did NOT execute/i);
+  assert.match(r.applied, /bad field/);
+});
+
 // ---- T8: dataset_promote is a PHYSICAL publish -------------------------------
 
 const promoteReq = {

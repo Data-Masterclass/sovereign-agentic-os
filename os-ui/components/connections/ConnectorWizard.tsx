@@ -31,6 +31,7 @@
  */
 
 import { useMemo, useState } from 'react';
+import { fixedEndpointHint, looksLikeEndpoint, ENDPOINT_LOOKS_WRONG } from './shared';
 
 // ---- Shared types (mirror the API payload GovernedConnections already loads) ----
 
@@ -112,10 +113,15 @@ export default function ConnectorWizard({
   const isOAuth = !isWarehouse && tpl?.auth === 'oauth';
   const isApiConnector = !isWarehouse && (tpl?.connector === 'api' || tpl?.connector === 'mcp');
 
-  // Shared form state.
+  // Shared form state. The endpoint starts PREFILLED from the template's fixed endpoint when
+  // it has one (Kajabi → https://api.kajabi.com) — editable, but never an empty box that
+  // invites pasting a credential. Generic/placeholder templates start empty (placeholder only).
   const [step, setStep] = useState(0);
   const [name, setName] = useState('');
-  const [endpoint, setEndpoint] = useState('');
+  const [endpoint, setEndpoint] = useState(() => {
+    const t = data.templates.find((x) => x.key === initialTemplate);
+    return fixedEndpointHint(t?.endpointHint) ?? '';
+  });
   const [credential, setCredential] = useState('');
   const [openApiSpec, setOpenApiSpec] = useState('');
   const [creating, setCreating] = useState(false);
@@ -169,6 +175,9 @@ export default function ConnectorWizard({
 
   async function create() {
     if (!name.trim() || creating) return;
+    // Endpoint-shape guard (non-OAuth only): block an obviously-non-URL (a pasted credential)
+    // before it reaches the egress path, where the error would echo it back. Server stays authority.
+    if (!isOAuth && !looksLikeEndpoint(endpoint)) { setMsg(`✗ ${ENDPOINT_LOOKS_WRONG}`); return; }
     setCreating(true); setMsg('');
     try {
       const body: Record<string, unknown> = { name, template };
@@ -221,7 +230,18 @@ export default function ConnectorWizard({
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
             Pick a connector type — the next steps adapt to it.
           </p>
-          <select value={template} onChange={(e) => setTemplate(e.target.value)} style={{ width: '100%' }}>
+          <select
+            value={template}
+            onChange={(e) => {
+              const key = e.target.value;
+              setTemplate(key);
+              // Re-prefill the endpoint for the newly chosen type (Choose precedes Endpoint,
+              // so nothing the user typed is clobbered): fixed hint or empty.
+              const t = data.templates.find((x) => x.key === key);
+              setEndpoint(fixedEndpointHint(t?.endpointHint) ?? '');
+            }}
+            style={{ width: '100%' }}
+          >
             {pickable.map((o) => <option key={o.key} value={o.key}>{o.label} · {o.type}</option>)}
           </select>
         </>
@@ -281,14 +301,15 @@ export default function ConnectorWizard({
       {!onChoose && isApiConnector && s === 0 ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Name it and give its endpoint URL. The host must be on the egress allowlist.
+            Name it and confirm its web address. Your API key comes on the <strong>next</strong> step —
+            not here. The host must be on the egress allowlist.
           </p>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Connection name (e.g. Salesforce API)" />
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Connection name (e.g. Salesforce)" />
           <input
             type="text"
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
-            placeholder={tpl ? `Endpoint (e.g. ${tpl.endpointHint})` : 'Endpoint URL'}
+            placeholder={tpl ? `Web address (e.g. ${tpl.endpointHint})` : 'Web address (https://…)'}
             style={{ marginTop: 10 }}
           />
         </>

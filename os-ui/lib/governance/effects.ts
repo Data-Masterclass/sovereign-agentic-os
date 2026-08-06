@@ -107,6 +107,24 @@ export type EffectDeps = {
     exposureId: string,
     approver: { id: string; role: Principal['role']; domains: string[] },
   ) => Promise<{ exposureId: string; connectionName: string }>;
+  /** Generate + FREEZE an OKF bundle for a knowledge product AT CERTIFY TIME
+   *  (OKF decision #2): a certified Marketplace knowledge product carries its bundle,
+   *  generated once at certification. Best-effort — a freeze hiccup never rolls back
+   *  the certification. Injected by the route/tool layer so this module stays free of
+   *  the server-only object-store + zip imports (same pattern as the other deps). */
+  freezeKnowledgeBundle?: (
+    workflowId: string,
+    approver: { id: string; role: Principal['role']; domains: string[] },
+  ) => Promise<{ fileId: string } | null>;
+  /** EXECUTE an APPROVED held connection write (C3): resolve the payload's connection +
+   *  tool + args and run it through the governed `approveOnce` path AS the approver (the
+   *  capability profile / four-layer intersection is re-checked server-side, so the held
+   *  payload can never smuggle a wider write). Returns the executor's honest {ok, reason}.
+   *  Injected by the route so this module (and its tests) stay free of the connections store. */
+  applyConnectionWrite?: (
+    payload: { connId: string; tool: string; args: Record<string, unknown> },
+    approver: { id: string; role: Principal['role']; domains: string[] },
+  ) => Promise<{ ok: boolean; reason: string }>;
 };
 
 /** The model-service Actor for a human approver (agents can never decide — the
@@ -416,6 +434,34 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
           },
         };
       }
+      // A HELD CONNECTION WRITE (Mode-A Write-approval / Mode-B queued review): approving it
+      // must EXECUTE the write, not clear it with "applied (mock)" (C3). Resolve the payload's
+      // connection + tool + args and run through the governed `approveOnce` seam AS the
+      // approver — the capability profile / four-layer intersection is re-checked server-side,
+      // so a doctored payload can never smuggle a wider write. If execution is IMPOSSIBLE
+      // (missing dep/payload), the approval outcome is ok:false with the reason — NEVER a mock.
+      if (deps.applyConnectionWrite) {
+        const connId = s(p.connId, s((p.connectionId)));
+        const preview = (p.preview ?? {}) as { action?: unknown; args?: unknown };
+        const tool = s(a.tool, s(preview.action));
+        const args = (preview.args && typeof preview.args === 'object' ? preview.args : {}) as Record<string, unknown>;
+        if (!connId || !tool) {
+          return {
+            ok: false,
+            applied: `Held connection write could not be executed: the approval payload is missing its connection or tool.`,
+            live: false,
+            audit: { action: 'approve', subject: tool || a.kind, reason: `${a.kind} approval failed (incomplete payload) — ${who}`, detail: { kind: a.kind, connId, tool, agent: a.agent } },
+          };
+        }
+        const approverP = approverPrincipal(approver, 'builder', a.domain);
+        const out = await deps.applyConnectionWrite({ connId, tool, args }, approverP);
+        return {
+          ok: out.ok,
+          applied: out.ok ? `Connection write executed: ${tool} — ${out.reason}` : `Connection write did NOT execute: ${out.reason}`,
+          live: out.ok,
+          audit: { action: 'approve', subject: tool, reason: `Held connection write approved by ${who}`, detail: { kind: a.kind, connId, tool, agent: a.agent } },
+        };
+      }
       // Fall through: other connection_write kinds (legacy agent write-backs) are
       // cleared below alongside knowledge_certify.
     }
@@ -478,7 +524,18 @@ async function applyLadder(
       const rec = rung === 'promote'
         ? publishWorkflow(id, approverPrincipal(approver, 'builder', a.domain))
         : certifyWorkflow(id, approverPrincipal(approver, 'admin', a.domain));
-      return okResult(rec.title, { visibility: rec.visibility, status: rec.status });
+      // Certify-time OKF freeze (decision #2): a certified knowledge product carries
+      // its OKF bundle, generated once here. Best-effort — never rolls back certify.
+      let frozenBundleFileId: string | undefined;
+      if (rung === 'certify' && deps.freezeKnowledgeBundle) {
+        try {
+          const frozen = await deps.freezeKnowledgeBundle(id, approverPrincipal(approver, 'admin', a.domain));
+          if (frozen) frozenBundleFileId = frozen.fileId;
+        } catch {
+          /* a freeze hiccup must never block certification */
+        }
+      }
+      return okResult(rec.title, { visibility: rec.visibility, status: rec.status, ...(frozenBundleFileId ? { frozenBundleFileId } : {}) });
     }
     case 'personal_knowledge': {
       const rec = rung === 'promote'

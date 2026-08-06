@@ -13,6 +13,144 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.81] — 2026-08-06
+
+### Fixed
+- **Connections integrity wave — the functional-audit CRITICAL/MAJOR fixes.** Security-
+  and honesty-critical corrections to the Connections tab's governed action surface:
+  - **Delete/archive full teardown (C1).** Deleting a connection now tears down everything
+    it GRANTED before forgetting the record: its exposure sets are revoked + propagated
+    (freeze/notify/trace + OPA withdraw), the action adoptions bound to them are revoked,
+    and a live-registered warehouse connection has its Trino catalog key + its
+    `trino-ext-<catalog>` credential-copy Secret removed and Trino rolled — each outcome
+    appended honestly to the delete report (the report previously falsely implied the
+    credential copy was purged). Called from both delete paths + the folder-cascade delete.
+  - **Labelled offline-mock results + legacy SF preset removed (C2).** Every `executeMock`
+    envelope is now stamped `mode:'offline-mock'` + an honest note, carried through the
+    tool-result UI and the agent tool-result path. The legacy per-object Salesforce preset
+    (`read_account`/`read_opportunity`/`update_opportunity_amount` — the last auto-allowed
+    mocked write) is deleted; the entity-generic `sf_*` tools replace it. SAP-OData/OData-V4
+    and Workday RaaS reads now run through REAL thin executors; Kajabi `tag_contact` defaults
+    Off (no live writer wired).
+  - **Inbox approvals execute the held write (C3).** Approving a held `connection_write` in
+    Policies & Approvals now EXECUTES it through the governed `approveOnce` path AS the
+    approver (profile re-checked server-side, so the payload can't smuggle a wider write) and
+    returns the executor's honest `{ok, reason}` — never "applied (mock)".
+  - **Cross-domain action adoption fixed (C4).** The four-layer intersection now keys the
+    exposure-grant + adoption layers on the CALLER's domains (`e.domains ∩ callerDomains`),
+    not the connection's — so a Sales connection exposed to Commerce actually arms a Commerce
+    caller (the flagship consent flow was dead). A Sales caller / un-adopted domain is denied.
+  - **Slug uniqueness (C5).** Two same-named connections no longer share a slug → principal →
+    vault secret name (credential clobber / OPA cross-talk / cross-delete); the record-id
+    suffix de-dupes on create.
+  - **Archive disables tools (M3); approveOnce handles `sf_*` (M6); action arming only where
+    tools exist (M9); action-adoptions route DLS (M10); registry-driven discover (M11); honest
+    approval previews (M12).** An archived connection denies every tool call and its exposures
+    drop to the OPA floor; approveOnce re-checks `sf_*` via the four-layer intersection; the
+    expose panel offers action toggles only for templates with a registered action-tool set;
+    the action-adoptions GET is DLS-scoped and verifies the exposure belongs to the connection;
+    discover dispatches through the operational registry (SAP/Workday no longer mis-routed to
+    Salesforce); and the Write-approval preview shows a REAL read where one exists, else an
+    explicit "unavailable" — never a fabricated before-state.
+
+## [os-ui 0.6.79] — 2026-08-06
+
+### Added
+- **OKF v0.2 compatibility — Knowledge + Marketplace interchange.** Knowledge artifacts,
+  domain operating manuals, and certified Marketplace knowledge products export to and import
+  from Open Knowledge Format (OKF v0.2, Apache-2.0; `github.com/GoogleCloudPlatform/knowledge-catalog`).
+  Boundary interchange only — the OpenSearch hybrid retrieval engine is untouched.
+  - **Export** — an artifact/manual/product becomes an OKF bundle (directory of `.md` + YAML
+    frontmatter, spec-correct `index.md`, internal links rewritten relative, zipped). Our five
+    kinds ride OKF's open `type` field; owner/domain/tier/workflow structure travels in a
+    namespaced `sovereign_os:` extension block; certification maps to `verified` events and tier
+    to `status`. Round-trip is lossless for our own artifacts (workflow steps/actors/rules/tacit
+    survive). Certified Marketplace products carry a bundle **frozen at certify time**.
+  - **Import** — a bundle is validated (the three OKF conformance rules; unknown fields/types are
+    accepted per spec, not rejected) then lands as **Personal-tier** artifacts owned by the
+    importer, through the normal author→index→publish ladder — never a governance bypass. Foreign
+    frontmatter preserved; re-import matches on the `resource` URI to create a version, not a
+    duplicate. Extraction is **zip-slip-safe** with size/file-count caps.
+  - **Link navigation** — markdown links between Knowledge artifacts resolve to first-class refs
+    (`get_knowledge` returns them) so an agent can deterministically walk a certified bundle
+    (workflow → rule → term) as the governed alternative to probabilistic retrieval.
+  - **MCP twins** — `export_okf_bundle` (writes a Files artifact, returns its ref) and
+    `import_okf_bundle`, both OPA-gated as the signed-in user. A vendored Google sample bundle
+    imports successfully in CI.
+
+## [os-ui 0.6.80] — 2026-08-05
+
+### Changed
+- **Connections tab — visual redesign (presentation-only, zero behavior change).**
+  The crown-jewel connectors feature reads like one now: business-power-user first,
+  jargon demoted (never deleted). Every action, gate, role floor and flag behaves
+  byte-identically — routes, stores and payload shapes are untouched.
+  - **Create doors.** The two-path "New connection" chooser (formerly the plain "Door A /
+    Door B" cards) is now two generous, distinct choice cards — **Bring a connector**
+    (gold cast) and **Wire up your own** (teal cast) — each with a monogram mark, a
+    plain-language headline and a one-line business-value subline, real hover/focus
+    affordance, and accessible focus rings. Copy killed the techy framing ("Use a
+    connector" → "Bring a connector", "Build a custom connector" → "Wire up your own").
+  - **Connector gallery as a showcase.** Tiles now lead with a refined **monogram mark**
+    (per-service accent hue, consistent geometry — *no trademarked logos*) and the
+    connector's business value; protocol/auth detail is demoted to a quiet mono meta line.
+    Polished search field, scannable vendor-stack headers (accent bar + count, collapsible),
+    a calm "ready" signal, and a density tuned for scanning 30–50 connectors. New shared
+    identity vocabulary (`lib/connections/connector-identity.ts`: curated monograms/accents/
+    value lines with an honest label-derived + hashed fallback) and a token-driven stylesheet
+    (`app/styles/connections.css`, `.conn-*`). The list tiles and the detail header adopt the
+    same monogram so the whole tab is one visual voice — still one elevation, no cards-in-cards.
+  - **Copy pass.** List lead, tile meta ("personal OAuth" → "signs in as you", "service creds"
+    → "service account"), gallery card meta and the wizard endpoint step now read business-first.
+    Terminology contracts (My/Domain/Company, Certified, promote/propose, health vocabulary)
+    are unchanged.
+
+### Fixed
+- **Connector wizard — paste-the-key footgun (live incident).** Adding a connector whose
+  endpoint is a known fixed host (Kajabi, GitHub, Slack, …) now **prefills** that endpoint
+  from the template's hint (editable) instead of showing an empty box — so a credential can't
+  be pasted into the address field. Generic/placeholder templates stay empty as before. Both
+  create paths (the wizard and the custom-connector door) now run a **client-side URL-shape
+  check** before submit: an obviously-non-URL value is stopped with the plain message *"That
+  doesn't look like a URL — did you paste a credential here? The API key goes in the next
+  step."* — never shipped to the egress path where the error could echo it back.
+  (`lib/connections/connector-identity.ts`, `components/connections/shared.ts`,
+  `ConnectorWizard.tsx`, `ConnectionBuilder.tsx`; server-side redaction handled separately.)
+
+## [os-ui 0.6.78] — 2026-08-05
+
+### Changed
+- **Docs truth-sync — the guide + tutorials caught up to 0.6.63–0.6.77.** The end-user manual
+  (`docs/Sovereign-Agentic-OS-Guide.md`, regenerated to `.pdf` via `scripts/build-docs.sh`) and
+  the in-product tutorials now describe what actually shipped, not the pre-redesign product:
+  - **Science redesign.** The guide's Science surface is now **Design · Launch · Monitor**
+    (was "Define · Train · Deploy · Predict · Monitor"): chat-first, granted-dataset-grounded
+    Design; one fused **"Train & launch"**; a Monitor that scores real rows with honest health,
+    usage and score-distribution (no fabricated metrics/drift). Honest capability statement
+    (classification + regression on CPU; algorithm/metric/split chosen automatically; no
+    forecasting/clustering). The Science tutorial is rewritten to the same three-stage journey
+    (the stale "model-as-a-service — define · predict · promote" framing removed).
+  - **Lakehouse import & exposure.** New guide chapter *Lakehouse — bringing external tables in,
+    governed*: the admin **Connect → Snapshot → Organize → Expose** flow (Catalog · Organize ·
+    Assign · Review, the four-way taxonomy seed chooser, AI "suggested, not verified") and the
+    domain-admin **Adopt** via **＋ New → 🔗 From a connection** (curated Domain-tier, live/sync,
+    fail-closed floor, honest frozen-copy revocation, MCP parity). "Pull from a product" is gone
+    from the Data narrative (ingest = upload). The Data + Connections tutorials cover the
+    "From a connection" adopt path and the expose→adopt journey (honestly flagged where it needs
+    an admin-registered warehouse).
+  - **Operational systems.** New guide chapter *Operational systems — Salesforce, SAP, Workday as
+    a source and a surface*: sync-only expose→adopt, per-entity cursor honesty, and the action
+    surface (four-layer fail-closed intersection, two-layer write approvals, service-account
+    labels, `OPERATIONAL_ACTIONS_ENABLED` **off by default**; SAP/OData/Workday data-only this
+    wave, with their honest v1 caveats).
+  - **Apps least-privilege.** The Software chapter now documents the app-origin data plane —
+    reads capped at (user ∩ app grants), the honest **Granted context** panel + members directory
+    in the Admin section, grant-scoped "ask", the `os.records` write surface, and the **Refresh
+    SDK** action.
+  - **Simplified domains.** The Science/ML layer is described as a plain per-domain toggle
+    (domain templates were retired in 0.6.68 and were never documented, so no stale claim
+    remained to remove).
+
 ## [os-ui 0.6.77] — 2026-08-05
 
 ### Added

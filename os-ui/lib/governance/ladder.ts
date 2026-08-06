@@ -10,8 +10,9 @@ import { record as auditRecord } from '@/lib/governance/audit';
 import { publishPromotionLive } from '@/lib/data/publish-server';
 import { getWorkflow } from '@/lib/knowledge';
 import { getPersonalKnowledge, decertifyPersonalKnowledge, unsharePersonalKnowledge } from '@/lib/knowledge/personal-store';
+import { freezeCertifiedKnowledgeBundle } from '@/lib/knowledge/okf-freeze';
 import { getDashboard, demoteDashboard } from '@/lib/dashboards';
-import { getConnectionForUser, promoteConnection, demoteConnection } from '@/lib/connections';
+import { getConnectionForUser, promoteConnection, demoteConnection, approveOnce } from '@/lib/connections';
 import { approveExposureActions } from '@/lib/connections/exposures';
 import { resolveOmCatalog, applyOmSyncForConnection, applyDqSyncForConnection } from '@/lib/connections/openmetadata';
 import { applyCatalogIngest } from '@/lib/connections/openmetadata-ingest';
@@ -210,6 +211,19 @@ export function buildEffectDeps(): EffectDeps {
       return { appName: app.name, state: app.deploy.state, live: app.pipeline.live === 'ok' };
     },
     enableExposureActions: (exposureId, approver) => approveExposureActions(exposureId, asCurrentUser(approver)),
+    freezeKnowledgeBundle: (workflowId, approver) => freezeCertifiedKnowledgeBundle(workflowId, { id: approver.id, role: approver.role, domains: approver.domains }),
+    applyConnectionWrite: async (payload, approver) => {
+      // EXECUTE the held write through the governed approveOnce seam AS the approver — the
+      // capability profile / four-layer intersection is re-checked inside, so a doctored
+      // payload can never widen the write. Map the ToolCallResult to an honest {ok, reason}.
+      const res = await approveOnce(payload.connId, asCurrentUser(approver), { tool: payload.tool, args: payload.args });
+      const ok = res.decision === 'allow';
+      const execFailed = ok && (res.result as { ok?: boolean } | undefined)?.ok === false;
+      const reason = execFailed
+        ? `executor reported failure: ${((res.result as { reason?: string }).reason) ?? 'no reason given'}`
+        : res.reason;
+      return { ok: ok && !execFailed, reason };
+    },
     applyOmSync: async (payload, approver) => {
       const user = asCurrentUser(approver);
       const c = await resolveOmCatalog(payload.connId, user); // DLS guard (404)

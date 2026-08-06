@@ -21,6 +21,8 @@ import {
   type Conn, type Data, type AppConn, type AppConns,
   badge, visWord,
 } from './shared';
+import { connectorIdentity, markStyle } from '@/lib/connections/connector-identity';
+import type { CSSProperties } from 'react';
 
 /**
  * Governed Connections surface — the OS-wide View/Edit artifact model (as on Metrics +
@@ -195,7 +197,8 @@ function GovernedConnectionsInner() {
       {/* Header: lead + Show archived + ＋ New connection */}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
         <p className="lead" style={{ margin: 0, maxWidth: 560 }}>
-          Governed connections — each connects with your own account and stores only a token <em>reference</em>.
+          Your connections to the tools and data you already use — each signs in as you and keeps
+          your credentials in the vault, never in the record.
         </p>
         <div className="row" style={{ gap: 8 }}>
           <button className="btn ghost" style={{ opacity: 1 }} onClick={() => setShowArchived((v) => !v)} title="Archived connections are hidden by default">
@@ -345,25 +348,29 @@ function connMovable(c: Conn, me: { id: string; role: Data['user']['role']; doma
  * never shows secrets or exposes controls — those live in View/Edit.
  */
 function ConnectionTile({ c, onOpen, onMove, canMove }: { c: Conn; onOpen: () => void; onMove: () => void; canMove: boolean }) {
+  const id = connectorIdentity(c.template, { label: c.name });
   return (
-    <div className="card" style={{ marginBottom: 14 }}>
+    <div className="card" style={{ marginBottom: 14, ...(markStyle(id.accent) as CSSProperties) }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <button
           type="button"
           onClick={onOpen}
-          style={{ all: 'unset', cursor: 'pointer', flex: 1, minWidth: 0 }}
+          style={{ all: 'unset', cursor: 'pointer', flex: 1, minWidth: 0, display: 'flex', gap: 12, alignItems: 'flex-start' }}
           aria-label={`Open ${c.name}`}
         >
-          <h3 style={{ margin: 0 }}>
-            {c.name}
-            <span className="badge muted" style={{ marginLeft: 6 }}>{c.type}</span>
-            {c.health === 'healthy' ? <span className="badge ok" style={{ marginLeft: 4 }}>healthy</span> : null}
-            {c.health === 'needs-reconnect' ? <span className="badge err" style={{ marginLeft: 4 }}>needs reconnect</span> : null}
-            {c.health === 'untested' ? <span className="badge muted" style={{ marginLeft: 4 }}>untested</span> : null}
-          </h3>
-          <div className="muted mono" style={{ marginTop: 6, fontSize: 11.5 }}>
-            {c.connector} · {c.auth === 'oauth' ? 'personal OAuth' : 'service creds'} · {c.owner}/{c.domain}
-          </div>
+          <span className="conn-mono sm" aria-hidden="true">{id.monogram}</span>
+          <span style={{ minWidth: 0 }}>
+            <h3 style={{ margin: 0 }}>
+              {c.name}
+              <span className="badge muted" style={{ marginLeft: 6 }}>{c.type}</span>
+              {c.health === 'healthy' ? <span className="badge ok" style={{ marginLeft: 4 }}>healthy</span> : null}
+              {c.health === 'needs-reconnect' ? <span className="badge err" style={{ marginLeft: 4 }}>needs reconnect</span> : null}
+              {c.health === 'untested' ? <span className="badge muted" style={{ marginLeft: 4 }}>untested</span> : null}
+            </h3>
+            <span className="muted mono" style={{ display: 'block', marginTop: 6, fontSize: 11.5 }}>
+              {c.connector} · {c.auth === 'oauth' ? 'signs in as you' : 'service account'} · {c.owner}/{c.domain}
+            </span>
+          </span>
         </button>
         <div className="row" style={{ gap: 6, alignItems: 'center', flexShrink: 0 }}>
           {c.archived ? <span className="badge muted">archived</span> : null}

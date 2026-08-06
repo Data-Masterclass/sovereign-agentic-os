@@ -4,22 +4,27 @@
 'use client';
 
 /**
- * <ConnectorGallery /> — the "Use a connector" door: the connector-TYPE gallery,
- * grouped by vendor stack with a search bar, rendered straight from the connection-template
- * registry the API returns (`data.templates` + `data.warehouse.providers`) so new templates
- * appear on their own. Each card's <strong>Connect →</strong> opens the shared ConnectorWizard
- * (Edit surface) pre-set to that type; <strong>Installation Guide</strong> opens the side panel.
+ * <ConnectorGallery /> — the "Bring a connector" door: the connector-TYPE gallery, the
+ * crown-jewel showcase. Grouped by vendor stack with a polished search, rendered straight
+ * from the connection-template registry the API returns (`data.templates` +
+ * `data.warehouse.providers`) so new templates appear on their own. Each tile leads with a
+ * refined MONOGRAM mark (per-service accent, no trademarked logos) and the connector's
+ * business value; protocol/auth detail is demoted to a quiet meta line. <strong>Connect →</strong>
+ * opens the shared ConnectorWizard (Edit surface) pre-set to that type; <strong>Setup guide</strong>
+ * opens the side panel.
  *
- * This is the SAME gallery the connections page always showed — extracted verbatim from
- * GovernedConnections so the type-chooser can host it behind door A without a rewrite.
+ * Presentation-only reshape: the SAME cards, filtering, grouping and handlers as before —
+ * every `onConnect(start)` and guide payload is byte-identical; only the visual identity changed.
  */
 
 import { useState } from 'react';
 import { STACKS, vendorStack, warehousePlatformStack, type StackId } from '@/lib/connections/connector-stacks';
 import { installGuideFor, type InstallGuide } from '@/lib/connections/install-guides';
+import { connectorIdentity, markStyle } from '@/lib/connections/connector-identity';
 import InstallationGuide from '@/components/connections/InstallationGuide';
 import type { WizardStart } from '@/components/connections/ConnectorWizard';
 import type { Template, WarehouseMeta } from './shared';
+import type { CSSProperties } from 'react';
 
 export default function ConnectorGallery({
   templates,
@@ -40,17 +45,19 @@ export default function ConnectorGallery({
 
   const warehouseMeta = warehouse?.enabled ? warehouse : null;
 
-  // A gallery card. `guideKey` resolves its Installation Guide (a warehouse card uses its
+  // A gallery card. `guideKey` resolves its Setup guide (a warehouse card uses its
   // provider platform; a template card uses its template key). `start` is how Connect opens
-  // the shared wizard (a warehouse card pins the platform).
-  type Card = { key: string; guideKey: string; label: string; meta: string; blurb?: string; stackId: StackId; start: WizardStart };
+  // the shared wizard (a warehouse card pins the platform). `identityKey`/`platform` resolve
+  // the monogram + per-service accent; `meta` is the demoted protocol/auth line.
+  type Card = { key: string; guideKey: string; identityKey: string; platform?: string; label: string; meta: string; blurb?: string; stackId: StackId; start: WizardStart };
 
   // Dynamic: one card per user-facing template the API returned…
   const cards: Card[] = templates.map((t) => ({
     key: t.key,
     guideKey: t.key,
+    identityKey: t.key,
     label: t.label,
-    meta: `${t.type} · ${t.auth === 'oauth' ? 'personal OAuth' : 'service credentials'}`,
+    meta: `${t.type} · ${t.auth === 'oauth' ? 'sign in with your account' : 'service credentials'}`,
     stackId: vendorStack(t.key),
     start: { mode: 'type', template: t.key },
   }));
@@ -73,8 +80,10 @@ export default function ConnectorGallery({
       cards.push({
         key: `warehouse:${p.platform}`,
         guideKey: p.platform,
+        identityKey: 'warehouse',
+        platform: p.platform,
         label: p.label,
-        meta: `${kind} · federated Trino catalog${caps ? ` · ${caps}` : ''}`,
+        meta: `${kind}${caps ? ` · ${caps}` : ''}`,
         blurb: p.category === 'operational'
           ? 'Federate this database as a governed catalog — query live, import tables, keep copies fresh with scheduled sync.'
           : p.category === 'streaming'
@@ -86,7 +95,7 @@ export default function ConnectorGallery({
     }
   }
 
-  if (cards.length === 0) return <div className="stub-page">No connector types available on this deployment.</div>;
+  if (cards.length === 0) return <div className="stub-page">No connectors are available on this deployment yet.</div>;
 
   // Filter by search query (name or stack label, case-insensitive).
   const q = connSearch.trim().toLowerCase();
@@ -109,59 +118,31 @@ export default function ConnectorGallery({
   return (
     <>
       {/* Search bar + stack jump-links */}
-      <div style={{ marginBottom: 18 }}>
-        <input
-          type="search"
-          value={connSearch}
-          onChange={(e) => setConnSearch(e.target.value)}
-          placeholder="Search connectors by name or vendor…"
-          style={{ width: '100%', maxWidth: 400 }}
-        />
+      <div style={{ marginBottom: 22 }}>
+        <div className="conn-search">
+          <span className="conn-search-ico" aria-hidden="true">⌕</span>
+          <input
+            type="search"
+            value={connSearch}
+            onChange={(e) => setConnSearch(e.target.value)}
+            placeholder="Search connectors by name or vendor…"
+            aria-label="Search connectors"
+          />
+        </div>
         {visibleStacks.length > 0 && (
-          <div
-            role="navigation"
-            aria-label="Jump to connector stack"
-            style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 8px', marginTop: 10 }}
-          >
+          <div className="conn-jump" role="navigation" aria-label="Jump to connector stack">
             {visibleStacks.map((stack) => (
               <button
                 key={stack.id}
                 type="button"
+                className="conn-jump-chip"
                 aria-label={`Jump to ${stack.label} connectors`}
                 onClick={() => {
                   const el = document.getElementById(`stack-${stack.id}`);
                   el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }}
-                style={{
-                  all: 'unset',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  padding: '3px 9px 3px 7px',
-                  borderRadius: 20,
-                  border: '1px solid var(--border)',
-                  fontSize: 11,
-                  fontFamily: 'var(--font-mono, monospace)',
-                  color: 'var(--text-faint)',
-                  background: 'var(--surface)',
-                  letterSpacing: '0.04em',
-                  transition: 'border-color 0.15s, color 0.15s',
-                  lineHeight: 1.4,
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.borderColor = stack.accent;
-                  (e.currentTarget as HTMLButtonElement).style.color = 'var(--text)';
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)';
-                  (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-faint)';
-                }}
               >
-                <span
-                  aria-hidden="true"
-                  style={{ width: 6, height: 6, borderRadius: '50%', background: stack.accent, flexShrink: 0, opacity: 0.85 }}
-                />
+                <span className="conn-jump-dot" aria-hidden="true" style={{ background: stack.accent }} />
                 {stack.label}
               </button>
             ))}
@@ -176,62 +157,56 @@ export default function ConnectorGallery({
           const group = grouped.get(stack.id)!;
           const isOpen = !collapsedCategories.has(stack.id);
           return (
-            <div key={stack.id} id={`stack-${stack.id}`} style={{ marginBottom: 24 }}>
-              {/* Stack header — accent dot + label + count + rule */}
+            <section key={stack.id} id={`stack-${stack.id}`} className="conn-stack">
+              {/* Stack header — accent bar + label + count, collapsible */}
               <button
                 type="button"
+                className="conn-stack-head"
+                aria-expanded={isOpen}
                 onClick={() => setCollapsedCategories((prev) => {
                   const next = new Set(prev);
                   if (next.has(stack.id)) next.delete(stack.id); else next.add(stack.id);
                   return next;
                 })}
-                style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, marginBottom: isOpen ? 12 : 0, width: '100%' }}
               >
-                <span
-                  aria-hidden="true"
-                  style={{ width: 8, height: 8, borderRadius: '50%', background: stack.accent, flexShrink: 0, opacity: 0.85 }}
-                />
-                <span style={{
-                  fontFamily: 'var(--font-mono, monospace)',
-                  fontSize: 10,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
-                  color: 'var(--text-faint)',
-                  userSelect: 'none',
-                }}>
-                  {isOpen ? '▾' : '▸'} {stack.label}
-                </span>
-                <span className="badge muted" style={{ fontSize: 10 }}>{group.length}</span>
-                <span style={{ flex: 1, height: 1, background: 'var(--border)', marginLeft: 4 }} />
+                <span className="conn-stack-bar" aria-hidden="true" style={{ background: stack.accent }} />
+                <span className="conn-stack-caret" aria-hidden="true" style={{ transform: isOpen ? 'rotate(90deg)' : 'none' }}>▸</span>
+                <span className="conn-stack-label">{stack.label}</span>
+                <span className="conn-stack-count">{group.length}</span>
+                <span className="conn-stack-rule" aria-hidden="true" />
               </button>
 
               {isOpen ? (
-                <div className="grid">
+                <div className="conn-tiles">
                   {group.map((c) => {
                     const g = installGuideFor(c.guideKey);
+                    const id = connectorIdentity(c.identityKey, { platform: c.platform, label: c.label, fallbackValue: c.blurb });
                     return (
-                      <div className="card" key={c.key} style={{ borderLeft: `3px solid ${stack.accent}`, paddingLeft: 14 }}>
-                        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                          <h3 style={{ margin: 0 }}>{c.label}</h3>
-                          <span className="badge ok">available</span>
+                      <div className="conn-tile" key={c.key} style={markStyle(id.accent) as CSSProperties}>
+                        <span className="conn-tile-ready" aria-hidden="true"><span className="dot" />ready</span>
+                        <div className="conn-tile-top">
+                          <span className="conn-mono" aria-hidden="true">{id.monogram}</span>
+                          <div className="conn-tile-heading">
+                            <h3 className="conn-tile-name" title={c.label}>{c.label}</h3>
+                          </div>
                         </div>
-                        <div className="muted" style={{ marginTop: 8 }}>{c.meta}</div>
-                        {c.blurb ? <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>{c.blurb}</p> : null}
-                        <div className="row" style={{ marginTop: 12, gap: 8, justifyContent: 'flex-end' }}>
-                          {g ? <button className="btn ghost" onClick={() => setGuide(g)}>Installation Guide</button> : null}
-                          {canOpen ? <button className="btn ghost" onClick={() => onConnect(c.start)}>Connect →</button> : null}
+                        <p className="conn-tile-value">{id.value}</p>
+                        <div className="conn-tile-meta">{c.meta}</div>
+                        <div className="conn-tile-actions">
+                          {g ? <button className="btn ghost sm" onClick={() => setGuide(g)}>Setup guide</button> : null}
+                          {canOpen ? <button className="btn sm" onClick={() => onConnect(c.start)}>Connect →</button> : null}
                         </div>
                       </div>
                     );
                   })}
                 </div>
               ) : null}
-            </div>
+            </section>
           );
         })
       )}
 
-      {/* Installation Guide side panel — opened from any card. */}
+      {/* Setup guide side panel — opened from any tile. */}
       {guide ? <InstallationGuide guide={guide} onClose={() => setGuide(null)} /> : null}
     </>
   );

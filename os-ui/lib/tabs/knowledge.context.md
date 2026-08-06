@@ -21,6 +21,30 @@ filter).
 - `search_knowledge(query, k?)` — governed hybrid retrieval (dense + lexical,
   reranked) with provenance. OPA `retrieve` gate + DLS grant filter; returns only
   units you may see. Tacit units carry `type: "tacit"` in their provenance.
+- `export_okf_bundle(workflowId)` — export a business process as an **OKF (Open
+  Knowledge Format) v0.2** bundle — a portable, human-readable directory of markdown
+  + YAML frontmatter, zipped and written as a governed Files-tab artifact (returns
+  its `fileId` + `deepLink`; MCP can't return a zip inline). The interchange format
+  ONLY — the OpenSearch retrieval engine is untouched. Round-trip is lossless for our
+  own artifacts (steps/actors/rules/tacit + tier/owner survive via a `sovereign_os:`
+  extension block); conformance is validated on export.
+- `import_okf_bundle(base64Content, domain?)` — import an OKF v0.2 bundle (zip as
+  base64). Validated for conformance, then its concepts land as governed artifacts at
+  **Personal tier with you as owner**, through the normal author ladder (never a
+  bypass). Idempotent: a concept whose `resource` (`sovereign-os://knowledge/<id>`)
+  matches an artifact you own → a NEW VERSION, not a duplicate. Unknown types + fields
+  + broken links are ACCEPTED (an unknown type is kept + shown, mapped to a general
+  knowledge doc); only a truly malformed bundle (unparseable frontmatter, missing
+  `type`) is rejected. Zip-slip-safe with hard caps (≤ 50 MB, ≤ 2,000 files).
+
+**OKF interchange (Open Knowledge Format):** the Knowledge tab + Marketplace speak
+OKF v0.2 at the boundary. "Export as OKF" in the Knowledge tab header downloads the
+zipped bundle; a certified Marketplace knowledge product carries its OKF bundle
+**generated and frozen at certify time**. `get_knowledge` returns `knowledgeLinks:
+{ links: [{id,title}], unresolved: [{href,label}] }` — the first-class references from
+a process to OTHER Knowledge artifacts, so an agent walks a certified bundle
+deterministically (workflow → rule → term) as the governed alternative to probabilistic
+retrieval; unresolvable links are flagged, never dropped.
 
 **Tacit knowledge:** two levels — per-step (`steps[].tacit` in `author_knowledge`,
 stored as `> tacit:` blockquotes in workflow.md) and process-level (`tacit` param,

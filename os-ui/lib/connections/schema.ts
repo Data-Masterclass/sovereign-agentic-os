@@ -447,18 +447,16 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
     auth: 'service',
     endpointHint: 'https://yourorg.my.salesforce.com',
     secretKey: 'client-credentials',
+    // The per-object preset (read_account / read_opportunity / update_opportunity_amount)
+    // has been REMOVED: the entity-generic `sf_*` action tools (salesforce-tools.ts) replaced
+    // them (operational-system-connections.md, Phase 3). The old mocked, Write-bounded
+    // `update_opportunity_amount` in particular fabricated an "updated" envelope with no live
+    // call — the single worst mocked-write offender. What remains are the two guard rails a
+    // Salesforce connection keeps regardless of the action surface: bulk update is Off, delete
+    // is Blocked (registered, never callable).
     tools: [
-      { name: 'read_account', description: 'Read an account (read).', write: false, mode: 'Read', limits: { dataScope: 'Sales domain accounts' } },
-      { name: 'read_opportunity', description: 'Read an opportunity (read).', write: false, mode: 'Read', limits: { dataScope: 'Sales domain opportunities' } },
-      {
-        name: 'update_opportunity_amount',
-        description: 'Update an opportunity amount (write).',
-        write: true,
-        mode: 'Write-bounded',
-        limits: { maxAmount: 50000, dataScope: 'Sales domain opportunities', rateLimitPerMin: 5, costCapUsd: 1 },
-      },
-      { name: 'mass_update', description: 'Bulk update many records (write).', write: true, mode: 'Off' },
-      { name: 'delete_record', description: 'Delete a record (write).', write: true, mode: 'Blocked' },
+      { name: 'mass_update', description: 'Bulk update many records (write — Off).', write: true, mode: 'Off' },
+      { name: 'delete_record', description: 'Delete a record (write — Blocked).', write: true, mode: 'Blocked' },
     ],
   },
   {
@@ -485,10 +483,13 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
       { name: 'read_purchase', description: 'Read an offer purchase (read).', write: false, mode: 'Read', limits: { dataScope: 'your Kajabi sites' } },
       { name: 'list_offers', description: 'List offers (read).', write: false, mode: 'Read' },
       {
+        // Off by default (C2): no real Kajabi write executor is wired yet, so leaving this
+        // Write-approval would mean an approved call still executed only a mocked write. It
+        // stays registered (visible, honest) but uncallable until a real writer lands.
         name: 'tag_contact',
-        description: 'Add a tag to a contact (write).',
+        description: 'Add a tag to a contact (write — Off: no live writer wired yet).',
         write: true,
-        mode: 'Write-approval',
+        mode: 'Off',
         limits: { dataScope: 'your Kajabi contacts', rateLimitPerMin: 10 },
       },
       { name: 'delete_contact', description: 'Delete a contact (write).', write: true, mode: 'Blocked' },

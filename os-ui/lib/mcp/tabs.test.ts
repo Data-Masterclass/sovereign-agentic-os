@@ -40,8 +40,8 @@ test('every declared write tool is registered under its correct real tab', () =>
   for (const n of ['create_dataset', 'add_dataset_version', 'document_dataset', 'request_promotion', 'approve_promotion', 'query_data', 'ingest_dataset', 'profile_dataset', 'transform_silver', 'build_gold_join']) {
     assert.ok(namesFor('data').includes(n), `data tab missing ${n}`);
   }
-  // Knowledge
-  for (const n of ['author_knowledge', 'publish_knowledge', 'index_knowledge', 'search_knowledge']) {
+  // Knowledge — incl. the OKF interchange twins (export_okf_bundle / import_okf_bundle).
+  for (const n of ['author_knowledge', 'publish_knowledge', 'index_knowledge', 'search_knowledge', 'export_okf_bundle', 'import_okf_bundle']) {
     assert.ok(namesFor('knowledge').includes(n), `knowledge tab missing ${n}`);
   }
   // Files / Metrics / Dashboards / Big Bets / Agents / Science

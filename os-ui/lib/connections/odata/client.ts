@@ -317,3 +317,41 @@ export async function odataHealth(c: Connection): Promise<{ ok: boolean; mode: '
     detail: `$metadata parsed: OData ${meta.data.version}, ${meta.data.entitySets.length} entity set(s).`,
   };
 }
+
+/**
+ * REAL, thin READ executor for an ALREADY-ALLOWED OData tool (C2). The governance gate
+ * (both are Read) has passed upstream in `callConnectionTool`; here we make the real
+ * $metadata / page round-trip so the tool result is live, not fabricated. Never throws —
+ * every failure degrades to `{ ok:false, reason }`. The credential is dereferenced from
+ * the vault inside `odataConnFrom` and never logged/returned.
+ *
+ *   • odata_list_entities → the entity-set names from $metadata (live).
+ *   • odata_read_entity   → one bounded page of an entity set (default $top 20, ≤ 200).
+ */
+export async function executeODataTool(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = odataConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false as const, reason });
+  const meta = await fetchMetadata(conn);
+  if (!meta.ok) return fail(meta.reason);
+  const dialect = dialectFor(meta.data.version);
+  if (tool === 'odata_list_entities') {
+    return { connection: c.name, ok: true as const, version: meta.data.version, entitySets: meta.data.entitySets.map((s) => s.name) };
+  }
+  if (tool === 'odata_read_entity') {
+    const entitySet = String(args.entitySet ?? args.entity ?? '');
+    if (!entitySet) return fail('odata_read_entity needs an entitySet');
+    const set = meta.data.entitySets.find((s) => s.name.toLowerCase() === entitySet.trim().toLowerCase());
+    if (!set) return fail(`entity set '${entitySet}' not found in $metadata`);
+    const pageSize = Math.min(Math.max(Number(args.limit ?? 20) || 20, 1), 200);
+    let url: string;
+    try {
+      url = firstPageUrl(conn, dialect, { entitySet: set.name, pageSize });
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'bad entity set name');
+    }
+    const page = await pullPage(conn, dialect, url);
+    if (!page.ok) return fail(page.reason);
+    return { connection: c.name, ok: true as const, entitySet: set.name, rows: page.data.rows, count: page.data.count, truncated: page.data.nextLink !== null };
+  }
+  return fail(`Unknown OData tool: ${tool}`);
+}

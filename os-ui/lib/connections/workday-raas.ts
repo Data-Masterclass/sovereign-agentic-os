@@ -266,6 +266,33 @@ export async function workdayHealth(c: Connection): Promise<{ ok: boolean; mode:
   return { ok: true, mode: 'live', detail: `Sampled report '${conn.reports[0].key}' (${rows.data.length} row(s) in the sample).` };
 }
 
+/**
+ * REAL, thin READ executor for an ALREADY-ALLOWED Workday RaaS tool (C2). Both tools are
+ * Read; the governance gate has passed upstream in `callConnectionTool`. Never throws —
+ * failures degrade to `{ ok:false, reason }`. The ISU credential is dereferenced from the
+ * vault inside `workdayConnFrom` and never logged/returned.
+ *
+ *   • workday_list_reports → the configured reports (each IS an entity — no live call).
+ *   • workday_read_report  → a REAL RaaS fetch of one configured report's rows.
+ */
+export async function executeWorkdayTool(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
+  const conn = workdayConnFrom(c);
+  const fail = (reason: string) => ({ connection: c.name, ok: false as const, reason });
+  if (tool === 'workday_list_reports') {
+    return { connection: c.name, ok: true as const, reports: conn.reports.map((r) => r.key) };
+  }
+  if (tool === 'workday_read_report') {
+    const key = String(args.report ?? args.reportKey ?? '');
+    if (!key) return fail('workday_read_report needs a report key');
+    const report = conn.reports.find((r) => r.key.toLowerCase() === key.trim().toLowerCase());
+    if (!report) return fail(`report '${key}' is not configured on this connection`);
+    const rows = await fetchReport(conn, report);
+    if (!rows.ok) return fail(rows.reason);
+    return { connection: c.name, ok: true as const, report: report.key, rows: rows.data };
+  }
+  return fail(`Unknown Workday tool: ${tool}`);
+}
+
 // -------------------------------------------------- API-batch sync execution ----
 
 export type WorkdaySliceArgs = {

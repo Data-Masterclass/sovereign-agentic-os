@@ -38,3 +38,18 @@ export function isOperationalTemplate(template: ConnectionTemplateKey): boolean 
 export function operationalTemplates(): ConnectionTemplateKey[] {
   return Object.keys(TEMPLATE_PLATFORM) as ConnectionTemplateKey[];
 }
+
+/**
+ * CAPABILITY FLAG — the templates that carry a REGISTERED action-tool set (the entity-
+ * generic `sf_*` tools + the four-layer intersection machinery). Today that is ONLY
+ * `salesforce-api`; Kajabi/SAP-OData/Workday are operational SYNC sources with NO action
+ * tools, so their expose panel must NOT offer action-arming toggles (there is nothing to
+ * arm — the decision doc). Both the client (ExposePanel) and the server (sanitizeActions)
+ * key on this so the two can never drift. Pure + client-safe.
+ */
+const ACTION_TOOL_TEMPLATES = new Set<ConnectionTemplateKey>(['salesforce-api']);
+
+/** True when a template has a registered action-tool set (arming UI + action grants). */
+export function templateHasActionTools(template: ConnectionTemplateKey): boolean {
+  return ACTION_TOOL_TEMPLATES.has(template);
+}

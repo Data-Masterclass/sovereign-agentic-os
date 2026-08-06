@@ -306,7 +306,7 @@ export const readTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'Read one knowledge business process (also called: workflow, process workflow, SOP (Standard Operating Procedure)) you can see — steps, rules, tacit, status. Path: DISCOVERY for the Knowledge golden path. Before: list_knowledge / search_knowledge. After: index_knowledge or (Builder) publish_knowledge. Governance: read-only; unseeable id → not_found.',
+      'Read one knowledge business process (also called: workflow, process workflow, SOP (Standard Operating Procedure)) you can see — steps, rules, tacit, status. Returns `knowledgeLinks: { links: [{id,title}], unresolved: [{href,label}] }` — the first-class references from THIS process to OTHER Knowledge artifacts, so you can walk a certified bundle deterministically (workflow → rule → term) instead of re-searching; unresolvable links are flagged, not dropped. Path: DISCOVERY for the Knowledge golden path. Before: list_knowledge / search_knowledge. After: index_knowledge or (Builder) publish_knowledge, or get_knowledge on a linked id. Governance: read-only; unseeable id → not_found.',
     inputSchema: idArg('workflowId', 'Workflow id from list_knowledge.'),
     call: async (user, args) => {
       const id = str(args.workflowId).trim();

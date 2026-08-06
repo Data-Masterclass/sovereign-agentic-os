@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyLiveRegistration, propsToProperties, extSecretName, type RegK8s } from './k8s-registration.ts';
+import { applyLiveRegistration, removeLiveRegistration, propsToProperties, extSecretName, type RegK8s } from './k8s-registration.ts';
 import { catalogRegistration } from './registration.ts';
 import type { WarehouseSource } from './types.ts';
 
@@ -112,4 +112,41 @@ test('register: not-in-cluster (status 0) is reported honestly as not-live', asy
   assert.equal(out.ok, false);
   assert.equal(out.live, false);
   assert.match(out.detail, /Kubernetes API/i);
+});
+
+// ---- C1: removeLiveRegistration (connection-teardown inverse) ------------------
+
+test('remove: drops the catalog key, DELETEs the credential-copy Secret, rolls Trino', async () => {
+  const { k8s, calls } = fakeK8s();
+  const out = await removeLiveRegistration('snow_fin', { namespace: NS, k8s });
+  assert.equal(out.ok, true);
+  assert.equal(out.live, true);
+
+  // (a) ConfigMap merge-patch sets the catalog key to null (removes exactly it).
+  const cmPatch = calls.find((c) => c.method === 'PATCH' && c.path.endsWith('/configmaps/trino-catalog'));
+  assert.ok(cmPatch, 'patched the trino-catalog ConfigMap');
+  assert.equal((cmPatch!.body as { data: Record<string, unknown> }).data['snow_fin.properties'], null);
+
+  // (b) The credential-copy Secret is DELETEd by name.
+  const del = calls.find((c) => c.method === 'DELETE' && c.path.endsWith(`/secrets/${extSecretName('snow_fin')}`));
+  assert.ok(del, 'deleted the trino-ext-snow-fin Secret');
+
+  // (c) A rollout was triggered.
+  assert.ok(calls.some((c) => JSON.stringify(c.body ?? {}).includes('catalog-registered')), 'triggered a rollout');
+});
+
+test('remove: a 404 on the Secret is a SUCCESSFUL (idempotent) removal', async () => {
+  const k8s: RegK8s = async (method, path) => {
+    if (method === 'DELETE' && /secrets\//.test(path)) return { status: 404, body: {} };
+    return { status: 200, body: {} };
+  };
+  const out = await removeLiveRegistration('snow_fin', { namespace: NS, k8s });
+  assert.equal(out.ok, true, '404 (already gone) counts as removed');
+});
+
+test('remove: not-in-cluster (status 0) is honest — nothing confirmed removed', async () => {
+  const k8s: RegK8s = async () => ({ status: 0, body: {} });
+  const out = await removeLiveRegistration('snow_fin', { namespace: NS, k8s });
+  assert.equal(out.live, false);
+  assert.match(out.detail, /Could not reach the Kubernetes API/i);
 });

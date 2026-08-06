@@ -76,7 +76,7 @@ The contract the model guarantees:
    - Data — Define · Ingest · Refine · Publish · Use
    - Metrics — Define · Refine · Preview · Publish · Monitor
    - Dashboards — Define · Design · Build · View · Govern
-   - Science — Define · Train · Deploy · Predict · Monitor
+   - Science — Design · Launch · Monitor
    - Software — Describe · Build · Preview · Publish · Operate
 2. **Own one `useState`**: `useState(() => initialStageState(STAGES))`, and
    derive `ctx` fresh each render from the tab's stores/props.

@@ -22,6 +22,7 @@ import { normaliseFolderPath } from '../core/folders.ts';
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '../folders/index.ts';
 import { type ManualScope, resolveManual } from './manual.ts';
 import { EMPTY_LINKS, type WorkflowLinks } from './links.ts';
+import { resolveKnowledgeLinks, type ResolvedLinks } from './okf-model.ts';
 
 export type { ArtifactVersion };
 export type { ManualScope };
@@ -75,7 +76,18 @@ export type WorkflowRecord = {
 
 export type WorkflowSummary = Omit<WorkflowRecord, 'md' | 'tacit'>;
 
-export type WorkflowView = WorkflowRecord & { workflow: Workflow; sha: string; links: WorkflowLinks };
+export type WorkflowView = WorkflowRecord & {
+  workflow: Workflow;
+  sha: string;
+  links: WorkflowLinks;
+  /**
+   * First-class KNOWLEDGE links (decision #6): markdown links from THIS process's
+   * body/tacit to OTHER Knowledge artifacts, resolved to `{id, title}` refs so an
+   * agent (via get_knowledge) or the UI can walk a certified bundle deterministically
+   * — workflow → rule → term. Unresolvable links are preserved + flagged, never dropped.
+   */
+  knowledgeLinks: ResolvedLinks;
+};
 
 // ----------------------------------------------------------------- helpers ---
 
@@ -313,10 +325,28 @@ export function listWorkflows(user: Principal, opts: { includeArchived?: boolean
   };
 }
 
+/**
+ * Resolve a knowledge-artifact id to its title WITHIN THE CALLER'S VIEW, or null.
+ * A link to an artifact the caller cannot see resolves to null → the link is kept
+ * as unresolved-and-flagged (no existence leak, never a hard reference).
+ */
+function resolveKnowledgeTitle(id: string, user: Principal): string | null {
+  const rec = ks().workflows.get(id);
+  if (rec && canView(rec, user) && !rec.archived) return rec.title;
+  return null;
+}
+
 export function getWorkflow(id: string, user: Principal): WorkflowView {
   const rec = requireView(id, user);
+  // Resolve knowledge→knowledge markdown links from the process source + its tacit
+  // doc to first-class refs (decision #6). Caller-scoped: unseeable targets stay
+  // flagged-unresolved (no existence leak).
+  const knowledgeLinks = resolveKnowledgeLinks(
+    `${rec.md}\n${rec.tacit ?? ''}`,
+    (linkId) => (linkId === id ? null : resolveKnowledgeTitle(linkId, user)),
+  );
   // `links` defaults here so every consumer is nil-safe on pre-links records.
-  return { ...rec, links: rec.links ?? EMPTY_LINKS, workflow: parseWorkflow(rec.md), sha: sha(rec.md) };
+  return { ...rec, links: rec.links ?? EMPTY_LINKS, knowledgeLinks, workflow: parseWorkflow(rec.md), sha: sha(rec.md) };
 }
 
 export function createWorkflow(

@@ -7,7 +7,7 @@ import { roleAtLeast } from '@/lib/core/session';
 import { osMirror } from '@/lib/infra/os-mirror';
 import { trace } from '@/lib/infra/agent-governed';
 import { getConnectionForUser } from '@/lib/connections/store';
-import { isOperationalTemplate } from '@/lib/connections/operational-platform';
+import { isOperationalTemplate, templateHasActionTools } from '@/lib/connections/operational-platform';
 import { config } from '@/lib/core/config';
 import { enqueue } from '@/lib/governance/approvals';
 import type { ConnectionTemplateKey } from '@/lib/connections/schema';
@@ -267,8 +267,10 @@ export async function createExposureSet(connId: string, user: CurrentUser, input
   // exposure of an operational connection is FORCED to 'sync'; an explicit 'live' is
   // refused honestly (operational-system-connections.md, Phase 2).
   const mode: ExposureMode = resolveExposureMode(c.template, input.mode);
-  // Agent actions only exist for operational exposures, and only when the flag is on.
-  const actions = config.operationalActionsEnabled && isOperationalTemplate(c.template)
+  // Agent actions only exist for templates with a REGISTERED action-tool set (today:
+  // salesforce-api), and only when the flag is on. Kajabi/SAP/Workday have no action
+  // tools, so their exposures are data-only — never arm a nonexistent action surface (M9).
+  const actions = config.operationalActionsEnabled && templateHasActionTools(c.template)
     ? sanitizeActions(input.actions)
     : undefined;
   const requestsWrites = actionsRequestWrites(actions);
@@ -339,7 +341,7 @@ export async function updateExposureSet(
   // write surface clears `writeApproved` and re-triggers the enable approval (the
   // envelope discipline). Narrowing/read-only edits never re-approve.
   let broadened = false;
-  if (input.actions !== undefined && config.operationalActionsEnabled && isOperationalTemplate(c.template)) {
+  if (input.actions !== undefined && config.operationalActionsEnabled && templateHasActionTools(c.template)) {
     const nextActions = sanitizeActions(input.actions);
     broadened = actionsBroadenWrites(e.actions, nextActions);
     e.actions = nextActions;

@@ -48,6 +48,11 @@ const connections: TutorialDef = {
         },
       },
     },
+    {
+      illustration: 'load',
+      title: 'Bring tables in — expose → adopt (admin)',
+      body: 'For a warehouse (Glue/Athena, Snowflake, BigQuery, Databricks) or an operational system (Salesforce, SAP, Workday), a platform admin uses the Expose surface — Catalog · Organize · Assign · Review — to open exactly the named tables to exactly the named domains (an unexposed external table reads zero rows for everyone). A domain admin then adopts one in the Data tab via "🔗 From a connection". This step needs an admin-registered warehouse connection, so it may not be available in your sandbox.',
+    },
   ],
 
   walkthrough: [
@@ -96,8 +101,8 @@ const connections: TutorialDef = {
 
   outro: {
     title: 'Your connection is live and governed',
-    body: 'You created a governed bridge with least-privilege settings and a full audit trail on every call. Next: attach it to an agent, or use it as a data source.',
-    next: ['agents', 'software'],
+    body: 'You created a governed bridge with least-privilege settings and a full audit trail on every call. Next: adopt an exposed table in the Data tab, attach it to an agent, or use it in an app.',
+    next: ['data', 'agents', 'software'],
     doc: 'connections-golden-path.md',
   },
 

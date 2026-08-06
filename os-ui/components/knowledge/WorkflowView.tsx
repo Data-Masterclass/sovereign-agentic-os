@@ -115,6 +115,8 @@ export default function WorkflowView({
   // Export PDF (client-side jsPDF — same stack as the Agents run report).
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfErr, setPdfErr] = useState('');
+  // Export as OKF bundle (server-side zip download — the portable interchange format).
+  const [okfBusy, setOkfBusy] = useState(false);
   // Inline rename of the workflow title (edit-gated; server re-checks canManageArtifact).
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -348,6 +350,33 @@ export default function WorkflowView({
     }
   }
 
+  /** Export this process as an OKF v0.2 bundle (server-side zip) and download it. */
+  async function exportOkf() {
+    if (!data || okfBusy) return;
+    setOkfBusy(true);
+    setPdfErr('');
+    try {
+      const res = await fetch(`/api/knowledge/workflows/${workflowId}/okf`, { cache: 'no-store' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `Export failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(data.title || 'workflow').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}.okf.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setPdfErr(`Could not export the OKF bundle: ${(e as Error).message}`);
+    } finally {
+      setOkfBusy(false);
+    }
+  }
+
   async function rename() {
     const title = nameDraft.trim();
     setRenameErr('');
@@ -503,6 +532,17 @@ export default function WorkflowView({
             title="Export this business process as a PDF — the visual flow first, then all content"
           >
             {pdfBusy ? <span className="spin" /> : 'Export PDF'}
+          </button>
+
+          {/* Export as OKF — the portable interchange bundle (markdown + YAML
+              frontmatter, zipped). Round-trips losslessly back into any OKF consumer. */}
+          <button
+            className="btn ghost sm"
+            onClick={() => void exportOkf()}
+            disabled={okfBusy}
+            title="Export this business process as an OKF bundle — the open, portable knowledge interchange format"
+          >
+            {okfBusy ? <span className="spin" /> : 'Export as OKF'}
           </button>
 
           {data.canPublish && data.status === 'draft' && (

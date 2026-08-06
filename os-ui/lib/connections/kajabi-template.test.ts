@@ -29,14 +29,16 @@ test('kajabi IS user-facing (shows in the Supported Connectors gallery) with its
   assert.equal(vendorStack('kajabi-api'), 'kajabi');
 });
 
-test('the preset ships safe: reads Read, tag write held for approval, delete Blocked', () => {
+test('the preset ships safe: reads Read, tag write Off (no live writer wired — C2), delete Blocked', () => {
   const t = templateByKey('kajabi-api')!;
   const byName = Object.fromEntries(t.tools.map((x) => [x.name, x]));
   for (const name of ['read_contact', 'read_purchase', 'list_offers']) {
     assert.equal(byName[name].mode, 'Read', `${name} is Read`);
     assert.equal(byName[name].write, false, `${name} is non-write`);
   }
-  assert.equal(byName.tag_contact.mode, 'Write-approval');
+  // C2(c): tag_contact is Off by default — no real Kajabi write executor is wired, so an
+  // approved call would only execute a mocked write. It stays registered but uncallable.
+  assert.equal(byName.tag_contact.mode, 'Off');
   assert.equal(byName.tag_contact.write, true);
   assert.equal(byName.delete_contact.mode, 'Blocked');
 });

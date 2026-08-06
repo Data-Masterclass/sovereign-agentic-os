@@ -220,9 +220,12 @@ import {
   actionToolLimits,
   exposedActionTools,
   executeSalesforceAction,
+  operationalActionsActive,
 } from '@/lib/connections/salesforce-tools';
 import { allActiveExposures } from '@/lib/connections/exposures';
 import { allActiveAdoptions } from '@/lib/connections/action-adoptions';
+import { executeODataTool } from '@/lib/connections/odata/client';
+import { executeWorkdayTool } from '@/lib/connections/workday-raas';
 import { adapterFor } from '@/lib/connections/connection-adapters';
 import {
   buildPreview,
@@ -291,6 +294,21 @@ function slugify(s: string): string {
   return (
     s.toLowerCase().trim().replace(/[^a-z0-9-_ ]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').slice(0, 40) || 'conn'
   );
+}
+
+/**
+ * Ensure a connection slug is UNIQUE across the registry (C5). The slug drives the OPA
+ * `principal` (`conn-<slug>`) and the vault `secretName` (`connection-<slug>`), so a
+ * collision means credential clobber + policy cross-talk + cross-delete of the other's
+ * secret. When `base` is already the slug of ANOTHER connection, append this record's id
+ * suffix (stable + unique per record) so the derived principal/secret name are unique.
+ */
+function uniqueSlug(base: string, connId: string, map: Map<string, Connection>): string {
+  // Compare against the principals actually in use — that is exactly what a collision means.
+  const principals = new Set<string>([...map.values()].map((c) => c.principal));
+  if (!principals.has(`conn-${base}`)) return base;
+  const suffix = connId.replace(/^conn_/, '');
+  return slugify(`${base}-${suffix}`);
 }
 function withStatus(err: Error, status: number): Error {
   (err as Error & { status?: number }).status = status;
@@ -544,7 +562,14 @@ export async function createConnection(
 
   const map = await getCache();
   const name = (input.name ?? '').trim() || tpl.label;
-  const slug = slugify(`${name}-${user.id}`);
+  // The record id is minted up-front so the slug can borrow its suffix to DE-DUPE (C5):
+  // two same-named connections must NOT share a slug — that would collide their principal
+  // (OPA cross-talk), their vault secret name (credential clobber), and cross-delete one
+  // another's secret. If the base slug is already taken by another connection, append the
+  // record-id suffix so the principal + secret name are provably unique.
+  const connId = id('conn');
+  const baseSlug = slugify(`${name}-${user.id}`);
+  const slug = uniqueSlug(baseSlug, connId, map);
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0];
   const principal = `conn-${slug}`;
   const endpoint = (input.endpoint ?? '').trim() || tpl.endpointHint;
@@ -576,7 +601,7 @@ export async function createConnection(
     const tools = tpl.tools.map((tool) => ({ ...tool, limits: tool.limits ? { ...tool.limits } : undefined }));
     const tW = now();
     const cW: Connection = {
-      id: id('conn'),
+      id: connId,
       name,
       type: tpl.type,
       connector: tpl.connector,
@@ -623,8 +648,14 @@ export async function createConnection(
   // is refused unless an operator explicitly allowlisted that host.
   const egress = isEgressAllowed(endpoint);
   if (!egress.allowed) {
+    // Never echo a non-hostname-shaped value back: a credential pasted into the
+    // endpoint field would otherwise leak into the UI and traces. Real hostnames
+    // contain a dot; anything else is redacted with a targeted hint.
+    const shown = egress.host.includes('.')
+      ? egress.host
+      : `${egress.host.slice(0, 4)}… (redacted — this doesn't look like a URL; did you paste a credential into the endpoint field?)`;
     throw withStatus(
-      new Error(`Endpoint host "${egress.host}" is not on the egress allowlist — request access and an Administrator must approve it first`),
+      new Error(`Endpoint host "${shown}" is not on the egress allowlist — request access and an Administrator must approve it first`),
       403,
     );
   }
@@ -649,7 +680,7 @@ export async function createConnection(
 
   const t = now();
   const c: Connection = {
-    id: id('conn'),
+    id: connId,
     name,
     type: tpl.type,
     connector: tpl.connector,
@@ -1523,7 +1554,10 @@ export async function grantToAgent(
   // them, and a `read-only` grant carries only their read/search tools. The runtime
   // intersection still re-checks per call, so a later revoke narrows a stale grant.
   const exposed = exposedConnectionTools(c.principal);
-  const actionExposed = await exposedActionTools(c);
+  // Fold the action tools currently exposed to the granting admin's domains (C4). The
+  // per-call intersection re-checks with the actual caller's domains, so this is only the
+  // grant's static list; a later revoke or a different-domain caller still narrows it.
+  const actionExposed = await exposedActionTools(c, user.domains);
   const readActionTools = actionExposed.filter((t) => t === 'sf_get_record' || t === 'sf_search');
   const readTools = [...c.tools.filter((t) => t.mode === 'Read').map((t) => t.name), ...readActionTools];
   const allowedTools = scope === 'read-only' ? readTools : [...exposed, ...actionExposed];
@@ -1561,8 +1595,11 @@ async function authorizeActionCall(
   c: Connection,
   tool: string,
   args: Record<string, unknown>,
+  callerDomains: string[],
   asAgent?: string,
 ): Promise<{ effect: 'allow' | 'deny' | 'requires_approval'; reason: string; mode?: CapabilityMode }> {
+  // Archived ⇒ every action tool is disabled (M3), even via a direct approveOnce re-check.
+  if (c.archived) return { effect: 'deny', reason: 'archived — tools disabled' };
   // Layer 4 (grant, restrict-only): a per-agent grant that does not list this tool denies.
   if (asAgent) {
     const grant = c.grants.find((g) => g.agent === asAgent);
@@ -1572,7 +1609,9 @@ async function authorizeActionCall(
   }
   const object = String(args.object ?? '');
   const [exposures, adoptions] = await Promise.all([allActiveExposures(), allActiveAdoptions()]);
-  const decision = decideActionTool(c, tool, object, exposures, adoptions);
+  // Layers 2+3 are keyed on the CALLER'S domains (C4), threaded from the callConnectionTool
+  // boundary — not the connection's own domain.
+  const decision = decideActionTool(c, tool, object, exposures, adoptions, callerDomains);
   if (decision.mode === null) return { effect: 'deny', reason: decision.reason };
   switch (decision.mode) {
     case 'Blocked':
@@ -1643,11 +1682,17 @@ export async function callConnectionTool(
   const tool = String(input.tool ?? '');
   const args = input.args ?? {};
   const reason = input.reason ?? 'tool call';
+  // ARCHIVED connections have their tools DISABLED (M3): a soft-hidden connection must not
+  // execute anything (the exposures it fed are also frozen). Fail closed, honestly traced.
+  if (c.archived) {
+    const tr = await trace({ principal: c.principal, tool, input: { args, asAgent: input.asAgent }, output: { denied: 'archived — tools disabled' }, decision: 'deny' });
+    return { tool, principal: c.principal, decision: 'deny', reason: 'archived — tools disabled', traceId: tr.id };
+  }
   // Operational action tools (sf_*) are NOT in the static bundle: their authz is the
   // four-layer intersection, recomputed FRESH here over the live exposure/adoption
   // stores (no cache outlives a revoke). Everything else uses the compiled profile.
   const authz = isSalesforceActionTool(tool)
-    ? await authorizeActionCall(c, tool, args, input.asAgent)
+    ? await authorizeActionCall(c, tool, args, user.domains, input.asAgent)
     : authorizeConnectionCall(c.principal, tool, args, input.asAgent);
 
   // Hard deny (Off / Blocked / over-bound / out-of-grant) — same in both modes.
@@ -1680,7 +1725,7 @@ export async function callConnectionTool(
     if (matchStandingPolicy(c.principal, tool, args)) {
       return runAllow(c, tool, args, input.asAgent, 'standing policy (approve & remember) — auto-allowed', authz.mode);
     }
-    const before = readBefore(c, tool, args);
+    const before = await readBefore(c, tool, args);
     const preview = buildPreview({ action: tool, args, before, who: user.id, reason });
     const tr = await trace({ principal: c.principal, tool, input: { args, asAgent: input.asAgent }, output: { held: authz.reason }, decision: 'requires_approval' });
     const approval = enqueue({
@@ -1734,6 +1779,11 @@ const CONNECTION_EXECUTORS: Partial<Record<ConnectionTemplateKey, Executor>> = {
   'gcp-identity': (c, tool, args) => executeGcpIdentity(c, tool, args),
   'gcp-directory': (c, tool, args) => executeGcpDirectory(c, tool, args),
   'snowflake-governance': (c, tool, args) => executeSnowflakeGov(c, tool, args),
+  // OData (SAP S/4HANA + generic V4) + Workday RaaS: REAL thin READ executors (C2) — the
+  // preset read tools make a live $metadata/page or RaaS-report round-trip, never a mock.
+  'sap-odata': (c, tool, args) => executeODataTool(c, tool, args),
+  'odata-v4': (c, tool, args) => executeODataTool(c, tool, args),
+  'workday-raas': (c, tool, args) => executeWorkdayTool(c, tool, args),
   // Operational action tools (Phase 3). Registered but INERT unless the flag is on:
   // executeSalesforceAction dispatches the entity-generic sf_* tools; the sync-only
   // capability tools of a salesforce-api connection never reach here (the profile has
@@ -1790,11 +1840,29 @@ async function runAllow(
   return { tool, principal: c.principal, decision: 'allow', reason, mode, traceId: tr.id, result };
 }
 
-/** A before-snapshot for the approval diff (seed-backed offline). */
-function readBefore(c: Connection, tool: string, args: Record<string, unknown>): Record<string, unknown> {
-  const cur = executeMock(c, tool.replace(/^update_/, 'read_'), args, true) as Record<string, unknown>;
-  const obj = (cur.opportunity ?? cur.account ?? cur.page ?? {}) as Record<string, unknown>;
-  return obj;
+/**
+ * A before-snapshot for the approval diff — HONEST (M12). An approver must never decide on
+ * invented data, so for a LIVE connector with a real read we fetch the REAL current record;
+ * otherwise we return an explicitly-labelled `unavailable` before-state (never a fabricated
+ * one). Today the only held write with a real read is a Salesforce `sf_update_record`
+ * (its before is a real `sf_get_record`); everything else is labelled unavailable.
+ */
+async function readBefore(c: Connection, tool: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (tool === 'sf_update_record' && operationalActionsActive(c)) {
+    const object = String(args.object ?? '');
+    const idArg = String(args.id ?? '');
+    if (object && idArg) {
+      const res = (await executeSalesforceAction(c, 'sf_get_record', { object, id: idArg, fields: args.fields })) as {
+        ok?: boolean;
+        record?: Record<string, unknown>;
+        reason?: string;
+      };
+      if (res.ok && res.record) return res.record;
+      return { unavailable: true, reason: `live read unavailable: ${res.reason ?? 'the record could not be fetched'}` };
+    }
+  }
+  // No real read wired for this tool/connector — say so; never fabricate a before-state.
+  return { unavailable: true, reason: 'no live read is available for this connector — before-state is unavailable' };
 }
 
 /** Mode B: queue an out-of-policy autonomous action for async Governance-inbox review. */
@@ -1859,7 +1927,13 @@ export async function approveOnce(
   if (!isOwner && !isDomainBuilderAdmin) throw withStatus(new Error('Only the owner or a domain Builder/Admin can approve this write'), 403);
   const tool = String(input.tool ?? '');
   const args = input.args ?? {};
-  const authz = authorizeConnectionCall(c.principal, tool, args);
+  // A held `sf_*` action lives OUTSIDE the compiled bundle, so re-checking it via the
+  // compiled-bundle `authorizeConnectionCall` would default-deny it (M6). Re-check an
+  // action tool via the (C4-fixed) four-layer intersection under the APPROVER's domains
+  // instead; everything else re-checks against the compiled capability profile.
+  const authz = isSalesforceActionTool(tool)
+    ? await authorizeActionCall(c, tool, args, user.domains)
+    : authorizeConnectionCall(c.principal, tool, args);
   if (authz.effect === 'deny') {
     // The capability profile still rules: a Blocked / Off / over-bound call is refused
     // even by an approver — approving cannot broaden the profile.
@@ -2455,14 +2529,17 @@ async function executeSnowflakeGov(c: Connection, tool: string, _args: Record<st
 }
 
 function executeMock(c: Connection, tool: string, args: Record<string, unknown>, credentialPresent: boolean): unknown {
-  const base = { connection: c.name, credentialInjectedServerSide: credentialPresent };
+  // EVERY offline-mock envelope carries an explicit HONESTY LABEL (C2): `mode:'offline-mock'`
+  // + a human note, so the tool-result UI + the agent tool-result path can render/carry it and
+  // nobody mistakes a demonstration fixture for a live call. A registered real executor never
+  // reaches here; this is only the fallback path for connectors with no live client wired.
+  const base = {
+    connection: c.name,
+    credentialInjectedServerSide: credentialPresent,
+    mode: 'offline-mock' as const,
+    note: 'demonstration data — no live call was made',
+  };
   switch (tool) {
-    case 'read_account':
-      return { ...base, account: { id: String(args.id ?? 'acct-1'), name: 'Sample Account', owner: 'Sales', arr: 48000 } };
-    case 'read_opportunity':
-      return { ...base, opportunity: { id: String(args.id ?? 'OPP-1'), account: 'Sample Account', amount: 42000, stage: 'Renewal' } };
-    case 'update_opportunity_amount':
-      return { ...base, updated: { id: String(args.id ?? 'OPP-1'), amount: Number(args.amount ?? 0) } };
     case 'list_files':
     case 'search_files':
       return { ...base, files: [{ id: 'f1', name: 'Q3 plan.docx' }, { id: 'f2', name: 'budget.xlsx' }, { id: 'f3', name: 'notes.md' }] };
@@ -2748,6 +2825,28 @@ export function moveConnection(connId: string, user: CurrentUser, folder: string
   return c;
 }
 
+/**
+ * Recompile the OPA exposure bundle after an ARCHIVE/UNARCHIVE (M3). On archive we snapshot
+ * this connection's exposure FQNs and recompile WITHDRAWING them — `activeExposureGovernanceInputs`
+ * now skips archived connections, so those tables drop to the fail-closed floor (zero rows).
+ * On unarchive the plain recompile re-adds them. Dynamically imported to avoid a static import
+ * cycle (exposure-policy imports back into this store). Best-effort + never throws.
+ */
+async function recompileAfterArchive(connId: string): Promise<void> {
+  try {
+    const [{ allActiveExposures }, { exposureFqns, recompileExposures }] = await Promise.all([
+      import('@/lib/connections/exposures'),
+      import('@/lib/connections/exposure-policy'),
+    ]);
+    const exps = (await allActiveExposures()).filter((e) => e.connectionId === connId);
+    const withdraw: string[] = [];
+    for (const e of exps) withdraw.push(...(await exposureFqns(e.id)));
+    await recompileExposures({ withdraw });
+  } catch {
+    /* best-effort: a recompile failure never blocks the archive flip */
+  }
+}
+
 // ------------------------------------ sync lifecycle (for the folder cascade) ---
 
 /**
@@ -2767,6 +2866,9 @@ export function setConnectionArchivedSync(connId: string, user: CurrentUser, arc
   c.updatedAt = now();
   syncCache().set(c.id, c);
   writeThrough(c);
+  // Fire-and-forget recompile so a folder-cascade archive/restore withdraws/re-adds the
+  // member connection's exposure FQNs from OPA (M3). The sync seam can't await it.
+  void recompileAfterArchive(c.id);
   return c;
 }
 
@@ -2776,6 +2878,13 @@ export function setConnectionArchivedSync(connId: string, user: CurrentUser, arc
 export function deleteConnectionSync(connId: string, user: CurrentUser): Connection {
   const map = syncCache();
   const c = requireConnEdit(map.get(connId), user);
+  // Tear down what the connection granted (C1) — exposures revoked + OPA withdrawn, bound
+  // action adoptions revoked, any live Trino catalog + its credential-copy Secret removed.
+  // The folder-cascade seam is SYNC and can't await, so this fires best-effort BEFORE the
+  // record delete (teardown filters exposures by connectionId, which survives the delete).
+  void import('@/lib/connections/exposure-propagation')
+    .then(({ teardownConnection }) => teardownConnection(c, user))
+    .catch(() => {});
   unregisterConnectionProfile(c.principal);
   map.delete(connId);
   mirror.deleteThrough(connId);
@@ -2797,6 +2906,9 @@ export async function setConnectionArchived(connId: string, user: CurrentUser, a
   c.archived = archived;
   c.updatedAt = now();
   writeThrough(c);
+  // Recompile OPA so the archived connection's exposure FQNs drop to the fail-closed floor
+  // (and an unarchive re-adds them) — the exposures it fed are frozen while archived (M3).
+  await recompileAfterArchive(c.id);
   return c;
 }
 
@@ -2842,12 +2954,19 @@ export async function deleteConnection(connId: string, user: CurrentUser): Promi
   const c = map.get(connId);
   if (!c) return { recordDeleted: false, physical: [] };
   requireConnEdit(c, user);
+  // TEAR DOWN what the connection GRANTED before forgetting the record (C1): revoke its
+  // exposure sets (freeze/notify + OPA withdraw), revoke the action adoptions bound to
+  // them, and remove any live Trino catalog registration + its credential-copy Secret.
+  // Runs FIRST, while the exposures/adoptions still resolve; its honest outcomes fold into
+  // the report's `physical` list alongside the vault purge.
+  const { teardownConnection } = await import('@/lib/connections/exposure-propagation');
+  const teardown = await teardownConnection(c, user);
   unregisterConnectionProfile(c.principal);
   map.delete(connId);
   mirror.deleteThrough(connId);
   versions.purge(connId);
   // Physical: purge the credential + OAuth token (+ Notion MCP client) from the vault.
-  const physical = purgeConnectionSecrets(c, hasSecret, deleteSecret);
+  const physical = [...teardown, ...purgeConnectionSecrets(c, hasSecret, deleteSecret)];
   void trace({
     principal: c.principal,
     tool: 'generate',

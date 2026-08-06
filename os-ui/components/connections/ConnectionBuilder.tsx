@@ -31,7 +31,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CAPABILITY_MODES, type CapabilityMode, type ConnectionTemplateKey } from '@/lib/connections/schema';
-import { isOperationalTemplate, operationalPlatformFor } from '@/lib/connections/operational-platform';
+import { isOperationalTemplate, operationalPlatformFor, templateHasActionTools } from '@/lib/connections/operational-platform';
 import { type Role, roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { providerForTemplate, providerConfig, type OAuthProvider } from '@/lib/oauth/providers';
@@ -43,9 +43,11 @@ import { WarehouseBrowser } from '@/components/data/WarehouseImportPanel';
 import ConnectorWizard, { type WizardStart, type WizardData } from '@/components/connections/ConnectorWizard';
 import ConnectorGallery from '@/components/connections/ConnectorGallery';
 import ExposePanel from '@/components/connections/ExposePanel';
+import { connectorIdentity, markStyle } from '@/lib/connections/connector-identity';
+import type { CSSProperties } from 'react';
 import {
   type Conn, type Tool, type Data, type EgressRequest, type ApprovalPreview, type OAuthProviderStatus,
-  badge, modeBadge, visWord, connVisibility, ladderTier, postJSON,
+  badge, modeBadge, visWord, connVisibility, ladderTier, postJSON, looksLikeEndpoint, ENDPOINT_LOOKS_WRONG,
 } from './shared';
 
 const AUTONOMOUS_PRESETS = ['read-only', 'read-propose', 'read-bounded', 'full-in-scope'] as const;
@@ -80,7 +82,7 @@ export default function ConnectionBuilder({
       <div>
         <div className="row" style={{ alignItems: 'center', marginBottom: 14 }}>
           <button className="btn ghost sm" onClick={door ? () => setDoor(null) : onBack}>
-            {door ? '← Choose a different type' : '← All connections'}
+            {door ? '← Choose a different way' : '← All connections'}
           </button>
         </div>
 
@@ -97,7 +99,7 @@ export default function ConnectionBuilder({
         ) : door.door === 'connector' ? (
           // Door A: the connector-template gallery (grouped + search).
           <div>
-            <div className="section-title" style={{ marginTop: 4 }}>Use a connector</div>
+            <div className="section-title" style={{ marginTop: 4 }}>Bring a connector</div>
             <ConnectorGallery
               templates={data.templates}
               warehouse={data.warehouse}
@@ -147,39 +149,40 @@ function TypeChooser({ canOpen, onPick }: { canOpen: boolean; onPick: (d: NewDoo
   }
   return (
     <div>
-      <h2 style={{ margin: '0 0 4px' }}>New connection</h2>
-      <p className="lead" style={{ marginTop: 0, maxWidth: 620 }}>Choose how to start.</p>
-      <div className="grid" style={{ marginTop: 18, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+      <h2 style={{ margin: '0 0 6px' }}>Connect a new source</h2>
+      <p className="lead" style={{ marginTop: 0, maxWidth: 640 }}>
+        Two ways in. Pick a ready-made connector, or wire up your own — either way it lands governed,
+        with your credentials kept in the vault, never in the record.
+      </p>
+      <div className="conn-doors">
         <button
           type="button"
-          className="card"
+          className="conn-door conn-door--gold"
           onClick={() => onPick({ door: 'connector' })}
-          style={{ all: 'unset', cursor: 'pointer', display: 'block', padding: 20, border: '1px solid var(--border)', borderRadius: 12 }}
         >
-          <div className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-faint)' }}>Door A</div>
-          <h3 style={{ margin: '6px 0 0' }}>Use a connector</h3>
-          <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
-            Pick from the ready-made gallery — warehouses, Google Drive, OneDrive, Notion and more.
+          <span className="conn-door-mark" aria-hidden="true">◇</span>
+          <div className="conn-door-eyebrow">Ready-made</div>
+          <h3 className="conn-door-title">Bring a connector</h3>
+          <p className="conn-door-sub">
+            Pick from the gallery — your files, your CRM, your warehouse, your inbox and more.
+            Sign in and it just works.
           </p>
-          <div className="row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
-            <span className="btn ghost sm" aria-hidden="true">Browse connectors →</span>
-          </div>
+          <span className="conn-door-cta">Browse the gallery <span className="arr" aria-hidden="true">→</span></span>
         </button>
 
         <button
           type="button"
-          className="card"
+          className="conn-door conn-door--teal"
           onClick={() => onPick({ door: 'custom' })}
-          style={{ all: 'unset', cursor: 'pointer', display: 'block', padding: 20, border: '1px solid var(--border)', borderRadius: 12 }}
         >
-          <div className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-faint)' }}>Door B</div>
-          <h3 style={{ margin: '6px 0 0' }}>Build a custom connector</h3>
-          <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
-            Connect any REST/GraphQL API or MCP server from scratch. Reads auto-allow; writes default to Off.
+          <span className="conn-door-mark" aria-hidden="true">◆</span>
+          <div className="conn-door-eyebrow">Your own</div>
+          <h3 className="conn-door-title">Wire up your own</h3>
+          <p className="conn-door-sub">
+            Connect any REST or GraphQL API, or an MCP server, from scratch. Reading is on by
+            default; anything that writes stays off until you allow it.
           </p>
-          <div className="row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
-            <span className="btn ghost sm" aria-hidden="true">Start from scratch →</span>
-          </div>
+          <span className="conn-door-cta">Start from scratch <span className="arr" aria-hidden="true">→</span></span>
         </button>
       </div>
     </div>
@@ -221,6 +224,9 @@ function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCrea
 
   async function handleAdd() {
     if (!name.trim() || !endpoint.trim() || busy) return;
+    // Client-side URL-shape guard: never ship an obviously-non-URL (a pasted credential)
+    // to the egress path, where the error would echo it back. Server stays the authority.
+    if (!looksLikeEndpoint(endpoint)) { setMsg(`✗ ${ENDPOINT_LOOKS_WRONG}`); setMsgOk(false); return; }
     setBusy(true); setMsg(''); setMsgOk(false);
     try {
       const connRes = await postJSON('/api/connections', {
@@ -247,7 +253,7 @@ function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCrea
 
   return (
     <div>
-      <div className="section-title" style={{ marginTop: 4 }}>Build a custom connector</div>
+      <div className="section-title" style={{ marginTop: 4 }}>Wire up your own</div>
       <div className="card" style={{ marginBottom: 0 }}>
         {/* API / MCP choice */}
         <div style={{ display: 'inline-flex', borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden', marginBottom: 16 }}>
@@ -482,7 +488,12 @@ function ConnectionDetail({
       setApprovalState(null);
       const icon = d.decision === 'allow' ? '✓' : d.decision === 'block' ? '✗' : '⏸';
       const tail = d.queuedForReview ? ' — blocked, queued to Governance inbox' : '';
-      setMsg(`${icon} ${toolName}: ${d.decision as string} — ${(d.reason ?? d.error) as string}${tail}`);
+      // HONESTY (C2): if the executor returned an offline-mock envelope, say so in the
+      // result line — never let a demonstration fixture read as a live call.
+      const mock = (d.result as { mode?: string } | undefined)?.mode === 'offline-mock'
+        ? ' · offline-mock (demonstration data — no live call was made)'
+        : '';
+      setMsg(`${icon} ${toolName}: ${d.decision as string} — ${(d.reason ?? d.error) as string}${tail}${mock}`);
       if (d.decision === 'requires_approval') onChanged();
     }
   }
@@ -532,6 +543,7 @@ function ConnectionDetail({
   }
 
   const canRevoke = (c.visibility === 'Certified' && role === 'admin') || (c.visibility === 'Shared' && canManage);
+  const identity = connectorIdentity(c.template, { label: c.name });
 
   return (
     <div>
@@ -541,6 +553,7 @@ function ConnectionDetail({
       </div>
 
       <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+        <span className="conn-mono sm" aria-hidden="true" style={markStyle(identity.accent) as CSSProperties}>{identity.monogram}</span>
         {renaming ? (
           <span className="rename-inline">
             <input
@@ -665,7 +678,7 @@ function ConnectionDetail({
         <div className="guided-panel" style={{ marginTop: 14 }}>
           <span className="comp-label" style={{ margin: 0 }}>What it connects to</span>
           <div className="muted mono" style={{ marginTop: 10, fontSize: 11.5 }}>
-            {c.connector} · {c.auth === 'oauth' ? 'personal OAuth' : 'service creds'} · {c.owner}/{c.domain}
+            {c.connector} · {c.auth === 'oauth' ? 'signs in as you' : 'service account'} · {c.owner}/{c.domain}
             {c.endpoint ? <> · {c.endpoint}</> : null}
           </div>
           <div className="muted" style={{ marginTop: 8, fontSize: 12.5 }}>
@@ -821,7 +834,7 @@ function ConnectionDetail({
         {/* Expose operational ENTITIES (Salesforce/Kajabi) — same admin gate; the panel
             locks mode to Sync (no Trino catalog exists to federate a live read). */}
         {isOperational && role === 'admin' ? (
-          <ExposePanel connectionId={c.id} catalog={operationalPlatformFor(c.template as ConnectionTemplateKey) ?? c.template} operational actionsEnabled={actionsEnabled} />
+          <ExposePanel connectionId={c.id} catalog={operationalPlatformFor(c.template as ConnectionTemplateKey) ?? c.template} operational actionsEnabled={actionsEnabled && templateHasActionTools(c.template as ConnectionTemplateKey)} />
         ) : null}
 
         {/* Data-source toggle */}
