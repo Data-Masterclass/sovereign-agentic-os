@@ -773,7 +773,50 @@ const OM_CATALOG: InstallGuide = {
 
 // ---- Registry ---------------------------------------------------------------
 
+const GENERIC_API: InstallGuide = {
+  key: 'generic-api',
+  title: 'Custom REST / GraphQL API',
+  summary: 'Wire any HTTP API you have a base URL + token for. Paste an OpenAPI spec to generate governed tools; reads auto-allow, writes are held for approval.',
+  prerequisites: [
+    'The API **base URL** (e.g. `https://api.example.com`), reachable from the OS — the host must be on the **egress allowlist**. If it is not yet, filing the connection auto-requests egress; an Admin approves it under Outbound access, then you retry.',
+    'A **credential** for the API (API key / bearer token / basic auth). It goes to Secrets Manager and is **never** on the record or sent to the browser.',
+    'Optional: an **OpenAPI (Swagger) document** (JSON or YAML) to auto-generate tools; without it the connection starts with a safe generic tool preset you can extend.',
+    'Builder/Admin rights (a service-credential connector, not personal OAuth).',
+  ],
+  steps: [
+    'Open **Wire up your own → REST / GraphQL API** (or the ＋ New connector wizard).',
+    'Enter the connection **name** and the API **base URL**. The next step collects the credential — never paste it into the URL box.',
+    'Provide the **credential** — stored once in Secrets Manager as a reference.',
+    'Optional: paste the **OpenAPI spec** so each operation becomes a governed tool (GET/HEAD → Read; other verbs → Off/opt-in; DELETE → Blocked).',
+    'Create the connection, then **Test** on its card and tune each tool’s capability mode (Read / Write-bounded / Write-approval / Blocked).',
+  ],
+  whatTheOsDoes:
+    'Registers a governed outbound API connection. Generated tools are exposed under the safe preset — **reads auto-allow, writes are Off until you opt in, deletes are Blocked** — and every call is OPA-checked, egress-bounded and audit-traced. The credential stays in Secrets Manager; the model only ever calls the tool by reference.',
+  caveat: 'The host is only reachable once it is on the egress allowlist. Tool shapes are inferred from the OpenAPI spec you provide; without a spec you get a generic preset to extend by hand. Credential validity is confirmed only when you Test.',
+};
+
+const GENERIC_MCP: InstallGuide = {
+  key: 'generic-mcp',
+  title: 'Custom MCP server',
+  summary: 'Connect any MCP (Model Context Protocol) server. Its tools are surfaced under the safe preset — reads on, writes off until you opt in.',
+  prerequisites: [
+    'The MCP server **endpoint** (e.g. `https://mcp.example.com/sse`), reachable from the OS — the host must be on the **egress allowlist** (filing the connection auto-requests it; an Admin approves, then you retry).',
+    'A **credential/token** the server expects (if any). It goes to Secrets Manager and is **never** on the record.',
+    'Builder/Admin rights (a service-credential connector, not personal OAuth).',
+  ],
+  steps: [
+    'Open **Wire up your own → MCP server** (or the ＋ New connector wizard).',
+    'Enter the connection **name** and the MCP server **endpoint**.',
+    'Provide the **token** if the server needs one — stored once in Secrets Manager.',
+    'Create the connection. The OS **lists the server’s tools** and surfaces them under the safe preset; open the card to tune each one’s capability mode.',
+  ],
+  whatTheOsDoes:
+    'Registers the external MCP server as a governed tool surface: its tools are listed and mapped to the safe preset (**read tools auto-allow; write tools start Off** until a Builder opts them in). Every call is OPA-checked, egress-bounded and audit-traced. It is a tool surface, not a data source — there is no data-sync.',
+  caveat: 'The server is only reachable once its host is on the egress allowlist. The tool list reflects what the server advertises at connect time; re-verify from the card after the server changes.',
+};
+
 const GUIDES: InstallGuide[] = [
+  GENERIC_API, GENERIC_MCP,
   GLUE, SNOWFLAKE, BIGQUERY, DATABRICKS, FABRIC,
   POSTGRESQL, MYSQL, SQLSERVER, MONGODB, KAFKA,
   GDRIVE, ONEDRIVE, NOTION, AIRFLOW, OM_CATALOG,

@@ -100,6 +100,13 @@ export type Measure = {
   format?: string;
   /** Drill-down members exposed for exploration (Cube `drill_members:`). */
   drillMembers?: string[];
+  /** The Gold columns the author ACTIVATED as this metric's slice-by dimensions in the
+   *  define form — the subset of the view's dimensions this metric is meant to be sliced
+   *  by (a curation hint, not a Cube field: the cube view still exposes every non-pk
+   *  column). Persisted so Edit re-opens with the same dimensions activated and the
+   *  metric View can name them. Absent on every measure created before this field existed
+   *  (byte-stable, like `label`/`formula`/`description`); `sameMeasure` ignores it. */
+  dimensions?: string[];
   /** COMPOSITE metric only: the SOURCE formula the user wrote (`([revenue]-[cost])/[orders]`).
    *  `sql` holds its compiled `{measure}`-reference form; this round-trips the human-readable
    *  original for Edit/View. Absent on every non-formula measure. */
@@ -528,6 +535,14 @@ function parseMeasure(raw: unknown, i: number): Measure {
   if (Array.isArray(dm)) {
     const members = dm.map((x) => String(x)).filter(Boolean);
     if (members.length > 0) m.drillMembers = members;
+  }
+  // The author's ACTIVATED slice-by dimensions (Bug A) — without this parse they were
+  // LOST on store reload, so Edit re-opened with none. Round-trips byte-stably like
+  // drillMembers; absent on every measure defined before dimensions were persisted.
+  const dims = raw.dimensions as unknown;
+  if (Array.isArray(dims)) {
+    const kept = dims.map((x) => String(x)).filter(Boolean);
+    if (kept.length > 0) m.dimensions = kept;
   }
   return m;
 }

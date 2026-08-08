@@ -57,6 +57,23 @@ test('the group-bys come from the GOVERNED REGISTRY — palette equals executor 
   assert.deepEqual(views[0].timeDimensions, ['Campaign.created_at']);
 });
 
+test('BUG B: a metric-backed view resolves its registry dimensions (group-by is non-empty)', () => {
+  // The group-by picker empties iff the metric's view can't be matched to its registry
+  // dims. Given the SAME view key on both sides (the member's view prefix and the registry
+  // key), the palette must carry the dimensions — this pins the registry→palette contract
+  // the PanelBuilder's effectiveView fix relies on (it binds the view to the selected
+  // metric so this lookup runs at all while designing the first panel).
+  const registryDims = new Map([
+    ['sales__Orders', { dimensions: ['sales__Orders.region', 'sales__Orders.net_amount'], timeDimensions: ['sales__Orders.order_date'] }],
+  ]);
+  const views = narrowCubeMeta(['sales__Orders.revenue'], meta, registryDims);
+  assert.equal(views.length, 1);
+  assert.equal(views[0].view, 'sales__Orders');
+  assert.ok(views[0].dimensions.length > 0, 'the metric-backed view offers its group-by dimensions');
+  assert.deepEqual(views[0].dimensions, ['sales__Orders.region', 'sales__Orders.net_amount']);
+  assert.deepEqual(views[0].timeDimensions, ['sales__Orders.order_date']);
+});
+
 test('the registry never leaks a view the caller has no metric on', () => {
   const registryDims = new Map([['HR', { dimensions: ['HR.dept'], timeDimensions: [] }]]);
   const views = narrowCubeMeta(['Sales.revenue'], meta, registryDims);

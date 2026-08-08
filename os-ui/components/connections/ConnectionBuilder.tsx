@@ -229,17 +229,33 @@ function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCrea
     if (!looksLikeEndpoint(endpoint)) { setMsg(`✗ ${ENDPOINT_LOOKS_WRONG}`); setMsgOk(false); return; }
     setBusy(true); setMsg(''); setMsgOk(false);
     try {
+      // M5: file the egress request FIRST. The whole reason a custom connector needs an
+      // egress request is that its host is NOT yet on the allowlist — in which case
+      // POST /api/connections 403s on that very host and returns BEFORE we could ever
+      // request egress. Requesting it first means the auto-request always fires in the
+      // case it exists for; the user then retries the create once an Admin approves.
+      const egressRes = await postJSON('/api/egress', {
+        endpoint: endpoint.trim(),
+        reason: `Custom ${kind === 'api' ? 'API' : 'MCP'} connector: ${name.trim()}`,
+      });
       const connRes = await postJSON('/api/connections', {
         name: name.trim(),
         template: kind === 'api' ? 'generic-api' : 'generic-mcp',
         endpoint: endpoint.trim(),
         credential,
       });
-      if (!connRes.ok) { setMsg(`✗ ${(connRes.data.error as string) ?? 'Could not create connection'}`); return; }
-      const egressRes = await postJSON('/api/egress', {
-        endpoint: endpoint.trim(),
-        reason: `Custom ${kind === 'api' ? 'API' : 'MCP'} connector: ${name.trim()}`,
-      });
+      if (!connRes.ok) {
+        // Create was refused — most commonly the host isn't on the egress allowlist yet.
+        // The egress request is already filed, so tell the user to retry after approval
+        // rather than losing the request they came here to make.
+        const err = (connRes.data.error as string) ?? 'Could not create connection';
+        const retryNote = egressRes.ok
+          ? ' An egress request was filed — once an Admin approves the host in the Governance tab, add the connection again.'
+          : '';
+        setMsg(`✗ ${err}${retryNote}`);
+        await loadEgress();
+        return;
+      }
       const egressNote = egressRes.ok ? ' Egress request submitted — pending Admin approval in the Governance tab.' : '';
       const connName = (connRes.data.connection as { name?: string })?.name ?? name.trim();
       setMsg(`✓ "${connName}" created.${egressNote}`);
@@ -363,6 +379,8 @@ function ConnectionDetail({
   const [grantBusy, setGrantBusy] = useState(false);
   const [grantMsg, setGrantMsg] = useState('');
   const [agentPrincipal, setAgentPrincipal] = useState('sales-assistant');
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const [rotateDraft, setRotateDraft] = useState('');
   const [autonomousPreset, setAutonomousPreset] = useState<AutonomousPreset>('read-only');
   const [presetBusy, setPresetBusy] = useState(false);
   const [autonomousMsg, setAutonomousMsg] = useState('');
@@ -380,6 +398,10 @@ function ConnectionDetail({
   const isWarehouse = c.template === 'warehouse';
   const isOperational = isOperationalTemplate(c.template as ConnectionTemplateKey);
   const isNotion = c.template === 'notion-mcp';
+  // M13: a SERVICE-credential connection (a pasted token/key) can have its credential
+  // rotated over the same ref. Flow-based OAuth (Drive/Notion) uses Connect/Reconnect
+  // instead, and a warehouse rotates via re-register — both excluded here.
+  const canRotate = c.auth === 'service' && !isWarehouse && !isNotion;
 
   const notionStatus = driveConnectionStatus(c);
   const [notionTools, setNotionTools] = useState<{ name: string; description?: string }[] | null>(null);
@@ -471,6 +493,17 @@ function ConnectionDetail({
     const r = await doPost(`/api/connections/${c.id}/usage`, { usage });
     if (r.ok) { const updated = r.data.connection as Conn | undefined; setDataUsage(updated?.dataUsage ?? usage); onChanged(); }
     else setMsg(`✗ ${r.data.error as string}`);
+  }
+
+  async function rotateCredential() {
+    const credential = rotateDraft;
+    if (!credential.trim()) { setMsg('✗ Paste the new credential first'); return; }
+    const r = await doPost(`/api/connections/${c.id}`, { action: 'rotate-credential', credential });
+    if (r.ok) {
+      setRotateOpen(false); setRotateDraft('');
+      setMsg('✓ Credential rotated — status is now Untested; run Test connection to verify.');
+      onChanged();
+    } else setMsg(`✗ ${(r.data.error as string) ?? 'Rotate failed'}`);
   }
 
   async function tryTool(toolName: string, opts?: { asAgent?: string; autonomous?: boolean }) {
@@ -583,8 +616,8 @@ function ConnectionDetail({
         )}
         <span className="badge muted">{c.type}</span>
         <HealthBadge health={c.health} />
-        {dataUsage === 'bronze' ? <span className="badge warn">Bronze source</span> : null}
-        {dataUsage === 'files' ? <span className="badge warn">Files index</span> : null}
+        {dataUsage === 'bronze' ? <span className="badge warn">Bronze source{c.dataUsageMode === 'offline-mock' ? ' (mock)' : ''}</span> : null}
+        {dataUsage === 'files' ? <span className="badge warn">Files index{c.dataUsageMode === 'offline-mock' ? ' (mock)' : ''}</span> : null}
         {c.archived ? <span className="badge muted">archived</span> : null}
         {(c.visibility === 'Shared' || c.visibility === 'Certified') ? <DomainTag domain={c.domain} /> : null}
         <span className={badge(c.visibility)}>{visWord(c.visibility)}</span>
@@ -847,7 +880,47 @@ function ConnectionDetail({
               <span className="hint" style={{ fontSize: 12 }}>Same connection — agent tool + {dataUsage === 'files' ? 'Files index' : 'Bronze source'}</span>
             )}
           </div>
+          {dataUsage && c.dataUsageMode === 'offline-mock' ? (
+            <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 11.5 }}>
+              ⚠︎ Registered as an <strong>offline mock</strong> — the row/item count is a deterministic stand-in, not a real ingest. The live dlt/Drive sync isn't wired on this deployment yet.
+            </p>
+          ) : null}
         </div>
+
+        {/* Credential rotation (M13) — re-supply an expired/rotated service credential
+            over the SAME vault ref, keeping grants + exposures. */}
+        {canRotate ? (
+          <div className="guided-panel" style={{ marginTop: 14 }}>
+            <span className="comp-label" style={{ margin: 0 }}>Credential</span>
+            <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {c.health === 'needs-reconnect' ? <span className="badge err">Needs reconnect</span> : null}
+              <span className="hint" style={{ fontSize: 12 }}>Fingerprint {c.secretFingerprint || '—'}</span>
+              {!rotateOpen ? (
+                <button className="btn ghost" onClick={() => setRotateOpen(true)} disabled={busy !== ''}>
+                  {c.health === 'needs-reconnect' ? 'Reconnect · rotate credential' : 'Rotate credential'}
+                </button>
+              ) : null}
+            </div>
+            {rotateOpen ? (
+              <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+                <input
+                  type="password"
+                  value={rotateDraft}
+                  onChange={(e) => setRotateDraft(e.target.value)}
+                  placeholder="New credential (token / API key) — goes straight to Secrets Manager"
+                  autoComplete="off"
+                />
+                <div className="row" style={{ gap: 8 }}>
+                  <button className="btn" onClick={rotateCredential} disabled={busy !== '' || !rotateDraft.trim()}>Rotate</button>
+                  <button className="btn ghost" onClick={() => { setRotateOpen(false); setRotateDraft(''); }} disabled={busy !== ''}>Cancel</button>
+                </div>
+                <span className="hint" style={{ fontSize: 11.5 }}>
+                  The new value is written over the same vault ref — your grants + exposures are kept. Status resets to Untested; run Test connection to verify.
+                </span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Capability profile (editable) */}
         <div className="guided-panel" style={{ marginTop: 14 }}>

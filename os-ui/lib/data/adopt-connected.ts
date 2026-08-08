@@ -63,7 +63,9 @@ export type AdoptExposedResult = {
  * the exposure is re-resolved, and its mode/tier/connection/catalog are authoritative.
  */
 export async function adoptExposedTable(user: CurrentUser, input: AdoptExposedInput): Promise<AdoptExposedResult> {
-  if (!config.externalConnectorsEnabled) fail('External connectors are not enabled.', 403);
+  // Role floor is unconditional; the external-connectors flag is NOT required for an
+  // OPERATIONAL exposure (those are user-facing without it) — so gate on it only after
+  // resolving whether this exposure is operational (M1: adoptionEnabledFor).
   if (!roleAtLeast(user.role, 'domain_admin')) fail('Adopting a connected table requires a Domain admin.', 403);
 
   const exposureId = (input.exposureId ?? '').trim();
@@ -75,6 +77,10 @@ export async function adoptExposedTable(user: CurrentUser, input: AdoptExposedIn
 
   const resolved = await resolveAdoptableExposure(exposureId, user);
   if (!resolved.ok) fail(resolved.reason, resolved.status);
+  // Warehouse exposures still require the federation flag; operational exposures do not.
+  if (!config.externalConnectorsEnabled && !resolved.operational) {
+    fail('External-warehouse connectors are not enabled on this deployment.', 403);
+  }
   const listed = resolved.exposure.tables.some((t) => t.schema === schema && t.table === table);
   if (!listed) fail('That table is not part of this exposure.', 400);
 

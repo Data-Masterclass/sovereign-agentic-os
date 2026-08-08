@@ -15,9 +15,9 @@ There are exactly four roles, lowest → highest. Each is additive; you cannot s
 
 **creator** — the default. Create, edit and run your OWN work in My scope with no approval; consume Domain/Company assets; FILE promotion requests (`request_promotion`). Cannot approve, publish, certify or decide deploys — at a promotion step a creator files a request and hands off.
 
-**builder** — creator rights PLUS approve My → Domain in your domain (`approve_promotion`, `publish_knowledge`, `promote_connection`, `decide_deploy`). An approver, not a people-admin. (The builder who filed a promotion is not its approver — a separate domain-admin decides.)
+**builder** — creator rights PLUS approve My → Domain in your domain (`approve_promotion`, `publish_knowledge`, `decide_deploy`). An approver, not a people-admin. (The builder who filed a promotion is not its approver — a separate domain-admin decides.) NOTE: promoting a **connection** to Shared floors at **domain_admin** (`promote_connection`), not builder — the security-correct floor; a builder files the request and hands off.
 
-**domain_admin** — builder rights PLUS administer users in your OWN domain(s) (invite, edit, deactivate; assign roles up to builder only) and every domain-scoped approval.
+**domain_admin** — builder rights PLUS `promote_connection` (My → Domain connection promotion), administering users in your OWN domain(s) (invite, edit, deactivate; assign roles up to builder only) and every domain-scoped approval.
 
 **admin** (tenant-admin) — everything tenant-wide PLUS certify My/Domain → Company, cross-domain Big Bets, policy overrides, cost caps, and appointing domain admins. The only role that mints a domain_admin.
 

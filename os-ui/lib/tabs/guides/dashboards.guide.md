@@ -6,7 +6,7 @@ The Dashboards tab composes governed metrics into visual surfaces. Every chart i
 
 ## How to build it
 
-1. **Inventory available metrics.** Call `list_metrics` to see all metrics in scope. Identify every metric your dashboard will need. If a required metric does not exist, call `define_metric` to create it before proceeding — you cannot bind a chart to a metric that has not been defined.
+1. **Inventory available metrics.** Call `list_metrics` to see all metrics in scope — your own (My), Domain and Company alike; you can build a dashboard on your OWN metrics, not just governed ones (the Dashboards tab's metric picker groups them My · Domain · Company). Identify every metric your dashboard will need. If a required metric does not exist, call `define_metric` to create it before proceeding — you cannot bind a chart to a metric that has not been defined.
 2. **Fill gaps.** For any metric you need that is missing, call `define_metric` with the appropriate `datasetId`, `name`, `aggregation`, and optional `column` / `dimensions`. See the Metrics guide for the full flow.
 3. **Create the dashboard.** Call `create_dashboard` with:
    - `name` — display name

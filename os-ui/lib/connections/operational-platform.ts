@@ -40,6 +40,18 @@ export function operationalTemplates(): ConnectionTemplateKey[] {
 }
 
 /**
+ * The ADOPTION GATE for a template (M1): an exposure/connection may be adopted as a
+ * governed dataset when EITHER the operator enabled external-warehouse connectors (the
+ * federation flag) OR the source is an operational api-batch connector — those are
+ * user-facing without the flag, so requiring it wrongly blocked adopting operational
+ * exposures (and returned a misleading "external connectors are not enabled" 403). Pure +
+ * client-safe; both the browse route and the adopt seam key on it so they can't drift.
+ */
+export function adoptionEnabledFor(template: ConnectionTemplateKey, externalConnectorsEnabled: boolean): boolean {
+  return externalConnectorsEnabled || isOperationalTemplate(template);
+}
+
+/**
  * CAPABILITY FLAG — the templates that carry a REGISTERED action-tool set (the entity-
  * generic `sf_*` tools + the four-layer intersection machinery). Today that is ONLY
  * `salesforce-api`; Kajabi/SAP-OData/Workday are operational SYNC sources with NO action

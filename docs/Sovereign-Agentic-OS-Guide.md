@@ -292,7 +292,11 @@ there.
   (*Save Data · Save Documentation · Save Transformations · Save Data Quality Checks*); a
   **curated** dataset opens on **Composition** (pick an explicit **base dataset**, add **joins**,
   keep or rename columns, add **derived fields**, then *Save Composition*) followed by
-  Documentation and Checks. Ingested data **never joins** — that is the curated path. The
+  Documentation and Checks. Ingested data **never joins** — that is the curated path. A curated
+  dataset can be composed from your OWN personal (My-tier) datasets, not only governed
+  assets/products — any dataset built to Silver/Gold that you can read is a valid join partner, so
+  you can build a curated view entirely from your own private data (its personal lane is read as
+  you). The
   business (Gold) layer that metrics read is **materialized automatically**: a clean single-table
   ingested dataset **passes through** to a queryable business table with no manual "build Gold"
   step, and a curated dataset materializes the composition you saved. Measures are defined in the
@@ -386,7 +390,10 @@ there.
   **null-safe division** (e.g. `([revenue] - [cost]) / [orders]`). A **materialized business layer
   is enough**: you can define, preview, explore *and* build a complex metric on a *personal*
   dataset with built Gold — no promotion needed; promotion is only to *share* it (and register its
-  cube for dashboards). The metric View
+  cube for dashboards). A metric also carries the **slice-by dimensions** you activate when
+  defining it — the columns it is meant to be broken out by — and those persist on the metric and
+  **rehydrate when you re-open it to edit**. Editing a metric is an **update in place**: re-saving a
+  metric of the same name replaces that definition rather than raising a false "already defined". The metric View
   shows where it is already charted — an **On dashboards** section with **＋ Add to a dashboard**.
   The builder's column palette shows the **actual business-layer columns**, including joined
   datasets' columns for a curated dataset; each definition emits a portable
@@ -531,7 +538,9 @@ honestly rather than inventing an answer when retrieval comes back empty.
   stepper. In **Edit** you name it, bind **one governed Cube view** via metric chips, then design
   panels — metrics, dimensions, time grain, filters, per-panel width (⅓ · ½ · full), and viz types
   led by **pie · bar · table** (then big number, line, area) — each with a live preview before
-  **Save dashboard**. The full-page **View** renders every panel by querying Cube **as the
+  **Save dashboard**. The **metric picker groups metrics My · Domain · Company**, so you can build a
+  dashboard on your **OWN metrics**, not only governed ones — each chip names the metric (with its
+  source dataset and details on hover, and an *Open in Metrics* link). The full-page **View** renders every panel by querying Cube **as the
   viewer** (per-user row-level security, with a live/offline badge; switch *View as* and every
   panel re-queries as that viewer). The viewer surface adds **cross-filter chips** (click a bar or
   slice to filter the whole dashboard through a governed `WHERE`), a **drill-down drawer**, a
@@ -691,7 +700,9 @@ Meet **Mara**, a Creator in the `sales` domain. She has a `campaign_master.csv`.
 3. **Curate — join margin & CAC.** To bring in margin and CAC, Mara clicks **＋ New → 🔗 Create a
    curated dataset** and, in **Composition**, picks the campaign dataset as the explicit **base**,
    joins margin and CAC on a reconciled key (the join picker offers only her active domain's
-   datasets), keeps the columns she wants and adds a derived field — then **Save Composition**.
+   datasets — including her OWN personal datasets built to Silver/Gold, so a curated dataset can be
+   composed entirely from her own data), keeps the columns she wants and adds a derived field —
+   then **Save Composition**.
    The composed business table materializes; measures come later in Metrics, so a rebuild never
    wipes them. (A single ingested dataset never joins — the curated path is where joins live.)
 4. **Checks — quality & lineage.** In the **Checks** section Mara authors a few rules

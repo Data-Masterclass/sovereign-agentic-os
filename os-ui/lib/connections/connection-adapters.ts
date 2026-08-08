@@ -23,9 +23,11 @@
  * in-memory fakes. Each client is `live | undefined`: when a live client is
  * injected and reachable the op runs LIVE; otherwise it falls back to a
  * deterministic OFFLINE MOCK (`mode: 'offline-mock'`), exactly like the
- * agent-runtime dual pattern. The real fetch-backed clients are wired server-side
- * in `lib/connection-clients.ts`. The kind gate exercises the mock path; a real
- * deploy injects live clients so the connector tools are fully functional.
+ * agent-runtime dual pattern. NOTE: the fetch-backed SYNC client is NOT wired yet
+ * (there is no `lib/connection-clients.ts`), so `enableDataUsage` currently always
+ * runs the offline mock — the store STAMPS `dataUsageMode:'offline-mock'` onto the
+ * record (M8) so a mock ingest is never presented as real. The live drive/files
+ * client lives in `lib/files/connectors-live.ts`; a real deploy injects it here.
  */
 
 import {

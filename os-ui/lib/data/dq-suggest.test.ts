@@ -141,6 +141,26 @@ test('every suggestChecks output carries a non-empty description (accept lands d
   for (const x of s) assert.ok(x.description && x.description.length > 0, `${x.rule}(${x.column}) has a description`);
 });
 
+test('BUG C: a CURATED Gold-only dataset (no bronze/silver) gets the same rule classes as ingested', () => {
+  // A curated dataset composes straight to Gold — its ONLY layer is `gold`. The suggester
+  // is layer-agnostic: it reads the profile of whatever built table the dq route resolved
+  // (builtLayerFqn → the composed Gold), so a curated Gold profiles + suggests exactly like
+  // an ingested Silver/Gold. This pins that curated is NOT a special case that returns none.
+  const goldOnly = profile(300, [
+    col({ name: 'service_id', kind: 'string', nulls: 0, distinct: 300 }),                    // → not_null + unique
+    col({ name: 'status', kind: 'string', nulls: 0, distinct: 3, top: [
+      { value: 'open', count: 120 }, { value: 'closed', count: 120 }, { value: 'pending', count: 60 },
+    ] }),                                                                                     // → accepted_values
+    col({ name: 'amount', kind: 'numeric', type: 'decimal(10,2)', nulls: 0, distinct: 250, min: '0', max: '9999' }), // → range
+  ]);
+  const s = suggestChecks(goldOnly);
+  assert.ok(s.length > 0, 'curated Gold-only profiles yield rules, not an empty set');
+  assert.ok(s.some((x) => x.rule === 'not_null' && x.column === 'service_id'));
+  assert.ok(s.some((x) => x.rule === 'unique' && x.column === 'service_id'));
+  assert.ok(s.some((x) => x.rule === 'accepted_values' && x.column === 'status'));
+  assert.ok(s.some((x) => x.rule === 'range' && x.column === 'amount'));
+});
+
 test('suggestions dedupe against rules the dataset already has (Accept-all is idempotent)', () => {
   const existing: DataCheck[] = [
     { id: 'c1', name: '', description: '', createdBy: '', createdAt: '', rule: 'not_null', column: 'order_id' },

@@ -215,6 +215,11 @@ export type Connection = {
   health: ConnectionHealth;
   /** Whether the connection is also registered as a data source, and where. */
   dataUsage: DataUsage;
+  /** HONESTY LABEL (M8): how that data-source registration ran — `live` (a real dlt/Drive
+   *  sync via an injected client) or `offline-mock` (a deterministic in-process stand-in
+   *  with FABRICATED row/item counts). Absent when not registered. Surfaced in the UI so a
+   *  mock registration is never presented as a real ingest. */
+  dataUsageMode?: 'live' | 'offline-mock';
   /** For a `warehouse` template only: the non-secret federation config (platform,
    *  catalog, region/account/…). Absent on every other connection type. */
   warehouse?: WarehouseConnectionConfig;
@@ -1131,12 +1136,17 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
 ];
 
 /**
- * The connectors a user may actually CONNECT from the Connections tab today — the
- * three that are genuinely wired end-to-end: Google Drive + OneDrive (personal
- * OAuth), and Notion via its hosted MCP OAuth. Every other template below is kept
- * ONLY as an internal building block for other working features (Marketplace
- * import, the connections gate, adapter tests) and is deliberately NOT offered in
- * the create picker — a user can never stand up a non-working mock connection.
+ * The connectors a user may actually CONNECT from the Connections tab today — the set
+ * that is genuinely wired end-to-end: personal-OAuth drives (Google Drive, OneDrive) +
+ * Notion hosted-MCP OAuth, the generic API/MCP builders, and the service-credential
+ * connectors that each carry a real health probe + adapter (Airflow, GitHub, Supabase,
+ * Atlassian, Slack, the Google/Microsoft OAuth-token SaaS set, the governance readers,
+ * and the operational api-batch sources Salesforce/Kajabi/OData/Workday). Any template
+ * NOT in this list is kept only as an internal building block (Marketplace import, the
+ * connections gate, adapter tests) and is deliberately NOT offered in the create picker,
+ * so a user can never stand up a non-working mock connection. Keep this list in sync as
+ * connectors are wired; the flag-gated `warehouse` / `om-catalog` templates are surfaced
+ * separately by their operator flags, not through this list.
  */
 export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'generic-api', 'generic-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'gcp-directory', 'snowflake-governance', 'salesforce-api', 'kajabi-api', 'sap-odata', 'odata-v4', 'workday-raas'];
 
@@ -1144,7 +1154,8 @@ export function isUserFacingTemplate(key: string): boolean {
   return (USER_FACING_TEMPLATE_KEYS as string[]).includes(key);
 }
 
-/** The templates offered in the Connections tab (the three working connectors). */
+/** The templates offered in the Connections tab (the wired connectors — see
+ *  USER_FACING_TEMPLATE_KEYS; flag-gated warehouse/om-catalog are surfaced separately). */
 export function userFacingTemplates(): ConnectionTemplate[] {
   return CONNECTION_TEMPLATES.filter((t) => isUserFacingTemplate(t.key));
 }

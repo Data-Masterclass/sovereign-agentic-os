@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getConnectionForUser, deleteConnection, setConnectionArchived, renameConnection } from '@/lib/connections';
+import { getConnectionForUser, deleteConnection, setConnectionArchived, renameConnection, rotateConnectionCredential } from '@/lib/connections';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +20,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
  * re-auth. A rename NEVER moves the FROZEN physical identity (principal / Trino catalog /
  * K8s secret name) — the store writes only the display `name`.
  */
-export const POST = withRoute<{ id: string }, { action?: string; name?: string }>(async ({ user, params, body }) => {
+export const POST = withRoute<{ id: string }, { action?: string; name?: string; credential?: string }>(async ({ user, params, body }) => {
     const { id } = params;
     switch (body.action) {
       case 'rename':
@@ -29,6 +29,10 @@ export const POST = withRoute<{ id: string }, { action?: string; name?: string }
         return NextResponse.json({ connection: await setConnectionArchived(id, user, true) });
       case 'unarchive':
         return NextResponse.json({ connection: await setConnectionArchived(id, user, false) });
+      case 'rotate-credential':
+        // Re-supply the vaulted credential over the same ref (M13). The secret is read from
+        // the body server-side and written straight to Secrets Manager — never returned.
+        return NextResponse.json({ connection: await rotateConnectionCredential(id, user, body.credential ?? '') });
       default:
         return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
     }

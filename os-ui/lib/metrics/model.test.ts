@@ -24,9 +24,12 @@ test('form / agent / YAML all produce the IDENTICAL measure (the same artifact)'
   const fromForm = measureFromForm(REVENUE_FORM);
   const fromAgent = measureFromAgent({ ...REVENUE_FORM }); // agent returns the same structured proposal
   const fromYaml = measureFromYaml(scaffoldCubeYaml(d), 'Revenue');
-  assert.deepEqual(fromForm, { name: 'revenue', type: 'sum', sql: 'net_amount' });
+  // The activated slice-by dimensions now RIDE ON the measure (Bug A: they were dropped
+  // on persist, so Edit re-opened with none). They are a curation hint OFF `sameMeasure`,
+  // so the form/agent/YAML convergence gate still holds even though YAML doesn't carry them.
+  assert.deepEqual(fromForm, { name: 'revenue', type: 'sum', sql: 'net_amount', dimensions: ['order_date', 'region'] });
   assert.ok(sameMeasure(fromForm, fromAgent), 'form == agent');
-  assert.ok(sameMeasure(fromForm, fromYaml), 'form == yaml');
+  assert.ok(sameMeasure(fromForm, fromYaml), 'form == yaml (dimensions off sameMeasure)');
 });
 
 test('measureMember is the canonical member the agent metrics tool also builds', () => {
@@ -70,6 +73,26 @@ test('COMPOSITE metric survives the full store round-trip: create → persist (p
 
   // Re-save converges on the identical measure (edit-in-place guarantee).
   assert.ok(sameMeasure(measureFromForm(back, siblings), measure), 'composite re-save converges');
+});
+
+test('BUG A: activated dimensions round-trip persist → parse → hydrate (Edit re-opens with them)', () => {
+  // The define form activates two slice-by dimensions.
+  const form: MetricForm = { name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: ['order_date', 'region'] };
+  const measure = measureFromForm(form);
+  assert.deepEqual(measure.dimensions, ['order_date', 'region'], 'dimensions persist onto the measure (were dropped before)');
+
+  // Persist the way the store does and parse back through the registry schema.
+  const persisted = parseDataset({ name: 'sales', measures: [measure] }).measures[0];
+  assert.deepEqual(persisted.dimensions, ['order_date', 'region'], 'dimensions survive persist/parse');
+
+  // Hydrate the Edit form — the dimensions come back ACTIVATED (the regression: they were []).
+  const back = formFromMeasure(persisted);
+  assert.deepEqual(back.dimensions, ['order_date', 'region'], 'Edit re-opens with the same dimensions activated');
+
+  // A metric with NO dimensions stays byte-stable (field absent, form empty array).
+  const plain = measureFromForm({ name: 'Orders', aggregation: 'count', column: '', dimensions: [] });
+  assert.equal('dimensions' in plain, false, 'no dimensions ⇒ field absent (byte-stable)');
+  assert.deepEqual(formFromMeasure(plain).dimensions, []);
 });
 
 test('formFromMeasure round-trips every generated measure shape onto the SAME member', () => {

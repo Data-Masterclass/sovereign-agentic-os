@@ -7,9 +7,9 @@
 - `get_connection(connId)` — one connection (metadata + sync state, never the secret).
 - `create_connection(name, template, endpoint?, credential?, domain?)` — a PERSONAL connection.
 - `test_connection(connId)` — probe it (live | offline).
-- `promote_connection(connId)` — Builder+: My → a DOMAIN source.
+- `promote_connection(connId)` — Domain admin+: My → a DOMAIN source (a creator/builder files the request and hands off).
 
-**Golden path:** `list_connections` (reuse) → `create_connection` (Personal) → `test_connection` → ⛔ Builder+ `promote_connection` → apps consume via `use_connection(appId, ref)` BY REFERENCE.
+**Golden path:** `list_connections` (reuse) → `create_connection` (Personal) → `test_connection` → ⛔ Domain admin+ `promote_connection` → apps consume via `use_connection(appId, ref)` BY REFERENCE.
 
 ## Lakehouse: connect → snapshot → organize → expose → adopt
 

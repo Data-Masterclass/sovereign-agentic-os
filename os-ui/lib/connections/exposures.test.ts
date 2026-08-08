@@ -109,3 +109,26 @@ test('sync mode carries syncDefaults; switching to live drops them', async () =>
   const up = await updateExposureSet(e.id, admin, { mode: 'live' });
   assert.equal(up.syncDefaults, undefined);
 });
+
+test('m6: createExposureSet refuses a non-warehouse, non-operational connection', async () => {
+  reset();
+  // A Gmail (SaaS tool-surface) connection has no adoptable tables — expose must 400.
+  const c = await createConnection(admin, { name: 'Gmail', template: 'gmail', endpoint: 'https://gmail.googleapis.com', credential: 'tok' });
+  await assert.rejects(
+    () => createExposureSet(c.id, admin, {
+      name: 'Nope', domains: ['commerce'], mode: 'live', tier: 'silver',
+      tables: [{ schema: 'x', table: 'y' }],
+    }),
+    /warehouse or operational/i,
+  );
+});
+
+test('m6: an operational (Salesforce) connection CAN expose', async () => {
+  reset();
+  const c = await createConnection(admin, { name: 'SF', template: 'salesforce-api', endpoint: 'https://acme.my.salesforce.com', credential: 'ck:cs' });
+  const e = await createExposureSet(c.id, admin, {
+    name: 'SF Accounts', domains: ['commerce'], mode: 'sync', tier: 'silver',
+    tables: [{ schema: 'salesforce', table: 'Account' }],
+  });
+  assert.equal(e.mode, 'sync'); // operational is forced to sync
+});

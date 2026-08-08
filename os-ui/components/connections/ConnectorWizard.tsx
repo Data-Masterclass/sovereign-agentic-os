@@ -124,6 +124,19 @@ export default function ConnectorWizard({
   });
   const [credential, setCredential] = useState('');
   const [openApiSpec, setOpenApiSpec] = useState('');
+  // Non-secret config for the half-wired templates (metadata-driven per template key).
+  // These stamp the connection's record so it can actually be used: an Atlassian Basic
+  // connection needs the account email to auth; a Workday RaaS connection has no entities
+  // until at least one report is registered; OData-OAuth needs the token URL; Airflow
+  // needs its auth kind + optional Basic username + trigger allowlist.
+  const [airflowAuthType, setAirflowAuthType] = useState<'bearer' | 'basic'>('bearer');
+  const [airflowUsername, setAirflowUsername] = useState('');
+  const [airflowDagAllowlist, setAirflowDagAllowlist] = useState('');
+  const [atlassianAuthKind, setAtlassianAuthKind] = useState<'basic' | 'bearer'>('basic');
+  const [atlassianEmail, setAtlassianEmail] = useState('');
+  const [odataAuthType, setOdataAuthType] = useState<'basic' | 'oauth-cc'>('basic');
+  const [odataTokenUrl, setOdataTokenUrl] = useState('');
+  const [workdayReports, setWorkdayReports] = useState<{ path: string; key: string; label: string }[]>([]);
   const [creating, setCreating] = useState(false);
   const [msg, setMsg] = useState('');
   const [done, setDone] = useState(false);
@@ -189,6 +202,34 @@ export default function ConnectorWizard({
           try { spec = JSON.parse(openApiSpec.trim()); } catch { /* send raw — backend tolerates */ }
           body.openApiSpec = spec;
         }
+      }
+      // Attach the non-secret config block for the half-wired templates (secrets stay
+      // in the credential field, vaulted server-side).
+      if (template === 'airflow') {
+        body.airflow = {
+          authType: airflowAuthType,
+          username: airflowAuthType === 'basic' ? airflowUsername.trim() : undefined,
+          dagAllowlist: airflowDagAllowlist.split(/[\s,]+/).map((d) => d.trim()).filter(Boolean),
+        };
+      }
+      if (template === 'atlassian') {
+        body.atlassian = {
+          authKind: atlassianAuthKind,
+          email: atlassianAuthKind === 'basic' ? atlassianEmail.trim() : undefined,
+        };
+      }
+      if (template === 'sap-odata' || template === 'odata-v4') {
+        body.odata = {
+          authType: odataAuthType,
+          tokenUrl: odataAuthType === 'oauth-cc' ? odataTokenUrl.trim() : undefined,
+        };
+      }
+      if (template === 'workday-raas') {
+        body.workday = {
+          reports: workdayReports
+            .filter((r) => r.path.trim())
+            .map((r) => ({ path: r.path.trim(), key: r.key.trim() || undefined, label: r.label.trim() || undefined })),
+        };
       }
       const res = await fetch('/api/connections', {
         method: 'POST',
@@ -318,13 +359,69 @@ export default function ConnectorWizard({
       {/* ── API/MCP: Auth (s === 1) ── */}
       {!onChoose && isApiConnector && s === 1 ? (
         <>
+          {/* Airflow: auth kind decides how the ONE credential is read (Bearer token vs
+              Basic user:pass); the Basic username is non-secret. */}
+          {template === 'airflow' ? (
+            <>
+              <label className="hint" style={{ display: 'block', marginTop: 0, marginBottom: 4 }}>Authentication</label>
+              <select value={airflowAuthType} onChange={(e) => setAirflowAuthType(e.target.value as 'bearer' | 'basic')} style={{ width: '100%', marginBottom: 10 }}>
+                <option value="bearer">Bearer token (JWT / access token)</option>
+                <option value="basic">Basic auth (username + password)</option>
+              </select>
+              {airflowAuthType === 'basic' ? (
+                <input type="text" value={airflowUsername} onChange={(e) => setAirflowUsername(e.target.value)} placeholder="Basic-auth username (non-secret)" style={{ marginBottom: 10 }} autoComplete="off" />
+              ) : null}
+            </>
+          ) : null}
+          {/* Atlassian: Basic (API token) REQUIRES the account email; Bearer (OAuth 3LO) does not. */}
+          {template === 'atlassian' ? (
+            <>
+              <label className="hint" style={{ display: 'block', marginTop: 0, marginBottom: 4 }}>Authentication</label>
+              <select value={atlassianAuthKind} onChange={(e) => setAtlassianAuthKind(e.target.value as 'basic' | 'bearer')} style={{ width: '100%', marginBottom: 10 }}>
+                <option value="basic">API token (email + token) — recommended</option>
+                <option value="bearer">OAuth access token (Bearer)</option>
+              </select>
+              {atlassianAuthKind === 'basic' ? (
+                <input type="email" value={atlassianEmail} onChange={(e) => setAtlassianEmail(e.target.value)} placeholder="Atlassian account email (required for API-token auth)" style={{ marginBottom: 10 }} autoComplete="off" />
+              ) : null}
+            </>
+          ) : null}
+          {/* OData: OAuth-CC needs the token endpoint; Basic (communication user) does not. */}
+          {template === 'sap-odata' || template === 'odata-v4' ? (
+            <>
+              <label className="hint" style={{ display: 'block', marginTop: 0, marginBottom: 4 }}>Authentication</label>
+              <select value={odataAuthType} onChange={(e) => setOdataAuthType(e.target.value as 'basic' | 'oauth-cc')} style={{ width: '100%', marginBottom: 10 }}>
+                <option value="basic">Basic (communication user)</option>
+                <option value="oauth-cc">OAuth2 client-credentials</option>
+              </select>
+              {odataAuthType === 'oauth-cc' ? (
+                <input type="text" value={odataTokenUrl} onChange={(e) => setOdataTokenUrl(e.target.value)} placeholder="OAuth token endpoint (https://…/oauth/token)" style={{ marginBottom: 10 }} autoComplete="off" />
+              ) : null}
+            </>
+          ) : null}
           <input
             type="password"
             value={credential}
             onChange={(e) => setCredential(e.target.value)}
-            placeholder="Credential (API key / token) — goes to Secrets Manager"
+            placeholder={
+              template === 'airflow' && airflowAuthType === 'basic' ? 'Password — goes to Secrets Manager'
+              : template === 'atlassian' && atlassianAuthKind === 'basic' ? 'API token — goes to Secrets Manager'
+              : template === 'sap-odata' || template === 'odata-v4' ? (odataAuthType === 'oauth-cc' ? 'client_id:client_secret — goes to Secrets Manager' : 'user:password — goes to Secrets Manager')
+              : 'Credential (API key / token) — goes to Secrets Manager'
+            }
             autoComplete="off"
           />
+          {/* Airflow trigger allowlist (optional; bounds trigger_dag to named DAGs). */}
+          {template === 'airflow' ? (
+            <input
+              type="text"
+              value={airflowDagAllowlist}
+              onChange={(e) => setAirflowDagAllowlist(e.target.value)}
+              placeholder="Optional: DAG trigger allowlist (comma-separated dag ids)"
+              style={{ marginTop: 10 }}
+              autoComplete="off"
+            />
+          ) : null}
         </>
       ) : null}
 
@@ -358,10 +455,53 @@ export default function ConnectorWizard({
             type="password"
             value={credential}
             onChange={(e) => setCredential(e.target.value)}
-            placeholder="Credential (API key / token / password) — goes to Secrets Manager"
+            placeholder={template === 'workday-raas' ? 'ISU credential (isu_user:password) — goes to Secrets Manager' : 'Credential (API key / token / password) — goes to Secrets Manager'}
             style={{ marginTop: 10 }}
             autoComplete="off"
           />
+          {/* Workday RaaS: each registered report IS an entity (no global describe). The
+              connection has NO data until at least one report is registered — so offer the
+              editor right here at create time. Add/remove report URL rows. */}
+          {template === 'workday-raas' ? (
+            <div style={{ marginTop: 12 }}>
+              <label className="hint" style={{ display: 'block', marginBottom: 6 }}>
+                RaaS reports (each becomes an entity — a Workday connection has no data until one is registered):
+              </label>
+              {workdayReports.map((r, i) => (
+                <div key={i} className="row" style={{ gap: 8, marginBottom: 8, alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1 }}>
+                    <input
+                      type="text"
+                      value={r.path}
+                      onChange={(e) => setWorkdayReports((prev) => prev.map((x, j) => j === i ? { ...x, path: e.target.value } : x))}
+                      placeholder="Report path or full RaaS URL (e.g. /Headcount?format=json)"
+                      autoComplete="off"
+                    />
+                    <input
+                      type="text"
+                      value={r.key}
+                      onChange={(e) => setWorkdayReports((prev) => prev.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
+                      placeholder="Optional key (defaults from path)"
+                      style={{ marginTop: 6 }}
+                      autoComplete="off"
+                    />
+                    <input
+                      type="text"
+                      value={r.label}
+                      onChange={(e) => setWorkdayReports((prev) => prev.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
+                      placeholder="Optional label"
+                      style={{ marginTop: 6 }}
+                      autoComplete="off"
+                    />
+                  </div>
+                  <button type="button" className="btn ghost" onClick={() => setWorkdayReports((prev) => prev.filter((_, j) => j !== i))} aria-label="Remove report">Remove</button>
+                </div>
+              ))}
+              <button type="button" className="btn ghost" onClick={() => setWorkdayReports((prev) => [...prev, { path: '', key: '', label: '' }])}>
+                + Add report
+              </button>
+            </div>
+          ) : null}
         </>
       ) : null}
 

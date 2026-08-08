@@ -26,7 +26,7 @@ const dashboards: TutorialDef = {
     {
       illustration: 'metric',
       title: 'New — name it, bind one view',
-      body: 'Metrics are defined in the Metrics tab — Dashboards only consume them. "＋ New dashboard": give it a name, then click a governed metric chip to bind its Cube view. A dashboard binds to ONE governed view, and every panel stays on it. No metrics yet? Define one in Metrics first.',
+      body: 'Metrics are defined in the Metrics tab — Dashboards only consume them. "＋ New dashboard": give it a name, then click a metric chip to bind its Cube view. The picker groups metrics My · Domain · Company, so you can chart your OWN metrics, not just governed ones — each chip names the metric, with its source dataset on hover. A dashboard binds to ONE view, and every panel stays on it. No metrics yet? Define one in Metrics first.',
     },
     {
       illustration: 'dashboard',
@@ -71,7 +71,7 @@ const dashboards: TutorialDef = {
       sandboxAnchor: ANCHORS.dashboards.sandbox,
       route: '/dashboards',
       title: 'Bind the view',
-      body: 'Name the dashboard, then click a governed metric to bind it. That fixes the ONE Cube view every panel reads. If the palette is empty, define a metric in the Metrics tab first — Dashboards only consume governed metrics.',
+      body: 'Name the dashboard, then click a metric to bind it — the picker groups metrics My · Domain · Company, so you can chart your OWN metrics too (each chip names the metric, dataset on hover). That fixes the ONE Cube view every panel reads. If the palette is empty, define a metric in the Metrics tab first.',
     },
     {
       anchor: ANCHORS.dashboards.design,

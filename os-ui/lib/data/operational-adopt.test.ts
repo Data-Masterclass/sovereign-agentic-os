@@ -111,3 +111,21 @@ test('operational adopt: a Kajabi created_at entity locks to created_at', async 
   });
   assert.equal(dataset.sync?.cursor?.column, 'created_at');
 });
+
+// ---- M1: the adopt gate no longer hard-requires the external-connectors flag for
+// OPERATIONAL exposures (they are user-facing without it). Toggle the flag OFF for these.
+test('M1 operational adopt: succeeds with EXTERNAL_CONNECTORS_ENABLED off', async () => {
+  (config as { externalConnectorsEnabled: boolean }).externalConnectorsEnabled = false;
+  try {
+    const { e } = await salesforceExposure('Account');
+    const { dataset } = await adoptExposedTable(commerceAdmin, {
+      exposureId: e.id, schema: 'salesforce', table: 'Account',
+      description: 'Salesforce accounts, synced, flag off.',
+      sync: { mode: 'full-refresh' },
+    });
+    assert.equal(dataset.origin, 'connected');
+    assert.equal(dataset.connected?.mode, 'sync');
+  } finally {
+    (config as { externalConnectorsEnabled: boolean }).externalConnectorsEnabled = true;
+  }
+});

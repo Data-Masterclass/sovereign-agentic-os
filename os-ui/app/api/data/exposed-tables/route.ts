@@ -6,20 +6,22 @@ import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { requirePrincipal } from '@/lib/data/server';
 import { roleAtLeast } from '@/lib/core/session';
-import { config } from '@/lib/core/config';
 import { listExposedTablesForUser } from '@/lib/connections/exposed-tables';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * The Adopt browse surface (lakehouse-import-exposure.md, Phase 2): every connection →
- * exposure → table the caller's domain(s) may adopt. Gated by the external-connectors
- * flag AND `domain_admin` (roleAtLeast) — the adoption floor. A caller below the floor,
- * or with the flag off, gets an empty list (the UI simply doesn't offer the card), never
- * a leak of what's exposed elsewhere.
+ * exposure → table the caller's domain(s) may adopt. Gated by `domain_admin` (roleAtLeast)
+ * — the adoption floor. The external-connectors flag is NOT required: OPERATIONAL exposures
+ * (Salesforce/Kajabi/OData/Workday) are user-facing without it, so blocking them on the
+ * flag wrongly hid adoptable operational sources. `listExposedTablesForUser` only ever
+ * returns warehouse (which can't exist without the flag) + operational exposures, so a
+ * flag-off deployment simply sees only its operational sources — never a leak. A caller
+ * below the role floor gets an empty list (the UI omits the card).
  */
 export const GET = withRoute(async ({ user }) => {
-  if (!config.externalConnectorsEnabled || !roleAtLeast(user.role, 'domain_admin')) {
+  if (!roleAtLeast(user.role, 'domain_admin')) {
     return NextResponse.json({ connections: [] });
   }
   const connections = await listExposedTablesForUser(user);

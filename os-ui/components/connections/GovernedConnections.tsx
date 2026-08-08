@@ -374,8 +374,8 @@ function ConnectionTile({ c, onOpen, onMove, canMove }: { c: Conn; onOpen: () =>
         </button>
         <div className="row" style={{ gap: 6, alignItems: 'center', flexShrink: 0 }}>
           {c.archived ? <span className="badge muted">archived</span> : null}
-          {c.dataUsage === 'bronze' ? <span className="badge warn">Bronze source</span> : null}
-          {c.dataUsage === 'files' ? <span className="badge warn">Files index</span> : null}
+          {c.dataUsage === 'bronze' ? <span className="badge warn">Bronze source{c.dataUsageMode === 'offline-mock' ? ' (mock)' : ''}</span> : null}
+          {c.dataUsage === 'files' ? <span className="badge warn">Files index{c.dataUsageMode === 'offline-mock' ? ' (mock)' : ''}</span> : null}
           {(c.visibility === 'Shared' || c.visibility === 'Certified') ? <DomainTag domain={c.domain} /> : null}
           <span className={badge(c.visibility)}>{visWord(c.visibility)}</span>
         </div>

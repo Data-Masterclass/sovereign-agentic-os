@@ -26,6 +26,7 @@ import {
   templateByKey,
   isPersonalConnectable,
 } from '@/lib/connections/schema';
+import { isOperationalTemplate } from '@/lib/connections/operational-platform';
 import {
   type AirflowConn,
   airflowHealth,
@@ -380,15 +381,39 @@ function syncCache(): Map<string, Connection> {
 export async function moveConnectionsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): Promise<string[]> {
   const map = await getCache();
   const moved: string[] = [];
+  // M4: a move that touches a warehouse/operational connection must trigger an exposure
+  // recompile — the OPA `data.governance.tables` entries are keyed by the connection's
+  // domain, so silently rewriting c.domain leaves the old-domain grants in the bundle and
+  // the action intersection re-keys under the stale domain. Track whether any moved
+  // connection backs exposures so we recompile once at the end (best-effort).
+  let touchedExposureBacking = false;
   for (const c of map.values()) {
     if (sel.id !== undefined && c.id !== sel.id) continue;
     if (sel.onlyUnassigned && c.domain) continue;
     if (c.domain === target) continue;
+    if (c.template === 'warehouse' || isOperationalTemplate(c.template)) touchedExposureBacking = true;
     c.domain = target;
     writeThrough(c);
     moved.push(c.id);
   }
+  if (touchedExposureBacking) await recompileExposuresAfterMove();
   return moved;
+}
+
+/**
+ * Recompile the OPA exposure bundle after a domain MOVE affecting a warehouse/operational
+ * connection (M4). A plain recompile re-derives every active exposure's grants from the
+ * connection's CURRENT domain, replacing the stale-domain entries. Dynamically imported to
+ * avoid the static import cycle (exposure-policy imports back into this store).
+ * Best-effort — a recompile failure never rolls back the authorised move.
+ */
+async function recompileExposuresAfterMove(): Promise<void> {
+  try {
+    const { recompileExposures } = await import('@/lib/connections/exposure-policy');
+    await recompileExposures();
+  } catch {
+    /* best-effort: a recompile failure never blocks the move */
+  }
 }
 
 // ------------------------------------------------------------------- Scoping ---
@@ -461,6 +486,19 @@ export async function getConnectionById(connId: string): Promise<Connection | nu
 export async function listWarehouseConnections(): Promise<Connection[]> {
   const map = await getCache();
   return [...map.values()].filter((c) => c.template === 'warehouse' && c.warehouse && !c.archived);
+}
+
+/**
+ * Every connection the `connections.catalogRefresh` sweep can re-snapshot (m5): warehouse
+ * connections PLUS operational api-batch sources (Salesforce/Kajabi/OData/Workday), whose
+ * ENTITY catalog rides the same snapshot machinery via the operational registry. Excludes
+ * archived. Warehouse-only callers keep using {@link listWarehouseConnections}.
+ */
+export async function listSnapshotableConnections(): Promise<Connection[]> {
+  const map = await getCache();
+  return [...map.values()].filter((c) =>
+    !c.archived && ((c.template === 'warehouse' && c.warehouse) || isOperationalTemplate(c.template)),
+  );
 }
 
 function assertBuilderOrAdmin(user: CurrentUser): void {
@@ -1109,9 +1147,14 @@ export async function testConnection(
     const provider = providerFor(c.warehouse.platform);
     const source = toWarehouseSource({ platform: c.warehouse.platform, catalog: c.warehouse.catalog, config: c.warehouse.config });
     if (provider.testProbe.kind === 'none') {
+      // No safe live probe exists for this platform — so the connection is NOT verified.
+      // M7: report ok:false + untested (config-valid is not connectivity-verified); never
+      // a fake ok on a check we didn't actually run.
+      c.mode = 'untested';
+      c.health = 'untested';
       c.updatedAt = now();
       writeThrough(c);
-      return { ok: true, mode: 'offline', detail: `Config valid for ${provider.label}. No safe live probe exists (${provider.testProbe.reason}) — reachability is the operator's step on a live tenant.` };
+      return { ok: false, mode: 'offline', detail: `Config valid for ${provider.label}, but NOT verified — no safe live probe exists (${provider.testProbe.reason}). Reachability is the operator's step on a live tenant.` };
     }
     const query = provider.testProbe.query(source);
     try {
@@ -1122,9 +1165,13 @@ export async function testConnection(
       writeThrough(c);
       return { ok: true, mode: 'live', detail: `Ran \`${query}\` through the governed query path — ${res.rowCount} schema(s) visible in catalog '${c.warehouse.catalog}'.` };
     } catch (e) {
+      // The catalog is not registered/queryable yet — the live probe FAILED, so this is
+      // NOT ok. M7: pending-registration is an untested state, not a success.
+      c.mode = 'untested';
+      c.health = 'untested';
       c.updatedAt = now();
       writeThrough(c);
-      return { ok: true, mode: 'offline', detail: `Config valid; catalog '${c.warehouse.catalog}' is not queryable yet (${(e as Error).message}). Register it in Trino (values.trino.externalCatalogs) + rolling-restart, then re-test.` };
+      return { ok: false, mode: 'offline', detail: `Config valid, but catalog '${c.warehouse.catalog}' is NOT queryable yet (${(e as Error).message}). Register it in Trino (values.trino.externalCatalogs) + rolling-restart, then re-test.` };
     }
   }
 
@@ -1144,33 +1191,38 @@ export async function testConnection(
     return { ok: false, mode: 'offline', detail: 'No credential set in Secrets Manager for this connection.' };
   }
 
-  // Best-effort reachability probe (never sends/echoes the secret in our response).
-  let mode: 'live' | 'offline' = 'offline';
+  // Best-effort reachability probe (never sends/echoes the secret in our response). NOTE:
+  // this is an UNAUTHENTICATED HEAD — it says the host answered, NOT that the credential
+  // is valid. So it can never justify a "healthy"/ok result on its own (M7).
+  let reachable = false;
   if (c.egress.external && c.egress.allowed) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 1500);
     try {
       await fetch(c.endpoint, { method: 'HEAD', signal: ctrl.signal, cache: 'no-store' });
-      mode = 'live';
+      reachable = true;
     } catch {
-      mode = 'offline';
+      reachable = false;
     } finally {
       clearTimeout(timer);
     }
   }
 
-  c.mode = mode;
-  c.health = 'healthy'; // silent OAuth refresh keeps it healthy; hard failure → needs-reconnect
+  // M7 HONESTY: there is NO authenticated round-trip for this generic template, so we
+  // CANNOT claim the connection is healthy. Leave it untested (never write 'healthy' on
+  // an unverified check), and return ok:false. An unauthenticated HEAD only tells us the
+  // host answered — reported as a hint, not as success.
+  c.mode = 'untested';
+  c.health = 'untested';
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
   return {
-    ok: true,
-    mode,
-    detail:
-      mode === 'live'
-        ? `Reached ${c.egress.host}; credential present (${c.secretFingerprint}). Egress allowed.`
-        : `Credential present in Secrets Manager (${c.secretFingerprint}); endpoint not probed offline. The secret is never sent to the browser.`,
+    ok: false,
+    mode: 'offline',
+    detail: reachable
+      ? `Host ${c.egress.host} answered an unauthenticated probe and a credential is present (${c.secretFingerprint}), but this connector has no authenticated round-trip to verify it — status is UNTESTED, not verified.`
+      : `Credential present in Secrets Manager (${c.secretFingerprint}); this connector has no authenticated round-trip to verify it — status is UNTESTED. The secret is never sent to the browser.`,
   };
 }
 
@@ -1899,6 +1951,11 @@ export async function enableDataUsage(connId: string, user: CurrentUser, usage: 
     registerBronzeSource({ connectionId: c.id, name: c.name, connector: c.connector, rows: sync.data?.records ?? 0, registeredBy: user.id });
     c.dataUsage = 'bronze';
   }
+  // M8 HONESTY: no live sync client is injected here (the real fetch-backed clients are a
+  // server-side wire that does not exist yet), so `sync.mode` is 'offline-mock' and the
+  // row/item counts are FABRICATED. Stamp the mode onto the record so the UI can label the
+  // registration a mock instead of presenting the fabricated count as a real ingest.
+  c.dataUsageMode = sync.mode; // 'live' once a real sync client is wired; 'offline-mock' today
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
@@ -2775,6 +2832,52 @@ export async function renameConnection(connId: string, user: CurrentUser, newNam
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
+  return c;
+}
+
+/**
+ * ROTATE the vaulted credential of a SERVICE-credential connection (M13). Many
+ * OAuth-access-token templates (gmail/gcal/outlook/teams/entra/purview/ai-foundry, …) are
+ * `auth:'service'` — the user PASTES a Bearer access token — and flip to `needs-reconnect`
+ * when that token expires, with NO surface to supply a fresh one (only Drive/Notion, which
+ * use the OAuth *flow*, had Reconnect). The dead-end was delete+recreate, losing grants and
+ * exposures. This writes the NEW secret over the SAME secretRef (frozen K8s identity), re-
+ * fingerprints, and clears the stale needs-reconnect health back to untested — grants,
+ * exposures, tools and principal are untouched. Edit-scoped (owner or domain admin).
+ * NEVER for a warehouse connection (multi-field register path) or a flow-based OAuth
+ * connection (use Connect/Reconnect). The secret never travels to the browser.
+ */
+export async function rotateConnectionCredential(connId: string, user: CurrentUser, newCredential: string): Promise<Connection> {
+  const map = await getCache();
+  const c = requireConnEdit(map.get(connId), user);
+  const value = String(newCredential ?? '');
+  if (!value) throw withStatus(new Error('a new credential is required to rotate'), 400);
+  if (c.template === 'warehouse') {
+    throw withStatus(new Error('Rotate a warehouse credential by re-registering the catalog, not here'), 400);
+  }
+  if (c.auth === 'oauth') {
+    throw withStatus(new Error('This connection uses the OAuth flow — use Connect / Reconnect to re-authorize'), 400);
+  }
+  // Write the new value over the SAME ref (name + key frozen), then re-fingerprint.
+  const ref = putSecret(c.secretRef.name, c.secretRef.key, value);
+  c.secretRef = ref;
+  c.secretSet = true;
+  c.secretFingerprint = secretFingerprint(ref);
+  // A rotated credential is UNVERIFIED until the next test — clear a stale needs-reconnect
+  // rather than claim health we did not verify (M7 discipline).
+  c.health = 'untested';
+  c.mode = 'untested';
+  c.updatedAt = now();
+  map.set(c.id, c);
+  writeThrough(c);
+  // Audit — NEVER the secret, only the new fingerprint.
+  void trace({
+    principal: c.principal,
+    tool: 'generate',
+    input: { action: 'rotate_credential', by: user.id },
+    output: { fingerprint: c.secretFingerprint },
+    decision: 'allow',
+  });
   return c;
 }
 

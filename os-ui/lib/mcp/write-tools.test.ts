@@ -89,10 +89,12 @@ test('DATA: a builder builds a governed dataset → metric → dashboard, all as
   assert.equal(promoted.approved, true);
   assert.equal(promoted.asset.tier, 'asset', 'approve_promotion moved it into the governed asset tier');
 
-  const metric = payload<{ member: string }>(await call(builder, 'define_metric', {
+  const metric = payload<{ member: string; measure: { dimensions?: string[] } }>(await call(builder, 'define_metric', {
     datasetId, name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: ['order_date'],
   }));
   assert.match(metric.member, /\.revenue$/, 'define_metric returns the canonical Cube member');
+  assert.deepEqual(metric.measure.dimensions, ['order_date'],
+    'define_metric threads the dimensions param into the persisted measure (full UI parity)');
 
   const view = metric.member.split('.')[0];
   const dash = payload<{ id: string }>(await call(builder, 'create_dashboard', {

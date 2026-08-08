@@ -13,6 +13,151 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.86] — 2026-08-07
+
+### Changed
+- **Docs + MCP truth-sync for 0.6.83–0.6.85:** `build_gold_join` accepts own personal
+  datasets, `define_metric` dimensions parity + upsert, guide/tutorials/tab-context updated for
+  curated-from-own-data + metric dimensions + dashboards-on-your-metrics.
+  - `build_gold_join` (MCP) description + `datasetId` pick guidance now state a join partner is a
+    governed asset/product OR your OWN personal (My-tier) dataset built to Silver/Gold — each still
+    re-resolved through the canView guard, the CTAS still runs AS you.
+  - `define_metric` (MCP) already exposed `dimensions`; its description now documents the
+    define-is-an-upsert-by-name semantics (re-defining the same name updates in place) and that
+    dimensions persist + rehydrate on edit.
+  - Tab-context + guide files (`data`, `metrics`, `dashboards`) reconciled: curated-from-own-data,
+    metric dimensions/upsert, and dashboards on your own metrics (My · Domain · Company picker).
+  - Hand-authored guide (`docs/Sovereign-Agentic-OS-Guide.md`) Data / Metrics / Dashboards
+    sections + Golden path 1 updated; Data / Dashboards tutorials updated for the new journeys.
+
+## [os-ui 0.6.85] — 2026-08-07
+
+### Changed
+- **Dashboard panel metric picker — grouped by My / Domain / Company, name-only chips,
+  hover details.** The palette of selectable metrics (a panel still charts ONE Cube view) is
+  now sliced into **My · Domain · Company** sections using the tier each metric carries
+  (threaded through via new pure helpers `groupMetricsByTier` / `metricTierSections` in
+  `components/dashboards/shared.ts`; empty tiers render nothing — no bare headers). Each chip
+  shows the metric **name only**; the source dataset (friendly `datasetName`, never the raw
+  `UPPER_SNAKE` view id), a composite/formula flag, its scope and its description live in a
+  **hover + focus popover** with an **"Open in Metrics"** link to `/metrics?focus=<id>`
+  (plain CSS hover-card — keyboard accessible, never a browser dialog).
+- **Honest picker label.** The misleading `Governed metrics on <RAW_VIEW> — click to chart`
+  caption (which showed the raw view identifier and wrongly called My-tier metrics
+  "governed") is replaced with a calm **"Charting from _\<friendly dataset name>_ — pick one
+  or more metrics (multi-select)"**. Tier is now explicit via the grouping, so "governed" is
+  dropped; the view→friendly-name mapping is the new `viewDatasetName` helper. The
+  single-view constraint and its empty-state are kept (reworded honestly). Multi-select, the
+  single-view narrowing, the group-by/time controls and the preview query path are unchanged
+  — this is presentation only.
+- **Metrics tab tiles — name-only with dataset on hover.** The tile face drops the muted
+  `datasetName` line; the source dataset moves to a hover `title` + `aria-label` on the
+  member line, keeping it discoverable without cluttering the card. The bold metric name,
+  value and tier/DomainTag badge are unchanged.
+
+## [os-ui 0.6.84] — 2026-08-07
+
+### Fixed
+- **BUG A — Metric edit now hydrates its saved dimensions and no longer 409s "already
+  defined" on a re-save.** Two coupled defects: (1) the activated slice-by dimensions were
+  never persisted onto the `Measure` (`measureFromForm` ignored `form.dimensions`) nor
+  rehydrated (`formFromMeasure` hardcoded `dimensions: []`), so re-opening Edit showed no
+  dimensions activated; (2) the save path always ran `defineMeasure`, which was create-only
+  and rejected an edit re-save of the same (frozen) measure name with `Measure '…' already
+  defined` (409). Fix: `Measure` gains an optional `dimensions` (a curation hint, kept off
+  `sameMeasure`/convergence); `measureFromForm` persists them and `formFromMeasure`
+  re-activates them; `parseMeasure` round-trips the field through the store (serialize
+  already dumps the whole measure); and `defineMeasure` is now an UPSERT keyed by the
+  measure name — the same name updates in place (preserving the display `label`), a new name
+  appends. There is never two same-named measures on one dataset, so this is the correct
+  edit-in-place semantic.
+- **BUG B — Dashboard "group by" shows dimensions again.** While designing the FIRST panel
+  of a new dashboard, the group-by picker was empty. Root cause was NOT the registry (both
+  ingested and curated Gold return dimensions correctly): the panel builder bound its
+  dimension palette to the dashboard's committed view, which is empty until the first panel
+  is added, so `viewMeta` never resolved. Fix: `PanelBuilder` derives an `effectiveView`
+  from the selected metric when no view is bound yet, and keys the group-by palette, live
+  preview and metric filter off it — the single-view guard still holds once a view binds.
+  (A and B did NOT share a root cause.)
+- **BUG C — "Suggest quality rules" for curated datasets.** Investigation (systematic
+  debugging) found the suggester is layer-agnostic and already proposes the standard
+  `not_null`/`unique`/`accepted_values`/`range` rules for a curated Gold-only dataset (it
+  profiles whatever built layer `builtLayerFqn` resolves — the composed Gold — exactly like
+  an ingested Silver/Gold; verified live in the #236 fix: 300 rows → 9 suggestions, and by
+  repro here). "Zero rules" is the honest empty-state when the curated Gold isn't
+  built/queryable yet, which is already surfaced with a machine-readable reason. Added a
+  regression test pinning curated-Gold-only → standard rule classes so the guarantee can't
+  silently regress.
+- **BUG D — Metric-tile title is fully visible, bold and prominent.** The tile name used a
+  single-line `nowrap` + ellipsis, so a longer metric name clipped out of the tile. It now
+  renders at 19px/700, wrapping to a two-line clamp (full text on hover) with the tier badge
+  top-aligned — surgical to the metric tile, other artifact tiles keep the shared treatment.
+
+## [os-ui 0.6.83] — 2026-08-07
+
+### Fixed
+- **Curated datasets can now be composed from your OWN personal (My-tier) datasets.**
+  The Compose / Gold-join source picker (`listJoinable`) previously excluded every
+  personal-tier dataset outright (`tier === 'dataset'`), so a participant could not build a
+  curated dataset from their own data — they had to promote each source to Domain first.
+  Now a personal dataset is reusable **by its owner** (owner-only `canView` already isolates
+  it; Shared/Company tiers stay open to all who can view). A new `reuseSourceFqn` resolver
+  points a personal source at the owner's personal lane (`personal_<owner>.<layer>_<slug>`)
+  instead of the domain schema, so the join hits the real table instead of `TABLE_NOT_FOUND`;
+  the build already runs AS the owner when the target is a personal lane. Materialization
+  (Silver/Gold built) is still required. Asset/product resolution is byte-identical.
+
+## [os-ui 0.6.82] — 2026-08-06
+
+### Fixed
+- **Connections integrity wave 2 — the functional-audit MODERATE/MINOR fixes.** Follow-up
+  to 0.6.81's CRITICAL wave; makes the half-wired connector templates actually usable and
+  closes the remaining honesty/governance gaps in the Connections tab.
+  - **Configurable half-wired templates (M2).** `POST /api/connections` and the MCP
+    `create_connection` tool now forward the non-secret config blocks the store already
+    supported: Atlassian **account email** (Basic auth cannot authenticate without it),
+    OData **OAuth-CC token URL**, the Airflow **auth kind / Basic username / trigger
+    allowlist**, and — the big one — the Workday **RaaS report catalog** (each report IS an
+    entity, so a Workday connection had no data until now). `ConnectorWizard` renders
+    metadata-driven fields per template, including an add/remove **report-list editor** for
+    Workday RaaS.
+  - **Operational adopt gate (M1).** Adoption no longer hard-requires
+    `EXTERNAL_CONNECTORS_ENABLED` — a new `adoptionEnabledFor(template)` gates on
+    *(flag OR operational)*, so operational exposures (Salesforce/Kajabi/OData/Workday),
+    which are user-facing without the flag, are adoptable, and warehouse adoption still
+    requires the flag with an honest reason.
+  - **Exposure recompile on domain move (M4).** `moveConnectionsDomain` now recompiles the
+    OPA exposure bundle when it moves a warehouse/operational connection, so
+    `data.governance.tables` (and the action intersection) re-key under the new domain
+    instead of leaving stale old-domain grants.
+  - **Egress-request ordering (M5).** The custom-connector builder files the egress request
+    *before* the create, so the auto-request fires in exactly the case it exists for (the
+    create 403s on the not-yet-allowlisted host); on refusal the user is told to retry after
+    approval instead of losing the request.
+  - **Honest test-connection (M7).** The warehouse test returns `ok:false` + `untested` when
+    the catalog is not queryable or the platform has no safe live probe (config-valid is not
+    connectivity-verified); the generic fallback no longer writes `health:healthy` on a mere
+    credential-presence + unauthenticated HEAD — it reports `ok:false` + `untested`.
+  - **Honest data-usage labeling (M8).** "Use as data source" runs the offline mock (the live
+    dlt/Drive sync client is not wired), so the connection record now carries
+    `dataUsageMode:'offline-mock'` and the UI badges/panel say "(mock)" — a fabricated count
+    is never presented as a real ingest.
+  - **Credential rotation (M13).** New `rotate-credential` action + generic Reconnect/Rotate
+    affordance: `rotateConnectionCredential` writes a new secret over the same vault ref,
+    re-fingerprints, and clears a stale `needs-reconnect` to `untested` — keeping grants +
+    exposures (no delete+recreate). Service connections only; Drive/Notion use Connect,
+    warehouse re-registers.
+  - **MCP lifecycle twins (m3).** `retire_connection` (archive/unarchive/delete),
+    `configure_connection` (rename/move/demote/capabilities), and `revoke_action_adoption`
+    — the MCP peers of the connection-detail controls, each running the SAME edit-scoped lib
+    as the UI.
+  - **Minor sweeps.** generic-api/generic-mcp install guides (m2); operational connections
+    included in the `catalogRefresh` sweep (m5); `createExposureSet` refuses a non-warehouse/
+    non-operational connection (m6); rewrote the stale "three genuinely-wired connectors"
+    comments + pruned 74 dead imports in `discovery-connection-tools.ts` (m1); reconciled the
+    promote-floor doc drift — the connection Personal→Shared floor is `domain_admin`, the
+    security-correct floor the code enforces (m4).
+
 ## [os-ui 0.6.81] — 2026-08-06
 
 ### Fixed

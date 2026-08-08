@@ -32,7 +32,7 @@ import {
   assetTarget,
   type Principal,
 } from './store.ts';
-import { versionTarget } from './store-fqn.ts';
+import { versionTarget, personalSchema } from './store-fqn.ts';
 import { DatasetError } from './dataset-schema.ts';
 import { cubeName, cubeViewName, CUBE_ARTIFACT } from './metrics.ts';
 import { listFolders as folderList, __resetStore as resetFolders } from '../folders/index.ts';
@@ -84,9 +84,16 @@ test('GOVERNANCE: the Gold join picker (listJoinable) is canView-scoped', () => 
   // …but NEVER the private finance dataset (canView false) — for anyone outside it.
   assert.ok(!listJoinable(bea).some((d) => d.name === 'Finance Ledger'));
   assert.ok(!listJoinable(amir).some((d) => d.name === 'Finance Ledger'));
-  // kenji sees his own only if it were shared; a private dataset is never joinable even
-  // for its owner (reuse is a governed-tier concept), and it never leaks cross-domain.
-  assert.ok(!listJoinable(finBuilder).some((d) => d.name === 'Orders')); // sales asset, not finance-visible
+  // …and never leaks cross-domain (a sales asset is not finance-visible).
+  assert.ok(!listJoinable(finBuilder).some((d) => d.name === 'Orders'));
+
+  // OWN personal datasets ARE reusable by their OWNER — you may compose a curated dataset
+  // from your own private datasets (no cross-user exposure); the source resolves to the
+  // owner's personal lane, not the domain schema.
+  const forKenji = listJoinable(kenji);
+  const ledger = forKenji.find((d) => d.name === 'Finance Ledger');
+  assert.ok(ledger, 'owner must be able to reuse their own personal dataset as a compose source');
+  assert.equal(ledger!.fqn, `iceberg.${personalSchema('kenji')}.silver_finance_ledger`);
 
   // The base dataset is excluded from its own picker.
   assert.ok(!listJoinable(bea, orders).some((d) => d.id === orders));
@@ -327,6 +334,20 @@ test('define a metric requires only a built Gold (any tier) — metrics→Trino 
   defineMeasure(id, sara, { name: 'order_count', type: 'count', sql: '' });
   const governedFiles = listFiles(id, sara).files;
   assert.ok(governedFiles.some((f) => f.endsWith('.cube.yml')), 'cube artifact regenerates once governed');
+});
+
+test('BUG A: re-defining an existing measure UPDATES it in place (no false "already defined" 409)', () => {
+  const id = seedOrders();
+  buildVersion(id, amir, 'gold', { quality: 'passing', artifact: 'gold/mart_orders.sql' });
+  const first = defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'net_amount' });
+  assert.equal(first.measures.filter((m) => m.name === 'revenue').length, 1);
+
+  // Editing the SAME metric re-saves the same (frozen) measure name — this used to 409
+  // "Measure 'revenue' already defined". It must UPDATE in place, not reject nor duplicate.
+  const edited = defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'net_amount', dimensions: ['region'] });
+  const revenues = edited.measures.filter((m) => m.name === 'revenue');
+  assert.equal(revenues.length, 1, 'no duplicate measure — the edit replaced in place');
+  assert.deepEqual(revenues[0].dimensions, ['region'], 'the edit persisted the new dimensions');
 });
 
 test('files: dataset.yaml is editable, native artifacts are Build-materialised', () => {

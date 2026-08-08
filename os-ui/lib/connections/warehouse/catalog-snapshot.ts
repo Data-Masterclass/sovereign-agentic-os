@@ -204,8 +204,28 @@ export async function refreshCatalogSnapshotService(
   c: Connection,
   deps: { query?: typeof queryRun } = {},
 ): Promise<CatalogSnapshot> {
+  // OPERATIONAL sources (Salesforce/Kajabi/OData/Workday) discover ENTITIES through the
+  // operational registry, not Trino (m5). The registry discover runs AS a principal — the
+  // service sweep has no signed-in user, so we synthesize one scoped to the connection's
+  // OWN domain (the same "run as the connection's domain" principle the warehouse branch
+  // uses). Snapshot honesty (status/takenAt) is identical to the warehouse path.
+  const op = operationalEntry(c.template);
+  if (op) {
+    const svcUser = { id: `service:catalog-refresh`, name: 'catalog-refresh', role: 'admin', domains: [c.domain] } as unknown as CurrentUser;
+    const catalog = op.platform;
+    let cached: Awaited<ReturnType<typeof op.discover>> | null = null;
+    const discoverOnce = async () => (cached ??= await op.discover(c.id, svcUser));
+    const boundOp: BoundDiscover = async (opts) => {
+      const res = await discoverOnce();
+      if (!res.ok) return { ok: false, schemas: [], tables: [] };
+      return opts.schema
+        ? { ok: true, schemas: [], tables: res.tables }
+        : { ok: true, schemas: res.schemas, tables: [] };
+    };
+    return buildSnapshot(c.id, catalog, boundOp);
+  }
   if (c.template !== 'warehouse' || !c.warehouse) {
-    throw Object.assign(new Error('Not a warehouse connection'), { status: 400 });
+    throw Object.assign(new Error('Not a warehouse or operational connection'), { status: 400 });
   }
   const provider = providerFor(c.warehouse.platform);
   const source = toWarehouseSource({ platform: c.warehouse.platform, catalog: c.warehouse.catalog, config: c.warehouse.config });

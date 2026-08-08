@@ -17,8 +17,8 @@ In the UI, ＋ New first asks **Simple or Complex** on a two-card chooser (the f
    - `name` — canonical business name (e.g. `gross_revenue`, `order_count`)
    - `aggregation` — one of `count`, `count_distinct`, `count_distinct_approx` (fast approximate distinct for large cardinalities), `sum`, `avg`, `min`, `max`, or `number` (a derived/ratio measure)
    - `column` — required for `sum`/`avg`/`min`/`max`/`count_distinct*`; omit for `count`-of-rows and for `number`/ratio
-   - `dimensions` — optional array of columns to group by
-   The metric is registered as a Cube member immediately and is available to dashboards.
+   - `dimensions` — optional array of columns to group by; the picked dimensions are persisted on the metric and rehydrate when you re-open it to edit
+   The metric is registered as a Cube member immediately and is available to dashboards. **Edit is an upsert:** re-defining a metric of the same name on the same dataset updates it in place (no false "already defined") — this is exactly how the tab's ✎ Edit saves a change.
 
    The **full measure model** is available as optional arguments (all guided — you never write Cube SQL; a call with none of them yields exactly the plain measure it always did):
    - `filter` — a **filtered measure**: aggregate only rows where `{column, operator, value}` (operator: `equals`/`notEquals`/`gt`/`gte`/`lt`/`lte`/`set`/`notSet`). e.g. count only `status = completed`.

@@ -8,7 +8,7 @@ import { requirePrincipal } from '@/lib/data/server';
 import { getDataset, buildGoldJoin } from '@/lib/data/store';
 import { rematerializeDomainTableLive } from '@/lib/data/publish-server';
 import { roleAtLeast } from '@/lib/core/session';
-import { assetTarget } from '@/lib/data/store-fqn';
+import { reuseSourceFqn } from '@/lib/data/store-fqn';
 import { stepperStages, stageArtifact, canBuildStage } from '@/lib/data/panels';
 import { buildStage } from '@/lib/data/build/server';
 import {
@@ -73,14 +73,15 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
   // CURATED base (ref 0): a curated dataset has no own Silver — it composes from existing
   // governed datasets — so its base is an EXPLICIT dataset, re-checked here through
   // `getDataset` (entitlement + active domain, exactly like a join partner). Its physical
-  // table (gold, else silver — `assetTarget`) becomes the compile source. Absent ⇒ the
+  // table (gold, else silver — `reuseSourceFqn`, owner-aware for a personal base) becomes
+  // the compile source. Absent ⇒ the
   // dataset's own Silver is the base (byte-stable for every ingested/pre-curated dataset).
   const rawBaseId = typeof body?.baseDatasetId === 'string' ? body.baseDatasetId.trim() : '';
   let baseSource: string | undefined;
   let baseUpstream: DatasetUpstream | undefined;
   if (rawBaseId && rawBaseId !== id) {
     const base = getDataset(rawBaseId, user); // throws 403/404 — same guard as a join partner
-    baseSource = assetTarget(base);
+    baseSource = reuseSourceFqn(base); // owner-aware: a personal base resolves to its personal lane
     baseUpstream = { datasetId: base.id, name: base.name, fqn: baseSource, joinType: 'inner' };
   }
 
@@ -108,7 +109,7 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
   if (baseUpstream) upstreams.push(baseUpstream);
   for (const p of rawPicks) {
     const up = getDataset(String(p?.datasetId ?? ''), user); // throws 403/404
-    const fqn = assetTarget(up);
+    const fqn = reuseSourceFqn(up); // owner-aware: a personal join partner resolves to its personal lane
     const type: JoinType = p?.type === 'left' ? 'left' : 'inner';
     const on = Array.isArray(p?.on) ? (p!.on as ResolvedJoin['on']) : [];
     joins.push({ table: fqn, type, on });

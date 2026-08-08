@@ -85,26 +85,30 @@ function MetricCard({
       }}
       title="Open this metric — explore, govern, or set an alert"
     >
-      <div className="tile-top">
-        <div className="row" style={{ gap: 6, alignItems: 'center', minWidth: 0, flex: 1 }}>
+      <div className="tile-top" style={{ alignItems: 'flex-start' }}>
+        <div className="row" style={{ gap: 6, alignItems: 'flex-start', minWidth: 0, flex: 1 }}>
           {onPick ? (
             // Multi-select for bulk archive. Stop the click so ticking a card
             // doesn't also open it.
             <input
               type="checkbox" className="file-pick" aria-label={`Select ${m.name}`}
+              style={{ marginTop: 3 }}
               checked={!!picked}
               onClick={(e) => e.stopPropagation()}
               onChange={(e) => onPick(e.target.checked)}
             />
           ) : null}
-          <span className="tile-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.name}>{m.name}</span>
+          <span className="tile-name tile-name--metric" title={m.name}>{m.name}</span>
         </div>
         <div className="row" style={{ gap: 4, alignItems: 'center', flex: 'none' }}>
           {showDomain ? <DomainTag domain={m.domain} /> : null}
           <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_WORD[m.tier]}</span>
         </div>
       </div>
-      <div className="muted mono" style={{ fontSize: 12 }}>{m.member}</div>
+      {/* The Cube member is the metric's technical identity; its SOURCE dataset now rides
+          this line as a hover title (aria-label for AT) rather than crowding the tile face —
+          the dataset name is discoverable without cluttering the card. */}
+      <div className="muted mono" style={{ fontSize: 12 }} title={`Source dataset: ${m.datasetName}`} aria-label={`Source dataset: ${m.datasetName}`}>{m.member}</div>
       {/* Plain-language meaning, one truncated line (full text on hover). Absent ⇒ no line,
           so a metric without a description keeps the exact prior tile layout. */}
       {m.description ? (
@@ -118,8 +122,6 @@ function MetricCard({
       ) : null}
       <div className="tile-meta" style={{ marginTop: 'auto' }}>
         <span className="muted">{m.owner}</span>
-        <span className="dot-sep">·</span>
-        <span className="muted">{m.datasetName}</span>
         <span className="dot-sep">·</span>
         <span className="badge muted" title={m.composite ? 'A formula over other metrics' : undefined}>{m.composite ? 'formula' : m.type}</span>
       </div>

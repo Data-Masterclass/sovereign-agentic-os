@@ -4,7 +4,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { postJson, VIZ_TYPES, panelMetrics } from './shared';
+import { postJson, VIZ_TYPES, panelMetrics, metricTierSections, viewDatasetName } from './shared';
 import type { CubeMetaResponse, MetricSummary, Panel, PanelQueryResponse, PanelViewMeta, VizType } from './shared';
 import PanelChart from './PanelChart';
 
@@ -21,6 +21,58 @@ const WIDTHS = [
   { w: 12, label: 'full' },
 ] as const;
 type PanelWidth = (typeof WIDTHS)[number]['w'];
+
+/** The tier NOUN a metric chip's hover details reads — the OS scope vocabulary. */
+const TIER_WORD: Record<MetricSummary['tier'], string> = { personal: 'My', domain: 'Domain', marketplace: 'Company' };
+
+/**
+ * A single selectable metric chip in the panel picker. The FACE shows the metric name only —
+ * the source dataset, formula, tier and description live in a hover/focus popover so the
+ * palette stays calm. The popover is a plain CSS hover-card (no browser dialog); it also
+ * opens on keyboard focus, and carries an "Open in Metrics" link to the metric's detail.
+ */
+function MetricChip({ m, selected, onToggle }: { m: MetricSummary; selected: boolean; onToggle: () => void }) {
+  return (
+    <span className="metric-chip-wrap">
+      <button
+        type="button"
+        className={`chip${selected ? ' ok' : ''}`}
+        aria-pressed={selected}
+        onClick={onToggle}
+      >
+        {m.name}
+      </button>
+      {/* Hover/focus details — dataset (friendly), formula flag, tier, description + a link
+          to the full definition. `role="tooltip"`; shown via CSS on hover of the wrap or
+          focus-within (keyboard accessible), never as a modal dialog. */}
+      <span className="metric-chip-pop" role="tooltip">
+        <span className="metric-chip-pop-name">{m.name}</span>
+        <span className="metric-chip-pop-row">
+          <span className="muted">Source</span>
+          <span>{m.datasetName}</span>
+        </span>
+        <span className="metric-chip-pop-row">
+          <span className="muted">Scope</span>
+          <span>{TIER_WORD[m.tier]}</span>
+        </span>
+        {m.composite ? (
+          <span className="metric-chip-pop-row">
+            <span className="muted">Type</span>
+            <span>Composite (formula over other metrics)</span>
+          </span>
+        ) : null}
+        {m.description ? <span className="metric-chip-pop-desc">{m.description}</span> : null}
+        <a
+          className="metric-chip-pop-link"
+          href={`/metrics?focus=${encodeURIComponent(m.id)}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          Open in Metrics →
+        </a>
+      </span>
+    </span>
+  );
+}
 
 /**
  * The native panel designer (Tier 1). Pick one-or-more governed metric members from the
@@ -94,8 +146,19 @@ export default function PanelBuilder({
     return () => { alive = false; };
   }, []);
 
-  const inView = useMemo(() => palette.filter((m) => !view || viewOf(m.member) === view), [palette, view]);
-  const viewMeta = useMemo(() => meta?.find((v) => v.view === view), [meta, view]);
+  // The EFFECTIVE view: the bound `view` once the dashboard has a panel, else the view of
+  // the metric(s) being selected for the FIRST panel. Before the first panel is added the
+  // parent `view` (derived from committed charts) is empty — keying the group-by palette off
+  // it left the dimension picker permanently empty while designing the very first panel
+  // (BUG B). Deriving it from the current selection binds the palette as soon as a metric is
+  // picked, while still honouring the single-view guard (`inView` filters the rest).
+  const effectiveView = useMemo(() => view || (metrics.length > 0 ? viewOf(metrics[0]) : ''), [view, metrics]);
+  const inView = useMemo(() => palette.filter((m) => !effectiveView || viewOf(m.member) === effectiveView), [palette, effectiveView]);
+  const viewMeta = useMemo(() => meta?.find((v) => v.view === effectiveView), [meta, effectiveView]);
+  // Presentation: the selectable metrics grouped My · Domain · Company (empty tiers dropped),
+  // and the FRIENDLY dataset name for the bound view (never the UPPER_SNAKE identifier).
+  const sections = useMemo(() => metricTierSections(inView), [inView]);
+  const friendlyView = useMemo(() => viewDatasetName(inView, effectiveView), [inView, effectiveView]);
 
   // Bar/pie REQUIRE a dimension to chart; a table can OPTIONALLY group by one (and trend
   // over time), so it too offers the group-by control. Big-number stays scalar.
@@ -117,14 +180,14 @@ export default function PanelBuilder({
   const [preview, setPreview] = useState<PanelQueryResponse | null>(null);
   const [previewErr, setPreviewErr] = useState('');
   useEffect(() => {
-    if (!draft || !view) { setPreview(null); return; }
+    if (!draft || !effectiveView) { setPreview(null); return; }
     let alive = true;
     setPreviewErr('');
-    postJson<PanelQueryResponse>('/api/dashboards/panel-query', { view, panel: draft })
+    postJson<PanelQueryResponse>('/api/dashboards/panel-query', { view: effectiveView, panel: draft })
       .then((d) => { if (alive) setPreview(d); })
       .catch((e: Error) => { if (alive) { setPreview(null); setPreviewErr(e.message); } });
     return () => { alive = false; };
-  }, [draft, view]);
+  }, [draft, effectiveView]);
 
   const toggleMetric = (member: string) =>
     setMetrics((ms) => (ms.includes(member) ? ms.filter((m) => m !== member) : [...ms, member]));
@@ -143,21 +206,32 @@ export default function PanelBuilder({
 
   return (
     <div className="agent-editor" style={{ marginTop: 4 }}>
-      <label className="comp-label">Governed metrics on <code>{view || '—'}</code> — click to chart (multi-select)</label>
+      {/* A panel charts ONE view — a calm caption naming the source dataset by its friendly
+          name (never the raw UPPER_SNAKE view id). Metrics are grouped My · Domain · Company
+          below, so the tier is explicit and there is no "governed" claim to make here. */}
+      <label className="comp-label">
+        {effectiveView
+          ? <>Charting from <strong>{friendlyView}</strong> — pick one or more metrics (multi-select)</>
+          : <>Pick one or more metrics to chart (multi-select)</>}
+      </label>
       {inView.length === 0 ? (
-        <div className="hint">No metrics on this view — go back to Define to pick another.</div>
+        <div className="hint">No metrics available on this dataset yet — go back to Define to pick another.</div>
       ) : (
-        <div className="chip-row" style={{ marginTop: 4 }}>
-          {inView.map((m) => (
-            <button
-              key={m.id}
-              className={`chip${metrics.includes(m.member) ? ' ok' : ''}`}
-              style={{ cursor: 'pointer' }}
-              onClick={() => toggleMetric(m.member)}
-              title={`Chart ${m.member}`}
-            >
-              {m.name} <span className="mono" style={{ opacity: 0.7 }}>{m.member}</span>
-            </button>
+        <div className="metric-picker" style={{ marginTop: 4 }}>
+          {sections.map((s) => (
+            <div key={s.key} className="metric-picker-group">
+              <div className="metric-picker-label">{s.label}</div>
+              <div className="chip-row">
+                {s.metrics.map((m) => (
+                  <MetricChip
+                    key={m.id}
+                    m={m}
+                    selected={metrics.includes(m.member)}
+                    onToggle={() => toggleMetric(m.member)}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}

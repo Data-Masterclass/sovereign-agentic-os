@@ -257,6 +257,13 @@ function enqueueActionEnable(e: ExposureSet, connName: string, requestedBy: stri
 export async function createExposureSet(connId: string, user: CurrentUser, input: ExposureInput): Promise<ExposureSet> {
   assertAdmin(user);
   const c = await getConnectionForUser(connId, user);
+  // m6: only a WAREHOUSE (Trino-federated) or an OPERATIONAL (api-batch entity) connection
+  // can back an exposure — those are the two the adopt/sync path actually understands. Any
+  // other template (a Drive, a SaaS tool surface, a plain API) has no adoptable tables, so
+  // refuse the create honestly rather than persisting an exposure nothing can adopt.
+  if (c.template !== 'warehouse' && !isOperationalTemplate(c.template)) {
+    throw withStatus(new Error('Only warehouse or operational connections can expose tables'), 400);
+  }
   const name = (input.name ?? '').trim();
   if (!name) throw withStatus(new Error('An exposure set needs a name'), 400);
   const tables = sanitizeTables(input.tables);

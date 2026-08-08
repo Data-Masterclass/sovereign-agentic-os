@@ -36,7 +36,7 @@ const data: TutorialDef = {
     {
       illustration: 'build',
       title: 'Or curate — compose a table',
-      body: 'A curated dataset opens on Composition: pick an explicit base dataset, join in others you can read, keep or rename columns, and add derived fields — then "Save Composition". Documentation and Checks follow. Curated is the only place datasets join; ingested data never does.',
+      body: 'A curated dataset opens on Composition: pick an explicit base dataset, join in others you can read — including your OWN datasets built to Silver/Gold, so you can compose entirely from your own data — keep or rename columns, and add derived fields — then "Save Composition". Documentation and Checks follow. Curated is the only place datasets join; ingested data never does.',
     },
     {
       illustration: 'governance',
@@ -91,7 +91,7 @@ const data: TutorialDef = {
       anchor: ANCHORS.data.harmonize,
       sandboxAnchor: ANCHORS.data.sandbox,
       title: 'Or curate — Composition',
-      body: 'A curated dataset opens on Composition: pick an explicit base dataset, join in others you can see, keep or rename columns, add derived fields, then "Save Composition". Curated datasets are the only place data joins; ingested data never does.',
+      body: 'A curated dataset opens on Composition: pick an explicit base dataset, join in others you can see — including your OWN datasets built to Silver/Gold, so a curated dataset can be composed from your own data — keep or rename columns, add derived fields, then "Save Composition". Curated datasets are the only place data joins; ingested data never does.',
       route: '/data',
     },
     {

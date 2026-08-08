@@ -3,7 +3,7 @@
 **Purpose:** Charts + tiles over GOVERNED metric members (Superset/Cube). A Domain/Company dashboard stays per-viewer RLS-scoped via the guest token.
 
 **Tools (MCP `dashboards`):**
-- `create_dashboard(name, view, charts[], id?)` — create (or replace, by `id`) a dashboard you own. Each chart references a governed metric member (e.g. `Orders.revenue`). Runs as you.
+- `create_dashboard(name, view, charts[], id?)` — create (or replace, by `id`) a dashboard you own. Each chart references a governed metric member (e.g. `Orders.revenue`) — from any tier you can see, including your OWN (My-tier) metrics; the tab's picker groups them My · Domain · Company. Runs as you.
 
 **Golden path:** `define_metric` in Metrics → `create_dashboard` here with ≥1 chart on that member → (a Builder/Admin later promotes/certifies it wider).
 

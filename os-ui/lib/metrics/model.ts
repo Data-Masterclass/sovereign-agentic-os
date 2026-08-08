@@ -166,6 +166,7 @@ export function measureFromForm(form: MetricForm, siblings?: Measure[]): Measure
     };
     if (form.format) m.format = form.format;
     if (form.description && form.description.trim()) m.description = form.description.trim();
+    setDimensions(m, form);
     return m;
   }
 
@@ -194,7 +195,17 @@ export function measureFromForm(form: MetricForm, siblings?: Measure[]): Measure
     m.drillMembers = form.drillMembers.filter((d) => d.trim());
   }
   if (form.description && form.description.trim()) m.description = form.description.trim();
+  setDimensions(m, form);
   return m;
+}
+
+/** Ride the author's ACTIVATED slice-by dimensions onto the measure (deduped, trimmed).
+ *  A curation hint that round-trips through Edit — kept OFF `sameMeasure`/`richKey` so it
+ *  never affects the form/agent/YAML convergence gate. Empty ⇒ field stays absent
+ *  (byte-stable for every metric defined before dimensions were persisted). */
+function setDimensions(m: Measure, form: MetricForm): void {
+  const dims = (form.dimensions ?? []).map((d) => d.trim()).filter((d, i, a) => d && a.indexOf(d) === i);
+  if (dims.length > 0) m.dimensions = dims;
 }
 
 /** Inverse of {@link filterSql} — parses back exactly the predicate shapes it emits. */
@@ -225,7 +236,9 @@ export function formFromMeasure(m: Measure): MetricForm {
     name: m.name,
     aggregation: isMeasureType(m.type) ? m.type : 'count',
     column: isRatio || m.type === 'count' ? '' : m.sql,
-    dimensions: [],
+    // Re-activate the slice-by dimensions the author saved, so Edit re-opens with the
+    // same dimensions selected (round-trips setDimensions above). Absent ⇒ none.
+    dimensions: m.dimensions ? [...m.dimensions] : [],
   };
   if (m.formula) {
     // Composite metric — the SOURCE formula rides on the measure, so it round-trips

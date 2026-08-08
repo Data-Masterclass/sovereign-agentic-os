@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { createConnection, listConnectionsForUser, type WarehouseCreateInput } from '@/lib/connections';
+import { createConnection, listConnectionsForUser, type WarehouseCreateInput, type AirflowCreateInput, type AtlassianCreateInput, type ODataCreateInput, type WorkdayCreateInput } from '@/lib/connections';
 import { userFacingTemplates, isUserFacingTemplate, templateByKey, type ConnectionTemplateKey } from '@/lib/connections';
 import { roleAtLeast } from '@/lib/core/session';
 import { providerCatalog, ensureHydrated as ensureOAuthAppsHydrated } from '@/lib/oauth/oauth-apps';
@@ -18,7 +18,7 @@ export const GET = withRoute(async ({ user, req }) => {
     // ?archived=1 additionally returns soft-archived connections (hidden by default).
     const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
     const connections = await listConnectionsForUser(user, { includeArchived });
-    // Only the three genuinely-working connectors are offered in the create picker.
+    // Only the wired connectors (USER_FACING_TEMPLATE_KEYS) are offered in the create picker.
     const templates = userFacingTemplates().map((t) => ({
       key: t.key,
       label: t.label,
@@ -77,7 +77,7 @@ export const POST = withRoute(async ({ user, req }) => {
     if (!name) return NextResponse.json({ error: 'A connection name is required' }, { status: 400 });
     if (!template) return NextResponse.json({ error: 'A connection template/type is required' }, { status: 400 });
     // The `warehouse` template is allowed ONLY when the operator enabled external
-    // connectors; every other create is limited to the three working connectors so no
+    // connectors; every other create is limited to the wired connectors so no
     // user can stand up a non-working mock connection through this surface.
     const isWarehouse = template === 'warehouse';
     if (isWarehouse && !config.externalConnectorsEnabled) {
@@ -106,6 +106,49 @@ export const POST = withRoute(async ({ user, req }) => {
       for (const [k, v] of Object.entries(rawFields)) fields[k] = String(v ?? '');
       warehouse = { platform, catalog, fields };
     }
+    // Parse the non-secret config blocks for the half-wired templates so their
+    // create surface can actually configure them (Airflow auth/allowlist, Atlassian
+    // account email, OData token URL, Workday RaaS report catalog). The lib
+    // re-normalizes/validates each block; secrets never travel in these.
+    let airflow: AirflowCreateInput | undefined;
+    if (template === 'airflow') {
+      const a = (body?.airflow && typeof body.airflow === 'object') ? (body.airflow as Record<string, unknown>) : {};
+      const authType = a.authType === 'basic' ? 'basic' : 'bearer';
+      const rawAllow = Array.isArray(a.dagAllowlist) ? (a.dagAllowlist as unknown[]) : [];
+      airflow = {
+        authType,
+        username: a.username != null ? String(a.username) : undefined,
+        dagAllowlist: rawAllow.map((d) => String(d ?? '')),
+      };
+    }
+    let atlassian: AtlassianCreateInput | undefined;
+    if (template === 'atlassian') {
+      const a = (body?.atlassian && typeof body.atlassian === 'object') ? (body.atlassian as Record<string, unknown>) : {};
+      const authKind = a.authKind === 'bearer' ? 'bearer' : 'basic';
+      atlassian = { authKind, email: a.email != null ? String(a.email) : undefined };
+    }
+    let odata: ODataCreateInput | undefined;
+    if (template === 'sap-odata' || template === 'odata-v4') {
+      const o = (body?.odata && typeof body.odata === 'object') ? (body.odata as Record<string, unknown>) : {};
+      const authType = o.authType === 'oauth-cc' ? 'oauth-cc' : 'basic';
+      odata = { authType, tokenUrl: o.tokenUrl != null ? String(o.tokenUrl) : undefined };
+    }
+    let workday: WorkdayCreateInput | undefined;
+    if (template === 'workday-raas') {
+      const w = (body?.workday && typeof body.workday === 'object') ? (body.workday as Record<string, unknown>) : {};
+      const rawReports = Array.isArray(w.reports) ? (w.reports as unknown[]) : [];
+      workday = {
+        reports: rawReports.map((r) => {
+          const row = (r && typeof r === 'object') ? (r as Record<string, unknown>) : {};
+          return {
+            key: row.key != null ? String(row.key) : undefined,
+            path: String(row.path ?? ''),
+            label: row.label != null ? String(row.label) : undefined,
+            incrementalParam: row.incrementalParam != null ? String(row.incrementalParam) : undefined,
+          };
+        }),
+      };
+    }
     const conn = await createConnection(user, {
       name,
       template,
@@ -114,6 +157,10 @@ export const POST = withRoute(async ({ user, req }) => {
       domain: body?.domain ? String(body.domain) : undefined,
       openApiSpec: body?.openApiSpec,
       warehouse,
+      airflow,
+      atlassian,
+      odata,
+      workday,
       // Optional default OM Service name for an om-catalog connection (non-secret).
       omService: isOmCatalog && body?.omService ? String(body.omService) : undefined,
     });

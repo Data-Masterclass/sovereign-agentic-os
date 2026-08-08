@@ -180,9 +180,13 @@ helper accordingly, as Airflow does:
 > `callConnectionTool` — this function is only reached once a call is allowed."*
 
 Governance ladder for the connection artifact itself: **Personal → Shared**
-(Builder/domain-admin gate via `promote_connection`) → **Certified** (Admin).
-Personal OAuth connections are connectable by any user; SHARED service-credential
-templates require a Builder/Admin to create (`isPersonalConnectable`).
+(**Domain-admin** gate via `promote_connection`) → **Certified** (Admin). The
+Personal→Shared floor for a **connection** is `domain_admin` — this is stricter than
+the generic Personal→Shared approve floor and is the security-correct floor the code
+enforces (`promoteConnection` / the `promote_connection` MCP tool are `domain_admin`);
+a Builder files the request and hands off. Personal OAuth connections are connectable
+by any user; SHARED service-credential templates require a Builder/Admin to create
+(`isPersonalConnectable`).
 
 **PASS:** reads `Read`; writes `Write-approval` (or `Write-bounded` with explicit
 limits); deletes `Blocked`; the preset ships safe. **FAIL:** a write auto-allowed;

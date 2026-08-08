@@ -40,6 +40,11 @@ export type MetricSummary = {
   tier: DashTier;
   owner: string;
   type: string;
+  /** COMPOSITE metric (a formula over other metrics). Shipped by /api/metrics — surfaced
+   *  in the panel picker's hover details so a formula metric reads honestly. */
+  composite?: boolean;
+  /** Plain-language "what does this metric mean?" — shown in the picker's hover popover. */
+  description?: string;
 };
 export type MetricGroups = { mine: MetricSummary[]; domain: MetricSummary[]; marketplace: MetricSummary[] };
 
@@ -150,6 +155,42 @@ export function slug(s: string): string {
 export function flatMetrics(g: MetricGroups | null): MetricSummary[] {
   if (!g) return [];
   return [...g.mine, ...g.domain, ...g.marketplace];
+}
+
+/** The tier→scope buckets for the panel picker, in OS scope order (My · Domain · Company).
+ *  Pure + presentation-only: it re-slices an already-authz'd `inView` list by the tier each
+ *  metric carries, so the picker can render My / Domain / Company sections. An empty bucket
+ *  is returned empty (the caller renders nothing for it — no empty column headers). */
+export type MetricTierBuckets = { mine: MetricSummary[]; domain: MetricSummary[]; marketplace: MetricSummary[] };
+export function groupMetricsByTier(list: MetricSummary[]): MetricTierBuckets {
+  return {
+    mine: list.filter((m) => m.tier === 'personal'),
+    domain: list.filter((m) => m.tier === 'domain'),
+    marketplace: list.filter((m) => m.tier === 'marketplace'),
+  };
+}
+/** The picker's My / Domain / Company sections, in order — each with its scope label and rows.
+ *  Empty sections are dropped so the picker never shows a bare header. */
+export function metricTierSections(list: MetricSummary[]): { key: keyof MetricTierBuckets; label: string; metrics: MetricSummary[] }[] {
+  const b = groupMetricsByTier(list);
+  return (
+    [
+      { key: 'mine' as const, label: 'My', metrics: b.mine },
+      { key: 'domain' as const, label: 'Domain', metrics: b.domain },
+      { key: 'marketplace' as const, label: 'Company', metrics: b.marketplace },
+    ]
+  ).filter((s) => s.metrics.length > 0);
+}
+
+/** The FRIENDLY dataset name for a Cube view id — the panel builder charts one view, and
+ *  every metric on that view shares its dataset, so the first matching metric's
+ *  `datasetName` is the human name to show instead of the UPPER_SNAKE view identifier.
+ *  Falls back to the raw view id only if no metric on that view is available. */
+export function viewDatasetName(list: MetricSummary[], view: string): string {
+  if (!view) return '';
+  const viewOf = (member: string) => (member.includes('.') ? member.slice(0, member.indexOf('.')) : member);
+  const hit = list.find((m) => viewOf(m.member) === view);
+  return hit?.datasetName ?? view;
 }
 
 // Dropdown order: pie + bar first (the most-reached-for panel shapes), then the rest.

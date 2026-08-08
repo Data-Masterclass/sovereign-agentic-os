@@ -94,6 +94,24 @@ export function assetTarget(d: Dataset): string {
   return `iceberg.${domainSchema(d.domain)}.${layer}_${physicalSlug(d)}`;
 }
 
+/**
+ * The physical FQN of a dataset being REUSED as a curated compose / gold-join SOURCE.
+ * Identical to {@link assetTarget} for a governed asset/product (the domain copy), but a
+ * PERSONAL (My-tier) dataset physically lives ONLY in its owner's personal lane — never
+ * the domain schema — so it MUST resolve there or the join hits TABLE_NOT_FOUND. Personal
+ * sources are owner-only (`canView`), so the caller composing the dataset IS `d.owner`,
+ * and the personal-lane read runs AS that uid (the gold-join route flips the Trino
+ * principal to the owner whenever the target schema is `personal_*`, which a personal
+ * curated dataset always is). Asset/product resolution is byte-identical to before.
+ */
+export function reuseSourceFqn(d: Dataset): string {
+  const layer: Layer = d.versions.gold.built ? 'gold' : 'silver';
+  if (d.tier === 'dataset') {
+    return `iceberg.${personalSchema(d.owner)}.${layer}_${physicalSlug(d)}`;
+  }
+  return assetTarget(d);
+}
+
 /** The product FQN a certified asset is listed/queried under. */
 export function productTarget(d: Dataset): string {
   const layer = d.versions.gold.built ? 'gold' : 'silver';

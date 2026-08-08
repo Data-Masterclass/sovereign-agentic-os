@@ -34,6 +34,8 @@ export type Conn = {
   auth: 'oauth' | 'service';
   health: 'healthy' | 'needs-reconnect' | 'untested';
   dataUsage: 'bronze' | 'files' | null;
+  /** How that data-source registration ran: 'offline-mock' (fabricated counts) vs 'live'. */
+  dataUsageMode?: 'live' | 'offline-mock';
   endpoint: string;
   principal: string;
   owner: string;

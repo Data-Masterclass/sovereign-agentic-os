@@ -33,7 +33,7 @@ import {
 import { transparencyGate, gateReason } from './transparency.ts';
 import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml, metricSqlReady, metricCubeReady } from './metrics.ts';
 import { SEMANTIC_ARTIFACT, scaffoldSemanticYaml } from './semantic.ts';
-import { assetTarget, productTarget, personalSchema, domainSchema, physicalSlug, versionTarget } from './store-fqn.ts';
+import { assetTarget, productTarget, reuseSourceFqn, personalSchema, domainSchema, physicalSlug, versionTarget } from './store-fqn.ts';
 import { config } from '../core/config.ts';
 import { osMirror } from '../infra/os-mirror.ts';
 import { type ArtifactVersion, versionLog } from '../core/versioning.ts';
@@ -569,7 +569,11 @@ export function listJoinable(user: Principal, excludeId?: string): JoinableDatas
   for (const rec of ds().store.values()) {
     const d = parseDataset(rec.yaml);
     if (d.id === excludeId) continue;
-    if (d.tier === 'dataset') continue; // private, owner-only — not reusable
+    // Personal (My-tier) datasets are reusable ONLY by their OWNER — you may compose a
+    // curated dataset from your OWN private datasets (no cross-user exposure; the join
+    // reads your personal lane AS you), but never from someone else's owner-only data.
+    // Shared (asset) / Company (product) tiers stay open to everyone who canView.
+    if (d.tier === 'dataset' && d.owner !== user.id) continue;
     if (!canView(d, user)) continue; // the hard visibility gate
     // ACTIVE-DOMAIN NARROWING (the same inScope gate the main list applies to all
     // tiers): canView alone leaks across domains — an owner/admin passes it for their
@@ -580,7 +584,7 @@ export function listJoinable(user: Principal, excludeId?: string): JoinableDatas
     // dropdown while operating in agentic-leader.)
     if (d.domain && !user.domains.includes(d.domain)) continue;
     if (!d.versions.gold.built && !d.versions.silver.built) continue; // must be materialized
-    out.push({ id: d.id, name: d.name, domain: d.domain, tier: d.tier, fqn: assetTarget(d), columns: d.columns.map((c) => c.name) });
+    out.push({ id: d.id, name: d.name, domain: d.domain, tier: d.tier, fqn: reuseSourceFqn(d), columns: d.columns.map((c) => c.name) });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -1176,8 +1180,18 @@ export function defineMeasure(id: string, user: Principal, measure: Measure): Da
   // governed Trino SQL run AS the viewer. Refuse a dataset with no built Gold honestly.
   const ready = metricSqlReady(d);
   if (!ready.ok) fail(ready.message ?? 'This dataset is not ready for a metric', 400);
-  if (d.measures.some((m) => m.name === measure.name)) fail(`Measure '${measure.name}' already defined`, 409);
-  d.measures.push(measure);
+  // Define is an UPSERT keyed by the measure name (a metric's frozen physical identity is
+  // its Cube member `${View}.${name}` — there is never two same-named measures on one
+  // dataset). A re-save of an existing measure name is an EDIT of THAT metric: replace it
+  // IN PLACE (preserving order + its DISPLAY `label`, which the define form never carries),
+  // never a false "already defined" 409. A new name appends.
+  const at = d.measures.findIndex((m) => m.name === measure.name);
+  if (at >= 0) {
+    const existing = d.measures[at];
+    d.measures[at] = existing.label ? { ...measure, label: existing.label } : measure;
+  } else {
+    d.measures.push(measure);
+  }
   // The portable MetricFlow-style semantic declaration is ALWAYS emitted (it is served as
   // Trino SQL, works on personal gold). The cube_dbt model + dbt exposure are CUBE artifacts
   // — emit them ONLY when the dataset is cube-ready (governed), never on personal gold where
@@ -1191,7 +1205,7 @@ export function defineMeasure(id: string, user: Principal, measure: Measure): Da
     artifacts[EXPOSURE_ARTIFACT] = scaffoldExposureYaml(d);
   }
   rec.artifacts = artifacts;
-  persist(rec, d, { author: user.id, summary: `define metric ${measure.name}` });
+  persist(rec, d, { author: user.id, summary: `${at >= 0 ? 'update' : 'define'} metric ${measure.name}` });
   return d;
 }
 
