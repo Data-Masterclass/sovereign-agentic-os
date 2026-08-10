@@ -2,7 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { currentUser } from '@/lib/core/auth';
+import { requireUser } from '@/lib/core/auth';
+import { errorResponse } from '@/lib/core/route-server';
 import { decide, ensureHydrated, getApproval, listApprovals, recordEffect } from '@/lib/governance/approvals';
 import { canApprove, canSee, roleLabel } from '@/lib/governance/roles';
 import { applyEffect } from '@/lib/governance/effects';
@@ -21,8 +22,13 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET() {
   await ensureHydrated();
-  const user = await currentUser();
-  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  // requireUser() (not currentUser()) so the first-run credential gate applies.
+  let user;
+  try {
+    user = await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
   const visible = listApprovals().filter((a) => canSee(user, a));
   return NextResponse.json({
     approvals: visible.map((a) => ({ ...a, mayApprove: canApprove(user, a) })),
@@ -32,8 +38,13 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const user = await currentUser();
-  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  // requireUser() (not currentUser()) so the first-run credential gate applies.
+  let user;
+  try {
+    user = await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
 
   let body: { id?: string; decision?: 'approve' | 'reject'; remember?: boolean };
   try {

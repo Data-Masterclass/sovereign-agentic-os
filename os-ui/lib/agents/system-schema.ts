@@ -42,7 +42,7 @@ export type Capability = 'Off' | 'Read' | 'Write-approval' | 'Write-bounded' | '
  * this; knowledge/metrics/connections have no layers.
  */
 export type DataLayer = 'bronze' | 'silver' | 'gold';
-export const DATA_LAYERS: DataLayer[] = ['bronze', 'silver', 'gold'];
+const DATA_LAYERS: DataLayer[] = ['bronze', 'silver', 'gold'];
 
 /**
  * A FOLDER grant target — grants EVERY item currently under `path` in the given

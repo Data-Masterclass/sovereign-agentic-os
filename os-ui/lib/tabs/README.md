@@ -45,7 +45,7 @@ tunes assistant behaviour for that tab without a code change.
 - **`GUIDE_PATHS`** — exhaustive list of guide slugs available as
   `sovereign-os://guide/<path>` MCP resources.
 - **`GuidePath`** type / **`isGuidePath(x)`** predicate.
-- **`loadGuide(path)`** — reads `lib/tabs/guides/<path>.md` (cached). Missing file → empty
+- **`loadGuide(path)`** — reads `lib/tabs/guides/<path>.guide.md` (cached). Missing file → empty
   string.
 - **`guideTitle(path)`** — human title for a guide path (used in MCP resource listings).
 

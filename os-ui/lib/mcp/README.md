@@ -12,9 +12,10 @@ calls; there is no privileged side-channel. The HTTP shell lives in
 
 ## Golden path
 
-1. **Connect** — the user imports the MCP URL into their AI client. `oauth.ts` runs
-   the Ory-based OAuth 2.1 flow; `token.ts` mints a short-lived bearer token that
-   encodes identity + role.
+1. **Connect** — the user imports the MCP URL into their AI client. `oauth.ts` is the
+   **OS-native OAuth 2.1 Authorization Server** (AS + Resource Server on one origin, no
+   external IdP); `token.ts` mints a **long-lived** bearer token (no `exp` — a one-time
+   copy-paste import) that encodes identity + role.
 2. **Initialize** — the client sends `initialize`; `buildInstructions()` returns
    tab-scoped usage guidance. `toolsForTab` + `listToolsForRole` filter the visible
    tool set to what this role may call on this tab.
@@ -40,11 +41,10 @@ Import via `@/lib/mcp/server` — no internal files directly.
 - **`resources.ts`** — `RESOURCES`, `resourcesForTab`, `templatesForTab`.
 - **`prompts.ts`** — `PROMPTS`, `renderPrompt`, `promptsForTab`.
 - **`instructions.ts`** — `buildInstructions(tab)` for `initialize.instructions`.
-- **`oauth.ts`** — MCP OAuth 2.1 token flow (Ory-backed).
-- **`token.ts`** — bearer token mint + verify.
+- **`oauth.ts`** — OS-native MCP OAuth 2.1 Authorization Server (no external IdP).
+- **`token.ts`** — long-lived bearer token mint + verify.
 - **`pending.ts`** — pending-approval queue for `requires_approval` decisions.
 - **`http.ts`** — Streamable-HTTP transport utilities.
-- **`tabs.ts`** — tab-scoped tool visibility map.
 
 Test coverage: `mcpv2-p0.test.ts` (promotion seam invariant), `wave-a.test.ts`,
 `wave-b.test.ts`, and per-domain test files.

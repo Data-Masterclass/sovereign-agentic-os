@@ -15,7 +15,6 @@ import {
   grantedToolExecutor,
   grantedLayerFor,
   resolveFolderGrants,
-  writesAreHeld,
   writeTargetScope,
   holdDecision,
   summarizeWriteOutcomes,
@@ -276,13 +275,6 @@ test('holdDecision: read-only holds all; personal never held; domain→domain_ad
   assert.deepEqual(holdDecision('full-in-scope', 'request_promotion'), { held: true, approverRole: 'domain_admin' });
   assert.deepEqual(holdDecision('read-propose', 'create_pillar', { scope: 'domain' }), { held: true, approverRole: 'domain_admin' });
   assert.deepEqual(holdDecision('read-propose', 'create_pillar', { scope: 'tenant' }), { held: true, approverRole: 'admin' });
-});
-
-test('writesAreHeld: only read-only holds unconditionally (scope-aware supersedes)', () => {
-  assert.equal(writesAreHeld('read-only'), true);
-  assert.equal(writesAreHeld('read-propose'), false);
-  assert.equal(writesAreHeld('read-bounded'), false);
-  assert.equal(writesAreHeld('full-in-scope'), false);
 });
 
 test('executor: read-propose does NOT hold personal create/upload/author/define/connection', async () => {

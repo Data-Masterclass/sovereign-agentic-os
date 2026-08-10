@@ -20,13 +20,18 @@ import assert from 'node:assert/strict';
 import { filesRetrieve } from './retrieve.ts';
 import { indexFile, __resetIndex, type ChunkDoc } from './index-store.ts';
 import { mockEmbed } from './embed.ts';
+import { config } from '@/lib/core/config';
 
 const realFetch = globalThis.fetch;
+const realFailOpen = config.opaFailOpen;
+// OPA + OpenSearch unreachable → the offline local OPA mirror + in-process index.
+// That mirror is gated behind OPA_FAIL_OPEN (fail-closed by default), so enable it.
 beforeEach(() => {
   __resetIndex();
+  config.opaFailOpen = true;
   globalThis.fetch = (async () => { throw new Error('offline'); }) as typeof fetch;
 });
-afterEach(() => { globalThis.fetch = realFetch; });
+afterEach(() => { globalThis.fetch = realFetch; config.opaFailOpen = realFailOpen; });
 
 function doc(over: {
   fileId: string; text: string; name?: string;

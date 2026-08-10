@@ -3,7 +3,8 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import type { McpTool, JsonSchema } from './server';
+import type { McpTool } from './server';
+import { fail, str } from './discovery-common';
 
 // --- The EXACT governed lib fns the Strategy UI + /api/strategy routes call ----
 import {
@@ -51,13 +52,6 @@ import { STUB_BET_CATALOGUE } from '@/lib/strategy/bets-bridge';
  */
 
 const VALID_BET_IDS = STUB_BET_CATALOGUE.map((b) => b.id);
-
-function fail(message: string, status: number): never {
-  const e = new Error(message) as Error & { status?: number };
-  e.status = status;
-  throw e;
-}
-const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
 // ================================ READ =========================================
 export const strategyReadTools: McpTool[] = [
@@ -413,5 +407,3 @@ export const strategyWriteTools: McpTool[] = [
     },
   },
 ];
-
-export const STRATEGY_TOOLS: McpTool[] = [...strategyReadTools, ...strategyWriteTools];

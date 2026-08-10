@@ -45,6 +45,8 @@ const TITLES: Record<McpTab, string> = {
   marketplace: 'Marketplace',
   strategy: 'Strategy',
   monitoring: 'Monitoring',
+  // Intentionally ungrounded: there is no `operating-manual.context.md`, so
+  // loadTabContext returns '' for it by design (it is a read-only reference tab).
   'operating-manual': 'Operating Model',
 };
 export function tabTitle(tab: McpTab): string {

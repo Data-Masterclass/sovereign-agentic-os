@@ -113,9 +113,3 @@ export function vendorStack(templateKey: string): StackId {
 export function warehousePlatformStack(platform: string): StackId {
   return WAREHOUSE_PLATFORM_STACK[platform] ?? 'other';
 }
-
-/** Convenience: look up the full Stack object for a template key. */
-export function stackForTemplate(templateKey: string): Stack {
-  const id = vendorStack(templateKey);
-  return STACKS.find((s) => s.id === id) ?? STACKS[STACKS.length - 1];
-}

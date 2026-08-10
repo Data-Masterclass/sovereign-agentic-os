@@ -15,7 +15,6 @@ import {
   inferFields,
   extractReportRows,
   reportUrl,
-  sanitizeReports,
   runWorkdaySlice,
   type WdConn,
 } from './workday-raas.ts';
@@ -32,16 +31,6 @@ test('extractReportRows: Report_Entry array (RaaS format=json)', () => {
   assert.deepEqual(extractReportRows({ Report_Entry: [{ a: 1 }] }), [{ a: 1 }]);
   assert.deepEqual(extractReportRows([{ b: 2 }]), [{ b: 2 }]);
   assert.deepEqual(extractReportRows({ nope: 'x' }), []);
-});
-
-test('sanitizeReports: slugifies keys, requires path, dedupes', () => {
-  const r = sanitizeReports([
-    { key: 'Headcount', path: '/reports/headcount' },
-    { path: '/reports/turnover' }, // key from last path segment
-    { key: 'Headcount', path: '/dupe' }, // dedupe by key
-    { label: 'no path' }, // dropped
-  ]);
-  assert.deepEqual(r.map((x) => x.key), ['headcount', 'turnover']);
 });
 
 test('reportUrl: forces format=json and windows on the configured date prompt', () => {

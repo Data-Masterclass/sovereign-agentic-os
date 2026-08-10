@@ -9,7 +9,6 @@ import {
   getFile,
   createFile,
   moveFile,
-  setTags,
   setDocs,
   renameFile,
   addVersion,
@@ -127,8 +126,7 @@ test('a no-text upload (binary the mock cannot parse) is stored, not falsely sea
 test('move + retag + docs edit the single source for the owner only', () => {
   const a = createFile(amir, { name: 'x.pdf', text: 'x' });
   moveFile(a.id, amir, '/contracts/2026');
-  setTags(a.id, amir, ['contract', 'acme']);
-  setDocs(a.id, amir, { description: 'the acme contract' });
+  setDocs(a.id, amir, { description: 'the acme contract', tags: ['contract', 'acme'] });
   const got = getFile(a.id, amir);
   assert.equal(got.asset.folder, '/contracts/2026');
   assert.deepEqual(got.asset.tags, ['contract', 'acme']);
@@ -163,7 +161,7 @@ test('the folder-move gate: a PRIVATE file is owner-only (no admin reaches it)',
 
 test('a non-owner cannot edit a private file', () => {
   const a = createFile(amir, { name: 'y.pdf', text: 'y' });
-  assert.throws(() => setTags(a.id, kenji, ['nope']), /permitted|not found|403|404/i);
+  assert.throws(() => setDocs(a.id, kenji, { tags: ['nope'] }), /permitted|not found|403|404/i);
 });
 
 test('re-upload bumps the version and keeps history', () => {
@@ -384,22 +382,10 @@ test('getFile (download gate) blocks a user outside the domain from a domain ass
 
 // ---------------------------------------- archive / delete / version history --
 
-test('snapshot-on-edit: a setTags call creates a version entry (prior state)', () => {
-  const a = createFile(amir, { name: 'snap.pdf', tags: ['old'], text: 'body' });
-  setTags(a.id, amir, ['new']);
-  const vList = listFileVersions(a.id, amir);
-  assert.ok(vList.length >= 1, 'at least one version after edit');
-  assert.equal(vList[0].summary, 'edit tags');
-  assert.equal(vList[0].author, 'amir');
-  // The captured state is the PRIOR state (tags: ['old'] is in the yaml)
-  const prior = vList[0].state as { yaml: string };
-  assert.ok(prior.yaml.includes('old'), 'prior state contains the old tag');
-});
-
 test('version list is newest-first', () => {
   const a = createFile(amir, { name: 'order.pdf', text: 'v1' });
   moveFile(a.id, amir, '/a');
-  setTags(a.id, amir, ['x']);
+  setDocs(a.id, amir, { tags: ['x'] });
   setDocs(a.id, amir, { description: 'desc' });
   const vList = listFileVersions(a.id, amir);
   assert.ok(vList.length >= 3, 'three edits → three versions');

@@ -5,7 +5,7 @@ import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { McpTool } from './server';
 import { pendingHandle, whoCanApprove } from './pending';
-import { decide, getApproval, listApprovals, recordEffect, type Approval, type ApprovalStatus, type ApprovalKind } from '@/lib/governance/approvals';
+import { decide, getApproval, listApprovals, recordEffect, type Approval, type ApprovalStatus } from '@/lib/governance/approvals';
 import { canApprove, canSee, roleLabel } from '@/lib/governance/roles';
 import { applyEffect } from '@/lib/governance/effects';
 import { buildEffectDeps, fileArtifactCertification, isLadderKind, type LadderKind } from '@/lib/governance/ladder';
@@ -336,6 +336,3 @@ export const governanceTools: McpTool[] = [
     },
   },
 ];
-
-// Keep the ApprovalKind type referenced (used in schema doc + tests via wire).
-export type GovernanceApprovalKind = ApprovalKind;

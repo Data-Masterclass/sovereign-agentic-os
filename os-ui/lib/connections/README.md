@@ -29,7 +29,7 @@ creds and governance: an **agent tool** (governed tool calls) and a **data sourc
 
 Import the tab through `@/lib/connections` (`index.ts`) — never its internal files.
 Client components that must avoid the `server-only` store deep-path
-`@/lib/connections/schema` and `@/lib/connections/connectors`.
+`@/lib/connections/schema`.
 
 - **`store.ts`** — the governed adapter (`server-only`): create / test / capabilities /
   grant / tool-call / data-usage / promote / lifecycle / versions, plus OAuth + Notion
@@ -37,8 +37,6 @@ Client components that must avoid the `server-only` store deep-path
 - **`schema.ts`** — pure types + safe-preset **templates** (`Connection`,
   `CapabilityMode`, `ConnectionTemplateKey`, `templateByKey`, `userFacingTemplates`,
   `isExposed`, `CAPABILITY_MODES`, …).
-- **`connectors.ts`** — the static connector catalogue (`CONNECTORS`,
-  `CONNECTOR_CATEGORIES`) for the picker.
 - **`connection-adapters.ts`** — the per-connector adapter interface + the launch
   adapters (`adapterFor`, `auth · test · generateTools · compilePolicy · sync`).
 - **`egress-requests.ts`** — Builder-request → Admin-approve for new endpoints +

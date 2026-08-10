@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import yaml from 'js-yaml';
-import { RESERVED_FILES, splitFrontmatter, type OkfBundle } from './okf-model.ts';
+import { RESERVED_FILES, splitFrontmatter, basename, type OkfBundle } from './okf-model.ts';
 
 /**
  * OKF v0.2 conformance validation — runs on every export AND every import (locked
@@ -33,11 +33,6 @@ export type OkfValidationResult = {
 
 function isMarkdown(path: string): boolean {
   return path.toLowerCase().endsWith('.md');
-}
-
-function basename(path: string): string {
-  const i = path.lastIndexOf('/');
-  return i === -1 ? path : path.slice(i + 1);
 }
 
 function isReserved(path: string): boolean {

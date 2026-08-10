@@ -135,3 +135,20 @@ export function clampAccess(level: AccessLevel, cap: AccessCap): AccessLevel {
   if (cap.locked) return cap.ceiling;
   return LEVEL_RANK[level] > LEVEL_RANK[cap.ceiling] ? cap.ceiling : level;
 }
+
+/**
+ * The ONE source of truth for the agent-system safety-preset picker copy, shared by
+ * RuntimeSelector and SimpleBuilder (they had diverging, self-contradictory copies).
+ *
+ * The `read-propose` consequence reflects the ACTUAL runtime enforcement: this preset
+ * maps to the `Write-approval` capability (see LEVEL_TO_CAPABILITY above and
+ * lib/infra/capability-compiler.ts `decide`), which HOLDS every write for a human in
+ * Governance — there is NO scope-based carve-out that lets My-scope writes run
+ * directly. So the honest copy is "a human approves each write" for ALL writes.
+ */
+export const AGENT_SAFETY_PRESETS: { id: SafetyPreset; label: string; consequence: string }[] = [
+  { id: 'read-only',     label: 'Read-only',             consequence: 'The agent can look but never change anything.' },
+  { id: 'read-propose',  label: 'Read + propose',        consequence: 'The agent proposes every change and a human approves each one before it runs — nothing is written directly.' },
+  { id: 'read-bounded',  label: 'Read + bounded writes', consequence: 'The agent can write inside its own workspace, nowhere else.' },
+  { id: 'full-in-scope', label: 'Full in-scope',         consequence: 'The agent may write anywhere its grants allow — use with care.' },
+];

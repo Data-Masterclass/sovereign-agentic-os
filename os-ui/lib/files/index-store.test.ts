@@ -3,7 +3,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __resetIndex, indexFile, removeFromIndex, indexSize, indexedHashes, priorVectorsByHash } from './index-store.ts';
+import { __resetIndex, indexFile, removeFromIndex, indexSize, priorVectorsByHash } from './index-store.ts';
 import type { ChunkDoc } from './index-store.ts';
 
 function doc(chunkId: string, fileId: string, hash = 'h1'): ChunkDoc {
@@ -25,13 +25,6 @@ test('removeFromIndex removes only the given fileId', () => {
   indexFile([doc('c2', 'f2')], 'f2');
   removeFromIndex('f1');
   assert.equal(indexSize(), 1);
-});
-
-test('indexedHashes returns hashes for a file', () => {
-  indexFile([doc('c1', 'f1', 'abc'), doc('c2', 'f1', 'def')], 'f1');
-  const hashes = indexedHashes('f1');
-  assert.ok(hashes.has('abc'));
-  assert.ok(hashes.has('def'));
 });
 
 test('priorVectorsByHash maps hash → vector', () => {

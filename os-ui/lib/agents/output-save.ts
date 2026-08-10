@@ -18,7 +18,7 @@ import type { DeclaredOutput } from './system-schema.ts';
  * the UI says so. Conservative: at least two non-empty lines, a consistent delimiter
  * (comma / tab / semicolon) with ≥2 columns, and no markdown fence noise on the header.
  */
-export function looksTabular(text: string): boolean {
+function looksTabular(text: string): boolean {
   const lines = text.trim().split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
   if (lines.length < 2) return false;
   const header = lines[0].replace(/^`+|`+$/g, '');

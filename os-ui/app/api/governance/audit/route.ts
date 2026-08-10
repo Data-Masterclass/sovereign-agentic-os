@@ -2,7 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { currentUser } from '@/lib/core/auth';
+import { requireUser } from '@/lib/core/auth';
+import { errorResponse } from '@/lib/core/route-server';
 import { verifyChain } from '@/lib/governance/audit';
 import { ensureHydrated, listAudit } from '@/lib/platform-admin/audit';
 
@@ -56,8 +57,13 @@ function normalise(e: {
 }
 
 export async function GET(req: Request) {
-  const user = await currentUser();
-  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  // requireUser() (not currentUser()) so the first-run credential gate applies.
+  let user;
+  try {
+    user = await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
   await ensureHydrated();
 
   const url = new URL(req.url);

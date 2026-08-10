@@ -3,7 +3,8 @@
  */
 'use client';
 
-import type { Runtime, SafetyPreset, System } from '@/lib/agents/system-schema';
+import type { Runtime, System } from '@/lib/agents/system-schema';
+import { AGENT_SAFETY_PRESETS } from '@/lib/agents/access-levels';
 
 /**
  * Runtime + safety-preset selector — a real choice moment for course participants.
@@ -36,12 +37,9 @@ const RUNTIMES: {
   },
 ];
 
-const PRESETS: { id: SafetyPreset; label: string; consequence: string }[] = [
-  { id: 'read-only',      label: 'Read-only',            consequence: 'The agent can look but never change anything.' },
-  { id: 'read-propose',   label: 'Read + propose',       consequence: 'The agent suggests changes — a human approves each one before it runs.' },
-  { id: 'read-bounded',   label: 'Read + bounded writes', consequence: 'The agent can write inside its own workspace, nowhere else.' },
-  { id: 'full-in-scope',  label: 'Full in-scope',        consequence: 'The agent may write anywhere its grants allow — use with care.' },
-];
+// The safety-preset copy lives in ONE shared const (lib/agents/access-levels.ts)
+// so RuntimeSelector and SimpleBuilder can never drift or contradict each other.
+const PRESETS = AGENT_SAFETY_PRESETS;
 
 export default function RuntimeSelector({
   system,

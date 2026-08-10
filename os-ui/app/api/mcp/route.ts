@@ -10,8 +10,9 @@ export const dynamic = 'force-dynamic';
  *
  * Transport: MCP over Streamable HTTP (the standard Claude & ChatGPT remote-MCP
  * support), JSON-RPC 2.0. A client POSTs a single request (or a batch) and gets a
- * single `application/json` response — we hold no long-lived stream because every
- * OS tool is request/response, so a GET SSE stream is not offered (405).
+ * single `application/json` response. GET serves the idle server→client SSE stream
+ * (hosted Claude opens it on connect and treats a 405 as fatal), which stays quiet
+ * because every OS tool is request/response.
  *
  * Auth: an OS-issued per-user bearer token (Authorization: Bearer <token>),
  * resolved to the LIVE delegated identity. Unauthenticated → HTTP 401 + a

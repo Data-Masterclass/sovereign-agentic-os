@@ -25,10 +25,11 @@ import type { Provenance } from '@/lib/knowledge/chunk';
  * `allow / deny / requires_approval` decision the agent layer needs (the data
  * spine only needs allow/deny).
  *
- *   1. OPA authorization — we ask the live decision API for the effect. OPA is
- *      off locally, so we fail OPEN with an explicit `opa-unreachable` marker and
- *      a built-in policy mirror (so the teaching flow + the approval gate still
- *      work offline, honestly reported).
+ *   1. OPA authorization — we ask the live decision API for the effect. When OPA
+ *      is unreachable we FAIL CLOSED (deny) with an explicit `opa-unreachable`
+ *      marker — consistent with the data spine (`lib/infra/governed.ts`) — so an
+ *      OPA outage cannot silently open agent authz. The offline-mock teaching
+ *      flow can opt into the built-in policy mirror with OPA_FAIL_OPEN=true.
  *   2. Best-effort Langfuse trace + an in-process ring buffer so every governed
  *      tool call is auditable in Monitoring even with no live Langfuse.
  */
@@ -121,6 +122,18 @@ function localDecision(principal: string, tool: ToolName): Authz {
 }
 
 /**
+ * The OPA-unreachable fallback. FAIL CLOSED (deny) by default — an OPA outage
+ * must not silently open agent authz — mirroring the data spine
+ * (`lib/infra/governed.ts:48`, gated on the SAME `config.opaFailOpen`). Only when
+ * `OPA_FAIL_OPEN=true` (the offline-mock teaching flow) do we consult the
+ * built-in local grant mirror.
+ */
+function unreachableDecision(principal: string, tool: ToolName): Authz {
+  if (config.opaFailOpen) return localDecision(principal, tool);
+  return { effect: 'deny', policy: 'opa-unreachable', reason: `OPA unreachable — failing closed (deny) for ${principal}/${tool}` };
+}
+
+/**
  * Ask OPA for the rich decision (`allow` / `deny` / `requires_approval`). Falls
  * back to the built-in mirror, clearly marked, when OPA is off.
  */
@@ -130,7 +143,7 @@ export async function authorize(principal: string, tool: ToolName): Promise<Auth
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ input: { principal, tool } }),
   });
-  if (!res) return localDecision(principal, tool);
+  if (!res) return unreachableDecision(principal, tool);
   try {
     const data = (await res.json()) as { result?: { effect?: Effect; reason?: string } };
     const effect = data?.result?.effect;
@@ -138,10 +151,10 @@ export async function authorize(principal: string, tool: ToolName): Promise<Auth
     if (effect === 'requires_approval')
       return { effect, policy: 'opa-requires-approval', reason: data.result?.reason ?? 'approval required' };
     if (effect === 'deny') return { effect, policy: 'opa-deny', reason: data.result?.reason ?? 'denied' };
-    // Old OPA without the decision rule -> use the mirror but keep it honest.
-    return localDecision(principal, tool);
+    // Old OPA without the decision rule -> treat as unreachable (fail-closed unless OPA_FAIL_OPEN).
+    return unreachableDecision(principal, tool);
   } catch {
-    return localDecision(principal, tool);
+    return unreachableDecision(principal, tool);
   }
 }
 

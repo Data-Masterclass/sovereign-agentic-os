@@ -264,7 +264,7 @@ export async function discoverODataEntities(
   const conn = await resolveODataConn(connId, user);
   const meta = await fetchMetadata(conn);
   if (!meta.ok) return { ok: false, schemas: [], tables: [], schema: null, detail: meta.reason };
-  const pseudo = meta.data.version === 'V2' ? 'odata' : 'odata';
+  const pseudo = 'odata';
   return {
     ok: true,
     schemas: [pseudo],

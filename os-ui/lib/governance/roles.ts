@@ -127,11 +127,6 @@ export function principalFor(actor: Pick<Actor, 'id'>): string {
   return `user:${actor.id}`;
 }
 
-/** Does `actor` have at least `min` privilege? */
-export function hasRole(actor: Actor, min: Role): boolean {
-  return roleRank(actor.role) >= roleRank(min);
-}
-
 /** Builder+/Domain admin may act within a domain; Admin spans the tenant. */
 export function inScope(actor: Actor, domain: string, scope: Scope): boolean {
   if (actor.role === 'admin') return true;

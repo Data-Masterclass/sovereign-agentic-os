@@ -127,11 +127,6 @@ export function recordRemediation(input: Omit<RemediationRecord, 'id'>): Remedia
   return rec;
 }
 
-/** All retained remediations for a dataset, oldest→newest. */
-export function listRemediations(datasetId: string): RemediationRecord[] {
-  return runsFor(state(), datasetId);
-}
-
 /** The most recent remediation for one rule, or null. */
 export function latestRemediation(datasetId: string, checkId: string): RemediationRecord | null {
   const runs = runsFor(state(), datasetId).filter((r) => r.checkId === checkId);

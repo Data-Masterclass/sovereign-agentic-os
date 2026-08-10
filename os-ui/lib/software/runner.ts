@@ -233,12 +233,12 @@ export function buildDeploymentManifest(spec: RunnerSpec, namespace: string, dep
               },
             },
           ],
-          // Pod-level hardening. `runAsNonRoot` is intentionally OMITTED for now: the
-          // All live apps have been rebuilt from non-root scaffolds with NUMERIC
-          // image users (kubelet can only verify runAsNonRoot against a numeric
-          // uid), so the pod now asserts non-root and the namespace can run PSS
-          // `restricted`. A root image reaching this manifest fails admission —
-          // by design, not by accident.
+          // Pod-level hardening. `runAsNonRoot: true` is asserted (set below): all
+          // live apps have been rebuilt from non-root scaffolds with NUMERIC image
+          // users (kubelet can only verify runAsNonRoot against a numeric uid), so
+          // the pod asserts non-root and the namespace can run PSS `restricted`. A
+          // root image reaching this manifest fails admission — by design, not by
+          // accident.
           securityContext: {
             seccompProfile: { type: 'RuntimeDefault' },
             runAsNonRoot: true,

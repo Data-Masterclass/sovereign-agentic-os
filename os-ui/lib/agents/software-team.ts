@@ -15,7 +15,7 @@
  * human reading; `software-team.test.ts` asserts the two are byte-identical.
  *
  * Model routing (STACKIT reasoning/execution tiers):
- *   • builder            → `sovereign-default`   (Qwen3.6-27B — code/execution)
+ *   • builder            → `sovereign-default`   (gpt-oss-20b — code/execution; see routing.ts)
  *   • all five others    → `sovereign-reasoning` (Qwen3-VL-235B — reasoning)
  *
  * Governance by construction: grants are exactly the software-MCP write surface

@@ -24,12 +24,16 @@ import { config } from '../core/config.ts';
 import type { Provenance } from './chunk.ts';
 
 const realFetch = globalThis.fetch;
+const realFailOpen = config.opaFailOpen;
 // Force OFFLINE: OPA + OpenSearch unreachable → local OPA mirror + in-process index.
+// The local OPA mirror is the offline-mock teaching flow, which is gated behind
+// OPA_FAIL_OPEN (fail-closed by default) — so enable it explicitly here.
 beforeEach(() => {
   __resetIndex();
+  config.opaFailOpen = true;
   globalThis.fetch = (async () => { throw new Error('offline'); }) as typeof fetch;
 });
-afterEach(() => { globalThis.fetch = realFetch; });
+afterEach(() => { globalThis.fetch = realFetch; config.opaFailOpen = realFailOpen; });
 
 function unit(over: Partial<Provenance> & { id: string; text: string; title?: string }): IndexedUnit {
   const prov: Provenance = {

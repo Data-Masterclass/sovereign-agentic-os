@@ -13,7 +13,7 @@
 
 /** Fallback max upload size shown when the server gives no explicit limit (ingress is
  *  200 MB; if a 413 carries a JSON `maxMb` we prefer that). Mirrors the UI default. */
-export const DEFAULT_MAX_MB = 200;
+const DEFAULT_MAX_MB = 200;
 
 const TIMEOUT_MS = 10 * 60 * 1000; // 10 min — large files over a slow link.
 

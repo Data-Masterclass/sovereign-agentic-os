@@ -3,12 +3,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   accessCap,
   accessToCapability,
   capabilityToAccess,
   allowedAccessLevels,
   clampAccess,
+  AGENT_SAFETY_PRESETS,
   type AccessLevel,
 } from './access-levels.ts';
 
@@ -76,4 +78,39 @@ test('system read-bounded → ceiling read+write, downgrade-only', () => {
   // Nothing to clamp — the ceiling is the top level.
   assert.equal(clampAccess('read-only', cap), 'read-only');
   assert.equal(clampAccess('read-write', cap), 'read-write');
+});
+
+/* ── item 6b: unified, honest agent safety-preset copy ──────────────────── */
+
+test('AGENT_SAFETY_PRESETS: read-propose maps to the Write-approval capability (all writes held)', () => {
+  const rp = AGENT_SAFETY_PRESETS.find((p) => p.id === 'read-propose')!;
+  assert.ok(rp, 'read-propose preset exists');
+  // The runtime truth: read-propose ↔ Write-approval (every write held for approval).
+  assert.equal(accessToCapability('read-propose'), 'Write-approval');
+  // The copy must be HONEST: it must NOT claim any write runs directly. The old
+  // SimpleBuilder copy ("My scope run directly") was factually wrong.
+  assert.doesNotMatch(rp.consequence, /run directly|runs directly/i,
+    'read-propose must not claim any write runs directly — Write-approval holds them all');
+  assert.match(rp.consequence, /approve/i, 'the honest copy names the human approval');
+});
+
+test('AGENT_SAFETY_PRESETS: covers all four presets with labels + consequences', () => {
+  assert.deepEqual(
+    AGENT_SAFETY_PRESETS.map((p) => p.id),
+    ['read-only', 'read-propose', 'read-bounded', 'full-in-scope'],
+  );
+  for (const p of AGENT_SAFETY_PRESETS) {
+    assert.ok(p.label.length > 0, `${p.id} has a label`);
+    assert.ok(p.consequence.length > 0, `${p.id} has a consequence`);
+  }
+});
+
+test('both agent builders use the ONE shared AGENT_SAFETY_PRESETS const (no divergent copies)', () => {
+  const runtimeSel = readFileSync(new URL('../../components/agents/RuntimeSelector.tsx', import.meta.url), 'utf8');
+  const simpleBuilder = readFileSync(new URL('../../components/agents/SimpleBuilder.tsx', import.meta.url), 'utf8');
+  for (const [name, src] of [['RuntimeSelector', runtimeSel], ['SimpleBuilder', simpleBuilder]] as const) {
+    assert.match(src, /AGENT_SAFETY_PRESETS/, `${name} references the shared preset const`);
+    // The old inline, hand-written consequence strings must be gone.
+    assert.doesNotMatch(src, /My scope run directly/, `${name} no longer carries the contradictory copy`);
+  }
 });

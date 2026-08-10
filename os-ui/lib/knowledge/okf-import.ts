@@ -23,6 +23,7 @@ import {
   idFromResource,
   okfDocToWorkflow,
   RESERVED_FILES,
+  basename,
   type OkfDoc,
   type OkfBundle,
 } from './okf-model.ts';
@@ -209,11 +210,6 @@ function matchExisting(doc: OkfDoc, user: Principal, kind: 'workflow' | 'general
   } catch {
     return null; // not found / not viewable → new artifact
   }
-}
-
-function basename(path: string): string {
-  const i = path.lastIndexOf('/');
-  return i === -1 ? path : path.slice(i + 1);
 }
 
 /** Splice a prose body back in right after the frontmatter of a serialized workflow. */

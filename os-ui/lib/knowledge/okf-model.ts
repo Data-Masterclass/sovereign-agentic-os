@@ -46,6 +46,12 @@ export const RESOURCE_PREFIX = 'sovereign-os://knowledge/';
 /** Reserved filenames — never imported as concept documents (spec §8–9). */
 export const RESERVED_FILES = new Set(['index.md', 'log.md']);
 
+/** The last path segment (filename) of a bundle-relative path. Pure. */
+export function basename(path: string): string {
+  const i = path.lastIndexOf('/');
+  return i === -1 ? path : path.slice(i + 1);
+}
+
 /**
  * Our five OKF `type` strings — the vocabulary carried in OKF's open type field.
  * Import accepts ANY type string (spec rule); these are the ones export emits and

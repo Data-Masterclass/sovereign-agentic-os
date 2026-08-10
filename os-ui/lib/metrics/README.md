@@ -24,7 +24,7 @@ Specs: `stackit/metrics-golden-path.md`, `…/metrics-dashboards-deep-design.md`
 |---|---|
 | `model.ts` | The metric artifact + the **three converging define paths**: `measureFromForm` / `measureFromAgent` / `measureFromYaml` all produce the SAME `Measure`; `measureMember(dataset, measure)` is the **canonical Cube member** (`ViewNoSpaces.measure`) — byte-for-byte what `lib/data` live-clients builds for the agent `metrics` tool, so define / explore / chart / ask all read one number. |
 | `consistency.ts` | **Metric-consistency.** `convergence` proves form==agent==YAML (define-time). `numbersMatch` proves explorer==dashboard==agent for a member (resolve-time). `consistencyCheck` is the **promotion gate content**: documented (transparency gate) + defined + resolves on its member. |
-| `explorer.ts` | The metric explorer. `explore(spec, token, exec)` runs **under the viewer's `securityContext`** (R3) — two viewers, different rows. `dropToSql` is the analyst escape hatch (Cube SQL API / Trino). |
+| `explorer.ts` | The metric explorer. `explore(spec, token, exec)` runs **under the viewer's `securityContext`** (R3) — two viewers, different rows. Since the metrics→Trino migration (Phase 1) the live read path is governed **Trino SQL** run AS the viewer; Cube is off the metric read path. `dropToSql` is the analyst escape hatch (Trino). |
 | `governance.ts` | Personal → Domain (Builder) → Marketplace (Admin). Reuses `canTransition` from `lib/data` so metrics never drift from datasets on who-may-do-what; gates on the consistency check. |
 | `store.ts` | Metrics derived **read-only** from `lib/data` datasets (a metric IS a measure on a governed dataset) — no second store, no drift. |
 | `fixtures.ts` | Shared test fixture (`goldSales`). |
@@ -47,9 +47,10 @@ itself enforces region RLS, so the two-viewer demo is real on a laptop).
 ## R3 / identity (Opus-owned, the bit to get right)
 Every governed call runs under a **user-delegated token** (`lib/identity-server`
 `delegatedToken` → `delegate` refuses a service account, R2). `propagate(token)` derives
-the Cube `securityContext` (R3); the explorer, the agent `metrics` tool and (in
-`lib/dashboards`) the Superset guest token all carry the **same** identity, so RLS is
-enforced **once at Cube** and can't collapse to a shared identity.
+the `securityContext` (R3); the explorer and the agent `metrics` tool carry the **same**
+identity, so RLS is enforced **once, run AS the viewer**, and can't collapse to a shared
+identity. Since the metrics→Trino migration (Phase 1) the metric read path is governed
+Trino SQL — Cube is off the metric read path (it now serves only dashboards).
 
 ## Routes
 `/api/metrics` (list) · `/api/metrics/define` (form/agent/YAML → convergence + build) ·

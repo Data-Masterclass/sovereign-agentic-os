@@ -55,9 +55,6 @@ import {
  * used for the between-node hand-off.
  */
 
-// The set of software-MCP tool names — the only surface a team may drive live.
-const SOFTWARE_TOOL_NAMES = new Set(toolsForTab('software').map((t) => t.name));
-
 /**
  * The input token ceiling for a team turn's between-node hand-off: the SMALLER of
  * the two live model windows (the tools/exec tier and the reasoning tier), so the
@@ -67,18 +64,6 @@ const SOFTWARE_TOOL_NAMES = new Set(toolsForTab('software').map((t) => t.name));
  */
 export function handoffBudget(): number {
   return Math.min(inputBudget(roleModel('tools')), inputBudget(roleModel('reasoning')));
-}
-
-/**
- * A LangGraph system is runnable by the in-process agentic executor iff it is a
- * `langgraph` system whose EVERY granted tool is a software-MCP tool. Anything
- * broader (data/knowledge/agents grants, or the hermes runtime) keeps the
- * existing `runSystem` path (Python runtime / offline mock).
- */
-export function isAgenticSoftwareTeam(sys: System): boolean {
-  if (sys.runtime !== 'langgraph') return false;
-  if (sys.grants.tools.length === 0) return false;
-  return sys.grants.tools.every((t) => SOFTWARE_TOOL_NAMES.has(t));
 }
 
 // The OS rules preamble every node is grounded in (mirrors the tab assistant's).

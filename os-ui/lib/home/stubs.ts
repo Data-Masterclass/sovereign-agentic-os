@@ -4,6 +4,10 @@
 import 'server-only';
 
 /**
+ * NOTE: despite the filename (`stubs.ts`) and the `*Stub` export suffix, these are
+ * LIVE readers, not stubs. The names are kept to avoid rippling imports across the
+ * Home feed; the behavior below is real. (A rename is a separate, larger change.)
+ *
  * Cross-tab feed ADAPTERS for the Cockpit "Domain Pulse" and "Spend / Health"
  * modules. These were formerly stubs returning `source: 'mock'` with all-zero
  * values. They now read from the real in-process stores that are already live

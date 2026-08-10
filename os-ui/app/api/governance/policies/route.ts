@@ -2,7 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { currentUser } from '@/lib/core/auth';
+import { requireUser } from '@/lib/core/auth';
+import { errorResponse } from '@/lib/core/route-server';
 import { listUsers } from '@/lib/platform-admin/users';
 import { canViewPolicyPlane, consolidatedPlane, listEgress, overrideRevoke, policySources, readOpaGrants } from '@/lib/governance/policy-view';
 import { listStanding, ensureHydrated } from '@/lib/governance/standing';
@@ -18,8 +19,13 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET() {
   await ensureHydrated();
-  const user = await currentUser();
-  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  // requireUser() (not currentUser()) so the first-run credential gate applies.
+  let user;
+  try {
+    user = await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
   // Gate on the policy.view right (Builder+), not mere authentication — a
   // User/Creator must not read the whole tenant's grant plane.
   if (!canViewPolicyPlane(user.role)) {
@@ -41,8 +47,13 @@ export async function GET() {
 
 export async function POST(req: Request) {
   await ensureHydrated();
-  const user = await currentUser();
-  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  // requireUser() (not currentUser()) so the first-run credential gate applies.
+  let user;
+  try {
+    user = await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
   if (user.role !== 'admin') {
     return NextResponse.json({ error: 'Overriding policy requires an Administrator' }, { status: 403 });
   }

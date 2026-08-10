@@ -592,11 +592,6 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
 }
 
 /**
- * A Dify-style pre-build checklist. Green when the graph compiles; otherwise it
- * surfaces the exact blocker (from the server-side compile) as a to-fix item so a
- * non-technical builder knows what to do before Run/Build.
- */
-/**
  * The likely run order (entrypoint first, then the other active agents in declared
  * order) — used only to show an immediate in-progress node path on Run press, before
  * the server reports the authoritative walk. Disabled agents are excluded.
@@ -607,6 +602,11 @@ function runOrder(system: System, disabledAgents: string[]): string[] {
   return [...entry, ...active.filter((id) => id !== system.entrypoint)];
 }
 
+/**
+ * A Dify-style pre-build checklist. Green when the graph compiles; otherwise it
+ * surfaces the exact blocker (from the server-side compile) as a to-fix item so a
+ * non-technical builder knows what to do before Run/Build.
+ */
 function BuildChecklist({ system, compileError, disabledAgents }: { system: System; compileError: string | null; disabledAgents: string[] }) {
   const items: { ok: boolean; text: string }[] = [];
   items.push({ ok: system.agents.length > 0, text: system.agents.length > 0 ? `${system.agents.length} agent${system.agents.length === 1 ? '' : 's'}` : 'Add at least one agent' });

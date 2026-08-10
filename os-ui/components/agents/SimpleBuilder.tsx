@@ -18,7 +18,7 @@ import {
 } from '@/lib/agents/simple-edit';
 import {
   accessCap, allowedAccessLevels, capabilityToAccess, clampAccess,
-  ACCESS_LABELS, type AccessLevel, type AccessCap,
+  ACCESS_LABELS, AGENT_SAFETY_PRESETS, type AccessLevel, type AccessCap,
 } from '@/lib/agents/access-levels';
 import { membersOf, isWorkflowId, type ResourceMember } from '@/lib/agents/resource-groups';
 import { scopeLabel, type ScopeKey } from '@/lib/core/scopes';
@@ -323,12 +323,10 @@ export default function SimpleBuilder({
 
 /* ─────────────────────────── Phase 1 — Define ─────────────────────────── */
 
-const PRESETS: { id: SafetyPreset; label: string; consequence: string }[] = [
-  { id: 'read-only',      label: 'Read-only',             consequence: 'The team can look but never change anything.' },
-  { id: 'read-propose',   label: 'Read + propose',        consequence: 'Writes to the team’s own My scope run directly; a change to Domain or Company waits for a human to approve it.' },
-  { id: 'read-bounded',   label: 'Read + bounded writes', consequence: 'The team can write inside its own workspace, nowhere else.' },
-  { id: 'full-in-scope',  label: 'Full in-scope',         consequence: 'The team may write anywhere its grants allow — use with care.' },
-];
+// Safety-preset copy comes from the ONE shared const (lib/agents/access-levels.ts)
+// so this picker can never contradict RuntimeSelector's. The read-propose copy
+// reflects the real Write-approval enforcement: EVERY write is held for approval.
+const PRESETS = AGENT_SAFETY_PRESETS;
 
 /**
  * Phase 1 — Define. Name on top, Description below it (the describe→scaffold box that
@@ -1672,8 +1670,8 @@ function TeamResources({
       <h2 className="sb-section-title" style={{ marginTop: 0 }}>What your team can use</h2>
       <p className="hint" style={{ marginTop: 0 }}>
         Give the whole team the resources it needs — every agent shares these. For each item, choose{' '}
-        <strong>Read-only</strong>, <strong>Read + propose</strong> (writes to the team’s own My scope run
-        directly; only a change to Domain or Company waits for a human), or{' '}
+        <strong>Read-only</strong>, <strong>Read + propose</strong> (every write is held for a human to
+        approve before it runs — nothing is written directly), or{' '}
         <strong>Read + write</strong> (writes run directly). The matching tools are granted automatically.
       </p>
 
@@ -1715,7 +1713,7 @@ const OUTPUT_KIND_CARDS: { kind: OutputKind; label: string; feedKind: 'files' | 
  * are path-derived — there is no standalone folder object). Emits the chosen `path`.
  * Reusable beyond Outputs — the same affordance can back a grant picker's new-path input.
  */
-export function NewFolderField({
+function NewFolderField({
   folders, value, canEdit, onChange, scope,
 }: {
   /** Existing folder paths available in the chosen scope. */
@@ -1911,7 +1909,7 @@ function AccessCapNote({ cap, preset }: { cap: AccessCap; preset: SafetyPreset }
     ? cap.reason
     : preset === 'read-bounded'
       ? 'The system allows writes in-scope — each item defaults to Read + write; you may downgrade any item, never go above it.'
-      : 'The system default is Read + propose — writes to the team’s own My scope still run directly; only a change to Domain or Company waits for a human. Each item defaults to Read + propose; you may downgrade to Read-only, never grant direct write above the system setting.';
+      : 'The system default is Read + propose — every write is held for a human to approve before it runs; nothing is written directly. Each item defaults to Read + propose; you may downgrade to Read-only, never grant direct write above the system setting.';
   return (
     <div className={`badge ${cap.locked ? 'warn' : 'muted'}`} role="note" style={{ display: 'block', padding: '8px 10px', marginBottom: 10, lineHeight: 1.4, whiteSpace: 'normal' }}>
       {cap.locked ? '🔒 ' : 'ℹ '}{msg} Change it under <strong>What this team is allowed to do</strong> above.
@@ -2003,7 +2001,7 @@ function scopeKeyOf(scope: 'personal' | 'domain' | 'marketplace'): ScopeKey {
 /** Per-level tooltip — what each access level actually grants, in plain words. */
 const ACCESS_HINTS: Record<AccessLevel, string> = {
   'read-only': 'Can read only — never changes anything.',
-  'read-propose': 'Writes to its own My scope run directly; a change to Domain or Company waits for a human to approve it.',
+  'read-propose': 'Every write is held for a human to approve before it runs — nothing is written directly.',
   'read-write': 'Can change directly — no approval step.',
 };
 

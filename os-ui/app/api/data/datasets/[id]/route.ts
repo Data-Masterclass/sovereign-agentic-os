@@ -70,7 +70,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         // Best-effort OM soft-delete — fire-and-forget; the archive already succeeded.
         void firstOmCatalogFor(user).then((c) => {
           if (c) void omSoftDeleteForConnection(c, summary);
-        });
+        }).catch(() => {});
         return NextResponse.json({ dataset: summary });
       }
       case 'unarchive': {
@@ -78,7 +78,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         // Best-effort OM reactivation.
         void firstOmCatalogFor(user).then((c) => {
           if (c) void omReactivateForConnection(c, summary);
-        });
+        }).catch(() => {});
         return NextResponse.json({ dataset: summary });
       }
       default:

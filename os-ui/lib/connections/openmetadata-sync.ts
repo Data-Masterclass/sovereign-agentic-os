@@ -392,20 +392,6 @@ export async function provisionOmNamespace(
   return { ok: errors.length === 0, applied, errors };
 }
 
-/** Bind a resolved {@link OmConn} into the {@link OmSyncClient} the apply step needs.
- *  Kept here (not in the pure client) because it composes the read + write verbs. */
-export function syncClientFrom(
-  conn: OmConn,
-  verbs: {
-    readEntityMeta: OmSyncClient['readEntityMeta'];
-    putEntity: OmSyncClient['putEntity'];
-    patchEntity: OmSyncClient['patchEntity'];
-    putLineage: OmSyncClient['putLineage'];
-  },
-): OmSyncClient {
-  return { ...verbs, omVersion: conn.omVersion };
-}
-
 // --- Soft-delete / reactivate (archive lifecycle, best-effort) -----------------
 
 /**

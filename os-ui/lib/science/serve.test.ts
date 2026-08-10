@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { servePredict } from './serve.ts';
 import { _resetModels, upsertModel, getModel, createModel, type Actor } from './model-service.ts';
 import type { ServiceModel } from './types.ts';
+import { config } from '@/lib/core/config';
 
 /** The churn slice registered as a Domain(sales) model — the tests register it explicitly
  *  (no fabricated platform seed exists; this is a test fixture, not production state). */
@@ -63,6 +64,8 @@ function fakeFetch(opts: { predictorScore?: number; predictorDown?: boolean }) {
 
 test('back-compat: no `model` arg scores the churn slice (offline seed) for a granted principal', async () => {
   const f = fakeFetch({});
+  const realFailOpen = config.opaFailOpen;
+  config.opaFailOpen = true; // OPA offline mirror (LOCAL_GRANTS predict) is the teaching flow
   try {
     _resetModels();
     upsertModel(churnFixture()); // Domain(sales) churn slice (test fixture)
@@ -80,6 +83,7 @@ test('back-compat: no `model` arg scores the churn slice (offline seed) for a gr
     assert.ok(r.body.band);
   } finally {
     f.restore();
+    config.opaFailOpen = realFailOpen;
     _resetModels();
   }
 });

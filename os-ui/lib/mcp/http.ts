@@ -5,6 +5,7 @@ import 'server-only';
 import { NextResponse } from 'next/server';
 import { resolveMcpUser } from '@/lib/mcp/token';
 import { handleRpc, type JsonRpcRequest, type HandleRpcOptions } from '@/lib/mcp/server';
+import { config } from '@/lib/core/config';
 
 /**
  * The shared Streamable-HTTP shell for every OS MCP endpoint (the overarching
@@ -24,7 +25,7 @@ export function mcpUnauthorized(): NextResponse {
   // The `resource_metadata` pointer (RFC 9728) is what starts Claude's managed-
   // authorization discovery chain. Absolute when OS_PUBLIC_URL is set (deploy);
   // relative locally (managed auth is a deploy-only surface).
-  const base = (process.env.OS_PUBLIC_URL ?? '').replace(/\/+$/, '');
+  const base = config.osPublicUrl;
   const wwwAuthenticate =
     `Bearer realm="Sovereign Agentic OS MCP", ` +
     `resource_metadata="${base}/.well-known/oauth-protected-resource/api/mcp", ` +

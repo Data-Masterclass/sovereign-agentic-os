@@ -346,7 +346,7 @@ function statusOf(a: FileAsset): FileStatus {
 /** True when a stored object's content-type renders inline in a browser (the Quick
  *  Look viewer + grid thumbnails use /raw for exactly these). Pure + exported so the
  *  client can branch its <img>/<iframe>/<video>/<audio> the same way. */
-export function inlineRenderable(contentType: string | undefined | null): boolean {
+function inlineRenderable(contentType: string | undefined | null): boolean {
   if (!contentType) return false;
   const t = contentType.toLowerCase();
   return t.startsWith('image/') || t.startsWith('video/') || t.startsWith('audio/') || t === 'application/pdf';
@@ -558,15 +558,6 @@ function upsertFolderRow(a: FileAsset, user: Principal): void {
   } catch {
     /* folder-registry mirror is best-effort; the file move already succeeded */
   }
-}
-
-export function setTags(id: string, user: Principal, tags: string[]): FileAsset {
-  const rec = get(id);
-  const a = editOf(rec, user);
-  versions.record(rec.id, user.id, snapshotState(rec), 'edit tags');
-  a.tags = tags.map((t) => t.trim()).filter(Boolean);
-  persist(rec, a);
-  return a;
 }
 
 /** The promotion-minimum documentation (decision #5: owner + description + tags).

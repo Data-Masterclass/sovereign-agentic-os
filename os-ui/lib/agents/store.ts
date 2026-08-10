@@ -451,12 +451,6 @@ export type SystemGroups = { mine: SystemSummary[]; domain: SystemSummary[]; mar
  * archive) — the owner/Admin can list them explicitly via `includeArchived` to
  * restore or delete. A shared/marketplace system, once archived by its owner,
  * disappears from everyone's domain/marketplace list too.
- */
-/**
- * The caller's systems, grouped. Archived systems are HIDDEN by default (soft
- * archive) — the owner/Admin can list them explicitly via `includeArchived` to
- * restore or delete. A shared/marketplace system, once archived by its owner,
- * disappears from everyone's domain/marketplace list too.
  *
  * GROUP BY VISIBILITY, not ownership: a Shared system is DOMAIN knowledge and belongs
  * under Domain even when the caller authored it; a Marketplace system under this tab's

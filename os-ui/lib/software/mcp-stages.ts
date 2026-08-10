@@ -109,8 +109,7 @@ export function buildGate(app: App, target: BuildTarget): BuildGate {
   const unspecified = scope
     .filter(({ story }) => !specHasContent(story.spec))
     .map(({ epic, story }) => ({ epicId: epic.id, storyId: story.id, title: story.title }));
-  if (target.kind !== 'app' && unspecified.length === 0 && scope.length > 0) return { ok: true };
-  if (target.kind === 'app' && unspecified.length === 0 && scope.length > 0) return { ok: true };
+  if (unspecified.length === 0 && scope.length > 0) return { ok: true };
   return {
     ok: false,
     reason:

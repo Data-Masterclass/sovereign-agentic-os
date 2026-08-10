@@ -3,12 +3,13 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import type { McpTool, JsonSchema } from './server';
+import type { McpTool } from './server';
+import { fail, str } from './discovery-common';
 
 // --- The EXACT governed marketplace lib the UI + /api/marketplace call ---------
 import { listingAdapter, rateListing } from '@/lib/marketplace';
 import { grantsForUser } from '@/lib/marketplace/store';
-import type { ProductType, ImportMode, Viewer } from '@/lib/marketplace/types';
+import type { ProductType, Viewer } from '@/lib/marketplace/types';
 
 /**
  * THE MARKETPLACE MCP SURFACE (mcp-v2 P3). Thin wrappers over the SAME governed
@@ -24,19 +25,10 @@ import type { ProductType, ImportMode, Viewer } from '@/lib/marketplace/types';
 
 const PRODUCT_TYPES: ProductType[] = ['dataset', 'metric', 'dashboard', 'knowledge', 'agent', 'connection', 'app'];
 
-function fail(message: string, status: number): never {
-  const e = new Error(message) as Error & { status?: number };
-  e.status = status;
-  throw e;
-}
-const str = (v: unknown): string => (typeof v === 'string' ? v : '');
-
 /** The caller as a marketplace Viewer (id + domains + role). */
 function viewerOf(u: CurrentUser): Viewer {
   return { id: u.id, domains: u.domains, role: u.role };
 }
-
-const NO_ARGS: JsonSchema = { type: 'object', properties: {}, examples: [{}] };
 
 export const marketplaceReadTools: McpTool[] = [
   {
@@ -113,9 +105,3 @@ export const marketplaceWriteTools: McpTool[] = [
     },
   },
 ];
-
-export const MARKETPLACE_TOOLS: McpTool[] = [...marketplaceReadTools, ...marketplaceWriteTools];
-
-// Keep ImportMode referenced (import_product [P0] carries the modes; this surface
-// documents them in browse/get flow without re-declaring the enum).
-export type MarketplaceImportMode = ImportMode;

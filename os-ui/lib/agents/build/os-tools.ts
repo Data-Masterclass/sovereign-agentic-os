@@ -400,29 +400,6 @@ export function writeOutcomesLine(o: WriteOutcomes): string {
 }
 
 /**
- * Does the system's safety preset HOLD writes for human approval? Mirrors
- * `lib/governance/governance.ts` `resolveAutonomous` for the agent-run path:
- *   - `read-only`    → writes blocked + queued (held).
- *   - `read-propose` → writes drafted for a human to run (held).
- *   - `read-bounded` → bounded writes auto-run (NOT held) — gate 2 (the acting
- *                      user's OPA/DLS/role) is the real authority.
- *   - `full-in-scope`→ everything the grants expose runs (NOT held).
- * When NOT held, a granted write tool falls through to the run-as-user governed
- * dispatch, exactly like a read tool: an agent can still never exceed what its
- * runner could do by hand in the UI (creating a Personal-lane artifact needs no
- * approval), and promotion (Personal→Shared) keeps its own separate approval gate.
- *
- * SUPERSEDED by the SCOPE-AWARE {@link holdDecision}: the old blanket rule held EVERY
- * agent write under read-only/read-propose regardless of the write's TARGET scope, so
- * an agent creating a PERSONAL (My) artifact — a My-lane write its builder has full
- * rights to by hand — was wrongly queued for admin review. Kept only for `read-only`,
- * which still blocks all writes. New writes route through `holdDecision`.
- */
-export function writesAreHeld(preset: SafetyPreset): boolean {
-  return preset === 'read-only';
-}
-
-/**
  * The TARGET SCOPE of a write — the lane the artifact lands in. This is what makes
  * the hold SCOPE-AWARE: a `personal` (My) write is exactly what the runner could do
  * by hand with NO approval, so it is never held; a `domain` / `company` write is a

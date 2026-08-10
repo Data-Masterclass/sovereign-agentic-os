@@ -63,6 +63,14 @@ export function parseModelPrices(raw: string): Record<string, ModelPrice> {
   }
 }
 
+/**
+ * The insecure placeholder secret shipped for local dev / clone-and-run. It is
+ * the fallback for OS_SESSION_SECRET and OS_MCP_TOKEN_SECRET. A boot-time guard
+ * (`assertNoDevDefaultSecretsInProd`) REFUSES to start with this value under
+ * NODE_ENV=production — see below.
+ */
+export const DEV_DEFAULT_SECRET = 'dev-only-insecure-session-secret-change-me-in-prod';
+
 export const config = {
   // sample-agent (LangGraph RAG): GET {SAMPLE_AGENT_URL}/ask?q=...
   sampleAgentUrl: base(env('SAMPLE_AGENT_URL', 'http://sample-agent:8000')),
@@ -218,18 +226,12 @@ export const config = {
   // seeded users { id, name, password, domain, role }. OS_SESSION_SECRET signs
   // the session cookie (HMAC-SHA256). Both are server-only. Replace this whole
   // block with Ory (Kratos/Hydra) later without touching the consumers. -------
-  sessionSecret: env(
-    'OS_SESSION_SECRET',
-    'dev-only-insecure-session-secret-change-me-in-prod',
-  ),
+  sessionSecret: env('OS_SESSION_SECRET', DEV_DEFAULT_SECRET),
   usersSeed: env('OS_USERS', ''),
   // Signs the per-user bearer token for the remote MCP endpoint (/api/mcp).
   // Server-only. Falls back to the session secret so the endpoint works out of
   // the box; set OS_MCP_TOKEN_SECRET in prod to rotate MCP tokens independently.
-  mcpTokenSecret: env(
-    'OS_MCP_TOKEN_SECRET',
-    env('OS_SESSION_SECRET', 'dev-only-insecure-session-secret-change-me-in-prod'),
-  ),
+  mcpTokenSecret: env('OS_MCP_TOKEN_SECRET', env('OS_SESSION_SECRET', DEV_DEFAULT_SECRET)),
 
   // ---- Outbound email (OPTIONAL). Transactional mail (email verification today;
   // user invites later) goes through a small, dependency-free PLUGGABLE mailer
@@ -643,3 +645,40 @@ export const config = {
 } as const;
 
 export type AppConfig = typeof config;
+
+/**
+ * Boot-time FAIL-CLOSED guard: under a real production runtime the platform must
+ * NOT come up signing sessions / MCP tokens with the shipped dev placeholder
+ * secret — that would let anyone forge a session cookie.
+ *
+ * IMPORTANT: this is keyed on `NODE_ENV === 'production'`, NOT on
+ * `config.deploymentProfile`. The live deploy runs `OS_PROFILE=local` yet with
+ * `NODE_ENV=production` (Next.js production build), so a profile-keyed guard would
+ * be inert exactly where it matters. Live env carries REAL secrets, so this never
+ * crashes prod; local dev (NODE_ENV!=='production') keeps the convenient default.
+ *
+ * Exported for direct unit testing; also invoked once at module load below.
+ */
+export function assertNoDevDefaultSecretsInProd(cfg: {
+  sessionSecret: string;
+  mcpTokenSecret: string;
+}): void {
+  if (process.env.NODE_ENV !== 'production') return;
+  // `next build` evaluates server modules with NODE_ENV=production but does NOT
+  // need a runtime secret; only the running server does. Skip the build phase so
+  // a secret-less CI build still succeeds — the guard fires at real boot.
+  if (process.env.NEXT_PHASE === 'phase-production-build') return;
+  const offenders: string[] = [];
+  if (cfg.sessionSecret === DEV_DEFAULT_SECRET) offenders.push('OS_SESSION_SECRET');
+  if (cfg.mcpTokenSecret === DEV_DEFAULT_SECRET) offenders.push('OS_MCP_TOKEN_SECRET');
+  if (offenders.length > 0) {
+    throw new Error(
+      `Refusing to boot in production with the insecure dev-default secret for: ${offenders.join(', ')}. ` +
+        'Set a strong, unique value for each (these sign session cookies + MCP tokens).',
+    );
+  }
+}
+
+// Run the guard once at module load — a production process with a dev-default
+// secret fails fast at boot rather than silently signing forgeable sessions.
+assertNoDevDefaultSecretsInProd(config);

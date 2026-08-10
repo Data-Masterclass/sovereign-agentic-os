@@ -2,7 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { currentUser } from '@/lib/core/auth';
+import { requireUser } from '@/lib/core/auth';
+import { errorResponse } from '@/lib/core/route-server';
 import { addSpend, checkCap, type CapScope } from '@/lib/governance/cost';
 
 export const dynamic = 'force-dynamic';
@@ -12,10 +13,15 @@ export const dynamic = 'force-dynamic';
  * over-cap action is BLOCKED (403). Demonstrates that setting a cap actually
  * constrains spend, without needing live LiteLLM. `commit` records the spend
  * when allowed (so repeated calls eventually breach the cap).
+ *
+ * `requireUser()` (not `currentUser()`) so the first-run credential gate applies.
  */
 export async function POST(req: Request) {
-  const user = await currentUser();
-  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  try {
+    await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
   let body: { scope?: CapScope; subject?: string; amount?: number; modelClass?: string; commit?: boolean };
   try {
     body = await req.json();

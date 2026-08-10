@@ -89,20 +89,31 @@ function resolveDataItem(id: string, access: string, user: CurrentUser): Resolve
 function resolveKnowledgeItem(id: string, access: string, user: CurrentUser): ResolvedItem | null {
   const p = principalOf(user);
   // Ids are prefixed: `wf_…` = workflow, `pk_…` = personal knowledge. Try the matching store;
-  // fall back to the other so a mis-prefixed legacy id still resolves. Both getters DLS-gate.
-  let title = '';
-  let md = '';
-  if (id.startsWith('wf')) {
+  // fall back to the OTHER store so a mis-prefixed legacy id still resolves. Both getters
+  // DLS-gate. If BOTH stores miss/deny, we RE-THROW so resolveItem's handler counts the
+  // omission and it is reported loudly — never a silent drop.
+  const prefersWorkflow = id.startsWith('wf');
+  const tryWorkflow = (): { title: string; md: string } => {
     const w = getWorkflow(id, p);
-    title = w.title;
-    md = w.md;
-  } else {
+    return { title: w.title, md: w.md };
+  };
+  const tryPersonal = (): { title: string; md: string } => {
     const k = getPersonalKnowledge(id, p);
-    title = k.title;
-    md = k.md;
+    return { title: k.title, md: k.md };
+  };
+  const primary = prefersWorkflow ? tryWorkflow : tryPersonal;
+  const fallback = prefersWorkflow ? tryPersonal : tryWorkflow;
+
+  let resolved: { title: string; md: string };
+  try {
+    resolved = primary();
+  } catch {
+    // Documented fallback: the id may be mis-prefixed (legacy). Try the other store;
+    // if that also misses/denies, let its throw propagate to resolveItem (honest omit).
+    resolved = fallback();
   }
-  const header = `### Knowledge · ${title} [${ACCESS_LABEL[access] ?? access}] (id: ${id})`;
-  return { header, body: capBody(md) };
+  const header = `### Knowledge · ${resolved.title} [${ACCESS_LABEL[access] ?? access}] (id: ${id})`;
+  return { header, body: capBody(resolved.md) };
 }
 
 /** FILES → name + text content (cap); binary → name + type only — DLS-scoped. */

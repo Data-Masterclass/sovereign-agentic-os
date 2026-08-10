@@ -80,28 +80,6 @@ export function safeReportKey(key: string): string {
   return s;
 }
 
-/** Normalize a raw report list from the wizard: keep only well-formed rows, slugify keys,
- *  dedupe by key. Pure — the store calls it at create time. */
-export function sanitizeReports(raw: unknown): WorkdayReport[] {
-  if (!Array.isArray(raw)) return [];
-  const out: WorkdayReport[] = [];
-  const seen = new Set<string>();
-  for (const r of raw) {
-    if (!r || typeof r !== 'object') continue;
-    const o = r as Record<string, unknown>;
-    const path = String(o.path ?? '').trim();
-    if (!path) continue;
-    const rawKey = String(o.key ?? '').trim() || path.split(/[/?]/).filter(Boolean).pop() || 'report';
-    const key = rawKey.replace(/[^A-Za-z0-9_]/g, '_').replace(/^([0-9])/, '_$1').toLowerCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    const label = String(o.label ?? '').trim() || undefined;
-    const incrementalParam = String(o.incrementalParam ?? '').trim() || undefined;
-    out.push({ key, path, ...(label ? { label } : {}), ...(incrementalParam ? { incrementalParam } : {}) });
-  }
-  return out;
-}
-
 function base(conn: WdConn): string {
   return conn.baseUrl.replace(/\/$/, '');
 }

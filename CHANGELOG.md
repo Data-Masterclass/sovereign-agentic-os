@@ -13,6 +13,14 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.88] — 2026-08-09
+
+Security/governance hardening: agent authz fails closed when OPA unreachable (opaFailOpen-gated like the data spine); SSRF deny for metadata/loopback literals; first-run credential gate on 5 governance routes; boot guard on dev-default secrets in production; server-derived subject for files/retrieve; grants-context fallback + unified honest agent safety-preset copy.
+
+## [os-ui 0.6.87] — 2026-08-08
+
+Codebase cleanup (behavior-preserving): removed 21 verified-dead symbols/files, dropped stray exports, collapsed no-ops, deduped helpers, and corrected stale docs/comments across data/metrics/dashboards/connections/files/knowledge/software/agents/governance/mcp. No behavior change.
+
 ## [os-ui 0.6.86] — 2026-08-07
 
 ### Changed

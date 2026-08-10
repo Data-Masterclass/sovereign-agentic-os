@@ -22,15 +22,17 @@ Specs: `stackit/dashboards-golden-path.md`, `…/metrics-dashboards-deep-design.
 | `model.ts` | The dashboard spec — a Cube view + `Panel[]`. A `Panel` charts governed metric **members** (`metrics`, with a legacy `metric` alias `normalizePanel` folds in), optionally grouped by dimensions / a time dimension at a grain, optionally filtered. **Dual-mode:** `fromTiles` (drag-drop) and `fromAgent` both produce the SAME normalized, deduped `DashboardSpec`. `buildPanelCubeQuery(panel)` → the exact Cube `load` query the viewer resolves. |
 | `build/panel-query.ts` | **Tier 1 server boundary.** `runPanelQuery(view, panel, token, user)` resolves each panel measure to its governed metric (registry resolver, RLS-scoped) and serves it through `exploreMetric` (governed Trino SQL, run AS the viewer) — Cube is off the read path (Phase 2). Honest offline-mock + window-metric pending + LOUD missing/dropped-member warnings all come from `exploreMetric`. |
 | `cube-meta.ts` | `narrowCubeMeta(members, meta)` — narrows Cube `/meta` to the caller's governed views for the **panel-builder palette** (a design-time affordance, not a read path), never exposing a view they can't see. |
-| `alerts.ts` | A threshold on a metric member → **notify** + (optional) **trigger a governed agent run** (`traced: true`). Plus scheduled reports (`dueReports` / `sendReport`). |
+| `reports.ts` | Scheduled reports on a governed dashboard — a dashboard snapshot on a cadence. Pure: decides which reports are **due** and records a send (`dueReports` / `sendReport`). (Metric alerts moved to `lib/metrics/alerts.ts`.) |
+| `delivery.ts` | The REAL delivery boundary for scheduled reports and fired alerts — renders + delivers in-app (the one delivery surface) instead of a notification that dies in the JSON response. |
 | `governance.ts` | Personal → Domain (Builder) → Marketplace (Admin), reusing `canTransition`. Broadening the tier never broadens the rows — every panel stays per-viewer RLS-scoped at Cube. |
 | `store.ts` | In-memory dashboard registry, principal-scoped like every governed surface (spec-shape-agnostic; reads only `spec.charts.length`). |
 
 ## R3 / identity
 Every panel-query runs under the viewer's **delegated** token (`lib/identity-server` →
-`propagate` → `securityContext`); `cubeLoad` forwards it as `x-cube-security-context` so
-Cube enforces RLS once — the same rows the explorer and the agent see. A shared/certified
-dashboard stays per-viewer scoped; the tier never broadens the rows.
+`propagate` → governed Trino via `exploreMetric`), so RLS is enforced once, run AS the
+viewer — the same rows the explorer and the agent see. Cube is off the read path (Phase 2);
+there is no `x-cube-security-context` forward. A shared/certified dashboard stays per-viewer
+scoped; the tier never broadens the rows.
 
 ## Routes
 `/api/dashboards` (tiles) · `/api/dashboards/build` (dual-mode, **persist-only**) ·

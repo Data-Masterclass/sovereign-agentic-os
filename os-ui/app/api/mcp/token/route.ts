@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { signMcpToken } from '@/lib/mcp/token';
+import { config } from '@/lib/core/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +16,7 @@ export const dynamic = 'force-dynamic';
  */
 export const GET = withRoute(async ({ user }) => {
   const token = signMcpToken(user.id);
-  const origin = (process.env.OS_PUBLIC_URL ?? '').replace(/\/+$/, '');
+  const origin = config.osPublicUrl;
   const endpoint = `${origin}/api/mcp`;
   return NextResponse.json({
     endpoint,

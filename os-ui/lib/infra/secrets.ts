@@ -161,24 +161,84 @@ export function egressHost(endpoint: string): string {
 }
 
 /**
- * Is this host an INTERNAL / in-cluster / loopback target? These are the hosts a
- * user-supplied connector endpoint must NOT be able to reach by default — reaching
- * an in-cluster service (`query-tool`, `trino`, `opa`, `minio`, `kubernetes.default`)
- * or loopback would be a server-side request forgery (SSRF) into the platform.
+ * Strip the surrounding brackets an IPv6 URL host carries (`[::1]` → `::1`) and
+ * lowercase, so the literal-IP matchers below see a bare address.
+ */
+function bareAddr(host: string): string {
+  return host.replace(/^\[/, '').replace(/\]$/, '').toLowerCase();
+}
+
+/**
+ * HARD-DENIED egress targets — refused ALWAYS, even if explicitly allowlisted.
+ * These IP literals are never a legitimate connector destination and are the
+ * classic SSRF pivots:
+ *   • cloud-metadata `169.254.169.254` + the whole link-local `169.254.0.0/16`
+ *   • IPv4 loopback `127.0.0.0/8`
+ *   • IPv6 loopback `::1`
+ *   • IPv4-mapped-IPv6 forms of the above (`::ffff:127.0.0.1`, `::ffff:169.254.x`,
+ *     and the dotless hex form `::ffff:a9fe:a9fe` for 169.254.169.254)
+ * (`localhost` is handled as an internal NAME below; it can be an allowlisted
+ * escape-hatch dev target, whereas a raw loopback/metadata literal never is.)
+ */
+export function isHardDeniedTarget(endpoint: string): boolean {
+  const host = bareAddr(egressHost(endpoint));
+  if (!host) return false;
+  if (host === '::1') return true; // IPv6 loopback
+  if (/^127\.\d+\.\d+\.\d+$/.test(host)) return true; // IPv4 loopback 127.0.0.0/8
+  if (/^169\.254\.\d+\.\d+$/.test(host)) return true; // link-local incl. metadata 169.254.169.254
+  // IPv4-mapped IPv6 (dotted tail): ::ffff:127.0.0.1 / ::ffff:169.254.169.254
+  const mapped = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped && isHardDeniedTarget(mapped[1])) return true;
+  // IPv4-mapped IPv6 (hex tail): ::ffff:7f00:1 (127.0.0.1), ::ffff:a9fe:a9fe (169.254.169.254)
+  const hex = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hex) {
+    const hi = parseInt(hex[1], 16);
+    const lo = parseInt(hex[2], 16);
+    const oct = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+    if (isHardDeniedTarget(oct)) return true;
+  }
+  return false;
+}
+
+/** Is `host` an RFC1918 private IPv4 literal (10/8, 172.16-31/12, 192.168/16)? */
+function isRfc1918(host: string): boolean {
+  const h = bareAddr(host);
+  if (/^10\.\d+\.\d+\.\d+$/.test(h)) return true;
+  if (/^192\.168\.\d+\.\d+$/.test(h)) return true;
+  const m = h.match(/^172\.(\d+)\.\d+\.\d+$/);
+  if (m) {
+    const second = Number(m[1]);
+    return second >= 16 && second <= 31;
+  }
+  return false;
+}
+
+/**
+ * Is this host an INTERNAL / in-cluster / loopback / private target? These are the
+ * hosts a user-supplied connector endpoint must NOT be able to reach by default —
+ * reaching an in-cluster service (`query-tool`, `trino`, `opa`, `minio`,
+ * `kubernetes.default`), loopback, or a private RFC1918 address would be a
+ * server-side request forgery (SSRF) into the platform / private network.
  *
- * Covers: bare hostnames (no dot, e.g. `opa`), `*.svc` / `*.cluster.local` /
- * `*.local`, `localhost`, IPv4 loopback `127.0.0.0/8`, IPv6 loopback `::1`, and IPv6
- * link-local `fe80::/10` (M2). Raw RFC1918 / 169.254 literals are additionally caught
- * by the private-literal check below; this predicate is the internal-NAME + loopback
- * layer that the old `isExternal` (return-false === auto-allow) let through.
+ * ACTUAL POLICY (two tiers):
+ *   • HARD-DENIED (never egressable, even if allowlisted) — see
+ *     `isHardDeniedTarget`: cloud-metadata / link-local `169.254.0.0/16`, loopback
+ *     `127.0.0.0/8` + `::1`, and IPv4-mapped-IPv6 forms of these.
+ *   • ALLOWLIST-GATED internal (denied UNLESS explicitly allowlisted — legit
+ *     on-prem warehouses on RFC1918 may be allowlisted): bare hostnames (no dot,
+ *     e.g. `opa`), `*.svc` / `*.cluster.local` / `*.local`, `localhost`, IPv6
+ *     link-local `fe80::/10`, and RFC1918 literals (`10/8`, `172.16-31/12`,
+ *     `192.168/16`).
+ * The real egress enforcement is defence-in-depth OUTSIDE this function too — the
+ * egress proxy plus the Cilium FQDN policy at the network boundary.
  */
 export function isInternalTarget(endpoint: string): boolean {
   const host = egressHost(endpoint);
   if (!host) return true; // un-parseable / empty → treat as internal (deny by default)
+  if (isHardDeniedTarget(endpoint)) return true;
   if (host === 'localhost') return true;
-  if (host === '::1' || host === '[::1]') return true; // IPv6 loopback
   if (/^\[?fe80:/i.test(host)) return true; // IPv6 link-local fe80::/10
-  if (/^127\./.test(host)) return true; // IPv4 loopback 127.0.0.0/8
+  if (isRfc1918(host)) return true; // private RFC1918 IPv4 literal (allowlist-gated)
   if (/\.(local|cluster\.local|svc)$/.test(host)) return true; // in-cluster / local dev
   if (!host.includes('.')) return true; // bare service name (e.g. "opa", "query-tool")
   return false;
@@ -208,6 +268,11 @@ function onAllowlist(host: string): boolean {
  */
 export function isEgressAllowed(endpoint: string): { external: boolean; host: string; allowed: boolean } {
   const host = egressHost(endpoint);
+  // Hard-denied literals (cloud-metadata / link-local / loopback, incl. IPv4-mapped
+  // IPv6) are refused ALWAYS — the allowlist cannot re-enable them (SSRF pivots).
+  if (isHardDeniedTarget(endpoint)) {
+    return { external: false, host, allowed: false };
+  }
   const internal = isInternalTarget(endpoint);
   if (internal) {
     // Internal targets are denied unless the operator EXPLICITLY allowlisted them.
@@ -216,6 +281,3 @@ export function isEgressAllowed(endpoint: string): { external: boolean; host: st
   // Allowed if on the static Admin allowlist OR an Admin-approved egress request.
   return { external: true, host, allowed: onAllowlist(host) };
 }
-
-/** The egress proxy the connection tools route external calls through (audit). */
-export const EGRESS_PROXY = config.opaUrl.replace(/opa:8181$/, 'egress-proxy:3128');

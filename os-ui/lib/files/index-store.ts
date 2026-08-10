@@ -13,8 +13,8 @@ import { cosine } from './embed.ts';
  *
  * Dual: the in-process index is authoritative in kind (and unit-tested); the
  * best-effort OpenSearch mirror (`ensureFilesIndex` / `bulkIndex` /
- * `liveHybridSearch`) makes a real deploy serve the SAME query from OpenSearch with
- * a k-NN mapping whose dimension comes from `config.filesEmbedDim` (never hardcoded).
+ * `buildOpenSearchQuery`) makes a real deploy serve the SAME query from OpenSearch
+ * with a k-NN mapping whose dimension comes from `config.filesEmbedDim` (never hardcoded).
  */
 
 export type ChunkMeta = DocMeta & {
@@ -67,13 +67,6 @@ export function indexFile(docs: ChunkDoc[], fileId: string): number {
 
 export function removeFromIndex(fileId: string): void {
   for (const [k, d] of fileIndex()) if (d.fileId === fileId) fileIndex().delete(k);
-}
-
-/** The hashes already indexed for a file — the content-hash cache (skip re-embeds). */
-export function indexedHashes(fileId: string): Set<string> {
-  const hashes = new Set<string>();
-  for (const d of fileIndex().values()) if (d.fileId === fileId) hashes.add(d.hash);
-  return hashes;
 }
 
 /** Prior chunk vectors keyed by content hash — lets a re-index REUSE the vector of

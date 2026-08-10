@@ -25,7 +25,7 @@ promote/certify · run the queued action) **and** writes **audit** + (optionally
 | **Policies** | `policy-view.ts` | Admin **override** (revoke a grant) | reads live OPA grants | role-derived plane compiled in-process |
 | **Audit** | `audit.ts` | — (records every effect) | Langfuse mirror + OpenMetadata lineage | hash-chained in-process log |
 | **Cost & limits** | `cost.ts` | set cap → enforce over-cap | LiteLLM budgets | in-process caps + `checkCap` |
-| **Users & access** | `roles.ts` (+ `lib/users`) | role-per-domain → **OPA grants** | Ory identities + OPA write-through | placeholder Ory seam + in-process compile |
+| **Users & access** | `roles.ts` (+ `lib/platform-admin`) | role-per-domain → **OPA grants** | OS-native identities (scrypt, `lib/core/password.ts`) + OPA write-through | in-process directory + compile |
 
 The **approval queue itself** is `lib/approvals.ts` (reused, extended with the five
 async sources + scope/approver/preview). `standing.ts` is the "approve & remember"
@@ -34,24 +34,27 @@ the gate runs on `kind`; the real sources reconcile at consolidation.
 
 ## Roles & scope (`roles.ts`)
 
-Roles are **User · Creator · Builder · Admin** (wire value for User stays
-`participant`). A user's **role-per-domain** is the source; `roles.ts` is the
-compiler → **OPA grants** every tab enforces.
+Roles are **Creator · Builder · Domain admin · Admin** (lowest→highest; the wire
+enum is `creator | builder | domain_admin | admin`). A user's **role-per-domain** is
+the source; `roles.ts` is the compiler → **OPA grants** every tab enforces.
 
-- **User** — sees + acts on **their own** requests.
-- **Builder** — **their domain's** queues / policy / audit / memberships; assigns
-  roles up to Builder, within their own domain.
-- **Admin** — **tenant-wide** (all domains, egress, tenant defaults, caps, users).
+- **Creator** — sees + acts on **their own** requests.
+- **Builder** — approves **Personal→Shared** in their domain (queues / policy /
+  audit); an approver, not a people-admin.
+- **Domain admin** — Builder rights + administers users in their **own** domain
+  (invite / edit / deactivate; assigns roles up to Builder).
+- **Admin** — **tenant-wide** (all domains, egress, tenant defaults, caps, users)
+  and the only role that appoints a Domain admin.
 
 `canSee`, `canApprove`, `canManageRole` enforce this; egress / tenant items are
 Admin-only (`scope: 'tenant'`).
 
 ## Credentials
 
-This module **never handles raw credentials**. Inviting a user assigns **role +
-membership** only; account creation / passwords / SSO go through **Ory's secure
-flow** (here a server-only placeholder seam, swappable for the Ory identity API).
-Sending a `password` to the users route is rejected (400).
+This module **never handles raw credentials in the approval path**. Inviting a user
+assigns **role + membership** only; account creation / passwords are **OS-native**
+(scrypt-hashed, `lib/core/password.ts` + `lib/platform-admin`) — no external identity
+provider. The governance approval surface itself takes no `password`.
 
 ## Dual pattern (live + offline-mock)
 
@@ -65,12 +68,12 @@ is **clearly marked `live:false`** and the teaching flow still proves the decisi
 | Route | Verbs | Purpose |
 |---|---|---|
 | `/api/governance/approvals` | GET · POST | scoped queue; decide → effect → audit (+ standing) |
-| `/api/governance/approvals/seed` | POST | seed the demo queue (Builder/Admin) |
+| `/api/governance/approvals/seed` | POST | demo-seed seam (Builder/Admin); `seedGovernanceDemo` now returns `[]` — the real sources (Software/Agents/Data/Connections) reconcile at consolidation |
 | `/api/governance/policies` | GET · POST | consolidated plane; Admin override |
 | `/api/governance/audit` | GET | searchable record + chain integrity |
 | `/api/governance/cost` | GET · POST | list / set caps |
 | `/api/governance/cost/check` | POST | enforcement seam (over-cap → 403) |
-| `/api/governance/users` | GET · POST · PATCH | invite / role-per-domain / deactivate |
+| `/api/platform-admin/access` | GET · POST · PATCH | invite / role-per-domain / deactivate (OS-native, scrypt) |
 
 ## Tests
 
@@ -81,7 +84,8 @@ scope (Builder=domain vs Admin=tenant; non-Builder can't deploy), approval→eff
 
 ## What's mocked on `kind`
 
-Argo deploy, the egress proxy, OpenMetadata promote, and live LiteLLM/Ory calls are
+Argo deploy, the egress proxy, OpenMetadata promote, and live LiteLLM calls are
 **mocked** (marked `live:false`). The **policy/access/egress plane is real
 in-process** (so the consumer truly can query, the endpoint truly is allowlisted).
-A real deploy reconciles these into OPA/LiteLLM/Ory.
+Identities are OS-native (no external IdP). A real deploy reconciles these into
+OPA/LiteLLM.

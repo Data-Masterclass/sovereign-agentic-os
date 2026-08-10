@@ -174,6 +174,20 @@ export function buildStatusRail(app: {
   return [repo, preview, dep];
 }
 
+/** Net lines added / removed across a changeset (each side counted separately). PURE. */
+function lineDelta(changes: { before: string; after: string }[]): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const c of changes) {
+    const beforeLines = c.before ? c.before.split('\n').length : 0;
+    const afterLines = c.after ? c.after.split('\n').length : 0;
+    const delta = afterLines - beforeLines;
+    if (delta > 0) added += delta;
+    else removed += -delta;
+  }
+  return { added, removed };
+}
+
 /**
  * The final activity line summarizing a completed commit changeset (real before/after
  * file counts + net line delta), e.g. "Committed 3 files (+120 −8)". Empty changeset
@@ -184,15 +198,7 @@ export function committedSummaryLine(
   changes: { before: string; after: string }[],
 ): string | null {
   if (!changes || changes.length === 0) return null;
-  let added = 0;
-  let removed = 0;
-  for (const c of changes) {
-    const beforeLines = c.before ? c.before.split('\n').length : 0;
-    const afterLines = c.after ? c.after.split('\n').length : 0;
-    const delta = afterLines - beforeLines;
-    if (delta > 0) added += delta;
-    else removed += -delta;
-  }
+  const { added, removed } = lineDelta(changes);
   const n = changes.length;
   return `Committed ${n} file${n === 1 ? '' : 's'} to ${appName} (+${added} −${removed})`;
 }
@@ -219,15 +225,7 @@ export function buildOutcome(
   changes: { path: string; before: string; after: string }[],
 ): BuildOutcome | null {
   if (!changes || changes.length === 0) return null;
-  let added = 0;
-  let removed = 0;
-  for (const c of changes) {
-    const beforeLines = c.before ? c.before.split('\n').length : 0;
-    const afterLines = c.after ? c.after.split('\n').length : 0;
-    const delta = afterLines - beforeLines;
-    if (delta > 0) added += delta;
-    else removed += -delta;
-  }
+  const { added, removed } = lineDelta(changes);
   const files = changes.map((c) => c.path);
   const n = files.length;
   return {

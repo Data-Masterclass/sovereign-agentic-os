@@ -92,31 +92,3 @@ export const DATA_STAGES: StageDef<DataStageId, DataCtx>[] = [
     completed: (c) => c.refined,
   },
 ];
-
-/**
- * The stages a dataset's ORIGIN actually walks. A CURATED dataset is born from existing
- * governed datasets — there is no raw file to ingest and nothing of its own to clean
- * (cleaning belongs to the SOURCES; fixing data in two places forks the truth) — so its
- * flow is Compose · Document · Validate · View. Ids stay stable (stored stage anchors and
- * routes never move); only the visible set, order, titles and ✓-conditions change.
- * An ingested dataset keeps the full 5-stage medallion path unchanged.
- */
-export function stagesForOrigin(origin?: 'ingest' | 'curated'): StageDef<DataStageId, DataCtx>[] {
-  if (origin !== 'curated') return DATA_STAGES;
-  const byId = new Map(DATA_STAGES.map((s) => [s.id, s] as const));
-  return [
-    {
-      ...byId.get('harmonize')!,
-      title: 'Compose (Gold)',
-      hint: 'Join existing governed datasets into this one — pick the base, join others in, choose the output columns. This IS the curated build; ingesting and cleaning happened at the sources.',
-    },
-    {
-      ...byId.get('define')!,
-      title: 'Document',
-      hint: 'Describe the composed dataset and what each output column means — required before it can be promoted.',
-      completed: (c) => !!c.documented,
-    },
-    byId.get('validate')!,
-    byId.get('publish')!,
-  ];
-}

@@ -127,14 +127,6 @@ export function listFacts(domain: string, agent: string): MemoryFact[] {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-/** The recalled long-term context the agent injects this turn (curated first). */
-export function recall(domain: string, agent: string, max = 5): MemoryFact[] {
-  const all = listFacts(domain, agent);
-  const curated = all.filter((f) => f.curated);
-  const rest = all.filter((f) => !f.curated);
-  return [...curated, ...rest].slice(0, max);
-}
-
 export function __resetMemory(): void {
   const s = state();
   s.threads.clear();
