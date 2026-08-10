@@ -12,6 +12,7 @@ import {
   preRoute,
   lastUserText,
 } from '@/lib/agents/build/phase-router';
+import { cleanTurns } from '@/lib/assistant/turns';
 
 export const dynamic = 'force-dynamic';
 // The phase router runs ONE role-agent per turn; a 235B PLAN call can still take
@@ -47,10 +48,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const clean = messages
-    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
-    .slice(-20)
-    .map((m) => ({ role: m.role, content: m.content.trim() }));
+  const clean = cleanTurns(messages);
   if (!reset && clean.length === 0) return NextResponse.json({ error: 'No message to send' }, { status: 400 });
 
   if (reset) resetSession(user.id);

@@ -72,7 +72,7 @@ test('stageDirective embeds the mode directive, Define context, spec + tier', ()
   assert.match(build, /Context from Define/);
   assert.match(build, /Track things/); // purpose
   assert.match(build, /Features to build: F1; F2/);
-  assert.match(build, /standard model/);
+  assert.match(build, /reasoning model/); // Build now runs on reasoning too (0.6.95)
   const test5 = stageDirective(app, { kind: 'story', epicId: 'e1', storyId: 's1' }, 'test');
   assert.match(test5, /Mode: TEST/);
   assert.match(test5, /reasoning model/);

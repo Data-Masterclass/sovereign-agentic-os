@@ -31,10 +31,12 @@ import {
   applyGrantsSuggestion,
   applyEpicsSuggestion,
   applyStoriesSuggestion,
+  applyEpicRequirementsSuggestion,
   applySpecSuggestion,
   type SuggestedGrant,
   type SuggestedEpic,
   type SuggestedStoriesForEpic,
+  type SuggestedEpicRequirements,
   type RawImprovementSuggestion,
 } from '@/lib/software/assistant-suggestions';
 import {
@@ -55,7 +57,7 @@ import { initialStageState, canEnter, isSatisfied, markDone, type StageState } f
 import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { buildStatusRail } from '@/lib/software/build-activity';
 import { type BuildTarget } from '@/lib/software/build-target';
-import { everyStoryHasSpec, specHasContent, type StorySpec } from '@/lib/software/story-spec';
+import { everyStoryHasSpec, specHasContent, storiesMissingSpec, designLadder, type StorySpec } from '@/lib/software/story-spec';
 import {
   BUILD_BATCH_CAP,
   pruneSelection,
@@ -624,6 +626,7 @@ export default function SoftwareBuilder({
             <DesignStage
               app={app} epics={epics} canEdit={canEdit} onSave={(next) => saveDesign({ epics: next })} onReload={onReload}
               refinements={improvements} refineHandlers={refineHandlers} storyTitleOf={storyTitleOf}
+              onGoBuild={canEnter(SW_STAGES, 'build', ctx) ? () => setStage((s) => ({ ...s, current: 'build' })) : undefined}
             />
           ) : null}
 
@@ -877,7 +880,7 @@ function withStorySpec(epics: Epic[], epicId: string, storyId: string, spec: Sto
  * the SAME governed `onSave` (→ patchAppDesign).
  */
 function DesignStage({
-  app, epics, canEdit, onSave, onReload, refinements, refineHandlers, storyTitleOf,
+  app, epics, canEdit, onSave, onReload, refinements, refineHandlers, storyTitleOf, onGoBuild,
 }: {
   app: SoftwareApp;
   epics: Epic[];
@@ -887,9 +890,12 @@ function DesignStage({
   refinements: Improvement[];
   refineHandlers: RefineHandlers;
   storyTitleOf: (storyId: string) => string;
+  /** Navigate to Build (present only when Build is reachable) — for the "looks ready" step. */
+  onGoBuild?: () => void;
 }) {
   const applyEpics = (sug: SuggestedEpic[]) => onSave(applyEpicsSuggestion(epics, sug));
   const applyStories = (groups: SuggestedStoriesForEpic[]) => onSave(applyStoriesSuggestion(epics, groups));
+  const applyEpicReqs = (groups: SuggestedEpicRequirements[]) => onSave(applyEpicRequirementsSuggestion(epics, groups));
 
   // The story the user is focused on (the expanded row) — the assistant's spec target.
   const [activeStory, setActiveStory] = useState<{ epicId: string; storyId: string } | null>(null);
@@ -907,8 +913,33 @@ function DesignStage({
   const specced = stories.filter((s) => specHasContent(s.spec)).length;
   const purpose = (app.purpose ?? '').trim();
 
+  // The artifact ladder + its next-step guidance — teaches AND tracks Epics → Requirements
+  // → Stories → Features/Rules, and feeds the never-a-dead-end assistant.
+  const ladder = designLadder(epics);
+  const designComplete = ladder.every((r) => r.done);
+  // The FIRST unfinished rung is what to do next; a spec-target story sharpens the ask.
+  const nextRung = ladder.find((r) => !r.done);
+  const nextSteps: { label: string; prompt?: string; onClick?: () => void }[] = [];
+  if (canEdit) {
+    if (targetStory) {
+      nextSteps.push({ label: `Draft features, NFRs & rules for “${targetStory.title.trim() || 'this story'}”`, prompt: 'Draft the features, non-functional requirements and rules for the story I have open.' });
+    } else if (nextRung?.key === 'epics') {
+      nextSteps.push({ label: 'Propose EPICs for this app', prompt: 'Suggest EPICs and user stories from the purpose.' });
+    } else if (nextRung?.key === 'requirements') {
+      nextSteps.push({ label: 'Fill in each EPIC’s requirements', prompt: 'For each existing epic, propose its technical, UX and governance requirements.' });
+    } else if (nextRung?.key === 'stories') {
+      nextSteps.push({ label: 'Add user stories to my EPICs', prompt: 'Propose user stories for my existing epics.' });
+    } else if (nextRung?.key === 'specs') {
+      nextSteps.push({ label: 'Draft the specs for my stories', prompt: 'For each story that has no spec yet, draft its features, NFRs and rules.' });
+    }
+    if (designComplete && onGoBuild) {
+      nextSteps.push({ label: 'This looks ready → go to Build', onClick: onGoBuild });
+    }
+  }
+
   return (
     <div {...anchorAttr(ANCHORS.software.design)}>
+      <DesignLadder ladder={ladder} nextKey={nextRung?.key ?? null} />
       <StageConversation
         reverse
         context={
@@ -944,8 +975,10 @@ function DesignStage({
               : ['Suggest EPICs for this app', 'Add user stories to my EPICs']}
             onApplyEpics={canEdit ? applyEpics : undefined}
             onApplyStories={canEdit ? applyStories : undefined}
+            onApplyEpicRequirements={canEdit ? applyEpicReqs : undefined}
             onApplySpec={canEdit && targetStory ? applySpec : undefined}
             specTargetLabel={targetStory?.title.trim() || undefined}
+            nextSteps={nextSteps}
           />
         }
         outcome={
@@ -959,6 +992,64 @@ function DesignStage({
           </>
         }
       />
+    </div>
+  );
+}
+
+/**
+ * DesignLadder — the Design stage's ORIENTATION: a calm "what happens here" line + the
+ * artifact-ladder progress checklist (Epics → Requirements → Stories → Features & rules).
+ * It teaches the order to build things AND tracks how far along each rung the user is, so
+ * the stage is self-explanatory and nobody is left guessing what to do next. Read-only —
+ * the actual creating happens in the epic detail + assistant below.
+ */
+function DesignLadder({
+  ladder,
+  nextKey,
+}: {
+  ladder: ReturnType<typeof designLadder>;
+  nextKey: string | null;
+}) {
+  return (
+    <div className="dl">
+      <p className="dl-lede">
+        <strong>Design</strong> is where you say what the app should do — no code yet. Work down the ladder:
+        break the app into <strong>epics</strong>, note each epic’s <strong>requirements</strong>, add the
+        <strong> user stories</strong> it delivers, then list each story’s <strong>features &amp; rules</strong>.
+        The assistant can draft any rung; every item is ticked off in Build.
+      </p>
+      <ol className="dl-steps">
+        {ladder.map((r, i) => {
+          const state = r.done ? 'done' : r.key === nextKey ? 'next' : 'todo';
+          return (
+            <li key={r.key} className={`dl-step dl-${state}`}>
+              <span className="dl-mark" aria-hidden>{r.done ? '✓' : i + 1}</span>
+              <span className="dl-body">
+                <span className="dl-name">
+                  {r.label}
+                  {r.total > 0 ? <span className="dl-count"> {r.count}/{r.total}</span> : null}
+                </span>
+                {state === 'next' ? <span className="dl-hint">{r.hint}</span> : null}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      <style jsx>{`
+        .dl { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); padding: 14px 16px; margin-bottom: 16px; }
+        .dl-lede { margin: 0 0 12px; font-size: 13px; line-height: 1.65; color: var(--text-muted); }
+        .dl-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+        .dl-step { display: flex; align-items: flex-start; gap: 8px; flex: 1 1 180px; min-width: 160px; border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; background: var(--panel-2, var(--panel)); }
+        .dl-step.dl-next { border-color: var(--gold-line); background: var(--gold-soft); }
+        .dl-step.dl-done { opacity: 0.75; }
+        .dl-mark { flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; border: 1px solid var(--border-strong, var(--border)); color: var(--text-faint); }
+        .dl-step.dl-done .dl-mark { background: var(--gold-soft); border-color: var(--gold-line); color: var(--gold-text, var(--accent)); }
+        .dl-step.dl-next .dl-mark { border-color: var(--gold-line); color: var(--gold-text, var(--accent)); }
+        .dl-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .dl-name { font-size: 12.5px; font-weight: 600; }
+        .dl-count { font-weight: 500; color: var(--text-faint); }
+        .dl-hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
+      `}</style>
     </div>
   );
 }
@@ -1260,12 +1351,33 @@ function BuildStage({
     }
   };
 
-  // The one "Build" press: map the selection to a target, remember the batch's stories,
+  // The story the user has FOCUSED in the tree (a story/feature row click), if any. Used
+  // to attribute a free-text build AND to let the primary Build button act on a single
+  // clicked story even when no feature checkbox is ticked.
+  const nodeStoryTarget: BuildTarget | null = node.kind === 'story' || node.kind === 'feature'
+    ? { kind: 'story', epicId: node.epicId, storyId: node.storyId }
+    : null;
+  // …but only offer to build a focused story that actually HAS a Design spec — building a
+  // spec-less story would produce nothing, the very confusion we are removing.
+  const nodeBuildableTarget: BuildTarget | null = (() => {
+    if (!nodeStoryTarget || nodeStoryTarget.kind !== 'story') return null;
+    const story = epics.find((e) => e.id === nodeStoryTarget.epicId)
+      ?.stories.find((s) => s.id === nodeStoryTarget.storyId);
+    return story && specHasContent(story.spec) ? nodeStoryTarget : null;
+  })();
+  // The button's effective target: ticked features win; otherwise the focused buildable
+  // story. This keeps the Build button live + visible as you move between stories instead
+  // of greying out after a build clears the checkboxes.
+  const primaryTarget = buildTargetForSelection ?? nodeBuildableTarget;
+  const chatTarget = target ?? nodeStoryTarget;
+
+  // The one "Build" press: map to the effective target, remember the batch's stories,
   // set the target, and fire the run.
   const runBuild = () => {
-    const t = buildTargetForSelection;
+    const t = primaryTarget;
     if (!t || running) return;
-    setBuildingStoryIds([...selectedStoryIds(selected)]);
+    const ids = [...selectedStoryIds(selected)];
+    setBuildingStoryIds(ids.length ? ids : (t.kind === 'story' ? [t.storyId] : []));
     setTarget(t);
     setBuildMode('build');
     // The target prop flows to BuildChat; bump the trigger next tick so the chat sees it.
@@ -1275,26 +1387,24 @@ function BuildStage({
   const toggleFeat = (fid: string) => setSelected((sel) => toggleFeatureSel(sel, fid));
   const toggleGrp = (fids: string[]) => setSelected((sel) => toggleGroupSel(sel, fids));
 
-  // The effective target for the ONE assistant (BuildChat). A batch build sets `target`
-  // explicitly; a free-text build with nothing queued attributes to the STORY the user
-  // has selected in the detail (so a typed "add a login form" is still attributed +
-  // ticked). Falls back to null (whole-app) only when nothing is selected.
-  const nodeStoryTarget: BuildTarget | null = node.kind === 'story'
-    ? { kind: 'story', epicId: node.epicId, storyId: node.storyId }
-    : node.kind === 'feature'
-      ? { kind: 'story', epicId: node.epicId, storyId: node.storyId }
-      : null;
-  const chatTarget = target ?? nodeStoryTarget;
-
   const capNote = `Build in focused batches of up to ${BUILD_BATCH_CAP} features so each result is reliable and reviewable.`;
   const buildLabel = (() => {
-    if (buildTargetForSelection?.kind === 'story') {
-      const done = epics.find((e) => e.id === (buildTargetForSelection as { epicId: string }).epicId)
-        ?.stories.find((s) => s.id === (buildTargetForSelection as { storyId: string }).storyId)?.status === 'done';
+    if (primaryTarget?.kind === 'story') {
+      const done = epics.find((e) => e.id === (primaryTarget as { epicId: string }).epicId)
+        ?.stories.find((s) => s.id === (primaryTarget as { storyId: string }).storyId)?.status === 'done';
       return done ? 'Rebuild this user story' : 'Build this user story';
     }
     return `Build ${selCount} selected feature${selCount === 1 ? '' : 's'}`;
   })();
+
+  // Honest "why can't I build?" state. Stories with NO Design spec have nothing to
+  // build — that's expected, not a bug: features/NFRs/rules are authored in DESIGN.
+  const totalStories = epics.flatMap((e) => e.stories).length;
+  const missingSpecCount = storiesMissingSpec(epics);
+  // Fully blocked: there ARE stories, but none has a spec yet → nothing at all to build.
+  const noneBuildable = totalStories > 0 && missingSpecCount === totalStories;
+  // Partially specified: some stories are buildable, some still need their Design spec.
+  const somePending = missingSpecCount > 0 && missingSpecCount < totalStories;
 
   // The structured LEFT surface: the capped-batch spec tree + the one Build button.
   const structure = (
@@ -1304,7 +1414,7 @@ function BuildStage({
         <span className={`badge ${selCount >= BUILD_BATCH_CAP ? 'warn' : 'muted'}`} title={capNote}>{selCount} / {BUILD_BATCH_CAP} selected</span>
       </div>
       <p className="hint" style={{ marginTop: 4 }}>
-        Tick the features to build next (selecting a story or EPIC cascades to its features). {capNote} A feature with no Design spec can&apos;t be built — specify it in Design first.
+        Tick the features to build next (selecting a story or EPIC cascades to its features). {capNote}
       </p>
       <div style={{ marginTop: 10 }}>
         {epics.length === 0 ? (
@@ -1312,17 +1422,46 @@ function BuildStage({
             <p className="muted" style={{ margin: 0 }}>No stories yet — specify the app in Design first.</p>
             {onGoDesign ? <button className="btn sm" style={{ marginTop: 10 }} onClick={onGoDesign}>Go to Design →</button> : null}
           </div>
+        ) : noneBuildable ? (
+          <div className="build-blocked">
+            <p className="bb-title">Nothing to build yet — your user stories need features &amp; requirements first.</p>
+            <p className="bb-body">
+              This is expected, not an error. A story&apos;s <strong>features, NFRs and rules</strong> are defined in the
+              {' '}<strong>Design</strong> stage, and {missingSpecCount === 1 ? 'your story doesn’t have them' : `all ${missingSpecCount} of your stories don’t have them`} yet.
+              Add them in Design and each becomes buildable here.
+            </p>
+            {onGoDesign ? (
+              <button className="btn" onClick={onGoDesign}>← Back to Design to add them</button>
+            ) : null}
+            <style jsx>{`
+              .build-blocked { border: 1px solid var(--gold-line); background: var(--gold-soft); border-radius: 12px; padding: 16px 18px; }
+              .bb-title { margin: 0 0 8px; font-size: 14.5px; font-weight: 700; line-height: 1.4; }
+              .bb-body { margin: 0 0 14px; font-size: 13px; line-height: 1.6; color: var(--text); }
+            `}</style>
+          </div>
         ) : (
-          <SpecTree
-            epics={epics}
-            selected={node}
-            onSelectNode={setNode}
-            selectable
-            selectedFeatures={selected}
-            onToggleFeature={toggleFeat}
-            onToggleGroup={toggleGrp}
-            onGoDesign={onGoDesign}
-          />
+          <>
+            {somePending ? (
+              <p className="build-pending-note">
+                <strong>{missingSpecCount} of {totalStories} stories can&apos;t be built yet</strong> — they have no features &amp; rules.
+                {' '}Add their spec in <strong>Design</strong>; the rest are ready to build below.
+                {onGoDesign ? <> <button type="button" className="btn ghost sm" onClick={onGoDesign}>Back to Design →</button></> : null}
+                <style jsx>{`
+                  .build-pending-note { margin: 0 0 10px; font-size: 12.5px; line-height: 1.55; padding: 9px 11px; border: 1px solid var(--gold-line); background: var(--gold-soft); border-radius: 9px; }
+                `}</style>
+              </p>
+            ) : null}
+            <SpecTree
+              epics={epics}
+              selected={node}
+              onSelectNode={setNode}
+              selectable
+              selectedFeatures={selected}
+              onToggleFeature={toggleFeat}
+              onToggleGroup={toggleGrp}
+              onGoDesign={onGoDesign}
+            />
+          </>
         )}
       </div>
 
@@ -1341,17 +1480,19 @@ function BuildStage({
         </div>
       ) : null}
 
-      {/* The ONE primary Build button — builds the selected set (tightest scope). */}
+      {/* The ONE primary Build button — always visible; builds the ticked features, or the
+          story you have clicked (tightest scope). It stays live as you move between
+          stories instead of greying out after a build clears the checkboxes. */}
       <div className="row" style={{ gap: 10, marginTop: 14, alignItems: 'center', flexWrap: 'wrap' }}>
         <button
           className="btn lg"
-          disabled={!buildTargetForSelection || running}
+          disabled={!primaryTarget || running}
           onClick={runBuild}
-          title={buildTargetForSelection ? 'Build the selected features — commits real code' : 'Select at least one feature to build'}
+          title={primaryTarget ? 'Build the selected features — commits real code' : 'Tick a feature, or click a user story that has a spec, to build'}
         >
           {running ? <span className="spin" /> : buildLabel}
         </button>
-        {selCount === 0 ? <span className="muted" style={{ fontSize: 12 }}>Select features on the left to build.</span> : null}
+        {!primaryTarget ? <span className="muted" style={{ fontSize: 12 }}>Tick features on the left, or click a user story, to build.</span> : null}
       </div>
 
       {/* Always-visible detail: the selected item's spec + honest built-state. */}
@@ -1371,9 +1512,9 @@ function BuildStage({
         context={
           <>
             <span className="sc-scope">Build</span>
-            <span className="badge muted" title="The build runs code generation on the standard model — no reasoning escalation">Build · {tierNote(modelRoleForMode('build'))}</span>
+            <span className="badge muted" title="The build runs code generation on the reasoning model">Build · {tierNote(modelRoleForMode('build'))}</span>
             <span className="sc-hint">Context from Define: {defineContextNote({ template: app.template, purpose: app.purpose })}</span>
-            <span className="sc-hint sc-spacer">Tick features → Build the batch on the standard model, grounded in the Design spec. The assistant refines &amp; gives feedback.</span>
+            <span className="sc-hint sc-spacer">Tick features → Build the batch on the reasoning model, grounded in the Design spec. The assistant refines &amp; gives feedback.</span>
           </>
         }
         structure={structure}
@@ -1510,7 +1651,7 @@ function TestStage({
         </div>
         {verifyMsg ? <div className={verifyMsg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 10 }}>{verifyMsg}</div> : null}
         <p className="hint" style={{ marginTop: 8 }}>
-          Refinements land as reviewable to-dos — nothing auto-runs. A missed spec item becomes a <strong>rebuild</strong> (standard model); feedback that changes the requirement is routed to <strong>Design</strong> first.
+          Refinements land as reviewable to-dos — nothing auto-runs. A missed spec item becomes a <strong>rebuild</strong> (reasoning model); feedback that changes the requirement is routed to <strong>Design</strong> first.
         </p>
       </div>
 

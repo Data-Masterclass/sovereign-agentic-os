@@ -15,6 +15,7 @@ export type {
   TalkResult,
   TalkCitation,
   TalkGrounding,
+  TalkChart,
   TalkConfig,
   TabMetadata,
 } from './schema.ts';

@@ -34,7 +34,7 @@ import { guardedEmbedder } from '@/lib/infra/context/librarian-live';
 import { trace } from '@/lib/infra/governed';
 import { getTabConfig } from './config.ts';
 import { getTabMetadata } from './metadata.ts';
-import type { TalkCitation, TalkResult, TalkTabId, TalkTurn } from './schema.ts';
+import type { TalkChart, TalkCitation, TalkResult, TalkTabId, TalkTurn } from './schema.ts';
 
 const LLM_TIMEOUT_MS = 60_000;
 /** The copilot answers concisely; the assembler already caps the (much larger) INPUT. */
@@ -283,6 +283,7 @@ export async function talkTo(
       query: grounding.query,
       evidence: grounding.evidence,
       citations: grounding.citations,
+      chart: grounding.chart, // the chartable view of the returned rows (undefined if none)
     },
   };
   await audit(tabId, user, q, result);
@@ -292,7 +293,7 @@ export async function talkTo(
 // ---------------------------------------------------------------------- helpers --
 
 /** The tab's grounding shape (the return of a `TalkRetrieval`). */
-type Grounding = { kind: 'sql' | 'retrieval' | 'none'; query?: string; evidence?: string; citations: TalkCitation[] };
+type Grounding = { kind: 'sql' | 'retrieval' | 'none'; query?: string; evidence?: string; citations: TalkCitation[]; chart?: TalkChart };
 
 /** Build + audit the honest "model unreachable" result (both tiers failed). */
 async function failModel(
@@ -309,7 +310,7 @@ async function failModel(
     answer: `The model was unreachable: ${err.message}`,
     reasoning: '',
     citations,
-    grounding: { kind: grounding.kind, query: grounding.query, evidence: grounding.evidence, citations: grounding.citations },
+    grounding: { kind: grounding.kind, query: grounding.query, evidence: grounding.evidence, citations: grounding.citations, chart: grounding.chart },
   };
   await audit(tabId, user, question, result);
   return result;

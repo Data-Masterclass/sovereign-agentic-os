@@ -1,0 +1,308 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG
+ */
+import 'server-only';
+import { config } from '@/lib/core/config';
+import { repoHtmlUrl } from './apps.ts';
+import type { CurrentUser } from '@/lib/core/auth';
+
+/**
+ * Software / Delivery -> Forgejo — the repo listing + scaffold-a-new-repo business
+ * logic, lifted VERBATIM from app/api/software/route.ts so the route keeps only
+ * auth + request parse + response shaping.
+ *
+ * IMPORTANT (flagged drift — human decision needed): the `ciWorkflow` below is the
+ * ROUTE's own inline copy. It is NOT identical to lib/software/apps.ts `ciWorkflow`:
+ * the apps.ts app-pipeline version appends a `prunePackagesStep()` registry-prune
+ * step that THIS repo-scaffold path never had. They were deliberately NOT unified —
+ * doing so would change the CI this endpoint seeds. If they should converge, that is
+ * a separate, reviewed change; here the behaviour is preserved exactly as before.
+ */
+
+export type ReposResult = {
+  status: number;
+  body: Record<string, unknown>;
+};
+
+type Repo = {
+  name: string;
+  fullName: string;
+  description: string;
+  private: boolean;
+  defaultBranch: string;
+  updatedAt: string | null;
+};
+
+type Run = {
+  id: number;
+  name: string;
+  status: string;
+  branch: string;
+  sha: string;
+  event: string;
+  title: string;
+  runNumber: number;
+  workflow: string;
+  createdAt: string | null;
+  url: string;
+};
+
+function authHeader(): string {
+  const token = Buffer.from(
+    `${config.forgejoUser}:${config.forgejoPassword}`,
+  ).toString('base64');
+  return `Basic ${token}`;
+}
+
+async function forgejo(path: string): Promise<unknown> {
+  const res = await fetch(`${config.forgejoUrl}/api/v1${path}`, {
+    headers: { authorization: authHeader(), accept: 'application/json' },
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Forgejo ${res.status} on ${path}: ${t.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
+async function forgejoWrite(
+  path: string,
+  body: unknown,
+): Promise<{ ok: boolean; status: number; data: Record<string, unknown>; raw: string }> {
+  const res = await fetch(`${config.forgejoUrl}/api/v1${path}`, {
+    method: 'POST',
+    headers: {
+      authorization: authHeader(),
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+  const raw = await res.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    /* non-JSON body left in raw */
+  }
+  return { ok: res.ok, status: res.status, data, raw };
+}
+
+/**
+ * GET -> list repos + the demo-app's recent CI runs (push -> CI -> deploy).
+ * Visibility scope: private repos are admin-only; every caller sees the shared ones.
+ */
+export async function listRepos(user: CurrentUser): Promise<ReposResult> {
+  const owner = config.forgejoRepoOwner;
+  const demo = config.forgejoDemoRepo;
+  try {
+    const search = (await forgejo('/repos/search?limit=30')) as {
+      data?: Record<string, unknown>[];
+    };
+    const all: Repo[] = (search.data ?? []).map((r) => ({
+      name: String(r.name ?? ''),
+      fullName: String(r.full_name ?? ''),
+      description: String(r.description ?? ''),
+      private: Boolean(r.private),
+      defaultBranch: String(r.default_branch ?? 'main'),
+      updatedAt: (r.updated_at as string) ?? null,
+    }));
+    // Visibility scope: private repos (personal, not domain-shared) are admin-
+    // only. Every authenticated caller sees the non-private (shared) repos.
+    const repos = user.role === 'admin' ? all : all.filter((r) => !r.private);
+
+    let runs: Run[] = [];
+    let runsError = '';
+    try {
+      const tasks = (await forgejo(
+        `/repos/${owner}/${demo}/actions/tasks`,
+      )) as { workflow_runs?: Record<string, unknown>[] };
+      runs = (tasks.workflow_runs ?? []).map((w) => ({
+        id: Number(w.id ?? 0),
+        name: String(w.name ?? ''),
+        status: String(w.status ?? 'unknown'),
+        branch: String(w.head_branch ?? ''),
+        sha: String(w.head_sha ?? '').slice(0, 8),
+        event: String(w.event ?? ''),
+        title: String(w.display_title ?? ''),
+        runNumber: Number(w.run_number ?? 0),
+        workflow: String(w.workflow_id ?? ''),
+        createdAt: (w.created_at as string) ?? null,
+        url: String(w.url ?? ''),
+      }));
+    } catch (e) {
+      runsError = (e as Error).message;
+    }
+
+    return {
+      status: 200,
+      body: {
+        repos,
+        demo: { owner, repo: demo },
+        runs,
+        runsError,
+        consoleUrl: config.forgejoConsoleUrl,
+        argocdUrl: config.argocdUrl,
+      },
+    };
+  } catch (e) {
+    return {
+      status: 502,
+      body: { error: `Could not reach Forgejo: ${(e as Error).message}` },
+    };
+  }
+}
+
+function slug(s: string): string {
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9-_ ]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 60);
+}
+
+function b64(s: string): string {
+  return Buffer.from(s, 'utf8').toString('base64');
+}
+
+/**
+ * The REAL build->push CI workflow — the SAME sovereign pipeline the app golden
+ * path seeds (lib/software/apps.ts `ciWorkflow`) and the proven demo-app seed uses:
+ * `runs-on: docker` (the in-cluster runner's only label), an in-pod DinD build, and
+ * a push of `:latest` to Forgejo's registry — the exact tag the app runner pulls.
+ * The previous stub (`runs-on: ubuntu-latest`, `uses: actions/checkout@v4`, an
+ * `echo` "build here") could NEVER run on the sovereign runner nor publish an image,
+ * so every repo it seeded reported "success" while pushing nothing.
+ *
+ * NOTE: this is the repo-scaffold copy; it does NOT include the apps.ts app-pipeline
+ * registry-prune step (see the flag at the top of this file). Preserved verbatim.
+ */
+function ciWorkflow(name: string): string {
+  const registry = config.harborRegistry.split('/')[0];
+  const owner = config.forgejoRepoOwner;
+  return (
+    'on:\n  push:\n    branches: [main]\n' +
+    'jobs:\n  build-and-push:\n    runs-on: docker\n    env:\n' +
+    '      DOCKER_HOST: tcp://localhost:2375\n' +
+    '      REGISTRY: ' + registry + '\n' +
+    '      OWNER: ' + owner + '\n' +
+    '      REPO: ' + name + '\n' +
+    '    steps:\n' +
+    '      - name: Checkout (manual — sovereign, no github.com)\n' +
+    '        env: { REG_PASS: "${{ secrets.REGISTRY_PASS }}" }\n' +
+    '        run: |\n          set -eu\n' +
+    '          git clone --depth 1 "http://${OWNER}:${REG_PASS}@${REGISTRY}/${OWNER}/${REPO}.git" src\n' +
+    '      - name: Build & push image\n' +
+    '        env: { REG_PASS: "${{ secrets.REGISTRY_PASS }}" }\n' +
+    '        run: |\n          set -eu\n' +
+    '          TAG="$(echo "${GITHUB_SHA}" | cut -c1-12)"\n' +
+    '          IMAGE="${REGISTRY}/${OWNER}/${REPO}"\n' +
+    '          echo "${REG_PASS}" | docker login "${REGISTRY}" -u "${OWNER}" --password-stdin\n' +
+    '          docker build -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" ./src\n' +
+    '          docker push "${IMAGE}:${TAG}"\n' +
+    '          docker push "${IMAGE}:latest"\n'
+  );
+}
+
+function starterFiles(name: string, description: string) {
+  // README.md is omitted here — auto_init already creates one; seeding it again
+  // would 422 (already exists). We seed the files Forgejo's auto-init does not.
+  void description;
+  const dockerfile = `# Starter Dockerfile — Sovereign Agentic OS software scaffold\nFROM node:22-alpine\nWORKDIR /app\nCOPY . .\nEXPOSE 8080\nCMD ["node", "server.js"]\n`;
+  const ci = ciWorkflow(name);
+  const manifest = `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: ${name}\n  labels: { app: ${name} }\nspec:\n  replicas: 1\n  selector: { matchLabels: { app: ${name} } }\n  template:\n    metadata: { labels: { app: ${name} } }\n    spec:\n      containers:\n        - name: ${name}\n          image: forgejo-http:3000/${config.forgejoRepoOwner}/${name}:latest\n          ports: [{ containerPort: 8080 }]\n`;
+  // Source first, workflow LAST — the commit that adds the workflow is the push
+  // that first triggers CI, so it must land with the Dockerfile already present.
+  return [
+    { path: 'Dockerfile', content: dockerfile },
+    { path: 'manifests/app.yaml', content: manifest },
+    { path: '.forgejo/workflows/ci.yml', content: ci },
+  ];
+}
+
+/**
+ * POST -> create a NEW repo (Forgejo `POST /user/repos`) and seed a starter
+ * Dockerfile, a Forgejo Actions CI workflow, and a k8s manifest for Argo CD.
+ * `rawName`/`rawDescription`/`rawPrivate` are the parsed request fields (the route
+ * only parses JSON + gates auth; all the real work is here, verbatim).
+ */
+export async function createRepo(
+  rawName: unknown,
+  rawDescription: unknown,
+  rawPrivate: unknown,
+): Promise<ReposResult> {
+  const name = slug((rawName ?? '').toString());
+  const description = (rawDescription ?? '').toString().trim().slice(0, 240);
+  const priv = Boolean(rawPrivate);
+  if (!name) {
+    return { status: 400, body: { error: 'A repository name is required' } };
+  }
+
+  // Real action #1: create the repository (auto_init so a default branch + tree
+  // exists, which the contents API needs to seed files).
+  const create = await forgejoWrite('/user/repos', {
+    name,
+    description: description || 'Scaffolded by the Sovereign Agentic OS',
+    private: priv,
+    auto_init: true,
+    default_branch: 'main',
+  });
+  if (!create.ok) {
+    return {
+      status: create.status === 409 ? 409 : 502,
+      body: { error: `Forgejo could not create repo: ${create.status} ${create.raw.slice(0, 200)}` },
+    };
+  }
+
+  const owner = config.forgejoRepoOwner;
+  // Real action #2a: set the REGISTRY_PASS Actions secret the CI workflow uses to
+  // `docker login` and push the image — BEFORE seeding the workflow, so the first
+  // push can build. (Admin creds — the same local-dev convenience the app path and
+  // the demo-app seed use.)
+  await fetch(
+    `${config.forgejoUrl}/api/v1/repos/${owner}/${name}/actions/secrets/REGISTRY_PASS`,
+    {
+      method: 'PUT',
+      headers: {
+        authorization: authHeader(),
+        accept: 'application/json',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ data: config.forgejoPassword }),
+      cache: 'no-store',
+    },
+  ).catch(() => undefined);
+  // Real action #2b: seed the starter files (Dockerfile / manifest / CI) so
+  // Forgejo Actions can build and Argo CD has a manifest to sync.
+  const seeded: string[] = [];
+  const seedErrors: string[] = [];
+  for (const f of starterFiles(name, description)) {
+    const r = await forgejoWrite(`/repos/${owner}/${name}/contents/${f.path}`, {
+      content: b64(f.content),
+      message: `seed ${f.path}`,
+      branch: 'main',
+    });
+    if (r.ok) seeded.push(f.path);
+    else seedErrors.push(`${f.path}: ${r.status}`);
+  }
+
+  const fullName = String(create.data?.full_name ?? `${owner}/${name}`);
+  return {
+    status: 200,
+    body: {
+      created: true,
+      repo: {
+        name,
+        fullName,
+        // The EXTERNAL browsable URL — never Forgejo's in-cluster `html_url` (404 in a browser).
+        htmlUrl: repoHtmlUrl(fullName),
+      },
+      seeded,
+      seedErrors,
+    },
+  };
+}

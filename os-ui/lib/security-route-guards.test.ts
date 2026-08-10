@@ -209,7 +209,9 @@ for (const p of USER_GATED_GETS) {
 }
 
 test('LEAK-FIX: /api/software GET scopes private repos to admins (no cross-user private recon)', () => {
-  const src = read('app/api/software/route.ts');
+  // The repo listing logic was lifted into lib/software/repos.ts (the route is now a
+  // thin auth+parse+shape wrapper); the admin-only private-repo scope lives there.
+  const src = read('lib/software/repos.ts');
   assert.match(src, /user\.role === 'admin' \? all : all\.filter\(\(r\) => !r\.private\)/, 'non-admins never see private repos');
 });
 

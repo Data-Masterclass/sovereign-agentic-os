@@ -10,6 +10,20 @@
  * retrieval for knowledge/files, …). Nothing here does IO; it only names the seams.
  */
 import type { CurrentUser } from '@/lib/core/auth';
+import type { ChartHint } from '@/lib/data/ask-chart';
+
+/**
+ * A CHARTABLE data result carried to the client so the answer can render an inline chart.
+ * `columns`/`rows` are the EXACT governed grid the answer is grounded in (already RLS/DLS
+ * filtered server-side, capped to `hint.plottedRows`); `hint` is the pure plan from
+ * `deriveChart`. Present ONLY when the data retrieval produced a clean chart shape — a
+ * non-chartable or non-data turn omits it (the UI then shows text + table only).
+ */
+export type TalkChart = {
+  columns: string[];
+  rows: string[][];
+  hint: ChartHint;
+};
 
 /** The five Context tabs that get a copilot. Add an id here + a config entry to roll one out. */
 export type TalkTabId = 'data' | 'knowledge' | 'files' | 'connections' | 'metrics';
@@ -102,6 +116,12 @@ export type TalkGrounding = {
   /** The compact evidence the model was grounded on (rows preview / retrieved snippets). */
   evidence?: string;
   citations: TalkCitation[];
+  /**
+   * A chartable view of the SAME returned rows — the real grid + the pure chart plan.
+   * Set ONLY by the data retrieval when the result has a clean chart shape; the UI renders
+   * it inline (never saved). Non-chartable / non-data turns leave it undefined.
+   */
+  chart?: TalkChart;
 };
 
 /**
@@ -153,6 +173,8 @@ export type TalkRetrieval = (
   query?: string;
   evidence?: string;
   citations: TalkCitation[];
+  /** A chartable view of the returned rows, when the tab's result has a clean chart shape. */
+  chart?: TalkChart;
 }>;
 
 /** The metadata source for a tab — DLS-scoped, run AS the caller. */

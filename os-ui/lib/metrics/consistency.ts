@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset, Measure } from '../data/index.ts';
-import { transparencyGate, gateReason } from '../data/transparency.ts';
+import { transparencyGate, gateReason } from '@/lib/data';
 import {
   type AgentMetricProposal,
   type MetricForm,

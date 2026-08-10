@@ -4,7 +4,7 @@
 import 'server-only';
 import { config } from '@/lib/core/config';
 import { queryRun } from '@/lib/infra/governed';
-import { type DelegatedToken, propagate } from '../../data/identity.ts';
+import { type DelegatedToken, propagate } from '@/lib/data';
 import type { Dataset, Measure } from '../../data/index.ts';
 import { personalSchema, domainSchema, physicalSlug } from '../../data/store-fqn.ts';
 import {

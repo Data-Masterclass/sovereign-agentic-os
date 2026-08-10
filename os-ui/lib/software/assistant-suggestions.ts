@@ -24,7 +24,7 @@ import {
   type ContextKind,
 } from '@/lib/core/context-grants';
 import type { AppEpic, AppStory } from '@/lib/software/apps';
-import { type StorySpec } from '@/lib/software/story-spec';
+import { normalizeSpec, type StorySpec } from '@/lib/software/story-spec';
 
 /** A single context-grant the assistant proposes: which kind + id, at what access. */
 export type SuggestedGrant = {
@@ -44,13 +44,15 @@ export type SuggestedEpic = {
   stories?: SuggestedStory[];
 };
 
-/** A user story the assistant proposes (id assigned on apply). */
+/** A user story the assistant proposes (id assigned on apply). May carry its spec. */
 export type SuggestedStory = {
   title: string;
   asA?: string;
   iWant?: string;
   soThat?: string;
   acceptance?: string;
+  /** The story's spec, when the assistant drafts features/NFRs/rules alongside it. */
+  spec?: Partial<StorySpec>;
 };
 
 /** Stories the assistant proposes for an EXISTING epic, referenced by its title. */
@@ -58,6 +60,13 @@ export type SuggestedStoriesForEpic = {
   /** The (case-insensitive) title of the epic these stories belong under. */
   epicTitle: string;
   stories: SuggestedStory[];
+};
+
+/** Requirements the assistant proposes for an EXISTING epic, referenced by its title. */
+export type SuggestedEpicRequirements = {
+  /** The (case-insensitive) title of the epic these requirements belong to. */
+  epicTitle: string;
+  requirements: Partial<AppEpic['requirements']>;
 };
 
 /** The structured suggestions a stage assistant reply may carry (all optional). */
@@ -70,6 +79,8 @@ export type StageSuggestions = {
   suggestedEpics?: SuggestedEpic[];
   /** Design: stories to add under existing epics, referenced by title. */
   suggestedStories?: SuggestedStoriesForEpic[];
+  /** Design: requirements (technical/ux/governance) to fill in on EXISTING epics. */
+  suggestedEpicRequirements?: SuggestedEpicRequirements[];
   /**
    * Design (spec mode): the three spec lists proposed for the CURRENTLY-SELECTED
    * story — features, non-functional requirements and rules. The host folds them
@@ -146,9 +157,9 @@ export function applyGrantsSuggestion(
 
 // ----------------------------------------------------- Design apply reducers --
 
-/** Normalise a suggested story into a full, id'd AppStory. */
+/** Normalise a suggested story into a full, id'd AppStory (its spec folded in if drafted). */
 function materializeStory(s: SuggestedStory): AppStory {
-  return {
+  const story: AppStory = {
     id: rid('story'),
     title: (s.title ?? '').trim(),
     asA: (s.asA ?? '').trim(),
@@ -156,6 +167,11 @@ function materializeStory(s: SuggestedStory): AppStory {
     soThat: (s.soThat ?? '').trim(),
     acceptance: (s.acceptance ?? '').trim(),
   };
+  // A drafted spec rides along the story — normalised (trimmed, blanks dropped) so a
+  // malformed suggestion can never widen the shape. Absent ⇒ field stays absent.
+  const spec = s.spec ? normalizeSpec(s.spec) : undefined;
+  if (spec) story.spec = spec;
+  return story;
 }
 
 /** Normalise a suggested epic into a full, id'd AppEpic (its stories materialised too). */
@@ -206,6 +222,39 @@ export function applyStoriesSuggestion(
     const add = byTitle.get(epic.title.trim().toLowerCase());
     if (!add || add.length === 0) return epic;
     return { ...epic, stories: [...epic.stories, ...add.map(materializeStory)] };
+  });
+}
+
+/**
+ * Fill in requirements (technical/ux/governance) on EXISTING epics, matched by title
+ * (case-insensitive, trimmed). Only EMPTY requirement fields are filled — a field the
+ * user already wrote is never overwritten. Epics that match no suggestion are untouched.
+ * Pure — returns a NEW epics array.
+ */
+export function applyEpicRequirementsSuggestion(
+  epics: AppEpic[],
+  suggested: SuggestedEpicRequirements[],
+): AppEpic[] {
+  const byTitle = new Map<string, Partial<AppEpic['requirements']>>();
+  for (const group of suggested) {
+    const key = (group?.epicTitle ?? '').trim().toLowerCase();
+    if (!key || !group.requirements) continue;
+    byTitle.set(key, { ...byTitle.get(key), ...group.requirements });
+  }
+  if (byTitle.size === 0) return epics;
+  return epics.map((epic) => {
+    const add = byTitle.get(epic.title.trim().toLowerCase());
+    if (!add) return epic;
+    const keep = (existing: string, next: string | undefined): string =>
+      existing.trim() ? existing : (next ?? '').trim();
+    return {
+      ...epic,
+      requirements: {
+        technical: keep(epic.requirements.technical, add.technical),
+        ux: keep(epic.requirements.ux, add.ux),
+        governance: keep(epic.requirements.governance, add.governance),
+      },
+    };
   });
 }
 
@@ -301,6 +350,24 @@ export function normalizeAssistantReply(raw: unknown, kinds: ContextKind[]): Sta
     if (groups.length) suggestions.suggestedStories = groups;
   }
 
+  if (Array.isArray(rec.suggestedEpicRequirements)) {
+    const groups = rec.suggestedEpicRequirements
+      .map((g): SuggestedEpicRequirements | null => {
+        if (!g || typeof g !== 'object') return null;
+        const o = g as Record<string, unknown>;
+        const epicTitle = str(o.epicTitle).trim();
+        const req = (o.requirements && typeof o.requirements === 'object' ? o.requirements : {}) as Record<string, unknown>;
+        const requirements: Partial<AppEpic['requirements']> = {};
+        const t = str(req.technical).trim(); if (t) requirements.technical = t;
+        const u = str(req.ux).trim(); if (u) requirements.ux = u;
+        const gv = str(req.governance).trim(); if (gv) requirements.governance = gv;
+        if (!epicTitle || (!requirements.technical && !requirements.ux && !requirements.governance)) return null;
+        return { epicTitle, requirements };
+      })
+      .filter((g): g is SuggestedEpicRequirements => g !== null);
+    if (groups.length) suggestions.suggestedEpicRequirements = groups;
+  }
+
   if (rec.suggestedSpec && typeof rec.suggestedSpec === 'object') {
     const o = rec.suggestedSpec as Record<string, unknown>;
     const list = (v: unknown): string[] =>
@@ -331,6 +398,19 @@ export function normalizeAssistantReply(raw: unknown, kinds: ContextKind[]): Sta
   return { message, suggestions };
 }
 
+/** Shape-guard a raw {features,nfrs,rules} blob into a Partial<StorySpec> (or undefined). */
+function normalizeSuggestedSpec(raw: unknown): Partial<StorySpec> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const list = (v: unknown): string[] =>
+    (Array.isArray(v) ? v : []).filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean);
+  const spec: Partial<StorySpec> = {};
+  const f = list(o.features); if (f.length) spec.features = f;
+  const n = list(o.nfrs); if (n.length) spec.nfrs = n;
+  const r = list(o.rules); if (r.length) spec.rules = r;
+  return spec.features || spec.nfrs || spec.rules ? spec : undefined;
+}
+
 function normalizeStory(raw: unknown): SuggestedStory | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
@@ -343,5 +423,6 @@ function normalizeStory(raw: unknown): SuggestedStory | null {
     iWant: str(o.iWant).trim() || undefined,
     soThat: str(o.soThat).trim() || undefined,
     acceptance: str(o.acceptance).trim() || undefined,
+    spec: normalizeSuggestedSpec(o.spec),
   };
 }

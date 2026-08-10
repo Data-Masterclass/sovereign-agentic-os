@@ -106,3 +106,36 @@ test('SWALLOW: every failure kind carries its kind + message into the evidence',
     assert.match(g.evidence ?? '', new RegExp(f.message.split(' ')[0]));
   }
 });
+
+// ------------------------------------------------------ chart hint attaches to grounding --
+
+test('CHART: a chartable outcome (category + one numeric) attaches a bar chart of the real rows', () => {
+  const outcome = {
+    ok: true as const,
+    sql: 'select region, revenue from t',
+    columns: ['region', 'revenue'],
+    rows: [['DE', '100'], ['FR', '80'], ['ES', '60']],
+    rowCount: 3,
+    answer: 'DE leads at 100.',
+  };
+  const g = dataResult(outcome, []);
+  assert.ok(g.chart, 'a clean category+numeric shape is chartable');
+  assert.equal(g.chart!.hint.defaultType, 'bar');
+  assert.equal(g.chart!.hint.plottedRows, 3);
+  assert.equal(g.chart!.hint.totalRows, 3);
+  // The chart carries the SAME real rows (nothing re-aggregated or invented).
+  assert.deepEqual(g.chart!.rows, outcome.rows);
+});
+
+test('CHART: an all-text outcome is NOT chartable (no chart on the grounding)', () => {
+  const g = dataResult(
+    { ok: true, sql: 'select name, status from t', columns: ['name', 'status'], rows: [['a', 'ready'], ['b', 'pending']], rowCount: 2, answer: '' },
+    [],
+  );
+  assert.equal(g.chart, undefined);
+});
+
+test('CHART: a failed outcome carries no chart (only honest evidence)', () => {
+  const g = dataResult({ ok: false, kind: 'query_failed', message: 'boom', sql: 'select 1' }, []);
+  assert.equal(g.chart, undefined);
+});

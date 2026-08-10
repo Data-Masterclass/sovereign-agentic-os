@@ -12,6 +12,8 @@ import {
   deriveStoryChecklist,
   deriveEpicOverview,
   everyStoryHasSpec,
+  storiesMissingSpec,
+  designLadder,
   type StorySpec,
 } from './story-spec.ts';
 
@@ -109,4 +111,49 @@ test('story-spec: everyStoryHasSpec is honest across epics', () => {
     ]),
     true,
   );
+});
+
+test('story-spec: storiesMissingSpec counts stories with no authored spec (Build callout)', () => {
+  // No stories → nothing missing.
+  assert.equal(storiesMissingSpec([]), 0);
+  assert.equal(storiesMissingSpec([{ stories: [] }]), 0);
+  // Every story lacks a spec → all missing (the fully-blocked Build state).
+  assert.equal(
+    storiesMissingSpec([{ stories: [{ status: 'todo' }, {}] }, { stories: [{ spec: { features: [], nfrs: [], rules: [] } }] }]),
+    3,
+  );
+  // Mixed: one specced, two not → 2 missing (the partial Build state).
+  assert.equal(
+    storiesMissingSpec([
+      { stories: [{ spec: { features: ['a'], nfrs: [], rules: [] } }, { status: 'todo' }] },
+      { stories: [{}] },
+    ]),
+    2,
+  );
+});
+
+test('story-spec: designLadder rolls the four rungs up honestly', () => {
+  // Empty app: nothing done, every rung at 0.
+  const empty = designLadder([]);
+  assert.deepEqual(empty.map((r) => r.key), ['epics', 'requirements', 'stories', 'specs']);
+  assert.ok(empty.every((r) => r.done === false && r.total === 0));
+
+  // One epic with requirements + one story that IS specced, one that is NOT.
+  const ladder = designLadder([
+    {
+      requirements: { technical: 'cron', ux: '', governance: '' },
+      stories: [
+        { spec: { features: ['f'], nfrs: [], rules: [] } },
+        { status: 'todo' }, // no spec
+      ],
+    },
+  ]);
+  const by = Object.fromEntries(ladder.map((r) => [r.key, r]));
+  assert.equal(by.epics.done, true);
+  assert.equal(by.requirements.done, true, 'the one epic has a requirement → rung done');
+  assert.equal(by.stories.done, true);
+  assert.equal(by.stories.count, 2);
+  assert.equal(by.specs.done, false, 'not every story specced');
+  assert.equal(by.specs.count, 1);
+  assert.equal(by.specs.total, 2);
 });

@@ -14,9 +14,13 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import Markdown from '@/components/Markdown';
+import ResultChart from '@/components/data/ResultChart';
+import type { ChartHint } from '@/lib/data/ask-chart';
 
 type Citation = { id: string; label: string; href?: string; kind: string };
-type Grounding = { kind: 'sql' | 'retrieval' | 'none'; query?: string; evidence?: string; citations: Citation[] };
+/** The chartable view of the returned rows, present only when the result is chartable. */
+type Chart = { columns: string[]; rows: string[][]; hint: ChartHint };
+type Grounding = { kind: 'sql' | 'retrieval' | 'none'; query?: string; evidence?: string; citations: Citation[]; chart?: Chart };
 type TalkResult = {
   ok: boolean;
   answer: string;
@@ -256,6 +260,12 @@ function ResultView({ result }: { result: TalkResult }) {
       <div className="answer">
         <Markdown>{result.answer}</Markdown>
       </div>
+
+      {/* Inline chart — only when the returned rows are chartable. Built from the SAME
+          governed rows the answer is grounded in; never saved. */}
+      {ran.chart && (
+        <ResultChart columns={ran.chart.columns} rows={ran.chart.rows} hint={ran.chart.hint} />
+      )}
 
       {/* Real citations. */}
       {result.citations.length > 0 && (

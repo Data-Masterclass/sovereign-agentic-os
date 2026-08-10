@@ -4,9 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { getAppForUser } from '@/lib/software/apps';
-import { executeAppTool } from '@/lib/software/app-records';
-import { authorizeAppTool, authorizeConnectionCall, trace } from '@/lib/infra/agent-governed';
-import { enqueue } from '@/lib/governance/approvals';
+import { callAppTool } from '@/lib/software/app-tool-call';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,48 +47,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   const tool = String(body?.tool ?? '');
-  const principal = app.mcpPrincipal;
 
-  // Honor the auto-MCP capability profile (reads-on / writes-off preset compiled
-  // to OPA). A read tool is allowed; a write tool is HELD for human approval and
-  // queued in the Governance inbox — never silently executed. Falls back to the
-  // app-registry grant when no compiled profile is present (older in-memory app).
-  const profile = authorizeConnectionCall(principal, tool, body.args);
-  const authz =
-    profile.reason.startsWith('unknown connection principal')
-      ? await authorizeAppTool(principal, tool)
-      : { effect: profile.effect, policy: 'app-grant' as const, reason: profile.reason };
-
-  if (authz.effect === 'requires_approval') {
-    enqueue({
-      kind: 'connection_write',
-      title: `Approval needed: ${tool}`,
-      detail: `Write to app MCP '${app.name}' (${principal}) requested via the app tool surface.`,
-      agent: principal,
-      domain: app.domain,
-      requestedBy: user.id,
-      tool,
-      payload: { appId: app.id, args: body.args ?? {} },
-    });
-    const tr = await trace({ principal, tool, input: body.args ?? {}, output: { held: true, reason: authz.reason }, decision: 'requires_approval' });
-    return NextResponse.json(
-      { tool, principal, decision: 'requires_approval', policy: authz.policy, reason: authz.reason, held: true, traceId: tr.id },
-      { status: 202 },
-    );
-  }
-  if (authz.effect !== 'allow') {
-    const tr = await trace({ principal, tool, input: body, output: { denied: authz.reason }, decision: 'deny' });
-    return NextResponse.json(
-      { tool, principal, decision: authz.effect, policy: authz.policy, reason: authz.reason, traceId: tr.id },
-      { status: 403 },
-    );
-  }
-
-  // Execute: proxy to the REAL app when its runner pod is running, else demo seed —
-  // the SHARED executor the app's own records routes also use (one store, two doors).
-  const args = (body.args ?? {}) as Record<string, unknown>;
-  const result = await executeAppTool(app, tool, args);
-
-  const tr = await trace({ principal, tool, input: body.args ?? {}, output: result, decision: 'allow', costUsd: 0.0004 });
-  return NextResponse.json({ tool, principal, decision: 'allow', policy: authz.policy, traceId: tr.id, result });
+  // The full governed spine (authorize → hold/deny → execute → trace) lives in
+  // lib/software/app-tool-call.ts; the route only maps its result to HTTP.
+  const { status, body: payload } = await callAppTool(app, tool, body.args, user.id, body);
+  return NextResponse.json(payload, { status });
 }

@@ -10,8 +10,12 @@ import type {
   SuggestedGrant,
   SuggestedEpic,
   SuggestedStoriesForEpic,
+  SuggestedEpicRequirements,
 } from '@/lib/software/assistant-suggestions';
 import type { StorySpec } from '@/lib/software/story-spec';
+
+/** A next-step the host can offer at the foot of the thread (never a dead end). */
+export type NextStep = { label: string; prompt?: string; onClick?: () => void };
 
 /**
  * StageAssistantChat — the ONE reusable, governed assistant CHAT panel any guided stage
@@ -42,9 +46,11 @@ export default function StageAssistantChat({
   onApplyGrants,
   onApplyEpics,
   onApplyStories,
+  onApplyEpicRequirements,
   onApplySpec,
   specTargetLabel,
   onApplyImprovements,
+  nextSteps = [],
 }: {
   /** The app the assistant reads under the caller's governance (server-side). */
   appId: string;
@@ -62,12 +68,21 @@ export default function StageAssistantChat({
   onApplyEpics?: (epics: SuggestedEpic[]) => void;
   /** Design: add suggested stories under existing epics. */
   onApplyStories?: (groups: SuggestedStoriesForEpic[]) => void;
+  /** Design: fill in requirements (technical/ux/governance) on existing epics. */
+  onApplyEpicRequirements?: (groups: SuggestedEpicRequirements[]) => void;
   /** Design (spec mode): fold a suggested spec into the selected story's spec. */
   onApplySpec?: (spec: Partial<StorySpec>) => void;
   /** Design (spec mode): the story the spec suggestion applies to (shown on the card). */
   specTargetLabel?: string;
   /** Test: turn the verifier's suggested improvements into pending Build-tree items. */
   onApplyImprovements?: (improvements: NonNullable<StageSuggestions['suggestedImprovements']>) => void;
+  /**
+   * Host-supplied NEXT STEPS shown at the foot of the thread so the assistant is never a
+   * dead end: each either seeds a follow-up prompt (asks the assistant to draft the next
+   * artifact) or runs a host action (e.g. jump to Build). Computed by the host from the
+   * live design state, so they always point at what to do next.
+   */
+  nextSteps?: NextStep[];
 }) {
   const [thread, setThread] = useState<Turn[]>([]);
   const [suggestions, setSuggestions] = useState<StageSuggestions>({});
@@ -118,6 +133,7 @@ export default function StageAssistantChat({
     (suggestions.suggestedGrants?.length ?? 0) > 0 ||
     (suggestions.suggestedEpics?.length ?? 0) > 0 ||
     (suggestions.suggestedStories?.length ?? 0) > 0 ||
+    (suggestions.suggestedEpicRequirements?.length ?? 0) > 0 ||
     ((suggestions.suggestedSpec?.features?.length ?? 0) +
       (suggestions.suggestedSpec?.nfrs?.length ?? 0) +
       (suggestions.suggestedSpec?.rules?.length ?? 0)) > 0 ||
@@ -169,6 +185,7 @@ export default function StageAssistantChat({
             <SuggestionCard
               label="Suggested purpose"
               onApply={() => onApplyPurpose(suggestions.improvedPurpose!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, improvedPurpose: undefined }))}
               applyLabel="Use this purpose"
             >
               <p style={{ margin: 0 }}>{suggestions.improvedPurpose}</p>
@@ -179,6 +196,7 @@ export default function StageAssistantChat({
             <SuggestionCard
               label={`Suggested context (${suggestions.suggestedGrants.length})`}
               onApply={() => onApplyGrants(suggestions.suggestedGrants!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedGrants: undefined }))}
               applyLabel="Grant all"
             >
               <ul className="sac-list">
@@ -198,6 +216,7 @@ export default function StageAssistantChat({
             <SuggestionCard
               label={`Suggested EPICs (${suggestions.suggestedEpics.length})`}
               onApply={() => onApplyEpics(suggestions.suggestedEpics!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedEpics: undefined }))}
               applyLabel="Create EPICs"
             >
               <ul className="sac-list">
@@ -216,6 +235,7 @@ export default function StageAssistantChat({
             <SuggestionCard
               label={`Suggested stories (${suggestions.suggestedStories.reduce((n, g) => n + g.stories.length, 0)})`}
               onApply={() => onApplyStories(suggestions.suggestedStories!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedStories: undefined }))}
               applyLabel="Add stories"
             >
               <ul className="sac-list">
@@ -223,7 +243,32 @@ export default function StageAssistantChat({
                   <li key={`${g.epicTitle}:${i}`}>
                     <span className="muted" style={{ fontSize: 12 }}>under</span> <strong>{g.epicTitle}</strong>
                     <ul className="sac-sublist">
-                      {g.stories.map((s, j) => <li key={j}>{s.title}</li>)}
+                      {g.stories.map((s, j) => {
+                        const n = (s.spec?.features?.length ?? 0) + (s.spec?.nfrs?.length ?? 0) + (s.spec?.rules?.length ?? 0);
+                        return <li key={j}>{s.title}{n > 0 ? <span className="muted"> · {n} spec item{n === 1 ? '' : 's'}</span> : null}</li>;
+                      })}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </SuggestionCard>
+          ) : null}
+
+          {suggestions.suggestedEpicRequirements?.length && onApplyEpicRequirements ? (
+            <SuggestionCard
+              label={`Suggested requirements (${suggestions.suggestedEpicRequirements.length} epic${suggestions.suggestedEpicRequirements.length === 1 ? '' : 's'})`}
+              onApply={() => onApplyEpicRequirements(suggestions.suggestedEpicRequirements!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedEpicRequirements: undefined }))}
+              applyLabel="Fill in requirements"
+            >
+              <ul className="sac-list">
+                {suggestions.suggestedEpicRequirements.map((g, i) => (
+                  <li key={`${g.epicTitle}:${i}`}>
+                    <strong>{g.epicTitle}</strong>
+                    <ul className="sac-sublist">
+                      {(['technical', 'ux', 'governance'] as const).map((k) =>
+                        g.requirements[k] ? <li key={k}><span className="muted" style={{ textTransform: 'capitalize' }}>{k}:</span> {g.requirements[k]}</li> : null,
+                      )}
                     </ul>
                   </li>
                 ))}
@@ -235,6 +280,7 @@ export default function StageAssistantChat({
             <SuggestionCard
               label={`Suggested spec${specTargetLabel ? ` for “${specTargetLabel}”` : ''}`}
               onApply={() => onApplySpec(suggestions.suggestedSpec!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedSpec: undefined }))}
               applyLabel="Add to spec"
             >
               <div className="sac-spec">
@@ -257,6 +303,7 @@ export default function StageAssistantChat({
             <SuggestionCard
               label={`Improvements (${suggestions.suggestedImprovements.length})`}
               onApply={() => onApplyImprovements(suggestions.suggestedImprovements!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedImprovements: undefined }))}
               applyLabel="Add to Build to-do"
             >
               <ul className="sac-list">
@@ -269,6 +316,24 @@ export default function StageAssistantChat({
               </ul>
             </SuggestionCard>
           ) : null}
+        </div>
+      ) : null}
+
+      {nextSteps.length > 0 && !busy ? (
+        <div className="sac-next">
+          <span className="sac-next-label">Next step</span>
+          <div className="sac-next-btns">
+            {nextSteps.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                className="btn ghost sm"
+                onClick={() => { if (s.onClick) s.onClick(); else if (s.prompt) void send(s.prompt); }}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
 
@@ -336,6 +401,9 @@ export default function StageAssistantChat({
         .sac-suggestions { display: flex; flex-direction: column; gap: 8px; }
         .sac-list { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
         .sac-sublist { margin: 2px 0 0; padding-left: 16px; color: var(--text-muted); font-size: 12px; }
+        .sac-next { border-top: 1px dashed var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+        .sac-next-label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--gold-text, var(--accent)); }
+        .sac-next-btns { display: flex; flex-wrap: wrap; gap: 6px; }
         .sac-input { display: flex; gap: 8px; align-items: center; }
         .sac-input input { flex: 1; }
       `}</style>
@@ -351,11 +419,14 @@ function SuggestionCard({
   label,
   applyLabel,
   onApply,
+  onDismiss,
   children,
 }: {
   label: string;
   applyLabel: string;
   onApply: () => void;
+  /** Optional: a quiet "Decline" that drops this card locally — applies nothing. */
+  onDismiss?: () => void;
   children: React.ReactNode;
 }) {
   const [applied, setApplied] = useState(false);
@@ -363,17 +434,24 @@ function SuggestionCard({
     <div className="sac-card">
       <div className="sac-card-head">
         <span className="sac-card-label">{label}</span>
-        <button
-          type="button"
-          className="btn sm"
-          disabled={applied}
-          onClick={() => {
-            onApply();
-            setApplied(true);
-          }}
-        >
-          {applied ? 'Applied ✓' : applyLabel}
-        </button>
+        <div className="sac-card-actions">
+          {onDismiss ? (
+            <button type="button" className="btn ghost sm" disabled={applied} onClick={onDismiss}>
+              Decline
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="btn sm"
+            disabled={applied}
+            onClick={() => {
+              onApply();
+              setApplied(true);
+            }}
+          >
+            {applied ? 'Applied ✓' : applyLabel}
+          </button>
+        </div>
       </div>
       <div className="sac-card-body">{children}</div>
       <style jsx>{`
@@ -384,6 +462,7 @@ function SuggestionCard({
           padding: 10px 12px;
         }
         .sac-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .sac-card-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
         .sac-card-label { font-weight: 600; font-size: 12.5px; }
         .sac-card-body { margin-top: 6px; font-size: 13px; }
       `}</style>

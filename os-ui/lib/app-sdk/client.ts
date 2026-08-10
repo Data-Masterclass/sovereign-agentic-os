@@ -10,6 +10,7 @@ import type {
   MetricQuery,
   OsClientOptions,
   OsContext,
+  QueryResult,
   RecordResult,
   WhoAmI,
 } from './types.ts';
@@ -48,17 +49,83 @@ export function withQuery(path: string, params: Record<string, string | number |
   return qs ? `${path}?${qs}` : path;
 }
 
+/** Stringify one cell for the uniform `string[][]` grid — null/undefined → ''. */
+function cell(v: unknown): string {
+  return v === null || v === undefined ? '' : String(v);
+}
+
+/**
+ * Normalize the `/api/data/ask` (NL) or dataset-preview response into a
+ * {@link QueryResult}. BOTH already carry `columns:string[]` + `rows:string[][]`
+ * at the top level on success — we forward them as-is (never reshaping the cells).
+ * A failure / not-materialized answer legitimately has no rows: it becomes an
+ * empty table (`[] / [] / 0`), never a fabricated one. `answer`/`sql` ride along
+ * when the route returned them (the NL path does; a plain preview does not).
+ */
+export function normalizeGridResult(raw: unknown): QueryResult {
+  const r = (raw ?? {}) as {
+    columns?: unknown;
+    rows?: unknown;
+    rowCount?: unknown;
+    answer?: unknown;
+    sql?: unknown;
+  };
+  const columns = Array.isArray(r.columns) ? r.columns.map(cell) : [];
+  const rows = Array.isArray(r.rows)
+    ? r.rows.map((row) => (Array.isArray(row) ? row.map(cell) : [cell(row)]))
+    : [];
+  const rowCount = typeof r.rowCount === 'number' ? r.rowCount : rows.length;
+  const out: QueryResult = { columns, rows, rowCount };
+  if (typeof r.answer === 'string') out.answer = r.answer;
+  if (typeof r.sql === 'string') out.sql = r.sql;
+  return out;
+}
+
+/**
+ * Normalize the `/api/metrics/explore` response into a {@link QueryResult}. The
+ * explorer returns member-KEYED row OBJECTS (`rows: Record<string, unknown>[]`)
+ * with NO `columns` array — so we DERIVE `columns` from the union of the rows'
+ * keys (first-seen order) and flatten each object into a cell array in that order.
+ * This is a lossless tabularization of the SAME values the route returned — the
+ * `{ columns, rows }` claim is made TRUE, not asserted over a shape that lacks it.
+ * `sql` (the drop-to SQL the route always includes) rides along.
+ */
+export function normalizeMetricResult(raw: unknown): QueryResult {
+  const r = (raw ?? {}) as { rows?: unknown; sql?: unknown };
+  const objRows: Record<string, unknown>[] = Array.isArray(r.rows)
+    ? r.rows.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x))
+    : [];
+  const columns: string[] = [];
+  const seen = new Set<string>();
+  for (const row of objRows) {
+    for (const k of Object.keys(row)) {
+      if (!seen.has(k)) {
+        seen.add(k);
+        columns.push(k);
+      }
+    }
+  }
+  const rows = objRows.map((row) => columns.map((c) => cell(row[c])));
+  const out: QueryResult = { columns, rows, rowCount: rows.length };
+  if (typeof r.sql === 'string') out.sql = r.sql;
+  return out;
+}
+
 export interface OsClient {
   whoami(): Promise<WhoAmI>;
   context(): Promise<OsContext>;
   datasets: {
     list(): Promise<unknown>;
     get(id: string): Promise<unknown>;
-    query(id: string, q?: DatasetQuery): Promise<unknown>;
+    /** Resolve to a normalized {@link QueryResult} table (`{ columns, rows, rowCount }`),
+     *  whichever governed route answered — see the NORMALIZE note on the impl. */
+    query(id: string, q?: DatasetQuery): Promise<QueryResult>;
   };
   metrics: {
     list(): Promise<unknown>;
-    query(id: string, q?: MetricQuery): Promise<unknown>;
+    /** Resolve to a normalized {@link QueryResult} table — the explorer's member-keyed
+     *  row objects are flattened into `{ columns, rows, rowCount }` honestly. */
+    query(id: string, q?: MetricQuery): Promise<QueryResult>;
   };
   knowledge: {
     search(q: string): Promise<KnowledgeHit[]>;
@@ -237,20 +304,26 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
        *    client SQL; it recompiles SQL from validated ops server-side.
        *  • neither → a governed row preview (`SELECT * LIMIT n`) for that dataset.
        */
-      async query(id: string, q: DatasetQuery = {}) {
+      async query(id: string, q: DatasetQuery = {}): Promise<QueryResult> {
         if (q.sql !== undefined) {
           throw new UnsupportedQuery(
             'Raw SQL is not accepted over the governed path. Use { nl } for a ' +
               'natural-language query, or omit both for a governed row preview.',
           );
         }
+        // BOTH governed dataset routes already answer with top-level columns/rows —
+        // normalize (fill the empty/failed cases, carry answer/sql) into QueryResult.
         if (q.nl !== undefined) {
-          return request('/api/data/ask', { method: 'POST', body: { question: q.nl } });
+          return normalizeGridResult(
+            await request('/api/data/ask', { method: 'POST', body: { question: q.nl } }),
+          );
         }
-        return request(
-          withQuery(
-            `/api/data/datasets/${encodeURIComponent(id)}/preview`,
-            { limit: q.limit },
+        return normalizeGridResult(
+          await request(
+            withQuery(
+              `/api/data/datasets/${encodeURIComponent(id)}/preview`,
+              { limit: q.limit },
+            ),
           ),
         );
       },
@@ -259,18 +332,22 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
     // ── metrics ───────────────────────────────────────────────────────────────
     metrics: {
       list: () => request('/api/metrics'),
-      /** Slice a metric via the governed explorer (per-viewer Cube RLS applies). */
-      query(id: string, q: MetricQuery = {}) {
-        return request('/api/metrics/explore', {
-          method: 'POST',
-          body: {
-            metricId: id,
-            dimensions: q.dimensions,
-            timeDimension: q.timeDimension,
-            granularity: q.granularity,
-            ...(q.filters ? { filters: q.filters } : {}),
-          },
-        });
+      /** Slice a metric via the governed explorer (per-viewer Cube RLS applies).
+       *  The explorer's member-keyed row objects are normalized into a QueryResult
+       *  table (columns derived from the row keys) — see normalizeMetricResult. */
+      async query(id: string, q: MetricQuery = {}): Promise<QueryResult> {
+        return normalizeMetricResult(
+          await request('/api/metrics/explore', {
+            method: 'POST',
+            body: {
+              metricId: id,
+              dimensions: q.dimensions,
+              timeDimension: q.timeDimension,
+              granularity: q.granularity,
+              ...(q.filters ? { filters: q.filters } : {}),
+            },
+          }),
+        );
       },
     },
 

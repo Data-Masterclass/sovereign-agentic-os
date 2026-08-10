@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset } from '../data/index.ts';
-import { cubeViewName } from '../data/metrics.ts';
+import { cubeViewName } from '@/lib/data';
 import type { CubeQuery } from '../infra/governed.ts';
 import type { Granularity } from '../metrics/explorer.ts';
 

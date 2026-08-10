@@ -7,6 +7,7 @@ import { readUiSource } from './app-ui-vendor.ts';
 import { readSdkSource } from './app-sdk-vendor.ts';
 import { detectPreviewShape } from './preview-shape.ts';
 import { getEsbuild, esbuildWasmReady } from './preview-runtime.ts';
+import { packageName, declaredDeps, makeVfsPlugin } from './vfs-resolve.ts';
 import type { ScaffoldFile } from './model.ts';
 
 /**
@@ -149,27 +150,6 @@ function rootDir(): string {
   return process.cwd();
 }
 
-/** The bare package name of an import specifier ('@scope/pkg/x' → '@scope/pkg'). */
-function packageName(spec: string): string {
-  const parts = spec.split('/');
-  return spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
-}
-
-/** The dependencies the app's own package.json declares (deps + devDeps). */
-function declaredDeps(tree: ScaffoldFile[]): Set<string> {
-  const pkg = tree.find((f) => f.path === 'package.json');
-  if (!pkg) return new Set();
-  try {
-    const parsed = JSON.parse(pkg.content) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    return new Set([...Object.keys(parsed.dependencies ?? {}), ...Object.keys(parsed.devDependencies ?? {})]);
-  } catch {
-    return new Set();
-  }
-}
-
 /** Packages the gate itself provides types/source for (never treated as unknowable). */
 const GATE_PROVIDED = new Set(['@sovereign-os/ui', '@sovereign-os/app-sdk', 'react', 'react-dom']);
 
@@ -277,36 +257,6 @@ function toDiagnostic(d: ts.Diagnostic): CompileDiagnostic {
 // -------------------------------------------------------------------- bundle pass ---
 
 const VFS = 'gate-vfs';
-const RESOLVE_TRIES = ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx'] as const;
-
-/** Resolve a relative specifier against its importer inside the virtual tree. */
-function resolveRelative(spec: string, importer: string, files: Map<string, string>): string | null {
-  const stack: string[] = [];
-  for (const part of [...importer.split('/').slice(0, -1), ...spec.split('/')]) {
-    if (part === '.' || part === '') continue;
-    if (part === '..') stack.pop();
-    else stack.push(part);
-  }
-  const joined = stack.join('/');
-  for (const ext of RESOLVE_TRIES) {
-    const candidate = `${joined}${ext}`;
-    if (files.has(candidate)) return candidate;
-  }
-  return null;
-}
-
-/** esbuild loader per extension (bundle correctness only — output is discarded). */
-function loaderFor(path: string): 'ts' | 'tsx' | 'js' | 'jsx' | 'css' | 'json' | 'dataurl' | 'text' {
-  const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
-  if (ext === 'ts') return 'ts';
-  if (ext === 'tsx') return 'tsx';
-  if (ext === 'js') return 'js';
-  if (ext === 'jsx') return 'jsx';
-  if (ext === 'css') return 'css';
-  if (ext === 'json') return 'json';
-  if (ext === 'svg' || ext === 'png' || ext === 'jpg' || ext === 'gif') return 'dataurl';
-  return 'text';
-}
 
 /**
  * Bundle the SPA entry with esbuild-wasm over the virtual tree (app + vendored OS
@@ -321,47 +271,20 @@ async function bundleDiagnostics(tree: ScaffoldFile[], entry: string, deps: Set<
   for (const f of tree) files.set(f.path, f.content);
 
   const esb = await getEsbuild();
-  const plugin: import('esbuild-wasm').Plugin = {
-    name: 'gate-vfs',
-    setup(build) {
-      build.onResolve({ filter: /.*/ }, (args) => {
-        // The entry point itself.
-        if (args.kind === 'entry-point') return { path: args.path, namespace: VFS };
-        const spec = args.path;
-        // Absolute URLs (e.g. the theme's Google-Fonts @import) stay external — the
-        // browser fetches them at runtime, exactly as the real Vite build leaves them.
-        if (/^(https?:)?\/\//.test(spec) || spec.startsWith('data:')) return { external: true };
-        // Relative — resolve inside the virtual tree; a miss is the wrong-path error.
-        if (spec.startsWith('.') || spec.startsWith('/')) {
-          const hit = resolveRelative(spec.replace(/^\/+/, ''), spec.startsWith('/') ? '' : args.importer, files);
-          if (hit) return { path: hit, namespace: VFS };
-          return { errors: [{ text: `Cannot resolve '${spec}' from '${args.importer}' — the file does not exist in the app tree.` }] };
-        }
-        // React family — provided by the runtime, exactly like the Instant Preview.
-        const pkg = packageName(spec);
-        if (pkg === 'react' || pkg === 'react-dom') return { external: true };
-        // Vendored OS packages — resolve into the virtual vendor source.
-        if (pkg === '@sovereign-os/ui' || pkg === '@sovereign-os/app-sdk') {
-          const sub = spec.slice(pkg.length).replace(/^\/+/, '');
-          const base = `node_modules/${pkg}`;
-          const target = sub ? `${base}/${sub}` : `${base}/index.ts`;
-          for (const ext of RESOLVE_TRIES) {
-            const candidate = `${target}${ext}`;
-            if (files.has(candidate)) return { path: candidate, namespace: VFS };
-          }
-          return { errors: [{ text: `Cannot resolve '${spec}' — not part of the vendored ${pkg} package.` }] };
-        }
-        // Any other bare import must be a DECLARED dependency (the npm build would
-        // resolve it); an undeclared one is a hallucinated package — a real error.
-        if (deps.has(pkg)) return { external: true };
-        return { errors: [{ text: `'${spec}' is not a declared dependency of this app — add it to package.json or remove the import.` }] };
-      });
-      build.onLoad({ filter: /.*/, namespace: VFS }, (args) => ({
-        contents: files.get(args.path) ?? '',
-        loader: loaderFor(args.path),
-      }));
+  // Shared VFS resolver (see vfs-resolve.ts). The gate keeps its RICHER corrective
+  // error text (fed back to the agent loop); logic is identical to the runtime bundler.
+  const plugin = makeVfsPlugin({
+    namespace: VFS,
+    files,
+    deps,
+    messages: {
+      relativeMiss: (spec, importer) =>
+        `Cannot resolve '${spec}' from '${importer}' — the file does not exist in the app tree.`,
+      vendorMiss: (spec, pkg) => `Cannot resolve '${spec}' — not part of the vendored ${pkg} package.`,
+      undeclared: (spec) =>
+        `'${spec}' is not a declared dependency of this app — add it to package.json or remove the import.`,
     },
-  };
+  });
 
   try {
     const res = await esb.build({

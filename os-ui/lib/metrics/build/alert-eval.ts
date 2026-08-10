@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { claimsFromUser, delegate, type DelegatedToken } from '../../data/identity.ts';
+import { claimsFromUser, delegate, type DelegatedToken } from '@/lib/data';
 import { getMetric, listMetrics } from '../store.ts';
 import { getPublicUser } from '../../platform-admin/users.ts';
 import type { Principal } from '../../data/store.ts';

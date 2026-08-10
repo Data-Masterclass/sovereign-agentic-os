@@ -3,7 +3,7 @@
  */
 import yaml from 'js-yaml';
 import type { Dataset, Measure, MeasureFilter, RollingWindow } from '../data/index.ts';
-import { MEASURE_TYPES, type MeasureType, cubeViewName, slug } from '../data/metrics.ts';
+import { MEASURE_TYPES, type MeasureType, cubeViewName, slug } from '@/lib/data';
 import { assertFormulaRefs, compileFormula } from './formula.ts';
 
 /**
@@ -24,7 +24,7 @@ import { assertFormulaRefs, compileFormula } from './formula.ts';
  * read-only, so Data owns the base cube and Metrics owns the measures layer on top.
  */
 
-export type { MeasureType } from '../data/metrics.ts';
+export type { MeasureType } from '@/lib/data';
 
 /** The comparison operators the guided (no-code) filter offers. Each compiles to a
  *  governed SQL predicate on the cube (never hand-typed SQL). */

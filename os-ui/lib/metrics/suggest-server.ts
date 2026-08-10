@@ -8,7 +8,7 @@ import { listPillars } from '@/lib/strategy/pillars';
 import { resolveManual, type ManualScope } from '@/lib/knowledge/manual';
 import { getDomainKnowledge, listWorkflows, getWorkflow } from '@/lib/knowledge/store';
 import { listDatasets, getDataset } from '@/lib/data/store';
-import { metricSqlReady } from '@/lib/data/metrics';
+import { metricSqlReady } from '@/lib/data';
 import {
   suggestMetricsMessages,
   parseCandidates,

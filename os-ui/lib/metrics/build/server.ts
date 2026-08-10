@@ -3,8 +3,8 @@
  */
 import 'server-only';
 import type { Dataset, Measure } from '../../data/index.ts';
-import { type DelegatedToken, propagate } from '../../data/identity.ts';
-import { scaffoldCubeYaml } from '../../data/metrics.ts';
+import { type DelegatedToken, propagate } from '@/lib/data';
+import { scaffoldCubeYaml } from '@/lib/data';
 import { measureMember } from '../model.ts';
 import { type BuildRow, type MetricBuildContext, runAdapter } from './adapter.ts';
 import { makeMetricAdapters } from './live.ts';

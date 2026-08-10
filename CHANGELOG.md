@@ -13,6 +13,33 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.95] — 2026-08-10
+
+Software tab now runs the reasoning model on ALL stages, including Build (code generation). Build was previously pinned to the standard tier, which proved too weak for getting the vendored SDK/UI surface and governance right in one pass — the recurring compile-gate rejections. Build now starts on reasoning (the ci-repair escalation becomes a safety net rather than the norm). An admin per-stage model override is the planned follow-up.
+
+## [os-ui 0.6.94] — 2026-08-10
+
+Build stage de-noise: the primary Build button now stays visible and live as you move between user stories — ticked features win, otherwise it builds the story you clicked (only when that story has a Design spec), instead of greying out after a build clears the checkboxes. The per-step build activity is no longer interleaved in the chat transcript; it lives collapsed under the Build-status block below the button, showing just the latest step as a one-liner and expanding on demand — or automatically when a run actually fails.
+
+## [os-ui 0.6.93] — 2026-08-10
+
+Design assistant: every suggestion card now has a Decline action (not just Add); and proposing/creating epics & stories now includes and persists their features, NFRs, rules and epic requirements in one step (full tree, not just titles); Build stage now shows a bold, clear "stories need features & requirements — add them in Design" callout with a Back-to-Design button instead of confusing small print.
+
+## [os-ui 0.6.92] — 2026-08-10
+
+App-SDK build fix: datasets.query/metrics.query now return a typed QueryResult ({columns, rows, rowCount}) instead of unknown (normalized in the SDK client + vendored types), and the build brief teaches the real Badge `tone` API + query-result usage — killing the recurring TS18046/Badge-variant compile-gate rejections in generated apps.
+
+## [os-ui 0.6.91] — 2026-08-10
+
+Talk-to-Data answers now auto-render an ECharts graph when the result is chartable (Bar/Line/Pie/Table toggle, inline), built only from the returned rows with honest numeric parsing + truncation labeling; table fallback for non-chartable results.
+
+## [os-ui 0.6.90] — 2026-08-10
+
+Software Design-stage UX: guided artifact ladder (Epics→Requirements→Stories→Features/NFRs/Rules) with orientation + progress checklist; never-a-dead-end assistant that proposes the next step (incl. features & requirements, not just stories); roomy auto-growing editors replacing the cramped text boxes.
+## [os-ui 0.6.89] — 2026-08-10
+
+Behavior-preserving refactors: hoisted the shared esbuild VFS resolver; lifted fat route handlers (software/apps tool+chat) into lib + unified cleanTurns; repointed metrics/dashboards off data-tab internals via the data barrel. No behavior change.
+
 ## [os-ui 0.6.88] — 2026-08-09
 
 Security/governance hardening: agent authz fails closed when OPA unreachable (opaFailOpen-gated like the data spine); SSRF deny for metadata/loopback literals; first-run credential gate on 5 governance routes; boot guard on dev-default secrets in production; server-derived subject for files/retrieve; grants-context fallback + unified honest agent safety-preset copy.

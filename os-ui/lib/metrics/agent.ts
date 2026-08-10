@@ -11,7 +11,7 @@
  * only builds the prompt and validates the model's JSON against the real schema, so
  * it is transport-free and unit-testable offline.
  */
-import { MEASURE_TYPES, type MeasureType } from '../data/metrics.ts';
+import { MEASURE_TYPES, type MeasureType } from '@/lib/data';
 import type { MetricForm } from './model.ts';
 import type { AssistantMessage } from '../assistant/complete.ts';
 

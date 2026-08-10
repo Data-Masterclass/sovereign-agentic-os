@@ -16,7 +16,7 @@
  * the REAL context — dropping any candidate whose dataset the caller can't see or
  * whose columns aren't real, so a suggestion can never fabricate access or a column.
  */
-import { MEASURE_TYPES, type MeasureType } from '../data/metrics.ts';
+import { MEASURE_TYPES, type MeasureType } from '@/lib/data';
 import type { MetricForm } from './model.ts';
 import type { AssistantMessage } from '../assistant/complete.ts';
 import { estimateTokens } from '../knowledge/context-pack.ts';

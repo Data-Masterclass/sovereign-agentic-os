@@ -24,6 +24,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
 import { roleModel } from '@/lib/models/roles';
 import { runAsk, type AskMessage, type AskOutcome } from '@/lib/data/ask';
+import { deriveChart } from '@/lib/data/ask-chart';
 import { listAskable, type AskableDataset } from '@/lib/data';
 import { readPrincipalFor } from '@/lib/data/store-fqn';
 import { queryRun } from '@/lib/infra/governed';
@@ -67,11 +68,20 @@ export function dataResult(outcome: AskOutcome, datasets: AskableDataset[]): Dat
   const cited: TalkCitation[] = datasets
     .filter((d) => outcome.sql.toLowerCase().includes(d.fqn.toLowerCase()))
     .map((d) => ({ id: d.fqn, label: d.name, kind: 'dataset', href: `/data#${d.id}` }));
+  // A CHARTABLE view of the SAME returned rows (pure heuristic; honest numeric parsing +
+  // truncation). Undefined when the shape isn't cleanly chartable — the UI then shows the
+  // text answer + table only. We ship ONLY the capped rows the hint plots (never the whole
+  // result), so the payload stays bounded and the chart matches its honest caption.
+  const hint = deriveChart(outcome.columns, outcome.rows);
+  const chart = hint
+    ? { columns: outcome.columns, rows: outcome.rows.slice(0, hint.plottedRows), hint }
+    : undefined;
   return {
     kind: 'sql',
     query: outcome.sql,
     evidence: `query result — ${outcome.rowCount} row${outcome.rowCount === 1 ? '' : 's'}:\n${evidence}`,
     citations: cited,
+    chart,
   };
 }
 

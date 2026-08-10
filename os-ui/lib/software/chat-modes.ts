@@ -31,16 +31,15 @@ export function isReadOnlyMode(mode: ChatRunMode): boolean {
 export type SwModelRole = 'reasoning' | 'standard';
 
 /**
- * The MODEL TIER per software run mode (Software tab tier policy). Reasoning is used in
- * exactly the reasoning-heavy places — PLAN (the Design spec/plan drafting + design
- * conversation), TEST (verify each story/feature against its spec) and REVIEW (reason
- * about what shipped). BUILD — the actual code GENERATION — stays STANDARD: the whole
- * point is the standard model does the bulk file writing; codegen is never auto-escalated
- * to reasoning. (The batch build's plan/sequence + built-vs-pending verification are the
- * reasoning-shaped work; they live in Design/Test which are pinned to reasoning.)
+ * The MODEL TIER per software run mode (Software tab tier policy). ALL software stages —
+ * PLAN (Design spec/plan), BUILD (code generation), TEST (verify each story/feature) and
+ * REVIEW — run on the REASONING model. Code generation is reasoning-heavy in practice
+ * (getting the vendored SDK/UI surface + governance right in one pass), and the standard
+ * model proved too weak for it, so Build is no longer pinned to standard. (An admin
+ * per-stage override is planned; until then this is the fixed default.)
  */
-export function modelRoleForMode(mode: ChatRunMode): SwModelRole {
-  return mode === 'build' ? 'standard' : 'reasoning';
+export function modelRoleForMode(_mode: ChatRunMode): SwModelRole {
+  return 'reasoning';
 }
 
 /** A short, honest UI note for the tier a stage runs on. */
@@ -142,9 +141,9 @@ export const DATA_PLANE_CONTRACT = [
   '  • The granted dataset SCHEMA above is AUTHORITATIVE over the story-spec field names: if the',
   '    spec mentions fields the schema lacks (status, tenant, SKU, …), do NOT invent them — build with',
   '    the real columns and note the gap in your result.',
-  '  • Read a granted dataset via os.datasets.query(\'<granted id>\', { limit: n }) — the governed',
-  '    preview. It returns { columns: string[], rows: string[][] }; rows are ARRAYS in column order —',
-  '    zip each row with `columns` before use (do NOT assume object keys).',
+  '  • os.datasets.query AND os.metrics.query resolve to a typed `QueryResult`:',
+  '    { columns: string[]; rows: string[][]; rowCount: number; answer?; sql? } — rows are ARRAYS in',
+  '    column order (do NOT assume object keys). Read a scalar as `Number(r.rows?.[0]?.[0] ?? 0)` — no cast.',
   '  • os.datasets.query(id, { nl }) routes to the ask surface, which is scoped to THIS app\'s granted',
   '    datasets ONLY; a natural-language query about anything else is refused.',
   '  • Never call list routes expecting the user\'s full catalog — the app sees only its grants.',

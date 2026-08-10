@@ -55,7 +55,7 @@ export const PLATFORM_MCP_PRINCIPAL = 'platform-mcp';
  * The MCP tool surface — parity with the UI's five governed stages:
  *   Define  → create_software
  *   Design  → design_software  (author the epic/story/spec tree)
- *   Build   → build_software   (unit-scoped, design-before-build gated, standard tier)
+ *   Build   → build_software   (unit-scoped, design-before-build gated, reasoning tier)
  *   Test    → verify_software  (5-dimension verification → dimension-tagged refinements)
  *   Publish → request_deploy / decide_deploy / promote (governed, role-gated)
  *
@@ -172,7 +172,7 @@ export async function callPlatformMcp(
 
     case 'build_software': {
       // STAGE 3 · BUILD — view-gate, resolve the target, ENFORCE the design-before-build
-      // gate, then return the governed BUILD directive (standard tier) + committed files
+      // gate, then return the governed BUILD directive (reasoning tier) + committed files
       // + honest built-vs-pending. The agent authors the code and calls `commit`.
       const app = await getAppForUser(appId, user);
       const target = asBuildTarget(args.target);

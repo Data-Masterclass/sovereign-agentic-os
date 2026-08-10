@@ -216,6 +216,95 @@ test('SDK TYPE CLOSURE: the real os.records.* WRITE surface COMPILES (the true d
   assert.ok(res.gated && res.ok, 'the real records write surface must typecheck clean');
 });
 
+// ----------------------------------------- QueryResult + Badge tone (0.6.92 build fix) ---
+
+/**
+ * The 0.6.92 recurring-rejection class, PROVEN at the gate. Before the fix,
+ * os.datasets.query/os.metrics.query were typed `Promise<unknown>`, so reading
+ * `.rows[0][0]` off the result was TS18046 ("'r' is of type 'unknown'") and every
+ * such commit was rejected. Now the methods return a typed QueryResult, so the exact
+ * usage the failing app tried COMPILES GREEN — alongside the correct Badge `tone` API.
+ */
+test('QueryResult + Badge tone: the real usage the failing app wanted now COMPILES green', async () => {
+  const res = await compileGate(
+    viteTree([
+      {
+        path: 'src/epics/orders/count/Count.tsx',
+        content: [
+          "import { Badge } from '@sovereign-os/ui';",
+          "import { os } from '../../../core/store.ts';",
+          'export default async function Count() {',
+          "  const r = await os.datasets.query('orders', { nl: 'how many orders shipped?' });",
+          '  const n = Number(r.rows?.[0]?.[0] ?? 0);              // no cast — QueryResult is typed',
+          "  const m = await os.metrics.query('rev', { dimensions: ['region'] });",
+          '  const top = Number(m.rows?.[0]?.[1] ?? 0);',
+          '  return <Badge tone={n > top ? "ok" : "warn"}>{n}</Badge>;',
+          '}',
+          '',
+        ].join('\n'),
+      },
+    ]),
+  );
+  assert.ok(res.gated && res.ok, 'the typed QueryResult read + Badge tone must typecheck clean');
+});
+
+/**
+ * The MIRROR IMAGE — the two mistakes the types must still catch so the gate keeps
+ * guiding the LLM: a wrong Badge `variant` prop (TS2322), and reading `.rows` off a
+ * value the SDK does NOT type as a grid (here a hallucinated `os.datasets.raw` — the
+ * closed OsClient has no such method, TS2339). Both REJECT, proving the types are the
+ * guardrail: green only for the real API, red for the shapes that used to slip through.
+ */
+test('Badge variant + reading .rows off a non-grid result are REJECTED (the types are the guardrail)', async () => {
+  const badVariant = await compileGate(
+    viteTree([
+      {
+        path: 'src/epics/orders/count/Bad.tsx',
+        content: [
+          "import { Badge } from '@sovereign-os/ui';",
+          'export default function Bad() {',
+          '  return <Badge variant="info">x</Badge>;', // variant does not exist — TS2322
+          '}',
+          '',
+        ].join('\n'),
+      },
+    ]),
+  );
+  assert.ok(badVariant.gated && !badVariant.ok, 'Badge variant must reject');
+  if (badVariant.gated && !badVariant.ok) {
+    assert.ok(
+      badVariant.diagnostics.some((d) => d.code === 2322 && /variant/i.test(d.message)),
+      'the wrong Badge prop is the TS2322 assignability error',
+    );
+  }
+
+  const badRows = await compileGate(
+    viteTree([
+      {
+        path: 'src/epics/orders/count/Bad2.tsx',
+        content: [
+          "import { os } from '../../../core/store.ts';",
+          'export default async function Bad2() {',
+          // os.datasets has no `raw` method — the closed OsClient rejects it (TS2339),
+          // so `.rows` can never be read off an unknowable/absent result. The type is
+          // the door: only the real query methods yield a grid you can index.
+          "  const r = await os.datasets.raw('orders');",
+          '  return String(r.rows[0][0]);',
+          '}',
+          '',
+        ].join('\n'),
+      },
+    ]),
+  );
+  assert.ok(badRows.gated && !badRows.ok, 'reading .rows off a hallucinated method must reject');
+  if (badRows.gated && !badRows.ok) {
+    assert.ok(
+      badRows.diagnostics.some((d) => d.code === 2339 && /raw/.test(d.message)),
+      'the hallucinated os.datasets.raw is a TS2339',
+    );
+  }
+});
+
 // ---------------------------------------------------- environment self-checks (Task 2) ---
 
 /**

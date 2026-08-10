@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { readUiSource } from './app-ui-vendor.ts';
 import { readSdkSource } from './app-sdk-vendor.ts';
+import { declaredDeps as bundleDeclaredDeps, makeVfsPlugin } from './vfs-resolve.ts';
 import type { ScaffoldFile } from './model.ts';
 
 /**
@@ -206,61 +207,7 @@ export type AppBundle = {
 /** SPA entry candidates, in boot order (matches vite-os / sovereign-app scaffolds). */
 const ENTRY_CANDIDATES = ['src/main.tsx', 'src/main.ts', 'src/index.tsx', 'src/index.ts'] as const;
 
-/** The bare package name of an import specifier ('@scope/pkg/x' → '@scope/pkg'). */
-function bundlePackageName(spec: string): string {
-  const parts = spec.split('/');
-  return spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
-}
-
-/** The declared deps of the app (deps + devDeps) — an undeclared bare import is an error. */
-function bundleDeclaredDeps(tree: ScaffoldFile[]): Set<string> {
-  const pkg = tree.find((f) => f.path === 'package.json');
-  if (!pkg) return new Set();
-  try {
-    const parsed = JSON.parse(pkg.content) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    return new Set([
-      ...Object.keys(parsed.dependencies ?? {}),
-      ...Object.keys(parsed.devDependencies ?? {}),
-    ]);
-  } catch {
-    return new Set();
-  }
-}
-
 const BUNDLE_VFS = 'runtime-vfs';
-const BUNDLE_RESOLVE_TRIES = ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx'] as const;
-
-/** Resolve a relative specifier against its importer inside the virtual tree. */
-function bundleResolveRelative(spec: string, importer: string, files: Map<string, string>): string | null {
-  const stack: string[] = [];
-  for (const part of [...importer.split('/').slice(0, -1), ...spec.split('/')]) {
-    if (part === '.' || part === '') continue;
-    if (part === '..') stack.pop();
-    else stack.push(part);
-  }
-  const joined = stack.join('/');
-  for (const ext of BUNDLE_RESOLVE_TRIES) {
-    const candidate = `${joined}${ext}`;
-    if (files.has(candidate)) return candidate;
-  }
-  return null;
-}
-
-/** esbuild loader per extension (correctness only). */
-function bundleLoaderFor(path: string): 'ts' | 'tsx' | 'js' | 'jsx' | 'css' | 'json' | 'dataurl' | 'text' {
-  const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
-  if (ext === 'ts') return 'ts';
-  if (ext === 'tsx') return 'tsx';
-  if (ext === 'js') return 'js';
-  if (ext === 'jsx') return 'jsx';
-  if (ext === 'css') return 'css';
-  if (ext === 'json') return 'json';
-  if (ext === 'svg' || ext === 'png' || ext === 'jpg' || ext === 'gif') return 'dataurl';
-  return 'text';
-}
 
 /** The vendored OS packages, read ONCE and memoised (same source the gate uses). */
 let bundleVendorMemo: ScaffoldFile[] | null = null;
@@ -298,49 +245,18 @@ export async function bundleAppTree(tree: ScaffoldFile[]): Promise<AppBundle> {
   const deps = bundleDeclaredDeps(tree);
 
   const esb = await getEsbuild();
-  const plugin: import('esbuild-wasm').Plugin = {
-    name: 'runtime-vfs',
-    setup(build) {
-      build.onResolve({ filter: /.*/ }, (args) => {
-        if (args.kind === 'entry-point') return { path: args.path, namespace: BUNDLE_VFS };
-        const spec = args.path;
-        // Absolute URLs / data URIs stay external — the browser fetches them at runtime.
-        if (/^(https?:)?\/\//.test(spec) || spec.startsWith('data:')) return { external: true };
-        // Relative — resolve inside the virtual tree; a miss is a real error.
-        if (spec.startsWith('.') || spec.startsWith('/')) {
-          const hit = bundleResolveRelative(
-            spec.replace(/^\/+/, ''),
-            spec.startsWith('/') ? '' : args.importer,
-            files,
-          );
-          if (hit) return { path: hit, namespace: BUNDLE_VFS };
-          return { errors: [{ text: `Cannot resolve '${spec}' from '${args.importer}'.` }] };
-        }
-        // React family — provided by the runtime import-map (external), same as preview.
-        const pkg = bundlePackageName(spec);
-        if (pkg === 'react' || pkg === 'react-dom') return { external: true };
-        // Vendored OS packages — resolve into the virtual vendor source.
-        if (pkg === '@sovereign-os/ui' || pkg === '@sovereign-os/app-sdk') {
-          const sub = spec.slice(pkg.length).replace(/^\/+/, '');
-          const base = `node_modules/${pkg}`;
-          const target = sub ? `${base}/${sub}` : `${base}/index.ts`;
-          for (const ext of BUNDLE_RESOLVE_TRIES) {
-            const candidate = `${target}${ext}`;
-            if (files.has(candidate)) return { path: candidate, namespace: BUNDLE_VFS };
-          }
-          return { errors: [{ text: `Cannot resolve '${spec}' — not part of vendored ${pkg}.` }] };
-        }
-        // Any other bare import must be a DECLARED dependency (external for the runtime
-        // — the app owns bringing it in; the gate already rejected undeclared imports).
-        if (deps.has(pkg)) return { external: true };
-        return { errors: [{ text: `'${spec}' is not a declared dependency of this app.` }] };
-      });
-      build.onLoad({ filter: /.*/, namespace: BUNDLE_VFS }, (args) => ({
-        contents: files.get(args.path) ?? '',
-        loader: bundleLoaderFor(args.path),
-      }));
+  // Shared VFS resolver (see vfs-resolve.ts). The runtime bundler keeps its TERSE
+  // error text (the gate uses richer corrective text); logic is identical to both.
+  const plugin = makeVfsPlugin({
+    namespace: BUNDLE_VFS,
+    files,
+    deps,
+    messages: {
+      relativeMiss: (spec, importer) => `Cannot resolve '${spec}' from '${importer}'.`,
+      vendorMiss: (spec, pkg) => `Cannot resolve '${spec}' — not part of vendored ${pkg}.`,
+      undeclared: (spec) => `'${spec}' is not a declared dependency of this app.`,
     },
-  };
+  });
 
   const res = await esb.build({
     entryPoints: [entry],

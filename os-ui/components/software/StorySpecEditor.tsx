@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { emptySpec, specHasContent, type StorySpec } from '@/lib/software/story-spec';
 import { useConfirm } from '@/components/lifecycle/ConfirmDialog';
+import AutoGrowTextarea from '@/components/core/AutoGrowTextarea';
 
 /**
  * StorySpecEditor — the Design-stage SPECIFICATION editor for ONE user story. It shows
@@ -14,13 +15,14 @@ import { useConfirm } from '@/components/lifecycle/ConfirmDialog';
  * straight into these lists). Controlled: `value` is the story's spec, `onChange`
  * persists the whole spec through the host's governed path (patchAppDesign).
  *
- * Calm three-column layout, generous spacing, one add-row per list — no cards-in-cards.
- * A blank spec reads as an invitation ("what should this story do?"), never a wall.
+ * Roomy one-artifact-per-row layout: every item is its own auto-growing textarea (edit
+ * in place, save-on-blur) and each list ends with a matching add row — no wall of tiny
+ * boxes. A blank list reads as an invitation ("Add the first …"), never a dead "None".
  */
 
 const LISTS: { key: keyof StorySpec; label: string; noun: string; hint: string; placeholder: string }[] = [
   { key: 'features', label: 'Features', noun: 'feature', hint: 'What it does', placeholder: 'e.g. Send a reminder email' },
-  { key: 'nfrs', label: 'Non-functional requirements', noun: 'requirement', hint: 'How well', placeholder: 'e.g. Renders in under 200ms' },
+  { key: 'nfrs', label: 'Non-functional requirements', noun: 'requirement', hint: 'How well it does it', placeholder: 'e.g. Renders in under 200ms' },
   { key: 'rules', label: 'Rules', noun: 'rule', hint: 'Governance & business rules', placeholder: 'e.g. Writes are held for approval' },
 ];
 
@@ -75,13 +77,13 @@ export default function StorySpecEditor({
       <style jsx>{`
         .sse { margin-top: 4px; }
         .sse-head { font-size: 13.5px; }
-        .sse-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-top: 10px; }
+        .sse-lists { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
       `}</style>
     </div>
   );
 }
 
-/** One editable list — a titled column with removable chips + an add row. */
+/** One editable list — a titled block of one-per-row auto-grow items + a matching add row. */
 function SpecList({
   label, noun, hint, placeholder, items, canEdit, onChange,
 }: {
@@ -104,6 +106,13 @@ function SpecList({
     });
     if (ok) onChange(items.filter((_, j) => j !== i));
   };
+  // Save-on-blur: an emptied item is dropped; an unchanged trim leaves the list stable.
+  const commit = (i: number, next: string) => {
+    const v = next.trim();
+    if (!v) { onChange(items.filter((_, j) => j !== i)); return; }
+    if (v === items[i]) return;
+    onChange(items.map((it, j) => (j === i ? v : it)));
+  };
   const add = () => {
     const v = entry.trim();
     if (!v) return;
@@ -117,39 +126,72 @@ function SpecList({
         <span className="muted" style={{ fontSize: 11 }}>{hint}</span>
       </div>
       {items.length === 0 ? (
-        <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>None yet.</p>
+        <p className="muted" style={{ fontSize: 12.5, margin: '6px 0 8px' }}>
+          {canEdit ? `Add the first ${noun} below →` : `No ${noun}s yet.`}
+        </p>
       ) : (
         <ul className="spl-items">
           {items.map((it, i) => (
             <li key={i} className="spl-item">
-              <span style={{ flex: 1, minWidth: 0 }}>{it}</span>
               {canEdit ? (
-                <button type="button" className="icon-btn danger" title="Delete" onClick={() => { void remove(i); }}>✕</button>
-              ) : null}
+                <SpecItemRow value={it} placeholder={placeholder} onCommit={(v) => commit(i, v)} onRemove={() => { void remove(i); }} />
+              ) : (
+                <span style={{ flex: 1, minWidth: 0, lineHeight: 1.6 }}>{it}</span>
+              )}
             </li>
           ))}
         </ul>
       )}
       {canEdit ? (
-        <div className="row" style={{ gap: 6, marginTop: 8, alignItems: 'center' }}>
-          <input
-            type="text" value={entry} placeholder={placeholder}
+        <div className="spl-add">
+          <AutoGrowTextarea
+            minRows={2}
+            value={entry}
+            placeholder={placeholder}
             onChange={(e) => setEntry(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
-            style={{ flex: 1, minWidth: 0 }}
+            onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); add(); } }}
+            aria-label={`Add a ${noun}`}
           />
-          <button type="button" className="btn ghost sm" onClick={add} disabled={!entry.trim()}>Add</button>
+          <button type="button" className="btn ghost sm" onClick={add} disabled={!entry.trim()}>Add {noun}</button>
         </div>
       ) : null}
       <style jsx>{`
-        .spl { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--panel); }
+        .spl { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--panel); }
         .spl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-        .spl-items { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-        .spl-item {
-          display: flex; align-items: center; gap: 8px; font-size: 13px;
-          background: var(--tile, var(--bg-elevated, var(--panel)));
-          border: 1px solid var(--border); border-radius: 7px; padding: 5px 9px;
-        }
+        .spl-items { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+        .spl-item { display: flex; }
+        .spl-add { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
+        .spl-add :global(textarea) { flex: 1; min-width: 0; }
+      `}</style>
+    </div>
+  );
+}
+
+/** One saved item — an in-place auto-grow editor with save-on-blur + a remove button. */
+function SpecItemRow({
+  value, placeholder, onCommit, onRemove,
+}: {
+  value: string;
+  placeholder: string;
+  onCommit: (next: string) => void;
+  onRemove: () => void;
+}) {
+  const [text, setText] = useState(value);
+  useEffect(() => { setText(value); }, [value]);
+  return (
+    <div className="sir">
+      <AutoGrowTextarea
+        minRows={2}
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => onCommit(text)}
+      />
+      <button type="button" className="icon-btn danger" title="Delete" onClick={onRemove}>✕</button>
+      <style jsx>{`
+        .sir { display: flex; gap: 8px; align-items: flex-start; width: 100%; }
+        .sir :global(textarea) { flex: 1; min-width: 0; }
+        .sir .icon-btn { margin-top: 6px; }
       `}</style>
     </div>
   );

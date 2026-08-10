@@ -98,6 +98,38 @@ export interface KnowledgeHit {
   ingestedAt: string | null;
 }
 
+/**
+ * A tabular query result — the ONE honest shape `os.datasets.query` and
+ * `os.metrics.query` resolve to, regardless of which governed route answered.
+ *
+ * The three routes DIVERGE at the wire: `/api/data/ask` and the dataset preview
+ * already carry `columns:string[]` + `rows:string[][]`; the metrics explorer
+ * (`/api/metrics/explore`) returns member-KEYED row OBJECTS with no `columns`
+ * array. So the SDK client NORMALIZES each response into this common table — a
+ * lossless reshape of what the route actually returned, never a fabricated field:
+ *   • `columns` — the column names, in order (for metrics, derived from the row
+ *     objects' keys; an empty-row / not-materialized answer yields `[]`).
+ *   • `rows` — the cell matrix, one array per row aligned to `columns` (metric row
+ *     objects are flattened into this order; every cell stringified for a uniform grid).
+ *   • `rowCount` — the row total the route reported (or `rows.length` when it did not).
+ * The NL path additionally surfaces the grounded `answer` and the executed `sql`
+ * when the route returned them (both optional — a preview/metric slice has no `answer`).
+ *
+ * Read a single scalar honestly with `Number(r.rows?.[0]?.[0] ?? 0)` — no cast needed.
+ */
+export interface QueryResult {
+  /** Column names, in order. `[]` for a no-rows / not-yet-materialized answer. */
+  columns: string[];
+  /** The cell matrix — one array per row, aligned to `columns`. `[]` when empty. */
+  rows: string[][];
+  /** The row total (the route's `rowCount`, else `rows.length`). */
+  rowCount: number;
+  /** NL path only: the grounded natural-language answer, when the route returned one. */
+  answer?: string;
+  /** NL / metric paths: the SQL the OS actually executed, when the route returned it. */
+  sql?: string;
+}
+
 /** How to query a dataset. Exactly one of `nl` (natural language → governed
  *  NL→SQL) — or neither, for a governed row preview. Raw `sql` is intentionally
  *  refused (the OS never trusts client SQL); see UnsupportedQuery. */

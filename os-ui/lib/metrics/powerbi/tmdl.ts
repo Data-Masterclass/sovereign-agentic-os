@@ -43,7 +43,7 @@ import {
   inferDimType,
   type CubeDimType,
   type MeasureType,
-} from '../../data/metrics.ts';
+} from '@/lib/data';
 import { biUserForDomain } from '../../powerbi/principal.ts';
 
 /** Where a generated TMDL model should point Power BI (the governed Cube SQL endpoint). */

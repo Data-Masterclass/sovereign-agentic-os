@@ -8,6 +8,7 @@ import type { AppEpic, AppStory } from '@/lib/software/apps';
 import { clampEpicIndex } from '@/lib/software/story-tree';
 import { specHasContent, type StorySpec } from '@/lib/software/story-spec';
 import { useConfirm } from '@/components/lifecycle/ConfirmDialog';
+import AutoGrowTextarea from '@/components/core/AutoGrowTextarea';
 import StorySpecEditor from './StorySpecEditor';
 
 /**
@@ -26,6 +27,13 @@ const rid = (p: string) => `${p}_${Math.random().toString(36).slice(2, 9)}`;
 function emptyStory(): AppStory {
   return { id: rid('story'), title: '', asA: '', iWant: '', soThat: '', acceptance: '' };
 }
+
+/** The three epic-requirement fields, with labels + placeholders that model good input. */
+const REQS: { key: 'technical' | 'ux' | 'governance'; label: string; placeholder: string }[] = [
+  { key: 'technical', label: 'Technical', placeholder: 'e.g. Runs on a nightly schedule; reads the invoices dataset' },
+  { key: 'ux', label: 'UX', placeholder: 'e.g. One click to send; clear overdue/paid states' },
+  { key: 'governance', label: 'Governance', placeholder: 'e.g. Reminders are logged; writes need approval' },
+];
 
 export default function DesignEpicDetail({
   epics,
@@ -135,13 +143,14 @@ export default function DesignEpicDetail({
       {/* Epic title + description + requirements — read-first, editable on toggle. */}
       {editing ? (
         <div className="ded-epic-edit">
-          <input className="ded-input" value={epic.title} placeholder="EPIC title" onChange={(e) => patchEpic((x) => ({ ...x, title: e.target.value }))} />
-          <textarea rows={2} value={epic.description} placeholder="What this EPIC delivers, in a sentence" onChange={(e) => patchEpic((x) => ({ ...x, description: e.target.value }))} style={{ width: '100%', marginTop: 8 }} />
+          <input className="ded-input" value={epic.title} placeholder="EPIC title — e.g. Overdue-invoice reminders" onChange={(e) => patchEpic((x) => ({ ...x, title: e.target.value }))} />
+          <AutoGrowTextarea minRows={2} value={epic.description} placeholder="What this EPIC delivers, in a sentence" onChange={(e) => patchEpic((x) => ({ ...x, description: e.target.value }))} style={{ marginTop: 8 }} />
+          <p className="hint" style={{ margin: '12px 0 0' }}>Requirements — how this EPIC must be built, look, and be governed.</p>
           <div className="ded-reqs">
-            {(['technical', 'ux', 'governance'] as const).map((k) => (
-              <div key={k}>
-                <label className="comp-label" style={{ textTransform: 'capitalize' }}>{k} requirements</label>
-                <textarea rows={2} value={epic.requirements[k]} style={{ width: '100%' }} onChange={(e) => patchEpic((x) => ({ ...x, requirements: { ...x.requirements, [k]: e.target.value } }))} />
+            {REQS.map(({ key, label, placeholder }) => (
+              <div key={key} className="ded-req-edit">
+                <label className="comp-label">{label}</label>
+                <AutoGrowTextarea minRows={3} value={epic.requirements[key]} placeholder={placeholder} onChange={(e) => patchEpic((x) => ({ ...x, requirements: { ...x.requirements, [key]: e.target.value } }))} />
               </div>
             ))}
           </div>
@@ -149,16 +158,23 @@ export default function DesignEpicDetail({
       ) : (
         <div className="ded-epic-read">
           {epic.description ? <p className="hint" style={{ marginTop: 0 }}>{epic.description}</p> : null}
-          <div className="ded-reqs-read">
-            {(['technical', 'ux', 'governance'] as const).map((k) =>
-              epic.requirements[k].trim() ? (
-                <div key={k} className="ded-req">
-                  <span className="comp-label" style={{ margin: 0, textTransform: 'capitalize' }}>{k}</span>
-                  <span style={{ fontSize: 13 }}>{epic.requirements[k]}</span>
-                </div>
-              ) : null,
-            )}
-          </div>
+          {REQS.some(({ key }) => epic.requirements[key].trim()) ? (
+            <div className="ded-reqs-read">
+              {REQS.map(({ key, label }) =>
+                epic.requirements[key].trim() ? (
+                  <div key={key} className="ded-req">
+                    <span className="comp-label" style={{ margin: 0 }}>{label}</span>
+                    <span style={{ fontSize: 13, lineHeight: 1.6 }}>{epic.requirements[key]}</span>
+                  </div>
+                ) : null,
+              )}
+            </div>
+          ) : canEdit ? (
+            <div className="ded-teach">
+              <span className="muted" style={{ fontSize: 12.5 }}>No requirements yet — note this epic’s technical, UX and governance needs.</span>
+              <button className="btn ghost sm" onClick={() => setEditing(true)}>Add requirements</button>
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -170,7 +186,14 @@ export default function DesignEpicDetail({
         ) : null}
       </div>
       {epic.stories.length === 0 ? (
-        <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>No stories yet.</p>
+        <div className="ded-teach" style={{ marginTop: 8 }}>
+          <span className="muted" style={{ fontSize: 12.5 }}>Add the user stories this EPIC delivers →</span>
+          {canEdit ? (
+            <button className="btn sm" onClick={() => { patchEpic((x) => ({ ...x, stories: [...x.stories, emptyStory()] })); setEditing(true); }}>
+              + Add the first story
+            </button>
+          ) : null}
+        </div>
       ) : (
         <div className="ded-stories">
           {epic.stories.map((story, si) => (
@@ -198,10 +221,12 @@ export default function DesignEpicDetail({
         .ded-title { font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
         .ded-head-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
         .ded-input { width: 100%; font-weight: 600; }
-        .ded-reqs { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 12px; }
+        .ded-reqs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 8px; }
+        .ded-req-edit { display: flex; flex-direction: column; gap: 4px; }
         .ded-reqs-read { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
         .ded-req { display: flex; flex-direction: column; gap: 2px; }
         .ded-epic-read, .ded-epic-edit { margin-top: 10px; }
+        .ded-teach { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px dashed var(--border-strong, var(--border)); border-radius: 9px; background: var(--gold-soft); margin-top: 8px; }
         .ded-stories-head { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; }
         .ded-stories { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
       `}</style>
@@ -245,13 +270,23 @@ function StoryRow({
       {open ? (
         <div className="sr-body">
           {editing ? (
-            <div className="sr-line">
-              <span className="muted">As a</span>
-              <input value={story.asA} placeholder="role" onChange={(e) => onPatch((s) => ({ ...s, asA: e.target.value }))} />
-              <span className="muted">I want</span>
-              <input value={story.iWant} placeholder="capability" onChange={(e) => onPatch((s) => ({ ...s, iWant: e.target.value }))} />
-              <span className="muted">so that</span>
-              <input value={story.soThat} placeholder="benefit" onChange={(e) => onPatch((s) => ({ ...s, soThat: e.target.value }))} />
+            <div className="sr-story-fields">
+              <div className="sr-field">
+                <label className="comp-label">As a…</label>
+                <AutoGrowTextarea minRows={2} value={story.asA} placeholder="a billing clerk" onChange={(e) => onPatch((s) => ({ ...s, asA: e.target.value }))} />
+              </div>
+              <div className="sr-field">
+                <label className="comp-label">I want…</label>
+                <AutoGrowTextarea minRows={2} value={story.iWant} placeholder="to be reminded of overdue invoices" onChange={(e) => onPatch((s) => ({ ...s, iWant: e.target.value }))} />
+              </div>
+              <div className="sr-field">
+                <label className="comp-label">so that…</label>
+                <AutoGrowTextarea minRows={2} value={story.soThat} placeholder="we get paid faster" onChange={(e) => onPatch((s) => ({ ...s, soThat: e.target.value }))} />
+              </div>
+              <div className="sr-field">
+                <label className="comp-label">Acceptance</label>
+                <AutoGrowTextarea minRows={2} value={story.acceptance} placeholder="A reminder email goes out the morning an invoice becomes overdue." onChange={(e) => onPatch((s) => ({ ...s, acceptance: e.target.value }))} />
+              </div>
             </div>
           ) : story.asA || story.iWant || story.soThat ? (
             <p className="hint" style={{ marginTop: 0 }}>
@@ -276,7 +311,10 @@ function StoryRow({
               })}
             </div>
           ) : (
-            <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>No spec yet — press Edit to add its features, NFRs and rules.</p>
+            <div className="ded-teach" style={{ marginTop: 4 }}>
+              <span className="muted" style={{ fontSize: 12.5 }}>No spec yet — list this story’s features, NFRs and rules.</span>
+              {canEdit ? <span className="muted" style={{ fontSize: 11.5 }}>Press <strong>Edit</strong> above, or ask the assistant to draft them →</span> : null}
+            </div>
           )}
         </div>
       ) : null}
@@ -288,10 +326,10 @@ function StoryRow({
         .sr-n { font-size: 10.5px; font-weight: 600; color: var(--text-faint); flex-shrink: 0; }
         .sr-title { flex: 1; min-width: 0; text-align: left; background: none; border: none; cursor: pointer; color: inherit; font: inherit; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0; }
         .sr-title-input { flex: 1; min-width: 0; font-weight: 600; }
-        .sr-body { padding: 4px 12px 12px 30px; border-top: 1px solid var(--border); }
-        .sr-line { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-        .sr-line input { flex: 1; min-width: 110px; }
-        .sr-line .muted { font-size: 12px; }
+        .sr-body { padding: 8px 12px 12px 30px; border-top: 1px solid var(--border); }
+        .sr-story-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+        .sr-field { display: flex; flex-direction: column; gap: 4px; }
+        .sr-field :global(textarea) { width: 100%; }
         .sr-spec-read { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
         .sr-spec-block ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
       `}</style>

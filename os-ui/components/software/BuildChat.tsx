@@ -98,6 +98,9 @@ export default function BuildChat({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [stopped, setStopped] = useState(false);
+  // The per-step activity list is collapsed by default — a build shows a clean status,
+  // not a wall of tool steps. The user opens it on demand; a failed run auto-opens it.
+  const [showSteps, setShowSteps] = useState(false);
   // Live run state: the plan + the append-only activity feed for the CURRENT run.
   const [planText, setPlanText] = useState('');
   const [feed, setFeed] = useState<FeedItem[]>([]);
@@ -226,6 +229,9 @@ export default function BuildChat({
     failed: !!error,
   });
   const showBuildStepper = !planning && (loading || feed.length > 0 || planText || lastChanges.length > 0);
+  // Steps are collapsed by default; a real (final) error force-opens them so the failing
+  // step is visible without a click.
+  const stepsOpen = showSteps || !!error;
 
   // The four scope actions. Build is PRIMARY (gold) — it's the verb that ships
   // code; Design · Test · Review are secondary (ghost) but full-size, not tiny.
@@ -288,7 +294,10 @@ export default function BuildChat({
             BUILD stepper + current-step line + STOP live UNDER the Build button (below
             the form), not here — so the running status stays put while the transcript
             (plan text + activity lines) scrolls in the log. */}
-        {loading || feed.length > 0 || planText ? (
+        {/* The transcript shows only the conversational Plan (and a first-message
+            placeholder). The per-step build activity is NOT interleaved here — it lives,
+            collapsed, in the fixed Build-status block under the Build button below. */}
+        {planText || (loading && feed.length === 0) ? (
           <div className="bubble assistant">
             <div className="bubble-role row" style={{ gap: 8, alignItems: 'center' }}>
               <span>{label}</span>
@@ -296,23 +305,15 @@ export default function BuildChat({
             </div>
             <div className="bubble-body">
               {planText ? (
-                <div style={{ marginBottom: feed.length ? 10 : 0 }}>
+                <div>
                   <div className="section-title" style={{ fontSize: 11, marginBottom: 4 }}>Plan</div>
                   <Markdown muted>{planText}</Markdown>
                 </div>
-              ) : null}
-              {feed.length > 0 ? (
-                <ul className="build-activity" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4 }}>
-                  {feed.map((it, i) => (
-                    <ActivityRow key={i} item={it} showDetails={showDetails} />
-                  ))}
-                </ul>
-              ) : null}
-              {loading && feed.length === 0 && !planText ? (
+              ) : (
                 <span className="muted" style={{ fontSize: 12 }}>
                   {planning ? 'Planning…' : 'Building…'} the model can take a moment on the first message.
                 </span>
-              ) : null}
+              )}
             </div>
           </div>
         ) : null}
@@ -364,6 +365,17 @@ export default function BuildChat({
         >
           <div className="row" style={{ gap: 8, alignItems: 'center', marginBottom: 4 }}>
             <span className="comp-label" style={{ fontSize: 11 }}>Build status</span>
+            {feed.length > 0 ? (
+              <button
+                type="button"
+                className="sw-quiet-link"
+                style={{ fontSize: 11, background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 8 }}
+                onClick={() => setShowSteps((v) => !v)}
+                aria-expanded={stepsOpen}
+              >
+                {stepsOpen ? 'hide details' : `show details (${feed.length})`}
+              </button>
+            ) : null}
             {loading ? (
               <button type="button" className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={stop}>Stop</button>
             ) : null}
@@ -379,6 +391,25 @@ export default function BuildChat({
                   : lastChanges.length > 0 ? 'Build committed.' : undefined
             }
           />
+          {/* The per-step activity. Collapsed → just the latest step as a one-liner, so the
+              status stays legible; expanded (or on a real error) → the full list, with the
+              raw tool I/O toggle for builders. */}
+          {feed.length > 0 ? (
+            stepsOpen ? (
+              <ul className="build-activity" style={{ listStyle: 'none', margin: '8px 0 0', padding: 0, display: 'grid', gap: 4 }}>
+                {feed.map((it, i) => (
+                  <ActivityRow key={i} item={it} showDetails={showDetails} />
+                ))}
+              </ul>
+            ) : (
+              <div
+                className={`muted ${feed[feed.length - 1]?.line.isError ? 'warn' : ''}`}
+                style={{ fontSize: 12, marginTop: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+              >
+                {feed[feed.length - 1]?.line.text}
+              </div>
+            )
+          ) : null}
         </div>
       ) : null}
     </div>

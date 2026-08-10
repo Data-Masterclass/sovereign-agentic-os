@@ -87,11 +87,32 @@ function grantsDigest(available: AvailableContext): string {
   return lines.join('\n') || '(no grantable artifacts visible to you yet)';
 }
 
-/** A compact digest of the current epics (titles + story titles) for the Design prompt. */
-function epicsDigest(epics: { title: string; stories: { title: string }[] }[]): string {
+/** The epic shape the Design digest reads (requirements + per-story spec presence). */
+type DesignEpicDigest = {
+  title: string;
+  requirements?: { technical?: string; ux?: string; governance?: string };
+  stories: { title: string; spec?: { features?: string[]; nfrs?: string[]; rules?: string[] } }[];
+};
+
+/**
+ * A compact digest of the current epics for the Design prompt — each epic notes whether
+ * it has requirements yet and, per story, whether a spec is authored. This lets the
+ * assistant pick the RIGHT next ladder step (requirements vs stories vs specs) instead of
+ * always stopping at stories.
+ */
+function epicsDigest(epics: DesignEpicDigest[]): string {
   if (epics.length === 0) return '(no epics yet)';
+  const hasReqs = (r?: { technical?: string; ux?: string; governance?: string }) =>
+    !!(r && ((r.technical ?? '').trim() || (r.ux ?? '').trim() || (r.governance ?? '').trim()));
+  const specced = (s: { spec?: { features?: string[]; nfrs?: string[]; rules?: string[] } }) =>
+    ((s.spec?.features?.length ?? 0) + (s.spec?.nfrs?.length ?? 0) + (s.spec?.rules?.length ?? 0)) > 0;
   return epics
-    .map((e) => `- ${e.title || '(untitled)'} — stories: ${e.stories.map((s) => s.title || '(untitled)').join(', ') || 'none'}`)
+    .map((e) => {
+      const stories = e.stories.length
+        ? e.stories.map((s) => `${s.title || '(untitled)'} [${specced(s) ? 'specced' : 'no spec'}]`).join('; ')
+        : 'none';
+      return `- ${e.title || '(untitled)'} [requirements: ${hasReqs(e.requirements) ? 'yes' : 'MISSING'}] — stories: ${stories}`;
+    })
     .join('\n');
 }
 
@@ -132,17 +153,22 @@ function systemFor(stage: Stage): string {
       ].join('\n');
     case 'design':
       return [
-        'You are the Design-stage assistant. You help SPECIFY a governed app: shape it as agile EPICs and user stories, and draft each story\'s SPEC — three lists: features (what it does), non-functional requirements (how well), and rules (governance / business rules).',
+        'You are the Design-stage assistant for a BUSINESS user (not a developer). You help SPECIFY a governed app by walking DOWN an artifact ladder: EPICs → each epic\'s REQUIREMENTS (technical/ux/governance) → USER STORIES → each story\'s SPEC (features = what it does, nfrs = how well, rules = governance/business rules).',
         'Ground every suggestion in the "Context from Define" block below (the chosen template, the app name/description and purpose) — never invent features the app is not about.',
-        'You can SUGGEST whole new epics (each with a description, technical/ux/governance requirements, and 2-3 user stories), additional user stories for EXISTING epics (referenced by their exact title), AND a spec (features/nfrs/rules) for the story the user is currently specifying.',
+        'You can SUGGEST: whole new epics (with description, requirements, and 2-3 stories); requirements for EXISTING epics that lack them (referenced by exact title); user stories for EXISTING epics (referenced by exact title); and a spec (features/nfrs/rules) for the story the user is currently specifying.',
+        'FULL-TREE RULE — build the whole branch in ONE proposal, never in separate turns. When you propose epics, each epic MUST already include its "requirements" (technical/ux/governance) AND its "stories", and EACH story MUST already include its "spec" (features/nfrs/rules). When you propose stories for an existing epic, EACH story MUST already include its "spec". Do NOT defer requirements or specs to a later turn or tell the user to add them separately — you create the epic, its requirements, its stories AND their features/NFRs/rules together, in the same Apply.',
+        'Keep it HONEST: propose real, specific requirements/features/NFRs/rules grounded in the app\'s purpose and the Context from Define — 2-4 concrete features per story, 1-2 real NFRs, 1-2 real governance/business rules. Do not pad with filler or generic boilerplate; if a story genuinely needs only one feature, give one.',
         'User stories use the "As a … I want … so that …" form with a short acceptance criterion.',
         'You NEVER mutate anything. You only suggest; the user clicks Apply to create.',
+        'GUIDANCE RULE — never leave the user at a dead end. Whatever you just proposed, your "message" MUST end by telling them the SINGLE next step down the ladder and how to take it: after epics, tell them to fill in requirements or add stories; after stories, offer to draft their specs; when everything looks specified, say it looks ready to Build. If you cannot auto-generate the next artifact, say plainly what to type or which button to press (e.g. "expand a story and press Edit to add its features"). NEVER claim you created or saved anything — you only suggest; Apply is the user\'s click.',
         'Respond with STRICT JSON only (no prose outside it, no code fences), matching:',
-        '{ "message": string (markdown; a short explanation of what you propose),',
-        '  "suggestedEpics"?: [ { "title": string, "description": string, "requirements": { "technical": string, "ux": string, "governance": string }, "stories": [ { "title": string, "asA": string, "iWant": string, "soThat": string, "acceptance": string } ] } ],',
-        '  "suggestedStories"?: [ { "epicTitle": exact title of an existing epic, "stories": [ { "title": string, "asA": string, "iWant": string, "soThat": string, "acceptance": string } ] } ],',
+        '{ "message": string (markdown; a short explanation of what you propose, ENDING with the one next step),',
+        '  "suggestedEpics"?: [ { "title": string, "description": string, "requirements": { "technical": string, "ux": string, "governance": string }, "stories": [ { "title": string, "asA": string, "iWant": string, "soThat": string, "acceptance": string, "spec": { "features": string[], "nfrs": string[], "rules": string[] } } ] } ],',
+        '  "suggestedEpicRequirements"?: [ { "epicTitle": exact title of an existing epic, "requirements": { "technical"?: string, "ux"?: string, "governance"?: string } } ],',
+        '  "suggestedStories"?: [ { "epicTitle": exact title of an existing epic, "stories": [ { "title": string, "asA": string, "iWant": string, "soThat": string, "acceptance": string, "spec": { "features": string[], "nfrs": string[], "rules": string[] } } ] } ],',
         '  "suggestedSpec"?: { "features"?: string[], "nfrs"?: string[], "rules"?: string[] } }',
-        'When the user asks to specify/flesh out the CURRENT story (features, NFRs, rules), return suggestedSpec. If there are no epics yet, propose 1-2 epics via suggestedEpics. Omit a field when you have nothing for it. Be concrete and concise.',
+        'Example of ONE full-tree epic (shape, keep content real): { "title": "Reminders", "description": "…", "requirements": { "technical": "Runs a daily scheduled job", "ux": "One-click snooze", "governance": "Sends only to opted-in users" }, "stories": [ { "title": "Send a due-date reminder", "asA": "user", "iWant": "an email before a task is due", "soThat": "I don\'t miss it", "acceptance": "Email arrives 24h before due", "spec": { "features": ["Compose reminder email", "Schedule 24h before due"], "nfrs": ["Sends within 1 min of trigger"], "rules": ["Only to opted-in users"] } } ] }',
+        'Pick the field that matches the user\'s next ladder step: no epics yet → suggestedEpics (WITH requirements + stories + each story\'s spec); epics without stories → suggestedStories (WITH each story\'s spec); epics that only lack requirements → suggestedEpicRequirements; a story open/asking for its spec → suggestedSpec. Omit a field when you have nothing for it. Be concrete and concise.',
       ].join('\n');
     case 'build':
       return 'You explain, in plain language, what a file or piece of an in-progress app does, or what to ask the build chat next. Two or three sentences, markdown, no jargon dumps. The delivery-team chat and the build chat are the agents that actually write code — you only clarify. Return your answer as markdown prose.';
@@ -169,7 +195,7 @@ function contextBlock(
     description: string;
     purpose: string;
     template: string;
-    epics: { title: string; stories: { id?: string; title: string; status?: string; spec?: { features?: string[]; nfrs?: string[]; rules?: string[] } }[] }[];
+    epics: { title: string; requirements?: { technical?: string; ux?: string; governance?: string }; stories: { id?: string; title: string; status?: string; spec?: { features?: string[]; nfrs?: string[]; rules?: string[] } }[] }[];
     surface: { ui: boolean; api: boolean };
     pipeline: Record<string, string>;
     deploy: { state: string; previewUrl: string | null; releases: number };

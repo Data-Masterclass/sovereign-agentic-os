@@ -74,21 +74,52 @@ test('datasets.list / get build the governed dataset-registry URLs', async () =>
   assert.equal(calls[1].url, '/api/data/datasets/ds%201%2Fx');
 });
 
-test('datasets.query{nl} POSTs the NL question to the governed ask route', async () => {
-  const { fn, calls } = stubFetch(() => ({ body: { ok: true, rowCount: 3 } }));
+test('datasets.query{nl} POSTs the NL question and resolves to a normalized QueryResult', async () => {
+  // The REAL ask-route success shape (lib/data/ask.ts AskSuccess): top-level
+  // columns/rows/rowCount + the grounded answer + the executed sql.
+  const { fn, calls } = stubFetch(() => ({
+    body: {
+      ok: true,
+      sql: 'SELECT name, spend FROM c ORDER BY spend DESC',
+      columns: ['name', 'spend'],
+      rows: [['Acme', '4200'], ['Globex', '3100']],
+      rowCount: 2,
+      answer: 'Acme is the top customer by spend.',
+    },
+  }));
   const os = createOsClient({ fetch: fn });
-  const out = (await os.datasets.query('d1', { nl: 'top customers?' })) as { rowCount: number };
+  const r = await os.datasets.query('d1', { nl: 'top customers?' });
   assert.equal(calls[0].url, '/api/data/ask');
   assert.equal((calls[0].init as RequestInit).method, 'POST');
   assert.deepEqual(JSON.parse(String((calls[0].init as RequestInit).body)), { question: 'top customers?' });
-  assert.equal(out.rowCount, 3);
+  // Resolves to { columns, rows } — no cast needed, the exact usage the brief teaches.
+  assert.deepEqual(r.columns, ['name', 'spend']);
+  assert.deepEqual(r.rows, [['Acme', '4200'], ['Globex', '3100']]);
+  assert.equal(r.rowCount, 2);
+  assert.equal(Number(r.rows?.[0]?.[1] ?? 0), 4200, 'a scalar reads cleanly off rows[0]');
+  assert.equal(r.answer, 'Acme is the top customer by spend.');
+  assert.equal(r.sql, 'SELECT name, spend FROM c ORDER BY spend DESC');
 });
 
-test('datasets.query{} falls back to the governed preview route with a limit', async () => {
-  const { fn, calls } = stubFetch(() => ({ body: { available: true } }));
+test('datasets.query{} falls back to the preview route and normalizes to a QueryResult', async () => {
+  // The REAL preview-route success shape (lib/data/preview.ts): datasetId/name +
+  // available + columns/rows/rowCount. Normalized to the same table.
+  const { fn, calls } = stubFetch(() => ({
+    body: { datasetId: 'd1', name: 'Orders', available: true, layer: 'gold', fqn: 'x', limit: 25, columns: ['id'], rows: [['1'], ['2']], rowCount: 2 },
+  }));
   const os = createOsClient({ fetch: fn });
-  await os.datasets.query('d1', { limit: 25 });
+  const r = await os.datasets.query('d1', { limit: 25 });
   assert.equal(calls[0].url, '/api/data/datasets/d1/preview?limit=25');
+  assert.deepEqual(r.columns, ['id']);
+  assert.equal(r.rowCount, 2);
+});
+
+test('datasets.query on a not-materialized preview is an HONEST empty table (no fabricated rows)', async () => {
+  // The preview route's not-built answer: { available:false, reason } — NO columns/rows.
+  const { fn } = stubFetch(() => ({ body: { datasetId: 'd1', name: 'Orders', available: false, reason: 'build it first' } }));
+  const os = createOsClient({ fetch: fn });
+  const r = await os.datasets.query('d1', {});
+  assert.deepEqual(r, { columns: [], rows: [], rowCount: 0 }, 'empty, not invented');
 });
 
 test('datasets.query{sql} is refused locally — no request, honest UnsupportedQuery', async () => {
@@ -99,14 +130,40 @@ test('datasets.query{sql} is refused locally — no request, honest UnsupportedQ
   assert.equal(calls.length, 0); // never touched the network
 });
 
-test('metrics.query POSTs the slice to the governed explorer', async () => {
-  const { fn, calls } = stubFetch(() => ({ body: { rows: [] } }));
+test('metrics.query POSTs the slice and normalizes member-keyed rows into a QueryResult table', async () => {
+  // The REAL explorer shape (lib/metrics/build/explore-server.ts ExploreServerResult):
+  // rows are member-KEYED OBJECTS, there is NO top-level columns array, plus sql/mode.
+  const { fn, calls } = stubFetch(() => ({
+    body: {
+      metricId: 'm1',
+      member: 'revenue',
+      rows: [{ region: 'DE', revenue: 100.5 }, { region: 'FR', revenue: 50 }],
+      sql: 'SELECT region, SUM(revenue) …',
+      mode: 'live (sql)',
+    },
+  }));
   const os = createOsClient({ fetch: fn });
-  await os.metrics.query('m1', { dimensions: ['region'] });
+  const r = await os.metrics.query('m1', { dimensions: ['region'] });
   assert.equal(calls[0].url, '/api/metrics/explore');
   const body = JSON.parse(String((calls[0].init as RequestInit).body));
   assert.equal(body.metricId, 'm1');
   assert.deepEqual(body.dimensions, ['region']);
+  // columns DERIVED from the row keys (first-seen order); rows FLATTENED into that order.
+  assert.deepEqual(r.columns, ['region', 'revenue']);
+  assert.deepEqual(r.rows, [['DE', '100.5'], ['FR', '50']]);
+  assert.equal(r.rowCount, 2);
+  assert.equal(Number(r.rows?.[0]?.[1] ?? 0), 100.5, 'a metric scalar reads off rows[0]');
+  assert.equal(r.sql, 'SELECT region, SUM(revenue) …');
+});
+
+test('metrics.query on an unavailable/empty slice normalizes to an honest empty table', async () => {
+  // The honesty-gate "unavailable" shape returns rows:[] — no fabricated number.
+  const { fn } = stubFetch(() => ({ body: { metricId: 'm1', member: 'revenue', rows: [], sql: 'x', mode: 'unavailable', unavailable: true } }));
+  const os = createOsClient({ fetch: fn });
+  const r = await os.metrics.query('m1');
+  assert.deepEqual(r.columns, []);
+  assert.deepEqual(r.rows, []);
+  assert.equal(r.rowCount, 0);
 });
 
 test('files.list / get build the governed file routes', async () => {

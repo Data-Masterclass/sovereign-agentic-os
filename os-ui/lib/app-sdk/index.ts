@@ -17,7 +17,14 @@
  *
  * Dependency-free (native fetch), tree-shakeable named exports.
  */
-export { createOsClient, joinUrl, withQuery, type OsClient } from './client.ts';
+export {
+  createOsClient,
+  joinUrl,
+  withQuery,
+  normalizeGridResult,
+  normalizeMetricResult,
+  type OsClient,
+} from './client.ts';
 export { OsError, NotAuthenticated, Forbidden, UnsupportedQuery } from './errors.ts';
 export type {
   OsClientOptions,
@@ -27,6 +34,7 @@ export type {
   KnowledgeHit,
   DatasetQuery,
   MetricQuery,
+  QueryResult,
   AppRecord,
   RecordResult,
 } from './types.ts';

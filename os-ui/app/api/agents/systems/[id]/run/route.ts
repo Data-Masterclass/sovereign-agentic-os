@@ -12,6 +12,7 @@ import { classifyStepError, type AgenticGraphResult } from '@/lib/agents/build/a
 import { governYamlForOwner } from '@/lib/agents/build/owner-grants';
 import { deriveContextUsage } from '@/lib/agents/build/context-usage';
 import { parseSystem, serializeSystem } from '@/lib/agents/system-schema';
+import { cleanTurns } from '@/lib/assistant/turns';
 
 export const dynamic = 'force-dynamic';
 // A multi-node team walk (each node a PLAN→ACT loop on a large model) can run long;
@@ -168,11 +169,7 @@ function finalizeTeamRun(team: AgenticGraphResult, running: boolean, yaml: strin
 
 /** A turn's conversation from the request body (`messages`, else `prompt`). */
 function runMessages(body: Record<string, unknown>, prompt: string): ChatMsg[] {
-  const raw = Array.isArray(body.messages) ? (body.messages as ChatMsg[]) : [];
-  const clean = raw
-    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
-    .slice(-20)
-    .map((m) => ({ role: m.role, content: m.content.trim() }));
+  const clean = cleanTurns(body.messages);
   return clean.length > 0 ? clean : [{ role: 'user', content: prompt }];
 }
 

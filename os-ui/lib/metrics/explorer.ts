@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset, Measure, RollingWindow } from '../data/index.ts';
-import { type DelegatedToken, propagate } from '../data/identity.ts';
+import { type DelegatedToken, propagate } from '@/lib/data';
 import { dimensionMember, measureMember } from './model.ts';
-import { goldMartFqn, viewMembers } from '../data/metrics.ts';
+import { goldMartFqn, viewMembers } from '@/lib/data';
 
 /**
  * The metric explorer — pick a metric + dimensions to slice, no SQL, per-viewer RLS.
