@@ -194,6 +194,10 @@ export const config = {
   // the offline tree, before/after changesets and repo-heal restore FULL source.
   // Degrades to the in-process snapshot when OpenSearch is off.
   appFilesIndex: env('APP_FILES_INDEX', 'os-app-files'),
+  // App-RECORDS index (Software golden path — the app's OWN write data). Durable
+  // mirror of an OS-built app's `os.records.*` writes, so a static SPA (no backend
+  // of its own) still persists records; degrades to in-memory when OpenSearch is off.
+  appRecordsIndex: env('APP_RECORDS_INDEX', 'os-app-records'),
   // Dataset registry index (Data tab). Best-effort durable mirror of the
   // in-process dataset store so seeded datasets/metrics survive an os-ui restart;
   // degrades to in-memory when OpenSearch is off.

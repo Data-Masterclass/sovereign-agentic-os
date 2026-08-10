@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { getAppForUser } from '@/lib/software/apps';
 import { callAppTool } from '@/lib/software/app-tool-call';
+import { recordActor } from '@/lib/software/app-records';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,6 +51,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   // The full governed spine (authorize → hold/deny → execute → trace) lives in
   // lib/software/app-tool-call.ts; the route only maps its result to HTTP.
-  const { status, body: payload } = await callAppTool(app, tool, body.args, user.id, body);
+  const { status, body: payload } = await callAppTool(app, tool, body.args, user.id, body, recordActor(user));
   return NextResponse.json(payload, { status });
 }

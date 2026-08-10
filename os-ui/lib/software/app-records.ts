@@ -6,23 +6,35 @@ import { runnerStatus, runnerName } from './runner.ts';
 import { getSnapshot } from './file-mirror.ts';
 import { templateFiles } from './apps.ts';
 import { resolveToolOperation, fillPathParams, seedToolResult } from './tool-exec.ts';
+import {
+  addAppRecord,
+  listAppRecords,
+  getAppRecord,
+  exportAppRecords,
+  type RecordActor,
+} from './app-records-store.ts';
+export type { RecordActor };
 import { config } from '@/lib/core/config';
 import type { App } from './apps.ts';
 
 /**
  * ONE STORE, TWO DOORS — the app's OWN records.
  *
- * An app's records live in the app's OWN backend (its committed OpenAPI `/records`
- * endpoints served by its in-cluster Service), NOT in an OS-side store. The
- * platform already reaches them one way: an AGENT calls the app's MCP tools
- * (`list_records` / `add_record` / `get_record` / `export_records`) through
- * `app/api/apps/[id]/tool/route.ts`, which authorizes then PROXIES to the live app
- * (or returns honestly-labelled seed data when the runner is not live).
+ * An OS-built app's internal writes must NOT create OS datasets (the governed data
+ * plane is read-only and the app identity lacks those perms). The write door is
+ * `os.records.*` (list/add/get/export), and its durable home is the OS-side
+ * app-records store (lib/software/app-records-store.ts) — because the DEFAULT app
+ * template is a static SPA with NO backend of its own. The four record tools are
+ * therefore backed by that store (`source:'os-records-store'`), scoped to the caller.
  *
- * This module factors out that EXACT execution so a SECOND door — the app's own
- * frontend, via the by-slug records routes + the `os.records.*` SDK — runs the
- * same governed record semantics against the same store. No new store, no new
- * governance: a shared executor + a shared envelope-write gate.
+ * The platform reaches records two ways onto the SAME store: an AGENT calls the app's
+ * MCP tools through `app/api/apps/[id]/tool/route.ts`, and the app's own frontend calls
+ * the by-slug records routes + the `os.records.*` SDK. Both funnel through the shared
+ * executor here (`executeAppTool`) + the shared envelope-write gate.
+ *
+ * NON-record app tools keep the original behaviour: proxy to the app's live in-cluster
+ * Service when its runner pod is running (`source:'live-app'`), else honestly-labelled
+ * demo seed (`source:'demo-seed'`).
  */
 
 /** The four record operations, by the app's committed `/records` OpenAPI convention. */
@@ -34,6 +46,21 @@ export const RECORD_TOOLS = {
 } as const;
 
 export type RecordToolName = (typeof RECORD_TOOLS)[keyof typeof RECORD_TOOLS];
+
+/**
+ * The caller identity a record tool is scoped to. The `domain` is the user's EFFECTIVE
+ * operating domain — the chosen active domain, or their sole domain when they belong to
+ * exactly one (else null). This is the SAME accessor `app/api/auth/me/route.ts` uses, so
+ * the record store's Domain scope tracks the OS-wide domain switcher: a record shows up
+ * as "Domain" only while the caller is operating in the app's owning domain.
+ */
+export function recordActor(user: {
+  id: string;
+  activeDomain: string | null;
+  domains: string[];
+}): RecordActor {
+  return { id: user.id, domain: user.activeDomain ?? (user.domains.length === 1 ? user.domains[0] : '') };
+}
 
 /** Which record tools WRITE (governed by the approved deploy envelope). Reads are always-on. */
 const WRITE_TOOLS = new Set<RecordToolName>([RECORD_TOOLS.add, RECORD_TOOLS.export]);
@@ -99,23 +126,66 @@ async function callLiveApp(
   }
 }
 
+/** The four record tool names, for O(1) "is this a record tool?" checks. */
+const RECORD_TOOL_NAMES = new Set<string>(Object.values(RECORD_TOOLS));
+
 /**
- * Execute an app tool the SAME way the MCP tool route does: when the app's runner
- * pod is actually RUNNING, proxy the call to the app's real in-cluster Service per
- * its committed OpenAPI (`source:'live-app'`); otherwise return deterministic,
- * honestly-labelled seed data (`source:'demo-seed'`) so the flow stays demonstrable
- * without ever pretending the deployed app answered.
+ * Run one of the four record tools against the durable OS-side app-records store,
+ * scoped to `actor` (My + Domain). Writes stamp owner = actor.id and domain =
+ * the APP's owning domain (`app.domain`). Every result is labelled
+ * `source:'os-records-store'` — honest: the OS's own governed store answered, not a
+ * live app pod and not demo seed.
+ */
+async function executeRecordTool(
+  app: App,
+  tool: string,
+  args: Record<string, unknown>,
+  actor: RecordActor,
+): Promise<Record<string, unknown>> {
+  const label = { source: 'os-records-store' as const };
+  if (tool === RECORD_TOOLS.add) {
+    const r = await addAppRecord({ appSlug: app.slug, owner: actor.id, domain: app.domain, record: args });
+    return { ...label, added: { id: r.id, ...r.record } };
+  }
+  if (tool === RECORD_TOOLS.get) {
+    const r = await getAppRecord({ appSlug: app.slug, id: String(args.id ?? ''), actor });
+    return { ...label, item: r ? { id: r.id, ...r.record } : null };
+  }
+  if (tool === RECORD_TOOLS.export) {
+    const rows = await exportAppRecords({ appSlug: app.slug, actor });
+    return { ...label, file: `${app.slug}-records.json`, rows: rows.length, items: rows.map((r) => ({ id: r.id, ...r.record })) };
+  }
+  // list_records
+  const rows = await listAppRecords({ appSlug: app.slug, actor });
+  return { ...label, items: rows.map((r) => ({ id: r.id, ...r.record })) };
+}
+
+/**
+ * Execute an app tool. RECORD tools (list/add/get/export) are backed by the durable
+ * OS-side app-records store (`source:'os-records-store'`), scoped to the caller — the
+ * store is required because the default app template is a static SPA with no backend.
+ * NON-record tools keep the original behaviour: when the app's runner pod is RUNNING,
+ * proxy to the app's real in-cluster Service per its committed OpenAPI
+ * (`source:'live-app'`); otherwise deterministic, honestly-labelled seed data
+ * (`source:'demo-seed'`) so the flow stays demonstrable.
  *
  * This is the shared core the `[id]/tool` route (any app tool) and the by-slug
  * records routes (the four record tools) both call — one store, two doors. It
  * performs NO authorization itself; each door runs its own gate first (the tool
- * route's OPA/profile check; the records routes' entry + envelope-write gate).
+ * route's OPA/profile check; the records routes' entry + envelope-write gate). The
+ * optional `actor` is REQUIRED for record tools (both record doors thread it in); if a
+ * record tool is reached without one, it falls back to the honest demo seed rather
+ * than leaking across the caller's scope.
  */
 export async function executeAppTool(
   app: App,
   tool: string,
   args: Record<string, unknown> = {},
+  actor?: RecordActor,
 ): Promise<Record<string, unknown>> {
+  if (RECORD_TOOL_NAMES.has(tool) && actor) {
+    return executeRecordTool(app, tool, args, actor);
+  }
   let result: Record<string, unknown> | null = null;
   const status = await runnerStatus({ slug: app.slug });
   if (status.live && status.phase === 'running') {

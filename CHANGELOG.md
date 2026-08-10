@@ -13,6 +13,10 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.96] — 2026-08-10
+
+An OS-built app's OWN write data now persists durably. The app's write door — `os.records.*` (list/get/add/export) — is backed by a new OS-side app-records store, so records survive even though the default app template is a static SPA with no backend of its own (previously the record tools fell back to honestly-labelled demo-seed and nothing persisted). The store reuses the existing OpenSearch durable-mirror pattern (a new `os-app-records` index + in-memory cache with hydrate-on-first-use and fire-and-forget write-through — no new infra), degrading to in-memory when OpenSearch is off. Records are scoped My + Domain (owner sees their own; a same-domain peer sees the app's owning-domain records; other domains see nothing) and are isolated per app. Writes stay envelope-gated in the routes; results are honestly labelled `source: os-records-store`. Both record doors (the app's own by-slug records routes and the agent MCP-tool route) thread the caller identity through so every read/write is scoped to what that user may see. The build guidance now makes it explicit that app-internal/persistent data uses `os.records.*` and that an app must never create OS datasets for its own writes (datasets are read-only).
+
 ## [os-ui 0.6.95] — 2026-08-10
 
 Software tab now runs the reasoning model on ALL stages, including Build (code generation). Build was previously pinned to the standard tier, which proved too weak for getting the vendored SDK/UI surface and governance right in one pass — the recurring compile-gate rejections. Build now starts on reasoning (the ci-repair escalation becomes a safety net rather than the norm). An admin per-stage model override is the planned follow-up.

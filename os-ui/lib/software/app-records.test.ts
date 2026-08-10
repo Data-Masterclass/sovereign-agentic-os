@@ -3,7 +3,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RECORD_TOOLS, envelopeAllowsRecordTool } from './app-records.ts';
+import { RECORD_TOOLS, envelopeAllowsRecordTool, executeAppTool, recordActor } from './app-records.ts';
+import { __resetAppRecordsCache } from './app-records-store.ts';
 import type { App } from './apps.ts';
 
 /** A minimal App stub carrying just the deploy envelope the gate reads. */
@@ -11,6 +12,11 @@ function appWith(approved: { writeTools: string[] } | null): App {
   return {
     deploy: { approved: approved as App['deploy']['approved'] },
   } as App;
+}
+
+/** A minimal App stub with the identity fields the record executor reads. */
+function recordApp(slug: string, domain: string): App {
+  return { slug, domain, deploy: { approved: null } } as unknown as App;
 }
 
 // Reads are always-on — never gated by the envelope.
@@ -45,4 +51,60 @@ test('envelope gate: a write present in the approved envelope is allowed', () =>
     envelopeAllowsRecordTool(appWith({ writeTools: ['export_records'] }), RECORD_TOOLS.export),
     { ok: true },
   );
+});
+
+// ------------------------------------------- record routing → OS-side store --
+
+// Record tools resolve to the durable OS-side store, not demo-seed / live-app,
+// and a written record persists across the add → list round-trip.
+test('executeAppTool: record tools hit the os-records-store and PERSIST (add → list)', async () => {
+  __resetAppRecordsCache();
+  const app = recordApp('crm', 'sales');
+  const actor = recordActor({ id: 'sara', activeDomain: 'sales', domains: ['sales'] });
+
+  const added = await executeAppTool(app, RECORD_TOOLS.add, { name: 'Acme' }, actor);
+  assert.equal(added.source, 'os-records-store');
+  const addedItem = added.added as { id: string; name: string };
+  assert.equal(addedItem.name, 'Acme');
+
+  const listed = await executeAppTool(app, RECORD_TOOLS.list, {}, actor);
+  assert.equal(listed.source, 'os-records-store');
+  const items = listed.items as Array<{ id: string; name: string }>;
+  assert.equal(items.length, 1);
+  assert.equal(items[0].id, addedItem.id);
+  assert.equal(items[0].name, 'Acme');
+
+  const got = await executeAppTool(app, RECORD_TOOLS.get, { id: addedItem.id }, actor);
+  assert.equal(got.source, 'os-records-store');
+  assert.equal((got.item as { id: string }).id, addedItem.id);
+
+  const exported = await executeAppTool(app, RECORD_TOOLS.export, {}, actor);
+  assert.equal(exported.source, 'os-records-store');
+  assert.equal(exported.rows, 1);
+});
+
+// The add stamps the APP's owning domain (not the caller's) — a same-domain peer
+// sees it (Domain), an other-domain user does not.
+test('executeAppTool: record add stamps the app domain; My + Domain scoping holds', async () => {
+  __resetAppRecordsCache();
+  const app = recordApp('crm', 'sales');
+  const author = recordActor({ id: 'sara', activeDomain: 'sales', domains: ['sales'] });
+  await executeAppTool(app, RECORD_TOOLS.add, { name: 'Acme' }, author);
+
+  const peer = recordActor({ id: 'amir', activeDomain: 'sales', domains: ['sales'] });
+  const peerList = await executeAppTool(app, RECORD_TOOLS.list, {}, peer);
+  assert.equal((peerList.items as unknown[]).length, 1);
+
+  const outsider = recordActor({ id: 'kenji', activeDomain: 'finance', domains: ['finance'] });
+  const outList = await executeAppTool(app, RECORD_TOOLS.list, {}, outsider);
+  assert.equal((outList.items as unknown[]).length, 0);
+});
+
+// A record tool called WITHOUT an actor falls back to the honest demo seed
+// (never leaks across scope) — non-record callers stay unaffected.
+test('executeAppTool: a record tool without an actor degrades to demo-seed, not the store', async () => {
+  __resetAppRecordsCache();
+  const app = recordApp('crm', 'sales');
+  const res = await executeAppTool(app, RECORD_TOOLS.list, {});
+  assert.equal(res.source, 'demo-seed');
 });

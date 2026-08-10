@@ -13,7 +13,8 @@ import assert from 'node:assert/strict';
  *   2. ENVELOPE (writes) — add/export need the tool in the app's APPROVED deploy
  *      envelope; a missing approval is 403 with an honest, governance-naming reason.
  *   3. Reads (list/get) and an ENVELOPE-approved write reach the shared executor,
- *      which — with no live runner in-test — returns honestly-labelled demo-seed.
+ *      which routes the four record tools to the durable OS-side app-records store
+ *      (`source:'os-records-store'`) — so an add PERSISTS and a following list returns it.
  *
  * Pattern mirrors lib/governance/approvals-route.test.ts: stub fetch to force the
  * offline in-process app cache, mock @/lib/core/auth, cache-busted route imports.
@@ -40,10 +41,12 @@ mock.module('@/lib/core/auth', {
 
 const { createApp, __resetAppsCache, writeThroughApp } = await import('./apps.ts');
 const { createUser, __resetUsers } = await import('@/lib/platform-admin/users');
+const { __resetAppRecordsCache } = await import('./app-records-store.ts');
 
 beforeEach(() => {
   __resetAppsCache();
   __resetUsers();
+  __resetAppRecordsCache();
 });
 
 async function loadListRoute() {
@@ -107,28 +110,30 @@ test('records export: no approved export_records ⇒ 403 (envelope-gated write)'
   assert.match((await res.json()).error, /export_records/);
 });
 
-// 3. HAPPY PATHS — reads always-on; an envelope-approved write reaches the executor.
-test('records list: entry-visible owner gets the seed result (no live runner)', async () => {
+// 3. HAPPY PATHS — reads always-on; the record tools resolve to the durable
+//    OS-side app-records store, and an approved add PERSISTS.
+test('records list: entry-visible owner gets the OS-side store result (empty to start)', async () => {
   const app = await seedApp();
   const route = await loadListRoute();
   const res = await route.GET(get(), ctx(app.slug));
   assert.equal(res.status, 200);
   const { result } = await res.json();
-  assert.equal(result.source, 'demo-seed', 'no live runner ⇒ honestly-labelled seed');
+  assert.equal(result.source, 'os-records-store', 'record reads hit the durable OS-side store');
   assert.ok(Array.isArray(result.items), 'list returns items');
+  assert.equal(result.items.length, 0, 'a fresh app has no records');
 });
 
-test('records get: reads are always-on and return the seeded item shape', async () => {
+test('records get: reads are always-on and hit the OS-side store (missing id ⇒ null)', async () => {
   const app = await seedApp();
   const route = await loadGetRoute();
   const res = await route.GET(get(), ctx(app.slug, 'r1'));
   assert.equal(res.status, 200);
   const { result } = await res.json();
-  assert.equal(result.source, 'demo-seed');
-  assert.ok('item' in result, 'get returns an item field');
+  assert.equal(result.source, 'os-records-store');
+  assert.equal(result.item, null, 'an unknown id is null, not fabricated');
 });
 
-test('records add: WITH add_record in the approved envelope ⇒ 200, executor runs', async () => {
+test('records add: WITH add_record in the envelope ⇒ 200 AND the record PERSISTS (add → list)', async () => {
   const app = await seedApp();
   // Approve the write envelope the way a Builder deploy would (add_record enabled live).
   app.deploy.approved = { writeTools: ['add_record'], connections: [], data: [], knowledge: [], footprint: { cpu: '250m', memory: '256Mi', estMonthlyUsd: 5 } };
@@ -137,8 +142,15 @@ test('records add: WITH add_record in the approved envelope ⇒ 200, executor ru
   const res = await route.POST(post({ record: { name: 'Widget', amount: 12 } }), ctx(app.slug));
   assert.equal(res.status, 200, 'an envelope-approved write is allowed');
   const { result } = await res.json();
-  assert.equal(result.source, 'demo-seed', 'no live runner ⇒ seed, but the write door was open');
+  assert.equal(result.source, 'os-records-store', 'the write lands in the durable OS-side store');
   assert.ok(result.added, 'the add executor returns the added record');
+  assert.equal(result.added.name, 'Widget');
+
+  // Durability: a fresh list returns the record just written.
+  const listRes = await route.GET(get(), ctx(app.slug));
+  const listed = (await listRes.json()).result;
+  assert.equal(listed.items.length, 1, 'the added record persists');
+  assert.equal(listed.items[0].name, 'Widget');
 });
 
 test('records add: anonymous caller is 401 (the session gate)', async () => {

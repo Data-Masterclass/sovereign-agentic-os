@@ -8,6 +8,7 @@ import {
   RECORD_TOOLS,
   envelopeAllowsRecordTool,
   executeAppTool,
+  recordActor,
 } from '@/lib/software/app-records';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,6 @@ export const POST = withRoute<{ slug: string }>(async ({ user, params }) => {
   if (!app) return NextResponse.json({ error: 'App not found' }, { status: 404 });
   const gate = envelopeAllowsRecordTool(app, RECORD_TOOLS.export);
   if (!gate.ok) return NextResponse.json({ error: gate.reason }, { status: 403 });
-  const result = await executeAppTool(app, RECORD_TOOLS.export);
+  const result = await executeAppTool(app, RECORD_TOOLS.export, {}, recordActor(user));
   return NextResponse.json({ result });
 }, { defaultStatus: 500 });

@@ -136,6 +136,8 @@ export const DATA_PLANE_CONTRACT = [
   '  add/export run live ONLY when this app\'s APPROVED deploy envelope permits them; otherwise the OS',
   '  answers 403 and the SDK throws Forbidden with the reason. There is NO os.datasets.update, no',
   '  os.files.create, no os.knowledge.write — datasets/metrics/knowledge/files are reads. Do not invent methods.',
+  '  ALL app-internal / persistent data goes through os.records.* (the app\'s OWN governed store, persisted',
+  '  durably OS-side). NEVER create an OS dataset for the app\'s own writes — datasets are read-only and it fails.',
   '',
   'GROUND RULES — this app can only reach the artifacts in its grants (see "## Granted context"):',
   '  • The granted dataset SCHEMA above is AUTHORITATIVE over the story-spec field names: if the',

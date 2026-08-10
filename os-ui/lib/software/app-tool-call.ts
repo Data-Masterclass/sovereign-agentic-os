@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { executeAppTool } from './app-records.ts';
+import { executeAppTool, type RecordActor } from './app-records.ts';
 import { authorizeAppTool, authorizeConnectionCall, trace } from '@/lib/infra/agent-governed';
 import { enqueue } from '@/lib/governance/approvals';
 import type { App } from './apps.ts';
@@ -32,6 +32,9 @@ export async function callAppTool(
   requestedBy: string,
   /** The raw parsed request body — used verbatim as the deny-trace input (as before). */
   rawBody: unknown,
+  /** The caller identity, so RECORD tools resolve to the OS-side app-records store,
+   *  scoped to what this caller may see (My + Domain). Omitted for non-record callers. */
+  actor?: RecordActor,
 ): Promise<AppToolCallResult> {
   const principal = app.mcpPrincipal;
 
@@ -73,7 +76,7 @@ export async function callAppTool(
   // Execute: proxy to the REAL app when its runner pod is running, else demo seed —
   // the SHARED executor the app's own records routes also use (one store, two doors).
   const execArgs = (args ?? {}) as Record<string, unknown>;
-  const result = await executeAppTool(app, tool, execArgs);
+  const result = await executeAppTool(app, tool, execArgs, actor);
 
   const tr = await trace({ principal, tool, input: args ?? {}, output: result, decision: 'allow', costUsd: 0.0004 });
   return {
