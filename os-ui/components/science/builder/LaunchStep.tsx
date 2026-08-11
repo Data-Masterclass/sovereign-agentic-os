@@ -136,23 +136,40 @@ export default function LaunchStep({
   const status: LaunchStatus | null = launch ?? deriveFromModel(model);
   const failureReason = status?.error ?? model.lastTrainingError ?? model.lastDeployError ?? '';
   const failed = status?.phase === 'deploy_failed' || (status?.phase === 'draft' && !!model.lastTrainingError);
+  // A publish failure whose reason carries the malformed serving-runtime signature is an ADMIN fix,
+  // not a user retry — say so specifically instead of the generic "couldn't finish launching".
+  const servingRuntimeBroken =
+    status?.phase === 'deploy_failed' &&
+    /--model_name|serving runtime is misconfigured|no runtime found to support/i.test(failureReason);
+  const failHeader = servingRuntimeBroken
+    ? 'Serving runtime misconfigured — see your platform admin.'
+    : status?.phase === 'deploy_failed'
+    ? 'Couldn’t finish publishing the model.'
+    : 'Couldn’t finish training the model.';
 
   // Auto-fetch the plain-language failure explanation once per distinct reason (no button hunt).
+  // Uses the governed LAUNCH-stage assistant, which is grounded server-side in THIS model's real
+  // signals (captured error + training run log tail + live KServe status) — so it can diagnose the
+  // cause, not just restate the raw reason. We pass the reason as the user turn and read `message`.
   useEffect(() => {
     if (!failed || !failureReason || explainedFor.current === failureReason) return;
     explainedFor.current = failureReason;
     setExplaining(true);
-    const stage = status?.phase === 'deploy_failed' ? 'deploy' : 'train';
+    const kind = status?.phase === 'deploy_failed' ? 'publishing (deploy)' : 'training';
     fetch('/api/science/assistant', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ stage, reason: failureReason }),
+      body: JSON.stringify({
+        stage: 'launch',
+        model: model.model,
+        messages: [{ role: 'user', content: `Launching this model failed at ${kind}. Explain what went wrong and what I should do next.` }],
+      }),
     })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d?.text) setExplain(d.text as string); })
+      .then((d) => { if (d?.message) setExplain(d.message as string); })
       .catch(() => { /* honest no-op — the raw reason is still shown */ })
       .finally(() => setExplaining(false));
-  }, [failed, failureReason, status?.phase]);
+  }, [failed, failureReason, status?.phase, model.model]);
 
   const deployed = bs === 'deployed';
   const inFlight = IN_FLIGHT.has(status?.phase ?? bs) || busy;
@@ -172,7 +189,12 @@ export default function LaunchStep({
           {deployed ? (
             <span className="badge ok">Live</span>
           ) : failed ? (
-            <button className="btn" onClick={retryDeploy} disabled={!canManage || busy}>
+            <button
+              className="btn"
+              onClick={retryDeploy}
+              disabled={!canManage || busy || servingRuntimeBroken}
+              title={servingRuntimeBroken ? 'A platform admin must fix the serving runtime before this can succeed.' : undefined}
+            >
               {busy ? <span className="spin" /> : '↻ Retry'}
             </button>
           ) : (
@@ -209,7 +231,7 @@ export default function LaunchStep({
       {/* On failure: the honest reason + its auto-fetched plain-language explanation. */}
       {failed ? (
         <div className="error" style={{ marginTop: 12 }}>
-          <div style={{ fontWeight: 600 }}>Couldn’t finish launching.</div>
+          <div style={{ fontWeight: 600 }}>{failHeader}</div>
           {explaining ? (
             <div className="hint" style={{ marginTop: 6 }}><span className="spin" /> Explaining…</div>
           ) : explain ? (

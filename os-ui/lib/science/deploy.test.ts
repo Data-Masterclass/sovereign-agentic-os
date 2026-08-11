@@ -10,6 +10,10 @@ import {
   submitDeploy,
   deployPhase,
   readDeploy,
+  isServingRuntimeMisconfigured,
+  humanizeDeployReason,
+  predictorCrashReason,
+  SERVING_RUNTIME_MISCONFIGURED_MESSAGE,
   type DeployRuntime,
 } from './deploy.ts';
 import type { K8sClient } from './training.ts';
@@ -110,4 +114,88 @@ test('readDeploy: unreachable → unknown (keep polling); missing ISVC → faile
   assert.equal((await readDeploy('m', RT, gone)).phase, 'failed');
   const ready: K8sClient = async () => ({ status: 200, body: { status: { conditions: [{ type: 'Ready', status: 'True' }] } } });
   assert.equal((await readDeploy('m', RT, ready)).phase, 'ready');
+});
+
+// ------------------------------------------------ serving-runtime misconfig ----
+
+test('isServingRuntimeMisconfigured detects the malformed --model_name exec signature', () => {
+  assert.equal(
+    isServingRuntimeMisconfigured('exec: "--model_name=sample-sklearn": executable file not found in $PATH'),
+    true,
+  );
+  assert.equal(isServingRuntimeMisconfigured('No runtime found to support predictor'), true);
+  assert.equal(isServingRuntimeMisconfigured('No model found in models/x'), false);
+  assert.equal(isServingRuntimeMisconfigured(undefined), false);
+});
+
+test('humanizeDeployReason wraps a misconfigured-runtime reason in the admin-directed message', () => {
+  const raw = 'exec: "--model_name=lead-scoring": executable file not found in $PATH';
+  const out = humanizeDeployReason(raw);
+  assert.ok(out.startsWith(SERVING_RUNTIME_MISCONFIGURED_MESSAGE));
+  assert.match(out, /cluster reason:/);
+  assert.match(out, /--model_name/);
+  // A normal reason passes through unchanged.
+  assert.equal(humanizeDeployReason('No model found in models/x'), 'No model found in models/x');
+});
+
+test('predictorCrashReason reads the predictor pod terminated/waiting message', async () => {
+  const crashing: K8sClient = async (_m, path) => {
+    assert.match(path, /serving\.kserve\.io\/inferenceservice%3Dlead-scoring/);
+    return {
+      status: 200,
+      body: {
+        items: [
+          {
+            metadata: { name: 'lead-scoring-predictor-abc' },
+            status: {
+              containerStatuses: [
+                { state: { terminated: { reason: 'StartError', message: 'exec: "--model_name=lead-scoring": executable file not found in $PATH' } } },
+              ],
+            },
+          },
+        ],
+      },
+    };
+  };
+  const reason = await predictorCrashReason('lead-scoring', 'agentic-os', crashing);
+  assert.match(reason, /--model_name/);
+});
+
+test('readDeploy promotes a crash-looping predictor to a FAILED with the admin-directed reason', async () => {
+  // ISVC still shows progressing (not Ready), but its predictor pod CrashLoopBackOffs on the
+  // malformed serving-runtime command — a REAL terminal failure the ISVC conditions never show.
+  const k: K8sClient = async (_m, path) => {
+    if (path.includes('/inferenceservices/')) {
+      return { status: 200, body: { status: { conditions: [{ type: 'Ready', status: 'False', message: 'rolling out' }] } } };
+    }
+    // pod list
+    return {
+      status: 200,
+      body: {
+        items: [
+          {
+            metadata: { name: 'lead-scoring-predictor-abc' },
+            status: {
+              containerStatuses: [
+                { state: { waiting: { reason: 'CrashLoopBackOff', message: 'exec: "--model_name=lead-scoring": executable file not found in $PATH' } } },
+              ],
+            },
+          },
+        ],
+      },
+    };
+  };
+  const st = await readDeploy('lead_scoring', RT, k);
+  assert.equal(st.phase, 'failed', 'a crash-looping predictor is terminal, not "still progressing"');
+  assert.ok(st.reason.startsWith(SERVING_RUNTIME_MISCONFIGURED_MESSAGE), 'admin-directed message');
+});
+
+test('readDeploy leaves a healthy-but-progressing ISVC progressing when its pod is fine', async () => {
+  const k: K8sClient = async (_m, path) => {
+    if (path.includes('/inferenceservices/')) {
+      return { status: 200, body: { status: { conditions: [{ type: 'Ready', status: 'False', message: 'rolling out' }] } } };
+    }
+    return { status: 200, body: { items: [{ metadata: { name: 'p' }, status: { containerStatuses: [{ state: { running: {} } }] } }] } };
+  };
+  assert.equal((await readDeploy('m', RT, k)).phase, 'progressing');
 });

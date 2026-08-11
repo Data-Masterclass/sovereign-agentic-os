@@ -18,3 +18,4 @@ export * from '@/lib/science/adapters';
 export * from '@/lib/science/training';
 export * from '@/lib/science/deploy';
 export * from '@/lib/science/assistant-grounding';
+export * from '@/lib/science/launch-grounding';

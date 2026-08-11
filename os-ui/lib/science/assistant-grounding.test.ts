@@ -18,7 +18,7 @@ const DATASETS = {
 
 mock.module('@/lib/data/store', {
   namedExports: {
-    listDatasets: () => DATASETS,
+    listDatasets: (u: { id?: string }) => (u?.id === 'nobody' ? { mine: [], domain: [], marketplace: [] } : DATASETS),
     getDataset: (id: string) => {
       const d = DATASETS.mine.find((x) => x.id === id);
       if (!d) throw new Error('403');
@@ -29,13 +29,31 @@ mock.module('@/lib/data/store', {
 });
 
 mock.module('@/lib/data/dataset-schema', { namedExports: { LAYERS: ['bronze', 'silver', 'gold'] } });
+const COLS = [{ name: 'churned', type: 'boolean' }, { name: 'recency_days', type: 'integer' }, { name: 'monetary_value', type: 'double' }];
 mock.module('@/lib/data/profile', {
-  namedExports: { parseDescribe: () => [{ name: 'churned', type: 'boolean' }, { name: 'recency_days', type: 'integer' }, { name: 'monetary_value', type: 'double' }] },
+  namedExports: {
+    parseDescribe: () => COLS,
+    previewSql: (fqn: string, limit = 50) => `select * from ${fqn} limit ${limit}`,
+  },
 });
 mock.module('@/lib/data/store-fqn', { namedExports: { slug: (s: string) => s.toLowerCase() } });
-mock.module('@/lib/infra/governed', { namedExports: { queryRun: async () => ({ engine: 'trino', tables: [], columns: [], rows: [], rowCount: 0 }) } });
+// A governed query stub that answers DESCRIBE and SELECT differently so the sample path has rows.
+mock.module('@/lib/infra/governed', {
+  namedExports: {
+    queryRun: async (sql: string) => {
+      if (/^\s*describe/i.test(sql)) {
+        return { engine: 'trino', tables: [], columns: ['Column', 'Type'], rows: COLS.map((c) => [c.name, c.type]), rowCount: COLS.length };
+      }
+      // SELECT * … LIMIT n → two real sample rows over the three columns.
+      return {
+        engine: 'trino', tables: [], columns: ['churned', 'recency_days', 'monetary_value'],
+        rows: [['true', '12', '340.5'], ['false', '3', '1290.0']], rowCount: 2,
+      };
+    },
+  },
+});
 
-const { validateDefinition, visibleDatasets } = await import('./assistant-grounding.ts');
+const { validateDefinition, visibleDatasets, datasetColumnsTyped, datasetSample, designGrounding, GROUNDING_SAMPLE_ROWS } = await import('./assistant-grounding.ts');
 
 const USER = { id: 'u1', domains: ['acme'], role: 'builder' as const };
 
@@ -78,4 +96,51 @@ test('validateDefinition drops invented feature columns, keeps real ones', async
   );
   assert.ok('definition' in r);
   if ('definition' in r) assert.deepEqual(r.definition.features, ['recency_days']);
+});
+
+/* ── 0.6.99 grounding: columns (name+type) + sample VALUES, DLS-scoped, still bounded/honest ── */
+
+test('datasetColumnsTyped returns real columns WITH their types', async () => {
+  const cols = await datasetColumnsTyped('ds_sales', USER);
+  assert.deepEqual(cols, COLS);
+});
+
+test('datasetColumnsTyped returns [] for a dataset the caller cannot see (DLS-scoped)', async () => {
+  const cols = await datasetColumnsTyped('ds_ghost', USER);
+  assert.deepEqual(cols, []);
+});
+
+test('datasetSample returns a small set of REAL rows (default budget)', async () => {
+  const sample = await datasetSample('ds_sales', USER);
+  assert.ok(sample);
+  assert.deepEqual(sample!.columns, ['churned', 'recency_days', 'monetary_value']);
+  assert.equal(sample!.rows.length, 2);
+  assert.deepEqual(sample!.rows[0], ['true', '12', '340.5']);
+  assert.ok(GROUNDING_SAMPLE_ROWS >= 1);
+});
+
+test('datasetSample is null for a dataset the caller cannot see (never fabricated)', async () => {
+  assert.equal(await datasetSample('ds_ghost', USER), null);
+});
+
+test('designGrounding lists visible datasets with columns AND types, and sample VALUES for the selected one', async () => {
+  const g = await designGrounding(USER, 'ds_sales');
+  // columns for the visible set, WITH types (name:type)
+  assert.match(g, /ds_sales — Sales \[personal\]/);
+  assert.match(g, /churned:boolean/);
+  assert.match(g, /recency_days:integer/);
+  // sample VALUES for the selected dataset (real rows)
+  assert.match(g, /Sample of the selected dataset \(Sales, ds_sales\)/);
+  assert.match(g, /340\.5/);
+});
+
+test('designGrounding omits sample values when no dataset is selected (columns only)', async () => {
+  const g = await designGrounding(USER, '');
+  assert.match(g, /churned:boolean/);
+  assert.doesNotMatch(g, /Sample of the selected dataset/);
+});
+
+test('designGrounding is honest when the caller has no datasets', async () => {
+  const g = await designGrounding({ id: 'nobody', domains: [], role: 'creator' as const }, 'ds_sales');
+  assert.match(g, /no datasets yet/);
 });

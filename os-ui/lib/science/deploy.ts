@@ -168,6 +168,77 @@ export function deployPhase(status: Record<string, unknown> | undefined): { phas
   return { phase: 'progressing', reason: detail };
 }
 
+/**
+ * Detect the SERVING-RUNTIME-MISCONFIGURED signature in a KServe failure reason. When the
+ * cluster is missing the v2 `kserve-mlserver` ClusterServingRuntime that our InferenceService
+ * (protocolVersion v2 + modelClass mlserver_sklearn) selects, KServe falls back to the built-in
+ * v1 `sklearnserver` runtime whose container command is malformed — the model-name FLAG lands
+ * where the executable should be:
+ *
+ *   exec: "--model_name=<isvc>": executable file not found in $PATH
+ *
+ * This is an ADMIN/cluster defect, NOT the model or the user's data — so the UI must say so
+ * (see admin) instead of blaming the launch. os-ui builds the SPEC correctly; the runtime that
+ * executes it is the problem. Pure string check (no cluster) so it is unit-testable + reusable.
+ */
+export function isServingRuntimeMisconfigured(reason: string | undefined): boolean {
+  if (!reason) return false;
+  const r = reason.toLowerCase();
+  return (
+    (r.includes('--model_name') && (r.includes('not found in $path') || r.includes('executable file not found'))) ||
+    r.includes('no runtime found to support')
+  );
+}
+
+/**
+ * A clear, admin-directed message for the misconfigured-runtime case — surfaced verbatim by the
+ * UI/assistant so the owner knows this is a cluster fix (see SCIENCE-KSERVE-FIX.md), not a retry.
+ */
+export const SERVING_RUNTIME_MISCONFIGURED_MESSAGE =
+  'The model serving runtime is misconfigured on the cluster — the KServe predictor is starting with a malformed command (see admin / SCIENCE-KSERVE-FIX.md). Your data and training are fine; a platform admin must install the v2 mlserver ServingRuntime before publishing can succeed.';
+
+/**
+ * Normalise a deploy failure reason for the UI: pass a misconfigured-runtime reason through the
+ * admin-directed message, otherwise keep the honest raw reason. Used by the poll path so a
+ * `deploy_failed` model records a reason the user can act on.
+ */
+export function humanizeDeployReason(reason: string): string {
+  return isServingRuntimeMisconfigured(reason)
+    ? `${SERVING_RUNTIME_MISCONFIGURED_MESSAGE} (cluster reason: ${reason})`
+    : reason;
+}
+
+/**
+ * The predictor POD's own crash/waiting reason — the ONLY place the malformed serving-runtime
+ * command (`exec: "--model_name=…": executable file not found in $PATH`) actually surfaces, since
+ * a CrashLoopBackOff on the runtime container is NOT reflected in the InferenceService `.status`
+ * conditions. Reads the predictor pod (label `serving.kserve.io/inferenceservice=<isvc>`) and
+ * returns its terminated/waiting message. Best-effort: any miss returns '' (no false failure).
+ */
+export async function predictorCrashReason(isvc: string, namespace: string, k: K8sClient): Promise<string> {
+  const res = await k(
+    'GET',
+    `/api/v1/namespaces/${namespace}/pods?labelSelector=serving.kserve.io/inferenceservice%3D${isvc}`,
+  );
+  if (res.status !== 200) return '';
+  const items = (res.body?.items as Record<string, unknown>[] | undefined) ?? [];
+  const pod = items[items.length - 1];
+  const st = (pod?.status ?? {}) as Record<string, unknown>;
+  const statuses = [
+    ...((st.initContainerStatuses as { state?: { waiting?: { reason?: string; message?: string }; terminated?: { reason?: string; message?: string } } }[] | undefined) ?? []),
+    ...((st.containerStatuses as { state?: { waiting?: { reason?: string; message?: string }; terminated?: { reason?: string; message?: string } } }[] | undefined) ?? []),
+  ];
+  for (const c of statuses) {
+    const term = c.state?.terminated;
+    if (term?.message) return term.reason ? `${term.reason}: ${term.message}` : term.message;
+    const w = c.state?.waiting;
+    if (w?.reason && w.reason !== 'PodInitializing' && w.reason !== 'ContainerCreating') {
+      return w.message ? `${w.reason}: ${w.message}` : w.reason;
+    }
+  }
+  return '';
+}
+
 /** Read a deploy's live status (poll). Never throws — an unreachable API is `unknown`. */
 export async function readDeploy(
   model: string,
@@ -181,5 +252,13 @@ export async function readDeploy(
   if (res.status === 404) return { isvc: name, phase: 'failed', reason: 'InferenceService not found — re-run Deploy' };
   if (res.status >= 400) return { isvc: name, phase: 'unknown', reason: `Kubernetes API error (${res.status})` };
   const { phase, reason } = deployPhase(res.body?.status as Record<string, unknown> | undefined);
+  // The ISVC may sit "progressing" for minutes while its predictor pod CrashLoopBackOffs on a
+  // malformed serving-runtime command — a REAL terminal failure the conditions never show. Probe
+  // the pod and promote a crash to a `failed` with the honest (admin-directed) reason.
+  if (phase !== 'ready') {
+    const crash = await predictorCrashReason(name, rt.namespace, k);
+    if (crash) return { isvc: name, phase: 'failed', reason: humanizeDeployReason(crash) };
+    if (phase === 'failed') return { isvc: name, phase, reason: humanizeDeployReason(reason) };
+  }
   return { isvc: name, phase, reason };
 }

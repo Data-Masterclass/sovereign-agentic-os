@@ -104,3 +104,50 @@ export function k8s(
     req.end();
   });
 }
+
+export type K8sTextResult = { status: number; text: string };
+
+/**
+ * GET a PLAIN-TEXT endpoint (the pod `/log` subresource returns text, not JSON, so
+ * {@link k8s} would parse it to `{}`). Same in-cluster ServiceAccount auth; never
+ * throws — a network/credential failure resolves to `{ status: 0, text: '' }` so
+ * callers (the launch grounding) degrade to "no logs" honestly instead of throwing.
+ */
+export function k8sText(path: string): Promise<K8sTextResult> {
+  return new Promise((resolve) => {
+    let token: string;
+    let ca: Buffer;
+    try {
+      token = readToken();
+      ca = readCa();
+    } catch {
+      resolve({ status: 0, text: '' });
+      return;
+    }
+    const url = new URL(API + path);
+    const req = https.request(
+      {
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'text/plain' },
+        ca,
+        timeout: 10000,
+      },
+      (res) => {
+        let buf = '';
+        res.on('data', (c) => {
+          buf += c;
+        });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, text: buf }));
+      },
+    );
+    req.on('error', () => resolve({ status: 0, text: '' }));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ status: 0, text: '' });
+    });
+    req.end();
+  });
+}

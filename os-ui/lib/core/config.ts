@@ -682,7 +682,9 @@ export function assertNoDevDefaultSecretsInProd(cfg: {
     );
   }
 }
-
-// Run the guard once at module load — a production process with a dev-default
-// secret fails fast at boot rather than silently signing forgeable sessions.
-assertNoDevDefaultSecretsInProd(config);
+// NOTE: the boot assertion is invoked from `instrumentation.ts` `register()` (real
+// server start, nodejs runtime only) — NOT here at module load. Running it at module
+// load also fires during `next build` static prerender (where there is no runtime
+// secret) and inside edge middleware; with an app-level error boundary present, that
+// build-time throw gets BAKED into the prerendered page and can't be cleared by
+// rotating the runtime secret. `register()` runs only when the server actually boots.

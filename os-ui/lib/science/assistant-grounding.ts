@@ -4,7 +4,7 @@
 import 'server-only';
 import { listDatasets, getDataset, builtLayerFqn, type DatasetSummary, type Principal } from '@/lib/data/store';
 import { LAYERS } from '@/lib/data/dataset-schema';
-import { parseDescribe } from '@/lib/data/profile';
+import { parseDescribe, previewSql, type ProfileColumn } from '@/lib/data/profile';
 import { slug } from '@/lib/data/store-fqn';
 import { queryRun } from '@/lib/infra/governed';
 
@@ -35,32 +35,144 @@ export function visibleDatasets(user: Principal): VisibleDataset[] {
   return out;
 }
 
-/**
- * The REAL column names of a dataset's furthest-built layer, read AS the caller through the
- * governed query path (so column masks / view rights apply). Returns [] when the dataset isn't
- * visible or has nothing queryable yet — the caller then simply can't validate columns against
- * it (and the assistant is told there are no columns to reference).
- */
-export async function datasetColumns(id: string, user: Principal): Promise<string[]> {
+/** Resolve a dataset's furthest-built layer FQN + the principal to read AS (or null). */
+function resolveBuiltTarget(id: string, user: Principal): { fqn: string; principal: string } | null {
   let dataset;
   try {
     dataset = getDataset(id, user); // throws / 403 for a non-viewer
   } catch {
-    return [];
+    return null;
   }
   const built = LAYERS.filter((l) => dataset.versions[l].built);
   const layer = built[built.length - 1];
-  if (!layer) return [];
+  if (!layer) return null;
   const resolved = builtLayerFqn(dataset, user, layer);
   const fqn = resolved?.fqn ?? '';
-  if (!fqn) return [];
-  const principal = resolved?.principal ?? (user.domains[0] ?? user.id);
+  if (!fqn) return null;
+  return { fqn, principal: resolved?.principal ?? (user.domains[0] ?? user.id) };
+}
+
+/**
+ * The REAL columns (name + Trino type) of a dataset's furthest-built layer, read AS the caller
+ * through the governed query path (so column masks / view rights apply). Returns [] when the
+ * dataset isn't visible or has nothing queryable yet — the assistant is then told there are no
+ * columns to reference for it.
+ */
+export async function datasetColumnsTyped(id: string, user: Principal): Promise<ProfileColumn[]> {
+  const target = resolveBuiltTarget(id, user);
+  if (!target) return [];
   try {
-    const describe = await queryRun(`describe ${fqn}`, principal);
-    return parseDescribe(describe).map((c) => c.name);
+    const describe = await queryRun(`describe ${target.fqn}`, target.principal);
+    return parseDescribe(describe);
   } catch {
     return [];
   }
+}
+
+/** The REAL column names of a dataset (thin wrapper over {@link datasetColumnsTyped}). */
+export async function datasetColumns(id: string, user: Principal): Promise<string[]> {
+  return (await datasetColumnsTyped(id, user)).map((c) => c.name);
+}
+
+/** The number of sample rows the Design assistant is grounded in for the selected dataset. */
+export const GROUNDING_SAMPLE_ROWS = 5;
+
+export type DatasetSample = { columns: string[]; rows: string[][] };
+
+/**
+ * A SMALL sample of REAL rows (first {@link GROUNDING_SAMPLE_ROWS}) of a dataset's furthest-built
+ * layer, read AS the caller through the SAME governed preview path the Data tab uses
+ * (`select * … limit n` via `queryRun`) — so row filters + column masks ride along and a masked
+ * value samples masked. Returns null when the dataset isn't visible or has nothing built yet, so
+ * the assistant is grounded ONLY in real values, never fabricated ones.
+ */
+export async function datasetSample(
+  id: string,
+  user: Principal,
+  rows: number = GROUNDING_SAMPLE_ROWS,
+): Promise<DatasetSample | null> {
+  const target = resolveBuiltTarget(id, user);
+  if (!target) return null;
+  try {
+    const res = await queryRun(previewSql(target.fqn, Math.max(1, Math.floor(rows))), target.principal);
+    if (!res.columns.length) return null;
+    return { columns: res.columns, rows: res.rows };
+  } catch {
+    return null;
+  }
+}
+
+/** How many visible datasets we spell out columns for (context guard on a huge dataset list). */
+export const GROUNDING_MAX_DATASETS = 25;
+/** How many columns we list per dataset (a very wide table is truncated, not dumped). */
+export const GROUNDING_MAX_COLS = 40;
+/** How many characters of a sample cell we keep (a long text blob is truncated). */
+const CELL_CLIP = 60;
+
+/** Render one sample as a compact TSV-ish block (header + rows), cells clipped. */
+function renderSample(sample: DatasetSample, maxCols = GROUNDING_MAX_COLS): string {
+  const cols = sample.columns.slice(0, maxCols);
+  const clip = (v: unknown) => {
+    const s = v == null ? '' : String(v);
+    return s.length > CELL_CLIP ? `${s.slice(0, CELL_CLIP)}…` : s;
+  };
+  const head = cols.join(' | ');
+  const body = sample.rows.map((r) => cols.map((_, i) => clip(r[i])).join(' | ')).join('\n');
+  const more = sample.columns.length > cols.length ? `\n(+${sample.columns.length - cols.length} more columns)` : '';
+  return `${head}\n${body}${more}`;
+}
+
+/**
+ * Build the Design-stage grounding block: the caller's VISIBLE datasets each with their real
+ * columns (name:type) so the assistant can pick the right dataset/target/inputs BEFORE one is
+ * selected, plus a small sample of REAL rows for the currently-selected dataset so it can reason
+ * about actual values. Everything is DLS-scoped (read AS the caller) and real — never fabricated.
+ *
+ * Context is bounded: columns (names+types) for up to {@link GROUNDING_MAX_DATASETS} datasets
+ * ({@link GROUNDING_MAX_COLS} each), and sample VALUES for the SELECTED dataset only
+ * ({@link GROUNDING_SAMPLE_ROWS} rows). When the assistant proposes a different dataset the user
+ * hasn't opened yet, selecting it re-grounds this block with that dataset's values on the next turn.
+ */
+export async function designGrounding(user: Principal, selectedDatasetId: string): Promise<string> {
+  const visible = visibleDatasets(user);
+  const parts: string[] = [];
+
+  if (!visible.length) {
+    return 'Your datasets: (you have no datasets yet — the user must create or share one in the Data tab first).';
+  }
+
+  const shown = visible.slice(0, GROUNDING_MAX_DATASETS);
+  const colLines = await Promise.all(
+    shown.map(async (d) => {
+      const cols = await datasetColumnsTyped(d.id, user);
+      const listed = cols.slice(0, GROUNDING_MAX_COLS).map((c) => `${c.name}:${c.type}`).join(', ');
+      const more = cols.length > GROUNDING_MAX_COLS ? ` (+${cols.length - GROUNDING_MAX_COLS} more)` : '';
+      const colsText = cols.length ? `${listed}${more}` : '(no columns readable yet — not built)';
+      return `${d.id} — ${d.name} [${d.scope}] columns: ${colsText}`;
+    }),
+  );
+  const truncated = visible.length > shown.length ? `\n(+${visible.length - shown.length} more datasets — ask about them by name and I’ll list their columns)` : '';
+  parts.push(
+    'Your datasets (id — name [scope] columns: name:type, …) — reference ONLY these by exact id and ONLY their real columns:',
+    colLines.join('\n') + truncated,
+  );
+
+  if (selectedDatasetId) {
+    const ds = visible.find((d) => d.id === selectedDatasetId);
+    if (ds) {
+      const sample = await datasetSample(selectedDatasetId, user);
+      if (sample) {
+        parts.push(
+          `Sample of the selected dataset (${ds.name}, ${ds.id}) — first ${sample.rows.length} REAL row(s), values may be masked by policy:`,
+          renderSample(sample),
+        );
+      } else {
+        parts.push(`Selected dataset (${ds.name}, ${ds.id}) has no readable rows yet (not built) — recommend from columns only.`);
+      }
+    }
+  }
+
+  return parts.join('\n\n');
 }
 
 export type RawDefinition = {

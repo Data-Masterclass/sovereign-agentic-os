@@ -30,6 +30,20 @@ export async function register(): Promise<void> {
   // Guard 1: Node.js runtime only (edge has no Buffer / fetch-credential access).
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
 
+  // Boot-time SECURITY guard: refuse to serve in production with the insecure
+  // dev-default session/MCP signing secret. This runs HERE (real server start) so it
+  // NEVER fires during `next build` static prerender or on the edge — where a
+  // module-load assertion would bake the error into a prerendered page (unclearable by
+  // a runtime secret rotation). Fail-closed: exit the process so the pod crash-loops
+  // and the bad deploy is loud, rather than silently signing forgeable sessions.
+  try {
+    const { config, assertNoDevDefaultSecretsInProd } = await import('./lib/core/config.ts');
+    assertNoDevDefaultSecretsInProd(config);
+  } catch (err) {
+    console.error(`[os-ui] boot secret guard: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
   // Guard 2: Forgejo must be explicitly configured. When FORGEJO_URL is unset
   // the app falls back to the in-cluster default — but on a laptop without the
   // cluster that default is unreachable and we should not spin up a fire-and-

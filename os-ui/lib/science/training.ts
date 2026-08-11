@@ -35,6 +35,9 @@ export type K8sClient = (
   body?: unknown,
 ) => Promise<{ status: number; body: Record<string, unknown> }>;
 
+/** Plain-text k8s reader — matches `lib/infra/k8s.ts` `k8sText(path)` (pod logs). */
+export type K8sTextClient = (path: string) => Promise<{ status: number; text: string }>;
+
 /** The cluster wiring the Job needs — injected from `config` (no secrets inline). */
 export type TrainingRuntime = {
   namespace: string;
@@ -303,6 +306,37 @@ export async function podPendingReason(
     if (unsched?.message) return unsched.message;
   }
   return '';
+}
+
+/**
+ * The last N lines of a training run's REAL logs — the `train` init container's stdout/stderr
+ * (where the sklearn traceback / Trino read error lands). Best-effort + honest: we resolve the
+ * Job's pod (label `job-name=<job>`), then read that container's `/log` tail; ANY miss (no pod,
+ * log not yet available, unreachable API, or a pod that never scheduled) returns '' so the caller
+ * grounds in "no logs captured" instead of a fabricated trace. The default `logs` binding is the
+ * plain-text in-cluster reader; `pods` is the JSON reader — both injected for `node --test`.
+ */
+export async function trainingLogs(
+  jobName: string,
+  namespace: string,
+  tailLines: number,
+  pods: K8sClient,
+  logs: K8sTextClient,
+): Promise<string> {
+  const list = await pods('GET', `/api/v1/namespaces/${namespace}/pods?labelSelector=job-name%3D${jobName}`);
+  if (list.status !== 200) return '';
+  const items = (list.body?.items as Record<string, unknown>[] | undefined) ?? [];
+  // Prefer the most recent pod (a re-run may leave an older one behind).
+  const pod = items[items.length - 1];
+  const name = ((pod?.metadata as { name?: string } | undefined)?.name) ?? '';
+  if (!name) return '';
+  const tail = Math.max(1, Math.min(200, Math.floor(tailLines)));
+  const res = await logs(
+    `/api/v1/namespaces/${namespace}/pods/${name}/log?container=train&tailLines=${tail}`,
+  );
+  if (res.status !== 200 || !res.text.trim()) return '';
+  // Keep only the last `tail` lines (the API honors tailLines, but guard against a chatty stream).
+  return res.text.trim().split('\n').slice(-tail).join('\n');
 }
 
 /** Read a training Job's status (poll). Never throws — an unreachable API is `unknown`. */

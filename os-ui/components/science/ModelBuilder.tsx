@@ -82,7 +82,6 @@ export default function ModelBuilder({
   const [predicted, setPredicted] = useState(false);
   const [, setLastResult] = useState<PredictResult | null>(null);
   const [defPrefill, setDefPrefill] = useState<ModelDefinition | null>(null);
-  const [manualOpen, setManualOpen] = useState(false);
   const [pickedDataset, setPickedDataset] = useState<{ id: string; fqn: string; name: string } | null>(null);
   const [createErr, setCreateErr] = useState('');
   // Bumped by the Launch chat card's Apply → LaunchStep starts the fused train.
@@ -130,10 +129,11 @@ export default function ModelBuilder({
   // governed create route the manual form uses — the assistant never mutates directly.
   const createFromDefinition = useCallback(async (def: ModelDefinition) => {
     setCreateErr('');
+    // ALWAYS reflect the suggestion in the always-visible controls below (dataset + target +
+    // inputs physically populate) so the user sees the assistant's choice and can tweak it.
+    setDefPrefill(def);
     if (!def.datasetFqn || !def.targetColumn || !def.features?.length) {
-      // Not enough to create outright → drop it into the manual form for the user to complete.
-      setDefPrefill(def);
-      setManualOpen(true);
+      // Not enough to create outright → the populated form lets the user finish the choice.
       return;
     }
     const spec = {
@@ -176,6 +176,21 @@ export default function ModelBuilder({
   const focusTryIt = useCallback(() => {
     tryItRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, []);
+
+  // The Design assistant for a NEW model (no spec yet) is rendered ON TOP of the always-visible
+  // form (not in StageShell's below-body slot), so the calm chat sits above the three controls.
+  const designChatOnTop = (stageId: SciStageId) => stageId === 'design' && !model;
+
+  const designChat = (
+    <ScienceChat
+      key="design"
+      stage="design"
+      modelId={undefined}
+      datasetId={pickedDataset?.id}
+      starters={['Which customers will churn', 'Expected order value next month']}
+      onApplyDefinition={createFromDefinition}
+    />
+  );
 
   return (
     <ConfirmProvider>
@@ -245,24 +260,28 @@ export default function ModelBuilder({
         ctx={ctx}
         onState={setStage}
         ariaLabel="Model stages"
-        assistant={(st) => (
-          <ScienceChat
-            key={st.id}
-            stage={st.id}
-            modelId={model?.model}
-            datasetId={st.id === 'design' ? pickedDataset?.id : undefined}
-            starters={
-              st.id === 'design'
-                ? ['Which customers will churn', 'Expected order value next month']
-                : st.id === 'launch'
-                ? ['What happens when I launch?']
-                : ['How is this model doing?']
-            }
-            onApplyDefinition={st.id === 'design' && !model ? createFromDefinition : undefined}
-            onApplyLaunch={st.id === 'launch' && canManage ? () => setLaunchNonce((n) => n + 1) : undefined}
-            onApplyScoreExample={st.id === 'monitor' ? focusTryIt : undefined}
-          />
-        )}
+        assistant={(st) =>
+          // Design-for-a-new-model renders its assistant ON TOP of the always-visible form
+          // (in the body) rather than here, so it isn't duplicated in the below-body slot.
+          designChatOnTop(st.id) ? null : (
+            <ScienceChat
+              key={st.id}
+              stage={st.id}
+              modelId={model?.model}
+              datasetId={st.id === 'design' ? pickedDataset?.id : undefined}
+              starters={
+                st.id === 'design'
+                  ? ['Which customers will churn', 'Expected order value next month']
+                  : st.id === 'launch'
+                  ? ['What happens when I launch?']
+                  : ['How is this model doing?']
+              }
+              onApplyDefinition={st.id === 'design' && !model ? createFromDefinition : undefined}
+              onApplyLaunch={st.id === 'launch' && canManage ? () => setLaunchNonce((n) => n + 1) : undefined}
+              onApplyScoreExample={st.id === 'monitor' ? focusTryIt : undefined}
+            />
+          )
+        }
       >
         {stage.current === 'design' ? (
           model ? (
@@ -277,28 +296,25 @@ export default function ModelBuilder({
               <div className="card" style={{ borderLeft: '3px solid var(--gold)' }}>
                 <div className="section-title" style={{ marginTop: 0 }}>Describe what you want to predict</div>
                 <p className="muted" style={{ marginTop: -4, marginBottom: 0 }}>
-                  Tell the assistant below your goal in plain words — it names a real dataset and the exact
-                  columns, and you create the model with one click. Prefer to do it by hand?{' '}
-                  <button
-                    type="button"
-                    onClick={() => setManualOpen((o) => !o)}
-                    style={{ background: 'none', border: 'none', padding: 0, color: 'var(--teal)', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
-                  >
-                    {manualOpen ? 'Hide the manual form' : 'Pick a dataset and columns yourself'}
-                  </button>.
+                  Tell the assistant your goal in plain words — it reads your datasets’ columns and values,
+                  then names a real dataset, the column to predict and the inputs to learn from. Its choice
+                  drops straight into the controls below, where you can adjust anything before you create.
                 </p>
               </div>
+
+              {/* Assistant ON TOP, then the dataset / predictor / inputs controls ALWAYS visible. */}
+              {designChat}
+
               {createErr ? <div className="error" style={{ marginTop: 10 }}>{createErr}</div> : null}
-              {manualOpen ? (
-                <div style={{ marginTop: 12 }}>
-                  <NewModel
-                    prefill={defPrefill}
-                    developer={developer}
-                    onDataset={setPickedDataset}
-                    onCreated={(m) => { setModel(m); setStage((s) => goTo(SCI_STAGES, markDone(s, 'design'), 'launch', { ...ctx, hasSpec: true })); }}
-                  />
-                </div>
-              ) : null}
+
+              <div style={{ marginTop: 12 }}>
+                <NewModel
+                  prefill={defPrefill}
+                  developer={developer}
+                  onDataset={setPickedDataset}
+                  onCreated={(m) => { setModel(m); setStage((s) => goTo(SCI_STAGES, markDone(s, 'design'), 'launch', { ...ctx, hasSpec: true })); }}
+                />
+              </div>
             </div>
           )
         ) : null}

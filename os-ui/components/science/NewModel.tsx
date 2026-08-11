@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { postJson, TASK_LABEL, TRAINABLE_TASKS, TASK_TYPES, isTrainableTask, type ModelSpec, type ModelSummary, type TaskType } from './shared';
 import type { ModelDefinition } from './ScienceChat';
 import FolderTree, { type FolderTreeItem } from '@/components/core/FolderTree';
@@ -191,14 +191,58 @@ export default function NewModel({
 
   const unsupervised = taskType === 'clustering';
 
-  // Apply a chat suggestion when one arrives. Dataset selection is applied by the parent
-  // (it fetches columns); here we honour task/target/features (validated against real columns).
+  /** Fetch a dataset's REAL columns so target/features become pickers (not free text). */
+  const loadColumns = useCallback((id: string) => {
+    setProfiling(true);
+    fetch(`/api/data/datasets/${encodeURIComponent(id)}/profile`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => {
+        const cols = Array.isArray(p?.columns)
+          ? p.columns.map((c: { name?: string }) => c?.name).filter((n: unknown): n is string => typeof n === 'string')
+          : [];
+        setColumns(cols);
+        onColumns?.(cols);
+      })
+      .catch(() => { /* honest no-op — the picker just stays empty */ })
+      .finally(() => setProfiling(false));
+  }, [onColumns]);
+
+  /**
+   * Select a dataset into the always-visible controls + fetch its columns. `keepChoices` keeps
+   * a just-applied target/feature set (an assistant suggestion carries all three together);
+   * a manual pick clears them so the user starts fresh.
+   */
+  const selectDataset = useCallback((fqn: string, dsName: string, id: string, keepChoices = false) => {
+    setSource(fqn);
+    setSourceId(id);
+    setSelectedDatasetName(dsName);
+    setExplorerOpen(false);
+    if (!keepChoices) { setTarget(''); setFeatures([]); }
+    setColumns([]);
+    onDataset?.({ id, fqn, name: dsName });
+    loadColumns(id);
+  }, [loadColumns, onDataset]);
+
+  // Apply a chat suggestion when one arrives — it physically POPULATES the always-visible
+  // dataset / target(predictor) / inputs controls (validated server-side against real data),
+  // so the user SEES the assistant's choice reflected and can tweak it. We guard on identity so
+  // a re-render doesn't clobber the user's subsequent manual edits.
+  const appliedPrefill = useRef<ModelDefinition | null>(null);
   useEffect(() => {
-    if (!prefill) return;
+    if (!prefill || prefill === appliedPrefill.current) return;
+    appliedPrefill.current = prefill;
     if (prefill.taskType && isTrainableTask(prefill.taskType)) setTaskType(prefill.taskType);
+    // Dataset first (it selects the dropdown + fetches columns); then the target/features it
+    // proposed — set alongside so they stay selected as the columns load in.
+    if (prefill.datasetId && prefill.datasetFqn) {
+      selectDataset(prefill.datasetFqn, prefill.datasetName ?? prefill.datasetFqn, prefill.datasetId, true);
+    }
     if (typeof prefill.targetColumn === 'string') setTarget(prefill.targetColumn);
     if (Array.isArray(prefill.features)) setFeatures(prefill.features);
-  }, [prefill]);
+    if (!name.trim() && (prefill.datasetName || prefill.targetColumn)) {
+      setName(prefill.datasetName ? `${prefill.datasetName} — ${prefill.targetColumn ?? 'model'}` : (prefill.targetColumn ?? ''));
+    }
+  }, [prefill, selectDataset, name]);
 
   async function create() {
     setErr('');
@@ -237,29 +281,7 @@ export default function NewModel({
     }
   }
 
-  function handleDatasetSelect(fqn: string, dsName: string, id: string) {
-    setSource(fqn);
-    setSourceId(id);
-    setSelectedDatasetName(dsName);
-    setExplorerOpen(false);
-    setTarget('');
-    setFeatures([]);
-    setColumns([]);
-    onDataset?.({ id, fqn, name: dsName });
-    // Pull the dataset's REAL columns so target/features become pickers (not free text).
-    setProfiling(true);
-    fetch(`/api/data/datasets/${encodeURIComponent(id)}/profile`, { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((p) => {
-        const cols = Array.isArray(p?.columns)
-          ? p.columns.map((c: { name?: string }) => c?.name).filter((n: unknown): n is string => typeof n === 'string')
-          : [];
-        setColumns(cols);
-        onColumns?.(cols);
-      })
-      .catch(() => { /* honest no-op — the picker just stays empty */ })
-      .finally(() => setProfiling(false));
-  }
+  const handleDatasetSelect = (fqn: string, dsName: string, id: string) => selectDataset(fqn, dsName, id, false);
 
   const labelStyle = { display: 'block', marginBottom: 4 } as const;
   // Feature choices exclude whatever is picked as the target.
@@ -267,10 +289,10 @@ export default function NewModel({
 
   return (
     <div className="card" style={{ maxWidth: 720 }}>
-      <div className="section-title" style={{ marginTop: 0 }}>Design the model by hand</div>
+      <div className="section-title" style={{ marginTop: 0 }}>Dataset, predictor &amp; inputs</div>
       <p className="muted" style={{ marginTop: -4 }}>
-        Pick your data, choose the column to predict and the columns to learn from. We handle the
-        rest and register a <strong>draft</strong> ready to launch.
+        Pick your data, the column to predict and the columns to learn from — or let the assistant
+        above fill these in and adjust anything here. We register a <strong>draft</strong> ready to launch.
       </p>
 
       <div style={{ display: 'grid', gap: 14 }}>

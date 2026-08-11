@@ -12,7 +12,9 @@ import {
   jobPhase,
   submitTrainingJob,
   readTrainingJob,
+  trainingLogs,
   type K8sClient,
+  type K8sTextClient,
   type TrainingRuntime,
 } from './training.ts';
 import type { ModelSpec } from './types.ts';
@@ -200,4 +202,35 @@ test('readTrainingJob reports the Job creationTimestamp and surfaces the pod wai
   assert.equal(s.phase, 'pending');
   assert.equal(s.createdAt, '2026-07-18T09:00:00Z'); // lets the route enforce the pending deadline
   assert.match(s.reason, /ImagePullBackOff/); // "pending forever" becomes an actionable error
+});
+
+// ------------------------------------------------------------ training logs ----
+
+test('trainingLogs resolves the job pod and returns the tail of the train container log', async () => {
+  const pods: K8sClient = async (_m, path) => {
+    assert.match(path, /labelSelector=job-name%3Dtrain-x/);
+    return { status: 200, body: { items: [{ metadata: { name: 'train-x-pod' } }] } };
+  };
+  const logsCalls: string[] = [];
+  const logs: K8sTextClient = async (path) => {
+    logsCalls.push(path);
+    return { status: 200, text: 'line1\nline2\nTraceback: ValueError target column missing\nline4\n' };
+  };
+  const out = await trainingLogs('train-x', 'ns', 30, pods, logs);
+  assert.match(logsCalls[0], /\/pods\/train-x-pod\/log\?container=train&tailLines=30/);
+  assert.match(out, /Traceback: ValueError target column missing/);
+  assert.equal(out.split('\n').length, 4); // trailing blank trimmed
+});
+
+test('trainingLogs is honest when there is no pod / no log / unreachable API', async () => {
+  const noPods: K8sClient = async () => ({ status: 200, body: { items: [] } });
+  const anyLogs: K8sTextClient = async () => ({ status: 200, text: 'x' });
+  assert.equal(await trainingLogs('j', 'ns', 30, noPods, anyLogs), '');
+
+  const pods: K8sClient = async () => ({ status: 200, body: { items: [{ metadata: { name: 'p' } }] } });
+  const emptyLog: K8sTextClient = async () => ({ status: 200, text: '   ' });
+  assert.equal(await trainingLogs('j', 'ns', 30, pods, emptyLog), '');
+
+  const offlinePods: K8sClient = async () => ({ status: 0, body: {} });
+  assert.equal(await trainingLogs('j', 'ns', 30, offlinePods, anyLogs), '');
 });

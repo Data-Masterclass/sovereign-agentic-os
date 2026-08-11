@@ -9,9 +9,10 @@ import { assistantComplete } from '@/lib/assistant/complete';
 import { roleModel } from '@/lib/models/roles';
 import {
   getModel,
-  visibleDatasets,
-  datasetColumns,
+  designGrounding,
   validateDefinition,
+  collectLaunchGrounding,
+  renderLaunchGrounding,
   type RawDefinition,
 } from '@/lib/science';
 
@@ -78,6 +79,8 @@ function systemFor(stage: Stage): string {
       return [
         'You are the Design-stage assistant for a business user defining a supervised ML model over their governed data.',
         CAPABILITY,
+        'You can SEE, in the grounding block: every dataset the user can access with its real columns (name:type), and — for the currently-selected dataset — a small sample of real rows. USE the column names, types and sample values to recommend the RIGHT dataset, the right target column to predict, and the right input columns to learn from. Prefer the dataset whose columns actually fit the user\'s goal.',
+        'If no dataset is selected and its values would help you choose the target/inputs, briefly tell the user to pick the dataset you name (in the always-visible dropdown below) so you can see its rows — but you can already recommend a dataset + target + inputs from the columns alone.',
         'You NEVER mutate anything — you only suggest; the user clicks Apply to create the draft.',
         'When (and only when) you have enough to propose a concrete model, respond with STRICT JSON (no prose outside it, no code fences):',
         '{ "message": string (markdown; a short, friendly explanation of what you propose and why),',
@@ -88,10 +91,12 @@ function systemFor(stage: Stage): string {
       return [
         'You are the Launch-stage assistant. The user has a defined model and wants to train it and put it live (one fused "Train & launch" step).',
         CAPABILITY,
+        'You DO have access to this launch\'s real signals in the grounding block: the captured training and/or publish (deploy) error, the last lines of the training run log, and the live serving status. When a launch failed, READ them and explain the cause plainly, then suggest ONE concrete next step. Never say you cannot see the logs or ask the user to paste the error — you have them here.',
+        'If the grounding says the failure is a CLUSTER serving-runtime misconfiguration, tell the user plainly that this is a platform-admin fix (not something they can retry away) and to contact their admin — do NOT suggest re-training or changing their data.',
         'You NEVER mutate anything — you only suggest; the user clicks Apply to start.',
         'Respond with STRICT JSON (no prose outside it, no code fences):',
-        '{ "message": string (markdown; explain what launching does, or interpret a failure plainly and suggest one next step),',
-        '  "launch"?: true (include ONLY when the user is ready and asking to start training) }',
+        '{ "message": string (markdown; explain what launching does, or interpret the real failure from the grounding and suggest one next step),',
+        '  "launch"?: true (include ONLY when the user is ready and asking to start training, and the failure is NOT an admin-side cluster misconfiguration) }',
       ].join('\n');
     case 'monitor':
       return [
@@ -114,17 +119,17 @@ async function contextBlock(
 ): Promise<string> {
   const parts = [modelDigest(m)];
   if (stage === 'design') {
-    const visible = visibleDatasets(user);
-    parts.push(
-      'Your datasets (id — name [scope]) — reference ONLY these by exact id:',
-      visible.length ? visible.map((d) => `${d.id} — ${d.name} [${d.scope}]`).join('\n') : '(you have no datasets yet — the user must create or share one in the Data tab first)',
-    );
-    if (datasetId) {
-      const cols = await datasetColumns(datasetId, user);
-      parts.push(`Columns of the selected dataset (${datasetId}): ${cols.length ? cols.join(', ') : '(none readable)'}`);
-    }
+    // Real, DLS-scoped grounding: every visible dataset's columns (name:type) so the assistant
+    // can pick the right dataset/target/inputs BEFORE one is selected, plus a small sample of
+    // REAL rows for the selected dataset so it can reason about actual values. Bounded + honest.
+    parts.push(await designGrounding(user, datasetId));
+  } else if (stage === 'launch' && m) {
+    // Real launch signals: the captured train/publish error, the training run log tail, and the
+    // live KServe status for THIS model — so the assistant can actually diagnose a failure and
+    // suggest a concrete next step (never "paste the error"). Bounded + honest (no fabrication).
+    parts.push(renderLaunchGrounding(await collectLaunchGrounding(m)));
   }
-  return parts.join('\n');
+  return parts.join('\n\n');
 }
 
 export async function POST(req: Request) {
