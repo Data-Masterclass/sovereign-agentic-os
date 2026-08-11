@@ -21,6 +21,7 @@ import { generateAndCompile } from './auto-mcp.ts';
 import { parseAppManifest, parseOpenApi, resolveSurface, reconcileKnowledgeConsumes } from './metadata.ts';
 import type { PipelineBackend, AuthorInput, AuthorResult, FrontDoorKey } from './adapters.ts';
 import type { AdapterStep, RunMode, ScaffoldFile } from './model.ts';
+import { ungrantedDatasetWarningForApp } from './dataset-guard.ts';
 
 /**
  * Software pipeline server boundary — the live/offline-mock DUAL exactly like
@@ -357,6 +358,15 @@ export async function commitToApp(
     detail: `${gateActivityNote(gate)}; ${step.detail}`,
     gate: gate.gated ? { gated: true, ok: true } : { gated: false, reason: gate.reason },
   };
+
+  // UNGRANTED-DATASET GUARD (0.6.97): the merged tree that just committed must only
+  // reference datasets in the app's grants. A reference outside `app.grants.data` is
+  // the root of the live `Forbidden: … not granted ds_…`. We WARN (never block — the
+  // scanner reads text conservatively; a hard block could false-positive on an id in a
+  // comment): the warning rides on the commit's audited `detail` so the reference can't
+  // land silently, and the same warning re-surfaces on the deploy review card.
+  const datasetWarning = await ungrantedDatasetWarningForApp(app, tree);
+  if (datasetWarning) step = { ...step, detail: `${step.detail}\n⚠ ${datasetWarning}` };
 
   // Metadata fidelity: parse the convention over the WHOLE tree on every commit.
   const manifest = parseAppManifest(tree, { name: app.name, owner: app.owner, description: app.description });

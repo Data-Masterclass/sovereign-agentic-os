@@ -20,6 +20,8 @@ import { ensureFolderId, renamedPath } from '@/lib/folders/client';
 import { useFolders } from '@/lib/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
+import SourceUnavailable from '@/components/core/SourceUnavailable';
+import { metricSourceUnavailable } from '@/lib/core/source-availability';
 import DomainTag from '@/components/DomainTag';
 import {
   type MetricGroups,
@@ -47,13 +49,27 @@ function rootOf(m: MetricSummary): FolderRoot {
 }
 
 function MetricCard({
-  m, onOpen, scope, canManage, onMove, picked, onPick,
+  m, onOpen, scope, canManage, onMove, picked, onPick, visibleDatasetIds,
 }: {
   m: MetricSummary; onOpen: (m: MetricSummary) => void; scope: ScopeKey;
   canManage: boolean; onMove?: (m: MetricSummary) => void;
   picked?: boolean; onPick?: (checked: boolean) => void;
+  /** The dataset ids currently resolvable to the viewer — a metric whose source fell out
+   *  (dataset demoted/archived/deleted) degrades gracefully instead of dead-linking (0.6.98). */
+  visibleDatasetIds?: ReadonlySet<string>;
 }) {
   const showDomain = showDomainForScope(scope);
+  // GRACEFUL DEGRADATION (0.6.98): the metric's source dataset was demoted to Personal,
+  // archived or deleted, so it no longer resolves to a visible dataset — render the calm
+  // SourceUnavailable note (non-clickable) so opening it can't deref a missing dataset and
+  // throw, while every other tile stays live.
+  if (visibleDatasetIds && metricSourceUnavailable(m.datasetId, visibleDatasetIds)) {
+    return (
+      <div className="card tile" style={{ minHeight: 120, boxSizing: 'border-box' }} title={`Source dataset for “${m.name}” is unavailable`}>
+        <SourceUnavailable name={m.name} compact />
+      </div>
+    );
+  }
   // FAIL-SOFT: one metric's model couldn't load — render its reason inline, non-clickable,
   // so the rest of the registry stays live (one bad cube never 500s the whole surface).
   if (m.error) {
@@ -175,6 +191,17 @@ function MetricsRegistryInner({
   useEffect(() => { void loadFolders(); }, [loadFolders, groups]);
 
   const uid = user?.id ?? '';
+  // The datasets currently resolvable to the viewer = every distinct source dataset across
+  // the metrics the API returned (a listed metric proves its dataset is visible). A metric
+  // that references a dataset NOT in this set has lost its source → degrade its tile (0.6.98).
+  // Non-error metrics only (an errored tile carries a placeholder datasetId).
+  const visibleDatasetIds = useMemo(() => {
+    const s = new Set<string>();
+    if (groups) for (const m of [...groups.mine, ...groups.domain, ...groups.marketplace]) {
+      if (!m.error && m.datasetId) s.add(m.datasetId);
+    }
+    return s;
+  }, [groups]);
   const scoped = groups ? groupByScope(groups, uid) : null;
   const counts = groups ? scopeCounts(groups, uid) : null;
   const scopedAll = (scoped ? scoped[scope] : []) as MetricSummary[];
@@ -468,6 +495,7 @@ function MetricsRegistryInner({
                     {list.map((m) => (
                       <MetricCard
                         key={m.id} m={m} onOpen={onOpen} scope={scope}
+                        visibleDatasetIds={visibleDatasetIds}
                         canManage={canManage(m)}
                         onMove={canManage(m) ? (mm) => setMoveIds({ ids: [mm.id], root: rootOf(mm) }) : undefined}
                         picked={picked.has(m.id)}
@@ -508,7 +536,7 @@ function MetricsRegistryInner({
               Hidden from the working registry — open one to Restore or Delete.
             </p>
             <div className="tile-grid">
-              {archived.map((m) => <MetricCard key={m.id} m={m} onOpen={onOpen} scope={scope} canManage={false} />)}
+              {archived.map((m) => <MetricCard key={m.id} m={m} onOpen={onOpen} scope={scope} canManage={false} visibleDatasetIds={visibleDatasetIds} />)}
             </div>
           </>
         ) : (

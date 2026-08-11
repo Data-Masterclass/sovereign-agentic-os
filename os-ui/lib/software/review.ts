@@ -22,6 +22,7 @@ import {
 } from '@/lib/governance/approvals';
 import { securityScan } from './scan.ts';
 import { resolveSurface } from './metadata.ts';
+import { ungrantedDatasetWarningForApp } from './dataset-guard.ts';
 import { getSnapshot, snapshotFiles, hydrateSnapshot } from './snapshot.ts';
 import { deployApp, runnerStatus, type RunnerApp, type RunnerOpts, type RunnerOutcome, type RunnerStatus } from './runner.ts';
 import { roleAtLeast } from '@/lib/core/session';
@@ -346,13 +347,23 @@ export async function requestDeploy(
 
   const requested = requestedEnvelope(app);
   const broadened = scopeBroadened(app.deploy.approved, requested);
+
+  // UNGRANTED-DATASET GUARD (0.6.97): does the code that will ship reference any
+  // dataset the app is NOT granted? Such a reference is the root of the live
+  // `Forbidden: … not granted ds_…`. It is a non-blocking WARNING on the review card
+  // (the scanner reads code as text, so a hard block risks a false positive) — but it
+  // MUST NOT auto-deploy silently: a routine in-envelope update that would otherwise
+  // auto-deploy is forced onto the review card when there is a dataset warning.
+  const datasetWarning = await ungrantedDatasetWarningForApp(app, files);
+  const warnings = datasetWarning ? [datasetWarning] : [];
   // The security scan runs on EVERY deploy request (CI scans every push), over
   // the files resolved above — labelled `live` only when they came from the real
   // repo. A routine update can only auto-deploy when BOTH in-envelope AND clean.
   const scan = securityScan(files, opts.scanMode ?? (source === 'live-repo' ? 'live' : 'offline-mock'));
 
-  // Routine update within the approved envelope + a clean scan → auto-deploy.
-  if (app.deploy.state === 'live' && !broadened && scan.passed) {
+  // Routine update within the approved envelope + a clean scan + NO dataset warning →
+  // auto-deploy. An ungranted-dataset reference re-opens the review gate so it is seen.
+  if (app.deploy.state === 'live' && !broadened && scan.passed && warnings.length === 0) {
     app.deploy.reviewCardId = null;
     app.deploy.releases += 1; // a routine update ships a new release/version.
     // Roll the new release onto the real runner (idempotent replace).
@@ -380,6 +391,7 @@ export async function requestDeploy(
     scan,
     requested,
     diff: diffFromFiles(files, opts.changedFiles),
+    warnings,
     decision: 'pending',
   };
   saveCard(card);
@@ -399,7 +411,8 @@ export async function requestDeploy(
       `${card.reason === 'first-deploy' ? 'First deploy' : 'Scope-broadening change'} — ` +
       `scan ${scan.passed ? 'passed' : 'FAILED'} (${scan.findings.length} findings), ` +
       `${requested.connections.length} connections, ${requested.writeTools.length} write tools, ` +
-      `~$${requested.footprint.estMonthlyUsd}/mo.`,
+      `~$${requested.footprint.estMonthlyUsd}/mo.` +
+      (warnings.length ? ` ⚠ references ungranted datasets — see the review card.` : ''),
     agent: app.mcpPrincipal,
     domain: app.domain,
     requestedBy: user.id,

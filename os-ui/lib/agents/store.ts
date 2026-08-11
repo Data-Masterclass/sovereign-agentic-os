@@ -500,6 +500,26 @@ export function getSystemsUsingDataset(datasetId: string, user: Principal): Syst
   return out;
 }
 
+/**
+ * UNSCOPED enumeration of every agent system with its parsed grants — for the OS-wide
+ * `dependentsOf` dependency walk (lib/core/dependents.ts) which must see EVERY dependent
+ * regardless of the actor's visibility (a warn-before-break preflight). Server-side only;
+ * never expose through a user-facing route. A system whose yaml can't be parsed is skipped.
+ */
+export function listAllSystemsInternal(): { id: string; name: string; grants: System['grants'] }[] {
+  ensureSeeded();
+  const out: { id: string; name: string; grants: System['grants'] }[] = [];
+  for (const rec of state().store.values()) {
+    if (rec.archived) continue;
+    try {
+      out.push({ id: rec.id, name: rec.name, grants: parseSystem(rec.yaml).grants });
+    } catch {
+      // unparseable system — skip, never fabricate a dependent
+    }
+  }
+  return out;
+}
+
 /** One agent-system row for Agent Monitoring: identity + last-run health + activity. */
 export type AgentHealthRow = {
   id: string;

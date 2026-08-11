@@ -87,6 +87,11 @@ export default function DashboardBuilder({
     const byMember = new Map(flatMetrics(metrics).map((m) => [m.member, m.id]));
     return (member: string) => byMember.get(member);
   }, [metrics]);
+  // The metric registry has finished loading — gates the panel source-unavailable
+  // degradation (0.6.98): a panel whose metric/dataset was demoted/deleted resolves to no
+  // live member, so we degrade the tile instead of firing a doomed query. Never degrade
+  // while metrics are still loading (every member would transiently look absent).
+  const metricsReady = !metricsLoading && metrics != null;
 
   // Simple ⇄ Developer view mode (persisted per user, defaults to Simple).
   const [viewMode, setViewMode] = useState<ViewMode>('simple');
@@ -365,6 +370,7 @@ export default function DashboardBuilder({
           onBuild={runBuild} saved={!!built}
           initialMetric={initialMetric}
           metricIdOf={metricIdOf}
+          metricsReady={metricsReady}
           defaultFilters={activeFilters}
         />
       ) : built ? (
@@ -374,6 +380,7 @@ export default function DashboardBuilder({
             panels={gridPanels}
             onLoaded={({ rls }) => setLiveRls(rls)}
             metricIdOf={metricIdOf}
+            metricsReady={metricsReady}
             // Seed the chips from the persisted defaults (P1-3); surface live chips up so a
             // subsequent Save (from Edit) persists whatever the viewer narrowed to.
             initialFilters={savedFilters}
@@ -399,13 +406,14 @@ function EditPane({
   name, setName, view, palette, loading,
   charts, addPanel, removeChart, editIdx, editKey, editChart, cancelEdit,
   multiView, views, building, buildErr, canBuild, onBuild, saved,
-  initialMetric, metricIdOf, defaultFilters,
+  initialMetric, metricIdOf, metricsReady, defaultFilters,
 }: {
   name: string;
   setName: (v: string) => void;
   view: string;
   palette: MetricSummary[];
   loading: boolean;
+  metricsReady: boolean;
   charts: ChartSpec[];
   addPanel: (p: Panel) => void;
   removeChart: (i: number) => void;
@@ -475,7 +483,7 @@ function EditPane({
         {charts.length > 0 ? (
           <div style={{ marginTop: 12 }}>
             <label className="comp-label">Preview</label>
-            <DashboardGrid view={view} panels={charts.map((c) => ({ ...c, metrics: panelMetrics(c) }))} metricIdOf={metricIdOf} />
+            <DashboardGrid view={view} panels={charts.map((c) => ({ ...c, metrics: panelMetrics(c) }))} metricIdOf={metricIdOf} metricsReady={metricsReady} />
           </div>
         ) : null}
       </div>

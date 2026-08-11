@@ -10,6 +10,8 @@ import type { EmbedMode, Panel, PanelFilter, PanelQueryResponse } from './shared
 import PanelChart, { type DrillRequest } from './PanelChart';
 import DrillDrawer from './DrillDrawer';
 import PanelExpand from './PanelExpand';
+import SourceUnavailable from '@/components/core/SourceUnavailable';
+import { panelSourceUnavailable } from '@/lib/core/source-availability';
 
 /** Render a Cube security context as a human RLS note (e.g. "region = DE"). */
 function rlsNote(ctx: Record<string, unknown>): string {
@@ -68,6 +70,7 @@ function PanelCard({
   onResolved,
   onDrill,
   metricIdOf,
+  metricsReady = false,
 }: {
   view: string;
   panel: Panel;
@@ -76,7 +79,17 @@ function PanelCard({
   onDrill: (panel: Panel, drill: DrillRequest) => void;
   /** Member → metric id (RLS-scoped registry); resolves the "what is this number?" backlink. */
   metricIdOf?: (member: string) => string | undefined;
+  /** True once the metric registry has finished loading — gates the source-unavailable
+   *  degradation so a still-loading registry never white-outs a live panel. */
+  metricsReady?: boolean;
 }) {
+  // GRACEFUL DEGRADATION (0.6.98): if — the registry having loaded — NONE of this panel's
+  // metric members resolves to a live metric, its source dataset was demoted/archived/deleted.
+  // Render the calm SourceUnavailable note for THIS tile instead of firing a doomed query
+  // (whose metricIdOf backlink would also be undefined) or letting a downstream deref throw.
+  const unavailable = metricsReady && !!metricIdOf
+    ? panelSourceUnavailable(panelMetrics(panel), metricIdOf, true)
+    : false;
   const [res, setRes] = useState<PanelQueryResponse | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -96,6 +109,8 @@ function PanelCard({
   // Key the fetch on the SERIALIZED panel — chip/grain changes re-query, render churn doesn't.
   const panelJson = JSON.stringify(queried);
   useEffect(() => {
+    // Source gone — don't fire a doomed governed query; the tile degrades below.
+    if (unavailable) { setLoading(false); return; }
     let alive = true;
     setLoading(true);
     setError('');
@@ -129,7 +144,7 @@ function PanelCard({
     return () => { alive = false; clearTimeout(timer); controller.abort(); };
     // onResolved is a stable host callback; excluded to avoid re-querying on identity churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, panelJson, retryKey]);
+  }, [view, panelJson, retryKey, unavailable]);
 
   // The panel is expandable once its rows have resolved — the expanded view reuses that
   // slice, never re-queries. The trigger (title + ⤢ corner button) is deliberately SEPARATE
@@ -187,7 +202,9 @@ function PanelCard({
           })}
         </span>
       </div>
-      {timedOut ? (
+      {unavailable ? (
+        <SourceUnavailable compact />
+      ) : timedOut ? (
         <div className="panel-state" style={{ height: 240, flexDirection: 'column', gap: 10 }}>
           <span className="hint" role="alert" style={{ margin: 0, textAlign: 'center' }}>
             Query exceeded 30 s — the governed engine may be busy.
@@ -250,6 +267,7 @@ export default function DashboardGrid({
   panels,
   onLoaded,
   metricIdOf,
+  metricsReady = false,
   initialFilters,
   onFiltersChange,
 }: {
@@ -259,6 +277,9 @@ export default function DashboardGrid({
   onLoaded?: (info: { mode: EmbedMode; rls: string }) => void;
   /** Member → metric id for the panel-header definition backlink (optional). */
   metricIdOf?: (member: string) => string | undefined;
+  /** True once the metric registry has loaded — gates the source-unavailable degradation
+   *  (0.6.98) so a panel on a demoted/deleted dataset degrades instead of throwing. */
+  metricsReady?: boolean;
   /** Seed the cross-filter chips (P1-3) — View opens narrowed to the dashboard's saved
    *  defaults. Absent = start unfiltered (today's behaviour). */
   initialFilters?: PanelFilter[];
@@ -398,6 +419,7 @@ export default function DashboardGrid({
                 onResolved={onResolved(key)}
                 onDrill={onDrill}
                 metricIdOf={metricIdOf}
+                metricsReady={metricsReady}
               />
             </div>
           );

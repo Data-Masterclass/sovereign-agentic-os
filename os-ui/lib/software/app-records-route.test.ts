@@ -89,21 +89,38 @@ test('records list: an app not visible to the caller is 404 (entry-gated)', asyn
   assert.match((await res.json()).error, /not found/i);
 });
 
-// 2. ENVELOPE GATE — a write with no approved envelope is 403, honestly.
-test('records add: no approved add_record in the envelope ⇒ 403 naming the governance path', async () => {
+// 2a. DEFAULT (0.6.97) — the app's OWN record writes work out of the box, no
+//     approved envelope needed (the owner's "automatic read+write by default" rule).
+test('records add: a FRESH app (no envelope) can write its own records by default ⇒ 200', async () => {
   const app = await seedApp(); // fresh app: deploy.approved is null
   assert.equal(app.deploy.approved, null, 'a fresh app has no approved envelope');
+  const route = await loadListRoute();
+  const res = await route.POST(post({ record: { name: 'Widget' } }), ctx(app.slug));
+  assert.equal(res.status, 200, 'the app\'s own record write is auto-approved by default');
+  const { result } = await res.json();
+  assert.equal(result.source, 'os-records-store');
+  assert.equal(result.added.name, 'Widget');
+});
+
+// 2b. REVOCABLE — once the owner REVOKES the default, a write with no approved
+//     envelope is 403 again, honestly naming the governance path.
+test('records add: REVOKED default + no approved envelope ⇒ 403 naming the governance path', async () => {
+  const app = await seedApp();
+  app.recordWritesRevoked = true; // owner turns the default off
+  writeThroughApp(app);
   const route = await loadListRoute();
   const res = await route.POST(post({ record: { name: 'Widget' } }), ctx(app.slug));
   assert.equal(res.status, 403);
   const body = await res.json();
   assert.match(body.error, /add_record/);
-  assert.match(body.error, /approved deploy envelope/);
-  assert.match(body.error, /request_deploy|Builder/);
+  assert.match(body.error, /approved deploy envelope|REVOKED/);
+  assert.match(body.error, /request_deploy|Builder|un-revoke/);
 });
 
-test('records export: no approved export_records ⇒ 403 (envelope-gated write)', async () => {
+test('records export: REVOKED default + no approved export_records ⇒ 403 (envelope-gated write)', async () => {
   const app = await seedApp();
+  app.recordWritesRevoked = true;
+  writeThroughApp(app);
   const route = await loadExportRoute();
   const res = await route.POST(post(), ctx(app.slug));
   assert.equal(res.status, 403);

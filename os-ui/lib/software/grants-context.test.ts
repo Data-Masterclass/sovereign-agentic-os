@@ -56,6 +56,28 @@ test('grants-context: a DATA grant resolves name, description, tier + real colum
   assert.match(block, /renews_on — renewal date/);
 });
 
+// BUILD CONTEXT IS GRANTED-ONLY (0.6.97): a dataset the owner CAN see but did NOT
+// grant to the app must NEVER appear in the build context — only its grants do. This
+// is the model-side half of "an app must only reference GRANTED datasets": the model
+// is never even shown an ungranted id/schema to hard-code.
+test('grants-context: an ungranted (but visible) dataset does NOT leak — only grants appear', async () => {
+  const granted = createDataset(principal(owner), { name: 'Granted Feed' });
+  setDocs(granted.id, principal(owner), { description: 'in scope', columns: [{ name: 'a', description: '' }] });
+  // A second dataset the owner owns/sees but does NOT grant to the app.
+  const ungranted = createDataset(principal(owner), { name: 'Ungranted Feed' });
+  setDocs(ungranted.id, principal(owner), { description: 'out of scope', columns: [{ name: 'b', description: '' }] });
+
+  const block = await resolveGrantedContext(
+    grantsWith({ data: [{ id: granted.id, access: 'read-only' }] }),
+    owner,
+  );
+  assert.match(block, /Granted Feed/);
+  assert.match(block, new RegExp(granted.id));
+  // The ungranted dataset — its name AND its id — is absent from the model's context.
+  assert.doesNotMatch(block, /Ungranted Feed/);
+  assert.doesNotMatch(block, new RegExp(ungranted.id));
+});
+
 test('grants-context: a KNOWLEDGE (personal) grant resolves title + content', async () => {
   const k = createPersonalKnowledge(principal(owner), { title: 'Onboarding SOP', md: 'Step 1: greet the customer.' });
   const block = await resolveGrantedContext(grantsWith({ knowledge: [{ id: k.id, access: 'read-only' }] }), owner);

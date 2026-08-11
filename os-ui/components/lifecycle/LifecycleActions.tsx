@@ -109,10 +109,15 @@ export default function LifecycleActions({
     [api, onChanged, toast],
   );
 
+  // Every breaking transition warns before it acts (0.6.98): the shared dialog fetches this
+  // artifact's dependents and shows "used by N metrics, M dashboards, K apps" without gating.
+  const breakWarn = { artifactId: id, direction: 'break' as const };
+
   const doArchive = useCallback(async () => {
-    if (!(await confirm(archiveCopy(name)))) return;
+    if (!(await confirm({ ...archiveCopy(name), dependents: breakWarn }))) return;
     await run('archive', handlers?.onArchive);
-  }, [confirm, name, run, handlers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirm, name, run, handlers, id]);
 
   const doRestore = useCallback(async () => {
     // Un-archiving is low-stakes and reversible → no confirm needed.
@@ -120,9 +125,10 @@ export default function LifecycleActions({
   }, [run, handlers]);
 
   const doDelete = useCallback(async () => {
-    if (!(await confirm(deleteCopy(kind, name, visibility)))) return;
+    if (!(await confirm({ ...deleteCopy(kind, name, visibility), dependents: breakWarn }))) return;
     await run('delete', handlers?.onDelete);
-  }, [confirm, kind, name, visibility, run, handlers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirm, kind, name, visibility, run, handlers, id]);
 
   // OS-wide rule: tiles expose ONLY their own Open — no lifecycle actions. You
   // archive/restore/delete/inspect versions from inside the opened detail.

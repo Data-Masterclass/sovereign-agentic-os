@@ -100,6 +100,8 @@ export default function PromoteButton({
         body: `Certifying makes this ${kind} available across every domain, company-wide. This is a governed step that a platform admin vouches for.`,
         confirmLabel: 'Certify',
         danger: false,
+        // Informational (0.6.98): certifying re-points dependents to the promoted copy.
+        dependents: { artifactId: id, direction: 'promote' },
       });
       if (!ok) return;
     }
@@ -137,7 +139,7 @@ export default function PromoteButton({
     } finally {
       setBusy(false);
     }
-  }, [confirm, isCertify, kind, promoteUrl, onDone, toast, text, notifyApprovalFiled]);
+  }, [confirm, isCertify, kind, promoteUrl, onDone, toast, text, notifyApprovalFiled, id]);
 
   // Top of the ladder — nothing to promote.
   if (tier === 'Marketplace') return null;

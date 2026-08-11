@@ -69,6 +69,14 @@ export type ConfirmCopy = {
   danger: boolean;
   /** When set, the confirm button stays disabled until the user types this exactly. */
   confirmPhrase?: string;
+  /**
+   * WARN-BEFORE-BREAK (0.6.98): when set, the ONE ConfirmDialog fetches this artifact's
+   * dependents and renders a direction-aware "used by N metrics, M dashboards, K apps —
+   * this will break their access" line (informational for `promote`). Non-blocking — the
+   * warn never disables Confirm; the transition is warn-THEN-allow. Wiring it here (on the
+   * shared copy) means every tab that drives the shared lifecycle controls inherits it.
+   */
+  dependents?: { artifactId: string; direction: 'promote' | 'break' };
 };
 
 /** Shared/Certified artifacts affect other people — deleting them requires typing the name. */

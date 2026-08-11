@@ -312,6 +312,15 @@ export type App = {
     /** Count of successful go-lives — the published release/version number (v{n}). */
     releases: number;
   };
+  /**
+   * REVOCATION flag for the app's OWN records write access (`os.records.add/export`).
+   * Undefined/false = the 0.6.97 default: the app's own record writes are auto-approved
+   * out of the box (see `envelopeAllowsRecordTool`). Set true to REVOKE that default —
+   * writes then run live only if a Builder listed them in the approved deploy envelope.
+   * Optional-on-load (undefined = default-on) so pre-0.6.97 apps stay byte-stable.
+   * This ONLY governs the app's own records; it never touches dataset/knowledge/file grants.
+   */
+  recordWritesRevoked?: boolean;
   /** Parsed app.yaml / OpenAPI convention (metadata fidelity). */
   manifest: AppManifest;
   /** Resolved UI/API surface — a declaration wins, else inferred from what was built. */

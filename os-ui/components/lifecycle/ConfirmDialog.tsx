@@ -19,6 +19,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConfirmCopy } from '@/lib/core/lifecycle';
 import { phraseSatisfied } from '@/lib/core/lifecycle';
+import { type Dependent, dependentsSummary } from '@/lib/core/dependents-shared';
 
 type Pending = ConfirmCopy & { resolve: (ok: boolean) => void };
 
@@ -117,6 +118,15 @@ function Dialog({ copy, onClose }: { copy: ConfirmCopy; onClose: (ok: boolean) =
           {copy.body}
         </div>
 
+        {/* WARN-BEFORE-BREAK (0.6.98): the ONE place every lifecycle transition surfaces its
+            dependents. Non-blocking — it never gates Confirm; the transition is warn-then-allow. */}
+        {copy.dependents ? (
+          <DependentsWarning
+            artifactId={copy.dependents.artifactId}
+            direction={copy.dependents.direction}
+          />
+        ) : null}
+
         {gated ? (
           <>
             <div className="danger-note">
@@ -151,6 +161,46 @@ function Dialog({ copy, onClose }: { copy: ConfirmCopy; onClose: (ok: boolean) =
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Fetches the artifact's dependents and renders a calm, direction-aware line inside the
+ * confirm dialog. Best-effort + non-blocking: a slow or failed fetch simply shows nothing
+ * (the transition is warn-THEN-allow, never gated on this). The endpoint is the shared
+ * `GET /api/artifacts/{id}/dependents` preflight, so every tab that drives the shared
+ * lifecycle controls inherits the same warning from this ONE place.
+ */
+function DependentsWarning({ artifactId, direction }: { artifactId: string; direction: 'promote' | 'break' }) {
+  const [deps, setDeps] = useState<Dependent[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/artifacts/${encodeURIComponent(artifactId)}/dependents`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        if (live && Array.isArray(data?.dependents)) setDeps(data.dependents as Dependent[]);
+      } catch {
+        /* best-effort — no warning line rather than a broken dialog */
+      }
+    })();
+    return () => { live = false; };
+  }, [artifactId]);
+
+  // Nothing to say until we have a result; a break with no dependents stays silent (the
+  // dialog's own body already covers the general case), while a promote is informational.
+  if (deps === null) return null;
+  if (deps.length === 0 && direction === 'break') return null;
+
+  return (
+    <div
+      className={direction === 'break' ? 'danger-note' : 'hint'}
+      role={direction === 'break' ? 'alert' : undefined}
+      style={{ marginTop: 12, fontSize: 12.5, lineHeight: 1.5 }}
+    >
+      {dependentsSummary(deps, direction)}
     </div>
   );
 }

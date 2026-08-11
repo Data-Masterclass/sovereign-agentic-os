@@ -66,25 +66,38 @@ export function recordActor(user: {
 const WRITE_TOOLS = new Set<RecordToolName>([RECORD_TOOLS.add, RECORD_TOOLS.export]);
 
 /**
- * Does the app's Builder-APPROVED deploy envelope permit this write tool to run
- * live? Reads are always allowed. A write tool that a Builder has not signed off on
- * (absent from `deploy.approved.writeTools`, or an app with no approved envelope at
- * all) is DENIED — the honest reason names the governance path so the caller knows
- * exactly how to enable it, instead of a silent nothing.
+ * Does the gate permit this record tool to run live? Reads are always-on.
+ *
+ * WRITES to the app's OWN records (`add_record`/`export_records`) are AUTO-APPROVED
+ * BY DEFAULT — the owner's rule: "the app's own write data must have automatic
+ * read+write out of the box." Every tool that reaches this gate is one of the four
+ * fixed `os.records.*` tools (its OWN store), so allowing its writes never widens
+ * access to any dataset/knowledge/file/connection — only the app's own records. It
+ * stays REVOCABLE: an owner who flips `app.recordWritesRevoked` turns the default
+ * off, and from then on the write runs live only if a Builder has explicitly listed
+ * it in the approved deploy envelope (the pre-0.6.97 behaviour). We deliberately do
+ * NOT auto-approve any non-record / external write capability here — this gate is
+ * only ever asked about `os.records.*`.
  */
 export function envelopeAllowsRecordTool(
   app: App,
   tool: RecordToolName,
 ): { ok: true } | { ok: false; reason: string } {
   if (!WRITE_TOOLS.has(tool)) return { ok: true }; // reads are always-on
+
+  // Default-ON: the app's own record writes work out of the box, revocably.
+  if (app.recordWritesRevoked !== true) return { ok: true };
+
+  // Revoked: fall back to the explicit Builder-approved envelope (legacy gate).
   const approved = app.deploy.approved?.writeTools ?? [];
   if (approved.includes(tool)) return { ok: true };
   return {
     ok: false,
     reason:
-      `'${tool}' is not in this app's approved deploy envelope. Writes run live only after a ` +
-      `Builder approves them: request a deploy (request_deploy) and have a Builder approve the ` +
-      `review card that lists this write tool. Reads work now; this write is held until then.`,
+      `'${tool}' is REVOKED for this app's own records and is not in its approved deploy ` +
+      `envelope. Re-enable the app's records write access (un-revoke it), or request a deploy ` +
+      `(request_deploy) and have a Builder approve the review card that lists this write tool. ` +
+      `Reads work now; this write is held until then.`,
   };
 }
 

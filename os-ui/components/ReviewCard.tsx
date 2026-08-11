@@ -31,6 +31,8 @@ export type ReviewCardData = {
     footprint: { cpu: string; memory: string; estMonthlyUsd: number };
   };
   diff: { files: { path: string; added: number; removed: number }[]; added: number; removed: number };
+  /** Non-blocking review warnings (e.g. references to ungranted datasets). */
+  warnings?: string[];
   decision: 'pending' | 'approved' | 'denied';
   decidedBy?: string;
   note?: string;
@@ -110,6 +112,17 @@ export default function ReviewCard({
           </ul>
         ) : null}
       </div>
+
+      {/* Non-blocking warnings (e.g. references to ungranted datasets) */}
+      {card.warnings && card.warnings.length > 0 ? (
+        <div style={{ marginTop: 10 }}>
+          {card.warnings.map((w, i) => (
+            <div key={i} className="badge warn" style={{ display: 'block', whiteSpace: 'pre-wrap', fontSize: 12, padding: 8 }}>
+              ⚠ {w}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {/* Requested governed resources */}
       <div style={{ marginTop: 10 }}>

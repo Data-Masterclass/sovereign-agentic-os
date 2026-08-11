@@ -30,6 +30,7 @@ export default function DemoteButton({
   onDone,
   label,
   body,
+  artifactId,
 }: {
   /** Human noun for confirm copy, e.g. 'pillar', 'connection'. */
   kind: string;
@@ -44,6 +45,9 @@ export default function DemoteButton({
   /** Override the confirm-dialog body — for kinds whose demotion reaches wider
    *  than the artifact itself (e.g. a metric moves its dataset too). */
   body?: string;
+  /** The artifact id — enables the warn-before-break dependents line (0.6.98). Demotion
+   *  narrows visibility, so it's the transition that most often broke dependents. */
+  artifactId?: string;
 }) {
   const confirm = useConfirm();
   const toast = useToast();
@@ -63,6 +67,7 @@ export default function DemoteButton({
         : `This lowers the ${kind} from Domain back to My — it stops being visible to your domain. It is not deleted; you can promote it again later.`),
       confirmLabel: verb,
       danger: true,
+      ...(artifactId ? { dependents: { artifactId, direction: 'break' as const } } : {}),
     });
     if (!ok) return;
     setBusy(true);
@@ -84,7 +89,7 @@ export default function DemoteButton({
     } finally {
       setBusy(false);
     }
-  }, [confirm, isRevokeCert, kind, verb, body, demoteUrl, onDone, toast]);
+  }, [confirm, isRevokeCert, kind, verb, body, demoteUrl, onDone, toast, artifactId]);
 
   // Personal/My is the bottom of the ladder — nothing to revoke.
   if (tier === 'Personal') return null;

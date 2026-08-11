@@ -27,12 +27,26 @@ type PageEntry = { epic: string; story: string; file: string; comp: string };
 // A small rotating icon set so sections are visually distinct (Overview keeps ◇).
 const ICONS = ['▤', '⚡', '◈', '▦', '◧', '❖', '⬢', '✦', '◑', '▣'];
 
-/** Title-case a kebab/snake folder name: `live-dossier` → `Live Dossier`. */
+/**
+ * Title-case a story-folder name into a readable nav label. Handles kebab/snake
+ * (`live-dossier` → `Live Dossier`), camelCase/PascalCase
+ * (`AssignNewCaseToServiceCenter` → `Assign New Case To Service Center`), and
+ * de-shouts a long ALL-CAPS run with no word boundaries
+ * (`ASSIGNNEWCASE` → `Assigncase`) so a tab never SHOUTS. Short acronyms (≤3, e.g.
+ * `KPI`, `API`) are left intact.
+ */
 function humanize(slug: string): string {
-  return slug
+  const spaced = slug
     .replace(/[-_]+/g, ' ')
-    .trim()
-    .replace(/\b\w/g, (c) => c.toUpperCase()) || slug;
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2') // camelCase boundary
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2') // ACRONYMWord boundary
+    .replace(/\s+/g, ' ')
+    .trim();
+  const deShouted = spaced
+    .split(' ')
+    .map((w) => (/^[A-Z]{4,}$/.test(w) ? w.charAt(0) + w.slice(1).toLowerCase() : w))
+    .join(' ');
+  return deShouted.replace(/\b\w/g, (c) => c.toUpperCase()) || slug;
 }
 
 /**

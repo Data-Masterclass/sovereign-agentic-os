@@ -43,6 +43,15 @@ test('generateSectionsContent: registers Overview + every story page, imports re
   assert.doesNotMatch(out, /workspace/);
 });
 
+test('generateSectionsContent: humanizes PascalCase/camelCase and de-shouts ALL-CAPS story folders', () => {
+  const pascal = { path: 'src/epics/service/AssignNewCaseToServiceCenter/AssignNewCaseToServiceCenter.tsx', content: 'export default function AssignNewCaseToServiceCenter(){return null}' };
+  const shout = { path: 'src/epics/service/ASSIGNNEWSERVICECASETOEMPLOYEE/Page.tsx', content: 'export default function Page(){return null}' };
+  const out = generateSectionsContent([shell, sectionsPlaceholder, pascal, shout])!;
+  assert.match(out, /label: "Assign New Case To Service Center"/); // PascalCase → spaced words
+  assert.match(out, /label: "Assignnewservicecasetoemployee"/); // ALL-CAPS de-shouted, not SHOUTING
+  assert.doesNotMatch(out, /label: "ASSIGNNEWSERVICECASETOEMPLOYEE"/); // never a shouting LABEL
+});
+
 test('generateSectionsContent: null for a non-sovereign-app (no template shell) or when no pages built', () => {
   assert.equal(generateSectionsContent([pageA, pageB]), null, 'no template shell → not applicable');
   assert.equal(generateSectionsContent([shell, sectionsPlaceholder]), null, 'no pages → keep the scaffold default');

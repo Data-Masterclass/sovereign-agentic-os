@@ -38,9 +38,14 @@ mock.module('@/lib/core/auth', {
 
 const { appSlugFromRequest, checkAppGrant, grantedIdSet } = await import('./app-origin.ts');
 const { createApp, writeThroughApp, __resetAppsCache } = await import('./apps.ts');
+// Real artifacts registry: seed a dataset so getArtifact resolves its name (0.6.97
+// friendly-denial), and reset it between tests. No module mock — other importers of
+// artifacts (e.g. apps.ts) must keep their real exports.
+const { createArtifact, __resetArtifactsCache } = await import('@/lib/core/artifacts');
 
 beforeEach(() => {
   __resetAppsCache();
+  __resetArtifactsCache();
 });
 
 const reqWith = (headers: Record<string, string>) => new Request('http://os.example.com/api/data/datasets', { headers });
@@ -102,12 +107,31 @@ test('checkAppGrant: a granted dataset is allowed', async () => {
   assert.equal(out.allowed, true);
 });
 
-test('checkAppGrant: an ungranted dataset is denied with an honest, actionable reason', async () => {
+// CASE 2 (deleted/nonexistent): a referenced dataset that getArtifact can't resolve is
+// treated as GONE — the denial says "no longer exists" + rebuild/restore, and must NOT
+// tell the user to grant it (they can't — it's deleted). Fail-soft: the bare id, no throw.
+test('checkAppGrant: a NONEXISTENT dataset is denied as deleted (rebuild/restore, not grant)', async () => {
   const app = await seedGrantedApp();
   const out = await checkAppGrant(app.slug, 'data', 'ds_not_granted');
   assert.equal(out.allowed, false);
-  assert.match(out.reason, /not granted/i);
   assert.match(out.reason, /ds_not_granted/);
+  assert.match(out.reason, /no longer exists|deleted/i);
+  assert.match(out.reason, /rebuild|restore/i);
+  // Not a "grant it" message, and no «…» name wrapper (unknown id).
+  assert.doesNotMatch(out.reason, /Software tab/);
+  assert.doesNotMatch(out.reason, /«/);
+});
+
+// CASE 1 (exists, ungranted): the denial NAMES the real dataset — «Service Centers»
+// (ds_…) — and points at the grant flow (the owner's "must name the real dataset" ask).
+test('checkAppGrant: an ungranted EXISTING dataset is denied by NAME + grant flow', async () => {
+  const app = await seedGrantedApp();
+  const seeder = { id: 'own', name: 'Owner', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'builder' };
+  const ds = await createArtifact(seeder as never, { type: 'dataset', name: 'Service Centers' });
+  const out = await checkAppGrant(app.slug, 'data', ds.id);
+  assert.equal(out.allowed, false);
+  assert.match(out.reason, new RegExp(`«Service Centers» \\(${ds.id}\\)`));
+  assert.match(out.reason, /not granted/i);
   assert.match(out.reason, /Software tab/);
 });
 

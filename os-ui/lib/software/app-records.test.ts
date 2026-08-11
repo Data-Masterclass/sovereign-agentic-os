@@ -14,6 +14,14 @@ function appWith(approved: { writeTools: string[] } | null): App {
   } as App;
 }
 
+/** Same stub, but with the app's own-records write access REVOKED (default flipped off). */
+function appRevoked(approved: { writeTools: string[] } | null): App {
+  return {
+    recordWritesRevoked: true,
+    deploy: { approved: approved as App['deploy']['approved'] },
+  } as App;
+}
+
 /** A minimal App stub with the identity fields the record executor reads. */
 function recordApp(slug: string, domain: string): App {
   return { slug, domain, deploy: { approved: null } } as unknown as App;
@@ -26,29 +34,37 @@ test('envelope gate: reads (list/get) are always allowed, envelope or not', () =
   assert.deepEqual(envelopeAllowsRecordTool(none, RECORD_TOOLS.get), { ok: true });
 });
 
-// Writes are denied with an HONEST, governance-naming reason when not approved.
-test('envelope gate: a write not in the approved envelope is denied with an honest reason', () => {
-  const noEnvelope = envelopeAllowsRecordTool(appWith(null), RECORD_TOOLS.add);
+// 0.6.97 DEFAULT: the app's OWN record writes are auto-approved out of the box —
+// no manual write-approval step, even with NO approved deploy envelope at all.
+test('envelope gate: the app\'s own record writes are ALLOWED by default (no envelope needed)', () => {
+  assert.deepEqual(envelopeAllowsRecordTool(appWith(null), RECORD_TOOLS.add), { ok: true });
+  assert.deepEqual(envelopeAllowsRecordTool(appWith(null), RECORD_TOOLS.export), { ok: true });
+});
+
+// REVOCABLE: once revoked, writes fall back to the explicit approved envelope and are
+// denied with an HONEST, governance-naming reason when absent from it.
+test('envelope gate: REVOKED — a write not in the approved envelope is denied with an honest reason', () => {
+  const noEnvelope = envelopeAllowsRecordTool(appRevoked(null), RECORD_TOOLS.add);
   assert.equal(noEnvelope.ok, false);
   if (!noEnvelope.ok) {
     assert.match(noEnvelope.reason, /add_record/);
-    assert.match(noEnvelope.reason, /approved deploy envelope/);
-    assert.match(noEnvelope.reason, /request_deploy|Builder/);
+    assert.match(noEnvelope.reason, /REVOKED|approved deploy envelope/);
+    assert.match(noEnvelope.reason, /request_deploy|Builder|un-revoke/);
   }
 
-  // An approved envelope that does NOT list this write still denies it.
-  const otherOnly = envelopeAllowsRecordTool(appWith({ writeTools: ['export_records'] }), RECORD_TOOLS.add);
+  // A revoked app with an approved envelope that does NOT list this write still denies it.
+  const otherOnly = envelopeAllowsRecordTool(appRevoked({ writeTools: ['export_records'] }), RECORD_TOOLS.add);
   assert.equal(otherOnly.ok, false);
 });
 
-// A write listed in the approved envelope is allowed.
-test('envelope gate: a write present in the approved envelope is allowed', () => {
+// REVOKED but explicitly approved via the envelope → allowed (the legacy gate still works).
+test('envelope gate: REVOKED — a write present in the approved envelope is allowed', () => {
   assert.deepEqual(
-    envelopeAllowsRecordTool(appWith({ writeTools: ['add_record', 'export_records'] }), RECORD_TOOLS.add),
+    envelopeAllowsRecordTool(appRevoked({ writeTools: ['add_record', 'export_records'] }), RECORD_TOOLS.add),
     { ok: true },
   );
   assert.deepEqual(
-    envelopeAllowsRecordTool(appWith({ writeTools: ['export_records'] }), RECORD_TOOLS.export),
+    envelopeAllowsRecordTool(appRevoked({ writeTools: ['export_records'] }), RECORD_TOOLS.export),
     { ok: true },
   );
 });

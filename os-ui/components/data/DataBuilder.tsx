@@ -1094,6 +1094,7 @@ export default function DataBuilder({
             <DemoteButton
               kind="dataset"
               tier="Shared"
+              artifactId={dataset.id}
               demoteUrl={`/api/data/datasets/${dataset.id}/lifecycle`}
               onDone={() => { void Promise.all([loadPromote(), load()]); }}
               label="Demote to My"
@@ -1112,6 +1113,7 @@ export default function DataBuilder({
             <DemoteButton
               kind="dataset"
               tier="Marketplace"
+              artifactId={dataset.id}
               demoteUrl={`/api/data/datasets/${dataset.id}/lifecycle`}
               onDone={() => { void Promise.all([loadPromote(), load()]); }}
               label="Demote to Domain"

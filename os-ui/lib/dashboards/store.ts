@@ -116,6 +116,18 @@ export function moveDashboardsDomain(sel: { id?: string; onlyUnassigned?: boolea
   return moved;
 }
 
+/**
+ * UNSCOPED enumeration of every live dashboard with its full spec — for the OS-wide
+ * `dependentsOf` dependency walk (lib/core/dependents.ts), which must see EVERY dependent
+ * regardless of the actor's visibility (a warn-before-break preflight). Server-side only;
+ * never expose through a user-facing route.
+ */
+export function listAllDashboardsInternal(): { id: string; name: string; spec: DashboardSpec }[] {
+  return dashState().dashboards
+    .filter((d) => !d.archived)
+    .map((d) => ({ id: d.id, name: d.spec.name, spec: d.spec }));
+}
+
 export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number; folder: string; archived?: boolean };
 
 function summarise(d: Stored): DashboardSummary {

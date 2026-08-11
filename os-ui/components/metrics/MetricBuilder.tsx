@@ -669,6 +669,9 @@ export default function MetricBuilder({
               <DemoteButton
                 kind="metric"
                 tier={saved.tier === 'marketplace' ? 'Marketplace' : saved.tier === 'domain' ? 'Shared' : 'Personal'}
+                // Demoting a metric lowers its underlying DATASET, so the warn reflects the
+                // dataset's blast radius (its dashboards/apps/agents), not just this metric.
+                artifactId={saved.datasetId}
                 demoteUrl={`/api/metrics/${saved.id}/demote`}
                 onDone={onChanged}
                 body={saved.tier === 'marketplace'

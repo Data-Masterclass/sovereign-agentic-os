@@ -127,6 +127,13 @@ export type ReviewCard = {
   requested: DeployEnvelope;
   /** The change diff (file path → +added/-removed line counts), summarised. */
   diff: DiffSummary;
+  /**
+   * Non-blocking review WARNINGS surfaced on the card so a deploy can't ship them
+   * silently — e.g. "references ungranted datasets: «Service Centers» (ds_…)" from the
+   * 0.6.97 dataset guard. Optional-on-load (undefined ⇒ none); a warning informs the
+   * Builder's decision but, unlike a failed scan, does not itself block approval.
+   */
+  warnings?: string[];
   decision: ReviewDecision;
   decidedBy?: string;
   decidedAt?: string;
