@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
+import { k8s, k8sText } from '@/lib/infra/k8s';
 import { trace } from '@/lib/infra/agent-governed';
 import {
   getModel,
@@ -11,12 +12,16 @@ import {
   startTraining,
   completeTraining,
   failTraining,
+  failDeploy,
   startDeploy,
   computeLaunchStatus,
   ensureModelsHydrated,
   trainTrackAdapter,
   deployAdapter,
   readMlflowMetric,
+  trainingLogs,
+  firstTrainerError,
+  humanizeDeployReason,
   type Actor,
   type ServiceModel,
 } from '@/lib/science';
@@ -30,9 +35,10 @@ const PENDING_DEADLINE_MS = 10 * 60_000;
  * FUSED "Train & launch": on a successful training run, auto-submit the deploy so the model
  * flows trained → deploying WITHOUT a second user action (auto-deploy is the Simple default).
  * The deploy poll (GET .../deploy) then carries deploying → deployed honestly. A cluster that
- * refuses the deploy submit does NOT fail the training result — training genuinely succeeded;
- * the model rests at `trained` with the deploy error recorded, so Developer view can retry the
- * standalone deploy. Returns the model AFTER the (attempted) fusion.
+ * refuses the deploy submit does NOT discard the training result — training genuinely succeeded
+ * (the artifact exists) — but it IS an honest DEPLOY failure: the model is recorded as
+ * `deploy_failed` with the real reason (never mislabeled as a training/no-artifact failure), and
+ * stays retry-able via the standalone Deploy route. Returns the model AFTER the (attempted) fusion.
  */
 async function fuseDeploy(model: string, actor: Actor, trained: ServiceModel, principal: string): Promise<ServiceModel> {
   try {
@@ -46,10 +52,54 @@ async function fuseDeploy(model: string, actor: Actor, trained: ServiceModel, pr
       decision: 'allow',
     });
     return deploying;
+  } catch (e) {
+    // HONEST: training genuinely succeeded (the artifact exists at the model's storageUri) — this is
+    // a DEPLOY (serving) failure, NOT a training failure. Record it as `deploy_failed` with the real
+    // cluster reason so the UI says "couldn't finish publishing", NOT "no model artifact was
+    // produced". The model stays retry-able (assertCanDeploy permits deploy_failed → deploying) via
+    // the standalone Deploy route. Best-effort: never let the recording throw over a good train.
+    const reason = humanizeDeployReason((e as Error).message || 'the model serving deploy could not be submitted');
+    try {
+      const failed = failDeploy(model, actor, reason);
+      await trace({
+        principal,
+        tool: 'model_deploy',
+        input: { model, fused: true },
+        output: { buildState: failed.buildState, reason },
+        decision: 'deny',
+      });
+      return failed;
+    } catch {
+      return getModel(model) ?? trained;
+    }
+  }
+}
+
+/** How many log lines to scan for the real trainer error, and the hard read budget (ms). */
+const FAIL_LOG_TAIL_LINES = 40;
+const FAIL_LOG_TIMEOUT_MS = 2500;
+
+/**
+ * Enrich a generic k8s Job failure reason with the REAL trainer error from the pod log (Bug 2a).
+ * Best-effort + timeout-boxed: reads the `train` container's log tail and folds its first real error
+ * line into the reason; ANY miss (no job handle, log unavailable, unreachable API, timeout) returns
+ * the original reason unchanged. Never throws — a good failure record must never be blocked by this.
+ */
+async function enrichTrainingFailure(
+  jobName: string | undefined,
+  namespace: string | undefined,
+  reason: string,
+): Promise<string> {
+  if (!config.mlEnabled || !jobName) return reason;
+  try {
+    const log = await Promise.race([
+      trainingLogs(jobName, namespace ?? config.platformNamespace, FAIL_LOG_TAIL_LINES, k8s, k8sText),
+      new Promise<string>((resolve) => setTimeout(() => resolve(''), FAIL_LOG_TIMEOUT_MS)),
+    ]);
+    const trainerError = firstTrainerError(log);
+    return trainerError ? `${trainerError} (cluster: ${reason})` : reason;
   } catch {
-    // Honest: training succeeded; the deploy submit did not. Leave the model `trained`
-    // (the standalone Deploy route + Developer retry path handles it) — never fake a deploy.
-    return getModel(model) ?? trained;
+    return reason;
   }
 }
 
@@ -157,7 +207,14 @@ export async function GET(_req: Request, ctx: { params: Promise<{ model: string 
       return NextResponse.json({ ok: true, phase: 'succeeded', status, model: updated, launch: computeLaunchStatus(updated) });
     }
     if (status.phase === 'failed') {
-      const updated = failTraining(model, actor, status.reason);
+      // HONEST failure surface: the k8s Job reason is generic ("BackoffLimitExceeded" /
+      // "Back-off restarting failed container") and hides WHY the trainer died. Best-effort read the
+      // `train` init-container's log tail and fold its FIRST real error line (the trainer's own FATAL
+      // or a Python exception) into the recorded reason, so the user sees the ACTUAL cause. Fully
+      // guarded + bounded — a log miss / unreachable API / timeout keeps the generic reason, never
+      // blocks or throws.
+      const reason = await enrichTrainingFailure(m.trainingJob, m.trainingNamespace, status.reason);
+      const updated = failTraining(model, actor, reason);
       return NextResponse.json({ ok: true, phase: 'failed', status, model: updated, launch: computeLaunchStatus(updated) });
     }
     return NextResponse.json({ ok: true, phase: status.phase, status, model: m, launch: computeLaunchStatus(m, `${status.phase}${status.reason ? ` — ${status.reason}` : ''}`) });

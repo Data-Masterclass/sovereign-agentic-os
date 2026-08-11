@@ -10,9 +10,9 @@ import { getSnapshot } from '@/lib/software/snapshot';
 import { diffTrees, type FileChange } from '@/lib/software/build-changeset';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
 import { cleanTurns } from '@/lib/assistant/turns';
-import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
+import { buildRunError, buildMaxIterations } from '@/lib/software/build-run';
 import { toolCallToLine, gateLineFromStep, committedSummaryLine, type ActivityLine } from '@/lib/software/build-activity';
-import { asChatRunMode, isReadOnlyMode, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, type ChatRunMode } from '@/lib/software/chat-modes';
+import { asChatRunMode, isReadOnlyMode, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_MODE_TOOLS, type ChatRunMode } from '@/lib/software/chat-modes';
 import { appContext } from '@/lib/software/build-brief';
 import { unresolvedDataNeedWarning } from '@/lib/software/data-plan';
 import { resolveGrantedContext } from '@/lib/software/grants-context';
@@ -74,10 +74,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // actionable message ("resolve it in Design") instead of the cryptic empty commit. A warning,
   // not a hard block — the signal is conservative, so a good build is never rejected on it.
   const dataNeedWarning = unresolvedDataNeedWarning(app.epics ?? [], app.grants.data.length);
-  // Per-stage MODEL TIER (Software tab policy): plan (Design) / test / review run on the
-  // REASONING model — the spec-drafting, verification and review reasoning; build (code
-  // GENERATION) runs on STANDARD — the standard model does the bulk file writing and is
-  // NEVER auto-escalated to reasoning. See lib/software/chat-modes.ts modelRoleForMode.
+  // MODEL TIER (Software tab policy, 0.6.107): EVERY stage — plan (Design), Build (code
+  // GENERATION), test and review — runs on the REASONING model. `modelRoleForMode` returns
+  // 'reasoning' for all modes; this is now PASSED to runTabAgent (previously computed but
+  // dropped, so the build silently ran on the platform assistant/standard model — the
+  // "why is a basic feature so hard to build" root cause). See lib/software/chat-modes.ts.
   const model = roleModel(modelRoleForMode(mode));
 
   /**
@@ -110,9 +111,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       // persistence + backward-compat.
       let finalText = '';
       let changes: FileChange[] = [];
-      // The tier this turn ran on for the UI note — starts at the mode's tier and is
-      // upgraded to reasoning if a bounded escalation fires (honestly reflected).
-      let ranRole = modelRoleForMode(mode);
+      // The tier this turn ran on for the UI note — the mode's tier (reasoning for
+      // every Software stage), which is what the run actually executes on now.
+      const ranRole = modelRoleForMode(mode);
       try {
         const result = await runTabAgent({
           user,
@@ -125,22 +126,24 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           // model never has to repeat it (an omitted/empty id is filled in, not 404'd —
           // the `commit({})` → not_found fix) and a mismatched id is rejected loudly.
           boundArgs: { appId: app.id },
-          // Plan/test/review are read-only — enforced by the harness, not just the prompt.
-          toolNames: isReadOnlyMode(mode) ? READ_ONLY_MODE_TOOLS : undefined,
-          // BUILD only: if the STANDARD tier cannot complete its commit (a repeated
-          // tool-shape error), retry ONCE on the reasoning model — bounded, labelled.
-          escalateActModel: mode === 'build' ? roleModel('reasoning') : undefined,
-          onEscalate: ({ tool }) => {
-            ranRole = 'reasoning';
-            send({
-              type: 'activity',
-              line: {
-                tool,
-                text: `standard model could not complete the ${tool} — retrying once on the reasoning model`,
-                isError: false,
-              },
-            });
-          },
+          // EVERY stage (incl. Build code-generation) runs on the reasoning tier. Passing
+          // it here is the fix: runTabAgent used to ignore the computed tier and run on the
+          // platform assistant/standard model. No standard→reasoning escalation is needed
+          // now — the run already starts on the strongest tier.
+          model,
+          // TOOL ALLOWLIST per mode (harness-enforced, not just prompted):
+          //  • plan/test/review — READ_ONLY_MODE_TOOLS (no write).
+          //  • build — BUILD_MODE_TOOLS: WRITE-ONLY (orientation + `commit`), no data
+          //    discovery/query/design. Context is bound/created in Choose Context and frozen
+          //    into the injected schema; the extra data tools only confused the build (0.6.108).
+          //  • any other writable mode — undefined (full surface).
+          toolNames: isReadOnlyMode(mode) ? READ_ONLY_MODE_TOOLS : mode === 'build' ? BUILD_MODE_TOOLS : undefined,
+          // ITERATION BUDGET (0.6.110): BUILD gets a real tool-call-round budget
+          // (softwareBuildMaxSteps, default 24) — a build needs many steps (orient →
+          // get_dataset → several compile-checked commits). Passing nothing let runAgentic
+          // fall back to its bare DEFAULT_MAX_ITERATIONS (6), so a real build ran out of
+          // steps mid-way. Read-only modes stay on the default (undefined ⇒ short + read-only).
+          maxIterations: buildMaxIterations(mode),
           onPlan: (plan) => send({ type: 'plan', text: plan }),
           onStep: (step) => {
             // The verify-before-commit COMPILE GATE runs inside commitToApp, so it is
@@ -169,14 +172,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           scheduleRepairCheck(app.id);
         }
       } catch (e) {
-        if (e instanceof AssistantNotConfiguredError) {
-          content = `(${e.message})`;
-        } else {
-          content =
-            (e as Error).name === 'AbortError'
-              ? '(the build assistant is still warming up — the model did not respond in time. Your message is saved; send it again in a few seconds.)'
-              : '(build assistant offline — LiteLLM unreachable. Your message is saved under the app; the design decisions and data model are captured on this page.)';
-        }
+        // HONEST failure (0.6.110): route the thrown error through the typed classifier
+        // instead of blanket-labelling every non-abort exception "LiteLLM unreachable".
+        // A model 400, a tool/compile/repo error now surfaces its REAL message; only a
+        // genuine gateway outage says unreachable. Client-abort stays silent (no error
+        // event). See lib/software/build-run.ts.
+        const { content: errContent, errorMessage } = buildRunError(e);
+        content = errContent;
+        if (errorMessage) send({ type: 'error', message: errorMessage });
       }
 
       // Persist the running conversation under the app (home of record).

@@ -690,6 +690,35 @@ test('normalizeSpec REFUSES an unsupported algorithm by name — never silently 
   );
 });
 
+test('normalizeSpec REFUSES a classification metric on a regression task (and vice versa) — never silently degrades', () => {
+  // auc on regression is a category error (no ROC for a continuous target) — the exact "Duration
+  // Prediction was configured as classification/auc on a continuous target" bug. Refuse it by name.
+  assert.throws(
+    () => normalizeSpec({
+      sourceDataProductFqn: 'sales.orders', targetColumn: 'duration_days',
+      taskType: 'regression', optimizeMetric: 'auc', features: ['a'],
+    }),
+    (e: any) => e.status === 400 && /does not apply/i.test(e.message) && /rmse/.test(e.message),
+  );
+  // rmse on classification is likewise refused.
+  assert.throws(
+    () => normalizeSpec({
+      sourceDataProductFqn: 'sales.customer_360', targetColumn: 'churned',
+      taskType: 'binary_classification', optimizeMetric: 'rmse', features: ['a'],
+    }),
+    (e: any) => e.status === 400 && /does not apply/i.test(e.message),
+  );
+  // The valid pairings still pass (case-insensitive) and normalize lower-case.
+  assert.equal(
+    normalizeSpec({ sourceDataProductFqn: 'x', targetColumn: 'y', taskType: 'regression', optimizeMetric: 'MAE', features: ['a'] }).optimizeMetric,
+    'mae',
+  );
+  assert.equal(
+    normalizeSpec({ sourceDataProductFqn: 'x', targetColumn: 'y', taskType: 'binary_classification', optimizeMetric: 'f1', features: ['a'] }).optimizeMetric,
+    'f1',
+  );
+});
+
 test('createModel accepts a Simple spec (no algorithm) and refuses an unsupported one', () => {
   _resetModels();
   const m = createModel(

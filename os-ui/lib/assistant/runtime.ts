@@ -336,6 +336,14 @@ export type RunTabAgentInput = {
   /** Progress hook — called once with the plan text as soon as PLAN completes. */
   onPlan?: (plan: string) => void;
   /**
+   * Optional MODEL override (a LiteLLM model_name, e.g. `roleModel('reasoning')`).
+   * When set, BOTH plan and act run on it — the Software Build passes the reasoning
+   * tier here so code GENERATION runs on the strong model, not the platform
+   * assistant/standard default. Unset ⇒ the platform assistant model (unchanged for
+   * every other tab assistant).
+   */
+  model?: string;
+  /**
    * BOUNDED reasoning escalation (opt-in). A LiteLLM model_name (e.g.
    * `roleModel('reasoning')`) the ACT loop switches to ONCE if a tool keeps failing on
    * a shape error. The Software Build stage passes it so a STANDARD-tier build that
@@ -358,7 +366,12 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
   // config tiers as opaque ids the fake caller ignores.
   const injected = input.llm;
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
-  const ctx = modelContext(assistantId);
+  // The model this run ACTUALLY executes on: an explicit override (the Software Build
+  // passes the reasoning tier) wins over the platform assistant default. Tests inject
+  // their own caller, so they keep the opaque exec id. The context window + budget +
+  // output cap all follow the model that runs, not a stale default.
+  const runModel = injected ? assistantId : (input.model ?? assistantId);
+  const ctx = modelContext(runModel);
   const allow = input.toolNames ? new Set(input.toolNames) : null;
   const specs = allow
     ? tabToolSpecs(input.user, input.tab).filter((t) => allow.has(t.name))
@@ -380,10 +393,10 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
     tools: specs,
     callTool,
     llm: injected ?? liteLlmCaller(),
-    planModel: injected ? config.litellmReasoningModel : assistantId,
-    actModel: assistantId,
+    planModel: injected ? config.litellmReasoningModel : runModel,
+    actModel: runModel,
     maxIterations: input.maxIterations,
-    budget: inputBudget(assistantId),
+    budget: inputBudget(runModel),
     maxOutputTokens: ctx.reservedOutput,
     onStep: input.onStep,
     onPlan: input.onPlan,

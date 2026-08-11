@@ -72,6 +72,9 @@ function resolveDataItem(id: string, access: string, user: CurrentUser): Resolve
   if (d.description) lines.push(d.description);
   // Column docs are the governed "gold/current schema" the transparency gate requires —
   // real column names + their plain-language docs, so the agent uses the exact names.
+  // NOTE (0.6.108): ColumnDoc has NO per-column SQL type (only name + description — see
+  // lib/data/dataset-schema.ts); the type surface is the measures line below. Build keeps
+  // `get_dataset` (BUILD_MODE_TOOLS) as the fallback for a column's exact type when needed.
   const cols = (d.columns ?? []).filter((c) => c.name);
   if (cols.length) {
     lines.push('Columns:');

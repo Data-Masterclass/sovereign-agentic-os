@@ -15,7 +15,7 @@ import { DUMMY_ROWS_DEFAULT } from '@/lib/software/data-plan';
  * `suggestedGrants` card (prefer it — this panel only creates).
  *
  * Deliberately decoupled from the Design stage internals (it holds only its own local state
- * and POSTs the resolve route) so a follow-up wave can lift it into its own "Create Context"
+ * and POSTs the resolve route) so a follow-up wave can lift it into its own "Choose Context"
  * stage without untangling it. The host passes the datasets + the appId + an `onResolved`
  * callback (fired with the updated app after each create) so it can reload; nothing else.
  */
@@ -87,10 +87,11 @@ export default function DataPlanPanel({
         ) : null}
       </div>
       <p className="dpp-hint">
-        Each story below needs data. Bind an existing dataset in the “Suggested context” card above when
-        one fits, or create one here — <strong>empty</strong> (schema only) or with realistic{' '}
-        <strong>sample data</strong> so it’s demoable. Created datasets are real, governed, in your
-        personal lane, and clearly labelled sample.
+        Each story below needs data. Prefer to <strong>Link an existing dataset</strong> (the grant card / “Suggested
+        context” above) when one fits and the app only needs to read it. <strong>Create a new dataset</strong> here
+        when the app owns/writes its own data or you want dummy rows to build against — <strong>empty</strong>{' '}
+        (schema only) or with realistic <strong>sample data</strong> so it’s demoable. Created datasets are real,
+        governed, in your personal lane, and clearly labelled sample.
       </p>
       <ul className="dpp-list">
         {datasets.map((d, i) => {

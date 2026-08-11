@@ -36,6 +36,10 @@ spec:
       modelFormat:
         name: {{ $m.format | default "sklearn" }}
       protocolVersion: v2
+      # PIN the runtime — do NOT rely on auto-select (two sklearn runtimes with identical
+      # autoSelect/priority on KServe 0.15; the v1 one CrashLoops the predictor). Mirrors
+      # lib/science/deploy.ts + the sampleModel above. See SCIENCE-KSERVE-FIX.md.
+      runtime: kserve-mlserver
       # The training runtime uploads model.joblib + model-settings.json here.
       storageUri: "s3://mlflow/models/{{ $m.name }}"
       resources:

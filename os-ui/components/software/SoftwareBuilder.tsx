@@ -323,7 +323,7 @@ export default function SoftwareBuilder({
 
   // The live ctx the stage gates/✓ read — REAL app state, never faked.
   const committed = app.pipeline.forgejo === 'ok' || app.repo.seeded.length > 0;
-  // Create Context is RESOLVED when no data-needing story is left ungrounded — i.e. the
+  // Choose Context is RESOLVED when no data-needing story is left ungrounded — i.e. the
   // 0.6.101 build-gate warning is empty (a dataset is bound, or no story implies a data
   // need). This is the SAME honest signal Build reads, so the gate and the stage agree.
   const contextResolved = unresolvedDataNeedWarning(epics, grants.data.length) === '';
@@ -792,13 +792,13 @@ function DefineStage({
   const purposeSet = !!(app.purpose ?? '').trim();
 
   // Structure — the app's spec being shaped: its purpose only. The governed context it may
-  // use is resolved in its own Create Context stage (moved out of Define in 0.6.105).
+  // use is resolved in its own Choose Context stage (moved out of Define in 0.6.105).
   const structure = (
     <>
       <label className="comp-label">Purpose</label>
       <p className="hint" style={{ marginTop: 0 }}>
         What is this app for? One or two sentences — Define App is complete once a purpose is set.
-        The governed context it may use is resolved next, in <strong>Create Context</strong>.
+        The governed context it may use is resolved next, in <strong>Choose Context</strong>.
       </p>
       <textarea
         value={purpose}
@@ -855,10 +855,10 @@ function DefineStage({
   );
 }
 
-/* ─────────────────────────── Create Context ─────────────────────────── */
+/* ─────────────────────────── Choose Context ─────────────────────────── */
 
 /**
- * The Create Context stage (0.6.105) — resolve EVERY context need the app has, in one place:
+ * The Choose Context stage (0.6.105) — resolve EVERY context need the app has, in one place:
  *   • BIND an EXISTING artifact (connections / data / knowledge / files / metrics) via
  *     SoftwareContextGrants — moved here from Define.
  *   • CREATE-NEW a dataset (empty schema, or with AI sample rows) via DataPlanPanel —
@@ -915,10 +915,19 @@ function ContextStage({
         </div>
       ) : null}
 
-      <div className="comp-label">Bind existing context (no raw credentials)</div>
+      {/* Two clearly-labelled paths per data need. One line of guidance up top so the
+          Link-vs-Create decision is legible before the user touches either control. */}
+      <p className="ctx-choice-guide">
+        <strong>Two ways to give this app data.</strong> Pick per need: <strong>Link</strong> when the app just
+        needs to read shared/governed data (it reads it in place, governed) — or <strong>Create new</strong> when
+        the app owns/writes its own data, or you want sample rows to build against.
+      </p>
+
+      <div className="comp-label">1 · Link an existing dataset (bind — no raw credentials)</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Apps consume governed resources — OPA-scoped and run AS you, never raw secrets. Grant the
-        Connections, Data, Knowledge, Files and Metrics this app may use, at folder or item level.
+        The app reads the resource <em>in place</em> — OPA-scoped, run AS you, never raw secrets, never a copy.
+        Best when you only need to <strong>read</strong> shared/governed data. Grant the Connections, Data,
+        Knowledge, Files and Metrics this app may use, at folder or item level.
       </p>
       <SoftwareContextGrants
         value={grants}
@@ -928,20 +937,37 @@ function ContextStage({
         canEdit={canEdit}
       />
 
-      {/* The data-need gate, surfaced honestly here — this is where you resolve it. When a
-          story needs data but nothing is bound, the assistant can propose datasets (the
-          DataPlanPanel renders in the conversation) to create empty or with sample rows. */}
+      {/* 2 · Create a new dataset — the app's OWN dataset. When a story needs data but nothing
+          is bound, the assistant proposes datasets and the DataPlanPanel (rendered in the
+          conversation) creates each one empty or with AI sample rows. */}
+      <div className="comp-label" style={{ marginTop: 18 }}>2 · Create a new dataset (the app’s own)</div>
+      <p className="hint" style={{ marginTop: 0 }}>
+        A fresh governed dataset in your personal lane — <strong>empty</strong> (schema only) or with AI{' '}
+        <strong>sample rows</strong>. Best when the app needs data it will <strong>populate or write</strong>, or
+        you want dummy rows to build against. Ask the assistant on the right and confirm each dataset it proposes.
+      </p>
+
+      {/* The data-need gate, surfaced honestly here — this is where you resolve it. */}
       {dataNeedWarning ? (
-        <div className="build-blocked" style={{ marginTop: 16 }}>
+        <div className="build-blocked" style={{ marginTop: 12 }}>
           <p className="bb-title">This app needs data before it can build.</p>
           <p className="bb-body" style={{ whiteSpace: 'pre-wrap' }}>{dataNeedWarning}</p>
-          <style jsx>{`
-            .build-blocked { border: 1px solid var(--gold-line); background: var(--gold-soft); border-radius: 12px; padding: 16px 18px; }
-            .bb-title { margin: 0 0 8px; font-size: 14.5px; font-weight: 700; line-height: 1.4; }
-            .bb-body { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text); }
-          `}</style>
+          <p className="bb-body" style={{ marginTop: 8 }}>
+            Resolve each need above: <strong>Link</strong> an existing dataset if one fits, or ask the assistant
+            to propose a new one to <strong>Create</strong>.
+          </p>
         </div>
       ) : null}
+
+      <style jsx>{`
+        .ctx-choice-guide {
+          margin: 0 0 16px; font-size: 13px; line-height: 1.6; color: var(--text);
+          border: 1px solid var(--border); background: var(--panel); border-radius: 10px; padding: 12px 14px;
+        }
+        .build-blocked { border: 1px solid var(--gold-line); background: var(--gold-soft); border-radius: 12px; padding: 16px 18px; }
+        .bb-title { margin: 0 0 8px; font-size: 14.5px; font-weight: 700; line-height: 1.4; }
+        .bb-body { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text); }
+      `}</style>
     </>
   );
 
@@ -950,7 +976,7 @@ function ContextStage({
       <StageConversation
         context={
           <>
-            <span className="sc-scope">Create Context</span>
+            <span className="sc-scope">Choose Context</span>
             <span className="sc-hint">resolve every context need — bind existing, or create new</span>
             <span className={`badge ${contextResolved ? 'ok' : 'muted'}`}>{contextResolved ? 'Context resolved' : 'Data need unresolved'}</span>
             <span className="sc-hint sc-spacer">Bind Connections · Data · Knowledge · Files · Metrics, or create the datasets your stories need.</span>
@@ -1022,7 +1048,7 @@ function DesignStage({
   refinements: Improvement[];
   refineHandlers: RefineHandlers;
   storyTitleOf: (storyId: string) => string;
-  /** Navigate to Create Context (present only when it's reachable) — the "looks ready" step. */
+  /** Navigate to Choose Context (present only when it's reachable) — the "looks ready" step. */
   onGoContext?: () => void;
 }) {
   const applyEpics = (sug: SuggestedEpic[]) => onSave(applyEpicsSuggestion(epics, sug));

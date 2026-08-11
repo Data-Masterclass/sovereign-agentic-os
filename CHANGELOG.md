@@ -13,6 +13,138 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.110] — 2026-08-11
+
+### Added
+- **Direct Kaniko digest-build path enabled on the STACKIT self-hosted overlay
+  (A3).** `values.stackit-selfhosted.yaml` now sets `softwareBuild.enabled: true`
+  + `namespace: agentic-apps`, which emits `SOFTWARE_BUILD_SERVICE=true` on os-ui
+  and activates the build-Job RBAC (`templates/software/apps-build.yaml`). os-ui
+  then submits an in-cluster Kaniko `batch/v1` Job per app commit that builds the
+  app's Dockerfile from its Forgejo tree at the commit SHA and pushes a
+  DIGEST-tagged image the runner serves pinned. `HARBOR_REGISTRY` is deliberately
+  **not** overridden — Kaniko pushes to the default `forgejo-http:3000/gitea_admin`
+  registry (nodes already trust it); `kanikoImage` inherits the chart default.
+  This is **additive + reversible**: the Forgejo-Actions build path still ships in
+  every app scaffold and existing live apps keep serving until they next commit;
+  set `softwareBuild.enabled: false` + `helm upgrade` to revert. Requires a
+  `helm upgrade` (chart change) to take effect.
+- **A bounded iteration budget for the Software Build chat (B2).** New
+  `SOFTWARE_BUILD_MAX_STEPS` config knob (default **24**), passed as
+  `maxIterations` to the agent run for **build mode only**. The Build route
+  previously passed none, so `runAgentic` fell back to its bare
+  `DEFAULT_MAX_ITERATIONS` (6) and a real build (orient → `get_dataset` → several
+  compile-checked commits) ran out of steps mid-way. Read-only modes
+  (plan/test/review) stay on the default. The token/budget caps in `runAgentic`
+  still apply.
+
+### Fixed
+- **Build failures no longer all lie as "LiteLLM unreachable" (B1).** The streamed
+  Build run's catch (`app/api/apps/[id]/chat/route.ts`) labelled *every* non-abort
+  exception a gateway outage. It now routes the thrown error through the existing
+  typed `classifyTeamError` (`lib/agents/build/phase-router.ts`) via the new
+  `lib/software/build-run.ts` helper: a model 400, a tool error, a compile error or
+  a repo error surface their **real** message, and only a genuine
+  ECONNREFUSED/ENOTFOUND/fetch-failed says unreachable. The real message is emitted
+  in a `{ type: 'error', message }` SSE event. A client-abort stays silent
+  (as-is), and an unconfigured assistant remains a soft note.
+
+## [os-ui 0.6.109] — 2026-08-11
+
+### Fixed
+- **Science serving deploy no longer CrashLoops on a runtime coin-flip (root-cause).**
+  The generated KServe `InferenceService` (`lib/science/deploy.ts`
+  `buildInferenceService`, sklearn + `protocolVersion: v2`) pinned **no runtime** and
+  relied on auto-selection. On the live cluster (KServe 0.15) TWO
+  ClusterServingRuntimes claim `sklearn` with identical `autoSelect: true, priority: 2`
+  (`kserve-mlserver`, the v2 one we want, and `kserve-sklearnserver`, v1+v2). Auto-select
+  binds the wrong one, whose container args (`--model_name=… --model_dir=…`) land in the
+  exec position → `exec: "--model_name=…": executable file not found` → predictor
+  CrashLoopBackOff → the model hangs "Publishing/Deploying" forever. We now set
+  `spec.predictor.model.runtime: 'kserve-mlserver'` **explicitly** in the generated
+  manifest (and mirrored the pin in the chart's `templates/science/kserve.yaml` sample +
+  `kserve-served-models.yaml`). We do **not** add a duplicate ClusterServingRuntime — the
+  runtime is KServe-shipped; the manifest pin is the real fix. (A)
+- **Honest training-failure surface.** When a training Job fails, the train poll route now
+  best-effort reads the `train` container's pod log tail and folds its **first real error
+  line** (the trainer's own `FATAL` or a Python exception) into the recorded
+  `lastTrainingError`, falling back to the generic k8s Job reason when no log is available.
+  Timeout-boxed + fully guarded — never blocks or throws. So the user sees the actual cause,
+  not "Back-off restarting failed container". (B)
+- **Task↔metric consistency guard.** `normalizeSpec` now refuses a classification metric
+  (auc/f1) on a regression task and a regression metric (rmse/mae/r2) on a classification
+  task with a friendly 400 steering to the right task — instead of the trainer silently
+  degrading `auc` to accuracy on a mislabeled continuous target. The trainer's `score()`
+  now also **fails loudly** when `auc` is requested on a non-binary target (was a silent
+  accuracy fallback). NOTE: the deeper target-column-dtype check (rejecting classification
+  on a clearly-continuous column) needs the column dtype, only available at the
+  Design/assistant grounding layer, and is deferred there. (C)
+- **Training-failure vs deploy-failure honesty.** In the fused "Train & launch", a failed
+  serving deploy now records the model as `deploy_failed` with the real (admin-directed)
+  reason instead of silently resting at `trained`. The user is no longer told "no model
+  artifact was produced" when the artifact exists and only the InferenceService failed —
+  the timeline shows a `publish` (deploy) failure, still retry-able. (D)
+
+## [os-ui 0.6.108] — 2026-08-11
+
+### Changed
+- **Software Build is now WRITE-ONLY over a frozen context (the core fix).** The Build
+  stage used to get the FULL software MCP surface (commit **plus** `list_datasets` /
+  `get_dataset` / `profile_dataset` / `query_data` / `design_*` …). But the granted
+  datasets' schema is ALREADY injected as static "## Granted context", so those extra
+  data-discovery tools only confused the build — the model wandered, re-queried, and
+  dead-ended mid-build on "no granted dataset". New `BUILD_MODE_TOOLS` (in
+  `lib/software/chat-modes.ts`) = the orientation set (`whoami` · `list_capabilities` ·
+  `get_guide` · `list_software` · `get_software` · `read_app_files` · `get_software_status`)
+  **plus `commit`** (the one write door) **plus `get_dataset`** (fallback, see below), and
+  **nothing else**. The chat route (`app/api/apps/[id]/chat/route.ts`) now wires build mode
+  to `BUILD_MODE_TOOLS`; read-only modes keep `READ_ONLY_MODE_TOOLS`. Context is
+  bound/created in **Choose Context**; Build writes code against the frozen schema.
+  - `get_dataset` is kept as a deliberate fallback because `ColumnDoc` carries **no
+    per-column SQL type** (only name + description — `lib/data/dataset-schema.ts`); the
+    injected schema lists column names + docs (only *measures* carry a type), so Build can
+    still fetch a granted dataset's exact column types when needed. Scoped to the app's own
+    grants, so it is not a discovery back-door.
+- **Choose Context: "Link existing" vs "Create new" is now explicit and legible.** The
+  stage presents two clearly-labelled paths per data need — **(1) Link an existing dataset**
+  (bind; the app reads it in place, governed; best for read-only shared data) and **(2)
+  Create a new dataset** (the app's own — empty or with AI sample rows; best when the app
+  owns/writes data or you want dummy rows to build against) — with one line of guidance on
+  when to pick which. Copy/presentation only (`SoftwareBuilder.tsx` ContextStage +
+  `DataPlanPanel.tsx`); no backend change.
+- **MCP + guide parity.** `build_software`'s description, the BUILD directive
+  (`chat-modes.ts` → surfaced via MCP `stageDirective`) and `software.guide.md` now state
+  that context is bound/created in **Choose Context** (`design_software` grants +
+  `create_dataset`) and that **build writes code against the already-granted context — it
+  does not discover or query data**. Tool NAMES unchanged; guidance/description only. (Also
+  corrected the guide's stale "standard tier" note for Build → reasoning.)
+
+### Deferred
+- **"Create a new dataset *based on an existing one*" (derive/copy).** Not shipped: the
+  data-plan resolve path (`SuggestedDataset` → `resolveDataPlanItem`) has no source-id /
+  schema-or-row copy surface, so deriving-from-existing needs real data-copy backend work.
+  The clear Link-vs-Create choice + guidance ship now; derive-from-existing is a follow-up.
+
+## [os-ui 0.6.107] — 2026-08-11
+
+### Fixed
+- **Software Build now runs on the REASONING model (root-cause fix).** The build's
+  code-generation loop was silently running on the platform assistant/**standard** model:
+  `runTabAgent` hardcoded `resolveAssistantModelId()` for both plan and act and **ignored**
+  the per-stage tier `modelRoleForMode` computed in the route. So the 0.6.95 "all stages
+  reasoning" change never reached the actual build — code was written by the weak tier,
+  tripped the compile gate on trivial errors (e.g. TS null-narrowing), and only escalated to
+  reasoning after repeated failures ("passing on to Reasoning Model"). `runTabAgent` now
+  accepts an optional `model`; the Build route passes the reasoning tier; the redundant
+  standard→reasoning escalation is removed. Context window + token budget follow the model
+  that actually runs. Other tab assistants are unchanged (default = platform assistant model).
+
+## [os-ui 0.6.106] — 2026-08-11
+
+### Changed
+- **Software:** renamed the 3rd builder stage `Create Context` → `Choose Context` (label +
+  all prose/docs/tutorials/MCP stage descriptions). Behaviour unchanged; internal id stays `context`.
+
 ## [os-ui 0.6.105] — 2026-08-11
 
 **Software builder stage restructure.** The Software guided flow is re-shaped from five stages (Define · Design · Build · Test · Publish) to five differently-organised stages: **Define App · Design Epics · Create Context · Build App · Test & Publish**, with tighter gating so the flow reflects real progress. Owner-directed.

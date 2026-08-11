@@ -86,6 +86,16 @@ export function buildInferenceService(model: string, rt: DeployRuntime): Record<
         model: {
           modelFormat: { name: 'sklearn' },
           protocolVersion: 'v2',
+          // PIN the serving runtime EXPLICITLY — do NOT let KServe auto-select it. On the live
+          // cluster (KServe 0.15) TWO ClusterServingRuntimes claim `sklearn` with identical
+          // `autoSelect: true, priority: 2`: `kserve-mlserver` (v2-only, correct) and
+          // `kserve-sklearnserver` (v1+v2). Auto-select is a coin-flip that binds
+          // kserve-sklearnserver, whose container args (`--model_name=… --model_dir=…`) land in
+          // the exec position → `exec: "--model_name=…": executable file not found` →
+          // predictor CrashLoopBackOff → the model hangs "Publishing/Deploying" forever. Pinning
+          // kserve-mlserver (the v2 MLServer sklearn runtime the trainer's artifact matches)
+          // removes the ambiguity and is the real fix. See SCIENCE-KSERVE-FIX.md.
+          runtime: 'kserve-mlserver',
           // The training runtime uploaded model.joblib + model-settings.json here.
           storageUri: modelStorageUri(model),
           resources: {

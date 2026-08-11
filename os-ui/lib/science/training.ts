@@ -339,6 +339,28 @@ export async function trainingLogs(
   return res.text.trim().split('\n').slice(-tail).join('\n');
 }
 
+/**
+ * Extract the first REAL error line from a training-log tail — the trainer's own message
+ * (`fail(...)` prints `trainer: FATAL <msg>`) or the last line of a Python traceback — so the
+ * route can record the ACTUAL cause instead of the generic k8s Job reason ("BackoffLimitExceeded"
+ * / "Back-off restarting failed container"). Pure + honest: returns '' when the log has no
+ * recognizable error signal (the caller then keeps the k8s reason). Prefers the trainer's own
+ * `FATAL`/`ERROR:` marker, else the final Python exception line.
+ */
+export function firstTrainerError(log: string): string {
+  const lines = log.split('\n').map((l) => l.trim()).filter(Boolean);
+  // The trainer's own honest failure marker takes priority (`trainer: FATAL <msg>`).
+  for (const l of lines) {
+    const m = l.match(/trainer:\s*(?:FATAL|ERROR:?)\s*(.+)$/i);
+    if (m) return m[1].trim();
+  }
+  // Otherwise the final Python exception line (e.g. "ValueError: ...") from a traceback.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^[A-Za-z_][\w.]*(Error|Exception|Warning):\s+/.test(lines[i])) return lines[i];
+  }
+  return '';
+}
+
 /** Read a training Job's status (poll). Never throws — an unreachable API is `unknown`. */
 export async function readTrainingJob(
   jobName: string,

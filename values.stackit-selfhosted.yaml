@@ -383,6 +383,22 @@ softwareRunner:
   runnerImage: "traefik/whoami:latest"   # teaching default; a built app overrides via runImage
   # ingressClass / tlsIssuer fall back to the ingress.* values (nginx / letsencrypt-prod).
 
+# Software DIRECT BUILD SERVICE (deploy redesign Phase B) — ON for STACKIT. os-ui
+# submits an in-cluster Kaniko batch/v1 Job per app commit that builds the app's
+# Dockerfile from its Forgejo git tree at the commit SHA and pushes a DIGEST-tagged
+# image the runner then serves pinned (no :latest roll dance). Flipping `enabled`
+# emits SOFTWARE_BUILD_SERVICE=true on os-ui + activates the build-Job RBAC
+# (templates/software/apps-build.yaml). ADDITIVE + REVERSIBLE: the Forgejo Actions
+# path still ships in every app scaffold and existing live apps keep serving until
+# they next commit; set `enabled: false` + `helm upgrade` to revert.
+#
+# HARBOR_REGISTRY is deliberately NOT overridden — Kaniko pushes to the default
+# in-cluster forgejo-http:3000/gitea_admin registry (nodes already trust it; the
+# runner pulls fine). `kanikoImage` inherits the chart default (pinned executor).
+softwareBuild:
+  enabled: true
+  namespace: agentic-apps
+
 queryTool:
   image:
     repository: ghcr.io/aborek/sovereign-os/query-tool

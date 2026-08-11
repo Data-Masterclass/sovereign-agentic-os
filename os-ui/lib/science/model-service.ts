@@ -273,6 +273,27 @@ const SUPPORTED_ALGORITHMS: Record<TaskType, string[]> = {
   clustering: ['kmeans'],
 };
 
+/**
+ * The metrics that make sense for each task family — the honest metric↔task pairing the trainer
+ * can actually compute. A classification metric (auc/f1/…) on a REGRESSION run is a category error
+ * (there is no ROC curve for a continuous target); a regression metric (rmse/…) on a CLASSIFICATION
+ * run is likewise wrong. Enforced by {@link normalizeSpec} so a mismatched request is refused up
+ * front (400) rather than silently degraded to the wrong number by the trainer's `score()` fallback.
+ *
+ * NOTE: the deeper check — that the TARGET COLUMN's dtype matches the task (e.g. rejecting
+ * classification on a continuous `duration_days`) — needs the column dtype, which is only available
+ * at the Design/assistant grounding layer (datasetColumnsTyped), not in this pure node-test-safe
+ * spine. That dtype-aware guard is deferred to the grounding layer; here we enforce the metric↔task
+ * consistency that IS decidable from the spec alone.
+ */
+const TASK_METRICS: Record<TaskType, string[]> = {
+  binary_classification: ['auc', 'roc_auc', 'f1', 'accuracy'],
+  multiclass_classification: ['f1', 'accuracy'],
+  regression: ['rmse', 'mae', 'mse', 'r2'],
+  forecast: ['rmse', 'mae', 'mse', 'r2'],
+  clustering: ['silhouette'],
+};
+
 /** The default learner + optimize metric for a task (the real learner the trainer runs). */
 function taskDefaults(task: TaskType): { algorithm: string; optimizeMetric: string } {
   switch (task) {
@@ -311,6 +332,22 @@ export function normalizeSpec(input: ModelSpecInput): ModelSpec {
   if (!(split > 0 && split < 1)) {
     throw withStatus(new Error('trainTestSplit must be a fraction in (0,1)'), 400);
   }
+  // Metric↔task consistency: a classification metric (auc/…) on a regression run — or vice versa —
+  // is refused by name, never silently degraded (the trainer's score() would otherwise fall back to
+  // the wrong metric, e.g. auc→accuracy on a mislabeled continuous target). Omit it to get the
+  // task's honest default.
+  const optimizeMetric = input.optimizeMetric?.trim().toLowerCase() || defaults.optimizeMetric;
+  const okMetrics = TASK_METRICS[task];
+  if (!okMetrics.includes(optimizeMetric)) {
+    throw withStatus(
+      new Error(
+        `Metric "${optimizeMetric}" does not apply to a ${task} model. Valid: ${okMetrics.join(', ')}. ` +
+          `(auc/f1 are classification metrics; rmse/mae/r2 are regression metrics — pick the task that matches ` +
+          `your target, e.g. use regression for a continuous target, or omit the metric to use "${defaults.optimizeMetric}".)`,
+      ),
+      400,
+    );
+  }
   return {
     sourceDataProductFqn: input.sourceDataProductFqn,
     sourceDatasetId: input.sourceDatasetId,
@@ -319,7 +356,7 @@ export function normalizeSpec(input: ModelSpecInput): ModelSpec {
     algorithm,
     features: input.features,
     trainTestSplit: split,
-    optimizeMetric: input.optimizeMetric?.trim() || defaults.optimizeMetric,
+    optimizeMetric,
   };
 }
 

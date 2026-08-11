@@ -14,10 +14,10 @@ const software: TutorialDef = {
   hook: {
     illustration: 'build',
     title: 'Build software by chatting — governed end to end',
-    body: 'Five stages — Define App · Design Epics · Create Context · Build App · Test & Publish. State a purpose, shape EPICs and user stories, resolve the governed context each story needs, then watch the build agent work live: the plan first, then one honest line per action, every commit landing in a sovereign in-cluster repo. Preview is yours alone; going live is a governed Builder review.',
+    body: 'Five stages — Define App · Design Epics · Choose Context · Build App · Test & Publish. State a purpose, shape EPICs and user stories, resolve the governed context each story needs, then watch the build agent work live: the plan first, then one honest line per action, every commit landing in a sovereign in-cluster repo. Preview is yours alone; going live is a governed Builder review.',
     byRole: {
       builder: {
-        body: 'Five stages — Define App · Design Epics · Create Context · Build App · Test & Publish. Your lane adds the gates: flip to the Developer view for the raw code panel, expand the raw tool I/O behind every activity line, and review deploy requests — security scan, granted resources, the diff — before anything goes live.',
+        body: 'Five stages — Define App · Design Epics · Choose Context · Build App · Test & Publish. Your lane adds the gates: flip to the Developer view for the raw code panel, expand the raw tool I/O behind every activity line, and review deploy requests — security scan, granted resources, the diff — before anything goes live.',
       },
     },
   },
@@ -26,7 +26,7 @@ const software: TutorialDef = {
     {
       illustration: 'build',
       title: 'Define App — its purpose',
-      body: '"Create new software app" needs only a name — a sovereign in-cluster Forgejo repo is provisioned, and the build agent infers UI/API from what it actually builds. State the purpose in a sentence or two and "Save purpose". Define App is complete once a purpose is set; the governed context the app may use is resolved next, in Create Context.',
+      body: '"Create new software app" needs only a name — a sovereign in-cluster Forgejo repo is provisioned, and the build agent infers UI/API from what it actually builds. State the purpose in a sentence or two and "Save purpose". Define App is complete once a purpose is set; the governed context the app may use is resolved next, in Choose Context.',
     },
     {
       illustration: 'document',
@@ -35,7 +35,7 @@ const software: TutorialDef = {
     },
     {
       illustration: 'document',
-      title: 'Create Context — resolve every data need',
+      title: 'Choose Context — resolve every data need',
       body: 'Every context need in one place. Bind the governed context the app may use — Connections, Data, Knowledge, Files, Metrics — at Read / Read+propose / Read+write, no raw credentials ever. For stories that need data with nothing bound, the assistant proposes datasets you can create empty (schema only) or with realistic sample rows, so the story is demoable. Data-needing stories can\'t build until this is resolved.',
     },
     {
@@ -61,14 +61,14 @@ const software: TutorialDef = {
       sandboxAnchor: ANCHORS.software.sandbox,
       route: '/software',
       title: 'Start from your software',
-      body: 'The list shows All · My · Domain · Company Software. "Create new software app" asks only for a name — "Create & build" scaffolds a sovereign Forgejo repo and drops you into the five-stage flow (Define App · Design Epics · Create Context · Build App · Test & Publish). Everything starts Personal.',
+      body: 'The list shows All · My · Domain · Company Software. "Create new software app" asks only for a name — "Create & build" scaffolds a sovereign Forgejo repo and drops you into the five-stage flow (Define App · Design Epics · Choose Context · Build App · Test & Publish). Everything starts Personal.',
     },
     {
       anchor: ANCHORS.software.define,
       sandboxAnchor: ANCHORS.software.sandbox,
       route: '/software',
       title: 'Define the app',
-      body: 'Write the purpose in your own words and "Save purpose" — Define App is complete once a purpose is set. The stage assistant can sharpen the purpose; you confirm every apply. The governed context the app may use is resolved next, in Create Context.',
+      body: 'Write the purpose in your own words and "Save purpose" — Define App is complete once a purpose is set. The stage assistant can sharpen the purpose; you confirm every apply. The governed context the app may use is resolved next, in Choose Context.',
     },
     {
       anchor: ANCHORS.software.design,
@@ -81,7 +81,7 @@ const software: TutorialDef = {
       anchor: ANCHORS.software.context,
       sandboxAnchor: ANCHORS.software.sandbox,
       route: '/software',
-      title: 'Create Context — resolve every data need',
+      title: 'Choose Context — resolve every data need',
       body: 'Resolve every context need in one place. Bind existing governed context (Connections, Data, Knowledge, Files, Metrics) at Read / Read+propose / Read+write — no raw credentials. For a story that needs data with nothing bound, the assistant proposes datasets you can create empty (schema only) or with realistic sample rows. A data-needing story can\'t build until its context is resolved.',
     },
     {

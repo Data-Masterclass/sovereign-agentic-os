@@ -68,11 +68,16 @@ spec:
       modelFormat:
         name: {{ $k.sampleModel.format }}
       # v2 (Open Inference Protocol): the OS UI's predict tool calls
-      # `/v2/models/churn_model/infer` (lib/science/churn.ts), so auto-select the
-      # v2-capable kserve-mlserver runtime; the artifact's model-settings.json
-      # names the model `churn_model` to match. The v1 sklearnserver default
-      # (`--model_name=<isvc name>`, v1 paths only) 404s every UI call.
+      # `/v2/models/churn_model/infer` (lib/science/churn.ts); the artifact's
+      # model-settings.json names the model `churn_model` to match.
       protocolVersion: v2
+      # PIN the runtime — do NOT rely on auto-select. KServe 0.15 ships TWO sklearn
+      # runtimes with identical autoSelect/priority (kserve-mlserver v2 +
+      # kserve-sklearnserver v1); auto-select can bind the v1 one, whose
+      # `--model_name=<isvc>` flag lands in the exec position and CrashLoops the
+      # predictor. Pinning kserve-mlserver (v2 MLServer) removes the ambiguity —
+      # mirrors lib/science/deploy.ts buildInferenceService. See SCIENCE-KSERVE-FIX.md.
+      runtime: kserve-mlserver
       # Trained model artifact (logged via MLflow) in object storage.
       storageUri: {{ $k.sampleModel.storageUri | quote }}
       resources:

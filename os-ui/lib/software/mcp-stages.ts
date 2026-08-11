@@ -4,7 +4,7 @@
 
 /**
  * THE STAGED MCP SURFACE (pure) — how the Platform MCP mirrors the UI's five-stage
- * Software flow (Define App → Design Epics → Create Context → Build App → Test & Publish,
+ * Software flow (Define App → Design Epics → Choose Context → Build App → Test & Publish,
  * 0.6.105) for an EXTERNAL agent.
  *
  * An external agent (Claude / Codex) IS the model. So the Build and Test tools do not

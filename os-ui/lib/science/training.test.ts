@@ -13,6 +13,7 @@ import {
   submitTrainingJob,
   readTrainingJob,
   trainingLogs,
+  firstTrainerError,
   type K8sClient,
   type K8sTextClient,
   type TrainingRuntime,
@@ -233,4 +234,24 @@ test('trainingLogs is honest when there is no pod / no log / unreachable API', a
 
   const offlinePods: K8sClient = async () => ({ status: 0, body: {} });
   assert.equal(await trainingLogs('j', 'ns', 30, offlinePods, anyLogs), '');
+});
+
+test('firstTrainerError surfaces the trainer FATAL / exception line, else empty', () => {
+  // The trainer's own honest marker (`trainer: FATAL <msg>`) wins.
+  const fatal = [
+    'trainer: model=duration task=binary_classification',
+    'Traceback (most recent call last):',
+    'trainer: FATAL this runtime trains supervised models only (a TARGET_COLUMN is required)',
+  ].join('\n');
+  assert.match(firstTrainerError(fatal), /supervised models only/);
+  // No trainer marker → the final Python exception line.
+  const trace = [
+    'Traceback (most recent call last):',
+    '  File "/app/train.py", line 146, in main',
+    'ValueError: multiclass format is not supported',
+  ].join('\n');
+  assert.equal(firstTrainerError(trace), 'ValueError: multiclass format is not supported');
+  // No recognizable error signal → '' (caller keeps the k8s reason).
+  assert.equal(firstTrainerError('trainer: wrote artifact to /artifact\nupload complete'), '');
+  assert.equal(firstTrainerError(''), '');
 });

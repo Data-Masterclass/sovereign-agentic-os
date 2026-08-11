@@ -296,6 +296,13 @@ export const config = {
   softwareBuildEnabled: env('SOFTWARE_BUILD_SERVICE', '') === 'true',
   softwareBuildNamespace: env('SOFTWARE_BUILD_NAMESPACE', 'agentic-apps'),
   kanikoImage: env('KANIKO_IMAGE', 'gcr.io/kaniko-project/executor:v1.23.2'),
+  // Software BUILD chat: max PLAN→ACT tool-call rounds for a build turn (only). A
+  // build legitimately needs many steps (orient → get_dataset → several commits, each
+  // re-parsed + compile-checked), yet the chat route passed no cap, so runAgentic used
+  // its bare DEFAULT_MAX_ITERATIONS (6) and a real build ran out of steps mid-way. 24
+  // gives it room while staying bounded — the token/budget caps in runAgentic still
+  // apply. Read-only modes (plan/test/review) keep the default (short + read-only).
+  softwareBuildMaxSteps: Number(env('SOFTWARE_BUILD_MAX_STEPS', '')) || 24,
 
   // Hermes autonomous runtime (Layer 1, opt-in). GATED OFF by default — the chart
   // sets HERMES_ENABLED=true only when `hermes.enabled` is on (never in base/kind).

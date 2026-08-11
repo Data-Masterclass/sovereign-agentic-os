@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_PRINCIPLES, CODE_STRUCTURE_CONVENTION, DATA_PLANE_CONTRACT } from './chat-modes.ts';
+import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_MODE_TOOLS, BUILD_PRINCIPLES, CODE_STRUCTURE_CONVENTION, DATA_PLANE_CONTRACT } from './chat-modes.ts';
 
 test('tier policy: ALL software stages run on the reasoning model', () => {
   assert.equal(modelRoleForMode('plan'), 'reasoning');
@@ -37,6 +37,22 @@ test('READ_ONLY_MODE_TOOLS: no write/mutating tool in the allowlist', () => {
     assert.ok(!/commit|preview|deploy|create|delete|promote/i.test(t), `${t} is read-only`);
   }
   assert.ok(READ_ONLY_MODE_TOOLS.includes('read_app_files'), 'test/review can ground themselves in the real files');
+});
+
+test('BUILD_MODE_TOOLS: WRITE-ONLY over frozen context — has commit + orientation, EXCLUDES data discovery/query (0.6.108)', () => {
+  // The orientation set (READ_ONLY_MODE_TOOLS) is fully included so Build can read its own files/status.
+  for (const t of READ_ONLY_MODE_TOOLS) assert.ok(BUILD_MODE_TOOLS.includes(t), `build keeps orientation tool ${t}`);
+  // The one write door + the ability to read its own committed files.
+  assert.ok(BUILD_MODE_TOOLS.includes('commit'), 'build can commit (the ONE write door)');
+  assert.ok(BUILD_MODE_TOOLS.includes('read_app_files'), 'build can read its own committed files');
+  // The whole point of the fix: NO data discovery / query / design tools in Build — context is
+  // bound/created in Choose Context and frozen into the injected schema.
+  for (const forbidden of ['list_datasets', 'profile_dataset', 'query_data', 'design_software', 'create_dataset', 'start_preview', 'request_deploy']) {
+    assert.ok(!BUILD_MODE_TOOLS.includes(forbidden), `build must NOT have ${forbidden}`);
+  }
+  // get_dataset is the deliberate fallback (ColumnDoc carries no per-column type — the injected
+  // schema has names+descriptions only, so Build can still fetch a granted dataset's exact types).
+  assert.ok(BUILD_MODE_TOOLS.includes('get_dataset'), 'build keeps get_dataset as the column-type fallback');
 });
 
 test('modeDirective: each mode gets its own honest directive; build names the appId', () => {

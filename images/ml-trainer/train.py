@@ -105,7 +105,18 @@ def score(kind, estimator, X, y, metric_name):
     )
 
     if kind == "classification":
-        if metric_name == "auc" and len(np.unique(y)) == 2:
+        if metric_name == "auc":
+            # AUC is a BINARY metric. If the target is not binary, the model was configured wrong
+            # (e.g. a continuous target trained as classification). Fail LOUDLY with an actionable
+            # message instead of silently returning accuracy on a mislabeled target — the honest
+            # cause the train route now surfaces to the user (Bug 2b).
+            if len(np.unique(y)) != 2:
+                fail(
+                    f"optimize metric 'auc' needs a binary target, but the target has "
+                    f"{len(np.unique(y))} distinct values — this looks like a continuous or "
+                    "multiclass target trained as binary classification. Use regression for a "
+                    "continuous target (metric rmse/mae), or f1/accuracy for multiclass."
+                )
             proba = estimator.predict_proba(X)[:, 1]
             return "auc", float(roc_auc_score(y, proba))
         if metric_name == "f1":

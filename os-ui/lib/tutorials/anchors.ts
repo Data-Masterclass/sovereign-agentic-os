@@ -80,7 +80,7 @@ export const ANCHORS = {
     sandbox: 'software.sandbox',
     define: 'software.define',
     design: 'software.design',
-    // Create Context (0.6.105) — the new stage where the app's context is resolved.
+    // Choose Context (0.6.105) — the new stage where the app's context is resolved.
     context: 'software.context',
     build: 'software.build',
     // Test replaces the old Preview stage; Publish replaces Operate. The anchor

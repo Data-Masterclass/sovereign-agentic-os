@@ -3,7 +3,7 @@
  */
 /**
  * Tests for the Software stage model (components/software/stages.ts) — the pure
- * Define App · Design Epics · Create Context · Build App · Test & Publish path: its
+ * Define App · Design Epics · Choose Context · Build App · Test & Publish path: its
  * ids, gates and ✓ conditions.
  */
 import { test } from 'node:test';
@@ -31,7 +31,7 @@ test('stages: the five ids are define · design · context · build · publish, 
   );
   assert.deepEqual(
     SW_STAGES.map((s) => s.title),
-    ['Define App', 'Design Epics', 'Create Context', 'Build App', 'Test & Publish'],
+    ['Define App', 'Design Epics', 'Choose Context', 'Build App', 'Test & Publish'],
   );
 });
 
@@ -42,15 +42,15 @@ test('stages: Define App is always reachable; Design Epics needs a purpose', () 
   assert.equal(canEnter(SW_STAGES, 'design', withPurpose), true);
 });
 
-test('stages: Create Context is enterable once Design has epics/stories', () => {
+test('stages: Choose Context is enterable once Design has epics/stories', () => {
   const withPurpose = { ...base, hasPurpose: true };
-  // A purpose alone is not enough — Create Context needs a backlog to resolve context for.
+  // A purpose alone is not enough — Choose Context needs a backlog to resolve context for.
   assert.equal(canEnter(SW_STAGES, 'context', withPurpose), false);
   const withDesign = { ...withPurpose, hasDesign: true };
   assert.equal(canEnter(SW_STAGES, 'context', withDesign), true);
 });
 
-test('stages: Build App is gated on Design (a specced story) AND Create Context (resolved)', () => {
+test('stages: Build App is gated on Design (a specced story) AND Choose Context (resolved)', () => {
   // Empty design ⇒ can't Build, even with a purpose and resolved context.
   const noDesign = { ...base, hasPurpose: true, hasDesign: false, contextResolved: true };
   assert.equal(canEnter(SW_STAGES, 'build', noDesign), false);
@@ -81,7 +81,7 @@ test('stages: Design Epics ✓ = every story has a spec (designSpecComplete), no
   assert.equal(isSatisfied(SW_STAGES, 'design', { ...base, designSpecComplete: true }), true);
 });
 
-test('stages: Create Context ✓ = context resolved; Build App ✓ = committed; Test & Publish ✓ = live', () => {
+test('stages: Choose Context ✓ = context resolved; Build App ✓ = committed; Test & Publish ✓ = live', () => {
   assert.equal(isSatisfied(SW_STAGES, 'context', { ...base, contextResolved: true }), true);
   assert.equal(isSatisfied(SW_STAGES, 'build', { ...base, committed: true }), true);
   assert.equal(isSatisfied(SW_STAGES, 'publish', { ...base, live: true }), true);

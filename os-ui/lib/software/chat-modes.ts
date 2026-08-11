@@ -62,6 +62,24 @@ export const READ_ONLY_MODE_TOOLS = [
 ];
 
 /**
+ * The BUILD tool allowlist — WRITE-ONLY over a FROZEN context (0.6.108). Build writes code
+ * against the schema that Choose Context already froze into the static "## Granted context"
+ * block; it does NOT discover or query data. So Build gets the orientation set
+ * (READ_ONLY_MODE_TOOLS) PLUS the ONE write door `commit` — and DELIBERATELY excludes the
+ * data-discovery/query/design surface (`list_datasets` / `profile_dataset` / `query_data` /
+ * `design_software` / `create_dataset` / `start_preview` / `request_deploy`). Those live in
+ * Choose Context, where context is bound/created — handing them to Build made the model wander,
+ * re-query and dead-end mid-build on "no granted dataset" instead of just writing the code.
+ *
+ * `get_dataset` is KEPT here as a deliberate fallback: the injected column schema carries
+ * names + descriptions but NO per-column SQL type (ColumnDoc has no type field — see
+ * lib/data/dataset-schema.ts; only measures carry a type), so the build model can still fetch
+ * a granted dataset's full detail when it needs the exact column type. It is scoped to the
+ * app's own grants, so this is not a discovery back-door.
+ */
+export const BUILD_MODE_TOOLS = [...READ_ONLY_MODE_TOOLS, 'get_dataset', 'commit'];
+
+/**
  * BUILD PRINCIPLES — five one-line rules, aligned 1:1 with the five TEST dimensions
  * (Functionality · User Experience · Code Structure · Security · Documentation). Injected
  * into the BUILD and Design spec-drafting prompts so what we build is what we later verify.
@@ -179,7 +197,13 @@ export function modeDirective(mode: ChatRunMode, appId: string): string[] {
       ];
     case 'build':
       return [
-        '## Mode: BUILD (execute end-to-end)',
+        '## Mode: BUILD (write code against the frozen granted context)',
+        'Context (datasets, knowledge, metrics, connections) was bound or created earlier in',
+        'CHOOSE CONTEXT; its schema is already injected below as "## Granted context". BUILD',
+        'WRITES CODE against that frozen schema — do NOT discover, list or query data here (those',
+        'tools live in Choose Context, not Build). Missing a granted dataset? Say so in one line',
+        'and resolve it in Choose Context; never invent an id or wander looking for data.',
+        '',
         `To build: generate the files, then call \`commit\` with THIS appId (${appId}) to`,
         'write them (re-parsed on every commit), `start_preview` for the private sandbox, and',
         '`request_deploy` to open the Builder review gate. When you make a design decision or',

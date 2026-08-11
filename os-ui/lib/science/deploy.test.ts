@@ -43,6 +43,10 @@ test('buildInferenceService mirrors the chart shape (RawDeployment, v2, mlserver
   assert.equal(isvc.spec.predictor.serviceAccountName, 'kserve-sa');
   assert.equal(model.protocolVersion, 'v2');
   assert.equal(model.modelFormat.name, 'sklearn');
+  // Runtime is PINNED (not auto-selected): the cluster has two sklearn runtimes with
+  // identical autoSelect/priority, so relying on auto-select binds the wrong (v1) one
+  // and CrashLoops the predictor. Pinning kserve-mlserver removes the ambiguity.
+  assert.equal(model.runtime, 'kserve-mlserver');
   // Serves EXACTLY where the training runtime uploaded the artifact.
   assert.equal(model.storageUri, 's3://mlflow/models/lead_scoring');
   assert.ok(model.resources.limits.cpu, 'CPU-bounded by construction');
