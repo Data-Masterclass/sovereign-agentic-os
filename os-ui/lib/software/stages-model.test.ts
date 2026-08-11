@@ -3,7 +3,8 @@
  */
 /**
  * Tests for the Software stage model (components/software/stages.ts) — the pure
- * Define · Design · Build · Test · Publish path: its ids, gates and ✓ conditions.
+ * Define App · Design Epics · Create Context · Build App · Test & Publish path: its
+ * ids, gates and ✓ conditions.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,64 +16,85 @@ const base: SwCtx = {
   hasPurpose: false,
   hasDesign: false,
   designSpecComplete: false,
+  contextResolved: false,
   committed: false,
+  anyStoryBuilt: false,
   previewed: false,
   deployed: false,
   live: false,
 };
 
-test('stages: the five ids are Define · Design · Build · Test · Publish, in order', () => {
+test('stages: the five ids are define · design · context · build · publish, in order', () => {
   assert.deepEqual(
     SW_STAGES.map((s) => s.id),
-    ['define', 'design', 'build', 'test', 'publish'],
+    ['define', 'design', 'context', 'build', 'publish'],
   );
   assert.deepEqual(
     SW_STAGES.map((s) => s.title),
-    ['Define', 'Design', 'Build', 'Test', 'Publish'],
+    ['Define App', 'Design Epics', 'Create Context', 'Build App', 'Test & Publish'],
   );
 });
 
-test('stages: Define is always reachable; Design/Build need a purpose', () => {
+test('stages: Define App is always reachable; Design Epics needs a purpose', () => {
   assert.equal(canEnter(SW_STAGES, 'define', base), true);
   assert.equal(canEnter(SW_STAGES, 'design', base), false);
-  assert.equal(canEnter(SW_STAGES, 'build', base), false);
   const withPurpose = { ...base, hasPurpose: true };
   assert.equal(canEnter(SW_STAGES, 'design', withPurpose), true);
-  assert.equal(canEnter(SW_STAGES, 'build', withPurpose), true);
 });
 
-test('stages: Test and Publish need a committed repo', () => {
+test('stages: Create Context is enterable once Design has epics/stories', () => {
   const withPurpose = { ...base, hasPurpose: true };
-  assert.equal(canEnter(SW_STAGES, 'test', withPurpose), false);
-  assert.equal(canEnter(SW_STAGES, 'publish', withPurpose), false);
-  const committed = { ...withPurpose, committed: true };
-  assert.equal(canEnter(SW_STAGES, 'test', committed), true);
-  assert.equal(canEnter(SW_STAGES, 'publish', committed), true);
+  // A purpose alone is not enough — Create Context needs a backlog to resolve context for.
+  assert.equal(canEnter(SW_STAGES, 'context', withPurpose), false);
+  const withDesign = { ...withPurpose, hasDesign: true };
+  assert.equal(canEnter(SW_STAGES, 'context', withDesign), true);
 });
 
-test('stages: Define ✓ = purpose set', () => {
+test('stages: Build App is gated on Design (a specced story) AND Create Context (resolved)', () => {
+  // Empty design ⇒ can't Build, even with a purpose and resolved context.
+  const noDesign = { ...base, hasPurpose: true, hasDesign: false, contextResolved: true };
+  assert.equal(canEnter(SW_STAGES, 'build', noDesign), false);
+  // Design exists but context is not resolved yet → Build is not reachable.
+  const unresolved = { ...base, hasPurpose: true, hasDesign: true, contextResolved: false };
+  assert.equal(canEnter(SW_STAGES, 'build', unresolved), false);
+  // Both present → Build is reachable.
+  const ready = { ...base, hasPurpose: true, hasDesign: true, contextResolved: true };
+  assert.equal(canEnter(SW_STAGES, 'build', ready), true);
+});
+
+test('stages: Test & Publish is blocked until ≥1 story is actually built (committed code)', () => {
+  const buildable = { ...base, hasPurpose: true, hasDesign: true, contextResolved: true };
+  // A committed/scaffolded repo alone is NOT enough — no story has been built yet.
+  assert.equal(canEnter(SW_STAGES, 'publish', { ...buildable, committed: true, anyStoryBuilt: false }), false);
+  // Once a story is built (real code committed for it) Test & Publish opens.
+  assert.equal(canEnter(SW_STAGES, 'publish', { ...buildable, committed: true, anyStoryBuilt: true }), true);
+});
+
+test('stages: Define App ✓ = purpose set', () => {
   assert.equal(isSatisfied(SW_STAGES, 'define', base), false);
   assert.equal(isSatisfied(SW_STAGES, 'define', { ...base, hasPurpose: true }), true);
 });
 
-test('stages: Design ✓ = every story has a spec (designSpecComplete), not merely a backlog', () => {
+test('stages: Design Epics ✓ = every story has a spec (designSpecComplete), not merely a backlog', () => {
   // A backlog with stories but no specs is NOT design-complete.
   assert.equal(isSatisfied(SW_STAGES, 'design', { ...base, hasDesign: true, designSpecComplete: false }), false);
   assert.equal(isSatisfied(SW_STAGES, 'design', { ...base, designSpecComplete: true }), true);
 });
 
-test('stages: Build ✓ = committed; Test ✓ = previewed; Publish ✓ = live', () => {
+test('stages: Create Context ✓ = context resolved; Build App ✓ = committed; Test & Publish ✓ = live', () => {
+  assert.equal(isSatisfied(SW_STAGES, 'context', { ...base, contextResolved: true }), true);
   assert.equal(isSatisfied(SW_STAGES, 'build', { ...base, committed: true }), true);
-  assert.equal(isSatisfied(SW_STAGES, 'test', { ...base, previewed: true }), true);
   assert.equal(isSatisfied(SW_STAGES, 'publish', { ...base, live: true }), true);
   // None satisfied on a bare ctx.
+  assert.equal(isSatisfied(SW_STAGES, 'context', base), false);
   assert.equal(isSatisfied(SW_STAGES, 'build', base), false);
-  assert.equal(isSatisfied(SW_STAGES, 'test', base), false);
   assert.equal(isSatisfied(SW_STAGES, 'publish', base), false);
 });
 
-test('stages: no legacy ids remain (preview/operate are gone)', () => {
+test('stages: no legacy stage ids remain (preview/operate/test are gone from the flow)', () => {
   const ids = SW_STAGES.map((s) => s.id as string);
   assert.equal(ids.includes('preview'), false);
   assert.equal(ids.includes('operate'), false);
+  // 'test' is no longer a standalone stage — it merged into 'publish' (Test & Publish).
+  assert.equal(ids.includes('test'), false);
 });

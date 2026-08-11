@@ -52,30 +52,35 @@ import { normalizeImprovement, type Improvement } from './improvements.ts';
 export const PLATFORM_MCP_PRINCIPAL = 'platform-mcp';
 
 /**
- * The MCP tool surface — parity with the UI's five governed stages:
- *   Define  → create_software
- *   Design  → design_software  (author the epic/story/spec tree)
- *   Build   → build_software   (unit-scoped, design-before-build gated, reasoning tier)
- *   Test    → verify_software  (5-dimension verification → dimension-tagged refinements)
- *   Publish → request_deploy / decide_deploy / promote (governed, role-gated)
+ * The MCP tool surface — parity with the UI's five governed stages (0.6.105 restructure):
+ *   Define App     → create_software
+ *   Design Epics   → design_software  (author the epic/story/spec tree)
+ *   Create Context → design_software  (bind existing via `grants`) + create_dataset / data-plan
+ *                    for CREATE-NEW datasets — the data-need gate is resolved here. NOTE:
+ *                    Create Context has no dedicated MCP verb in this wave; it is expressed
+ *                    through `design_software` (grants) — a fuller "resolve_context" verb is a
+ *                    deliberate FOLLOW-UP.
+ *   Build App      → build_software   (unit-scoped, design-before-build + data-need gated)
+ *   Test & Publish → verify_software (5-dimension verification → refinements), then
+ *                    request_deploy / decide_deploy / promote (governed, role-gated)
  *
- * The STAGED tools are the advertised default path — an external agent walks the
- * identical governed flow to the UI. `commit` remains as a DEVELOPER-MODE escape hatch
- * (raw file write, role-gated to builder/admin) for the deliberate exception.
+ * Tool NAMES are stable across the 0.6.105 rename — only the stage LABELS/descriptions moved.
+ * The STAGED tools are the advertised default path — an external agent walks the identical
+ * governed flow to the UI. `commit` remains as a DEVELOPER-MODE escape hatch (raw file write,
+ * role-gated to builder/admin) for the deliberate exception.
  */
 export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boolean }[] = [
-  // ---- Define ----
-  { name: 'create_software', description: "STAGE 1 · DEFINE. Create a new governed app from a template (default `sovereign-app` — the Sovereign standard app: AppShell chrome, OS-delegated identity, domain-scoped data helpers, an admin section and the MCP top-bar link already wired; epics then add business features). Other templates: 'website', 'api-service', 'empty' (and legacy 'vite-os','nextjs-supabase','service','script','dashboard'). Optionally DECLARE its surface (surface: 'ui' | 'api' | 'both') — declaring wins over auto-detection, so a UI app is never mislabelled as API. Optionally set `purpose` (the app's stated intent, ≤2000 chars). Next: design_software.", write: true },
-  // ---- Design ----
-  { name: 'design_software', description: "STAGE 2 · DESIGN. Author or update the app's specification tree — `purpose`, `epics` (each with user stories and per-story `spec` of features / non-functional requirements / rules), and governed context `grants`. This is the SAME governed write the UI Design stage uses (patchAppDesign): owner / owning-domain admin / platform admin only. A story must have a spec here before build_software will build it (the design-before-build gate). Next: build_software.", write: true },
-  // ---- Build ----
-  { name: 'build_software', description: "STAGE 3 · BUILD. Build a SPECIFIC unit — the whole app, one `epic`, or one `story` (pass `target`) — from its FINALIZED Design spec. Enforces the design-before-build gate (refuses stories with no spec, naming them), pins the STANDARD model tier, and returns the governed BUILD directive + Define context + the target's spec + the code-structure convention (write each story under epics/<epic>/<story>/, app/ stays thin) + the current committed files and honest built-vs-pending progress. You then author the code and call `commit` — a story counts as BUILT only after its files land in a SUCCESSFUL commit (an empty/failed commit builds nothing), never from a status you set by hand. Next: verify_software.", write: false },
-  // ---- Test ----
-  { name: 'verify_software', description: "STAGE 4 · TEST. Verify a built unit against its Design spec across the FIVE dimensions (Functionality · User Experience · Code Structure · Security · Documentation). Returns the governed TEST directive + spec + committed files to verify against (read-only). Report PASS/FAIL per dimension; pass any shortfalls as `findings` (each { storyId, note, dimension }) and they are normalized into dimension-tagged REFINEMENTS via the SAME refinement model the UI uses — a missed-spec item is a rebuild, a requirement change routes to Design first. Next (if PASS): request_deploy.", write: false },
-  // ---- Publish ----
-  { name: 'request_deploy', description: 'STAGE 5 · PUBLISH. Request a domain deploy → opens the Builder review gate (security scan + envelope + diff). Cannot self-approve a go-live.', write: true },
-  { name: 'decide_deploy', description: 'STAGE 5 · PUBLISH. Approve/deny a deploy (Builder/Admin only — role-gated, requires a passing security scan).', write: true },
-  { name: 'promote', description: 'STAGE 5 · PUBLISH. Promote the app one tier (role-gated, same as UI).', write: true },
+  // ---- Define App ----
+  { name: 'create_software', description: "STAGE 1 · DEFINE APP. Create a new governed app from a template (default `sovereign-app` — the Sovereign standard app: AppShell chrome, OS-delegated identity, domain-scoped data helpers, an admin section and the MCP top-bar link already wired; epics then add business features). Other templates: 'website', 'api-service', 'empty' (and legacy 'vite-os','nextjs-supabase','service','script','dashboard'). Optionally DECLARE its surface (surface: 'ui' | 'api' | 'both') — declaring wins over auto-detection, so a UI app is never mislabelled as API. Optionally set `purpose` (the app's stated intent, ≤2000 chars). Next: design_software.", write: true },
+  // ---- Design Epics (+ Create Context via `grants`) ----
+  { name: 'design_software', description: "STAGE 2 · DESIGN EPICS (and STAGE 3 · CREATE CONTEXT). Author or update the app's specification tree — `purpose`, `epics` (each with user stories and per-story `spec` of features / non-functional requirements / rules), and governed context `grants` (bind existing connections / data / knowledge / files / metrics — this is the Create Context bind-existing surface). This is the SAME governed write the UI uses (patchAppDesign): owner / owning-domain admin / platform admin only. A story must have a spec AND, if it needs data, a bound/created dataset before build_software will build it (the design-before-build + data-need gates). Next: build_software.", write: true },
+  // ---- Build App ----
+  { name: 'build_software', description: "STAGE 4 · BUILD APP. Build a SPECIFIC unit — the whole app, one `epic`, or one `story` (pass `target`) — from its FINALIZED Design spec and resolved Context. Enforces the design-before-build gate (refuses stories with no spec, naming them), pins the STANDARD model tier, and returns the governed BUILD directive + Define context + the target's spec + the code-structure convention (write each story under epics/<epic>/<story>/, app/ stays thin) + the current committed files and honest built-vs-pending progress. You then author the code and call `commit` — a story counts as BUILT only after its files land in a SUCCESSFUL commit (an empty/failed commit builds nothing), never from a status you set by hand. Next: verify_software.", write: false },
+  // ---- Test & Publish ----
+  { name: 'verify_software', description: "STAGE 5 · TEST & PUBLISH (test half). Verify a built unit against its Design spec across the FIVE dimensions (Functionality · User Experience · Code Structure · Security · Documentation). Returns the governed TEST directive + spec + committed files to verify against (read-only). Report PASS/FAIL per dimension; pass any shortfalls as `findings` (each { storyId, note, dimension }) and they are normalized into dimension-tagged REFINEMENTS via the SAME refinement model the UI uses — a missed-spec item is a rebuild, a requirement change routes to Design first. Next (if PASS): request_deploy.", write: false },
+  { name: 'request_deploy', description: 'STAGE 5 · TEST & PUBLISH (publish half). Request a domain deploy → opens the Builder review gate (security scan + envelope + diff). Cannot self-approve a go-live.', write: true },
+  { name: 'decide_deploy', description: 'STAGE 5 · TEST & PUBLISH. Approve/deny a deploy (Builder/Admin only — role-gated, requires a passing security scan).', write: true },
+  { name: 'promote', description: 'STAGE 5 · TEST & PUBLISH. Promote the app one tier (role-gated, same as UI).', write: true },
   // ---- Publish helpers / lifecycle ----
   { name: 'start_preview', description: 'Start the private sandbox preview (no review).', write: true },
   { name: 'use_connection', description: 'Consume a granted Connection (no raw creds).', write: true },

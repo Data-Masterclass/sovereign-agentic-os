@@ -114,17 +114,17 @@ function MetricCard({
               onChange={(e) => onPick(e.target.checked)}
             />
           ) : null}
-          <span className="tile-name tile-name--metric" title={m.name}>{m.name}</span>
+          <span className="tile-name tile-name--metric" title={`${m.name}\nMetric: ${m.member}\nSource dataset: ${m.datasetName}`}>{m.name}</span>
         </div>
         <div className="row" style={{ gap: 4, alignItems: 'center', flex: 'none' }}>
           {showDomain ? <DomainTag domain={m.domain} /> : null}
           <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_WORD[m.tier]}</span>
         </div>
       </div>
-      {/* The Cube member is the metric's technical identity; its SOURCE dataset now rides
-          this line as a hover title (aria-label for AT) rather than crowding the tile face —
-          the dataset name is discoverable without cluttering the card. */}
-      <div className="muted mono" style={{ fontSize: 12 }} title={`Source dataset: ${m.datasetName}`} aria-label={`Source dataset: ${m.datasetName}`}>{m.member}</div>
+      {/* The Cube member is the metric's TECHNICAL identity (a domain-namespaced
+          `<VIEW>.<measure>`) — it made the tile unreadable, so it no longer rides the tile
+          face. The clean metric NAME (above) is the identity here; the full member + source
+          dataset are on the name's hover title for discoverability. */}
       {/* Plain-language meaning, one truncated line (full text on hover). Absent ⇒ no line,
           so a metric without a description keeps the exact prior tile layout. */}
       {m.description ? (

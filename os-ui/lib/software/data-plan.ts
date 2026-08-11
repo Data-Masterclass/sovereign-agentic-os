@@ -221,7 +221,7 @@ export function unresolvedDataNeedWarning(
   return [
     `${needy.length} stor${needy.length === 1 ? 'y needs' : 'ies need'} data, but no dataset is bound to this app:`,
     shown.map((t) => `  • ${t}`).join('\n') + (more > 0 ? `\n  • …and ${more} more` : ''),
-    'Resolve it in Design — bind an existing dataset or create one (empty, or with sample data) — then build. ' +
+    'Resolve it in Create Context — bind an existing dataset or create one (empty, or with sample data) — then build. ' +
       'Building now would fail: the model has no schema to write against.',
   ].join('\n');
 }

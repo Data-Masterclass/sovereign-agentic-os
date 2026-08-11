@@ -12,9 +12,9 @@ The Software tab is where apps and services are built, deployed, and governed. S
 4. **Test** — one "Verify & Improve" button LLM-verifies each built story against its Design spec (PASS/FAIL per item, grounded in the committed code) and drafts concrete improvements for shortfalls; the LIVE-POD view (real preview app + provision control) stays here. Improvements become pending Build to-dos — a missed spec item is a **rebuild** (standard model); feedback that changes the requirement is routed to **Design** first.
 5. **Publish** — request go-live (a Builder deploy review), then run the live app, call its governed MCP tools, and climb the promotion ladder.
 
-**Model tiers (cost policy):** Define — no LLM. Design — **reasoning** (all planning + the full spec). Build — **standard only** (code generation from the finalized spec, deterministic sequencing, never escalated to reasoning). Test — **reasoning** (verify built code vs spec → the fix loop rebuilds on standard). Publish — no LLM. Each stage shows an honest tier badge.
+**Model tiers (cost policy):** Define App — no LLM. Design Epics — **reasoning** (all planning + the full spec). Create Context — **reasoning** (context/dataset suggestions). Build App — **standard only** (code generation from the finalized spec, deterministic sequencing, never escalated to reasoning). Test & Publish — **reasoning** for verify (built code vs spec → the fix loop rebuilds on standard); no LLM for the deploy/go-live half. Each stage shows an honest tier badge.
 
-The MCP tool sequence below is the same governed path the UI drives — **the staged Define → Design → Build → Test → Publish flow is the default; direct `commit` is the deliberate exception (Developer mode).**
+The MCP tool sequence below is the same governed path the UI drives — **the staged Define App → Design Epics → Create Context → Build App → Test & Publish flow is the default; direct `commit` is the deliberate exception (Developer mode).**
 
 ## How to build it (the staged governed flow — default path)
 

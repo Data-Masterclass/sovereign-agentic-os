@@ -67,6 +67,7 @@ import {
   toggleGroup as toggleGroupSel,
 } from '@/lib/software/build-selection';
 import { defineContextNote } from '@/lib/software/define-context';
+import { unresolvedDataNeedWarning } from '@/lib/software/data-plan';
 import { modelRoleForMode, tierNote } from '@/lib/software/chat-modes';
 import TeamPanel from '@/app/(build)/software/TeamPanel';
 import DesignEpicDetail from './DesignEpicDetail';
@@ -322,12 +323,21 @@ export default function SoftwareBuilder({
 
   // The live ctx the stage gates/✓ read — REAL app state, never faked.
   const committed = app.pipeline.forgejo === 'ok' || app.repo.seeded.length > 0;
+  // Create Context is RESOLVED when no data-needing story is left ungrounded — i.e. the
+  // 0.6.101 build-gate warning is empty (a dataset is bound, or no story implies a data
+  // need). This is the SAME honest signal Build reads, so the gate and the stage agree.
+  const contextResolved = unresolvedDataNeedWarning(epics, grants.data.length) === '';
+  // At least one story is ACTUALLY BUILT — real code committed for it (status `done`, set
+  // by a successful build commit, never by hand). The Test & Publish entry gate.
+  const anyStoryBuilt = epics.some((e) => (e.stories ?? []).some((s) => s.status === 'done'));
   const ctx: SwCtx = {
     named: !!app.name.trim(),
     hasPurpose: !!(app.purpose ?? '').trim(),
     hasDesign: epics.some((e) => (e.stories?.length ?? 0) > 0),
     designSpecComplete: everyStoryHasSpec(epics),
+    contextResolved,
     committed,
+    anyStoryBuilt,
     previewed: !!app.deploy.previewUrl || previewAck,
     deployed: app.deploy.releases > 0,
     live: app.deploy.state === 'live',
@@ -616,10 +626,8 @@ export default function SoftwareBuilder({
           {stage.current === 'define' ? (
             <DefineStage
               app={app}
-              grants={grants}
               canEdit={canEdit}
               onSavePurpose={(purpose) => saveDesign({ purpose })}
-              onSaveGrants={(g) => saveDesign({ grants: g })}
             />
           ) : null}
 
@@ -627,7 +635,18 @@ export default function SoftwareBuilder({
             <DesignStage
               app={app} epics={epics} canEdit={canEdit} onSave={(next) => saveDesign({ epics: next })} onReload={onReload}
               refinements={improvements} refineHandlers={refineHandlers} storyTitleOf={storyTitleOf}
+              onGoContext={canEnter(SW_STAGES, 'context', ctx) ? () => setStage((s) => ({ ...s, current: 'context' })) : undefined}
+            />
+          ) : null}
+
+          {stage.current === 'context' ? (
+            <ContextStage
+              app={app} epics={epics} grants={grants} canEdit={canEdit}
+              contextResolved={contextResolved}
+              onSaveGrants={(g) => saveDesign({ grants: g })}
+              onReload={onReload}
               onGoBuild={canEnter(SW_STAGES, 'build', ctx) ? () => setStage((s) => ({ ...s, current: 'build' })) : undefined}
+              onGoDesign={() => setStage((s) => ({ ...s, current: 'design' }))}
             />
           ) : null}
 
@@ -643,43 +662,45 @@ export default function SoftwareBuilder({
             />
           ) : null}
 
-          {stage.current === 'test' ? (
-            <TestStage
-              app={app} epics={epics} surface={surface} pipe={pipe}
-              busy={busy} onPreview={() => deployAction('preview')}
-              deployMsg={deployMsg}
-              offlineAck={previewAck} onOfflineAck={() => { setPreviewAck(true); setStage((s) => markDone(s, 'test')); }}
-              connTools={connection?.tools ?? app.mcpTools}
-              improvements={improvements}
-              onAddImprovements={addImprovements}
-              onGoBuild={() => setStage((s) => ({ ...s, current: 'build' }))}
-              onGoDesign={() => setStage((s) => ({ ...s, current: 'design' }))}
-              refineHandlers={refineHandlers}
-              storyTitleOf={storyTitleOf}
-            />
-          ) : null}
-
+          {/* Test & Publish — the MERGED stage: the Test verification + live-pod surface
+              above the governed Publish / deploy / go-live controls. Both flows kept intact. */}
           {stage.current === 'publish' ? (
-            <PublishStage
-              app={app} surface={surface} user={user} pipe={pipe}
-              connTools={connection?.tools ?? app.mcpTools}
-              reviewCard={reviewCard}
-              publishLabel={publishLabel} publishDisabled={publishDisabled} inReview={inReview}
-              onPublish={() => deployAction()} deployMsg={deployMsg}
-              toolOut={toolOut} toolNote={toolNote} onCallTool={callTool}
-              onOpenRepo={() => {
-                // Open the EXTERNAL browsable repo URL directly — Forgejo's console is a
-                // full app whose root-relative assets/redirects break inside the embedding
-                // proxy (the 404 the user hit). The htmlUrl is now the external host.
-                if (app.repo.htmlUrl) window.open(app.repo.htmlUrl, '_blank', 'noreferrer');
-                else if (app.repo.fullName) openTool('forgejo', `${app.name} · repo`, app.repo.fullName);
-              }}
-              canPromoteUI={canPromoteUI} onPromote={promote}
-              canDemoteUI={canDemoteUI} demoteLabel={demoteLabel} confirmDemoteLabel={confirmDemoteLabel}
-              confirmDemote={confirmDemote} setConfirmDemote={setConfirmDemote} onDemote={demote}
-              busy={busy} onLifecycle={lifecycle} msg={msg} onHealRepo={healRepo}
-              canEdit={canEdit} onSetServeMode={setServeMode}
-            />
+            <>
+              <TestStage
+                app={app} epics={epics} surface={surface} pipe={pipe}
+                busy={busy} onPreview={() => deployAction('preview')}
+                deployMsg={deployMsg}
+                offlineAck={previewAck} onOfflineAck={() => { setPreviewAck(true); setStage((s) => markDone(s, 'publish')); }}
+                connTools={connection?.tools ?? app.mcpTools}
+                improvements={improvements}
+                onAddImprovements={addImprovements}
+                onGoBuild={() => setStage((s) => ({ ...s, current: 'build' }))}
+                onGoDesign={() => setStage((s) => ({ ...s, current: 'design' }))}
+                refineHandlers={refineHandlers}
+                storyTitleOf={storyTitleOf}
+              />
+              <div className="section-title" style={{ marginTop: 24 }}>Publish &amp; go live</div>
+              <PublishStage
+                app={app} surface={surface} user={user} pipe={pipe}
+                connTools={connection?.tools ?? app.mcpTools}
+                reviewCard={reviewCard}
+                publishLabel={publishLabel} publishDisabled={publishDisabled} inReview={inReview}
+                onPublish={() => deployAction()} deployMsg={deployMsg}
+                toolOut={toolOut} toolNote={toolNote} onCallTool={callTool}
+                onOpenRepo={() => {
+                  // Open the EXTERNAL browsable repo URL directly — Forgejo's console is a
+                  // full app whose root-relative assets/redirects break inside the embedding
+                  // proxy (the 404 the user hit). The htmlUrl is now the external host.
+                  if (app.repo.htmlUrl) window.open(app.repo.htmlUrl, '_blank', 'noreferrer');
+                  else if (app.repo.fullName) openTool('forgejo', `${app.name} · repo`, app.repo.fullName);
+                }}
+                canPromoteUI={canPromoteUI} onPromote={promote}
+                canDemoteUI={canDemoteUI} demoteLabel={demoteLabel} confirmDemoteLabel={confirmDemoteLabel}
+                confirmDemote={confirmDemote} setConfirmDemote={setConfirmDemote} onDemote={demote}
+                busy={busy} onLifecycle={lifecycle} msg={msg} onHealRepo={healRepo}
+                canEdit={canEdit} onSetServeMode={setServeMode}
+              />
+            </>
           ) : null}
         </StageShell>
       )}
@@ -746,13 +767,11 @@ function DeveloperSurface({
 /* ─────────────────────────── Define ─────────────────────────── */
 
 function DefineStage({
-  app, grants, canEdit, onSavePurpose, onSaveGrants,
+  app, canEdit, onSavePurpose,
 }: {
   app: SoftwareApp;
-  grants: ContextGrantsValue;
   canEdit: boolean;
   onSavePurpose: (purpose: string) => void;
-  onSaveGrants: (grants: ContextGrantsValue) => void;
 }) {
   const [purpose, setPurpose] = useState(app.purpose ?? '');
   // When the assistant proposes a purpose, we stage it as a confirmable draft (never a
@@ -762,12 +781,6 @@ function DefineStage({
   useEffect(() => { setPurpose(app.purpose ?? ''); setSuggested(false); }, [app.purpose]);
   const surfaceLabel = [app.surface?.ui ? 'UI' : '', app.surface?.api ? 'API' : ''].filter(Boolean).join(' + ') || 'inferred on build';
 
-  // The context-grant safety ceiling for an app: builders may grant direct writes,
-  // everyone else caps at read+propose (writes held for approval). New grants START
-  // at read-only (the safe default) — the user raises each item to Read+propose /
-  // Read+write up to the ceiling when they actually need write access.
-  const cap = { ...contextAccessCap(canEdit ? 'read-write' : 'read-propose'), default: 'read-only' as const };
-
   const dirty = purpose !== (app.purpose ?? '');
 
   // Apply an assistant purpose suggestion → editable draft the user confirms.
@@ -775,20 +788,17 @@ function DefineStage({
     setPurpose(applyPurposeSuggestion(p));
     setSuggested(true);
   };
-  // Apply assistant grant suggestions → fold into the current grants (clamped to cap) + persist.
-  const applyGrants = (sg: SuggestedGrant[]) => onSaveGrants(applyGrantsSuggestion(grants, sg, cap));
 
-  const grantCount = SW_GRANT_KINDS.reduce((n, k) => n + (grants[k]?.length ?? 0), 0);
   const purposeSet = !!(app.purpose ?? '').trim();
 
-  // Structure — the app's spec being shaped: its purpose and the governed context it may
-  // use. This is the direct-manipulation twin of the conversation; the assistant's
-  // suggestions flow straight into these controls.
+  // Structure — the app's spec being shaped: its purpose only. The governed context it may
+  // use is resolved in its own Create Context stage (moved out of Define in 0.6.105).
   const structure = (
     <>
       <label className="comp-label">Purpose</label>
       <p className="hint" style={{ marginTop: 0 }}>
-        What is this app for? One or two sentences — Define is complete once a purpose is set.
+        What is this app for? One or two sentences — Define App is complete once a purpose is set.
+        The governed context it may use is resolved next, in <strong>Create Context</strong>.
       </p>
       <textarea
         value={purpose}
@@ -805,19 +815,6 @@ function DefineStage({
             : dirty ? <span className="muted" style={{ fontSize: 12 }}>Unsaved changes</span> : null}
         </div>
       ) : null}
-
-      <div className="section-title">Granted context (no raw credentials)</div>
-      <p className="hint" style={{ marginTop: 0 }}>
-        Apps consume governed resources — OPA-scoped and run AS you, never raw secrets. Grant the
-        Connections, Data, Knowledge, Files and Metrics this app may use, at folder or item level.
-      </p>
-      <SoftwareContextGrants
-        value={grants}
-        onChange={onSaveGrants}
-        kinds={SW_GRANT_KINDS}
-        cap={cap}
-        canEdit={canEdit}
-      />
     </>
   );
 
@@ -834,7 +831,7 @@ function DefineStage({
               </span>{' '}
               · surface <code>{surfaceLabel}</code>
             </span>
-            <span className="sc-hint sc-spacer">Describe the app — the conversation shapes its purpose &amp; the context it may use.</span>
+            <span className="sc-hint sc-spacer">Describe the app — the conversation shapes its purpose.</span>
           </>
         }
         structure={structure}
@@ -842,17 +839,151 @@ function DefineStage({
           <StageAssistantChat
             appId={app.id}
             stage="define"
-            intro="Improve the purpose and suggest which governed context to grant."
-            starters={['Sharpen my purpose', 'What context should this app be granted?']}
+            intro="Improve the purpose of this app."
+            starters={['Sharpen my purpose', 'What should this app do?']}
             onApplyPurpose={canEdit ? applyPurpose : undefined}
-            onApplyGrants={canEdit ? applyGrants : undefined}
           />
         }
         outcome={
           <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <span className="comp-label" style={{ margin: 0 }}>Defined</span>
             <span className={`badge ${purposeSet ? 'ok' : 'muted'}`}>{purposeSet ? 'Purpose set' : 'Purpose pending'}</span>
-            <span className="badge muted">{grantCount} context grant{grantCount === 1 ? '' : 's'}</span>
+          </div>
+        }
+      />
+    </div>
+  );
+}
+
+/* ─────────────────────────── Create Context ─────────────────────────── */
+
+/**
+ * The Create Context stage (0.6.105) — resolve EVERY context need the app has, in one place:
+ *   • BIND an EXISTING artifact (connections / data / knowledge / files / metrics) via
+ *     SoftwareContextGrants — moved here from Define.
+ *   • CREATE-NEW a dataset (empty schema, or with AI sample rows) via DataPlanPanel —
+ *     moved here from Design (0.6.101). The Design assistant proposed the datasets; here
+ *     the user resolves each need.
+ *
+ * The data-needing stories cannot build until this stage is resolved (the same 0.6.101
+ * build-gate the Build stage reads). Create-new for the NON-dataset kinds is a deliberate
+ * FOLLOW-UP (bind-existing already covers them) — the seam is left clean here.
+ */
+function ContextStage({
+  app, epics, grants, canEdit, contextResolved, onSaveGrants, onReload, onGoBuild, onGoDesign,
+}: {
+  app: SoftwareApp;
+  epics: Epic[];
+  grants: ContextGrantsValue;
+  canEdit: boolean;
+  /** True when every data-needing story has a bound/created dataset (or none needs data). */
+  contextResolved: boolean;
+  onSaveGrants: (grants: ContextGrantsValue) => void;
+  onReload: () => void;
+  /** Navigate to Build (present only when Build is reachable). */
+  onGoBuild?: () => void;
+  /** Jump back to Design Epics (the empty-state pointer). */
+  onGoDesign: () => void;
+}) {
+  // The context-grant safety ceiling for an app: builders may grant direct writes,
+  // everyone else caps at read+propose (writes held for approval). New grants START
+  // at read-only (the safe default) — the user raises each item to Read+propose /
+  // Read+write up to the ceiling when they actually need write access.
+  const cap = { ...contextAccessCap(canEdit ? 'read-write' : 'read-propose'), default: 'read-only' as const };
+
+  // Apply assistant grant suggestions → fold into the current grants (clamped to cap) + persist.
+  const applyGrants = (sg: SuggestedGrant[]) => onSaveGrants(applyGrantsSuggestion(grants, sg, cap));
+
+  const grantCount = SW_GRANT_KINDS.reduce((n, k) => n + (grants[k]?.length ?? 0), 0);
+  const hasDesign = epics.some((e) => (e.stories?.length ?? 0) > 0);
+  // The honest data-need warning — empty when nothing to resolve (a dataset is bound, or no
+  // story implies a data need). The SAME signal the Build data-need gate reads.
+  const dataNeedWarning = unresolvedDataNeedWarning(epics, grants.data.length);
+
+  const nextSteps: { label: string; prompt?: string; onClick?: () => void }[] = [];
+  if (canEdit) {
+    nextSteps.push({ label: 'What context should this app be granted?', prompt: 'What governed context (connections, data, knowledge, files, metrics) should this app be granted, and what new datasets does it need?' });
+    if (contextResolved && onGoBuild) nextSteps.push({ label: 'Context resolved → go to Build', onClick: onGoBuild });
+  }
+
+  const structure = (
+    <>
+      {!hasDesign ? (
+        <div className="db-empty" style={{ padding: 18, border: '1px dashed var(--border)', borderRadius: 10, textAlign: 'center', marginBottom: 12 }}>
+          <p className="muted" style={{ margin: 0 }}>No stories yet — specify the app in Design Epics first, then resolve its context here.</p>
+          <button className="btn sm" style={{ marginTop: 10 }} onClick={onGoDesign}>Go to Design Epics →</button>
+        </div>
+      ) : null}
+
+      <div className="comp-label">Bind existing context (no raw credentials)</div>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Apps consume governed resources — OPA-scoped and run AS you, never raw secrets. Grant the
+        Connections, Data, Knowledge, Files and Metrics this app may use, at folder or item level.
+      </p>
+      <SoftwareContextGrants
+        value={grants}
+        onChange={onSaveGrants}
+        kinds={SW_GRANT_KINDS}
+        cap={cap}
+        canEdit={canEdit}
+      />
+
+      {/* The data-need gate, surfaced honestly here — this is where you resolve it. When a
+          story needs data but nothing is bound, the assistant can propose datasets (the
+          DataPlanPanel renders in the conversation) to create empty or with sample rows. */}
+      {dataNeedWarning ? (
+        <div className="build-blocked" style={{ marginTop: 16 }}>
+          <p className="bb-title">This app needs data before it can build.</p>
+          <p className="bb-body" style={{ whiteSpace: 'pre-wrap' }}>{dataNeedWarning}</p>
+          <style jsx>{`
+            .build-blocked { border: 1px solid var(--gold-line); background: var(--gold-soft); border-radius: 12px; padding: 16px 18px; }
+            .bb-title { margin: 0 0 8px; font-size: 14.5px; font-weight: 700; line-height: 1.4; }
+            .bb-body { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text); }
+          `}</style>
+        </div>
+      ) : null}
+    </>
+  );
+
+  return (
+    <div {...anchorAttr(ANCHORS.software.context)}>
+      <StageConversation
+        context={
+          <>
+            <span className="sc-scope">Create Context</span>
+            <span className="sc-hint">resolve every context need — bind existing, or create new</span>
+            <span className={`badge ${contextResolved ? 'ok' : 'muted'}`}>{contextResolved ? 'Context resolved' : 'Data need unresolved'}</span>
+            <span className="sc-hint sc-spacer">Bind Connections · Data · Knowledge · Files · Metrics, or create the datasets your stories need.</span>
+          </>
+        }
+        structure={structure}
+        conversation={
+          <StageAssistantChat
+            appId={app.id}
+            stage="design"
+            intro="Suggest which governed context to grant, and propose new datasets to create for stories that need data."
+            starters={['What context should this app be granted?', 'What datasets does this app need?']}
+            onApplyGrants={canEdit ? applyGrants : undefined}
+            renderDataPlan={
+              canEdit
+                ? (datasets, dismiss) => (
+                    <DataPlanPanel
+                      appId={app.id}
+                      datasets={datasets}
+                      onResolved={() => onReload()}
+                      onDismiss={dismiss}
+                    />
+                  )
+                : undefined
+            }
+            nextSteps={nextSteps}
+          />
+        }
+        outcome={
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span className="comp-label" style={{ margin: 0 }}>Context</span>
+            <span className="badge muted">{grantCount} bound grant{grantCount === 1 ? '' : 's'}</span>
+            <span className={`badge ${contextResolved ? 'ok' : 'muted'}`}>{contextResolved ? 'Data needs resolved' : 'Data need pending'}</span>
           </div>
         }
       />
@@ -881,7 +1012,7 @@ function withStorySpec(epics: Epic[], epicId: string, storyId: string, spec: Sto
  * the SAME governed `onSave` (→ patchAppDesign).
  */
 function DesignStage({
-  app, epics, canEdit, onSave, onReload, refinements, refineHandlers, storyTitleOf, onGoBuild,
+  app, epics, canEdit, onSave, onReload, refinements, refineHandlers, storyTitleOf, onGoContext,
 }: {
   app: SoftwareApp;
   epics: Epic[];
@@ -891,8 +1022,8 @@ function DesignStage({
   refinements: Improvement[];
   refineHandlers: RefineHandlers;
   storyTitleOf: (storyId: string) => string;
-  /** Navigate to Build (present only when Build is reachable) — for the "looks ready" step. */
-  onGoBuild?: () => void;
+  /** Navigate to Create Context (present only when it's reachable) — the "looks ready" step. */
+  onGoContext?: () => void;
 }) {
   const applyEpics = (sug: SuggestedEpic[]) => onSave(applyEpicsSuggestion(epics, sug));
   const applyStories = (groups: SuggestedStoriesForEpic[]) => onSave(applyStoriesSuggestion(epics, groups));
@@ -933,8 +1064,8 @@ function DesignStage({
     } else if (nextRung?.key === 'specs') {
       nextSteps.push({ label: 'Draft the specs for my stories', prompt: 'For each story that has no spec yet, draft its features, NFRs and rules.' });
     }
-    if (designComplete && onGoBuild) {
-      nextSteps.push({ label: 'This looks ready → go to Build', onClick: onGoBuild });
+    if (designComplete && onGoContext) {
+      nextSteps.push({ label: 'This looks ready → create the context', onClick: onGoContext });
     }
   }
 
@@ -979,18 +1110,6 @@ function DesignStage({
             onApplyEpicRequirements={canEdit ? applyEpicReqs : undefined}
             onApplySpec={canEdit && targetStory ? applySpec : undefined}
             specTargetLabel={targetStory?.title.trim() || undefined}
-            renderDataPlan={
-              canEdit
-                ? (datasets, dismiss) => (
-                    <DataPlanPanel
-                      appId={app.id}
-                      datasets={datasets}
-                      onResolved={() => onReload()}
-                      onDismiss={dismiss}
-                    />
-                  )
-                : undefined
-            }
             nextSteps={nextSteps}
           />
         }

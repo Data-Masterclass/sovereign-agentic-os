@@ -80,10 +80,14 @@ export const ANCHORS = {
     sandbox: 'software.sandbox',
     define: 'software.define',
     design: 'software.design',
+    // Create Context (0.6.105) — the new stage where the app's context is resolved.
+    context: 'software.context',
     build: 'software.build',
     // Test replaces the old Preview stage; Publish replaces Operate. The anchor
     // STRING values stay stable ('software.preview'/'software.operate') so existing
     // tutorial content keeps resolving — only the key (the stage vocabulary) changed.
+    // (0.6.105: Test + Publish merged into one "Test & Publish" stage; the `test`
+    // anchor stays for the Test verification surface inside it.)
     test: 'software.preview',
     publish: 'software.operate',
   },

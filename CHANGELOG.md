@@ -13,6 +13,26 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.105] — 2026-08-11
+
+**Software builder stage restructure.** The Software guided flow is re-shaped from five stages (Define · Design · Build · Test · Publish) to five differently-organised stages: **Define App · Design Epics · Create Context · Build App · Test & Publish**, with tighter gating so the flow reflects real progress. Owner-directed.
+
+- **Renames are display-only; internal ids stay stable** (the OS scope-vocabulary pattern). `SwStageId` keeps `define`/`design`/`build`/`publish`; only their labels moved (Define→**Define App**, Design→**Design Epics**, Build→**Build App**). The standalone `test` stage id is **retired from the flow** and merged into `publish`; the assistant/MCP `test` verb (`verify_software`, `stage="test"`) is a separate vocabulary and is unchanged.
+- **NEW "Create Context" stage (id `context`), inserted at position 3** — the app's context resolution now lives in one place. `SoftwareContextGrants` (bind an existing connection / data / knowledge / files / metrics) **moved out of Define** into Create Context, and the `DataPlanPanel` (create-new datasets: empty / AI-sample, 0.6.101) **moved out of Design** into Create Context. Define App is now purpose + template only; Design Epics is epics/stories/specs only.
+- **MERGE: Test + Publish → one "Test & Publish" stage.** Its body hosts both the Test verification surface (LLM-verify built stories vs spec + the live-pod preview) and the Publish/deploy controls (request_deploy / approve / self-serve go-live). Both flows kept working.
+- **Tighter gating (stage state machine, `components/software/stages.ts` `SwCtx` + `lib/core/stages.ts`):**
+  - **Create Context** is enterable once Design Epics has a backlog; its ✓ = every data-needing story is resolved (a dataset bound/created, or no story needs data — the same honest `unresolvedDataNeedWarning` signal, now labelled "Create Context").
+  - **Build App** is gated on **a specced backlog AND a resolved context** — empty design ⇒ can't Build; an unresolved data need ⇒ can't Build (guiding gate, mirrors the design-before-build gate).
+  - **Test & Publish** is blocked until **at least one user story is actually BUILT** — real code committed for it (a story marked `done` by a successful build commit), not merely that the user clicked into Build. Reaching Test/Publish with an empty app is blocked with a friendly reason. (Owner: "you can go to Test and Build without writing a single line of code, which does not make sense.")
+- **MCP parity + copy.** The Platform MCP stage descriptions are renumbered/relabelled to the new five governed stages (`lib/software/platform-mcp.ts`, `mcp-stages.ts`) — **tool names are stable** (`create_software`/`design_software`/`build_software`/`verify_software`/`request_deploy`…); only the STAGE labels/descriptions changed. Create Context has no dedicated MCP verb this wave — it is expressed through `design_software`'s `grants` (bind-existing); a fuller `resolve_context` verb is a deliberate follow-up. Tutorial + guide + anchor copy updated (`lib/tutorials/content/software.ts`, `anchors.ts` adds `software.context`, `lib/tabs/guides/software.guide.md`).
+- **Deliberately deferred:** generalising **create-new** to the non-dataset kinds (metrics/files/knowledge/connections). Bind-existing already covers them via `SoftwareContextGrants`; datasets get create-new via `DataPlanPanel`. The seam is left clean.
+
+Stage-model tests updated to the new flow (`lib/software/stages-model.test.ts`): empty app can't enter Test & Publish; after one story is built it can; Build gated on design-spec + resolved context.
+
+## [os-ui 0.6.104] — 2026-08-11
+
+Metric tiles are readable again: the tile face no longer shows the domain-namespaced Cube **member** (`<VIEW>.<measure>`, e.g. `AGENTIC_LEADER_Q3_2026__SERVICE_PERFORMANCE.open_cases_count`) — just the clean metric **name** (+ description). The full member and the source dataset moved to the name's hover title for discoverability.
+
 ## [os-ui 0.6.103] — 2026-08-11
 
 Three fixes to adding components to a **Big Bet** (the solution-design workspace — an interplay graph of referenced artifacts), all reported by the owner while building one out.
