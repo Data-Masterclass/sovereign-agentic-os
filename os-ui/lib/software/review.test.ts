@@ -21,6 +21,23 @@ async function expectStatus(p: Promise<unknown>, status: number, re?: RegExp) {
   });
 }
 
+test('SELF-SERVE (0.6.102): a Builder deploying their OWN Personal app goes live in ONE action — no review card, no admin', async () => {
+  const app = await createApp(builder, { name: 'My Self Serve App', template: 'nextjs-supabase' });
+  assert.equal(app.visibility, 'Personal'); // a fresh app is My-tier
+  const res = await requestDeploy(app.id, builder); // owner + builder + Personal + clean scan
+  assert.equal(res.kind, 'auto-deployed'); // NOT 'review' — published without a separate approval
+  assert.equal(res.app.deploy.state, 'live');
+  assert.ok(res.app.deploy.approved, 'the self-approved envelope is recorded so later in-envelope updates auto-deploy');
+});
+
+test('SELF-SERVE stays SECURITY-gated: an owner-Builder Personal app with a failing scan still opens the review card', async () => {
+  const app = await createApp(builder, { name: 'My Leaky App', template: 'nextjs-supabase' });
+  await commitToApp(app.id, builder, [{ path: 'src/leak.ts', content: 'const AWS_SECRET_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLEKEYDONTUSE1234";' }], 'leak');
+  const res = await requestDeploy(app.id, builder);
+  assert.equal(res.kind, 'review'); // a scan finding falls through to the gate — never self-served
+  assert.equal(res.card.scan.passed, false);
+});
+
 test('GATE: preview is free; first deploy opens a Builder review card', async () => {
   const app = await createApp(creator, { name: 'Renewals Tracker R1', template: 'nextjs-supabase' });
   const { app: previewed, runnerNote } = await startPreview(app.id, creator);

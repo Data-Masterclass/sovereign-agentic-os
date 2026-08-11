@@ -13,6 +13,7 @@ import type {
   SuggestedEpicRequirements,
 } from '@/lib/software/assistant-suggestions';
 import type { StorySpec } from '@/lib/software/story-spec';
+import type { SuggestedDataset } from '@/lib/software/data-plan';
 
 /** A next-step the host can offer at the foot of the thread (never a dead end). */
 export type NextStep = { label: string; prompt?: string; onClick?: () => void };
@@ -50,6 +51,7 @@ export default function StageAssistantChat({
   onApplySpec,
   specTargetLabel,
   onApplyImprovements,
+  renderDataPlan,
   nextSteps = [],
 }: {
   /** The app the assistant reads under the caller's governance (server-side). */
@@ -76,6 +78,13 @@ export default function StageAssistantChat({
   specTargetLabel?: string;
   /** Test: turn the verifier's suggested improvements into pending Build-tree items. */
   onApplyImprovements?: (improvements: NonNullable<StageSuggestions['suggestedImprovements']>) => void;
+  /**
+   * Design (data plan): render the CREATE-NEW dataset resolution surface for the proposed
+   * `suggestedDatasets`. A render-prop (not a coupled component) so this core chat stays
+   * decoupled from the Software data-plan panel — the host supplies the self-contained
+   * `DataPlanPanel`. `dismiss` drops the plan card locally.
+   */
+  renderDataPlan?: (datasets: SuggestedDataset[], dismiss: () => void) => React.ReactNode;
   /**
    * Host-supplied NEXT STEPS shown at the foot of the thread so the assistant is never a
    * dead end: each either seeds a follow-up prompt (asks the assistant to draft the next
@@ -137,6 +146,7 @@ export default function StageAssistantChat({
     ((suggestions.suggestedSpec?.features?.length ?? 0) +
       (suggestions.suggestedSpec?.nfrs?.length ?? 0) +
       (suggestions.suggestedSpec?.rules?.length ?? 0)) > 0 ||
+    ((suggestions.suggestedDatasets?.length ?? 0) > 0 && !!renderDataPlan) ||
     (suggestions.suggestedImprovements?.length ?? 0) > 0;
 
   return (
@@ -298,6 +308,12 @@ export default function StageAssistantChat({
               </div>
             </SuggestionCard>
           ) : null}
+
+          {suggestions.suggestedDatasets?.length && renderDataPlan
+            ? renderDataPlan(suggestions.suggestedDatasets, () =>
+                setSuggestions((s) => ({ ...s, suggestedDatasets: undefined })),
+              )
+            : null}
 
           {suggestions.suggestedImprovements?.length && onApplyImprovements ? (
             <SuggestionCard

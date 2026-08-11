@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { layoutInterplay, bandFor } from './interplay-layout.ts';
+import { layoutInterplay, bandFor, resolveNodeLabel } from './interplay-layout.ts';
 import type { ComponentRef, SolutionEdge, Tab } from './model.ts';
 
 let seq = 0;
@@ -41,6 +41,38 @@ test('bandFor: anchor id wins; leaf tabs → components; the rest → context', 
   assert.equal(bandFor(ref('data'), 'wf'), 'context');
   assert.equal(bandFor(ref('metric'), 'wf'), 'context');
   assert.equal(bandFor(ref('connection'), 'wf'), 'context');
+});
+
+test('resolveNodeLabel: name when known; short-id fallback when not; redaction wins', () => {
+  // Name known → shown verbatim, not a fallback.
+  assert.deepEqual(
+    resolveNodeLabel({ name: 'Churn risk model', id: 'ml_9f3ab21' }),
+    { text: 'Churn risk model', fallback: false },
+  );
+  // Blank/whitespace name → fall back to a short tail of the id, flagged as fallback.
+  assert.deepEqual(
+    resolveNodeLabel({ name: '   ', id: 'agent_9f3ab21' }),
+    { text: '9f3ab21', fallback: true },
+  );
+  assert.deepEqual(
+    resolveNodeLabel({ name: undefined, id: 'placeholder:art_abcdef123456' }),
+    { text: 'abcdef1234…', fallback: true },
+  );
+  // Redacted (members-only) beats everything — never leaks an id.
+  assert.deepEqual(
+    resolveNodeLabel({ name: 'secret', id: 'x', redacted: true }),
+    { text: 'Members only', fallback: false },
+  );
+  // Two different real names resolve to two different labels (the reporter's core bug:
+  // an agent node and a knowledge node must be distinguishable by NAME).
+  assert.notEqual(
+    resolveNodeLabel({ name: 'Retention agent', id: 'a' }).text,
+    resolveNodeLabel({ name: 'Onboarding workflow', id: 'b' }).text,
+  );
+});
+
+test('resolveNodeLabel: empty id falls back to a dash, never an empty label', () => {
+  assert.deepEqual(resolveNodeLabel({ name: '', id: '' }), { text: '—', fallback: true });
 });
 
 test('banding: anchor sits above components, which sit above context', () => {

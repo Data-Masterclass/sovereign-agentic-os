@@ -166,6 +166,24 @@ test('normalizeAssistantReply surfaces story-level specs + epic requirements', (
   assert.equal(reply.suggestions.suggestedEpicRequirements?.[0].requirements.ux, undefined, 'blank field dropped');
 });
 
+test('0.6.101: normalizeAssistantReply surfaces suggestedDatasets, dropping the malformed', () => {
+  const reply = normalizeAssistantReply(
+    {
+      message: 'Here is the data plan.',
+      suggestedDatasets: [
+        { name: 'employees', purpose: 'staff directory', columns: [{ name: 'id', type: 'int' }, { name: 'name', type: 'string' }], fill: 'dummy', rows: 10 },
+        { name: 'no columns', columns: [], fill: 'empty' }, // dropped — a real column list is required
+      ],
+    },
+    KINDS as unknown as (typeof KINDS)[number][],
+  );
+  assert.equal(reply.suggestions.suggestedDatasets?.length, 1, 'malformed (no columns) dropped');
+  assert.equal(reply.suggestions.suggestedDatasets?.[0].name, 'employees');
+  assert.equal(reply.suggestions.suggestedDatasets?.[0].fill, 'dummy');
+  assert.equal(reply.suggestions.suggestedDatasets?.[0].rows, 10);
+  assert.deepEqual(reply.suggestions.suggestedDatasets?.[0].columns.map((c) => c.name), ['id', 'name']);
+});
+
 test('0.6.93: a full-tree suggested epic (2 stories with specs + epic requirements) applies as ONE governed create', () => {
   // Item 2: proposing/creating an epic must carry its requirements AND each story's spec
   // (features/nfrs/rules) through the single apply, not just the titles.

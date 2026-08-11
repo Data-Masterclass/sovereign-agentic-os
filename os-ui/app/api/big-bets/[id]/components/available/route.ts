@@ -10,6 +10,7 @@ import { sourceFor } from '@/lib/bigbets';
 // the actual datasets/agents/dashboards/knowledge/files/metrics a student built.
 import '@/lib/bigbets/real-sources';
 import { type Tab } from '@/lib/bigbets';
+import { listAppsForUser } from '@/lib/software';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +36,24 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
     const tab = url.searchParams.get('tab') as Tab | null;
     if (!tab || !TABS.includes(tab)) {
       return NextResponse.json({ error: `tab must be one of: ${TABS.join(', ')}` }, { status: 400 });
+    }
+
+    // Software is the one tab whose governed list gate (`listAppsForUser`) is ASYNC,
+    // so the synchronous `sourceFor(tab).list` reader seam can't wire it (see
+    // real-sources.ts). This route IS async, so list it directly here — same
+    // domain-scoped canView gate every other kind uses. Map the app tier → the
+    // reference-card visibility/lifecycle exactly like `resolveLinkedComponent`.
+    if (tab === 'software') {
+      const apps = await listAppsForUser(user);
+      return NextResponse.json({
+        artifacts: apps.map((a) => ({
+          id: a.id,
+          title: a.name,
+          tab: 'software' as Tab,
+          lifecycle: a.visibility === 'Personal' ? 'draft' : 'deployed',
+          visibility: a.visibility === 'Personal' ? 'personal' : a.visibility === 'Shared' ? 'shared' : 'marketplace',
+        })),
+      });
     }
 
     // canView-scoped at the source: REAL artifacts come through each tab's own

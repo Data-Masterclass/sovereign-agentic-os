@@ -124,6 +124,38 @@ test('EDIT-GATE: a non-editor (other domain, non-member) is rejected 403 on writ
   assert.equal(getSolution(betId, sara).anchor, null);
 });
 
+test('addPlaceholder then createFromPlaceholder: the route rebinds and returns the created tab+id', async () => {
+  ACTING = { id: 'sara', name: 'Sara', domains: ['sales'], role: 'builder' };
+  const { betId } = seedBet();
+
+  const withPh = await (await post(betId, { action: 'addPlaceholder', kind: 'agent', name: 'Retention agent' })).json();
+  const ph = withPh.nodes.find((n: { placeholder?: boolean }) => n.placeholder);
+  assert.ok(ph, 'a placeholder node was added');
+  assert.equal(ph.placeholderName, 'Retention agent');
+
+  const res = await post(betId, { action: 'createFromPlaceholder', refId: ph.id });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.created?.refId, ph.id, 'the route echoes the created hint');
+  assert.equal(body.created?.tab, 'agent');
+  assert.ok(body.created?.artifactId && !String(body.created.artifactId).startsWith('placeholder:'), 'rebound to a real id');
+  const node = body.nodes.find((n: { id: string }) => n.id === ph.id);
+  assert.equal(node.placeholder ?? false, false, 'the node is no longer a placeholder');
+});
+
+test('addPlaceholder: empty name → 400', async () => {
+  ACTING = { id: 'sara', name: 'Sara', domains: ['sales'], role: 'builder' };
+  const { betId } = seedBet();
+  assert.equal((await post(betId, { action: 'addPlaceholder', kind: 'agent', name: '   ' })).status, 400);
+});
+
+test('placeholder writes are edit-gated (an outsider is 403)', async () => {
+  ACTING = { id: 'sara', name: 'Sara', domains: ['sales'], role: 'builder' };
+  const { betId } = seedBet();
+  ACTING = { id: 'mo', name: 'Mo', domains: ['ops'], role: 'creator' };
+  assert.equal((await post(betId, { action: 'addPlaceholder', kind: 'agent', name: 'X' })).status, 403);
+});
+
 test('unknown action → 400', async () => {
   ACTING = { id: 'sara', name: 'Sara', domains: ['sales'], role: 'builder' };
   const { betId } = seedBet();

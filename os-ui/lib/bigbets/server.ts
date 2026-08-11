@@ -87,6 +87,8 @@ export type ComponentView = {
    * cases (no detail is shown); the UI can label them differently.
    */
   unavailable: boolean;
+  /** TRUE when this ref is a named placeholder (no real artifact yet). */
+  placeholder: boolean;
 };
 
 export type BetView = {
@@ -130,6 +132,26 @@ export async function buildBetView(
   const statusByRef = new Map(statuses.map((s) => [s.refId, s]));
 
   const components: ComponentView[] = bet.components.map((ref) => {
+    // A PLACEHOLDER ref has no real artifact yet — synthesize a display card from
+    // its name so the graph + rows show the name (never "unavailable"), and flag it
+    // so the UI can render it distinctly and offer "Create real <kind>".
+    if (ref.placeholder) {
+      return {
+        ref,
+        status: statusByRef.get(ref.id)!,
+        visible: true,
+        unavailable: false,
+        placeholder: true,
+        artifact: {
+          id: ref.artifactId,
+          tab: ref.tab,
+          title: ref.placeholderName ?? 'Placeholder',
+          lifecycle: 'planned',
+          visibility: 'personal',
+          readyVerb: READY_VERB[ref.tab],
+        },
+      };
+    }
     const visible = canViewComponentDetail(bet, ref, p);
     // Resolve DURABLY + viewer-scoped from the real per-tab store (falls back to
     // the in-memory registry) — the same gate `canViewComponentDetail` used, so a
@@ -143,6 +165,7 @@ export async function buildBetView(
       // members-only redaction still resolves the artifact for gating purposes
       // (admins/members), so a null resolution is the honest "unavailable" case.
       unavailable: art === null,
+      placeholder: false,
       artifact:
         visible && art
           ? {

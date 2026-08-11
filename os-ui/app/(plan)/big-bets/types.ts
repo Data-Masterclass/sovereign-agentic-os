@@ -30,6 +30,7 @@ export type ComponentRef = {
   dependsOn: string[]; weight: number;
   override?: { note: string; asserts?: string };
   origin: string; addedBy: string; addedAt: string;
+  placeholder?: boolean; placeholderName?: string;
 };
 
 export type ComponentStatus = {
@@ -46,6 +47,8 @@ export type Artifact = {
 
 export type BetComponent = {
   status: ComponentStatus; visible: boolean; artifact: Artifact | null;
+  /** TRUE when this ref is a named placeholder (no real artifact yet). */
+  placeholder?: boolean;
 };
 
 export type RoadmapComp = {

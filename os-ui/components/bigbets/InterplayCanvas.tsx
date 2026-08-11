@@ -4,7 +4,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { layoutInterplay } from '@/lib/bigbets/interplay-layout';
+import { layoutInterplay, resolveNodeLabel } from '@/lib/bigbets/interplay-layout';
 import type { ComponentRef, SolutionEdge, InterplayRelation, Tab } from '@/lib/bigbets/model';
 
 /**
@@ -63,7 +63,13 @@ const TAB_LABEL_SHORT: Record<Tab, string> = {
 // Dashed for the "signalling" relations (a trigger / a monitor is not a data flow).
 const DASHED: InterplayRelation[] = ['triggers', 'monitors'];
 
-export type NodeMeta = { title?: string; derived?: 'planned' | 'in-progress' | 'completed'; visible?: boolean };
+export type NodeMeta = {
+  title?: string;
+  derived?: 'planned' | 'in-progress' | 'completed';
+  visible?: boolean;
+  /** TRUE when the ref is a named placeholder (no real artifact yet). */
+  placeholder?: boolean;
+};
 
 export default function InterplayCanvas({
   anchorId,
@@ -163,13 +169,22 @@ export default function InterplayCanvas({
 
           {layout.nodes.map((n) => {
             const m = meta[n.id] ?? {};
-            const title = m.visible === false ? 'Members only' : (m.title ?? TAB_LABEL_SHORT[n.tab]);
+            // NAME is the primary label (so an agent node and a knowledge node are
+            // distinguishable at a glance); the type is the glyph + a small caption.
+            // Fall back to a short id when the name is unknown; redact when not visible.
+            const { text: name, fallback } = resolveNodeLabel({
+              name: m.title,
+              id: n.artifactId,
+              redacted: m.visible === false,
+            });
+            const displayName = name.length > 22 ? `${name.slice(0, 22)}…` : name;
             const badge = statusBadge(m.derived);
+            const isPlaceholder = m.placeholder === true || n.placeholder;
             return (
               <g
                 key={n.id}
                 transform={`translate(${n.x},${n.y})`}
-                className={`canvas-block${connectMode && selectedFrom === n.id ? ' selected' : ''}`}
+                className={`canvas-block${connectMode && selectedFrom === n.id ? ' selected' : ''}${isPlaceholder ? ' bb-placeholder' : ''}`}
                 onClick={() => activate(n)}
                 role="button"
                 tabIndex={0}
@@ -177,20 +192,33 @@ export default function InterplayCanvas({
                   if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); activate(n); }
                 }}
               >
-                <title>{TAB_LABEL_SHORT[n.tab]} · {title}</title>
-                <rect width={n.w} height={n.h} rx={9} className="canvas-rect" />
-                <rect x={0} y={0} width={4} height={n.h} rx={2} fill={TAB_ACCENT[n.tab]} />
+                <title>{TAB_LABEL_SHORT[n.tab]} · {name}{isPlaceholder ? ' (placeholder)' : ''}</title>
+                <rect
+                  width={n.w}
+                  height={n.h}
+                  rx={9}
+                  className="canvas-rect"
+                  strokeDasharray={isPlaceholder ? '5 4' : undefined}
+                  opacity={isPlaceholder ? 0.62 : undefined}
+                />
+                <rect x={0} y={0} width={4} height={n.h} rx={2} fill={TAB_ACCENT[n.tab]} opacity={isPlaceholder ? 0.55 : undefined} />
                 {n.anchor ? <rect width={n.w} height={n.h} rx={9} className="bb-anchor-ring" /> : null}
-                <text x={16} y={22} className="bb-node-glyph" fill={TAB_ACCENT[n.tab]}>{TAB_GLYPH[n.tab]}</text>
-                <text x={36} y={22} className="canvas-block-id">{TAB_LABEL_SHORT[n.tab]}</text>
-                {n.anchor ? <text x={n.w - 12} y={22} textAnchor="end" className="canvas-tag">ANCHOR</text> : null}
-                <text x={16} y={44} className="canvas-block-role">
-                  {title.length > 24 ? `${title.slice(0, 24)}…` : title}
+                <text x={16} y={24} className="bb-node-glyph" fill={TAB_ACCENT[n.tab]}>{TAB_GLYPH[n.tab]}</text>
+                <text x={36} y={26} className="canvas-block-role">
+                  {displayName}
+                </text>
+                {n.anchor ? (
+                  <text x={n.w - 12} y={24} textAnchor="end" className="canvas-tag">BUSINESS PROCESS</text>
+                ) : isPlaceholder ? (
+                  <text x={n.w - 12} y={24} textAnchor="end" className="canvas-tag">PLACEHOLDER</text>
+                ) : null}
+                <text x={16} y={46} className="canvas-block-id">
+                  {TAB_LABEL_SHORT[n.tab]}{fallback ? ' · unresolved' : ''}
                 </text>
                 {badge ? (
                   <>
-                    <circle cx={20} cy={60} r={4} fill={badge.color} />
-                    <text x={30} y={63} className="bb-node-status">{badge.label}</text>
+                    <circle cx={20} cy={62} r={4} fill={badge.color} />
+                    <text x={30} y={65} className="bb-node-status">{badge.label}</text>
                   </>
                 ) : null}
               </g>

@@ -553,6 +553,78 @@ function findRef(bet: BigBet, refId: string): ComponentRef {
   return ref;
 }
 
+/**
+ * Add a PLACEHOLDER component — a named stand-in for an artifact that does not
+ * exist yet (no real artifact is created). It carries `placeholder:true` + the
+ * given `name`, and a synthetic `placeholder:*` artifactId so nothing downstream
+ * mistakes it for a real reference. Turn it into a real artifact later with
+ * {@link createFromPlaceholder}. Edit-gated like every other bet mutation.
+ */
+export function addPlaceholder(
+  betId: string,
+  user: Actor,
+  input: { tab: Tab; name: string; plannedReady?: string },
+): { bet: BigBet; ref: ComponentRef } {
+  const bet = requireEdit(betId, user);
+  const name = (input.name ?? '').trim();
+  if (!name) throw new BetError('A placeholder needs a name', 400);
+  const ref: ComponentRef = {
+    id: id('ref'),
+    // Synthetic id: never resolves to a real artifact until createFromPlaceholder rebinds it.
+    artifactId: `placeholder:${id('art')}`,
+    tab: input.tab,
+    start: today(),
+    plannedReady: input.plannedReady ?? today(),
+    dependsOn: [],
+    weight: 0,
+    origin: 'scaffolded',
+    placeholder: true,
+    placeholderName: name,
+    addedBy: user.id,
+    addedAt: now(),
+  };
+  bet.components.push(ref);
+  bet.updatedAt = now();
+  writeThrough(bet);
+  log(user.id, 'component.placeholder', bet.id, { tab: input.tab, name, refId: ref.id });
+  return { bet, ref };
+}
+
+/**
+ * Turn a PLACEHOLDER ref into a REAL artifact and rebind the ref to it. Scaffolds
+ * a governed draft through the tab's OWN create flow (the same path `addComponent`
+ * uses for a scaffold — reuse, never a fork), then rewires `artifactId` to the new
+ * id and clears the placeholder flags. The caller (UI) then deep-links the user to
+ * that tab, prefilled with the name, to finish the real work. Edit-gated.
+ */
+export function createFromPlaceholder(
+  betId: string,
+  user: Actor,
+  refId: string,
+): { bet: BigBet; ref: ComponentRef; artifactId: string; tab: Tab } {
+  const bet = requireEdit(betId, user);
+  const ref = findRef(bet, refId);
+  if (!ref.placeholder) throw new BetError('That component is not a placeholder', 400);
+  const title = (ref.placeholderName ?? '').trim();
+  if (!title) throw new BetError('The placeholder has no name to create from', 400);
+  // Scaffold a real draft-level artifact via the tab's governed create flow.
+  const art = sourceFor(ref.tab).scaffold({
+    title,
+    domain: bet.domain,
+    bigBetId: bet.id,
+    by: user,
+  });
+  // Rebind the ref: placeholder → real artifact id, keeping edges/anchor/position
+  // (those key off the ref id, which is unchanged), and drop the placeholder flags.
+  ref.artifactId = art.id;
+  ref.placeholder = undefined;
+  ref.placeholderName = undefined;
+  bet.updatedAt = now();
+  writeThrough(bet);
+  log(user.id, 'component.placeholder.realize', bet.id, { refId: ref.id, tab: ref.tab, artifactId: art.id, title });
+  return { bet, ref, artifactId: art.id, tab: ref.tab };
+}
+
 /** Remove a component reference (untags the artifact; NEVER deletes it). */
 export function removeComponent(betId: string, user: Principal, refId: string): BigBet {
   const bet = requireEdit(betId, user);

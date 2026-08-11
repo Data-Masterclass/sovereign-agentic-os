@@ -11,6 +11,8 @@ import {
   unwireComponents,
   savePositions,
   addComponent,
+  addPlaceholder,
+  createFromPlaceholder,
   removeComponent,
   ensureHydrated,
 } from '@/lib/bigbets/store';
@@ -78,6 +80,27 @@ export const POST = withRoute<{ id: string }, Record<string, unknown>>(async ({ 
           addComponent(id, actor(user), { tab: card.tab, artifactId: card.id, plannedReady });
         }
         break;
+      }
+      case 'addPlaceholder': {
+        // A named stand-in for an artifact that doesn't exist yet — no real artifact
+        // is created. Turned into a real one later via action:'createFromPlaceholder'.
+        const kind = String(body.kind ?? '') as Tab;
+        const name = String(body.name ?? '').trim();
+        if (!name) return NextResponse.json({ error: 'addPlaceholder needs a name' }, { status: 400 });
+        const plannedReady =
+          typeof body.plannedReady === 'string' && body.plannedReady.trim()
+            ? body.plannedReady.trim()
+            : new Date(Date.now() + 28 * 86400000).toISOString().slice(0, 10);
+        addPlaceholder(id, actor(user), { tab: kind, name, plannedReady });
+        break;
+      }
+      case 'createFromPlaceholder': {
+        // Scaffold the real artifact and rebind the placeholder ref to it. Returns the
+        // fresh blueprint PLUS the new artifact's tab+id so the UI can deep-link there.
+        const refId = String(body.refId ?? '').trim();
+        if (!refId) return NextResponse.json({ error: 'createFromPlaceholder needs a refId' }, { status: 400 });
+        const { artifactId, tab } = createFromPlaceholder(id, actor(user), refId);
+        return NextResponse.json({ ...getSolution(id, p), created: { refId, tab, artifactId } });
       }
       case 'detach': {
         const refId = String(body.refId ?? '').trim();

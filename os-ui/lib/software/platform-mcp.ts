@@ -254,7 +254,8 @@ export async function callPlatformMcp(
           new Error(
             'commit needs at least one file: an empty commit writes nothing. Do NOT write the code as prose in your reply — the server only receives what you pass in `files`. Author the code, then call commit with the EXACT shape: ' +
               'commit({ files: [{ path: "src/epics/<epic>/<story>/Page.tsx", content: "<the full file source>" }] }). ' +
-              'Retry now with the files array populated.',
+              'If you stalled because a story needs DATA that no granted dataset provides, do NOT invent a dataset here — that data need must be RESOLVED IN DESIGN first (bind an existing dataset, or create one — empty or with sample data), then rebuild. ' +
+              'Otherwise retry now with the files array populated.',
           ),
           400,
         );

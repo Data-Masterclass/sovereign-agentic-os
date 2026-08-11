@@ -5,15 +5,18 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { ComponentRef, SolutionEdge, InterplayRelation, Tab } from '@/lib/bigbets/model';
 
 /**
  * The 3-step Solution wizard — the editor's write path over the bet's blueprint.
  * It guides an editor through the solution the same way the read-only canvas shows
- * it: Step 1 the ANCHOR workflow, Step 2 the solution COMPONENTS + their interplay,
- * Step 3 the CONTEXT the solution reads from. Every mutation is a thin POST to the
- * solution route (which wraps the store's edit-gated setters); every "create new"
- * deep-links to the artifact's home tab and comes back to attach it.
+ * it: Step 1 the BUSINESS PROCESS (the anchor Workflow, internally `anchor-workflow`),
+ * Step 2 the solution COMPONENTS + their interplay, Step 3 the CONTEXT the solution
+ * reads from. Every mutation is a thin POST to the solution route (which wraps the
+ * store's edit-gated setters); every "create new" deep-links to the artifact's home
+ * tab. A PLACEHOLDER (named stand-in) can be added to any step and later turned into
+ * a real artifact with "Create real <kind>".
  *
  * The wizard owns no governance: the route re-resolves each id through its tab's
  * canView gate and the store owns the edit gate. This is a guided surface, not a
@@ -42,13 +45,14 @@ const TAB_HOME: Record<Tab, string> = {
   agent: '/agents', ml: '/science', knowledge: '/workflows', files: '/unstructured', connection: '/connections',
 };
 
-// Step 2's solution component kinds; Step 3's context kinds. (Anchor is knowledge.)
+// Step 2's solution component kinds; Step 3's context kinds. (The Business Process
+// anchor is a knowledge workflow.)
 const COMPONENT_KINDS: Tab[] = ['agent', 'software', 'ml', 'dashboard'];
 const CONTEXT_KINDS: Tab[] = ['data', 'metric', 'knowledge', 'files', 'connection'];
 
-// The reader seam still defers software/connection in the picker (their governed lists
-// are async) — be honest about it rather than showing a silently-empty list.
-const PICKER_DEFERRED: Tab[] = ['software', 'connection'];
+// Software now lists via the async gate in the available route; only connection stays
+// deferred (its governed list gate isn't wired into the picker route yet).
+const PICKER_DEFERRED: Tab[] = ['connection'];
 
 async function post(betId: string, body: Record<string, unknown>): Promise<Solution> {
   const res = await fetch(`/api/big-bets/${betId}/solution`, {
@@ -75,6 +79,7 @@ export default function SolutionWizard({
   /** Called with the fresh blueprint after any mutation so the page re-renders. */
   onChanged: (next: Solution) => void;
 }) {
+  const router = useRouter();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -83,6 +88,34 @@ export default function SolutionWizard({
     setErr(''); setBusy(true);
     try { onChanged(await fn()); } catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
+  };
+
+  // Turn a placeholder into a real artifact: the route scaffolds a governed draft in
+  // its tab + rebinds the ref, then we deep-link the user to that tab (prefilled with
+  // the name) to finish the real work. WIRED end-to-end — the rebind already happened
+  // server-side; the deep-link is just the "finish it" hand-off.
+  const createReal = async (refId: string, tab: Tab, name: string) => {
+    setErr(''); setBusy(true);
+    try {
+      const res = await fetch(`/api/big-bets/${betId}/solution`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'createFromPlaceholder', refId }),
+        cache: 'no-store',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+      onChanged(data as Solution);
+      const created = (data as { created?: { tab: Tab; artifactId: string } }).created;
+      // Deep-link to the new artifact's tab, carrying the name so the create/edit
+      // surface can prefill it. Best-effort — the rebind stands even if the nav is a no-op.
+      const home = TAB_HOME[created?.tab ?? tab];
+      router.push(`${home}?name=${encodeURIComponent(name)}`);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const anchorSet = Boolean(sol.anchor);
@@ -94,7 +127,7 @@ export default function SolutionWizard({
     <div className="card" style={{ display: 'grid', gap: 14 }}>
       <div className="bb-seg" role="tablist" aria-label="Solution wizard step">
         <button type="button" className={step === 1 ? 'active' : ''} onClick={() => setStep(1)}>
-          1 · Anchor{anchorSet ? ' ✓' : ''}
+          1 · Business Process{anchorSet ? ' ✓' : ''}
         </button>
         <button type="button" className={step === 2 ? 'active' : ''} onClick={() => setStep(2)}>
           2 · Components{componentNodes.length ? ` · ${componentNodes.length}` : ''}
@@ -123,6 +156,7 @@ export default function SolutionWizard({
           labelFor={labelFor}
           busy={busy}
           run={run}
+          createReal={createReal}
         />
       ) : (
         <StepContext
@@ -131,6 +165,7 @@ export default function SolutionWizard({
           labelFor={labelFor}
           busy={busy}
           run={run}
+          createReal={createReal}
         />
       )}
     </div>
@@ -152,28 +187,29 @@ function StepAnchor({
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>
-        The <strong>anchor workflow</strong> is the one operating procedure this solution runs on — a
-        Knowledge workflow. Attach it below (or create one), then set it as the anchor.
+        The <strong>Business Process</strong> is the one operating procedure this solution runs on — a
+        <strong> Workflow</strong> from the Workflows tab. Link an existing workflow below (or create one),
+        then set it as the Business Process.
       </p>
 
       {anchor ? (
         <div className="row" style={{ gap: 8, alignItems: 'center', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--panel)' }}>
           <span style={{ flex: 1, fontSize: 13 }}>❦ {labelFor(anchor.id)}</span>
-          <span className="chip" style={{ fontSize: 10 }}>anchor</span>
+          <span className="chip" style={{ fontSize: 10 }}>business process</span>
           <button className="btn ghost sm" disabled={busy} onClick={() => run(() => post(betId, { action: 'setAnchor' }))}>
-            Clear anchor
+            Clear
           </button>
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 8 }}>
           {knowledgeNodes.length === 0 ? (
-            <p className="muted" style={{ margin: 0, fontSize: 12 }}>No workflow attached yet — attach one below to make it the anchor.</p>
+            <p className="muted" style={{ margin: 0, fontSize: 12 }}>No workflow linked yet — link one below to make it the Business Process.</p>
           ) : (
             knowledgeNodes.map((n) => (
               <div key={n.id} className="row" style={{ gap: 8, alignItems: 'center', padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6 }}>
                 <span style={{ flex: 1, fontSize: 13 }}>❦ {labelFor(n.id)}</span>
                 <button className="btn sm" disabled={busy} onClick={() => run(() => post(betId, { action: 'setAnchor', refId: n.id }))}>
-                  Set as anchor
+                  Set as Business Process
                 </button>
               </div>
             ))
@@ -184,9 +220,11 @@ function StepAnchor({
       <AttachPicker
         betId={betId}
         kind="knowledge"
+        label="Workflow"
+        home="/workflows"
         busy={busy}
         run={run}
-        blurb="Attach the operating workflow this solution automates."
+        blurb="Link the operating Workflow this solution automates."
       />
     </div>
   );
@@ -195,7 +233,7 @@ function StepAnchor({
 // ---------------------------------------------------------------- Step 2 ------
 
 function StepComponents({
-  betId, sol, componentNodes, labelFor, busy, run,
+  betId, sol, componentNodes, labelFor, busy, run, createReal,
 }: {
   betId: string;
   sol: Solution;
@@ -203,6 +241,7 @@ function StepComponents({
   labelFor: (refId: string) => string;
   busy: boolean;
   run: (fn: () => Promise<Solution>) => Promise<void>;
+  createReal: (refId: string, tab: Tab, name: string) => Promise<void>;
 }) {
   const [kind, setKind] = useState<Tab>('agent');
   return (
@@ -224,6 +263,15 @@ function StepComponents({
       </div>
 
       <AttachPicker betId={betId} kind={kind} busy={busy} run={run} />
+
+      {componentNodes.length > 0 ? (
+        <div style={{ display: 'grid', gap: 6 }}>
+          <span className="muted" style={{ fontSize: 11 }}>Attached components</span>
+          {componentNodes.map((n) => (
+            <NodeRow key={n.id} betId={betId} node={n} labelFor={labelFor} busy={busy} run={run} createReal={createReal} />
+          ))}
+        </div>
+      ) : null}
 
       {componentNodes.length >= 2 ? (
         <QuickWire betId={betId} sol={sol} labelFor={labelFor} busy={busy} run={run} />
@@ -294,13 +342,14 @@ function QuickWire({
 // ---------------------------------------------------------------- Step 3 ------
 
 function StepContext({
-  betId, contextNodes, labelFor, busy, run,
+  betId, contextNodes, labelFor, busy, run, createReal,
 }: {
   betId: string;
   contextNodes: ComponentRef[];
   labelFor: (refId: string) => string;
   busy: boolean;
   run: (fn: () => Promise<Solution>) => Promise<void>;
+  createReal: (refId: string, tab: Tab, name: string) => Promise<void>;
 }) {
   const [kind, setKind] = useState<Tab>('data');
   return (
@@ -327,12 +376,7 @@ function StepContext({
         <div style={{ display: 'grid', gap: 6 }}>
           <span className="muted" style={{ fontSize: 11 }}>Attached context</span>
           {contextNodes.map((n) => (
-            <div key={n.id} className="row" style={{ gap: 8, alignItems: 'center', fontSize: 12.5 }}>
-              <span style={{ flex: 1 }}>{TAB_LABEL[n.tab]} · {labelFor(n.id)}</span>
-              <button className="btn ghost sm" disabled={busy} onClick={() => run(() => post(betId, { action: 'detach', refId: n.id }))}>
-                Remove
-              </button>
-            </div>
+            <NodeRow key={n.id} betId={betId} node={n} labelFor={labelFor} busy={busy} run={run} createReal={createReal} />
           ))}
         </div>
       ) : null}
@@ -340,21 +384,77 @@ function StepContext({
   );
 }
 
+/**
+ * One attached-component row in the wizard. A PLACEHOLDER row is drawn distinctly (a
+ * dashed marker + label) and offers "Create real <kind>" — which scaffolds the real
+ * artifact and rebinds this ref (via the parent's createReal). A real ref just shows
+ * its name + a Remove.
+ */
+function NodeRow({
+  betId, node, labelFor, busy, run, createReal,
+}: {
+  betId: string;
+  node: ComponentRef;
+  labelFor: (refId: string) => string;
+  busy: boolean;
+  run: (fn: () => Promise<Solution>) => Promise<void>;
+  createReal: (refId: string, tab: Tab, name: string) => Promise<void>;
+}) {
+  const isPlaceholder = node.placeholder === true;
+  const name = isPlaceholder ? (node.placeholderName ?? labelFor(node.id)) : labelFor(node.id);
+  return (
+    <div
+      className="row"
+      style={{
+        gap: 8, alignItems: 'center', fontSize: 12.5,
+        ...(isPlaceholder
+          ? { padding: '7px 10px', border: '1px dashed var(--border-strong)', borderRadius: 6, opacity: 0.9 }
+          : {}),
+      }}
+    >
+      <span style={{ flex: 1 }}>
+        {TAB_LABEL[node.tab]} · {name}
+        {isPlaceholder ? <span className="chip" style={{ fontSize: 9.5, marginLeft: 6 }}>placeholder</span> : null}
+      </span>
+      {isPlaceholder ? (
+        <button
+          className="btn sm"
+          disabled={busy}
+          title={`Create a real ${TAB_LABEL[node.tab]} from this placeholder and open its tab to finish it`}
+          onClick={() => createReal(node.id, node.tab, name)}
+        >
+          Create real {TAB_LABEL[node.tab]}
+        </button>
+      ) : null}
+      <button className="btn ghost sm" disabled={busy} onClick={() => run(() => post(betId, { action: 'detach', refId: node.id }))}>
+        Remove
+      </button>
+    </div>
+  );
+}
+
 // -------------------------------------------- the attach-existing / create-new picker --
 
 function AttachPicker({
-  betId, kind, busy, run, blurb,
+  betId, kind, busy, run, blurb, label, home,
 }: {
   betId: string;
   kind: Tab;
   busy: boolean;
   run: (fn: () => Promise<Solution>) => Promise<void>;
   blurb?: string;
+  /** Display noun override (e.g. "Workflow" for the knowledge-backed Business Process). */
+  label?: string;
+  /** "Create new" deep-link override (defaults to the tab's home surface). */
+  home?: string;
 }) {
   const [options, setOptions] = useState<PickerOption[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
+  const [placeholderName, setPlaceholderName] = useState('');
   const deferred = PICKER_DEFERRED.includes(kind);
+  const noun = label ?? TAB_LABEL[kind];
+  const createHome = home ?? TAB_HOME[kind];
 
   useEffect(() => {
     if (deferred) { setOptions([]); return; }
@@ -370,30 +470,40 @@ function AttachPicker({
 
   const filtered = search.trim() ? options.filter((o) => o.title.toLowerCase().includes(search.toLowerCase())) : options;
 
+  const addPlaceholder = () => {
+    const name = placeholderName.trim();
+    if (!name) return;
+    run(async () => {
+      const next = await post(betId, { action: 'addPlaceholder', kind, name });
+      setPlaceholderName('');
+      return next;
+    });
+  };
+
   return (
     <div style={{ border: '1px dashed var(--border-strong)', borderRadius: 6, padding: 12, display: 'grid', gap: 8 }}>
       {blurb ? <p className="muted" style={{ margin: 0, fontSize: 11.5 }}>{blurb}</p> : null}
 
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 12, fontWeight: 600 }}>Attach an existing {TAB_LABEL[kind]}</span>
-        <Link href={`${TAB_HOME[kind]}`} style={{ color: 'var(--teal)', fontSize: 11.5 }}>
-          Create a new {TAB_LABEL[kind]} →
+        <span style={{ fontSize: 12, fontWeight: 600 }}>Link an existing {noun}</span>
+        <Link href={createHome} style={{ color: 'var(--teal)', fontSize: 11.5 }}>
+          Create a new {noun} →
         </Link>
       </div>
 
       {deferred ? (
         <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-          {TAB_LABEL[kind]} listing is coming — attach it from its own tab for now, or paste its id via the MCP <span className="mono">attach_bet_component</span>.
+          {noun} listing is coming — attach it from its own tab for now, or paste its id via the MCP <span className="mono">attach_bet_component</span>.
         </p>
       ) : (
         <>
-          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${TAB_LABEL[kind].toLowerCase()}s…`} />
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${noun.toLowerCase()}s…`} />
           <div style={{ border: '1px solid var(--border)', borderRadius: 6, maxHeight: 170, overflowY: 'auto', background: 'var(--panel)' }}>
             {loading ? (
               <div className="muted" style={{ padding: '8px 12px', fontSize: 12 }}>Loading…</div>
             ) : filtered.length === 0 ? (
               <div className="muted" style={{ padding: '8px 12px', fontSize: 12 }}>
-                {options.length === 0 ? `No ${TAB_LABEL[kind].toLowerCase()}s visible to you yet — create one.` : 'No matches.'}
+                {options.length === 0 ? `No ${noun.toLowerCase()}s visible to you yet — create one, or add a placeholder below.` : 'No matches.'}
               </div>
             ) : (
               filtered.map((o, i) => (
@@ -417,6 +527,22 @@ function AttachPicker({
           </div>
         </>
       )}
+
+      {/* Placeholder: a named stand-in for a {noun} that doesn't exist yet. Turn it
+          into a real artifact later with "Create real {noun}" on the component row. */}
+      <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+        <input
+          type="text"
+          value={placeholderName}
+          onChange={(e) => setPlaceholderName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addPlaceholder(); } }}
+          placeholder={`…or add a placeholder ${noun.toLowerCase()} (name it now, build it later)`}
+          style={{ flex: 1 }}
+        />
+        <button className="btn ghost sm" disabled={busy || !placeholderName.trim()} onClick={addPlaceholder}>
+          + Placeholder
+        </button>
+      </div>
     </div>
   );
 }

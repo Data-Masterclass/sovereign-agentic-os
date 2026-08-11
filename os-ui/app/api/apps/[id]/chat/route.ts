@@ -14,6 +14,7 @@ import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
 import { toolCallToLine, gateLineFromStep, committedSummaryLine, type ActivityLine } from '@/lib/software/build-activity';
 import { asChatRunMode, isReadOnlyMode, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, type ChatRunMode } from '@/lib/software/chat-modes';
 import { appContext } from '@/lib/software/build-brief';
+import { unresolvedDataNeedWarning } from '@/lib/software/data-plan';
 import { resolveGrantedContext } from '@/lib/software/grants-context';
 import type { BuildTarget } from '@/lib/software/build-target';
 
@@ -68,6 +69,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // Resolve the app's granted context ONCE (async, DLS-scoped as the caller) before the
   // streamed run, so the build agent gets the real data plane it was granted. Empty ⇒ ''.
   const grantedContext = await resolveGrantedContext(app.grants, user);
+  // DATA-RESOLUTION GATE (0.6.101): if the app has ZERO granted datasets yet a story implies
+  // a data need, warn LOUDLY + up front in the brief so the build agent stops with an honest,
+  // actionable message ("resolve it in Design") instead of the cryptic empty commit. A warning,
+  // not a hard block — the signal is conservative, so a good build is never rejected on it.
+  const dataNeedWarning = unresolvedDataNeedWarning(app.epics ?? [], app.grants.data.length);
   // Per-stage MODEL TIER (Software tab policy): plan (Design) / test / review run on the
   // REASONING model — the spec-drafting, verification and review reasoning; build (code
   // GENERATION) runs on STANDARD — the standard model does the bulk file writing and is
@@ -112,7 +118,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           user,
           tab: 'software',
           messages: clean,
-          extraContext: appContext(app, mode, target, grantedContext),
+          extraContext:
+            appContext(app, mode, target, grantedContext) +
+            (dataNeedWarning ? `\n\n## Unresolved data need (RESOLVE IN DESIGN FIRST)\n${dataNeedWarning}` : ''),
           // This run is scoped to THIS app: bind its appId into every tool call so the
           // model never has to repeat it (an omitted/empty id is filled in, not 404'd —
           // the `commit({})` → not_found fix) and a mismatched id is rejected loudly.

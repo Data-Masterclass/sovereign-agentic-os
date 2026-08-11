@@ -205,6 +205,15 @@ export type ComponentRef = {
   id: string;
   artifactId: string;
   tab: Tab;
+  /**
+   * PLACEHOLDER stand-in: a named component for an artifact that doesn't exist yet.
+   * When true, `artifactId` is a synthetic `placeholder:*` id (no real artifact) and
+   * `placeholderName` carries the display name. "Create real <kind>" scaffolds the
+   * artifact and rebinds this ref (placeholder → real id). Absent on real refs.
+   */
+  placeholder?: boolean;
+  /** The placeholder's display name (only when `placeholder` is true). */
+  placeholderName?: string;
   /** Start + planned-ready date for the Gantt bar (ISO yyyy-mm-dd). */
   start: string;
   plannedReady: string;

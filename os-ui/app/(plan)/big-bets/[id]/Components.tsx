@@ -68,17 +68,24 @@ function ComponentRow({
     try { await fn(); onMutate(); } catch (e) { setErr((e as Error).message); setBusy(''); }
   };
 
-  const candidates = art
+  const isPlaceholder = c.placeholder === true;
+  const candidates = art && !isPlaceholder
     ? Array.from(new Set(['building', 'draft', art.readyVerb])).filter((l) => l !== c.status.lifecycle)
     : [];
 
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '12px 14px', background: 'var(--panel)' }}>
+    <div style={{
+      border: isPlaceholder ? '1px dashed var(--border-strong)' : '1px solid var(--border)',
+      borderRadius: 'var(--radius)', padding: '12px 14px', background: 'var(--panel)',
+    }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{art?.title ?? '🔒 members only'}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 600 }}>
+            {art?.title ?? '🔒 members only'}
+            {isPlaceholder ? <span className="chip" style={{ fontSize: 9.5, marginLeft: 6 }}>placeholder</span> : null}
+          </div>
           <div className="muted mono" style={{ fontSize: 10.5, marginTop: 2 }}>
-            {(art?.tab ?? '') as string} · {c.status.label}
+            {(art?.tab ?? '') as string} · {isPlaceholder ? 'placeholder — not built yet' : c.status.label}
             {c.status.blocked && c.status.blockedBy.length ? ` · blocked by ${c.status.blockedBy.length}` : ''}
           </div>
           {c.status.override?.note ? (
@@ -88,10 +95,41 @@ function ComponentRow({
             </div>
           ) : null}
         </div>
-        {art ? <span className={`badge vis-${art.visibility}`}>{art.lifecycle}</span> : null}
+        {art && !isPlaceholder ? <span className={`badge vis-${art.visibility}`}>{art.lifecycle}</span> : null}
       </div>
 
-      {canEdit && art ? (
+      {canEdit && isPlaceholder ? (
+        <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            className="btn sm"
+            disabled={busy !== ''}
+            title={`Create a real ${art?.tab ?? 'artifact'} from this placeholder and open its tab to finish it`}
+            onClick={() => run('create', async () => {
+              const name = art?.title ?? '';
+              const res = await api(`/api/big-bets/${betId}/solution`, 'POST', { action: 'createFromPlaceholder', refId: ref }) as { created?: { tab: string } };
+              const tab = res.created?.tab ?? art?.tab;
+              if (tab) router.push(`/${tab === 'ml' ? 'science' : tab === 'knowledge' ? 'workflows' : tab === 'files' ? 'unstructured' : tab}?name=${encodeURIComponent(name)}`);
+            })}
+          >
+            {busy === 'create' ? <span className="spin" /> : `Create real ${art?.tab ?? 'artifact'}`}
+          </button>
+          <button
+            className="btn ghost sm"
+            style={{ marginLeft: 'auto' }}
+            disabled={busy !== ''}
+            onClick={() => {
+              if (confirm('Remove this placeholder from the bet?')) {
+                run('del', () => api(`/api/big-bets/${betId}/components/${ref}`, 'DELETE'));
+              }
+            }}
+          >
+            Remove from bet
+          </button>
+          {err ? <div className="error" style={{ marginTop: 8, width: '100%' }}>{err}</div> : null}
+        </div>
+      ) : null}
+
+      {canEdit && art && !isPlaceholder ? (
         <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           {candidates.length > 0 ? (
             <>

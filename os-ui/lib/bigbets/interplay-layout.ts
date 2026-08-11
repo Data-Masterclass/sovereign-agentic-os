@@ -29,6 +29,8 @@ export type Node = {
   tab: Tab;
   band: Band;
   anchor: boolean;
+  /** TRUE when the ref is a named placeholder (no real artifact yet) — drawn faded. */
+  placeholder: boolean;
   x: number;
   y: number;
   w: number;
@@ -64,8 +66,11 @@ const PAD = 32;
 const PER_ROW = 4;
 
 const COMPONENT_TABS: Tab[] = ['agent', 'software', 'ml', 'dashboard'];
+// DISPLAY labels only — the band key `anchor` (and the store's `anchor-workflow`
+// role / `anchorWorkflowRefId`) stay stable; only the user-facing text changed to
+// "Business Process" (the workflow that anchors the solution).
 const BAND_LABEL: Record<Band, string> = {
-  anchor: 'Anchor workflow',
+  anchor: 'Business Process',
   components: 'Components',
   context: 'Context',
 };
@@ -74,6 +79,36 @@ const BAND_LABEL: Record<Band, string> = {
 export function bandFor(ref: ComponentRef, anchorId?: string): Band {
   if (anchorId && ref.id === anchorId) return 'anchor';
   return COMPONENT_TABS.includes(ref.tab) ? 'components' : 'context';
+}
+
+/**
+ * Resolve the text a node shows as its PRIMARY label: the artifact's real name when
+ * known, else a short fallback derived from the id (so an unknown/unresolved ref is
+ * still distinguishable, not just its type). `redacted` (members-only) shows a fixed
+ * "Members only". Pure + unit-tested — the canvas is a thin renderer over it.
+ *
+ *   - name known           → { text: name, fallback: false }
+ *   - name unknown, has id → { text: shortId(id), fallback: true }
+ *   - redacted             → { text: 'Members only', fallback: false }
+ */
+export function resolveNodeLabel(input: {
+  name?: string | null;
+  id: string;
+  redacted?: boolean;
+}): { text: string; fallback: boolean } {
+  if (input.redacted) return { text: 'Members only', fallback: false };
+  const name = (input.name ?? '').trim();
+  if (name) return { text: name, fallback: false };
+  return { text: shortId(input.id), fallback: true };
+}
+
+/** A compact, human-ish tail of an opaque ref/artifact id for the fallback label. */
+function shortId(id: string): string {
+  const s = (id ?? '').trim();
+  if (!s) return '—';
+  // Keep the last segment after the last separator, capped — e.g. `agent_9f3ab21` → `9f3ab21`.
+  const tail = s.split(/[:_/-]/).filter(Boolean).pop() ?? s;
+  return tail.length > 10 ? `${tail.slice(0, 10)}…` : tail;
 }
 
 export function layoutInterplay(input: {
@@ -116,6 +151,7 @@ export function layoutInterplay(input: {
           tab: ref.tab,
           band,
           anchor: band === 'anchor',
+          placeholder: ref.placeholder === true,
           x: saved ? saved.x : startX + c * (BLOCK_W + GAP_X),
           y: saved ? saved.y : y,
           w: BLOCK_W,

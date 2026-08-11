@@ -87,6 +87,7 @@ export default function Design({ view, onMutate }: { view: BetView; onMutate?: (
       title: c.artifact?.title,
       derived: c.status.derived,
       visible: c.visible,
+      placeholder: c.placeholder,
     };
   }
   const labelFor = (refId: string) => meta[refId]?.title ?? refId;
@@ -185,7 +186,7 @@ export default function Design({ view, onMutate }: { view: BetView; onMutate?: (
 
       {wf ? (
         <>
-          <div className="section-title">Anchor workflow</div>
+          <div className="section-title">Business Process workflow</div>
           <div className="card">
             <SwimlaneCanvas workflow={wf.workflow} gaps={wf.gaps} canEdit={false} />
           </div>

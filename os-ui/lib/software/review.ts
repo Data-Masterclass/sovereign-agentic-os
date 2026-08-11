@@ -379,6 +379,26 @@ export async function requestDeploy(
     return { kind: 'auto-deployed', app };
   }
 
+  // SELF-SERVE go-live (0.6.102): a Builder deploying their OWN Personal ("My") app
+  // publishes in ONE action — no separate approval step, no admin. They are already
+  // entitled to approve it themselves (decideDeploy is builder+), so folding
+  // request+approve just removes the friction of a personal app you own. Still fully
+  // SECURITY-GATED: only on a PASSING scan and with NO ungranted-dataset warning — a
+  // scan finding or a dataset warning falls through to the review card so it is seen.
+  // Shared / Domain / Company tiers are unaffected: they keep the Builder review gate,
+  // and promotion to a higher tier remains separately role-gated.
+  if (app.owner === user.id && isBuilder(user) && app.visibility === 'Personal' && scan.passed && warnings.length === 0) {
+    await applyDeployDecisionToApp(app, 'approve', requested);
+    void trace({
+      principal: app.mcpPrincipal,
+      tool: 'generate',
+      input: { action: 'request_deploy', by: user.id, selfServe: true, tier: 'Personal' },
+      output: { autoDeployed: true, envelope: requested },
+      decision: 'allow',
+    });
+    return { kind: 'auto-deployed', app };
+  }
+
   // First deploy, scope-broadening change, OR a scan finding → Builder review card.
   const card: ReviewCard = {
     id: newId('rev'),

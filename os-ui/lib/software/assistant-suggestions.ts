@@ -25,6 +25,9 @@ import {
 } from '@/lib/core/context-grants';
 import type { AppEpic, AppStory } from '@/lib/software/apps';
 import { normalizeSpec, type StorySpec } from '@/lib/software/story-spec';
+import { normalizeSuggestedDatasets, type SuggestedDataset } from '@/lib/software/data-plan';
+
+export type { SuggestedDataset } from '@/lib/software/data-plan';
 
 /** A single context-grant the assistant proposes: which kind + id, at what access. */
 export type SuggestedGrant = {
@@ -88,6 +91,14 @@ export type StageSuggestions = {
    * be omitted.
    */
   suggestedSpec?: Partial<StorySpec>;
+  /**
+   * Design (data plan): CREATE-NEW datasets the assistant proposes for the app's data
+   * needs — one per entity ("employees", "cases") with an inferred schema and whether to
+   * fill it empty (schema only) or with AI dummy rows. Distinct from `suggestedGrants`,
+   * which BINDS an existing dataset; the host resolves each item server-side (create +
+   * materialize + grant). See `data-plan.ts`.
+   */
+  suggestedDatasets?: SuggestedDataset[];
   /**
    * Test (Verify & Improve): concrete improvements the verifier drafted for built
    * stories/features that fell short of spec, plus scope-changing feedback. Each is
@@ -378,6 +389,9 @@ export function normalizeAssistantReply(raw: unknown, kinds: ContextKind[]): Sta
     const r = list(o.rules); if (r.length) spec.rules = r;
     if (spec.features || spec.nfrs || spec.rules) suggestions.suggestedSpec = spec;
   }
+
+  const datasets = normalizeSuggestedDatasets(rec.suggestedDatasets);
+  if (datasets) suggestions.suggestedDatasets = datasets;
 
   if (Array.isArray(rec.suggestedImprovements)) {
     const imps = rec.suggestedImprovements

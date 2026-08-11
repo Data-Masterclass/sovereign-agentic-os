@@ -50,6 +50,7 @@ import {
   refinementsToBuild,
   type Improvement,
 } from '@/lib/software/improvements';
+import DataPlanPanel from './DataPlanPanel';
 import RefinementList, { type RefineHandlers } from './RefinementList';
 import { buildableBatch } from './refinement-view';
 import StageConversation from '@/components/core/StageConversation';
@@ -978,6 +979,18 @@ function DesignStage({
             onApplyEpicRequirements={canEdit ? applyEpicReqs : undefined}
             onApplySpec={canEdit && targetStory ? applySpec : undefined}
             specTargetLabel={targetStory?.title.trim() || undefined}
+            renderDataPlan={
+              canEdit
+                ? (datasets, dismiss) => (
+                    <DataPlanPanel
+                      appId={app.id}
+                      datasets={datasets}
+                      onResolved={() => onReload()}
+                      onDismiss={dismiss}
+                    />
+                  )
+                : undefined
+            }
             nextSteps={nextSteps}
           />
         }
