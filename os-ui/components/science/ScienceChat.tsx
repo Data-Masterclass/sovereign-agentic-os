@@ -6,7 +6,7 @@
 import { useCallback, useRef, useState } from 'react';
 import Markdown from '@/components/Markdown';
 import type { SciStageId } from './stages';
-import type { TaskType } from './shared';
+import { TASK_LABEL, type TaskType } from './shared';
 
 /**
  * ScienceChat — ONE persistent, governed, multi-turn assistant mounted across all three
@@ -34,6 +34,10 @@ export type ModelDefinition = {
   targetColumn?: string;
   features?: string[];
   rationale?: string;
+  /** True when the OS auto-detected/corrected `taskType` from the target column (dtype + content). */
+  autoDetectedTask?: boolean;
+  /** Human reason for the auto-detection — shown so the correction is transparent, not hidden. */
+  autoDetectedReason?: string;
 };
 
 type Turn = { role: 'user' | 'assistant'; content: string };
@@ -168,6 +172,13 @@ export default function ScienceChat({
                 {def.datasetName ? <li><span className="muted">Data:</span> <strong>{def.datasetName}</strong></li> : null}
                 {def.targetColumn ? <li><span className="muted">Predict:</span> <span className="mono">{def.targetColumn}</span></li> : null}
                 {def.features?.length ? <li><span className="muted">From:</span> {def.features.map((f) => <span key={f} className="mono" style={{ marginRight: 6 }}>{f}</span>)}</li> : null}
+                {def.taskType ? (
+                  <li>
+                    <span className="muted">Task:</span> <strong>{TASK_LABEL[def.taskType]}</strong>
+                    {def.autoDetectedTask ? <span className="muted" style={{ fontSize: 12 }}> · auto-detected from target</span> : null}
+                  </li>
+                ) : null}
+                {def.autoDetectedTask && def.autoDetectedReason ? <li className="muted" style={{ fontSize: 12 }}>{def.autoDetectedReason}</li> : null}
                 {def.rationale ? <li className="muted" style={{ fontSize: 12 }}>{def.rationale}</li> : null}
               </ul>
             </SuggestionCard>

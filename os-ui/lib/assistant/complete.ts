@@ -68,7 +68,10 @@ export type AssistantRequest = {
 /** A transport that turns one request into the model's text. Injected in tests. */
 export type AssistantCaller = (req: AssistantRequest) => Promise<string>;
 
-const LLM_TIMEOUT_MS = Number(process.env.LLM_CHAT_TIMEOUT_MS ?? '') || 90_000;
+// 240s default — the reasoning tier (all Software stages since 0.6.107, plus Design/Science)
+// can take well over the old 90s for a heavy generation; a shorter cap aborted mid-response
+// and surfaced as "the model did not respond in time" with nothing produced.
+const LLM_TIMEOUT_MS = Number(process.env.LLM_CHAT_TIMEOUT_MS ?? '') || 240_000;
 
 /** The live caller: POST the governed LiteLLM gateway /v1/chat/completions. */
 export function liteLlmAssistantCaller(): AssistantCaller {

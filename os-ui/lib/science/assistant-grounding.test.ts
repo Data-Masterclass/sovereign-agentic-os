@@ -29,31 +29,54 @@ mock.module('@/lib/data/store', {
 });
 
 mock.module('@/lib/data/dataset-schema', { namedExports: { LAYERS: ['bronze', 'silver', 'gold'] } });
-const COLS = [{ name: 'churned', type: 'boolean' }, { name: 'recency_days', type: 'integer' }, { name: 'monetary_value', type: 'double' }];
+const COLS = [
+  { name: 'churned', type: 'boolean' },
+  { name: 'recency_days', type: 'integer' },
+  { name: 'monetary_value', type: 'double' },
+  { name: 'duration_days', type: 'double' },
+];
 mock.module('@/lib/data/profile', {
   namedExports: {
     parseDescribe: () => COLS,
     previewSql: (fqn: string, limit = 50) => `select * from ${fqn} limit ${limit}`,
+    // Real classifier (mirrors the module) so targetProfile knows which columns are numeric.
+    classifyType: (t: string) => (/^(tinyint|smallint|integer|int|bigint|real|double|decimal|numeric)\b/.test((t || '').toLowerCase()) ? 'numeric' : (t || '').toLowerCase() === 'boolean' ? 'boolean' : 'string'),
   },
 });
 mock.module('@/lib/data/store-fqn', { namedExports: { slug: (s: string) => s.toLowerCase() } });
-// A governed query stub that answers DESCRIBE and SELECT differently so the sample path has rows.
+// The per-target content profile the stubbed governed query returns (distinct/non-null/frac).
+// duration_days = a continuous double (many distinct, fractional values present → regression).
+const PROFILE: Record<string, { n: number; distinct_n: number; non_null: number; frac?: number }> = {
+  duration_days: { n: 1000, distinct_n: 640, non_null: 1000, frac: 512 }, // fractional ⇒ continuous
+  churned: { n: 1000, distinct_n: 2, non_null: 1000, frac: 0 },
+  recency_days: { n: 1000, distinct_n: 45, non_null: 1000, frac: 0 },
+};
+// A governed query stub that answers DESCRIBE, the content-profile SELECT, and the row-sample SELECT.
 mock.module('@/lib/infra/governed', {
   namedExports: {
     queryRun: async (sql: string) => {
       if (/^\s*describe/i.test(sql)) {
         return { engine: 'trino', tables: [], columns: ['Column', 'Type'], rows: COLS.map((c) => [c.name, c.type]), rowCount: COLS.length };
       }
-      // SELECT * … LIMIT n → two real sample rows over the three columns.
+      // Content profile: `select count(*) as n, count(distinct "<t>") as distinct_n, ...`.
+      const m = /count\(distinct "([^"]+)"\)/i.exec(sql);
+      if (/count\(\*\) as n/i.test(sql) && m) {
+        const p = PROFILE[m[1]] ?? { n: 0, distinct_n: 0, non_null: 0 };
+        const numeric = /count_if\(/i.test(sql);
+        const columns = ['n', 'distinct_n', 'non_null', ...(numeric ? ['frac'] : [])];
+        const row = [String(p.n), String(p.distinct_n), String(p.non_null), ...(numeric ? [String(p.frac ?? 0)] : [])];
+        return { engine: 'trino', tables: [], columns, rows: [row], rowCount: 1 };
+      }
+      // SELECT * … LIMIT n → two real sample rows over the columns.
       return {
-        engine: 'trino', tables: [], columns: ['churned', 'recency_days', 'monetary_value'],
-        rows: [['true', '12', '340.5'], ['false', '3', '1290.0']], rowCount: 2,
+        engine: 'trino', tables: [], columns: ['churned', 'recency_days', 'monetary_value', 'duration_days'],
+        rows: [['true', '12', '340.5', '5.5'], ['false', '3', '1290.0', '18.0']], rowCount: 2,
       };
     },
   },
 });
 
-const { validateDefinition, visibleDatasets, datasetColumnsTyped, datasetSample, designGrounding, GROUNDING_SAMPLE_ROWS } = await import('./assistant-grounding.ts');
+const { validateDefinition, visibleDatasets, datasetColumnsTyped, datasetSample, designGrounding, targetProfile, GROUNDING_SAMPLE_ROWS } = await import('./assistant-grounding.ts');
 
 const USER = { id: 'u1', domains: ['acme'], role: 'builder' as const };
 
@@ -113,9 +136,9 @@ test('datasetColumnsTyped returns [] for a dataset the caller cannot see (DLS-sc
 test('datasetSample returns a small set of REAL rows (default budget)', async () => {
   const sample = await datasetSample('ds_sales', USER);
   assert.ok(sample);
-  assert.deepEqual(sample!.columns, ['churned', 'recency_days', 'monetary_value']);
+  assert.deepEqual(sample!.columns, ['churned', 'recency_days', 'monetary_value', 'duration_days']);
   assert.equal(sample!.rows.length, 2);
-  assert.deepEqual(sample!.rows[0], ['true', '12', '340.5']);
+  assert.deepEqual(sample!.rows[0], ['true', '12', '340.5', '5.5']);
   assert.ok(GROUNDING_SAMPLE_ROWS >= 1);
 });
 
@@ -143,4 +166,66 @@ test('designGrounding omits sample values when no dataset is selected (columns o
 test('designGrounding is honest when the caller has no datasets', async () => {
   const g = await designGrounding({ id: 'nobody', domains: [], role: 'creator' as const }, 'ds_sales');
   assert.match(g, /no datasets yet/);
+});
+
+/* ── 0.6.111 auto-detect the ML task from the target column (dtype + content) ── */
+
+test('targetProfile reads the target column content (distinct/non-null + integer-valued)', async () => {
+  const p = await targetProfile('ds_sales', 'duration_days', 'double', USER);
+  assert.ok(p);
+  assert.equal(p!.distinctCount, 640);
+  assert.equal(p!.nonNull, 1000);
+  assert.equal(p!.isIntegerValued, false); // fractional values present ⇒ continuous
+});
+
+test('validateDefinition OVERRIDES classification-on-continuous → regression + flags it', async () => {
+  // The owner's exact bug: binary_classification proposed on a continuous `duration_days` double.
+  const r = await validateDefinition(
+    { datasetId: 'ds_sales', targetColumn: 'duration_days', features: ['recency_days', 'monetary_value'], taskType: 'binary_classification' },
+    USER,
+  );
+  assert.ok('definition' in r);
+  if ('definition' in r) {
+    assert.equal(r.definition.taskType, 'regression');
+    assert.equal(r.definition.autoDetectedTask, true);
+    assert.match(r.definition.autoDetectedReason ?? '', /regression/i);
+    assert.match(r.definition.autoDetectedReason ?? '', /duration_days/);
+  }
+});
+
+test('validateDefinition FILLS a missing task from the target and flags it', async () => {
+  const r = await validateDefinition(
+    { datasetId: 'ds_sales', targetColumn: 'duration_days', features: ['recency_days'] },
+    USER,
+  );
+  assert.ok('definition' in r);
+  if ('definition' in r) {
+    assert.equal(r.definition.taskType, 'regression');
+    assert.equal(r.definition.autoDetectedTask, true);
+  }
+});
+
+test('validateDefinition KEEPS a task already consistent with the target (no flag)', async () => {
+  // churned has 2 distinct values → binary; a proposed binary is consistent, kept, unflagged.
+  const r = await validateDefinition(
+    { datasetId: 'ds_sales', targetColumn: 'churned', features: ['recency_days'], taskType: 'binary_classification' },
+    USER,
+  );
+  assert.ok('definition' in r);
+  if ('definition' in r) {
+    assert.equal(r.definition.taskType, 'binary_classification');
+    assert.ok(!r.definition.autoDetectedTask);
+  }
+});
+
+test('validateDefinition OVERRIDES regression-on-binary → binary_classification', async () => {
+  const r = await validateDefinition(
+    { datasetId: 'ds_sales', targetColumn: 'churned', features: ['recency_days'], taskType: 'regression' },
+    USER,
+  );
+  assert.ok('definition' in r);
+  if ('definition' in r) {
+    assert.equal(r.definition.taskType, 'binary_classification');
+    assert.equal(r.definition.autoDetectedTask, true);
+  }
 });

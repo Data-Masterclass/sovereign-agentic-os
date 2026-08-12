@@ -142,7 +142,10 @@ export function boundExecutor(base: ToolExecutor, bound: Record<string, unknown>
   };
 }
 
-const LLM_TIMEOUT_MS = Number(process.env.LLM_CHAT_TIMEOUT_MS ?? '') || 90_000;
+// 240s default: Build runs on the REASONING model (0.6.107), which can take well over the
+// old 90s to generate a full multi-file commit in one act — a shorter cap aborted the fetch
+// mid-generation and surfaced as "the model did not respond in time" with nothing streamed.
+const LLM_TIMEOUT_MS = Number(process.env.LLM_CHAT_TIMEOUT_MS ?? '') || 240_000;
 
 /**
  * A LiteLLM-backed `LlmCall`. Sends OpenAI-shaped chat completions through the

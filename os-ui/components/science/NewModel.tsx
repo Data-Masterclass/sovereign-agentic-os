@@ -188,6 +188,10 @@ export default function NewModel({
   const [split, setSplit] = useState('0.8');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  // When the assistant's suggestion had its task AUTO-DETECTED from the target column, carry the
+  // reason so the Simple form shows the SAME transparent note (the OS chose the task from the data,
+  // not a guess). Cleared when the user changes the target manually (it no longer applies).
+  const [autoTaskNote, setAutoTaskNote] = useState('');
 
   const unsupervised = taskType === 'clustering';
 
@@ -232,6 +236,7 @@ export default function NewModel({
     if (!prefill || prefill === appliedPrefill.current) return;
     appliedPrefill.current = prefill;
     if (prefill.taskType && isTrainableTask(prefill.taskType)) setTaskType(prefill.taskType);
+    setAutoTaskNote(prefill.autoDetectedTask && prefill.autoDetectedReason ? prefill.autoDetectedReason : '');
     // Dataset first (it selects the dropdown + fetches columns); then the target/features it
     // proposed — set alongside so they stay selected as the columns load in.
     if (prefill.datasetId && prefill.datasetFqn) {
@@ -347,13 +352,16 @@ export default function NewModel({
                   <select
                     id="nm-target"
                     value={targetColumn}
-                    onChange={(e) => { setTarget(e.target.value); setFeatures((f) => f.filter((c) => c !== e.target.value)); }}
+                    onChange={(e) => { setTarget(e.target.value); setFeatures((f) => f.filter((c) => c !== e.target.value)); setAutoTaskNote(''); }}
                     style={{ width: '100%' }}
                   >
                     <option value="">— pick a column —</option>
                     {columns.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
-                  <div className="hint" style={{ marginTop: 4 }}>{taskSentence(taskType)}</div>
+                  <div className="hint" style={{ marginTop: 4 }}>
+                    {taskSentence(taskType)}
+                    {autoTaskNote ? <> — <span className="muted">{autoTaskNote}</span></> : null}
+                  </div>
                 </div>
               ) : null}
 

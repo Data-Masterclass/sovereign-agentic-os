@@ -117,6 +117,50 @@ test('CODE_STRUCTURE_CONVENTION: names template/core/epics + thin app entrypoint
   assert.match(CODE_STRUCTURE_CONVENTION, /governed data plane/i);
 });
 
+test('CODE_STRUCTURE_CONVENTION: the vendored-API guardrails that keep the compile gate green', () => {
+  // The recurring live failures: importing react-router-dom, and wrapping a page in <AppShell>.
+  // ONLY 3 import sources — and an explicit ban on routers / any 3rd-party lib.
+  assert.match(CODE_STRUCTURE_CONVENTION, /ONLY 3 import sources/i, 'names the three-import-sources rule');
+  assert.match(CODE_STRUCTURE_CONVENTION, /react-router-dom/, 'names the exact banned router import that bit us');
+  assert.match(CODE_STRUCTURE_CONVENTION, /NEVER import anything else/i, 'bans all other 3rd-party libs');
+  // Navigation is the section registry, not a client router.
+  assert.match(CODE_STRUCTURE_CONVENTION, /no client-side router/i, 'no client-side router');
+  assert.match(CODE_STRUCTURE_CONVENTION, /useNavigate/, 'names the exact router hook the agent reached for');
+  // A page returns its CONTENT (Section/Card) and NEVER renders <AppShell> (template-only).
+  assert.match(CODE_STRUCTURE_CONVENTION, /NEVER renders?\s+`?<AppShell>/i, 'pages must never render AppShell');
+  assert.match(CODE_STRUCTURE_CONVENTION, /<Section /, 'shows a page returns Section content');
+  assert.match(CODE_STRUCTURE_CONVENTION, /Overview\.tsx/, 'points at the correct example page to mirror');
+  // The exact @sovereign-os/ui signatures that bit us (AppShell requires nav; Alert variant).
+  assert.match(CODE_STRUCTURE_CONVENTION, /AppShell[^\n]*REQUIRES `nav`/i, 'notes AppShell requires nav (template-only)');
+  assert.match(CODE_STRUCTURE_CONVENTION, /<Alert variant=/i, 'Alert takes variant');
+  // The onChange DOM-event gotcha.
+  assert.match(CODE_STRUCTURE_CONVENTION, /e\.target as HTMLSelectElement/i, 'reads onChange event value from the DOM target');
+});
+
+test('modeDirective(build): tells the agent to FIX rejected diagnostics, not resubmit unchanged code', () => {
+  const b = modeDirective('build', 'app_1').join('\n');
+  assert.match(b, /never resubmit (the same |unchanged )/i, 'forbids re-committing identical rejected code');
+});
+
+test('modeDirective(build): "done" is grounded in facts, and un-built stories must be BUILT (no false "already implemented")', () => {
+  const b = modeDirective('build', 'app_1').join('\n');
+  assert.match(b, /"DONE" IS GROUNDED IN FACTS, NEVER IN THE SPEC/i, 'done = facts, not spec');
+  assert.match(b, /status:'done' AND committed source files/i, 'done requires status:done AND committed files');
+  assert.match(b, /already implemented/i, 'names the false "already implemented" refusal');
+  assert.match(b, /no further\s+build needed/i, 'names the "no further build needed" claim');
+  assert.match(b, /BUILD IT/, 'un-built story must be built');
+});
+
+test('modeDirective(build): roles use useIdentity + roleAtLeast (a floor), never an exact-match block', () => {
+  const b = modeDirective('build', 'app_1').join('\n');
+  assert.match(b, /useIdentity\(\)/, 'gets the user from useIdentity');
+  assert.match(b, /roleAtLeast\(user\.role, '<floor>'\)/, 'gates with the roleAtLeast floor helper');
+  assert.match(b, /NEVER an exact match like[\s\S]*role === 'admin'/i, 'forbids the exact-match role block');
+  assert.match(b, /creator < builder < domain_admin < admin/, 'states the real OS role ladder');
+  assert.match(b, /ADVISORY UX/i, 'client checks are advisory, not enforcement');
+  assert.match(b, /HIDE or DISABLE/i, 'hide/disable the control, not a blocking error');
+});
+
 // --------------------------------------- BUILD directive injects both --
 
 test('modeDirective(build): injects BUILD_PRINCIPLES + the code-structure convention', () => {

@@ -83,6 +83,20 @@ test('DEVELOPER MODE: commit is role-gated to builder/admin AND labelled — a C
   assert.match(commit?.description ?? '', /BYPASS/i);
 });
 
+test('build_software description carries the vendored-API + done-is-facts guardrails (MCP parity)', () => {
+  const build = PLATFORM_MCP_TOOLS.find((t) => t.name === 'build_software')?.description ?? '';
+  // Vendored-API landmine: no router, page never renders AppShell.
+  assert.match(build, /react-router-dom/, 'names the banned router import');
+  assert.match(build, /NEVER renders `<AppShell>`/i, 'forbids AppShell in a page');
+  assert.match(build, /Overview\.tsx/, 'points at the example page to mirror');
+  // Done = facts, not spec.
+  assert.match(build, /"DONE" = status:'done' AND committed files/i, 'done is grounded in facts');
+  assert.match(build, /already implemented/i, 'names the false "already implemented" refusal');
+  // Roles: roleAtLeast floor, not exact-match.
+  assert.match(build, /roleAtLeast\(user\.role/, 'gates with the roleAtLeast floor helper');
+  assert.match(build, /role === 'admin'/, 'names the exact-match anti-pattern to avoid');
+});
+
 test('commit with NO appId returns a corrective 400 (not a confusing not_found)', async () => {
   // The build agent (standard model) emitted `commit({})` live — empty args. Without a
   // guard this reached the store as a lookup for an empty id and answered `not_found:

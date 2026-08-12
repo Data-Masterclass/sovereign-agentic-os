@@ -387,16 +387,23 @@ softwareRunner:
 # submits an in-cluster Kaniko batch/v1 Job per app commit that builds the app's
 # Dockerfile from its Forgejo git tree at the commit SHA and pushes a DIGEST-tagged
 # image the runner then serves pinned (no :latest roll dance). Flipping `enabled`
-# emits SOFTWARE_BUILD_SERVICE=true on os-ui + activates the build-Job RBAC
-# (templates/software/apps-build.yaml). ADDITIVE + REVERSIBLE: the Forgejo Actions
-# path still ships in every app scaffold and existing live apps keep serving until
-# they next commit; set `enabled: false` + `helm upgrade` to revert.
+# DORMANT / UNFINISHED — the Kaniko digest build service (Path B). Kept OFF for the
+# cohort (2026-08-11 decision): apps build+serve via the Forgejo Actions path (Path A),
+# which is PROVEN working end-to-end on this cluster (fresh app → Actions build → push
+# forgejo-http:3000/<slug>:latest → runner deploys → pod 1/1 Running).
 #
-# HARBOR_REGISTRY is deliberately NOT overridden — Kaniko pushes to the default
-# in-cluster forgejo-http:3000/gitea_admin registry (nodes already trust it; the
-# runner pulls fine). `kanikoImage` inherits the chart default (pinned executor).
+# Path B was NEVER exercised and has a CHAIN of latent bugs found in live validation —
+# do NOT flip `enabled: true` until ALL are fixed (that's the deferred 0.6.111 wave):
+#   1. PSS — `softwareRunner.podSecurityStandard: baseline` (apps ns renders `restricted`;
+#      Kaniko needs baseline). The value is the durable lever (a manual relabel is reverted
+#      by helm). Cleaner: a dedicated build namespace at baseline, runtime ns stays restricted.
+#   2. kaniko image — needs a SHELL for the docker-config init → `…executor:vX-debug`.
+#   3. CODE fix in lib/software/build-service.ts — the -debug image's ENTRYPOINT is a shell,
+#      so the MAIN kaniko container needs `command: ["/kaniko/executor"]` (or split images).
+#   4. (likely next) registry push auth to forgejo-http:3000 from the Kaniko pod.
+# Kaniko itself is barely maintained — reconsider BuildKit/buildah when finishing Path B.
 softwareBuild:
-  enabled: true
+  enabled: false
   namespace: agentic-apps
 
 queryTool:

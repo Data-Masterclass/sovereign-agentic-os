@@ -20,7 +20,7 @@ import { DUMMY_ROWS_DEFAULT } from '@/lib/software/data-plan';
  * callback (fired with the updated app after each create) so it can reload; nothing else.
  */
 
-type Status = { state: 'idle' | 'busy' | 'done' | 'error'; detail?: string };
+type Status = { state: 'idle' | 'busy' | 'done' | 'error'; detail?: string; warn?: string };
 
 /** The resolve outcome the route returns (mirrors ResolveDataPlanResult; app is opaque here). */
 type ResolveResult = {
@@ -29,6 +29,10 @@ type ResolveResult = {
   fill: SuggestedDataset['fill'];
   rowsPersisted: number;
   materialized: boolean;
+  /** Whether it was promoted to a Domain asset (readable by ANY domain user). */
+  promoted: boolean;
+  /** LOUD owner-only warning when it stayed Personal (Creator / offline / failed publish). */
+  warning?: string;
   app: unknown;
   error?: string;
 };
@@ -65,11 +69,16 @@ export default function DataPlanPanel({
       });
       const data = (await res.json().catch(() => ({}))) as ResolveResult;
       if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
-      const detail =
+      const madeIt =
         fill === 'dummy'
-          ? `Created «${data.datasetName}» with ${data.rowsPersisted} sample row${data.rowsPersisted === 1 ? '' : 's'}${data.materialized ? '' : ' (offline — schema saved)'} and granted it.`
-          : `Created empty «${data.datasetName}» (schema only) and granted it.`;
-      setStatus((s) => ({ ...s, [i]: { state: 'done', detail } }));
+          ? `Created «${data.datasetName}» with ${data.rowsPersisted} sample row${data.rowsPersisted === 1 ? '' : 's'}${data.materialized ? '' : ' (offline — schema saved)'}`
+          : `Created empty «${data.datasetName}» (schema only)`;
+      // Promoted ⇒ a Domain asset ANY domain user can read through the app. Not promoted ⇒
+      // it stayed Personal (owner-only) and we surface the LOUD warning the server returned.
+      const detail = data.promoted
+        ? `${madeIt}, promoted to a domain asset, and granted it — the app can read it for everyone in the domain.`
+        : `${madeIt} and granted it.`;
+      setStatus((s) => ({ ...s, [i]: { state: 'done', detail, warn: data.warning } }));
       onResolved(data.app);
     } catch (e) {
       setStatus((s) => ({ ...s, [i]: { state: 'error', detail: (e as Error).message } }));
@@ -149,6 +158,11 @@ export default function DataPlanPanel({
                   {st.detail}
                 </div>
               ) : null}
+              {st.warn ? (
+                <div className="dpp-warn" role="alert">
+                  ⚠ {st.warn}
+                </div>
+              ) : null}
             </li>
           );
         })}
@@ -174,6 +188,12 @@ export default function DataPlanPanel({
         }
         .dpp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
         .dpp-fill { display: flex; align-items: center; gap: 5px; font-size: 12.5px; cursor: pointer; }
+        .dpp-warn {
+          margin-top: 6px; font-size: 12px; line-height: 1.4;
+          border: 1px solid var(--warn-line, #d0a24c); border-radius: 6px;
+          background: var(--warn-soft, rgba(208, 162, 76, 0.12));
+          color: var(--warn-text, #8a6116); padding: 6px 8px;
+        }
       `}</style>
     </div>
   );

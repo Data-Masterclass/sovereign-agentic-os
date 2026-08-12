@@ -46,6 +46,30 @@ test('the SDK brief teaches the REAL Badge `tone` API and the QueryResult query 
   assert.match(OS_SDK_BRIEF, /Number\(r\.rows\?\.\[0\]\?\.\[0\] \?\? 0\)/, 'brief shows the NL-count pattern (no cast)');
 });
 
+test('the SDK brief forbids the two live compile-gate failures: react-router-dom + <AppShell> in a page', () => {
+  // Failure 1: `import { useNavigate } from 'react-router-dom'` — there is no router.
+  assert.match(OS_SDK_BRIEF, /react-router-dom/, 'brief names the banned router import that bit us');
+  assert.match(OS_SDK_BRIEF, /not a router|any router|no (client-side )?router/i, 'brief states there is no router');
+  assert.match(OS_SDK_BRIEF, /ONLY 3 import sources/i, 'brief names the three allowed import sources');
+  // Failure 2: a page wrapped its content in <AppShell> (TS2741 nav missing).
+  assert.match(OS_SDK_BRIEF, /NEVER renders?\s+`?<AppShell>/i, 'brief forbids rendering AppShell in a page');
+  assert.match(OS_SDK_BRIEF, /template[- ]only/i, 'brief says AppShell is the template shell\'s job');
+});
+
+test('the SDK brief forbids the false "already implemented" refusal — done = status + committed code, not spec', () => {
+  assert.match(OS_SDK_BRIEF, /"DONE" = status \+ committed code/i, 'brief defines done by facts, not spec');
+  assert.match(OS_SDK_BRIEF, /already implemented/i, 'brief names the exact false refusal to avoid');
+  assert.match(OS_SDK_BRIEF, /BUILD IT/, 'brief tells the agent to build an un-built story');
+});
+
+test('the SDK brief teaches the REAL role gate — useIdentity + roleAtLeast, not an exact-match block', () => {
+  assert.match(OS_SDK_BRIEF, /useIdentity\(\)/, 'brief gets the user from useIdentity');
+  assert.match(OS_SDK_BRIEF, /roleAtLeast\(user\.role/, 'brief gates with the roleAtLeast floor helper');
+  assert.match(OS_SDK_BRIEF, /role === 'admin'/, 'brief names the exact-match anti-pattern to avoid');
+  assert.match(OS_SDK_BRIEF, /creator < builder < domain_admin < admin/, 'brief states the OS role ladder');
+  assert.match(OS_SDK_BRIEF, /ADVISORY UX/i, 'client checks are advisory (hide/disable), not enforcement');
+});
+
 test('sovereign-app adds the skeleton contract; others do not', () => {
   const sov = appContext(baseApp({ template: 'sovereign-app' }), 'build', null, '');
   assert.match(sov, /Sovereign standard app — skeleton contract/);

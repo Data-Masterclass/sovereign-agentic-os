@@ -9,8 +9,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PUBLIC_TIP=c6befc1          # current public main (0.6.105 — 0.6.106-0.6.110 never synced)
-MSG="release: sync to os-ui 0.6.110 — Choose Context rename; Build runs on the reasoning model + is write-only over frozen context; Science KServe runtime pin + honest training/deploy failures; Kaniko digest build path + honest Build errors + wider Build budget"
+PUBLIC_TIP=91890a2          # current public main (last synced at 0.6.110)
+MSG="release: sync to os-ui 0.6.111 — Science auto-detects the ML task from the target column's real content; build LLM timeout 90s→240s (reasoning tier); defer the Kaniko digest build (Path B) dormant+documented, ship apps on Forgejo Actions"
 
 echo "==> safety gate: no secret files tracked in HEAD"
 if git ls-tree -r HEAD --name-only | grep -qE "^(deploy/kubeconfig|\.env\.stackit|deploy/terraform/.*tfstate)"; then

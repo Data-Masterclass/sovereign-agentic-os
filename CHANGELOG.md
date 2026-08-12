@@ -13,6 +13,107 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.113] — 2026-08-12
+
+### Fixed
+- **Build agent now knows the vendored-app API, so generated code compiles first try —
+  no more `react-router-dom` / `<AppShell>`-in-a-page reject loops.** Two failures seen
+  live building a real app: (1) `import { useNavigate } from 'react-router-dom'` →
+  `TS2307: Cannot find module` (there is no router in a Sovereign app — navigation is the
+  auto-registered section registry, `src/template/sections.tsx`); (2) a story page wrapped
+  its content in `<AppShell>…</AppShell>` → `TS2741: Property 'nav' is missing`
+  (`AppShell` is the TEMPLATE shell's job, `src/template/shell.tsx`; a page must return its
+  CONTENT — `<Section><Card>…` — mirroring `src/template/pages/Overview.tsx`). The build
+  brief now carries a tight, ACCURATE **Generated-app API contract** (grounded in the real
+  `lib/app-ui/*` + `lib/app-sdk/*` source): the **only 3 import sources** that exist
+  (`react`, `@sovereign-os/ui`, the OS `os` client) with an explicit ban on routers / any
+  3rd-party lib, the **exact `@sovereign-os/ui` signatures** (AppShell requires `nav` and is
+  template-only; `Alert` `variant`; `Badge` `tone`; `Select`/`Input` controlled `value`
+  +`onChange`), the **onChange DOM-event gotcha** (read
+  `(e.target as HTMLSelectElement).value`), and **pages return `<Section>` content, never
+  `<AppShell>`**. Hardened in `lib/software/build-brief.ts` (`OS_SDK_BRIEF`) and
+  `lib/software/chat-modes.ts` (`CODE_STRUCTURE_CONVENTION` + BUILD directive), so it rides
+  BOTH the UI build path and the MCP `build_software` path; mirrored terse into the
+  `build_software` tool description (`lib/software/platform-mcp.ts`) for external agents.
+- **Build agent no longer falsely refuses an un-built story as "already implemented".**
+  Asked to build a story that is NOT `status:'done'` and has no committed files, the agent
+  sometimes recited the acceptance criteria back and claimed *"already implemented,
+  committed, and live — no further build needed"*. The BUILD directive + brief now state:
+  **"done" is grounded in FACTS (status:'done' AND committed source files), never in the
+  spec** — the acceptance criteria describe what to BUILD, not evidence it was built — so an
+  un-built story must be **built** (`read_app_files` the `src/epics/<epic>/<story>/` path
+  first if unsure), never restated.
+- **Build agent now gates roles the RIGHT way — no more `role === 'admin'` hard-blocking a
+  real admin.** Generated apps invented checks like
+  `if (role !== 'admin') error('Only admins can…')`, which fails even for a higher role and
+  hard-blocks the user, and invented app-specific roles/permissions that don't exist in the
+  OS. The brief now teaches the REAL scaffolded pattern (grounded in `src/template/roles.ts`
+  + `src/template/identity.tsx`): get the user from `useIdentity()`, gate with
+  **`roleAtLeast(user.role, '<floor>')`** (a FLOOR, never an exact match) over the real OS
+  ladder (`creator < builder < domain_admin < admin`), only when the role is KNOWN (never
+  hard-fail while identity loads or `role` is null), and treat client checks as **advisory
+  UX** — hide/disable the control, not a scary blocking error (the OS data layer / OPA is the
+  real enforcement).
+- **Self-correction:** the BUILD directive now instructs the agent to FIX the exact
+  rejected diagnostics before re-committing and never resubmit unchanged code (an identical
+  rejected commit just loops).
+
+## [os-ui 0.6.112] — 2026-08-11
+
+### Fixed
+- **Choose Context now creates APP-READABLE datasets — "I granted it but the app can't
+  read it" is fixed.** An OS-built app reads its granted data AS WHOEVER opens it (the
+  ambient end-user session), not a fixed app principal. Choose Context's "create sample
+  data" created the dataset **Personal + private** (`dataset` tier), which `canView` makes
+  **owner-only** and Trino does not govern — so the app could be read ONLY by the dataset's
+  owner; every other domain user 403'd at `getDataset`→`canView`. `resolveDataPlanItem`
+  (`lib/software/data-plan-server.ts`) now, after landing bronze, **builds Silver + Gold**
+  from it (the SAME honest `commitLayerVersion` the Data tab / MCP `add_dataset_version`
+  use) and **promotes** the dataset to a **Domain `asset`** via the sanctioned publish
+  (`publishPromotionLive`), approving AS the app owner when they are **Builder+** — so
+  `canView` admits domain peers, Trino governs the asset, and the domain-schema FQN
+  resolves for ANY domain user. The app is then granted **read-only** on the now-Domain
+  dataset.
+- **Honesty fallback — no more silent owner-only grants.** When the caller is only a
+  **Creator** (cannot self-approve a promotion), the materialization backend is **offline**
+  (bronze did not land), or the **publish returns `{ok:false}`**, the dataset stays Personal
+  and the resolve returns a LOUD, explicit `warning` — "«…» was created in your PRIVATE
+  space and only YOU can read it — a Builder must promote it to the domain before the app
+  can read it for OTHER users." — surfaced in `DataPlanPanel`. It never pretends the app is
+  domain-readable when it is not.
+- **Build agent stops hallucinating "no dataset" when the data IS present.** The BUILD
+  directive (`lib/software/chat-modes.ts`), `build_software` description
+  (`lib/software/platform-mcp.ts`) and build brief (`lib/software/build-brief.ts`) now state
+  explicitly: when a "## Granted context" block WITH dataset columns is present, the data
+  need is already met and the agent MUST build against those columns — the grant IS the
+  authorization (resolved as you, DLS-scoped); it must NOT refuse or claim the app has no
+  data. Only when the granted-context block is genuinely empty of the dataset a story needs
+  does it stop, and then it points back to Choose Context rather than dead-ending.
+
+## [os-ui 0.6.111] — 2026-08-11
+
+### Fixed
+- **Science now auto-detects the ML task from the target column — content-first, dtype
+  as a tiebreaker.** A model to predict a continuous `duration_days` (a `double`) was set
+  to `binary_classification` and aborted training ("InferenceService not found"); in the
+  Simple user flow there is **no task selector** at all, so the assistant's wrong guess
+  could not be corrected by hand. The Design grounding layer now reads the target column's
+  real **type AND content** (one cheap, governed, DLS-scoped query — `count(*)`,
+  `count(distinct)`, `count(non-null)`, and for numeric targets whether every value is
+  integer-valued) and infers the task from the DATA: exactly two distinct values →
+  binary classification (any type — 0/1, true/false, Y/N); a numeric column with fractional
+  values or many distinct values → regression (the `duration_days` case); a small set of
+  string/integer categories → multiclass; a boolean → binary; a high-cardinality string
+  (likely an id) → left to the assistant. `validateDefinition` **uses** the inferred task
+  when the assistant omitted one and **overrides** a clearly-wrong one (classification on a
+  continuous target → regression; regression on a binary target → binary), flagging it
+  (`autoDetectedTask` + a plain-language reason). The Simple flow shows the resolved task
+  with that reason transparently on the Apply card and under the target picker (e.g. "Task:
+  Regression · auto-detected from target"). New pure module `lib/science/infer-task.ts`
+  (heuristic, fully unit-tested). Fail-soft throughout: a failed profile query degrades to
+  type-only inference, and an unknown case keeps the assistant's proposal. The 0.6.109
+  metric↔task backstop in `normalizeSpec` is left intact for the non-assistant / MCP path.
+
 ## [os-ui 0.6.110] — 2026-08-11
 
 ### Added
