@@ -8,6 +8,7 @@ import { listPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from 
 import { listMetrics } from '@/lib/metrics/store';
 import { listConnectionsForUser } from '@/lib/connections';
 import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/files/store';
+import { listSystems } from '@/lib/agents/store';
 import { listFolders } from '@/lib/folders/index';
 import type { ContextKind } from '@/lib/core/context-grants';
 import type { CurrentUser } from '@/lib/core/auth';
@@ -95,6 +96,22 @@ async function forKind(kind: ContextKind, user: CurrentUser): Promise<AvailableC
     name: c.name,
     scope: c.visibility === 'Certified' ? 'marketplace' : c.visibility === 'Shared' ? 'domain' : 'personal',
   }));
+}
+
+/**
+ * The grantable AGENTS the caller can see — the SIXTH Choose-Context type (Phase 4b). Agents
+ * are NOT a core `ContextKind` (they ride the separate `app.grants.agents` list), so they have
+ * their own feed, shaped identically to `AvailableContextItem` so the picker reuses the same UI.
+ * Personal/Shared/Marketplace → personal/domain/marketplace, matching the other kinds.
+ */
+export async function availableAgents(user: CurrentUser): Promise<AvailableContextItem[]> {
+  const principal = { id: user.id, domains: user.domains, role: user.role };
+  const g = listSystems(principal);
+  return [
+    ...g.mine.map((s) => ({ id: s.id, name: s.name, scope: 'personal' as const })),
+    ...g.domain.map((s) => ({ id: s.id, name: s.name, scope: 'domain' as const })),
+    ...g.marketplace.map((s) => ({ id: s.id, name: s.name, scope: 'marketplace' as const })),
+  ];
 }
 
 /** The folder rows (personal + domain) a foldered kind exposes to the grant tree. */

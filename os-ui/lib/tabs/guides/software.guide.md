@@ -2,89 +2,77 @@
 
 ## What this is
 
-The Software tab is where apps and services are built, deployed, and governed. Software is the most dependency-rich surface in the OS: it can consume governed datasets, published knowledge, and promoted connections — all by reference, never by copying. Deployed software runs as the signed-in user under OPA policy. Optionally, a running app can export its output back to the Bronze data tier via `use_as_data`, closing the cross-tab spine loop.
+The Software tab is where apps are built and governed. An app is a **validated AppSpec of cookbook-pattern tabs over governed data**, served **same-origin** by the trusted OS renderer under the viewer's session — **no Forgejo repo, no CI, no image, no pod**. You author it declaratively (author the tabs over granted data), and it is **live at `/apps/<slug>` the moment its spec validates** — no build latency. Software is the most dependency-rich surface in the OS: it consumes governed datasets, published knowledge, promoted connections and governed metrics — all by reference, never by copying. A running app can also export its output back to the Bronze tier via `use_as_data`, closing the cross-tab spine loop.
 
-## Guided flow (UI) — five stages, each one function
+**Declarative is the default and the golden path.** The historic CODED path (raw code + Forgejo + CI + image build) is an ADVANCED option that is **OFF by default** and **platform-admin-gated** — `create_software` with `kind:'code'` and the `commit` tool fail closed with a clear message unless a platform admin has enabled coded apps.
 
-1. **Define** — name it, **pick a template** (Application = the Sovereign standard app: OS sign-in + Admin/user-directory + settings + multi-tenant, and the DEFAULT; Website; APIs only; Empty — locked at creation), state its purpose, and grant governed context. The whole Define context (template + name/description + purpose) is carried into every later spec-draft and code-generation prompt, so features are grounded in what the app is.
-2. **Design** — the SPECIFICATION. Read-first, one epic at a time (prev/next), with an Edit toggle. Per user story, three lists: **Features**, **Non-functional requirements**, **Rules** (stories are expandable spec rows). Assistant on the left, epic detail on the right. Complete when every story has a spec.
-3. **Build** — EXECUTION. The left tree is Epics › Stories › Features/NFRs/Rules; tick the features to build next (a **selection checkbox**, capped at 8 features per batch — distinct from the green **done ✓** status badge), then press the one Build button. The right panel always shows the selected item's spec and, after a build, ticks each item honestly against what shipped (pending if unverifiable, never fake-ticked). Feedback goes to the build chat at the bottom.
-4. **Test** — one "Verify & Improve" button LLM-verifies each built story against its Design spec (PASS/FAIL per item, grounded in the committed code) and drafts concrete improvements for shortfalls; the LIVE-POD view (real preview app + provision control) stays here. Improvements become pending Build to-dos — a missed spec item is a **rebuild** (standard model); feedback that changes the requirement is routed to **Design** first.
-5. **Publish** — request go-live (a Builder deploy review), then run the live app, call its governed MCP tools, and climb the promotion ladder.
+## The golden path (declarative — MCP)
 
-**Model tiers:** Define App — no LLM. Design Epics — **reasoning** (all planning + the full spec). Choose Context — **reasoning** (context/dataset suggestions). Build App — **reasoning** (code generation runs on the strong model — 0.6.107; it previously ran on the platform assistant/standard model, which struggled). Test & Publish — **reasoning** for verify (built code vs spec); no LLM for the deploy/go-live half. Each stage shows an honest tier badge.
+An external agent (Claude / Codex) walks the SAME governed stages the UI does; each tool reuses the governed server function the UI calls, so role gates, validation and audit apply automatically.
 
-The MCP tool sequence below is the same governed path the UI drives — **the staged Define App → Design Epics → Choose Context → Build App → Test & Publish flow is the default; direct `commit` is the deliberate exception (Developer mode).**
+0. **Reuse check.** `list_software` to see what exists in your domain; `get_software` / `get_app_spec` to inspect a specific app before forking it.
+1. **Define — `create_software`.** Pass `name`, an optional `domain`, `purpose`, and `surface` (`ui` | `api` | `both`). `kind` **defaults to `'spec'`** — a declarative app with NO image pipeline, servable the moment you author its spec. (No `template` needed; templates only shape a coded scaffold.)
+2. **Design + Choose Context — `design_software`.** Author the specification tree: `purpose`, `epics` (each with user stories + a per-story `spec` of features / NFRs / rules), AND bind governed context with `grants` (existing datasets / metrics / knowledge / connections / files — by reference, never credentials). Every dataset a tab will read must be granted here.
+3. **Author the app — `generate_app_spec` OR `set_app_spec`.**
+   - **`generate_app_spec`** — the one-call scaffold: reads your designed epics + user stories + granted data (datasets with their REAL columns, metrics, agents) and asks the OS reasoning model to compose a complete, validated AppSpec whose tabs are cookbook patterns wired only to granted ids + real columns. Returns `{ ok:true, spec }` (a validated spec, not yet persisted) — review it, then publish with `set_app_spec`.
+   - **`set_app_spec`** — the author-and-publish door. Set the validated AppSpec `{ version:2, name, description, theme?, functions?, tabs:[] }`. Each tab is a cookbook **pattern** (`{ kind:'pattern', pattern, config }`) or a sandboxed **custom** block (`{ kind:'custom', html, css?, js?, data? }` — a null-origin iframe that can never act as the user). A data-backed pattern's `source.datasetId` must be a **granted** dataset and every referenced column must be **real** — call `get_dataset` to discover exact column names. Optional app-wide `theme.css` (scoped under the app root; no `<`/`>`) and governed query/expression `functions` (rendered by a KPI card's `functionId`). **A governed author = a versioned publish:** on success the spec goes LIVE and a version is snapshotted; `{ ok:true, servedUrl:'/apps/<slug>', version }`. On any blocking issue it returns `{ ok:false, issues:[{path,reason,fix}] }` and persists nothing.
+4. **Live.** The app serves at `/apps/<slug>` immediately. `get_app_spec` reads the live spec (+ a plain-language `describe` legibility summary) for read-modify-write. Climb the ladder with `promote`; `archive` / `delete` (lineage-blocked) for lifecycle.
 
-## How to build it (the staged governed flow — default path)
+**Wire dependencies by reference** (design/author time): a tab may only read a dataset the app was granted; `use_data` / `use_knowledge` / `use_connection` formally bind a granted asset. **Close the loop:** `use_as_data` registers the app's output as a Bronze dataset.
 
-An external agent (Claude / Codex) walks the IDENTICAL five governed stages the UI does. Each stage tool reuses the same governed server function the UI calls — so the design-before-build gate, model tiers, role gates, folder structure and audit all apply automatically.
+**Model tiers:** Define — no LLM. Design — reasoning. `generate_app_spec` — reasoning (composes the spec). `set_app_spec` — no LLM (pure validate + persist).
 
-0. **Reuse check.** Call `list_software` to see what exists in your domain. Call `get_software` to inspect a specific app (its epic/story/spec tree + grants + lifecycle) before forking or duplicating it.
-1. **Define — `create_software`.** Pass `name`, an optional `domain` and `template` (`sovereign-app` = the default Application; `website`; `api-service`; `empty`), an optional `surface` (`ui` | `api` | `both` — a declaration wins over auto-detection, so a UI app is never mislabelled as API), and an optional `purpose`. This creates a My-scope draft AND seeds the app's Forgejo repo with a **real build→push CI workflow** (plus the `REGISTRY_PASS` Actions secret): every push to `main` **auto-builds the image** — no manual build step. Watch the pipeline with `get_software_status`.
-2. **Design — `design_software`.** Author the SPECIFICATION tree: `purpose`, `epics` (each with user stories), and per-story `spec` (three lists: **features**, **non-functional requirements**, **rules**). This is the reasoning-tier stage; a story must have a spec here before it can be built.
-2a. **Choose Context — `design_software` (grants) + `create_dataset` / data-plan.** Resolve every context need BEFORE Build, in one place: **Link an existing dataset** (bind it via `grants` — the app reads it in place, governed; best when you only need to read shared/governed data) OR **Create a new dataset** (`create_dataset` / the data-plan resolve — the app's OWN dataset, empty or with AI sample rows; best when the app owns/writes its own data or you want dummy rows to build against). The granted context's schema is then frozen and injected into Build. A data-needing story cannot build until this is resolved.
-3. **Build — `build_software`.** Build a SPECIFIC unit — the whole app, one `epic`, or one `story` (pass `target`) — from its finalized spec and its **already-granted context**. Build **writes code against the frozen granted-context schema** injected here — it does **not** discover, list or query data (that happens in Choose Context). It **enforces the design-before-build gate** (refuses stories with no spec, naming them), runs on the **reasoning** tier, and returns the governed build directive + Define context + the granted-context schema + the target's spec + the code-structure convention (write each story under `epics/<epic>/<story>/`; `app/` stays thin router entrypoints) + the current committed files and honest built-vs-pending progress. Missing a dataset? Go back to Choose Context and grant/create it — don't try to discover data from Build. Author the code, then `commit` it, then mark completed stories done via `design_software` (set the story `status` to `done`). Read code back any time with `read_app_files`.
-4. **Test — `verify_software`.** Verify a built unit against its spec across the **five dimensions** (Functionality · User Experience · Code Structure · Security · Documentation). It returns the governed test directive + the committed code to verify against (read-only, reasoning tier). Report PASS/FAIL per dimension and pass any shortfalls as `findings` — each becomes a dimension-tagged **refinement** via the same refinement model the UI uses (a missed-spec item is a rebuild; a requirement change routes back to Design first). Feed refinements back into Build.
-5. **Publish.** `start_preview` runs the app privately (no review). `request_deploy` opens a Builder review card (security scan + envelope + diff). ⛔ A Builder/Admin then calls `decide_deploy` to approve/reject (a non-Builder gets a 403; approval requires a passing scan). `promote` climbs the tier ladder. `get_software_status` returns the ONE honest status card at any point — URLs appear only when a runner actually serves them.
+## Implemented cookbook patterns
 
-**Wire dependencies by reference** (any stage): `use_data`, `use_knowledge`, `use_connection` formally bind a granted asset — you can only wire what you have read access to; credentials are never copied into the app. **Close the loop:** `use_as_data` registers the app's output as a Bronze dataset. Lifecycle: `promote`, `archive` (reversible soft-hide, restorable), `delete` (hard delete — lineage-blocked).
+- **View (read):** `records-table`, `master-detail`, `detail`, `status-board`, `kpi-overview`, `chart-explorer`, `card-gallery`, `timeline`, `calendar`, `landing`.
+- **Interactive (write via the governed `os.records` door + role gates — never arbitrary code):** `form`, `intake-wizard`, `assignment`, `approval-queue`, `task-checklist`.
 
-## Developer mode — direct `commit` (the escape hatch, NOT the default)
+The registry in `appspec/patterns.ts` is the source of truth; a spec referencing a not-yet-implemented pattern parses cleanly and renders an honest "coming soon" placeholder.
 
-`commit` writes files DIRECTLY to the app folders, **bypassing the staged Design → Build → Test governance and the design-before-build gate**. It is role-gated to **Builder/Admin** — a Creator cannot use it to bypass the governed stages. Reach for it only as a deliberate exception (e.g. a low-level fix outside the epic/story model); the normal flow is `design_software` → `build_software` → `verify_software`. A commit is a push to `main`, so it triggers the auto-build; declare consumed dependencies in a `.app/` manifest within the commit.
+## Advanced — the coded path (admin-enabled only)
+
+CODED apps (`kind:'code'`) build raw code through Forgejo + CI + an image build. This path is **DISABLED by default** and only works when a platform admin has enabled coded apps. When enabled, the staged flow is `create_software(kind:'code')` → `design_software` → `build_software` (returns the governed build directive + committed files, design-before-build gated) → author code → `commit` (Developer mode, Builder+; direct file write) → `verify_software` (5-dimension test) → `start_preview` / `request_deploy` → a Builder `decide_deploy`. `commit` is role-gated to Builder/Admin and fails closed (403) when coded apps are off — author a declarative app with `set_app_spec` instead.
 
 ## What to consider
 
-- **Wire deps before preview.** An app that references a connection ID not formally wired will fail at preview start with `bad_request`.
-- **Dependency by reference only.** Never embed credentials or dataset row copies in committed code. The OS detects raw credential patterns and returns `bad_request`.
-- **delete is lineage-blocked.** If another dataset, software, or metric depends on this app's output, `delete` returns `conflict`. Use `archive` instead.
-- **Scope of deps constrains deploy scope.** An app wired to a My-scope connection cannot be deployed to Domain. Promote dependencies first.
-- **`use_as_data` closes the spine.** The Bronze dataset created by `use_as_data` inherits the app's lineage, making the data-to-software-to-data chain fully traceable.
+- **Grant before you author.** A tab that reads a dataset the app wasn't granted, or references a column that doesn't exist, is a BLOCKING validation issue — `set_app_spec` returns a machine-actionable `{ path, reason, fix }` and persists nothing.
+- **`get_dataset` for real columns.** Never invent a column name; discover them first.
+- **delete is lineage-blocked.** If something depends on this app's output, `delete` returns `conflict` — use `archive`.
+- **`use_as_data` closes the spine.** The Bronze dataset it creates inherits the app's lineage, making the data → software → data chain traceable.
 
 ## Governance
 
 | Step | Role required |
 |---|---|
-| `list_software`, `get_software`, `read_app_files`, `get_software_status`, `build_software`, `verify_software` | Creator |
-| `create_software`, `design_software`, `use_data`, `use_knowledge`, `use_connection`, `start_preview`, `request_deploy`, `use_as_data`, `archive` | Creator (own work) |
-| ⛔ `decide_deploy`, `promote` | Builder or Admin |
-| ⛔ `commit` (Developer mode — direct file write, bypasses the staged governance) | Builder or Admin |
+| `list_software`, `get_software`, `get_app_spec`, `generate_app_spec` | Creator (visibility-gated) |
+| `create_software`, `design_software`, `set_app_spec`, `use_data`, `use_knowledge`, `use_connection`, `archive` | Creator (owner / owning-domain builder+ for the spec doors) |
+| ⛔ `promote` | Builder or Admin |
+| ⛔ `commit` (Advanced coded path — direct file write; disabled when coded apps are off) | Builder or Admin |
 | `delete` | Creator (lineage permitting) |
 
-`build_software` and `verify_software` are read-only planning tools — they hand back the governed build/test directive + committed code and enforce the design-before-build gate; the actual writes still flow through `commit` (Developer mode) or, for spec/status, `design_software`.
+Every author runs AS you, is OPA-policy-checked and Langfuse-traced. A governed `set_app_spec` author is a versioned publish, at parity with the UI Publish.
 
-OPA checks every dependency reference at wire time and at deploy time. Langfuse traces every production invocation.
-
-**Worked example:**
+**Worked example (declarative):**
 
 ```
-list_software({ domain: "data-eng" })
-→ [{ id: "sw_22A...", name: "invoice-loader", state: "deployed" }]
-— a loader exists; create a separate transform app
+list_software({ domain: "sales" })
+→ [{ id: "sw_22A...", name: "orders-app", state: "live" }]
 
-create_software({ name: "invoice-transformer", domain: "data-eng", template: "api-service", surface: "api", purpose: "Transform loaded invoices into the gold model" })
-→ { id: "sw_33B...", surface: "api", state: "draft" }        # DEFINE
+create_software({ name: "Orders desk", domain: "sales", purpose: "Triage and view orders" })
+→ { id: "sw_33B...", serveMode: "spec", state: "draft" }        # DEFINE (declarative by default)
 
-design_software({ appId: "sw_33B...", epics: [{ id: "epic_1", title: "Transform", stories: [
-  { id: "story_1", title: "Normalize amounts", asA: "analyst", iWant: "amounts in EUR", soThat: "reports reconcile",
-    spec: { features: ["Convert currency"], nfrs: ["<500ms/1k rows"], rules: ["No raw credentials in code"] } }] }] })
-→ { epics: [...] }                                            # DESIGN (spec authored)
+design_software({ appId: "sw_33B...",
+  epics: [{ id: "epic_1", title: "Orders", stories: [
+    { id: "story_1", title: "See open orders", asA: "rep", iWant: "a table of open orders", soThat: "I can triage",
+      spec: { features: ["List orders"], nfrs: [], rules: [] } }] }],
+  grants: { data: [{ id: "ds_01J...", access: "read-only" }] } })   # DESIGN + CHOOSE CONTEXT
 
-build_software({ appId: "sw_33B...", target: { kind: "story", epicId: "epic_1", storyId: "story_1" } })
-→ { stage: "build", gate: "passed", tier: "standard", directive: "…", progress: { itemsBuilt: 0, itemsTotal: 3 }, code: {…} }
-# author the code from the directive, then:
-commit({ appId: "sw_33B...", files: [{ path: "src/epics/epic_1/story_1/Normalize.tsx", content: "…" }, { path: ".app/deps.yaml", content: "datasets: [ds_01J...]" }] })   # Developer mode — Builder+
-design_software({ appId: "sw_33B...", epics: [/* story_1 with status: "done" */] })
+get_dataset({ id: "ds_01J..." })                                   # discover REAL columns
+generate_app_spec({ appId: "sw_33B..." })                          # ✨ scaffold a validated spec from the design
+→ { ok: true, spec: { version: 2, tabs: [{ body: { kind: "pattern", pattern: "records-table", … } }] } }
 
-verify_software({ appId: "sw_33B...", target: { kind: "story", epicId: "epic_1", storyId: "story_1" },
-  findings: [{ storyId: "story_1", note: "Handle empty input", dimension: "ux" }] })
-→ { stage: "test", tier: "reasoning", directive: "…", refinements: [{ kind: "rebuild", dimension: "ux", … }] }   # TEST
-
-use_data({ appId: "sw_33B...", ref: "ds_01J..." })
-start_preview({ appId: "sw_33B..." })
-request_deploy({ appId: "sw_33B..." })
-→ { kind: "review", card: { id: "rc_55D..." } }              # PUBLISH (Builder review)
+set_app_spec({ appId: "sw_33B...", spec: <the reviewed spec> })    # AUTHOR = versioned PUBLISH
+→ { ok: true, servedUrl: "/apps/orders-desk", version: { name: "v1", … } }   # LIVE, no build
 ```
 
-A Builder then calls `decide_deploy({ cardId: "rc_55D...", decision: "approve" })`.
+If instead you author by hand, skip `generate_app_spec` and pass your own `{ version:2, name, description, tabs:[…] }` straight to `set_app_spec` — the validator gates it identically.

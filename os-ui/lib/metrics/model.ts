@@ -146,10 +146,28 @@ function windowFor(form: MetricForm): RollingWindow | undefined {
  *  optional groups add filters / rolling_window / format / drill_members / a ratio sql.
  *  A COMPOSITE formula (`form.formula`, aggregation 'number') compiles to the same
  *  `{measure}`-reference sql the ratio uses; pass `siblings` (the dataset's existing
- *  measures) to validate its references — refs must exist and be basic metrics. */
+ *  measures) to validate its references — refs must exist and be basic metrics.
+ *
+ *  DISPLAY NAME: when the user's typed name differs from its machine slug (e.g. "Revenue"
+ *  vs "revenue", "Monthly Revenue" vs "monthly_revenue"), the original is persisted as
+ *  `label` so the tile, the registry and the detail header all show the human name the
+ *  author chose — not a lowercased slug. The Cube member (which uses the slug) is FROZEN
+ *  and unaffected. */
 export function measureFromForm(form: MetricForm, siblings?: Measure[]): Measure {
   if (!form.name.trim()) throw new MetricError('a metric needs a name');
   if (!isMeasureType(form.aggregation)) throw new MetricError(`unknown aggregation '${form.aggregation}'`);
+
+  const humanName = form.name.trim();
+  const machineName = measureName(humanName);
+
+  /** Set the display `label` when the human name the author typed is richer than the
+   *  machine slug — so tiles show "Monthly Revenue" not "monthly_revenue". The label is
+   *  the ONLY thing that changes on a rename (the member stays frozen), so it's safe to
+   *  set it here without touching the Cube identity. */
+  function applyLabel(m: Measure): Measure {
+    if (humanName !== machineName) m.label = humanName;
+    return m;
+  }
 
   // Composite formula — the general case of the two-term ratio below.
   if (form.formula && form.formula.trim()) {
@@ -159,7 +177,7 @@ export function measureFromForm(form: MetricForm, siblings?: Measure[]): Measure
     const compiled = compileFormula(form.formula);
     if (siblings) assertFormulaRefs(compiled.refs, siblings);
     const m: Measure = {
-      name: measureName(form.name),
+      name: machineName,
       type: 'number',
       sql: compiled.sql,
       formula: form.formula.trim(),
@@ -167,7 +185,7 @@ export function measureFromForm(form: MetricForm, siblings?: Measure[]): Measure
     if (form.format) m.format = form.format;
     if (form.description && form.description.trim()) m.description = form.description.trim();
     setDimensions(m, form);
-    return m;
+    return applyLabel(m);
   }
 
   const isRatio = form.aggregation === 'number';
@@ -183,7 +201,7 @@ export function measureFromForm(form: MetricForm, siblings?: Measure[]): Measure
     ? `1.0 * {${form.ratio!.numerator.trim()}} / {${form.ratio!.denominator.trim()}}`
     : form.aggregation === 'count' ? '' : form.column.trim();
 
-  const m: Measure = { name: measureName(form.name), type: form.aggregation, sql };
+  const m: Measure = { name: machineName, type: form.aggregation, sql };
 
   if (form.filter && form.filter.column.trim()) {
     m.filters = [{ sql: filterSql(form.filter) }];
@@ -196,7 +214,7 @@ export function measureFromForm(form: MetricForm, siblings?: Measure[]): Measure
   }
   if (form.description && form.description.trim()) m.description = form.description.trim();
   setDimensions(m, form);
-  return m;
+  return applyLabel(m);
 }
 
 /** Ride the author's ACTIVATED slice-by dimensions onto the measure (deduped, trimmed).

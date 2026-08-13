@@ -130,6 +130,56 @@ export function generateSectionsContent(files: ScaffoldFile[]): string | null {
 }
 
 /**
+ * Off-pattern `.tsx` files under `src/epics/` that LOOK like an intended page but will
+ * NOT be auto-registered, so the build "compiles but the feature never shows". The
+ * generator (`discoverPages`) only wires files at EXACTLY
+ * `src/epics/<epic>/<story>/<PascalCase>.tsx` (depth 4, one per folder, `general/`
+ * excluded). This flags the near-misses so the silent drop becomes a visible hint:
+ *   • lowercase-first filename (e.g. `index.tsx`)  → rename to PascalCase
+ *   • wrong depth (too shallow / too deep)         → move to <epic>/<story>/<Page>.tsx
+ *   • a 2nd PascalCase page in a story folder       → only the first registers
+ * PURE + side-effect free. Returns [] when nothing is off-pattern (the common case).
+ */
+export function unregisteredPageHints(files: ScaffoldFile[]): string[] {
+  const okRe = /^src\/epics\/([^/]+)\/([^/]+)\/([A-Z][A-Za-z0-9]*)\.tsx$/;
+  const hints: string[] = [];
+  const registeredFolders = new Set<string>();
+  // First pass: the folders that DO get a registered page (the first PascalCase file).
+  for (const f of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
+    const m = okRe.exec(f.path);
+    if (m && m[2] !== 'general') registeredFolders.add(`${m[1]}/${m[2]}`);
+  }
+  const secondSeen = new Set<string>();
+  for (const f of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
+    const p = f.path;
+    if (!p.startsWith('src/epics/') || !p.endsWith('.tsx')) continue;
+    const rel = p.slice('src/epics/'.length);
+    const parts = rel.split('/');
+    // Skip epic-wide shared code — general/ is intentionally not a page.
+    if (parts.includes('general')) continue;
+    const m = okRe.exec(p);
+    if (m) {
+      // A valid page: only the FIRST per folder registers; a 2nd+ is a silent drop.
+      const folder = `${m[1]}/${m[2]}`;
+      if (secondSeen.has(folder)) {
+        hints.push(`${p} won't register — a story folder gets ONE page; only the first PascalCase page in ${folder} is wired.`);
+      } else {
+        secondSeen.add(folder);
+      }
+      continue;
+    }
+    // Not the canonical shape — say why (only for plausible pages, depth ≥ 2).
+    const fileName = parts[parts.length - 1];
+    if (parts.length !== 3) {
+      hints.push(`${p} won't register — a page must be at EXACTLY src/epics/<epic>/<story>/<PascalCase>.tsx (depth 4).`);
+    } else if (!/^[A-Z]/.test(fileName)) {
+      hints.push(`${p} won't register — the page filename must start UPPERCASE (PascalCase), e.g. ${parts[0]}/${parts[1]}/Page.tsx.`);
+    }
+  }
+  return hints;
+}
+
+/**
  * Commit-path hook: given the prior tree, the incoming changeset, and the app
  * template, return the changeset — augmented with a regenerated `sections.tsx`
  * when (a) it's a sovereign-app, (b) epic pages exist, and (c) the generated

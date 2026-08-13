@@ -8,6 +8,7 @@ import {
   ensureHydrated,
   listDatasets,
   getDataset,
+  peekDatasetMeta,
   createDataset,
   buildVersion,
   defineMeasure,
@@ -56,6 +57,19 @@ function seedOrders(): string {
   buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql' });
   return d.id;
 }
+
+test('peekDatasetMeta: a live dataset resolves to its name; an absent id is null (0.6.114 guard)', () => {
+  const id = seedOrders();
+  const meta = peekDatasetMeta(id);
+  assert.deepEqual(meta, { name: 'Orders' }); // EXISTS, name-legible for the guard
+  assert.equal(peekDatasetMeta('ds_does_not_exist'), null); // truly-absent ⇒ deleted signal
+});
+
+test('peekDatasetMeta: an ARCHIVED dataset still EXISTS (archived ≠ deleted)', () => {
+  const id = seedOrders();
+  archiveDataset(id, amir);
+  assert.deepEqual(peekDatasetMeta(id), { name: 'Orders' }); // present record ⇒ non-null
+});
 
 test('SECURITY: a participant/creator cannot import a cross-domain data product', () => {
   const id = seedOrders();

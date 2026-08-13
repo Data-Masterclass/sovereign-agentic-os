@@ -428,16 +428,99 @@ export async function compileGate(tree: ScaffoldFile[], opts: CompileGateOpts = 
 // ------------------------------------------------------------------- Presentation ---
 
 /**
+ * Best-effort index of the vendored @sovereign-os/* surface, memoised for the process:
+ *   • `members`: for each exported Props type (`BadgeProps`, `SectionProps`, …), the CUSTOM
+ *     member names the component adds beyond the native HTML props (e.g. Badge → [tone]).
+ *   • `exports`: the named value exports of the package barrels (for TS2305 "no exported member").
+ * Parsed by regex from the same source `vendorFiles()` already loads — cheap, deterministic,
+ * and fail-soft: any slip yields an empty index so the formatter still renders plain diagnostics.
+ */
+let vendorApiMemo: { members: Map<string, string[]>; exports: string[] } | null = null;
+function vendorApi(): { members: Map<string, string[]>; exports: string[] } {
+  if (vendorApiMemo) return vendorApiMemo;
+  const members = new Map<string, string[]>();
+  const exportsSet = new Set<string>();
+  try {
+    for (const f of vendorFiles()) {
+      if (!/\.tsx?$/.test(f.path)) continue;
+      // `export type XProps = <native> & { a?: T; b: U };` → the custom members [a, b].
+      for (const m of f.content.matchAll(/export\s+type\s+(\w+)\s*=\s*[^{;]*\{([^}]*)\}/g)) {
+        const name = m[1];
+        const names = [...m[2].matchAll(/([A-Za-z_$][\w$]*)\s*\??\s*:/g)].map((x) => x[1]);
+        if (names.length) members.set(name, names);
+      }
+      // Named value exports from the barrels: `export { A, B, type C } from '…'`.
+      for (const m of f.content.matchAll(/export\s*\{([^}]*)\}/g)) {
+        for (const raw of m[1].split(',')) {
+          const t = raw.trim();
+          if (!t || t.startsWith('type ')) continue; // skip type-only re-exports
+          exportsSet.add(t.replace(/\s+as\s+\w+$/, ''));
+        }
+      }
+    }
+  } catch {
+    /* fail-soft — an empty index just means no member hint */
+  }
+  vendorApiMemo = { members, exports: [...exportsSet].sort() };
+  return vendorApiMemo;
+}
+
+/**
+ * A best-effort, one-line HINT appended under a diagnostic that targets a `@sovereign-os/*`
+ * symbol — turns a blind retry into a first-try fix by listing what the type ACTUALLY offers.
+ * Handles TS2339 (`Property 'variant' does not exist on type '… & BadgeProps'`), TS2305
+ * (`Module '"@sovereign-os/ui"' has no exported member 'Modal'`) and TS2322 (a bad prop value,
+ * e.g. Badge `variant`). Returns '' when it cannot name a concrete member set — never throws.
+ */
+function memberHint(d: CompileDiagnostic): string {
+  try {
+    const msg = d.message;
+    const { members, exports } = vendorApi();
+    // TS2305: no exported member — list the real named exports of the package.
+    if (d.code === 2305 && /@sovereign-os\//.test(msg) && exports.length) {
+      const bad = /member '([^']+)'/.exec(msg)?.[1];
+      return `    → @sovereign-os/ui exports: ${exports.join(', ')}${bad ? ` (no '${bad}')` : ''}`;
+    }
+    // TS2339 / TS2322: a bad prop on a vendored component. The message references a Props
+    // type either by NAME (`BadgeProps`) or by its EXPANDED literal (`… & { tone?: … }`).
+    if (d.code === 2339 || d.code === 2322) {
+      const bad = /(?:Property|property) '([^']+)'/.exec(msg)?.[1];
+      // (a) named Props type → the vendored member index.
+      const propsType = /\b(\w+Props)\b/.exec(msg)?.[1];
+      const named = propsType ? members.get(propsType) : undefined;
+      if (propsType && named) {
+        return `    → ${propsType.replace(/Props$/, '')} accepts: ${named.join(', ')}${bad ? ` (you used '${bad}')` : ''}`;
+      }
+      // (b) expanded literal in the message: pull the custom members from the LAST `{ … }`
+      //     object-type block (tsc expands `& { tone?: BadgeTone }` inline for a UI primitive).
+      const blocks = [...msg.matchAll(/\{([^{}]*)\}/g)];
+      const last = blocks.length ? blocks[blocks.length - 1][1] : '';
+      const custom = [...last.matchAll(/([A-Za-z_$][\w$]*)\s*\??\s*:/g)].map((x) => x[1]);
+      if (custom.length) {
+        return `    → accepts: ${custom.join(', ')}${bad ? ` (you used '${bad}')` : ''}`;
+      }
+    }
+  } catch {
+    /* never throw from the formatter */
+  }
+  return '';
+}
+
+/**
  * Render gate diagnostics into the CORRECTIVE, machine-actionable error text the agent
  * loop feeds back (consistent with the 0.6.54 corrective-error contract): it names each
  * file+line+code, states nothing was written, and instructs a fix-and-recommit. Kept
- * terse + deterministic so it rides in a tool result without bloating the turn.
+ * terse + deterministic so it rides in a tool result without bloating the turn. For a
+ * @sovereign-os/* symbol error (TS2339/TS2305/TS2322) it appends the type's REAL members
+ * so the fix lands on the first retry, not the fifth (best-effort; never throws).
  */
 export function formatGateError(result: Extract<CompileGateResult, { gated: true; ok: false }>): string {
   const shown = result.diagnostics;
-  const lines = shown.map(
-    (d) => `  ${d.file}:${d.line}:${d.column}  ${d.code > 0 ? `TS${d.code}` : 'bundle'}: ${d.message.split('\n')[0]}`,
-  );
+  const lines = shown.map((d) => {
+    const head = `  ${d.file}:${d.line}:${d.column}  ${d.code > 0 ? `TS${d.code}` : 'bundle'}: ${d.message.split('\n')[0]}`;
+    const hint = memberHint(d);
+    return hint ? `${head}\n${hint}` : head;
+  });
   const more = result.total > shown.length ? `\n  …and ${result.total - shown.length} more.` : '';
   return [
     `commit rejected: ${result.total} compile error${result.total === 1 ? '' : 's'} — NOTHING was written.`,

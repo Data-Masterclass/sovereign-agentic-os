@@ -422,6 +422,16 @@ export async function runAgentic(opts: {
    * model") so the switch is always visible, never silent.
    */
   onEscalate?: (info: { tool: string; from: string; to: string; failures: number }) => void;
+  /**
+   * WRITE tools (e.g. `commit`) whose FAILED calls must never re-run byte-identically. The
+   * dedup ledger only short-circuits a prior SUCCESS, so a `commit` that failed the compile
+   * gate would otherwise re-run the exact same rejected code up to the error-streak cap (the
+   * observed build loop). When a call to one of these tools has the byte-identical signature
+   * of a prior FAILED call, it is short-circuited WITHOUT re-running and fed a STRONGER
+   * corrective note (the prior diagnostics + "you MUST change the code"), stopping the loop at
+   * n=1. Unset ⇒ no such guard (the exact prior behaviour for every non-build assistant).
+   */
+  writeToolNames?: string[];
 }): Promise<AgenticResult> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const budget = opts.budget ?? DEFAULT_MESSAGE_BUDGET;
@@ -456,6 +466,13 @@ export async function runAgentic(opts: {
   // never answered from the failed result — the errorStreak guard stops real loops.
   const executedSignatures = new Map<string, { count: number; ok: boolean }>();
   let repeatedCalls = 0;
+  // Same-signature WRITE guard (the build loop fix): a `commit` (or any writeTool) that
+  // FAILED the compile gate must not re-run byte-identically. Map an errored write
+  // signature → its exact error text so an identical re-submit is short-circuited with a
+  // STRONGER corrective note (the same diagnostics + "you MUST change the code") instead of
+  // re-running the doomed commit. Only WRITE tools qualify (a failed READ may be transient).
+  const writeTools = new Set(opts.writeToolNames ?? []);
+  const failedWriteSignatures = new Map<string, string>();
   // Consecutive same-tool ERROR tracker (the varied-args error loop). Reset the
   // instant a different tool runs or any call succeeds; trips the break once a tool
   // errors DEFAULT_MAX_CONSECUTIVE_TOOL_ERRORS times in a row.
@@ -560,10 +577,44 @@ export async function runAgentic(opts: {
         continue;
       }
 
+      // SAME-SIGNATURE WRITE GUARD: a WRITE tool re-submitting byte-identical args that
+      // already FAILED does NOT re-run — the exact same code would fail the exact same way
+      // (the build loop). Short-circuit with a STRONGER corrective note carrying the prior
+      // diagnostics, so the model MUST change the code before committing again.
+      const priorWriteError = writeTools.has(call.name) ? failedWriteSignatures.get(sig) : undefined;
+      if (priorWriteError !== undefined) {
+        const note = identicalWriteNote(call.name, priorWriteError);
+        const step: AgenticStep = { tool: call.name, args: call.args, result: note, isError: true };
+        steps.push(step);
+        opts.onStep?.(step);
+        if (react) {
+          messages.push({ role: 'user', content: `Observation: ${note}` });
+        } else {
+          messages.push({ role: 'tool', tool_call_id: call.id, content: note });
+        }
+        // Count it toward the streak so a model that keeps re-submitting still hands off.
+        if (call.name === errorStreakTool) errorStreak += 1;
+        else {
+          errorStreakTool = call.name;
+          errorStreak = 1;
+        }
+        if (errorStreak >= DEFAULT_MAX_CONSECUTIVE_TOOL_ERRORS) {
+          forcedStop = true;
+          break;
+        }
+        continue;
+      }
+
       const out = await opts.callTool(call.name, call.args);
       // Record the OUTCOME after the call: a success becomes dedup-able; an error is
       // recorded ok:false so an identical retry re-runs instead of being short-circuited.
       executedSignatures.set(sig, { count: (prior?.count ?? 0) + 1, ok: !out.isError });
+      // Remember a FAILED write's exact signature+error so an identical re-commit is caught
+      // above next turn (and clear it on a success, so a later real change can re-use args).
+      if (writeTools.has(call.name)) {
+        if (out.isError) failedWriteSignatures.set(sig, out.text);
+        else failedWriteSignatures.delete(sig);
+      }
       const step: AgenticStep = { tool: call.name, args: call.args, result: out.text, isError: out.isError };
       steps.push(step);
       opts.onStep?.(step);
@@ -715,6 +766,21 @@ function errorStreakNote(streak: number, tool: string): string {
     `Your last ${streak} ${tool} calls all errored. Stop retrying — the same approach ` +
     `keeps failing. Fix your approach or answer from what you already have. Do NOT call ` +
     `${tool} again; give your best final answer now using the information gathered above.`
+  );
+}
+
+/**
+ * The STRONGER corrective note injected in place of re-running a WRITE tool (e.g. `commit`)
+ * that was re-submitted byte-identically after already failing. It does NOT re-run the
+ * doomed call; it replays the exact prior diagnostics and demands a code change first — the
+ * n=1 stop for the build loop where an unchanged commit kept re-failing the compile gate.
+ */
+function identicalWriteNote(tool: string, priorError: string): string {
+  return (
+    `You re-submitted byte-identical ${tool} args that ALREADY FAILED — the exact same ` +
+    `code would fail the exact same way, so it was NOT run again. You MUST change the code ` +
+    `at the file:line named below before committing again; do not resubmit it unchanged.\n` +
+    `The diagnostics from that identical attempt, again:\n${priorError}`
   );
 }
 

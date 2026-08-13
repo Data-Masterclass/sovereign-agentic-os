@@ -254,6 +254,44 @@ export function __resetStore(): void {
   versions.__reset();
 }
 
+/**
+ * Test hook: insert a dataset with a FIXED id, owner, domain, tier and columns
+ * directly into the in-process store. Real datasets are born through the governed
+ * flows (createDataset → buildVersion → …) with a minted id, so tests that need a
+ * SPECIFIC production id (e.g. the Northpeak `ds_zpco1s6n7y` the demo-app seed
+ * guards on) cannot reproduce it through the public API. This is the minimal,
+ * test-only door for exactly that — additive, `__`-prefixed like `__resetStore`,
+ * and never referenced by production code paths.
+ */
+export function __seedDatasetForTest(input: {
+  id: string;
+  name: string;
+  owner: string;
+  domain: string;
+  tier?: Tier;
+  columns?: ColumnDoc[];
+}): void {
+  ensureSeeded();
+  const d: Dataset = {
+    version: '1',
+    id: input.id,
+    name: input.name,
+    owner: input.owner,
+    domain: input.domain,
+    tier: input.tier ?? 'dataset',
+    visibility: input.tier === 'asset' ? 'domain' : input.tier === 'product' ? 'public' : 'private',
+    folder: '/',
+    description: '',
+    versions: emptyVersions(),
+    grants: [],
+    measures: [],
+    columns: input.columns ?? [],
+    cubeNamespaced: true,
+  };
+  const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
+  ds().store.set(rec.id, rec);
+}
+
 // ------------------------------------------------------------------- scoping --
 
 function get(id: string): DatasetRecord {
@@ -433,6 +471,52 @@ export function listDatasets(user: Principal, opts: { includeArchived?: boolean 
 
 export function getDataset(id: string, user: Principal): Dataset {
   return viewOf(get(id), user);
+}
+
+/** UNSCOPED existence+name peek for the software dataset-reference guard (no authz):
+ *  "does this dataset id exist in the world, and what is it called?" — used ONLY to tell a
+ *  DELETED dataset (rebuild/restore) apart from an EXISTS-but-ungranted one (grant it).
+ *  No rows, no per-viewer detail — just the display name or null. An ARCHIVED dataset still
+ *  EXISTS (archived ≠ deleted), so a present record ⇒ non-null. */
+export function peekDatasetMeta(id: string): { name: string } | null {
+  ensureSeeded();
+  const rec = ds().store.get(id);
+  if (!rec) return null;
+  try { return { name: parseDataset(rec.yaml).name }; } catch { return { name: '' }; }
+}
+
+/** UNSCOPED tier peek for the declarative AppSpec validator (0.6.116): "is this dataset
+ *  Personal (owner-only) or a governed asset/product?" — used to WARN when a spec sources a
+ *  Personal dataset (readable only by its owner, so other app users get access-denied →
+ *  promote-to-Domain). Non-throwing: an absent or unparseable record ⇒ null (fail-soft; the
+ *  caller skips the warning rather than emitting a false one). No authz, no rows. */
+export function peekDatasetTier(id: string): Tier | null {
+  ensureSeeded();
+  const rec = ds().store.get(id);
+  if (!rec) return null;
+  try { return parseDataset(rec.yaml).tier; } catch { return null; }
+}
+
+/** UNSCOPED column-name peek for the declarative AppSpec validator (0.6.116): the dataset's
+ *  documented column names, so the validator can verify every spec `field`/`keyField` exists
+ *  and LIST the real columns in the fix hint — the highest-value teaching signal. Non-throwing
+ *  and unscoped (consistent with `peekDatasetMeta`): an absent or unparseable record ⇒ null
+ *  (fail-soft; the caller skips the column check rather than flagging a false unknown). */
+export function peekDatasetColumns(id: string): string[] | null {
+  ensureSeeded();
+  const rec = ds().store.get(id);
+  if (!rec) return null;
+  try { return parseDataset(rec.yaml).columns.map((c) => c.name); } catch { return null; }
+}
+
+/** UNSCOPED measure-name peek for the metric-existence check behind the AppSpec validator
+ *  (0.6.116). A metric IS a measure on a dataset (`datasetId.measure`), so existence is
+ *  "the dataset exists and declares this measure". Non-throwing: absent/unparseable ⇒ null. */
+export function peekDatasetMeasureNames(id: string): string[] | null {
+  ensureSeeded();
+  const rec = ds().store.get(id);
+  if (!rec) return null;
+  try { return parseDataset(rec.yaml).measures.map((m) => m.name); } catch { return null; }
 }
 
 /**

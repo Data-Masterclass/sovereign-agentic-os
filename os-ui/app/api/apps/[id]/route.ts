@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, refreshActionsStage, refreshBuildStage, reconcileBuiltStatus, setAutoRepairEnabled, setAppServeMode, normalizeServeMode, type AppEpic } from '@/lib/software/apps';
 import { normalizeContextGrants } from '@/lib/core/context-grants';
+import { normalizeAgentGrants } from '@/lib/software/app-agent-grants';
 import { reconcileDeployApproval } from '@/lib/software/review';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
 
@@ -63,12 +64,14 @@ export const PATCH = withRoute<{ id: string }>(async ({ user, params, req }) => 
 
   // Define/Design fields, when present, persist through patchAppDesign.
   const hasDesign =
-    body?.purpose !== undefined || body?.epics !== undefined || body?.grants !== undefined;
+    body?.purpose !== undefined || body?.epics !== undefined ||
+    body?.grants !== undefined || body?.agents !== undefined;
   if (hasDesign) {
     const app = await patchAppDesign(id, user, {
       purpose: body?.purpose !== undefined ? String(body.purpose) : undefined,
       epics: body?.epics !== undefined ? (body.epics as AppEpic[]) : undefined,
       grants: body?.grants !== undefined ? normalizeContextGrants(body.grants) : undefined,
+      agents: body?.agents !== undefined ? normalizeAgentGrants(body.agents) : undefined,
     });
     return NextResponse.json({ app });
   }

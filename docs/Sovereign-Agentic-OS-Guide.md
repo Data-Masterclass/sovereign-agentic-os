@@ -128,7 +128,8 @@ same shape:
   Transformation · Checks*), so you save the part you changed and nothing else. **View** is the
   read-first surface (talk to it, preview it, read its stats and quality). The build tabs that
   produce *running systems* — **Agents** (Define · Design · Build · Run · Evaluate), **Software**
-  (Define · Design · Build · Test · Publish) and **Science** (Design · Launch · Monitor) — keep a
+  (Define App · Design Epics · Choose Context · Build App · Test & Publish) and **Science**
+  (Design · Launch · Monitor) — keep a
   **staged builder** (`lib/core/stages.ts` + `components/core/StageShell.tsx`),
   because a deploy genuinely has ordered gates; the artifact tabs no longer do.
 - **Honest state.** Nothing shows a ✓ it hasn't earned: a data-quality scorecard turns green only
@@ -445,68 +446,59 @@ honestly rather than inventing an answer when retrieval comes back empty.
   offers a **"Download PDF Results Report"**; **Evaluate** attributes context per agent and offers
   a **"Download PDF Evaluation Report"** — both fully brand-styled (gold-lotus cover, embedded
   datamasterclass fonts). Every call routes through **LiteLLM → OPA → Langfuse**.
-- **Software — a governed frontend over the OS API.** An app here isn't a black box you bolt on
-  — it's a first-class client of the OS itself. It moves through the shared five-stage builder —
-  **Define** (state the purpose and grant the app its context) · **Design** (epics + user
-  stories) · **Build** (the Simple view puts the app's *structure* first: the **Epics &
-  stories tree** from Design, each story with an honest status chip — *to do · building ·
-  done · blocked* — and a *"N of M stories built"* count; **click a story to make it the
-  build target** for the run, click it again to build the whole app. Beside it, a **live
-  streaming build**: the AI streams its plan, then one honest,
-  human-readable line per action — *"Committed 3 files"*, *"Provisioning preview…"* — with
-  errors shown as warnings with the real reason and retries visible in the feed, plus a real
-  before/after **file diff** of what was committed per run; the raw code panel lives one
-  click away in the **Developer view**) · **Test** (a *"Verify & Improve"* pass — the reasoning
-  model checks each built story against its spec across five dimensions — Functionality · User
-  Experience · Code Structure · Security · Documentation — and turns any shortfall into a tracked
-  refinement with a visible **Proposed → Designed → Built** state, beside a live in-cluster
-  preview pod) · **Publish** (the Builder-reviewed deploy, promote / certify, the live tool
-  surface, and lifecycle). A persistent **Build ▸ Preview ▸ Deploy status rail** keeps the
-  honest, single-glance state in view throughout. At **Define** you pick one of **four
-  scaffold templates** — **Application** (the default, full OS UX), **Website**, **APIs only**
-  (no user interface), or **Empty app** — and each pre-shapes the epic structure the Build
-  stage works through. The default is the **Sovereign
-  standard app template** — a Vite + React + TypeScript SPA that already *is* an OS app before
-  the first story is built. It boots *in the OS design*: it vendors **`@sovereign-os/ui`**
-  (the gold-on-black AppShell and `.sb-*` primitives, no build step, no registry) and calls
-  back into the platform through the
-  **OS-client SDK** (`@sovereign-os/app-sdk` — `createOsClient().whoami()`, `.datasets.list()`,
-  `.metrics`, `.knowledge`), so a brand-new app already renders *real governed data* under the
-  signed-in user's own row security. Sign-in is **delegated to the OS session** — no local
-  accounts or passwords, ever. The app shows its **owning-domain badge** and ships **My /
-  Domain scope helpers** that filter every record by domain + user; an **Admin section** (OS
-  `domain_admin` / Administrator only) carries a **read-only directory** of the OS users who
-  can reach the app *and* an honest **Granted context** panel that lists **only what this app was
-  actually granted** — not everything its signed-in user can see; and a top-bar **MCP button**
-  links to the app's own MCP connection in Connections. **The app runs least-privilege, not
-  as-you-wide.** Although a generated app rides the signed-in user's session, a governed read from
-  an app origin is capped at **(what the user can see ∩ what the app was granted)**: list surfaces
-  filter to the granted ids, a single artifact the app wasn't granted returns an honest 403 that
-  names the app and points at the Software-tab grant flow, and the free-form "ask your data"
-  surface is narrowed to *this app's* granted datasets (an app with zero grants is told so, plainly).
-  Its `os.datasets.query(id, { nl })` is likewise scoped to the app's grants, and its writes are the
-  bounded `os.records` surface. When you change an app's grants, a **Refresh SDK** action in the
-  Software tab re-vends the client so the app picks the new context up. The scaffolded **README is
-  the build
-  contract** — it documents how each story adds a page + section, and the Build assistant
-  reads the same text as context. Each built story page is **auto-wired into the app's
-  navigation**: the OS deterministically regenerates the section registry from the committed
-  story pages on every commit, so a written story can never be left invisible ("builds fine
-  but no feature shows"). Code commits to an
-  in-cluster **Forgejo** repo (no GitHub, no tokens, your code never leaves). Commits are
-  **sha-aware** — every write fetches the live blob sha first, so concurrent edits can never
-  silently no-op or overwrite — and the pipeline status is **earned, not claimed**: the CI
-  badge reflects the actual outcome of the latest Actions run on your commit (a missing repo
-  secret even self-heals on the next push), and a build that *fails* is loud — the Test and
-  Publish stages say plainly that the app is serving an *earlier* release with your recent
-  changes undeployed, so a broken build never masquerades as "complete." An app can still
-  **declare its surface** — `surface: ui | api | both` in `app.yaml`, which wins over
-  auto-detection so a Streamlit/Gradio/Flask UI is never mislabelled "API." *Request deploy*
-  assembles a review card — a security scan of the **live repo tree**, resource envelope, diff —
-  that a human Builder decides in **Policies & Approvals**; on approve the in-cluster runner provisions a real
-  Deployment + Service + Ingress with a live per-app URL (a `vite-os` app publishes as **static**
-  files served by nginx). Apps carry the same lifecycle as every other tab — **Archive →
-  Restore / Delete**.
+- **Software — compose a governed app, don't code one.** An app here isn't a coding project you
+  build, ship and host — it's a **governed declarative specification** (an *AppSpec*) that the
+  trusted OS renders **same-origin**, under the viewer's own session. There's **no per-app repo,
+  no CI, no container, no pod, no deploy** — the app is *live the moment its spec validates*. An
+  app is a set of **tabs**; each tab is a beautiful **cookbook pattern** filled with *your governed
+  data*, so a business reader **composes** an app by picking recipes and mapping data — never by
+  writing code. It moves through the shared five-stage builder — **Define App** (name it and state
+  its purpose) · **Design Epics** (epics + user stories) · **Choose Context** (grant the app the
+  data it may use) · **Build App** (compose the tabs) · **Test & Publish** (go live).
+  - **The pattern cookbook.** Each tab renders one named pattern, config-only. **View patterns
+    (read):** `records-table`, `master-detail`, `detail`, `status-board`, `kpi-overview`,
+    `chart-explorer`, `card-gallery`, `timeline`, `calendar`, and a composed `landing` home page.
+    **Interactive patterns (write):** `form`, `intake-wizard`, `assignment`, `approval-queue`, and
+    `task-checklist` — all writing through the governed, append-only **`os.records`** door and
+    advisory role gates, never arbitrary code. Every pattern is mapped to *real columns* from a
+    *granted* dataset — you tick fields from the actual schema, you never type a column name. An
+    app-wide, scoped **`theme.css`** restyles it (it can't leak into the OS chrome); a governed
+    query/expression DSL (**`functions`** — safe aggregates and formulas, no `eval`, ever) feeds
+    headline numbers; and for the rare layout no pattern expresses, a **sandboxed custom HTML/CSS/JS
+    block** runs in a null-origin frame that can *never* act as you or call the OS — it only reads a
+    read-only snapshot of parent-fetched data.
+  - **Choose Context — six grant types.** Bind the governed context the app may use — **Data ·
+    Metrics · Files · Knowledge · Agents · Connections** — by reference, never by copying and never
+    with raw credentials. Per type you can **use existing** (pick governed artifacts you're
+    entitled to and grant them) or **create new** — a fresh, possibly-empty dataset / file /
+    knowledge is created for you in an **"App «Name»"** folder, granted, and ready to fill. A tab
+    can only read a dataset the app was granted; anything else is a blocking validation issue.
+  - **Build App — it builds itself, then you refine by chat.** Open **Build App** and the OS
+    **auto-generates the whole app** from your epics, user stories and granted data — a validated
+    spec of pattern tabs wired to real columns. From there you **refine with the built-in chat
+    assistant**: it explains what's built, and you say *"make Orders a kanban by status"* or
+    *"add a KPI tab for total revenue"* — it applies the change *directly*, schema- and
+    governance-validated, and the live preview updates (an instruction it can't satisfy changes
+    nothing and is explained in plain words). You can also edit any pattern by hand. Two grouped,
+    confirm-gated controls sit together — **Reset based on Design** (regenerate from your epics) and
+    **Start from blank**. There is **no Save button**: every change **autosaves as a draft**, so
+    the app *always* appears in your tiles (marked **"Draft"**) — even before its first publish.
+  - **Test & Publish — versioned go-live.** You test the draft privately while the currently
+    **published** version stays live at `/apps/<slug>`. **Publish** runs the full serving gate over
+    your draft and, if clean, **promotes it to a new live version** with an auto name and a change
+    summary (a blocking draft comes back with inline `{ path, reason, fix }` issues and *nothing*
+    goes live). You can open the live app and **restore an earlier version** at any time. Then climb
+    the ladder — **My → Domain → Company** — with the same lifecycle every tab has (**Archive →
+    Restore / Delete**, lineage-blocked).
+  - **Intelligence is an ingredient, not a primitive.** An app **never calls a raw LLM and never
+    holds credentials.** Deterministic logic is a governed DSL **function**; *intelligent* logic is
+    an **agent** you build in the Agents tab (governed, versioned, evaluated, cost-capped, running as
+    you with its own subset of grants), granted to the app and invoked at runtime; external systems
+    are reached only through governed **Connections** or an agent — the app itself has no back door.
+  - **Coded apps are an advanced, admin-only option.** By default, **"New app" creates a
+    declarative app directly** (no chooser). The historic **coded path** — raw code built through
+    Forgejo, CI and an image/pod — is **off by default** and only appears when a **platform admin**
+    enables it; until then it fails closed with a clear message. Declarative is *the* way.
 - **Science — classic ML, in three plain stages** *(opt-in, Layer 4)*. Take traditional ML
   (classification and regression — *not* LLMs) from a governed data product to a deployed model
   through **Design · Launch · Monitor**. **Design** is chat-first: describe what you want to
@@ -1045,8 +1037,8 @@ no separate admin service to run.
 Four end-to-end demos ship seeded, so the system proves itself the moment it's up: **ask the
 RAG agent** (retrieve → generate → trace), **query the lakehouse** (the governed `query` tool
 over central Trino), **build a dashboard** (native ECharts panels on governed metrics),
-and **ship software** (push → Forgejo CI
-builds an image → Argo CD redeploys). Each has a one-card launcher on **Home**.
+and **compose software** (author a declarative AppSpec of cookbook-pattern tabs over governed
+data → live same-origin, no build). Each has a one-card launcher on **Home**.
 
 ## Deploy to your cloud (STACKIT)
 
@@ -1273,20 +1265,24 @@ one fused **"Train & launch"**, and a Monitor that scores real rows against a li
 model — classification and regression on CPU, algorithm/metric/split chosen automatically, no
 fabricated metrics. The raw MLflow/JupyterHub/KServe consoles are a Developer escape hatch.
 **Software** is now
-a *governed frontend over the OS API*: new apps scaffold from the **Sovereign standard app
-template** — a Vite/React SPA that
-boots in the OS design (`@sovereign-os/ui`), signs in through the OS session only (no local
-passwords), scopes records My / Domain, and calls back through the OS-client SDK
-(`@sovereign-os/app-sdk`) under the signed-in user's own security — with a **live streaming
-Build** (the plan first, then one honest line per action, warnings and retries visible, behind a
-persistent Build ▸ Preview ▸ Deploy status rail) driven from the **Epics & stories tree**
-(per-story status chips, one-click build targets, *"N of M stories built"*) — every built
-story **auto-wired into the app's navigation** (the section registry regenerates from the
-committed pages, so a story can never build-but-not-show) and a **failed build surfaced
-honestly** in Test and Publish (never a fake "complete" over a stale release). It shows real
-per-run file diffs, live preview, and a Builder-reviewed deploy that
-scans the live repo tree; apps build a real image in-cluster (Forgejo CI) or publish static, and
-deploy to a live per-app URL. **Metrics** are served by
+a *declarative composition surface*: an app is a **validated AppSpec of cookbook-pattern tabs over
+governed data**, rendered **same-origin** by the trusted OS renderer under the viewer's own
+session — **no per-app repo, CI, image, pod or deploy**; the app is **live the moment its spec
+validates**. You **compose** it through the five stages — **Define App · Design Epics · Choose
+Context · Build App · Test & Publish** — and **Build App auto-generates the whole app** from your
+epics, user stories and granted data, then lets you **refine by chat** (*"make Orders a kanban by
+status"* applied directly, schema-validated) or by hand. Every tab maps a **cookbook pattern** —
+view (`records-table`, `master-detail`, `status-board`, `kpi-overview`, `chart-explorer`, …) or
+interactive (`form`, `intake-wizard`, `approval-queue`, `task-checklist`, `assignment`, writing
+through the governed append-only `os.records` door) — to *real columns* of a *granted* dataset;
+an app-wide scoped `theme.css`, a safe query/expression DSL (`functions`), and a null-origin
+**sandboxed** custom block cover the rest. Context is granted by reference across **six types**
+(**Data · Metrics · Files · Knowledge · Agents · Connections**) — **intelligence enters only as a
+granted agent, never a raw LLM, and the app never holds credentials.** Work **autosaves as a
+draft** (no Save button) so an app always shows in the tiles; **Publish** validates the draft and
+promotes it to a **new live version** at `/apps/<slug>` (auto name + change summary), and earlier
+versions **restore**. The historic **coded path** (raw code + Forgejo + CI + image) is an
+**advanced option, off by default and platform-admin-gated**. **Metrics** are served by
 **direct governed Trino SQL** compiled from each metric's declaration and run **as the viewer**
 — definable and previewable on a *personal* Gold (promotion only to share and to register the
 dashboard cube), each emitting a portable MetricFlow-style semantic declaration, honestly

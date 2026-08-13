@@ -14,6 +14,9 @@ type Settings = {
   localization: { locale: 'en' | 'de'; available: string[] };
   notifications: { email: string; backupFailure: boolean; costThreshold: boolean };
   modelRoles: { reasoning: string; standard: string; embeddings: string };
+  /** os-ui 0.6.133 — allow coded (custom) apps. OFF by default: only Declarative
+   *  (no-code) apps can be created. The coded path is experimental. */
+  codedAppsEnabled: boolean;
 };
 
 type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external' };
@@ -274,6 +277,27 @@ export default function SettingsPage() {
           <button className="btn" disabled={busy === 'modelRoles'} onClick={() => save('modelRoles', { modelRoles: s.modelRoles })}>
             {busy === 'modelRoles' ? <span className="spin" /> : 'Save'}
           </button>
+        </div>
+
+        <div className="section-title">Software</div>
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              Allow coded (custom) apps
+              <Switch
+                on={s.codedAppsEnabled}
+                disabled={busy === 'codedAppsEnabled'}
+                onClick={() => {
+                  const next = !s.codedAppsEnabled;
+                  set('codedAppsEnabled', next);
+                  void save('codedAppsEnabled', { codedAppsEnabled: next });
+                }}
+              />
+            </label>
+          </div>
+          <div className="hint" style={{ marginTop: 8 }}>
+            Off = only Declarative no-code apps can be created. The coded path is experimental.
+          </div>
         </div>
 
         <div className="section-title">Notifications</div>

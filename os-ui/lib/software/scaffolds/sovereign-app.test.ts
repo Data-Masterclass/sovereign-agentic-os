@@ -58,7 +58,10 @@ test('sovereign-app scaffold: App.tsx is a thin entrypoint mounting the template
   assert.match(shell, /@sovereign-os\/ui/, 'imports the OS design system');
   assert.match(shell, /SECTIONS/, 'nav is driven by the sections registry');
   const sections = byPath('src/template/sections.tsx');
-  assert.match(sections, /EPICS ADD SECTIONS HERE/, 'documents where epics add nav items');
+  // 0.6.115 (A3): the registry is AUTO-GENERATED from story pages on commit — the seeded
+  // comment must say so and tell the agent NOT to hand-edit it (no stale "add entries here").
+  assert.match(sections, /AUTO-GENERATED/, 'documents that the registry is auto-generated on commit');
+  assert.match(sections, /do NOT hand-edit/i, 'tells the agent not to hand-edit sections.tsx');
   assert.match(sections, /Overview/, 'seeds the Overview section');
   assert.match(sections, /Workspace/, 'seeds the placeholder section');
 });

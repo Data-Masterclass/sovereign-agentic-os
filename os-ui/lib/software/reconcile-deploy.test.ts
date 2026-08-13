@@ -5,7 +5,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { createApp, getAppForUser, persistApp } from '@/lib/software/apps';
-import { requestDeploy, reconcileDeployApproval, reconcileDeployStatus } from './review.ts';
+import {
+  requestDeploy,
+  reconcileDeployApproval,
+  reconcileDeployStatus,
+  previewNoteForRunner,
+  PREVIEW_PENDING_NOTE,
+  IMAGE_BUILDING_NOTE,
+} from './review.ts';
 import type { RunnerK8s } from './runner.ts';
 import { decide, listApprovals, __resetApprovals } from '@/lib/governance/approvals';
 
@@ -150,6 +157,42 @@ test('SELF-HEAL: offline cluster (status 0) is NOT healed — stays honestly pen
   assert.equal(status.phase, 'offline');
   app = await getAppForUser(appId, creator);
   assert.equal(app.deploy.previewUrl ?? null, null, 'no fabricated URL when unreachable');
+});
+
+test('STATUS READ (0.6.114): a RUNNING pod yields a served URL and NOT the "unreachable" note', async () => {
+  __resetApprovals();
+  // Live app with a Deployment already present and RUNNING (1/1 ready) — the live-verified
+  // case: the pod is 1/1 Running, so the status read must reconcile it into a served URL.
+  const appId = await orphanStuckApp('Running Pod Status', 'approve');
+  let app = await getAppForUser(appId, creator);
+  await reconcileDeployApproval(app);
+
+  const depPath = `/apis/apps/v1/namespaces/${HEAL_OPTS.namespace}/deployments/app-${app.slug}`;
+  const runningK8s: RunnerK8s = async (method, path) => {
+    if (method === 'GET' && path === depPath) return { status: 200, body: { spec: { replicas: 1 }, status: { readyReplicas: 1 } } };
+    return { status: 200, body: {} };
+  };
+
+  const { status } = await reconcileDeployStatus(appId, creator, { ...HEAL_OPTS, k8s: runningK8s });
+  assert.equal(status.phase, 'running', 'the stub reports a running pod');
+  assert.equal(status.live, true);
+
+  app = await getAppForUser(appId, creator);
+  assert.ok(app.deploy.previewUrl, 'a running pod reconciles into a NON-NULL served preview URL');
+
+  // The status reader derives the honest note off this fresh status: a running pod is
+  // served (no pending note), and it is NEVER the "runner unreachable" note.
+  const note = previewNoteForRunner(status);
+  assert.notEqual(note, PREVIEW_PENDING_NOTE, 'a running runner is NOT flagged unreachable');
+  assert.notEqual(note, IMAGE_BUILDING_NOTE, 'a running runner is not "still building"');
+});
+
+test('STATUS READ: a provisioned-but-not-yet-running pod says "image build in progress", not unreachable', () => {
+  const building = previewNoteForRunner({ phase: 'deploying', live: true, replicas: 1, ready: 0, detail: '' });
+  assert.equal(building, IMAGE_BUILDING_NOTE);
+  const offline = previewNoteForRunner({ phase: 'offline', live: false, replicas: 0, ready: 0, detail: '' });
+  assert.equal(offline, PREVIEW_PENDING_NOTE, 'a genuinely offline cluster IS the unreachable note');
+  assert.equal(previewNoteForRunner(null), PREVIEW_PENDING_NOTE, 'no reconcile ⇒ honest unreachable default');
 });
 
 test('RECONCILE: no-op when there is NO matching approval (left unchanged)', async () => {

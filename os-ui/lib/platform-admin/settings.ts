@@ -35,6 +35,14 @@ export type Settings = {
   // those stay premium regardless (see lib/assistant/escalate.ts). Admin role pins
   // still decide the actual aliases each tier resolves to.
   standardFirstEscalation: boolean;
+  // CODED (custom) APPS — the platform decision (os-ui 0.6.133). When OFF (the
+  // DEFAULT), only DECLARATIVE (spec) no-code apps can be created; the coded path
+  // (`kind:'code'` / image|runtime serveMode — the agent writes code + a Forgejo
+  // repo + an image build) is disabled everywhere (UI, API, MCP). The coded path
+  // has been higher-risk and unstable, so we stand behind Declarative by default;
+  // a PLATFORM admin (not a domain admin) may turn it back on. Fail-closed: the UI
+  // is not the gate — createApp + the create route + the MCP surface all enforce it.
+  codedAppsEnabled: boolean;
 };
 
 const EMPTY_ROLES = { reasoning: '', standard: '', tools: '', embeddings: '' };
@@ -48,6 +56,7 @@ let settings: Settings = {
   notifications: { email: 'admin@datamasterclass.com', backupFailure: true, costThreshold: true },
   modelRoles: { ...EMPTY_ROLES },
   standardFirstEscalation: true,
+  codedAppsEnabled: false,
 };
 
 function fail(message: string, status: number): Error {
@@ -80,8 +89,21 @@ export function updateSettings(patch: Partial<Settings> & Record<string, unknown
       typeof patch.standardFirstEscalation === 'boolean'
         ? patch.standardFirstEscalation
         : settings.standardFirstEscalation,
+    // Nil-safe (same pattern as standardFirstEscalation): only a REAL boolean flips
+    // it; an absent/partial/garbage patch keeps the current value (default OFF), so a
+    // partial settings PUT can never accidentally ENABLE the coded-app path.
+    codedAppsEnabled:
+      typeof patch.codedAppsEnabled === 'boolean'
+        ? patch.codedAppsEnabled
+        : settings.codedAppsEnabled,
   };
   return settings;
+}
+
+/** The coded-apps platform flag (default OFF). The ONE read the create-gate + MCP
+ *  surface consult so "coded apps disabled" is decided in exactly one place. */
+export function codedAppsEnabled(): boolean {
+  return settings.codedAppsEnabled;
 }
 
 export function _reset(): void {
@@ -94,5 +116,6 @@ export function _reset(): void {
     notifications: { email: 'admin@datamasterclass.com', backupFailure: true, costThreshold: true },
     modelRoles: { ...EMPTY_ROLES },
     standardFirstEscalation: true,
+    codedAppsEnabled: false,
   };
 }

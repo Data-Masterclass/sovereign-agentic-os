@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { availableContext, availableContextWithFolders } from '@/lib/software/available-context';
+import { availableContext, availableContextWithFolders, availableAgents } from '@/lib/software/available-context';
 import type { ContextKind } from '@/lib/core/context-grants';
 
 export const dynamic = 'force-dynamic';
@@ -29,9 +29,14 @@ const KINDS: ContextKind[] = ['connections', 'data', 'knowledge', 'files', 'metr
 
 export const GET = withRoute(async ({ user, req }) => {
   const url = new URL(req.url);
-  const kind = url.searchParams.get('kind') as ContextKind | null;
+  const kind = url.searchParams.get('kind') as ContextKind | 'agents' | null;
+  // Agents are the sixth Choose-Context type (Phase 4b) — not a core ContextKind, so they
+  // have their own feed, shaped identically so the picker reuses the same UI.
+  if (kind === 'agents') {
+    return NextResponse.json({ items: await availableAgents(user) });
+  }
   if (!kind || !KINDS.includes(kind)) {
-    return NextResponse.json({ error: `kind must be one of: ${KINDS.join(', ')}` }, { status: 400 });
+    return NextResponse.json({ error: `kind must be one of: ${KINDS.join(', ')}, agents` }, { status: 400 });
   }
   if (url.searchParams.get('folders') === '1') {
     const { items, folders } = await availableContextWithFolders(user, [kind]);

@@ -4,6 +4,7 @@
 import 'server-only';
 import { config } from '@/lib/core/config';
 import { emptyContextGrants, normalizeContextGrants, type ContextGrants } from '@/lib/core/context-grants';
+import { emptyAgentGrants, normalizeAgentGrants, type AppAgentGrant } from '@/lib/software/app-agent-grants';
 import type { CurrentUser } from '@/lib/core/auth';
 import { canPromote, roleAtLeast } from '@/lib/core/session';
 import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
@@ -33,6 +34,9 @@ import type {
   SurfaceDeclaration,
 } from '@/lib/software/model';
 import { normalizeSpec, type StorySpec } from '@/lib/software/story-spec';
+import type { AppSpec, SpecIssue } from '@/lib/software/appspec/schema';
+import { parseAppSpec } from '@/lib/software/appspec/schema';
+import type { SpecWarning } from '@/lib/software/appspec/validate';
 import { detectPreviewShape } from '@/lib/software/preview-shape';
 import { viteOsFiles } from '@/lib/software/scaffolds/vite-os';
 import { sovereignAppFiles, sovereignAppGuide } from '@/lib/software/scaffolds/sovereign-app';
@@ -43,10 +47,11 @@ import { vendorSdkForRepo, applySdkFileDep } from '@/lib/software/app-sdk-vendor
 import { vendorUiForRepo, applyUiFileDep } from '@/lib/software/app-ui-vendor';
 import { snapshotFiles, getSnapshot, hydrateSnapshot, deleteSnapshot } from '@/lib/software/snapshot';
 import { generateAndCompile } from '@/lib/software/auto-mcp';
-import { dataPlaneToolsFromGrants } from '@/lib/software/grant-tools';
+import { dataPlaneToolsFromGrants, agentToolsFromGrants } from '@/lib/software/grant-tools';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, resolveSurface } from '@/lib/software/metadata';
 import { osMirror } from '@/lib/infra/os-mirror';
 import { getPublicUser, type PublicUser } from '@/lib/platform-admin/users';
+import { codedAppsEnabled } from '@/lib/platform-admin/settings';
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@/lib/folders';
 import { normaliseFolderPath } from '@/lib/core/folders';
 import { type ArtifactVersion, versionLog } from '@/lib/core/versioning';
@@ -187,18 +192,20 @@ export type AppEpic = {
 };
 
 /**
- * How an app is served (Phase D). The DEFAULT + every legacy record is 'image' (the
- * per-app container path); 'runtime' opts into the OS no-image runtime serving.
+ * How an app is served (Phase D + AppSpec Phase 3). The DEFAULT + every legacy record
+ * is 'image' (the per-app container path); 'runtime' opts into the OS no-image runtime
+ * serving; 'spec' opts into declarative AppSpec same-origin serving (the OS renders
+ * `app.spec` under the viewer's session — no pod, see appspec/DESIGN.md).
  */
-export type ServeMode = 'image' | 'runtime';
+export type ServeMode = 'image' | 'runtime' | 'spec';
 
 /**
- * The ONE coercion for a persisted/incoming `serveMode`: only the explicit string
- * 'runtime' opts in; anything else (undefined on a legacy record, garbage, or the
- * explicit 'image') resolves to 'image'. Keeps the field byte-stable + nil-safe.
+ * The ONE coercion for a persisted/incoming `serveMode`: only the explicit strings
+ * 'runtime' / 'spec' opt in; anything else (undefined on a legacy record, garbage, or
+ * the explicit 'image') resolves to 'image'. Keeps the field byte-stable + nil-safe.
  */
 export function normalizeServeMode(raw: unknown): ServeMode {
-  return raw === 'runtime' ? 'runtime' : 'image';
+  return raw === 'runtime' ? 'runtime' : raw === 'spec' ? 'spec' : 'image';
 }
 
 /** The app's effective serve mode (nil-safe read for a possibly-legacy record). */
@@ -229,6 +236,15 @@ export type App = {
    * Optional + defaults to an empty grants object so pre-grants apps still load.
    */
   grants: ContextGrants;
+  /**
+   * The SIXTH Choose-Context type (Phase 4b): governed AGENTS the app may run. Agents are
+   * how intelligence enters an app — built + evaluated + role-gated in the Agents tab, granted
+   * here, invoked at runtime via a "Run agent" action (the invocation is Phase 4c; this field
+   * RECORDS the grant). Kept as a SEPARATE additive list (not a sixth kind of the OS-wide
+   * `ContextGrants` primitive, which the Agents builder also uses) so legacy apps load
+   * unchanged. Optional-on-load: pre-4b apps default to `[]` in hydrateAppDoc.
+   */
+  agents: AppAgentGrant[];
   template: AppTemplateKey;
   owner: string;
   domain: string;
@@ -266,6 +282,24 @@ export type App = {
    * to 'image', and normalizeServeMode is the ONE coercion (only 'runtime' opts in).
    */
   serveMode?: ServeMode;
+  /**
+   * The declarative AppSpec (AppSpec Phase 3). Present ONLY when `serveMode === 'spec'`:
+   * the validated, git-backed contract the trusted OS renderer serves same-origin under
+   * the viewer's session — no per-app image/pod. `setAppSpec` is the sole write door
+   * (author-time `validateAppSpec` gate). Optional-on-load so every legacy record (and
+   * every image/runtime app) round-trips byte-stable with the field simply absent.
+   */
+  spec?: AppSpec;
+  /**
+   * The AUTOSAVED candidate spec (os-ui 0.6.135 — the DRAFT/LIVE model). The composer
+   * autosaves every change here WITHOUT the serve-validation gate (a partial, not-yet-valid
+   * draft saves fine), so an app always persists + always shows in the tiles — even before
+   * its first Publish. `spec` stays the LIVE, served + versioned field; `draftSpec` is the
+   * work-in-progress. Publish validates `draftSpec` with the full serving gate and promotes it
+   * into `spec`. Optional-on-load so every legacy record (only `spec`, or neither) round-trips
+   * byte-stable with the field simply absent — serving is UNCHANGED (it always reads `spec`).
+   */
+  draftSpec?: AppSpec;
   repo: { fullName: string; htmlUrl: string; seeded: string[] };
   subdomain: string;
   /**
@@ -1062,6 +1096,8 @@ function hydrateAppDoc(app: App): App {
   // Re-derive it from the full name against the EXTERNAL console URL on every load.
   if (app.repo?.fullName) app.repo.htmlUrl = repoHtmlUrl(app.repo.fullName);
   app.grants = normalizeContextGrants(app.grants);
+  // Back-compat: apps persisted before the Phase-4b agents grant default to `[]`.
+  app.agents = normalizeAgentGrants(app.agents);
   // Re-hydrate the in-process MCP grant so agents can call it after a restart.
   // rehydrateConnection is status-aware — it never resurrects an archived app.
   if (app.connectionId) rehydrateConnection(app);
@@ -2116,6 +2152,162 @@ export async function setAppServeMode(appId: string, user: CurrentUser, mode: Se
 }
 
 /**
+ * Set an app's declarative AppSpec (AppSpec Phase 3 — the ONE write door for `app.spec`).
+ * This is what the Phase-4 authoring MCP tool + the demo-seed call; there is NO MCP wiring
+ * in Phase 3.
+ *
+ * • AUTHORIZE with the SAME owner-or-in-domain-builder check `startPreview` uses (a mere
+ *   viewer cannot rewrite an app's served surface).
+ * • GATE on `validateAppSpec` (Phase 1): a `spec` that has any BLOCKING issue is returned as
+ *   `{ issues }` and NOT persisted — the app is left exactly as it was. Otherwise the spec
+ *   is set, `serveMode` flips to 'spec', the app is persisted, and non-blocking `warnings`
+ *   are returned so the caller can surface them.
+ *
+ * `spec` is accepted as `unknown` and re-parsed through `parseAppSpec` here so the structural
+ * grammar is enforced at the door too: a structurally-malformed payload returns its parse
+ * issues (never persisted), identical in shape to the semantic issues.
+ */
+export async function setAppSpec(
+  appId: string,
+  spec: unknown,
+  user: CurrentUser,
+): Promise<{ app: App; issues: SpecIssue[]; warnings: SpecWarning[]; version: ArtifactVersion | null }> {
+  const app = await getAppByIdInternal(appId);
+  if (!app) throw withStatus(new Error('App not found'), 404);
+  const ownerOrBuilder =
+    app.owner === user.id || (roleAtLeast(user.role, 'builder') && user.domains.includes(app.domain));
+  if (!ownerOrBuilder) throw withStatus(new Error('Only the creator can set this app spec'), 403);
+  if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot set a spec'), 409);
+
+  // Structural gate first — a malformed payload returns its parse issues, unpersisted.
+  const parsed = parseAppSpec(spec);
+  if (!parsed.ok) return { app, issues: parsed.issues, warnings: [], version: null };
+
+  // Semantic gate — dataset/column/metric/grant invariants against the real stores.
+  // Imported LAZILY: validate.ts pulls in the data/metrics stores, and keeping that off the
+  // module-load path of apps.ts preserves the store-mock isolation other suites rely on.
+  const { validateAppSpec } = await import('@/lib/software/appspec/validate');
+  const { issues, warnings } = await validateAppSpec(app, parsed.spec, user);
+  if (issues.length > 0) return { app, issues, warnings, version: null };
+
+  // A GOVERNED AUTHOR = a versioned PUBLISH (0.6.136). set_app_spec writes the LIVE spec, so it
+  // must be at parity with the UI Publish (publishApp): snapshot a version with an auto short
+  // name + a deterministic, LLM-free change summary (a describeApp diff of the previous live spec
+  // vs the newly-set one). Same shared version log the Publish surface uses (a spec app has no
+  // Forgejo repo, so this snapshot log IS its version history).
+  const { summarizeSpecChange, autoVersionName } = await import('@/lib/software/appspec/change-summary');
+  const previousLive = app.spec ?? null;
+  const summary = summarizeSpecChange(previousLive, parsed.spec);
+
+  app.spec = parsed.spec;
+  app.draftSpec = undefined; // the authored spec is now the live spec — clear any stale draft.
+  app.serveMode = 'spec';
+  app.deploy = { ...app.deploy, releases: app.deploy.releases + 1 };
+
+  const name = autoVersionName(app.deploy.releases);
+  const version = versions.record(appId, user.id, { spec: parsed.spec, name }, `${name} — ${summary}`);
+
+  await persistApp(app);
+  return { app, issues: [], warnings, version };
+}
+
+/**
+ * AUTOSAVE the candidate `draftSpec` (os-ui 0.6.135 — the DRAFT/LIVE model). This is the write
+ * door for the composer's continuous autosave: it persists the work-in-progress WITHOUT the
+ * serve-validation gate, so a partial / not-yet-valid draft saves fine and the app always shows
+ * in the tiles (even before its first Publish). It NEVER touches `spec` (the live served field)
+ * and NEVER snapshots a version — Publish is the only go-live gate.
+ *
+ * • AUTHORIZE with the SAME owner-or-in-domain-builder check `setAppSpec` uses.
+ * • BEST-EFFORT structural parse: a clean payload is stored as a parsed AppSpec; a structurally
+ *   incomplete payload is stored verbatim (never rejected) so no keystrokes are lost. Serving is
+ *   unaffected either way (it reads `spec`, not `draftSpec`).
+ * • Flip `serveMode` to 'spec' so the app is recognised as a declarative app in the tiles/rail
+ *   from its very first draft (it only SERVES once `spec` is set on Publish).
+ * Idempotent + debounce-friendly: re-saving the same payload is a plain write-through.
+ */
+export async function saveAppDraft(appId: string, draft: unknown, user: CurrentUser): Promise<App> {
+  const app = await getAppByIdInternal(appId);
+  if (!app) throw withStatus(new Error('App not found'), 404);
+  const ownerOrBuilder =
+    app.owner === user.id || (roleAtLeast(user.role, 'builder') && user.domains.includes(app.domain));
+  if (!ownerOrBuilder) throw withStatus(new Error('Only the creator can edit this app draft'), 403);
+  if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot save a draft'), 409);
+
+  const parsed = parseAppSpec(draft);
+  // A clean parse stores the normalised spec; an incomplete one stores the raw payload so the
+  // composer can re-hydrate exactly what the author had (no serve-gate here, by design).
+  app.draftSpec = (parsed.ok ? parsed.spec : (draft as AppSpec)) ?? undefined;
+  app.serveMode = 'spec';
+  await persistApp(app);
+  return app;
+}
+
+/**
+ * PUBLISH (os-ui 0.6.135) — the ONE explicit go-live gate. Validates the app's autosaved
+ * `draftSpec` with the FULL serving gate (`parseAppSpec` structural + `validateAppSpec` semantic),
+ * and on success PROMOTES it to `spec` (live at `/apps/<slug>`) and SNAPSHOTS a version with an
+ * auto short name (`v{n}`) + a deterministic, LLM-free change summary (a `describeApp` diff of the
+ * previous live spec vs the newly-published one). A draft with any BLOCKING issue is returned as
+ * `{ issues }` and NOTHING is promoted (the app keeps serving its current live `spec`).
+ *
+ * Falls back to `spec` when there is no `draftSpec` (a legacy app whose draft == live) so Publish
+ * is never a no-op that silently drops the app. Edit-scoped owner-or-in-domain-builder.
+ */
+export async function publishApp(
+  appId: string,
+  user: CurrentUser,
+): Promise<{ app: App; issues: SpecIssue[]; warnings: SpecWarning[]; version: ArtifactVersion | null }> {
+  const app = await getAppByIdInternal(appId);
+  if (!app) throw withStatus(new Error('App not found'), 404);
+  const ownerOrBuilder =
+    app.owner === user.id || (roleAtLeast(user.role, 'builder') && user.domains.includes(app.domain));
+  if (!ownerOrBuilder) throw withStatus(new Error('Only the creator can publish this app'), 403);
+  if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot be published'), 409);
+
+  // The candidate to go live: the autosaved draft, else the current live spec (draft == live).
+  const candidate = app.draftSpec ?? app.spec;
+  if (candidate === undefined) {
+    throw withStatus(new Error('There is nothing to publish yet — build a draft first.'), 409);
+  }
+
+  // Structural gate first — a malformed candidate returns its parse issues, unpublished.
+  const parsed = parseAppSpec(candidate);
+  if (!parsed.ok) return { app, issues: parsed.issues, warnings: [], version: null };
+
+  // Semantic gate — the SAME serving gate `setAppSpec` runs (dataset/column/metric/grant invariants).
+  const { validateAppSpec } = await import('@/lib/software/appspec/validate');
+  const { issues, warnings } = await validateAppSpec(app, parsed.spec, user);
+  if (issues.length > 0) return { app, issues, warnings, version: null };
+
+  // Deterministic change summary: diff the PREVIOUS live spec vs the newly-published one.
+  const { summarizeSpecChange, autoVersionName } = await import('@/lib/software/appspec/change-summary');
+  const previousLive = app.spec ?? null;
+  const summary = summarizeSpecChange(previousLive, parsed.spec);
+
+  // Promote draft → live. Serving flips on immediately (same-origin OS render, no build).
+  app.spec = parsed.spec;
+  app.draftSpec = undefined; // the draft is now the live spec — clear the candidate.
+  app.serveMode = 'spec';
+  app.deploy = { ...app.deploy, releases: app.deploy.releases + 1 };
+
+  // Snapshot the published version via the shared version log (the spec app has no Forgejo
+  // repo, so listAppGitVersions returns null → this snapshot log is the app's version history).
+  const name = autoVersionName(app.deploy.releases);
+  const version = versions.record(appId, user.id, { spec: parsed.spec, name }, `${name} — ${summary}`);
+
+  await persistApp(app);
+  void trace({
+    principal: app.mcpPrincipal,
+    tool: 'generate',
+    input: { action: 'publish_app', slug: app.slug, version: name, by: user.id, role: user.role },
+    output: { summary, tabs: parsed.spec.tabs.length },
+    decision: 'allow',
+  });
+  return { app, issues: [], warnings, version };
+}
+
+/**
  * Synthesize the CurrentUser an auto-repair build turn runs AS — the app's OWNER,
  * scoped to the app's domain, at the `builder` role (needs the commit/build tool
  * surface). This is a SERVER-INITIATED turn (no request session), so there is no
@@ -2355,7 +2547,8 @@ export async function refreshBuildStage(
  */
 export function compileAppProfile(app: App): void {
   const grantTools = dataPlaneToolsFromGrants(app.grants);
-  generateAndCompile(app.mcpPrincipal, { tools: [...app.mcpTools, ...grantTools] });
+  const agentTools = agentToolsFromGrants(app.agents);
+  generateAndCompile(app.mcpPrincipal, { tools: [...app.mcpTools, ...grantTools, ...agentTools] });
 }
 
 export function rehydrateConnection(app: App): void {
@@ -2429,7 +2622,24 @@ export async function getEditableAppForUser(appId: string, user: CurrentUser): P
 
 export async function createApp(
   user: CurrentUser,
-  input: { name: string; description?: string; template?: AppTemplateKey; domain?: string; surface?: SurfaceDeclaration; purpose?: string },
+  input: {
+    name: string;
+    description?: string;
+    template?: AppTemplateKey;
+    domain?: string;
+    surface?: SurfaceDeclaration;
+    purpose?: string;
+    /**
+     * The app's SERVING KIND (AppSpec Phase 4a). Defaults to `'code'` — the historic
+     * per-app image/CI/pod path (byte-identical to today). `'spec'` opts a fresh app
+     * into DECLARATIVE serving: the OS renders its validated `spec` same-origin under
+     * the viewer's session (see appspec/DESIGN.md), so it needs NO Forgejo repo / CI /
+     * registry / pod. A spec app therefore skips the image pipeline at create time —
+     * no `scaffoldRepo`, pipeline stages `'disabled'`, `serveMode:'spec'` — and becomes
+     * servable at `/apps/<slug>` the moment `setAppSpec` validates + persists its spec.
+     */
+    kind?: 'spec' | 'code';
+  },
 ): Promise<App> {
   const map = await getCache();
   // Default a fresh app to the SOVEREIGN STANDARD APP (`sovereign-app`): the rich
@@ -2447,21 +2657,45 @@ export async function createApp(
   const t = now();
   const subdomain = `${slug}.${domain}.${config.appsBaseDomain}`;
 
-  // 1. Scaffold the per-app Forgejo repo (real when reachable).
-  const repo = await scaffoldRepo(slug, description, tpl, name);
+  // A DECLARATIVE (spec) app is served same-origin by the OS renderer — it has NO
+  // per-app image / CI / registry / pod, so it SKIPS the whole image pipeline at
+  // create time. Everything else (governed MCP connection, data artifact, lifecycle)
+  // is identical to a code app; only the image-pipeline side effects are elided.
+  const specKind = input.kind === 'spec';
 
-  // 2. Pipeline status — honest reflection of reachability + default-off Harbor.
+  // FAIL-CLOSED platform gate (os-ui 0.6.133): when the platform admin has coded apps
+  // OFF (the default), a coded app (`kind:'code'` / the image pipeline) cannot be
+  // created — from ANY front door (UI, API, MCP). Declarative (spec) creation is
+  // always allowed. This is the server-side gate: the UI merely reflects it, it does
+  // NOT enforce it. Rejected BEFORE any repo/pipeline side effect runs.
+  if (!specKind && !codedAppsEnabled()) {
+    throw withStatus(
+      new Error('Coded apps are disabled by the platform administrator. Create a Declarative (no-code) app instead (kind: "spec").'),
+      403,
+    );
+  }
+
+  // 1. Scaffold the per-app Forgejo repo (real when reachable) — code apps only. A
+  //    spec app needs no repo, so we never call Forgejo for it (no CI, no image).
+  const repo = specKind
+    ? { mode: 'offline' as const, fullName: '', htmlUrl: '', seeded: [] as string[] }
+    : await scaffoldRepo(slug, description, tpl, name);
+
+  // 2. Pipeline status — for a spec app EVERY stage is 'disabled' (there is no image
+  //    pipeline to run); for a code app it is the honest reflection of reachability.
   const live = repo.mode === 'live';
-  const pipeline: Record<PipelineStage, StageStatus> = {
-    forgejo: live ? 'ok' : 'offline',
-    // HONEST: 'ok' is EARNED, never assumed — `refreshActionsStage` flips it to
-    // 'ok' only once the latest push on main actually produced an Actions run.
-    actions: 'pending',
-    // Harbor is a default-off heavy workload; CI uses Forgejo's registry locally.
-    harbor: config.harborEnabled ? (live ? 'ok' : 'pending') : 'disabled',
-    argocd: live ? 'ok' : 'pending',
-    live: live ? 'ok' : 'pending',
-  };
+  const pipeline: Record<PipelineStage, StageStatus> = specKind
+    ? { forgejo: 'disabled', actions: 'disabled', harbor: 'disabled', argocd: 'disabled', live: 'disabled' }
+    : {
+        forgejo: live ? 'ok' : 'offline',
+        // HONEST: 'ok' is EARNED, never assumed — `refreshActionsStage` flips it to
+        // 'ok' only once the latest push on main actually produced an Actions run.
+        actions: 'pending',
+        // Harbor is a default-off heavy workload; CI uses Forgejo's registry locally.
+        harbor: config.harborEnabled ? (live ? 'ok' : 'pending') : 'disabled',
+        argocd: live ? 'ok' : 'pending',
+        live: live ? 'ok' : 'pending',
+      };
 
   // 3. Auto-register the data as a Personal artifact owned by the creator.
   let dataArtifactId: string | null = null;
@@ -2507,6 +2741,7 @@ export async function createApp(
     purpose: (input.purpose ?? '').slice(0, 2000),
     epics: [],
     grants: emptyContextGrants(),
+    agents: emptyAgentGrants(),
     template: tpl.key,
     owner: user.id,
     domain,
@@ -2516,9 +2751,11 @@ export async function createApp(
     members: [],
     folder: '/',
     mode: repo.mode,
-    // Phase D: a fresh app is served the historic way (per-app image) until the
-    // owner explicitly opts into OS runtime serving on the Publish surface.
-    serveMode: 'image',
+    // A spec app is served declaratively (same-origin OS renderer) from the moment its
+    // spec is set; a code app is served the historic way (per-app image) until the owner
+    // opts into OS runtime serving on the Publish surface. (setAppSpec also flips this to
+    // 'spec' — this just makes a spec app's serveMode correct BEFORE its first spec.)
+    serveMode: specKind ? 'spec' : 'image',
     repo: { fullName: repo.fullName, htmlUrl: repo.htmlUrl, seeded: repo.seeded },
     subdomain,
     pipeline,
@@ -2775,7 +3012,7 @@ function normalizeEpicSpecs(epics: AppEpic[]): AppEpic[] {
 export async function patchAppDesign(
   appId: string,
   user: CurrentUser,
-  patch: { purpose?: string; epics?: AppEpic[]; grants?: ContextGrants },
+  patch: { purpose?: string; epics?: AppEpic[]; grants?: ContextGrants; agents?: AppAgentGrant[] },
 ): Promise<App> {
   const map = await getCache();
   const a = map.get(appId);
@@ -2808,6 +3045,13 @@ export async function patchAppDesign(
     // GRANTS → RUNTIME TRUTH: a grant change re-derives the app's data-plane tools and
     // re-compiles its OPA capability profile immediately, so the deployed app can actually
     // use what it was just granted (and loses access the moment a grant is revoked).
+    compileAppProfile(a);
+  }
+  if (patch.agents !== undefined) {
+    // The Phase-4b agents grant follows the SAME grants→runtime-truth rule: an agent grant
+    // re-compiles the app's OPA profile so a granted agent becomes runnable (run_agent_system
+    // + its discovery companion), and access is dropped the moment the grant is revoked.
+    a.agents = normalizeAgentGrants(patch.agents);
     compileAppProfile(a);
   }
   a.updatedAt = now();
@@ -2989,9 +3233,13 @@ export async function listAppVersions(appId: string, user: CurrentUser): Promise
 }
 
 /**
- * Restore a prior version of an app's doc content. Restore is auditable +
- * reversible: the current state is snapshotted as a new version first, then
- * the chosen version is applied. Edit-scoped (owner or Admin only).
+ * Restore a prior version of an app. Restore is auditable + reversible: the current state is
+ * snapshotted as a new version first, then the chosen version is applied. Edit-scoped.
+ *
+ * Two snapshot shapes are handled (0.6.135): a PUBLISHED spec snapshot (`{ spec }`, from
+ * `publishApp`) restores that spec straight back to LIVE (and clears any draft); the historic
+ * DOC-CONTENT snapshot (`{ designDecisions, … }`) restores the doc fields. A snapshot with
+ * neither is 422 (nothing restorable).
  */
 export async function restoreAppVersion(appId: string, user: CurrentUser, version: number): Promise<App> {
   const map = await getCache();
@@ -3000,6 +3248,21 @@ export async function restoreAppVersion(appId: string, user: CurrentUser, versio
   if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to edit this app'), 403);
   const snap = versions.get(appId, version);
   if (!snap) throw withStatus(new Error(`Version ${version} not found`), 404);
+
+  // Published-spec snapshot: promote the prior spec straight back to LIVE, snapshotting the
+  // current live spec first so the restore itself is reversible.
+  const specSnap = (snap.state as { spec?: unknown }).spec;
+  if (specSnap && typeof specSnap === 'object') {
+    if (a.spec) versions.record(appId, user.id, { spec: a.spec, name: `restore of v${version}` }, `restore of v${version}`);
+    a.spec = specSnap as AppSpec;
+    a.draftSpec = undefined; // the restored spec is now the live + working spec
+    a.serveMode = 'spec';
+    a.updatedAt = now();
+    map.set(a.id, a);
+    writeThrough(a);
+    return a;
+  }
+
   const restored = snap.state as { designDecisions?: string; dataDescriptions?: string; docs?: string };
   if (typeof restored.designDecisions !== 'string') {
     throw withStatus(new Error(`Version ${version} has no restorable content`), 422);

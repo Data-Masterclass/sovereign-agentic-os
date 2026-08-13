@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { discoverPages, generateSectionsContent, ensureSectionsRegistered } from './sections-registry.ts';
+import { discoverPages, generateSectionsContent, ensureSectionsRegistered, unregisteredPageHints } from './sections-registry.ts';
 
 const shell = { path: 'src/template/shell.tsx', content: 'shell' };
 const sectionsPlaceholder = {
@@ -79,4 +79,41 @@ test('ensureSectionsRegistered: no-op when sections.tsx is already exactly the g
   // Re-committing pageA with the registry already correct → nothing added.
   const out = ensureSectionsRegistered(priorWithGen, [pageA], 'sovereign-app');
   assert.deepEqual(out, [pageA], 'already-correct registry is left untouched');
+});
+
+// -------------------- off-pattern page hints (0.6.115 C3) --
+
+test('C3: a valid PascalCase page produces NO registration hint', () => {
+  const hints = unregisteredPageHints([pageA, pageB, pageC]);
+  assert.deepEqual(hints, [], 'canonical pages register cleanly — no hint');
+});
+
+test('C3: a lowercase-first page (e.g. index.tsx) is flagged as unregisterable', () => {
+  const off = { path: 'src/epics/radar/live-opportunities/index.tsx', content: 'export default function I(){return null}' };
+  const hints = unregisteredPageHints([off]);
+  assert.equal(hints.length, 1, 'one hint');
+  assert.match(hints[0], /index\.tsx/);
+  assert.match(hints[0], /UPPERCASE|PascalCase/i, 'names the PascalCase requirement');
+});
+
+test('C3: a wrong-depth .tsx under src/epics/ is flagged', () => {
+  const shallow = { path: 'src/epics/radar/Page.tsx', content: 'export default function P(){return null}' };
+  const deep = { path: 'src/epics/radar/story/parts/Page.tsx', content: 'export default function P(){return null}' };
+  const hints = unregisteredPageHints([shallow, deep]);
+  assert.equal(hints.length, 2, 'both wrong-depth files flagged');
+  for (const h of hints) assert.match(h, /depth 4|src\/epics\/<epic>\/<story>/);
+});
+
+test('C3: a 2nd PascalCase page in the same story folder is flagged (only the first path-sorted registers)', () => {
+  // Zebra.tsx sorts AFTER LiveOpportunities.tsx, so LiveOpportunities registers (matches
+  // discoverPages: first path-sorted wins) and Zebra is the one flagged as unregisterable.
+  const second = { path: 'src/epics/radar/live-opportunities/Zebra.tsx', content: 'export default function Z(){return null}' };
+  const hints = unregisteredPageHints([pageA, second]);
+  assert.equal(hints.length, 1, 'the second page is flagged');
+  assert.match(hints[0], /Zebra\.tsx/, 'the path-later page is the one that will not register');
+  assert.match(hints[0], /ONE page|only the first/i);
+});
+
+test('C3: general/ and non-.tsx helpers are never flagged (they are intentionally not pages)', () => {
+  assert.deepEqual(unregisteredPageHints([generalHelper, lower]), [], 'general/ + .ts helpers ignored');
 });

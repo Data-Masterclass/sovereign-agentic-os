@@ -53,6 +53,26 @@ export function expandSelectionToIds(
 }
 
 /**
+ * The Personal-DATA grant warning message (display-only). A Personal (owner-only)
+ * dataset granted to an app is readable ONLY by the owner at runtime — every OTHER
+ * user of the app gets a silent access-denied — so the grant UI surfaces this.
+ */
+export const PERSONAL_DATA_GRANT_WARNING =
+  'Only you can read this dataset — promote it to Domain in the Data tab, or other users of this app get access-denied.';
+
+/**
+ * True when a granted context item warrants the Personal-data access-denied warning:
+ * a `data`-kind grant whose item is Personal-scoped (owner-only). Domain/marketplace
+ * data and every non-data kind return false. Pure — the component and the test share it.
+ */
+export function isPersonalDataGrantRisk(
+  kind: ContextKind,
+  itemScope: 'personal' | 'domain' | 'marketplace' | undefined,
+): boolean {
+  return kind === 'data' && itemScope === 'personal';
+}
+
+/**
  * Reconcile the granted item set for ONE kind against a target id set: keep ids that
  * persist (with their current access), drop de-selected ones, add new ids at the cap
  * default. Pure — returns a NEW grants object.

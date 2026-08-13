@@ -133,8 +133,37 @@ test('CODE_STRUCTURE_CONVENTION: the vendored-API guardrails that keep the compi
   // The exact @sovereign-os/ui signatures that bit us (AppShell requires nav; Alert variant).
   assert.match(CODE_STRUCTURE_CONVENTION, /AppShell[^\n]*REQUIRES `nav`/i, 'notes AppShell requires nav (template-only)');
   assert.match(CODE_STRUCTURE_CONVENTION, /<Alert variant=/i, 'Alert takes variant');
-  // The onChange DOM-event gotcha.
-  assert.match(CODE_STRUCTURE_CONVENTION, /e\.target as HTMLSelectElement/i, 'reads onChange event value from the DOM target');
+  // The onChange handler: read e.currentTarget.value (already typed — NO `as` cast; A4/0.6.115).
+  assert.match(CODE_STRUCTURE_CONVENTION, /e\.currentTarget\.value/i, 'reads onChange value from currentTarget (no cast)');
+  assert.doesNotMatch(CODE_STRUCTURE_CONVENTION, /e\.target as HTMLSelectElement/i, 'no stale `as HTMLSelectElement` cast');
+});
+
+// ------------------------------------ Vite `src/` layout (0.6.115 — A1..A5) --
+
+test('CODE_STRUCTURE_CONVENTION: teaches the Vite `src/` layout, NEVER a Next.js `app/` story location', () => {
+  // Every folder ref carries the src/ prefix; the entrypoints are the Vite pair.
+  assert.match(CODE_STRUCTURE_CONVENTION, /src\/template\//, 'src/template/');
+  assert.match(CODE_STRUCTURE_CONVENTION, /src\/core\//, 'src/core/');
+  assert.match(CODE_STRUCTURE_CONVENTION, /src\/epics\/<epicKey>\/<storyKey>\//, 'src/epics/<epic>/<story>/');
+  assert.match(CODE_STRUCTURE_CONVENTION, /src\/main\.tsx/, 'names the Vite entry src/main.tsx');
+  assert.match(CODE_STRUCTURE_CONVENTION, /src\/App\.tsx/, 'names src/App.tsx');
+  // The contradiction that caused the same failure class as the useIdentity bug: NO app/ layout.
+  assert.doesNotMatch(CODE_STRUCTURE_CONVENTION, /App-Router/i, 'no Next.js App-Router framing');
+  assert.doesNotMatch(CODE_STRUCTURE_CONVENTION, /^\s*app\//m, 'no bare `app/` as a story location');
+  assert.doesNotMatch(CODE_STRUCTURE_CONVENTION, /under `app\//, 'no "under app/" story-location claim');
+});
+
+test('CODE_STRUCTURE_CONVENTION: uses the slug-bound `os` singleton, never `createOsClient()` in a page', () => {
+  assert.match(CODE_STRUCTURE_CONVENTION, /import \{ os \} from '\.\.\/\.\.\/\.\.\/core\/store'/, 'imports the singleton os');
+  assert.match(CODE_STRUCTURE_CONVENTION, /createOsClient\(APP_SLUG\)/, 'created once as createOsClient(APP_SLUG)');
+  assert.doesNotMatch(CODE_STRUCTURE_CONVENTION, /createOsClient\(\)\s*;?\s*\/\/|const os = createOsClient\(\)/, 'never a no-arg createOsClient() page example');
+});
+
+test('CODE_STRUCTURE_CONVENTION: auto-registration is scoped to sovereign-app + states the discovery rule', () => {
+  assert.match(CODE_STRUCTURE_CONVENTION, /sovereign-app/, 'scopes the claim to sovereign-app');
+  assert.match(CODE_STRUCTURE_CONVENTION, /<PascalCase>\.tsx/, 'PascalCase filename rule');
+  assert.match(CODE_STRUCTURE_CONVENTION, /ONE\s+PascalCase page per story folder/i, 'one page per story folder');
+  assert.match(CODE_STRUCTURE_CONVENTION, /general\/`?\s+folder is skipped/i, 'general/ skipped');
 });
 
 test('modeDirective(build): tells the agent to FIX rejected diagnostics, not resubmit unchanged code', () => {
@@ -159,6 +188,12 @@ test('modeDirective(build): roles use useIdentity + roleAtLeast (a floor), never
   assert.match(b, /creator < builder < domain_admin < admin/, 'states the real OS role ladder');
   assert.match(b, /ADVISORY UX/i, 'client checks are advisory, not enforcement');
   assert.match(b, /HIDE or DISABLE/i, 'hide/disable the control, not a blocking error');
+  // 0.6.114: the BUILD directive must teach the discriminated-union contract and forbid
+  // `const { id } = useIdentity()` (the TS2339 that loops the build agent).
+  assert.match(b, /identity\.phase === 'ready'/, 'narrows on .phase === ready before touching .user');
+  assert.match(b, /IdentityState/, 'names IdentityState as the union type');
+  assert.match(b, /never `const \{ id \} = useIdentity\(\)`/, 'forbids destructuring a non-existent {id}');
+  assert.doesNotMatch(b, /^\s*const \{ id \} = useIdentity\(\)/m, 'never shows a bare `const { id } = useIdentity()` example line');
 });
 
 // --------------------------------------- BUILD directive injects both --

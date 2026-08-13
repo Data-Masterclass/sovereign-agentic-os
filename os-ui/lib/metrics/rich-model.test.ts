@@ -22,9 +22,10 @@ import { convergence } from './consistency.ts';
  * round-trips through the same scaffold→YAML→parse path as a plain measure.
  */
 
-test('a plain form is byte-for-byte the old measure (no rich fields leak in)', () => {
+test('a plain form produces exactly the expected measure fields (label auto-set when human name differs from slug)', () => {
   const m = measureFromForm({ name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: [] });
-  assert.deepEqual(m, { name: 'revenue', type: 'sum', sql: 'net_amount' });
+  // "Revenue" → slug "revenue": they differ, so label is set so tiles show the human name.
+  assert.deepEqual(m, { name: 'revenue', label: 'Revenue', type: 'sum', sql: 'net_amount' });
 });
 
 test('count_distinct_approx is accepted as an aggregation', () => {

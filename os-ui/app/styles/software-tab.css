@@ -342,3 +342,154 @@
   .chat.claude .bubble.user { max-width: 92%; }
 }
 
+
+/* ─────────────── Declarative AppSpec compose editor (Phase 4a) ─────────────── */
+/* Calm three-pane authoring surface: tab list · tab editor · live preview. Uses the OS
+   tokens for full coherence; no new colors, quiet borders, generous rhythm. */
+.sc-appspec { margin-top: 8px; }
+.sc-appspec-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+/* App name + description. */
+.sc-appspec-details { display: grid; grid-template-columns: minmax(220px, 320px) minmax(0, 1fr); gap: 14px; margin-top: 14px; align-items: start; }
+.sc-detail-field { display: flex; flex-direction: column; gap: 4px; }
+.sc-detail-field .input { width: 100%; }
+.sc-detail-field textarea.input { resize: vertical; min-height: 40px; }
+@media (max-width: 760px) { .sc-appspec-details { grid-template-columns: 1fr; } }
+/* The "restored unsaved draft" notice. */
+.sc-draft-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+/* Config row: tab list + editor side by side; the live preview now sits BELOW, full width. */
+.sc-appspec-grid {
+  display: grid;
+  grid-template-columns: minmax(200px, 240px) minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 14px;
+  align-items: start;
+}
+.sc-appspec-preview { margin-top: 16px; }
+.sc-appspec-assistant { margin-top: 16px; }
+@media (max-width: 760px) { .sc-appspec-grid { grid-template-columns: 1fr; } }
+
+.sc-appspec-tabs, .sc-appspec-editor, .sc-appspec-preview, .sc-appspec-assistant {
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 12px);
+  background: var(--panel);
+  padding: 14px;
+}
+/* The Build assistant reuses the .chat.claude look; keep it calm inside the composer panel. */
+.sc-assistant-chat .chat-log {
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 12px);
+  padding: 10px 12px;
+  overflow-y: auto;
+}
+.sc-tablist { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+/* The tab button + its reorder/remove controls are SIBLINGS in a flex row (the controls are
+   real focusable buttons, no longer nested inside the tab button — Mi1). */
+.sc-tabrow-wrap {
+  display: flex; align-items: center; gap: 2px; padding-right: 6px;
+  border: 1px solid transparent; border-radius: 10px; transition: background .12s, border-color .12s;
+}
+.sc-tabrow-wrap:hover { background: var(--tile); }
+.sc-tabrow-wrap.is-active { border-color: var(--gold-line, var(--border-strong)); background: var(--gold-soft, var(--tile)); }
+.sc-tabrow {
+  flex: 1 1 auto; min-width: 0; text-align: left; display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 9px 10px; border: none; border-radius: 10px;
+  background: transparent; cursor: pointer; font: inherit; color: inherit;
+}
+.sc-tabrow-main { min-width: 0; }
+.sc-tabrow-label { display: block; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-tabrow-sub { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 11px; color: var(--text-muted); }
+.sc-tabrow-ctrls { display: flex; gap: 2px; flex: 0 0 auto; opacity: 0; transition: opacity .12s; }
+.sc-tabrow-wrap:hover .sc-tabrow-ctrls, .sc-tabrow-wrap.is-active .sc-tabrow-ctrls,
+.sc-tabrow-ctrls:focus-within { opacity: 1; }
+.sc-mini {
+  display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+  border-radius: 6px; font-size: 13px; color: var(--text-muted); cursor: pointer; user-select: none;
+  background: transparent; border: none; padding: 0; font-family: inherit;
+}
+.sc-mini:hover { background: var(--bg-elevated, var(--tile)); color: var(--text); }
+.sc-mini:focus-visible { outline: 2px solid var(--gold-line, var(--border-strong)); outline-offset: 1px; }
+.sc-mini-danger:hover { color: #c0392b; }
+.sc-io-badge { margin-left: 6px; }
+
+.sc-field { display: flex; flex-direction: column; gap: 4px; }
+.sc-field-inline { flex-direction: row; align-items: center; gap: 6px; font-size: 12px; }
+
+.sc-pattern-shelves { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
+.sc-shelf-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint, var(--text-muted)); margin-bottom: 6px; }
+.sc-pattern-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; }
+.sc-pattern-card {
+  text-align: left; padding: 9px 10px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; cursor: pointer; font: inherit; color: inherit; transition: border-color .12s, background .12s;
+}
+.sc-pattern-card:hover:not(:disabled) { border-color: var(--border-strong); }
+.sc-pattern-card.is-active { border-color: var(--gold); background: var(--gold-soft, var(--tile)); }
+.sc-pattern-card.is-soon { opacity: .45; cursor: not-allowed; }
+.sc-pattern-name { display: block; font-size: 12.5px; font-weight: 600; }
+.sc-pattern-desc { display: block; font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+.sc-config { display: flex; flex-direction: column; gap: 14px; }
+.sc-slot { }
+.sc-slot-label { font-size: 12.5px; font-weight: 600; margin-bottom: 4px; }
+.sc-slot-help { margin: 0 0 6px; }
+.sc-fieldgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 12px; }
+.sc-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; cursor: pointer; }
+.sc-check input { accent-color: var(--gold); }
+.sc-formatrow, .sc-filter-controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+
+.sc-preview-frame {
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  max-height: 560px; overflow-y: auto; background: var(--bg-input, var(--panel));
+}
+.sc-how { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.sc-how li { font-size: 12.5px; }
+.sc-how-io { font-size: 11px; margin-top: 2px; }
+
+.sc-issue { font-size: 12px; margin-top: 6px; }
+.sc-issue-warn { color: var(--gold-deep, var(--text-muted)); }
+
+/* ─────────── 4c: bespoke sub-editors (cards · blocks · steps · functions) ─────────── */
+/* A calm, repeatable "item card" shared by KPI cards, landing blocks, wizard steps and
+   functions: a bordered tile with a quiet header row (title + reorder/remove) and a body. */
+.sc-item {
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-input, transparent);
+  padding: 10px 11px; margin-top: 8px;
+}
+.sc-item-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;
+}
+.sc-item-title { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.sc-item-ctrls { display: flex; gap: 2px; }
+.sc-item-body { display: flex; flex-direction: column; gap: 8px; }
+.sc-inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.sc-seg {
+  display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+}
+.sc-seg button {
+  font: inherit; font-size: 12px; padding: 5px 10px; border: 0; background: transparent;
+  color: var(--text-muted); cursor: pointer;
+}
+.sc-seg button.is-on { background: var(--gold-soft, var(--tile)); color: var(--text); font-weight: 600; }
+.sc-add-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+/* Advanced disclosure — a builder-gated <details> for theme CSS + the custom block. */
+.sc-adv { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+.sc-adv > summary {
+  cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; display: flex;
+  align-items: center; gap: 8px; color: var(--text);
+}
+.sc-adv > summary::-webkit-details-marker { display: none; }
+.sc-adv > summary::before { content: '▸'; color: var(--text-muted); font-size: 11px; transition: transform .12s; }
+.sc-adv[open] > summary::before { transform: rotate(90deg); }
+.sc-adv-body { margin-top: 12px; display: flex; flex-direction: column; gap: 16px; }
+.sc-code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px; line-height: 1.5; width: 100%; resize: vertical;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg-input, var(--panel));
+  color: var(--text); padding: 8px 10px;
+}
+.sc-safety {
+  display: flex; align-items: flex-start; gap: 8px; font-size: 12px; padding: 8px 10px;
+  border: 1px solid var(--gold-line, var(--border)); border-radius: 8px;
+  background: var(--gold-soft, var(--tile)); color: var(--text-muted);
+}
+.sc-count { font-size: 11px; color: var(--text-faint, var(--text-muted)); margin-top: 3px; text-align: right; }

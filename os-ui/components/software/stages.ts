@@ -71,6 +71,23 @@ export type SwCtx = {
   deployed: boolean;
   /** The app is live right now (`deploy.state` === 'live'). */
   live: boolean;
+  /**
+   * The app is a DECLARATIVE (no-code) spec app (`serveMode === 'spec'`). Its data is mapped
+   * INSIDE the composer — each tab picks its own granted dataset, or needs none at all (a
+   * form-only tab writes a record) — so Build must NOT be hard-blocked on `contextResolved`
+   * the way a coded app is. Choose Context still feeds the composer's dataset picker; it just
+   * isn't a build gate for the no-code path.
+   */
+  isSpec: boolean;
+  /**
+   * A spec app has a DRAFT or LIVE spec to test/publish (os-ui 0.6.135). For a spec app, Build
+   * never sets the code-app `anyStoryBuilt` signal (no repo/commit), so the Test & Publish stage
+   * was permanently unclickable. This makes it reachable the moment a draft/spec exists — mirror
+   * of the `isSpec` Build-gate fix. False for a coded app (its gate stays `anyStoryBuilt`).
+   */
+  hasDraftOrSpec: boolean;
+  /** A spec app has PUBLISHED (a live `spec` exists) — the spec-app equivalent of `live`. */
+  specPublished: boolean;
 };
 
 /**
@@ -88,6 +105,6 @@ export const SW_STAGES: StageDef<SwStageId, SwCtx>[] = [
   { id: 'define', title: 'Define App', hint: 'Name it, pick a template, and state its purpose.', completed: (c) => c.hasPurpose },
   { id: 'design', title: 'Design Epics', hint: 'Specify each user story — its features, non-functional requirements and rules.', enabled: (c) => c.hasPurpose, completed: (c) => c.designSpecComplete },
   { id: 'context', title: 'Choose Context', hint: 'Resolve every context need — bind an existing artifact, or create a new dataset (empty or with sample data).', enabled: (c) => c.hasDesign, completed: (c) => c.contextResolved },
-  { id: 'build', title: 'Build App', hint: 'Build a user story with one press; watch the spec tick off as it lands.', enabled: (c) => c.hasDesign && c.contextResolved, completed: (c) => c.committed },
-  { id: 'publish', title: 'Test & Publish', hint: 'Test each built story against its spec, then deploy to go live — request go-live, watch the live pod, and manage its lifecycle.', enabled: (c) => c.anyStoryBuilt, completed: (c) => c.live },
+  { id: 'build', title: 'Build App', hint: 'Build a user story with one press; watch the spec tick off as it lands.', enabled: (c) => c.hasDesign && (c.isSpec || c.contextResolved), completed: (c) => c.committed },
+  { id: 'publish', title: 'Test & Publish', hint: 'Test each built story against its spec, then deploy to go live — request go-live, watch the live pod, and manage its lifecycle.', enabled: (c) => c.anyStoryBuilt || (c.isSpec && c.hasDraftOrSpec), completed: (c) => (c.isSpec ? c.specPublished : c.live) },
 ];

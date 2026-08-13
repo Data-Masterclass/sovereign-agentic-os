@@ -30,7 +30,8 @@ import {
   dirListing,
 } from '@/lib/software/apps';
 import { forgejoReachable, getSnapshot, hydrateSnapshot } from '@/lib/software/server';
-import { getReviewCard, listReviewCards, PREVIEW_PENDING_NOTE } from '@/lib/software/review';
+import { getReviewCard, listReviewCards, reconcileDeployStatus, previewNoteForRunner } from '@/lib/software/review';
+import type { RunnerStatus } from '@/lib/software/runner';
 import {
   listConnectionsForUser,
   getConnectionForUser,
@@ -375,7 +376,24 @@ export const waveBReadTools: McpTool[] = [
     call: async (user, args) => {
       const appId = str(args.appId).trim();
       if (!appId) fail('get_software_status needs an `appId` (from list_software)', 400);
-      const app = await getAppForUser(appId, user); // visibility guard (404)
+      let app = await getAppForUser(appId, user); // visibility guard (404)
+      // RECONCILE the live runner at READ time (0.6.114): the persisted `app.deploy`
+      // captured previewUrl at start_preview — when the pod was NOT yet running — so a
+      // stale read re-emits "runner unreachable" even though the pod is now 1/1 Running.
+      // reconcileDeployStatus re-polls the real Deployment and self-heals previewUrl.
+      // Fail-soft: a non-owner creator (403) or offline cluster falls back to the stale
+      // fields + the honest pending note; we never fabricate a URL.
+      let runner: RunnerStatus | null = null;
+      try {
+        const reconciled = await reconcileDeployStatus(appId, user);
+        app = reconciled.app;
+        runner = reconciled.status;
+      } catch {
+        /* fail-soft: keep the last persisted deploy fields */
+      }
+      // Honest preview note from the FRESH runner status (running ⇒ served URL, no note;
+      // provisioned-not-running ⇒ image build in progress; offline/null ⇒ unreachable).
+      const previewNote = previewNoteForRunner(runner);
       // HONEST `actions` stage: re-verified against live Forgejo on every status
       // read — 'ok' only when the latest push on main actually produced a run;
       // a disabled repo Actions unit is auto-healed (see refreshActionsStage).
@@ -398,7 +416,7 @@ export const waveBReadTools: McpTool[] = [
         preview: {
           state: app.deploy.state,
           url: app.deploy.previewUrl,
-          ...(app.deploy.previewUrl ? {} : { note: PREVIEW_PENDING_NOTE }),
+          ...(app.deploy.previewUrl ? {} : { note: previewNote }),
         },
         deploy: {
           state: app.deploy.state,

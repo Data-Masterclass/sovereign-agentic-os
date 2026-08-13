@@ -636,3 +636,88 @@ test('BUDGET exhaustion retries ONCE on the reasoning model, then finishes', asy
   assert.equal(escalations[0], 'run', 'a run-level (budget) escalation, not a tool-shape one');
   assert.match(res.finalText, /reasoning model/, 'the reasoning model produced the final answer');
 });
+
+// ----------------------------- same-signature WRITE guard (0.6.115 B1 — build loop) --
+
+test('B1: a byte-identical FAILED write (commit) is NOT re-run — short-circuited with the prior diagnostics', async () => {
+  // The build loop: a `commit` fails the compile gate, and the model re-submits the EXACT
+  // same code. Without the guard it re-runs (and re-fails) up to the error-streak cap. With
+  // `writeToolNames: ['commit']` the identical re-commit is short-circuited at n=1 and fed a
+  // STRONGER corrective note carrying the same diagnostics — the model must change the code.
+  const gateError = 'commit rejected: 1 compile error — NOTHING was written.\n  src/epics/e/s/P.tsx:3:10  TS2339: Property x';
+  const dupCall = { id: 'c', name: 'commit', args: { appId: 'app_1', files: [{ path: 'p', content: 'code' }] } };
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) {
+      const midRun = req.messages.some((m) => (m.role === 'tool' || m.role === 'user') && /byte-identical/i.test(m.content));
+      return { content: midRun ? 'I see — I must change the code first.' : 'plan', toolCalls: [] };
+    }
+    return { content: 'resubmitting the same commit', toolCalls: [dupCall] };
+  };
+  let executed = 0;
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'build the story' }],
+    tools: TOOLS,
+    callTool: async () => { executed += 1; return { text: gateError, isError: true }; },
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+    writeToolNames: ['commit'],
+    maxIterations: 8,
+  });
+  assert.equal(executed, 1, 'the doomed commit ran ONCE; the identical re-commit was short-circuited (not re-run)');
+  const guarded = res.steps.find((s) => /byte-identical/i.test(s.result));
+  assert.ok(guarded, 'the guard injected the stronger corrective note');
+  assert.equal(guarded!.isError, true, 'the short-circuit is recorded as an error, not a fake success');
+  assert.match(guarded!.result, /You MUST change the code/i, 'demands a code change');
+  assert.match(guarded!.result, /TS2339: Property x/, 'replays the exact prior diagnostics');
+});
+
+test('B1: the guard is opt-in — without writeToolNames an identical failed commit RE-RUNS (unchanged behaviour)', async () => {
+  const dupCall = { id: 'c', name: 'commit', args: { appId: 'app_1' } };
+  const { llm } = scriptLlm([
+    { content: 'plan' },
+    { content: '', toolCalls: [dupCall] }, // 1st commit — errors
+    { content: '', toolCalls: [dupCall] }, // exact repeat — re-runs (no guard armed)
+    { content: 'done' },
+  ]);
+  let executed = 0;
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'build' }],
+    tools: TOOLS,
+    callTool: async () => { executed += 1; return executed === 1 ? { text: 'gate error', isError: true } : { text: 'ok', isError: false }; },
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+    maxIterations: 8,
+  });
+  assert.equal(executed, 2, 'without writeToolNames the identical failed commit re-runs (the pre-0.6.115 path)');
+});
+
+test('B1: a write that CHANGES its args after a failure re-runs normally (the guard only blocks byte-identical)', async () => {
+  const calls = [
+    { id: 'c1', name: 'commit', args: { appId: 'app_1', files: [{ path: 'p', content: 'bad' }] } },
+    { id: 'c2', name: 'commit', args: { appId: 'app_1', files: [{ path: 'p', content: 'fixed' }] } },
+  ];
+  let idx = 0;
+  const llm: LlmCall = async (req) => {
+    if (!req.tools) return { content: 'plan', toolCalls: [] };
+    if (idx >= calls.length) return { content: 'Committed the fixed code.', toolCalls: [] };
+    return { content: 'commit', toolCalls: [calls[idx++]] };
+  };
+  let executed = 0;
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'build' }],
+    tools: TOOLS,
+    callTool: async () => { executed += 1; return executed === 1 ? { text: 'gate error', isError: true } : { text: 'ok', isError: false }; },
+    llm,
+    planModel: 'r',
+    actModel: 'e',
+    writeToolNames: ['commit'],
+    maxIterations: 8,
+  });
+  assert.equal(executed, 2, 'the CHANGED commit re-ran (guard blocks only byte-identical failed args)');
+  assert.equal(res.steps[1].isError, false, 'the fixed commit succeeded');
+});

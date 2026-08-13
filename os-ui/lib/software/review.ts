@@ -245,12 +245,26 @@ export const PREVIEW_PENDING_NOTE =
  *   • cluster unreachable (phase offline)  → PREVIEW_PENDING_NOTE
  *   • provisioned, pod not yet running     → image build in progress
  */
+export const IMAGE_BUILDING_NOTE =
+  'Image build in progress — the app is provisioned and the preview URL appears once CI ' +
+  'publishes the image and the pod becomes ready.';
+
 function previewPendingNote(outcome: RunnerOutcome): string {
-  if (!outcome.live) return PREVIEW_PENDING_NOTE;
-  return (
-    'Image build in progress — the app is provisioned and the preview URL appears once CI ' +
-    'publishes the image and the pod becomes ready.'
-  );
+  return outcome.live ? IMAGE_BUILDING_NOTE : PREVIEW_PENDING_NOTE;
+}
+
+/**
+ * The honest preview note for a status READ (get_software_status), derived from the
+ * FRESH runner poll (0.6.114): a `running` pod is SERVED — no note ('' — its URL stands
+ * on its own); a provisioned-but-not-yet-running pod (deploying/absent, `live` true) is
+ * honestly "image build in progress"; a genuinely offline cluster is the unreachable note.
+ * A null status (reconcile unavailable — e.g. a non-owner read) falls back to the
+ * unreachable note so a stale null URL is never dressed up as served.
+ */
+export function previewNoteForRunner(status: RunnerStatus | null): string {
+  if (!status) return PREVIEW_PENDING_NOTE;
+  if (status.phase === 'running') return ''; // served — the URL says it, no note needed
+  return status.live ? IMAGE_BUILDING_NOTE : PREVIEW_PENDING_NOTE;
 }
 
 /**

@@ -107,9 +107,9 @@ const guideResources: McpResource[] = GUIDE_DEFS.map((g) => ({
 const buildSpecResource: McpResource = {
   uri: 'sovereign-os://guide/build-spec/software',
   name: 'build-spec-software',
-  title: 'Build spec — Software (canonical)',
+  title: 'Build spec — Software (advanced coded path)',
   description:
-    'The canonical Software build spec: the nextjs-supabase template tree + conventions, the governed tool sequence, governance rules, the elicitation question set, and the pre-deploy checklist.',
+    'The canonical build spec for the ADVANCED coded path (kind:"code" — raw code + Forgejo + image build, disabled unless a platform admin enables coded apps): template tree + conventions, tool sequence, governance, elicitation questions, pre-deploy checklist. For the DEFAULT declarative path (author an AppSpec with generate_app_spec / set_app_spec — no repo/CI/pod) read sovereign-os://guide/path/software instead.',
   mimeType: 'text/markdown',
   tab: 'software',
   minRole: 'creator',

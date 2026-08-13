@@ -410,7 +410,9 @@ test('read_app_files: an app the caller cannot see → typed not_found (no exist
 
 test('get_software_status: one honest card — NO preview/live URL is ever claimed that is not actually served', async () => {
   resetAll();
-  const app = payload<{ id: string }>(await call(builder, 'create_software', { name: 'Renewals' }));
+  // This card exercises the CODED (image) pipeline status — create a coded app explicitly
+  // (declarative is the default now; coded apps are enabled process-wide by the test harness).
+  const app = payload<{ id: string }>(await call(builder, 'create_software', { name: 'Renewals', kind: 'code' }));
 
   const fresh = payload<{ preview: { state: string; url: string | null; note?: string }; deploy: { state: string; liveUrl: string | null; review: unknown; releases: number }; build: { pipeline: Record<string, string>; repo: string } }>(
     await call(builder, 'get_software_status', { appId: app.id }),

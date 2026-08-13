@@ -126,7 +126,8 @@ const PATH_PRIMARY: Partial<Record<GuidePath, string[]>> = {
   knowledge: ['author_knowledge', 'publish_knowledge'],
   connections: ['create_connection', 'promote_connection', 'list_connection_templates'],
   agents: ['create_agent_system', 'build_agent_system', 'run_agent_system'],
-  software: ['create_software', 'decide_deploy', 'read_app_files', 'get_software_status'],
+  // Declarative-first golden path (0.6.136): the core tools are the spec-authoring surface.
+  software: ['create_software', 'design_software', 'generate_app_spec', 'set_app_spec', 'get_app_spec'],
   metrics: ['define_metric', 'query_metric', 'get_metric', 'preview_metric', 'promote_metric'],
   dashboards: ['create_dashboard', 'get_dashboard'],
   bigbets: ['create_big_bet', 'get_big_bet', 'attach_component', 'update_big_bet'],

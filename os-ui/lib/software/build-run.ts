@@ -53,3 +53,17 @@ export function buildRunError(e: unknown): { content: string; errorMessage: stri
 export function buildMaxIterations(mode: ChatRunMode): number | undefined {
   return mode === 'build' ? config.softwareBuildMaxSteps : undefined;
 }
+
+/** The authoritative prefix for a build turn that committed nothing (B3, 0.6.115). */
+export const BUILD_NOT_LANDED_PREFIX = 'No files were committed this turn — the build did not land.';
+
+/**
+ * EMPTY-CHANGESET HONESTY (0.6.115). A `build` turn that committed 0 files did NOT land —
+ * prefix the final bubble text authoritatively so the UI can't render a green success over
+ * an empty changeset (no false "done"). Non-build modes, or a build that DID commit, pass
+ * `finalText` through unchanged. Pure.
+ */
+export function honestBuildFinalText(mode: ChatRunMode, changeCount: number, finalText: string): string {
+  if (mode !== 'build' || changeCount > 0) return finalText;
+  return finalText ? `${BUILD_NOT_LANDED_PREFIX}\n\n${finalText}` : BUILD_NOT_LANDED_PREFIX;
+}

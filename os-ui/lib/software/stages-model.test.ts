@@ -22,6 +22,7 @@ const base: SwCtx = {
   previewed: false,
   deployed: false,
   live: false,
+  isSpec: false,
 };
 
 test('stages: the five ids are define · design · context · build · publish, in order', () => {
@@ -60,6 +61,17 @@ test('stages: Build App is gated on Design (a specced story) AND Choose Context 
   // Both present → Build is reachable.
   const ready = { ...base, hasPurpose: true, hasDesign: true, contextResolved: true };
   assert.equal(canEnter(SW_STAGES, 'build', ready), true);
+});
+
+test('stages: a DECLARATIVE (spec) app reaches Build on a specced backlog alone — data is mapped in the composer, so Choose Context is not a hard gate', () => {
+  // Coded app with an unresolved data need is blocked (regression guard for the coded path).
+  const coded = { ...base, hasPurpose: true, hasDesign: true, contextResolved: false, isSpec: false };
+  assert.equal(canEnter(SW_STAGES, 'build', coded), false);
+  // Same unresolved state, but a no-code spec app → Build IS reachable (it maps data per-tab).
+  const spec = { ...coded, isSpec: true };
+  assert.equal(canEnter(SW_STAGES, 'build', spec), true);
+  // A spec app still needs a backlog to build against.
+  assert.equal(canEnter(SW_STAGES, 'build', { ...base, hasPurpose: true, hasDesign: false, isSpec: true }), false);
 });
 
 test('stages: Test & Publish is blocked until ≥1 story is actually built (committed code)', () => {

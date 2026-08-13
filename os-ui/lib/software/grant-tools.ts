@@ -30,6 +30,7 @@
  */
 
 import type { ContextGrants, ContextKind } from '@/lib/core/context-grants';
+import type { AppAgentGrant } from '@/lib/software/app-agent-grants';
 import type { AppTool } from '@/lib/infra/app-registry';
 
 /**
@@ -99,4 +100,23 @@ export function dataPlaneToolsFromGrants(grants: ContextGrants): AppTool[] {
   }
 
   return out;
+}
+
+/**
+ * The AGENTS-grant → runtime tool access (the sixth Choose-Context type; agents ride the
+ * separate `app.grants.agents` list, not the core `ContextGrants`). A granted agent RECORDS
+ * that the app may run it: the app gets the governed `run_agent_system` action tool plus its
+ * `list_agent_systems` discovery companion. `run_agent_system` is a WRITE tool (it executes a
+ * governed agent that may itself act) — least-privilege keeps it off until an agent is granted.
+ * Per-agent runnability is still governed on the Agents side (run-as-user, the agent's own ⊆
+ * grants, role gate). The runtime "Run agent" invocation is Phase 4c; this only widens the
+ * app's compiled OPA profile so a granted agent is available, matching how data grants compile.
+ * Empty ⇒ [] (fail-closed). Callers MERGE with template + data-plane tools before compiling.
+ */
+export function agentToolsFromGrants(agentGrants: AppAgentGrant[]): AppTool[] {
+  if (!agentGrants || agentGrants.length === 0) return [];
+  return [
+    { name: 'run_agent_system', description: 'Run a granted governed agent (run as the app user; the agent applies its own ⊆ grants + role gate).', write: true },
+    { name: 'list_agent_systems', description: 'List agents the app may run (discovery for run_agent_system).', write: false },
+  ];
 }

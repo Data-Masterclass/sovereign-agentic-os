@@ -19,6 +19,9 @@ import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import StageAssistantChat from '@/components/core/StageAssistantChat';
 import SoftwareContextGrants from './SoftwareContextGrants';
 import BuildChat, { type FileChange } from './BuildChat';
+import AppSpecComposer, { type ComposerApp } from './appspec/AppSpecComposer';
+import VersionHistory from '@/components/lifecycle/VersionHistory';
+import type { AppSpec as AppSpecValue } from '@/lib/software/appspec/schema';
 import type { ViewMode } from '@/lib/core/view-mode';
 import {
   contextAccessCap,
@@ -26,6 +29,7 @@ import {
   type ContextGrants as ContextGrantsValue,
   type ContextKind,
 } from '@/lib/core/context-grants';
+import { normalizeAgentGrants, type AppAgentGrant } from '@/lib/software/app-agent-grants';
 import {
   applyPurposeSuggestion,
   applyGrantsSuggestion,
@@ -101,12 +105,21 @@ export type SoftwareApp = {
   purpose: string;
   epics: Epic[];
   grants: ContextGrantsValue;
+  /** The sixth Choose-Context type (Phase 4b): granted agents (their own list). Legacy apps load `[]`. */
+  agents?: AppAgentGrant[];
   owner: string;
   domain: string;
   visibility: Visibility;
   mode: 'live' | 'offline';
-  /** Phase D: 'image' (default) served by a per-app image, or 'runtime' served by the OS. */
-  serveMode?: 'image' | 'runtime';
+  /**
+   * How the app is served: 'image' (default, per-app image), 'runtime' (OS bundles the tree), or
+   * 'spec' (AppSpec Phase 4 — the OS renders a declarative spec same-origin, no code/pod).
+   */
+  serveMode?: 'image' | 'runtime' | 'spec';
+  /** The declarative AppSpec (present only for a spec app) — the LIVE, published spec the OS serves. */
+  spec?: AppSpecValue;
+  /** The AUTOSAVED candidate spec (os-ui 0.6.135) — what the composer edits; Publish promotes it to `spec`. */
+  draftSpec?: AppSpecValue;
   repo: { fullName: string; htmlUrl: string; seeded: string[] };
   subdomain: string;
   pipeline: Record<string, string>;
@@ -320,6 +333,7 @@ export default function SoftwareBuilder({
   // Real app state, defaulted for backward-compat (pre-Define/Design apps).
   const epics = app.epics ?? [];
   const grants = useMemo(() => normalizeContextGrants(app.grants), [app.grants]);
+  const agentGrants = useMemo(() => normalizeAgentGrants(app.agents), [app.agents]);
 
   // The live ctx the stage gates/✓ read — REAL app state, never faked.
   const committed = app.pipeline.forgejo === 'ok' || app.repo.seeded.length > 0;
@@ -341,6 +355,14 @@ export default function SoftwareBuilder({
     previewed: !!app.deploy.previewUrl || previewAck,
     deployed: app.deploy.releases > 0,
     live: app.deploy.state === 'live',
+    // Declarative (no-code) apps map their data INSIDE the composer, so Build isn't
+    // hard-gated on Choose Context the way a coded app is (a form-only app needs no dataset).
+    isSpec: app.serveMode === 'spec',
+    // A spec app reaches Test & Publish the moment a draft OR a live spec exists (os-ui 0.6.135) —
+    // it never sets the code-app `anyStoryBuilt` signal, so this is its stage-entry gate.
+    hasDraftOrSpec: !!(app.draftSpec || app.spec),
+    // A spec app has PUBLISHED once a LIVE spec exists (the spec-app equivalent of `live`).
+    specPublished: !!app.spec,
   };
 
   // Open on the FIRST INCOMPLETE stage that is reachable — a fresh app lands on
@@ -351,7 +373,7 @@ export default function SoftwareBuilder({
     return firstIncomplete ? { ...base, current: firstIncomplete.id } : base;
   });
 
-  async function saveDesign(patch: { purpose?: string; epics?: Epic[]; grants?: ContextGrantsValue }): Promise<void> {
+  async function saveDesign(patch: { purpose?: string; epics?: Epic[]; grants?: ContextGrantsValue; agents?: AppAgentGrant[] }): Promise<void> {
     setMsg('');
     try {
       const res = await fetch(`/api/apps/${app.id}`, {
@@ -553,7 +575,9 @@ export default function SoftwareBuilder({
   // can never disagree. A live/serving app shows all upstream stages complete;
   // a real failure surfaces the same marked stage in both surfaces.
   const pipe = useMemo(
-    () => derivePipelineView(app.pipeline, { state: app.deploy.state, releases: app.deploy.releases, serveMode: app.serveMode }),
+    // A declarative (spec) app has no image/runtime pipeline; pass undefined so the view falls back
+    // to the plain pipeline reflection rather than the image/runtime-specific derivations.
+    () => derivePipelineView(app.pipeline, { state: app.deploy.state, releases: app.deploy.releases, serveMode: app.serveMode === 'spec' ? undefined : app.serveMode }),
     [app.pipeline, app.deploy.state, app.deploy.releases, app.serveMode],
   );
 
@@ -641,9 +665,10 @@ export default function SoftwareBuilder({
 
           {stage.current === 'context' ? (
             <ContextStage
-              app={app} epics={epics} grants={grants} canEdit={canEdit}
+              app={app} epics={epics} grants={grants} agentGrants={agentGrants} canEdit={canEdit}
               contextResolved={contextResolved}
               onSaveGrants={(g) => saveDesign({ grants: g })}
+              onSaveAgents={(a) => saveDesign({ agents: a })}
               onReload={onReload}
               onGoBuild={canEnter(SW_STAGES, 'build', ctx) ? () => setStage((s) => ({ ...s, current: 'build' })) : undefined}
               onGoDesign={() => setStage((s) => ({ ...s, current: 'design' }))}
@@ -651,20 +676,31 @@ export default function SoftwareBuilder({
           ) : null}
 
           {stage.current === 'build' ? (
-            <BuildStage
-              app={app} epics={epics} canEditCode={canEditCode} onBuilt={onReload}
-              target={target} setTarget={setTarget}
-              onSaveEpics={canEdit ? (next) => saveDesign({ epics: next }) : undefined}
-              onGoDesign={() => setStage((s) => ({ ...s, current: 'design' }))}
-              improvements={improvements}
-              refineHandlers={refineHandlers}
-              storyTitleOf={storyTitleOf}
-            />
+            app.serveMode === 'spec' ? (
+              // DECLARATIVE app — the Build stage is a no-code COMPOSE editor (pattern-first
+              // authoring + live preview + governed save) instead of the code-build chat.
+              <SpecBuildStage app={app} epics={epics} user={user} onSaved={onReload} onGoContext={() => setStage((s) => ({ ...s, current: 'context' }))} onGoPublish={() => setStage((s) => ({ ...s, current: 'publish' }))} />
+            ) : (
+              <BuildStage
+                app={app} epics={epics} canEditCode={canEditCode} onBuilt={onReload}
+                target={target} setTarget={setTarget}
+                onSaveEpics={canEdit ? (next) => saveDesign({ epics: next }) : undefined}
+                onGoDesign={() => setStage((s) => ({ ...s, current: 'design' }))}
+                improvements={improvements}
+                refineHandlers={refineHandlers}
+                storyTitleOf={storyTitleOf}
+              />
+            )
           ) : null}
 
           {/* Test & Publish — the MERGED stage: the Test verification + live-pod surface
-              above the governed Publish / deploy / go-live controls. Both flows kept intact. */}
-          {stage.current === 'publish' ? (
+              above the governed Publish / deploy / go-live controls. Both flows kept intact.
+              A DECLARATIVE (spec) app takes the dedicated Publish surface instead (os-ui 0.6.135):
+              Publish promotes the autosaved draft to live + snapshots a version — no pods/repo. */}
+          {stage.current === 'publish' && app.serveMode === 'spec' ? (
+            <SpecPublishStage app={app} user={user} onReload={onReload} onGoBuild={() => setStage((s) => ({ ...s, current: 'build' }))} />
+          ) : null}
+          {stage.current === 'publish' && app.serveMode !== 'spec' ? (
             <>
               <TestStage
                 app={app} epics={epics} surface={surface} pipe={pipe}
@@ -825,11 +861,23 @@ function DefineStage({
           <>
             <span className="sc-scope">{app.name}</span>
             <span className="sc-hint">
-              id <code>{app.slug}</code> · template{' '}
-              <span className="badge muted" title="Chosen at creation — locked afterwards">
-                {TEMPLATE_LABEL[app.template] ?? app.template}
-              </span>{' '}
-              · surface <code>{surfaceLabel}</code>
+              id <code>{app.slug}</code> ·{' '}
+              {app.serveMode === 'spec' ? (
+                <>
+                  kind{' '}
+                  <span className="badge muted" title="A no-code app assembled from patterns — no template, no repo">
+                    Declarative (no-code)
+                  </span>
+                </>
+              ) : (
+                <>
+                  template{' '}
+                  <span className="badge muted" title="Chosen at creation — locked afterwards">
+                    {TEMPLATE_LABEL[app.template] ?? app.template}
+                  </span>{' '}
+                  · surface <code>{surfaceLabel}</code>
+                </>
+              )}
             </span>
             <span className="sc-hint sc-spacer">Describe the app — the conversation shapes its purpose.</span>
           </>
@@ -870,15 +918,17 @@ function DefineStage({
  * FOLLOW-UP (bind-existing already covers them) — the seam is left clean here.
  */
 function ContextStage({
-  app, epics, grants, canEdit, contextResolved, onSaveGrants, onReload, onGoBuild, onGoDesign,
+  app, epics, grants, agentGrants, canEdit, contextResolved, onSaveGrants, onSaveAgents, onReload, onGoBuild, onGoDesign,
 }: {
   app: SoftwareApp;
   epics: Epic[];
   grants: ContextGrantsValue;
+  agentGrants: AppAgentGrant[];
   canEdit: boolean;
   /** True when every data-needing story has a bound/created dataset (or none needs data). */
   contextResolved: boolean;
   onSaveGrants: (grants: ContextGrantsValue) => void;
+  onSaveAgents: (agents: AppAgentGrant[]) => void;
   onReload: () => void;
   /** Navigate to Build (present only when Build is reachable). */
   onGoBuild?: () => void;
@@ -897,8 +947,10 @@ function ContextStage({
   const grantCount = SW_GRANT_KINDS.reduce((n, k) => n + (grants[k]?.length ?? 0), 0);
   const hasDesign = epics.some((e) => (e.stories?.length ?? 0) > 0);
   // The honest data-need warning — empty when nothing to resolve (a dataset is bound, or no
-  // story implies a data need). The SAME signal the Build data-need gate reads.
-  const dataNeedWarning = unresolvedDataNeedWarning(epics, grants.data.length);
+  // story implies a data need). The SAME signal the Build data-need gate reads. A declarative
+  // (spec) app gets no-code framing (read-tabs need data; input-only tabs don't) instead of the
+  // coded "no schema to write against" language.
+  const dataNeedWarning = unresolvedDataNeedWarning(epics, grants.data.length, app.serveMode === 'spec' ? 'spec' : 'code');
 
   const nextSteps: { label: string; prompt?: string; onClick?: () => void }[] = [];
   if (canEdit) {
@@ -915,32 +967,33 @@ function ContextStage({
         </div>
       ) : null}
 
-      {/* Two clearly-labelled paths per data need. One line of guidance up top so the
-          Link-vs-Create decision is legible before the user touches either control. */}
+      {/* Six-type Choose Context (Phase 4b). Per type, TWO unmistakable modes — pick EXISTING
+          governed context you're entitled to, OR create a fresh one (Data/Files/Knowledge land
+          in the App folder + are granted; Agents/Connections deep-link to their own tab). */}
       <p className="ctx-choice-guide">
-        <strong>Two ways to give this app data.</strong> Pick per need: <strong>Link</strong> when the app just
-        needs to read shared/governed data (it reads it in place, governed) — or <strong>Create new</strong> when
-        the app owns/writes its own data, or you want sample rows to build against.
+        <strong>Give this app its context — six types.</strong> For each of{' '}
+        <strong>Data · Metrics · Files · Knowledge · Agents · Connections</strong>, either{' '}
+        <strong>＋ Add existing</strong> governed context you're entitled to, or <strong>＋ Create new</strong> —
+        the app reads it <em>in place</em>, OPA-scoped, run AS you, never raw secrets, never a copy.
       </p>
 
-      <div className="comp-label">1 · Link an existing dataset (bind — no raw credentials)</div>
-      <p className="hint" style={{ marginTop: 0 }}>
-        The app reads the resource <em>in place</em> — OPA-scoped, run AS you, never raw secrets, never a copy.
-        Best when you only need to <strong>read</strong> shared/governed data. Grant the Connections, Data,
-        Knowledge, Files and Metrics this app may use, at folder or item level.
-      </p>
       <SoftwareContextGrants
         value={grants}
         onChange={onSaveGrants}
-        kinds={SW_GRANT_KINDS}
+        agentGrants={agentGrants}
+        onChangeAgents={onSaveAgents}
         cap={cap}
         canEdit={canEdit}
+        appId={app.id}
+        appName={app.name}
+        onReload={onReload}
       />
 
-      {/* 2 · Create a new dataset — the app's OWN dataset. When a story needs data but nothing
-          is bound, the assistant proposes datasets and the DataPlanPanel (rendered in the
-          conversation) creates each one empty or with AI sample rows. */}
-      <div className="comp-label" style={{ marginTop: 18 }}>2 · Create a new dataset (the app’s own)</div>
+      {/* Create a new dataset WITH SAMPLE ROWS — the app's OWN dataset. The six-type surface
+          above creates EMPTY artifacts; this assistant-driven path adds AI sample rows to build
+          against. When a story needs data but nothing is bound, the assistant proposes datasets
+          and the DataPlanPanel (rendered in the conversation) creates each one empty or with rows. */}
+      <div className="comp-label" style={{ marginTop: 18 }}>Create a dataset with sample rows (the app’s own)</div>
       <p className="hint" style={{ marginTop: 0 }}>
         A fresh governed dataset in your personal lane — <strong>empty</strong> (schema only) or with AI{' '}
         <strong>sample rows</strong>. Best when the app needs data it will <strong>populate or write</strong>, or
@@ -950,7 +1003,7 @@ function ContextStage({
       {/* The data-need gate, surfaced honestly here — this is where you resolve it. */}
       {dataNeedWarning ? (
         <div className="build-blocked" style={{ marginTop: 12 }}>
-          <p className="bb-title">This app needs data before it can build.</p>
+          <p className="bb-title">{app.serveMode === 'spec' ? 'Some tabs will need data.' : 'This app needs data before it can build.'}</p>
           <p className="bb-body" style={{ whiteSpace: 'pre-wrap' }}>{dataNeedWarning}</p>
           <p className="bb-body" style={{ marginTop: 8 }}>
             Resolve each need above: <strong>Link</strong> an existing dataset if one fits, or ask the assistant
@@ -1426,6 +1479,196 @@ function selectionToTarget(epics: Epic[], selected: ReadonlySet<string>): BuildT
   const epicIds = new Set([...storyIds].map((sid) => epicOf(sid)?.id).filter(Boolean) as string[]);
   if (epicIds.size === 1) return { kind: 'epic', epicId: [...epicIds][0] };
   return { kind: 'app' };
+}
+
+/* ─────────────────────────── Declarative (spec) Build ─────────────────────────── */
+
+/**
+ * The DECLARATIVE Build stage — a thin wrapper that resolves the app's granted dataset/metric NAMES
+ * (the app record carries only ids) and its designed stories, then hands them to the pure
+ * `<AppSpecComposer>`. Names are resolved from the governed `/api/context/available` feed (the same
+ * DLS-scoped list the Choose-Context picker uses), intersected with the app's grants — so the
+ * dropdowns show only what THIS app may use, by their real names.
+ */
+function SpecBuildStage({
+  app, epics, user, onSaved, onGoContext, onGoPublish,
+}: {
+  app: SoftwareApp;
+  epics: Epic[];
+  user: { id: string; role: SessionRole };
+  onSaved: () => void;
+  /** Jump to Choose Context — surfaced when a tab needs a dataset but none is granted. */
+  onGoContext?: () => void;
+  /** Advance to Test & Publish — the Build stage has NO Save button; work autosaves. */
+  onGoPublish?: () => void;
+}) {
+  const [names, setNames] = useState<{ data: Record<string, string>; metrics: Record<string, string> }>({ data: {}, metrics: {} });
+
+  useEffect(() => {
+    let live = true;
+    const load = async (kind: 'data' | 'metrics') => {
+      try {
+        const res = await fetch(`/api/context/available?kind=${kind}`);
+        if (!res.ok) return {} as Record<string, string>;
+        const d = (await res.json()) as { items?: { id: string; name: string }[] };
+        return Object.fromEntries((d.items ?? []).map((i) => [i.id, i.name]));
+      } catch {
+        return {} as Record<string, string>;
+      }
+    };
+    void Promise.all([load('data'), load('metrics')]).then(([data, metrics]) => {
+      if (live) setNames({ data, metrics });
+    });
+    return () => { live = false; };
+  }, []);
+
+  const composerApp: ComposerApp = useMemo(() => {
+    const grantName = (id: string, map: Record<string, string>) => map[id] ?? id;
+    const stories = (epics ?? []).flatMap((e) =>
+      (e.stories ?? []).map((s) => ({ epicId: e.id, storyId: s.id, label: `${e.title} · ${s.title || s.id}` })),
+    );
+    return {
+      id: app.id,
+      slug: app.slug,
+      name: app.name,
+      description: app.description,
+      spec: app.spec,
+      draftSpec: app.draftSpec,
+      grantedData: (app.grants?.data ?? []).map((g) => ({ id: g.id, name: grantName(g.id, names.data) })),
+      grantedMetrics: (app.grants?.metrics ?? []).map((g) => ({ id: g.id, name: grantName(g.id, names.metrics) })),
+      stories,
+    };
+  }, [app, epics, names]);
+
+  const noData = composerApp.grantedData.length === 0;
+
+  return (
+    <div>
+      {noData ? (
+        <div className="grant-block" style={{ marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+          <p className="hint" style={{ margin: 0 }}>
+            No datasets are granted to this app yet. Grant one in <strong>Choose Context</strong> so
+            your tabs have real data to map — you can still add tabs and preview meanwhile.
+          </p>
+          {onGoContext ? (
+            <button type="button" className="btn ghost sm" onClick={onGoContext}>Choose Context →</button>
+          ) : null}
+        </div>
+      ) : null}
+      <AppSpecComposer app={composerApp} userRole={user.role} onSaved={onSaved} onGoContext={onGoContext} />
+      {/* No Save button — work autosaves as a draft. This advances to Test & Publish, the go-live gate. */}
+      {onGoPublish ? (
+        <div className="row" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+          <button type="button" className="btn" onClick={onGoPublish} title="Test your draft, then publish it live">
+            Test &amp; Publish →
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * SpecPublishStage (os-ui 0.6.135) — the declarative app's Test & Publish surface. NO pods, NO
+ * repo: Publish validates the autosaved draft with the full serving gate and, on success, promotes
+ * it to LIVE at /apps/<slug> + snapshots a version. Shows validation issues inline when the draft
+ * isn't serve-valid, a "View live app" link once a published spec exists, and the version history
+ * (auto name + change summary) with a confirm-gated Restore — all reusing the shared VersionHistory.
+ */
+type PublishIssue = { path: string; reason: string; fix: string };
+function SpecPublishStage({
+  app, user, onReload, onGoBuild,
+}: {
+  app: SoftwareApp;
+  user: { id: string; role: SessionRole };
+  onReload: () => void;
+  onGoBuild: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [issues, setIssues] = useState<PublishIssue[]>([]);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const canEdit = user.id === app.owner || roleAtLeast(user.role, 'builder');
+  const hasLive = !!app.spec;
+  const hasDraft = !!app.draftSpec;
+
+  const publish = async () => {
+    setBusy(true);
+    setMsg(null);
+    setIssues([]);
+    try {
+      const res = await fetch(`/api/apps/${app.id}/publish`, { method: 'POST', headers: { 'content-type': 'application/json' } });
+      const d = (await res.json().catch(() => ({}))) as {
+        ok?: boolean; issues?: PublishIssue[]; error?: string; slug?: string;
+        version?: { name?: string; summary?: string } | null;
+      };
+      if (!res.ok) {
+        setMsg({ kind: 'error', text: d.error ?? 'Publish failed.' });
+        return;
+      }
+      if (d.ok) {
+        setMsg({ kind: 'ok', text: `Published ${d.version?.name ?? ''} — live at /apps/${d.slug ?? app.slug}. ${d.version?.summary ?? ''}`.trim() });
+        onReload();
+      } else {
+        setIssues(d.issues ?? []);
+        setMsg({ kind: 'error', text: 'The draft has validation issues — fix them in Build, then publish.' });
+      }
+    } catch (e) {
+      setMsg({ kind: 'error', text: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="sw-spec-publish">
+      <div className="grant-block">
+        <div className="section-title" style={{ margin: 0 }}>Publish your app</div>
+        <p className="hint" style={{ marginTop: 4 }}>
+          Your work autosaves as a draft while you build. Publishing validates the draft and, if it
+          passes, makes it the live app at{' '}
+          <Link className="sw-quiet-link" href={`/apps/${app.slug}`}>/apps/{app.slug}</Link>{' '}
+          — snapshotting a version you can restore later.
+        </p>
+        <div className="row" style={{ gap: 10, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+          {canEdit ? (
+            <button type="button" className="btn" onClick={() => void publish()} disabled={busy || (!hasDraft && !hasLive)} title="Validate the draft and go live">
+              {busy ? <span className="spin" /> : hasLive ? 'Publish changes' : 'Publish'}
+            </button>
+          ) : (
+            <span className="hint" style={{ margin: 0 }}>Only the app’s owner or a builder can publish.</span>
+          )}
+          {hasLive ? (
+            <a className="sw-quiet-link" href={`/apps/${app.slug}`} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
+              View live app ↗
+            </a>
+          ) : (
+            <span className="hint" style={{ margin: 0 }}>Not published yet.</span>
+          )}
+          <button type="button" className="btn ghost sm" onClick={onGoBuild} title="Back to editing your draft">← Back to Build</button>
+        </div>
+        {msg ? (
+          <div style={{ marginTop: 10 }}>
+            <span className={msg.kind === 'ok' ? 'badge ok' : 'error'} style={{ margin: 0, display: 'inline-block', maxWidth: '100%' }}>{msg.text}</span>
+          </div>
+        ) : null}
+        {issues.length > 0 ? (
+          <ul className="hint" style={{ marginTop: 10 }}>
+            {issues.map((iss, i) => (
+              <li key={i}><strong>{iss.path}</strong>: {iss.reason} — {iss.fix}</li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+
+      <div className="grant-block" style={{ marginTop: 16 }}>
+        <div className="section-title" style={{ margin: 0 }}>Version history</div>
+        <p className="hint" style={{ marginTop: 4, marginBottom: 8 }}>
+          Each Publish snapshots a version with an auto name and a plain-language summary of what changed.
+        </p>
+        <VersionHistory basePath={`/api/apps/${app.id}`} name={app.name} onRestored={onReload} />
+      </div>
+    </div>
+  );
 }
 
 function BuildStage({

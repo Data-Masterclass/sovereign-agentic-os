@@ -104,6 +104,18 @@ test('unresolvedDataNeedWarning fires only when no dataset is bound AND a story 
   assert.equal(unresolvedDataNeedWarning([{ stories: [{ title: 'Pretty landing page' }] }], 0), '');
 });
 
+test('unresolvedDataNeedWarning uses no-code framing for a declarative (spec) app', () => {
+  const epics = [{ stories: [{ title: 'List all employees' }] }];
+  // Coded default: the "no schema to write against" framing (an agent writes code).
+  assert.match(unresolvedDataNeedWarning(epics, 0), /no schema to write against/);
+  // Declarative: read-tabs-need-data framing, NEVER the coded "write against" language.
+  const spec = unresolvedDataNeedWarning(epics, 0, 'spec');
+  assert.doesNotMatch(spec, /schema to write against/);
+  assert.match(spec, /Tabs that read data need a granted dataset/);
+  // Still fires only on the same conditions (bound dataset silences it).
+  assert.equal(unresolvedDataNeedWarning(epics, 1, 'spec'), '');
+});
+
 test('storiesImplyingData names each data-needing story', () => {
   const names = storiesImplyingData([
     { stories: [{ title: 'Browse the case ledger' }, { title: 'Static about page' }] },

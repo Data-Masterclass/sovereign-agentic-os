@@ -428,6 +428,37 @@ test('formatGateError is corrective: names file:line + code, states nothing was 
   }
 });
 
+test('B2 (0.6.115): a @sovereign-os/* prop error appends the type\'s REAL members (blind retry → first-try fix)', async () => {
+  const res = await compileGate(
+    viteTree([
+      {
+        path: 'src/epics/e/s/Page.tsx',
+        content: "import { Badge } from '@sovereign-os/ui';\nexport default function P(){ return <Badge variant=\"x\"/>; }\n",
+      },
+    ]),
+  );
+  assert.ok(res.gated && !res.ok);
+  if (res.gated && !res.ok) {
+    const text = formatGateError(res);
+    // The hint names what Badge ACTUALLY accepts (`tone`) and the wrong prop used, so the
+    // agent fixes it on the first retry (the tsc message expands the props type inline).
+    assert.match(text, /accepts:.*\btone\b/i, 'lists the real Badge member (tone)');
+    assert.match(text, /you used 'variant'/i, 'names the wrong prop');
+  }
+});
+
+test('B2: formatGateError NEVER throws, even on a diagnostic with an odd/absent symbol', () => {
+  // A synthetic non-@sovereign-os diagnostic: the hinter must fail-soft and just render the line.
+  const text = formatGateError({
+    gated: true,
+    ok: false,
+    total: 1,
+    diagnostics: [{ file: 'src/x.ts', line: 1, column: 1, code: 2339, message: "Property 'z' does not exist on type 'Foo'" }],
+  });
+  assert.match(text, /src\/x\.ts:1:1\s+TS2339/);
+  assert.match(text, /NOTHING was written/);
+});
+
 test('gateActivityNote + gateLineFromStep render the feed step in the existing line language', async () => {
   assert.equal(gateActivityNote({ gated: true, ok: true }), 'compile check ✓');
   assert.equal(

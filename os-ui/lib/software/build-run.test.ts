@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRunError, buildMaxIterations } from './build-run.ts';
+import { buildRunError, buildMaxIterations, honestBuildFinalText, BUILD_NOT_LANDED_PREFIX } from './build-run.ts';
 import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
 
 /**
@@ -64,4 +64,27 @@ test('B2: read-only modes pass NO budget (undefined ⇒ runAgentic default)', ()
   assert.equal(buildMaxIterations('plan'), undefined);
   assert.equal(buildMaxIterations('test'), undefined);
   assert.equal(buildMaxIterations('review'), undefined);
+});
+
+// -------------------------- empty-changeset honesty (0.6.115 B3) --
+
+test('B3: a build turn that committed 0 files is prefixed "did not land"', () => {
+  const out = honestBuildFinalText('build', 0, 'Everything looks done.');
+  assert.ok(out.startsWith(BUILD_NOT_LANDED_PREFIX), 'the not-landed prefix leads the text');
+  assert.match(out, /did not land/i);
+  assert.match(out, /Everything looks done\./, 'the original text is kept below the prefix');
+});
+
+test('B3: an empty finalText still yields the authoritative not-landed line alone', () => {
+  assert.equal(honestBuildFinalText('build', 0, ''), BUILD_NOT_LANDED_PREFIX);
+});
+
+test('B3: a build that DID commit is passed through unchanged (no false negative)', () => {
+  assert.equal(honestBuildFinalText('build', 3, 'Committed 3 files.'), 'Committed 3 files.');
+});
+
+test('B3: non-build modes are never prefixed (only build writes)', () => {
+  for (const m of ['plan', 'test', 'review'] as const) {
+    assert.equal(honestBuildFinalText(m, 0, 'read-only summary'), 'read-only summary');
+  }
 });

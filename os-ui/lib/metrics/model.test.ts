@@ -27,7 +27,9 @@ test('form / agent / YAML all produce the IDENTICAL measure (the same artifact)'
   // The activated slice-by dimensions now RIDE ON the measure (Bug A: they were dropped
   // on persist, so Edit re-opened with none). They are a curation hint OFF `sameMeasure`,
   // so the form/agent/YAML convergence gate still holds even though YAML doesn't carry them.
-  assert.deepEqual(fromForm, { name: 'revenue', type: 'sum', sql: 'net_amount', dimensions: ['order_date', 'region'] });
+  // "Revenue" differs from its slug "revenue" → label is auto-set so the tile shows the
+  // human name, not the lowercased machine slug.
+  assert.deepEqual(fromForm, { name: 'revenue', label: 'Revenue', type: 'sum', sql: 'net_amount', dimensions: ['order_date', 'region'] });
   assert.ok(sameMeasure(fromForm, fromAgent), 'form == agent');
   assert.ok(sameMeasure(fromForm, fromYaml), 'form == yaml (dimensions off sameMeasure)');
 });
@@ -40,7 +42,8 @@ test('measureMember is the canonical member the agent metrics tool also builds',
 });
 
 test('count needs no column; non-count needs one', () => {
-  assert.deepEqual(measureFromForm({ name: 'Orders', aggregation: 'count', column: '', dimensions: [] }), { name: 'orders', type: 'count', sql: '' });
+  // "Orders" → "orders" (human name ≠ slug) → label auto-set.
+  assert.deepEqual(measureFromForm({ name: 'Orders', aggregation: 'count', column: '', dimensions: [] }), { name: 'orders', label: 'Orders', type: 'count', sql: '' });
   assert.throws(() => measureFromForm({ name: 'Bad', aggregation: 'sum', column: '', dimensions: [] }), /needs a column/);
 });
 
@@ -93,6 +96,19 @@ test('BUG A: activated dimensions round-trip persist → parse → hydrate (Edit
   const plain = measureFromForm({ name: 'Orders', aggregation: 'count', column: '', dimensions: [] });
   assert.equal('dimensions' in plain, false, 'no dimensions ⇒ field absent (byte-stable)');
   assert.deepEqual(formFromMeasure(plain).dimensions, []);
+});
+
+test('metric name label: human name → label auto-set; bare slug → no label (tile shows the right name)', () => {
+  // When the user types a human name that differs from its slug, the tile must show the
+  // human name — so label is auto-set. A bare slug (already lowercase+underscore) is its
+  // own label, so no extra field is written (byte-stable for existing metrics).
+  const withLabel = measureFromForm({ name: 'Monthly Revenue', aggregation: 'count', column: '', dimensions: [] });
+  assert.equal(withLabel.name, 'monthly_revenue', 'slug is the machine identity');
+  assert.equal(withLabel.label, 'Monthly Revenue', 'label carries the human name for the tile');
+
+  const noLabel = measureFromForm({ name: 'monthly_revenue', aggregation: 'count', column: '', dimensions: [] });
+  assert.equal(noLabel.name, 'monthly_revenue', 'slug unchanged');
+  assert.equal('label' in noLabel, false, 'bare slug → no label (byte-stable)');
 });
 
 test('formFromMeasure round-trips every generated measure shape onto the SAME member', () => {

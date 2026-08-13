@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { getArtifact } from '@/lib/core/artifacts';
+import { peekDatasetMeta } from '@/lib/data/store';
 import type { App } from './apps.ts';
 import type { ScaffoldFile } from './model.ts';
 import {
@@ -25,29 +25,33 @@ import {
  */
 
 /**
- * Resolve each id against the artifacts registry into the EXISTS-vs-DELETED split the
- * warning needs: a resolvable artifact contributes its `name`; an id that resolves to
- * NULL is DELETED (its hard-coded reference is the root of the unfixable runtime
- * Forbidden — you can't grant a dataset that's gone). A lookup ERROR fails soft to
- * neither (treated as "exists, unnamed" → grant advice with the bare id).
+ * Resolve each id against the DATASET store into the EXISTS-vs-DELETED split the warning
+ * needs: a present record contributes its `name`; an id that peeks to NULL is DELETED (its
+ * hard-coded reference is the root of the unfixable runtime Forbidden — you can't grant a
+ * dataset that's gone). A lookup ERROR fails soft to neither (treated as "exists, unnamed"
+ * → grant advice with the bare id).
+ *
+ * NOTE (0.6.114): datasets live in `lib/data/store.ts`, NOT the artifacts registry
+ * (`getArtifact` only holds knowledge/metrics/dashboards/agents/software/bigbets). Peeking
+ * the artifacts registry ALWAYS returned null for a `ds_…` id, so every referenced — even
+ * LIVE — dataset was falsely flagged "no longer exists (likely deleted)". `peekDatasetMeta`
+ * is the unscoped existence+name peek against the real dataset store.
  */
 async function resolveDatasetRefs(ids: string[]): Promise<{ names: Record<string, string>; deletedIds: string[] }> {
   const names: Record<string, string> = {};
   const deletedIds: string[] = [];
-  await Promise.all(
-    ids.map(async (id) => {
-      try {
-        const art = await getArtifact(id);
-        if (art) {
-          if (art.name) names[id] = art.name;
-        } else {
-          deletedIds.push(id); // resolved to null ⇒ deleted / nonexistent
-        }
-      } catch {
-        /* fail-soft: leave unclassified — the warning treats it as grant-advice */
+  for (const id of ids) {
+    try {
+      const meta = peekDatasetMeta(id);
+      if (meta) {
+        if (meta.name) names[id] = meta.name; // present record ⇒ EXISTS (archived counts)
+      } else {
+        deletedIds.push(id); // peeked to null ⇒ deleted / nonexistent
       }
-    }),
-  );
+    } catch {
+      /* fail-soft: leave unclassified — the warning treats it as grant-advice, NOT deleted */
+    }
+  }
   return { names, deletedIds };
 }
 

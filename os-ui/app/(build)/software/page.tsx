@@ -39,7 +39,21 @@ type AppItem = {
   mode: 'live' | 'offline';
   subdomain: string;
   deploy: { state: 'building' | 'preview' | 'review' | 'live'; releases: number };
+  /** How the app is served — 'spec' = declarative (os-ui 0.6.135 DRAFT/LIVE model). */
+  serveMode?: 'image' | 'runtime' | 'spec';
+  /** Presence signals for the tile's Draft indicator (never the full spec is read here). */
+  spec?: unknown;
+  draftSpec?: unknown;
 };
+
+/**
+ * A spec app is a DRAFT-only work-in-progress when it has a draft (or is a spec app) but has never
+ * published a live `spec` (os-ui 0.6.135). Such an app STILL shows in the tiles — never hidden —
+ * with a small "Draft" indicator, so a work-in-progress is never lost.
+ */
+function isDraftOnly(a: AppItem): boolean {
+  return a.serveMode === 'spec' && !a.spec && (!!a.draftSpec || a.deploy.releases === 0);
+}
 
 /** The folder root an app lives in: a Personal app folds into the owner's PERSONAL
  *  tree; a Shared/Certified app folds into the owning DOMAIN's tree (parity with Data). */
@@ -65,6 +79,10 @@ type AppsData = {
   apps: AppItem[];
   /** The create picker's four choices (server-defined; sovereign-app is default). */
   templates?: { key: string; label: string; blurb: string }[];
+  /** os-ui 0.6.133 platform flag — when false (default) only Declarative (spec) apps
+   *  can be created, so the launcher drops the coded chooser entirely. Server-decided
+   *  (any authenticated user may read just this one boolean). */
+  codedAppsEnabled?: boolean;
 };
 
 /** A running app's deploy state → a calm status badge. */
@@ -101,9 +119,18 @@ function SoftwareInner() {
   const { data, loading, reload } = useApi<AppsData>('/api/apps');
   const confirm = useConfirm();
 
+  // os-ui 0.6.133: coded (custom) apps are platform-admin-gated and OFF by default.
+  // Treat an absent flag as OFF (fail-safe: default to the Declarative-only launcher).
+  // When OFF there is NO chooser — "New app" creates a Declarative (spec) app directly.
+  const codedAppsEnabled = data?.codedAppsEnabled === true;
+
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [template, setTemplate] = useState('sovereign-app');
+  // AppSpec Phase 4a: choose the SERVING KIND. 'spec' = declarative no-code (the recommended
+  // default — assemble it in Build by picking patterns + mapping governed data, served same-origin
+  // with no pod). 'code' = the advanced coded path (a Forgejo repo + CI + image the agent builds).
+  const [kind, setKind] = useState<'spec' | 'code'>('spec');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [scope, setScope] = useState<ScopeKey>('all');
@@ -120,10 +147,14 @@ function SoftwareInner() {
     setCreating(true);
     setError('');
     try {
+      // When coded apps are disabled, "New app" ALWAYS creates a Declarative (spec) app
+      // directly — the coded path is not an option (the server also fail-closes on it).
+      const effectiveKind = codedAppsEnabled ? kind : 'spec';
       const res = await fetch('/api/apps', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, template }),
+        // A declarative (spec) app carries no template — the OS renders its spec directly.
+        body: JSON.stringify(effectiveKind === 'spec' ? { name, kind: 'spec' } : { name, template, kind: 'code' }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -292,7 +323,8 @@ function SoftwareInner() {
             <div className="row" style={{ gap: 6, alignItems: 'center' }}>
               {(scope === 'shared' || scope === 'marketplace') ? <DomainTag domain={a.domain} /> : null}
               {a.archived ? <span className="badge muted">archived</span> : null}
-              <span className={s.cls}>{s.label}</span>
+              {/* A never-published spec app is a work-in-progress DRAFT — always shown, never hidden. */}
+              {isDraftOnly(a) && !a.archived ? <span className="badge muted" title="Not published yet — a work-in-progress draft">Draft</span> : <span className={s.cls}>{s.label}</span>}
             </div>
           </div>
           <div className="sw-app-desc">{a.description || 'No description yet.'}</div>
@@ -343,9 +375,12 @@ function SoftwareInner() {
             <div className="sw-create-head">
               <div>
                 <div className="sw-create-title">Create new software app</div>
+                {/* KIND-aware sub: declarative (the recommended default) vs the coded path.
+                    The collapsed trigger below stays neutral (no kind chosen yet). */}
                 <div className="sw-create-sub">
-                  Describe it in chat; the agent writes the code, commits to its own in-cluster
-                  Forgejo repo, and ships it. No accounts, no tokens — your code never leaves.
+                  {kind === 'spec'
+                    ? 'Assemble it in Build by picking patterns and mapping your governed data — no code. Served instantly, same-origin, with no repo or pipeline.'
+                    : 'Describe it in chat; the agent writes the code, commits to its own in-cluster Forgejo repo, and ships it. No accounts, no tokens — your code never leaves.'}
                 </div>
               </div>
             </div>
@@ -354,8 +389,9 @@ function SoftwareInner() {
               <div>
                 <div className="sw-create-title">Create new software app</div>
                 <div className="sw-create-sub">
-                  Describe it in chat; the agent writes the code, commits to its own in-cluster
-                  Forgejo repo, and ships it. No accounts, no tokens — your code never leaves.
+                  {codedAppsEnabled
+                    ? 'Build it no-code by mapping your governed data, or have the agent write real code — your choice, both sovereign and served in-cluster.'
+                    : 'Build it no-code by mapping your governed data to patterns — sovereign, served instantly in-cluster, no repo or pipeline.'}
                 </div>
               </div>
               <span className="sw-create-go" aria-hidden="true">+</span>
@@ -374,21 +410,27 @@ function SoftwareInner() {
                   if (e.key === 'Enter') create();
                 }}
               />
-              {/* The four-template picker — calm radio cards; Application is default. */}
+              {/* Serving KIND — the first, clearest choice: declarative (no-code) vs coded.
+                  Shown ONLY when the platform admin has enabled coded apps; otherwise
+                  "New app" creates a Declarative (spec) app directly (no chooser). */}
+              {codedAppsEnabled ? (
               <div
                 role="radiogroup"
-                aria-label="App template"
-                style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8, marginTop: 12 }}
+                aria-label="How to build"
+                style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 8, marginTop: 12 }}
               >
-                {(data?.templates ?? []).map((t) => {
-                  const active = template === t.key;
+                {([
+                  { k: 'spec' as const, label: 'Declarative app (no-code · recommended)', blurb: 'Assemble it in Build by picking patterns and mapping your governed data. Served instantly — no repo, no pipeline, no code.' },
+                  { k: 'code' as const, label: 'Coded app (advanced)', blurb: 'The agent writes real code into an in-cluster Forgejo repo and ships an image. Full control; more moving parts.' },
+                ]).map((opt) => {
+                  const active = kind === opt.k;
                   return (
                     <button
-                      key={t.key}
+                      key={opt.k}
                       type="button"
                       role="radio"
                       aria-checked={active}
-                      onClick={() => setTemplate(t.key)}
+                      onClick={() => setKind(opt.k)}
                       style={{
                         textAlign: 'left',
                         padding: '10px 12px',
@@ -400,12 +442,48 @@ function SoftwareInner() {
                         color: 'inherit',
                       }}
                     >
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</div>
-                      <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{t.blurb}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{opt.label}</div>
+                      <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{opt.blurb}</div>
                     </button>
                   );
                 })}
               </div>
+              ) : null}
+
+              {/* The four-template picker — CODED apps only; a declarative app has no template. */}
+              {codedAppsEnabled && kind === 'code' ? (
+                <div
+                  role="radiogroup"
+                  aria-label="App template"
+                  style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8, marginTop: 12 }}
+                >
+                  {(data?.templates ?? []).map((t) => {
+                    const active = template === t.key;
+                    return (
+                      <button
+                        key={t.key}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setTemplate(t.key)}
+                        style={{
+                          textAlign: 'left',
+                          padding: '10px 12px',
+                          border: `1px solid ${active ? 'var(--gold)' : 'var(--border)'}`,
+                          borderRadius: 'var(--radius)',
+                          background: active ? 'var(--panel)' : 'transparent',
+                          cursor: 'pointer',
+                          font: 'inherit',
+                          color: 'inherit',
+                        }}
+                      >
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</div>
+                        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{t.blurb}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
               <div className="row" style={{ marginTop: 10, gap: 10, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
                 <button type="button" className="btn ghost" onClick={() => { setOpen(false); setError(''); }} disabled={creating}>
                   Cancel
@@ -423,14 +501,16 @@ function SoftwareInner() {
               {creating ? (
                 <BusyProgress
                   label={`Creating ${name.trim() || 'your app'}`}
-                  detail="Provisioning its in-cluster Forgejo repository, wiring the build pipeline and seeding the scaffold"
-                  typicalSeconds={20}
+                  detail={kind === 'spec'
+                    ? 'Registering the app and its governed MCP — no repo or pipeline for a declarative app'
+                    : 'Provisioning its in-cluster Forgejo repository, wiring the build pipeline and seeding the scaffold'}
+                  typicalSeconds={kind === 'spec' ? 6 : 20}
                 />
               ) : null}
               <p className="sw-create-note">
-                The template only sets the starting point — describe the rest in chat and the build
-                agent takes it from there. A sovereign Forgejo repo is created in-cluster; if git
-                isn&apos;t ready yet you can still build in honest offline mode.
+                {kind === 'spec'
+                  ? 'No repo, pipeline or code — you compose the app from patterns in Build and it’s served the moment you save. You can grant it governed data, metrics and agents in Choose Context.'
+                  : 'The template only sets the starting point — describe the rest in chat and the build agent takes it from there. A sovereign Forgejo repo is created in-cluster; if git isn’t ready yet you can still build in honest offline mode.'}
               </p>
               {error ? <div className="error" style={{ marginTop: 10 }}>{error}</div> : null}
             </div>

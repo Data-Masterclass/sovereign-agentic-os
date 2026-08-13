@@ -6,6 +6,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { ROLES, type Role } from '@/lib/core/session';
 import { config } from '@/lib/core/config';
 import { PLATFORM_MCP_TOOLS, callPlatformMcp } from '@/lib/software/platform-mcp';
+import { codedAppsEnabled } from '@/lib/platform-admin/settings';
 import { authorize, queryRun, trace } from '@/lib/infra/governed';
 import { servePredict } from '@/lib/science/serve';
 import type { ChurnFeatures } from '@/lib/science';
@@ -133,6 +134,14 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 // governance, so it too floors at builder (the governed fn re-gates identically).
 const ELEVATED = new Set(['promote', 'decide_deploy', 'delete', 'commit']);
 
+// os-ui 0.6.133: the CODED-app-only tools. When the platform admin has coded apps OFF
+// (the default), these are NOT advertised as available in list_capabilities (they are
+// listed as gated with an honest reason) and fail-closed if called — Declarative
+// authoring (set_app_spec / get_app_spec / generate) stays fully available. `commit`
+// is the raw code-write path; the coded FRAMING of create_software (kind:'code') is
+// enforced in createApp, so create_software itself stays advertised (a spec app uses it).
+const CODED_ONLY_TOOLS = new Set(['commit']);
+
 /** A build/test TARGET — the whole app, one epic, or one story (the Build-stage scope). */
 const TARGET_SCHEMA: JsonSchema = {
   type: 'object',
@@ -218,7 +227,7 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
       template: {
         type: 'string',
         description:
-          "Template key: 'sovereign-app' (Application — OS look, sign-in, admin; the default), 'website' (public site, no sign-in), 'api-service' (APIs only, headless), or 'empty' (blank canvas). Legacy keys (e.g. 'nextjs-supabase') stay accepted for existing apps.",
+          "Only shapes a CODED app's scaffold (kind:'code'): 'sovereign-app' (Application — OS look, sign-in, admin; the default), 'website' (public site, no sign-in), 'api-service' (APIs only, headless), or 'empty' (blank canvas). Ignored for the default declarative (spec) app. Legacy keys (e.g. 'nextjs-supabase') stay accepted for existing apps.",
       },
       domain: { type: 'string', description: 'Domain to create in (must be one of yours).' },
       surface: {
@@ -231,8 +240,39 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
         type: 'string',
         description: "The app's stated purpose (Define stage), ≤2000 chars. Optional at creation; update later with set_app_design.",
       },
+      kind: {
+        type: 'string',
+        enum: ['spec', 'code'],
+        description:
+          "Serving kind. 'spec' (DEFAULT) creates a DECLARATIVE app served same-origin by the OS renderer — no Forgejo repo / CI / registry / pod; author it with set_app_spec or scaffold it with generate_app_spec (the spec IS the app). 'code' is the ADVANCED coded path (raw code + image build) — DISABLED unless a platform admin has enabled coded apps (createApp fails closed with 403 otherwise).",
+      },
     },
     required: ['name'],
+  },
+  set_app_spec: {
+    type: 'object',
+    properties: {
+      appId: { type: 'string', description: 'App id from list_software.' },
+      spec: {
+        type: 'object',
+        description:
+          "The declarative AppSpec: { version: 2, name, description, theme?, tabs: [] }. Each tab is a cookbook PATTERN ({ kind:'pattern', pattern, config }) or a sandboxed CUSTOM block ({ kind:'custom', html, css?, js?, data? }). View-pattern sources must be a GRANTED dataset with REAL columns (get_dataset to discover). Validated author-time; blocking issues return { path, reason, fix } and persist nothing.",
+      },
+    },
+    required: ['appId', 'spec'],
+  },
+  get_app_spec: {
+    type: 'object',
+    properties: { appId: { type: 'string', description: 'App id from list_software.' } },
+    required: ['appId'],
+  },
+  generate_app_spec: {
+    type: 'object',
+    description:
+      "Scaffold a complete declarative AppSpec from the app's designed epics/user-stories + granted data (datasets with real columns, metrics, agents). Returns a validated spec (NOT persisted) to review + publish with set_app_spec.",
+    properties: { appId: { type: 'string', description: 'App id from list_software (must have designed epics + granted context).' } },
+    required: ['appId'],
+    examples: [{ appId: 'app_ab12cd' }],
   },
   design_software: {
     type: 'object',
@@ -510,11 +550,28 @@ const discoveryTools: McpTool[] = [
         minRole: t.minRole,
         description: t.description,
       }));
-      const available = rows.filter((r) => roleCanUse(user.role, r.minRole));
+      // os-ui 0.6.133: when coded apps are OFF, the coded-only tools are advertised as
+      // GATED (with an honest reason), never as available — Declarative authoring stays open.
+      const coded = codedAppsEnabled();
+      const codedGated = (name: string) => !coded && CODED_ONLY_TOOLS.has(name);
+      const available = rows.filter((r) => roleCanUse(user.role, r.minRole) && !codedGated(r.name));
       const gated = rows
-        .filter((r) => !roleCanUse(user.role, r.minRole))
-        .map((r) => ({ ...r, reason: `requires ${r.minRole}; you are ${user.role}` }));
-      return { role: user.role, availableCount: available.length, available, gated };
+        .filter((r) => !roleCanUse(user.role, r.minRole) || codedGated(r.name))
+        .map((r) => ({
+          ...r,
+          reason: codedGated(r.name)
+            ? 'coded (custom) apps are disabled by the platform administrator — use Declarative authoring (set_app_spec)'
+            : `requires ${r.minRole}; you are ${user.role}`,
+        }));
+      return {
+        role: user.role,
+        availableCount: available.length,
+        available,
+        gated,
+        // A client fetches its tool manifest at connect: a tool listed here but not callable
+        // in your client means your MCP session predates it — reconnect the MCP server to refresh.
+        note: "If a tool listed here isn't callable in your client, your MCP session predates it — reconnect the MCP server to refresh the tool list.",
+      };
     },
   },
 ];

@@ -4,7 +4,7 @@
 /** Tests for GRANTS → runtime data-plane tool mapping (Piece 2 of the grants wave). */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dataPlaneToolsFromGrants } from './grant-tools.ts';
+import { dataPlaneToolsFromGrants, agentToolsFromGrants } from './grant-tools.ts';
 import { emptyContextGrants, type ContextGrants } from '@/lib/core/context-grants';
 
 function grantsWith(patch: Partial<ContextGrants>): ContextGrants {
@@ -82,4 +82,21 @@ test('grant-tools: every derived tool carries a non-empty description', () => {
     }),
   );
   assert.ok(tools.every((t) => typeof t.description === 'string' && t.description.length > 0));
+});
+
+test('agent-tools: empty agent grants ⇒ [] (fail-closed)', () => {
+  assert.deepEqual(agentToolsFromGrants([]), []);
+});
+
+test('agent-tools: a granted agent enables run_agent_system + list_agent_systems (once)', () => {
+  const tools = agentToolsFromGrants([
+    { id: 'sys_1', access: 'read-only' },
+    { id: 'sys_2', access: 'read-write' },
+  ]);
+  const n = tools.map((t) => t.name);
+  assert.deepEqual(n, ['run_agent_system', 'list_agent_systems'], 'stable, deduped set regardless of grant count');
+  const run = tools.find((t) => t.name === 'run_agent_system')!;
+  assert.equal(run.write, true, 'running a governed agent is a write tool');
+  assert.equal(tools.find((t) => t.name === 'list_agent_systems')!.write, false);
+  assert.ok(tools.every((t) => t.description.length > 0));
 });

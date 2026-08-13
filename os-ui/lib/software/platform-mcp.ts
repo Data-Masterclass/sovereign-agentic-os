@@ -9,12 +9,15 @@ import {
   getAppByIdInternal,
   getAppForUser,
   patchAppDesign,
+  setAppSpec,
+  serveModeOf,
   listAppFilesForViewer,
   readAppFileForViewer,
   withStatus,
   type AppEpic,
   type AppTemplateKey,
 } from '@/lib/software/apps';
+import { describeApp } from '@/lib/software/appspec/describe';
 import { normalizeContextGrants } from '@/lib/core/context-grants';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
 import { trace } from '@/lib/infra/agent-governed';
@@ -25,6 +28,24 @@ import type { ConsumedResource, SurfaceDeclaration } from './model.ts';
 import { asBuildTarget, buildGate, stageDirective, targetProgress, resolveTarget } from './mcp-stages.ts';
 import { resolveGrantedContext } from './grants-context.ts';
 import { normalizeImprovement, type Improvement } from './improvements.ts';
+import { codedAppsEnabled } from '@/lib/platform-admin/settings';
+import { PATTERNS, PATTERN_IDS, isImplementedPattern } from './appspec/patterns.ts';
+import { generateAppSpecForApp } from './appspec/generate-server.ts';
+
+/**
+ * The IMPLEMENTED cookbook patterns, sourced from the authoritative registry
+ * (`patterns.ts`) so a tool description can never drift from the validator. Split
+ * by shelf (VIEW reads · INTERACTIVE writes via `os.records`) for the set_app_spec
+ * description — each is a compact "`id` (what it does)" list.
+ */
+export const IMPLEMENTED_PATTERN_LIST: { view: string; interactive: string } = (() => {
+  const line = (category: 'view' | 'interactive') =>
+    PATTERN_IDS.filter(isImplementedPattern)
+      .filter((id) => PATTERNS[id].category === category)
+      .map((id) => `\`${id}\` (${PATTERNS[id].description.replace(/\.$/, '')})`)
+      .join(', ');
+  return { view: line('view'), interactive: line('interactive') };
+})();
 
 /**
  * THE PLATFORM MCP — front door #2, and the GOVERNANCE INVARIANT this build's
@@ -71,16 +92,35 @@ export const PLATFORM_MCP_PRINCIPAL = 'platform-mcp';
  */
 export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boolean }[] = [
   // ---- Define App ----
-  { name: 'create_software', description: "STAGE 1 · DEFINE APP. Create a new governed app from a template (default `sovereign-app` — the Sovereign standard app: AppShell chrome, OS-delegated identity, domain-scoped data helpers, an admin section and the MCP top-bar link already wired; epics then add business features). Other templates: 'website', 'api-service', 'empty' (and legacy 'vite-os','nextjs-supabase','service','script','dashboard'). Optionally DECLARE its surface (surface: 'ui' | 'api' | 'both') — declaring wins over auto-detection, so a UI app is never mislabelled as API. Optionally set `purpose` (the app's stated intent, ≤2000 chars). Next: design_software.", write: true },
+  { name: 'create_software', description: "STAGE 1 · DEFINE APP. Create a new governed app. DEFAULT `kind: 'spec'` — a DECLARATIVE app: a validated AppSpec of cookbook-pattern tabs over governed data, served SAME-ORIGIN by the OS renderer (NO Forgejo repo / CI / registry / pod), authored with set_app_spec or scaffolded in one call with generate_app_spec. This is the golden path. Pass `name`, an optional `domain`, an optional `purpose` (the app's stated intent, ≤2000 chars), and optionally DECLARE its surface (surface: 'ui' | 'api' | 'both') — declaring wins over auto-detection. `kind: 'code'` is the ADVANCED coded path (raw code + Forgejo + image build) — it is DISABLED by default and only works when a platform admin has enabled coded apps (createApp fails closed with 403 otherwise). The `template` arg (`sovereign-app` default, `website`, `api-service`, `empty`) only shapes a coded app's scaffold. Next: design_software.", write: true },
   // ---- Design Epics (+ Choose Context via `grants`) ----
   { name: 'design_software', description: "STAGE 2 · DESIGN EPICS (and STAGE 3 · CHOOSE CONTEXT). Author or update the app's specification tree — `purpose`, `epics` (each with user stories and per-story `spec` of features / non-functional requirements / rules), and governed context `grants` (bind existing connections / data / knowledge / files / metrics — this is the Choose Context bind-existing surface). This is the SAME governed write the UI uses (patchAppDesign): owner / owning-domain admin / platform admin only. A story must have a spec AND, if it needs data, a bound/created dataset before build_software will build it (the design-before-build + data-need gates). Next: build_software.", write: true },
   // ---- Build App ----
-  { name: 'build_software', description: "STAGE 4 · BUILD APP. Build a SPECIFIC unit — the whole app, one `epic`, or one `story` (pass `target`) — from its FINALIZED Design spec and its ALREADY-GRANTED context. Context (datasets / knowledge / metrics / connections) is bound or created earlier in CHOOSE CONTEXT (design_software `grants` + create_dataset) — build WRITES CODE against that frozen, injected schema; it does NOT discover, list or query data. Enforces the design-before-build gate (refuses stories with no spec, naming them), and returns the governed BUILD directive + Define context + the granted-context schema + the target's spec + the code-structure convention (write each story under epics/<epic>/<story>/, app/ stays thin) + the current committed files and honest built-vs-pending progress. You then author the code and call `commit` — a story counts as BUILT only after its files land in a SUCCESSFUL commit (an empty/failed commit builds nothing), never from a status you set by hand. DATA IS PRESENT ⇒ BUILD IT: when the returned granted-context block carries dataset columns, the data need is ALREADY MET — build against those columns; do NOT refuse or claim the app has no data (the grant IS the authorization, resolved as you). ONLY when the granted-context block is genuinely empty of the dataset a story needs, go back to Choose Context and grant/create it — do not try to discover data from Build, and do not dead-end. VENDORED-API CONTRACT (the returned directive spells it out; breaking it FAILS the compile gate): a page imports ONLY from `react`, `@sovereign-os/ui` and the OS `os` client — NEVER `react-router-dom`/any router or other 3rd-party lib (no client-side router; navigation is the auto-registered section page), and a story page returns its CONTENT (`<Section><Card>…`) and NEVER renders `<AppShell>` (template-only; it requires `nav`) — mirror src/template/pages/Overview.tsx. \"DONE\" = status:'done' AND committed files, NEVER the spec: asked to build a story that is not done and has no files, BUILD IT — never reply \"already implemented / no further build needed\" or recite acceptance criteria as proof; `read_app_files` its path if unsure. ROLES: gate with `roleAtLeast(user.role, '<floor>')` from src/template/roles.ts + the user from `useIdentity()` — NEVER an exact `role === 'admin'` (it hard-blocks a real admin; ladder creator<builder<domain_admin<admin), never invent app roles, and make client checks ADVISORY (hide/disable, not a blocking error — the OS data layer enforces). Next: verify_software.", write: false },
+  { name: 'build_software', description: "STAGE 4 · BUILD APP. Build a SPECIFIC unit — the whole app, one `epic`, or one `story` (pass `target`) — from its FINALIZED Design spec and its ALREADY-GRANTED context. Context (datasets / knowledge / metrics / connections) is bound or created earlier in CHOOSE CONTEXT (design_software `grants` + create_dataset) — build WRITES CODE against that frozen, injected schema; it does NOT discover, list or query data. Enforces the design-before-build gate (refuses stories with no spec, naming them), and returns the governed BUILD directive + Define context + the granted-context schema + the target's spec + the code-structure convention (write each story under src/epics/<epic>/<story>/, src/App.tsx/main.tsx stay thin) + the current committed files and honest built-vs-pending progress. You then author the code and call `commit` — a story counts as BUILT only after its files land in a SUCCESSFUL commit (an empty/failed commit builds nothing), never from a status you set by hand. DATA IS PRESENT ⇒ BUILD IT: when the returned granted-context block carries dataset columns, the data need is ALREADY MET — build against those columns; do NOT refuse or claim the app has no data (the grant IS the authorization, resolved as you). ONLY when the granted-context block is genuinely empty of the dataset a story needs, go back to Choose Context and grant/create it — do not try to discover data from Build, and do not dead-end. VENDORED-API CONTRACT (the returned directive spells it out; breaking it FAILS the compile gate): a page imports ONLY from `react`, `@sovereign-os/ui` and the OS `os` client — NEVER `react-router-dom`/any router or other 3rd-party lib (no client-side router; navigation is the auto-registered section page), and a story page returns its CONTENT (`<Section><Card>…`) and NEVER renders `<AppShell>` (template-only; it requires `nav`) — mirror src/template/pages/Overview.tsx. \"DONE\" = status:'done' AND committed files, NEVER the spec: asked to build a story that is not done and has no files, BUILD IT — never reply \"already implemented / no further build needed\" or recite acceptance criteria as proof; `read_app_files` its path if unsure. ROLES: `useIdentity()` returns IdentityState — a DISCRIMINATED UNION with `.phase` ({phase:'loading'}|{phase:'signed-out'}|{phase:'error',message}|{phase:'ready',user}), NO `id` field; never `const { id } = useIdentity()`, never `.id`, never `.user` without narrowing `.phase === 'ready'` first. Copy exactly (mirror src/template/pages/Overview.tsx): `const identity = useIdentity(); const user = identity.phase === 'ready' ? identity.user : null; const canEdit = !!user && roleAtLeast(user.role, 'domain_admin');`. Gate with `roleAtLeast(user.role, '<floor>')` from src/template/roles.ts — NEVER an exact `role === 'admin'` (it hard-blocks a real admin; ladder creator<builder<domain_admin<admin), never invent app roles, and make client checks ADVISORY (hide/disable, not a blocking error — the OS data layer enforces). Next: verify_software.", write: false },
   // ---- Test & Publish ----
   { name: 'verify_software', description: "STAGE 5 · TEST & PUBLISH (test half). Verify a built unit against its Design spec across the FIVE dimensions (Functionality · User Experience · Code Structure · Security · Documentation). Returns the governed TEST directive + spec + committed files to verify against (read-only). Report PASS/FAIL per dimension; pass any shortfalls as `findings` (each { storyId, note, dimension }) and they are normalized into dimension-tagged REFINEMENTS via the SAME refinement model the UI uses — a missed-spec item is a rebuild, a requirement change routes to Design first. Next (if PASS): request_deploy.", write: false },
   { name: 'request_deploy', description: 'STAGE 5 · TEST & PUBLISH (publish half). Request a domain deploy → opens the Builder review gate (security scan + envelope + diff). Cannot self-approve a go-live.', write: true },
   { name: 'decide_deploy', description: 'STAGE 5 · TEST & PUBLISH. Approve/deny a deploy (Builder/Admin only — role-gated, requires a passing security scan).', write: true },
   { name: 'promote', description: 'STAGE 5 · TEST & PUBLISH. Promote the app one tier (role-gated, same as UI).', write: true },
+  // ---- Declarative AppSpec authoring (the spec IS the app — no image build) ----
+  {
+    name: 'set_app_spec',
+    description:
+      "AUTHOR A DECLARATIVE APP (author = PUBLISH — this writes the LIVE spec and snapshots a version). Set the app's validated AppSpec — the spec IS the app, served SAME-ORIGIN by the trusted OS renderer under the viewer's session (NO image / CI / registry / pod). An AppSpec is `{ version: 2, name, description, theme?, functions?, tabs: [] }`. `theme` is an app-wide `{ css }` (scoped under the app root; may not contain `<`/`>`). `functions` are governed query/expression DSL functions (aggregate or expression over granted data) a `kpi-overview` card can render by `functionId`. Each TAB renders EITHER a cookbook PATTERN (`{ kind: 'pattern', pattern, config }`) OR a sandboxed CUSTOM block (`{ kind: 'custom', html, css?, js?, data? }` — a null-origin iframe that can never act as the user). Implemented patterns — VIEW (read): " + IMPLEMENTED_PATTERN_LIST.view + "; INTERACTIVE (write via the governed `os.records` door + role gates, never arbitrary code): " + IMPLEMENTED_PATTERN_LIST.interactive + ". A data-backed pattern's `config.source.datasetId` MUST be a dataset GRANTED to the app (bind it first via Choose Context / `design_software` grants) and every referenced column (`columns[].field`, `keyField`, `statusField`, `dateField`, filter fields, …) MUST exist in that dataset's real schema — call `get_dataset` to discover the exact column names. VALIDATION runs author-time and is the gate: on any BLOCKING issue the tool returns `{ ok: false, issues: [{ path, reason, fix }] }` and PERSISTS NOTHING (each fix is machine-actionable — grant the source, restore the dataset, or use a real column). On success it persists the spec as the LIVE served surface (serveMode flips to 'spec') AND snapshots a version, and returns `{ ok: true, servedUrl: '/apps/<slug>', version, warnings }` — the app is live at servedUrl with no build latency. Role: owner or an owning-domain builder+ (same gate as design_software). Scaffold a whole app in one call with generate_app_spec first; read-modify-write with get_app_spec.",
+    write: true,
+  },
+  {
+    name: 'generate_app_spec',
+    description:
+      "SCAFFOLD A DECLARATIVE APP from its DESIGN. Reads the app's epics + user stories + per-story spec (features/NFRs/rules) and its GRANTED context (datasets with their REAL columns, metrics, agents), then asks the OS reasoning model to compose a complete, validated AppSpec whose tabs are cookbook patterns wired ONLY to granted ids + real columns. Returns `{ ok: true, spec }` (a validated AppSpec — NOT yet persisted; review it with the returned `spec` / get_app_spec, then author it live with set_app_spec) or `{ ok: false, error, issues? }` when the design is empty (grant/design first) or the model can't produce a valid spec. This is the AI-coder scaffold: one call to go from a designed app to a valid spec, without hand-writing tabs. Role: owner or an owning-domain builder+ (same gate as set_app_spec). Next: set_app_spec to publish it live.",
+    write: false,
+  },
+  {
+    name: 'get_app_spec',
+    description:
+      "READ A DECLARATIVE APP for read-modify-write. Returns `{ spec, serveMode, describe }` for one app you can see (same visibility gate as `get_software`): `spec` is the current validated AppSpec or null (null ⇒ not a spec app / no spec yet); `serveMode` is 'spec' | 'image' | 'runtime'; `describe` is the plain-language legibility summary (`describeApp` — name, themed flag, and each tab's kind / what-it-does / data source / role gate). Use it to fetch the live spec, edit tabs/patterns/theme/functions, and write it back with `set_app_spec`. Governance: read-only, unseeable id → not_found.",
+    write: false,
+  },
   // ---- Publish helpers / lifecycle ----
   { name: 'start_preview', description: 'Start the private sandbox preview (no review).', write: true },
   { name: 'use_connection', description: 'Consume a granted Connection (no raw creds).', write: true },
@@ -159,6 +199,10 @@ export async function callPlatformMcp(
         // Intent wins over auto-detect: a declared surface never regresses to API.
         surface: asSurface(args.surface),
         purpose: str(args.purpose) || undefined,
+        // DECLARATIVE-FIRST (0.6.136): default to 'spec' (same-origin, no image pipeline).
+        // Coded is off by default and platform-admin-gated, so an explicit `kind:'code'`
+        // still requests the coded path (createApp fails-closed 403 when it is disabled).
+        kind: str(args.kind) === 'code' ? 'code' : 'spec',
       });
       break;
 
@@ -232,7 +276,54 @@ export async function callPlatformMcp(
       break;
     }
 
+    case 'set_app_spec': {
+      // AUTHOR a declarative app. Delegates to the SAME governed server fn the UI/route
+      // uses (setAppSpec), run AS the caller — its own owner/domain-builder gate + the
+      // author-time validateAppSpec gate apply. On a BLOCKING issue nothing is persisted;
+      // we surface the typed { path, reason, fix } issues so the author can self-correct.
+      const { app, issues, warnings, version } = await setAppSpec(appId, args.spec, user);
+      result =
+        issues.length > 0
+          ? { ok: false, issues, warnings }
+          : { ok: true, servedUrl: `/apps/${app.slug}`, version, warnings };
+      break;
+    }
+
+    case 'generate_app_spec': {
+      // SCAFFOLD a declarative app from its design. Delegates to the SAME governed server fn the
+      // ✨ Generate-my-app route calls (generateAppSpecForApp) — owner-or-in-domain-builder gate +
+      // the reasoning model + the structural/semantic validation loop. Returns a validated (or
+      // failed) candidate; it PERSISTS NOTHING (the author reviews then set_app_spec publishes it).
+      result = await generateAppSpecForApp(user, appId);
+      break;
+    }
+
+    case 'get_app_spec': {
+      // READ a declarative app for read-modify-write. Same visibility gate as get_software.
+      const app = await getAppForUser(appId, user);
+      result = {
+        appId: app.id,
+        slug: app.slug,
+        serveMode: serveModeOf(app),
+        spec: app.spec ?? null,
+        // Legibility summary — only meaningful when a spec is present.
+        describe: app.spec ? describeApp(app.spec) : null,
+      };
+      break;
+    }
+
     case 'commit': {
+      // FAIL-CLOSED (os-ui 0.6.133): `commit` is the CODED-path raw file write — it only
+      // makes sense for a coded (image) app. When the platform admin has coded apps OFF
+      // (the default), refuse it with a clear message; a Declarative app is authored with
+      // set_app_spec, not commit. This mirrors the createApp create-gate so neither UI nor
+      // API nor MCP can build a coded app when off.
+      if (!codedAppsEnabled()) {
+        throw withStatus(
+          new Error('Coded apps are disabled by the platform administrator. Author a Declarative (no-code) app with set_app_spec instead of committing raw code.'),
+          403,
+        );
+      }
       // DEVELOPER MODE — a raw direct file write that BYPASSES the staged Design→Build→
       // Test governance and the design-before-build gate. Role-gated to builder/admin so a
       // Creator cannot bypass the governed stages; the governed path is design/build/verify.

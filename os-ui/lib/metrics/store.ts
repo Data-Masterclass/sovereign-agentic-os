@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type Principal, getDataset, listDatasets } from '../data/store.ts';
+import { type Principal, getDataset, listDatasets, peekDatasetMeasureNames } from '../data/store.ts';
 import { type MetricRecord, metricRecord } from './governance.ts';
 import { measureMember } from './model.ts';
 import { isMetricArchived, metricFolder } from './lifecycle.ts';
@@ -125,4 +125,18 @@ export function getMetric(metricId: string, user: Principal): MetricRecord {
     throw e;
   }
   return metricRecord(d, measure, d.owner, TIER_OF[d.tier]);
+}
+
+/** UNSCOPED existence peek for the declarative AppSpec validator (0.6.116): does the metric
+ *  `datasetId.measure` exist at all? A metric IS a measure on a dataset, so this is true iff
+ *  the dataset exists and declares the measure. Non-throwing + no authz (mirrors
+ *  `peekDatasetMeta`) — the granted-check is a separate concern the validator owns. Returns
+ *  false for a malformed id (no dot) or an absent dataset. */
+export function peekMetricExists(metricId: string): boolean {
+  const lastDot = metricId.lastIndexOf('.');
+  if (lastDot <= 0 || lastDot === metricId.length - 1) return false;
+  const datasetId = metricId.slice(0, lastDot);
+  const measureName = metricId.slice(lastDot + 1);
+  const measures = peekDatasetMeasureNames(datasetId);
+  return measures !== null && measures.includes(measureName);
 }

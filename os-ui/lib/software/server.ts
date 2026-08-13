@@ -254,7 +254,7 @@ export async function pickBackend(): Promise<PipelineBackend> {
 // path in apps.ts can update it too, without an import cycle). Re-exported here
 // for existing importers.
 import { snapshotFiles, getSnapshot, hydrateSnapshot } from './snapshot.ts';
-import { ensureSectionsRegistered } from './sections-registry.ts';
+import { ensureSectionsRegistered, unregisteredPageHints } from './sections-registry.ts';
 import { compileGate, formatGateError, gateActivityNote } from './compile-gate.ts';
 export { snapshotFiles, getSnapshot, hydrateSnapshot };
 
@@ -367,6 +367,15 @@ export async function commitToApp(
   // land silently, and the same warning re-surfaces on the deploy review card.
   const datasetWarning = await ungrantedDatasetWarningForApp(app, tree);
   if (datasetWarning) step = { ...step, detail: `${step.detail}\n⚠ ${datasetWarning}` };
+
+  // SECTION-REGISTRATION HINT (0.6.115): `ensureSectionsRegistered` fail-opens, so a page
+  // that violates the depth-4 / PascalCase / one-per-folder / not-general rule is committed
+  // but INVISIBLE with no error ("builds but the feature never shows"). Surface those
+  // near-misses as an audited hint on the commit detail (sovereign-app only) — the generator
+  // stays correct; this only turns the silent drop into a visible, actionable note.
+  if (app.template === 'sovereign-app') {
+    for (const hint of unregisteredPageHints(tree)) step = { ...step, detail: `${step.detail}\n⚠ ${hint}` };
+  }
 
   // Metadata fidelity: parse the convention over the WHOLE tree on every commit.
   const manifest = parseAppManifest(tree, { name: app.name, owner: app.owner, description: app.description });

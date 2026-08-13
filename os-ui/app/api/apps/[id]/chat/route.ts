@@ -10,7 +10,7 @@ import { getSnapshot } from '@/lib/software/snapshot';
 import { diffTrees, type FileChange } from '@/lib/software/build-changeset';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
 import { cleanTurns } from '@/lib/assistant/turns';
-import { buildRunError, buildMaxIterations } from '@/lib/software/build-run';
+import { buildRunError, buildMaxIterations, honestBuildFinalText } from '@/lib/software/build-run';
 import { toolCallToLine, gateLineFromStep, committedSummaryLine, type ActivityLine } from '@/lib/software/build-activity';
 import { asChatRunMode, isReadOnlyMode, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_MODE_TOOLS, type ChatRunMode } from '@/lib/software/chat-modes';
 import { appContext } from '@/lib/software/build-brief';
@@ -138,6 +138,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           //    into the injected schema; the extra data tools only confused the build (0.6.108).
           //  • any other writable mode — undefined (full surface).
           toolNames: isReadOnlyMode(mode) ? READ_ONLY_MODE_TOOLS : mode === 'build' ? BUILD_MODE_TOOLS : undefined,
+          // BUILD-LOOP GUARD (0.6.115): a `commit` that fails the compile gate must never
+          // re-run byte-identically. Passing the write tool here makes the harness short-
+          // circuit an identical failed re-commit with a stronger corrective note (stops
+          // the observed loop at n=1). Only build writes, so only build arms the guard.
+          writeToolNames: mode === 'build' ? ['commit'] : undefined,
           // ITERATION BUDGET (0.6.110): BUILD gets a real tool-call-round budget
           // (softwareBuildMaxSteps, default 24) — a build needs many steps (orient →
           // get_dataset → several compile-checked commits). Passing nothing let runAgentic
@@ -161,6 +166,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         finalText = result.finalText;
         // Diff the committed tree after the run (build mode only ever writes).
         if (mode === 'build') changes = diffTrees(before, getSnapshot(app.id));
+        // EMPTY-CHANGESET HONESTY (0.6.115): a build turn that committed 0 files did NOT
+        // land — prefix the bubble text authoritatively so the UI can't render a green
+        // success over an empty changeset (no false "done" on a no-op build).
+        finalText = honestBuildFinalText(mode, changes.length, finalText);
         // A closing activity line summarizing the real committed changeset.
         const summary = mode === 'build' ? committedSummaryLine(app.name, changes) : null;
         if (summary) send({ type: 'activity', line: { tool: 'commit', text: summary, isError: false } });

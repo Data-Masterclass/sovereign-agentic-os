@@ -356,6 +356,12 @@ export type RunTabAgentInput = {
   escalateActModel?: string;
   /** Called once when escalation fires — the build route renders it as a labelled activity line. */
   onEscalate?: (info: { tool: string; from: string; to: string; failures: number }) => void;
+  /**
+   * WRITE tools whose FAILED calls must never re-run byte-identically (the build-loop guard).
+   * The Software Build passes `['commit']` so a compile-gate rejection is never re-committed
+   * unchanged. Unset ⇒ no guard (every other assistant is unchanged).
+   */
+  writeToolNames?: string[];
   /** Injected in tests; defaults to the live LiteLLM caller. */
   llm?: LlmCall;
 };
@@ -405,6 +411,7 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
     onPlan: input.onPlan,
     escalateActModel: input.escalateActModel,
     onEscalate: input.onEscalate,
+    writeToolNames: input.writeToolNames,
   });
 }
 

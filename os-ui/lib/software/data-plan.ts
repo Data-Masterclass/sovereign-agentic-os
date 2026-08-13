@@ -212,16 +212,24 @@ export function storiesImplyingData(
 export function unresolvedDataNeedWarning(
   epics: { stories?: GateStory[] }[],
   grantedDataCount: number,
+  serveMode?: 'spec' | 'code',
 ): string {
   if (grantedDataCount > 0) return ''; // some dataset is bound — nothing to warn.
   const needy = storiesImplyingData(epics);
   if (needy.length === 0) return '';
   const shown = needy.slice(0, 8);
   const more = needy.length - shown.length;
+  // A DECLARATIVE (spec) app is authored by non-coders and served with no model/agent — the
+  // "no schema to write against" framing is coded-path language and is wrong here. Speak in
+  // terms of tabs: read-tabs need a granted dataset; input-only tabs don't.
+  const closing = serveMode === 'spec'
+    ? 'Resolve it in Choose Context — bind an existing dataset or create one (empty, or with sample data). ' +
+      'Tabs that read data need a granted dataset; tabs that only collect input don’t.'
+    : 'Resolve it in Choose Context — bind an existing dataset or create one (empty, or with sample data) — then build. ' +
+      'Building now would fail: the model has no schema to write against.';
   return [
     `${needy.length} stor${needy.length === 1 ? 'y needs' : 'ies need'} data, but no dataset is bound to this app:`,
     shown.map((t) => `  • ${t}`).join('\n') + (more > 0 ? `\n  • …and ${more} more` : ''),
-    'Resolve it in Choose Context — bind an existing dataset or create one (empty, or with sample data) — then build. ' +
-      'Building now would fail: the model has no schema to write against.',
+    closing,
   ].join('\n');
 }

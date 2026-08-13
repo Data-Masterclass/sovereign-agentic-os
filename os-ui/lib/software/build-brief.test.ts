@@ -68,6 +68,12 @@ test('the SDK brief teaches the REAL role gate — useIdentity + roleAtLeast, no
   assert.match(OS_SDK_BRIEF, /role === 'admin'/, 'brief names the exact-match anti-pattern to avoid');
   assert.match(OS_SDK_BRIEF, /creator < builder < domain_admin < admin/, 'brief states the OS role ladder');
   assert.match(OS_SDK_BRIEF, /ADVISORY UX/i, 'client checks are advisory (hide/disable), not enforcement');
+  // 0.6.114: teach the REAL discriminated-union contract — narrow on .phase before .user,
+  // and forbid the `const { id } = useIdentity()` mistake that loops the build agent (TS2339).
+  assert.match(OS_SDK_BRIEF, /identity\.phase === 'ready'/, 'brief narrows on .phase === ready before touching .user');
+  assert.match(OS_SDK_BRIEF, /IdentityState/, 'brief names IdentityState as the union type');
+  assert.match(OS_SDK_BRIEF, /never `const \{ id \} = useIdentity\(\)`/, 'brief forbids destructuring a non-existent {id}');
+  assert.doesNotMatch(OS_SDK_BRIEF, /^\s*const \{ id \} = useIdentity\(\)/m, 'brief never shows a bare `const { id } = useIdentity()` example line');
 });
 
 test('sovereign-app adds the skeleton contract; others do not', () => {
@@ -108,4 +114,38 @@ test('always closes with design/data/docs sections (defaults when empty)', () =>
   assert.match(out, /## Design decisions\n\(none yet\)/);
   assert.match(out, /## Data descriptions\n\(none yet\)/);
   assert.match(out, /## Docs\n\(none yet\)/);
+});
+
+// ---------------------------------- Vite `src/` layout + singleton os (0.6.115) --
+
+test('OS_SDK_BRIEF: teaches the Vite `src/` layout and the slug-bound `os` singleton (A2), never a Next.js/Supabase framing (A1/A5)', () => {
+  // A2: the singleton import rule, NOT a no-arg createOsClient() page example.
+  assert.match(OS_SDK_BRIEF, /import \{ os \} from '\.\.\/\.\.\/\.\.\/core\/store'/, 'imports the singleton os');
+  assert.match(OS_SDK_BRIEF, /createOsClient\(APP_SLUG\)/, 'notes it is created once as createOsClient(APP_SLUG)');
+  assert.doesNotMatch(OS_SDK_BRIEF, /const os = createOsClient\(\)/, 'no bare no-arg createOsClient() page example');
+  // A1: Vite src/ entrypoints, not Next.js app/.
+  assert.match(OS_SDK_BRIEF, /src\/main\.tsx/, 'names src/main.tsx');
+  assert.doesNotMatch(OS_SDK_BRIEF, /App-Router/i, 'no Next.js App-Router framing');
+});
+
+test('OS_SDK_BRIEF: os.datasets.query(id,{nl}) answers across ALL granted datasets; id only for the preview (A6)', () => {
+  assert.match(OS_SDK_BRIEF, /across ALL of THIS app's granted datasets/i, 'nl asks across all granted datasets');
+});
+
+test('OS_SDK_BRIEF: auto-registration is scoped to sovereign-app with the discovery rule (A3)', () => {
+  assert.match(OS_SDK_BRIEF, /sovereign-app/, 'scopes the auto-generation to sovereign-app');
+  assert.match(OS_SDK_BRIEF, /<PascalCase>\.tsx/, 'states the PascalCase discovery rule');
+});
+
+test('appContext: no "Next.js + Supabase" stack line anywhere (A5)', () => {
+  for (const t of ['vite-os', 'sovereign-app', 'website', 'empty', 'api-service']) {
+    const out = appContext(baseApp({ template: t }), 'build', null, '');
+    assert.doesNotMatch(out, /Next\.js \+ Supabase/, `no Supabase stack line for ${t}`);
+  }
+});
+
+test('appContext(sovereign-app): the skeleton contract says sections.tsx is AUTO-GENERATED, not hand-edited (A3)', () => {
+  const out = appContext(baseApp({ template: 'sovereign-app' }), 'build', null, '');
+  assert.match(out, /auto-generates src\/template\/sections\.tsx/i, 'sections.tsx auto-generated');
+  assert.match(out, /do NOT hand-edit/i, 'do not hand-edit');
 });

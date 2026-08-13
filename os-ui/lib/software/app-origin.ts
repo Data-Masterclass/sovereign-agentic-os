@@ -105,6 +105,16 @@ export function appSlugFromRequest(req: Request): string | null {
     if (slug) return slug;
   }
 
+  // TODO(appspec-grant-scope): a DECLARATIVE app served same-origin at `/apps/<slug>` is NOT
+  // matched here — its referer path is `/apps/<slug>`, not `/api/apps/runtime/<slug>` — so its
+  // governed reads skip `checkAppGrant`. The security review deemed this ACCEPTABLE (not a
+  // cross-user leak: `checkAppGrant` only NARROWS an already-RLS-scoped read; the viewer's own
+  // canView still governs). Threading `/apps/<slug>` here would add the app-grant intersection as
+  // defense-in-depth, BUT this function is a shared primitive every governed read route attributes
+  // through, and a spec app only ever reads its granted artifacts anyway — so the change is
+  // cross-cutting and low-value. Deferred deliberately: prefer not to alter a security primitive's
+  // matching across all routes in this wave. Revisit if `/apps/<slug>` ever reads UNgranted ids.
+
   return null;
 }
 

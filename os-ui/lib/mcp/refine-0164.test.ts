@@ -276,11 +276,14 @@ test('define_metric: a "number" ratio with no numerator/denominator is a typed b
   assert.match(e.reason, /ratio|numerator|denominator/i);
 });
 
-test('define_metric: a plain measure still yields exactly {name,type,sql} (rich fields absent — back-compat)', async () => {
+test('define_metric: a plain measure yields {name,label,type,sql} — label auto-set when human name differs from slug', async () => {
   resetAll();
   const dsId = await goldOrders();
   const m = payload<{ measure: Record<string, unknown> }>(
     await call(builder, 'define_metric', { datasetId: dsId, name: 'Revenue', aggregation: 'sum', column: 'net_amount' }),
   );
-  assert.deepEqual(Object.keys(m.measure).sort(), ['name', 'sql', 'type']);
+  // "Revenue" → slug "revenue": they differ, so label is set so tiles show the human name.
+  assert.deepEqual(Object.keys(m.measure).sort(), ['label', 'name', 'sql', 'type']);
+  assert.equal(m.measure.label, 'Revenue');
+  assert.equal(m.measure.name, 'revenue');
 });

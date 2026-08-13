@@ -75,6 +75,28 @@ test('WAVE A registry: every new tool is registered, exampled, and R/W-classifie
   for (const n of [...NEW_WRITE, ...NEW_READ]) assert.ok(avail.has(n), `${n} available to a creator`);
 });
 
+test('list_capabilities (0.6.114): every advertised name is a REGISTERED, callable tool + carries the reconnect note', async () => {
+  const caps = payload<{
+    available: { name: string }[];
+    gated: { name: string }[];
+    note?: string;
+  }>(await call(creator, 'list_capabilities'));
+  const registered = new Set(ALL_MCP_TOOLS.map((t) => t.name));
+
+  // The list may NOT advertise a tool that isn't actually registered (no phantom names).
+  for (const r of [...caps.available, ...caps.gated]) {
+    assert.ok(registered.has(r.name), `${r.name} is advertised but NOT a registered tool`);
+  }
+  // design_software / build_software ARE registered + callable — the staleness the note explains.
+  const availNames = new Set(caps.available.map((t) => t.name));
+  for (const n of ['design_software', 'build_software']) {
+    assert.ok(registered.has(n), `${n} must be a registered MCP tool`);
+    assert.ok(availNames.has(n), `${n} is available to a creator`);
+  }
+  // The honest client-staleness note is present (a manifest predating a tool ⇒ reconnect).
+  assert.match(caps.note ?? '', /reconnect the MCP server/i, 'list_capabilities carries the reconnect-to-refresh note');
+});
+
 test('WAVE A: query_metric accepts NO SQL by construction (semantic layer only)', () => {
   const t = ALL_MCP_TOOLS.find((x) => x.name === 'query_metric')!;
   assert.ok(!('sql' in t.inputSchema.properties), 'query_metric has no sql parameter — a raw statement is impossible by construction');
