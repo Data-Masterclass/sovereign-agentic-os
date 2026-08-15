@@ -31,6 +31,7 @@ const {
   listAppVersions,
   restoreAppVersion,
   getAppByIdInternal,
+  getAppForUser,
   serveModeOf,
 } = await import('./apps.ts');
 import type { Principal } from '../data/store.ts';
@@ -86,6 +87,23 @@ test('saveAppDraft: an INCOMPLETE draft persists without the serve gate; app sta
   // The tiles include an app that has only a draft (never hidden).
   const listed = await listAppsForUser(user);
   assert.ok(listed.some((a) => a.id === app.id), 'a draft-only app shows in the tiles');
+});
+
+test('saveAppDraft → getAppForUser: the autosaved draft ROUND-TRIPS through the READ path (the UI fetch)', async () => {
+  // The data-loss regression (os-ui 0.6.138): the composer re-hydrates from the `draftSpec`
+  // returned by GET /api/apps/[id] (→ getAppForUser). If that read path dropped the draft, a
+  // full reload / re-open would lose the work. This asserts the draft survives the SAME read
+  // door the app-detail page uses — so remounting the composer sees the autosaved work.
+  __resetStore();
+  __resetAppsCache();
+  const app = await createApp(user, { name: 'Roundtrip App', domain: 'sales', kind: 'spec' });
+
+  await saveAppDraft(app.id, { version: 2, name: 'Roundtrip App', description: 'wip', tabs: [] }, user);
+
+  const read = await getAppForUser(app.id, user);
+  assert.ok(read.draftSpec, 'getAppForUser returns the autosaved draftSpec');
+  assert.equal(read.draftSpec!.description, 'wip', 'the draft content round-trips intact');
+  assert.equal(read.spec, undefined, 'the live spec is untouched by a draft save');
 });
 
 test('publishApp: an INVALID draft is rejected — nothing goes live', async () => {

@@ -140,6 +140,8 @@ export type SoftwareApp = {
 type Connection = { id: string; name: string; principal: string; visibility: Visibility; tools: Tool[] } | null;
 
 const MODE_KEY = 'software.viewMode';
+/** The Build-stage Simple⇄Developer split for a declarative (spec) app — its own persisted key. */
+const SPEC_BUILD_MODE_KEY = 'software.specBuildMode';
 /** A stable empty selection set (Design passes this — it has no build-select). */
 const EMPTY_SET: ReadonlySet<string> = new Set<string>();
 /** The context kinds the Software Define stage offers. */
@@ -211,6 +213,11 @@ export default function SoftwareBuilder({
   const [toolOut, setToolOut] = useState('');
   const [toolNote, setToolNote] = useState('');
   const [confirmDemote, setConfirmDemote] = useState(false);
+
+  // A DECLARATIVE (spec) app has no code files, so it has no top-level code/Developer
+  // view — only the staged flow (Define→Design→Context→Build→Test&Publish). Used to
+  // hide the top-level BuilderModeToggle + DeveloperSurface for spec apps (os-ui 0.6.139).
+  const isSpecApp = app.serveMode === 'spec';
 
   // Simple ⇄ Developer view mode (persisted per user, defaults to Simple).
   const [viewMode, setViewMode] = useState<ViewMode>('simple');
@@ -600,11 +607,18 @@ export default function SoftwareBuilder({
           {app.mode === 'offline' ? <span className="badge muted">git not ready</span> : null}
         </div>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <BuilderModeToggle
-            mode={viewMode}
-            onChange={setModePersisted}
-            developerHint="The raw app files + build/deploy console"
-          />
+          {/* The top-level Simple⇄Developer toggle drives the RAW CODE-FILES view
+              (DeveloperSurface). A declarative (spec) app has no code files, so that
+              view is meaningless and confusing — for spec apps the ONLY "Developer"
+              surface is the Build-stage manual composer. Hide the top-level toggle
+              (and its code view below) for spec apps; keep it for coded apps. */}
+          {!isSpecApp ? (
+            <BuilderModeToggle
+              mode={viewMode}
+              onChange={setModePersisted}
+              developerHint="The raw app files + build/deploy console"
+            />
+          ) : null}
           {canEdit ? (
             <button
               className="btn sm"
@@ -632,12 +646,21 @@ export default function SoftwareBuilder({
               compact
             />
           ) : null}
+          {/* When the app is PUBLISHED (a live spec exists), always offer an obvious way
+              to open the running app — no matter which stage you're on (os-ui 0.6.139). */}
+          {isSpecApp && app.spec ? (
+            <a className="btn sm" href={`/apps/${app.slug}`} target="_blank" rel="noreferrer" title="Open the running app in a new tab">
+              Open app ↗
+            </a>
+          ) : null}
           <Link className="sw-quiet-link" href="/software">All software</Link>
         </div>
       </div>
       {app.description ? <p className="sw-app-lead">{app.description}</p> : null}
 
-      {viewMode === 'developer' ? (
+      {/* Coded apps only: the top-level Developer view is the raw code-files surface.
+          Spec apps never reach it (the toggle is hidden) and always render the staged flow. */}
+      {!isSpecApp && viewMode === 'developer' ? (
         <DeveloperSurface app={app} canEditCode={canEditCode} deployMsg={deployMsg} toolOut={toolOut} msg={msg} />
       ) : (
         <StageShell
@@ -646,6 +669,10 @@ export default function SoftwareBuilder({
           ctx={ctx}
           onState={setStage}
           ariaLabel="Software stages"
+          // A declarative (spec) Build stage owns its OWN "Test & Publish →" affordance
+          // (SpecBuildStage), so suppress the shell footer's duplicate next-button there
+          // (os-ui 0.6.138 — the double Test & Publish button). Coded apps keep the footer.
+          hideNextFor={app.serveMode === 'spec' ? ['build'] : undefined}
         >
           {stage.current === 'define' ? (
             <DefineStage
@@ -1504,6 +1531,20 @@ function SpecBuildStage({
 }) {
   const [names, setNames] = useState<{ data: Record<string, string>; metrics: Record<string, string> }>({ data: {}, metrics: {} });
 
+  // Build-stage Simple ⇄ Developer split (os-ui 0.6.138, Lovable-style). SIMPLE (default) shows only
+  // the live preview + the assistant — the user builds by talking. DEVELOPER shows the full manual
+  // composer (tabs + config + advanced). Persisted per user under its own key so it's remembered.
+  const [buildMode, setBuildMode] = useState<ViewMode>('simple');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(SPEC_BUILD_MODE_KEY);
+    if (saved === 'simple' || saved === 'developer') setBuildMode(saved);
+  }, []);
+  const setBuildModePersisted = (m: ViewMode) => {
+    setBuildMode(m);
+    if (typeof window !== 'undefined') window.localStorage.setItem(SPEC_BUILD_MODE_KEY, m);
+  };
+
   useEffect(() => {
     let live = true;
     const load = async (kind: 'data' | 'metrics') => {
@@ -1544,6 +1585,22 @@ function SpecBuildStage({
 
   return (
     <div>
+      {/* Simple ⇄ Developer split (Lovable-style). Simple = preview + assistant; Developer = the full
+          manual composer. Autosave is identical in both. */}
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <p className="hint" style={{ margin: 0 }}>
+          {buildMode === 'simple'
+            ? 'Build by talking to the assistant — the preview updates live. Switch to Developer to edit tabs by hand.'
+            : 'Edit every tab by hand — patterns, data mapping and advanced settings.'}
+        </p>
+        <BuilderModeToggle
+          mode={buildMode}
+          onChange={setBuildModePersisted}
+          simpleHint="Preview + assistant only — build by talking"
+          developerHint="The full manual composer — edit tabs by hand"
+          ariaLabel="Build App view mode"
+        />
+      </div>
       {noData ? (
         <div className="grant-block" style={{ marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <p className="hint" style={{ margin: 0 }}>
@@ -1555,7 +1612,7 @@ function SpecBuildStage({
           ) : null}
         </div>
       ) : null}
-      <AppSpecComposer app={composerApp} userRole={user.role} onSaved={onSaved} onGoContext={onGoContext} />
+      <AppSpecComposer app={composerApp} userRole={user.role} onSaved={onSaved} onGoContext={onGoContext} mode={buildMode} />
       {/* No Save button — work autosaves as a draft. This advances to Test & Publish, the go-live gate. */}
       {onGoPublish ? (
         <div className="row" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
@@ -1638,8 +1695,10 @@ function SpecPublishStage({
             <span className="hint" style={{ margin: 0 }}>Only the app’s owner or a builder can publish.</span>
           )}
           {hasLive ? (
-            <a className="sw-quiet-link" href={`/apps/${app.slug}`} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
-              View live app ↗
+            // Prominent primary way to open the RUNNING app — not a tiny quiet link
+            // (os-ui 0.6.139). This is the payoff of publishing, so it reads clearly.
+            <a className="btn" href={`/apps/${app.slug}`} target="_blank" rel="noreferrer">
+              Open the live app ↗
             </a>
           ) : (
             <span className="hint" style={{ margin: 0 }}>Not published yet.</span>

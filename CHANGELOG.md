@@ -13,6 +13,70 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.6.140] — 2026-08-14 — Remove the in-app tool overlay entirely (embedded tools open in their own tab)
+
+### Fixed
+- **A black full-screen overlay could cover the whole OS chrome (including the left nav) with no reliable way out.** Root cause: `ToolWindowProvider` restored the embedded-tool overlay (`.toolwin`, `position:fixed; inset:0; z-index:1000; #0c0b0d`) from the `?tool=` URL param on **every mount**, so a stale param (or a hung/focus-grabbing embedded iframe that swallowed the dismiss keys) re-opened the full-screen overlay on each reload and trapped the operator. An overlay that can trap the operator is unacceptable, so the in-app tool overlay is **removed entirely** — embedded tools (Superset, Langfuse, MLflow, …) now open in their **own browser tab** (`window.open('/tools/<key>/…')`), which can never cover or block the OS. `openTool` keeps the same signature (every "Open <tool>" button still works); on load any stale `?tool=` param is stripped. The old `ToolWindow` overlay component is no longer rendered.
+
+## [os-ui 0.6.139] — 2026-08-14 — Software: no stuck full-screen overlay + drop dead code-view for spec apps + tile Open/Edit + prominent View-live
+
+- **ROBUSTNESS — a stuck full-screen BLACK overlay could trap the whole UI (incl. the left nav) with
+  no way out.** Symptom (platform owner, live): "the menu on the left is blacked out and I cannot see
+  or click anything." Root cause: the embedded-tool overlay `.toolwin` (`position: fixed; inset: 0;
+  z-index: 1000; background: #0c0b0d`) is a near-black surface covering the entire app, and
+  `ToolWindowProvider` RESTORES it from the `?tool=` URL param on every mount — so a stale param, or an
+  embedded `/tools/<key>` iframe that hangs/fails or grabs keyboard focus, leaves the black overlay up
+  with Escape swallowed by the focused iframe and NO backdrop-click dismiss (only a small × in the top
+  bar). Fixes: `ToolWindow` now closes on a **backdrop click** on the black chrome AND on **Escape via
+  a capture-phase listener** (so a focused iframe can't swallow the key). As a GLOBAL SAFETY NET, a new
+  pure helper `lib/core/overlay-dismiss.ts` (`isEscapeKey` / `isBackdropClick` / capture-phase
+  `onEscape`) is shared by the Software-reachable overlays that were missing a dismiss path:
+  `FolderPickerModal` (the folder Move picker) and `GuardedConfirm` now both close on Escape as well as
+  backdrop-click. Every full-screen overlay reachable from Software is now dismissible by BOTH Escape
+  and a backdrop click — it is no longer possible to be left with a blacked-out, unclickable screen and
+  no escape. New unit tests cover the helper (SSR-safe, Escape-only, backdrop-only, no phantom dismiss).
+
+- **Declarative (spec) apps no longer show the dead "Developer" code view.** A `serveMode: 'spec'` app
+  has NO code files, so the top-level Simple⇄Developer toggle (which drives the raw code-files
+  `DeveloperSurface`) was meaningless — toggling it showed an empty old code view. The top-level
+  `BuilderModeToggle` and `DeveloperSurface` are now hidden for spec apps; a spec app always renders the
+  staged flow (Define→Design→Context→Build→Test&Publish). "Developer" for a spec app is the Build-stage
+  manual composer (unchanged). Coded apps keep the top-level code view.
+
+- **Software tiles now have TWO clear actions: "Open App" and "Edit App."** Open App → the SERVED app at
+  `/apps/<slug>` (its own page), enabled only when the app is actually served (a published live spec, or
+  a live deploy); a draft-only app shows Open disabled with a "Publish to open" hint. Edit App → the
+  builder. Lifecycle actions (Move / Archive / Delete) unchanged.
+
+- **The "View live app" link is now prominent.** In the spec app's Test & Publish stage the tiny quiet
+  link became a primary "Open the live app ↗" button (shown once a published spec exists), and the Build
+  App header now always surfaces an "Open app ↗" button whenever the app is published — so there's
+  always an obvious way to open the running app.
+
+## [os-ui 0.6.138] — 2026-08-14 — Build App: fix autosave-draft data-loss + Simple/Developer (Lovable-style) split + de-dupe Test & Publish
+
+- **CRITICAL data-loss fix — the autosaved draft no longer disappears.** Symptom: build some tabs →
+  press Test & Publish → go back to Build and "it all disappears and starts from scratch." Root cause
+  was purely client-side: `saveAppDraft` persists the draft server-side (proven, and `getAppForUser`
+  returns it — no stripping), but (a) the composer's `state` is initialised ONCE from `app.draftSpec`
+  on mount, (b) autosave never refreshed the in-memory `app`, and (c) stage navigation
+  Build→Test&Publish UNMOUNTS `AppSpecComposer`. So returning re-mounted the composer and re-hydrated
+  from the STALE `app.draftSpec` (undefined for a fresh app) → empty. Fix (`AppSpecComposer.tsx`):
+  after each successful autosave, call `onSaved` (→ the page reload) so `app.draftSpec` matches what
+  was saved; add a FLUSH-ON-UNMOUNT (keepalive PUT) so edits within the last debounce window are sent
+  before the composer unmounts; a remount then hydrates from the fresh server draft. The draft now
+  survives Build↔Test&Publish nav, a full page reload, and re-opening from the tiles. Regression test
+  in `lib/software/publish-app.test.ts` asserts the draft round-trips through the READ path
+  (`saveAppDraft` → `getAppForUser`) the UI fetch uses.
+- **Simple ⇄ Developer split for Build App (Lovable-style).** A per-user, localStorage-persisted
+  toggle (reusing the OS-wide `BuilderModeToggle`) in `SpecBuildStage`, defaulting to **Simple**:
+  Simple shows only the live app **preview** + the **assistant** (build by talking); **Developer**
+  shows the full manual composer (tab list, pattern config, advanced theme/functions). Autosave,
+  auto-generate-on-first-load and assistant-apply work identically in both.
+- **De-duped Test & Publish.** The declarative Build stage showed the "Test & Publish →" advance
+  affordance TWICE — `SpecBuildStage`'s own button plus `StageShell`'s standard footer next-button.
+  `SoftwareBuilder` now passes `hideNextFor={['build']}` for spec apps, leaving exactly one.
+
 ## [os-ui 0.6.137] — 2026-08-13 — Docs: guide + tutorials rewritten for the declarative Software model
 
 - **End-user guide (`docs/Sovereign-Agentic-OS-Guide.md`).** Rewrote the Software narrative for the

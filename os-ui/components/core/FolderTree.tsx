@@ -3,7 +3,8 @@
  */
 'use client';
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { onEscape, isBackdropClick } from '@/lib/core/overlay-dismiss';
 import {
   buildTree,
   triState,
@@ -814,6 +815,10 @@ export function FolderPickerModal({
   onCreate?: (scope: RootScope, path: string) => Promise<void>;
   title?: string;
 }) {
+  // Escape dismisses (backdrop-click + × already do). Wired via the shared safety
+  // net so the picker can never trap the user (os-ui 0.6.139). Hook runs every
+  // render; it no-ops while closed.
+  useEffect(() => (open ? onEscape(onCancel) : undefined), [open, onCancel]);
   if (!open) return null;
   void tab; // consumed by the parent; kept in props for documentation clarity
   return (
@@ -826,7 +831,7 @@ export function FolderPickerModal({
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         background: 'rgba(0,0,0,0.45)',
       }}
-      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+      onClick={(e) => { if (isBackdropClick(e.target, e.currentTarget)) onCancel(); }}
     >
       <div
         className="card"

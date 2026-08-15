@@ -4,6 +4,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { onEscape, isBackdropClick } from '@/lib/core/overlay-dismiss';
 
 /**
  * Full-bleed overlay that frames one embedded tool. The tool loads same-origin
@@ -76,17 +77,16 @@ export default function ToolWindow({
     return undefined;
   }, [tool]);
 
-  // Escape closes; body scroll locks while the overlay is up.
+  // Escape closes; body scroll locks while the overlay is up. Uses the shared
+  // CAPTURE-phase Escape (via onEscape) so a focused same-origin iframe inside the
+  // frame can't swallow the key and trap the user behind the black overlay.
   useEffect(() => {
     if (!active) return undefined;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
+    const detach = onEscape(onClose);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      document.removeEventListener('keydown', onKey);
+      detach();
       document.body.style.overflow = prevOverflow;
     };
   }, [active, onClose]);
@@ -96,8 +96,20 @@ export default function ToolWindow({
   const ownTab = info?.embed === 'own-tab';
 
   return (
-    <div className={`toolwin${visible ? ' open' : ''}`} role="dialog" aria-modal="true" aria-label={active.title}>
-      <div className="toolwin-bar topbar">
+    <div
+      className={`toolwin${visible ? ' open' : ''}`}
+      role="dialog"
+      aria-modal="true"
+      aria-label={active.title}
+      // Clicking the black chrome (the top bar area outside the frame) dismisses —
+      // a second escape hatch alongside Escape + the × so the overlay can NEVER
+      // trap the user behind a blacked-out screen with no way out.
+      onMouseDown={(e) => { if (isBackdropClick(e.target, e.currentTarget)) onClose(); }}
+    >
+      <div
+        className="toolwin-bar topbar"
+        onMouseDown={(e) => { if (isBackdropClick(e.target, e.currentTarget)) onClose(); }}
+      >
         <div>
           <h1>{active.title}</h1>
           <div className="crumb">

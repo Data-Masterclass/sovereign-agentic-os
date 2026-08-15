@@ -243,13 +243,22 @@ export default function AppSpecComposer({
   userRole,
   onSaved,
   onGoContext,
+  mode = 'developer',
 }: {
   app: ComposerApp;
   userRole: Role;
   onSaved?: () => void;
   /** Jump to Choose Context — surfaced inline where a tab needs a dataset but none is granted. */
   onGoContext?: () => void;
+  /**
+   * Simple ⇄ Developer (os-ui 0.6.138, Lovable-style). In SIMPLE the user builds by TALKING to
+   * the assistant: only the live preview + assistant show (no tab list / config / advanced). In
+   * DEVELOPER the full manual composer shows. Autosave, generate + assistant-apply work identically
+   * in both. Defaults to 'developer' so any other caller keeps the full editor.
+   */
+  mode?: 'simple' | 'developer';
 }) {
+  const developer = mode === 'developer';
   // Load the DRAFT (autosaved candidate) if present, else the LIVE spec (draft == live), else a
   // fresh starter (os-ui 0.6.135 — the DRAFT/LIVE model).
   const [state, setState] = useState<ComposeState>(() =>
@@ -283,6 +292,14 @@ export default function AppSpecComposer({
 
   // Persist the current working spec to the server draft door (best-effort autosave). Structural
   // partials save fine — the draft door has no serve gate; only Publish validates.
+  //
+  // DATA-LOSS FIX (os-ui 0.6.138): after a successful save we refresh the in-memory `app` via
+  // `onSaved` (→ the page's reload) so `app.draftSpec` matches what was just autosaved. Without
+  // this, navigating Build↔Test&Publish UNMOUNTS this composer and remounting re-hydrates from the
+  // STALE `app.draftSpec` (undefined for a fresh app) → the work vanished from the UI even though
+  // it was safe on the server. The composer's `state` is the source of truth once mounted (the
+  // `useState` initializer runs on mount only), so refreshing `app` here never resets `state` or
+  // loses the cursor; it only makes a later REMOUNT hydrate from the fresh server draft.
   const persistDraft = useCallback(
     async (composeState: ComposeState) => {
       setSaveState('saving');
@@ -293,11 +310,12 @@ export default function AppSpecComposer({
           body: JSON.stringify({ draft: composeSpec(composeState) }),
         });
         setSaveState(res.ok ? 'saved' : 'error');
+        if (res.ok) onSaved?.();
       } catch {
         setSaveState('error');
       }
     },
-    [app.id],
+    [app.id, onSaved],
   );
 
   // Mark hydration complete on mount so the debounced writer below can start.
@@ -305,15 +323,46 @@ export default function AppSpecComposer({
     setDraftReady(true);
   }, []);
 
+  // The latest edited state + whether a debounced save is still pending — read by the
+  // unmount flush below so a fast "build tabs → press Test & Publish" (which UNMOUNTS this
+  // composer before the 800ms debounce fires) never loses those last edits (os-ui 0.6.138).
+  const pendingRef = useRef<{ state: ComposeState; dirty: boolean }>({ state, dirty: false });
+  pendingRef.current.state = state;
+
   // Debounced autosave: ~800ms after the last edit, flush the draft to the server.
   useEffect(() => {
     if (!draftReady) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => void persistDraft(state), 800);
+    pendingRef.current.dirty = true;
+    saveTimer.current = setTimeout(() => {
+      pendingRef.current.dirty = false;
+      void persistDraft(state);
+    }, 800);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [draftReady, state, persistDraft]);
+
+  // FLUSH-ON-UNMOUNT (os-ui 0.6.138): if the composer unmounts (stage navigation Build→Test&
+  // Publish, or a route change) with a save still pending, send it now — best-effort, keepalive
+  // so it survives a page unload too. This closes the "edited within the last 800ms, then left"
+  // gap that the debounce cleanup would otherwise drop.
+  useEffect(() => {
+    return () => {
+      if (!pendingRef.current.dirty) return;
+      try {
+        void fetch(`/api/apps/${app.id}/spec/draft`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ draft: composeSpec(pendingRef.current.state) }),
+          keepalive: true,
+        });
+      } catch {
+        /* best-effort — nothing to surface on the way out */
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.id]);
 
   // Reset the composer to its base (live spec / starter) — used by Start-from-blank / Discard.
   const discardDraft = useCallback(() => {
@@ -433,10 +482,11 @@ export default function AppSpecComposer({
     <div className="sc-appspec">
       <div className="sc-appspec-head">
         <div>
-          <div className="section-title">Compose your app</div>
+          <div className="section-title">{developer ? 'Compose your app' : 'Build with the assistant'}</div>
           <p className="hint" style={{ marginTop: 2 }}>
-            Build it by picking patterns and mapping your governed data — no code. Your work autosaves
-            as a draft; use <strong>Test &amp; Publish</strong> to go live at <Link className="sw-quiet-link" href={`/apps/${app.slug}`}>/apps/{app.slug}</Link>.
+            {developer
+              ? <>Build it by picking patterns and mapping your governed data — no code. Your work autosaves as a draft; use <strong>Test &amp; Publish</strong> to go live at <Link className="sw-quiet-link" href={`/apps/${app.slug}`}>/apps/{app.slug}</Link>.</>
+              : <>Describe what you want and the assistant builds it — the live preview updates as you go. Your work autosaves; use <strong>Test &amp; Publish</strong> to go live at <Link className="sw-quiet-link" href={`/apps/${app.slug}`}>/apps/{app.slug}</Link>. Switch to <strong>Developer</strong> to edit tabs by hand.</>}
           </p>
         </div>
         {/* Autosave indicator — NOT a button. There is no Save button (0.6.135); every change
@@ -498,6 +548,10 @@ export default function AppSpecComposer({
         </div>
       ) : null}
 
+      {/* DEVELOPER-ONLY manual surface (os-ui 0.6.138) — draft controls, app-name field and the tab
+          grid. In SIMPLE mode these are hidden; the user builds by talking to the assistant below. */}
+      {developer ? (
+      <>
       {/* Draft controls — grouped (0.6.134/0.6.135): "Reset based on Design" + "Start from blank"
           hard-overwrite the working draft (both confirm-gated); "Discard draft" resets to the last
           published version. All autosave; nothing goes live until Publish. Small buttons, together. */}
@@ -629,6 +683,8 @@ export default function AppSpecComposer({
           ) : null}
         </section>
       </div>
+      </>
+      ) : null}
 
       {/* BELOW — live preview + legibility, full width under the configuration. */}
       <section className="sc-appspec-preview">
@@ -662,8 +718,9 @@ export default function AppSpecComposer({
         />
       </section>
 
-      {/* ADVANCED — builder-gated: app theme CSS + the app-wide governed functions[]. */}
-      {canAdvanced ? (
+      {/* ADVANCED — builder-gated: app theme CSS + the app-wide governed functions[]. Developer-only
+          (os-ui 0.6.138) — hidden in Simple mode alongside the rest of the manual surface. */}
+      {developer && canAdvanced ? (
         <AdvancedSettings
           state={state}
           schemas={schemas}

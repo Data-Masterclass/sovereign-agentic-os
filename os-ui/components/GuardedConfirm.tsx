@@ -3,7 +3,8 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { onEscape, isBackdropClick } from '@/lib/core/overlay-dismiss';
 
 /**
  * Typed-confirmation modal for guarded, destructive Platform-Admin actions
@@ -32,10 +33,14 @@ export default function GuardedConfirm({
   onCancel: () => void;
 }) {
   const [typed, setTyped] = useState('');
+  // Escape dismisses (backdrop-click + Cancel already do) — shared safety net so
+  // the guarded modal can never trap the user (os-ui 0.6.139). No-ops while closed
+  // or busy so an in-flight guarded action isn't abandoned mid-request.
+  useEffect(() => (open && !busy ? onEscape(onCancel) : undefined), [open, busy, onCancel]);
   if (!open) return null;
   const ok = typed.trim().toLowerCase().replace(/\s+/g, ' ') === phrase;
   return (
-    <div className="pa-confirm-backdrop" onClick={onCancel}>
+    <div className="pa-confirm-backdrop" onClick={(e) => { if (isBackdropClick(e.target, e.currentTarget) && !busy) onCancel(); }}>
       <div className="pa-confirm" onClick={(e) => e.stopPropagation()}>
         <h3>{title}</h3>
         <div className="muted" style={{ fontSize: 13 }}>{detail}</div>

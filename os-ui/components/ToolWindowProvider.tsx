@@ -3,16 +3,19 @@
  */
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import ToolWindow, { type OpenToolTarget } from '@/components/ToolWindow';
+import { createContext, useCallback, useContext, useEffect, useMemo } from 'react';
 import { getUrlParam, patchUrl } from '@/lib/core/url-params';
 
 /**
- * App-wide host for the embedded-tool overlay. Mounted once in the root layout
- * so any page/component can open a tool same-origin without threading props:
+ * App-wide host for embedded tools (Superset, Langfuse, MLflow, …).
  *
- *   const { openTool } = useToolWindow();
- *   <button onClick={() => openTool('mlflow', 'MLflow')}>Open MLflow</button>
+ * os-ui 0.6.140 — the in-app FULL-SCREEN tool OVERLAY was REMOVED entirely. It could leave a
+ * black screen over the whole OS chrome (including the left nav) with no reliable way out — a
+ * stale `?tool=` URL param restored it on every reload, and a hung/focus-grabbing embed could
+ * swallow the dismiss keys ("the menu is blacked out and I can't click anything"). An overlay
+ * that can trap the operator is never acceptable. Tools now open in their OWN BROWSER TAB, which
+ * can never cover the OS. `openTool` keeps the same signature so every "Open <tool>" button keeps
+ * working; `closeTool` is a no-op (there is nothing to close).
  */
 type ToolWindowCtx = {
   openTool: (key: string, title: string, path?: string) => void;
@@ -22,39 +25,25 @@ type ToolWindowCtx = {
 const Ctx = createContext<ToolWindowCtx | null>(null);
 
 export function ToolWindowProvider({ children }: { children: React.ReactNode }) {
-  const [tool, setTool] = useState<OpenToolTarget>(null);
-
-  // Persist the open tool in the URL so a reload restores it and it's shareable.
-  // We push on open (so browser Back closes it) and mirror history navigation.
-  const openTool = useCallback((key: string, title: string, path?: string) => {
-    setTool({ key, title, path });
-    patchUrl({ tool: key, toolTitle: title, toolPath: path ?? null }, { push: true });
+  // Open the same-origin tool proxy (`/tools/<key>/…`, served by os-ui) in a NEW TAB.
+  const openTool = useCallback((key: string, _title: string, path?: string) => {
+    if (typeof window === 'undefined') return;
+    const url = `/tools/${encodeURIComponent(key)}/${path ? path.replace(/^\/+/, '') : ''}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
   }, []);
-  const closeTool = useCallback(() => {
-    setTool(null);
-    patchUrl({ tool: null, toolTitle: null, toolPath: null });
-  }, []);
+  const closeTool = useCallback(() => {}, []);
 
-  // Restore on mount and follow back/forward.
+  // One-time cleanup: strip any stale `?tool=` params left in the address bar / a bookmark so an
+  // old URL can't linger. Nothing restores an overlay on load anymore — there is no overlay.
   useEffect(() => {
-    const sync = () => {
-      const key = getUrlParam('tool');
-      if (key) setTool({ key, title: getUrlParam('toolTitle') ?? key, path: getUrlParam('toolPath') ?? undefined });
-      else setTool(null);
-    };
-    sync();
-    window.addEventListener('popstate', sync);
-    return () => window.removeEventListener('popstate', sync);
+    if (getUrlParam('tool') || getUrlParam('toolTitle') || getUrlParam('toolPath')) {
+      patchUrl({ tool: null, toolTitle: null, toolPath: null });
+    }
   }, []);
 
   const value = useMemo(() => ({ openTool, closeTool }), [openTool, closeTool]);
 
-  return (
-    <Ctx.Provider value={value}>
-      {children}
-      <ToolWindow tool={tool} onClose={closeTool} />
-    </Ctx.Provider>
-  );
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useToolWindow(): ToolWindowCtx {

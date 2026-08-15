@@ -55,6 +55,16 @@ function isDraftOnly(a: AppItem): boolean {
   return a.serveMode === 'spec' && !a.spec && (!!a.draftSpec || a.deploy.releases === 0);
 }
 
+/**
+ * Is the app actually SERVED, so "Open App" can go straight to /apps/<slug>?
+ * A declarative (spec) app is served once it has a published LIVE `spec`; a coded
+ * app is served once its deploy is live. A draft-only app isn't served yet, so
+ * Open is disabled with a "Publish to open" hint (os-ui 0.6.139).
+ */
+function isOpenable(a: AppItem): boolean {
+  return a.serveMode === 'spec' ? !!a.spec : a.deploy.state === 'live';
+}
+
 /** The folder root an app lives in: a Personal app folds into the owner's PERSONAL
  *  tree; a Shared/Certified app folds into the owning DOMAIN's tree (parity with Data). */
 function rootOf(a: AppItem): FolderRoot {
@@ -331,9 +341,29 @@ function SoftwareInner() {
           <div className="sw-app-foot">
             <span className="sw-app-ver">{versionLabel(a.deploy.releases)}</span>
             {a.mode === 'offline' ? <span className="badge muted">git not ready</span> : null}
-            <span className="sw-app-open">Open →</span>
           </div>
         </Link>
+        {/* TWO explicit actions on every tile (os-ui 0.6.139): Open App → the SERVED app
+            at /apps/<slug> (its own page), Edit App → the builder. Open is enabled only when
+            the app is actually served (a published live spec / live deploy); a draft-only app
+            shows a disabled Open with a "Publish to open" hint. */}
+        {!a.archived ? (
+          <div className="sw-app-open-actions" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {isOpenable(a) ? (
+              <a className="btn sm" href={`/apps/${a.slug}`} target="_blank" rel="noreferrer" title="Open the running app in a new tab">
+                Open App ↗
+              </a>
+            ) : (
+              <button type="button" className="btn sm" disabled title="Publish this app first — a draft isn't served yet">
+                Open App
+              </button>
+            )}
+            <Link className="btn ghost sm" href={`/software/${a.id}`} title="Open the builder to edit this app">
+              Edit App
+            </Link>
+            {!isOpenable(a) ? <span className="sw-app-open-hint hint" style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Publish to open</span> : null}
+          </div>
+        ) : null}
         {canManage(a) ? (
           <div className="sw-app-actions" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             {!a.archived ? (
