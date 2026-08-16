@@ -12,21 +12,6 @@
 {{- $t := .Values.trino }}
 {{- $pl := .Values.polaris }}
 {{- $ice := $t.catalog.iceberg }}
-{{- if eq .Values.global.profile "local" }}
-apiVersion: v1
-kind: Secret
-metadata:
-  name: trino-catalog-credentials
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "soa.labels" . | nindent 4 }}
-    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
-type: Opaque
-stringData:
-  # Polaris OAuth2 client (clientId:clientSecret) — local dev root principal.
-  POLARIS_OAUTH_CREDENTIAL: "{{ $pl.local.rootClientId }}:{{ $pl.local.rootClientSecret }}"
----
-{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
