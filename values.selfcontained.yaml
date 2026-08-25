@@ -33,5 +33,9 @@ openmetadata:
 # path then needs the node scaled up.
 trino:
   enabled: false        # tiny-node override; set true (or size the node) for the governed path
+# Cube's readiness probe is a live Trino connection check — with trino off it can
+# never pass and the pod CrashLoopBackOffs forever. Off alongside trino.
+cube:
+  enabled: false
 spark:
   enabled: false
