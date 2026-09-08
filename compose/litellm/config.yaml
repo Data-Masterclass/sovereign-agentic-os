@@ -1,0 +1,69 @@
+# Layer A (docker compose) LiteLLM proxy config.
+#
+# Copied from charts/sovereign-agentic-os/values.yaml:887-962
+# (litellm.proxy_config: model_list, router_settings, litellm_settings,
+# general_settings, mcp_servers) verbatim, with exactly one class of change:
+# sovereign-default / sovereign-mock / sovereign-reasoning are repointed from
+# the STACKIT api_base/api_key (empty locally, so those routes 401/error
+# offline) to the local mock-model service, so the offline Compose golden path
+# actually reaches a live chat backend. Each changed entry is marked below.
+# sovereign-embed and mcp_servers are untouched.
+
+model_list:
+  # --- Standard / worker tier -----------------------------------------------
+  # DIVERGES from values.yaml for the offline profile: values.yaml routes this
+  # to STACKIT (os.environ/STACKIT_API_BASE + STACKIT_API_KEY, empty locally).
+  # Compose Layer A has no STACKIT credentials, so this is repointed at the
+  # local mock-model chat backend instead.
+  - model_name: sovereign-default
+    litellm_params:
+      model: openai/gpt-oss-20b
+      api_base: http://mock-model:8080/v1
+      api_key: "sk-mock-unused"
+  # DIVERGES from values.yaml for the offline profile: same STACKIT->mock-model
+  # repoint as sovereign-default (this is its back-compat alias -> worker tier).
+  - model_name: sovereign-mock            # back-compat alias -> worker tier
+    litellm_params:
+      model: openai/gpt-oss-20b
+      api_base: http://mock-model:8080/v1
+      api_key: "sk-mock-unused"
+  # DIVERGES from values.yaml for the offline profile: same STACKIT->mock-model
+  # repoint as sovereign-default; the `timeout: 300` is kept from values.yaml.
+  - model_name: sovereign-reasoning
+    litellm_params:
+      model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+      api_base: http://mock-model:8080/v1
+      api_key: "sk-mock-unused"
+      timeout: 300
+  # --- Offline embeddings (mock-model, deterministic 384-dim) -------------
+  # Unchanged from values.yaml — already pointed at mock-model.
+  - model_name: sovereign-embed
+    litellm_params:
+      model: openai/mock-embed
+      api_base: http://mock-model:8080/v1
+      api_key: "sk-mock-unused"
+
+# Unchanged from values.yaml:936-945.
+router_settings:
+  routing_strategy: simple-shuffle        # load-balance across healthy deployments
+  num_retries: 3                          # retry transient failures before failover
+  timeout: 120                            # per-request timeout (s)
+  allowed_fails: 3                        # circuit-breaking: trip after N fails...
+  cooldown_time: 60                       # ...then cool the deployment down (s)
+
+# Unchanged from values.yaml:946-948.
+litellm_settings:
+  success_callback: ["langfuse"]          # gateway-level tracing to Langfuse
+  drop_params: true
+
+# Unchanged from values.yaml:949-954.
+general_settings:
+  master_key: os.environ/PROXY_MASTER_KEY
+  store_model_in_db: true
+
+# Unchanged from values.yaml:958-962.
+mcp_servers:
+  sovereign_query:
+    url: "http://query-tool:8000/mcp"
+    transport: "http"
+    description: "Governed SQL over the lakehouse marts via central Trino (row/column governed)"

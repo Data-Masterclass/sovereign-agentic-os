@@ -1,0 +1,345 @@
+# Sovereign Agentic OS — Docker Compose, Layer A (LiteLLM + its Postgres +
+# mock-model only). Forgejo, OPA, Langfuse, ClickHouse, Valkey, MinIO, os-ui
+# are NOT part of this layer yet.
+#
+# Mirrors charts/sovereign-agentic-os/values.yaml's `litellm` / `postgres`
+# (engine: plain) / `mockModel` blocks and templates/litellm/agent-key.yaml,
+# reproducing the existing env-var contract (os-ui/lib/core/config.ts
+# defaults) — no new contract introduced.
+#
+# Usage:
+#   cp .env.example .env
+#   docker compose up -d
+
+services:
+  # ---------------------------------------------------------------------
+  # Postgres (plain engine) — mirrors charts/sovereign-agentic-os/
+  # templates/postgres/statefulset.yaml + values.yaml `postgres.plainImage`
+  # (postgres:17). Only the two databases this layer needs (langfuse, litellm)
+  # are created — see compose/postgres/init/10-extra-databases.sh.
+  # ---------------------------------------------------------------------
+  pg-rw:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      LANGFUSE_DB_USER: ${LANGFUSE_DB_USER}
+      LANGFUSE_DB_PASSWORD: ${LANGFUSE_DB_PASSWORD}
+      LITELLM_DB_USER: ${LITELLM_DB_USER}
+      LITELLM_DB_PASSWORD: ${LITELLM_DB_PASSWORD}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./compose/postgres/init/10-extra-databases.sh:/docker-entrypoint-initdb.d/10-extra-databases.sh:ro
+    healthcheck:
+      # Mirrors templates/postgres/statefulset.yaml:169-181 (pg_isready probe).
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -h 127.0.0.1 -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # ---------------------------------------------------------------------
+  # mock-model — local OpenAI-compatible stub (chat + embeddings). Mirrors
+  # charts/sovereign-agentic-os/templates/mock-model/mock-model.yaml.
+  # Built from images/mock-model/ (python:3.12-slim base, no curl/wget).
+  # ---------------------------------------------------------------------
+  mock-model:
+    build:
+      context: ./images/mock-model
+    environment:
+      # Visible request logging in later layers (BaseHTTPRequestHandler's
+      # log_message already prints per-request; unbuffered so it isn't
+      # withheld from `docker compose logs` when stdout isn't a TTY).
+      PYTHONUNBUFFERED: "1"
+    healthcheck:
+      # No curl/wget in python:3.12-slim (verified) — use the stdlib instead.
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  # ---------------------------------------------------------------------
+  # LiteLLM — model/MCP gateway. Mirrors the litellm-helm v1.90.0 chart as
+  # wired by charts/sovereign-agentic-os/values.yaml `litellm` block.
+  # Effective image + masterkey/DATABASE_URL wiring verified read-only against
+  # the actual litellm-helm@1.90.0 chart (Phase 2.1 investigation).
+  # ---------------------------------------------------------------------
+  litellm:
+    image: ghcr.io/berriai/litellm-database:1.90.0
+    # Image ENTRYPOINT is docker/prod_entrypoint.sh, default CMD ["--port","4000"].
+    # Keep the default --port and add --config (mirrors the chart's `args:
+    # [--config, /etc/litellm/config.yaml]`, litellm-helm templates/deployment.yaml:167-172).
+    command: ["--port", "4000", "--config", "/etc/litellm/config.yaml"]
+    volumes:
+      - ./compose/litellm/config.yaml:/etc/litellm/config.yaml:ro
+    environment:
+      # PROXY_MASTER_KEY: the config's general_settings.master_key references
+      # os.environ/PROXY_MASTER_KEY (compose/litellm/config.yaml, unchanged
+      # from values.yaml:950).
+      PROXY_MASTER_KEY: ${PROXY_MASTER_KEY}
+      # Fully literal DATABASE_URL. The chart relies on Kubernetes $(VAR)
+      # expansion inside the container env (litellm-helm's own default
+      # db.url = "postgresql://$(DATABASE_USERNAME):...", litellm-helm
+      # values.yaml:249) — Compose/Docker does not perform that runtime
+      # expansion, so the credentials are written out here. ${...} below is
+      # Compose's OWN host-side interpolation (from .env), resolved BEFORE the
+      # container starts, so DATABASE_URL lands in the container as one
+      # already-resolved literal string.
+      DATABASE_URL: postgresql://${LITELLM_DB_USER}:${LITELLM_DB_PASSWORD}@pg-rw:5432/litellm
+    ports:
+      - "4000:4000"
+    networks:
+      default:
+        # So os-ui/lib/core/config.ts's baked-in default (litellmUrl =
+        # http://agentic-os-litellm:4000, config.ts:317) resolves unchanged.
+        aliases:
+          - agentic-os-litellm
+    depends_on:
+      pg-rw:
+        condition: service_healthy
+      mock-model:
+        condition: service_healthy
+    healthcheck:
+      # No curl/wget in ghcr.io/berriai/litellm-database:1.90.0 (verified) —
+      # the image's own venv python is on PATH.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    profiles: ["litellm-local"]
+
+  # ---------------------------------------------------------------------
+  # One-shot: provision the scoped agent virtual key. Mirrors
+  # charts/sovereign-agentic-os/templates/litellm/agent-key.yaml's Job
+  # (curlimages/curl:8.11.1, poll readiness -> GET /key/info -> POST
+  # /key/generate if absent, pinning `key` to the fixed local value).
+  # ---------------------------------------------------------------------
+  litellm-key-init:
+    image: curlimages/curl:8.11.1
+    volumes:
+      - ./compose/litellm/key-init.sh:/key-init.sh:ro
+    environment:
+      MASTER_KEY: ${PROXY_MASTER_KEY}
+      VIRTUAL_KEY: ${LITELLM_AGENT_KEY}
+    entrypoint: ["/bin/sh", "/key-init.sh"]
+    depends_on:
+      litellm:
+        condition: service_healthy
+    profiles: ["litellm-local"]
+
+  # ---------------------------------------------------------------------
+  # OPA — policy-as-code at the MCP/tool boundary. Mirrors
+  # charts/sovereign-agentic-os/templates/opa/opa.yaml. Fail-closed:
+  # authz.rego's `default allow := false` was verified to survive the copy
+  # into compose/opa/authz.rego byte-for-byte from templates/opa/opa.yaml:35-108
+  # (that block has no Helm {{ }} expressions). data.json and governance.json
+  # ARE Helm-generated (the whole ConfigMap value is one {{ dict ... | toJson }}
+  # expression) so they are committed as rendered static snapshots instead —
+  # see the `_source`/`_regenerate_with` keys inside each file. `helm template`
+  # is NOT part of this runtime path; those two files are pre-rendered.
+  # ---------------------------------------------------------------------
+  opa:
+    image: openpolicyagent/opa:1.4.2-static
+    volumes:
+      - ./compose/opa/authz.rego:/policies/authz.rego:ro
+      - ./compose/opa/data.json:/policies/data.json:ro
+      - ./compose/opa/trino.rego:/policies/trino.rego:ro
+      - ./compose/opa/governance.json:/policies/governance.json:ro
+      - ./compose/opa/marketplace.rego:/policies/marketplace.rego:ro
+    # Mirrors templates/opa/opa.yaml:166-178 exactly: the explicit five-file
+    # list (not the directory — a ConfigMap volume's `..data` symlinks would
+    # make a recursive dir load see each file multiple times; the same
+    # reasoning applies to a bind-mounted directory on some platforms, so the
+    # chart's explicit-file convention is kept here too).
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--log-level=info"
+      - "--watch"
+      - "/policies/authz.rego"
+      - "/policies/data.json"
+      - "/policies/trino.rego"
+      - "/policies/governance.json"
+      - "/policies/marketplace.rego"
+    healthcheck:
+      # openpolicyagent/opa:1.4.2-static is scratch-based: no shell, no
+      # curl/wget/python — CMD-SHELL and any tool-based probe are impossible
+      # (verified: `sh`/`/opa` exec-form both confirmed unusable for a
+      # shell-based probe; there is exactly one executable in the image, /opa
+      # itself). The alternative found and verified here: OPA's own `eval`
+      # subcommand exposes the `http.send` Rego built-in, so /opa can probe
+      # itself with NO shell and NO extra tool. `--fail` makes `opa eval` exit
+      # non-zero when the query is undefined (unreachable / connection
+      # refused) or errors; a two-statement query (assign then assert) is
+      # required — a single `expr == 200` expression always returns a defined
+      # boolean (true/false) and always exits 0 even when false, so it would
+      # never actually fail. Verified empirically (both the reachable/200 and
+      # unreachable cases) before writing this.
+      test:
+        - "CMD"
+        - "/opa"
+        - "eval"
+        - "--fail"
+        - 'resp := http.send({"url": "http://127.0.0.1:8181/health", "method": "GET"}); resp.status_code == 200'
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    ports:
+      - "8181:8181"
+
+  # ---------------------------------------------------------------------
+  # Forgejo (git + registry). Mirrors the forgejo subchart v17.1.1 as wired by
+  # charts/sovereign-agentic-os/values.yaml `forgejo` block. FORGEJO__section__KEY
+  # (double underscore) is the image's own env-to-ini convention, confirmed
+  # against the actual base image (not chart-specific): docker-entrypoint.sh
+  # unconditionally runs docker-setup.sh, which unconditionally runs
+  # `environment-to-ini` on every container start.
+  # ---------------------------------------------------------------------
+  forgejo-http:
+    image: code.forgejo.org/forgejo/forgejo:11-rootless
+    environment:
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__server__DOMAIN: ${FORGEJO_DOMAIN:-forgejo-http}
+      FORGEJO__server__ROOT_URL: ${FORGEJO_ROOT_URL:-http://forgejo-http:3000/}
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__OFFLINE_MODE: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      # Without this Forgejo serves the install wizard and every API call
+      # fails (verified) — confirmed required, not optional.
+      FORGEJO__security__INSTALL_LOCK: "true"
+    ports:
+      - "3001:3000"
+    volumes:
+      - forgejo-data:/var/lib/gitea
+    healthcheck:
+      # code.forgejo.org/forgejo/forgejo:11-rootless has BOTH curl and wget
+      # (verified) — curl used, matching the chart's own readinessProbe path.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  # ---------------------------------------------------------------------
+  # One-shot: create the Forgejo admin user. The chart's own mechanism
+  # (an initContainer running /usr/local/bin/configure_gitea.sh, baked into
+  # the forgejo subchart's init Secret) does not exist in the plain
+  # code.forgejo.org/forgejo/forgejo:11-rootless image, so it is NOT reused —
+  # see compose/forgejo/init.sh for the verified-working replacement and why
+  # `-c/--config` is deliberately omitted.
+  # ---------------------------------------------------------------------
+  forgejo-init:
+    image: code.forgejo.org/forgejo/forgejo:11-rootless
+    environment:
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__server__DOMAIN: ${FORGEJO_DOMAIN:-forgejo-http}
+      FORGEJO__server__ROOT_URL: ${FORGEJO_ROOT_URL:-http://forgejo-http:3000/}
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__OFFLINE_MODE: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO_ADMIN_USER: ${FORGEJO_ADMIN_USER:-gitea_admin}
+      FORGEJO_ADMIN_PASSWORD: ${FORGEJO_ADMIN_PASSWORD:-forgejo-admin-local-dev}
+      FORGEJO_ADMIN_EMAIL: ${FORGEJO_ADMIN_EMAIL:-admin@datamasterclass.com}
+    volumes:
+      - forgejo-data:/var/lib/gitea
+      - ./compose/forgejo/init.sh:/init.sh:ro
+    # Deliberately NOT `entrypoint:` — this leaves the image's own ENTRYPOINT
+    # (dumb-init -- docker-entrypoint.sh) in place so docker-setup.sh still
+    # runs first (idempotent env-to-ini re-apply onto the already-existing
+    # app.ini on the shared volume), then execs this CMD. Verified this exact
+    # shape (normal entrypoint + CMD override) works from a fresh, separate
+    # container sharing forgejo-http's volume.
+    command: ["/bin/sh", "/init.sh"]
+    depends_on:
+      forgejo-http:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # agent-runtime — shared LangGraph IR interpreter (Agents tab live
+  # execution). Mirrors charts/sovereign-agentic-os/templates/agent-runtime/
+  # agent-runtime.yaml's ConfigMap `agent-runtime-config` + the two env-var
+  # Secrets, read in full before writing this (plus images/agent-runtime/
+  # app.py, which is the actual source of truth for every env var it reads).
+  #
+  # LITELLM_API_KEY reuses ${LITELLM_AGENT_KEY} — the SAME scoped virtual key
+  # value litellm-key-init provisions in LiteLLM (agent-key.yaml:72-73,91:
+  # env VIRTUAL_KEY from Secret agent-litellm-key key apiKey) — never the
+  # LITELLM_MASTER_KEY/PROXY_MASTER_KEY. This mirrors the chart exactly: the
+  # Deployment's LITELLM_API_KEY and the Job's VIRTUAL_KEY both read the same
+  # Secret/key (agent-runtime.yaml:89-91 vs agent-key.yaml:72-73).
+  #
+  # NOT reproducible in this layer (see verification report): GOVERNED_TOOL_URL
+  # defaults to http://os-ui:3000/api/agents/tool (agent-runtime.yaml:46) —
+  # os-ui is out of scope for Layer C, so this endpoint is unreachable here.
+  # The env var is still set (matching the chart's default) so nothing about
+  # the app's own config surface is missing; only its target is down. A /run
+  # invocation whose IR calls a tool will fail to reach it until a later layer
+  # adds os-ui — /health, /reload, and a plain model_call-only /run do not
+  # need it.
+  #
+  # OPA_URL is NOT part of this service's real contract: neither
+  # agent-runtime.yaml's ConfigMap nor images/agent-runtime/app.py reference
+  # an OPA_URL/OPA-anything env var (confirmed by reading both in full) — the
+  # chart's own header comment says so explicitly ("It holds ONLY its scoped
+  # LiteLLM virtual key... no OPA"). No OPA_URL env var is set here; the
+  # depends_on ordering on opa below is kept as a pure startup-order
+  # constraint, independent of whether the app actually talks to OPA (it
+  # doesn't, directly — only os-ui does, on agent-runtime's behalf).
+  # ---------------------------------------------------------------------
+  agent-runtime:
+    build:
+      context: ./images/agent-runtime
+    environment:
+      PORT: "8000"
+      PYTHONUNBUFFERED: "1"
+      LITELLM_BASE_URL: ${AGENT_RUNTIME_LITELLM_BASE_URL:-http://agentic-os-litellm:4000/v1}
+      LITELLM_API_KEY: ${LITELLM_AGENT_KEY:-sk-agents-local-dev}
+      CHAT_MODEL: ${AGENT_RUNTIME_CHAT_MODEL:-sovereign-mock}
+      REASONING_MODEL: ${AGENT_RUNTIME_REASONING_MODEL:-sovereign-reasoning}
+      EXECUTION_MODEL: ${AGENT_RUNTIME_EXECUTION_MODEL:-sovereign-default}
+      GOVERNED_TOOL_URL: ${AGENT_RUNTIME_GOVERNED_TOOL_URL:-http://os-ui:3000/api/agents/tool}
+      AGENT_RUNTIME_TOKEN: ${AGENT_RUNTIME_TOKEN:-agent-runtime-local-dev-token}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      # No curl/wget in python:3.12-slim (verified, same base as mock-model).
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    depends_on:
+      litellm:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+      litellm-key-init:
+        condition: service_completed_successfully
+
+volumes:
+  pg-data:
+  forgejo-data:

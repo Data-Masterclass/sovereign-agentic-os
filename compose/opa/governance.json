@@ -1,0 +1,92 @@
+{
+  "governance": {
+    "principals": {
+      "agentic-leader-q3-2026": {
+        "clearances": [],
+        "domains": [
+          "agentic-leader-q3-2026"
+        ]
+      },
+      "cube-sales": {
+        "clearances": [],
+        "domains": [
+          "sales"
+        ]
+      },
+      "dbt-sales": {
+        "clearances": [],
+        "domains": [
+          "sales"
+        ]
+      },
+      "marketing-agent": {
+        "clearances": [],
+        "domains": [
+          "marketing"
+        ]
+      },
+      "northpeak-marts": {
+        "clearances": [],
+        "domains": [
+          "sales"
+        ]
+      },
+      "sales": {
+        "clearances": [
+          "pii"
+        ],
+        "domains": [
+          "sales"
+        ]
+      },
+      "sales-agent": {
+        "clearances": [
+          "pii"
+        ],
+        "domains": [
+          "sales"
+        ]
+      },
+      "sales-assistant": {
+        "clearances": [
+          "pii"
+        ],
+        "domains": [
+          "sales"
+        ]
+      },
+      "test": {
+        "clearances": [
+          "pii"
+        ],
+        "domains": [
+          "test"
+        ]
+      }
+    },
+    "tables": {
+      "iceberg.sales.daily_revenue": {
+        "domain": "sales",
+        "sensitive_columns": {},
+        "shared_with": [],
+        "visibility": "domain"
+      },
+      "iceberg.sales.gold_northpeak_commerce": {
+        "domain": "sales",
+        "sensitive_columns": {},
+        "shared_with": [
+          "agentic-leader-q3-2026"
+        ],
+        "visibility": "shared"
+      },
+      "iceberg.sales.stg_orders": {
+        "domain": "sales",
+        "sensitive_columns": {
+          "customer": "pii"
+        },
+        "shared_with": [],
+        "visibility": "domain"
+      }
+    }
+  }
+}
