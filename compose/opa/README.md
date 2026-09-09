@@ -23,9 +23,9 @@ Then copy the `data.json: |` / `governance.json: |` block's content (de-indented
 
 ## Do not add top-level keys to these JSON files
 
-`data.json` and `governance.json` must contain **only** their rendered content, nothing added. We initially put `_source`/`_regenerate_with` provenance keys inside both files, and OPA failed to load with `load error: merge error` — OPA merges every JSON file in its file list into the root of `data`, and both files declared the same top-level metadata keys, which collided. Provenance belongs in this README, not in the data files.
+`data.json` and `governance.json` must contain **only** their rendered content, nothing added. OPA merges every JSON file in its file list into the root of `data`, so two files sharing a top-level key collide and OPA refuses to start with `load error: merge error`. Provenance belongs in this README, not in the data files.
 
-Rule for later: any JSON file you add to OPA's file list (`compose.yaml`'s `opa` service `command:`) must not share a top-level key with a file that's already loaded, or OPA will refuse to start.
+Any JSON file you add to OPA's file list (`compose.yaml`'s `opa` service `command:`) must not share a top-level key with a file that's already loaded.
 
 ## Fail-closed, and what that means for debugging
 

@@ -1,25 +1,28 @@
-# Sovereign Agentic OS — Docker Compose, Layer A (LiteLLM + its Postgres +
-# mock-model only). Forgejo, OPA, Langfuse, ClickHouse, Valkey, MinIO, os-ui
-# are NOT part of this layer yet.
+# Sovereign Agentic OS — Docker Compose. Full guide: compose/README.md.
 #
-# Mirrors charts/sovereign-agentic-os/values.yaml's `litellm` / `postgres`
-# (engine: plain) / `mockModel` blocks and templates/litellm/agent-key.yaml,
-# reproducing the existing env-var contract (os-ui/lib/core/config.ts
-# defaults) — no new contract introduced.
+# Two independent knobs run through this whole file: a Compose PROFILE
+# decides which local infrastructure containers start (postgres-local /
+# litellm-local / langfuse-local); an env var, always ${VAR:-default},
+# independently decides what an app connects to. Turning a profile off stops
+# the local container but does not repoint anything — see compose/README.md's
+# "External mode" section for what to change together.
+#
+# Applications (os-ui, agent-runtime, mock-model, opa, forgejo-http,
+# forgejo-init) carry no profile — they always run.
 #
 # Usage:
 #   cp .env.example .env
 #   docker compose up -d
 
 services:
-  # ---------------------------------------------------------------------
-  # Postgres (plain engine) — mirrors charts/sovereign-agentic-os/
-  # templates/postgres/statefulset.yaml + values.yaml `postgres.plainImage`
-  # (postgres:17). Only the two databases this layer needs (langfuse, litellm)
-  # are created — see compose/postgres/init/10-extra-databases.sh.
-  # ---------------------------------------------------------------------
+  # Postgres for LiteLLM + Langfuse. Only those two databases are created —
+  # see compose/postgres/init/10-extra-databases.sh.
   pg-rw:
     image: postgres:17
+    # Starts if any of these profiles is active; litellm-local and
+    # langfuse-local both need the database, so postgres-local exists as a
+    # standalone "just the database" opt-in.
+    profiles: ["postgres-local", "litellm-local", "langfuse-local"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -32,28 +35,21 @@ services:
       - pg-data:/var/lib/postgresql/data
       - ./compose/postgres/init/10-extra-databases.sh:/docker-entrypoint-initdb.d/10-extra-databases.sh:ro
     healthcheck:
-      # Mirrors templates/postgres/statefulset.yaml:169-181 (pg_isready probe).
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -h 127.0.0.1 -q"]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 30s
 
-  # ---------------------------------------------------------------------
-  # mock-model — local OpenAI-compatible stub (chat + embeddings). Mirrors
-  # charts/sovereign-agentic-os/templates/mock-model/mock-model.yaml.
-  # Built from images/mock-model/ (python:3.12-slim base, no curl/wget).
-  # ---------------------------------------------------------------------
+  # Local OpenAI-compatible stub serving chat + embeddings, so the whole
+  # stack runs offline with no model API key.
   mock-model:
     build:
       context: ./images/mock-model
     environment:
-      # Visible request logging in later layers (BaseHTTPRequestHandler's
-      # log_message already prints per-request; unbuffered so it isn't
-      # withheld from `docker compose logs` when stdout isn't a TTY).
       PYTHONUNBUFFERED: "1"
     healthcheck:
-      # No curl/wget in python:3.12-slim (verified) — use the stdlib instead.
+      # No curl/wget in this image — probe with the stdlib instead.
       test:
         [
           "CMD",
@@ -66,50 +62,36 @@ services:
       retries: 10
       start_period: 5s
 
-  # ---------------------------------------------------------------------
-  # LiteLLM — model/MCP gateway. Mirrors the litellm-helm v1.90.0 chart as
-  # wired by charts/sovereign-agentic-os/values.yaml `litellm` block.
-  # Effective image + masterkey/DATABASE_URL wiring verified read-only against
-  # the actual litellm-helm@1.90.0 chart (Phase 2.1 investigation).
-  # ---------------------------------------------------------------------
+  # Model + MCP gateway all apps talk to.
   litellm:
     image: ghcr.io/berriai/litellm-database:1.90.0
-    # Image ENTRYPOINT is docker/prod_entrypoint.sh, default CMD ["--port","4000"].
-    # Keep the default --port and add --config (mirrors the chart's `args:
-    # [--config, /etc/litellm/config.yaml]`, litellm-helm templates/deployment.yaml:167-172).
     command: ["--port", "4000", "--config", "/etc/litellm/config.yaml"]
     volumes:
       - ./compose/litellm/config.yaml:/etc/litellm/config.yaml:ro
     environment:
-      # PROXY_MASTER_KEY: the config's general_settings.master_key references
-      # os.environ/PROXY_MASTER_KEY (compose/litellm/config.yaml, unchanged
-      # from values.yaml:950).
-      PROXY_MASTER_KEY: ${PROXY_MASTER_KEY}
-      # Fully literal DATABASE_URL. The chart relies on Kubernetes $(VAR)
-      # expansion inside the container env (litellm-helm's own default
-      # db.url = "postgresql://$(DATABASE_USERNAME):...", litellm-helm
-      # values.yaml:249) — Compose/Docker does not perform that runtime
-      # expansion, so the credentials are written out here. ${...} below is
-      # Compose's OWN host-side interpolation (from .env), resolved BEFORE the
-      # container starts, so DATABASE_URL lands in the container as one
-      # already-resolved literal string.
-      DATABASE_URL: postgresql://${LITELLM_DB_USER}:${LITELLM_DB_PASSWORD}@pg-rw:5432/litellm
+      PROXY_MASTER_KEY: ${PROXY_MASTER_KEY:-sk-litellm-local-dev-master}
+      # Written out literally: Compose has no equivalent of the Kubernetes
+      # $(VAR) runtime expansion the chart relies on, so this substitution
+      # has to happen host-side, before the container starts.
+      DATABASE_URL: postgresql://${LITELLM_DB_USER}:${LITELLM_DB_PASSWORD}@${POSTGRES_HOST:-pg-rw}:5432/litellm
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-localdev0000public}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-localdev0000secret}
+      LANGFUSE_HOST: ${LITELLM_LANGFUSE_HOST:-http://agentic-os-langfuse-web:3000}
+      # Only read when config.yaml's chat aliases are switched to the
+      # commented real-provider block; unused by the mock-model default.
+      STACKIT_API_KEY: ${STACKIT_API_KEY:-}
     ports:
       - "4000:4000"
     networks:
       default:
-        # So os-ui/lib/core/config.ts's baked-in default (litellmUrl =
-        # http://agentic-os-litellm:4000, config.ts:317) resolves unchanged.
         aliases:
-          - agentic-os-litellm
+          - agentic-os-litellm   # matches os-ui/agent-runtime's baked-in default hostname
     depends_on:
       pg-rw:
         condition: service_healthy
       mock-model:
         condition: service_healthy
     healthcheck:
-      # No curl/wget in ghcr.io/berriai/litellm-database:1.90.0 (verified) —
-      # the image's own venv python is on PATH.
       test:
         [
           "CMD",
@@ -123,18 +105,13 @@ services:
       start_period: 20s
     profiles: ["litellm-local"]
 
-  # ---------------------------------------------------------------------
-  # One-shot: provision the scoped agent virtual key. Mirrors
-  # charts/sovereign-agentic-os/templates/litellm/agent-key.yaml's Job
-  # (curlimages/curl:8.11.1, poll readiness -> GET /key/info -> POST
-  # /key/generate if absent, pinning `key` to the fixed local value).
-  # ---------------------------------------------------------------------
+  # One-shot: provisions the scoped agent virtual key agent-runtime uses.
   litellm-key-init:
     image: curlimages/curl:8.11.1
     volumes:
       - ./compose/litellm/key-init.sh:/key-init.sh:ro
     environment:
-      MASTER_KEY: ${PROXY_MASTER_KEY}
+      MASTER_KEY: ${PROXY_MASTER_KEY:-sk-litellm-local-dev-master}
       VIRTUAL_KEY: ${LITELLM_AGENT_KEY}
     entrypoint: ["/bin/sh", "/key-init.sh"]
     depends_on:
@@ -142,17 +119,8 @@ services:
         condition: service_healthy
     profiles: ["litellm-local"]
 
-  # ---------------------------------------------------------------------
-  # OPA — policy-as-code at the MCP/tool boundary. Mirrors
-  # charts/sovereign-agentic-os/templates/opa/opa.yaml. Fail-closed:
-  # authz.rego's `default allow := false` was verified to survive the copy
-  # into compose/opa/authz.rego byte-for-byte from templates/opa/opa.yaml:35-108
-  # (that block has no Helm {{ }} expressions). data.json and governance.json
-  # ARE Helm-generated (the whole ConfigMap value is one {{ dict ... | toJson }}
-  # expression) so they are committed as rendered static snapshots instead —
-  # see the `_source`/`_regenerate_with` keys inside each file. `helm template`
-  # is NOT part of this runtime path; those two files are pre-rendered.
-  # ---------------------------------------------------------------------
+  # Policy-as-code gate at the MCP/tool boundary; fails closed by default —
+  # see compose/opa/README.md for file provenance and the fail-closed rules.
   opa:
     image: openpolicyagent/opa:1.4.2-static
     volumes:
@@ -161,11 +129,8 @@ services:
       - ./compose/opa/trino.rego:/policies/trino.rego:ro
       - ./compose/opa/governance.json:/policies/governance.json:ro
       - ./compose/opa/marketplace.rego:/policies/marketplace.rego:ro
-    # Mirrors templates/opa/opa.yaml:166-178 exactly: the explicit five-file
-    # list (not the directory — a ConfigMap volume's `..data` symlinks would
-    # make a recursive dir load see each file multiple times; the same
-    # reasoning applies to a bind-mounted directory on some platforms, so the
-    # chart's explicit-file convention is kept here too).
+    # Explicit file list, not a directory mount — a mounted directory's
+    # symlink layout can make OPA load the same file twice.
     command:
       - "run"
       - "--server"
@@ -178,19 +143,9 @@ services:
       - "/policies/governance.json"
       - "/policies/marketplace.rego"
     healthcheck:
-      # openpolicyagent/opa:1.4.2-static is scratch-based: no shell, no
-      # curl/wget/python — CMD-SHELL and any tool-based probe are impossible
-      # (verified: `sh`/`/opa` exec-form both confirmed unusable for a
-      # shell-based probe; there is exactly one executable in the image, /opa
-      # itself). The alternative found and verified here: OPA's own `eval`
-      # subcommand exposes the `http.send` Rego built-in, so /opa can probe
-      # itself with NO shell and NO extra tool. `--fail` makes `opa eval` exit
-      # non-zero when the query is undefined (unreachable / connection
-      # refused) or errors; a two-statement query (assign then assert) is
-      # required — a single `expr == 200` expression always returns a defined
-      # boolean (true/false) and always exits 0 even when false, so it would
-      # never actually fail. Verified empirically (both the reachable/200 and
-      # unreachable cases) before writing this.
+      # Scratch image (no shell/curl/wget): probes itself via `opa eval` and
+      # the http.send builtin. Needs two statements — a bare `expr == 200` is
+      # always a defined boolean, so `--fail` would never trigger on failure.
       test:
         - "CMD"
         - "/opa"
@@ -204,14 +159,7 @@ services:
     ports:
       - "8181:8181"
 
-  # ---------------------------------------------------------------------
-  # Forgejo (git + registry). Mirrors the forgejo subchart v17.1.1 as wired by
-  # charts/sovereign-agentic-os/values.yaml `forgejo` block. FORGEJO__section__KEY
-  # (double underscore) is the image's own env-to-ini convention, confirmed
-  # against the actual base image (not chart-specific): docker-entrypoint.sh
-  # unconditionally runs docker-setup.sh, which unconditionally runs
-  # `environment-to-ini` on every container start.
-  # ---------------------------------------------------------------------
+  # Git server + container registry.
   forgejo-http:
     image: code.forgejo.org/forgejo/forgejo:11-rootless
     environment:
@@ -221,30 +169,20 @@ services:
       FORGEJO__server__HTTP_PORT: "3000"
       FORGEJO__server__OFFLINE_MODE: "true"
       FORGEJO__service__DISABLE_REGISTRATION: "true"
-      # Without this Forgejo serves the install wizard and every API call
-      # fails (verified) — confirmed required, not optional.
+      # Without this, Forgejo serves the install wizard and every API call fails.
       FORGEJO__security__INSTALL_LOCK: "true"
     ports:
       - "3001:3000"
     volumes:
       - forgejo-data:/var/lib/gitea
     healthcheck:
-      # code.forgejo.org/forgejo/forgejo:11-rootless has BOTH curl and wget
-      # (verified) — curl used, matching the chart's own readinessProbe path.
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/healthz"]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 15s
 
-  # ---------------------------------------------------------------------
-  # One-shot: create the Forgejo admin user. The chart's own mechanism
-  # (an initContainer running /usr/local/bin/configure_gitea.sh, baked into
-  # the forgejo subchart's init Secret) does not exist in the plain
-  # code.forgejo.org/forgejo/forgejo:11-rootless image, so it is NOT reused —
-  # see compose/forgejo/init.sh for the verified-working replacement and why
-  # `-c/--config` is deliberately omitted.
-  # ---------------------------------------------------------------------
+  # One-shot: creates the Forgejo admin user (see compose/forgejo/init.sh).
   forgejo-init:
     image: code.forgejo.org/forgejo/forgejo:11-rootless
     environment:
@@ -261,49 +199,16 @@ services:
     volumes:
       - forgejo-data:/var/lib/gitea
       - ./compose/forgejo/init.sh:/init.sh:ro
-    # Deliberately NOT `entrypoint:` — this leaves the image's own ENTRYPOINT
-    # (dumb-init -- docker-entrypoint.sh) in place so docker-setup.sh still
-    # runs first (idempotent env-to-ini re-apply onto the already-existing
-    # app.ini on the shared volume), then execs this CMD. Verified this exact
-    # shape (normal entrypoint + CMD override) works from a fresh, separate
-    # container sharing forgejo-http's volume.
+    # No `entrypoint:` override — keeps the image's own entrypoint so it
+    # re-applies env-to-ini before this command runs.
     command: ["/bin/sh", "/init.sh"]
     depends_on:
       forgejo-http:
         condition: service_healthy
 
-  # ---------------------------------------------------------------------
-  # agent-runtime — shared LangGraph IR interpreter (Agents tab live
-  # execution). Mirrors charts/sovereign-agentic-os/templates/agent-runtime/
-  # agent-runtime.yaml's ConfigMap `agent-runtime-config` + the two env-var
-  # Secrets, read in full before writing this (plus images/agent-runtime/
-  # app.py, which is the actual source of truth for every env var it reads).
-  #
-  # LITELLM_API_KEY reuses ${LITELLM_AGENT_KEY} — the SAME scoped virtual key
-  # value litellm-key-init provisions in LiteLLM (agent-key.yaml:72-73,91:
-  # env VIRTUAL_KEY from Secret agent-litellm-key key apiKey) — never the
-  # LITELLM_MASTER_KEY/PROXY_MASTER_KEY. This mirrors the chart exactly: the
-  # Deployment's LITELLM_API_KEY and the Job's VIRTUAL_KEY both read the same
-  # Secret/key (agent-runtime.yaml:89-91 vs agent-key.yaml:72-73).
-  #
-  # NOT reproducible in this layer (see verification report): GOVERNED_TOOL_URL
-  # defaults to http://os-ui:3000/api/agents/tool (agent-runtime.yaml:46) —
-  # os-ui is out of scope for Layer C, so this endpoint is unreachable here.
-  # The env var is still set (matching the chart's default) so nothing about
-  # the app's own config surface is missing; only its target is down. A /run
-  # invocation whose IR calls a tool will fail to reach it until a later layer
-  # adds os-ui — /health, /reload, and a plain model_call-only /run do not
-  # need it.
-  #
-  # OPA_URL is NOT part of this service's real contract: neither
-  # agent-runtime.yaml's ConfigMap nor images/agent-runtime/app.py reference
-  # an OPA_URL/OPA-anything env var (confirmed by reading both in full) — the
-  # chart's own header comment says so explicitly ("It holds ONLY its scoped
-  # LiteLLM virtual key... no OPA"). No OPA_URL env var is set here; the
-  # depends_on ordering on opa below is kept as a pure startup-order
-  # constraint, independent of whether the app actually talks to OPA (it
-  # doesn't, directly — only os-ui does, on agent-runtime's behalf).
-  # ---------------------------------------------------------------------
+  # Shared LangGraph IR interpreter behind the Agents tab's live execution.
+  # OPA_URL is deliberately not set here — this service holds only its scoped
+  # LiteLLM key and never calls OPA directly; only os-ui does, on its behalf.
   agent-runtime:
     build:
       context: ./images/agent-runtime
@@ -311,6 +216,8 @@ services:
       PORT: "8000"
       PYTHONUNBUFFERED: "1"
       LITELLM_BASE_URL: ${AGENT_RUNTIME_LITELLM_BASE_URL:-http://agentic-os-litellm:4000/v1}
+      # Reuses the scoped virtual key litellm-key-init provisions — never the
+      # master key os-ui uses (see os-ui's LITELLM_URL/_MASTER_KEY below).
       LITELLM_API_KEY: ${LITELLM_AGENT_KEY:-sk-agents-local-dev}
       CHAT_MODEL: ${AGENT_RUNTIME_CHAT_MODEL:-sovereign-mock}
       REASONING_MODEL: ${AGENT_RUNTIME_REASONING_MODEL:-sovereign-reasoning}
@@ -320,7 +227,6 @@ services:
     ports:
       - "8000:8000"
     healthcheck:
-      # No curl/wget in python:3.12-slim (verified, same base as mock-model).
       test:
         [
           "CMD",
@@ -333,13 +239,326 @@ services:
       retries: 10
       start_period: 5s
     depends_on:
+      # required: false so this still starts when litellm-local is inactive
+      # (external LiteLLM mode) — otherwise Compose refuses to start it at
+      # all, since litellm/litellm-key-init wouldn't exist.
       litellm:
         condition: service_healthy
+        required: false
       opa:
         condition: service_healthy
       litellm-key-init:
         condition: service_completed_successfully
+        required: false
+
+  # Next.js front door — completes the golden path (Agents -> SimpleBuilder ->
+  # Build -> Forgejo + Agent Runtime -> LiteLLM -> mock-model -> Run).
+  os-ui:
+    build:
+      context: .
+      dockerfile: images/os-ui/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      # No fallback: production mode rejects the in-code dev default secret.
+      OS_SESSION_SECRET: ${OS_SESSION_SECRET:?set a real value in .env -- the in-code dev fallback is rejected under NODE_ENV=production}
+      # A seeded user (unlike the default empty-OS_USERS bootstrap admin) can
+      # call every protected route immediately, no forced first-run setup.
+      # Set as a literal in .env.example, not ${VAR:-...} here -- its `}`
+      # characters would terminate that substitution early.
+      OS_USERS: ${OS_USERS}
+      AGENT_RUNTIME_URL: ${OS_UI_AGENT_RUNTIME_URL:-http://agent-runtime:8000}
+      AGENT_RUNTIME_TOKEN: ${AGENT_RUNTIME_TOKEN:-agent-runtime-local-dev-token}
+      FORGEJO_URL: ${OS_UI_FORGEJO_URL:-http://forgejo-http:3000}
+      FORGEJO_USER: ${FORGEJO_ADMIN_USER:-gitea_admin}
+      FORGEJO_PASSWORD: ${FORGEJO_ADMIN_PASSWORD:-forgejo-admin-local-dev}
+      FORGEJO_REPO_OWNER: ${FORGEJO_ADMIN_USER:-gitea_admin}
+      # os-ui authenticates to LiteLLM with the MASTER key (admin surface);
+      # agent-runtime uses its own scoped LITELLM_API_KEY/LITELLM_BASE_URL
+      # above -- different names, different keys, deliberately not conflated.
+      LITELLM_URL: ${OS_UI_LITELLM_URL:-http://agentic-os-litellm:4000}
+      LITELLM_MASTER_KEY: ${PROXY_MASTER_KEY:-sk-litellm-local-dev-master}
+      LITELLM_CHAT_MODEL: ${LITELLM_CHAT_MODEL:-sovereign-mock}
+      LITELLM_REASONING_MODEL: ${LITELLM_REASONING_MODEL:-sovereign-reasoning}
+      LITELLM_EXEC_MODEL: ${LITELLM_EXEC_MODEL:-sovereign-default}
+      OPA_URL: ${OS_UI_OPA_URL:-http://opa:8181}
+      LANGFUSE_URL: ${OS_UI_LANGFUSE_URL:-http://agentic-os-langfuse-web:3000}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-localdev0000public}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-localdev0000secret}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    depends_on:
+      # agent-runtime healthy before os-ui starts: the real-vs-mock Build
+      # decision probes agent-runtime's /health at request time, so this just
+      # avoids racing a cold start on the very first request.
+      agent-runtime:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+        required: false
+      opa:
+        condition: service_healthy
+      forgejo-http:
+        condition: service_healthy
+
+  # Langfuse's analytics store.
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    profiles: ["langfuse-local"]
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse-local-dev}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"   # lets the app user run its own migration DDL
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # Langfuse's job queue/cache -- no persistence by design.
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    profiles: ["langfuse-local"]
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:-valkey-local-dev}
+    command:
+      [
+        "valkey-server",
+        "--requirepass",
+        "${VALKEY_PASSWORD:-valkey-local-dev}",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        # Used as a queue, not a cache -- must not evict keys under memory pressure.
+        "--maxmemory-policy",
+        "noeviction",
+      ]
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli --no-auth-warning -a \"$$VALKEY_PASSWORD\" PING | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # Langfuse's S3-compatible blob store.
+  minio:
+    image: minio/minio@sha256:8834ae47a2de3509b83e0e70da9369c24bbbc22de42f2a2eddc530eee88acd1b
+    profiles: ["langfuse-local"]
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-agentic-os-local}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-agentic-os-local-secret}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # One-shot: creates the "langfuse" bucket (see compose/minio/bucket-init.sh).
+  minio-bucket-init:
+    image: amazon/aws-cli@sha256:e14216fb361cce909ce199616711ad103182d5937f851cda9bebf25867d7180a
+    profiles: ["langfuse-local"]
+    entrypoint: ["/bin/sh", "/bucket-init.sh"]
+    volumes:
+      - ./compose/minio/bucket-init.sh:/bucket-init.sh:ro
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
+      AWS_DEFAULT_REGION: us-east-1
+      ENDPOINT: http://minio:9000
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  # Langfuse's web app + API.
+  langfuse-web:
+    image: langfuse/langfuse:3.194.1
+    profiles: ["langfuse-local"]
+    environment:
+      NODE_ENV: production
+      LANGFUSE_LOG_LEVEL: info
+      LANGFUSE_LOG_FORMAT: text
+      SALT: ${LANGFUSE_SALT:-sovereign-os-local-dev-salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90}
+      TELEMETRY_ENABLED: "false"
+      AUTH_DISABLE_SIGNUP: "false"
+      ENABLE_EXPERIMENTAL_FEATURES: "false"
+      # 3002, not the chart's port-forward default of 3000 -- os-ui already
+      # owns 3000 and Forgejo owns 3001.
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3002}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-sovereign-os-local-dev-nextauth-secret}
+      DATABASE_HOST: ${POSTGRES_HOST:-pg-rw}
+      DATABASE_PORT: "5432"
+      DATABASE_USERNAME: ${LANGFUSE_DB_USER:-langfuse}
+      DATABASE_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse-local-dev}
+      DATABASE_NAME: langfuse
+      LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED: "false"
+      REDIS_TLS_ENABLED: "false"
+      REDIS_CONNECTION_STRING: redis://default:${VALKEY_PASSWORD:-valkey-local-dev}@valkey:6379/0
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_MIGRATION_SSL: "false"
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse-local-dev}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "true"
+      LANGFUSE_S3_BATCH_EXPORT_BUCKET: langfuse
+      LANGFUSE_S3_BATCH_EXPORT_REGION: us-east-1
+      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
+      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
+      LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_MAX_CONTENT_LENGTH: "1e+09"
+      LANGFUSE_S3_MEDIA_UPLOAD_DOWNLOAD_URL_EXPIRY_SECONDS: "3600"
+      LANGFUSE_S3_CONCURRENT_READS: "50"
+      LANGFUSE_S3_CONCURRENT_WRITES: "50"
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      NODE_OPTIONS: --max-old-space-size=1152
+      # Headless org/project/user bootstrap on first boot (a Langfuse
+      # application convention, not a Compose-specific mechanism).
+      LANGFUSE_INIT_ORG_ID: sovereign-os
+      LANGFUSE_INIT_ORG_NAME: Sovereign Agentic OS
+      LANGFUSE_INIT_PROJECT_ID: agent-core
+      LANGFUSE_INIT_PROJECT_NAME: Agent Core
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-localdev0000public}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-localdev0000secret}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-alex@datamasterclass.com}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Alex}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-langfuse-local-dev-admin}
+    ports:
+      - "3002:3000"
+    networks:
+      default:
+        aliases:
+          - agentic-os-langfuse-web   # matches os-ui/LiteLLM's baked-in default hostname
+    depends_on:
+      pg-rw:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio-bucket-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/public/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3.194.1
+    profiles: ["langfuse-local"]
+    environment:
+      NODE_ENV: production
+      LANGFUSE_LOG_LEVEL: info
+      LANGFUSE_LOG_FORMAT: text
+      SALT: ${LANGFUSE_SALT:-sovereign-os-local-dev-salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90}
+      TELEMETRY_ENABLED: "false"
+      AUTH_DISABLE_SIGNUP: "false"
+      ENABLE_EXPERIMENTAL_FEATURES: "false"
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3002}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-sovereign-os-local-dev-nextauth-secret}
+      DATABASE_HOST: ${POSTGRES_HOST:-pg-rw}
+      DATABASE_PORT: "5432"
+      DATABASE_USERNAME: ${LANGFUSE_DB_USER:-langfuse}
+      DATABASE_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse-local-dev}
+      DATABASE_NAME: langfuse
+      LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED: "false"
+      REDIS_TLS_ENABLED: "false"
+      REDIS_CONNECTION_STRING: redis://default:${VALKEY_PASSWORD:-valkey-local-dev}@valkey:6379/0
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_MIGRATION_SSL: "false"
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse-local-dev}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "true"
+      LANGFUSE_S3_BATCH_EXPORT_BUCKET: langfuse
+      LANGFUSE_S3_BATCH_EXPORT_REGION: us-east-1
+      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
+      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
+      LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_MAX_CONTENT_LENGTH: "1e+09"
+      LANGFUSE_S3_MEDIA_UPLOAD_DOWNLOAD_URL_EXPIRY_SECONDS: "3600"
+      LANGFUSE_S3_CONCURRENT_READS: "50"
+      LANGFUSE_S3_CONCURRENT_WRITES: "50"
+      HOSTNAME: "0.0.0.0"
+      # No PORT var -- this image defaults to 3030 on its own.
+      LANGFUSE_INIT_ORG_ID: sovereign-os
+      LANGFUSE_INIT_ORG_NAME: Sovereign Agentic OS
+      LANGFUSE_INIT_PROJECT_ID: agent-core
+      LANGFUSE_INIT_PROJECT_NAME: Agent Core
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-localdev0000public}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-localdev0000secret}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-alex@datamasterclass.com}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Alex}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-langfuse-local-dev-admin}
+    depends_on:
+      pg-rw:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio-bucket-init:
+        condition: service_completed_successfully
+    healthcheck:
+      # Liveness only -- the worker has no separate readiness endpoint.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3030/api/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
 volumes:
   pg-data:
   forgejo-data:
+  clickhouse-data:
+  minio-data:

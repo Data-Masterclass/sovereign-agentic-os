@@ -16,6 +16,14 @@ ee/
 cli/
 licenses/
 
+# Broken symlink left over from the original macOS checkout (points to an
+# absolute /Users/... path that doesn't exist here) — not consumed by any
+# Dockerfile, but buildkit refuses to transfer a build context containing it
+# ("invalid file request os-ui/scripts/scripts"). Every real file under
+# os-ui/scripts/ (copy-monaco.mjs etc.) is unaffected; this excludes only the
+# one stray self-named symlink entry.
+os-ui/scripts/scripts
+
 # Binary and generated files that bloat the context
 *.sql
 *.png

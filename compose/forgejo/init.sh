@@ -1,33 +1,14 @@
 #!/bin/sh
-# Layer B (docker compose) — one-shot Forgejo admin bootstrap.
+# Creates the Forgejo admin user. The chart's own bootstrap (an
+# initContainer script baked into the forgejo subchart's image) isn't
+# shipped in the plain code.forgejo.org/forgejo/forgejo:11-rootless image,
+# so this calls `forgejo admin user create` directly instead, sharing the
+# server's app-data volume.
 #
-# The Helm chart's admin bootstrap (charts/sovereign-agentic-os/templates/gitea/
-# — pulled read-only for Phase 2.1 investigation from the forgejo subchart
-# v17.1.1) runs an initContainer executing /usr/local/bin/configure_gitea.sh,
-# which is baked into that subchart's own container image build and was
-# verified against Forgejo 11.0.16 (the same binary this compose file uses).
-# That script is NOT shipped in the plain
-# code.forgejo.org/forgejo/forgejo:11-rootless image (it belongs to the chart's
-# init Secret, templated by Helm) — so it does not transfer to Compose. This
-# script replicates the same end result (idempotent `admin user create`)
-# directly against the forgejo CLI, verified empirically against this exact
-# image/tag before being written:
-#
-#   * `forgejo admin user create` DOES support being invoked from a fresh,
-#     separate one-shot container (not just via `docker exec` into the running
-#     server), as long as it shares the server's app-data volume — confirmed.
-#   * `-c/--config` must NOT be passed explicitly. Passing
-#     `-c /var/lib/gitea/custom/conf/app.ini` (the container's own default
-#     $GITEA_APP_INI) causes `MustInstalled()` to fail even though the exact
-#     same config file the running server uses is right there — reproduced
-#     3 times, including via `docker exec` into an already-healthy server.
-#     Omitting -c and relying on the image's built-in $GITEA_APP_INI default
-#     works every time. This looks like a bug in this Forgejo version, not
-#     something we're free to "fix" — just avoid it.
-#   * A second `admin user create` for the same username fails with exit 1 and
-#     stdout/stderr `Command error: CreateUser: user already exists
-#     [name: <user>]` — this is the ONLY failure mode we treat as success below,
-#     so a genuine failure (bad DB, bad env, etc.) still propagates.
+# Deliberately omits `-c/--config`: passing the container's own default
+# app.ini path explicitly makes `MustInstalled()` fail even though it's the
+# same file the running server uses — a quirk of this Forgejo version, not
+# something to "fix" here, just avoid.
 set -eu
 
 USERNAME=${FORGEJO_ADMIN_USER:-gitea_admin}

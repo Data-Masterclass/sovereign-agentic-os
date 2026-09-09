@@ -1,17 +1,7 @@
 #!/bin/sh
-# Layer A (docker compose) — replicates
-# charts/sovereign-agentic-os/templates/litellm/agent-key.yaml's Job logic:
-# poll LiteLLM readiness, then GET /key/info, then POST /key/generate only if
-# the key is absent (idempotent). Runs in curlimages/curl, same image the
-# chart's Job uses (agent-key.yaml line 64).
-#
-# MASTER_KEY / VIRTUAL_KEY come from the environment (compose.yaml), mirroring
-# the chart Job's two Secret-sourced envs (agent-key.yaml lines 70-73). Every
-# other field below (alias/models/budget/limits) is a literal, matching the
-# chart's rendered PAYLOAD for the default litellmAgentKey values
-# (values.yaml:688-720) exactly as Helm would have rendered them — the chart
-# itself bakes these in as literals from values at render time, not as env
-# vars, so hardcoding them here mirrors the chart 1:1.
+# Provisions the scoped virtual key agent-runtime uses: poll LiteLLM
+# readiness, GET /key/info, then POST /key/generate only if absent
+# (idempotent). MASTER_KEY / VIRTUAL_KEY come from compose.yaml's environment.
 set -e
 
 B=http://agentic-os-litellm:4000
