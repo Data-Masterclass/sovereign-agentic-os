@@ -27,10 +27,9 @@ console login is **Langfuse**: `admin@datamasterclass.com` / `langfuse-local-dev
 `litellm-admin-local-dev`, Forgejo `gitea_admin` / `forgejo-admin-local-dev`, and Argo CD
 `admin`). Non-interactive: `./install.sh --defaults`. Remove: `./install.sh --uninstall`.
 
-**Two front doors** (port-forward, then open):
+**Front door** (port-forward, then open):
 ```bash
 kubectl -n agentic-os port-forward svc/os-ui 8080:3000           # OS UI — product front door
-kubectl -n agentic-os port-forward svc/admin-console 8081:8080   # Admin Console — operate the stack + docs
 ```
 
 Presets: `values.selfcontained.yaml` (default) · `values.stackit-managed.yaml` (backends →

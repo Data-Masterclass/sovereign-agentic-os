@@ -14,8 +14,7 @@
 {{- /*
   Scoped RBAC for the native Components surface. The OS UI server reads workload
   status + scales Deployments/StatefulSets 0<->1 and reads CNPG Clusters
-  directly via the in-cluster API (lib/platform.ts) — this is what the standalone
-  admin-console used to do. Same least-privilege Role, now bound to os-ui.
+  directly via the in-cluster API (lib/platform.ts).
 */}}
 apiVersion: v1
 kind: ServiceAccount
