@@ -171,7 +171,13 @@ local Langfuse then shows only os-ui's agent spans (`agent.generate`,
   real model, edit `compose/litellm/config.yaml` and point the
   `sovereign-default`/`sovereign-mock`/`sovereign-reasoning` aliases at a
   real endpoint instead of `http://mock-model:8080/v1`.
-- This stack only covers the Agents golden path.
+- The Helm chart deploys 47 workloads. This stack covers 17 of them — the 15
+  services listed at the top, since LiteLLM and Forgejo each account for two
+  chart workloads. 30 are not included.
+- The 30 fall into three groups: services outside the Phase 2.1 scope (the
+  data and knowledge layers), Kubernetes-only services with no Compose
+  equivalent such as ArgoCD, and services already switched off in the
+  chart's own local configuration.
 - Knowledge, Files, Data, Metrics, Dashboards, Software, Components, and
   Console show empty or unavailable.
 - The "LIVE CLUSTER" indicator in the header is meaningless here — there's
@@ -187,3 +193,12 @@ username `admin` and the value of `PROXY_MASTER_KEY` as the password.
 - `docker compose down` stops everything and keeps your data.
 - `docker compose down -v` also deletes the named volumes (`pg-data`,
   `forgejo-data`, `clickhouse-data`, `minio-data`).
+
+## Adding more services
+
+This stack is intentionally scoped to the Agents flow. Further services can
+be added incrementally as development needs them: a new service block in
+`compose.yaml`, with a `profiles:` entry if it should be optional.
+
+Some chart workloads have no Compose equivalent at all, because they depend
+on the Kubernetes API. Not every remaining service will be added.
