@@ -88,11 +88,20 @@ const VERIFY_TTL_MS = 1000 * 60 * 60 * 24; // 24h single-use verification window
 
 type Meta = { recoveryHash?: string; initialized?: boolean };
 
-type UsersCacheState = { cache: Map<string, StoredUser> | null; meta: Meta; dummyHash: string | null };
+type UsersCacheState = {
+  cache: Map<string, StoredUser> | null;
+  meta: Meta;
+  dummyHash: string | null;
+  /** True while `cache` is an in-memory seed served WITHOUT the durable mirror
+   *  (dev/no-cluster only). Such a cache is never final: the mirror is re-probed
+   *  and, once reachable, replaces it — the mirror is the source of truth. */
+  offline: boolean;
+  lastHydrateAttempt: number;
+};
 const USERS_STATE_KEY = Symbol.for('soa.users.cache');
 function usersState(): UsersCacheState {
   const g = globalThis as unknown as Record<symbol, UsersCacheState | undefined>;
-  if (!g[USERS_STATE_KEY]) g[USERS_STATE_KEY] = { cache: null, meta: {}, dummyHash: null };
+  if (!g[USERS_STATE_KEY]) g[USERS_STATE_KEY] = { cache: null, meta: {}, dummyHash: null, offline: false, lastHydrateAttempt: 0 };
   return g[USERS_STATE_KEY]!;
 }
 
@@ -221,44 +230,126 @@ function persistMeta(): void {
   mirror.writeThrough(META_ID, { id: META_ID, ...s.meta });
 }
 
+/**
+ * Thrown when the durable user directory (OpenSearch `os-users`) cannot be
+ * reached and offline seeding is not permitted. Callers fail CLOSED (HTTP 503)
+ * — never a silent fallback to the operator seed.
+ */
+export class DirectoryUnavailableError extends Error {
+  status = 503;
+  constructor() {
+    super('User directory temporarily unavailable');
+    this.name = 'DirectoryUnavailableError';
+  }
+}
+
+const HYDRATE_ATTEMPTS = 3; // boot-time retries before the mirror counts as down
+const HYDRATE_BACKOFF_MS = 1500;
+
+/**
+ * In-memory seeding while the mirror is unreachable is a no-cluster DEV
+ * convenience only. In production it is a footgun: os-ui booting a few seconds
+ * before OpenSearch (2026-09-10, a routine node roll) took this branch, re-seeded
+ * every account from OS_USERS with the ORIGINAL passwords, dropped every account
+ * created since, and froze that view for the life of the pod — an all-users
+ * lockout. Explicit env wins; otherwise only non-production may seed offline.
+ */
+function offlineSeedAllowed(): boolean {
+  const v = process.env.OS_ALLOW_OFFLINE_USER_SEED;
+  if (v !== undefined && v !== '') return v.toLowerCase() === 'true';
+  return process.env.NODE_ENV !== 'production';
+}
+
+/** While offline-seeded, re-probe the mirror at most this often. */
+function offlineRehydrateMs(): number {
+  const n = Number(process.env.OS_OFFLINE_REHYDRATE_MS);
+  return Number.isFinite(n) && n >= 0 ? n : 30_000;
+}
+
+async function hydrateWithRetry(): Promise<unknown[] | null> {
+  for (let i = 1; i <= HYDRATE_ATTEMPTS; i++) {
+    const docs = await mirror.hydrate(1000);
+    if (docs !== null) return docs;
+    if (i < HYDRATE_ATTEMPTS) await new Promise((r) => setTimeout(r, HYDRATE_BACKOFF_MS * i));
+  }
+  return null;
+}
+
+/** Build the directory from mirror docs. `meta` comes from the mirror too (it is
+ *  the source of truth), so an offline-seeded `initialized` flag never masks a
+ *  genuinely fresh index. */
+async function buildFromDocs(s: UsersCacheState, docs: unknown[]): Promise<Map<string, StoredUser>> {
+  const map = new Map<string, StoredUser>();
+  s.meta = {};
+  for (const src of docs as (StoredUser & Meta)[]) {
+    if (src.id === META_ID) {
+      s.meta = { recoveryHash: src.recoveryHash, initialized: src.initialized };
+      continue;
+    }
+    // Migrate legacy roles on read: anything outside the 4 canonical roles
+    // (agentic-leader, participant, …) → creator. Nobody is ever auto-promoted
+    // — domain_admin is only ever assigned explicitly by a platform admin.
+    if (!ROLES.includes(src.role as Role)) {
+      src.role = 'creator';
+    }
+    map.set(src.id, src);
+  }
+  // Seed the first-run bootstrap admin ONLY on a never-initialised store. Once
+  // a deployment has been set up (s.meta.initialized), an empty user map means
+  // every account was removed — we must NOT silently resurrect admin/admin;
+  // recovery is via the master key. This closes the default-credential
+  // resurrection path.
+  if (map.size === 0 && !s.meta.initialized) {
+    for (const u of await loadSeed()) { map.set(u.id, u); writeThrough(u); }
+    s.meta.initialized = true;
+    persistMeta();
+  }
+  return map;
+}
+
 async function getCache(): Promise<Map<string, StoredUser>> {
   const s = usersState();
-  if (s.cache) return s.cache;
-  const map = new Map<string, StoredUser>();
-  const docs = await mirror.hydrate(1000);
+  if (s.cache && !s.offline) return s.cache;
+
+  if (s.cache && s.offline) {
+    // Serving an in-memory seed: keep probing and adopt the mirror the moment it
+    // answers. Never let an offline view outlive the outage that created it.
+    if (Date.now() - s.lastHydrateAttempt < offlineRehydrateMs()) return s.cache;
+    s.lastHydrateAttempt = Date.now();
+    const docs = await mirror.hydrate(1000);
+    if (docs === null) return s.cache;
+    const map = await buildFromDocs(s, docs);
+    s.cache = map;
+    s.offline = false;
+    return map;
+  }
+
+  const docs = await hydrateWithRetry();
   if (docs !== null) {
-    for (const src of docs as (StoredUser & Meta)[]) {
-      if (src.id === META_ID) {
-        s.meta = { recoveryHash: src.recoveryHash, initialized: src.initialized };
-        continue;
-      }
-      // Migrate legacy roles on read: anything outside the 4 canonical roles
-      // (agentic-leader, participant, …) → creator. Nobody is ever auto-promoted
-      // — domain_admin is only ever assigned explicitly by a platform admin.
-      if (!ROLES.includes(src.role as Role)) {
-        src.role = 'creator';
-      }
-      map.set(src.id, src);
-    }
-    // Seed the first-run bootstrap admin ONLY on a never-initialised store. Once
-    // a deployment has been set up (s.meta.initialized), an empty user map means
-    // every account was removed — we must NOT silently resurrect admin/admin;
-    // recovery is via the master key. This closes the default-credential
-    // resurrection path.
-    if (map.size === 0 && !s.meta.initialized) {
-      for (const u of await loadSeed()) { map.set(u.id, u); writeThrough(u); }
-      s.meta.initialized = true;
-      persistMeta();
-    }
-  } else {
-    // Mirror unreachable → offline/in-memory mode (no durability): seed only
-    // when nothing is loaded.
-    if (map.size === 0 && !s.meta.initialized) {
-      for (const u of await loadSeed()) map.set(u.id, u);
-      s.meta.initialized = true;
-    }
+    const map = await buildFromDocs(s, docs);
+    s.cache = map;
+    s.offline = false;
+    return map;
+  }
+
+  // Mirror unreachable.
+  if (!offlineSeedAllowed()) {
+    // FAIL CLOSED. Do not cache, so the very next request retries the mirror.
+    console.warn(
+      '[users] directory mirror unreachable — refusing to seed from OS_USERS ' +
+        '(set OS_ALLOW_OFFLINE_USER_SEED=true only for no-cluster development)',
+    );
+    throw new DirectoryUnavailableError();
+  }
+  // Dev/no-cluster: seed in memory, flagged offline so it is replaced later.
+  const map = new Map<string, StoredUser>();
+  if (!s.meta.initialized) {
+    for (const u of await loadSeed()) map.set(u.id, u);
+    s.meta.initialized = true;
   }
   s.cache = map;
+  s.offline = true;
+  s.lastHydrateAttempt = Date.now();
   return map;
 }
 
@@ -664,6 +755,8 @@ export async function resetPasswordWithRecovery(
 export function __resetUsers(): void {
   const s = usersState();
   s.cache = null;
+  s.offline = false;
+  s.lastHydrateAttempt = 0;
   s.meta = {};
   s.dummyHash = null;
   mirror.__reset();

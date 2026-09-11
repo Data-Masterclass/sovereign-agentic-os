@@ -2750,6 +2750,13 @@ ciRunner:
 # port 3000, probes /api/health.
 osUI:
   enabled: true
+  # Gate os-ui startup on OpenSearch (the durable user-directory mirror). Booting
+  # before it was reachable re-seeded every account from OS_USERS (2026-09-10).
+  # Rendered unless explicitly false (robust to `helm --reuse-values`).
+  waitForOpenSearch: true
+  # In-memory user seeding while the mirror is unreachable is a no-cluster DEV
+  # convenience only. Production fails closed (503) instead of reverting passwords.
+  allowOfflineUserSeed: false
   image:
     repository: sovereign-os/os-ui    # built locally, loaded into kind
     tag: "0.1.0"

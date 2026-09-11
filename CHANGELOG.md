@@ -13,6 +13,25 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### os-ui 0.6.167 — Directory fails closed: no more silent password revert when OpenSearch is late (chart 0.2.12)
+
+**Incident (2026-09-10):** a routine SKE node roll restarted every pod at once; os-ui came up ~34 s before
+OpenSearch answered, took the "mirror unreachable → offline seed" branch in `lib/platform-admin/users.ts`,
+re-seeded all 45 `OS_USERS` accounts with their ORIGINAL passwords into a cache that was never re-hydrated,
+and dropped the 16 accounts created since — "Invalid email or password" for every user until a restart.
+
+- `getCache()` now retries hydration (3× with backoff) and, if the mirror is still unreachable, **fails
+  CLOSED** in production: `DirectoryUnavailableError` (status 503) — it never seeds from `OS_USERS` over a
+  deployment it cannot see. `/api/auth/login` surfaces this as an honest `503 + retry-after`, not a 401.
+- Offline in-memory seeding is now opt-in (`OS_ALLOW_OFFLINE_USER_SEED=true`, non-production default) and
+  is never frozen: the mirror is re-probed (`OS_OFFLINE_REHYDRATE_MS`, 30 s) and adopted the moment it answers.
+- Chart: `wait-for-opensearch` initContainer on os-ui (uses the os-ui image; renders unless
+  `osUI.waitForOpenSearch=false`, so it survives `--reuse-values`), `OS_ALLOW_OFFLINE_USER_SEED` env
+  (`osUI.allowOfflineUserSeed`, default false).
+- Deploy: `scripts/deploy-06167.sh` runs the pre-upgrade pg backup and removes the plaintext `OS_USERS`
+  roster from the pod env (`osUI.usersSeed=""`) — the `os-users` mirror is the source of truth.
+- Tests: `lib/platform-admin/users-offline-failclosed.test.ts`. Carries all of 0.6.166.
+
 ### os-ui 0.6.166 — Editable records: in-place edit/delete for OS-built apps (3 new interactive patterns)
 
 OS-built apps can now **edit and delete** their own records in place — not just append. The three
