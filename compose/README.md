@@ -89,13 +89,6 @@ In external mode, create it yourself: open the deployed instance's LiteLLM
 dashboard, go to Virtual Keys, create a key, and put its value in
 `LITELLM_AGENT_KEY`.
 
-A scoped key is recommended, so agent-runtime runs with limited models and
-a budget cap rather than full admin rights.
-
-Using the master key for both works, but `litellm-key-init` will exit 22
-because it cannot create a virtual key equal to the master key. That
-container has no work to do in external mode, so nothing breaks.
-
 ### Use a deployed LiteLLM
 
 LiteLLM runs on your deployed instance. Postgres and Langfuse stay local.
@@ -133,6 +126,23 @@ API paths. On v4 with `LANGFUSE_MIGRATION_V4_WRITE_MODE=events_only`, the
 ingestion endpoint rejects `trace-create` events, and the trace-read
 endpoints 404.
 
+### Use a real model through the local LiteLLM
+
+Keeps LiteLLM local but points it at a real provider, so you get real model
+answers and still get full trace detail in the local Langfuse. This is the
+same arrangement the deployed Helm environment uses.
+
+In `compose/litellm/config.yaml`, the three chat aliases (`sovereign-default`,
+`sovereign-mock`, `sovereign-reasoning`) each have a commented real-provider
+block — replace the active values with those, filling in the provider's URL
+and model names. In `.env`, uncomment `STACKIT_API_KEY` and set it to the
+provider's key. Nothing else changes: `COMPOSE_PROFILES` stays as it is, and
+the six model-name variables above don't need overriding, because the alias
+names stay `sovereign-*` and the local LiteLLM handles the translation.
+
+The stack is no longer offline in this mode. The committed default routes to
+`mock-model`, so the offline path keeps working.
+
 Tracing: local LiteLLM writes full prompt and completion detail to Langfuse.
 An external LiteLLM writes those traces to its own Langfuse instead — your
 local Langfuse then shows only os-ui's agent spans (`agent.generate`,
@@ -168,9 +178,7 @@ local Langfuse then shows only os-ui's agent spans (`agent.generate`,
 - Using a deployed LiteLLM reduces local trace detail (see How to run
   externally).
 - `mock-model` always answers with the same deterministic stub. To use a
-  real model, edit `compose/litellm/config.yaml` and point the
-  `sovereign-default`/`sovereign-mock`/`sovereign-reasoning` aliases at a
-  real endpoint instead of `http://mock-model:8080/v1`.
+  real model, see Use a real model through the local LiteLLM.
 - The Helm chart deploys 47 workloads. This stack covers 17 of them — the 15
   services listed at the top, since LiteLLM and Forgejo each account for two
   chart workloads. 30 are not included.
