@@ -29,7 +29,12 @@ export default function Sidebar() {
   // machine-readable minRole + requiresLayer on each tab — no string parsing,
   // no edge cases. Layers are the ACTIVE domain's (from /api/auth/me); unknown
   // layers fail open, so a missing record never hides navigation.
-  const visibleGroups = filterTabGroups(TAB_GROUPS, user?.role ?? null, user?.activeDomainLayers ?? null);
+  const visibleGroups = filterTabGroups(
+    TAB_GROUPS,
+    user?.role ?? null,
+    user?.activeDomainLayers ?? null,
+    user?.enabledFeatures ? new Set(user.enabledFeatures) : undefined,
+  );
 
   function renderTab(tab: Tab) {
     if (!tab.href) {

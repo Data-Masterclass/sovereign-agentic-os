@@ -181,6 +181,11 @@ spec:
                  Production fails closed (503) instead of reverting passwords. */}}
             - name: OS_ALLOW_OFFLINE_USER_SEED
               value: {{ ternary "true" "false" (eq (toString $u.allowOfflineUserSeed) "true") | quote }}
+            {{- /* Tab gating. Empty = base-8 default. */}}
+            {{- if .Values.osUI.enabledTabs }}
+            - name: OS_ENABLED_TABS
+              value: {{ .Values.osUI.enabledTabs | quote }}
+            {{- end }}
             # Session-signing secret (HMAC-SHA256 for the auth cookie). Sourced
             # from the generated `os-ui-session` Secret — NEVER the in-code
             # dev fallback, which would let anyone forge an admin session.
