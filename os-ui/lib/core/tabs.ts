@@ -40,6 +40,10 @@ export type Tab = {
    *  hiding only, exactly like minRole: the page itself stays reachable and the
    *  serving plane reports the layer being off honestly. */
   requiresLayer?: 'ml';
+  /** Machine-readable feature key for OS_ENABLED_TABS gating. A tab with no
+   *  feature is always visible (role/layer gates still apply). */
+  feature?: string;
+
 };
 
 /** The active domain's optional-layer flags, as far as the client knows them.
@@ -57,53 +61,53 @@ export const TAB_GROUPS: TabGroup[] = [
     // transparency (every role can read it); the admin gate on the page itself was
     // the only real constraint — moving it here keeps it accessible and honest.
     tabs: [
-      { label: 'Home', icon: '◇', href: '/' },
-      { label: 'Cockpit', icon: '◉', href: '/cockpit' },
-      { label: 'Tutorials', icon: '◎', href: '/tutorials' },
+      { label: 'Home', icon: '◇', href: '/', feature: 'home' },
+      { label: 'Cockpit', icon: '◉', href: '/cockpit', feature: 'cockpit' },
+      { label: 'Tutorials', icon: '◎', href: '/tutorials', feature: 'tutorials' },
       // MCP setup UI is builder+/admin. Creators still CONNECT via MCP (the
       // /api/mcp endpoint + their per-user token are unaffected) — only this
       // configuration tab is hidden from the creator menu.
-      { label: 'MCP', icon: '⌗', href: '/mcp', role: 'Builder / Administrator', minRole: 'builder' },
-      { label: 'About / Licenses', icon: '©', href: '/about' },
+      { label: 'MCP', icon: '⌗', href: '/mcp', role: 'Builder / Administrator', minRole: 'builder', feature: 'mcp' },
+      { label: 'About / Licenses', icon: '©', href: '/about', feature: 'about' },
     ],
   },
   {
     heading: 'Plan',
     tabs: [
-      { label: 'Strategy', icon: '▲', href: '/strategy' },
-      { label: 'Big Bets', icon: '◆', href: '/big-bets' },
-      { label: 'Operating Model', icon: '❧', href: '/operating-manual' },
-      { label: 'Business Workflows', icon: '⧉', href: '/workflows' },
-      { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator' },
+      { label: 'Strategy', icon: '▲', href: '/strategy', feature: 'strategy' },
+      { label: 'Big Bets', icon: '◆', href: '/big-bets', feature: 'big-bets' },
+      { label: 'Operating Model', icon: '❧', href: '/operating-manual', feature: 'operating-model' },
+      { label: 'Business Workflows', icon: '⧉', href: '/workflows', feature: 'workflows' },
+      { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator', feature: 'marketplace' },
     ],
   },
   {
     heading: 'Context',
     tabs: [
-      { label: 'Data', icon: '▤', href: '/data' },
-      { label: 'Metrics', icon: '∑', href: '/metrics' },
-      { label: 'Files', icon: '❏', href: '/unstructured' },
-      { label: 'Knowledge', icon: '❦', href: '/knowledge' },
-      { label: 'Connections', icon: '⇄', href: '/connections' },
+      { label: 'Data', icon: '▤', href: '/data', feature: 'data' },
+      { label: 'Metrics', icon: '∑', href: '/metrics', feature: 'metrics' },
+      { label: 'Files', icon: '❏', href: '/unstructured', feature: 'files' },
+      { label: 'Knowledge', icon: '❦', href: '/knowledge', feature: 'knowledge' },
+      { label: 'Connections', icon: '⇄', href: '/connections', feature: 'connections' },
     ],
   },
   {
     heading: 'Build',
     tabs: [
-      { label: 'Agents', icon: '✦', href: '/agents' },
-      { label: 'Dashboards', icon: '▦', href: '/dashboards' },
-      { label: 'Software', icon: '⌘', href: '/software' },
+      { label: 'Agents', icon: '✦', href: '/agents', feature: 'agents' },
+      { label: 'Dashboards', icon: '▦', href: '/dashboards', feature: 'dashboards' },
+      { label: 'Software', icon: '⌘', href: '/software', feature: 'software' },
       // Science only exists where the domain's optional Science layer (layers.ml,
       // toggled in Admin → Domains) is on — hidden from the nav when it is
       // explicitly off for the active domain (see tabVisible).
-      { label: 'Science', icon: '∿', href: '/science', requiresLayer: 'ml' },
+      { label: 'Science', icon: '∿', href: '/science', requiresLayer: 'ml', feature: 'science' },
       // Console merges the former Terminal (/terminal) and Query (/admin-query)
       // operator tools into one page with a Shell | Query switch. The tab is
       // builder-visible so course participants get the GOVERNED Query surface
       // (SQL over Trino/Cube, OPA/RLS-checked per-caller, audited). The raw
       // Shell sub-panel INSIDE it stays admin-only (ConsoleClient gates it) —
       // exposing the tab does NOT expose arbitrary command execution.
-      { label: 'Console', icon: '▶', href: '/console', role: 'Builder / Administrator', minRole: 'builder' },
+      { label: 'Console', icon: '▶', href: '/console', role: 'Builder / Administrator', minRole: 'builder', feature: 'console' },
     ],
   },
   {
@@ -111,19 +115,42 @@ export const TAB_GROUPS: TabGroup[] = [
     // (route /governance unchanged), plus Admin moved from the dissolved Admin group.
     heading: 'Govern',
     tabs: [
-      { label: 'Policies & Approvals', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder' },
-      { label: 'Monitoring', icon: '◷', href: '/monitoring', role: 'Builder / Administrator', minRole: 'builder' },
-      { label: 'Components', icon: '▥', href: '/components', role: 'Administrator', minRole: 'admin' },
-      { label: 'LLM Gateway', icon: '⌁', href: '/llm-gateway', role: 'Builder / Administrator', minRole: 'builder' },
+      { label: 'Policies & Approvals', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder', feature: 'governance' },
+      { label: 'Monitoring', icon: '◷', href: '/monitoring', role: 'Builder / Administrator', minRole: 'builder', feature: 'monitoring' },
+      { label: 'Components', icon: '▥', href: '/components', role: 'Administrator', minRole: 'admin', feature: 'components' },
+      { label: 'LLM Gateway', icon: '⌁', href: '/llm-gateway', role: 'Builder / Administrator', minRole: 'builder', feature: 'llm-gateway' },
       // Admin (Platform) is builder-visible, but the page renders ONLY the tiles
       // a builder is authorised for (fail-closed per-tile minRole). Every
       // platform-admin tile stays admin-only, and each /platform sub-page's API
       // is hard-gated by adminCtx()/requireAdmin — a builder sees only the
       // self-service Settings tile and never reaches an admin control.
-      { label: 'Admin', icon: '❖', href: '/platform', role: 'Builder / Administrator', minRole: 'builder' },
+      { label: 'Admin', icon: '❖', href: '/platform', role: 'Builder / Administrator', minRole: 'builder', feature: 'admin' },
     ],
   },
 ];
+
+/**
+ * Which tab `feature` keys are enabled in this deployment. Reads
+ * OS_ENABLED_TABS (comma-separated feature keys) from the environment.
+ * Unset/empty → defaults to the base-tier tab set only, so a base-only
+ * install shows just what it actually ships.
+ */
+const BASE_FEATURES = [
+  'home',
+  'about',
+  'agents',
+  'monitoring',
+  'llm-gateway',
+  'mcp',
+  'governance',
+  'tutorials',
+];
+
+export const TAB_FEATURES: Set<string> = (() => {
+  const raw = process.env.OS_ENABLED_TABS;
+  if (!raw || raw.trim() === '') return new Set(BASE_FEATURES);
+  return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
+})();
 
 // Flat list (kept for any consumer that just wants every tab in order).
 export const TABS: Tab[] = TAB_GROUPS.flatMap((g) => g.tabs);
@@ -143,19 +170,32 @@ const ROLE_RANK: Record<Role, number> = { creator: 0, builder: 1, domain_admin: 
  * user out on missing data, and the serving plane already 404s honestly when
  * the layer really is off.
  */
-export function tabVisible(tab: Tab, userRole: Role | null | undefined, layers?: LayerFlags): boolean {
+export function tabVisible(
+  tab: Tab,
+  userRole: Role | null | undefined,
+  layers?: LayerFlags,
+  enabledFeatures: Set<string> = TAB_FEATURES,
+): boolean {
+  if (tab.feature && !enabledFeatures.has(tab.feature)) return false;
   if (tab.requiresLayer && layers?.[tab.requiresLayer] === false) return false;
   if (!tab.minRole) return true;
   if (!userRole) return true; // middleware guards; UI shows tabs, server redirects
   return (ROLE_RANK[userRole] ?? 0) >= (ROLE_RANK[tab.minRole] ?? 0);
 }
 
+
+
 /**
  * Filter tab groups for a given user role + active-domain layers. Empty groups
  * (all tabs hidden) are dropped so no dangling heading appears in the sidebar.
  */
-export function filterTabGroups(groups: TabGroup[], userRole: Role | null | undefined, layers?: LayerFlags): TabGroup[] {
+export function filterTabGroups(
+  groups: TabGroup[],
+  userRole: Role | null | undefined,
+  layers?: LayerFlags,
+  enabledFeatures: Set<string> = TAB_FEATURES,
+): TabGroup[] {
   return groups
-    .map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabVisible(t, userRole, layers)) }))
+    .map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabVisible(t, userRole, layers, enabledFeatures)) }))
     .filter((g) => g.tabs.length > 0);
 }

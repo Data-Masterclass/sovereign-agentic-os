@@ -5,6 +5,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { config as appConfig } from '@/lib/core/config';
 import { SESSION_COOKIE, verifySession } from '@/lib/core/session';
 import { corsHeadersFor } from '@/lib/core/cors';
+import { TABS, TAB_FEATURES } from '@/lib/core/tabs';
 
 /**
  * Edge gate. Page navigations require a valid signed session (else → /signin).
@@ -57,6 +58,19 @@ export async function middleware(req: NextRequest) {
   // unauthenticated iframe should see a clean 401, not an HTML /signin page.
   if (pathname.startsWith('/api/') || pathname.startsWith('/tools/')) {
     return withCors(NextResponse.next());
+  }
+  
+  // Disabled-route guard: a tab hidden by OS_ENABLED_TABS must be truly
+  // unreachable, not just hidden from the sidebar. Match the pathname
+  // against the tab's href (exact for '/', prefix otherwise, so a sub-route
+  // like /platform/settings is covered by the Admin tab's /platform) and
+  // 404 honestly if that tab's feature isn't enabled in this deployment.
+  const disabledTab = TABS.find((tab) => {
+    if (!tab.href || !tab.feature || TAB_FEATURES.has(tab.feature)) return false;
+    return tab.href === '/' ? pathname === '/' : pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+  });
+  if (disabledTab) {
+    return new NextResponse('Not found', { status: 404 });
   }
 
   const token = req.cookies.get(SESSION_COOKIE)?.value;

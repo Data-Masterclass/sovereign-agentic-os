@@ -18,13 +18,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TAB_GROUPS, tabVisible, filterTabGroups } from './tabs.ts';
+import { TAB_GROUPS, TAB_FEATURES, tabVisible, filterTabGroups } from './tabs.ts';
 import type { Role } from './session.ts';
 
 // Flat label list for a given role after filtering.
 function visibleLabels(role: Role): string[] {
-  return filterTabGroups(TAB_GROUPS, role).flatMap((g) => g.tabs.map((t) => t.label));
+  return filterTabGroups(TAB_GROUPS, role, undefined, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
 }
+
 
 const ENTRY_GROUP   = TAB_GROUPS.find((g) => !g.heading)!;
 const PLAN_GROUP    = TAB_GROUPS.find((g) => g.heading === 'Plan')!;
@@ -37,6 +38,12 @@ assert.ok(PLAN_GROUP,    'Plan group must exist in TAB_GROUPS');
 assert.ok(CONTEXT_GROUP, 'Context group must exist in TAB_GROUPS');
 assert.ok(BUILD_GROUP,   'Build group must exist in TAB_GROUPS');
 assert.ok(GOVERN_GROUP,  'Govern group must exist in TAB_GROUPS');
+// TAB-VIS / TAB-LAYER tests below predate OS_ENABLED_TABS and check role/layer
+// gating in isolation — they assume every tab is reachable (a full deployment).
+// Pass this explicit "everything enabled" set so the base-8 default doesn't
+// change what they're testing. TAB-FEATURE tests further down exercise the
+// feature gate itself, using the real default.
+const ALL_FEATURES = new Set(TAB_GROUPS.flatMap((g) => g.tabs.map((t) => t.feature!)));
 
 // The former Monitor and Admin groups must be gone.
 const MONITOR_GROUP = TAB_GROUPS.find((g) => g.heading === 'Monitor');
@@ -179,7 +186,7 @@ test('TAB-VIS creator: Govern group still visible (Monitoring + LLM Gateway are 
 });
 
 test('TAB-VIS builder: Govern group is visible and includes Policies & Approvals', () => {
-  const groups = filterTabGroups(TAB_GROUPS, 'builder');
+  const groups = filterTabGroups(TAB_GROUPS, 'builder', undefined, ALL_FEATURES);
   const govern = groups.find((g) => g.heading === 'Govern');
   assert.ok(govern, 'Govern group must be present for builder');
   assert.ok(govern!.tabs.some((t) => t.label === 'Policies & Approvals'), 'builder must see Policies & Approvals');
@@ -189,7 +196,7 @@ test('TAB-VIS builder: Govern group is visible and includes Policies & Approvals
 });
 
 test('TAB-VIS builder: Console tab in Build group is visible (governed Query surface)', () => {
-  const groups = filterTabGroups(TAB_GROUPS, 'builder');
+  const groups = filterTabGroups(TAB_GROUPS, 'builder', undefined, ALL_FEATURES);
   const build = groups.find((g) => g.heading === 'Build');
   assert.ok(build, 'Build group must be present for builder');
   assert.ok(build!.tabs.some((t) => t.label === 'Console'), 'builder must see Console (Query is builder+; the raw Shell inside stays admin-only)');
@@ -283,7 +290,7 @@ test('TAB-VIS entry/Context/Build/Plan tabs are open to creators except the MCP 
       }
       assert.equal(tab.minRole, undefined,
         `${group.heading ?? 'Entry'} group tab "${tab.label}" must not have minRole`);
-      assert.equal(tabVisible(tab, 'creator'), true,
+      assert.equal(tabVisible(tab, 'creator', undefined, ALL_FEATURES), true,
         `${group.heading ?? 'Entry'} group tab "${tab.label}" hidden from creator`);
     }
   }
@@ -313,39 +320,82 @@ test('TAB-LAYER Science carries requiresLayer=ml; no other tab is layer-gated', 
 
 test('TAB-LAYER Science hidden when the active domain explicitly has ml:false (every role)', () => {
   for (const role of ['creator', 'builder', 'domain_admin', 'admin'] as Role[]) {
-    const labels = filterTabGroups(TAB_GROUPS, role, { ml: false }).flatMap((g) => g.tabs.map((t) => t.label));
+    const labels = filterTabGroups(TAB_GROUPS, role, { ml: false }, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
     assert.ok(!labels.includes('Science'), `${role} must not see Science when ml is explicitly off`);
   }
 });
 
 test('TAB-LAYER Science visible when ml:true', () => {
-  const labels = filterTabGroups(TAB_GROUPS, 'creator', { ml: true }).flatMap((g) => g.tabs.map((t) => t.label));
+  const labels = filterTabGroups(TAB_GROUPS, 'creator', { ml: true }, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
   assert.ok(labels.includes('Science'), 'Science must show when the layer is on');
 });
 
 test('TAB-LAYER unknown/absent layers FAIL OPEN — Science stays visible', () => {
-  // No layers arg, null, and a record without the ml key all show Science:
-  // navigation never locks out on missing data; the serving plane 404s
-  // honestly when the layer really is off.
   for (const layers of [undefined, null, {}]) {
-    const labels = filterTabGroups(TAB_GROUPS, 'creator', layers).flatMap((g) => g.tabs.map((t) => t.label));
+    const labels = filterTabGroups(TAB_GROUPS, 'creator', layers, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
     assert.ok(labels.includes('Science'), `Science must fail open for layers=${JSON.stringify(layers)}`);
   }
 });
 
 test('TAB-LAYER minRole filtering is unaffected by the layers argument', () => {
   for (const layers of [{ ml: false }, { ml: true }, null]) {
-    const creator = filterTabGroups(TAB_GROUPS, 'creator', layers).flatMap((g) => g.tabs.map((t) => t.label));
+    const creator = filterTabGroups(TAB_GROUPS, 'creator', layers, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
     assert.ok(!creator.includes('Console'), 'creator still must not see Console (builder+)');
     assert.ok(!creator.includes('MCP'), 'creator still must not see MCP (builder+)');
-    const admin = filterTabGroups(TAB_GROUPS, 'admin', layers).flatMap((g) => g.tabs.map((t) => t.label));
+    const admin = filterTabGroups(TAB_GROUPS, 'admin', layers, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
     assert.ok(admin.includes('Components'), 'admin still sees Components regardless of layers');
   }
 });
 
 test('TAB-LAYER tabVisible combines both gates: layer off wins even for admin', () => {
   const science = BUILD_GROUP.tabs.find((t) => t.label === 'Science')!;
-  assert.equal(tabVisible(science, 'admin', { ml: false }), false, 'ml:false hides Science even for admin');
-  assert.equal(tabVisible(science, 'admin', { ml: true }), true);
-  assert.equal(tabVisible(science, null, { ml: false }), false, 'layer gate applies even when role is unknown');
+  assert.equal(tabVisible(science, 'admin', { ml: false }, ALL_FEATURES), false, 'ml:false hides Science even for admin');
+  assert.equal(tabVisible(science, 'admin', { ml: true }, ALL_FEATURES), true);
+  assert.equal(tabVisible(science, null, { ml: false }, ALL_FEATURES), false, 'layer gate applies even when role is unknown');
+});
+
+// ---- Feature gating (OS_ENABLED_TABS) ---------------------------------------
+
+test('TAB-FEATURE every tab has a feature key', () => {
+  for (const group of TAB_GROUPS) {
+    for (const tab of group.tabs) {
+      assert.equal(typeof tab.feature, 'string', `${group.heading ?? 'Entry'} tab "${tab.label}" must have a feature key`);
+      assert.ok(/^[a-z][a-z0-9-]*$/.test(tab.feature!), `feature key "${tab.feature}" must be kebab-case`);
+    }
+  }
+});
+
+test('TAB-FEATURE default (OS_ENABLED_TABS unset) is exactly the base-8 tab set', () => {
+  assert.equal(process.env.OS_ENABLED_TABS, undefined, 'this test assumes OS_ENABLED_TABS is not set in the test env');
+  const expected = ['home', 'about', 'agents', 'monitoring', 'llm-gateway', 'mcp', 'governance', 'tutorials'];
+  assert.deepEqual([...TAB_FEATURES].sort(), expected.sort());
+});
+
+test('TAB-FEATURE tabVisible hides a tab whose feature is not enabled, for every role', () => {
+  const data = CONTEXT_GROUP.tabs.find((t) => t.label === 'Data')!;
+  assert.equal(TAB_FEATURES.has(data.feature!), false, 'this test assumes "data" is not in the default base set');
+  for (const role of ['creator', 'builder', 'domain_admin', 'admin', null, undefined] as (Role | null | undefined)[]) {
+    assert.equal(tabVisible(data, role), false, `${role} must not see Data when its feature is disabled`);
+  }
+});
+
+test('TAB-FEATURE tabVisible shows a tab whose feature is enabled (no other gate)', () => {
+  const home = ENTRY_GROUP.tabs.find((t) => t.label === 'Home')!;
+  assert.equal(TAB_FEATURES.has(home.feature!), true, 'this test assumes "home" is in the default base set');
+  assert.equal(tabVisible(home, 'creator'), true);
+});
+
+test('TAB-FEATURE combines with role gating: MCP feature enabled but still hidden from creator', () => {
+  const mcp = ENTRY_GROUP.tabs.find((t) => t.label === 'MCP')!;
+  assert.equal(TAB_FEATURES.has(mcp.feature!), true, 'mcp is in the default base set');
+  assert.equal(tabVisible(mcp, 'creator'), false, 'creator still gated by minRole even though feature is enabled');
+  assert.equal(tabVisible(mcp, 'builder'), true);
+});
+
+test('TAB-FEATURE filterTabGroups: with default OS_ENABLED_TABS, admin sees only base-feature tabs', () => {
+  const labels = filterTabGroups(TAB_GROUPS, 'admin').flatMap((g) => g.tabs.map((t) => t.label));
+  const visibleTabs = TAB_GROUPS.flatMap((g) => g.tabs).filter((t) => labels.includes(t.label));
+  for (const tab of visibleTabs) {
+    assert.ok(TAB_FEATURES.has(tab.feature!), `"${tab.label}" visible to admin but its feature "${tab.feature}" is not in the default base set`);
+  }
 });
