@@ -32,7 +32,7 @@ for bin in kubectl helm jq; do command -v "$bin" >/dev/null || die "$bin not on 
 # ---- 1. read the backup target from terraform ---------------------------------
 log "reading backup bucket + credentials from terraform outputs"
 BUCKET=$("$TF" -chdir="$DEPLOY_DIR/terraform" output -raw backup_bucket_name)
-ENDPOINT=$("$TF" -chdir="$DEPLOY_DIR/terraform" output -raw backup_s3_endpoint)
+ENDPOINT="${BACKUP_S3_ENDPOINT:-$("$TF" -chdir="$DEPLOY_DIR/terraform" output -raw backup_s3_endpoint)}"  # env override: the tf output can be empty right after bucket creation
 ACCESS_KEY=$("$TF" -chdir="$DEPLOY_DIR/terraform" output -raw backup_access_key)
 SECRET_KEY=$("$TF" -chdir="$DEPLOY_DIR/terraform" output -raw backup_secret_key)
 [ -n "$BUCKET" ] && [ -n "$ENDPOINT" ] && [ -n "$ACCESS_KEY" ] && [ -n "$SECRET_KEY" ] \
@@ -52,8 +52,11 @@ aws_secret_access_key=$SECRET_KEY" \
 log "installing velero chart"
 helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts >/dev/null
 helm repo update vmware-tanzu >/dev/null
+# upgradeCRDs=false: the chart's CRD-upgrade hook pulls bitnami/kubectl, which Bitnami withdrew
+# from Docker Hub in 2025 (ImagePullBackOff forever). CRDs still install from the chart's crds/ dir.
 helm upgrade --install velero vmware-tanzu/velero \
   -n velero --version 8.1.0 \
+  --set upgradeCRDs=false \
   -f "$SCRIPT_DIR/values.yaml" \
   --set-string "configuration.backupStorageLocation[0].name=default" \
   --set-string "configuration.backupStorageLocation[0].provider=aws" \
