@@ -59,14 +59,15 @@ schedules:
         - agentic-os
       defaultVolumesToFsBackup: true
 
+# 2Gi limits: the server was OOM-killed at 1Gi during the first ~80 GiB fs-backup (2026-09-21).
 resources:
   requests: { cpu: 100m, memory: 256Mi }
-  limits: { cpu: "1", memory: 1Gi }
+  limits: { cpu: "1", memory: 2Gi }
 
 nodeAgent:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
-    limits: { cpu: "1", memory: 1Gi }
+    limits: { cpu: "1", memory: 2Gi }
 
 metrics:
   enabled: true
