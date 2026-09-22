@@ -12,7 +12,7 @@ import {
   type ToolSpec,
 } from '@/lib/assistant/agentic';
 import { compactToolResult } from '@/lib/infra/context/context-assembler';
-import { estimateTokens } from '@/lib/knowledge/context-pack';
+import { estimateTokens } from '@/lib/experimental/knowledge/context-pack';
 import { curateContext, type CurateCandidate, type EmbedFn } from '@/lib/infra/context/librarian';
 
 /**

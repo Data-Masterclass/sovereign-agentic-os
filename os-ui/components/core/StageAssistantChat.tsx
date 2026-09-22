@@ -11,9 +11,9 @@ import type {
   SuggestedEpic,
   SuggestedStoriesForEpic,
   SuggestedEpicRequirements,
-} from '@/lib/software/assistant-suggestions';
-import type { StorySpec } from '@/lib/software/story-spec';
-import type { SuggestedDataset } from '@/lib/software/data-plan';
+} from '@/lib/experimental/software/assistant-suggestions';
+import type { StorySpec } from '@/lib/experimental/software/story-spec';
+import type { SuggestedDataset } from '@/lib/experimental/software/data-plan';
 
 /** A next-step the host can offer at the foot of the thread (never a dead end). */
 export type NextStep = { label: string; prompt?: string; onClick?: () => void };

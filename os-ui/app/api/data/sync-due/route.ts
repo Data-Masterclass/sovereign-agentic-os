@@ -2,12 +2,12 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
 import { roleAtLeast } from '@/lib/core/session';
-import { datasetsWithSync } from '@/lib/data/store';
+import { datasetsWithSync } from '@/lib/experimental/data/store';
 import { runtimeTokenOk } from '@/lib/agents/build/runtime-auth';
-import { runDatasetSync } from '@/lib/data/sync-run-server';
-import { cronDueInWindow } from '@/lib/data/sync-cron';
+import { runDatasetSync } from '@/lib/experimental/data/sync-run-server';
+import { cronDueInWindow } from '@/lib/experimental/data/sync-cron';
 
 export const dynamic = 'force-dynamic';
 

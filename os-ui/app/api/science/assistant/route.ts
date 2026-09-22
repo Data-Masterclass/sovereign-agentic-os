@@ -14,7 +14,7 @@ import {
   collectLaunchGrounding,
   renderLaunchGrounding,
   type RawDefinition,
-} from '@/lib/science';
+} from '@/lib/experimental/science';
 
 export const dynamic = 'force-dynamic';
 

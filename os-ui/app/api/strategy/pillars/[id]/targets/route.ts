@@ -3,14 +3,14 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getPillar, setTargets } from '@/lib/strategy/pillars';
+import { getPillar, setTargets } from '@/lib/experimental/strategy/pillars';
 import {
   type TargetSet,
   type AnnualQuarterly,
   ARTIFACT_KINDS,
   QUARTERS,
   emptyAnnualQuarterly,
-} from '@/lib/strategy';
+} from '@/lib/experimental/strategy';
 
 export const dynamic = 'force-dynamic';
 

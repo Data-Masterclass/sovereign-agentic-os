@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { requireAdmin } from '@/lib/core/auth';
-import { publishAdapter, type Viewer } from '@/lib/marketplace';
+import { publishAdapter, type Viewer } from '@/lib/experimental/marketplace';
 
 export const dynamic = 'force-dynamic';
 

@@ -17,7 +17,7 @@ mock.module('@/lib/core/auth', {
 });
 
 const { delegatedToken } = await import('./identity-server.ts');
-const { propagate } = await import('@/lib/data/identity');
+const { propagate } = await import('@/lib/experimental/data/identity');
 
 function acting(role: string) {
   ACTING = { id: `u_${role}`, name: role, domains: ['sales'], allDomains: ['sales'], activeDomain: null, role };

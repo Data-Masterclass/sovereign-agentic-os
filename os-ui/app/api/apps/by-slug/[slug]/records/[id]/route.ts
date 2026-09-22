@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getAppBySlugForUser } from '@/lib/software/apps';
-import { RECORD_TOOLS, executeAppTool, recordActor } from '@/lib/software/app-records';
+import { getAppBySlugForUser } from '@/lib/experimental/software/apps';
+import { RECORD_TOOLS, executeAppTool, recordActor } from '@/lib/experimental/software/app-records';
 
 export const dynamic = 'force-dynamic';
 

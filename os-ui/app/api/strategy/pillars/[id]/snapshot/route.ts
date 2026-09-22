@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getPillar } from '@/lib/strategy/pillars';
-import { recordSnapshot } from '@/lib/strategy/snapshots';
+import { getPillar } from '@/lib/experimental/strategy/pillars';
+import { recordSnapshot } from '@/lib/experimental/strategy/snapshots';
 
 export const dynamic = 'force-dynamic';
 

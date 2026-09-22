@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { estimateTokens } from '@/lib/knowledge/context-pack';
+import { estimateTokens } from '@/lib/experimental/knowledge/context-pack';
 
 /**
  * THE CONTEXT ASSEMBLER (pure, tested).

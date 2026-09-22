@@ -4,11 +4,11 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/experimental/data/server';
 import { config } from '@/lib/core/config';
-import { getDataset } from '@/lib/data/store';
-import { getMetric } from '@/lib/metrics/store';
-import { datasetToTmdl, tmdlFilename, measureMappings } from '@/lib/metrics/powerbi/tmdl';
+import { getDataset } from '@/lib/experimental/data/store';
+import { getMetric } from '@/lib/experimental/metrics/store';
+import { datasetToTmdl, tmdlFilename, measureMappings } from '@/lib/experimental/metrics/powerbi/tmdl';
 
 export const dynamic = 'force-dynamic';
 

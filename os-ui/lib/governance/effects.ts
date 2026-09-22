@@ -10,21 +10,21 @@ import {
   type Principal,
   type PromotionRequest,
   type CertificationRequest,
-} from '../data/store.ts';
-import type { PublishOutcome } from '../data/publish.ts';
-import { applyApprovedFilePromotion, type FilePromotionRequest } from '../files/store.ts';
+} from '../experimental/data/store.ts';
+import type { PublishOutcome } from '../experimental/data/publish.ts';
+import { applyApprovedFilePromotion, type FilePromotionRequest } from '../experimental/files/store.ts';
 // The ladder's per-kind promote/certify appliers. The SYNC + in-memory ones
 // (knowledge/dashboard/model/agent_system) are dispatched here directly; the
 // async + server-only ones (connection/artifact/app) arrive as injected deps so
 // this module (and its tests) stay free of the heavy object-store cache imports —
 // exactly the isolation pattern `publishPromotion` already uses.
-import { publishWorkflow, certifyWorkflow } from '../knowledge/store.ts';
-import { promotePersonalKnowledge, certifyPersonalKnowledge } from '../knowledge/personal-store.ts';
-import { transitionDashboard } from '../dashboards/store.ts';
+import { publishWorkflow, certifyWorkflow } from '../experimental/knowledge/store.ts';
+import { promotePersonalKnowledge, certifyPersonalKnowledge } from '../experimental/knowledge/personal-store.ts';
+import { transitionDashboard } from '../experimental/dashboards/store.ts';
 import { promoteSystem } from '../agents/store.ts';
-import { promoteModel, certifyModel } from '../science/model-service.ts';
-import type { Actor as ModelActor } from '../science/types.ts';
-import type { ConsumptionMode } from '../science/types.ts';
+import { promoteModel, certifyModel } from '../experimental/science/model-service.ts';
+import type { Actor as ModelActor } from '../experimental/science/types.ts';
+import type { ConsumptionMode } from '../experimental/science/types.ts';
 
 /**
  * The approval-IS-an-action executor (governance-golden-path.md key principle).

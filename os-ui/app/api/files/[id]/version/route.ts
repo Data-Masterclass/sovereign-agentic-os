@@ -4,11 +4,11 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/files/server';
-import { addVersion, attachObject, objectKeyForAsset, getFile } from '@/lib/files/store';
-import { putBlob } from '@/lib/files/object-store';
-import '@/lib/files/object-store-server'; // registers the durable MinIO backend
-import { reindexById } from '@/lib/files/pipeline-server';
+import { requirePrincipal } from '@/lib/experimental/files/server';
+import { addVersion, attachObject, objectKeyForAsset, getFile } from '@/lib/experimental/files/store';
+import { putBlob } from '@/lib/experimental/files/object-store';
+import '@/lib/experimental/files/object-store-server'; // registers the durable MinIO backend
+import { reindexById } from '@/lib/experimental/files/pipeline-server';
 
 export const dynamic = 'force-dynamic';
 

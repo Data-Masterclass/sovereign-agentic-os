@@ -4,11 +4,11 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/files/server';
+import { requirePrincipal } from '@/lib/experimental/files/server';
 import { requireUser } from '@/lib/core/auth';
-import { addSource, listSources, CONNECTOR_TEMPLATES, type Provider, type SyncMode, type SyncScope } from '@/lib/files/connectors';
-import type { Sensitivity } from '@/lib/files/asset-schema';
-import { getConnectionForUser } from '@/lib/connections';
+import { addSource, listSources, CONNECTOR_TEMPLATES, type Provider, type SyncMode, type SyncScope } from '@/lib/experimental/files/connectors';
+import type { Sensitivity } from '@/lib/experimental/files/asset-schema';
+import { getConnectionForUser } from '@/lib/experimental/connections';
 import { providerForTemplate, filesProviderFor } from '@/lib/oauth/providers';
 
 export const dynamic = 'force-dynamic';

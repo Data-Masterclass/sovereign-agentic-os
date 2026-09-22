@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { createApp, listAppsForUser, APP_TEMPLATES, type AppTemplateKey } from '@/lib/software/apps';
-import type { SurfaceDeclaration } from '@/lib/software/model';
+import { createApp, listAppsForUser, APP_TEMPLATES, type AppTemplateKey } from '@/lib/experimental/software/apps';
+import type { SurfaceDeclaration } from '@/lib/experimental/software/model';
 import { codedAppsEnabled } from '@/lib/platform-admin/settings';
 
 export const dynamic = 'force-dynamic';

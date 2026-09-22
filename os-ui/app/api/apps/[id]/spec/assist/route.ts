@@ -4,12 +4,12 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { roleAtLeast } from '@/lib/core/session';
-import { getAppByIdInternal, type App } from '@/lib/software/apps';
+import { getAppByIdInternal, type App } from '@/lib/experimental/software/apps';
 import { assistantComplete } from '@/lib/assistant/complete';
 import { roleModel } from '@/lib/models/roles';
-import { peekDatasetColumns, peekDatasetMeta } from '@/lib/data/store';
-import { parseAppSpec, type AppSpec } from '@/lib/software/appspec/schema';
-import { describeApp } from '@/lib/software/appspec/describe';
+import { peekDatasetColumns, peekDatasetMeta } from '@/lib/experimental/data/store';
+import { parseAppSpec, type AppSpec } from '@/lib/experimental/software/appspec/schema';
+import { describeApp } from '@/lib/experimental/software/appspec/describe';
 import {
   buildAssistPrompt,
   parseAssistedSpec,
@@ -18,7 +18,7 @@ import {
   type GenerateDataset,
   type GenerateGrant,
   type GenerateEpic,
-} from '@/lib/software/appspec/assist';
+} from '@/lib/experimental/software/appspec/assist';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,7 +84,7 @@ export const POST = withRoute<{ id: string }>(async ({ user, params, req }) => {
     { role: 'user', content: prompt.user },
   ];
 
-  const { validateAppSpec } = await import('@/lib/software/appspec/validate');
+  const { validateAppSpec } = await import('@/lib/experimental/software/appspec/validate');
 
   let lastIssues: { path: string; reason: string; fix: string }[] = [];
   for (let attempt = 0; attempt < 2; attempt++) {

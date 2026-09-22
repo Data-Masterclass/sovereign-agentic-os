@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { promotePillar } from '@/lib/strategy/pillars';
+import { promotePillar } from '@/lib/experimental/strategy/pillars';
 
 export const dynamic = 'force-dynamic';
 

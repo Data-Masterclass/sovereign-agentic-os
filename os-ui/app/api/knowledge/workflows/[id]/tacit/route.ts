@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getTacit, updateTacit } from '@/lib/knowledge/store';
+import { getTacit, updateTacit } from '@/lib/experimental/knowledge/store';
 
 export const dynamic = 'force-dynamic';
 

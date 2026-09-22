@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { METRIC_CATALOGUE } from '@/lib/strategy/pillars';
-import { betCatalogue } from '@/lib/strategy/bets-bridge';
+import { METRIC_CATALOGUE } from '@/lib/experimental/strategy/pillars';
+import { betCatalogue } from '@/lib/experimental/strategy/bets-bridge';
 
 export const dynamic = 'force-dynamic';
 

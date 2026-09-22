@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { countEntity } from '@/lib/connections/warehouse/catalog-snapshot';
+import { countEntity } from '@/lib/experimental/connections/warehouse/catalog-snapshot';
 
 export const dynamic = 'force-dynamic';
 

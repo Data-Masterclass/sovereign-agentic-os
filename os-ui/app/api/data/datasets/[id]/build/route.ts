@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { getDataset } from '@/lib/data/store';
-import { buildStage } from '@/lib/data/build/server';
-import type { DataStage } from '@/lib/data/build/adapter';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { getDataset } from '@/lib/experimental/data/store';
+import { buildStage } from '@/lib/experimental/data/build/server';
+import type { DataStage } from '@/lib/experimental/data/build/adapter';
 
 export const dynamic = 'force-dynamic';
 

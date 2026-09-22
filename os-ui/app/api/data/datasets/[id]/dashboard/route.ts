@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { getDataset } from '@/lib/data/store';
-import { buildStage } from '@/lib/data/build/server';
+import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
+import { getDataset } from '@/lib/experimental/data/store';
+import { buildStage } from '@/lib/experimental/data/build/server';
 
 export const dynamic = 'force-dynamic';
 

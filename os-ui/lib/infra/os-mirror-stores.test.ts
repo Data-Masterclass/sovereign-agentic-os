@@ -100,7 +100,7 @@ const admin = { id: 'admin', name: 'Admin', domains: ['sales'], role: 'admin' as
 
 test('datasets (os-datasets): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const { createDataset, listDatasets, ensureHydrated, __resetStore } = await import('../data/store.ts');
+  const { createDataset, listDatasets, ensureHydrated, __resetStore } = await import('../experimental/data/store.ts');
   try {
     __resetStore();
     await ensureHydrated();
@@ -147,7 +147,7 @@ test('artifacts (os-artifacts): fresh-boot bootstrap + round-trip hydration', as
 
 test('apps (os-apps): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const apps = await import('../software/apps.ts');
+  const apps = await import('../experimental/software/apps.ts');
   const app = {
     id: 'app_test1', name: 'Test app', slug: 'test-app', template: 'service', surface: 'api',
     owner: 'admin', domain: 'sales', visibility: 'Personal',
@@ -174,7 +174,7 @@ test('apps (os-apps): fresh-boot bootstrap + round-trip hydration', async () => 
 
 test('connections (os-connections): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const conns = await import('../connections/store.ts');
+  const conns = await import('../experimental/connections/store.ts');
   try {
     conns.__resetConnections();
     const c = await conns.createConnection(admin, {
@@ -222,7 +222,7 @@ test('users (os-users): fresh boot seeds the bootstrap admin DURABLY + round-tri
 
 test('strategy pillars (os-strategy-pillars): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const pillars = await import('../strategy/pillars.ts');
+  const pillars = await import('../experimental/strategy/pillars.ts');
   try {
     pillars.__resetForTests();
     const p = await pillars.createPillar(admin, { name: 'Grow NRR', scope: 'tenant' });
@@ -335,7 +335,7 @@ test('agent systems (os-agent-systems): fresh-boot bootstrap + round-trip hydrat
 
 test('dashboards (os-dashboards): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const dash = await import('../dashboards/store.ts');
+  const dash = await import('../experimental/dashboards/store.ts');
   try {
     dash.__resetDashboards();
     await dash.ensureHydrated();
@@ -360,7 +360,7 @@ test('dashboards (os-dashboards): fresh-boot bootstrap + round-trip hydration', 
 
 test('big bets (os-bigbets): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const bets = await import('../bigbets/store.ts');
+  const bets = await import('../experimental/bigbets/store.ts');
   try {
     bets.__resetBets();
     await bets.ensureHydrated();
@@ -392,7 +392,7 @@ test('big bets (os-bigbets): fresh-boot bootstrap + round-trip hydration', async
 
 test('knowledge workflows (os-knowledge-records): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const know = await import('../knowledge/store.ts');
+  const know = await import('../experimental/knowledge/store.ts');
   try {
     know.__resetStore();
     await know.ensureHydrated();
@@ -416,7 +416,7 @@ test('knowledge workflows (os-knowledge-records): fresh-boot bootstrap + round-t
 
 test('file records (os-file-records): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const files = await import('../files/store.ts');
+  const files = await import('../experimental/files/store.ts');
   try {
     files.__resetStore();
     await files.ensureHydrated();
@@ -468,7 +468,7 @@ test('standing policies (os-standing-policies): fresh-boot bootstrap + round-tri
 
 test('strategy snapshots (os-strategy-snapshots): pre-seeded doc survives round-trip hydration', async () => {
   const os = fakeCluster();
-  const snaps = await import('../strategy/snapshots.ts');
+  const snaps = await import('../experimental/strategy/snapshots.ts');
   try {
     snaps.__resetSnapshotsForTests();
     // Pre-seed the cluster (simulates a prior run's write-through).
@@ -549,7 +549,7 @@ test('tenant user status (os-tenant-user-status): pre-seeded status survives rou
 
 test('egress requests (os-egress-requests): fresh-boot bootstrap + round-trip hydration', async () => {
   const os = fakeCluster();
-  const egress = await import('../connections/egress-requests.ts');
+  const egress = await import('../experimental/connections/egress-requests.ts');
   try {
     egress.__resetEgress();
     await egress.ensureHydrated();
@@ -717,7 +717,7 @@ test('agent memory (os-agent-memory): curated fact survives pod roll via hydrati
 
 test('marketplace (os-marketplace-*): grant + deprecated survive pod roll via hydration', async () => {
   const os = fakeCluster();
-  const mkt = await import('../marketplace/store.ts');
+  const mkt = await import('../experimental/marketplace/store.ts');
   try {
     mkt.__resetMarketplace();
     mkt.putGrant({ id: 'grant_t1', listingId: 'mock-1', grantee: { kind: 'domain', id: 'sales' }, mode: 'reference', grantedBy: 'admin', grantedAt: new Date().toISOString() } as Parameters<typeof mkt.putGrant>[0]);
@@ -795,7 +795,7 @@ test('agent memory (os-agent-memory): first fact on a fresh cluster bootstraps t
 
 test('marketplace (os-marketplace-*): first grant/audit on a fresh cluster bootstraps their indices and persists', async () => {
   const os = fakeCluster();
-  const mkt = await import('../marketplace/store.ts');
+  const mkt = await import('../experimental/marketplace/store.ts');
   try {
     osMirror({ index: 'os-marketplace-grants' }).__reset();
     osMirror({ index: 'os-marketplace-audit' }).__reset();
@@ -814,7 +814,7 @@ test('marketplace (os-marketplace-*): first grant/audit on a fresh cluster boots
 
 test('science models (os-science-models): fresh-boot bootstrap + round-trip hydration + delete-through', async () => {
   const os = fakeCluster();
-  const svc = await import('../science/model-service.ts');
+  const svc = await import('../experimental/science/model-service.ts');
   const sara = { id: 'sara', role: 'user' as const, domains: ['sales'], isAgent: false };
   const spec = {
     sourceDataProductFqn: 'sales.customer_360',

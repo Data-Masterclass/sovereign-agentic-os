@@ -7,7 +7,7 @@ import {
   ensureHydrated,
   listPersonalKnowledgeVersions,
   restorePersonalKnowledgeVersion,
-} from '@/lib/knowledge/personal-store';
+} from '@/lib/experimental/knowledge/personal-store';
 
 export const dynamic = 'force-dynamic';
 

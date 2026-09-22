@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/files/server';
-import { requestPromotion, promotionStatus } from '@/lib/files/store';
+import { requirePrincipal } from '@/lib/experimental/files/server';
+import { requestPromotion, promotionStatus } from '@/lib/experimental/files/store';
 import { enqueue, listApprovals } from '@/lib/governance/approvals';
-import type { DataVisibility, Grant } from '@/lib/data';
+import type { DataVisibility, Grant } from '@/lib/experimental/data';
 
 export const dynamic = 'force-dynamic';
 

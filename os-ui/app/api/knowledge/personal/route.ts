@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { listPersonalKnowledge, createPersonalKnowledge, ensureHydrated } from '@/lib/knowledge/personal-store';
+import { listPersonalKnowledge, createPersonalKnowledge, ensureHydrated } from '@/lib/experimental/knowledge/personal-store';
 
 export const dynamic = 'force-dynamic';
 

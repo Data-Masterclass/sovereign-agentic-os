@@ -3,14 +3,14 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getBet } from '@/lib/bigbets/store';
-import { principal } from '@/lib/bigbets/server';
-import { sourceFor } from '@/lib/bigbets';
+import { getBet } from '@/lib/experimental/bigbets/store';
+import { principal } from '@/lib/experimental/bigbets/server';
+import { sourceFor } from '@/lib/experimental/bigbets';
 // Side-effect import: registers the REAL cross-tab reader so the picker surfaces
 // the actual datasets/agents/dashboards/knowledge/files/metrics a student built.
-import '@/lib/bigbets/real-sources';
-import { type Tab } from '@/lib/bigbets';
-import { listAppsForUser } from '@/lib/software';
+import '@/lib/experimental/bigbets/real-sources';
+import { type Tab } from '@/lib/experimental/bigbets';
+import { listAppsForUser } from '@/lib/experimental/software';
 
 export const dynamic = 'force-dynamic';
 

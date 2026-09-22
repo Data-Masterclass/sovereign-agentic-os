@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { withRoute } from '@/lib/core/route-server';
-import { requestEgress, listEgressRequests, egressLog, ensureHydrated } from '@/lib/connections';
+import { requestEgress, listEgressRequests, egressLog, ensureHydrated } from '@/lib/experimental/connections';
 import { egressHost } from '@/lib/infra/secrets';
 import { roleAtLeast } from '@/lib/core/session';
 

@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { proposePlan, approvePlan, type Mode, type PlanCompleter } from '@/lib/bigbets/planner';
-import { principal, plannerHooks } from '@/lib/bigbets/server';
+import { proposePlan, approvePlan, type Mode, type PlanCompleter } from '@/lib/experimental/bigbets/planner';
+import { principal, plannerHooks } from '@/lib/experimental/bigbets/server';
 import { assistantComplete } from '@/lib/assistant/complete';
 
 export const dynamic = 'force-dynamic';

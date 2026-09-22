@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { principal } from '@/lib/bigbets/server';
-import { moveBet, ensureHydrated } from '@/lib/bigbets/store';
+import { principal } from '@/lib/experimental/bigbets/server';
+import { moveBet, ensureHydrated } from '@/lib/experimental/bigbets/store';
 
 export const dynamic = 'force-dynamic';
 

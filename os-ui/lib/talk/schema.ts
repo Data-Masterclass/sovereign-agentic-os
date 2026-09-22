@@ -10,7 +10,7 @@
  * retrieval for knowledge/files, …). Nothing here does IO; it only names the seams.
  */
 import type { CurrentUser } from '@/lib/core/auth';
-import type { ChartHint } from '@/lib/data/ask-chart';
+import type { ChartHint } from '@/lib/experimental/data/ask-chart';
 
 /**
  * A CHARTABLE data result carried to the client so the answer can render an inline chart.

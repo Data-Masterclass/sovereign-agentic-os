@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { requireUser, type CurrentUser } from '@/lib/core/auth';
 import { failResponse, runStageAssistant } from '@/lib/assistant/stage-route';
-import { listMetrics } from '@/lib/metrics/store';
-import { narrowCubeMeta, type RegistryViewDims } from '@/lib/dashboards/cube-meta';
-import { listDatasets, getDataset } from '@/lib/data/store';
-import { cubeViewName, registryDimensionMembers } from '@/lib/data/metrics';
+import { listMetrics } from '@/lib/experimental/metrics/store';
+import { narrowCubeMeta, type RegistryViewDims } from '@/lib/experimental/dashboards/cube-meta';
+import { listDatasets, getDataset } from '@/lib/experimental/data/store';
+import { cubeViewName, registryDimensionMembers } from '@/lib/experimental/data/metrics';
 
 export const dynamic = 'force-dynamic';
 

@@ -5,9 +5,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import WorkflowTile from '@/components/knowledge/WorkflowTile';
-import WorkflowView from '@/components/knowledge/WorkflowView';
-import type { WorkflowSummary } from '@/lib/knowledge/store';
+import WorkflowTile from '@/components/experimental/knowledge/WorkflowTile';
+import WorkflowView from '@/components/experimental/knowledge/WorkflowView';
+import type { WorkflowSummary } from '@/lib/experimental/knowledge/store';
 import { roleAtLeast, type Role } from '@/lib/core/session';
 import { useTabNavReset } from '@/lib/core/tab-nav';
 import { SCOPE_GROUPS, groupByScope, activeScopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@/lib/core/scopes';

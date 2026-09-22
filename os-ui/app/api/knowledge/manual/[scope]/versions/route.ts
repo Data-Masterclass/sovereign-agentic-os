@@ -8,7 +8,7 @@ import {
   listManualVersions,
   restoreManualVersion,
   type ManualScope,
-} from '@/lib/knowledge/store';
+} from '@/lib/experimental/knowledge/store';
 
 export const dynamic = 'force-dynamic';
 

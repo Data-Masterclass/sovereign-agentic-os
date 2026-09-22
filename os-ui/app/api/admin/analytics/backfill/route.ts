@@ -6,8 +6,8 @@ import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/core/auth';
 import { withRoute } from '@/lib/core/route-server';
 import { realForgejo } from '@/lib/agents/build/live-clients';
-import { listGovernedDatasets } from '@/lib/data/store';
-import { writeAnalyticsFiles } from '@/lib/data/analytics-repo';
+import { listGovernedDatasets } from '@/lib/experimental/data/store';
+import { writeAnalyticsFiles } from '@/lib/experimental/data/analytics-repo';
 import type { ForgejoClient } from '@/lib/infra/forgejo';
 
 export const dynamic = 'force-dynamic';

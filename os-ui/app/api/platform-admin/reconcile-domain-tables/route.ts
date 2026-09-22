@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { reconcileDomainTablesLive } from '@/lib/data/reconcile-server';
-import type { Principal } from '@/lib/data/store';
+import { reconcileDomainTablesLive } from '@/lib/experimental/data/reconcile-server';
+import type { Principal } from '@/lib/experimental/data/store';
 
 export const dynamic = 'force-dynamic';
 

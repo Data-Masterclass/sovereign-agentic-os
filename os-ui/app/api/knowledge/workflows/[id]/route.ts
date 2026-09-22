@@ -3,13 +3,13 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getWorkflow, updateWorkflow, deleteWorkflow, archiveWorkflow, unarchiveWorkflow, renameKnowledge, setWorkflowLinks, ensureHydrated } from '@/lib/knowledge/store';
-import { normalizeWorkflowLinks, filterVisibleLinks } from '@/lib/knowledge/links';
-import { getDataset } from '@/lib/data/store';
-import { getMetric } from '@/lib/metrics/store';
-import { purgeKnowledgeUnits } from '@/lib/knowledge/index-pipeline';
-import { findGaps } from '@/lib/knowledge/gaps';
-import { resolveEntityIndex } from '@/lib/knowledge/mock-entities';
+import { getWorkflow, updateWorkflow, deleteWorkflow, archiveWorkflow, unarchiveWorkflow, renameKnowledge, setWorkflowLinks, ensureHydrated } from '@/lib/experimental/knowledge/store';
+import { normalizeWorkflowLinks, filterVisibleLinks } from '@/lib/experimental/knowledge/links';
+import { getDataset } from '@/lib/experimental/data/store';
+import { getMetric } from '@/lib/experimental/metrics/store';
+import { purgeKnowledgeUnits } from '@/lib/experimental/knowledge/index-pipeline';
+import { findGaps } from '@/lib/experimental/knowledge/gaps';
+import { resolveEntityIndex } from '@/lib/experimental/knowledge/mock-entities';
 import { roleAtLeast } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';

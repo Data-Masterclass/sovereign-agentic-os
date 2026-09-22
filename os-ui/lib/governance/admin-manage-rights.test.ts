@@ -14,14 +14,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { canManageArtifact } from './edit-scope.ts';
-import { canEdit as canEditBet } from '../bigbets/store.ts';
-import type { BigBet } from '../bigbets/model.ts';
+import { canEdit as canEditBet } from '../experimental/bigbets/store.ts';
+import type { BigBet } from '../experimental/bigbets/model.ts';
 import {
   createFolder,
   renameFolder,
   __resetStore,
 } from '../folders/folder-store.ts';
-import { canEditPillar } from '../strategy/model.ts';
+import { canEditPillar } from '../experimental/strategy/model.ts';
 import type { Role } from '../core/session.ts';
 
 const u = (id: string, role: Role, domains: string[]) => ({ id, role, domains });

@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getWorkflow, getDomainKnowledge } from '@/lib/knowledge/store';
-import { indexWorkflow, indexDomain } from '@/lib/knowledge/index-pipeline';
+import { getWorkflow, getDomainKnowledge } from '@/lib/experimental/knowledge/store';
+import { indexWorkflow, indexDomain } from '@/lib/experimental/knowledge/index-pipeline';
 
 export const dynamic = 'force-dynamic';
 
