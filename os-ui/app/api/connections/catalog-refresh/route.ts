@@ -5,8 +5,8 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { roleAtLeast } from '@/lib/core/session';
 import { runtimeTokenOk } from '@/lib/agents/build/runtime-auth';
-import { listSnapshotableConnections } from '@/lib/connections/store';
-import { refreshCatalogSnapshotService } from '@/lib/connections/warehouse/catalog-snapshot';
+import { listSnapshotableConnections } from '@/lib/experimental/connections/store';
+import { refreshCatalogSnapshotService } from '@/lib/experimental/connections/warehouse/catalog-snapshot';
 
 export const dynamic = 'force-dynamic';
 

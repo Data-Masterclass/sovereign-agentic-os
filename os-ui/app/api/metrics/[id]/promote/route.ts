@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/experimental/data/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { transition as transitionDataset } from '@/lib/data/store';
+import { transition as transitionDataset } from '@/lib/experimental/data/store';
 import { delegatedToken } from '@/lib/infra/identity-server';
-import { getMetric } from '@/lib/metrics/store';
-import { governMetric, canPromote as canPromoteMetric } from '@/lib/metrics/governance';
-import { exploreMetric } from '@/lib/metrics/build/explore-server';
+import { getMetric } from '@/lib/experimental/metrics/store';
+import { governMetric, canPromote as canPromoteMetric } from '@/lib/experimental/metrics/governance';
+import { exploreMetric } from '@/lib/experimental/metrics/build/explore-server';
 import { enqueue, listApprovals } from '@/lib/governance/approvals';
 
 export const dynamic = 'force-dynamic';

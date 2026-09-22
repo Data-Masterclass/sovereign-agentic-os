@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
-import { getConnectionForUser } from '@/lib/connections';
+import { getConnectionForUser } from '@/lib/experimental/connections';
 import { asOAuthProvider, providerForTemplate, providerConfig } from '@/lib/oauth/providers';
 import { getOAuthApp, isConfigured, ensureHydrated } from '@/lib/oauth/oauth-apps';
 import { buildAuthorizeUrl } from '@/lib/oauth/token-set';

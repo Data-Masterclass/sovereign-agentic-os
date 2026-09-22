@@ -4,9 +4,9 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
 import { requireUser } from '@/lib/core/auth';
-import { errorResponse } from '@/lib/data/server';
-import { dlsFilter } from '@/lib/knowledge/retrieve';
-import { appSlugFromRequest, grantedIdSet } from '@/lib/software/app-origin';
+import { errorResponse } from '@/lib/experimental/data/server';
+import { dlsFilter } from '@/lib/experimental/knowledge/retrieve';
+import { appSlugFromRequest, grantedIdSet } from '@/lib/experimental/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 

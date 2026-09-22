@@ -4,11 +4,11 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { requestPromotion, getDataset } from '@/lib/data/store';
-import { transparencyGate } from '@/lib/data/transparency';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { requestPromotion, getDataset } from '@/lib/experimental/data/store';
+import { transparencyGate } from '@/lib/experimental/data/transparency';
 import { enqueue, listApprovals } from '@/lib/governance/approvals';
-import type { DataVisibility, Grant } from '@/lib/data';
+import type { DataVisibility, Grant } from '@/lib/experimental/data';
 
 export const dynamic = 'force-dynamic';
 

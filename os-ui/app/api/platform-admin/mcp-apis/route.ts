@@ -5,10 +5,10 @@ import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { config } from '@/lib/core/config';
 import { ALL_MCP_TOOLS, MCP_TABS } from '@/lib/mcp/server';
-import { listAppsForUser } from '@/lib/software/apps';
+import { listAppsForUser } from '@/lib/experimental/software/apps';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
-import { listConnectionsForUser } from '@/lib/connections';
-import { isExposed } from '@/lib/connections';
+import { listConnectionsForUser } from '@/lib/experimental/connections';
+import { isExposed } from '@/lib/experimental/connections';
 import {
   buildMcpRegistry,
   STACK_MCP_SERVERS,

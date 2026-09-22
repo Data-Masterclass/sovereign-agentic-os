@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { availableContext, availableContextWithFolders, availableAgents } from '@/lib/software/available-context';
+import { availableContext, availableContextWithFolders, availableAgents } from '@/lib/experimental/software/available-context';
 import type { ContextKind } from '@/lib/core/context-grants';
 
 export const dynamic = 'force-dynamic';

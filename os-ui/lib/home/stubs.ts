@@ -25,10 +25,10 @@ import 'server-only';
 
 import { listUsers } from '@/lib/platform-admin';
 import { listCaps, getSpend } from '@/lib/governance';
-import { latestManualValue } from '@/lib/strategy';
-import type { Pillar } from '@/lib/strategy';
-import type { BigBet } from '@/lib/bigbets';
-import { deriveBet, completion } from '@/lib/bigbets/status';
+import { latestManualValue } from '@/lib/experimental/strategy';
+import type { Pillar } from '@/lib/experimental/strategy';
+import type { BigBet } from '@/lib/experimental/bigbets';
+import { deriveBet, completion } from '@/lib/experimental/bigbets/status';
 
 export type FeedSource = 'live' | 'mock';
 

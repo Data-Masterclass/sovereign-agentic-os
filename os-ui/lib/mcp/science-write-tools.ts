@@ -27,7 +27,7 @@ import {
   type ModelSpecInput,
   type ServiceModel,
   type TaskType,
-} from '@/lib/science';
+} from '@/lib/experimental/science';
 
 /**
  * THE SCIENCE WRITE MCP SURFACE (Phase D) — MCP parity for the full Science journey

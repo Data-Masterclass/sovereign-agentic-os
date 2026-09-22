@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { requireDatasetEditable, builtLayerFqn } from '@/lib/data/store';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { requireDatasetEditable, builtLayerFqn } from '@/lib/experimental/data/store';
 import { queryRun, executeRun } from '@/lib/infra/governed';
-import { applyFixes, type FixApplyInput } from '@/lib/data/dq-fix-server';
+import { applyFixes, type FixApplyInput } from '@/lib/experimental/data/dq-fix-server';
 
 export const dynamic = 'force-dynamic';
 

@@ -4,13 +4,13 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { getDataset, buildGoldJoin } from '@/lib/data/store';
-import { rematerializeDomainTableLive } from '@/lib/data/publish-server';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { getDataset, buildGoldJoin } from '@/lib/experimental/data/store';
+import { rematerializeDomainTableLive } from '@/lib/experimental/data/publish-server';
 import { roleAtLeast } from '@/lib/core/session';
-import { reuseSourceFqn } from '@/lib/data/store-fqn';
-import { stepperStages, stageArtifact, canBuildStage } from '@/lib/data/panels';
-import { buildStage } from '@/lib/data/build/server';
+import { reuseSourceFqn } from '@/lib/experimental/data/store-fqn';
+import { stepperStages, stageArtifact, canBuildStage } from '@/lib/experimental/data/panels';
+import { buildStage } from '@/lib/experimental/data/build/server';
 import {
   goldJoinPlan,
   goldMeasureToCube,
@@ -19,9 +19,9 @@ import {
   type GoldMeasure,
   type GoldDerived,
   type JoinType,
-} from '@/lib/data/transform';
-import type { DatasetUpstream } from '@/lib/data';
-import { parseGoldSpec, type GoldSpec } from '@/lib/data/dataset-schema';
+} from '@/lib/experimental/data/transform';
+import type { DatasetUpstream } from '@/lib/experimental/data';
+import { parseGoldSpec, type GoldSpec } from '@/lib/experimental/data/dataset-schema';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
 
 export const dynamic = 'force-dynamic';

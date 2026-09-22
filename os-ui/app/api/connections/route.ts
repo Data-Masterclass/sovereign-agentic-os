@@ -3,13 +3,13 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { createConnection, listConnectionsForUser, type WarehouseCreateInput, type AirflowCreateInput, type AtlassianCreateInput, type ODataCreateInput, type WorkdayCreateInput } from '@/lib/connections';
-import { userFacingTemplates, isUserFacingTemplate, templateByKey, type ConnectionTemplateKey } from '@/lib/connections';
+import { createConnection, listConnectionsForUser, type WarehouseCreateInput, type AirflowCreateInput, type AtlassianCreateInput, type ODataCreateInput, type WorkdayCreateInput } from '@/lib/experimental/connections';
+import { userFacingTemplates, isUserFacingTemplate, templateByKey, type ConnectionTemplateKey } from '@/lib/experimental/connections';
 import { roleAtLeast } from '@/lib/core/session';
 import { providerCatalog, ensureHydrated as ensureOAuthAppsHydrated } from '@/lib/oauth/oauth-apps';
 import { config } from '@/lib/core/config';
-import { WAREHOUSE_PROVIDERS } from '@/lib/connections/warehouse/registry';
-import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/connections/warehouse/types';
+import { WAREHOUSE_PROVIDERS } from '@/lib/experimental/connections/warehouse/registry';
+import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/experimental/connections/warehouse/types';
 
 export const dynamic = 'force-dynamic';
 

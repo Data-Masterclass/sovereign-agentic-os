@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { approveAndRemember } from '@/lib/connections';
+import { approveAndRemember } from '@/lib/experimental/connections';
 
 export const dynamic = 'force-dynamic';
 

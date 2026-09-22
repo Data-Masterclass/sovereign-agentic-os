@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { defineMeasure, getDataset } from '@/lib/data/store';
-import { MEASURE_TYPES, scaffoldCubeYaml, type MeasureType } from '@/lib/data/metrics';
-import { buildStage } from '@/lib/data/build/server';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { defineMeasure, getDataset } from '@/lib/experimental/data/store';
+import { MEASURE_TYPES, scaffoldCubeYaml, type MeasureType } from '@/lib/experimental/data/metrics';
+import { buildStage } from '@/lib/experimental/data/build/server';
 
 export const dynamic = 'force-dynamic';
 

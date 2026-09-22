@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { roleAtLeast } from '@/lib/core/session';
-import { getPersonalKnowledge, ensureHydrated } from '@/lib/knowledge/personal-store';
+import { getPersonalKnowledge, ensureHydrated } from '@/lib/experimental/knowledge/personal-store';
 import {
   promoteThroughSeam,
   fileArtifactPromotion,

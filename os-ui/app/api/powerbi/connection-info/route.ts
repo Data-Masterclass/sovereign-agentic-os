@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { config } from '@/lib/core/config';
-import { connectionInfoForDomain, type SqlApiExposure } from '@/lib/powerbi/connection-info';
+import { connectionInfoForDomain, type SqlApiExposure } from '@/lib/experimental/powerbi/connection-info';
 
 export const dynamic = 'force-dynamic';
 

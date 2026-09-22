@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { getDataset, transition, listAllDatasets } from '@/lib/data/store';
-import { stepperStages } from '@/lib/data/panels';
-import { retireDomainTables, sharedFootprintFqns } from '@/lib/data/physical-delete';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { getDataset, transition, listAllDatasets } from '@/lib/experimental/data/store';
+import { stepperStages } from '@/lib/experimental/data/panels';
+import { retireDomainTables, sharedFootprintFqns } from '@/lib/experimental/data/physical-delete';
 import { dependentsOf } from '@/lib/core/dependents';
 import { executeRun } from '@/lib/infra/governed';
 

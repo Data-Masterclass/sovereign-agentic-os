@@ -60,9 +60,9 @@ test('GAP 2: the agents-systems create route no longer accepts a client visibili
 });
 
 test('GAP 3: marketplace import paths gate on Builder+ (rank-based — domain_admin inherits)', () => {
-  assert.match(read('lib/marketplace/adapters.ts'), /!roleAtLeast\(viewer\.role, 'builder'\)/, 'GovernedImportAdapter.import gates Builder+');
+  assert.match(read('lib/experimental/marketplace/adapters.ts'), /!roleAtLeast\(viewer\.role, 'builder'\)/, 'GovernedImportAdapter.import gates Builder+');
   assert.match(read('lib/core/artifacts.ts'), /roleRank\(user\.role\) < roleRank\('builder'\)/, 'addFromMarketplace gates Builder+');
-  assert.match(read('lib/data/store.ts'), /!roleAtLeast\(importer\.role, 'builder'\)/, 'importProduct gates Builder+');
+  assert.match(read('lib/experimental/data/store.ts'), /!roleAtLeast\(importer\.role, 'builder'\)/, 'importProduct gates Builder+');
   assert.match(read('lib/core/tabs.ts'), /Marketplace'[^\n]*role: 'Builder/, 'Marketplace tab carries a role hint');
 });
 
@@ -211,7 +211,7 @@ for (const p of USER_GATED_GETS) {
 test('LEAK-FIX: /api/software GET scopes private repos to admins (no cross-user private recon)', () => {
   // The repo listing logic was lifted into lib/software/repos.ts (the route is now a
   // thin auth+parse+shape wrapper); the admin-only private-repo scope lives there.
-  const src = read('lib/software/repos.ts');
+  const src = read('lib/experimental/software/repos.ts');
   assert.match(src, /user\.role === 'admin' \? all : all\.filter\(\(r\) => !r\.private\)/, 'non-admins never see private repos');
 });
 

@@ -6,7 +6,7 @@ import { requireAdmin } from '@/lib/core/auth';
 import type { CurrentUser } from '@/lib/core/auth';
 import { withRoute } from '@/lib/core/route-server';
 import { config } from '@/lib/core/config';
-import { previewCatalogIngest, applyCatalogIngest } from '@/lib/connections/openmetadata-ingest';
+import { previewCatalogIngest, applyCatalogIngest } from '@/lib/experimental/connections/openmetadata-ingest';
 
 export const dynamic = 'force-dynamic';
 

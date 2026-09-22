@@ -4,8 +4,8 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { roleAtLeast } from '@/lib/core/session';
-import { getWorkflow, getDomainKnowledge } from '@/lib/knowledge/store';
-import { indexWorkflow, indexDomain } from '@/lib/knowledge/index-pipeline';
+import { getWorkflow, getDomainKnowledge } from '@/lib/experimental/knowledge/store';
+import { indexWorkflow, indexDomain } from '@/lib/experimental/knowledge/index-pipeline';
 import { promoteThroughSeam, fileArtifactPromotion, fileArtifactCertification } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';

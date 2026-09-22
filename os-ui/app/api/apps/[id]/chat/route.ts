@@ -4,19 +4,19 @@
 import { NextResponse } from 'next/server';
 import { roleModel } from '@/lib/models/roles';
 import { requireUser } from '@/lib/core/auth';
-import { getAppForUser, saveChat } from '@/lib/software/apps';
-import { scheduleRepairCheck } from '@/lib/software/ci-repair';
-import { getSnapshot } from '@/lib/software/snapshot';
-import { diffTrees, type FileChange } from '@/lib/software/build-changeset';
+import { getAppForUser, saveChat } from '@/lib/experimental/software/apps';
+import { scheduleRepairCheck } from '@/lib/experimental/software/ci-repair';
+import { getSnapshot } from '@/lib/experimental/software/snapshot';
+import { diffTrees, type FileChange } from '@/lib/experimental/software/build-changeset';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
 import { cleanTurns } from '@/lib/assistant/turns';
-import { buildRunError, buildMaxIterations, honestBuildFinalText } from '@/lib/software/build-run';
-import { toolCallToLine, gateLineFromStep, committedSummaryLine, type ActivityLine } from '@/lib/software/build-activity';
-import { asChatRunMode, isReadOnlyMode, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_MODE_TOOLS, type ChatRunMode } from '@/lib/software/chat-modes';
-import { appContext } from '@/lib/software/build-brief';
-import { unresolvedDataNeedWarning } from '@/lib/software/data-plan';
-import { resolveGrantedContext } from '@/lib/software/grants-context';
-import type { BuildTarget } from '@/lib/software/build-target';
+import { buildRunError, buildMaxIterations, honestBuildFinalText } from '@/lib/experimental/software/build-run';
+import { toolCallToLine, gateLineFromStep, committedSummaryLine, type ActivityLine } from '@/lib/experimental/software/build-activity';
+import { asChatRunMode, isReadOnlyMode, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_MODE_TOOLS, type ChatRunMode } from '@/lib/experimental/software/chat-modes';
+import { appContext } from '@/lib/experimental/software/build-brief';
+import { unresolvedDataNeedWarning } from '@/lib/experimental/software/data-plan';
+import { resolveGrantedContext } from '@/lib/experimental/software/grants-context';
+import type { BuildTarget } from '@/lib/experimental/software/build-target';
 
 export const dynamic = 'force-dynamic';
 

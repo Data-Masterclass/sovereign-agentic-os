@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { setHeadlineTarget } from '@/lib/strategy/pillars';
-import { METRIC_TYPES, HORIZONS, type MetricType, type Horizon } from '@/lib/strategy';
+import { setHeadlineTarget } from '@/lib/experimental/strategy/pillars';
+import { METRIC_TYPES, HORIZONS, type MetricType, type Horizon } from '@/lib/experimental/strategy';
 
 export const dynamic = 'force-dynamic';
 

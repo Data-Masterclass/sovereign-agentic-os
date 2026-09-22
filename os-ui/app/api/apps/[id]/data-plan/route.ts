@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { resolveDataPlanItem } from '@/lib/software/data-plan-server';
-import { normalizeSuggestedDatasets } from '@/lib/software/data-plan';
+import { resolveDataPlanItem } from '@/lib/experimental/software/data-plan-server';
+import { normalizeSuggestedDatasets } from '@/lib/experimental/software/data-plan';
 
 export const dynamic = 'force-dynamic';
 

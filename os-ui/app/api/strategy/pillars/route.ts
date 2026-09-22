@@ -3,11 +3,11 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { listPillars, createPillar } from '@/lib/strategy/pillars';
-import { rollupForPillar, valueHistory } from '@/lib/strategy/value-rollup';
-import { snapshotHistory, ensureHydrated } from '@/lib/strategy/snapshots';
-import { recentStrategyAudit } from '@/lib/strategy/audit';
-import { canCreatePillar, canEditPillar, canPromotePillar, canDemotePillar, nextPillarScope, prevPillarScope, type PillarScope } from '@/lib/strategy';
+import { listPillars, createPillar } from '@/lib/experimental/strategy/pillars';
+import { rollupForPillar, valueHistory } from '@/lib/experimental/strategy/value-rollup';
+import { snapshotHistory, ensureHydrated } from '@/lib/experimental/strategy/snapshots';
+import { recentStrategyAudit } from '@/lib/experimental/strategy/audit';
+import { canCreatePillar, canEditPillar, canPromotePillar, canDemotePillar, nextPillarScope, prevPillarScope, type PillarScope } from '@/lib/experimental/strategy';
 import { getSettings } from '@/lib/platform-admin/settings';
 
 export const dynamic = 'force-dynamic';

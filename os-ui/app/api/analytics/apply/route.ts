@@ -8,13 +8,13 @@ import { withRoute } from '@/lib/core/route-server';
 import { roleAtLeast } from '@/lib/core/session';
 import { config } from '@/lib/core/config';
 import { getPublicUser } from '@/lib/platform-admin/users';
-import { listGovernedDatasets, getDataset, type Principal } from '@/lib/data/store';
+import { listGovernedDatasets, getDataset, type Principal } from '@/lib/experimental/data/store';
 import {
   planApply,
   type ApplyPlan,
   type ChangedFile,
   type FileDecision,
-} from '@/lib/data/analytics-apply';
+} from '@/lib/experimental/data/analytics-apply';
 
 export const dynamic = 'force-dynamic';
 

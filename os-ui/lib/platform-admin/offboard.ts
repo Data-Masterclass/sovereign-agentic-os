@@ -24,11 +24,11 @@ import 'server-only';
  * listed under `deferred` so the caller can warn the admin.
  */
 
-import { reassignOwner as reassignData } from '@/lib/data/store';
-import { reassignOwner as reassignFiles } from '@/lib/files';
-import { reassignOwner as reassignKnowledge } from '@/lib/knowledge';
+import { reassignOwner as reassignData } from '@/lib/experimental/data/store';
+import { reassignOwner as reassignFiles } from '@/lib/experimental/files';
+import { reassignOwner as reassignKnowledge } from '@/lib/experimental/knowledge';
 import { reassignOwner as reassignAgents } from '@/lib/agents/store';
-import { reassignOwner as reassignSoftware } from '@/lib/software';
+import { reassignOwner as reassignSoftware } from '@/lib/experimental/software';
 
 export type ReassignReport = {
   /** Personal-lane artifacts moved, per store (only stores that moved ≥1). */

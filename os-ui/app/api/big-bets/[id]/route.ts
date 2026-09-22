@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { buildBetView, principal } from '@/lib/bigbets/server';
-import { updateBet, archiveBet, unarchiveBet, deleteBet, renameBet, ensureHydrated } from '@/lib/bigbets/store';
-import { type ValueBasis, type AllocationMethod, type BigBet } from '@/lib/bigbets';
+import { buildBetView, principal } from '@/lib/experimental/bigbets/server';
+import { updateBet, archiveBet, unarchiveBet, deleteBet, renameBet, ensureHydrated } from '@/lib/experimental/bigbets/store';
+import { type ValueBasis, type AllocationMethod, type BigBet } from '@/lib/experimental/bigbets';
 
 export const dynamic = 'force-dynamic';
 

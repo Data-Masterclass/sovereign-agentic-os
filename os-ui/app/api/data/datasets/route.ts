@@ -4,9 +4,9 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { listDatasets, createDataset } from '@/lib/data/store';
-import { appSlugFromRequest, grantedIdSet } from '@/lib/software/app-origin';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { listDatasets, createDataset } from '@/lib/experimental/data/store';
+import { appSlugFromRequest, grantedIdSet } from '@/lib/experimental/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 

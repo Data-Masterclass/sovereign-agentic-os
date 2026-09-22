@@ -7,17 +7,17 @@ import type { Role } from '@/lib/core/session';
 import type { ToolTab, McpTab } from './server';
 
 // --- Governed read/list lib functions (the SAME the UI + discovery tools call) --
-import { listDatasets, getDataset } from '@/lib/data/store';
-import { listWorkflows, getWorkflow, getManual } from '@/lib/knowledge/store';
-import { listFiles, getFile } from '@/lib/files/store';
-import { listMetrics } from '@/lib/metrics/store';
-import { listDashboards, getDashboard } from '@/lib/dashboards/store';
-import { listBets, getBet } from '@/lib/bigbets/store';
+import { listDatasets, getDataset } from '@/lib/experimental/data/store';
+import { listWorkflows, getWorkflow, getManual } from '@/lib/experimental/knowledge/store';
+import { listFiles, getFile } from '@/lib/experimental/files/store';
+import { listMetrics } from '@/lib/experimental/metrics/store';
+import { listDashboards, getDashboard } from '@/lib/experimental/dashboards/store';
+import { listBets, getBet } from '@/lib/experimental/bigbets/store';
 import { listSystems, getSystem } from '@/lib/agents/store';
-import { listAppsForUser, getAppForUser } from '@/lib/software/apps';
-import { listConnectionsForUser, getConnectionForUser } from '@/lib/connections';
-import { listModelsForUser } from '@/lib/science';
-import { listPillars } from '@/lib/strategy/pillars';
+import { listAppsForUser, getAppForUser } from '@/lib/experimental/software/apps';
+import { listConnectionsForUser, getConnectionForUser } from '@/lib/experimental/connections';
+import { listModelsForUser } from '@/lib/experimental/science';
+import { listPillars } from '@/lib/experimental/strategy/pillars';
 import { config } from '@/lib/core/config';
 import { loadGuide, guideTitle, type GuidePath } from '@/lib/tabs/guides';
 import { loadBuildSpec } from '@/lib/tabs/build-spec';

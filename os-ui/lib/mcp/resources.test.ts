@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, type JsonRpcResponse } from './server.ts';
 import { RESOURCES, RESOURCE_TEMPLATES } from './resources.ts';
-import { __resetStore as resetData } from '@/lib/data/store';
+import { __resetStore as resetData } from '@/lib/experimental/data/store';
 
 /**
  * MCP RESOURCES over the dispatcher: guides + dynamic my/* inventories, all

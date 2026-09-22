@@ -2,15 +2,15 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/experimental/data/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { cubeMeta } from '@/lib/infra/governed';
-import { listMetrics } from '@/lib/metrics/store';
-import { narrowCubeMeta, type RegistryViewDims } from '@/lib/dashboards/cube-meta';
-import { listDatasets, getDataset } from '@/lib/data/store';
-import { cubeViewName, registryDimensionMembers } from '@/lib/data/metrics';
-import type { Principal } from '@/lib/data/store';
+import { listMetrics } from '@/lib/experimental/metrics/store';
+import { narrowCubeMeta, type RegistryViewDims } from '@/lib/experimental/dashboards/cube-meta';
+import { listDatasets, getDataset } from '@/lib/experimental/data/store';
+import { cubeViewName, registryDimensionMembers } from '@/lib/experimental/data/metrics';
+import type { Principal } from '@/lib/experimental/data/store';
 
 /** Registry dims for EVERY dataset the caller can see — personal datasets carry
  *  metrics too (Phase 1), so the palette must include their dimensions; the old

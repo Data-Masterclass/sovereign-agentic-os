@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getDashboard } from '@/lib/dashboards';
+import { getDashboard } from '@/lib/experimental/dashboards';
 import { demoteThroughSeam } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';

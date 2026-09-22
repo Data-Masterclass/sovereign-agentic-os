@@ -11,9 +11,9 @@ import {
   type OpaConnectionBundle,
   type CapMode,
 } from '@/lib/infra/capability-compiler';
-import { type Principal as DlsPrincipal, canSee } from '@/lib/knowledge/retrieve-core';
+import { type Principal as DlsPrincipal, canSee } from '@/lib/experimental/knowledge/retrieve-core';
 import { roleAtLeast } from '@/lib/core/session';
-import type { Provenance } from '@/lib/knowledge/chunk';
+import type { Provenance } from '@/lib/experimental/knowledge/chunk';
 
 /**
  * Governed agent-tool spine (Agent golden path §1, §7). Every tool an agent

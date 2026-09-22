@@ -22,9 +22,9 @@ globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof f
 const { handleRpc } = await import('./server.ts');
 type JsonRpcResponse = import('./server.ts').JsonRpcResponse;
 type ToolError = import('./server.ts').ToolError;
-const { createConnection, __resetConnections } = await import('@/lib/connections/store');
-const { __resetExposures } = await import('@/lib/connections/exposures');
-const { __resetActionAdoptions } = await import('@/lib/connections/action-adoptions');
+const { createConnection, __resetConnections } = await import('@/lib/experimental/connections/store');
+const { __resetExposures } = await import('@/lib/experimental/connections/exposures');
+const { __resetActionAdoptions } = await import('@/lib/experimental/connections/action-adoptions');
 
 // A platform admin (exposure CRUD) who shares the exposed domain, and a domain_admin +
 // builder of the SAME domain (commerce) so adoption is in-scope for the domain_admin.

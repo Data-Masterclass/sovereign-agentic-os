@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/core/auth';
 import { withRoute } from '@/lib/core/route-server';
-import { decideEgress } from '@/lib/connections';
+import { decideEgress } from '@/lib/experimental/connections';
 
 export const dynamic = 'force-dynamic';
 

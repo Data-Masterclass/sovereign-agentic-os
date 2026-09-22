@@ -4,8 +4,8 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { adoptExposedTable, type AdoptSyncInput } from '@/lib/data/adopt-connected';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { adoptExposedTable, type AdoptSyncInput } from '@/lib/experimental/data/adopt-connected';
 
 export const dynamic = 'force-dynamic';
 

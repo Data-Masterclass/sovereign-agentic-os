@@ -4,18 +4,18 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { getSystem } from '@/lib/agents/store';
-import { listDatasets, ensureHydrated } from '@/lib/data/store';
-import { listWorkflows, ensureHydrated as ensureWorkflowsHydrated } from '@/lib/knowledge/store';
-import { listPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from '@/lib/knowledge/personal-store';
-import { listMetrics } from '@/lib/metrics/store';
-import { listConnectionsForUser } from '@/lib/connections';
-import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/files/store';
+import { listDatasets, ensureHydrated } from '@/lib/experimental/data/store';
+import { listWorkflows, ensureHydrated as ensureWorkflowsHydrated } from '@/lib/experimental/knowledge/store';
+import { listPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from '@/lib/experimental/knowledge/personal-store';
+import { listMetrics } from '@/lib/experimental/metrics/store';
+import { listConnectionsForUser } from '@/lib/experimental/connections';
+import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/experimental/files/store';
 import { listFolders, ensureHydrated as ensureFoldersHydrated, type FolderTab } from '@/lib/folders';
 import { grantFolderNodes } from '@/lib/agents/grant-folders';
-import { resolveManual } from '@/lib/knowledge/manual';
-import { listPillars } from '@/lib/strategy/pillars';
-import type { PillarScope } from '@/lib/strategy';
-import { listBets, ensureHydrated as ensureBetsHydrated } from '@/lib/bigbets/store';
+import { resolveManual } from '@/lib/experimental/knowledge/manual';
+import { listPillars } from '@/lib/experimental/strategy/pillars';
+import type { PillarScope } from '@/lib/experimental/strategy';
+import { listBets, ensureHydrated as ensureBetsHydrated } from '@/lib/experimental/bigbets/store';
 import {
   MANUAL_SCOPES,
   planGrantId,

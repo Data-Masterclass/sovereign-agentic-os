@@ -3,7 +3,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __resetStore, createDataset, buildVersion, setDocs, transition } from '../data/store.ts';
+import { __resetStore, createDataset, buildVersion, setDocs, transition } from '../experimental/data/store.ts';
 import type { CurrentUser } from '../core/auth.ts';
 import { getTabMetadata } from './metadata.ts';
 

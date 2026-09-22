@@ -7,9 +7,9 @@ import type { McpTool } from './server';
 import { fail, str } from './discovery-common';
 
 // --- The EXACT governed marketplace lib the UI + /api/marketplace call ---------
-import { listingAdapter, rateListing } from '@/lib/marketplace';
-import { grantsForUser } from '@/lib/marketplace/store';
-import type { ProductType, Viewer } from '@/lib/marketplace/types';
+import { listingAdapter, rateListing } from '@/lib/experimental/marketplace';
+import { grantsForUser } from '@/lib/experimental/marketplace/store';
+import type { ProductType, Viewer } from '@/lib/experimental/marketplace/types';
 
 /**
  * THE MARKETPLACE MCP SURFACE (mcp-v2 P3). Thin wrappers over the SAME governed

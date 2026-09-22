@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { adoptActions, revokeActionAdoption, listAdoptions } from '@/lib/connections/action-adoptions';
-import { getConnectionForUser } from '@/lib/connections/store';
-import { listExposureSets } from '@/lib/connections/exposures';
+import { adoptActions, revokeActionAdoption, listAdoptions } from '@/lib/experimental/connections/action-adoptions';
+import { getConnectionForUser } from '@/lib/experimental/connections/store';
+import { listExposureSets } from '@/lib/experimental/connections/exposures';
 
 export const dynamic = 'force-dynamic';
 

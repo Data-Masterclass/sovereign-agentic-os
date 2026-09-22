@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { updateCapabilities } from '@/lib/connections';
-import type { CapabilityMode, CapabilityLimits } from '@/lib/connections';
+import { updateCapabilities } from '@/lib/experimental/connections';
+import type { CapabilityMode, CapabilityLimits } from '@/lib/experimental/connections';
 
 export const dynamic = 'force-dynamic';
 

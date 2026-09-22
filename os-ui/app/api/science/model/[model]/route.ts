@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
 import { trace } from '@/lib/infra/agent-governed';
-import { setModelArchived, deleteModel, renameModel, ensureModelsHydrated, type Actor } from '@/lib/science';
+import { setModelArchived, deleteModel, renameModel, ensureModelsHydrated, type Actor } from '@/lib/experimental/science';
 
 export const dynamic = 'force-dynamic';
 

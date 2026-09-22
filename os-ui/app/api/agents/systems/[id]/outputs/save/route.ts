@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { getSystem } from '@/lib/agents/store';
-import { createFile } from '@/lib/files/store';
-import { createPersonalKnowledge } from '@/lib/knowledge/personal-store';
-import { createDataset } from '@/lib/data/store';
-import { ingestAndRegisterBronze } from '@/lib/data/ingest';
+import { createFile } from '@/lib/experimental/files/store';
+import { createPersonalKnowledge } from '@/lib/experimental/knowledge/personal-store';
+import { createDataset } from '@/lib/experimental/data/store';
+import { ingestAndRegisterBronze } from '@/lib/experimental/data/ingest';
 import { canSaveFromResult, DATA_NON_TABULAR_NOTE } from '@/lib/agents/output-save';
 import type { DeclaredOutput } from '@/lib/agents/system-schema';
 

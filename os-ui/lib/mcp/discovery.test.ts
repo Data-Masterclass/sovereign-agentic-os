@@ -7,7 +7,7 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, toolsForTab, ALL_MCP_TOOLS, type JsonRpcResponse } from './server.ts';
 import { GUIDE_PATHS, loadGuide, type GuidePath } from '@/lib/tabs/guides';
 import { config } from '@/lib/core/config';
-import { __resetStore as resetData } from '@/lib/data/store';
+import { __resetStore as resetData } from '@/lib/experimental/data/store';
 
 /**
  * The DISCOVERY tools (thin governed adapters) + the science_predict run-as-user

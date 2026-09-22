@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { getDataset, builtLayerFqn } from '@/lib/data/store';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { getDataset, builtLayerFqn } from '@/lib/experimental/data/store';
 import { queryRun } from '@/lib/infra/governed';
-import { proposeFixes, dqComplete } from '@/lib/data/dq-fix-server';
+import { proposeFixes, dqComplete } from '@/lib/experimental/data/dq-fix-server';
 
 export const dynamic = 'force-dynamic';
 

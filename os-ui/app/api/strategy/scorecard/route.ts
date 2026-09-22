@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { strategyScorecard } from '@/lib/strategy/scorecard';
+import { strategyScorecard } from '@/lib/experimental/strategy/scorecard';
 
 export const dynamic = 'force-dynamic';
 

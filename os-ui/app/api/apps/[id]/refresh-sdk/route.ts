@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { refreshVendoredSdk } from '@/lib/software/server';
+import { refreshVendoredSdk } from '@/lib/experimental/software/server';
 
 export const dynamic = 'force-dynamic';
 

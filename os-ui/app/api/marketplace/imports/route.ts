@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { myImports, type Viewer } from '@/lib/marketplace';
-import { ensureHydrated } from '@/lib/marketplace/store';
+import { myImports, type Viewer } from '@/lib/experimental/marketplace';
+import { ensureHydrated } from '@/lib/experimental/marketplace/store';
 
 export const dynamic = 'force-dynamic';
 

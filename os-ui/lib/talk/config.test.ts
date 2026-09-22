@@ -3,8 +3,8 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __resetStore, createDataset, buildVersion, transition, listAskable, type Principal } from '../data/store.ts';
-import { runAsk, type AskGrid } from '../data/ask.ts';
+import { __resetStore, createDataset, buildVersion, transition, listAskable, type Principal } from '../experimental/data/store.ts';
+import { runAsk, type AskGrid } from '../experimental/data/ask.ts';
 import { dataResult } from './config.ts';
 
 /**

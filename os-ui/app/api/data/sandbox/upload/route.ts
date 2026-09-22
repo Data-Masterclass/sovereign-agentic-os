@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
-import { ingestUpload } from '@/lib/data/ingest';
+import { ingestUpload } from '@/lib/experimental/data/ingest';
 
 export const dynamic = 'force-dynamic';
 

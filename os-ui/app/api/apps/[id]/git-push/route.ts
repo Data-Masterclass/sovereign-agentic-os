@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getAppForUser, listAppFilesForViewer } from '@/lib/software/apps';
-import { listConnectionsForUser, callConnectionTool } from '@/lib/connections';
-import { pickConnectionForTemplate } from '@/lib/software/design-push';
+import { getAppForUser, listAppFilesForViewer } from '@/lib/experimental/software/apps';
+import { listConnectionsForUser, callConnectionTool } from '@/lib/experimental/connections';
+import { pickConnectionForTemplate } from '@/lib/experimental/software/design-push';
 
 export const dynamic = 'force-dynamic';
 

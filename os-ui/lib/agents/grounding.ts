@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { getDataset, ensureHydrated as ensureDataHydrated, type Principal } from '@/lib/data/store';
-import { getWorkflow, ensureHydrated as ensureWorkflowsHydrated } from '@/lib/knowledge/store';
-import { getPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from '@/lib/knowledge/personal-store';
-import { getMetric } from '@/lib/metrics/store';
-import { getConnectionForUser } from '@/lib/connections/store';
-import { resolveManual } from '@/lib/knowledge/manual';
-import { getPillar } from '@/lib/strategy/pillars';
-import { getBet, ensureHydrated as ensureBetsHydrated } from '@/lib/bigbets/store';
+import { getDataset, ensureHydrated as ensureDataHydrated, type Principal } from '@/lib/experimental/data/store';
+import { getWorkflow, ensureHydrated as ensureWorkflowsHydrated } from '@/lib/experimental/knowledge/store';
+import { getPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from '@/lib/experimental/knowledge/personal-store';
+import { getMetric } from '@/lib/experimental/metrics/store';
+import { getConnectionForUser } from '@/lib/experimental/connections/store';
+import { resolveManual } from '@/lib/experimental/knowledge/manual';
+import { getPillar } from '@/lib/experimental/strategy/pillars';
+import { getBet, ensureHydrated as ensureBetsHydrated } from '@/lib/experimental/bigbets/store';
 import {
   manualScopeOfPlanId,
   manualLabel,

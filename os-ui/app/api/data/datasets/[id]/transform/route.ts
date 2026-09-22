@@ -4,12 +4,12 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { getDataset, buildVersion } from '@/lib/data/store';
-import { stepperStages, stageArtifact, canBuildStage } from '@/lib/data/panels';
-import { buildStage } from '@/lib/data/build/server';
-import { silverPlan, type TransformOp } from '@/lib/data/transform';
-import { rematerializeDomainTableLive } from '@/lib/data/publish-server';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { getDataset, buildVersion } from '@/lib/experimental/data/store';
+import { stepperStages, stageArtifact, canBuildStage } from '@/lib/experimental/data/panels';
+import { buildStage } from '@/lib/experimental/data/build/server';
+import { silverPlan, type TransformOp } from '@/lib/experimental/data/transform';
+import { rematerializeDomainTableLive } from '@/lib/experimental/data/publish-server';
 import { roleAtLeast } from '@/lib/core/session';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
 

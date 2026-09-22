@@ -16,8 +16,8 @@
  * for write access.
  */
 
-import type { ConnectionTemplateKey } from '@/lib/connections/schema';
-import type { Provider as FilesProvider } from '@/lib/files/connectors';
+import type { ConnectionTemplateKey } from '@/lib/experimental/connections/schema';
+import type { Provider as FilesProvider } from '@/lib/experimental/files/connectors';
 
 export type OAuthProvider = 'google' | 'microsoft';
 

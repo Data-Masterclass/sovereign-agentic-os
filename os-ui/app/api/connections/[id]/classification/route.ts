@@ -10,7 +10,7 @@ import {
   setSeed,
   patchTaxonomy,
   type SeedSource,
-} from '@/lib/connections/warehouse/catalog-classification';
+} from '@/lib/experimental/connections/warehouse/catalog-classification';
 
 export const dynamic = 'force-dynamic';
 

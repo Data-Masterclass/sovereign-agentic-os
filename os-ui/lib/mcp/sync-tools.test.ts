@@ -21,7 +21,7 @@ globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof f
 // ─── the ONE mocked seam: the governed sync executor ─────────────────────────
 let SYNC_OUTCOME: unknown = { ok: false, status: 409, error: 'No sync is configured on this dataset' };
 const SYNC_CALLS: { datasetId: string; trigger: string }[] = [];
-mock.module('@/lib/data/sync-run-server', {
+mock.module('@/lib/experimental/data/sync-run-server', {
   namedExports: {
     runDatasetSync: async (datasetId: string, trigger: string) => {
       SYNC_CALLS.push({ datasetId, trigger });
@@ -37,9 +37,9 @@ mock.module('@/lib/data/sync-run-server', {
 const { handleRpc } = await import('./server.ts');
 type JsonRpcResponse = import('./server.ts').JsonRpcResponse;
 type ToolError = import('./server.ts').ToolError;
-const { __resetStore: resetData } = await import('@/lib/data/store');
-const { __resetConnections } = await import('@/lib/connections/store');
-const { __resetSyncRuns, recordSyncRun } = await import('@/lib/data/sync-runs');
+const { __resetStore: resetData } = await import('@/lib/experimental/data/store');
+const { __resetConnections } = await import('@/lib/experimental/connections/store');
+const { __resetSyncRuns, recordSyncRun } = await import('@/lib/experimental/data/sync-runs');
 
 // The OWNER (builder: may create the shared-credential Kajabi connection AND owns
 // the dataset — the sync edit gate is owner/domain_admin/admin, re-checked in-lib).
