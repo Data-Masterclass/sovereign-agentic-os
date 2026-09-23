@@ -63,9 +63,29 @@ function physicalViewBase(d: Dataset): string {
  *  fails to compile ("fails to match the identifier pattern"). Underscores, readable case.
  *  NAMESPACED (`<domain>__<View>`) for post-#155 datasets, LEGACY (bare View) otherwise —
  *  moves in lockstep with `cubeName` so the cube + its view are always the same scheme. */
+/** Title-case an identifier's underscore segments: `service_centers` → `Service_Centers`.
+ *  Cube identifiers are case-SENSITIVE, so this yields a distinct name while matching the
+ *  existing view convention (`Northpeak_Goods_Receipts`). */
+function titleCaseIdent(s: string): string {
+  return s
+    .split('_')
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+    .join('_');
+}
+
 export function cubeViewName(d: Dataset): string {
   const view = physicalViewBase(d);
-  return d.cubeNamespaced ? `${cubeDomainPrefix(d)}__${view}` : view;
+  const name = d.cubeNamespaced ? `${cubeDomainPrefix(d)}__${view}` : view;
+  // A view and a cube may NOT share a name: Cube rejects the WHOLE schema with
+  // "Found conflicting cube and view name", so ONE bad model 500s /meta and takes every
+  // dataset's build/promote down with it (2026-09-23 outage). This happens whenever the
+  // view base is the FROZEN slug — `cubeName` is built from that same slug. Disambiguate
+  // ONLY on collision, so no other dataset's live view name churns.
+  if (name !== cubeName(d)) return name;
+  const titled = d.cubeNamespaced
+    ? `${cubeDomainPrefix(d)}__${titleCaseIdent(view)}`
+    : titleCaseIdent(view);
+  return titled !== cubeName(d) ? titled : `${name}_view`;
 }
 
 /** The un-namespaced (legacy) cube name a dataset WOULD have had before #155. The
