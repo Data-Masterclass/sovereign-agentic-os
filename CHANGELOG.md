@@ -13,6 +13,20 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### os-ui 0.6.168 — Data tab restored: a Cube view may never share its cube's name
+
+**Incident (2026-09-23):** creating or promoting ANY dataset failed. Cube's `/meta` returned 500
+("Found conflicting cube and view name") for three models, and because Cube refuses to compile the
+ENTIRE schema when one model is invalid, all 25 datasets went down with them.
+
+- `cubeViewName()` (`lib/data/metrics.ts`): `physicalViewBase()` returns the FROZEN slug when a
+  dataset has one, and `cubeName()` is built from that same slug — so cube and view got byte-identical
+  names. Now disambiguated ONLY on collision (title-cased, matching the existing
+  `Northpeak_Goods_Receipts` convention; `_view` fallback), so no other dataset's live view churns.
+- Datasets without a frozen slug derive the view from the case-preserved display name and were never
+  affected — which is why only slug-frozen datasets broke.
+- Tests: `lib/data/cube-view-collision.test.ts`. Carries all of 0.6.167.
+
 ### os-ui 0.6.167 — Directory fails closed: no more silent password revert when OpenSearch is late (chart 0.2.12)
 
 **Incident (2026-09-10):** a routine SKE node roll restarted every pod at once; os-ui came up ~34 s before
