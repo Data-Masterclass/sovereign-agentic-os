@@ -25,7 +25,8 @@ import { governanceTools } from '@/lib/mcp/governance-tools';
 import { strategyReadTools } from '@/lib/mcp/strategy-tools';
 import { MANUAL_TOOLS } from '@/lib/mcp/manual-tools';
 import { marketplaceReadTools } from '@/lib/mcp/marketplace-tools';
-import { MONITORING_TOOLS } from '@/lib/mcp/monitoring-tools';
+import { getRegisteredTools } from '@/lib/mcp/registry';
+import '@/lib/mcp/register-base';
 import {
   RESOURCES,
   RESOURCE_TEMPLATES,
@@ -588,7 +589,7 @@ export const ALL_MCP_TOOLS: McpTool[] = [
   ...strategyReadTools,
   ...MANUAL_TOOLS,
   ...marketplaceReadTools,
-  ...MONITORING_TOOLS,
+  ...getRegisteredTools(), // registry-based bundles (monitoring today; more move here per Phase 3.3)
   ...discoveryTools,
 ];
 
