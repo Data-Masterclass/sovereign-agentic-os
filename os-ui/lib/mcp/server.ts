@@ -23,7 +23,6 @@ import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
 import { DISCOVERY_TOOLS } from '@/lib/mcp/discovery-tools';
 import { governanceTools } from '@/lib/mcp/governance-tools';
 import { strategyReadTools } from '@/lib/mcp/strategy-tools';
-import { MANUAL_TOOLS } from '@/lib/mcp/manual-tools';
 import { marketplaceReadTools } from '@/lib/mcp/marketplace-tools';
 import { getRegisteredTools } from '@/lib/mcp/registry';
 import '@/lib/mcp/register-base';
@@ -578,12 +577,8 @@ const discoveryTools: McpTool[] = [
   },
 ];
 
-// Tools registered through the Phase 3.3 registry (lib/mcp/registry.ts). Some of
-// these (e.g. agent-write) ALSO still ship from their old static-import source
-// below (ALL_WRITE_TOOLS) until that source itself is migrated off — the filter
-// beneath dedupes by name so a bundle never appears twice in ALL_MCP_TOOLS.
-// write-tools.ts's own ALL_WRITE_TOOLS export is untouched (os-tools.ts's write-
-// approval gate reads from it directly and must keep seeing every write tool).
+// Registry-based tools (lib/mcp/registry.ts). Some also still ship from their
+// old static import below — filter them out there so nothing appears twice.
 const REGISTRY_TOOLS = getRegisteredTools();
 const REGISTRY_TOOL_NAMES = new Set(REGISTRY_TOOLS.map((t) => t.name));
 
@@ -594,9 +589,8 @@ export const ALL_MCP_TOOLS: McpTool[] = [
   ...agentTools,
   ...ALL_WRITE_TOOLS.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name)),
   ...DISCOVERY_TOOLS,
-  ...governanceTools,
+  ...governanceTools.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name)),
   ...strategyReadTools,
-  ...MANUAL_TOOLS,
   ...marketplaceReadTools,
   ...REGISTRY_TOOLS,
   ...discoveryTools,

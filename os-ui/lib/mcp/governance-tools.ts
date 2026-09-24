@@ -11,7 +11,8 @@ import { applyEffect } from '@/lib/governance/effects';
 import { buildEffectDeps, fileArtifactCertification, isLadderKind, type LadderKind } from '@/lib/governance/ladder';
 import { remember } from '@/lib/governance/standing';
 import { record as audit } from '@/lib/governance/audit';
-import { getLineage } from '@/lib/experimental/lineage/unified';
+// getLineage is dynamically imported at its call site below, not statically
+// here, so it doesn't bundle lineage's code into the base build.
 import { importAdapter } from '@/lib/experimental/marketplace';
 import type { ImportMode } from '@/lib/experimental/marketplace/types';
 import { canViewPolicyPlane, consolidatedPlane, listEgress, policySources } from '@/lib/governance/policy-view';
@@ -239,6 +240,7 @@ export const governanceTools: McpTool[] = [
     call: async (user, args) => {
       const ref = str(args.ref).trim();
       if (!ref) fail('get_lineage needs a `ref` (e.g. "dataset:ds_ab12cd")', 400);
+      const { getLineage } = await import('@/lib/experimental/lineage/unified');
       return getLineage(ref, user);
     },
   },
@@ -336,3 +338,6 @@ export const governanceTools: McpTool[] = [
     },
   },
 ];
+
+// governanceTools minus import_product (tab: 'marketplace', moves out later).
+export const governanceBaseTools: McpTool[] = governanceTools.filter((t) => t.tab === 'governance');

@@ -6,13 +6,8 @@ import type { CurrentUser } from '@/lib/core/auth';
 import type { Role } from '@/lib/core/session';
 import type { McpTool } from './server';
 
-// --- The EXACT governed store fns the Operating Model tab + its API routes call --
-import {
-  getManual,
-  updateManual,
-  listManualVersions,
-  restoreManualVersion,
-} from '@/lib/experimental/knowledge/store';
+// Store fns are dynamically imported per call below, not statically here,
+// so this base file doesn't bundle @/lib/experimental/knowledge/store's code.
 import { type ManualScope } from '@/lib/experimental/knowledge/manual';
 
 /**
@@ -79,6 +74,7 @@ export const MANUAL_TOOLS: McpTool[] = [
     call: async (user, args) => {
       const scope = scopeOf(args.scope);
       const domain = str(args.domain).trim() || undefined;
+      const { getManual } = await import('@/lib/experimental/knowledge/store');
       return getManual(scope, P(user), domain);
     },
   },
@@ -121,6 +117,7 @@ export const MANUAL_TOOLS: McpTool[] = [
         .map((s) => ({ id: str(s.id).trim(), content: str(s.content) }))
         .filter((s) => s.id);
       if (sections.length === 0) fail('update_operating_manual needs at least one `sections` entry ({ id, content })', 400);
+      const { updateManual } = await import('@/lib/experimental/knowledge/store');
       return updateManual(scope, P(user), { sections }, domain);
     },
   },
@@ -142,6 +139,7 @@ export const MANUAL_TOOLS: McpTool[] = [
     call: async (user, args) => {
       const scope = scopeOf(args.scope);
       const domain = str(args.domain).trim() || undefined;
+      const { listManualVersions } = await import('@/lib/experimental/knowledge/store');
       return listManualVersions(scope, P(user), domain);
     },
   },
@@ -166,6 +164,7 @@ export const MANUAL_TOOLS: McpTool[] = [
       const domain = str(args.domain).trim() || undefined;
       const version = Number(args.versionId);
       if (!Number.isInteger(version)) fail('restore_operating_manual_version needs an integer `versionId`', 400);
+      const { restoreManualVersion } = await import('@/lib/experimental/knowledge/store');
       return restoreManualVersion(scope, P(user), version, domain);
     },
   },
