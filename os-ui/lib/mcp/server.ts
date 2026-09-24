@@ -578,18 +578,27 @@ const discoveryTools: McpTool[] = [
   },
 ];
 
+// Tools registered through the Phase 3.3 registry (lib/mcp/registry.ts). Some of
+// these (e.g. agent-write) ALSO still ship from their old static-import source
+// below (ALL_WRITE_TOOLS) until that source itself is migrated off — the filter
+// beneath dedupes by name so a bundle never appears twice in ALL_MCP_TOOLS.
+// write-tools.ts's own ALL_WRITE_TOOLS export is untouched (os-tools.ts's write-
+// approval gate reads from it directly and must keep seeing every write tool).
+const REGISTRY_TOOLS = getRegisteredTools();
+const REGISTRY_TOOL_NAMES = new Set(REGISTRY_TOOLS.map((t) => t.name));
+
 export const ALL_MCP_TOOLS: McpTool[] = [
   ...platformTools,
   ...crossTools,
   ...knowledgeTools,
   ...agentTools,
-  ...ALL_WRITE_TOOLS,
+  ...ALL_WRITE_TOOLS.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name)),
   ...DISCOVERY_TOOLS,
   ...governanceTools,
   ...strategyReadTools,
   ...MANUAL_TOOLS,
   ...marketplaceReadTools,
-  ...getRegisteredTools(), // registry-based bundles (monitoring today; more move here per Phase 3.3)
+  ...REGISTRY_TOOLS,
   ...discoveryTools,
 ];
 

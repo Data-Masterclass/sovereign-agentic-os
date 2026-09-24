@@ -4,6 +4,7 @@
 import 'server-only';
 import { registerToolBundle } from './registry';
 import { MONITORING_TOOLS } from './monitoring-tools';
+import { agentWriteTools } from './agent-write-tools';
 
 /**
  * BASE bundle registration — always-on tools that ship in every build, no
@@ -11,10 +12,10 @@ import { MONITORING_TOOLS } from './monitoring-tools';
  * side effect (registration happens at module-eval time, before
  * `ALL_MCP_TOOLS` is assembled).
  *
- * Only `monitoring` is registered here so far (Phase 3.3 step 1 — proving the
- * registry mechanics before extracting the entangled base-candidate files:
- * manual/governance/discovery/resources/agent-write, each of which still has
- * live `@/lib/experimental/*` imports and needs a per-tool/per-call-site
- * split, not a file-level move).
+ * `monitoring` and `agent-write`  are registered here.
+ * Still pending: manual tools/governance/discovery/model-gateway passthrough
+ * resources, which have genuine (non-dead) non-base dependencies and need a
+ * per-tool/per-call-site split, not a file-level move.
  */
 registerToolBundle({ name: 'monitoring', tools: MONITORING_TOOLS });
+registerToolBundle({ name: 'agent-write', tools: agentWriteTools });
