@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.167 — directory fails CLOSED when OpenSearch is late (chart 0.2.12).
 # Fixes the 2026-09-10 all-users lockout: os-ui booting before OpenSearch re-seeded every account from
 # OS_USERS with the original passwords into a frozen cache. Now: hydrate retries → 503 fail-closed (prod),

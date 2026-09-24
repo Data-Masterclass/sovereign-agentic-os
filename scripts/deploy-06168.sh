@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.168 — Data tab restored: a Cube view may never share its
 # cube's name. Fixes the 2026-09-23 outage where creating/promoting ANY dataset failed because
 # three slug-frozen datasets produced view names identical to their cube names, and Cube refuses
