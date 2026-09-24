@@ -332,7 +332,13 @@ test('rename freezes the Cube + dbt identity (legacy, un-namespaced dataset)', (
   // Rename "Orders" → "Sales Orders" pins slug="orders" (what renameDataset does).
   const after = gold({ name: 'Sales Orders', slug: 'orders' });
   assert.equal(cubeName(after), 'orders', 'cube name must NOT move to sales_orders');
-  assert.equal(cubeViewName(after), 'orders', 'view stays anchored to the frozen slug');
+  // The view stays anchored to the frozen slug BUT may not EQUAL the cube name: Cube
+  // rejects the entire schema on "conflicting cube and view name" (one bad model 500s
+  // /meta for every dataset), so the identifier is disambiguated by case — Cube
+  // identifiers are case-sensitive. legacyCubeViewName + cubeViewNameMatches keep any
+  // stored reference to the old name resolving, so nothing that referenced it breaks.
+  assert.equal(cubeViewName(after), 'Orders', 'view anchored to the frozen slug, disambiguated from the cube');
+  assert.notEqual(cubeViewName(after), cubeName(after), 'a view may never share its cube name');
   assert.equal(goldMartFqn(after), 'iceberg.sales.gold_orders', 'gold mart FQN frozen');
   assert.match(scaffoldExposureYaml(after), /ref\('mart_orders'\)/);
   assert.doesNotMatch(goldMartFqn(after), /sales_orders/);
@@ -342,7 +348,9 @@ test('rename freezes the Cube + dbt identity (legacy, un-namespaced dataset)', (
 test('rename freezes the Cube identity (namespaced #155 dataset)', () => {
   const after = gold({ name: 'Sales Orders', slug: 'orders', cubeNamespaced: true });
   assert.equal(cubeName(after), 'sales__orders');
-  assert.equal(cubeViewName(after), 'sales__orders');
+  // Disambiguated from the cube name (same rule as the legacy test above) — never equal.
+  assert.equal(cubeViewName(after), 'sales__Orders');
+  assert.notEqual(cubeViewName(after), cubeName(after), 'a view may never share its cube name');
   // The legacy bare name still resolves to the frozen slug (back-compat unbroken).
   assert.ok(cubeNameMatches(after, 'orders'));
 });
