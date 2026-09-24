@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.155 — AGENTS builder iteration on 0.6.154 (from live testing):
 #   • SIX stages now: Define · Grant · Design · Build · Run · Evaluate (Build & Run split back apart).
 #   • The trigger (Manual / On schedule / Called from system) moved to DEFINE ("how the team runs"

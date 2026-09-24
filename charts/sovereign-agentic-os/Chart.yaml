@@ -92,7 +92,7 @@ dependencies:
   # JupyterHub (Apache 2.0 / BSD-3, Zero-to-JupyterHub) — per-domain multi-user
   # notebooks; GPU-capable for training. Auth federates to Ory in production
   # (DummyAuthenticator locally). MLflow / Featureform / KServe / the ML agent are
-  # bespoke under templates/science/.
+  # bespoke under templates/extensions/science/.
   #
   # Layer 4 master gate: the whole Science layer is off unless `ml.enabled=true`
   # (see values.yaml `ml.enabled`). JupyterHub additionally requires its own

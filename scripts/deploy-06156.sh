@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.156 — Software Design cleanup (on top of 0.6.155):
 #   • Remove the vestigial "Ship this design" panel from the Software Design/Epics view —
 #     Push-to-Jira, Push-code-to-Git (GitHub hand-off) and Import-Claude-design (seed src/) were

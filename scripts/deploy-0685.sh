@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.85 (dashboard metric picker tiering + name-only tiles + honest label)
 # Registry: ghcr.io/aborek/sovereign-os/os-ui (private) — same as live 0.6.81.
 # Release: agentic-os / ns agentic-os. Run from repo root.

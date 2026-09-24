@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.165 — fix: saving a record INSIDE an OS-built app falsely
 # reported "Not saved for real — the app runner is not live (demo-seed)." The interactive patterns
 # (form/intake-wizard/assignment/approval-queue/task-checklist) write via os.records.add, whose

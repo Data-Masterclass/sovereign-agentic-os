@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.160 — tutorials refreshed for 0.6.158 + a "Talk to the OS"
 # front door on Home (tsc-clean + tests green):
 #  TUTORIALS: Software tutorial (step + walkthrough) now covers 0.6.158 — Build App lists the exact

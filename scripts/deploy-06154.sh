@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.154 — AGENTS-TAB BUILDER REDESIGN (on top of 0.6.153):
 #  New five-stage flow Define · Grant · Design · Build&Run · Evaluate —
 #   • Define = the outcome only (name + deliverable + "where the results go").

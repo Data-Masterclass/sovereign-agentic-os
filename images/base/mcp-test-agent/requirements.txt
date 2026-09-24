@@ -1,0 +1,5 @@
+# MCP test agent deps — deliberately minimal (no LangGraph: this is a single
+# list-tools -> maybe-call-tool -> answer loop, not a multi-node graph).
+requests>=2.31,<3
+openai>=1.40,<2
+langfuse>=3.0,<4

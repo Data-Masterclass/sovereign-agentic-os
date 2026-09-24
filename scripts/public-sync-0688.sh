@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # Sync os-ui 0.6.88 to the PUBLIC repo (github.com/Data-Masterclass/sovereign-agentic-os).
 # Method: one clean public-line commit whose TREE == private HEAD tree, parented on
 # the current public tip, then fast-forward push. Secrets are never tracked in the

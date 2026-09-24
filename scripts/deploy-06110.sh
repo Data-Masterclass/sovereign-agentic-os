@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.110 — enables the Kaniko digest build path
 # (softwareBuild.enabled via --set, since --reuse-values ignores the overlay) + honest
 # Build errors + 24-step Build budget. Additive/reversible (set enabled=false to revert).

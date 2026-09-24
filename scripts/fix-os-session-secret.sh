@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # URGENT prod fix: the os-ui session/MCP signing secret is the insecure DEV-DEFAULT, so the
 # 0.6.88 security guard refuses to boot pages in production ("Refusing to boot in production
 # with the insecure dev-default secret for: OS_SESSION_SECRET, OS_MCP_TOKEN_SECRET").

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # Sync os-ui 0.6.127 to the PUBLIC repo (github.com/Data-Masterclass/sovereign-agentic-os).
 # BUNDLES 0.6.114→0.6.127 (public tip was last synced at 0.6.113):
 #   0.6.114 — useIdentity/roleAtLeast fix + dataset-ref sees Domain assets + status reconciles

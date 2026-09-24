@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.105 — Software builder stage restructure.
 #   0.6.104 metric tiles show clean name (not the domain-qualified Cube member)  [bundled — same image]
 #   0.6.105 Software stages renamed + reordered: Define App · Design Epics · Create Context (NEW) · Build App · Test & Publish

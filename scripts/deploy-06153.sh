@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.153 — four-fix bundle on top of 0.6.152:
 #  (1) AGENT-RUN SCOPING (security/UX): the run system prompt no longer dumps each granted tab's
 #      full CONTEXT.md tool catalog + golden paths — a grant-scoped tool brief replaces it, so an

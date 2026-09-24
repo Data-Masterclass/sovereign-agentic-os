@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.159 — MCP + documentation alignment for the 0.6.158 fixes
 # (docs/guidance only, no behaviour change; tsc-clean + tests green):
 #  MCP: generate_app_spec description now frames its failure issues[] as machine-actionable

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.158 — two live-blocker UX fixes (tsc-clean + tests green):
 #  SOFTWARE BUILD (cohort blocker): the "Generate my app" failure was a DEAD-END — the message said
 #     "Review the notes" but the composer never rendered the notes (it dropped the server's `issues`).

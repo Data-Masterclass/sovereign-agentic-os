@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.135 — teach the Software build agent the vendored-app
 # API (only-3-import-sources, no react-router, pages return <Section> not <AppShell>, exact
 # @sovereign-os/ui + app-sdk signatures) + roles via useIdentity/roleAtLeast (not exact 'admin',

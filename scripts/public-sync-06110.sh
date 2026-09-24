@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # Sync os-ui 0.6.110 to the PUBLIC repo (github.com/Data-Masterclass/sovereign-agentic-os).
 # BUNDLES 0.6.106→0.6.110 (Choose Context rename · Build on the reasoning model ·
 # write-only Build over frozen context · Science KServe runtime pin + honest failures ·

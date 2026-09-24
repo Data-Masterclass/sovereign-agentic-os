@@ -83,7 +83,7 @@ opensearch:
       network.host: 0.0.0.0
       path.repo: ["/usr/share/opensearch/snapshots"]
   # Mount the snapshot PVC into the OpenSearch pod. The PVC is created by
-  # templates/backup/opensearch-snapshot.yaml (gated on opensearchSnapshots.enabled).
+  # templates/extensions/backup/opensearch-snapshot.yaml (gated on opensearchSnapshots.enabled).
   extraVolumes:
     - name: snapshots
       persistentVolumeClaim:
@@ -281,7 +281,7 @@ osUI:
   # os-ui's SMTP transport is pointed at the in-cluster `mail` Service (587,
   # STARTTLS); maddy DKIM-signs and delivers as noreply@sovereign-agentic.com.
   # No AWS SES / no third-party ESP. See the `mail:` block below + the DNS
-  # (SPF/DKIM/DMARC) + go-live steps in templates/mail/maddy.yaml.
+  # (SPF/DKIM/DMARC) + go-live steps in templates/extensions/mail/maddy.yaml.
   #
   # Graph (Microsoft 365) is DISABLED here so the in-cluster relay is the single,
   # unambiguous sender. The Graph transport is retained in the chart for OTHER
@@ -307,7 +307,7 @@ osUI:
     from: "noreply@sovereign-agentic.com"
 
 # In-cluster transactional MTA (maddy) — see values.yaml `mail:` for all knobs
-# and templates/mail/maddy.yaml for the open-relay guards + go-live steps.
+# and templates/extensions/mail/maddy.yaml for the open-relay guards + go-live steps.
 mail:
   enabled: true
   # VERIFIED 2026-07-05: STACKIT BLOCKS outbound :25 from this cluster. Tested from
@@ -477,7 +477,7 @@ dagster:
 
 # forgejo (Software tab — sovereign git) — ENABLED. The imagePullSecrets
 # double-wrap that broke first boot is fixed in the chart: the umbrella overrides
-# the gitea `gitea.images.pullSecrets` helper (templates/_helpers.tpl) so the
+# the gitea `gitea.images.pullSecrets` helper (templates/base/_helpers.tpl) so the
 # map-form global.imagePullSecrets renders as a valid `- name: registry-pull-secret`
 # instead of the malformed `name: {name: …}`. Forgejo's image
 # (code.forgejo.org/forgejo/forgejo:11-rootless) is public, so the (now valid)
@@ -636,7 +636,7 @@ dagsterRetrain:
 # ingress-nginx LoadBalancer (its public IP is written into the STACKIT DNS zone
 # by `make dns`); cert-manager issues Let's Encrypt certs. `agentic.datamasterclass.com` is
 # substituted with `terraform output dns_name` by render-values.sh.
-# Same keys the chart's templates/ingress.yaml routes to in-cluster Services.
+# Same keys the chart's templates/base/ingress.yaml routes to in-cluster Services.
 # -----------------------------------------------------------------------------
 ingress:
   enabled: true

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.157 — overnight P-bundle (all tsc-clean + 5493 tests green):
 #  P0 SOFTWARE BUILD (cohort blocker): the declarative Build stage no longer dead-ends — a new
 #     build-affordance always resolves to one actionable outcome + a "Build from my design" button in

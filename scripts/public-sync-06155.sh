@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # Sync os-ui 0.6.141→0.6.155 to the PUBLIC repo (github.com/Data-Masterclass/sovereign-agentic-os).
 # Public tip was last synced at 0.6.140 (6dfbfb17). This bundles the whole wave:
 #   0.6.141–0.6.145  materialization self-heal + Trino-gated probes/builds + promote/demote round-trip

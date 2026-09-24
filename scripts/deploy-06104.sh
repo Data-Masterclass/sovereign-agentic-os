@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.104 — metric tiles show clean name (not the domain-qualified Cube member).
 #   0.6.92 app-sdk QueryResult typing + build brief (Badge tone / query shape)
 #   0.6.93 Design assistant Decline + full-tree epics/stories + Build "needs specs" callout

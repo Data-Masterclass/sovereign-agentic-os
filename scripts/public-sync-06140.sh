@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # Sync os-ui 0.6.140 to the PUBLIC repo (github.com/Data-Masterclass/sovereign-agentic-os).
 # BUNDLES 0.6.138→0.6.140 (public tip was last synced at 0.6.137 = d1bf41e):
 #   0.6.138 — Build App: fix the autosave-draft DATA-LOSS (draft survives Build<->Test&Publish nav +

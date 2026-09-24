@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.112 — Science task auto-detect (0.6.111) + build LLM
 # timeout 90s->240s + Choose Context creates app-readable Domain datasets + build prompt hardening.
 

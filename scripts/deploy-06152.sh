@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.152 — (1) FIX agent-system Build "test invocation did not
 # reach END": the mock graph verifier now treats any ReAct node as able to finish to END (handoffs
 # are conditional Commands), so a cyclic/handoff team (e.g. Campaign Example 2) verifies green;

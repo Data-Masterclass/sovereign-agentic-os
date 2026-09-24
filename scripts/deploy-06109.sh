@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.109 — bundles 0.6.106 (Choose Context rename),
 # 0.6.108 (write-only Build over frozen context), 0.6.109 (Science runtime pin + honest failures).
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.164 — fix: a fully-built, PUBLISHED Software app vanishes
 # after a pod restart. Root cause was at the PERSISTENCE boundary, not the publish path: the app's
 # arbitrary-shape `spec`/`draftSpec` were stored under the os-apps index's DEFAULT DYNAMIC mappings,

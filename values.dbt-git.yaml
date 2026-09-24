@@ -22,8 +22,8 @@
 # transient Forgejo blip can never hang or brick the helm upgrade.
 # =============================================================================
 
-# 1) dbt-build Job reads the project from git (templates/dbt/dbt-build.yaml already
-#    gates its clone init container on this exact value — see that file).
+# 1) dbt-build Job reads the project from git (templates/extensions/dbt/dbt-build.yaml
+#    already gates its clone init container on this exact value — see that file).
 dbt:
   projectSource: git
 

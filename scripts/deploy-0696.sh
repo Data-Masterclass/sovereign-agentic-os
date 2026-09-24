@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.96 — durable OS-side app-records store behind os.records.* (+ 0.6.90→0.6.95 already live).
 #   0.6.90 Software Design-stage UX · 0.6.91 Talk-to-Data inline charts
 #   0.6.92 app-sdk QueryResult typing + build brief (Badge tone / query shape)

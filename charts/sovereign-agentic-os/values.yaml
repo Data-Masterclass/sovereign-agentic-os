@@ -138,13 +138,13 @@ global:
 # Default-deny egress ships ON (secure by default). Agents reach the internet
 # only via the egress proxy + governed web_fetch tool. NOTE: kind's kindnet CNI
 # does not enforce NetworkPolicies; on STACKIT, Cilium enforces and adds
-# FQDN-aware allowlists + DLP. See templates/network/egress-policies.yaml.
+# FQDN-aware allowlists + DLP. See templates/base/network/egress-policies.yaml.
 # -----------------------------------------------------------------------------
 networkPolicies:
   defaultDeny: true
 
 # -----------------------------------------------------------------------------
-# Backups (templates/backup/). pgDump is the nightly logical dump of EVERY
+# Backups (templates/extensions/backup/). pgDump is the nightly logical dump of EVERY
 # database in the bundled Postgres (pg-rw) to the S3 backend (soa.s3Endpoint —
 # bundled MinIO or the external endpoint), one timestamped folder per run:
 #   s3://<bucket>/<prefix>/<UTC-stamp>/{globals.sql,<db>.dump,MANIFEST}
@@ -170,7 +170,7 @@ backup:
 # -----------------------------------------------------------------------------
 # Ingress + TLS — OFF by default (Mode A is port-forward only). When enabled
 # (Mode B / STACKIT, see values.stackit-managed.yaml) the chart emits one Ingress
-# per public tool whose `hosts.<key>` is set (templates/ingress.yaml): a
+# per public tool whose `hosts.<key>` is set (templates/base/ingress.yaml): a
 # cert-manager-issued TLS cert + a rule routing `/` to the tool's Service.
 # Nothing renders while `enabled: false`, so the bundled path is untouched.
 # -----------------------------------------------------------------------------
@@ -192,7 +192,7 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
   # Per-tool public hostnames. Empty => that tool gets NO Ingress. Filled by the
   # Mode-B overlay (render-values.sh substitutes the DNS zone). Keys map to
-  # Services in templates/ingress.yaml: osUI->os-ui:3000, litellm->litellm:4000,
+  # Services in templates/base/ingress.yaml: osUI->os-ui:3000, litellm->litellm:4000,
   # langfuse->langfuse-web:3000, superset->superset:8088, forgejo->forgejo-http:3000,
   # argocd->argocd-server:80, openmetadata->openmetadata:8585.
   # osUIApex (opt-in) -> a SECOND os-ui:3000 Ingress on the bare zone apex
@@ -307,8 +307,8 @@ postgres:
     digest: sha256:5c855ad7b85e68e48a62f34662853f38b57c1c1d80f3a927ab58034fd6d31c5e
   # Infra tier — wave 0, high-priority. BOTH engines carry the sync-wave
   # annotation + infra priorityClassName + memory requests/limits: the CNPG
-  # Cluster in templates/postgres/cluster.yaml and the plain StatefulSet in
-  # templates/postgres/statefulset.yaml. `resources` below applies to both.
+  # Cluster in templates/base/postgres/cluster.yaml and the plain StatefulSet in
+  # templates/base/postgres/statefulset.yaml. `resources` below applies to both.
   resources:
     # Request bumped so concurrent boot-time schema migrations (Langfuse, LiteLLM,
     # Dagster, Superset, OpenMetadata all migrate at once) have real headroom.
@@ -447,7 +447,7 @@ clickhouse:
     repository: clickhouse/clickhouse-server
     tag: "24.8"
     digest: sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
-  # Infra tier — wave 0, high-priority (wired in templates/clickhouse/clickhouse.yaml).
+  # Infra tier — wave 0, high-priority (wired in templates/base/clickhouse/clickhouse.yaml).
   #
   # DURABILITY / SSA: change these values ONLY here (chart), never with an
   # out-of-band `kubectl set|patch|edit`. Helm 4 applies server-side; a manual
@@ -481,7 +481,7 @@ clickhouse:
 # -----------------------------------------------------------------------------
 # Langfuse project keys (consumed by the sample agent + LiteLLM to send traces).
 # For profile=local these provision a deterministic project via LANGFUSE_INIT_*
-# (templates/langfuse/init.yaml). The secretKey is a dev throwaway; on STACKIT,
+# (templates/base/langfuse/init.yaml). The secretKey is a dev throwaway; on STACKIT,
 # real project keys are managed externally.
 # -----------------------------------------------------------------------------
 langfuseInit:
@@ -494,7 +494,7 @@ langfuseInit:
 # NOTE: this is the `langfuse` SUBCHART's value tree; the chart's own core
 # config section is itself called `langfuse`, hence `langfuse.langfuse.*`.
 # Secrets are referenced (never inlined): core secrets come from the local-only
-# Secret created by templates/langfuse/core-secrets.yaml; backend passwords reuse
+# Secret created by templates/base/langfuse/core-secrets.yaml; backend passwords reuse
 # the per-backend Secrets created earlier.
 # -----------------------------------------------------------------------------
 langfuse:
@@ -512,7 +512,7 @@ langfuse:
         secretKeyRef: { name: langfuse-core-secrets, key: nextauthSecret }
     features:
       telemetryEnabled: false           # sovereign/offline — no phone-home
-    # Headless org/project/key provisioning (Secret from templates/langfuse/init.yaml).
+    # Headless org/project/key provisioning (Secret from templates/base/langfuse/init.yaml).
     additionalEnvFrom:
       - secretRef:
           name: langfuse-init
@@ -724,7 +724,7 @@ litellmAgentKey:
 # LiteLLM can reach an EXTERNAL Ollama model (e.g. a Mac Mini's qwen3:14b) that
 # dials IN over WireGuard. First-class chart component (survives redeploys /
 # node-rolls — the previous one-off `kubectl apply` manifest got wiped, which was
-# the whole bug). See templates/wireguard/wireguard.yaml for the topology + the
+# the whole bug). See templates/extensions/wireguard/wireguard.yaml for the topology + the
 # NAT-forwarder routing rationale.
 #
 # OFF by default (OSS / local-kind stays off). Turned ON in the STACKIT overlay
@@ -1109,10 +1109,31 @@ sampleAgent:
         assembled only from permissively licensed open source.
 
 # -----------------------------------------------------------------------------
+# MCP test agent — proves the OS's own real, governed MCP registry (/api/mcp)
+# works end to end, the same way sampleAgent proves OpenSearch+RAG works end to
+# end. Runs as a designated demo user (not OpenSearch-dependent, so it can live
+# in base). `mcpToken` is that user's minted MCP bearer — leave unset here and
+# supply it via the mcp-test-agent-token Secret instead (see the chart comment
+# in templates/base/mcp-test-agent/mcp-test-agent.yaml); never commit a real
+# token to this file.
+# -----------------------------------------------------------------------------
+mcpTestAgent:
+  enabled: true
+  image:
+    repository: sovereign-os/mcp-test-agent   # built locally, loaded into kind
+    tag: "0.1.0"
+  mcpUrl: "http://os-ui:3000/api/mcp"
+  mcpToken: ""   # set via values.private.yaml or the Secret directly — never here
+  chatModel: sovereign-mock
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+
+# -----------------------------------------------------------------------------
 # Agent runtime — the live-execution backend for the Agents tab (Phase 4). It
 # holds ONLY its scoped LiteLLM virtual key (least privilege): no OPA, no
 # Langfuse, no Forgejo, no platform creds. Its egress is default-deny except the
-# LiteLLM gateway + the OS UI governed-tool endpoint (templates/network).
+# LiteLLM gateway + the OS UI governed-tool endpoint (templates/base/network).
 # -----------------------------------------------------------------------------
 agentRuntime:
   enabled: true
@@ -1360,7 +1381,7 @@ opa:
 
 # -----------------------------------------------------------------------------
 # Sales Assistant — the Agent golden-path vertical slice. Ships AGENT.md +
-# MEMORY.md as a versioned ConfigMap (templates/sales-assistant/). The supervisor
+# MEMORY.md as a versioned ConfigMap (templates/extensions/sales-assistant/). The supervisor
 # runs inside the OS UI (lib/sales-assistant.ts) over the governed LiteLLM + OPA +
 # Langfuse spine; its scoped key is opa.grants `sales-assistant` above. ConfigMap
 # only — no extra workload, so it's effectively free to keep on.
@@ -1538,7 +1559,7 @@ dbt:
 # OPA governance data and the dagster user-code keeps TRINO_USER=dbt-sales (current
 # live behavior). Flip `enabled: true` to:
 #   1. inject the `dagster-analytics` principal into opa.grants.governance.principals
-#      (templates/opa/opa.yaml merges it in — see that file), and
+#      (templates/base/opa/opa.yaml merges it in — see that file), and
 #   2. point the dagster user-code + the values.dbt-git.yaml overlay at it
 #      (set TRINO_USER=dagster-analytics in the overlay's deployment env).
 # Rollback: set enabled:false (principal drops out; runs fall back to dbt-sales).
@@ -1616,7 +1637,7 @@ cube:
   # speaks the Postgres protocol so Power BI's "Get Data → PostgreSQL" connects to
   # Cube. Queries still resolve Cube → Trino → OPA (governed measures/dimensions, NOT
   # raw tables). Per-DOMAIN scope: a report authenticates as the domain's read-only BI
-  # principal `bi_<domain>`; Cube's checkSqlAuth (templates/cube/cube-config.js) maps
+  # principal `bi_<domain>`; Cube's checkSqlAuth (templates/extensions/cube/cube-config.js) maps
   # that username to the domain's securityContext → Trino/OPA RLS. This is DOMAIN-LEVEL
   # RLS (all viewers of a domain share it), NOT per-individual-viewer RLS.
   #
@@ -1640,7 +1661,7 @@ cube:
     host: cube-sql
 
 # -----------------------------------------------------------------------------
-# Northpeak gold-mart materialization (templates/lakehouse/northpeak-marts-init.yaml).
+# Northpeak gold-mart materialization (templates/extensions/lakehouse/northpeak-marts-init.yaml).
 # A one-shot, idempotent Helm hook that materializes the PHYSICAL Iceberg gold table
 # `iceberg.sales.gold_northpeak_commerce` THROUGH central Trino so the Metrics tab
 # resolves real numbers (the os-ui Data build adapters are probe-only and write no
@@ -1870,7 +1891,7 @@ webFetch:
 # -----------------------------------------------------------------------------
 # Software live-app runner (Software tab). When ON, the os-ui provisions a real
 # Deployment+Service+Ingress per built app into `namespace` (RBAC:
-# templates/os-ui/apps-runner.yaml) and drives its status from the live pod.
+# templates/base/os-ui/apps-runner.yaml) and drives its status from the live pod.
 # OFF here so kind/base helm-template stays minimal; the STACKIT overlay enables
 # it. Reachable per-app URLs additionally need a `*.<appsDomain>` wildcard DNS
 # record → the ingress LB (see the operator note in apps-runner.yaml).
@@ -1988,7 +2009,7 @@ polaris:
     repository: apache/polaris-admin-tool
     tag: "1.1.0-incubating"
     digest: sha256:7cdd9216c2e55a45ad0e725f47949c7632e6eadcf1e18bbcaeee19ea65f2c94e
-  # Image for the catalog-registration Job (templates/lakehouse/polaris-bootstrap.yaml):
+  # Image for the catalog-registration Job (templates/extensions/lakehouse/polaris-bootstrap.yaml):
   # a tiny curl + POSIX-shell image (the OAuth token is parsed with sed, no jq). It
   # registers the `lakehouse` catalog via the Polaris management API once Polaris is
   # up. Runs for BOTH profiles (in-memory local also needs the catalog for the seed).
@@ -2870,7 +2891,7 @@ osUI:
 # ZERO mail objects. Enabled in values.stackit-selfhosted.yaml, where os-ui's
 # SMTP transport is pointed at the in-cluster `mail` Service so the OS sends its
 # OWN verification/invite mail from noreply@sovereign-agentic.com (no AWS SES /
-# no third-party ESP). See templates/mail/maddy.yaml for the open-relay guards.
+# no third-party ESP). See templates/extensions/mail/maddy.yaml for the open-relay guards.
 # -----------------------------------------------------------------------------
 mail:
   enabled: false
@@ -2930,7 +2951,7 @@ mail:
 # namespace with a no-rights ServiceAccount, and deny-egress NetworkPolicies.
 # Each session gets an ephemeral, locked-down Pod (non-root, read-only rootfs,
 # drop-ALL caps, seccomp RuntimeDefault, no API token, tight limits) destroyed on
-# disconnect/idle/max-TTL. See templates/terminal/terminal.yaml + os-ui Terminal
+# disconnect/idle/max-TTL. See templates/extensions/terminal/terminal.yaml + os-ui Terminal
 # tab. Authorization is tied to OS roles via `allowedRoles`.
 terminal:
   enabled: false
@@ -3055,7 +3076,7 @@ workbench:
 
 # -----------------------------------------------------------------------------
 # Layer 4 MASTER SWITCH. OFF by default. `ml.enabled` is the single gate for the
-# entire Science layer: every `templates/science/*` object AND the `jupyterhub`
+# entire Science layer: every `templates/extensions/science/*` object AND the `jupyterhub`
 # subchart are gated behind it, composed (logical AND) with their own
 # per-component flag below (`mlflow.enabled`, `featureform.enabled`,
 # `kserve.enabled`, `mlAgent.enabled`, `jupyterhub.enabled`). This lets the whole
@@ -3122,7 +3143,7 @@ jupyterhub:
 # MLflow (Apache 2.0) — experiment tracking + model registry (bespoke). Backend
 # store = CNPG `mlflow` DB; artifact store = object-storage `mlflow` bucket,
 # served via `--serve-artifacts`. Custom image (mlflow + psycopg2 + boto3),
-# built locally + loaded into kind (images/mlflow/).
+# built locally + loaded into kind (images/extensions/mlflow/).
 # -----------------------------------------------------------------------------
 mlflow:
   enabled: false
@@ -3204,7 +3225,7 @@ kserve:
 # from a governed Gold product THROUGH Trino (least-privilege read principal), logs
 # to MLflow and uploads the artifact to s3://mlflow/models/<model>/. This block only
 # holds the trainer IMAGE + the read principal; the Job is not a chart object (it is
-# created per-train at runtime). CPU-only; no GPU. See images/ml-trainer/.
+# created per-train at runtime). CPU-only; no GPU. See images/extensions/ml-trainer/.
 # -----------------------------------------------------------------------------
 mlTrainer:
   image:

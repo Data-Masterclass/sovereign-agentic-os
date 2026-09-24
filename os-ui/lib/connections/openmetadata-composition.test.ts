@@ -40,7 +40,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CHART = path.resolve(HERE, '../../../charts/sovereign-agentic-os');
 const VALUES = readFileSync(path.join(CHART, 'values.yaml'), 'utf8');
 const TEMPLATE = readFileSync(
-  path.join(CHART, 'templates/openmetadata/trino-ingestion.yaml'),
+  path.join(CHART, 'templates/extensions/openmetadata/trino-ingestion.yaml'),
   'utf8',
 );
 

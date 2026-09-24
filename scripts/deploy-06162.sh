@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.162 — Software apps no longer disappear (cache null-poison fix):
 #  The app registry bulk-hydrate did `(await mirror.hydrate(500)) ?? []` — collapsing null (OpenSearch
 #  UNREACHABLE) and [] (reachable-but-empty) into one empty list and CACHING it as authoritative, so a

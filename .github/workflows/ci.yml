@@ -64,14 +64,18 @@ jobs:
       - name: Install pytest
         run: pip install "pytest>=8.0,<9"
       # data-runner: existing + new failure-mode tests
+      - name: Install data-runner deps
+        run: pip install -r images/extensions/data-runner/requirements.txt
       - name: pytest (data-runner)
-        run: python3 -m pytest -q images/data-runner/test_app.py
+        run: python3 -m pytest -q images/extensions/data-runner/test_app.py
       # web-fetch: new tests (zero tests previously)
       - name: pytest (web-fetch)
-        run: python3 -m pytest -q images/web-fetch/test_app.py
+        run: python3 -m pytest -q images/base/web-fetch/test_app.py
       # agent-runtime: existing interpreter tests (no new tests added here)
+      - name: Install agent-runtime deps
+        run: pip install -r images/base/agent-runtime/requirements.txt
       - name: pytest (agent-runtime)
-        run: python3 -m pytest -q images/agent-runtime/tests/
+        run: python3 -m pytest -q images/base/agent-runtime/tests/
 
   # OPA policy tests — skipped in CI if the opa binary is unavailable; a comment
   # explains how to run locally. Adding the full setup-opa action adds ~30s and

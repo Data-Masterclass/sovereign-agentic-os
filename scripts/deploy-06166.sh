@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # One-shot guarded deploy of os-ui 0.6.166 — editable records: in-place edit/delete for OS-built apps.
 # The 3 previously-deferred interactive patterns are now real: editable-grid (inline-edit table),
 # kanban-workflow (move cards between status columns), action-detail (record + governed action buttons).
