@@ -29,10 +29,10 @@ ENTIRE schema when one model is invalid, all 25 datasets went down with them.
 
 ### os-ui 0.6.167 — Directory fails closed: no more silent password revert when OpenSearch is late (chart 0.2.12)
 
-**Incident (2026-09-10):** a routine SKE node roll restarted every pod at once; os-ui came up ~34 s before
-OpenSearch answered, took the "mirror unreachable → offline seed" branch in `lib/platform-admin/users.ts`,
-re-seeded all 45 `OS_USERS` accounts with their ORIGINAL passwords into a cache that was never re-hydrated,
-and dropped the 16 accounts created since — "Invalid email or password" for every user until a restart.
+**Incident (2026-09-10):** a routine node roll restarted every pod at once; os-ui came up shortly before
+OpenSearch answered and took the "mirror unreachable → offline seed" branch in `lib/platform-admin/users.ts`.
+It re-seeded the operator `OS_USERS` entries into a cache that was never re-hydrated, so accounts created
+after the seed were missing and later credential changes were not reflected — sign-in failed until a restart.
 
 - `getCache()` now retries hydration (3× with backoff) and, if the mirror is still unreachable, **fails
   CLOSED** in production: `DirectoryUnavailableError` (status 503) — it never seeds from `OS_USERS` over a
