@@ -118,6 +118,43 @@ spec:
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000
+      {{- /* Gate startup on the durable user-directory mirror. os-ui booting before
+           OpenSearch was reachable took the offline branch and silently re-seeded
+           every account from OS_USERS (2026-09-10 all-users lockout). Rendered
+           unless osUI.waitForOpenSearch is explicitly false, so it survives
+           `helm --reuse-values` (which ignores new chart defaults). Uses the os-ui
+           image itself — no extra image to pull or allow-list. */}}
+      {{- if ne (toString $u.waitForOpenSearch) "false" }}
+      initContainers:
+        - name: wait-for-opensearch
+          image: "{{ $u.image.repository }}:{{ $u.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          resources:
+            requests: { cpu: 20m, memory: 48Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          env:
+            - name: OPENSEARCH_URL
+              value: {{ include "soa.opensearchUrl" . | quote }}
+          command: ["node", "-e"]
+          args:
+            - |
+              const url = process.env.OPENSEARCH_URL + '/_cluster/health?wait_for_status=yellow&timeout=5s';
+              const deadline = Date.now() + 10 * 60 * 1000;
+              (async () => {
+                for (;;) {
+                  try {
+                    const r = await fetch(url);
+                    if (r.ok) { console.log('opensearch ready'); process.exit(0); }
+                    console.log('opensearch not ready: HTTP ' + r.status);
+                  } catch (e) { console.log('opensearch unreachable: ' + e.message); }
+                  if (Date.now() > deadline) { console.error('gave up waiting for opensearch'); process.exit(1); }
+                  await new Promise((r) => setTimeout(r, 3000));
+                }
+              })();
+      {{- end }}
       containers:
         - name: os-ui
           image: "{{ $u.image.repository }}:{{ $u.image.tag }}"
@@ -141,6 +178,10 @@ spec:
             # surface reads their status + scales them 0<->1 here via the k8s API.
             - name: NAMESPACE
               value: {{ .Release.Namespace | quote }}
+            {{- /* Offline (in-memory) user seeding is a no-cluster DEV convenience.
+                 Production fails closed (503) instead of reverting passwords. */}}
+            - name: OS_ALLOW_OFFLINE_USER_SEED
+              value: {{ ternary "true" "false" (eq (toString $u.allowOfflineUserSeed) "true") | quote }}
             # Session-signing secret (HMAC-SHA256 for the auth cookie). Sourced
             # from the generated `os-ui-session` Secret — NEVER the in-code
             # dev fallback, which would let anyone forge an admin session.

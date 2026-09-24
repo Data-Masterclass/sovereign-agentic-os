@@ -36,7 +36,20 @@ export async function POST(req: Request) {
     );
   }
 
-  const claims = await authenticate(username, password);
+  let claims: Awaited<ReturnType<typeof authenticate>>;
+  try {
+    claims = await authenticate(username, password);
+  } catch (err) {
+    // The durable user directory is unreachable: say so honestly (503, retryable)
+    // rather than a misleading "invalid password" — and never fall back to a seed.
+    if ((err as { status?: number })?.status === 503) {
+      return NextResponse.json(
+        { error: 'User directory temporarily unavailable — please retry in a moment.' },
+        { status: 503, headers: { 'retry-after': '5' } },
+      );
+    }
+    throw err;
+  }
   if (!claims) {
     return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
   }
