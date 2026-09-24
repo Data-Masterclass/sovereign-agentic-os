@@ -10,112 +10,11 @@ import {
   type Principal,
 } from './write-common';
 
-// --- Governed lib functions (the EXACT same the UI + /api routes call) ---------
-import {
-  createDataset,
-  buildVersion,
-  setDocs as setDatasetDocs,
-  requestPromotion as requestDatasetPromotion,
-  getDataset,
-  archiveDataset,
-  deleteDataset,
-  defineMeasure,
-  buildGoldJoin as commitGoldJoin,
-  addCheck,
-  builtLayerFqn,
-  type PromotionRequest,
-} from '@/lib/experimental/data/store';
-import { runQualityChecks } from '@/lib/experimental/data/dq-run';
-import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/experimental/data';
 import { queryRun } from '@/lib/infra/governed';
-import { publishPromotionLive } from '@/lib/experimental/data/publish-server';
-import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
-import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/experimental/data/panels';
-import { scaffoldCubeYaml } from '@/lib/experimental/data/metrics';
-import { ingestAndRegisterBronze } from '@/lib/experimental/data/ingest';
-import { buildStage, commitLayerVersion } from '@/lib/experimental/data/build/server';
-import {
-  silverPlan,
-  goldJoinPlan,
-  goldMeasureToCube,
-  CAST_TYPES,
-  type TransformOp,
-  type ResolvedJoin,
-  type GoldDimension,
-  type GoldMeasure,
-  type JoinType,
-} from '@/lib/experimental/data/transform';
-import { assetTarget } from '@/lib/experimental/data/store-fqn';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
-import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@/lib/experimental/data';
-import { measureFromForm, measureMember, type MetricForm, type GuidedFilter, type GuidedWindow } from '@/lib/experimental/metrics/model';
-import type { MeasureType } from '@/lib/experimental/data/metrics';
-import { buildMetric } from '@/lib/experimental/metrics/build/server';
-import { exploreMetric } from '@/lib/experimental/metrics/build/explore-server';
-import type { Granularity } from '@/lib/experimental/metrics/explorer';
-import { getMetric } from '@/lib/experimental/metrics/store';
-import { governMetric, canPromote as canPromoteMetric } from '@/lib/experimental/metrics/governance';
-import { transition as transitionDataset } from '@/lib/experimental/data/store';
-
-import {
-  createWorkflow,
-  updateWorkflow,
-  updateTacit,
-  getWorkflow,
-  getDomainKnowledge,
-  archiveWorkflow,
-  deleteWorkflow,
-} from '@/lib/experimental/knowledge/store';
-import { knowledgeConsumers } from '@/lib/experimental/knowledge/consumers';
+import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
 import { fileArtifactPromotion, promoteThroughSeam, isLadderKind, type LadderKind } from '@/lib/governance/ladder';
 import { pendingHandle } from '@/lib/mcp/pending';
-import {
-  serializeWorkflow,
-  deriveActors,
-  ACTOR_TYPES,
-  type Workflow,
-  type WorkflowStep,
-  type WorkflowRule,
-  type ActorType,
-  type Actor,
-} from '@/lib/experimental/knowledge/schema';
-import { indexWorkflow, indexDomain, purgeKnowledgeUnits } from '@/lib/experimental/knowledge/index-pipeline';
-
-import {
-  createFile,
-  setDocs as setFileDocs,
-  attachObject,
-  objectKeyForAsset,
-  requestPromotion as requestFilePromotion,
-  applyApprovedFilePromotion,
-  type FilePromotionRequest,
-} from '@/lib/experimental/files/store';
-import { reindexFile } from '@/lib/experimental/files/pipeline-server';
-import { putBlob } from '@/lib/experimental/files/object-store';
-import type { Sensitivity } from '@/lib/experimental/files/asset-schema';
-
-import { saveDashboard } from '@/lib/experimental/dashboards/store';
-import { fromTiles, type ChartSpec } from '@/lib/experimental/dashboards/model';
-import { claimsFromUser, delegate } from '@/lib/experimental/data/identity';
-
-import {
-  createBet,
-  getBet,
-  updateBet,
-  addComponent,
-  archiveBet,
-  unarchiveBet,
-  deleteBet,
-  restoreBetVersion,
-  setBetWorkflow,
-  wireComponents,
-  unwireComponents,
-  canEdit as canEditBet,
-  type CreateBetInput,
-} from '@/lib/experimental/bigbets/store';
-import { getPillar } from '@/lib/experimental/strategy/pillars';
-import { deriveBetName, INTERPLAY_RELATIONS, type BigBet, type InterplayRelation, type Tab as BetTab, type ValueBasis } from '@/lib/experimental/bigbets';
-import { resolveLinkedComponent } from '@/lib/experimental/bigbets/attach-server';
 
 import {
   createSystem,
@@ -126,7 +25,6 @@ import {
 import { isTemplateKey } from '@/lib/agents/templates';
 import { buildSystem } from '@/lib/agents/build/server';
 
-import { patchAppDesign, getAppForUser, type AppEpic } from '@/lib/experimental/software/apps';
 import { normalizeContextGrants } from '@/lib/core/context-grants';
 
 // ================================ AGENTS ======================================
