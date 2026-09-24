@@ -6,9 +6,10 @@
 # in a separate storage repo/branch and re-checks on each PR.
 #
 # One-time setup (repo admin):
-#   - Create a Personal Access Token with `repo` scope and add it as the secret
-#     PERSONAL_ACCESS_TOKEN (used to write the signatures file). GITHUB_TOKEN is
-#     used for PR comments.
+#   - PERSONAL_ACCESS_TOKEN is OPTIONAL: without it the action uses GITHUB_TOKEN,
+#     which needs `contents: write` (granted below) to store signatures. Set a PAT
+#     only when signatures live in a DIFFERENT repo (remote-repository-name).
+#   - The signatures branch (`cla-signatures`) must NOT be protected.
 #   - Adjust `path-to-signatures` / `remote-repository-name` if you want signatures
 #     stored outside this repo.
 name: CLA Assistant
@@ -20,7 +21,11 @@ on:
 
 permissions:
   actions: write
-  contents: read
+  # contents: WRITE — the bot commits signatures.json to the `cla-signatures`
+  # branch. With `read` (and no PERSONAL_ACCESS_TOKEN secret set) it fails with
+  # "Resource not accessible by integration", so every PR showed an unsigned CLA
+  # even after the contributor signed (2026-09-23).
+  contents: write
   pull-requests: write
   statuses: write
 
