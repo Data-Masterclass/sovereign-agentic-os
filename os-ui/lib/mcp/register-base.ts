@@ -5,17 +5,20 @@ import 'server-only';
 import { registerToolBundle } from './registry';
 import { MONITORING_TOOLS } from './monitoring-tools';
 import { agentWriteTools } from './agent-write-tools';
+import { MANUAL_TOOLS } from './manual-tools';
+import { governanceBaseTools } from './governance-tools';
 
 /**
- * BASE bundle registration — always-on tools that ship in every build, no
- * feature flag, no dynamic import. server.ts imports this module for its
- * side effect (registration happens at module-eval time, before
- * `ALL_MCP_TOOLS` is assembled).
+ * Base bundles — always on, no flag. server.ts imports this for its side
+ * effect (runs before ALL_MCP_TOOLS is built).
  *
- * `monitoring` and `agent-write`  are registered here.
- * Still pending: manual tools/governance/discovery/model-gateway passthrough
- * resources, which have genuine (non-dead) non-base dependencies and need a
- * per-tool/per-call-site split, not a file-level move.
+ * manual-tools.ts and governance's get_lineage had a static experimental
+ * import for a base tool — now a dynamic import at the call site instead
+ * (still always on, just not bundled statically).
+ *
+ * Still pending: discovery's base-tab tools (e.g. get_agent_system).
  */
 registerToolBundle({ name: 'monitoring', tools: MONITORING_TOOLS });
 registerToolBundle({ name: 'agent-write', tools: agentWriteTools });
+registerToolBundle({ name: 'manual', tools: MANUAL_TOOLS });
+registerToolBundle({ name: 'governance', tools: governanceBaseTools });
