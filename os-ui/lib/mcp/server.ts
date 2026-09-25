@@ -22,10 +22,9 @@ import { sanitizeSingleStatement } from '@/lib/experimental/data/sql-guard';
 import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
 import { DISCOVERY_TOOLS } from '@/lib/mcp/discovery-tools';
 import { governanceTools } from '@/lib/mcp/governance-tools';
-import { strategyReadTools } from '@/lib/mcp/strategy-tools';
-import { marketplaceReadTools } from '@/lib/mcp/marketplace-tools';
 import { getRegisteredTools } from '@/lib/mcp/registry';
 import '@/lib/mcp/register-base';
+import '@/lib/mcp/register-experimental';
 import {
   RESOURCES,
   RESOURCE_TEMPLATES,
@@ -590,8 +589,6 @@ export const ALL_MCP_TOOLS: McpTool[] = [
   ...ALL_WRITE_TOOLS.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name)),
   ...DISCOVERY_TOOLS,
   ...governanceTools.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name)),
-  ...strategyReadTools,
-  ...marketplaceReadTools,
   ...REGISTRY_TOOLS,
   ...discoveryTools,
 ];
@@ -601,8 +598,8 @@ export const ALL_MCP_TOOLS: McpTool[] = [
  * cross-cutting `meta` discovery tools are ALWAYS included so `whoami` /
  * `list_capabilities` work on every per-tab endpoint too.
  */
-export function toolsForTab(tab: McpTab): McpTool[] {
-  return ALL_MCP_TOOLS.filter((t) => t.tab === tab || t.tab === 'meta' || t.extraTabs?.includes(tab));
+export function toolsForTab(tab: McpTab, tools: McpTool[] = ALL_MCP_TOOLS): McpTool[] {
+  return tools.filter((t) => t.tab === tab || t.tab === 'meta' || t.extraTabs?.includes(tab));
 }
 
 /** The role-scoped, wire-shaped tool list for `tools/list` (no internals leak). */
