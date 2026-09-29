@@ -27,12 +27,33 @@ import { config } from '@/lib/core/config';
  * a god-module) — filtered by `tab` per domain and merged into that domain's
  * bundle below, alongside its write tools.
  */
-async function registerIfEnabled(feature: string, name: string, load: () => Promise<McpTool[]>): Promise<void> {
+async function registerIfEnabled(
+  feature: string,
+  name: string,
+  load: () => Promise<McpTool[]>,
+  hydrate?: () => Promise<void>,
+): Promise<void> {
   if (!TAB_FEATURES.has(feature)) return;
-  registerToolBundle({ name, tools: await load() });
+  registerToolBundle({ name, tools: await load(), hydrate });
 }
 
 const byTab = (tools: McpTool[], tab: string) => tools.filter((t) => t.tab === tab);
+
+/**
+ * #28 step 1: server.ts's inline tools (platform, query_data, science_predict,
+ * search_knowledge), extracted but still unconditional — same behavior as
+ * before, just out of server.ts. Real flag-gating is a follow-up step.
+ */
+async function registerAlways(name: string, load: () => Promise<McpTool[]>): Promise<void> {
+  registerToolBundle({ name, tools: await load() });
+}
+
+await Promise.all([
+  registerAlways('platform-tools', async () => (await import('@/lib/experimental/mcp/platform-tools')).platformTools),
+  registerAlways('data-query', async () => (await import('@/lib/experimental/mcp/data-query-tools')).dataQueryTools),
+  registerAlways('science-predict', async () => (await import('@/lib/experimental/mcp/science-predict-tools')).sciencePredictTools),
+  registerAlways('knowledge-search', async () => (await import('@/lib/experimental/mcp/knowledge-search-tools')).knowledgeSearchTools),
+]);
 
 await Promise.all([
   registerIfEnabled('data', 'data-write', async () => {
@@ -43,14 +64,14 @@ await Promise.all([
       import('@/lib/experimental/mcp/discovery-waveb-tools'),
     ]);
     return [...write.dataWriteTools, ...promo.promotionTools, ...byTab(read.readTools, 'data'), ...byTab(waveb.waveBReadTools, 'data')];
-  }),
+  }, () => import('@/lib/experimental/data/store').then((m) => m.ensureHydrated())),
   registerIfEnabled('knowledge', 'knowledge-write', async () => {
     const [write, read] = await Promise.all([
       import('@/lib/experimental/mcp/knowledge-write-tools'),
       import('@/lib/experimental/mcp/discovery-read-tools'),
     ]);
     return [...write.knowledgeWriteTools, ...byTab(read.readTools, 'knowledge')];
-  }),
+  }, () => import('@/lib/experimental/knowledge/store').then((m) => m.ensureHydrated())),
   registerIfEnabled('files', 'file-write', async () => {
     const [write, read, waveb] = await Promise.all([
       import('@/lib/experimental/mcp/file-write-tools'),
@@ -58,7 +79,7 @@ await Promise.all([
       import('@/lib/experimental/mcp/discovery-waveb-tools'),
     ]);
     return [...write.fileWriteTools, ...byTab(read.readTools, 'files'), ...byTab(waveb.waveBReadTools, 'files')];
-  }),
+  }, () => import('@/lib/experimental/files/store').then((m) => m.ensureHydrated())),
   registerIfEnabled('metrics', 'metric-write', async () => {
     const [write, read, waveb] = await Promise.all([
       import('@/lib/experimental/mcp/metric-write-tools'),
@@ -82,7 +103,7 @@ await Promise.all([
       import('@/lib/experimental/mcp/discovery-waveb-tools'),
     ]);
     return [...write.bigbetWriteTools, ...byTab(read.readTools, 'bigbets'), ...byTab(waveb.waveBReadTools, 'bigbets')];
-  }),
+  }, () => import('@/lib/experimental/bigbets/store').then((m) => m.ensureHydrated())),
   registerIfEnabled('software', 'software-write', async () => {
     const [write, read, waveb] = await Promise.all([
       import('@/lib/experimental/mcp/software-write-tools'),
