@@ -28,6 +28,12 @@ export function getRegisteredTools(): McpTool[] {
   return bundles.flatMap((b) => b.tools);
 }
 
+/** One named bundle's tools (empty if it isn't registered). Lets a caller place
+ *  a specific bundle at a fixed position instead of the flatMap order above. */
+export function getBundleTools(name: string): McpTool[] {
+  return bundles.find((b) => b.name === name)?.tools ?? [];
+}
+
 /** Whether a given bundle name has been registered — used to give a clean
  *  "feature not enabled" answer instead of a crash for a disabled tool. */
 export function isBundleRegistered(name: string): boolean {
