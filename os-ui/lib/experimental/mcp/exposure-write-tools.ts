@@ -3,8 +3,8 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import type { McpTool } from './server';
-import { fail, str, strArr, idArg } from './discovery-common';
+import type { McpTool } from '@/lib/mcp/server';
+import { fail, str, strArr, idArg } from '@/lib/experimental/mcp/discovery-common';
 
 // --- Governed lib functions (the EXACT same the Expose/Adopt UI + /api routes call) ------
 import {

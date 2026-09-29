@@ -3,8 +3,8 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import type { McpTool } from './server';
-import { P, fail, str, strArr } from './discovery-common';
+import type { McpTool } from '@/lib/mcp/server';
+import { P, fail, str, strArr } from '@/lib/experimental/mcp/discovery-common';
 import { config } from '@/lib/core/config';
 import { trace } from '@/lib/infra/agent-governed';
 import {

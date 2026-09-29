@@ -89,3 +89,61 @@ test('hydrateAllBundles: calls every registered bundle\'s hydrate hook exactly o
   await hydrateAllBundles();
   assert.equal(calls, 2);
 });
+
+// --- Flag gating ----------------------------------------------------------------
+// registry.ts itself has no notion of "flags" — a caller (register-experimental.ts
+// in production) decides whether to call registerToolBundle at all. These tests
+// exercise that exact shape (conditional registration) using the registry's own
+// primitives, without depending on the real TAB_FEATURES/env state.
+
+test('flag gating: a bundle registered only when its condition is false never appears', () => {
+  const conditionOff = false;
+  if (conditionOff) registerToolBundle({ name: 'rt-flag-off', tools: [fakeTool('rt_flag_off_tool', 'ok')] });
+  assert.equal(isBundleRegistered('rt-flag-off'), false);
+  assert.ok(!getRegisteredTools().some((t) => t.name === 'rt_flag_off_tool'));
+});
+
+test('flag gating: a bundle registered only when its condition is true appears once registered', () => {
+  const conditionOn = true;
+  if (conditionOn) registerToolBundle({ name: 'rt-flag-on', tools: [fakeTool('rt_flag_on_tool', 'ok')] });
+  assert.equal(isBundleRegistered('rt-flag-on'), true);
+  assert.ok(getRegisteredTools().some((t) => t.name === 'rt_flag_on_tool'));
+});
+
+test('flag gating: flipping the condition after the fact does not retroactively register (registration is a one-time decision at call time)', () => {
+  let flag = false;
+  const maybeRegister = () => {
+    if (flag) registerToolBundle({ name: 'rt-flag-late', tools: [fakeTool('rt_flag_late_tool', 'ok')] });
+  };
+  maybeRegister(); // flag is false here — no-op
+  assert.equal(isBundleRegistered('rt-flag-late'), false);
+  flag = true;
+  // Flipping the flag alone changes nothing — registerToolBundle must be called again.
+  assert.equal(isBundleRegistered('rt-flag-late'), false);
+  maybeRegister(); // now it registers
+  assert.equal(isBundleRegistered('rt-flag-late'), true);
+});
+
+// --- Unknown-tool path ------------------------------------------------------------
+// The registry's job is to answer lookups for a name that was never registered
+// honestly (undefined/false), never throw — that's the foundation handleRpc and
+// os-tools.ts's grantedToolExecutor build their "clean error, not a crash" typed
+// responses on top of for a disabled/unregistered tool.
+
+test('unknown-tool path: isBundleRegistered on a name that was never registered is a clean false, never throws', () => {
+  assert.doesNotThrow(() => {
+    assert.equal(isBundleRegistered('rt-totally-unknown-bundle'), false);
+  });
+});
+
+test('unknown-tool path: looking up an unregistered tool name in getRegisteredTools() is a clean undefined, never throws', () => {
+  registerToolBundle({ name: 'rt-lookup-scope', tools: [fakeTool('rt_lookup_real_tool', 'ok')] });
+  let found: McpTool | undefined;
+  assert.doesNotThrow(() => {
+    found = getRegisteredTools().find((t) => t.name === 'rt_totally_unknown_tool');
+  });
+  assert.equal(found, undefined);
+  // The real tool, by contrast, resolves cleanly — proves the lookup mechanism
+  // itself works and the previous assertion wasn't a false negative.
+  assert.ok(getRegisteredTools().some((t) => t.name === 'rt_lookup_real_tool'));
+});

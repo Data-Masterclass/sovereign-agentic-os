@@ -3,12 +3,12 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import type { McpTool, JsonSchema } from './server';
+import type { McpTool, JsonSchema } from '@/lib/mcp/server';
 import {
   P, mcpToken, fail, str, num, bool, strArr, slug, rand, defaultGoLive,
   colDocs, mapSteps, mapRules, mapActors, normFiles, INGEST_MAX_BYTES,
   type Principal,
-} from './write-common';
+} from '@/lib/mcp/write-common';
 
 // --- Governed lib functions (the EXACT same the UI + /api routes call) ---------
 import {

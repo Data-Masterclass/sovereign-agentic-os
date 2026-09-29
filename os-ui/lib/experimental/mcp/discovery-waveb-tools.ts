@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import type { McpTool, JsonSchema } from './server';
+import type { McpTool, JsonSchema } from '@/lib/mcp/server';
 import {
   P, fail, str, strArr, NO_ARGS, idArg, resolveQueryable,
   type Principal,

@@ -7,6 +7,7 @@ import { MONITORING_TOOLS } from './monitoring-tools';
 import { agentWriteTools } from './agent-write-tools';
 import { MANUAL_TOOLS } from './manual-tools';
 import { governanceBaseTools } from './governance-tools';
+import { discoveryBaseTools } from './discovery-base-tools';
 
 /**
  * Base bundles — always on, no flag. server.ts imports this for its side
@@ -22,3 +23,4 @@ registerToolBundle({ name: 'monitoring', tools: MONITORING_TOOLS });
 registerToolBundle({ name: 'agent-write', tools: agentWriteTools });
 registerToolBundle({ name: 'manual', tools: MANUAL_TOOLS });
 registerToolBundle({ name: 'governance', tools: governanceBaseTools });
+registerToolBundle({ name: 'discovery', tools: discoveryBaseTools });

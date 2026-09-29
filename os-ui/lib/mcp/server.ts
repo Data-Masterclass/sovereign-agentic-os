@@ -587,7 +587,7 @@ export const ALL_MCP_TOOLS: McpTool[] = [
   ...knowledgeTools,
   ...agentTools,
   ...ALL_WRITE_TOOLS.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name)),
-  ...DISCOVERY_TOOLS,
+  ...DISCOVERY_TOOLS.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name)),
   ...governanceTools.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name)),
   ...REGISTRY_TOOLS,
   ...discoveryTools,

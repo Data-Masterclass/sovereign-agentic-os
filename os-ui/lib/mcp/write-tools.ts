@@ -3,20 +3,20 @@
  */
 import 'server-only';
 import type { McpTool, JsonSchema } from './server';
-import { strategyWriteTools } from './strategy-tools';
-import { marketplaceWriteTools } from './marketplace-tools';
+import { strategyWriteTools } from '@/lib/experimental/mcp/strategy-tools';
+import { marketplaceWriteTools } from '@/lib/experimental/mcp/marketplace-tools';
 
-import { dataWriteTools } from './data-write-tools';
-import { knowledgeWriteTools } from './knowledge-write-tools';
-import { fileWriteTools } from './file-write-tools';
-import { promotionTools } from './promotion-write-tools';
-import { metricWriteTools } from './metric-write-tools';
-import { dashboardWriteTools } from './dashboard-write-tools';
-import { bigbetWriteTools } from './bigbet-write-tools';
+import { dataWriteTools } from '@/lib/experimental/mcp/data-write-tools';
+import { knowledgeWriteTools } from '@/lib/experimental/mcp/knowledge-write-tools';
+import { fileWriteTools } from '@/lib/experimental/mcp/file-write-tools';
+import { promotionTools } from '@/lib/experimental/mcp/promotion-write-tools';
+import { metricWriteTools } from '@/lib/experimental/mcp/metric-write-tools';
+import { dashboardWriteTools } from '@/lib/experimental/mcp/dashboard-write-tools';
+import { bigbetWriteTools } from '@/lib/experimental/mcp/bigbet-write-tools';
 import { agentWriteTools } from './agent-write-tools';
-import { softwareWriteTools } from './software-write-tools';
-import { scienceWriteTools } from './science-write-tools';
-import { exposureWriteTools } from './exposure-write-tools';
+import { softwareWriteTools } from '@/lib/experimental/mcp/software-write-tools';
+import { scienceWriteTools } from '@/lib/experimental/mcp/science-write-tools';
+import { exposureWriteTools } from '@/lib/experimental/mcp/exposure-write-tools';
 
 /**
  * The GOVERNED WRITE tools of the OS MCP — one per authoring action a case study
@@ -37,17 +37,17 @@ import { exposureWriteTools } from './exposure-write-tools';
  * __setRunOsTeamForTests, WriteToolSchema) is unchanged.
  */
 
-export { dataWriteTools } from './data-write-tools';
-export { knowledgeWriteTools } from './knowledge-write-tools';
-export { fileWriteTools } from './file-write-tools';
-export { promotionTools } from './promotion-write-tools';
-export { metricWriteTools } from './metric-write-tools';
-export { dashboardWriteTools } from './dashboard-write-tools';
-export { bigbetWriteTools } from './bigbet-write-tools';
+export { dataWriteTools } from '@/lib/experimental/mcp/data-write-tools';
+export { knowledgeWriteTools } from '@/lib/experimental/mcp/knowledge-write-tools';
+export { fileWriteTools } from '@/lib/experimental/mcp/file-write-tools';
+export { promotionTools } from '@/lib/experimental/mcp/promotion-write-tools';
+export { metricWriteTools } from '@/lib/experimental/mcp/metric-write-tools';
+export { dashboardWriteTools } from '@/lib/experimental/mcp/dashboard-write-tools';
+export { bigbetWriteTools } from '@/lib/experimental/mcp/bigbet-write-tools';
 export { agentWriteTools, __setRunOsTeamForTests } from './agent-write-tools';
-export { softwareWriteTools } from './software-write-tools';
-export { scienceWriteTools } from './science-write-tools';
-export { exposureWriteTools } from './exposure-write-tools';
+export { softwareWriteTools } from '@/lib/experimental/mcp/software-write-tools';
+export { scienceWriteTools } from '@/lib/experimental/mcp/science-write-tools';
+export { exposureWriteTools } from '@/lib/experimental/mcp/exposure-write-tools';
 
 export const ALL_WRITE_TOOLS: McpTool[] = [
   ...dataWriteTools,
