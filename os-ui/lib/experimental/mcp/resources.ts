@@ -4,7 +4,7 @@
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { Role } from '@/lib/core/session';
-import type { ToolTab, McpTab } from './server';
+import type { ToolTab, McpTab } from '@/lib/mcp/server';
 
 // --- Governed read/list lib functions (the SAME the UI + discovery tools call) --
 import { listDatasets, getDataset } from '@/lib/experimental/data/store';

@@ -11,9 +11,9 @@ import { applyEffect } from '@/lib/governance/effects';
 import { buildEffectDeps, fileArtifactCertification, isLadderKind, type LadderKind } from '@/lib/governance/ladder';
 import { remember } from '@/lib/governance/standing';
 import { record as audit } from '@/lib/governance/audit';
-// getLineage is dynamically imported at its call site below, not statically
-// here, so it doesn't bundle lineage's code into the base build.
-import { importAdapter } from '@/lib/experimental/marketplace';
+// getLineage and importAdapter are dynamically imported at their call sites
+// below, not statically here, so they don't bundle experimental code into
+// the base build.
 import type { ImportMode } from '@/lib/experimental/marketplace/types';
 import { canViewPolicyPlane, consolidatedPlane, listEgress, policySources } from '@/lib/governance/policy-view';
 import { listStanding } from '@/lib/governance/standing';
@@ -264,6 +264,7 @@ export const governanceTools: McpTool[] = [
       if (!listingId) fail('import_product needs a `listingId`', 400);
       const mode = (str(args.mode) || undefined) as ImportMode | undefined;
       const viewer = { id: user.id, domains: user.domains, role: user.role };
+      const { importAdapter } = await import('@/lib/experimental/marketplace');
       const result = await importAdapter.import(listingId, viewer, mode);
       if (result.pending) {
         // Approval-policy import → the canonical pending handle (the owner domain decides).

@@ -4,7 +4,7 @@
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { Role } from '@/lib/core/session';
-import type { McpTool, JsonSchema } from './server';
+import type { McpTool, JsonSchema } from '@/lib/mcp/server';
 import { getDataset, builtLayerFqn } from '@/lib/experimental/data/store';
 import type { Layer } from '@/lib/experimental/data';
 import { LAYERS } from '@/lib/experimental/data';

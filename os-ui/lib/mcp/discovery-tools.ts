@@ -5,33 +5,22 @@ import 'server-only';
 import type { McpTool } from './server';
 import { config } from '@/lib/core/config';
 
-import { readTools } from './discovery-read-tools';
-import { waveBReadTools } from './discovery-waveb-tools';
-import { connectionTools } from './discovery-connection-tools';
-import { warehouseTools } from './discovery-warehouse-tools';
-import { omCatalogTools } from './discovery-om-tools';
-import { airflowTools } from './discovery-airflow-tools';
-import { scienceTools } from './discovery-science-tools';
-import { guideTool } from './discovery-guide-tools';
+import { readTools } from '@/lib/experimental/mcp/discovery-read-tools';
+import { waveBReadTools } from '@/lib/experimental/mcp/discovery-waveb-tools';
+import { connectionTools } from '@/lib/experimental/mcp/discovery-connection-tools';
+import { warehouseTools } from '@/lib/experimental/mcp/discovery-warehouse-tools';
+import { omCatalogTools } from '@/lib/experimental/mcp/discovery-om-tools';
+import { airflowTools } from '@/lib/experimental/mcp/discovery-airflow-tools';
+import { scienceTools } from '@/lib/experimental/mcp/discovery-science-tools';
 
 /**
- * The DISCOVERY tools — read-only adapters that make the OS legible so an AI
- * BUILDS ON WHAT EXISTS instead of re-creating it. Each is a THIN delegate over
- * the SAME governed lib function the UI calls, under the caller's delegated
- * identity, so OPA + document/row-level-security (mine/shared/marketplace
- * grouping) + Langfuse audit apply UNCHANGED. No privileged path here: identity
- * comes from the session, the role floor is re-checked in `handleRpc`, and the
- * governed fn is always the real authority.
- *
- * These mirror the dynamic `sovereign-os://my/*` resources one-for-one — the
- * deliberate redundancy so tools-only clients (ChatGPT, several runtimes) that
- * ignore MCP resources can still discover everything.
- *
- * This module is a BARREL: each per-domain cluster lives in its own file
- * (read/waveb/connection/warehouse/om/airflow/science/guide), sharing helpers
- * via ./discovery-common. The public surface (DISCOVERY_TOOLS) is unchanged.
+ * Compatibility barrel — restores the pre-refactor always-on behavior after
+ * the discovery-*.ts files moved to lib/experimental/mcp/ (#28). Same pattern
+ * as write-tools.ts's ALL_WRITE_TOOLS: the source files moved, but this
+ * unconditional composition is kept so nothing that already depends on these
+ * tools always being present breaks. Real flag-gating for these (via
+ * register-experimental.ts) is additive — server.ts dedupes against it.
  */
-
 export const DISCOVERY_TOOLS: McpTool[] = [
   ...readTools,
   ...waveBReadTools,
@@ -46,5 +35,4 @@ export const DISCOVERY_TOOLS: McpTool[] = [
   // connector); the tools resolve to a no-op unless an airflow connection exists.
   ...airflowTools,
   ...scienceTools,
-  guideTool,
 ];

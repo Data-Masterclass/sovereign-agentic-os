@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { McpTool } from './server';
+import type { McpTool } from '@/lib/mcp/server';
 import { fail, str, strArr, NO_ARGS, idArg } from './discovery-common';
 
 // --- Governed connection lib functions (the EXACT same the UI + /api call) ------
