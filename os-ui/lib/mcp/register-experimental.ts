@@ -142,7 +142,10 @@ await Promise.all([
     return [...m.strategyReadTools, ...m.strategyWriteTools];
   }),
   registerIfEnabled('marketplace', 'marketplace', async () => {
-    const m = await import('@/lib/experimental/mcp/marketplace-tools');
-    return [...m.marketplaceReadTools, ...m.marketplaceWriteTools];
+    const [m, gov] = await Promise.all([
+      import('@/lib/experimental/mcp/marketplace-tools'),
+      import('@/lib/mcp/governance-tools'),
+    ]);
+    return [...m.marketplaceReadTools, ...m.marketplaceWriteTools, ...gov.governanceMarketplaceTools];
   }),
 ]);

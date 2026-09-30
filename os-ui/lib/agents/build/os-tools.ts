@@ -18,6 +18,7 @@ import { trace as realTrace } from '@/lib/infra/agent-governed';
 import { enqueue as realEnqueue } from '@/lib/governance/approvals';
 import { resolveFolderGrant } from '@/lib/core/folders';
 import { config } from '@/lib/core/config';
+import { TAB_FEATURES } from '@/lib/core/tabs';
 
 /**
  * THE ONE reusable core that lets an INTERNAL agent (Agents tab) call the SAME
@@ -64,6 +65,14 @@ export const OS_TOOL_ALIASES: Record<string, string> = {
   files_retrieve: 'search_files',
   predict: 'science_predict',
   write_file: 'upload_file',
+};
+
+/** #28: which feature flag gates an alias's target (only the ones that
+ *  actually depend on one — retrieve/predict's targets are always on). */
+const ALIAS_REQUIRES_FEATURE: Record<string, string> = {
+  metrics: 'metrics',
+  files_retrieve: 'files',
+  write_file: 'files',
 };
 
 /** Resolve a single (possibly legacy) grant name to its MCP registry name. */
@@ -650,6 +659,13 @@ export function grantedToolExecutor(
 
     // Gate 1 — structural grant scope. Not granted ⇒ never touch OPA or the tool.
     if (!grantedNames.has(mcpName)) {
+      // #28: OS_TOOL_ALIASES only — a precise "feature not enabled" message for the
+      // 3 legacy aliases whose target is genuinely flag-gated, never guessed for a
+      // plain grant/permission denial (that stays the generic message below).
+      const requiredFeature = ALIAS_REQUIRES_FEATURE[name];
+      if (requiredFeature && !TAB_FEATURES.has(requiredFeature)) {
+        return errorResult('not_found', `Tool not available: the '${requiredFeature}' feature is not enabled`);
+      }
       return errorResult('not_found', `Tool not available: ${name || '(none)'}`);
     }
 

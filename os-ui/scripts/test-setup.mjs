@@ -1,4 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+// #28: TAB_FEATURES (lib/core/tabs.ts) reads this once at import time, so it
+// must be set before anything else runs. Most tests exercise FEATURE behavior
+// (e.g. create_dataset), not gating itself, so the default test env mirrors a
+// full install (every tab on) instead of the base-only production default —
+// the few tests that DO test gating (marketplace/strategy-tools.test.ts) use
+// their own local tool list and don't depend on this.
+process.env.OS_ENABLED_TABS = 'home,cockpit,tutorials,mcp,about,strategy,big-bets,operating-model,workflows,marketplace,data,metrics,files,knowledge,connections,agents,dashboards,software,science,console,governance,monitoring,components,llm-gateway,admin';
+
 import { register } from 'node:module';
 register('./test-alias-hook.mjs', import.meta.url);
 
