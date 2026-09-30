@@ -1,7 +1,11 @@
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import bundleAnalyzer from '@next/bundle-analyzer';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// #28 DoD check: ANALYZE=true npm run build opens the bundle report.
+const withBundleAnalyzer = bundleAnalyzer({ enabled: process.env.ANALYZE === 'true' });
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -38,4 +42,4 @@ const nextConfig = {
   // server-side API routes. Nothing here is a NEXT_PUBLIC_* var by design.
 };
 
-export default nextConfig;
+export default withBundleAnalyzer(nextConfig);

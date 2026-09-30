@@ -342,3 +342,8 @@ export const governanceTools: McpTool[] = [
 
 // governanceTools minus import_product (tab: 'marketplace', moves out later).
 export const governanceBaseTools: McpTool[] = governanceTools.filter((t) => t.tab === 'governance');
+
+// #28: import_product stays in this file (its dynamic-import fix lives here),
+// but it's tab:'marketplace' (non-base) so it registers via the marketplace
+// bundle, not the always-on governance-base one.
+export const governanceMarketplaceTools: McpTool[] = governanceTools.filter((t) => t.tab === 'marketplace');

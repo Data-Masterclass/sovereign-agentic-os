@@ -7,9 +7,6 @@ import { ROLES, type Role } from '@/lib/core/session';
 import { config } from '@/lib/core/config';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@/lib/platform-admin/settings';
 import { listSystems, ensureHydrated as agentsHydrated } from '@/lib/agents/store';
-import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
-import { DISCOVERY_TOOLS } from '@/lib/mcp/discovery-tools';
-import { governanceTools } from '@/lib/mcp/governance-tools';
 import { getRegisteredTools, getBundleTools, hydrateAllBundles } from '@/lib/mcp/registry';
 import '@/lib/mcp/register-base';
 import '@/lib/mcp/register-experimental';
@@ -219,19 +216,16 @@ const crossTools = [...getBundleTools('data-query'), ...getBundleTools('science-
 const knowledgeTools = getBundleTools('knowledge-search');
 const PINNED_NAMES = new Set([...platformTools, ...crossTools, ...knowledgeTools].map((t) => t.name));
 
-// Registry-based tools (lib/mcp/registry.ts). Some also still ship from their
-// old static import below — filter them out there so nothing appears twice.
+// #28: every non-base tool now comes ONLY from the registry (real flag-gating -
+// write-tools.ts/discovery-tools.ts/governanceTools's old unconditional compat
+// spreads are gone). A bundle whose feature flag is off simply isn't here.
 const REGISTRY_TOOLS = getRegisteredTools().filter((t) => !PINNED_NAMES.has(t.name));
-const REGISTRY_TOOL_NAMES = new Set(getRegisteredTools().map((t) => t.name));
 
 export const ALL_MCP_TOOLS: McpTool[] = [
   ...platformTools,
   ...crossTools,
   ...knowledgeTools,
   ...agentTools,
-  ...ALL_WRITE_TOOLS.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name)),
-  ...DISCOVERY_TOOLS.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name)),
-  ...governanceTools.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name)),
   ...REGISTRY_TOOLS,
   ...discoveryTools,
 ];
