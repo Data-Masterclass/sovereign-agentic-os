@@ -54,7 +54,10 @@ export async function buildSystem(systemId: string, yaml: string): Promise<Build
     const report = await orchestrateBuild({
       yaml,
       systemId,
-      adapters: makeLiveAdapters(makeRealClients()),
+      // Forgejo is an extension (chart forgejo.enabled → FORGEJO_ENABLED): off → skip its step.
+      adapters: makeLiveAdapters(makeRealClients()).filter(
+        (a) => a.tool !== 'forgejo' || process.env.FORGEJO_ENABLED !== 'false',
+      ),
       probe: 'Build verification',
     });
     // The live langgraph verify already traced every tool call via the governed

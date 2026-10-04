@@ -316,7 +316,7 @@ function emitRunSummaryTrace(
     principal: `${principalFor(input.systemId)}:run`,
     tool: 'generate',
     input: { prompt: prompt.length > RUN_TRACE_PROMPT_MAX ? `${prompt.slice(0, RUN_TRACE_PROMPT_MAX)}…` : prompt },
-    output: { path: result.path },
+    output: { reachedEnd: result.reachedEnd, path: result.path },
     decision: 'allow',
     tokens: usage?.total,
     costUsd: runCostUsd(usage, tracked.models(), prices),

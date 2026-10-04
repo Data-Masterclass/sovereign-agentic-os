@@ -163,7 +163,7 @@ function finalizeTeamRun(team: AgenticGraphResult, running: boolean, yaml: strin
     writeSummary,
     mode: 'live',
   };
-  const body = { running, mode: 'live' as const, team: true, ok: teamOk, path: team.path, finalText: team.finalText, nodes, contextUsage, grantedIds, writeSummary };
+  const body = { running, mode: 'live' as const, team: true, ok: teamOk, reachedEnd: team.reachedEnd, path: team.path, finalText: team.finalText, nodes, contextUsage, grantedIds, writeSummary };
   return { body, lastRun };
 }
 
