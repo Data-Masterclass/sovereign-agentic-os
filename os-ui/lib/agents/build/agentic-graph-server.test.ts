@@ -277,7 +277,7 @@ test('runOsTeam emits ONE run-summary trace with the summed token usage (Monitor
   assert.equal(t.decision, 'allow');
   assert.equal(t.tokens, 330, 'plan 110 + act 220; the usage-less final call adds 0');
   assert.deepEqual(t.input, { prompt: 'How many rows?' });
-  assert.deepEqual(t.output, { path: res.path });
+  assert.deepEqual(t.output, { reachedEnd: true, path: res.path });
   // No price book in tests (env seed empty, store empty) → cost is undefined
   // ("—"), never a fabricated 0.
   assert.equal(t.costUsd, undefined);
