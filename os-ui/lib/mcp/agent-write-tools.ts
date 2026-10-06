@@ -152,6 +152,7 @@ export const agentWriteTools: McpTool[] = [
       return {
         systemId,
         mode: 'live',
+        reachedEnd: team.reachedEnd,
         path: team.path,
         finalText: team.finalText,
         // Per-node summary: model + governed tool steps (no raw model text — tight).
@@ -188,6 +189,7 @@ type RunTeamFn = (input: {
 }) => Promise<{
   path: string[];
   finalText: string;
+  reachedEnd: boolean;
   runs: { node: string; model: string; result: { steps: { tool: string; isError: boolean }[] } }[];
 }>;
 
