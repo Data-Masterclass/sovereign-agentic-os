@@ -356,6 +356,11 @@ services:
       FORGEJO_USER: ${FORGEJO_ADMIN_USER:-gitea_admin}
       FORGEJO_PASSWORD: ${FORGEJO_ADMIN_PASSWORD:-forgejo-admin-local-dev}
       FORGEJO_REPO_OWNER: ${FORGEJO_ADMIN_USER:-gitea_admin}
+      # #29: mirrors the chart's forgejo.enabled -> FORGEJO_ENABLED wiring, so the
+      # same Forgejo-skip code path (buildSystem() in server.ts) is actually
+      # exercisable on compose, not just Helm. Default true -- this stack runs
+      # Forgejo unless explicitly set false (e.g. `FORGEJO_ENABLED=false` in .env).
+      FORGEJO_ENABLED: ${FORGEJO_ENABLED:-true}
       # os-ui authenticates to LiteLLM with the MASTER key (admin surface);
       # agent-runtime uses its own scoped LITELLM_API_KEY/LITELLM_BASE_URL
       # above -- different names, different keys, deliberately not conflated.
