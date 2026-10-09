@@ -348,6 +348,8 @@ services:
       OS_ALLOW_OFFLINE_USER_SEED: "true"
       # Plain http://localhost: drop the cookie's Secure flag (Safari rejects it).
       OS_SESSION_COOKIE_INSECURE: "true"
+      # Comma-separated tab feature keys; empty = base-tier tabs only.
+      OS_ENABLED_TABS: ${OS_ENABLED_TABS:-}
       AGENT_RUNTIME_URL: ${OS_UI_AGENT_RUNTIME_URL:-http://agent-runtime:8000}
       AGENT_RUNTIME_TOKEN: ${AGENT_RUNTIME_TOKEN:-agent-runtime-local-dev-token}
       FORGEJO_URL: ${OS_UI_FORGEJO_URL:-http://forgejo-http:3000}

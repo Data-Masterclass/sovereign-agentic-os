@@ -43,7 +43,6 @@ export type Tab = {
   /** Machine-readable feature key for OS_ENABLED_TABS gating. A tab with no
    *  feature is always visible (role/layer gates still apply). */
   feature?: string;
-
 };
 
 /** The active domain's optional-layer flags, as far as the client knows them.
@@ -129,12 +128,7 @@ export const TAB_GROUPS: TabGroup[] = [
   },
 ];
 
-/**
- * Which tab `feature` keys are enabled in this deployment. Reads
- * OS_ENABLED_TABS (comma-separated feature keys) from the environment.
- * Unset/empty → defaults to the base-tier tab set only, so a base-only
- * install shows just what it actually ships.
- */
+/** Tab `feature` keys enabled when OS_ENABLED_TABS is unset/empty: the base tier. */
 const BASE_FEATURES = [
   'home',
   'about',
@@ -144,10 +138,14 @@ const BASE_FEATURES = [
   'mcp',
   'governance',
   'tutorials',
+  'admin',
+  'components',
 ];
 
+const ENABLED_TABS_ENV = 'OS_ENABLED_TABS';
+
 export const TAB_FEATURES: Set<string> = (() => {
-  const raw = process.env.OS_ENABLED_TABS;
+  const raw = process.env[ENABLED_TABS_ENV];
   if (!raw || raw.trim() === '') return new Set(BASE_FEATURES);
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
 })();
@@ -182,8 +180,6 @@ export function tabVisible(
   if (!userRole) return true; // middleware guards; UI shows tabs, server redirects
   return (ROLE_RANK[userRole] ?? 0) >= (ROLE_RANK[tab.minRole] ?? 0);
 }
-
-
 
 /**
  * Filter tab groups for a given user role + active-domain layers. Empty groups

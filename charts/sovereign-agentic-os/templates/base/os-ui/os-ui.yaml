@@ -181,7 +181,7 @@ spec:
                  Production fails closed (503) instead of reverting passwords. */}}
             - name: OS_ALLOW_OFFLINE_USER_SEED
               value: {{ ternary "true" "false" (eq (toString $u.allowOfflineUserSeed) "true") | quote }}
-            {{- /* Tab gating. Empty = base-8 default. */}}
+            {{- /* Tab gating. Empty = base-tier default. */}}
             {{- if .Values.osUI.enabledTabs }}
             - name: OS_ENABLED_TABS
               value: {{ .Values.osUI.enabledTabs | quote }}

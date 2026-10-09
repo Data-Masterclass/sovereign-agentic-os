@@ -59,7 +59,7 @@ export async function middleware(req: NextRequest) {
   if (pathname.startsWith('/api/') || pathname.startsWith('/tools/')) {
     return withCors(NextResponse.next());
   }
-  
+
   // Disabled-route guard: a tab hidden by OS_ENABLED_TABS must be truly
   // unreachable, not just hidden from the sidebar. Match the pathname
   // against the tab's href (exact for '/', prefix otherwise, so a sub-route

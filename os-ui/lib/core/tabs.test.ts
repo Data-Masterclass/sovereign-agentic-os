@@ -26,7 +26,6 @@ function visibleLabels(role: Role): string[] {
   return filterTabGroups(TAB_GROUPS, role, undefined, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
 }
 
-
 const ENTRY_GROUP   = TAB_GROUPS.find((g) => !g.heading)!;
 const PLAN_GROUP    = TAB_GROUPS.find((g) => g.heading === 'Plan')!;
 const CONTEXT_GROUP = TAB_GROUPS.find((g) => g.heading === 'Context')!;
@@ -40,7 +39,7 @@ assert.ok(BUILD_GROUP,   'Build group must exist in TAB_GROUPS');
 assert.ok(GOVERN_GROUP,  'Govern group must exist in TAB_GROUPS');
 // TAB-VIS / TAB-LAYER tests below predate OS_ENABLED_TABS and check role/layer
 // gating in isolation — they assume every tab is reachable (a full deployment).
-// Pass this explicit "everything enabled" set so the base-8 default doesn't
+// Pass this explicit "everything enabled" set so the base default doesn't
 // change what they're testing. TAB-FEATURE tests further down exercise the
 // feature gate itself, using the real default.
 const ALL_FEATURES = new Set(TAB_GROUPS.flatMap((g) => g.tabs.map((t) => t.feature!)));
@@ -365,9 +364,9 @@ test('TAB-FEATURE every tab has a feature key', () => {
   }
 });
 
-test('TAB-FEATURE default (OS_ENABLED_TABS unset) is exactly the base-8 tab set', () => {
+test('TAB-FEATURE default (OS_ENABLED_TABS unset) is exactly the base tab set', () => {
   assert.equal(process.env.OS_ENABLED_TABS, undefined, 'this test assumes OS_ENABLED_TABS is not set in the test env');
-  const expected = ['home', 'about', 'agents', 'monitoring', 'llm-gateway', 'mcp', 'governance', 'tutorials'];
+  const expected = ['home', 'about', 'agents', 'monitoring', 'llm-gateway', 'mcp', 'governance', 'tutorials', 'admin', 'components'];
   assert.deepEqual([...TAB_FEATURES].sort(), expected.sort());
 });
 
