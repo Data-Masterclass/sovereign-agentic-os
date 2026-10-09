@@ -73,7 +73,7 @@ import {
 import { defineContextNote } from '@/lib/experimental/software/define-context';
 import { unresolvedDataNeedWarning } from '@/lib/experimental/software/data-plan';
 import { modelRoleForMode, tierNote } from '@/lib/experimental/software/chat-modes';
-import TeamPanel from '@/app/experimental/software/TeamPanel';
+import TeamPanel from '@/app/(experimental)/software/TeamPanel';
 import DesignEpicDetail from './DesignEpicDetail';
 import SpecTree, { type SpecNode } from './SpecTree';
 import SpecDetailPanel from './SpecDetailPanel';
