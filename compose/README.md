@@ -33,6 +33,10 @@ cp .env.example .env
 docker compose up
 ```
 
+Don't use `docker compose up --wait`: it exits 1 because the one-shot
+containers (`forgejo-init`, `litellm-key-init`, `minio-bucket-init`) exit by
+design. Use `docker compose up -d`, then check `docker compose ps`.
+
 1. Wait for `docker compose ps` to show every service healthy.
 2. Open **http://localhost:3000**.
 3. Log in as **admin** / **admin**.
