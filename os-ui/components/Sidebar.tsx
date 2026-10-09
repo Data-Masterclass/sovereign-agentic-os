@@ -33,7 +33,9 @@ export default function Sidebar() {
     TAB_GROUPS,
     user?.role ?? null,
     user?.activeDomainLayers ?? null,
-    user?.enabledFeatures ? new Set(user.enabledFeatures) : undefined,
+    // Until /api/auth/me resolves the enabled set is unknown: show nothing rather
+    // than flash the base default for a deployment configured differently.
+    new Set(user?.enabledFeatures ?? []),
   );
 
   function renderTab(tab: Tab) {

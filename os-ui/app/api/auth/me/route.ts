@@ -7,7 +7,7 @@ import { currentUser } from '@/lib/core/auth';
 import { getPublicUser, knownDomains } from '@/lib/platform-admin/users';
 import { ensureHydrated, getDomain, type DomainLayers } from '@/lib/platform-admin/domains';
 import { DOMAIN_CHOSEN_COOKIE } from '@/lib/core/active-domain';
-import { TAB_FEATURES } from '@/lib/core/tabs';
+import { config } from '@/lib/core/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +39,7 @@ export async function GET() {
     }
   }
   return NextResponse.json({
-    user: { ...user, activeDomainLayers, enabledFeatures: [...TAB_FEATURES] },
+    user: { ...user, activeDomainLayers, enabledFeatures: [...config.enabledTabs] },
     // Whether the user has ever made an explicit domain choice (incl. "All") —
     // drives the one-time first-login domain prompt for multi-domain users.
     domainChosen: store.get(DOMAIN_CHOSEN_COOKIE)?.value === '1',

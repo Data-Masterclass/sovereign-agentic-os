@@ -10,6 +10,7 @@
  * server-only: it is imported exclusively by API routes + server components,
  * so credentials/keys never reach the browser.
  */
+import { parseEnabledTabs } from './tabs.ts';
 
 function env(name: string, fallback: string): string {
   const v = process.env[name];
@@ -232,6 +233,8 @@ export const config = {
   // block with Ory (Kratos/Hydra) later without touching the consumers. -------
   sessionSecret: env('OS_SESSION_SECRET', DEV_DEFAULT_SECRET),
   usersSeed: env('OS_USERS', ''),
+  // Tab gating: enabled tab feature keys (OS_ENABLED_TABS; empty = base tier, `*` = all).
+  enabledTabs: parseEnabledTabs(process.env.OS_ENABLED_TABS),
   // Signs the per-user bearer token for the remote MCP endpoint (/api/mcp).
   // Server-only. Falls back to the session secret so the endpoint works out of
   // the box; set OS_MCP_TOKEN_SECRET in prod to rotate MCP tokens independently.

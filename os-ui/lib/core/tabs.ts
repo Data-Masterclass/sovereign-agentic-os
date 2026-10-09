@@ -129,7 +129,7 @@ export const TAB_GROUPS: TabGroup[] = [
 ];
 
 /** Tab `feature` keys enabled when OS_ENABLED_TABS is unset/empty: the base tier. */
-const BASE_FEATURES = [
+export const BASE_FEATURES: readonly string[] = [
   'home',
   'about',
   'agents',
@@ -142,13 +142,37 @@ const BASE_FEATURES = [
   'components',
 ];
 
-const ENABLED_TABS_ENV = 'OS_ENABLED_TABS';
+/** Every feature key declared by a tab in TAB_GROUPS. */
+export const ALL_FEATURES: ReadonlySet<string> = new Set(
+  TAB_GROUPS.flatMap((g) => g.tabs.flatMap((t) => (t.feature ? [t.feature] : []))),
+);
 
-export const TAB_FEATURES: Set<string> = (() => {
-  const raw = process.env[ENABLED_TABS_ENV];
-  if (!raw || raw.trim() === '') return new Set(BASE_FEATURES);
-  return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
-})();
+/** Wildcard accepted by OS_ENABLED_TABS: enable every tab. */
+export const ALL_TABS_WILDCARD = '*';
+
+/**
+ * Parse a raw OS_ENABLED_TABS value into the enabled feature set. Empty/unset →
+ * the base tier; `*` → every tab; otherwise the comma-separated keys REPLACE the
+ * base tier (they do not extend it). Pure: the caller supplies the env value.
+ */
+export function parseEnabledTabs(raw: string | undefined): Set<string> {
+  const keys = (raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (keys.length === 0) return new Set(BASE_FEATURES);
+  if (keys.includes(ALL_TABS_WILDCARD)) return new Set(ALL_FEATURES);
+  return new Set(keys);
+}
+
+/** Human-readable misconfiguration warnings for an enabled set (empty = fine). */
+export function enabledTabsWarnings(enabled: ReadonlySet<string>): string[] {
+  const out: string[] = [];
+  const unknown = [...enabled].filter((k) => !ALL_FEATURES.has(k));
+  if (unknown.length) {
+    out.push(`unknown tab key(s) ignored: ${unknown.join(', ')} (valid: ${[...ALL_FEATURES].join(', ')})`);
+  }
+  if (!enabled.has('home')) out.push("'home' is not enabled: '/' (the post-login landing page) will 404");
+  if (!enabled.has('admin')) out.push("'admin' is not enabled: /platform (the admin UI) will 404");
+  return out;
+}
 
 // Flat list (kept for any consumer that just wants every tab in order).
 export const TABS: Tab[] = TAB_GROUPS.flatMap((g) => g.tabs);
@@ -172,7 +196,7 @@ export function tabVisible(
   tab: Tab,
   userRole: Role | null | undefined,
   layers?: LayerFlags,
-  enabledFeatures: Set<string> = TAB_FEATURES,
+  enabledFeatures: ReadonlySet<string> = new Set(BASE_FEATURES),
 ): boolean {
   if (tab.feature && !enabledFeatures.has(tab.feature)) return false;
   if (tab.requiresLayer && layers?.[tab.requiresLayer] === false) return false;
@@ -189,9 +213,21 @@ export function filterTabGroups(
   groups: TabGroup[],
   userRole: Role | null | undefined,
   layers?: LayerFlags,
-  enabledFeatures: Set<string> = TAB_FEATURES,
+  enabledFeatures: ReadonlySet<string> = new Set(BASE_FEATURES),
 ): TabGroup[] {
   return groups
     .map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabVisible(t, userRole, layers, enabledFeatures)) }))
     .filter((g) => g.tabs.length > 0);
+}
+
+/**
+ * The tab whose route (its href, or any sub-route) is requested but whose feature
+ * is not enabled — i.e. the route must 404. `/` matches exactly so the home tab
+ * does not swallow every path. Pure; used by middleware.
+ */
+export function findDisabledTab(pathname: string, enabledFeatures: ReadonlySet<string>): Tab | undefined {
+  return TABS.find((tab) => {
+    if (!tab.href || !tab.feature || enabledFeatures.has(tab.feature)) return false;
+    return tab.href === '/' ? pathname === '/' : pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+  });
 }

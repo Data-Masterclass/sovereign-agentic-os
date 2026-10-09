@@ -5,7 +5,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { config as appConfig } from '@/lib/core/config';
 import { SESSION_COOKIE, verifySession } from '@/lib/core/session';
 import { corsHeadersFor } from '@/lib/core/cors';
-import { TABS, TAB_FEATURES } from '@/lib/core/tabs';
+import { findDisabledTab } from '@/lib/core/tabs';
 
 /**
  * Edge gate. Page navigations require a valid signed session (else → /signin).
@@ -65,10 +65,7 @@ export async function middleware(req: NextRequest) {
   // against the tab's href (exact for '/', prefix otherwise, so a sub-route
   // like /platform/settings is covered by the Admin tab's /platform) and
   // 404 honestly if that tab's feature isn't enabled in this deployment.
-  const disabledTab = TABS.find((tab) => {
-    if (!tab.href || !tab.feature || TAB_FEATURES.has(tab.feature)) return false;
-    return tab.href === '/' ? pathname === '/' : pathname === tab.href || pathname.startsWith(`${tab.href}/`);
-  });
+  const disabledTab = findDisabledTab(pathname, appConfig.enabledTabs);
   if (disabledTab) {
     return new NextResponse('Not found', { status: 404 });
   }

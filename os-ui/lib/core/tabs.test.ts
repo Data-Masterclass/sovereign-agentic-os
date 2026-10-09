@@ -18,7 +18,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TAB_GROUPS, TAB_FEATURES, tabVisible, filterTabGroups } from './tabs.ts';
+import {
+  TAB_GROUPS, BASE_FEATURES, ALL_FEATURES as ALL_FEATURE_KEYS, parseEnabledTabs, enabledTabsWarnings,
+  findDisabledTab, tabVisible, filterTabGroups,
+} from './tabs.ts';
 import type { Role } from './session.ts';
 
 // Flat label list for a given role after filtering.
@@ -42,7 +45,8 @@ assert.ok(GOVERN_GROUP,  'Govern group must exist in TAB_GROUPS');
 // Pass this explicit "everything enabled" set so the base default doesn't
 // change what they're testing. TAB-FEATURE tests further down exercise the
 // feature gate itself, using the real default.
-const ALL_FEATURES = new Set(TAB_GROUPS.flatMap((g) => g.tabs.map((t) => t.feature!)));
+const ALL_FEATURES = ALL_FEATURE_KEYS;
+const DEFAULT_FEATURES = new Set(BASE_FEATURES);
 
 // The former Monitor and Admin groups must be gone.
 const MONITOR_GROUP = TAB_GROUPS.find((g) => g.heading === 'Monitor');
@@ -179,7 +183,7 @@ test('TAB-VIS builder sees the builder-gated tabs (Monitoring, LLM Gateway, MCP,
 });
 
 test('TAB-VIS creator: Govern group still visible (Monitoring + LLM Gateway are builder+, but group appears for admin-only tabs too — actually Govern is hidden entirely for creator)', () => {
-  const groups = filterTabGroups(TAB_GROUPS, 'creator');
+  const groups = filterTabGroups(TAB_GROUPS, 'creator', undefined, ALL_FEATURES);
   const govern = groups.find((g) => g.heading === 'Govern');
   assert.ok(!govern, 'Govern group must be absent for creator (all tabs are builder+ or admin-only)');
 });
@@ -202,7 +206,7 @@ test('TAB-VIS builder: Console tab in Build group is visible (governed Query sur
 });
 
 test('TAB-VIS creator: Console tab is still hidden (builder+)', () => {
-  const groups = filterTabGroups(TAB_GROUPS, 'creator');
+  const groups = filterTabGroups(TAB_GROUPS, 'creator', undefined, ALL_FEATURES);
   const build = groups.find((g) => g.heading === 'Build');
   assert.ok(!build!.tabs.some((t) => t.label === 'Console'), 'creator must not see Console (builder+)');
 });
@@ -365,36 +369,101 @@ test('TAB-FEATURE every tab has a feature key', () => {
 });
 
 test('TAB-FEATURE default (OS_ENABLED_TABS unset) is exactly the base tab set', () => {
-  assert.equal(process.env.OS_ENABLED_TABS, undefined, 'this test assumes OS_ENABLED_TABS is not set in the test env');
   const expected = ['home', 'about', 'agents', 'monitoring', 'llm-gateway', 'mcp', 'governance', 'tutorials', 'admin', 'components'];
-  assert.deepEqual([...TAB_FEATURES].sort(), expected.sort());
+  assert.deepEqual([...parseEnabledTabs(undefined)].sort(), expected.sort());
+  assert.deepEqual([...BASE_FEATURES].sort(), expected.sort());
+});
+
+test('TAB-FEATURE every base feature maps to a real tab', () => {
+  for (const f of BASE_FEATURES) assert.ok(ALL_FEATURES.has(f), `base feature "${f}" has no tab`);
 });
 
 test('TAB-FEATURE tabVisible hides a tab whose feature is not enabled, for every role', () => {
   const data = CONTEXT_GROUP.tabs.find((t) => t.label === 'Data')!;
-  assert.equal(TAB_FEATURES.has(data.feature!), false, 'this test assumes "data" is not in the default base set');
+  assert.equal(DEFAULT_FEATURES.has(data.feature!), false, 'this test assumes "data" is not in the default base set');
   for (const role of ['creator', 'builder', 'domain_admin', 'admin', null, undefined] as (Role | null | undefined)[]) {
     assert.equal(tabVisible(data, role), false, `${role} must not see Data when its feature is disabled`);
+    assert.equal(tabVisible(data, role, undefined, new Set(['data'])), true, `${role} sees Data once enabled`);
   }
 });
 
 test('TAB-FEATURE tabVisible shows a tab whose feature is enabled (no other gate)', () => {
   const home = ENTRY_GROUP.tabs.find((t) => t.label === 'Home')!;
-  assert.equal(TAB_FEATURES.has(home.feature!), true, 'this test assumes "home" is in the default base set');
   assert.equal(tabVisible(home, 'creator'), true);
 });
 
 test('TAB-FEATURE combines with role gating: MCP feature enabled but still hidden from creator', () => {
   const mcp = ENTRY_GROUP.tabs.find((t) => t.label === 'MCP')!;
-  assert.equal(TAB_FEATURES.has(mcp.feature!), true, 'mcp is in the default base set');
   assert.equal(tabVisible(mcp, 'creator'), false, 'creator still gated by minRole even though feature is enabled');
   assert.equal(tabVisible(mcp, 'builder'), true);
 });
 
-test('TAB-FEATURE filterTabGroups: with default OS_ENABLED_TABS, admin sees only base-feature tabs', () => {
-  const labels = filterTabGroups(TAB_GROUPS, 'admin').flatMap((g) => g.tabs.map((t) => t.label));
-  const visibleTabs = TAB_GROUPS.flatMap((g) => g.tabs).filter((t) => labels.includes(t.label));
-  for (const tab of visibleTabs) {
-    assert.ok(TAB_FEATURES.has(tab.feature!), `"${tab.label}" visible to admin but its feature "${tab.feature}" is not in the default base set`);
+test('TAB-FEATURE filterTabGroups: with the default set, admin sees only base-feature tabs', () => {
+  const tabs = filterTabGroups(TAB_GROUPS, 'admin').flatMap((g) => g.tabs);
+  assert.ok(tabs.length > 0);
+  for (const tab of tabs) assert.ok(DEFAULT_FEATURES.has(tab.feature!), `"${tab.label}" visible but not in base set`);
+});
+
+test('TAB-FEATURE filterTabGroups: an empty enabled set hides every tab (sidebar loading state)', () => {
+  assert.deepEqual(filterTabGroups(TAB_GROUPS, 'admin', undefined, new Set()), []);
+});
+
+// ---- parseEnabledTabs --------------------------------------------------------
+
+test('TAB-PARSE empty / whitespace / only-commas fall back to the base set', () => {
+  for (const raw of [undefined, '', '   ', ' , ,, ']) {
+    assert.deepEqual([...parseEnabledTabs(raw)].sort(), [...BASE_FEATURES].sort(), JSON.stringify(raw));
   }
+});
+
+test('TAB-PARSE trims, drops empties, and REPLACES (does not extend) the base set', () => {
+  assert.deepEqual([...parseEnabledTabs(' home, data ,,science ')].sort(), ['data', 'home', 'science']);
+});
+
+test('TAB-PARSE "*" enables every tab', () => {
+  assert.deepEqual([...parseEnabledTabs('*')].sort(), [...ALL_FEATURES].sort());
+  assert.deepEqual([...parseEnabledTabs('home, *')].sort(), [...ALL_FEATURES].sort());
+});
+
+test('TAB-PARSE keeps unknown keys (so they can be warned about) without enabling any tab', () => {
+  const set = parseEnabledTabs('home,admin,bogus');
+  assert.ok(set.has('bogus'));
+  assert.equal(filterTabGroups(TAB_GROUPS, 'admin', undefined, set).flatMap((g) => g.tabs).length, 2);
+});
+
+// ---- enabledTabsWarnings -----------------------------------------------------
+
+test('TAB-WARN no warnings for the default and wildcard sets', () => {
+  assert.deepEqual(enabledTabsWarnings(parseEnabledTabs(undefined)), []);
+  assert.deepEqual(enabledTabsWarnings(parseEnabledTabs('*')), []);
+});
+
+test('TAB-WARN flags unknown keys, a missing home, and a missing admin', () => {
+  const w = enabledTabsWarnings(parseEnabledTabs('data,datta'));
+  assert.equal(w.length, 3);
+  assert.ok(w.some((m) => m.includes('datta')));
+  assert.ok(w.some((m) => m.includes("'home'")));
+  assert.ok(w.some((m) => m.includes("'admin'")));
+});
+
+// ---- findDisabledTab (middleware guard) --------------------------------------
+
+test('TAB-GUARD disabled tab route and its sub-routes are reported; enabled/unknown routes are not', () => {
+  assert.equal(findDisabledTab('/data', DEFAULT_FEATURES)?.label, 'Data');
+  assert.equal(findDisabledTab('/data/sets/1', DEFAULT_FEATURES)?.label, 'Data');
+  assert.equal(findDisabledTab('/agents', DEFAULT_FEATURES), undefined);
+  assert.equal(findDisabledTab('/agents/x', DEFAULT_FEATURES), undefined);
+  assert.equal(findDisabledTab('/does-not-exist', DEFAULT_FEATURES), undefined);
+  assert.equal(findDisabledTab('/data', new Set(['data'])), undefined);
+});
+
+test('TAB-GUARD prefix match is segment-aware (/dataset is not /data)', () => {
+  assert.equal(findDisabledTab('/database', DEFAULT_FEATURES), undefined);
+});
+
+test('TAB-GUARD "/" matches exactly, only when home is disabled', () => {
+  const noHome = new Set(['agents']);
+  assert.equal(findDisabledTab('/', noHome)?.label, 'Home');
+  assert.equal(findDisabledTab('/agents', noHome), undefined);
+  assert.equal(findDisabledTab('/', DEFAULT_FEATURES), undefined);
 });

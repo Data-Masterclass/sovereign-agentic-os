@@ -35,7 +35,16 @@ directly. The files below are the stable surface:
 - **`artifacts.ts`** — in-process artifact registry and OS-mirror client for
   cross-tab discovery.
 - **`tabs.ts`** / **`tab-nav.ts`** — tab-id constants and navigation utilities
-  used by the shell and individual tab routes.
+  used by the shell and individual tab routes. Also owns **tab gating**: every tab
+  has a `feature` key, and `OS_ENABLED_TABS` (read via `config.enabledTabs`) picks
+  which are on. Unset/empty = the base tier (`BASE_FEATURES`); a comma-separated
+  list **replaces** the base tier (so keep `home` and `admin`, or `/` and
+  `/platform` 404); `*` enables every tab. Unknown keys and a missing `home`/`admin`
+  are warned about at boot. A disabled tab's page routes (and sub-routes) 404 in
+  `middleware.ts` via `findDisabledTab`; its `/api/*` routes are NOT gated. Valid
+  keys: `home cockpit tutorials mcp about strategy big-bets operating-model
+  workflows marketplace data metrics files knowledge connections agents dashboards
+  software science console governance monitoring components llm-gateway admin`.
 - **`stages.ts`** — the OS-wide staged-builder model (pure, no React): ordered
   `StageDef`s with `enabled`/`completed` gates plus the `StageState` transitions
   (`advance`, `goTo`, `markDone`, …). Rendered by
