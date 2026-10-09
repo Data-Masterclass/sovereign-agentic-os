@@ -60,7 +60,7 @@ COPY --from=deps /app/node_modules/esbuild-wasm/esbuild.wasm ./node_modules/esbu
 COPY --from=builder /app/public ./public
 
 # Bake in the per-component docs so the Components surface reads them natively
-# (no separate admin-console service / cross-pod fetch).
+# (read straight off disk, no cross-pod fetch).
 COPY docs/components ./docs/components
 
 # Drop to the built-in non-root `node` user (uid 1000).

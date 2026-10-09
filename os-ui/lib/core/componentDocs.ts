@@ -4,8 +4,7 @@
 /**
  * Per-component documentation (server-only).
  *
- * Reads the `docs/components/<id>.md` markdown that used to be served by the
- * standalone admin-console. The OS UI image bakes `docs/components` in (see
+ * Reads the `docs/components/<id>.md` markdown. The OS UI image bakes `docs/components` in (see
  * images/os-ui/Dockerfile), so this reads it straight off disk — no cross-pod
  * fetch. The id is sanitised to an alnum/-/_ alphabet so it can never escape
  * the docs directory.

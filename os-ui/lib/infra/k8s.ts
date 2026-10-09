@@ -8,8 +8,7 @@
  * patch their /scale, read CNPG Clusters — see the chart's os-ui RBAC). This
  * module talks to the in-cluster API server with that ServiceAccount's token
  * and CA, using only the Node stdlib so it adds no dependencies and never ships
- * to the browser. It replaces the former cross-pod hop to the standalone
- * `admin-console` service (which is the fragile "fetch failed" path we removed).
+ * to the browser. The OS UI talks to the API directly — there is no cross-pod hop.
  *
  * Token + CA are read fresh per call (they rotate). Outside a cluster the reads
  * fail and we resolve `{ status: 0 }` so callers degrade gracefully instead of
