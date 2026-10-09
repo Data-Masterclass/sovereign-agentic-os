@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getAppForUser } from '@/lib/software/apps';
-import { listConnectionsForUser, callConnectionTool } from '@/lib/connections';
-import { planJiraIssues, pickConnectionForTemplate } from '@/lib/software/design-push';
+import { getAppForUser } from '@/lib/experimental/software/apps';
+import { listConnectionsForUser, callConnectionTool } from '@/lib/experimental/connections';
+import { planJiraIssues, pickConnectionForTemplate } from '@/lib/experimental/software/design-push';
 
 export const dynamic = 'force-dynamic';
 

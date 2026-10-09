@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { setComponentPlan, setOverride, removeComponent } from '@/lib/bigbets/store';
-import { principal } from '@/lib/bigbets/server';
+import { setComponentPlan, setOverride, removeComponent } from '@/lib/experimental/bigbets/store';
+import { principal } from '@/lib/experimental/bigbets/server';
 
 export const dynamic = 'force-dynamic';
 

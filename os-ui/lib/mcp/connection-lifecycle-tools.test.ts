@@ -18,7 +18,7 @@ globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof f
 
 const { handleRpc } = await import('./server.ts');
 type JsonRpcResponse = import('./server.ts').JsonRpcResponse;
-const { createConnection, promoteConnection, __resetConnections } = await import('@/lib/connections/store');
+const { createConnection, promoteConnection, __resetConnections } = await import('@/lib/experimental/connections/store');
 
 const admin: CurrentUser = { id: 'ada', name: 'Ada', domains: ['sales'], role: 'admin' };
 const domainAdmin: CurrentUser = { id: 'dan', name: 'Dan', domains: ['sales'], role: 'domain_admin' };

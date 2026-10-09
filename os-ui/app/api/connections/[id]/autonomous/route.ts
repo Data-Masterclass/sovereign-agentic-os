@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getConnectionForUser } from '@/lib/connections';
+import { getConnectionForUser } from '@/lib/experimental/connections';
 import { roleAtLeast } from '@/lib/core/session';
 import {
   SAFETY_PRESETS,

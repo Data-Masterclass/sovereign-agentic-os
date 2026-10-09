@@ -4,8 +4,8 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/files/server';
-import { removeSource } from '@/lib/files/connectors';
+import { requirePrincipal } from '@/lib/experimental/files/server';
+import { removeSource } from '@/lib/experimental/files/connectors';
 
 export const dynamic = 'force-dynamic';
 

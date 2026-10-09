@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { discoverWarehouse } from '@/lib/connections';
+import { discoverWarehouse } from '@/lib/experimental/connections';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,9 +24,9 @@ async function discover(id: string, schema: string | undefined) {
     // kajabi-vs-salesforce fork mis-dispatched every non-kajabi operational template to the
     // Salesforce describe. The registry is the ONE source of truth for per-template discovery.
     if ((e as { status?: number }).status === 400 && /Not a warehouse connection/i.test((e as Error).message)) {
-      const { getConnectionForUser } = await import('@/lib/connections/store');
+      const { getConnectionForUser } = await import('@/lib/experimental/connections/store');
       const c = await getConnectionForUser(id, user); // DLS-scoped read (404 if unseeable)
-      const { discoverOperational } = await import('@/lib/connections/operational-registry');
+      const { discoverOperational } = await import('@/lib/experimental/connections/operational-registry');
       return discoverOperational(c.template, id, user);
     }
     throw e;

@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/files/server';
-import { runConnectorSync } from '@/lib/files/connectors-server';
-import { getSource } from '@/lib/files/connectors';
-import { resolveConnectionAccessToken } from '@/lib/connections';
+import { requirePrincipal } from '@/lib/experimental/files/server';
+import { runConnectorSync } from '@/lib/experimental/files/connectors-server';
+import { getSource } from '@/lib/experimental/files/connectors';
+import { resolveConnectionAccessToken } from '@/lib/experimental/connections';
 
 export const dynamic = 'force-dynamic';
 

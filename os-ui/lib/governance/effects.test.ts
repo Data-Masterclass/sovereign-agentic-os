@@ -18,7 +18,7 @@ import {
   setDocs,
   requestPromotion,
   getFile,
-} from '../files/store.ts';
+} from '../experimental/files/store.ts';
 
 function appr(p: Partial<Approval> & Pick<Approval, 'kind'>): Approval {
   return {

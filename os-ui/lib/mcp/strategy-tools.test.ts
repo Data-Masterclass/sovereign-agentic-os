@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, ALL_MCP_TOOLS, toolsForTab, type JsonRpcResponse, type ToolError } from './server.ts';
 import { ALL_WRITE_TOOLS } from './write-tools.ts';
-import { __resetForTests as resetPillars } from '@/lib/strategy/pillars';
-import { STUB_BET_CATALOGUE } from '@/lib/strategy/bets-bridge';
+import { __resetForTests as resetPillars } from '@/lib/experimental/strategy/pillars';
+import { STUB_BET_CATALOGUE } from '@/lib/experimental/strategy/bets-bridge';
 
 /**
  * STRATEGY SURFACE (mcp-v2 P2) — six THIN wrappers over lib/strategy/*, driven

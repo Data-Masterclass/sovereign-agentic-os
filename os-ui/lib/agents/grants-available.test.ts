@@ -8,12 +8,12 @@ import {
   createWorkflow,
   publishWorkflow,
   listWorkflows,
-} from '../knowledge/store.ts';
+} from '../experimental/knowledge/store.ts';
 import {
   __resetStore as resetPersonal,
   createPersonalKnowledge,
   listPersonalKnowledge,
-} from '../knowledge/personal-store.ts';
+} from '../experimental/knowledge/personal-store.ts';
 
 /**
  * The `…/grants/available?kind=knowledge` endpoint returns exactly what

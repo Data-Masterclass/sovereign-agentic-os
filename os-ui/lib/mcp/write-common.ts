@@ -4,15 +4,15 @@
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { Role } from '@/lib/core/session';
-import type { ColumnDoc } from '@/lib/data';
-import { claimsFromUser, delegate } from '@/lib/data/identity';
+import type { ColumnDoc } from '@/lib/experimental/data';
+import { claimsFromUser, delegate } from '@/lib/experimental/data/identity';
 import {
   ACTOR_TYPES,
   type WorkflowStep,
   type WorkflowRule,
   type ActorType,
   type Actor,
-} from '@/lib/knowledge/schema';
+} from '@/lib/experimental/knowledge/schema';
 
 export type Principal = { id: string; domains: string[]; role: Role };
 export const P = (u: CurrentUser): Principal => ({ id: u.id, domains: u.domains, role: u.role });

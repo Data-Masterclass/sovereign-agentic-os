@@ -10,8 +10,8 @@ import '@/lib/app-ui/theme.css';
 import { createOsClient } from '@/lib/app-sdk/index.ts';
 import type { Role } from '@/lib/core/session.ts';
 import { ROLES } from '@/lib/core/session.ts';
-import type { AppSpec } from '@/lib/software/appspec/schema.ts';
-import { AppSpecRenderer, type RendererIdentity } from '@/components/software/appspec/AppSpecRenderer.tsx';
+import type { AppSpec } from '@/lib/experimental/software/appspec/schema.ts';
+import { AppSpecRenderer, type RendererIdentity } from '@/components/experimental/software/appspec/AppSpecRenderer.tsx';
 
 /** Coerce an unknown role string from the session route to a Role, else null. */
 function asRole(raw: unknown): Role | null {

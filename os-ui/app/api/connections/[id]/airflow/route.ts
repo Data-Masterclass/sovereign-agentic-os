@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { callConnectionTool } from '@/lib/connections';
+import { callConnectionTool } from '@/lib/experimental/connections';
 
 export const dynamic = 'force-dynamic';
 

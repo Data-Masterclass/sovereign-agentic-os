@@ -14,8 +14,8 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import Markdown from '@/components/Markdown';
-import ResultChart from '@/components/data/ResultChart';
-import type { ChartHint } from '@/lib/data/ask-chart';
+import ResultChart from '@/components/experimental/data/ResultChart';
+import type { ChartHint } from '@/lib/experimental/data/ask-chart';
 
 type Citation = { id: string; label: string; href?: string; kind: string };
 /** The chartable view of the returned rows, present only when the result is chartable. */

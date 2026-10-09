@@ -5,16 +5,16 @@ import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
 import { getSystem, type Principal } from '@/lib/agents/store';
-import { getDataset, listDatasetVersions, listDatasets, ensureHydrated as ensureDataHydrated } from '@/lib/data/store';
-import { latestSyncRun, ensureSyncRunsHydrated } from '@/lib/data/sync-runs';
-import { listWorkflows, ensureHydrated as ensureKnowledgeHydrated } from '@/lib/knowledge/store';
-import { listPersonalKnowledge } from '@/lib/knowledge/personal-store';
-import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/files/store';
-import { listMetrics } from '@/lib/metrics/store';
-import { listConnectionsForUser } from '@/lib/connections';
+import { getDataset, listDatasetVersions, listDatasets, ensureHydrated as ensureDataHydrated } from '@/lib/experimental/data/store';
+import { latestSyncRun, ensureSyncRunsHydrated } from '@/lib/experimental/data/sync-runs';
+import { listWorkflows, ensureHydrated as ensureKnowledgeHydrated } from '@/lib/experimental/knowledge/store';
+import { listPersonalKnowledge } from '@/lib/experimental/knowledge/personal-store';
+import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/experimental/files/store';
+import { listMetrics } from '@/lib/experimental/metrics/store';
+import { listConnectionsForUser } from '@/lib/experimental/connections';
 import { recentTraces } from '@/lib/infra/agent-governed';
-import { lineageFor } from '@/lib/data/lineage';
-import { latestRun, healthTrend, ensureHydrated as ensureDqHydrated } from '@/lib/data/dq-results';
+import { lineageFor } from '@/lib/experimental/data/lineage';
+import { latestRun, healthTrend, ensureHydrated as ensureDqHydrated } from '@/lib/experimental/data/dq-results';
 import { agentTelemetryFor, type AgentRunRecord } from './adapters/agent-telemetry';
 import {
   buildProfile,
@@ -35,7 +35,7 @@ import {
   type CheckVerdict,
   type DqSummary,
 } from './telemetry-core';
-import { LAYERS, type Layer } from '@/lib/data';
+import { LAYERS, type Layer } from '@/lib/experimental/data';
 
 /**
  * The big DIAGNOSIS-WINDOW payloads. Everything a user needs to diagnose ONE agent

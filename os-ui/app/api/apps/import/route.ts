@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { createApp, type AppTemplateKey } from '@/lib/software/apps';
-import { authorThroughFrontDoor, commitToApp } from '@/lib/software/server';
+import { createApp, type AppTemplateKey } from '@/lib/experimental/software/apps';
+import { authorThroughFrontDoor, commitToApp } from '@/lib/experimental/software/server';
 
 export const dynamic = 'force-dynamic';
 

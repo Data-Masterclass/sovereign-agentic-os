@@ -11,11 +11,11 @@ import {
   archivePillar,
   unarchivePillar,
   promotePillar,
-} from '@/lib/strategy/pillars';
-import { rollupForPillar } from '@/lib/strategy/value-rollup';
-import { targetsVsActuals } from '@/lib/strategy/snapshots';
-import { recentStrategyAudit } from '@/lib/strategy/audit';
-import { canEditPillar, canPromotePillar, canDemotePillar, nextPillarScope, prevPillarScope } from '@/lib/strategy';
+} from '@/lib/experimental/strategy/pillars';
+import { rollupForPillar } from '@/lib/experimental/strategy/value-rollup';
+import { targetsVsActuals } from '@/lib/experimental/strategy/snapshots';
+import { recentStrategyAudit } from '@/lib/experimental/strategy/audit';
+import { canEditPillar, canPromotePillar, canDemotePillar, nextPillarScope, prevPillarScope } from '@/lib/experimental/strategy';
 
 export const dynamic = 'force-dynamic';
 

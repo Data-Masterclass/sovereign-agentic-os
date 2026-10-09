@@ -5,8 +5,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/PageHeader';
-import type { DomainKnowledge } from '@/lib/knowledge/schema';
-import type { ManualScope } from '@/lib/knowledge/manual';
+import type { DomainKnowledge } from '@/lib/experimental/knowledge/schema';
+import type { ManualScope } from '@/lib/experimental/knowledge/manual';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
 import VersionHistory from '@/components/lifecycle/VersionHistory';
 

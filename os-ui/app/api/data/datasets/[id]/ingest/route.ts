@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { stepperStages } from '@/lib/data/panels';
-import { ingestAndRegisterBronze } from '@/lib/data/ingest';
+import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
+import { stepperStages } from '@/lib/experimental/data/panels';
+import { ingestAndRegisterBronze } from '@/lib/experimental/data/ingest';
 
 export const dynamic = 'force-dynamic';
 

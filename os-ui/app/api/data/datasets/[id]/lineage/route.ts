@@ -4,9 +4,9 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { getDataset } from '@/lib/data/store';
-import { lineageFor } from '@/lib/data/lineage';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { getDataset } from '@/lib/experimental/data/store';
+import { lineageFor } from '@/lib/experimental/data/lineage';
 
 export const dynamic = 'force-dynamic';
 

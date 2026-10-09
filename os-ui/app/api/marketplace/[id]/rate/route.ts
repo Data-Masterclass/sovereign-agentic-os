@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { rateListing, type Viewer } from '@/lib/marketplace';
+import { rateListing, type Viewer } from '@/lib/experimental/marketplace';
 
 export const dynamic = 'force-dynamic';
 

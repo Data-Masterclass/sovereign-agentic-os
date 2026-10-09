@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { ensureHydrated } from '@/lib/knowledge/personal-store';
+import { ensureHydrated } from '@/lib/experimental/knowledge/personal-store';
 import { demoteThroughSeam } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';

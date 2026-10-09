@@ -27,11 +27,11 @@ import 'server-only';
  * // TODO: extend for transformation→dataset lineage and knowledge/file→dashboard edges.
  */
 
-import { datasetForScheduler } from '@/lib/data/store';
-import { measureMember } from '@/lib/metrics/model';
-import { listAllDashboardsInternal } from '@/lib/dashboards/store';
-import { panelMetrics } from '@/lib/dashboards/model';
-import { listAllAppsInternal } from '@/lib/software/apps';
+import { datasetForScheduler } from '@/lib/experimental/data/store';
+import { measureMember } from '@/lib/experimental/metrics/model';
+import { listAllDashboardsInternal } from '@/lib/experimental/dashboards/store';
+import { panelMetrics } from '@/lib/experimental/dashboards/model';
+import { listAllAppsInternal } from '@/lib/experimental/software/apps';
 import { isGranted, type ContextKind } from '@/lib/core/context-grants';
 import { listAllSystemsInternal } from '@/lib/agents/store';
 import type { ArtifactGrant } from '@/lib/agents/system-schema';

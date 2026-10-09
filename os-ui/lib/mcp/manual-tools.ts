@@ -12,8 +12,8 @@ import {
   updateManual,
   listManualVersions,
   restoreManualVersion,
-} from '@/lib/knowledge/store';
-import { type ManualScope } from '@/lib/knowledge/manual';
+} from '@/lib/experimental/knowledge/store';
+import { type ManualScope } from '@/lib/experimental/knowledge/manual';
 
 /**
  * THE OPERATING MODEL MCP SURFACE. Four THIN wrappers over the SAME governed

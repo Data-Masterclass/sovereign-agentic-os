@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { adoptionBoard } from '@/lib/strategy/adoption';
-import { entitledToDomain } from '@/lib/strategy';
+import { adoptionBoard } from '@/lib/experimental/strategy/adoption';
+import { entitledToDomain } from '@/lib/experimental/strategy';
 
 export const dynamic = 'force-dynamic';
 

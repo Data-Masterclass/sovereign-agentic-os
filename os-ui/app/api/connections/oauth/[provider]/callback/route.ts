@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
-import { storeConnectionTokens } from '@/lib/connections';
+import { storeConnectionTokens } from '@/lib/experimental/connections';
 import { asOAuthProvider } from '@/lib/oauth/providers';
 import { exchangeCode } from '@/lib/oauth/client';
 import { verifyState, nonceMatches, OAUTH_STATE_COOKIE } from '@/lib/oauth/state';

@@ -24,7 +24,7 @@ import {
   humanizeDeployReason,
   type Actor,
   type ServiceModel,
-} from '@/lib/science';
+} from '@/lib/experimental/science';
 
 export const dynamic = 'force-dynamic';
 

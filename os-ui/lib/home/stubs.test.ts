@@ -4,10 +4,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { domainPulseStub, healthCostStub } from './stubs.ts';
-import { createBet, __resetBets } from '@/lib/bigbets';
+import { createBet, __resetBets } from '@/lib/experimental/bigbets';
 import { setCap, addSpend, __resetCost } from '@/lib/governance';
-import type { BigBet } from '@/lib/bigbets';
-import type { Pillar } from '@/lib/strategy';
+import type { BigBet } from '@/lib/experimental/bigbets';
+import type { Pillar } from '@/lib/experimental/strategy';
 
 // ── Contract: fresh tenant shows real 0s, source is 'live' ────────────────────
 
@@ -87,7 +87,7 @@ test('pulse ignores archived bets', async () => {
     domain: 'mkt',
   });
   // Archive the bet.
-  const { updateBet } = await import('@/lib/bigbets/store');
+  const { updateBet } = await import('@/lib/experimental/bigbets/store');
   const archived = updateBet(bet.id, admin, { status: 'archived' });
 
   const p = await domainPulseStub('mkt', { pillars: [], bets: [archived] });

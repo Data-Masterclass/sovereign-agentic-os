@@ -3,10 +3,10 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, refreshActionsStage, refreshBuildStage, reconcileBuiltStatus, setAutoRepairEnabled, setAppServeMode, normalizeServeMode, type AppEpic } from '@/lib/software/apps';
+import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, refreshActionsStage, refreshBuildStage, reconcileBuiltStatus, setAutoRepairEnabled, setAppServeMode, normalizeServeMode, type AppEpic } from '@/lib/experimental/software/apps';
 import { normalizeContextGrants } from '@/lib/core/context-grants';
-import { normalizeAgentGrants } from '@/lib/software/app-agent-grants';
-import { reconcileDeployApproval } from '@/lib/software/review';
+import { normalizeAgentGrants } from '@/lib/experimental/software/app-agent-grants';
+import { reconcileDeployApproval } from '@/lib/experimental/software/review';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
 
 export const dynamic = 'force-dynamic';

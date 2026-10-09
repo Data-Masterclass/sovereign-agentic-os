@@ -3,15 +3,15 @@
  */
 import { NextResponse } from 'next/server';
 import { trace as gvTrace } from '@/lib/infra/agent-governed';
-import { requirePrincipal } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/experimental/data/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { roleAtLeast } from '@/lib/core/session';
 import { getPublicUser } from '@/lib/platform-admin/users';
-import { type AlertRule, evaluateAlert } from '@/lib/metrics/alerts';
-import { deliverAlert } from '@/lib/dashboards/delivery';
-import { saveAlertRule } from '@/lib/metrics/alert-store';
-import { resolveAlertValue } from '@/lib/metrics/build/alert-eval';
+import { type AlertRule, evaluateAlert } from '@/lib/experimental/metrics/alerts';
+import { deliverAlert } from '@/lib/experimental/dashboards/delivery';
+import { saveAlertRule } from '@/lib/experimental/metrics/alert-store';
+import { resolveAlertValue } from '@/lib/experimental/metrics/build/alert-eval';
 
 export const dynamic = 'force-dynamic';
 

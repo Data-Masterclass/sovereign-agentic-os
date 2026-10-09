@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getWorkflow } from '@/lib/knowledge/store';
-import { compileGuardrails } from '@/lib/knowledge/guardrails';
-import { applyGuardrails } from '@/lib/knowledge/guardrails-apply';
+import { getWorkflow } from '@/lib/experimental/knowledge/store';
+import { compileGuardrails } from '@/lib/experimental/knowledge/guardrails';
+import { applyGuardrails } from '@/lib/experimental/knowledge/guardrails-apply';
 import { roleAtLeast } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';

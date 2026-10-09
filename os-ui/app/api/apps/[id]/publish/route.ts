@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { publishApp } from '@/lib/software/apps';
+import { publishApp } from '@/lib/experimental/software/apps';
 
 export const dynamic = 'force-dynamic';
 

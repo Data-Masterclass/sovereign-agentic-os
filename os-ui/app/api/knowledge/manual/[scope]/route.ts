@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { ensureHydrated, getManual, updateManual, type ManualScope } from '@/lib/knowledge/store';
-import { resolveManual } from '@/lib/knowledge/manual';
+import { ensureHydrated, getManual, updateManual, type ManualScope } from '@/lib/experimental/knowledge/store';
+import { resolveManual } from '@/lib/experimental/knowledge/manual';
 
 export const dynamic = 'force-dynamic';
 

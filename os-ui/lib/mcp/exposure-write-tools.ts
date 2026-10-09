@@ -11,15 +11,15 @@ import {
   listExposureSets,
   createExposureSet,
   type ExposureTableRef,
-} from '@/lib/connections/exposures';
-import { recompileExposures } from '@/lib/connections/exposure-policy';
-import { revokeExposureAndPropagate, updateExposureAndRecompile } from '@/lib/connections/exposure-propagation';
-import { getCatalogSnapshot, refreshCatalogSnapshot } from '@/lib/connections/warehouse/catalog-snapshot';
-import { getMergedClassification, runClassification, UNSORTED } from '@/lib/connections/warehouse/catalog-classification';
-import { listExposedTablesForUser } from '@/lib/connections/exposed-tables';
-import { adoptExposedTable, type AdoptSyncInput } from '@/lib/data/adopt-connected';
-import { adoptActions } from '@/lib/connections/action-adoptions';
-import { entityActionKey } from '@/lib/connections/exposures';
+} from '@/lib/experimental/connections/exposures';
+import { recompileExposures } from '@/lib/experimental/connections/exposure-policy';
+import { revokeExposureAndPropagate, updateExposureAndRecompile } from '@/lib/experimental/connections/exposure-propagation';
+import { getCatalogSnapshot, refreshCatalogSnapshot } from '@/lib/experimental/connections/warehouse/catalog-snapshot';
+import { getMergedClassification, runClassification, UNSORTED } from '@/lib/experimental/connections/warehouse/catalog-classification';
+import { listExposedTablesForUser } from '@/lib/experimental/connections/exposed-tables';
+import { adoptExposedTable, type AdoptSyncInput } from '@/lib/experimental/data/adopt-connected';
+import { adoptActions } from '@/lib/experimental/connections/action-adoptions';
+import { entityActionKey } from '@/lib/experimental/connections/exposures';
 import { roleAtLeast } from '@/lib/core/session';
 
 /**

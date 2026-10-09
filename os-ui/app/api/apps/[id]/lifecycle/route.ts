@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource } from '@/lib/software/lifecycle';
-import type { ConsumedResource } from '@/lib/software/model';
+import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource } from '@/lib/experimental/software/lifecycle';
+import type { ConsumedResource } from '@/lib/experimental/software/model';
 
 export const dynamic = 'force-dynamic';
 

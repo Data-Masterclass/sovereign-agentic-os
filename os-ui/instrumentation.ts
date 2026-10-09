@@ -97,7 +97,7 @@ export async function register(): Promise<void> {
   // seed-demo's heavy server graph (apps.ts → connections/crypto) from the EDGE instrumentation
   // bundle — it must never be traced there (middleware is edge; node-only modules break it).
   if (process.env.NEXT_RUNTIME === 'nodejs') {
-    void import('./lib/software/appspec/seed-demo.ts')
+    void import('./lib/experimental/software/appspec/seed-demo.ts')
       .then((m) => m.seedDeclarativeDemoApp())
       .catch(() => {
         /* fail-soft — the module already swallows its own errors; this guards the import */
@@ -116,8 +116,8 @@ export async function register(): Promise<void> {
   const [{ realForgejo }, { listGovernedDatasets, ensureHydrated }, { reconcileAnalyticsRepo }] =
     await Promise.all([
       import('./lib/agents/build/live-clients.ts'),
-      import('./lib/data/store.ts'),
-      import('./lib/data/analytics-repo.ts'),
+      import('./lib/experimental/data/store.ts'),
+      import('./lib/experimental/data/analytics-repo.ts'),
     ]);
 
   // Best-effort hydrate: the dataset store may not yet have loaded its durable

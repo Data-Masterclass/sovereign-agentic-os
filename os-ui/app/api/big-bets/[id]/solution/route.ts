@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { principal, actor } from '@/lib/bigbets/server';
+import { principal, actor } from '@/lib/experimental/bigbets/server';
 import {
   getSolution,
   setBetWorkflow,
@@ -15,9 +15,9 @@ import {
   createFromPlaceholder,
   removeComponent,
   ensureHydrated,
-} from '@/lib/bigbets/store';
-import { INTERPLAY_RELATIONS, type InterplayRelation, type Tab } from '@/lib/bigbets';
-import { resolveLinkedComponent } from '@/lib/bigbets/attach-server';
+} from '@/lib/experimental/bigbets/store';
+import { INTERPLAY_RELATIONS, type InterplayRelation, type Tab } from '@/lib/experimental/bigbets';
+import { resolveLinkedComponent } from '@/lib/experimental/bigbets/attach-server';
 
 export const dynamic = 'force-dynamic';
 

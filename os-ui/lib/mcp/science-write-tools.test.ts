@@ -7,8 +7,8 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, ALL_MCP_TOOLS, type JsonRpcResponse, type ToolError } from './server.ts';
 import { ALL_WRITE_TOOLS } from './write-tools.ts';
 import { config } from '@/lib/core/config';
-import { __resetStore as resetData } from '@/lib/data/store';
-import { _resetModels, getModel, trainTrackAdapter, deployAdapter } from '@/lib/science';
+import { __resetStore as resetData } from '@/lib/experimental/data/store';
+import { _resetModels, getModel, trainTrackAdapter, deployAdapter } from '@/lib/experimental/science';
 
 /**
  * SCIENCE WRITE SURFACE (Phase D) — MCP parity for the full model journey an external

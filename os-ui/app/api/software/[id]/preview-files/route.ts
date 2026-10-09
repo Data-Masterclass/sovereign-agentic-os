@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { previewFilesForApp } from '@/lib/software/apps';
-import { readSdkSource } from '@/lib/software/app-sdk-vendor';
-import { readUiSource } from '@/lib/software/app-ui-vendor';
+import { previewFilesForApp } from '@/lib/experimental/software/apps';
+import { readSdkSource } from '@/lib/experimental/software/app-sdk-vendor';
+import { readUiSource } from '@/lib/experimental/software/app-ui-vendor';
 
 export const dynamic = 'force-dynamic';
 

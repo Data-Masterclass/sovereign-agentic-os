@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { callPlatformMcp, PLATFORM_MCP_TOOLS } from '@/lib/software/platform-mcp';
+import { callPlatformMcp, PLATFORM_MCP_TOOLS } from '@/lib/experimental/software/platform-mcp';
 
 export const dynamic = 'force-dynamic';
 

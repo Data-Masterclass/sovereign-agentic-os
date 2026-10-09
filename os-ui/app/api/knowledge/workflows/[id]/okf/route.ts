@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { makeRequirePrincipal, errorResponse } from '@/lib/core/route-server';
-import { getWorkflow, ensureHydrated } from '@/lib/knowledge/store';
-import { exportWorkflowBundle } from '@/lib/knowledge/okf-export';
-import { zipBundle } from '@/lib/knowledge/okf-zip';
+import { getWorkflow, ensureHydrated } from '@/lib/experimental/knowledge/store';
+import { exportWorkflowBundle } from '@/lib/experimental/knowledge/okf-export';
+import { zipBundle } from '@/lib/experimental/knowledge/okf-zip';
 
 export const dynamic = 'force-dynamic';
 

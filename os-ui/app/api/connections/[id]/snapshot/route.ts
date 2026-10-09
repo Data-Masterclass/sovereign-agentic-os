@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getCatalogSnapshot, refreshCatalogSnapshot } from '@/lib/connections/warehouse/catalog-snapshot';
-import { markDatasetsDrifted } from '@/lib/data/store';
+import { getCatalogSnapshot, refreshCatalogSnapshot } from '@/lib/experimental/connections/warehouse/catalog-snapshot';
+import { markDatasetsDrifted } from '@/lib/experimental/data/store';
 import { addNotification } from '@/lib/notifications/store';
 
 export const dynamic = 'force-dynamic';

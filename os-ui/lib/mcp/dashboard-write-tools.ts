@@ -25,16 +25,16 @@ import {
   builtLayerFqn,
   listGovernedDatasets,
   type PromotionRequest,
-} from '@/lib/data/store';
-import { runQualityChecks } from '@/lib/data/dq-run';
-import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
+} from '@/lib/experimental/data/store';
+import { runQualityChecks } from '@/lib/experimental/data/dq-run';
+import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/experimental/data';
 import { cubeMeta, queryRun } from '@/lib/infra/governed';
-import { publishPromotionLive } from '@/lib/data/publish-server';
+import { publishPromotionLive } from '@/lib/experimental/data/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
-import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/data/panels';
-import { cubeViewName, registryDimensionMembers, scaffoldCubeYaml } from '@/lib/data/metrics';
-import { ingestAndRegisterBronze } from '@/lib/data/ingest';
-import { buildStage, commitLayerVersion } from '@/lib/data/build/server';
+import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/experimental/data/panels';
+import { cubeViewName, registryDimensionMembers, scaffoldCubeYaml } from '@/lib/experimental/data/metrics';
+import { ingestAndRegisterBronze } from '@/lib/experimental/data/ingest';
+import { buildStage, commitLayerVersion } from '@/lib/experimental/data/build/server';
 import {
   silverPlan,
   goldJoinPlan,
@@ -45,18 +45,18 @@ import {
   type GoldDimension,
   type GoldMeasure,
   type JoinType,
-} from '@/lib/data/transform';
-import { assetTarget } from '@/lib/data/store-fqn';
+} from '@/lib/experimental/data/transform';
+import { assetTarget } from '@/lib/experimental/data/store-fqn';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
-import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@/lib/data';
-import { measureFromForm, measureMember, type MetricForm, type GuidedFilter, type GuidedWindow } from '@/lib/metrics/model';
-import type { MeasureType } from '@/lib/data/metrics';
-import { buildMetric } from '@/lib/metrics/build/server';
-import { exploreMetric } from '@/lib/metrics/build/explore-server';
-import type { Granularity } from '@/lib/metrics/explorer';
-import { getMetric } from '@/lib/metrics/store';
-import { governMetric, canPromote as canPromoteMetric } from '@/lib/metrics/governance';
-import { transition as transitionDataset } from '@/lib/data/store';
+import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@/lib/experimental/data';
+import { measureFromForm, measureMember, type MetricForm, type GuidedFilter, type GuidedWindow } from '@/lib/experimental/metrics/model';
+import type { MeasureType } from '@/lib/experimental/data/metrics';
+import { buildMetric } from '@/lib/experimental/metrics/build/server';
+import { exploreMetric } from '@/lib/experimental/metrics/build/explore-server';
+import type { Granularity } from '@/lib/experimental/metrics/explorer';
+import { getMetric } from '@/lib/experimental/metrics/store';
+import { governMetric, canPromote as canPromoteMetric } from '@/lib/experimental/metrics/governance';
+import { transition as transitionDataset } from '@/lib/experimental/data/store';
 
 import {
   createWorkflow,
@@ -66,8 +66,8 @@ import {
   getDomainKnowledge,
   archiveWorkflow,
   deleteWorkflow,
-} from '@/lib/knowledge/store';
-import { knowledgeConsumers } from '@/lib/knowledge/consumers';
+} from '@/lib/experimental/knowledge/store';
+import { knowledgeConsumers } from '@/lib/experimental/knowledge/consumers';
 import { fileArtifactPromotion, promoteThroughSeam, isLadderKind, type LadderKind } from '@/lib/governance/ladder';
 import { pendingHandle } from '@/lib/mcp/pending';
 import {
@@ -79,8 +79,8 @@ import {
   type WorkflowRule,
   type ActorType,
   type Actor,
-} from '@/lib/knowledge/schema';
-import { indexWorkflow, indexDomain, purgeKnowledgeUnits } from '@/lib/knowledge/index-pipeline';
+} from '@/lib/experimental/knowledge/schema';
+import { indexWorkflow, indexDomain, purgeKnowledgeUnits } from '@/lib/experimental/knowledge/index-pipeline';
 
 import {
   createFile,
@@ -90,16 +90,16 @@ import {
   requestPromotion as requestFilePromotion,
   applyApprovedFilePromotion,
   type FilePromotionRequest,
-} from '@/lib/files/store';
-import { reindexFile } from '@/lib/files/pipeline-server';
-import { putBlob } from '@/lib/files/object-store';
-import type { Sensitivity } from '@/lib/files/asset-schema';
+} from '@/lib/experimental/files/store';
+import { reindexFile } from '@/lib/experimental/files/pipeline-server';
+import { putBlob } from '@/lib/experimental/files/object-store';
+import type { Sensitivity } from '@/lib/experimental/files/asset-schema';
 
-import { saveDashboard } from '@/lib/dashboards/store';
-import { fromTiles, missingPanelMembers, type ChartSpec } from '@/lib/dashboards/model';
-import { narrowCubeMeta, type RegistryViewDims } from '@/lib/dashboards/cube-meta';
-import { listMetrics } from '@/lib/metrics/store';
-import { claimsFromUser, delegate } from '@/lib/data/identity';
+import { saveDashboard } from '@/lib/experimental/dashboards/store';
+import { fromTiles, missingPanelMembers, type ChartSpec } from '@/lib/experimental/dashboards/model';
+import { narrowCubeMeta, type RegistryViewDims } from '@/lib/experimental/dashboards/cube-meta';
+import { listMetrics } from '@/lib/experimental/metrics/store';
+import { claimsFromUser, delegate } from '@/lib/experimental/data/identity';
 
 import {
   createBet,
@@ -115,10 +115,10 @@ import {
   unwireComponents,
   canEdit as canEditBet,
   type CreateBetInput,
-} from '@/lib/bigbets/store';
-import { getPillar } from '@/lib/strategy/pillars';
-import { deriveBetName, INTERPLAY_RELATIONS, type BigBet, type InterplayRelation, type Tab as BetTab, type ValueBasis } from '@/lib/bigbets';
-import { resolveLinkedComponent } from '@/lib/bigbets/attach-server';
+} from '@/lib/experimental/bigbets/store';
+import { getPillar } from '@/lib/experimental/strategy/pillars';
+import { deriveBetName, INTERPLAY_RELATIONS, type BigBet, type InterplayRelation, type Tab as BetTab, type ValueBasis } from '@/lib/experimental/bigbets';
+import { resolveLinkedComponent } from '@/lib/experimental/bigbets/attach-server';
 
 import {
   createSystem,
@@ -129,7 +129,7 @@ import {
 import { isTemplateKey } from '@/lib/agents/templates';
 import { buildSystem } from '@/lib/agents/build/server';
 
-import { patchAppDesign, getAppForUser, type AppEpic } from '@/lib/software/apps';
+import { patchAppDesign, getAppForUser, type AppEpic } from '@/lib/experimental/software/apps';
 import { normalizeContextGrants } from '@/lib/core/context-grants';
 
 // ============================== DASHBOARDS ====================================

@@ -3,13 +3,13 @@
  */
 import { NextResponse } from 'next/server';
 import { roleModel } from '@/lib/models/roles';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { listAskable } from '@/lib/data/store';
-import { readPrincipalFor } from '@/lib/data/store-fqn';
+import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
+import { listAskable } from '@/lib/experimental/data/store';
+import { readPrincipalFor } from '@/lib/experimental/data/store-fqn';
 import { queryRun, trace } from '@/lib/infra/governed';
 import { liteLlmCaller } from '@/lib/assistant/runtime';
-import { runAsk, type AskMessage } from '@/lib/data/ask';
-import { appSlugFromRequest, grantedIdSet } from '@/lib/software/app-origin';
+import { runAsk, type AskMessage } from '@/lib/experimental/data/ask';
+import { appSlugFromRequest, grantedIdSet } from '@/lib/experimental/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 

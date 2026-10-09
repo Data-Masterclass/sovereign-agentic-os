@@ -10,14 +10,14 @@ import {
 } from './discovery-common';
 
 // --- Governed read/list lib functions (the EXACT same the UI + /api call) ------
-import { listDatasets, getDataset } from '@/lib/data/store';
-import { listWorkflows, getWorkflow } from '@/lib/knowledge/store';
-import { listFiles, searchFiles, getFile } from '@/lib/files/store';
-import { listMetrics } from '@/lib/metrics/store';
-import { listDashboards, getDashboard } from '@/lib/dashboards/store';
-import { normalizePanel, panelMetrics } from '@/lib/dashboards/model';
-import { listBets, getSolution } from '@/lib/bigbets/store';
-import { buildBetView } from '@/lib/bigbets/server';
+import { listDatasets, getDataset } from '@/lib/experimental/data/store';
+import { listWorkflows, getWorkflow } from '@/lib/experimental/knowledge/store';
+import { listFiles, searchFiles, getFile } from '@/lib/experimental/files/store';
+import { listMetrics } from '@/lib/experimental/metrics/store';
+import { listDashboards, getDashboard } from '@/lib/experimental/dashboards/store';
+import { normalizePanel, panelMetrics } from '@/lib/experimental/dashboards/model';
+import { listBets, getSolution } from '@/lib/experimental/bigbets/store';
+import { buildBetView } from '@/lib/experimental/bigbets/server';
 import { getSystem } from '@/lib/agents/store';
 import {
   listAppsForUser,
@@ -26,9 +26,9 @@ import {
   readAppFileForViewer,
   templateFiles,
   refreshActionsStage,
-} from '@/lib/software/apps';
-import { forgejoReachable, getSnapshot } from '@/lib/software/server';
-import { getReviewCard, listReviewCards, PREVIEW_PENDING_NOTE } from '@/lib/software/review';
+} from '@/lib/experimental/software/apps';
+import { forgejoReachable, getSnapshot } from '@/lib/experimental/software/server';
+import { getReviewCard, listReviewCards, PREVIEW_PENDING_NOTE } from '@/lib/experimental/software/review';
 import {
   listConnectionsForUser,
   getConnectionForUser,
@@ -44,8 +44,8 @@ import {
   type ConnectionTemplateKey,
   type WarehouseCreateInput,
   type AirflowCreateInput,
-} from '@/lib/connections';
-import type { AirflowAuthType } from '@/lib/connections/schema';
+} from '@/lib/experimental/connections';
+import type { AirflowAuthType } from '@/lib/experimental/connections/schema';
 import {
   resolveOmCatalog,
   omListDomains,
@@ -55,21 +55,21 @@ import {
   omLineage,
   previewOmSyncForConnection,
   previewDqSyncForConnection,
-} from '@/lib/connections/openmetadata';
-import { previewCatalogIngest } from '@/lib/connections/openmetadata-ingest';
-import { WAREHOUSE_PROVIDERS } from '@/lib/connections/warehouse/registry';
-import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/connections/warehouse/types';
+} from '@/lib/experimental/connections/openmetadata';
+import { previewCatalogIngest } from '@/lib/experimental/connections/openmetadata-ingest';
+import { WAREHOUSE_PROVIDERS } from '@/lib/experimental/connections/warehouse/registry';
+import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/experimental/connections/warehouse/types';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
 import { enqueue } from '@/lib/governance/approvals';
-import { scaffoldCubeYaml, cubeViewName } from '@/lib/data/metrics';
-import { cubeDeliverable } from '@/lib/data/cube-models';
+import { scaffoldCubeYaml, cubeViewName } from '@/lib/experimental/data/metrics';
+import { cubeDeliverable } from '@/lib/experimental/data/cube-models';
 import { loadGuide, isGuidePath, GUIDE_PATHS, type GuidePath } from '@/lib/tabs/guides';
 import { config } from '@/lib/core/config';
 import { queryRun } from '@/lib/infra/governed';
-import { versionTarget } from '@/lib/data/store-fqn';
-import { builtLayerFqn } from '@/lib/data/store';
-import type { Layer } from '@/lib/data';
-import { LAYERS } from '@/lib/data';
+import { versionTarget } from '@/lib/experimental/data/store-fqn';
+import { builtLayerFqn } from '@/lib/experimental/data/store';
+import type { Layer } from '@/lib/experimental/data';
+import { LAYERS } from '@/lib/experimental/data';
 import {
   assembleProfile,
   parseDescribe,
@@ -77,13 +77,13 @@ import {
   statsSql,
   topValuesSql,
   type ProfileColumn,
-} from '@/lib/data/profile';
-import { getMetric } from '@/lib/metrics/store';
-import { exploreMetric } from '@/lib/metrics/build/explore-server';
-import type { Granularity } from '@/lib/metrics/explorer';
-import { claimsFromUser, delegate } from '@/lib/data/identity';
-import { listModelsForUser, type ModelViewer } from '@/lib/science';
-import { CHURN, DEFAULT_FEATURES } from '@/lib/science/churn';
+} from '@/lib/experimental/data/profile';
+import { getMetric } from '@/lib/experimental/metrics/store';
+import { exploreMetric } from '@/lib/experimental/metrics/build/explore-server';
+import type { Granularity } from '@/lib/experimental/metrics/explorer';
+import { claimsFromUser, delegate } from '@/lib/experimental/data/identity';
+import { listModelsForUser, type ModelViewer } from '@/lib/experimental/science';
+import { CHURN, DEFAULT_FEATURES } from '@/lib/experimental/science/churn';
 
 // =================================== META =====================================
 export const guideTool: McpTool = {

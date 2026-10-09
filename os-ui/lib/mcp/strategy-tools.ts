@@ -23,10 +23,10 @@ import {
   promotePillar,
   demotePillar,
   restorePillarVersion,
-} from '@/lib/strategy/pillars';
-import { rollupForPillar, valueHistory } from '@/lib/strategy/value-rollup';
-import { snapshotHistory } from '@/lib/strategy/snapshots';
-import { recentStrategyAudit } from '@/lib/strategy/audit';
+} from '@/lib/experimental/strategy/pillars';
+import { rollupForPillar, valueHistory } from '@/lib/experimental/strategy/value-rollup';
+import { snapshotHistory } from '@/lib/experimental/strategy/snapshots';
+import { recentStrategyAudit } from '@/lib/experimental/strategy/audit';
 import {
   canEditPillar,
   METRIC_TYPES,
@@ -35,8 +35,8 @@ import {
   type ValueMode,
   type MetricType,
   type Horizon,
-} from '@/lib/strategy';
-import { STUB_BET_CATALOGUE } from '@/lib/strategy/bets-bridge';
+} from '@/lib/experimental/strategy';
+import { STUB_BET_CATALOGUE } from '@/lib/experimental/strategy/bets-bridge';
 
 /**
  * THE STRATEGY MCP SURFACE (mcp-v2 P2). Six THIN wrappers over the SAME governed

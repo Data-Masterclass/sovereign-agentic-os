@@ -27,11 +27,11 @@ import {
   type AtlassianCreateInput,
   type ODataCreateInput,
   type WorkdayCreateInput,
-} from '@/lib/connections';
-import type { AirflowAuthType, AtlassianAuthKind, ODataAuthType, CapabilityMode } from '@/lib/connections/schema';
-import { revokeActionAdoption } from '@/lib/connections/action-adoptions';
-import { WAREHOUSE_PROVIDERS } from '@/lib/connections/warehouse/registry';
-import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/connections/warehouse/types';
+} from '@/lib/experimental/connections';
+import type { AirflowAuthType, AtlassianAuthKind, ODataAuthType, CapabilityMode } from '@/lib/experimental/connections/schema';
+import { revokeActionAdoption } from '@/lib/experimental/connections/action-adoptions';
+import { WAREHOUSE_PROVIDERS } from '@/lib/experimental/connections/warehouse/registry';
+import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/experimental/connections/warehouse/types';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
 import { config } from '@/lib/core/config';
 

@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { setValueMetric } from '@/lib/strategy/pillars';
-import { METRIC_TYPES, type ValueMode, type MetricType } from '@/lib/strategy';
+import { setValueMetric } from '@/lib/experimental/strategy/pillars';
+import { METRIC_TYPES, type ValueMode, type MetricType } from '@/lib/experimental/strategy';
 
 export const dynamic = 'force-dynamic';
 

@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { startPreview, requestDeploy, reconcileDeployStatus } from '@/lib/software/review';
-import { getEditableAppForUser, healAppRepo } from '@/lib/software/apps';
+import { startPreview, requestDeploy, reconcileDeployStatus } from '@/lib/experimental/software/review';
+import { getEditableAppForUser, healAppRepo } from '@/lib/experimental/software/apps';
 
 export const dynamic = 'force-dynamic';
 

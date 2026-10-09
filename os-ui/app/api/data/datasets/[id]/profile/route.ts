@@ -4,11 +4,11 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { getDataset } from '@/lib/data/store';
-import { builtLayerFqn } from '@/lib/data/store';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { getDataset } from '@/lib/experimental/data/store';
+import { builtLayerFqn } from '@/lib/experimental/data/store';
 import { queryRun } from '@/lib/infra/governed';
-import type { Layer } from '@/lib/data';
+import type { Layer } from '@/lib/experimental/data';
 import {
   assembleProfile,
   parseDescribe,
@@ -19,7 +19,7 @@ import {
   LIVE_PROFILE_SAMPLE_ROWS,
   type Profile,
   type ProfileColumn,
-} from '@/lib/data/profile';
+} from '@/lib/experimental/data/profile';
 
 export const dynamic = 'force-dynamic';
 

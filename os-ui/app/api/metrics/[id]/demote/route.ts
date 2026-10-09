@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { transition as transitionDataset } from '@/lib/data/store';
-import { getMetric } from '@/lib/metrics/store';
+import { transition as transitionDataset } from '@/lib/experimental/data/store';
+import { getMetric } from '@/lib/experimental/metrics/store';
 
 export const dynamic = 'force-dynamic';
 

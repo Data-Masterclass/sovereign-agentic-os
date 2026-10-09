@@ -4,8 +4,8 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { safeSummariesFor } from '@/lib/metrics/store';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { safeSummariesFor } from '@/lib/experimental/metrics/store';
 
 export const dynamic = 'force-dynamic';
 

@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { registerWarehouseCatalog } from '@/lib/connections';
+import { registerWarehouseCatalog } from '@/lib/experimental/connections';
 
 export const dynamic = 'force-dynamic';
 

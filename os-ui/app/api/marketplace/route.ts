@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { listingAdapter } from '@/lib/marketplace';
-import { PRODUCT_TYPES, type ProductType, type ListingFilter } from '@/lib/marketplace';
-import { ensureHydrated } from '@/lib/marketplace/store';
+import { listingAdapter } from '@/lib/experimental/marketplace';
+import { PRODUCT_TYPES, type ProductType, type ListingFilter } from '@/lib/experimental/marketplace';
+import { ensureHydrated } from '@/lib/experimental/marketplace/store';
 
 export const dynamic = 'force-dynamic';
 

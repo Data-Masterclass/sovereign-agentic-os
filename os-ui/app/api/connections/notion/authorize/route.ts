@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
-import { getConnectionForUser } from '@/lib/connections';
+import { getConnectionForUser } from '@/lib/experimental/connections';
 import { discoverMetadata, registerClient, buildNotionAuthorizeUrl } from '@/lib/oauth/notion-mcp';
 import { createPkcePair } from '@/lib/oauth/pkce';
 import { signState, newNonce, OAUTH_STATE_COOKIE } from '@/lib/oauth/state';

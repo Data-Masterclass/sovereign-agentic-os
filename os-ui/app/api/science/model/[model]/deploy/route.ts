@@ -15,7 +15,7 @@ import {
   computeLaunchStatus,
   deployAdapter,
   type Actor,
-} from '@/lib/science';
+} from '@/lib/experimental/science';
 
 export const dynamic = 'force-dynamic';
 

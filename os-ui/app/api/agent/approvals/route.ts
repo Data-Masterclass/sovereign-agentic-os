@@ -11,13 +11,13 @@ import {
   applyApprovedCertification,
   type PromotionRequest,
   type CertificationRequest,
-} from '@/lib/data/store';
-import { publishPromotionLive } from '@/lib/data/publish-server';
-import { applyApprovedFilePromotion, type FilePromotionRequest } from '@/lib/files/store';
-import { reindexById } from '@/lib/files/pipeline-server';
-import { listLineage } from '@/lib/files/lineage';
-import { pushLineage } from '@/lib/files/catalog';
-import { onApprovalDecided } from '@/lib/marketplace';
+} from '@/lib/experimental/data/store';
+import { publishPromotionLive } from '@/lib/experimental/data/publish-server';
+import { applyApprovedFilePromotion, type FilePromotionRequest } from '@/lib/experimental/files/store';
+import { reindexById } from '@/lib/experimental/files/pipeline-server';
+import { listLineage } from '@/lib/experimental/files/lineage';
+import { pushLineage } from '@/lib/experimental/files/catalog';
+import { onApprovalDecided } from '@/lib/experimental/marketplace';
 import { roleAtLeast } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';

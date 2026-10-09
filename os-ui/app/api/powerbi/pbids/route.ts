@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { config } from '@/lib/core/config';
-import { buildPbids, pbidsToString, pbidsFilename } from '@/lib/powerbi/pbids';
+import { buildPbids, pbidsToString, pbidsFilename } from '@/lib/experimental/powerbi/pbids';
 
 export const dynamic = 'force-dynamic';
 

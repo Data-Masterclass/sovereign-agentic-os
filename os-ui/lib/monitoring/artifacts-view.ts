@@ -4,9 +4,9 @@
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import { agentHealthRows, ensureHydrated as ensureAgentsHydrated, type AgentHealthRow } from '@/lib/agents/store';
-import { listDatasets, ensureHydrated } from '@/lib/data/store';
-import { latestRun, ensureHydrated as ensureDqHydrated } from '@/lib/data/dq-results';
-import { latestSyncRun, ensureSyncRunsHydrated } from '@/lib/data/sync-runs';
+import { listDatasets, ensureHydrated } from '@/lib/experimental/data/store';
+import { latestRun, ensureHydrated as ensureDqHydrated } from '@/lib/experimental/data/dq-results';
+import { latestSyncRun, ensureSyncRunsHydrated } from '@/lib/experimental/data/sync-runs';
 import { type Health, combine, pipelineHealth, dqHealth, ageInDays } from './artifact-health-core';
 import { agentTelemetryBatch } from './adapters/agent-telemetry';
 import { rollupAgentTelemetry, summarizeDq, type AgentTelemetry } from './telemetry-core';

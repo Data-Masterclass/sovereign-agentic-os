@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { setDocs } from '@/lib/data/store';
-import { transparencyGate } from '@/lib/data/transparency';
-import type { ColumnDoc } from '@/lib/data';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { setDocs } from '@/lib/experimental/data/store';
+import { transparencyGate } from '@/lib/experimental/data/transparency';
+import type { ColumnDoc } from '@/lib/experimental/data';
 
 export const dynamic = 'force-dynamic';
 

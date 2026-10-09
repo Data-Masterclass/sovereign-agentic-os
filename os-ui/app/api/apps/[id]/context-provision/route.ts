@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { createAndGrant, type ProvisionableType } from '@/lib/software/appspec/context-provision';
+import { createAndGrant, type ProvisionableType } from '@/lib/experimental/software/appspec/context-provision';
 
 export const dynamic = 'force-dynamic';
 

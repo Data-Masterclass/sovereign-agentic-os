@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, ALL_MCP_TOOLS, toolsForTab, type JsonRpcResponse, type ToolError } from './server.ts';
 import { ALL_WRITE_TOOLS } from './write-tools.ts';
-import { __resetMarketplace, mockCatalog } from '@/lib/marketplace/store';
+import { __resetMarketplace, mockCatalog } from '@/lib/experimental/marketplace/store';
 
 /** Seed one certified listing into the offline mock catalogue (fresh tenant = empty). */
 const LISTING_ID = 'mkt_test_ds';

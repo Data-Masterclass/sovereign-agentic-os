@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getAppBySlugForUser } from '@/lib/software/apps';
-import { availableContext } from '@/lib/software/available-context';
+import { getAppBySlugForUser } from '@/lib/experimental/software/apps';
+import { availableContext } from '@/lib/experimental/software/available-context';
 import { CONTEXT_KINDS, type ContextKind } from '@/lib/core/context-grants';
 
 export const dynamic = 'force-dynamic';

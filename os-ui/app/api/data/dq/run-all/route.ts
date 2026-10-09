@@ -4,15 +4,15 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/experimental/data/server';
 import { requireUser } from '@/lib/core/auth';
 import { roleAtLeast } from '@/lib/core/session';
-import { listGovernedDatasets, builtLayerFqn } from '@/lib/data/store';
+import { listGovernedDatasets, builtLayerFqn } from '@/lib/experimental/data/store';
 import { queryRun } from '@/lib/infra/governed';
-import { ensureHydrated, latestRun } from '@/lib/data/dq-results';
-import { runAndRecord, isNewFailure } from '@/lib/data/dq-run-server';
-import { omDqAppenderFor } from '@/lib/connections/openmetadata';
-import { deliverDqAlert } from '@/lib/dashboards/delivery';
+import { ensureHydrated, latestRun } from '@/lib/experimental/data/dq-results';
+import { runAndRecord, isNewFailure } from '@/lib/experimental/data/dq-run-server';
+import { omDqAppenderFor } from '@/lib/experimental/connections/openmetadata';
+import { deliverDqAlert } from '@/lib/experimental/dashboards/delivery';
 import { getPublicUser } from '@/lib/platform-admin/users';
 
 export const dynamic = 'force-dynamic';

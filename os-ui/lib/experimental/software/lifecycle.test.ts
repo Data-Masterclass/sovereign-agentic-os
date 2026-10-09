@@ -1,0 +1,152 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import type { CurrentUser } from '@/lib/core/auth';
+import { createApp, deleteAppRepo, rehydrateConnection } from '@/lib/experimental/software/apps';
+import { authorizeConnectionCall } from '@/lib/infra/agent-governed';
+import { getConnectionByApp } from '@/lib/infra/app-registry';
+import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource, dependentsOf, demoteApp } from './lifecycle.ts';
+import { getAppByIdInternal, promoteApp } from '@/lib/experimental/software/apps';
+
+const owner: CurrentUser = { id: 'carol', name: 'Carol', domains: ['ops'], role: 'creator' };
+const opsAdmin: CurrentUser = { id: 'dana', name: 'Dana', domains: ['ops'], role: 'admin' };
+const opsBuilder: CurrentUser = { id: 'eli', name: 'Eli', domains: ['ops'], role: 'builder' };
+// Promoting Personal→Shared now requires a domain_admin+ (the in-domain approver).
+const opsDomainAdmin: CurrentUser = { id: 'nadia', name: 'Nadia', domains: ['ops'], role: 'domain_admin' };
+
+async function expectStatus(p: Promise<unknown>, status: number, re?: RegExp) {
+  await assert.rejects(p, (e: Error & { status?: number }) => {
+    assert.equal(e.status, status);
+    if (re) assert.match(e.message, re);
+    return true;
+  });
+}
+
+test('archive disables the MCP but RETAINS the data artifact (restorable)', async () => {
+  const app = await createApp(owner, { name: 'Inventory L1', template: 'nextjs-supabase' });
+  const readTool = app.mcpTools.find((t) => !t.write)!.name;
+  assert.equal(authorizeConnectionCall(app.mcpPrincipal, readTool).effect, 'allow');
+
+  const archived = await archiveApp(app.id, owner);
+  assert.equal(archived.status, 'archived');
+  // MCP disabled: the tool is no longer exposed/governed (deny).
+  assert.equal(authorizeConnectionCall(app.mcpPrincipal, readTool).effect, 'deny');
+  // Data retained.
+  assert.equal(archived.dataArtifactId, app.dataArtifactId);
+
+  const restored = await unarchiveApp(app.id, owner);
+  assert.equal(restored.status, 'active');
+  assert.equal(authorizeConnectionCall(app.mcpPrincipal, readTool).effect, 'allow');
+});
+
+test('archive/delete cascade to the app-registry MCP connection (no orphan in Connections)', async () => {
+  const app = await createApp(owner, { name: 'Cascade App', template: 'service' });
+  // A live app has a registered connection (this is what the Connections tab lists).
+  assert.ok(getConnectionByApp(app.id), 'a live app registers its MCP connection');
+
+  // ARCHIVE tears down the connection so it no longer surfaces in Connections.
+  await archiveApp(app.id, owner);
+  assert.equal(getConnectionByApp(app.id), null, 'archived app has no MCP connection');
+  // A re-hydrate (pod restart) must NOT resurrect an archived app's connection.
+  rehydrateConnection((await getAppByIdInternal(app.id))!);
+  assert.equal(getConnectionByApp(app.id), null, 'archived app stays disconnected across a restart');
+
+  // UNARCHIVE re-registers it (symmetric restore — reappears immediately).
+  await unarchiveApp(app.id, owner);
+  assert.ok(getConnectionByApp(app.id), 'restored app re-registers its MCP connection');
+
+  // DELETE removes it for good.
+  await deleteApp(app.id, owner);
+  assert.equal(getConnectionByApp(app.id), null, 'deleted app has no MCP connection');
+});
+
+test('consume rejects a raw credential; records a reference (no embedded creds)', async () => {
+  const app = await createApp(owner, { name: 'Inventory L2', template: 'service' });
+  await expectStatus(
+    consumeResource(app.id, owner, { kind: 'connection', ref: 'password=hunter2', label: 'x', scope: 'read' }),
+    400,
+    /reference, never a raw credential/,
+  );
+  const updated = await consumeResource(app.id, owner, { kind: 'connection', ref: 'salesforce', label: 'Salesforce', scope: 'read' });
+  assert.equal(updated.consumes.some((c) => c.ref === 'salesforce'), true);
+});
+
+test('delete is lineage-aware — blocked while a dependency is in use', async () => {
+  const dep = await createApp(owner, { name: 'Shared Renewals API', template: 'service' });
+  const consumer = await createApp(owner, { name: 'Sales Dashboard', template: 'dashboard' });
+  // The consumer app uses the dependency's MCP.
+  await consumeResource(consumer.id, owner, { kind: 'app-mcp', ref: dep.mcpPrincipal, label: 'Renewals API MCP', scope: 'read' });
+
+  const deps = await dependentsOf((await getAppByIdInternal(dep.id))!);
+  assert.equal(deps.length >= 1, true);
+  // Deleting the depended-on app is blocked.
+  await expectStatus(deleteApp(dep.id, owner), 409, /Delete blocked/);
+  // Deleting the consumer first is fine, then the dependency unblocks.
+  assert.deepEqual(await deleteApp(consumer.id, owner), { deleted: true });
+  assert.deepEqual(await deleteApp(dep.id, owner), { deleted: true });
+});
+
+test('DEMOTE: revoke sharing lowers Marketplace → Shared → Personal one step at a time', async () => {
+  const app = await createApp(owner, { name: 'Revocable App', template: 'service' });
+  await promoteApp(app.id, opsDomainAdmin); // Personal → Shared (domain_admin gate)
+  await promoteApp(app.id, opsAdmin);       // Shared → Certified/Marketplace
+  assert.equal((await getAppByIdInternal(app.id))!.visibility, 'Certified');
+  // Marketplace → Shared is admin-only.
+  await expectStatus(demoteApp(app.id, opsBuilder), 403, /Administrator/);
+  assert.equal((await demoteApp(app.id, opsAdmin)).visibility, 'Shared');
+  // Shared → Personal: a non-owner Builder is DENIED (fail-closed edit-scope);
+  // the owner (or an in-domain Domain admin / Admin) may unshare.
+  await expectStatus(demoteApp(app.id, opsBuilder), 403, /Domain admin|Administrator/);
+  assert.equal((await demoteApp(app.id, owner)).visibility, 'Personal');
+  await expectStatus(demoteApp(app.id, owner), 400, /already Personal/i);
+});
+
+test('DEMOTE is lineage-aware — revoke blocked while another app depends on it', async () => {
+  const dep = await createApp(owner, { name: 'Shared API', template: 'service' });
+  await promoteApp(dep.id, opsDomainAdmin); // → Shared (domain_admin gate)
+  const consumer = await createApp(owner, { name: 'Consumer', template: 'dashboard' });
+  await consumeResource(consumer.id, owner, { kind: 'app-mcp', ref: dep.mcpPrincipal, label: 'Shared API MCP', scope: 'read' });
+  // Unsharing the depended-on app is blocked (would orphan the consumer).
+  await expectStatus(demoteApp(dep.id, owner), 409, /Revoke blocked/);
+  assert.equal((await getAppByIdInternal(dep.id))!.visibility, 'Shared');
+});
+
+test('deleteAppRepo: PHYSICALLY deletes the per-app Forgejo repo, honest on 404 / unreachable', async () => {
+  const app = await createApp(owner, { name: 'Repo Del', template: 'service' });
+  const orig = globalThis.fetch;
+  try {
+    // Happy path: Forgejo confirms the repo delete (204).
+    let seen: { method?: string; url: string } | null = null;
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      seen = { method: init?.method, url: String(url) };
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    const ok = await deleteAppRepo(app);
+    assert.equal(ok.ok, true);
+    assert.equal(ok.action, 'deleted');
+    assert.equal(seen!.method, 'DELETE');
+    assert.match(seen!.url, /\/repos\//);
+
+    // Already gone (404) → benign no-op success.
+    globalThis.fetch = (async () => new Response(null, { status: 404 })) as typeof fetch;
+    assert.deepEqual((await deleteAppRepo(app)).action, 'noop');
+    assert.equal((await deleteAppRepo(app)).ok, true);
+
+    // Unreachable (network error) → honest failure (orphan flagged), never silent.
+    globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
+    const down = await deleteAppRepo(app);
+    assert.equal(down.ok, false);
+    assert.equal(down.live, false);
+    assert.match(down.detail, /unreachable/i);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('Use as Data marks the Bronze snapshot', async () => {
+  const app = await createApp(owner, { name: 'Inventory L4', template: 'nextjs-supabase' });
+  const updated = await useAsData(app.id, owner);
+  assert.equal(updated.usedAsData, true);
+});

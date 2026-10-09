@@ -9,7 +9,7 @@ import {
   addAppMember,
   removeAppMember,
   type AppMemberRole,
-} from '@/lib/software/apps';
+} from '@/lib/experimental/software/apps';
 
 export const dynamic = 'force-dynamic';
 

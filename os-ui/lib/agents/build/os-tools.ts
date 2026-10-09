@@ -241,14 +241,14 @@ export function serverScopedItemsLoader(user: CurrentUser): ScopedItemsLoader {
   const principal = { id: user.id, domains: user.domains, role: user.role };
   return async (kind, scope) => {
     if (kind === 'data') {
-      const { listDatasets, ensureHydrated } = await import('@/lib/data/store');
+      const { listDatasets, ensureHydrated } = await import('@/lib/experimental/data/store');
       await ensureHydrated();
       const g = listDatasets(principal);
       const group = scope === 'personal' ? g.mine : g.domain;
       return group.map((d) => ({ id: d.id, folder: d.folder }));
     }
     if (kind === 'files') {
-      const { listFiles, ensureHydrated } = await import('@/lib/files/store');
+      const { listFiles, ensureHydrated } = await import('@/lib/experimental/files/store');
       await ensureHydrated();
       const g = listFiles(principal);
       const group = scope === 'personal' ? g.mine : g.domain;
@@ -256,7 +256,7 @@ export function serverScopedItemsLoader(user: CurrentUser): ScopedItemsLoader {
     }
     // knowledge — workflows (no folder → root) ∪ foldered personal-knowledge entries.
     const [{ listWorkflows, ensureHydrated: ensureWf }, { listPersonalKnowledge, ensureHydrated: ensurePk }] =
-      await Promise.all([import('@/lib/knowledge/store'), import('@/lib/knowledge/personal-store')]);
+      await Promise.all([import('@/lib/experimental/knowledge/store'), import('@/lib/experimental/knowledge/personal-store')]);
     await Promise.all([ensureWf(), ensurePk()]);
     const wf = listWorkflows(principal);
     const pk = listPersonalKnowledge(principal);
