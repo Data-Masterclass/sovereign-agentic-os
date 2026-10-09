@@ -145,7 +145,11 @@ export function sessionCookieOptions(opts: {
   return {
     httpOnly: true,
     sameSite: 'lax',
-    secure: opts.isProd ?? process.env.NODE_ENV === 'production',
+    // OS_SESSION_COOKIE_INSECURE=true drops `Secure` for plain-http local dev
+    // (the Docker Compose stack): Safari rejects Secure cookies on http://localhost.
+    secure:
+      opts.isProd ??
+      (process.env.NODE_ENV === 'production' && process.env.OS_SESSION_COOKIE_INSECURE !== 'true'),
     path: '/',
     maxAge: opts.maxAge ?? MAX_AGE_SECONDS,
     ...(domain ? { domain } : {}),
