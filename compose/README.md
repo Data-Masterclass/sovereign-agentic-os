@@ -14,7 +14,7 @@ embeddings, so no Kubernetes cluster and no model API key are needed.
 | Application | `litellm` | Model / MCP gateway | `litellm-local` |
 | Application | `mock-model` | Chat + embeddings stub | `mock` |
 | Application | `opa` | Policy gate | Always |
-| Application | `query-tool` | MCP-over-HTTP SQL tool LiteLLM points at (no Trino in base) | Always |
+| Application | `query-tool` | MCP-over-HTTP SQL tool LiteLLM points at (no Trino in base; built from `images/extensions/`, the only non-base image) | Always |
 | Application | `forgejo-http` | Git server | Always |
 | Application | `langfuse-web` | Trace UI + API | `langfuse-local` |
 | Application | `langfuse-worker` | Trace processing | `langfuse-local` |
@@ -174,6 +174,10 @@ Run `docker compose down` before switching. The stack is not offline in the
   `docker compose exec os-ui env | grep -iE 'LANGFUSE_URL|LITELLM_URL|MODEL'`.
 
 ## Limitations
+
+- `OS_SESSION_COOKIE_INSECURE=true` (set on `os-ui` in `compose.yaml`) drops the
+  `Secure` flag from the session cookie so login works over plain
+  `http://localhost`. It is local-dev only: never set it in a real deployment.
 
 - Postgres's init script (`compose/postgres/init/10-extra-databases.sh`)
   only runs on a fresh volume, the first time `pg-rw` boots. Changing a
