@@ -2,19 +2,19 @@
 
 ## Copied verbatim (edit these directly, then diff against source to confirm you didn't drift)
 
-- `authz.rego` — from `charts/sovereign-agentic-os/templates/opa/opa.yaml:35-108`, de-indented. No Helm `{{ }}` expressions in that block, so it's a straight copy.
+- `authz.rego` — from `charts/sovereign-agentic-os/templates/base/opa/opa.yaml:35-108`, de-indented. No Helm `{{ }}` expressions in that block, so it's a straight copy.
 - `trino.rego`, `marketplace.rego` — from `charts/sovereign-agentic-os/policies/`, byte-identical (`cp` + `diff`).
 
 ## Generated (do NOT hand-edit — regenerate instead)
 
-- `data.json` — rendered content of the `data.json` ConfigMap key, `templates/opa/opa.yaml:115-116` (`{{ dict "seed_grants" $opa.grants "requires_approval" ... | toJson }}`).
-- `governance.json` — rendered content of the `governance.json` ConfigMap key, `templates/opa/opa.yaml:124-125` (`{{ dict "governance" $gov | toJson }}`).
+- `data.json` — rendered content of the `data.json` ConfigMap key, `templates/base/opa/opa.yaml:115-116` (`{{ dict "seed_grants" $opa.grants "requires_approval" ... | toJson }}`).
+- `governance.json` — rendered content of the `governance.json` ConfigMap key, `templates/base/opa/opa.yaml:124-125` (`{{ dict "governance" $gov | toJson }}`).
 
 ### Regenerate
 
 ```
 helm dependency build charts/sovereign-agentic-os
-helm template agentic-os charts/sovereign-agentic-os -f values.selfcontained.yaml --show-only templates/opa/opa.yaml
+helm template agentic-os charts/sovereign-agentic-os -f values.selfcontained.yaml --show-only templates/base/opa/opa.yaml
 ```
 
 Then copy the `data.json: |` / `governance.json: |` block's content (de-indented) verbatim into the matching file here — **nothing else**, see below.
