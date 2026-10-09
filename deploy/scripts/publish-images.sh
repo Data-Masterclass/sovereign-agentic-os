@@ -83,8 +83,7 @@ done
 
 # Special build contexts (mirror scripts/build-images.sh). The OS UI now builds
 # from the repo root so it can bake in docs/components/* for the native
-# Components surface. admin-console is DEPRECATED (its function is native to the
-# OS UI) — build it only for the legacy standalone service.
+# Components surface.
 for spec in \
   "dagster:0.2.0:REPLACE-DAGSTER-DIGEST:-f images/dagster/Dockerfile images/" \
   "os-ui:0.1.0:REPLACE-OS-UI-DIGEST:-f images/os-ui/Dockerfile ."

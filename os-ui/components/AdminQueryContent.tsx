@@ -6,9 +6,9 @@
 /**
  * AdminQueryContent — the inner query UI (Lakehouse SQL + Cube semantic layer).
  *
- * Extracted from app/admin-query/page.tsx so it can be embedded in the Console
+ * Extracted from the former admin-query page so it can be embedded in the Console
  * page (/console) without a duplicate page header. The standalone /admin-query
- * route redirects to /console; this component hosts the actual query logic.
+ * route has been removed; this component hosts the actual query logic.
  *
  * Access: builder+ for Lakehouse SQL (runs under the CALLER's own Trino OPA
  * principal — governed per-caller, not a bypass). The Cube semantic-layer mode is

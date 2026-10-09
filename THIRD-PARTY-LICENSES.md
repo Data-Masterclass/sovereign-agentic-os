@@ -130,7 +130,7 @@ Licenses in use and their bundled full text:
 
 > Our own images (`sovereign-os/*`: mock-model, sample-agent, poet-agent,
 > haystack-retriever, query-tool, dbt, dagster, superset, egress-proxy, web-fetch,
-> admin-console, os-ui, ci-builder) are **Borek Data Ventures UG** code under
+> os-ui, ci-builder) are **Borek Data Ventures UG** code under
 > **Apache-2.0** (`LICENSE`) and carry SPDX headers.
 
 ---

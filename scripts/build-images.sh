@@ -53,9 +53,7 @@ docker build -q -f images/extensions/dagster/Dockerfile -t sovereign-os/dagster:
 kind load docker-image sovereign-os/dagster:0.2.0 --name "$CLUSTER" >/dev/null 2>&1 || true
 
 # OS UI needs the repo root as context (it COPYs os-ui/ + bakes in docs/components
-# for the native Components surface). The standalone admin-console image is
-# DEPRECATED — its functionality now lives natively in the OS UI; build it only
-# if you explicitly want the legacy standalone service.
+# for the native Components surface).
 echo "==> building sovereign-os/os-ui:0.1.0 (context=repo root)"
 docker build -q -t sovereign-os/os-ui:0.1.0 -f images/base/os-ui/Dockerfile . >/dev/null
 kind load docker-image sovereign-os/os-ui:0.1.0 --name "$CLUSTER" >/dev/null 2>&1 || true
