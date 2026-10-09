@@ -1,11 +1,14 @@
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
-import bundleAnalyzer from '@next/bundle-analyzer';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// #28 DoD check: ANALYZE=true npm run build opens the bundle report.
-const withBundleAnalyzer = bundleAnalyzer({ enabled: process.env.ANALYZE === 'true' });
+// #28 DoD check: ANALYZE=true npm run build opens the bundle report. Loaded only
+// then, so a devDependency-free install (production image) never needs the package.
+const withBundleAnalyzer =
+  process.env.ANALYZE === 'true'
+    ? (await import('@next/bundle-analyzer')).default({ enabled: true })
+    : (config) => config;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
