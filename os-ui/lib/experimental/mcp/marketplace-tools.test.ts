@@ -4,9 +4,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
-import { handleRpc, ALL_MCP_TOOLS, toolsForTab, type JsonRpcResponse, type ToolError } from './server.ts';
-import { ALL_WRITE_TOOLS } from './write-tools.ts';
+import { handleRpc, toolsForTab, type JsonRpcResponse, type ToolError, type McpTool } from '@/lib/mcp/server.ts';
+import { governanceTools } from '@/lib/mcp/governance-tools.ts';
+import { marketplaceReadTools, marketplaceWriteTools } from './marketplace-tools.ts';
 import { __resetMarketplace, mockCatalog } from '@/lib/experimental/marketplace/store';
+
+/** This bundle's own tools, tested directly (not via the global, flag-gated
+ *  ALL_MCP_TOOLS) so this test never depends on whether OS_ENABLED_TABS
+ *  happens to include 'marketplace' in the process running it. governanceTools
+ *  is base (always registered) and is only needed here for import_product,
+ *  which also surfaces on the marketplace tab (extraTabs). */
+const TEST_TOOLS: McpTool[] = [...marketplaceReadTools, ...marketplaceWriteTools, ...governanceTools];
 
 /** Seed one certified listing into the offline mock catalogue (fresh tenant = empty). */
 const LISTING_ID = 'mkt_test_ds';
@@ -41,7 +49,7 @@ function seedListing(): string {
 const salesCreator: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' };
 
 async function call(user: CurrentUser, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-  const res = await handleRpc(user, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+  const res = await handleRpc(user, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, { tools: TEST_TOOLS });
   assert.ok(res && 'result' in res, `expected a result for ${name}`);
   return (res as JsonRpcResponse).result as Record<string, unknown>;
 }
@@ -55,9 +63,9 @@ function errorOf(r: Record<string, unknown>): ToolError {
 }
 
 test('MARKETPLACE registry: browse/get read at creator, rate is a creator write, all under marketplace tab', () => {
-  const byName = new Map(ALL_MCP_TOOLS.map((t) => [t.name, t]));
-  const writeNames = new Set(ALL_WRITE_TOOLS.map((t) => t.name));
-  const tabNames = new Set(toolsForTab('marketplace').map((t) => t.name));
+  const byName = new Map(TEST_TOOLS.map((t) => [t.name, t]));
+  const writeNames = new Set(marketplaceWriteTools.map((t) => t.name));
+  const tabNames = new Set(toolsForTab('marketplace', TEST_TOOLS).map((t) => t.name));
   for (const n of ['browse_marketplace', 'get_listing', 'rate_listing']) {
     const t = byName.get(n)!;
     assert.ok(t, `${n} registered`);
@@ -67,7 +75,7 @@ test('MARKETPLACE registry: browse/get read at creator, rate is a creator write,
     assert.ok((t.inputSchema.examples ?? []).length >= 1, `${n} carries a worked example`);
   }
   assert.ok(!writeNames.has('browse_marketplace') && !writeNames.has('get_listing'), 'browse/get are read-only');
-  assert.ok(writeNames.has('rate_listing'), 'rate_listing in ALL_WRITE_TOOLS');
+  assert.ok(writeNames.has('rate_listing'), 'rate_listing in marketplaceWriteTools');
   // import_product (P0) also rides the marketplace tab.
   assert.ok(tabNames.has('import_product'), 'import_product surfaces on marketplace');
 });

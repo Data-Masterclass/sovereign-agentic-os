@@ -11,8 +11,9 @@ import { applyEffect } from '@/lib/governance/effects';
 import { buildEffectDeps, fileArtifactCertification, isLadderKind, type LadderKind } from '@/lib/governance/ladder';
 import { remember } from '@/lib/governance/standing';
 import { record as audit } from '@/lib/governance/audit';
-import { getLineage } from '@/lib/experimental/lineage/unified';
-import { importAdapter } from '@/lib/experimental/marketplace';
+// getLineage and importAdapter are dynamically imported at their call sites
+// below, not statically here, so they don't bundle experimental code into
+// the base build.
 import type { ImportMode } from '@/lib/experimental/marketplace/types';
 import { canViewPolicyPlane, consolidatedPlane, listEgress, policySources } from '@/lib/governance/policy-view';
 import { listStanding } from '@/lib/governance/standing';
@@ -239,6 +240,7 @@ export const governanceTools: McpTool[] = [
     call: async (user, args) => {
       const ref = str(args.ref).trim();
       if (!ref) fail('get_lineage needs a `ref` (e.g. "dataset:ds_ab12cd")', 400);
+      const { getLineage } = await import('@/lib/experimental/lineage/unified');
       return getLineage(ref, user);
     },
   },
@@ -262,6 +264,7 @@ export const governanceTools: McpTool[] = [
       if (!listingId) fail('import_product needs a `listingId`', 400);
       const mode = (str(args.mode) || undefined) as ImportMode | undefined;
       const viewer = { id: user.id, domains: user.domains, role: user.role };
+      const { importAdapter } = await import('@/lib/experimental/marketplace');
       const result = await importAdapter.import(listingId, viewer, mode);
       if (result.pending) {
         // Approval-policy import → the canonical pending handle (the owner domain decides).
@@ -336,3 +339,11 @@ export const governanceTools: McpTool[] = [
     },
   },
 ];
+
+// governanceTools minus import_product (tab: 'marketplace', moves out later).
+export const governanceBaseTools: McpTool[] = governanceTools.filter((t) => t.tab === 'governance');
+
+// #28: import_product stays in this file (its dynamic-import fix lives here),
+// but it's tab:'marketplace' (non-base) so it registers via the marketplace
+// bundle, not the always-on governance-base one.
+export const governanceMarketplaceTools: McpTool[] = governanceTools.filter((t) => t.tab === 'marketplace');

@@ -3,6 +3,13 @@ import { dirname } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// #28 DoD check: ANALYZE=true npm run build opens the bundle report. Loaded only
+// then, so a devDependency-free install (production image) never needs the package.
+const withBundleAnalyzer =
+  process.env.ANALYZE === 'true'
+    ? (await import('@next/bundle-analyzer')).default({ enabled: true })
+    : (config) => config;
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Self-contained production server for the Docker image (copies only the
@@ -38,4 +45,4 @@ const nextConfig = {
   // server-side API routes. Nothing here is a NEXT_PUBLIC_* var by design.
 };
 
-export default nextConfig;
+export default withBundleAnalyzer(nextConfig);

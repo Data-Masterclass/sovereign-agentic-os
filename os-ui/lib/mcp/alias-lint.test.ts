@@ -21,6 +21,14 @@ import assert from 'node:assert/strict';
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
 import { ALL_MCP_TOOLS } from './server.ts';
+import { strategyReadTools, strategyWriteTools } from '@/lib/experimental/mcp/strategy-tools.ts';
+import { marketplaceReadTools, marketplaceWriteTools } from '@/lib/experimental/mcp/marketplace-tools.ts';
+
+// ALL_MCP_TOOLS only carries non-base bundles whose feature flag is on in THIS
+// process. This lint checks tool descriptions, not registration state, so it
+// supplements ALL_MCP_TOOLS with the bundles being flag-gated directly —
+// otherwise the "pillar" family (strategy) would look like it vanished.
+const CHECK_TOOLS = [...ALL_MCP_TOOLS, ...strategyReadTools, ...strategyWriteTools, ...marketplaceReadTools, ...marketplaceWriteTools];
 
 // ─── Approved alias map ────────────────────────────────────────────────────────
 // key = family label; value = aliases that MUST appear in the family's primary
@@ -113,7 +121,7 @@ test('alias-lint: no alias appears in two different family parentheticals', () =
 
   for (const [family, toolNames] of Object.entries(FAMILY_PRIMARY_TOOLS)) {
     for (const toolName of toolNames) {
-      const tool = ALL_MCP_TOOLS.find((t) => t.name === toolName);
+      const tool = CHECK_TOOLS.find((t) => t.name === toolName);
       if (!tool) continue; // handled separately in assertion B
       const tokens = extractAliasTokens(tool.description);
       for (const token of tokens) {
@@ -135,7 +143,7 @@ test("alias-lint: every approved alias appears in its family's primary tool desc
     // Gather all alias tokens across ALL primary tools for this family.
     const foundTokens = new Set<string>();
     for (const toolName of toolNames) {
-      const tool = ALL_MCP_TOOLS.find((t) => t.name === toolName);
+      const tool = CHECK_TOOLS.find((t) => t.name === toolName);
       assert.ok(tool, `Family "${family}": primary tool "${toolName}" not found in ALL_MCP_TOOLS — was it renamed?`);
       for (const token of extractAliasTokens(tool.description)) {
         foundTokens.add(token);

@@ -3,11 +3,11 @@
  */
 import 'server-only';
 import { ALL_MCP_TOOLS, roleCanUse, type ToolTab } from '@/lib/mcp/server';
-import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
+import { WRITE_TOOL_NAMES } from '@/lib/mcp/write-tool-meta';
 import type { Role } from '@/lib/core/session';
 
 /** Write-tool names — these are state-modifying calls that may be held by Governance. */
-const WRITE_NAMES = new Set(ALL_WRITE_TOOLS.map((t) => t.name));
+const WRITE_NAMES = WRITE_TOOL_NAMES;
 
 export type CatalogEntry = {
   name: string;
@@ -16,7 +16,7 @@ export type CatalogEntry = {
   description: string;
   /**
    * True when the tool is a write operation that the Governance queue may hold for
-   * human approval when called by an agent (i.e. it is in ALL_WRITE_TOOLS). The
+   * human approval when called by an agent (i.e. it is in WRITE_TOOL_NAMES). The
    * `grantedToolExecutor` enforces this at runtime; this field lets the UI surface
    * a "needs approval" badge so the system author can set expectations.
    */

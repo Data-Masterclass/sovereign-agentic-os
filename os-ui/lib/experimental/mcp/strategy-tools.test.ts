@@ -4,10 +4,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
-import { handleRpc, ALL_MCP_TOOLS, toolsForTab, type JsonRpcResponse, type ToolError } from './server.ts';
-import { ALL_WRITE_TOOLS } from './write-tools.ts';
+import { handleRpc, toolsForTab, type JsonRpcResponse, type ToolError, type McpTool } from '@/lib/mcp/server.ts';
+import { strategyReadTools, strategyWriteTools } from './strategy-tools.ts';
 import { __resetForTests as resetPillars } from '@/lib/experimental/strategy/pillars';
 import { STUB_BET_CATALOGUE } from '@/lib/experimental/strategy/bets-bridge';
+
+/** This bundle's own tools, tested directly (not via the global, flag-gated
+ *  ALL_MCP_TOOLS) so this test never depends on whether OS_ENABLED_TABS
+ *  happens to include 'strategy' in the process running it. */
+const TEST_TOOLS: McpTool[] = [...strategyReadTools, ...strategyWriteTools];
 
 /**
  * STRATEGY SURFACE (mcp-v2 P2) — six THIN wrappers over lib/strategy/*, driven
@@ -21,7 +26,7 @@ const salesCreator: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales']
 const financeBuilder: CurrentUser = { id: 'fin', name: 'Fin', domains: ['finance'], role: 'builder' };
 
 async function call(user: CurrentUser, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-  const res = await handleRpc(user, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+  const res = await handleRpc(user, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, { tools: TEST_TOOLS });
   assert.ok(res && 'result' in res, `expected a result for ${name}`);
   return (res as JsonRpcResponse).result as Record<string, unknown>;
 }
@@ -54,9 +59,9 @@ const BUILDER_WRITE = [
 const READ = ['list_pillars', 'get_pillar'];
 
 test('STRATEGY registry: tools present, exampled, floored, and W-classified under the strategy tab', () => {
-  const byName = new Map(ALL_MCP_TOOLS.map((t) => [t.name, t]));
-  const writeNames = new Set(ALL_WRITE_TOOLS.map((t) => t.name));
-  const tabNames = new Set(toolsForTab('strategy').map((t) => t.name));
+  const byName = new Map(TEST_TOOLS.map((t) => [t.name, t]));
+  const writeNames = new Set(strategyWriteTools.map((t) => t.name));
+  const tabNames = new Set(toolsForTab('strategy', TEST_TOOLS).map((t) => t.name));
   for (const n of READ) {
     const t = byName.get(n)!;
     assert.ok(t, `${n} registered`);
@@ -72,7 +77,7 @@ test('STRATEGY registry: tools present, exampled, floored, and W-classified unde
     assert.equal(t.minRole, floor, `${n} floors at ${floor}`);
     assert.equal(t.tab, 'strategy', `${n} is on the strategy tab`);
     assert.ok(tabNames.has(n), `${n} surfaces on the strategy tab`);
-    assert.ok(writeNames.has(n), `${n} in ALL_WRITE_TOOLS (W-classified)`);
+    assert.ok(writeNames.has(n), `${n} in strategyWriteTools (W-classified)`);
     assert.ok((t.inputSchema.examples ?? []).length >= 1, `${n} carries a worked example`);
     assert.ok(t.description.length > 200, `${n} carries a rich description`);
   };

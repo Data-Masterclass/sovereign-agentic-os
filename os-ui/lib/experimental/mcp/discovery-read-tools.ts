@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import type { McpTool, JsonSchema } from './server';
+import type { McpTool, JsonSchema } from '@/lib/mcp/server';
 import {
   P, fail, str, strArr, NO_ARGS, idArg, resolveQueryable,
   type Principal,
@@ -19,7 +19,6 @@ import { listDashboards, getDashboard } from '@/lib/experimental/dashboards/stor
 import { normalizePanel, panelMetrics } from '@/lib/experimental/dashboards/model';
 import { listBets, getSolution } from '@/lib/experimental/bigbets/store';
 import { buildBetView } from '@/lib/experimental/bigbets/server';
-import { getSystem } from '@/lib/agents/store';
 import {
   listAppsForUser,
   getAppForUser,
@@ -413,19 +412,7 @@ export const readTools: McpTool[] = [
     inputSchema: NO_ARGS,
     call: async (user) => listBets(P(user)),
   },
-  {
-    name: 'get_agent_system',
-    tab: 'agents',
-    minRole: 'creator',
-    description:
-      'Read one agent system (also called: AI team, assistant team) you can see — system.yaml, agents, grants, status. Path: DISCOVERY for the Agents golden path (guide: sovereign-os://guide/path/agents). Before: list_agent_systems. After: commit_agent_files / build_agent_system. Governance: read-only; unseeable id → not_found.',
-    inputSchema: idArg('systemId', 'System id from list_agent_systems.'),
-    call: async (user, args) => {
-      const id = str(args.systemId).trim();
-      if (!id) fail('get_agent_system needs a `systemId`', 400);
-      return getSystem(id, P(user));
-    },
-  },
+  // get_agent_system moved to discovery-base-tools.ts (tab: 'agents' is base).
   {
     name: 'list_software',
     tab: 'software',

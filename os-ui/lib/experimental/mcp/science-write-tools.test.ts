@@ -4,8 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
-import { handleRpc, ALL_MCP_TOOLS, type JsonRpcResponse, type ToolError } from './server.ts';
-import { ALL_WRITE_TOOLS } from './write-tools.ts';
+import { handleRpc, ALL_MCP_TOOLS, type JsonRpcResponse, type ToolError } from '@/lib/mcp/server.ts';
+import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools.ts';
 import { config } from '@/lib/core/config';
 import { __resetStore as resetData } from '@/lib/experimental/data/store';
 import { _resetModels, getModel, trainTrackAdapter, deployAdapter } from '@/lib/experimental/science';
