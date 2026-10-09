@@ -12,8 +12,9 @@ embeddings, so no Kubernetes cluster and no model API key are needed.
 | Application | `os-ui` | Front door | Always |
 | Application | `agent-runtime` | Executes agent systems | Always |
 | Application | `litellm` | Model / MCP gateway | `litellm-local` |
-| Application | `mock-model` | Chat + embeddings stub | Always |
+| Application | `mock-model` | Chat + embeddings stub | `mock` |
 | Application | `opa` | Policy gate | Always |
+| Application | `query-tool` | MCP-over-HTTP SQL tool LiteLLM points at (no Trino in base) | Always |
 | Application | `forgejo-http` | Git server | Always |
 | Application | `langfuse-web` | Trace UI + API | `langfuse-local` |
 | Application | `langfuse-worker` | Trace processing | `langfuse-local` |
@@ -62,7 +63,7 @@ whether or not `litellm-local` is active.
 
 | Setting | Controls |
 |---|---|
-| Compose profile | Which local containers start (`postgres-local`, `litellm-local`, `langfuse-local`), set via `COMPOSE_PROFILES` in `.env`. |
+| Compose profile | Which local containers start (`mock`, `postgres-local`, `litellm-local`, `langfuse-local`), set via `COMPOSE_PROFILES` in `.env`. |
 | Env var | What an app connects to (e.g. `OS_UI_LITELLM_URL`, `LITELLM_LANGFUSE_HOST`), each `${VAR:-default}` in `compose.yaml`. |
 
 ## How to run externally
@@ -94,7 +95,7 @@ dashboard, go to Virtual Keys, create a key, and put its value in
 LiteLLM runs on your deployed instance. Postgres and Langfuse stay local.
 
 ```
-COMPOSE_PROFILES=postgres-local,langfuse-local                 # drop litellm-local
+COMPOSE_PROFILES=mock,postgres-local,langfuse-local            # drop litellm-local
 PROXY_MASTER_KEY=<the deployed instance's real master key>     # os-ui's admin key
 LITELLM_AGENT_KEY=sk-agents-local-dev                           # must match the key you create above
 OS_UI_LITELLM_URL=https://litellm.example.com                   # os-ui -> LiteLLM
@@ -114,7 +115,7 @@ AGENT_RUNTIME_EXECUTION_MODEL=<a model your instance serves>
 Langfuse runs on your deployed instance. LiteLLM (with mock-model) stays local.
 
 ```
-COMPOSE_PROFILES=postgres-local,litellm-local                 # drop langfuse-local
+COMPOSE_PROFILES=mock,postgres-local,litellm-local            # drop langfuse-local
 OS_UI_LANGFUSE_URL=https://langfuse.example.com                # os-ui -> Langfuse
 LITELLM_LANGFUSE_HOST=https://langfuse.example.com             # LiteLLM's trace callback -> Langfuse
 LANGFUSE_INIT_PROJECT_PUBLIC_KEY=pk-...   # the deployed project's real key pair
@@ -131,22 +132,22 @@ An external LiteLLM writes those traces to its own Langfuse instead - your
 local Langfuse then shows only os-ui's agent spans (`agent.generate`,
 `agent.search_knowledge`), not the model prompt or completion.
 
-### Use a real model through the local LiteLLM
+### Model providers: `mock`, `openai`, `stackit`
 
-Keeps LiteLLM local but points it at a real provider, so you get real model
-answers and still get full trace detail in the local Langfuse. This is the
-same arrangement the deployed Helm environment uses.
+LiteLLM stays local in every mode, so you keep full trace detail in the local
+Langfuse. The provider is chosen by two settings in `.env`: `COMPOSE_PROFILES`
+(whether `mock-model` runs) and `LITELLM_CONFIG` (which file in
+`compose/litellm/` LiteLLM loads). The alias names stay `sovereign-*` in all
+three, so the model-name variables never need overriding.
 
-In `compose/litellm/config.yaml`, the three chat aliases (`sovereign-default`,
-`sovereign-mock`, `sovereign-reasoning`) each have a commented real-provider
-block - replace the active values with those, filling in the provider's URL
-and model names. In `.env`, uncomment `STACKIT_API_KEY` and set it to the
-provider's key. Nothing else changes: `COMPOSE_PROFILES` stays as it is, and
-the six model-name variables above don't need overriding, because the alias
-names stay `sovereign-*` and the local LiteLLM handles the translation.
+| Provider | `LITELLM_CONFIG` | `COMPOSE_PROFILES` | Also set |
+|---|---|---|---|
+| `mock` (default, offline) | `config.mock.yaml` | includes `mock` | nothing |
+| `openai` | `config.openai.yaml` | **without** `mock` | `OPENAI_API_KEY` |
+| `stackit` | `config.stackit.yaml` | includes `mock` (embeddings use the stub, as in the Helm chart) | `STACKIT_API_BASE`, `STACKIT_API_KEY` |
 
-The stack is no longer offline in this mode. The committed default routes to
-`mock-model`, so the offline path keeps working.
+Run `docker compose down` before switching. The stack is not offline in the
+`openai` and `stackit` modes; the default routes everything to `mock-model`.
 
 ## Testing the flow
 
@@ -178,7 +179,7 @@ The stack is no longer offline in this mode. The committed default routes to
 - Using a deployed LiteLLM reduces local trace detail (see How to run
   externally).
 - `mock-model` always answers with the same deterministic stub. To use a
-  real model, see Use a real model through the local LiteLLM.
+  real model, see Model providers.
 - The Helm chart deploys 47 workloads. This stack covers 17 of them - the 15
   services listed at the top, since LiteLLM and Forgejo each account for two
   chart workloads. 30 are not included.

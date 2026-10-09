@@ -1,0 +1,51 @@
+# LiteLLM proxy config for the Compose `stackit` profile. See compose/README.md.
+# Needs STACKIT_API_BASE and STACKIT_API_KEY in .env. Mirrors the Helm chart's
+# model list. Embeddings stay on mock-model (as in the chart), so keep the
+# `mock` profile enabled too.
+
+model_list:
+  - model_name: sovereign-default
+    litellm_params:
+      model: openai/gpt-oss-20b
+      api_base: os.environ/STACKIT_API_BASE
+      api_key: os.environ/STACKIT_API_KEY
+
+  - model_name: sovereign-mock
+    litellm_params:
+      model: openai/gpt-oss-20b
+      api_base: os.environ/STACKIT_API_BASE
+      api_key: os.environ/STACKIT_API_KEY
+
+  - model_name: sovereign-reasoning
+    litellm_params:
+      model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+      api_base: os.environ/STACKIT_API_BASE
+      api_key: os.environ/STACKIT_API_KEY
+      timeout: 300
+
+  - model_name: sovereign-embed          # as in the Helm chart: no real embedder wired
+    litellm_params:
+      model: openai/mock-embed
+      api_base: http://mock-model:8080/v1
+      api_key: "sk-mock-unused"
+
+router_settings:
+  routing_strategy: simple-shuffle        # load-balance across healthy deployments
+  num_retries: 3                          # retry transient failures before failover
+  timeout: 120                            # per-request timeout (s)
+  allowed_fails: 3                        # circuit-breaking: trip after N fails...
+  cooldown_time: 60                       # ...then cool the deployment down (s)
+
+litellm_settings:
+  success_callback: ["langfuse"]          # gateway-level tracing to Langfuse
+  drop_params: true
+
+general_settings:
+  master_key: os.environ/PROXY_MASTER_KEY
+  store_model_in_db: true
+
+mcp_servers:
+  sovereign_query:
+    url: "http://query-tool:8000/mcp"
+    transport: "http"
+    description: "Governed SQL over the lakehouse marts via central Trino (row/column governed)"

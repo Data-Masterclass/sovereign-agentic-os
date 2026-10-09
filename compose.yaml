@@ -7,12 +7,77 @@
 # the local container but does not repoint anything — see compose/README.md's
 # "External mode" section for what to change together.
 #
-# Applications (os-ui, agent-runtime, mock-model, opa, forgejo-http,
+# Applications (os-ui, agent-runtime, query-tool, opa, forgejo-http,
 # forgejo-init) carry no profile — they always run.
 #
 # Usage:
 #   cp .env.example .env
 #   docker compose up -d
+
+# Env shared by langfuse-web and langfuse-worker. web adds PORT/NODE_OPTIONS;
+# the worker sets no PORT -- its image defaults to 3030 on its own.
+x-langfuse-env: &langfuse-env
+  NODE_ENV: production
+  LANGFUSE_LOG_LEVEL: info
+  LANGFUSE_LOG_FORMAT: text
+  SALT: ${LANGFUSE_SALT:-sovereign-os-local-dev-salt}
+  ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90}
+  TELEMETRY_ENABLED: "false"
+  AUTH_DISABLE_SIGNUP: "false"
+  ENABLE_EXPERIMENTAL_FEATURES: "false"
+  # 3002, not the chart's port-forward default of 3000 -- os-ui already
+  # owns 3000 and Forgejo owns 3001.
+  NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3002}
+  NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-sovereign-os-local-dev-nextauth-secret}
+  DATABASE_HOST: ${POSTGRES_HOST:-pg-rw}
+  DATABASE_PORT: "5432"
+  DATABASE_USERNAME: ${LANGFUSE_DB_USER:-langfuse}
+  DATABASE_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse-local-dev}
+  DATABASE_NAME: langfuse
+  LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED: "false"
+  REDIS_TLS_ENABLED: "false"
+  REDIS_CONNECTION_STRING: redis://default:${VALKEY_PASSWORD:-valkey-local-dev}@valkey:6379/0
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_MIGRATION_SSL: "false"
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_DB: langfuse
+  CLICKHOUSE_USER: langfuse
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse-local-dev}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED: "false"
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_BATCH_EXPORT_ENABLED: "true"
+  LANGFUSE_S3_BATCH_EXPORT_BUCKET: langfuse
+  LANGFUSE_S3_BATCH_EXPORT_REGION: us-east-1
+  LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
+  LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
+  LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_MAX_CONTENT_LENGTH: "1e+09"
+  LANGFUSE_S3_MEDIA_UPLOAD_DOWNLOAD_URL_EXPIRY_SECONDS: "3600"
+  LANGFUSE_S3_CONCURRENT_READS: "50"
+  LANGFUSE_S3_CONCURRENT_WRITES: "50"
+  HOSTNAME: "0.0.0.0"
+  LANGFUSE_INIT_ORG_ID: sovereign-os
+  LANGFUSE_INIT_ORG_NAME: Sovereign Agentic OS
+  LANGFUSE_INIT_PROJECT_ID: agent-core
+  LANGFUSE_INIT_PROJECT_NAME: Agent Core
+  LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-localdev0000public}
+  LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-localdev0000secret}
+  LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-alex@datamasterclass.com}
+  LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Alex}
+  LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-langfuse-local-dev-admin}
 
 services:
   # Postgres for LiteLLM + Langfuse. Only those two databases are created —
@@ -44,8 +109,11 @@ services:
   # Local OpenAI-compatible stub serving chat + embeddings, so the whole
   # stack runs offline with no model API key.
   mock-model:
+    # `mock` profile (default). Drop it for the openai profile; keep it for
+    # stackit, whose embeddings still use the stub (see compose/README.md).
+    profiles: ["mock"]
     build:
-      context: ./images/mock-model
+      context: ./images/base/mock-model
     environment:
       PYTHONUNBUFFERED: "1"
     healthcheck:
@@ -67,7 +135,7 @@ services:
     image: ghcr.io/berriai/litellm-database:1.90.0
     command: ["--port", "4000", "--config", "/etc/litellm/config.yaml"]
     volumes:
-      - ./compose/litellm/config.yaml:/etc/litellm/config.yaml:ro
+      - ./compose/litellm/${LITELLM_CONFIG:-config.mock.yaml}:/etc/litellm/config.yaml:ro
     environment:
       PROXY_MASTER_KEY: ${PROXY_MASTER_KEY:-sk-litellm-local-dev-master}
       # Written out literally: Compose has no equivalent of the Kubernetes
@@ -77,9 +145,11 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-localdev0000public}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-localdev0000secret}
       LANGFUSE_HOST: ${LITELLM_LANGFUSE_HOST:-http://agentic-os-langfuse-web:3000}
-      # Only read when config.yaml's chat aliases are switched to the
-      # commented real-provider block; unused by the mock-model default.
+      # Read only by config.openai.yaml / config.stackit.yaml (see
+      # LITELLM_CONFIG in .env.example); unused by the mock default.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       STACKIT_API_KEY: ${STACKIT_API_KEY:-}
+      STACKIT_API_BASE: ${STACKIT_API_BASE:-}
     ports:
       - "4000:4000"
     networks:
@@ -90,6 +160,9 @@ services:
       pg-rw:
         condition: service_healthy
       mock-model:
+        condition: service_healthy
+        required: false          # absent when the `mock` profile is off
+      query-tool:
         condition: service_healthy
     healthcheck:
       test:
@@ -211,7 +284,7 @@ services:
   # LiteLLM key and never calls OPA directly; only os-ui does, on its behalf.
   agent-runtime:
     build:
-      context: ./images/agent-runtime
+      context: ./images/base/agent-runtime
     environment:
       PORT: "8000"
       PYTHONUNBUFFERED: "1"
@@ -256,7 +329,7 @@ services:
   os-ui:
     build:
       context: .
-      dockerfile: images/os-ui/Dockerfile
+      dockerfile: images/base/os-ui/Dockerfile
     ports:
       - "3000:3000"
     environment:
@@ -307,6 +380,25 @@ services:
       forgejo-http:
         condition: service_healthy
 
+  # Generic MCP-over-HTTP path (litellm mcp_servers.sovereign_query -> http://query-tool:8000/mcp)
+  query-tool:
+    build:
+      context: ./images/extensions/query-tool
+    environment:
+      PORT: "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
   # Langfuse's analytics store.
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
@@ -353,7 +445,9 @@ services:
 
   # Langfuse's S3-compatible blob store.
   minio:
-    image: minio/minio@sha256:8834ae47a2de3509b83e0e70da9369c24bbbc22de42f2a2eddc530eee88acd1b
+    # minio/minio is no longer published on Docker Hub/Quay.
+    # Chainguard's community build; the -dev tag ships wget for the healthcheck.
+    image: cgr.dev/chainguard/minio:latest-dev
     profiles: ["langfuse-local"]
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -362,7 +456,7 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/ready"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/ready"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -389,71 +483,9 @@ services:
     image: langfuse/langfuse:3.194.1
     profiles: ["langfuse-local"]
     environment:
-      NODE_ENV: production
-      LANGFUSE_LOG_LEVEL: info
-      LANGFUSE_LOG_FORMAT: text
-      SALT: ${LANGFUSE_SALT:-sovereign-os-local-dev-salt}
-      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90}
-      TELEMETRY_ENABLED: "false"
-      AUTH_DISABLE_SIGNUP: "false"
-      ENABLE_EXPERIMENTAL_FEATURES: "false"
-      # 3002, not the chart's port-forward default of 3000 -- os-ui already
-      # owns 3000 and Forgejo owns 3001.
-      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3002}
-      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-sovereign-os-local-dev-nextauth-secret}
-      DATABASE_HOST: ${POSTGRES_HOST:-pg-rw}
-      DATABASE_PORT: "5432"
-      DATABASE_USERNAME: ${LANGFUSE_DB_USER:-langfuse}
-      DATABASE_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse-local-dev}
-      DATABASE_NAME: langfuse
-      LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED: "false"
-      REDIS_TLS_ENABLED: "false"
-      REDIS_CONNECTION_STRING: redis://default:${VALKEY_PASSWORD:-valkey-local-dev}@valkey:6379/0
-      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
-      CLICKHOUSE_MIGRATION_SSL: "false"
-      CLICKHOUSE_URL: http://clickhouse:8123
-      CLICKHOUSE_DB: langfuse
-      CLICKHOUSE_USER: langfuse
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse-local-dev}
-      CLICKHOUSE_CLUSTER_ENABLED: "false"
-      LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED: "false"
-      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
-      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
-      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
-      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
-      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
-      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "true"
-      LANGFUSE_S3_BATCH_EXPORT_BUCKET: langfuse
-      LANGFUSE_S3_BATCH_EXPORT_REGION: us-east-1
-      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://minio:9000
-      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
-      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
-      LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
-      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
-      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
-      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
-      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
-      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
-      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
-      LANGFUSE_S3_MEDIA_UPLOAD_MAX_CONTENT_LENGTH: "1e+09"
-      LANGFUSE_S3_MEDIA_UPLOAD_DOWNLOAD_URL_EXPIRY_SECONDS: "3600"
-      LANGFUSE_S3_CONCURRENT_READS: "50"
-      LANGFUSE_S3_CONCURRENT_WRITES: "50"
+      <<: *langfuse-env
       PORT: "3000"
-      HOSTNAME: "0.0.0.0"
       NODE_OPTIONS: --max-old-space-size=1152
-      # Headless org/project/user bootstrap on first boot (a Langfuse
-      # application convention, not a Compose-specific mechanism).
-      LANGFUSE_INIT_ORG_ID: sovereign-os
-      LANGFUSE_INIT_ORG_NAME: Sovereign Agentic OS
-      LANGFUSE_INIT_PROJECT_ID: agent-core
-      LANGFUSE_INIT_PROJECT_NAME: Agent Core
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-localdev0000public}
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-localdev0000secret}
-      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-alex@datamasterclass.com}
-      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Alex}
-      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-langfuse-local-dev-admin}
     ports:
       - "3002:3000"
     networks:
@@ -480,66 +512,7 @@ services:
     image: langfuse/langfuse-worker:3.194.1
     profiles: ["langfuse-local"]
     environment:
-      NODE_ENV: production
-      LANGFUSE_LOG_LEVEL: info
-      LANGFUSE_LOG_FORMAT: text
-      SALT: ${LANGFUSE_SALT:-sovereign-os-local-dev-salt}
-      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90}
-      TELEMETRY_ENABLED: "false"
-      AUTH_DISABLE_SIGNUP: "false"
-      ENABLE_EXPERIMENTAL_FEATURES: "false"
-      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3002}
-      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-sovereign-os-local-dev-nextauth-secret}
-      DATABASE_HOST: ${POSTGRES_HOST:-pg-rw}
-      DATABASE_PORT: "5432"
-      DATABASE_USERNAME: ${LANGFUSE_DB_USER:-langfuse}
-      DATABASE_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse-local-dev}
-      DATABASE_NAME: langfuse
-      LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED: "false"
-      REDIS_TLS_ENABLED: "false"
-      REDIS_CONNECTION_STRING: redis://default:${VALKEY_PASSWORD:-valkey-local-dev}@valkey:6379/0
-      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
-      CLICKHOUSE_MIGRATION_SSL: "false"
-      CLICKHOUSE_URL: http://clickhouse:8123
-      CLICKHOUSE_DB: langfuse
-      CLICKHOUSE_USER: langfuse
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse-local-dev}
-      CLICKHOUSE_CLUSTER_ENABLED: "false"
-      LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED: "false"
-      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
-      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
-      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
-      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
-      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
-      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "true"
-      LANGFUSE_S3_BATCH_EXPORT_BUCKET: langfuse
-      LANGFUSE_S3_BATCH_EXPORT_REGION: us-east-1
-      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://minio:9000
-      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
-      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
-      LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
-      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
-      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
-      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
-      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-agentic-os-local}
-      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-agentic-os-local-secret}
-      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
-      LANGFUSE_S3_MEDIA_UPLOAD_MAX_CONTENT_LENGTH: "1e+09"
-      LANGFUSE_S3_MEDIA_UPLOAD_DOWNLOAD_URL_EXPIRY_SECONDS: "3600"
-      LANGFUSE_S3_CONCURRENT_READS: "50"
-      LANGFUSE_S3_CONCURRENT_WRITES: "50"
-      HOSTNAME: "0.0.0.0"
-      # No PORT var -- this image defaults to 3030 on its own.
-      LANGFUSE_INIT_ORG_ID: sovereign-os
-      LANGFUSE_INIT_ORG_NAME: Sovereign Agentic OS
-      LANGFUSE_INIT_PROJECT_ID: agent-core
-      LANGFUSE_INIT_PROJECT_NAME: Agent Core
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-localdev0000public}
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-localdev0000secret}
-      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-alex@datamasterclass.com}
-      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Alex}
-      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-langfuse-local-dev-admin}
+      <<: *langfuse-env
     depends_on:
       pg-rw:
         condition: service_healthy

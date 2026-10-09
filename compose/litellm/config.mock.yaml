@@ -2,7 +2,8 @@
 # Mirrors the Helm chart's litellm.proxy_config, with one deliberate
 # divergence: sovereign-default/-mock/-reasoning point at the local
 # mock-model stub instead of the chart's STACKIT endpoint, so the stack runs
-# fully offline with no API key. Each has a commented real-provider variant.
+# fully offline with no API key. Real providers: config.openai.yaml /
+# config.stackit.yaml, selected with LITELLM_CONFIG.
 
 model_list:
   - model_name: sovereign-default
@@ -10,20 +11,12 @@ model_list:
       model: openai/gpt-oss-20b
       api_base: http://mock-model:8080/v1
       api_key: "sk-mock-unused"
-  # Real provider instead of mock-model: replace the three values above with:
-      # model: openai/gpt-4.1-mini
-      # api_base: https://your-gateway.example.com/v1
-      # api_key: os.environ/STACKIT_API_KEY
 
   - model_name: sovereign-mock            # back-compat alias -> worker tier
     litellm_params:
       model: openai/gpt-oss-20b
       api_base: http://mock-model:8080/v1
       api_key: "sk-mock-unused"
-  # Real provider instead of mock-model: replace the three values above with:
-      # model: openai/gpt-4.1-mini
-      # api_base: https://your-gateway.example.com/v1
-      # api_key: os.environ/STACKIT_API_KEY
 
   - model_name: sovereign-reasoning
     litellm_params:
@@ -31,11 +24,6 @@ model_list:
       api_base: http://mock-model:8080/v1
       api_key: "sk-mock-unused"
       timeout: 300
-  # Real provider instead of mock-model: replace the four values above with:
-      # model: openai/gpt-4.1
-      # api_base: https://your-gateway.example.com/v1
-      # api_key: os.environ/STACKIT_API_KEY
-      # timeout: 300
 
   - model_name: sovereign-embed
     litellm_params:
