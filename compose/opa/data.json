@@ -1,0 +1,52 @@
+{
+  "requires_approval": [
+    "connection_crm_write",
+    "knowledge_certify",
+    "notion_create_page"
+  ],
+  "seed_grants": {
+    "agentic-leader-q3-2026": [
+      "query",
+      "metrics",
+      "retrieve"
+    ],
+    "churn-model": [
+      "predict"
+    ],
+    "conn-notion-workspace": [
+      "notion_search",
+      "notion_get_page",
+      "notion_create_page"
+    ],
+    "conn-salesforce-sales-org": [
+      "read_account",
+      "read_opportunity",
+      "update_opportunity_amount"
+    ],
+    "sales-assistant": [
+      "metrics",
+      "retrieve",
+      "connection_crm_read",
+      "connection_crm_write",
+      "write_file",
+      "knowledge_certify",
+      "predict"
+    ],
+    "sovereign-agents": [
+      "rag_search",
+      "llm_generate",
+      "query"
+    ],
+    "sovereign-agents-web": [
+      "rag_search",
+      "llm_generate",
+      "query",
+      "web_fetch"
+    ],
+    "test": [
+      "query",
+      "metrics",
+      "retrieve"
+    ]
+  }
+}

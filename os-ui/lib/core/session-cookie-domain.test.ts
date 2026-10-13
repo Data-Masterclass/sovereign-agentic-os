@@ -70,3 +70,21 @@ test('sessionCookieOptions omits Domain entirely when not derivable (host-only)'
   assert.equal('domain' in opts, false, 'no domain key → host-only cookie, OS login unaffected');
   assert.equal(opts.secure, false);
 });
+
+test('OS_SESSION_COOKIE_INSECURE=true drops Secure in production (plain-http local dev)', () => {
+  const prevEnv = process.env.NODE_ENV;
+  const prevFlag = process.env.OS_SESSION_COOKIE_INSECURE;
+  try {
+    (process.env as Record<string, string>).NODE_ENV = 'production';
+    delete process.env.OS_SESSION_COOKIE_INSECURE;
+    assert.equal(sessionCookieOptions({}).secure, true);
+    process.env.OS_SESSION_COOKIE_INSECURE = 'true';
+    assert.equal(sessionCookieOptions({}).secure, false);
+    // An explicit isProd still wins.
+    assert.equal(sessionCookieOptions({ isProd: true }).secure, true);
+  } finally {
+    (process.env as Record<string, string>).NODE_ENV = prevEnv as string;
+    if (prevFlag === undefined) delete process.env.OS_SESSION_COOKIE_INSECURE;
+    else process.env.OS_SESSION_COOKIE_INSECURE = prevFlag;
+  }
+});
