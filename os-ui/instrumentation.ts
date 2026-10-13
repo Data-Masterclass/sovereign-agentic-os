@@ -44,6 +44,16 @@ export async function register(): Promise<void> {
     process.exit(1);
   }
 
+  // TAB GATING warnings (telemetry only): surface typo'd keys and omissions that would
+  // 404 the landing page / admin UI. Never fails boot.
+  try {
+    const { config } = await import('./lib/core/config.ts');
+    const { enabledTabsWarnings } = await import('./lib/core/tabs.ts');
+    for (const w of enabledTabsWarnings(config.enabledTabs)) console.warn(`[os-ui] OS_ENABLED_TABS: ${w}`);
+  } catch {
+    /* telemetry must never break boot */
+  }
+
   // CROSS-ORIGIN SESSION guard (telemetry only, 0.6.115): deployed apps carry the OS
   // session cookie ONLY when the OS host and the apps domain share one registrable parent
   // domain. If OS_PUBLIC_URL is a real (non-local) https host yet no such parent exists,
