@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { listExposureSets, createExposureSet, type ExposureInput } from '@/lib/connections/exposures';
-import { recompileExposures } from '@/lib/connections/exposure-policy';
+import { listExposureSets, createExposureSet, type ExposureInput } from '@/lib/experimental/connections/exposures';
+import { recompileExposures } from '@/lib/experimental/connections/exposure-policy';
 
 export const dynamic = 'force-dynamic';
 

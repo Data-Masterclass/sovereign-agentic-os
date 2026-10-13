@@ -26,11 +26,11 @@ globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof f
 const { handleRpc } = await import('./server.ts');
 type JsonRpcResponse = import('./server.ts').JsonRpcResponse;
 type ToolError = import('./server.ts').ToolError;
-const { createConnection, __resetConnections } = await import('@/lib/connections/store');
-const { __resetExposures } = await import('@/lib/connections/exposures');
-const { refreshCatalogSnapshot, __resetCatalogSnapshots } = await import('@/lib/connections/warehouse/catalog-snapshot');
-const { setSeed, __resetCatalogClassifications } = await import('@/lib/connections/warehouse/catalog-classification');
-const { __resetStore: resetData } = await import('@/lib/data/store');
+const { createConnection, __resetConnections } = await import('@/lib/experimental/connections/store');
+const { __resetExposures } = await import('@/lib/experimental/connections/exposures');
+const { refreshCatalogSnapshot, __resetCatalogSnapshots } = await import('@/lib/experimental/connections/warehouse/catalog-snapshot');
+const { setSeed, __resetCatalogClassifications } = await import('@/lib/experimental/connections/warehouse/catalog-classification');
+const { __resetStore: resetData } = await import('@/lib/experimental/data/store');
 
 // A platform admin (exposure CRUD, catalog refresh/classify) + a domain admin who shares the
 // exposed domain (adopt) + a builder (denied the admin acts).

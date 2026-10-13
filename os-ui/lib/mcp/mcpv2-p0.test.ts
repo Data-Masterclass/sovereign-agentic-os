@@ -7,12 +7,12 @@ import { execSync } from 'node:child_process';
 import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, type JsonRpcResponse, type ToolError } from './server.ts';
 
-import { __resetStore as resetData } from '@/lib/data/store';
-import { __resetStore as resetKnowledge } from '@/lib/knowledge/store';
-import { __resetStore as resetFiles } from '@/lib/files/store';
-import { __resetDashboards } from '@/lib/dashboards/store';
-import { __resetBets } from '@/lib/bigbets/store';
-import { __resetForTests as resetPillars, createPillar } from '@/lib/strategy/pillars';
+import { __resetStore as resetData } from '@/lib/experimental/data/store';
+import { __resetStore as resetKnowledge } from '@/lib/experimental/knowledge/store';
+import { __resetStore as resetFiles } from '@/lib/experimental/files/store';
+import { __resetDashboards } from '@/lib/experimental/dashboards/store';
+import { __resetBets } from '@/lib/experimental/bigbets/store';
+import { __resetForTests as resetPillars, createPillar } from '@/lib/experimental/strategy/pillars';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
 import { __resetApprovals } from '@/lib/governance/approvals';
 
@@ -217,14 +217,14 @@ test('P0.4 the ladder is the ONLY promotion path: no direct promote/certify/tier
   };
   // fn → the ONLY files allowed to call it (definition + seam + documented cascade).
   const ALLOW: Record<string, string[]> = {
-    promoteConnection: ['lib/connections/store.ts', 'lib/governance/ladder.ts'],
-    publishWorkflow: ['lib/knowledge/store.ts', 'lib/governance/effects.ts'],
-    certifyWorkflow: ['lib/knowledge/store.ts', 'lib/governance/effects.ts'],
-    promoteApp: ['lib/software/apps.ts', 'lib/governance/ladder.ts'],
-    promoteArtifact: ['lib/core/artifacts.ts', 'lib/software/apps.ts', 'lib/governance/ladder.ts'], // apps.ts = documented cascade
-    transitionDashboard: ['lib/dashboards/store.ts', 'lib/governance/effects.ts'],
-    promoteModel: ['lib/science/model-service.ts', 'lib/governance/effects.ts'],
-    certifyModel: ['lib/science/model-service.ts', 'lib/governance/effects.ts'],
+    promoteConnection: ['lib/experimental/connections/store.ts', 'lib/governance/ladder.ts'],
+    publishWorkflow: ['lib/experimental/knowledge/store.ts', 'lib/governance/effects.ts'],
+    certifyWorkflow: ['lib/experimental/knowledge/store.ts', 'lib/governance/effects.ts'],
+    promoteApp: ['lib/experimental/software/apps.ts', 'lib/governance/ladder.ts'],
+    promoteArtifact: ['lib/core/artifacts.ts', 'lib/experimental/software/apps.ts', 'lib/governance/ladder.ts'], // apps.ts = documented cascade
+    transitionDashboard: ['lib/experimental/dashboards/store.ts', 'lib/governance/effects.ts'],
+    promoteModel: ['lib/experimental/science/model-service.ts', 'lib/governance/effects.ts'],
+    certifyModel: ['lib/experimental/science/model-service.ts', 'lib/governance/effects.ts'],
     promoteSystem: ['lib/agents/store.ts', 'lib/governance/effects.ts'], // the fix: agent_system now on the ladder
     // dataset tier relabel (the `transition` alias): only the guarded metrics-govern
     // routes may call it, and ONLY for a NON-materialising asset→product move (they
@@ -365,9 +365,9 @@ test('FIX5 rung intent: publish_knowledge on an already-Shared workflow is a CON
 
 // ===================== TACIT KNOWLEDGE — MCP surface =========================
 
-import { __resetStore as resetKnowledgeForTacit } from '@/lib/knowledge/store';
-import { getTacit } from '@/lib/knowledge/store';
-import { chunkWorkflow } from '@/lib/knowledge/chunk';
+import { __resetStore as resetKnowledgeForTacit } from '@/lib/experimental/knowledge/store';
+import { getTacit } from '@/lib/experimental/knowledge/store';
+import { chunkWorkflow } from '@/lib/experimental/knowledge/chunk';
 
 test('TACIT.1 author_knowledge with per-step tacit persists inline and is parseable', async () => {
   resetAll();

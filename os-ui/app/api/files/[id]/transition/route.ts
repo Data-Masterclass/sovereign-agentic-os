@@ -4,12 +4,12 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/files/server';
-import { transition } from '@/lib/files/store';
-import { reindexById } from '@/lib/files/pipeline-server';
-import { listLineage } from '@/lib/files/lineage';
-import { pushLineage } from '@/lib/files/catalog';
-import type { DataVisibility, Grant, Transition } from '@/lib/data';
+import { requirePrincipal } from '@/lib/experimental/files/server';
+import { transition } from '@/lib/experimental/files/store';
+import { reindexById } from '@/lib/experimental/files/pipeline-server';
+import { listLineage } from '@/lib/experimental/files/lineage';
+import { pushLineage } from '@/lib/experimental/files/catalog';
+import type { DataVisibility, Grant, Transition } from '@/lib/experimental/data';
 
 export const dynamic = 'force-dynamic';
 

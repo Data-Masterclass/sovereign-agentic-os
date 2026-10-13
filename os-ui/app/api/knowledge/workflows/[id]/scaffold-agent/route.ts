@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getWorkflow } from '@/lib/knowledge/store';
-import { scaffoldSystem, type Disposition } from '@/lib/knowledge/agent-scaffold';
+import { getWorkflow } from '@/lib/experimental/knowledge/store';
+import { scaffoldSystem, type Disposition } from '@/lib/experimental/knowledge/agent-scaffold';
 import { createSystem } from '@/lib/agents/store';
 
 export const dynamic = 'force-dynamic';

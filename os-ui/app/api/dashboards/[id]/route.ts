@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/experimental/data/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { ensureHydrated, setDashboardArchived, deleteDashboard, getDashboard, renameDashboard } from '@/lib/dashboards/store';
-import { normalizePanel } from '@/lib/dashboards/model';
+import { ensureHydrated, setDashboardArchived, deleteDashboard, getDashboard, renameDashboard } from '@/lib/experimental/dashboards/store';
+import { normalizePanel } from '@/lib/experimental/dashboards/model';
 
 export const dynamic = 'force-dynamic';
 

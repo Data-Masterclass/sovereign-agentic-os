@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { listReviewCards } from '@/lib/software/review';
+import { listReviewCards } from '@/lib/experimental/software/review';
 import { roleAtLeast } from '@/lib/core/session';
 
 export const dynamic = 'force-dynamic';

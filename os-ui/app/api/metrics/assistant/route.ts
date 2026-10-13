@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { failResponse, runStageAssistant } from '@/lib/assistant/stage-route';
-import { runSuggest } from '@/lib/metrics/suggest-server';
+import { runSuggest } from '@/lib/experimental/metrics/suggest-server';
 
 export const dynamic = 'force-dynamic';
 

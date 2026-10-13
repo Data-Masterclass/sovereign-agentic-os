@@ -5,9 +5,9 @@ import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { Role } from '@/lib/core/session';
 import type { McpTool, JsonSchema } from './server';
-import { getDataset, builtLayerFqn } from '@/lib/data/store';
-import type { Layer } from '@/lib/data';
-import { LAYERS } from '@/lib/data';
+import { getDataset, builtLayerFqn } from '@/lib/experimental/data/store';
+import type { Layer } from '@/lib/experimental/data';
+import { LAYERS } from '@/lib/experimental/data';
 
 export type Principal = { id: string; domains: string[]; role: Role };
 export const P = (u: CurrentUser): Principal => ({ id: u.id, domains: u.domains, role: u.role });

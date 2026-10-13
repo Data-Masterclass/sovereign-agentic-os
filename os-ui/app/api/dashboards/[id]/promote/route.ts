@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getDashboard } from '@/lib/dashboards/store';
+import { getDashboard } from '@/lib/experimental/dashboards/store';
 import { promoteOrRequest } from '@/lib/governance/ladder';
 import { listApprovals } from '@/lib/governance/approvals';
 

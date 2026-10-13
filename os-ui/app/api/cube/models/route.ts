@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
-import { ensureHydrated, listGovernedDatasets } from '@/lib/data/store';
-import { buildCubeModels } from '@/lib/data/cube-models';
+import { ensureHydrated, listGovernedDatasets } from '@/lib/experimental/data/store';
+import { buildCubeModels } from '@/lib/experimental/data/cube-models';
 
 export const dynamic = 'force-dynamic';
 

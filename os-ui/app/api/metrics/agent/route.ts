@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { getDataset } from '@/lib/data/store';
-import { metricAgentMessages, parseMetricProposal } from '@/lib/metrics/agent';
+import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
+import { getDataset } from '@/lib/experimental/data/store';
+import { metricAgentMessages, parseMetricProposal } from '@/lib/experimental/metrics/agent';
 import { assistantComplete, AssistantNotConfiguredError } from '@/lib/assistant/complete';
 
 export const dynamic = 'force-dynamic';

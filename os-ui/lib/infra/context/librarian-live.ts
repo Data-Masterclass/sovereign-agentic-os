@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { embed, type EmbedResult } from '@/lib/knowledge/embed';
+import { embed, type EmbedResult } from '@/lib/experimental/knowledge/embed';
 import type { EmbedFn } from './librarian.ts';
 
 /**

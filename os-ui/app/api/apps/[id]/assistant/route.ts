@@ -3,15 +3,15 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { getAppForUser } from '@/lib/software/apps';
+import { getAppForUser } from '@/lib/experimental/software/apps';
 import { failResponse } from '@/lib/assistant/stage-route';
 import { parseJsonReply } from '@/lib/assistant/json-reply';
 import { assistantComplete } from '@/lib/assistant/complete';
 import { roleModel } from '@/lib/models/roles';
-import { availableContext, type AvailableContext } from '@/lib/software/available-context';
-import { normalizeAssistantReply } from '@/lib/software/assistant-suggestions';
-import { defineContextBlock } from '@/lib/software/define-context';
-import { resolveGrantedContext } from '@/lib/software/grants-context';
+import { availableContext, type AvailableContext } from '@/lib/experimental/software/available-context';
+import { normalizeAssistantReply } from '@/lib/experimental/software/assistant-suggestions';
+import { defineContextBlock } from '@/lib/experimental/software/define-context';
+import { resolveGrantedContext } from '@/lib/experimental/software/grants-context';
 import { CONTEXT_KINDS, type ContextGrants, type ContextKind } from '@/lib/core/context-grants';
 
 export const dynamic = 'force-dynamic';

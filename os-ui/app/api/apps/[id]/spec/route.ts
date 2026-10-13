@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { setAppSpec } from '@/lib/software/apps';
+import { setAppSpec } from '@/lib/experimental/software/apps';
 
 export const dynamic = 'force-dynamic';
 

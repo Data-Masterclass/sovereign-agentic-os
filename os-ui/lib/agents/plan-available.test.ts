@@ -3,9 +3,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPillar, listPillars, __resetForTests as resetPillars } from '../strategy/pillars.ts';
-import type { PillarScope } from '../strategy/model.ts';
-import { createBet, listBets, __resetBets as resetBets } from '../bigbets/store.ts';
+import { createPillar, listPillars, __resetForTests as resetPillars } from '../experimental/strategy/pillars.ts';
+import type { PillarScope } from '../experimental/strategy/model.ts';
+import { createBet, listBets, __resetBets as resetBets } from '../experimental/bigbets/store.ts';
 import { pillarPlanId, bigBetPlanId } from './plan-grants.ts';
 
 /**

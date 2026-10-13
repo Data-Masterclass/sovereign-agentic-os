@@ -4,8 +4,8 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
-import { servePredict } from '@/lib/science/serve';
-import type { ChurnFeatures } from '@/lib/science';
+import { servePredict } from '@/lib/experimental/science/serve';
+import type { ChurnFeatures } from '@/lib/experimental/science';
 
 export const dynamic = 'force-dynamic';
 

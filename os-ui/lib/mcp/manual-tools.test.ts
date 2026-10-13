@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, ALL_MCP_TOOLS, toolsForTab, type JsonRpcResponse, type ToolError } from './server.ts';
 import { MANUAL_TOOLS } from './manual-tools.ts';
-import { __resetStore } from '@/lib/knowledge/store';
+import { __resetStore } from '@/lib/experimental/knowledge/store';
 
 /**
  * OPERATING MODEL MCP SURFACE — four THIN wrappers over the governed manual store

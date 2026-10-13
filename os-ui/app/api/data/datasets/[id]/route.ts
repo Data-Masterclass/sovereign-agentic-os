@@ -4,16 +4,16 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
 import { requireUser } from '@/lib/core/auth';
-import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset, renameDataset, listAllDatasets } from '@/lib/data/store';
-import { dropPhysicalTables, sharedFootprintFqns } from '@/lib/data/physical-delete';
-import { domainTableMissing } from '@/lib/data/reconcile-server';
+import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset, renameDataset, listAllDatasets } from '@/lib/experimental/data/store';
+import { dropPhysicalTables, sharedFootprintFqns } from '@/lib/experimental/data/physical-delete';
+import { domainTableMissing } from '@/lib/experimental/data/reconcile-server';
 import { executeRun } from '@/lib/infra/governed';
-import { stepperStages } from '@/lib/data/panels';
-import { goldOutputColumns } from '@/lib/data/metrics';
-import { firstOmCatalogFor, omSoftDeleteForConnection, omReactivateForConnection } from '@/lib/connections/openmetadata';
-import { appSlugFromRequest, checkAppGrant } from '@/lib/software/app-origin';
+import { stepperStages } from '@/lib/experimental/data/panels';
+import { goldOutputColumns } from '@/lib/experimental/data/metrics';
+import { firstOmCatalogFor, omSoftDeleteForConnection, omReactivateForConnection } from '@/lib/experimental/connections/openmetadata';
+import { appSlugFromRequest, checkAppGrant } from '@/lib/experimental/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 

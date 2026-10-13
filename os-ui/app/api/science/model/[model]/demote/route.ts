@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { config } from '@/lib/core/config';
-import { getModel, compilePredictPolicy, ensureModelsHydrated } from '@/lib/science';
+import { getModel, compilePredictPolicy, ensureModelsHydrated } from '@/lib/experimental/science';
 import { demoteThroughSeam } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';

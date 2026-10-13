@@ -1,0 +1,715 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+import 'server-only';
+import type { CurrentUser } from '@/lib/core/auth';
+import {
+  getAppByIdInternal,
+  liveRepoFiles,
+  persistApp,
+  templateFiles,
+  newId,
+  withStatus,
+  type App,
+} from '@/lib/experimental/software/apps';
+import { osMirror } from '@/lib/infra/os-mirror';
+import { trace } from '@/lib/infra/agent-governed';
+import {
+  enqueue,
+  decide as decideApproval,
+  listApprovals,
+  ensureHydrated as ensureApprovalsHydrated,
+} from '@/lib/governance/approvals';
+import { securityScan } from './scan.ts';
+import { resolveSurface } from './metadata.ts';
+import { ungrantedDatasetWarningForApp } from './dataset-guard.ts';
+import { getSnapshot, snapshotFiles, hydrateSnapshot } from './snapshot.ts';
+import { deployApp, runnerStatus, type RunnerApp, type RunnerOpts, type RunnerOutcome, type RunnerStatus } from './runner.ts';
+import { roleAtLeast } from '@/lib/core/session';
+import { config } from '@/lib/core/config';
+
+/** The app's live host, ALWAYS computed from the CURRENT apps domain — not the
+ *  `app.subdomain` stored at creation time (which may carry a stale default like
+ *  `apps.local` for apps created before OS_APPS_DOMAIN was configured). This keeps
+ *  the served Ingress host + the UI link on the real, resolvable wildcard domain. */
+function appHost(app: App): string {
+  return `${app.slug}.${app.domain}.${config.appsBaseDomain}`;
+}
+import type {
+  DeployEnvelope,
+  DiffSummary,
+  ResourceFootprint,
+  ReviewCard,
+  ScaffoldFile,
+} from './model.ts';
+
+/**
+ * The deploy review gate (Software golden path §D) — the platform's top deploy
+ * security control and an Opus-owned, explicitly-tested invariant:
+ *
+ *   • PREVIEW IS FREE. The creator runs a private sandbox preview themselves
+ *     (`startPreview`); no review.
+ *   • GOING LIVE IN THE DOMAIN IS BUILDER-REVIEWED. `requestDeploy` assembles a
+ *     review card — security scan + the governed resources the app declares +
+ *     its cost/resource footprint + the change diff — and routes it to a Builder.
+ *   • A NON-BUILDER CANNOT APPROVE (`decideDeploy` role gate → 403).
+ *   • Review the FIRST deploy and any SCOPE-BROADENING change; ROUTINE updates
+ *     inside the approved envelope auto-deploy without re-review.
+ *   • A failing security scan (secret leak / high/critical) BLOCKS approval.
+ *
+ * This holds regardless of which front door requested the deploy (chat, Platform
+ * MCP, git push, git import) — they all converge here. Cards are in-process
+ * authoritative with a best-effort DURABLE mirror (`os-software-reviews`, the
+ * same osMirror pattern as approvals) so a pod restart no longer empties the
+ * `/software/reviews` inbox and loses the scan/diff; they also land in the
+ * Governance approval inbox.
+ */
+
+const CARDS_KEY = Symbol.for('soa.software.review');
+function cards(): Map<string, ReviewCard> {
+  const g = globalThis as unknown as Record<symbol, Map<string, ReviewCard> | undefined>;
+  if (!g[CARDS_KEY]) g[CARDS_KEY] = new Map();
+  return g[CARDS_KEY]!;
+}
+
+// Durable mirror + one-shot hydration (rebuild the in-process map on first read
+// after a pod roll). Best-effort: an unreachable mirror leaves cards in-memory.
+const cardsMirror = osMirror({ index: 'os-software-reviews' });
+const CARDS_HYDRATION_KEY = Symbol.for('soa.software.review.hydration');
+function cardsHydration(): { p: Promise<void> | null } {
+  const g = globalThis as unknown as Record<symbol, { p: Promise<void> | null } | undefined>;
+  if (!g[CARDS_HYDRATION_KEY]) g[CARDS_HYDRATION_KEY] = { p: null };
+  return g[CARDS_HYDRATION_KEY]!;
+}
+async function ensureCardsHydrated(): Promise<void> {
+  const ref = cardsHydration();
+  if (!ref.p) {
+    ref.p = (async () => {
+      const docs = (await cardsMirror.hydrate(2000)) ?? [];
+      for (const c of docs as ReviewCard[]) {
+        // Never clobber a card created in-process before hydration completed.
+        if (c && c.id && !cards().has(c.id)) cards().set(c.id, c);
+      }
+    })();
+  }
+  return ref.p;
+}
+function saveCard(card: ReviewCard): void {
+  cards().set(card.id, card);
+  cardsMirror.writeThrough(card.id, card);
+}
+
+/** Test-only: drop the in-process cards + hydration state (fresh-pod simulation). */
+export function __resetReviewCards(): void {
+  cards().clear();
+  cardsHydration().p = null;
+  cardsMirror.__reset();
+}
+
+// Per-runtime cost/resource footprint surfaced on the card (rough monthly USD).
+const FOOTPRINT: Record<App['template'], ResourceFootprint> = {
+  'nextjs-supabase': { cpu: '250m', memory: '256Mi', estMonthlyUsd: 12 },
+  'vite-os': { cpu: '50m', memory: '64Mi', estMonthlyUsd: 3 },
+  'sovereign-app': { cpu: '50m', memory: '64Mi', estMonthlyUsd: 3 },
+  website: { cpu: '50m', memory: '64Mi', estMonthlyUsd: 3 },
+  'api-service': { cpu: '100m', memory: '128Mi', estMonthlyUsd: 6 },
+  empty: { cpu: '50m', memory: '64Mi', estMonthlyUsd: 3 },
+  service: { cpu: '100m', memory: '128Mi', estMonthlyUsd: 6 },
+  script: { cpu: '50m', memory: '64Mi', estMonthlyUsd: 2 },
+  dashboard: { cpu: '200m', memory: '256Mi', estMonthlyUsd: 10 },
+};
+
+function isBuilder(user: CurrentUser): boolean {
+  return roleAtLeast(user.role, 'builder');
+}
+
+/**
+ * Re-provision the app's runner from its CURRENT record (esp. `runImageDigest`) —
+ * the shared entry the Phase B build service calls to re-pin the pod to a freshly
+ * built digest, so the footprint table + runner shape stay SINGLE-SOURCED here (no
+ * duplicate FOOTPRINT in apps.ts, no import cycle: apps.ts dynamic-imports this).
+ */
+export async function redeployRunnerForApp(app: App): Promise<RunnerOutcome> {
+  return deployApp(runnerAppFor(app));
+}
+
+/** The minimal runnable shape the in-cluster runner needs, derived from an app. */
+function runnerAppFor(app: App): RunnerApp {
+  return {
+    slug: app.slug,
+    host: appHost(app),
+    runImage: app.runImage,
+    // The OS build service's captured digest (Phase B) pins the serving image; when
+    // unset the runner keeps the `:latest`/CI convention (purely additive).
+    runImageDigest: app.runImageDigest,
+    footprint: FOOTPRINT[app.template] ?? FOOTPRINT['nextjs-supabase'],
+  };
+}
+
+/**
+ * Reflect the REAL runner outcome onto the app's deploy fields — honestly. When
+ * the cluster is unreachable we leave `previewUrl` null and `pipeline.live`
+ * `pending` (never fabricate a live URL); the served URL only appears once the
+ * pod is actually `running` (the status route reconciles it as readiness lands).
+ */
+function applyRunnerOutcome(app: App, outcome: RunnerOutcome): void {
+  if (!outcome.live) {
+    app.deploy.previewUrl = null;
+    app.pipeline.live = 'pending';
+    return;
+  }
+  const running = outcome.phase === 'running';
+  app.deploy.previewUrl = running ? outcome.url : null;
+  app.pipeline.live = running ? 'ok' : 'pending';
+}
+
+/** The exact governed scope a deploy is asking for (the envelope under review). */
+export function requestedEnvelope(app: App): DeployEnvelope {
+  return {
+    writeTools: app.mcpTools.filter((t) => t.write).map((t) => t.name).sort(),
+    connections: [...app.manifest.connections, ...app.consumes.filter((c) => c.kind === 'connection').map((c) => c.ref)]
+      .filter((v, i, a) => a.indexOf(v) === i)
+      .sort(),
+    data: [...app.manifest.data].sort(),
+    knowledge: [...app.manifest.knowledge].sort(),
+    footprint: FOOTPRINT[app.template] ?? FOOTPRINT['nextjs-supabase'],
+  };
+}
+
+/**
+ * Does the requested scope BROADEN the approved one? True if it adds any write
+ * tool, connection, data product, or knowledge grant, or raises the cost
+ * footprint. Routine updates (subset of the approved envelope) return false and
+ * auto-deploy. This is the "routine-update envelope" decision made concrete.
+ */
+export function scopeBroadened(approved: DeployEnvelope | null, requested: DeployEnvelope): boolean {
+  if (!approved) return true; // first deploy always reviews
+  const broadensList = (a: string[], b: string[]) => b.some((x) => !a.includes(x));
+  return (
+    broadensList(approved.writeTools, requested.writeTools) ||
+    broadensList(approved.connections, requested.connections) ||
+    broadensList(approved.data, requested.data) ||
+    broadensList(approved.knowledge, requested.knowledge) ||
+    requested.footprint.estMonthlyUsd > approved.footprint.estMonthlyUsd
+  );
+}
+
+function diffFromFiles(files: ScaffoldFile[], changed?: DiffSummary['files']): DiffSummary {
+  const list =
+    changed ??
+    files.map((f) => ({ path: f.path, added: f.content.split('\n').length, removed: 0 }));
+  return {
+    files: list,
+    added: list.reduce((n, f) => n + f.added, 0),
+    removed: list.reduce((n, f) => n + f.removed, 0),
+  };
+}
+
+/**
+ * Gather the app's repo files for the scan/diff — the code that will ACTUALLY
+ * ship. When Forgejo is reachable this is the LIVE repo tree (so editor saves
+ * and direct git pushes are scanned, not just agent commits); the fetched tree
+ * also refreshes the snapshot. Offline it falls back to the latest committed
+ * snapshot (else the template seed), honestly labelled `offline-mock`.
+ */
+async function appFilesForScan(app: App): Promise<{ files: ScaffoldFile[]; source: 'live-repo' | 'snapshot' }> {
+  const live = await liveRepoFiles(app);
+  if (live) {
+    // Also durably backfills the mirror (heal-forward for legacy apps).
+    snapshotFiles(app.id, live); // keep the offline fallback in step with reality
+    return { files: live, source: 'live-repo' };
+  }
+  // Offline: hydrate the durable mirror first so a scan after a restart sees the
+  // app's REAL last committed tree, not just the template seed.
+  await hydrateSnapshot(app.id);
+  return { files: getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug), source: 'snapshot' };
+}
+
+// --------------------------------------------------------------- Preview -------
+
+/**
+ * The HONEST preview note used when the in-cluster runner is UNREACHABLE (a
+ * laptop with no cluster). The build + commit loop is real either way; when the
+ * k8s API cannot be reached the runner provisions nothing and we NEVER fabricate
+ * a URL. When a cluster IS reachable, `startPreview`/`decideDeploy` provision a
+ * real Deployment+Service+Ingress and the served URL appears once the pod is ready.
+ */
+export const PREVIEW_PENDING_NOTE =
+  'Preview runner unreachable — your commits are real, but no in-cluster runner could be provisioned; ' +
+  'the served preview URL is pending until the Kubernetes API is reachable.';
+
+/**
+ * Honest pending-preview note. Distinguishes the two very different pending
+ * states so we never claim "runner unreachable / API not reachable" when the
+ * app IS provisioned and we're simply waiting on the image:
+ *   • cluster unreachable (phase offline)  → PREVIEW_PENDING_NOTE
+ *   • provisioned, pod not yet running     → image build in progress
+ */
+export const IMAGE_BUILDING_NOTE =
+  'Image build in progress — the app is provisioned and the preview URL appears once CI ' +
+  'publishes the image and the pod becomes ready.';
+
+function previewPendingNote(outcome: RunnerOutcome): string {
+  return outcome.live ? IMAGE_BUILDING_NOTE : PREVIEW_PENDING_NOTE;
+}
+
+/**
+ * The honest preview note for a status READ (get_software_status), derived from the
+ * FRESH runner poll (0.6.114): a `running` pod is SERVED — no note ('' — its URL stands
+ * on its own); a provisioned-but-not-yet-running pod (deploying/absent, `live` true) is
+ * honestly "image build in progress"; a genuinely offline cluster is the unreachable note.
+ * A null status (reconcile unavailable — e.g. a non-owner read) falls back to the
+ * unreachable note so a stale null URL is never dressed up as served.
+ */
+export function previewNoteForRunner(status: RunnerStatus | null): string {
+  if (!status) return PREVIEW_PENDING_NOTE;
+  if (status.phase === 'running') return ''; // served — the URL says it, no note needed
+  return status.live ? IMAGE_BUILDING_NOTE : PREVIEW_PENDING_NOTE;
+}
+
+/**
+ * Start a PRIVATE sandbox preview the creator runs themselves — no review. Any
+ * owner (or a Builder in the domain) can preview. This is the free-iteration
+ * loop; only going live in the domain is gated. Phase 2: this provisions the REAL
+ * in-cluster runner (Deployment+Service+Ingress); the served URL surfaces once
+ * the pod is ready. Offline (no cluster) it stays honestly pending (no URL).
+ */
+export type PreviewResult = {
+  app: App;
+  /**
+   * The human-readable runner outcome detail surfaced to the client.
+   * Set when the runner provisioned the pod (or is trying to); null when the
+   * preview URL is already live (nothing extra to say). The deploy route
+   * includes this so the UI can distinguish "provisioning — URL coming" from
+   * "runner failed: <reason>" instead of showing the same "pending" blurb for both.
+   */
+  runnerNote: string | null;
+};
+
+export async function startPreview(appId: string, user: CurrentUser): Promise<PreviewResult> {
+  const app = await getAppByIdInternal(appId);
+  if (!app) throw withStatus(new Error('App not found'), 404);
+  const ownerOrBuilder = app.owner === user.id || (isBuilder(user) && user.domains.includes(app.domain));
+  if (!ownerOrBuilder) throw withStatus(new Error('Only the creator can preview this app'), 403);
+  if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot run a preview'), 409);
+  app.deploy.state = app.deploy.state === 'live' ? 'live' : 'preview';
+
+  // Provision the real runner; reflect its outcome honestly (no fake URL offline).
+  const runner = await deployApp(runnerAppFor(app));
+  applyRunnerOutcome(app, runner);
+  await persistApp(app);
+
+  // Surface the actionable outcome: null when the pod is already running (URL is
+  // live, nothing to explain); the pending note when provisioning is in progress;
+  // or the specific runner failure detail so the UI never silently hangs on "pending".
+  const runnerNote: string | null =
+    runner.live && runner.phase === 'running'
+      ? null
+      : runner.live && !runner.ok
+        ? runner.detail   // e.g. "Kubernetes rejected part of the deploy (deployment 403, …)"
+        : previewPendingNote(runner);
+
+  void trace({
+    principal: app.mcpPrincipal,
+    tool: 'generate',
+    input: { action: 'start_preview', by: user.id },
+    output:
+      runner.live && runner.phase === 'running'
+        ? { preview: runner.phase, url: app.deploy.previewUrl, host: runner.host }
+        : { preview: runner.live ? runner.phase : 'pending-runner', note: runnerNote },
+    decision: 'allow',
+  });
+  return { app, runnerNote };
+}
+
+// ---------------------------------------------------------- Request deploy -----
+
+/** The just-filed Governance approval, minimally described for the UI's shared
+ *  "this needs approval" notice (Policies & Approvals link + inline-approve gate). */
+export type FiledApprovalRef = { id: string; domain: string; approverRole: 'builder' | 'domain_admin' | 'admin'; scope: 'own' | 'domain' | 'tenant' };
+
+export type DeployRequestResult =
+  | { kind: 'auto-deployed'; app: App }
+  | { kind: 'review'; app: App; card: ReviewCard; approval: FiledApprovalRef };
+
+/**
+ * Request a domain deploy. Routine in-envelope updates to an already-live app
+ * auto-deploy; the first deploy and any scope-broadening change open a Builder
+ * review card. The creator can call this; a Builder approves it.
+ */
+export async function requestDeploy(
+  appId: string,
+  user: CurrentUser,
+  opts: { changedFiles?: DiffSummary['files']; scanMode?: 'live' | 'offline-mock' } = {},
+): Promise<DeployRequestResult> {
+  const app = await getAppByIdInternal(appId);
+  if (!app) throw withStatus(new Error('App not found'), 404);
+  if (app.owner !== user.id && !isBuilder(user)) {
+    throw withStatus(new Error('Only the creator or a Builder can request a deploy'), 403);
+  }
+  if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot deploy'), 409);
+
+  // The files under review: the LIVE repo tree when Forgejo is reachable (what
+  // will actually ship — editor saves + git pushes included), else the snapshot.
+  const { files, source } = await appFilesForScan(app);
+
+  // Resolve the app's UI/API surface at deploy from the code + manifest the agent
+  // wrote (the deploy manifest reveals whether it binds a web server vs only an
+  // API), so the monitor view is honest to what actually ships — but a declaration
+  // (the creator's recorded intent) WINS over the heuristic.
+  app.surface = resolveSurface(files, app.declaredSurface);
+
+  const requested = requestedEnvelope(app);
+  const broadened = scopeBroadened(app.deploy.approved, requested);
+
+  // UNGRANTED-DATASET GUARD (0.6.97): does the code that will ship reference any
+  // dataset the app is NOT granted? Such a reference is the root of the live
+  // `Forbidden: … not granted ds_…`. It is a non-blocking WARNING on the review card
+  // (the scanner reads code as text, so a hard block risks a false positive) — but it
+  // MUST NOT auto-deploy silently: a routine in-envelope update that would otherwise
+  // auto-deploy is forced onto the review card when there is a dataset warning.
+  const datasetWarning = await ungrantedDatasetWarningForApp(app, files);
+  const warnings = datasetWarning ? [datasetWarning] : [];
+  // The security scan runs on EVERY deploy request (CI scans every push), over
+  // the files resolved above — labelled `live` only when they came from the real
+  // repo. A routine update can only auto-deploy when BOTH in-envelope AND clean.
+  const scan = securityScan(files, opts.scanMode ?? (source === 'live-repo' ? 'live' : 'offline-mock'));
+
+  // Routine update within the approved envelope + a clean scan + NO dataset warning →
+  // auto-deploy. An ungranted-dataset reference re-opens the review gate so it is seen.
+  if (app.deploy.state === 'live' && !broadened && scan.passed && warnings.length === 0) {
+    app.deploy.reviewCardId = null;
+    app.deploy.releases += 1; // a routine update ships a new release/version.
+    // Roll the new release onto the real runner (idempotent replace).
+    applyRunnerOutcome(app, await deployApp(runnerAppFor(app)));
+    await persistApp(app);
+    void trace({
+      principal: app.mcpPrincipal,
+      tool: 'generate',
+      input: { action: 'request_deploy', by: user.id, routine: true },
+      output: { autoDeployed: true, envelope: requested },
+      decision: 'allow',
+    });
+    return { kind: 'auto-deployed', app };
+  }
+
+  // SELF-SERVE go-live (0.6.102): a Builder deploying their OWN Personal ("My") app
+  // publishes in ONE action — no separate approval step, no admin. They are already
+  // entitled to approve it themselves (decideDeploy is builder+), so folding
+  // request+approve just removes the friction of a personal app you own. Still fully
+  // SECURITY-GATED: only on a PASSING scan and with NO ungranted-dataset warning — a
+  // scan finding or a dataset warning falls through to the review card so it is seen.
+  // Shared / Domain / Company tiers are unaffected: they keep the Builder review gate,
+  // and promotion to a higher tier remains separately role-gated.
+  if (app.owner === user.id && isBuilder(user) && app.visibility === 'Personal' && scan.passed && warnings.length === 0) {
+    await applyDeployDecisionToApp(app, 'approve', requested);
+    void trace({
+      principal: app.mcpPrincipal,
+      tool: 'generate',
+      input: { action: 'request_deploy', by: user.id, selfServe: true, tier: 'Personal' },
+      output: { autoDeployed: true, envelope: requested },
+      decision: 'allow',
+    });
+    return { kind: 'auto-deployed', app };
+  }
+
+  // First deploy, scope-broadening change, OR a scan finding → Builder review card.
+  const card: ReviewCard = {
+    id: newId('rev'),
+    appId: app.id,
+    appName: app.name,
+    domain: app.domain,
+    requestedBy: user.id,
+    requestedAt: new Date().toISOString(),
+    reason: app.deploy.approved ? 'scope-broadened' : 'first-deploy',
+    scan,
+    requested,
+    diff: diffFromFiles(files, opts.changedFiles),
+    warnings,
+    decision: 'pending',
+  };
+  saveCard(card);
+
+  app.deploy.state = 'review';
+  app.deploy.reviewCardId = card.id;
+  await persistApp(app);
+
+  // Surface in the Governance inbox too. ONE gate: software deploys are
+  // BUILDER-reviewed — the same floor `decideDeploy` enforces and the UI copy
+  // promises (previously this filed at domain_admin, so the two inboxes gated
+  // the SAME decision at different ranks).
+  const approval = enqueue({
+    kind: 'app_deploy',
+    title: `Deploy review: ${app.name}`,
+    detail:
+      `${card.reason === 'first-deploy' ? 'First deploy' : 'Scope-broadening change'} — ` +
+      `scan ${scan.passed ? 'passed' : 'FAILED'} (${scan.findings.length} findings), ` +
+      `${requested.connections.length} connections, ${requested.writeTools.length} write tools, ` +
+      `~$${requested.footprint.estMonthlyUsd}/mo.` +
+      (warnings.length ? ` ⚠ references ungranted datasets — see the review card.` : ''),
+    agent: app.mcpPrincipal,
+    domain: app.domain,
+    requestedBy: user.id,
+    tool: 'request_deploy',
+    payload: { appId: app.id, cardId: card.id },
+    approverRole: 'builder',
+  });
+
+  void trace({
+    principal: app.mcpPrincipal,
+    tool: 'generate',
+    input: { action: 'request_deploy', by: user.id, reason: card.reason },
+    output: { cardId: card.id, scanPassed: scan.passed },
+    decision: scan.passed ? 'requires_approval' : 'deny',
+  });
+  return {
+    kind: 'review',
+    app,
+    card,
+    approval: { id: approval.id, domain: approval.domain, approverRole: approval.approverRole, scope: approval.scope },
+  };
+}
+
+// ----------------------------------------------------------- Decide deploy -----
+
+/**
+ * The app-state transition a decided deploy applies — the ONE seam both the
+ * normal `decideDeploy` path and the self-heal reconcile share, so a healed app
+ * lands in exactly the same state (envelope recorded + release bumped + runner
+ * rolled on approve; back to preview on deny). Mutates + persists the app.
+ */
+async function applyDeployDecisionToApp(
+  app: App,
+  decision: 'approve' | 'deny',
+  approvedEnvelope: DeployEnvelope | null,
+): Promise<void> {
+  if (decision === 'approve') {
+    app.deploy.state = 'live';
+    app.deploy.approved = approvedEnvelope ?? requestedEnvelope(app);
+    app.deploy.reviewCardId = null;
+    app.deploy.releases += 1; // approved go-live ships a new release/version.
+    // Provision the real in-cluster runner on the app's per-app host; the served
+    // URL + `pipeline.live = ok` only land once the pod is actually running
+    // (offline stays honestly pending — the go-live decision is still recorded).
+    applyRunnerOutcome(app, await deployApp(runnerAppFor(app)));
+  } else {
+    app.deploy.state = 'preview'; // back to the free preview loop to fix it
+    app.deploy.reviewCardId = null;
+  }
+}
+
+/**
+ * Approve or deny a deploy. THE ROLE GATE: only a Builder/Admin in the app's
+ * domain may decide — a Creator/non-Builder gets 403. Approval additionally
+ * REQUIRES a passing security scan (a leaked secret / high finding blocks the
+ * go-live). On approval the app goes live and the approved envelope is recorded
+ * so later in-envelope updates auto-deploy.
+ */
+export async function decideDeploy(
+  cardId: string,
+  user: CurrentUser,
+  decision: 'approve' | 'deny',
+  note?: string,
+): Promise<{ app: App; card: ReviewCard }> {
+  await ensureCardsHydrated(); // a fresh pod rebuilds the cards from the mirror
+  const card = cards().get(cardId);
+  if (!card) throw withStatus(new Error('Review card not found'), 404);
+  if (card.decision !== 'pending') throw withStatus(new Error('This review is already decided'), 409);
+
+  // The gate: a non-Builder cannot approve OR deny a deploy.
+  if (!isBuilder(user) || !user.domains.includes(card.domain)) {
+    throw withStatus(new Error('Only a Builder or Administrator in this domain can review a deploy'), 403);
+  }
+
+  const app = await getAppByIdInternal(card.appId);
+  if (!app) {
+    // The card outlived its app — the classic multi-session churn: the app was
+    // deleted/re-created (new id) after this review card + its Governance approval
+    // were filed, so the card points at an id that resolves nowhere. A bare "App
+    // not found" (which the UI then shows verbatim next to the card's own summary)
+    // hid the real cause. Auto-retire the orphaned card + its governance record so
+    // it stops blocking the inbox, and tell the user exactly what to do: re-request
+    // the deploy on the CURRENT app. (A transient mirror miss self-heals on the next
+    // press — getAppByIdInternal re-probes the durable mirror every call.)
+    card.decision = 'denied';
+    card.decidedBy = user.id;
+    card.decidedAt = new Date().toISOString();
+    card.note = `Auto-retired: referenced app ${card.appId} no longer exists.`;
+    saveCard(card);
+    for (const a of listGovernanceForCard(card.id)) decideApproval(a, 'reject', user.id);
+    throw withStatus(
+      new Error(
+        `This deploy request references an app that no longer exists (${card.appId}) — it was ` +
+          `re-created since the request was filed. The stale request has been dismissed; open the ` +
+          `current app and press Build → Approve & go live again to file a fresh deploy request.`,
+      ),
+      409,
+    );
+  }
+
+  if (decision === 'approve') {
+    if (!card.scan.passed) {
+      throw withStatus(
+        new Error('Cannot approve: the security scan did not pass (fix the findings and re-request).'),
+        409,
+      );
+    }
+    card.decision = 'approved';
+    await applyDeployDecisionToApp(app, 'approve', card.requested);
+  } else {
+    card.decision = 'denied';
+    await applyDeployDecisionToApp(app, 'deny', null);
+  }
+  card.decidedBy = user.id;
+  card.decidedAt = new Date().toISOString();
+  card.note = note;
+  saveCard(card);
+  await persistApp(app);
+
+  // Reflect the decision into the Governance inbox record.
+  for (const a of listGovernanceForCard(card.id)) decideApproval(a, decision === 'approve' ? 'approve' : 'reject', user.id);
+
+  void trace({
+    principal: app.mcpPrincipal,
+    tool: 'generate',
+    input: { action: 'decide_deploy', by: user.id, role: user.role, decision },
+    output: { cardId: card.id, state: app.deploy.state },
+    decision: decision === 'approve' ? 'allow' : 'deny',
+  });
+  return { app, card };
+}
+
+// Link Governance approval ids back to a card (best-effort; in-process).
+function listGovernanceForCard(cardId: string): string[] {
+  return listApprovals({ status: 'pending' })
+    .filter((a) => a.kind === 'app_deploy' && (a.payload as { cardId?: string })?.cardId === cardId)
+    .map((a) => a.id);
+}
+
+// -------------------------------------------------------- Self-heal reconcile ---
+
+/**
+ * SELF-HEAL: an app stuck in `review` whose Governance app_deploy approval was
+ * ALREADY decided must be reconciled to its true state on load. This heals apps
+ * orphaned before the approve→decideDeploy write-back existed (the item is
+ * `approved`/`rejected`, yet the app kept `deploy.state === 'review'` with a
+ * `reviewCardId`) AND guards against any future effect that misses.
+ *
+ * We cannot route through `decideDeploy` for these: its in-process review card is
+ * gone after a restart (that's why they orphaned). Instead we apply the SAME
+ * transition via the shared `applyDeployDecisionToApp` seam, sourcing the approved
+ * envelope from the card if it survives, else from the app's current requested
+ * envelope. Idempotent (only fires while state === 'review' with a reviewCardId),
+ * fail-soft (a reconcile error NEVER breaks loading the app), and a no-op when no
+ * matching decided approval exists (the app is left exactly as-is).
+ */
+export async function reconcileDeployApproval(app: App): Promise<boolean> {
+  try {
+    if (app.deploy.state !== 'review' || !app.deploy.reviewCardId) return false;
+    const cardId = app.deploy.reviewCardId;
+    // Rebuild durable review cards first (mirror), so a surviving card supplies
+    // the exact approved envelope instead of falling back to the requested one.
+    await ensureCardsHydrated();
+    // Ensure durable approvals are hydrated (memoized) so a fresh pod sees the
+    // already-decided app_deploy record persisted in the os-approvals index.
+    await ensureApprovalsHydrated();
+    // Match the decided governance approval by card id, else by app id (the
+    // payload carries both). Only decided items heal; pending leaves it in review.
+    const decided = listApprovals({})
+      .filter((a) => a.kind === 'app_deploy' && a.status !== 'pending')
+      .find((a) => {
+        const p = a.payload as { cardId?: string; appId?: string };
+        return p?.cardId === cardId || p?.appId === app.id;
+      });
+    if (!decided) return false;
+
+    if (decided.status === 'approved') {
+      const card = cards().get(cardId);
+      await applyDeployDecisionToApp(app, 'approve', card?.requested ?? null);
+    } else {
+      await applyDeployDecisionToApp(app, 'deny', null);
+    }
+    await persistApp(app);
+    void trace({
+      principal: app.mcpPrincipal,
+      tool: 'generate',
+      input: { action: 'reconcile_deploy', cardId, approvalId: decided.id, approvalStatus: decided.status },
+      output: { state: app.deploy.state },
+      decision: decided.status === 'approved' ? 'allow' : 'deny',
+    });
+    return true;
+  } catch {
+    // Fail-soft: a reconcile problem must never break loading the app.
+    return false;
+  }
+}
+
+// ------------------------------------------------------- Runner status poll ----
+
+/**
+ * Poll the app's REAL in-cluster runner status and reconcile the deploy fields
+ * off ACTUAL pod state (the `deploying → running → failed` transition is driven
+ * by the Deployment's readyReplicas/conditions, never a timer). The served URL
+ * only appears once the pod is `running`; a failed rollout marks `pipeline.live`
+ * accordingly. Offline (no cluster) mutates nothing — it cannot confirm state.
+ */
+export async function reconcileDeployStatus(
+  appId: string,
+  user: CurrentUser,
+  opts: RunnerOpts = {},
+): Promise<{ app: App; status: RunnerStatus }> {
+  const app = await getAppByIdInternal(appId);
+  if (!app) throw withStatus(new Error('App not found'), 404);
+  const ownerOrBuilder = app.owner === user.id || (isBuilder(user) && user.domains.includes(app.domain));
+  if (!ownerOrBuilder) throw withStatus(new Error('Only the creator or a Builder can read this app runner status'), 403);
+
+  let status = await runnerStatus({ slug: app.slug }, opts);
+
+  // SELF-HEAL a missing runner. An app that is preview/live is SUPPOSED to have a
+  // Deployment; when the runner is `absent` (deployment 404) but the cluster IS
+  // reachable, the runner was never provisioned — the classic case is a deploy
+  // approved (or preview started) while the k8s API was transiently unreachable,
+  // so `deployApp` returned offline and no Deployment was ever created (the image
+  // built + pushed regardless). Re-provision idempotently now that the API answers,
+  // then re-read. Only fires for absent-but-reachable + a deploy state that should
+  // be running; `offline` (status 0) is left untouched (we honestly cannot heal
+  // what we cannot reach), and a running/deploying/failed runner is never re-applied.
+  if (status.phase === 'absent' && (app.deploy.state === 'live' || app.deploy.state === 'preview')) {
+    const healed = await deployApp(runnerAppFor(app), opts);
+    if (healed.live) {
+      void trace({
+        principal: app.mcpPrincipal,
+        tool: 'generate',
+        input: { action: 'reconcile_runner', by: user.id, was: 'absent' },
+        output: { phase: healed.phase, detail: healed.detail },
+        decision: 'allow',
+      });
+      status = await runnerStatus({ slug: app.slug }, opts);
+    }
+  }
+
+  if (status.live) {
+    const running = status.phase === 'running';
+    app.deploy.previewUrl = running ? `https://${appHost(app)}` : null;
+    if (app.deploy.state === 'live') {
+      app.pipeline.live = running ? 'ok' : status.phase === 'failed' ? 'offline' : 'pending';
+    }
+    await persistApp(app);
+  }
+  return { app, status };
+}
+
+// ------------------------------------------------------------- Readers ---------
+
+export async function getReviewCard(cardId: string): Promise<ReviewCard | null> {
+  await ensureCardsHydrated();
+  return cards().get(cardId) ?? null;
+}
+
+export async function listReviewCards(opts: { domain?: string; pendingOnly?: boolean } = {}): Promise<ReviewCard[]> {
+  await ensureCardsHydrated();
+  return [...cards().values()]
+    .filter((c) => (opts.domain ? c.domain === opts.domain : true))
+    .filter((c) => (opts.pendingOnly ? c.decision === 'pending' : true))
+    .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+}

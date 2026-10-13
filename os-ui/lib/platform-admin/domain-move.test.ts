@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 
 import { moveArtifactDomain, moveUnassignedToDomain } from './domain-move.ts';
 import { createArtifact, getArtifact, moveArtifactsDomain, __resetArtifactsCache } from '../core/artifacts.ts';
-import { createDataset, getDataset, __resetStore as __resetData } from '../data/store.ts';
+import { createDataset, getDataset, __resetStore as __resetData } from '../experimental/data/store.ts';
 import { _resetAudit, listAudit } from './audit.ts';
 
 type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';

@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { getAppForUser } from '@/lib/software/apps';
-import { callAppTool } from '@/lib/software/app-tool-call';
-import { recordActor } from '@/lib/software/app-records';
+import { getAppForUser } from '@/lib/experimental/software/apps';
+import { callAppTool } from '@/lib/experimental/software/app-tool-call';
+import { recordActor } from '@/lib/experimental/software/app-records';
 
 export const dynamic = 'force-dynamic';
 
