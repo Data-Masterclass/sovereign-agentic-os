@@ -386,6 +386,9 @@ spec:
               value: {{ $u.forgejoUrl | quote }}
             - name: FORGEJO_USER
               value: {{ $u.forgejoUser | quote }}
+            # forgejo.enabled=false → os-ui's agent Build skips its Forgejo step.
+            - name: FORGEJO_ENABLED
+              value: {{ .Values.forgejo.enabled | quote }}
             - name: LITELLM_URL
               value: {{ $u.litellmUrl | quote }}
             - name: OPA_URL

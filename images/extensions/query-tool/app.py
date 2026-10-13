@@ -81,11 +81,19 @@ def run_query(sql: str, principal: str | None = None, schema: str | None = None)
     # (Trino's OPA plugin remains the authoritative row/column governance layer.)
     sql = guard_read(sql)
     eff_schema = schema or TRINO_SCHEMA
-    conn = _connect(principal, eff_schema)
-    cur = conn.cursor()
-    cur.execute(sql)
-    rows = cur.fetchall()
-    cols = [d[0] for d in cur.description] if cur.description else []
+    try:
+        conn = _connect(principal, eff_schema)
+        cur = conn.cursor()
+        cur.execute(sql)
+        rows = cur.fetchall()
+        cols = [d[0] for d in cur.description] if cur.description else []
+    except trino.exceptions.TrinoConnectionError:
+        # Trino unreachable (DNS/connection refused) - the base deployment has no
+        # lakehouse at all, not a transient outage.
+        return {"error": "no_catalog_configured",
+                "message": "No lakehouse is configured in this deployment "
+                            "(Trino is unreachable) - the data/lakehouse extension "
+                            "is not enabled."}
     return {
         "engine": "trino",
         "catalog": TRINO_CATALOG,
