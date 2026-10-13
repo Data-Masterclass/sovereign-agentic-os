@@ -4,13 +4,13 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { getDataset, builtLayerFqn, setMonitor } from '@/lib/data/store';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { getDataset, builtLayerFqn, setMonitor } from '@/lib/experimental/data/store';
 import { queryRun } from '@/lib/infra/governed';
-import { ensureHydrated, healthTrend, latestRun } from '@/lib/data/dq-results';
-import { suggestChecks } from '@/lib/data/dq-suggest';
-import { MONITOR_KINDS, monitorEnabled, type MonitorConfig, type MonitorKind } from '@/lib/data/dq-monitors';
-import { isNotMaterialized } from '@/lib/data/materialized';
+import { ensureHydrated, healthTrend, latestRun } from '@/lib/experimental/data/dq-results';
+import { suggestChecks } from '@/lib/experimental/data/dq-suggest';
+import { MONITOR_KINDS, monitorEnabled, type MonitorConfig, type MonitorKind } from '@/lib/experimental/data/dq-monitors';
+import { isNotMaterialized } from '@/lib/experimental/data/materialized';
 import {
   assembleProfile,
   parseDescribe,
@@ -19,7 +19,7 @@ import {
   topValuesSql,
   type Profile,
   type ProfileColumn,
-} from '@/lib/data/profile';
+} from '@/lib/experimental/data/profile';
 
 export const dynamic = 'force-dynamic';
 

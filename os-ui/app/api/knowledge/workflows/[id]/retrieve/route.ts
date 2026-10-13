@@ -3,13 +3,13 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getWorkflow, getDomainKnowledge } from '@/lib/knowledge/store';
-import { chunkWorkflow, chunkDomain } from '@/lib/knowledge/chunk';
-import { indexWorkflow, indexDomain } from '@/lib/knowledge/index-pipeline';
-import { hasWorkflowUnits } from '@/lib/knowledge/index-store';
-import { retrieveKnowledge } from '@/lib/knowledge/retrieve';
-import { buildContextPack } from '@/lib/knowledge/context-pack';
-import { traceContext } from '@/lib/knowledge/knowledge-trace';
+import { getWorkflow, getDomainKnowledge } from '@/lib/experimental/knowledge/store';
+import { chunkWorkflow, chunkDomain } from '@/lib/experimental/knowledge/chunk';
+import { indexWorkflow, indexDomain } from '@/lib/experimental/knowledge/index-pipeline';
+import { hasWorkflowUnits } from '@/lib/experimental/knowledge/index-store';
+import { retrieveKnowledge } from '@/lib/experimental/knowledge/retrieve';
+import { buildContextPack } from '@/lib/experimental/knowledge/context-pack';
+import { traceContext } from '@/lib/experimental/knowledge/knowledge-trace';
 
 export const dynamic = 'force-dynamic';
 

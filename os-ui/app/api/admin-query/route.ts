@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
 import { roleAtLeast } from '@/lib/core/session';
-import { errorResponse } from '@/lib/data/server';
+import { errorResponse } from '@/lib/experimental/data/server';
 import { queryRun } from '@/lib/infra/governed';
 import { cubeLoad, type CubeQuery } from '@/lib/infra/governed';
 

@@ -9,9 +9,9 @@ import {
   pullExtract,
   promotePlan,
   type PersonalDataset,
-} from '@/lib/data/personal-lane';
-import { listPersonalTables, landGridAsBronze } from '@/lib/data/ingest';
-import { stepperStages } from '@/lib/data/panels';
+} from '@/lib/experimental/data/personal-lane';
+import { listPersonalTables, landGridAsBronze } from '@/lib/experimental/data/ingest';
+import { stepperStages } from '@/lib/experimental/data/panels';
 
 export const dynamic = 'force-dynamic';
 

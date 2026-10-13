@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/core/auth';
-import { listRepos, createRepo } from '@/lib/software/repos';
+import { listRepos, createRepo } from '@/lib/experimental/software/repos';
 
 export const dynamic = 'force-dynamic';
 

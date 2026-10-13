@@ -4,12 +4,12 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
-import { getDataset, requireDatasetEditable, setDatasetSync } from '@/lib/data/store';
-import { parseSyncBlock, type DatasetSync } from '@/lib/data/dataset-schema';
+import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
+import { getDataset, requireDatasetEditable, setDatasetSync } from '@/lib/experimental/data/store';
+import { parseSyncBlock, type DatasetSync } from '@/lib/experimental/data/dataset-schema';
 import { runtimeTokenOk } from '@/lib/agents/build/runtime-auth';
-import { runDatasetSync, type SyncTrigger } from '@/lib/data/sync-run-server';
-import { reconcileSyncCron } from '@/lib/data/sync-cron';
+import { runDatasetSync, type SyncTrigger } from '@/lib/experimental/data/sync-run-server';
+import { reconcileSyncCron } from '@/lib/experimental/data/sync-cron';
 import {
   consecutiveErrorCount,
   currentWatermark,
@@ -17,7 +17,7 @@ import {
   isQuarantined,
   lastMaintenanceAt,
   listSyncRuns,
-} from '@/lib/data/sync-runs';
+} from '@/lib/experimental/data/sync-runs';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,7 +86,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   if (dataset.sync) {
     try {
       const [{ getConnectionForUser }, { requireUser }] = await Promise.all([
-        import('@/lib/connections/store'),
+        import('@/lib/experimental/connections/store'),
         import('@/lib/core/auth'),
       ]);
       const c = await getConnectionForUser(dataset.sync.connectionId, await requireUser());

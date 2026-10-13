@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { importProduct } from '@/lib/data/store';
-import { runConformance } from '@/lib/data/policy/conformance';
-import { buildRoster } from '@/lib/data/build/live-clients';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { importProduct } from '@/lib/experimental/data/store';
+import { runConformance } from '@/lib/experimental/data/policy/conformance';
+import { buildRoster } from '@/lib/experimental/data/build/live-clients';
 
 export const dynamic = 'force-dynamic';
 

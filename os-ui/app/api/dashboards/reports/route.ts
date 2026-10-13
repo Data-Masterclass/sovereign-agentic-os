@@ -2,13 +2,13 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/experimental/data/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { roleAtLeast } from '@/lib/core/session';
 import { getPublicUser } from '@/lib/platform-admin/users';
-import { type ScheduledReport, sendReport } from '@/lib/dashboards/reports';
-import { deliverReport } from '@/lib/dashboards/delivery';
+import { type ScheduledReport, sendReport } from '@/lib/experimental/dashboards/reports';
+import { deliverReport } from '@/lib/experimental/dashboards/delivery';
 
 export const dynamic = 'force-dynamic';
 

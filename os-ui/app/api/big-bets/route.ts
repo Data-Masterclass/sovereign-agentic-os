@@ -3,12 +3,12 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { createBet, listBets, ensureHydrated } from '@/lib/bigbets/store';
-import { deriveBetName } from '@/lib/bigbets';
-import { principal } from '@/lib/bigbets/server';
-import { deriveBet, completion } from '@/lib/bigbets/status';
-import { rollup } from '@/lib/bigbets/roadmap';
-import { realizedValue } from '@/lib/bigbets/value';
+import { createBet, listBets, ensureHydrated } from '@/lib/experimental/bigbets/store';
+import { deriveBetName } from '@/lib/experimental/bigbets';
+import { principal } from '@/lib/experimental/bigbets/server';
+import { deriveBet, completion } from '@/lib/experimental/bigbets/status';
+import { rollup } from '@/lib/experimental/bigbets/roadmap';
+import { realizedValue } from '@/lib/experimental/bigbets/value';
 
 export const dynamic = 'force-dynamic';
 

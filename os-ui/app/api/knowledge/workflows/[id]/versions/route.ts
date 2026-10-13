@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { ensureHydrated, listWorkflowVersions, restoreWorkflowVersion } from '@/lib/knowledge/store';
+import { ensureHydrated, listWorkflowVersions, restoreWorkflowVersion } from '@/lib/experimental/knowledge/store';
 
 export const dynamic = 'force-dynamic';
 

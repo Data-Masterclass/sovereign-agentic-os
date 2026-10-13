@@ -23,9 +23,9 @@ import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import { listApprovals } from '@/lib/governance/approvals';
 import { listForUser, listMarketplace } from '@/lib/core/artifacts';
-import { listAppsForUser } from '@/lib/software';
-import { listBets } from '@/lib/bigbets';
-import { listPillars } from '@/lib/strategy';
+import { listAppsForUser } from '@/lib/experimental/software';
+import { listBets } from '@/lib/experimental/bigbets';
+import { listPillars } from '@/lib/experimental/strategy';
 import {
   hasAuthored,
   whatNeedsMe,

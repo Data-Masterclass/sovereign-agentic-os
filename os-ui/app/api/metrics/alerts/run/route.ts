@@ -2,15 +2,15 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal } from '@/lib/data/server';
+import { requirePrincipal } from '@/lib/experimental/data/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { roleAtLeast } from '@/lib/core/session';
-import { evaluateAlert } from '@/lib/metrics/alerts';
-import { listAlertRules, recordEvaluation, ensureHydrated } from '@/lib/metrics/alert-store';
-import { deliverAlert } from '@/lib/dashboards/delivery';
+import { evaluateAlert } from '@/lib/experimental/metrics/alerts';
+import { listAlertRules, recordEvaluation, ensureHydrated } from '@/lib/experimental/metrics/alert-store';
+import { deliverAlert } from '@/lib/experimental/dashboards/delivery';
 import { getPublicUser } from '@/lib/platform-admin/users';
-import { resolveAlertValue } from '@/lib/metrics/build/alert-eval';
+import { resolveAlertValue } from '@/lib/experimental/metrics/build/alert-eval';
 
 export const dynamic = 'force-dynamic';
 

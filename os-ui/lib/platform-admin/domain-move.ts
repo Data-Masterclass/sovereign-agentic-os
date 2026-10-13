@@ -11,17 +11,17 @@ import { currentTenantId } from '@/lib/platform-admin/tenant';
 // setter each one exposes — this module never reaches into a store's private
 // state, it just drives the setters and audits the result.
 import { moveArtifactsDomain } from '@/lib/core/artifacts';
-import { moveDatasetsDomain, ensureHydrated as ensureDatasetsHydrated } from '@/lib/data/store';
-import { moveDashboardsDomain, ensureHydrated as ensureDashboardsHydrated } from '@/lib/dashboards/store';
-import { moveFilesDomain, ensureHydrated as ensureFilesHydrated } from '@/lib/files/store';
-import { moveWorkflowsDomain, ensureHydrated as ensureWorkflowsHydrated } from '@/lib/knowledge/store';
-import { movePersonalKnowledgeDomain, ensureHydrated as ensurePersonalKnowledgeHydrated } from '@/lib/knowledge/personal-store';
+import { moveDatasetsDomain, ensureHydrated as ensureDatasetsHydrated } from '@/lib/experimental/data/store';
+import { moveDashboardsDomain, ensureHydrated as ensureDashboardsHydrated } from '@/lib/experimental/dashboards/store';
+import { moveFilesDomain, ensureHydrated as ensureFilesHydrated } from '@/lib/experimental/files/store';
+import { moveWorkflowsDomain, ensureHydrated as ensureWorkflowsHydrated } from '@/lib/experimental/knowledge/store';
+import { movePersonalKnowledgeDomain, ensureHydrated as ensurePersonalKnowledgeHydrated } from '@/lib/experimental/knowledge/personal-store';
 import { moveSystemsDomain, ensureHydrated as ensureSystemsHydrated } from '@/lib/agents/store';
-import { moveModelsDomain, ensureModelsHydrated } from '@/lib/science/model-service';
-import { movePillarsDomain, ensureHydrated as ensurePillarsHydrated } from '@/lib/strategy/pillars';
-import { moveBetsDomain, ensureHydrated as ensureBetsHydrated } from '@/lib/bigbets/store';
-import { moveConnectionsDomain } from '@/lib/connections/store';
-import { moveAppsDomain, ensureHydrated as ensureAppsHydrated } from '@/lib/software/apps';
+import { moveModelsDomain, ensureModelsHydrated } from '@/lib/experimental/science/model-service';
+import { movePillarsDomain, ensureHydrated as ensurePillarsHydrated } from '@/lib/experimental/strategy/pillars';
+import { moveBetsDomain, ensureHydrated as ensureBetsHydrated } from '@/lib/experimental/bigbets/store';
+import { moveConnectionsDomain } from '@/lib/experimental/connections/store';
+import { moveAppsDomain, ensureHydrated as ensureAppsHydrated } from '@/lib/experimental/software/apps';
 
 /**
  * Governance: reassign an artifact's owning DOMAIN — a superadmin-only mutation.

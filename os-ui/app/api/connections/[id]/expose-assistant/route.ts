@@ -7,12 +7,12 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { roleAtLeast } from '@/lib/core/session';
 import { parseJsonReply } from '@/lib/assistant/json-reply';
 import { assistantComplete } from '@/lib/assistant/complete';
-import { getConnectionForUser } from '@/lib/connections/store';
-import { getCatalogSnapshot } from '@/lib/connections/warehouse/catalog-snapshot';
-import { getMergedClassification } from '@/lib/connections/warehouse/catalog-classification';
-import { listExposureSets, entityActionKey } from '@/lib/connections/exposures';
+import { getConnectionForUser } from '@/lib/experimental/connections/store';
+import { getCatalogSnapshot } from '@/lib/experimental/connections/warehouse/catalog-snapshot';
+import { getMergedClassification } from '@/lib/experimental/connections/warehouse/catalog-classification';
+import { listExposureSets, entityActionKey } from '@/lib/experimental/connections/exposures';
 import { listDomains } from '@/lib/platform-admin/domains';
-import { isOperationalTemplate } from '@/lib/connections/operational-platform';
+import { isOperationalTemplate } from '@/lib/experimental/connections/operational-platform';
 import { config } from '@/lib/core/config';
 
 export const dynamic = 'force-dynamic';

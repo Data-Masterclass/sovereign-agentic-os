@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { requireUser } from '@/lib/core/auth';
-import { getPreviewRuntimeAsset } from '@/lib/software/preview-runtime';
+import { getPreviewRuntimeAsset } from '@/lib/experimental/software/preview-runtime';
 
 export const dynamic = 'force-dynamic';
 

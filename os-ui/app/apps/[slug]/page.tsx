@@ -25,8 +25,8 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { currentUser } from '@/lib/core/auth';
-import { getAppBySlugForUser } from '@/lib/software/apps';
-import { resolveServeTarget } from '@/lib/software/served-app';
+import { getAppBySlugForUser } from '@/lib/experimental/software/apps';
+import { resolveServeTarget } from '@/lib/experimental/software/served-app';
 import ServedAppSpec from './ServedAppSpec';
 
 export const dynamic = 'force-dynamic';

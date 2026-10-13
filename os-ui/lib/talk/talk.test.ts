@@ -3,7 +3,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __resetStore, createDataset, buildVersion, setDocs } from '../data/store.ts';
+import { __resetStore, createDataset, buildVersion, setDocs } from '../experimental/data/store.ts';
 import { estimateTokens } from '../infra/context/context-assembler.ts';
 import { inputBudget } from '../models/context-windows.ts';
 import { roleModel } from '../models/roles.ts';

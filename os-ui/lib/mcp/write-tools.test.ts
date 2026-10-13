@@ -6,15 +6,15 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, type JsonRpcResponse, type ToolError } from './server.ts';
 
-import { __resetStore as resetData } from '@/lib/data/store';
-import { __resetStore as resetKnowledge } from '@/lib/knowledge/store';
-import { __resetStore as resetFiles } from '@/lib/files/store';
-import { __resetBlobs, getBlob } from '@/lib/files/object-store';
-import { __resetDashboards } from '@/lib/dashboards/store';
-import { __resetBets } from '@/lib/bigbets/store';
+import { __resetStore as resetData } from '@/lib/experimental/data/store';
+import { __resetStore as resetKnowledge } from '@/lib/experimental/knowledge/store';
+import { __resetStore as resetFiles } from '@/lib/experimental/files/store';
+import { __resetBlobs, getBlob } from '@/lib/experimental/files/object-store';
+import { __resetDashboards } from '@/lib/experimental/dashboards/store';
+import { __resetBets } from '@/lib/experimental/bigbets/store';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
 import { __resetApprovals } from '@/lib/governance/approvals';
-import { __resetForTests as resetPillars } from '@/lib/strategy/pillars';
+import { __resetForTests as resetPillars } from '@/lib/experimental/strategy/pillars';
 
 /**
  * The governed MCP WRITE tools: each must delegate to the SAME lib function the UI

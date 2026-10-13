@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { requireUser } from '@/lib/core/auth';
-import { ensureHydrated } from '@/lib/software/apps';
-import { serveAppRuntime } from '@/lib/software/app-runtime';
+import { ensureHydrated } from '@/lib/experimental/software/apps';
+import { serveAppRuntime } from '@/lib/experimental/software/app-runtime';
 
 export const dynamic = 'force-dynamic';
 

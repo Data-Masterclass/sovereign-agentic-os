@@ -23,7 +23,7 @@ import {
   type ConsumptionMode,
   type ModelSpecInput,
   type ServiceModel,
-} from '@/lib/science';
+} from '@/lib/experimental/science';
 import { promoteThroughSeam } from '@/lib/governance/ladder';
 
 export const dynamic = 'force-dynamic';

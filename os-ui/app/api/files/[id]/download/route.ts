@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal, errorResponse } from '@/lib/files/server';
-import { getFile } from '@/lib/files/store';
-import { getBlob } from '@/lib/files/object-store';
-import '@/lib/files/object-store-server'; // registers the durable MinIO backend
-import { textDownloadName, safeDispositionName, absentOriginalNote } from '@/lib/files/download';
+import { requirePrincipal, errorResponse } from '@/lib/experimental/files/server';
+import { getFile } from '@/lib/experimental/files/store';
+import { getBlob } from '@/lib/experimental/files/object-store';
+import '@/lib/experimental/files/object-store-server'; // registers the durable MinIO backend
+import { textDownloadName, safeDispositionName, absentOriginalNote } from '@/lib/experimental/files/download';
 
 export const dynamic = 'force-dynamic';
 

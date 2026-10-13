@@ -9,7 +9,7 @@ import {
   restoreAppVersion,
   listAppGitVersions,
   restoreAppGitVersion,
-} from '@/lib/software/apps';
+} from '@/lib/experimental/software/apps';
 
 export const dynamic = 'force-dynamic';
 

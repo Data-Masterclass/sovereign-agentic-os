@@ -4,15 +4,15 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal, errorResponse } from '@/lib/files/server';
-import { listFiles, createFile, attachObject, objectKeyForAsset, type UploadInput } from '@/lib/files/store';
-import { putBlob } from '@/lib/files/object-store';
-import '@/lib/files/object-store-server'; // registers the durable MinIO backend
-import { reindexFile } from '@/lib/files/pipeline-server';
-import { truncationError } from '@/lib/files/integrity';
+import { requirePrincipal, errorResponse } from '@/lib/experimental/files/server';
+import { listFiles, createFile, attachObject, objectKeyForAsset, type UploadInput } from '@/lib/experimental/files/store';
+import { putBlob } from '@/lib/experimental/files/object-store';
+import '@/lib/experimental/files/object-store-server'; // registers the durable MinIO backend
+import { reindexFile } from '@/lib/experimental/files/pipeline-server';
+import { truncationError } from '@/lib/experimental/files/integrity';
 import { config } from '@/lib/core/config';
-import type { Sensitivity, Storage } from '@/lib/files/asset-schema';
-import { appSlugFromRequest, grantedIdSet } from '@/lib/software/app-origin';
+import type { Sensitivity, Storage } from '@/lib/experimental/files/asset-schema';
+import { appSlugFromRequest, grantedIdSet } from '@/lib/experimental/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 

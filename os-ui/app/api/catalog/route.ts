@@ -4,16 +4,16 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/core/config';
 import { requireUser } from '@/lib/core/auth';
-import { errorResponse } from '@/lib/data/server';
-import { ensureHydrated, listDatasets, type Principal } from '@/lib/data/store';
+import { errorResponse } from '@/lib/experimental/data/server';
+import { ensureHydrated, listDatasets, type Principal } from '@/lib/experimental/data/store';
 import { queryRun } from '@/lib/infra/governed';
 import {
   assembleCatalog,
   registryAssets,
   type CatalogAsset,
-} from '@/lib/data/catalog';
-import { openMetadataSource, omEntityUrl } from '@/lib/data';
-import { firstOmCatalogFor, omConnectionSource } from '@/lib/connections/openmetadata';
+} from '@/lib/experimental/data/catalog';
+import { openMetadataSource, omEntityUrl } from '@/lib/experimental/data';
+import { firstOmCatalogFor, omConnectionSource } from '@/lib/experimental/connections/openmetadata';
 
 export const dynamic = 'force-dynamic';
 

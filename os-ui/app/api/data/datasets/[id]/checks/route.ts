@@ -4,13 +4,13 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal, errorResponse } from '@/lib/data/server';
+import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
 import { requireUser } from '@/lib/core/auth';
-import { getDataset, addCheck, removeCheck, updateCheckDescriptions, builtLayerFqn } from '@/lib/data/store';
+import { getDataset, addCheck, removeCheck, updateCheckDescriptions, builtLayerFqn } from '@/lib/experimental/data/store';
 import { queryRun } from '@/lib/infra/governed';
-import { runAndRecord } from '@/lib/data/dq-run-server';
-import { omDqAppenderFor } from '@/lib/connections/openmetadata';
-import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/data';
+import { runAndRecord } from '@/lib/experimental/data/dq-run-server';
+import { omDqAppenderFor } from '@/lib/experimental/connections/openmetadata';
+import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/experimental/data';
 
 export const dynamic = 'force-dynamic';
 

@@ -4,18 +4,18 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/files/server';
+import { requirePrincipal } from '@/lib/experimental/files/server';
 import {
   getFile, moveFile, setDocs, setSensitivity, setIndexingMode, deleteFile,
   archiveFile, unarchiveFile, renameFile,
-} from '@/lib/files/store';
-import { reindexById } from '@/lib/files/pipeline-server';
-import { removeFromIndex } from '@/lib/files/index-store';
-import { purgeFileObjects } from '@/lib/files/physical-delete';
-import { deleteBlob } from '@/lib/files/object-store';
-import '@/lib/files/object-store-server'; // registers the durable MinIO backend
-import type { IndexingMode, Sensitivity } from '@/lib/files/asset-schema';
-import { appSlugFromRequest, checkAppGrant } from '@/lib/software/app-origin';
+} from '@/lib/experimental/files/store';
+import { reindexById } from '@/lib/experimental/files/pipeline-server';
+import { removeFromIndex } from '@/lib/experimental/files/index-store';
+import { purgeFileObjects } from '@/lib/experimental/files/physical-delete';
+import { deleteBlob } from '@/lib/experimental/files/object-store';
+import '@/lib/experimental/files/object-store-server'; // registers the durable MinIO backend
+import type { IndexingMode, Sensitivity } from '@/lib/experimental/files/asset-schema';
+import { appSlugFromRequest, checkAppGrant } from '@/lib/experimental/software/app-origin';
 
 export const dynamic = 'force-dynamic';
 

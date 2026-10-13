@@ -6,7 +6,7 @@ import { withRoute } from '@/lib/core/route-server';
 import { getSystem } from '@/lib/agents/store';
 import { assistantComplete } from '@/lib/assistant/complete';
 import { judgeRun, type JudgeComplete } from '@/lib/agents/evaluate-judge';
-import { getWorkflow } from '@/lib/knowledge/store';
+import { getWorkflow } from '@/lib/experimental/knowledge/store';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { System } from '@/lib/agents/system-schema';
 

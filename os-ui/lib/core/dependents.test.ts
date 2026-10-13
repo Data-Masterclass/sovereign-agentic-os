@@ -10,12 +10,12 @@ import assert from 'node:assert/strict';
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
 const { dependentsOf, dependentsSummary } = await import('./dependents.ts');
-const dataStore = await import('../data/store.ts');
+const dataStore = await import('../experimental/data/store.ts');
 const { __resetStore, createDataset, buildVersion, defineMeasure, datasetForScheduler } = dataStore;
-const { measureMember } = await import('../metrics/model.ts');
-const { __resetDashboards, saveDashboard } = await import('../dashboards/store.ts');
+const { measureMember } = await import('../experimental/metrics/model.ts');
+const { __resetDashboards, saveDashboard } = await import('../experimental/dashboards/store.ts');
 const { __resetStore: __resetAgents, createSystem } = await import('../agents/store.ts');
-const { __resetAppsCache, createApp, patchAppDesign } = await import('../software/apps.ts');
+const { __resetAppsCache, createApp, patchAppDesign } = await import('../experimental/software/apps.ts');
 
 type Principal = { id: string; domains: string[]; role: 'creator' | 'builder' | 'admin' };
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'builder' };

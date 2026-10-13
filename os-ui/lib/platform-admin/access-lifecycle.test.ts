@@ -179,7 +179,7 @@ test('offboard with reassignTo moves a personal dataset to the target and delete
   await post(listRoute, { id: 'val@example.com', name: 'Val', role: 'creator', domains: ['sales'], password: STRONG });
 
   // Seed a PERSONAL-lane dataset owned by sam directly in the data store.
-  const data = await import('../data/store.ts');
+  const data = await import('../experimental/data/store.ts');
   data.__resetStore();
   const ds = data.createDataset({ id: 'sam@example.com', domains: ['sales'], role: 'creator' }, { name: 'Sam Personal DS' });
 

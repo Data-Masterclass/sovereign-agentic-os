@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getEditableAppForUser } from '@/lib/software/apps';
-import { commitToApp } from '@/lib/software/server';
-import { validateFrontendImport } from '@/lib/software/design-push';
+import { getEditableAppForUser } from '@/lib/experimental/software/apps';
+import { commitToApp } from '@/lib/experimental/software/server';
+import { validateFrontendImport } from '@/lib/experimental/software/design-push';
 
 export const dynamic = 'force-dynamic';
 

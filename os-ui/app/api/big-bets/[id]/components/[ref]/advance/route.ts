@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { advanceComponent } from '@/lib/bigbets/store';
-import { actor } from '@/lib/bigbets/server';
-import { type Lifecycle } from '@/lib/bigbets';
+import { advanceComponent } from '@/lib/experimental/bigbets/store';
+import { actor } from '@/lib/experimental/bigbets/server';
+import { type Lifecycle } from '@/lib/experimental/bigbets';
 
 export const dynamic = 'force-dynamic';
 

@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/data/server';
-import { listDatasets } from '@/lib/data/store';
-import { ensureHydrated, latestRun } from '@/lib/data/dq-results';
-import { monitorId } from '@/lib/data/dq-monitors';
+import { requirePrincipal } from '@/lib/experimental/data/server';
+import { listDatasets } from '@/lib/experimental/data/store';
+import { ensureHydrated, latestRun } from '@/lib/experimental/data/dq-results';
+import { monitorId } from '@/lib/experimental/data/dq-monitors';
 import { buildDqOverview, type DqDatasetInput } from '@/lib/monitoring/dq-overview';
 
 export const dynamic = 'force-dynamic';

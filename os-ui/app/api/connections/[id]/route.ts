@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getConnectionForUser, deleteConnection, setConnectionArchived, renameConnection, rotateConnectionCredential } from '@/lib/connections';
+import { getConnectionForUser, deleteConnection, setConnectionArchived, renameConnection, rotateConnectionCredential } from '@/lib/experimental/connections';
 
 export const dynamic = 'force-dynamic';
 

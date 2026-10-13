@@ -3,15 +3,15 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getWorkflow, getDomainKnowledge } from '@/lib/knowledge/store';
-import { chunkWorkflow, chunkDomain } from '@/lib/knowledge/chunk';
+import { getWorkflow, getDomainKnowledge } from '@/lib/experimental/knowledge/store';
+import { chunkWorkflow, chunkDomain } from '@/lib/experimental/knowledge/chunk';
 import {
   embedUnits,
   evaluateGolden,
   evaluateAccessControl,
   type GoldenCase,
   type AccessCase,
-} from '@/lib/knowledge/eval-harness';
+} from '@/lib/experimental/knowledge/eval-harness';
 
 export const dynamic = 'force-dynamic';
 
