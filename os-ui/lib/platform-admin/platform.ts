@@ -4,12 +4,11 @@
 /**
  * Platform / Components — native stack control plane (server-only).
  *
- * This is the OS UI's own implementation of what used to be the standalone
- * `admin-console` service: the single-source-of-truth component registry plus
+ * The OS UI's operator surface: the single-source-of-truth component registry plus
  * live status (read the workload from the k8s API), on/off toggling (scale the
  * Deployment/StatefulSet 0<->1, with a core-guard) and the per-component docs.
  * The OS UI server already runs in-cluster with a scoped ServiceAccount, so it
- * does this directly — no cross-pod fetch to `admin-console:8080`.
+ * does this directly — no cross-pod fetch.
  *
  * Registry fields:
  *   kind:   deploy | sts | cluster | job   (how to read/scale it)

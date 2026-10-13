@@ -19,7 +19,7 @@ export const runtime = 'nodejs';
  *   { id, name, layer, status, svc, port, ns, lport, ui, url_path, login,
  *     summary, toggle }
  * The browser only ever talks to THIS route — the k8s token never reaches the
- * client. (Formerly this proxied the standalone admin-console service.)
+ * client.
  *
  * Nav consolidation: each component also carries `version` and — where the
  * tool has a browser-reachable native console — `consoleUrl`, resolved from

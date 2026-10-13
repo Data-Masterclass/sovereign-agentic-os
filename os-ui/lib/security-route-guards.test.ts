@@ -283,23 +283,6 @@ test('PLATFORM-GATE 4: consolidated tab gates — Policies & Approvals is builde
   assert.doesNotMatch(src, /label: 'Governance'/, "Governance label must be gone (renamed to Policies & Approvals)");
 });
 
-test('PLATFORM-GATE 5: removed tab routes are redirect stubs, not content (no 404s for old links)', () => {
-  const targets: Record<string, string> = {
-    'app/(system)/users/page.tsx': '/platform',
-    'app/(system)/gateway/page.tsx': '/components',
-    'app/(system)/orchestration/page.tsx': '/components',
-    'app/(system)/consoles/page.tsx': '/components',
-    'app/(system)/workbench/page.tsx': '/components',
-    'app/(build)/terminal/page.tsx': '/console',
-    'app/(build)/admin-query/page.tsx': '/console',
-  };
-  for (const [p, target] of Object.entries(targets)) {
-    const src = read(p);
-    assert.match(src, /from 'next\/navigation'/, `${p} must use next/navigation redirect`);
-    assert.match(src, new RegExp(`redirect\\('${target}'\\)`), `${p} must redirect to ${target}`);
-  }
-});
-
 test('RUN PATH: the agent RUN route derives a real default task, never "Test invocation"', () => {
   const src = read('app/api/agents/systems/[id]/run/route.ts');
   // The run path must fall back to a purpose-derived default, not the literal probe string.

@@ -410,8 +410,7 @@ export const config = {
   // Platform / Components surface — namespace the stack workloads live in. The
   // OS UI server reads their status + scales them 0<->1 NATIVELY via the
   // in-cluster Kubernetes API using the pod's scoped ServiceAccount (see
-  // lib/platform.ts + lib/k8s.ts). This replaces the former server-side proxy to
-  // the standalone `admin-console` service — there is no cross-pod hop anymore.
+  // lib/platform.ts + lib/k8s.ts). There is no cross-pod hop to a separate console service.
   platformNamespace: env('NAMESPACE', env('OS_NAMESPACE', 'agentic-os')),
 
   // ---- In-UI Terminal. The OS UI mints a short-lived, single-use HMAC token

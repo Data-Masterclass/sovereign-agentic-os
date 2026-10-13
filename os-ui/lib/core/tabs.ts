@@ -16,7 +16,7 @@
  *   - About / Licenses moved to the Entry group (transparency — every user can read it).
  *   - Admin moved to the Govern group.
  *   - Terminal + Query merged into Console (/console), hosted in the Build group.
- *   - Old /terminal and /admin-query routes redirect to /console.
+ *   - The old /terminal and /admin-query routes were removed (404).
  *
  * The former Monitor group was renamed Govern. The Governance tab was relabelled
  * "Policies & Approvals" (route unchanged: /governance).

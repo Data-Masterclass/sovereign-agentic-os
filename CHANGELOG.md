@@ -13,6 +13,28 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Removed — dead artifacts (#6)
+
+- Deleted the deprecated `images/admin-console/` image and its README/build-script references.
+- Deleted 7 redirect-stub routes: `/users`, `/gateway`, `/orchestration`, `/consoles`, `/workbench`, `/terminal`, `/admin-query`. Old bookmarks now return 404 (use `/platform`, `/components`, `/console`).
+
+### Changed — base/extensions split (#2)
+
+- Introduced one boundary between "the base OS" and "extensions": `images/{base,extensions}/` and
+  `charts/sovereign-agentic-os/templates/{base,extensions}/`. Helm resolves templates by name, so
+  `helm template` output is unchanged (verified byte-identical before/after, apart from the new
+  `mcp-test-agent` resource).
+- Placement corrections: `web-fetch` / `egress-proxy` chart templates are in `base` (required for the
+  base agent path); `query-tool` is in `extensions` (it only works via Trino).
+- Added `experimental/README.md` documenting the base/extensions quarantine policy and the re-entry
+  checklist for promoting an extension back to base.
+- CI: fixed `images/` paths in pytest steps, a stale chart path in the openmetadata test and a broken
+  `setup-python` SHA pin; Node 20 → 22 to match the Dockerfile. Added missing SPDX headers to 84
+  `deploy/sync` scripts.
+- Added `mcp-test-agent`, a demo agent that exercises the governed `/api/mcp` endpoint end-to-end
+  (list tools as a minted-token user → model decides → call the tool → trace in Langfuse), plus
+  `scripts/get-mcp-token.sh` and `scripts/test-mcp-agent.sh`.
+
 ### os-ui 0.6.168 — Data tab restored: a Cube view may never share its cube's name
 
 **Incident (2026-09-23):** creating or promoting ANY dataset failed. Cube's `/meta` returned 500

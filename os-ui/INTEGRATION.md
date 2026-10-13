@@ -77,8 +77,8 @@ osUI:
 ## 2. `scripts/build-images.sh`
 
 The UI's build context is the **app dir** (`os-ui/`), referenced by `-f`, so it does
-**not** fit the generic `images/<dir>` loop. Add it next to the `admin-console`
-special case (which also uses a non-default context):
+**not** fit the generic `images/<dir>` loop. Add it as a special case
+(it uses a non-default context):
 
 ```bash
 # OS UI needs the app dir (os-ui/) as the build context.
@@ -89,8 +89,7 @@ kind load docker-image sovereign-os/os-ui:0.1.0 --name "$CLUSTER" >/dev/null 2>&
 
 ## 3. `Chart.yaml`
 
-**No change needed.** The OS UI is a bespoke in-chart template (like `admin-console`
-and `sample-agent`), not a wrapped subchart — there is no `dependencies:` entry to add.
+**No change needed.** The OS UI is a bespoke in-chart template (like `sample-agent`), not a wrapped subchart — there is no `dependencies:` entry to add.
 (Optionally bump the chart `version:` per your packaging policy when you cut a release.)
 
 ## 4. `README.md` (optional)
