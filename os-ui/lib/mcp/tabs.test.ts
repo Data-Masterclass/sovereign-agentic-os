@@ -15,6 +15,8 @@ import {
   type JsonRpcResponse,
 } from './server.ts';
 import { PROMPTS } from './prompts.ts';
+import { strategyReadTools, strategyWriteTools } from '@/lib/experimental/mcp/strategy-tools.ts';
+import { marketplaceReadTools, marketplaceWriteTools } from '@/lib/experimental/mcp/marketplace-tools.ts';
 
 const creator: CurrentUser = { id: 'dan', name: 'Dan', domains: ['sales'], role: 'creator' };
 const builder: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'builder' };
@@ -139,7 +141,17 @@ test('the overarching endpoint (no tools override) still sees ALL tools', async 
 test('context.md and guide.md files reference only real MCP tool names (drift tripwire)', () => {
   // Tools AND prompts are both legitimate references — a brief may point the AI at a
   // slash-command front door (e.g. `score_and_wire_prediction`) as well as at tools.
-  const realToolNames = new Set([...ALL_MCP_TOOLS.map((t) => t.name), ...PROMPTS.map((p) => p.name)]);
+  // ALL_MCP_TOOLS only carries non-base bundles whose feature flag is on in THIS
+  // process — supplement with the bundles being flag-gated directly so this
+  // drift-check still sees marketplace/strategy tool names.
+  const realToolNames = new Set([
+    ...ALL_MCP_TOOLS.map((t) => t.name),
+    ...PROMPTS.map((p) => p.name),
+    ...strategyReadTools.map((t) => t.name),
+    ...strategyWriteTools.map((t) => t.name),
+    ...marketplaceReadTools.map((t) => t.name),
+    ...marketplaceWriteTools.map((t) => t.name),
+  ]);
 
   // Non-tool tokens that legitimately appear in backticks in these markdown files.
   // Extend this list only for provably non-tool terms — never to paper over a dead tool.

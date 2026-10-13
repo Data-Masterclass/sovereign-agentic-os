@@ -174,6 +174,9 @@ export function enabledTabsWarnings(enabled: ReadonlySet<string>): string[] {
   return out;
 }
 
+/** The enabled feature set for this process (OS_ENABLED_TABS; unset → base tier). */
+export const TAB_FEATURES: Set<string> = parseEnabledTabs(process.env.OS_ENABLED_TABS);
+
 // Flat list (kept for any consumer that just wants every tab in order).
 export const TABS: Tab[] = TAB_GROUPS.flatMap((g) => g.tabs);
 

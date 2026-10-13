@@ -3,8 +3,8 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
-import type { McpTool } from './server';
-import { fail, str } from './discovery-common';
+import type { McpTool } from '@/lib/mcp/server';
+import { fail, str } from '@/lib/experimental/mcp/discovery-common';
 
 // --- The EXACT governed marketplace lib the UI + /api/marketplace call ---------
 import { listingAdapter, rateListing } from '@/lib/experimental/marketplace';

@@ -9,7 +9,7 @@ import {
   listToolsForRole,
   type McpTool,
 } from '@/lib/mcp/server';
-import { ALL_WRITE_TOOLS } from '@/lib/mcp/write-tools';
+import { WRITE_TOOL_NAMES, WRITE_TOOL_TABS } from '@/lib/mcp/write-tool-meta';
 import type { ToolExecutor, ToolSpec } from '@/lib/assistant/agentic';
 import type { ArtifactGrant, System, SafetyPreset } from '../system-schema.ts';
 import { type Effect } from '../gateway.ts';
@@ -18,6 +18,7 @@ import { trace as realTrace } from '@/lib/infra/agent-governed';
 import { enqueue as realEnqueue } from '@/lib/governance/approvals';
 import { resolveFolderGrant } from '@/lib/core/folders';
 import { config } from '@/lib/core/config';
+import { TAB_FEATURES } from '@/lib/core/tabs';
 
 /**
  * THE ONE reusable core that lets an INTERNAL agent (Agents tab) call the SAME
@@ -30,7 +31,7 @@ import { config } from '@/lib/core/config';
  * THE DOUBLE GATE (an agent can exceed NEITHER its grants NOR its runner's rights):
  *   1. Grant scope — the tool must be in the system's `grants.tools` (resolved
  *      through the legacy→MCP alias map). This is ALSO where a WRITE tool is HELD:
- *      a granted write tool (any {@link ALL_WRITE_TOOLS} name) resolves to
+ *      a granted write tool (any {@link WRITE_TOOL_NAMES} name) resolves to
  *      `requires_approval`, enqueues to Governance and NEVER executes; a granted
  *      read tool is allowed to reach gate 2. This decision is derived IN-PROCESS
  *      from the system's own resolved grant-set + the write-tool catalog — it does
@@ -64,6 +65,14 @@ export const OS_TOOL_ALIASES: Record<string, string> = {
   files_retrieve: 'search_files',
   predict: 'science_predict',
   write_file: 'upload_file',
+};
+
+/** #28: which feature flag gates an alias's target (only the ones that
+ *  actually depend on one — retrieve/predict's targets are always on). */
+const ALIAS_REQUIRES_FEATURE: Record<string, string> = {
+  metrics: 'metrics',
+  files_retrieve: 'files',
+  write_file: 'files',
 };
 
 /** Resolve a single (possibly legacy) grant name to its MCP registry name. */
@@ -313,12 +322,12 @@ export async function resolveFolderGrantsForRun(
  * `requires_approval` list, so gate 1b needs no live `os-<id>` OPA document. Read
  * tools are absent → they flow through to the run-as-user governed dispatch.
  */
-const WRITE_APPROVAL_NAMES = new Set(ALL_WRITE_TOOLS.map((t) => t.name));
+const WRITE_APPROVAL_NAMES = WRITE_TOOL_NAMES;
 
 /** The tab a write tool lands its artifact in — for the honest "wrote N … to My <tab>"
  *  run-report line. Falls back to the tab the write-tool catalog records; an unmapped
  *  write is summarised generically ("My workspace"). */
-const WRITE_TOOL_TAB = new Map<string, string>(ALL_WRITE_TOOLS.map((t) => [t.name, t.tab]));
+const WRITE_TOOL_TAB = new Map<string, string>(Object.entries(WRITE_TOOL_TABS));
 
 /** Human labels for the tabs the run report names (keeps "My Data" not "My data"). */
 const TAB_LABEL: Record<string, string> = {
@@ -650,6 +659,13 @@ export function grantedToolExecutor(
 
     // Gate 1 — structural grant scope. Not granted ⇒ never touch OPA or the tool.
     if (!grantedNames.has(mcpName)) {
+      // #28: OS_TOOL_ALIASES only — a precise "feature not enabled" message for the
+      // 3 legacy aliases whose target is genuinely flag-gated, never guessed for a
+      // plain grant/permission denial (that stays the generic message below).
+      const requiredFeature = ALIAS_REQUIRES_FEATURE[name];
+      if (requiredFeature && !TAB_FEATURES.has(requiredFeature)) {
+        return errorResult('not_found', `Tool not available: the '${requiredFeature}' feature is not enabled`);
+      }
       return errorResult('not_found', `Tool not available: ${name || '(none)'}`);
     }
 

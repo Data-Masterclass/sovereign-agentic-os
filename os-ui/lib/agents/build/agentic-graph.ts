@@ -12,8 +12,15 @@ import {
   type ToolSpec,
 } from '@/lib/assistant/agentic';
 import { compactToolResult } from '@/lib/infra/context/context-assembler';
-import { estimateTokens } from '@/lib/experimental/knowledge/context-pack';
 import { curateContext, type CurateCandidate, type EmbedFn } from '@/lib/infra/context/librarian';
+
+// #28: inlined from @/lib/experimental/knowledge/context-pack's estimateTokens
+// (same one-line formula) instead of importing it — this file is base and the
+// formula has no real knowledge-domain logic, so importing it only pulled an
+// unrelated experimental module into the base bundle for no reason.
+function estimateTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4));
+}
 
 /**
  * THE AGENTIC GRAPH EXECUTOR — the core of the Software Delivery Team.
