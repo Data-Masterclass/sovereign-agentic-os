@@ -233,11 +233,12 @@ objectStorage:
   # SeaweedFS is the air-gap/sovereign alternative but proved unreliable for
   # Iceberg writes on kind. MinIO is AGPL — local dev stand-in only, never bundled.
   image:
-    # quay.io, NOT docker.io: MinIO restricted `minio/minio` on Docker Hub — the digest
-    # (and even :latest) now 401/denied, so any node WITHOUT a warm cache cannot pull it.
-    # This took object storage down when the node was replaced on 2026-09-22.
-    repository: quay.io/minio/minio
-    digest: sha256:8834ae47a2de3509b83e0e70da9369c24bbbc22de42f2a2eddc530eee88acd1b
+    # ghcr MIRROR of Chainguard's community MinIO build (cgr.dev/chainguard/minio,
+    # MinIO RELEASE.2026-09-22T19-25-18Z). MinIO withdrew its images from Docker Hub
+    # (2025) and quay.io (2026-10); a pinned upstream digest vanished and object
+    # storage was down for 4 days after a node roll. Pull from a registry WE control.
+    repository: ghcr.io/aborek/sovereign-os/minio
+    digest: sha256:1887982b34cc821a569fdc94c4d30ee01c2826184fe7d3a49aee37bb3bbb23a7
   awsCli:
     repository: amazon/aws-cli
     digest: sha256:e14216fb361cce909ce199616711ad103182d5937f851cda9bebf25867d7180a   # 2.31.13
