@@ -151,8 +151,12 @@ function finalizeTeamRun(team: AgenticGraphResult, running: boolean, yaml: strin
   const lastRun: LastRun = {
     at: Date.now(),
     running,
-    ok: teamOk,
+    // A run is only genuinely ok if every node that ran finished 'ok' AND the walk
+    // reached the end of the path — `teamOk` alone reads true for a budget-stopped
+    // partial run (every node that DID run was fine; the run just didn't finish).
+    ok: teamOk && team.reachedEnd,
     path: team.path,
+    reachedEnd: team.reachedEnd,
     traces: 0,
     held: outcomes.heldTotal,
     steps: teamSteps,
@@ -163,7 +167,19 @@ function finalizeTeamRun(team: AgenticGraphResult, running: boolean, yaml: strin
     writeSummary,
     mode: 'live',
   };
-  const body = { running, mode: 'live' as const, team: true, ok: teamOk, reachedEnd: team.reachedEnd, path: team.path, finalText: team.finalText, nodes, contextUsage, grantedIds, writeSummary };
+  const body = {
+    running,
+    mode: 'live' as const,
+    team: true,
+    ok: teamOk && team.reachedEnd,
+    reachedEnd: team.reachedEnd,
+    path: team.path,
+    finalText: team.finalText,
+    nodes,
+    contextUsage,
+    grantedIds,
+    writeSummary,
+  };
   return { body, lastRun };
 }
 

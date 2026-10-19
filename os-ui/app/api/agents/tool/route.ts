@@ -3,13 +3,16 @@
  */
 import { NextResponse } from 'next/server';
 import {
-  authorizeAppTool,
+  authorize,
   trace,
   metricsTool,
   retrieveTool,
   SALES,
   type DlsPrincipal,
+  type ToolName,
 } from '@/lib/infra/agent-governed';
+import { grantsForDurable } from '@/lib/infra/app-registry';
+import { realOpa } from '@/lib/agents/build/live-clients';
 import { principalFor, type GovernedToolResponse } from '@/lib/agents/build/runtime-contract';
 import { runtimeTokenOk } from '@/lib/agents/build/runtime-auth';
 import { ensureHydrated, systemForScheduler } from '@/lib/agents/store';
@@ -82,11 +85,24 @@ export async function POST(req: Request) {
   await ensureHydrated();
 
   // Authorize BEFORE any side effect (honoring read/write); never run-then-check.
-  // `authorizeAppTool` first consults the dynamic grant registry (rehydrated from
-  // the durable agent-system record when the in-memory copy was wiped by a restart),
-  // then falls through to OPA — so a built agent's granted tool self-heals instead of
-  // denying until rebuilt, while an ungranted tool still hits OPA/deny (fail-closed).
-  const authz = await authorizeAppTool(principal, tool);
+  // Ask OPA first to enforce OS tool policies, including requires_approval.
+  // If OPA denies because a restart wiped its in-memory grants, restore grants
+  // from the DURABLE agent-system record and retry ONCE. Fail-closed if the
+  // durable record doesn't list this tool or re-provisioning fails (OPA
+  // unreachable). authorizeAppTool() itself is left unchanged: software-app
+  // MCP depends on its current grant-first behavior.
+  let authz = await authorize(principal, tool as ToolName);
+  if (authz.effect === 'deny') {
+    const durableTools = await grantsForDurable(principal);
+    if (durableTools.includes(tool)) {
+      try {
+        await realOpa().putGrants(principal, durableTools);
+        authz = await authorize(principal, tool as ToolName);
+      } catch {
+        /* OPA unreachable — keep the original deny, fail-closed */
+      }
+    }
+  }
 
   if (authz.effect !== 'allow') {
     // Denied or held: the side effect is NOT executed; the attempt is still traced.
