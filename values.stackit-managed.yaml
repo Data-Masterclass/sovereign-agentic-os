@@ -155,6 +155,13 @@ litellm:
 langfuse:
   postgresql:
     host: "REPLACE-postgres-flex-host"   # Langfuse metadata DB -> managed PostgreSQL
+  langfuse:
+    nextauth:
+      # MUST be the public console URL. The subchart default is http://localhost:3000,
+      # which makes NextAuth redirect the browser to localhost after a successful
+      # login — the UI looks "unable to log in" (2026-10-21). Same REPLACE token as
+      # the ingress hosts; render-values.sh fills it.
+      url: "https://langfuse.REPLACE-DNS-NAME"
   s3:
     endpoint: "https://object.storage.eu01.onstackit.cloud" # blob store -> managed S3
 
