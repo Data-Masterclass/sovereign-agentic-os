@@ -32,7 +32,8 @@ export default function DemoteButton({
   body,
   artifactId,
 }: {
-  /** Human noun for confirm copy, e.g. 'pillar', 'connection'. */
+  /** Human noun for confirm copy, e.g. 'dashboard', 'connection'. */
+
   kind: string;
   /** The artifact's CURRENT tier — drives the verb + confirm copy. */
   tier: DemoteTier;

@@ -13,7 +13,7 @@ import { stepperStages, stageArtifact, canBuildStage } from '@/lib/experimental/
 import { buildStage } from '@/lib/experimental/data/build/server';
 import {
   goldJoinPlan,
-  goldMeasureToCube,
+  goldMeasureToModel,
   type ResolvedJoin,
   type GoldDimension,
   type GoldMeasure,
@@ -151,7 +151,7 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
     ? (baseSource ? { ...parsedSpec, baseDatasetId: rawBaseId } : (() => { const { baseDatasetId: _drop, ...rest } = parsedSpec; return rest; })())
     : undefined;
   const updated = buildGoldJoin(id, user, {
-    measures: measures.map(goldMeasureToCube),
+    measures: measures.map(goldMeasureToModel),
     upstreams,
     artifact: stageArtifact(dataset.name, 'gold'),
     body: plan.sql,

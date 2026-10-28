@@ -112,10 +112,6 @@ export const mysqlProvider: WarehouseProvider = {
     kind: 'sql',
     query: (source) => `SHOW SCHEMAS FROM ${source.catalog}`,
   },
-  openMetadata: {
-    connectorType: 'Mysql',
-    configKeys: ['hostPort', 'username', 'databaseSchema', 'schemaFilterPattern'],
-  },
   liveVerificationRequired: [
     'MySQL/MariaDB reachability from the Trino pod (host:port, network policy) on a live server',
     'login user acceptance + least-privilege read (SELECT) on the target databases',

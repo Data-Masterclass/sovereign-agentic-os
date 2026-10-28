@@ -27,7 +27,7 @@ test('non-admin: body viewerRegion is IGNORED (no region in the security context
   acting('creator');
   const { token } = await delegatedToken('domain', { region: 'FR' });
   assert.equal(token.attributes.region, undefined, 'creator cannot inject a region');
-  const ctx = propagate(token).cube.securityContext;
+  const ctx = propagate(token).securityContext;
   assert.equal(ctx.region, undefined, 'no region reaches the live RLS security context');
 });
 
@@ -41,7 +41,7 @@ test('admin: body viewerRegion IS honored (view-as affordance)', async () => {
   acting('admin');
   const { token } = await delegatedToken('domain', { region: 'FR' });
   assert.equal(token.attributes.region, 'FR', 'admin view-as seeds the region');
-  const ctx = propagate(token).cube.securityContext;
+  const ctx = propagate(token).securityContext;
   assert.equal(ctx.region, 'FR');
 });
 

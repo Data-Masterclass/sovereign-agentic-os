@@ -6,10 +6,10 @@
  * (os-application.md §4); every tab routes to a real surface in v1.0.
  *
  * Six sections (5 tabs each):
- *   Ungrouped (entry): Home, Cockpit, Tutorials, MCP, About / Licenses
- *   Plan:    Strategy, Big Bets, Operating Model, Marketplace
+ *   Ungrouped (entry): Home, MCP, About / Licenses
+ *   Plan:    Operating Model
  *   Context: Data, Metrics, Files, Knowledge
- *   Build:   Workflows, Agents, Dashboards, Software, Science, Console (admin)
+ *   Build:   Workflows, Agents, Dashboards, Software, Console (admin)
  *   Manage:  Connections, Governance (builder+), Monitoring (builder+), Components (admin), LLM Gateway (builder+), Admin
  *
  * The former Admin group (Admin, Terminal, Query, About / Licenses) was dissolved:
@@ -35,19 +35,10 @@ export type Tab = {
   role?: string; // human-readable display hint (legacy informational label)
   /** Machine-readable minimum role required to see + reach this tab. */
   minRole?: Role;
-  /** Optional-layer gate: the tab only makes sense when the active domain has
-   *  this layer enabled (today only 'ml' — the Science layer). Navigation-level
-   *  hiding only, exactly like minRole: the page itself stays reachable and the
-   *  serving plane reports the layer being off honestly. */
-  requiresLayer?: 'ml';
   /** Machine-readable feature key for OS_ENABLED_TABS gating. A tab with no
-   *  feature is always visible (role/layer gates still apply). */
+   *  feature is always visible (role gates still apply). */
   feature?: string;
 };
-
-/** The active domain's optional-layer flags, as far as the client knows them.
- *  `null`/`undefined` = unknown (no active domain chosen, or record not found). */
-export type LayerFlags = { ml?: boolean } | null | undefined;
 
 export type TabGroup = {
   heading?: string;
@@ -61,8 +52,6 @@ export const TAB_GROUPS: TabGroup[] = [
     // the only real constraint — moving it here keeps it accessible and honest.
     tabs: [
       { label: 'Home', icon: '◇', href: '/', feature: 'home' },
-      { label: 'Cockpit', icon: '◉', href: '/cockpit', feature: 'cockpit' },
-      { label: 'Tutorials', icon: '◎', href: '/tutorials', feature: 'tutorials' },
       // MCP setup UI is builder+/admin. Creators still CONNECT via MCP (the
       // /api/mcp endpoint + their per-user token are unaffected) — only this
       // configuration tab is hidden from the creator menu.
@@ -73,10 +62,7 @@ export const TAB_GROUPS: TabGroup[] = [
   {
     heading: 'Plan',
     tabs: [
-      { label: 'Strategy', icon: '▲', href: '/strategy', feature: 'strategy' },
-      { label: 'Big Bets', icon: '◆', href: '/big-bets', feature: 'big-bets' },
       { label: 'Operating Model', icon: '❧', href: '/operating-manual', feature: 'operating-model' },
-      { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator', feature: 'marketplace' },
     ],
   },
   {
@@ -95,14 +81,10 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Agents', icon: '✦', href: '/agents', feature: 'agents' },
       { label: 'Dashboards', icon: '▦', href: '/dashboards', feature: 'dashboards' },
       { label: 'Software', icon: '⌘', href: '/software', feature: 'software' },
-      // Science only exists where the domain's optional Science layer (layers.ml,
-      // toggled in Admin → Domains) is on — hidden from the nav when it is
-      // explicitly off for the active domain (see tabVisible).
-      { label: 'Science', icon: '∿', href: '/science', requiresLayer: 'ml', feature: 'science' },
       // Console merges the former Terminal (/terminal) and Query (/admin-query)
       // operator tools into one page with a Shell | Query switch. The tab is
       // builder-visible so course participants get the GOVERNED Query surface
-      // (SQL over Trino/Cube, OPA/RLS-checked per-caller, audited). The raw
+      // (SQL over Trino, OPA/RLS-checked per-caller, audited). The raw
       // Shell sub-panel INSIDE it stays admin-only (ConsoleClient gates it) —
       // exposing the tab does NOT expose arbitrary command execution.
       { label: 'Console', icon: '▶', href: '/console', role: 'Builder / Administrator', minRole: 'builder', feature: 'console' },
@@ -139,7 +121,6 @@ export const BASE_FEATURES: readonly string[] = [
   'llm-gateway',
   'mcp',
   'governance',
-  'tutorials',
   'admin',
   'components',
 ];
@@ -186,42 +167,34 @@ export const TABS: Tab[] = TAB_GROUPS.flatMap((g) => g.tabs);
 const ROLE_RANK: Record<Role, number> = { creator: 0, builder: 1, domain_admin: 2, admin: 3 };
 
 /**
- * Pure visibility check: can `userRole` see `tab` in the active domain?
+ * Pure visibility check: can `userRole` see `tab`?
  * No `minRole` on the tab means visible to everyone.
  * A `null`/`undefined` userRole (unauthenticated) always passes — the Edge
  * middleware handles the redirect to /signin before the page renders.
- *
- * `layers` are the ACTIVE domain's optional-layer flags. A layer-gated tab is
- * hidden ONLY when the layer is EXPLICITLY disabled (`false`); unknown/absent
- * layers FAIL OPEN and the tab stays visible — navigation must never lock a
- * user out on missing data, and the serving plane already 404s honestly when
- * the layer really is off.
  */
 export function tabVisible(
   tab: Tab,
   userRole: Role | null | undefined,
-  layers?: LayerFlags,
   enabledFeatures: ReadonlySet<string> = new Set(BASE_FEATURES),
 ): boolean {
   if (tab.feature && !enabledFeatures.has(tab.feature)) return false;
-  if (tab.requiresLayer && layers?.[tab.requiresLayer] === false) return false;
   if (!tab.minRole) return true;
   if (!userRole) return true; // middleware guards; UI shows tabs, server redirects
   return (ROLE_RANK[userRole] ?? 0) >= (ROLE_RANK[tab.minRole] ?? 0);
 }
 
 /**
- * Filter tab groups for a given user role + active-domain layers. Empty groups
+ * Filter tab groups for a given user role. Empty groups
  * (all tabs hidden) are dropped so no dangling heading appears in the sidebar.
  */
 export function filterTabGroups(
   groups: TabGroup[],
   userRole: Role | null | undefined,
-  layers?: LayerFlags,
   enabledFeatures: ReadonlySet<string> = new Set(BASE_FEATURES),
 ): TabGroup[] {
   return groups
-    .map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabVisible(t, userRole, layers, enabledFeatures)) }))
+    .map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabVisible(t, userRole, enabledFeatures)) }))
+
     .filter((g) => g.tabs.length > 0);
 }
 

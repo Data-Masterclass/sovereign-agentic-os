@@ -3,10 +3,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compilePolicy, compileCube, governanceFor, tableFqn, cubeFor, type Roster } from './compiler.ts';
-import { runConformance, evaluateOpa, evaluateCube } from './conformance.ts';
+import { compilePolicy, evaluateOpa, governanceFor, tableFqn, type Roster } from './compiler.ts';
 import { emptyVersions, type Dataset, type Grant } from '../dataset-schema.ts';
-import { cubeName } from '../metrics.ts';
 
 function product(over: Partial<Dataset> = {}): Dataset {
   const v = emptyVersions();
@@ -52,88 +50,34 @@ test('emits a domain SELF-PRINCIPAL for every governing/shared domain (empty-sco
   assert.deepEqual(opa.principals.sam, { domains: ['sales', 'finance'], clearances: [] });
 });
 
-test('compiles the SAME source → Cube access policies', () => {
-  const d = product({ imports: ['finance'], grants: [maskGrant('net_amount')] });
-  const { cube } = compilePolicy([d], roster);
-  const c = cube.find((x) => x.cube === cubeFor(d))!;
-  assert.deepEqual(c.allowDomains, ['finance', 'sales']);
-  assert.ok(c.excludes.includes('net_amount')); // restricted column excluded in Cube
-});
-
-test('OPA and Cube agree on row access for every identity (conformance ✓)', () => {
-  const d = product({ imports: ['finance'] });
-  const r = runConformance([d], roster);
-  assert.equal(r.ok, true);
-  assert.ok(r.checks > 0);
-});
-
-test('restricted column: masked in Trino AND excluded in Cube (mask-vs-hide conformant)', () => {
+test('restricted column: masked in Trino for a principal without clearance', () => {
   const d = product({ grants: [maskGrant('net_amount')] });
-  const { opa, cube } = compilePolicy([d], roster);
+  const { opa } = compilePolicy([d], roster);
   const fqn = tableFqn(d);
   const opaDec = evaluateOpa(opa, { user: 'amir', domains: ['sales'] }, fqn, 'net_amount');
-  const cubeDec = evaluateCube(cube, { user: 'amir', domains: ['sales'] }, cubeFor(d), 'net_amount');
+  assert.equal(opaDec.entitled, true);
   assert.equal(opaDec.masked, true);
-  assert.equal(cubeDec.excluded, true);
-  assert.equal(runConformance([d], roster).ok, true);
 });
 
-test('cross-domain without a grant is denied on BOTH paths', () => {
+test('cross-domain without a grant is denied', () => {
   const d = product({ visibility: 'domain' }); // sales only, no finance grant
-  const { opa, cube } = compilePolicy([d], roster);
-  const fqn = tableFqn(d);
-  assert.equal(evaluateOpa(opa, { user: 'kenji', domains: ['finance'] }, fqn).entitled, false);
-  assert.equal(evaluateCube(cube, { user: 'kenji', domains: ['finance'] }, cubeFor(d)).entitled, false);
+  const { opa } = compilePolicy([d], roster);
+  assert.equal(evaluateOpa(opa, { user: 'kenji', domains: ['finance'] }, tableFqn(d)).entitled, false);
 });
 
-test('CONFORMANCE FAILS on injected drift — a grant present in OPA but dropped from Cube', () => {
+test('a shared import entitles the importing domain (the marketplace grant)', () => {
   const d = product({ imports: ['finance'] });
-  const r = runConformance([d], roster, {
-    mutate: (c) => ({
-      ...c,
-      // drift: drop 'finance' from the Cube policy only (OPA still allows it)
-      cube: c.cube.map((p) => ({ ...p, allowDomains: p.allowDomains.filter((x) => x !== 'finance') })),
-    }),
-  });
-  assert.equal(r.ok, false);
-  assert.ok(r.mismatches.some((m) => m.user === 'kenji' && /row access/.test(m.reason)));
-});
-
-test('CONFORMANCE FAILS when a column is masked in Trino but visible in Cube', () => {
-  const d = product({ grants: [maskGrant('net_amount')] });
-  const r = runConformance([d], roster, {
-    mutate: (c) => ({ ...c, cube: c.cube.map((p) => ({ ...p, excludes: [] })) }), // Cube no longer excludes it
-  });
-  assert.equal(r.ok, false);
-  assert.ok(r.mismatches.some((m) => /column mask/.test(m.reason)));
+  const { opa } = compilePolicy([d], roster);
+  assert.equal(evaluateOpa(opa, { user: 'kenji', domains: ['finance'] }, tableFqn(d)).entitled, true);
+  assert.equal(evaluateOpa(opa, { user: 'zoe', domains: ['marketing'] }, tableFqn(d)).entitled, false);
 });
 
 test('private datasets are not governed in Trino (no table entry)', () => {
   assert.equal(governanceFor(product({ tier: 'dataset', visibility: 'private' })), null);
 });
 
-test('#155 cubeFor === cubeName (the access-policy key IS the model name buildCubeModels joins on)', () => {
-  assert.equal(cubeFor(product()), cubeName(product())); // legacy
-  const ns = product({ cubeNamespaced: true });
-  assert.equal(cubeFor(ns), cubeName(ns)); // namespaced — join key follows the identity
-  assert.equal(cubeFor(ns), 'sales__orders');
-});
-
-test('#155 two domains, SAME product name → DISTINCT cube policy keys (no shared access policy)', () => {
-  const sales = product({ domain: 'sales', name: 'Sales', cubeNamespaced: true, grants: [maskGrant('net_amount')] });
-  const finance = product({ id: 'ds_fin', owner: 'kenji', domain: 'finance', name: 'Sales', cubeNamespaced: true });
-  const cube = compileCube([sales, finance]);
-  const keys = cube.map((c) => c.cube).sort();
-  assert.deepEqual(keys, ['finance__sales', 'sales__sales']); // one policy each, no collision
-});
-
-test('domain-visibility with a stray cross-domain domain grant stays conformant (both deny)', () => {
-  // A `domain` asset must NOT honour shared_with on either path (OPA gates it on
-  // visibility=shared); the compiler must agree, or conformance would catch the drift.
+test('domain-visibility with a stray cross-domain domain grant still denies (shared_with gated on visibility=shared)', () => {
   const d = product({ tier: 'asset', visibility: 'domain', grants: [domainGrant('finance')] });
-  const r = runConformance([d], roster);
-  assert.equal(r.ok, true);
-  const { opa, cube } = compilePolicy([d], roster);
+  const { opa } = compilePolicy([d], roster);
   assert.equal(evaluateOpa(opa, { user: 'kenji', domains: ['finance'] }, tableFqn(d)).entitled, false);
-  assert.equal(evaluateCube(cube, { user: 'kenji', domains: ['finance'] }, cubeFor(d)).entitled, false);
 });

@@ -162,7 +162,8 @@ function grantedContextBrief(sys: System): string {
   add('files', g.files);
   add('metrics', g.metrics);
   add('connections', g.connections);
-  add('plan (pillars / bets / operating-manual)', g.plan);
+  add('plan (operating-manual)', g.plan);
+
   if (rows.length === 0) return '';
   return [
     'These are the ONLY governed resources you may act on. A discovery/list tool may return',

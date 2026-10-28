@@ -7,7 +7,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo } from 'reac
 import { getUrlParam, patchUrl } from '@/lib/core/url-params';
 
 /**
- * App-wide host for embedded tools (Superset, Langfuse, MLflow, …).
+ * App-wide host for embedded tools (Langfuse, MLflow, …).
  *
  * os-ui 0.6.140 — the in-app FULL-SCREEN tool OVERLAY was REMOVED entirely. It could leave a
  * black screen over the whole OS chrome (including the left nav) with no reliable way out — a

@@ -16,9 +16,9 @@ import {
  * Connections · Metrics), with Workflows a SEPARATE member from Knowledge.
  */
 
-test('Plan Items are Strategy · Big Bets · Operating Model · Workflows, in order', () => {
+test('Plan Items are Operating Model · Workflows, in order', () => {
   const labels = membersOf('plan').map((m) => m.label);
-  assert.deepEqual(labels, ['Strategy', 'Big Bets', 'Operating Model', 'Workflows']);
+  assert.deepEqual(labels, ['Operating Model', 'Workflows']);
 });
 
 test('Context is Knowledge · Files · Data · Connections · Metrics, in order', () => {
@@ -55,21 +55,6 @@ test('Operating Model is genuinely wireable via the plan grant list + operating-
   assert.equal(m.feedKind, 'operating-manual');
 });
 
-test('Strategy · Big Bets are now genuinely wireable via the plan grant list + their feeds', () => {
-  const strategy = RESOURCE_MEMBERS.find((x) => x.key === 'strategy')!;
-  assert.equal(strategy.wireable, true);
-  assert.equal(strategy.field, 'plan');
-  assert.equal(strategy.feedKind, 'strategy');
-
-  const bigbets = RESOURCE_MEMBERS.find((x) => x.key === 'bigbets')!;
-  assert.equal(bigbets.wireable, true);
-  assert.equal(bigbets.field, 'plan');
-  assert.equal(bigbets.feedKind, 'big-bets');
-
-  // No placeholder note lingers now that they are real pickers.
-  assert.equal(strategy.note, undefined);
-  assert.equal(bigbets.note, undefined);
-});
 
 test('isWorkflowId splits the shared knowledge feed', () => {
   assert.equal(isWorkflowId('wf_123'), true);

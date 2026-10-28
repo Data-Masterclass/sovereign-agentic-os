@@ -42,7 +42,7 @@ const CONNECTION_URL_ENV = 'MONGODB_CONNECTION_URL';
  * Validate the MongoDB `host` (or `host:port` / SRV host) + optional port. Pure + total:
  * throws `WarehouseError` on empty/malformed input. This is METADATA ONLY — the actual
  * connection URL (with credentials) is vaulted and referenced via `${ENV:...}`; the host
- * is validated so the install guide / OM config and a helpful error stay honest.
+ * is validated so the install guide and a helpful error stay honest.
  */
 export function validateMongoHost(cfg: MongoConfig): string {
   let raw = (cfg.host ?? '').trim();
@@ -78,7 +78,7 @@ export function validateMongoHost(cfg: MongoConfig): string {
  * Emits ONLY the connector name, the vault-referenced connection URL
  * (`${ENV:MONGODB_CONNECTION_URL}`), the schema-inference collection, and
  * case-insensitive name matching. Credentials are NEVER inlined — the whole URL is the
- * secret. The host config is validated (honest error / OM metadata) but not emitted.
+ * secret. The host config is validated (honest error) but not emitted.
  */
 function mongoProps(cfg: MongoConfig): TrinoCatalogProps {
   // Validate the host so a malformed config fails the same way the JDBC providers do,
@@ -150,10 +150,6 @@ export const mongoProvider: WarehouseProvider = {
   testProbe: {
     kind: 'sql',
     query: (source) => `SHOW SCHEMAS FROM ${source.catalog}`,
-  },
-  openMetadata: {
-    connectorType: 'MongoDB',
-    configKeys: ['hostPort', 'databaseName', 'schemaFilterPattern'],
   },
   liveVerificationRequired: [
     'MongoDB reachability from the Trino pod (host:port or SRV DNS, TLS, network policy) on a live deployment',

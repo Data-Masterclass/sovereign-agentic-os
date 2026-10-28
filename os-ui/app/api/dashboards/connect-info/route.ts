@@ -5,20 +5,15 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@/lib/experimental/data/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
-import { config } from '@/lib/core/config';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Tier-2 "connected tools" surface for the Govern stage: the caller's default domain (for
- * the Power BI / Tableau connection export) and the OPTIONAL external Superset console URL.
- * `supersetUrl` is returned ONLY when the operator configured a non-empty console URL — the
- * UI hides the "Open in Superset" link otherwise (no dead link). No secrets here.
+ * "Connect your own BI" surface for the Govern stage: the caller's default domain, which
+ * scopes the Power BI / Tableau connection export against governed Trino. Dashboards are
+ * rendered natively in the OS — there is no external BI console to link out to. No secrets
+ * here.
  */
 export const GET = withRoute(async ({ user }) => {
-  const supersetUrl = (config.supersetUrl ?? '').trim();
-  return NextResponse.json({
-    domain: user.domains[0] ?? '',
-    supersetUrl: supersetUrl || null,
-  });
+  return NextResponse.json({ domain: user.domains[0] ?? '' });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

@@ -15,7 +15,6 @@ import { ensureFolderId, renamedPath } from '@/lib/folders/client';
 import { useFolders } from '@/lib/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { TIER_BADGE, TIER_LABEL } from './shared';
 import type { DashboardGroups, DashboardSummary } from './shared';
 import DomainTag from '@/components/DomainTag';
@@ -216,7 +215,6 @@ function DashboardsInner({
               type="button"
               className={scope === g.key ? 'on' : ''}
               onClick={() => { setScope(g.key); setSel(null); }}
-              {...(g.key === 'mine' ? anchorAttr(ANCHORS.dashboards.sandbox) : undefined)}
             >
               {g.label('Dashboards')}{counts ? ` (${counts[g.key]})` : ''}
             </button>

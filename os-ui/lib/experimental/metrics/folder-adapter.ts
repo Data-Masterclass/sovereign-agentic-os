@@ -27,7 +27,7 @@ import {
  *
  * NOTE: metric DELETE is PHYSICAL (`deleteMetric` de-registers the Cube measure) — the
  * archive→delete discipline still holds (delete of a folder is archived-only), but a
- * deleted metric drops from `/api/cube/models` exactly as the tab's own delete does.
+ * deleted metric drops from the served metric model exactly as the tab's own delete does.
  */
 
 function principal(user: AdapterPrincipal): Principal {

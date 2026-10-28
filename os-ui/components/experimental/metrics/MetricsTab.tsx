@@ -29,14 +29,13 @@ type View =
  * MetricBuilder unifies define → publish into one continuous staged flow, not two
  * disconnected screens.
  */
-function MetricsTabInner({ onDetailChange }: { onDetailChange?: (open: boolean) => void }) {
+function MetricsTabInner() {
   const searchParams = useSearchParams();
   const [view, setView] = useState<View>({ kind: 'list' });
 
   // Tell the page whether a metric detail (the builder or the type chooser) is open — the
   // builder's View carries its own "Talk to Metrics" at the top, so the page-level copilot
   // hides while a detail is open (mirrors the Data tab; no double Talk).
-  useEffect(() => { onDetailChange?.(view.kind !== 'list'); }, [view.kind, onDetailChange]);
   // ?archived=1 additionally returns soft-archived metrics (their own section), so an
   // archived metric stays openable → its detail exposes Restore + Delete (OS-wide rule).
   const [showArchived, setShowArchived] = useState(false);
@@ -116,10 +115,10 @@ function MetricsTabInner({ onDetailChange }: { onDetailChange?: (open: boolean) 
   );
 }
 
-export default function MetricsTab({ onDetailChange }: { onDetailChange?: (open: boolean) => void }) {
+export default function MetricsTab() {
   return (
     <Suspense>
-      <MetricsTabInner onDetailChange={onDetailChange} />
+      <MetricsTabInner />
     </Suspense>
   );
 }

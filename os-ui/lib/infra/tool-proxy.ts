@@ -14,7 +14,7 @@ import { ROLES, SESSION_COOKIE, type Role } from '@/lib/core/session';
  * session cookie; this module turns that into whatever the upstream tool needs:
  *
  *  - `sso.mode:'header'` — Level-1 trusted-proxy SSO: inject `X-Forwarded-User`
- *    (+ a tool-specific alias like Forgejo's `X-WEBAUTH-USER`), a preferred-
+ *    (+ an optional tool-specific alias), a preferred-
  *    username, and a role header mapped through `roleMap`. The tool auto-
  *    provisions the account on first request. Credentials never touch the wire.
  *  - `sso.mode:'basic'` — inject a shared server-side credential as HTTP Basic
@@ -23,7 +23,7 @@ import { ROLES, SESSION_COOKIE, type Role } from '@/lib/core/session';
  *    NextAuth). The proxy signs a server-only service account in server-side and
  *    injects the resulting session cookie (lib/tool-sso-langfuse.ts) so no second
  *    login is shown; the password never reaches the browser.
- *  - `sso.mode:'none'` — no per-user account exists (MLflow/Dagster/Cube OSS);
+ *  - `sso.mode:'none'` — no per-user account exists (MLflow/Dagster OSS);
  *    the proxy + role gate IS the access control. Nothing is injected.
  *
  * On the way back it strips `X-Frame-Options`, pins CSP `frame-ancestors 'self'`
@@ -63,11 +63,10 @@ export type Tool = {
   note?: string;
   /**
    * Set when the tool CANNOT render inside the same-origin `/tools/<key>` frame
-   * and must open in its own tab instead (the Tier-2 pattern the OS already uses
-   * for Superset). The classic cause: the tool's SPA loads ROOT-ABSOLUTE assets
-   * (`/_next/*`, `/static/*`, `/api/*`) that resolve against the OS origin and
-   * collide with os-ui's OWN Next.js routes → every chunk 404s → blank iframe
-   * (exactly how the Superset embed died). `consoleUrl` is the tool's own
+   * and must open in its own tab instead (the Tier-2 pattern). The classic cause:
+   * the tool's SPA loads ROOT-ABSOLUTE assets (`/_next/*`, `/static/*`, `/api/*`)
+   * that resolve against the OS origin and collide with os-ui's OWN Next.js routes
+   * → every chunk 404s → blank iframe. `consoleUrl` is the tool's own
    * external URL (its ingress) — may be `''` when the operator configured none;
    * the UI then says so honestly instead of rendering a dead link.
    */
@@ -116,56 +115,6 @@ export const TOOLS: Record<string, Tool> = {
     ownTab: {
       reason: 'The Featureform dashboard loads its scripts from the site root, which collides with the OS’s own routes inside the embedded frame.',
       consoleUrl: config.featureformConsoleUrl,
-    },
-  },
-  cube: {
-    key: 'cube',
-    title: 'Cube',
-    upstream: config.cubeUrl,
-    protocol: 'http',
-    frame: 'strip',
-    basePath: '/tools/cube',
-    minRole: 'creator',
-    embeddable: true,
-    sso: { mode: 'none' }, // Cube dev playground; add a JWT on STACKIT.
-    note: 'Cube Playground (dev mode). No per-user account; add a JWT for prod.',
-  },
-  forgejo: {
-    key: 'forgejo',
-    title: 'Forgejo',
-    upstream: config.forgejoUrl,
-    protocol: 'http',
-    frame: 'strip',
-    basePath: '/tools/forgejo',
-    minRole: 'creator',
-    embeddable: true,
-    sso: {
-      mode: 'header',
-      userHeader: 'X-WEBAUTH-USER', // Forgejo REVERSE_PROXY_AUTHENTICATION default header
-      roleMap: { admin: 'owner' }, // informational; org-owner provisioning is tool-side
-    },
-    note: 'Reverse-proxy auth (REVERSE_PROXY_AUTHENTICATION); auto-registers on first login.',
-  },
-  superset: {
-    key: 'superset',
-    title: 'Superset',
-    upstream: config.supersetInternalUrl,
-    protocol: 'http',
-    frame: 'strip',
-    basePath: '/tools/superset',
-    minRole: 'creator',
-    embeddable: true,
-    sso: {
-      mode: 'header',
-      roleMap: { admin: 'Admin', builder: 'Alpha', 'creator': 'Gamma' },
-    },
-    note: 'AUTH_REMOTE_USER + auto-user-registration; role via X-Forwarded-Roles.',
-    // Standing platform decision (native-Cube dashboards work): Superset is a
-    // Tier-2 "open in its own tab" tool, never embedded — its /static asset
-    // paths 307 to /signin behind the proxy prefix (the original blank iframe).
-    ownTab: {
-      reason: 'Superset serves its assets from the site root, so it cannot render inside the embedded frame — the OS uses native dashboards as Tier 1 and the Superset console in its own tab as Tier 2.',
-      consoleUrl: config.supersetUrl,
     },
   },
   langfuse: {
@@ -223,21 +172,6 @@ export const TOOLS: Record<string, Tool> = {
     },
     note: 'Proxy/JWT header auth; admin → all_access, else read.',
   },
-  openmetadata: {
-    key: 'openmetadata',
-    title: 'OpenMetadata',
-    upstream: config.openmetadataApiUrl,
-    protocol: 'http',
-    frame: 'strip',
-    basePath: '/tools/openmetadata',
-    minRole: 'creator',
-    embeddable: true,
-    sso: {
-      mode: 'header',
-      roleMap: { admin: 'Admin', builder: 'DataConsumer', 'creator': 'DataConsumer' },
-    },
-    note: 'Header/JWT auth; off by default locally (~2.5 GB JVM).',
-  },
   // Dagster's UI renders over HTTP; only its live push (GraphQL subscriptions)
   // needs a WebSocket. It embeds now; live-tail updates need the WS ingress rule.
   dagster: {
@@ -281,19 +215,8 @@ export const TOOLS: Record<string, Tool> = {
       consoleUrl: config.jupyterhubConsoleUrl,
     },
   },
-  kserve: {
-    key: 'kserve',
-    title: 'KServe',
-    upstream: config.kserveUrl,
-    protocol: 'http',
-    frame: 'strip',
-    basePath: '/tools/kserve',
-    minRole: 'builder',
-    embeddable: false,
-    sso: { mode: 'none' },
-    note: 'Inference server — no human UI; render a status panel, never an iframe.',
-  },
 };
+
 
 export function resolveTool(key: string): Tool | undefined {
   return Object.prototype.hasOwnProperty.call(TOOLS, key) ? TOOLS[key] : undefined;

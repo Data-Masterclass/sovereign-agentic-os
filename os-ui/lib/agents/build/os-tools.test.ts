@@ -120,7 +120,7 @@ test('alias map resolves legacy names to MCP names', () => {
   assert.equal(resolveAlias('retrieve'), 'search_knowledge');
   assert.equal(resolveAlias('metrics'), 'list_metrics');
   assert.equal(resolveAlias('files_retrieve'), 'search_files');
-  assert.equal(resolveAlias('predict'), 'science_predict');
+
   assert.equal(resolveAlias('write_file'), 'upload_file');
   // A native MCP name passes through unchanged.
   assert.equal(resolveAlias('query_data'), 'query_data');
@@ -286,31 +286,22 @@ test('writeTargetScope: create/author/upload/build/define = personal; escalation
     assert.equal(writeTargetScope(t), 'personal', `${t} targets personal`);
   }
   // Escalation family → Domain.
-  for (const t of ['publish_knowledge', 'request_promotion', 'approve_promotion', 'promote_pillar']) {
+  for (const t of ['publish_knowledge', 'request_promotion', 'approve_promotion']) {
     assert.equal(writeTargetScope(t), 'domain', `${t} escalates to domain`);
   }
-  // Scope-parametric create_pillar reads its `scope` arg (My-default).
-  assert.equal(writeTargetScope('create_pillar', {}), 'personal');
-  assert.equal(writeTargetScope('create_pillar', { scope: 'personal' }), 'personal');
-  assert.equal(writeTargetScope('create_pillar', { scope: 'domain' }), 'domain');
-  assert.equal(writeTargetScope('create_pillar', { scope: 'tenant' }), 'company');
-  assert.equal(writeTargetScope('update_pillar', { scope: 'tenant' }), 'company');
 });
 
-test('holdDecision: read-only holds all; personal never held; domain→domain_admin; company→admin', () => {
+test('holdDecision: read-only holds all; personal never held; domain→domain_admin', () => {
   // read-only blocks every write (any target).
   assert.deepEqual(holdDecision('read-only', 'create_dataset'), { held: true, approverRole: 'admin' });
   // personal create is NEVER held under any non-read-only preset.
   for (const p of ['read-propose', 'read-bounded', 'full-in-scope'] as const) {
     assert.deepEqual(holdDecision(p, 'create_dataset'), { held: false }, `${p} personal not held`);
     assert.deepEqual(holdDecision(p, 'upload_file'), { held: false });
-    assert.deepEqual(holdDecision(p, 'create_pillar', { scope: 'personal' }), { held: false });
   }
-  // Domain escalation → held to domain_admin; Company → held to admin.
+  // Domain escalation → held to domain_admin.
   assert.deepEqual(holdDecision('read-propose', 'publish_knowledge'), { held: true, approverRole: 'domain_admin' });
   assert.deepEqual(holdDecision('full-in-scope', 'request_promotion'), { held: true, approverRole: 'domain_admin' });
-  assert.deepEqual(holdDecision('read-propose', 'create_pillar', { scope: 'domain' }), { held: true, approverRole: 'domain_admin' });
-  assert.deepEqual(holdDecision('read-propose', 'create_pillar', { scope: 'tenant' }), { held: true, approverRole: 'admin' });
 });
 
 test('executor: read-propose does NOT hold personal create/upload/author/define/connection', async () => {
@@ -341,17 +332,6 @@ test('executor: promoting to Domain is HELD and enqueued to domain_admin', async
   assert.equal(item.agent, 'os-sys1');
 });
 
-test('executor: certifying to Company is HELD and enqueued to admin', async () => {
-  const deps = spyDeps();
-  const exec = grantedToolExecutor(BUILDER, sysWithPreset(['create_pillar'], 'full-in-scope'), 'sys1', deps);
-  const res = await exec('create_pillar', { name: 'ARR', scope: 'tenant' });
-  assert.equal(res.isError, true);
-  assert.match(res.text, /requires admin approval/);
-  assert.equal(deps.calls.handleRpc.length, 0, 'NEVER executed');
-  assert.equal(deps.calls.enqueue.length, 1);
-  const item = deps.calls.enqueue[0] as { approverRole: string };
-  assert.equal(item.approverRole, 'admin');
-});
 
 test('executor: an allowed tool dispatches as the ACTING USER (not the service principal)', async () => {
   const deps = spyDeps();

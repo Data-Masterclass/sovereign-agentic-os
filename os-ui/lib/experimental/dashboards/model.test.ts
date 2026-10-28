@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  type Panel, buildPanelCubeQuery, fromTiles, fromAgent, missingPanelMembers, normalizePanel,
+  type Panel, fromTiles, fromAgent, missingPanelMembers, normalizePanel,
   panelMetrics, panelRequestedMembers, sameDashboard, viewFor,
 } from './model.ts';
 import { goldSales } from '../metrics/fixtures.ts';
@@ -80,8 +80,8 @@ test('dedupe keys on vizType+metrics — same members different viz are distinct
   assert.equal(spec.charts.length, 2, 'the legacy-alias duplicate is deduped away');
 });
 
-test('buildPanelCubeQuery maps a time-series panel to measures + timeDimensions + filters', () => {
-  const q = buildPanelCubeQuery({
+test('a time-series panel keeps its measures, time dimension and filters verbatim', () => {
+  const p = normalizePanel({
     name: 'Revenue over time',
     vizType: 'area',
     metrics: ['Sales.revenue'],
@@ -89,15 +89,17 @@ test('buildPanelCubeQuery maps a time-series panel to measures + timeDimensions 
     timeGrain: 'month',
     filters: [{ member: 'Sales.region', operator: 'equals', values: ['DE'] }],
   });
-  assert.deepEqual(q.measures, ['Sales.revenue']);
-  assert.deepEqual(q.timeDimensions, [{ dimension: 'Sales.order_date', granularity: 'month' }]);
-  assert.deepEqual(q.filters, [{ member: 'Sales.region', operator: 'equals', values: ['DE'] }]);
+  assert.deepEqual(p.metrics, ['Sales.revenue']);
+  assert.deepEqual(panelRequestedMembers(p), ['Sales.revenue', 'Sales.order_date']);
+  assert.equal(p.timeGrain, 'month');
+  assert.deepEqual(p.filters, [{ member: 'Sales.region', operator: 'equals', values: ['DE'] }]);
 });
 
-test('buildPanelCubeQuery folds the legacy `metric` alias into measures', () => {
-  const q = buildPanelCubeQuery({ name: 'KPI', vizType: 'big_number', metric: 'Sales.revenue' });
-  assert.deepEqual(q.measures, ['Sales.revenue']);
-  assert.equal(q.dimensions, undefined);
+test('normalizePanel folds the legacy `metric` alias into `metrics`', () => {
+  const p = normalizePanel({ name: 'KPI', vizType: 'big_number', metric: 'Sales.revenue' });
+  assert.deepEqual(p.metrics, ['Sales.revenue']);
+  assert.equal(p.metric, undefined);
+  assert.equal(p.dimensions, undefined);
 });
 
 // ── Northpeak fix: the missing-member guard (never a silent de-dimension) ──────

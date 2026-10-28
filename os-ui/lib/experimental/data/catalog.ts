@@ -13,17 +13,15 @@ import { isNotMaterialized } from './materialized.ts';
  *   • registry     — the governed dataset registry (always available, DLS-scoped to
  *                     the caller by the store; a missing warehouse never hides it).
  *   • trino        — physical Iceberg tables in the caller's OWN domain schema.
- *   • openmetadata — the CORE metadata backbone (a live health probe drives its
- *                     CONNECTED state; governed marts are mirrored + deep-linked
- *                     into it, and its own tables are pulled when a bot token is set).
  *
- * The contract: a missing/empty warehouse or an unreachable OpenMetadata yields a
- * valid registry-only-or-empty catalog with an honest per-source status — NEVER a
- * 500. Every asset carries its `source` so the UI is truthful about where each
- * entry came from.
+ * The OS registry is the system of record for catalog, lineage and quality — there
+ * is no external catalog to mirror into. The contract: a missing/empty warehouse
+ * yields a valid registry-only-or-empty catalog with an honest per-source status —
+ * NEVER a 500. Every asset carries its `source` so the UI is truthful about where
+ * each entry came from.
  */
 
-export type CatalogSource = 'registry' | 'trino' | 'openmetadata' | 'om-connection';
+export type CatalogSource = 'registry' | 'trino';
 
 export type CatalogAsset = {
   name: string;
@@ -34,9 +32,6 @@ export type CatalogAsset = {
   /** Populated for registry-sourced entries — enables the catalog to link to the
    *  dataset detail view without reversing the FQN. */
   datasetId?: string;
-  /** Deep link to this asset's OpenMetadata entity page (governed Iceberg marts,
-   *  when OM is connected). Lets each governed row jump into the metadata backbone. */
-  omUrl?: string;
 };
 
 /**
@@ -109,39 +104,13 @@ export function trinoStatus(err: unknown, schema: string): string {
 
 /**
  * Assemble the union. Each source is injected (fetchers) so this stays pure and
- * testable. Trino + OpenMetadata failures are ABSORBED into a source status; only
- * the always-available registry is required, so the result is never a 500.
+ * testable. Trino failures are ABSORBED into a source status; only the always-
+ * available registry is required, so the result is never a 500.
  */
 export async function assembleCatalog(opts: {
   schema: string;
   registry: CatalogAsset[];
   trino: () => Promise<CatalogAsset[]>;
-  openmetadata: () => Promise<{
-    assets: CatalogAsset[] | null;
-    status: string;
-    severity?: SourceSeverity;
-    /** Explicit source health. OpenMetadata can be CONNECTED (ok) with 0 pulled
-     *  tables — it is the metadata backbone, not an optional list. Defaults to
-     *  `!!assets` so callers that only push assets keep the old behaviour. */
-    ok?: boolean;
-    /** Explicit pill count (e.g. governed marts mirrored when nothing is pulled). */
-    count?: number;
-  }>;
-  /**
-   * OPTIONAL: an EXTERNAL OpenMetadata modelled as an `om-catalog` Connection
-   * (Phase 1, read/discover). When present it folds that OM's domains / data
-   * products / tables into the union as DLS-scoped discovery context (the route
-   * clamps to what the caller may see — the raw bot-token view is never exposed).
-   * Absent (the default) means no external OM is connected → nothing changes.
-   * Never throws: an unreachable external OM degrades to a calm source status.
-   */
-  omConnection?: () => Promise<{
-    assets: CatalogAsset[] | null;
-    status: string;
-    severity?: SourceSeverity;
-    ok?: boolean;
-    count?: number;
-  }>;
 }): Promise<CatalogResult> {
   const assets: CatalogAsset[] = [];
   const sources: CatalogSourceStatus[] = [];
@@ -175,38 +144,6 @@ export async function assembleCatalog(opts: {
       count: 0,
       status: trinoStatus(e, opts.schema),
       severity: isNotMaterialized(e) ? 'info' : 'warn',
-    });
-  }
-
-  // 3. openmetadata — the CORE metadata backbone. Its health is probed live: a
-  //    CONNECTED OM counts as ok even when it pulls 0 tables (the governed marts are
-  //    mirrored into it), and only a genuinely unreachable OM degrades to `warn`
-  //    ("reconnecting…"). It is never framed as an optional/off integration.
-  const om = await opts.openmetadata();
-  if (om.assets) assets.push(...om.assets);
-  const omOk = om.ok ?? !!om.assets;
-  sources.push({
-    source: 'openmetadata',
-    ok: omOk,
-    count: om.count ?? om.assets?.length ?? 0,
-    status: om.status,
-    severity: om.severity ?? (omOk ? 'ok' : 'warn'),
-  });
-
-  // 4. om-connection — an EXTERNAL OpenMetadata modelled as an `om-catalog`
-  //    Connection (Phase 1, read/discover). Only appears when an OM is connected
-  //    AND reachable; the route already DLS-clamped its contribution to what the
-  //    caller may see. Absent/unreachable degrades honestly — never a 500.
-  if (opts.omConnection) {
-    const oc = await opts.omConnection();
-    if (oc.assets) assets.push(...oc.assets);
-    const ocOk = oc.ok ?? !!oc.assets;
-    sources.push({
-      source: 'om-connection',
-      ok: ocOk,
-      count: oc.count ?? oc.assets?.length ?? 0,
-      status: oc.status,
-      severity: oc.severity ?? (ocOk ? 'ok' : 'warn'),
     });
   }
 

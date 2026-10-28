@@ -285,7 +285,7 @@ test('a domain BUILDER applies the approved promotion → a domain asset (the ga
   assert.throws(() => getFile(a.id, kenji), /permitted|not found|40[34]/i);
 });
 
-test('promotion records a file_promoted lineage edge (OM, mock-tolerant)', () => {
+test('promotion records a file_promoted lineage edge (in-process ring)', () => {
   const a = documented();
   applyApprovedFilePromotion(requestPromotion(a.id, amir, {}), bea);
   const edges = listLineage(a.id);

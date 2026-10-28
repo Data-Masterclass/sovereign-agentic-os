@@ -36,7 +36,7 @@ export type MetricSummary = {
    *  tile. Absent ⇒ no line (layout unchanged). */
   description?: string;
   /** FAIL-SOFT: set when this metric's model couldn't load — rendered inline so the
-   *  rest of the registry still shows (one bad cube never 500s the whole surface). */
+   *  rest of the registry still shows (one bad metric never 500s the whole surface). */
   error?: string;
 };
 export type MetricGroups = { mine: MetricSummary[]; domain: MetricSummary[]; marketplace: MetricSummary[] };
@@ -53,7 +53,7 @@ export type DefineResult = {
   build: { rows: BuildRow[]; ok: boolean; member: string; mode: Mode; pending?: boolean };
   /** Saved, but its live value hasn't sync'd to the query engine yet (not an error). */
   pending?: boolean;
-  cube: string;
+  definitionYaml: string;
 };
 
 export type ExploreResult = {
@@ -173,7 +173,7 @@ export function ModeBadge({ mode }: { mode: Mode }) {
   return <span className={`badge ${mode.startsWith('live') ? 'ok' : 'muted'}`}>{mode}</span>;
 }
 
-/** The metric Build report (cube → metric-explorer, apply→verify) + its mode.
+/** The metric Build report (the governed Trino adapter, apply→verify) + its mode.
  *  When the build is `pending` (Cube is up but the model-sync sidecar hasn't pushed the
  *  just-defined measure yet), a not-yet-resolved row is SYNC LAG, not a failure — so it
  *  renders as "syncing" (⟳), never a hard "✗ Build failed". The metric is already saved. */

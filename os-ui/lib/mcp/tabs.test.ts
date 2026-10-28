@@ -15,8 +15,6 @@ import {
   type JsonRpcResponse,
 } from './server.ts';
 import { PROMPTS } from './prompts.ts';
-import { strategyReadTools, strategyWriteTools } from '@/lib/experimental/mcp/strategy-tools.ts';
-import { marketplaceReadTools, marketplaceWriteTools } from '@/lib/experimental/mcp/marketplace-tools.ts';
 
 const creator: CurrentUser = { id: 'dan', name: 'Dan', domains: ['sales'], role: 'creator' };
 const builder: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'builder' };
@@ -46,25 +44,19 @@ test('every declared write tool is registered under its correct real tab', () =>
   for (const n of ['author_knowledge', 'publish_knowledge', 'index_knowledge', 'search_knowledge', 'export_okf_bundle', 'import_okf_bundle']) {
     assert.ok(namesFor('knowledge').includes(n), `knowledge tab missing ${n}`);
   }
-  // Files / Metrics / Dashboards / Big Bets / Agents / Science
+  // Files / Metrics / Dashboards / Agents
   // request_promotion/approve_promotion live on data but ALSO surface on files (extraTabs).
   assert.ok(namesFor('files').includes('upload_file') && namesFor('files').includes('request_promotion'));
   assert.ok(namesFor('files').includes('get_file'), 'files tab missing the Wave-B read-back');
   assert.ok(namesFor('metrics').includes('define_metric') && namesFor('metrics').includes('query_metric'));
   assert.ok(namesFor('metrics').includes('get_metric'), 'metrics tab missing the Wave-B read-back');
   assert.ok(namesFor('dashboards').includes('create_dashboard') && namesFor('dashboards').includes('get_dashboard'));
-  for (const n of ['create_big_bet', 'list_big_bets', 'get_big_bet', 'attach_component', 'update_big_bet']) {
-    assert.ok(namesFor('bigbets').includes(n), `bigbets tab missing ${n}`);
-  }
   for (const n of ['read_app_files', 'get_software_status']) {
     assert.ok(namesFor('software').includes(n), `software tab missing ${n}`);
   }
   assert.ok(namesFor('connections').includes('list_connection_templates'), 'connections tab missing the template catalog');
   for (const n of ['create_agent_system', 'commit_agent_files', 'build_agent_system', 'run_agent_system', 'list_agent_systems']) {
     assert.ok(namesFor('agents').includes(n), `agents tab missing ${n}`);
-  }
-  for (const n of ['science_predict', 'list_models', 'get_model']) {
-    assert.ok(namesFor('science').includes(n), `science tab missing ${n}`);
   }
 });
 
@@ -133,24 +125,17 @@ test('initialize carries per-tab serverInfo + instructions when provided', async
 test('the overarching endpoint (no tools override) still sees ALL tools', async () => {
   const res = await handleRpc(builder, { jsonrpc: '2.0', id: 5, method: 'tools/list' });
   const names = (result(res).tools as { name: string }[]).map((t) => t.name);
-  for (const n of ['create_software', 'query_data', 'search_knowledge', 'list_agent_systems', 'create_dataset', 'upload_file', 'define_metric', 'create_dashboard', 'create_big_bet', 'create_agent_system', 'whoami', 'list_capabilities']) {
+  for (const n of ['create_software', 'query_data', 'search_knowledge', 'list_agent_systems', 'create_dataset', 'upload_file', 'define_metric', 'create_dashboard', 'create_agent_system', 'whoami', 'list_capabilities']) {
     assert.ok(names.includes(n), `overarching endpoint missing ${n}`);
   }
 });
 
 test('context.md and guide.md files reference only real MCP tool names (drift tripwire)', () => {
   // Tools AND prompts are both legitimate references — a brief may point the AI at a
-  // slash-command front door (e.g. `score_and_wire_prediction`) as well as at tools.
-  // ALL_MCP_TOOLS only carries non-base bundles whose feature flag is on in THIS
-  // process — supplement with the bundles being flag-gated directly so this
-  // drift-check still sees marketplace/strategy tool names.
+  // slash-command front door (e.g. `build_data_product`) as well as at tools.
   const realToolNames = new Set([
     ...ALL_MCP_TOOLS.map((t) => t.name),
     ...PROMPTS.map((p) => p.name),
-    ...strategyReadTools.map((t) => t.name),
-    ...strategyWriteTools.map((t) => t.name),
-    ...marketplaceReadTools.map((t) => t.name),
-    ...marketplaceWriteTools.map((t) => t.name),
   ]);
 
   // Non-tool tokens that legitimately appear in backticks in these markdown files.
@@ -163,7 +148,6 @@ test('context.md and guide.md files reference only real MCP tool names (drift tr
     'rest_api',                                           // connection type enum value
     'gross_revenue', 'order_count',                       // example metric names in guide worked examples
     'big_number_total',                                   // dashboard vizType enum value (create_dashboard charts[].vizType)
-    'binary_classification', 'multiclass_classification', // model taskType enum values (create_model), not tools
     'exposure_action_enable',                             // approval kind (operational action enablement), not a tool
   ]);
 
@@ -221,7 +205,7 @@ test('global topbar MCP button: the overarching endpoint (no tab) exposes all to
   const allNames = ALL_MCP_TOOLS.map((t) => t.name);
   for (const n of [
     'create_dataset', 'author_knowledge', 'upload_file', 'define_metric',
-    'create_dashboard', 'create_big_bet', 'create_agent_system', 'create_software',
+    'create_dashboard', 'create_agent_system', 'create_software',
     'query_data', 'search_knowledge', 'whoami', 'list_capabilities',
   ]) {
     assert.ok(allNames.includes(n), `overarching endpoint missing tool: ${n}`);

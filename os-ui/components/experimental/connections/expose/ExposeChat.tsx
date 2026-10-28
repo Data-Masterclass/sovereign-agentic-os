@@ -10,7 +10,8 @@ import Markdown from '@/components/Markdown';
  * ExposeChat — ONE persistent, governed, multi-turn assistant mounted across all FOUR Expose
  * stages (Catalog · Organize · Assign · Review) in the ExposePanel's StageShell assistant slot
  * (lakehouse-expose-experience.md, Phase C). It follows the OS suggestion-card pattern
- * (components/science/ScienceChat.tsx, the `.sac-*` skin): the assistant only PROPOSES; every
+ * (the `.sac-*` skin): the assistant only PROPOSES; every
+
  * mutation runs through the host's governed callback on an explicit Apply click.
  *
  * The thread is kept locally and POSTed to /api/connections/[id]/expose-assistant (multi-turn),

@@ -4,19 +4,14 @@
 import 'server-only';
 import { buildStage } from './build/server.ts';
 import { queryToolReachable, realTrino } from './build/live-clients.ts';
-import { realForgejo } from '../../agents/build/live-clients.ts';
 import { publishApprovedPromotion, rematerializeDomainTable, type PublishOutcome, type RematerializeOutcome } from './publish.ts';
-import { listGovernedDatasets } from './store.ts';
-import { syncAnalyticsRepo } from './analytics-repo.ts';
 import { promoteAsView, ensureHydrated as ensureSettingsHydrated } from '../../platform-admin/settings.ts';
 import type { MaterializationVerifier, Principal, PromotionRequest } from './store.ts';
 
 /**
  * The independent FAIL-CLOSED domain-table probe (#96) the publish runs right before
  * the tier flip. Gated on the WRITE/Trino path the domain table lives in
- * (`queryToolReachable`) — NOT Cube's `/meta` (`liveDataReachable`), which is slow under
- * load and would flip this to a blanket "present", falsely passing verification for a
- * table the CTAS never landed (the reconcile-sweep false-"refreshed"). LIVE ⇒ a REAL
+ * (`queryToolReachable`). LIVE ⇒ a REAL
  * governed `tableQueryable` probe on the exact domain target. Only a genuinely unreachable
  * query-tool (true offline-mock — no domain schema to probe) trusts the in-process build ✓.
  */
@@ -45,11 +40,6 @@ export async function publishPromotionLive(
     // datasets are never migrated (their recorded `domainArtifact` decides demote/reconcile).
     asView: promoteAsView(),
   });
-  // Fire-and-forget analytics repo sync on promote success (#146 Phase 2).
-  // Never throws into the approval flow — the hook is best-effort.
-  if (outcome.ok) {
-    syncAnalyticsRepo(realForgejo(), listGovernedDatasets(), approver.id);
-  }
   return outcome;
 }
 
@@ -57,7 +47,7 @@ export async function publishPromotionLive(
  * The server-boundary RE-MATERIALIZE (Northpeak fix): re-run the publish CTAS for an
  * already-promoted dataset whose Gold was rebuilt, refreshing the governed domain table +
  * clearing the STALE marker. Wired to the SAME live Build runner + domain probe as promotion,
- * so a rebuild's new data reaches Cube (and thus every dashboard) instead of drifting silently.
+ * so a rebuild's new data reaches every dashboard instead of drifting silently.
  */
 export async function rematerializeDomainTableLive(
   datasetId: string,

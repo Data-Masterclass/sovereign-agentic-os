@@ -20,7 +20,7 @@ import { DatasetError, type Dataset } from './dataset-schema.ts';
 import { publishApprovedPromotion, type PublishWrite } from './publish.ts';
 import { assetTarget } from './store-fqn.ts';
 import { publishPlan } from './transform.ts';
-import { buildCubeModels } from './cube-models.ts';
+import { scaffoldMetricYaml } from './metrics.ts';
 import { governanceFor } from './policy/compiler.ts';
 import type { DataBuildReport } from './build/orchestrate.ts';
 
@@ -155,17 +155,18 @@ test('#96 FAIL-CLOSED: a build ✓ but an ABSENT domain table refuses the flip (
   assert.deepEqual(fb.probes, [{ fqn: 'iceberg.sales.gold_orders', principal: 'sales' }]);
 });
 
-test('success: the tier flips AND the Cube models payload includes the new view', async () => {
+test('success: the tier flips AND the published Gold is served at its governed domain FQN', async () => {
   const { id, req } = ready();
   const out = await publishApprovedPromotion(req, bea, fakeBuild(true).deps);
   assert.equal(out.ok, true);
   const ds = getDataset(id, bea);
   assert.equal(ds.tier, 'asset');
-  assert.ok(out.ok && out.cubeView, 'the promoted Gold dataset appears in /api/cube/models');
   assert.equal(out.ok && out.fqn, 'iceberg.sales.gold_orders');
+  // The governed asset is now resolvable by every metric/dashboard consumer.
+  assert.ok(listGovernedDatasets().some((x) => x.id === id), 'the promoted dataset is a governed asset');
 });
 
-test('Gold publish auto-registers a COMPLETE, queryable Cube model — no define_metric needed', async () => {
+test('Gold publish auto-registers a COMPLETE, queryable metric model — no define_metric needed', async () => {
   // A dataset the user NEVER ran define_metric on: zero measures, gold columns documented.
   const d = createDataset(amir, { name: 'Orders' });
   buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'b' });
@@ -184,30 +185,30 @@ test('Gold publish auto-registers a COMPLETE, queryable Cube model — no define
   const out = await publishApprovedPromotion(req, bea, fakeBuild(true).deps);
   assert.equal(out.ok, true);
 
-  // The Cube model the sync sidecar reads is emitted from the SAME governed source.
-  // #155: a NEW dataset gets the domain-namespaced cube identity (`sales__orders`).
-  const model = buildCubeModels(listGovernedDatasets()).models.find((m) => m.name === 'sales__orders');
-  assert.ok(model, 'the Gold dataset is auto-registered as a Cube model');
+  // The governed dataset's metric model is derived from the SAME governed source.
+  // #155: a NEW dataset gets the domain-namespaced identity (`sales__orders`).
+  const governed = listGovernedDatasets().find((x) => x.id === d.id);
+  assert.ok(governed, 'the promoted Gold dataset is a governed asset');
+  const model = scaffoldMetricYaml(governed!);
+  assert.match(model, /name: sales__orders\n/);
   // Measures auto-fall back to `count` (queryable without any user-defined metric).
-  assert.deepEqual(model!.measures, ['count']);
-  assert.match(model!.model, /name: count\n\s+type: count/);
+  assert.match(model, /name: count\n\s+type: count/);
   // Dimensions are derived AUTOMATICALLY from the gold columns — no manual step.
-  assert.match(model!.model, /dimensions:/);
-  assert.match(model!.model, /name: order_id/);
-  assert.match(model!.model, /name: region/);
-  assert.match(model!.model, /name: net_amount/);
-  // It binds to the built Gold mart, so the semantic model is actually queryable.
-  assert.match(model!.model, /sql_table: iceberg\.sales\.gold_orders/);
+  assert.match(model, /dimensions:/);
+  assert.match(model, /name: order_id/);
+  assert.match(model, /name: region/);
+  assert.match(model, /name: net_amount/);
+  // It binds to the built Gold mart, so the metric is actually queryable.
+  assert.match(model, /sql_table: iceberg\.sales\.gold_orders/);
 });
 
-test('a silver-only promotion publishes silver_<slug> and honestly reports no Cube view', async () => {
+test('a silver-only promotion publishes silver_<slug>', async () => {
   const { req } = ready(['silver']);
   const fb = fakeBuild(true);
   const out = await publishApprovedPromotion(req, bea, fb.deps);
   assert.equal(out.ok, true);
   assert.equal(out.ok && out.fqn, 'iceberg.sales.silver_orders');
   assert.match(fb.calls[0].write.transformSql, /iceberg\.personal_amir\.silver_orders$/);
-  assert.equal(out.ok && out.cubeView, null); // no Gold ⇒ not Cube-deliverable
 });
 
 test('separation of duties: the requesting creator cannot approve (no build is even run)', async () => {

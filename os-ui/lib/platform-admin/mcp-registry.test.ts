@@ -18,7 +18,8 @@ import {
   type OwnedMcpInput,
 } from './mcp-registry.ts';
 
-const TABS = ['software', 'data', 'science', 'knowledge', 'agents'] as const;
+const TABS = ['software', 'data', 'knowledge', 'agents'] as const;
+
 
 const OFFICIAL: OfficialToolInput[] = [
   { name: 'create_software', description: 'Create an app.', minRole: 'creator', tab: 'software' },
@@ -102,10 +103,10 @@ test('stack section: sources from the values.yaml mirror; live tools enrich live
   assert.equal(trino.importable, false, 'stack tools are gateway-fronted, not per-user importable');
   assert.deepEqual(trino.tools.map((t) => t.name), ['sovereign_query', 'explain_query']);
   // A not-yet-live server keeps its (empty) static tools + status badge.
-  const superset = s.entries.find((e) => e.id === 'stack-superset')!;
-  assert.equal(superset.live, false);
-  assert.equal(superset.tools.length, 0);
-  assert.equal(superset.scope, 'coming online');
+  const dbt = s.entries.find((e) => e.id === 'stack-dbt')!;
+  assert.equal(dbt.live, false);
+  assert.equal(dbt.tools.length, 0);
+  assert.equal(dbt.scope, 'coming online');
 });
 
 test('stack section: without live tools, the live entry falls back to declared tools', () => {

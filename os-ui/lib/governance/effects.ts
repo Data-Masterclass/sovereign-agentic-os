@@ -14,7 +14,7 @@ import {
 import type { PublishOutcome } from '../experimental/data/publish.ts';
 import { applyApprovedFilePromotion, type FilePromotionRequest } from '../experimental/files/store.ts';
 // The ladder's per-kind promote/certify appliers. The SYNC + in-memory ones
-// (knowledge/dashboard/model/agent_system) are dispatched here directly; the
+// (knowledge/dashboard/agent_system) are dispatched here directly; the
 // async + server-only ones (connection/artifact/app) arrive as injected deps so
 // this module (and its tests) stay free of the heavy object-store cache imports —
 // exactly the isolation pattern `publishPromotion` already uses.
@@ -22,9 +22,6 @@ import { publishWorkflow, certifyWorkflow } from '../experimental/knowledge/stor
 import { promotePersonalKnowledge, certifyPersonalKnowledge } from '../experimental/knowledge/personal-store.ts';
 import { transitionDashboard } from '../experimental/dashboards/store.ts';
 import { promoteSystem } from '../agents/store.ts';
-import { promoteModel, certifyModel } from '../experimental/science/model-service.ts';
-import type { Actor as ModelActor } from '../experimental/science/types.ts';
-import type { ConsumptionMode } from '../experimental/science/types.ts';
 
 /**
  * The approval-IS-an-action executor (governance-golden-path.md key principle).
@@ -50,7 +47,7 @@ export type EffectResult = {
   /** Set when the effect created an OPA grant (access requests). */
   grant?: { principal: string; tool: string };
   /** Set by the physical dataset publish (T8) — ok/fqn/error for honest status. */
-  publish?: { ok: boolean; fqn: string; error?: string; mode?: string; cubeView?: string | null };
+  publish?: { ok: boolean; fqn: string; error?: string; mode?: string };
 };
 
 /** The approving human: the id (legacy string form) or the full session identity —
@@ -74,22 +71,6 @@ export type EffectDeps = {
   promoteArtifact?: LadderApplier;
   /** App promote/certify (Personal→Shared→Certified single-step advance). */
   promoteApp?: LadderApplier;
-  /** Execute an APPROVED OpenMetadata write-back (apply_om_sync). Resolves the
-   *  connection + dataset AS the approver (DLS), recomputes the plan server-side
-   *  and writes through the least-privilege writer bot. Injected by the route so
-   *  this module (and its tests) stay free of the server-only OM bridge. */
-  applyOmSync?: (
-    payload: { connId: string; datasetId: string; humanServiceFqn?: string | null; syncDq?: boolean },
-    approver: { id: string; role: Principal['role']; domains: string[] },
-  ) => Promise<{ ok: boolean; summary: string; live: boolean }>;
-  /** Execute an APPROVED catalog REFRESH (#147 `refresh_catalog`): folds the additive
-   *  metadata + DQ write-back over EVERY governed mart the approver may see (DLS), so
-   *  OM reflects the live lakehouse in one pass. Injected by the route (server-only OM
-   *  orchestrator) so this module + its tests stay free of the OM bridge. */
-  refreshCatalog?: (
-    payload: { humanServiceFqn?: string | null },
-    approver: { id: string; role: Principal['role']; domains: string[] },
-  ) => Promise<{ ok: boolean; summary: string; live: boolean }>;
   /** Decide a Software deploy-review card AS the approver — flips the software
    *  release/app deploy state (review → live | preview) so approving the app_deploy
    *  item in Policies & Approvals actually clears the app's "awaiting review".
@@ -127,21 +108,6 @@ export type EffectDeps = {
   ) => Promise<{ ok: boolean; reason: string }>;
 };
 
-/** The model-service Actor for a human approver (agents can never decide — the
- *  `assertHuman` guard in model-service enforces this; we set isAgent:false). */
-function modelActor(approver: EffectApprover, fallbackRole: Principal['role'], domain: string): ModelActor {
-  const p = approverPrincipal(approver, fallbackRole, domain);
-  // model-service's Actor role is 'user'|'builder'|'domain_admin'|'admin'; map the
-  // 4-rank session role onto it, PRESERVING domain_admin so the shared edit-scope
-  // rule can grant it manage rights on in-domain models (certification stays
-  // admin-only). Only the base creator collapses to the science 'user' rank.
-  const role: ModelActor['role'] =
-    p.role === 'admin' ? 'admin'
-    : p.role === 'domain_admin' ? 'domain_admin'
-    : p.role === 'builder' ? 'builder'
-    : 'user';
-  return { id: p.id, role, domains: p.domains, isAgent: false };
-}
 
 function s(v: unknown, fallback = ''): string {
   return v === undefined || v === null ? fallback : String(v);
@@ -194,11 +160,11 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
       };
     }
     case 'deploy_review': {
-      // Live path = Argo CD sync; unwired here, so mock + mark live:false.
+      // Live path = the in-cluster app runner; unwired here, so mock + mark live:false.
       const app = s(p.app, a.title);
       return {
         ok: true,
-        applied: `Deployed ${app} via Argo CD (mock) to ${s(p.namespace, 'agentic-os')}.`,
+        applied: `Deployed ${app} (mock) to ${s(p.namespace, 'agentic-os')}.`,
         live: false,
         audit: {
           action: 'deploy',
@@ -307,9 +273,9 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
       }
       return {
         ok: true,
-        applied: `Published “${out.dataset.name}” → ${out.fqn} (${out.mode}${out.cubeView ? `; Cube view '${out.cubeView}' delivered` : ''}).`,
+        applied: `Published “${out.dataset.name}” → ${out.fqn} (${out.mode}).`,
         live: out.mode === 'live',
-        publish: { ok: true, fqn: out.fqn, mode: out.mode, cubeView: out.cubeView },
+        publish: { ok: true, fqn: out.fqn, mode: out.mode },
         audit: {
           action: 'approve',
           subject: out.dataset.name,
@@ -353,7 +319,7 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
         const stage = s(p.stage, 'certified');
         return {
           ok: true,
-          applied: `Promoted ${artifact} → ${stage} (mock OpenMetadata + registry).`,
+          applied: `Promoted ${artifact} → ${stage} (mock registry).`,
           live: false,
           audit: {
             action: 'approve',
@@ -385,55 +351,6 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
       };
     }
     case 'connection_write': {
-      // OpenMetadata write-back (apply_om_sync): EXECUTE the held write on approval.
-      // The plan is recomputed server-side from the datasetId (the held payload can
-      // never smuggle a wider write). The injected bridge resolves conn + dataset AS
-      // the approver (DLS) and writes through the least-privilege writer bot.
-      // `apply_om_sync` = metadata leg (tables/lineage/tags); `sync_quality_to_catalog`
-      // = the DQ leg (TestSuites/TestCases) — the SAME effect + guards, `syncDq` flag set.
-      // #147 — a bulk catalog REFRESH over every governed mart (no single datasetId).
-      if (a.tool === 'refresh_catalog' && deps.refreshCatalog) {
-        const approverP = approverPrincipal(approver, 'builder', a.domain);
-        const out = await deps.refreshCatalog(
-          { humanServiceFqn: p.humanServiceFqn as string | null | undefined },
-          approverP,
-        );
-        return {
-          ok: out.ok,
-          applied: out.ok ? `Catalog refresh applied: ${out.summary}` : `Catalog refresh did not complete: ${out.summary}`,
-          live: out.live,
-          audit: {
-            action: 'approve',
-            subject: a.tool,
-            reason: `OpenMetadata catalog refresh approved by ${who}`,
-            detail: { kind: a.kind, agent: a.agent },
-          },
-        };
-      }
-      if ((a.tool === 'apply_om_sync' || a.tool === 'sync_quality_to_catalog') && deps.applyOmSync) {
-        const connId = s(p.connId);
-        const datasetId = s(p.datasetId);
-        const syncDq = a.tool === 'sync_quality_to_catalog';
-        const label = syncDq ? 'OpenMetadata DQ write-back' : 'OpenMetadata write-back';
-        const approverP = approverPrincipal(approver, 'builder', a.domain);
-        const out = await deps.applyOmSync(
-          { connId, datasetId, humanServiceFqn: p.humanServiceFqn as string | null | undefined, syncDq },
-          approverP,
-        );
-        return {
-          ok: out.ok,
-          applied: out.ok
-            ? `${label} applied: ${out.summary}`
-            : `${label} did not complete: ${out.summary}`,
-          live: out.live,
-          audit: {
-            action: 'approve',
-            subject: a.tool,
-            reason: `OpenMetadata sync approved by ${who}`,
-            detail: { kind: a.kind, connId, datasetId, agent: a.agent },
-          },
-        };
-      }
       // A HELD CONNECTION WRITE (Mode-A Write-approval / Mode-B queued review): approving it
       // must EXECUTE the write, not clear it with "applied (mock)" (C3). Resolve the payload's
       // connection + tool + args and run through the governed `approveOnce` seam AS the
@@ -488,7 +405,7 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
 
 /**
  * THE UNIFIED LADDER SEAM. Every promotion (rung 1) and certification (rung 2) of
- * a formerly-DIRECT kind (knowledge/connection/model/artifact/dashboard/app) flows
+ * a formerly-DIRECT kind (knowledge/connection/artifact/dashboard/app) flows
  * through here — the ONE place the per-kind promote/certify dispatch lives. No UI
  * route and no MCP tool flips a tier without arriving in this switch, so the
  * governance back door is closed at a single point. The underlying store fn
@@ -547,13 +464,7 @@ async function applyLadder(
       const rec = transitionDashboard(id, approverPrincipal(approver, rung === 'promote' ? 'builder' : 'admin', a.domain), rung);
       return okResult(rec.spec.name, { tier: rec.tier });
     }
-    case 'model': {
-      const actor = modelActor(approver, rung === 'promote' ? 'builder' : 'admin', a.domain);
-      const m = rung === 'promote'
-        ? promoteModel(id, actor)
-        : certifyModel(id, actor, (s(p.mode) as ConsumptionMode) || 'read-in-place');
-      return okResult(m.name, { tier: m.tier });
-    }
+
     case 'agent_system': {
       // promoteSystem is a single-step advance (Personal→Shared→Marketplace),
       // role-gated internally exactly like promoteArtifact — sync + in-memory.

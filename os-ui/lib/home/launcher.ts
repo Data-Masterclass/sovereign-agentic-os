@@ -13,8 +13,7 @@
  *
  *   • one-line explainer (what the path is for),
  *   • a role-aware PRIMARY ACTION verb + deep-link into that tab's flow,
- *   • whether the persona can ACT (else the card is explained-but-dimmed),
- *   • a "How it works" tutorial link (learning is ALWAYS available).
+ *   • whether the persona can ACT (else the card is explained-but-dimmed).
  *
  * Roles in the OS auth model are `participant | builder | admin`. Home expresses
  * the design's four personas (home-golden-path.md §"Role-aware emphasis") by
@@ -43,11 +42,8 @@ export type PathId =
   | 'connections'
   | 'agents'
   | 'software'
-  | 'science'
   | 'metrics'
-  | 'dashboards'
-  | 'big-bets'
-  | 'marketplace';
+  | 'dashboards';
 
 type PathDef = {
   id: PathId;
@@ -60,8 +56,8 @@ type PathDef = {
   createLabel: string;
   /**
    * Minimum persona rank to perform the PRIMARY (authoring) action. Consumer
-   * paths are 0 (a User can Explore/Use). Connections + Big Bets are Builder-
-   * gated authoring surfaces (rank 2), so they are explained-but-dimmed for a
+   * paths are 0 (a User can Explore/Use). Connections is a Builder-
+   * gated authoring surface (rank 2), so it is explained-but-dimmed for a
    * User/Creator — exactly as the golden-path docs specify.
    */
   actRank: number;
@@ -70,9 +66,8 @@ type PathDef = {
 };
 
 /**
- * The ten golden paths, in the design's gallery order. Copy mirrors
- * home-golden-path.md §"Centerpiece" (incl. the Science line decided in the
- * 2026-06-30 interview: "Train, run & monitor machine learning models.").
+ * The golden paths, in the design's gallery order. Copy mirrors
+ * home-golden-path.md §"Centerpiece".
  */
 export const PATHS: PathDef[] = [
   { id: 'data', title: 'Data', blurb: 'Turn raw data into governed, documented products.', tab: '/data', createLabel: 'Load data', actRank: 0, art: 'data' },
@@ -80,11 +75,10 @@ export const PATHS: PathDef[] = [
   { id: 'connections', title: 'Connections', blurb: 'Securely connect APIs, DBs & SaaS as governed tools.', tab: '/connections', createLabel: 'Add a connection', actRank: 2, art: 'connections' },
   { id: 'agents', title: 'Agents', blurb: 'Build agents that use your data, knowledge & tools.', tab: '/agents', createLabel: 'Create an agent', actRank: 0, art: 'agents' },
   { id: 'software', title: 'Software', blurb: 'Build & deploy governed apps by chat.', tab: '/software', createLabel: 'Build an app', actRank: 0, art: 'software' },
-  { id: 'science', title: 'Science', blurb: 'Train, run & monitor machine learning models.', tab: '/science', createLabel: 'New model', actRank: 0, art: 'science' },
+
   { id: 'metrics', title: 'Metrics', blurb: 'Define the KPIs everyone agrees on.', tab: '/metrics', createLabel: 'Define a metric', actRank: 0, art: 'metrics' },
   { id: 'dashboards', title: 'Dashboards', blurb: 'See the KPIs; alert & report on them.', tab: '/dashboards', createLabel: 'Build a dashboard', actRank: 0, art: 'dashboards' },
-  { id: 'big-bets', title: 'Big Bets', blurb: 'Plan an initiative that bundles all of the above.', tab: '/big-bets', createLabel: 'Start a Big Bet', actRank: 2, art: 'big-bets' },
-  { id: 'marketplace', title: 'Marketplace', blurb: 'Discover & reuse certified products across domains.', tab: '/marketplace', createLabel: 'Browse', actRank: 0, art: 'marketplace' },
+
 ];
 
 /** Resolved launcher card for one viewer persona. */
@@ -101,8 +95,6 @@ export type LauncherCard = {
   canAct: boolean;
   /** When dimmed, a short reason ("Builders & Admins can …") for awareness. */
   dimmedReason?: string;
-  /** "How it works" → the path's tutorial (single source, two entry points). */
-  tutorialHref: string;
 };
 
 /**
@@ -127,26 +119,20 @@ export function personaStance(p: HomePersona): string {
 }
 
 function actionLabel(persona: HomePersona, def: PathDef): string {
-  // Marketplace always reads "Browse"; consumers Explore; authors get the
-  // create verb; stewards/admins keep the create verb (they can author too) so
-  // the action stays a working deep-link, while EMPHASIS shifts via cockpit
-  // ordering + the persona banner (kept simple + honest on purpose).
-  if (def.id === 'marketplace') return 'Browse';
+  // Consumers Explore; authors get the create verb; stewards/admins keep the
+  // create verb (they can author too) so the action stays a working deep-link,
+  // while EMPHASIS shifts via cockpit ordering + the persona banner (kept
+  // simple + honest on purpose).
   if (PERSONA_RANK[persona] === 0) return 'Explore';
   return def.createLabel;
-}
-
-function tutorialHref(id: PathId): string {
-  // Single tutorial registry key per golden path (tutorials-golden-path.md):
-  // Home's "How it works" + the tab header's "Tutorial" resolve the same key.
-  return `${tabFor(id)}?tutorial=${id}`;
 }
 
 function tabFor(id: PathId): string {
   return PATHS.find((p) => p.id === id)?.tab ?? '/';
 }
 
-/** Build the persona's full launcher gallery (all ten cards, ordered). */
+/** Build the persona's full launcher gallery (all cards, ordered). */
+
 export function launcherFor(persona: HomePersona): LauncherCard[] {
   const rank = PERSONA_RANK[persona];
   return PATHS.map((def) => {
@@ -161,7 +147,6 @@ export function launcherFor(persona: HomePersona): LauncherCard[] {
       href,
       canAct,
       dimmedReason: canAct ? undefined : 'Builders & Admins can act here — explore to learn the path.',
-      tutorialHref: tutorialHref(def.id),
     };
   });
 }

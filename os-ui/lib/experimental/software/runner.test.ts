@@ -19,6 +19,7 @@ import {
   type RunnerApp,
   type RunnerK8s,
 } from './runner.ts';
+import { config } from '@/lib/core/config';
 
 const OPTS = { namespace: 'agentic-apps', ingressClass: 'nginx', tlsIssuer: 'letsencrypt-prod' };
 
@@ -53,27 +54,19 @@ test('runnerName is deterministic + RFC1123-safe', () => {
   assert.match(runnerName('shop'), /^[a-z0-9-]+$/);
 });
 
-test('appImageRef: explicit runImage wins; else the registry convention', () => {
+test('appImageRef: the app\u2019s explicit runImage wins; else the shared runner image', () => {
   assert.equal(appImageRef({ slug: 'shop', runImage: 'ghcr.io/acme/shop:v2' }), 'ghcr.io/acme/shop:v2');
-  // No explicit image + no SOFTWARE_RUNNER_IMAGE env → the CI registry convention.
-  assert.match(appImageRef({ slug: 'shop' }), /\/shop:latest$/);
-});
-
-test('appImageRef: the OS build service DIGEST wins over runImage AND the :latest convention', () => {
-  const digest = 'forgejo-http:3000/gitea_admin/shop@sha256:' + 'a'.repeat(64);
-  // Digest wins even with an explicit mutable runImage present.
-  assert.equal(appImageRef({ slug: 'shop', runImage: 'ghcr.io/acme/shop:v2', runImageDigest: digest }), digest);
-  // A malformed "digest" is ignored (falls back to runImage) — never serve garbage.
-  assert.equal(
-    appImageRef({ slug: 'shop', runImage: 'ghcr.io/acme/shop:v2', runImageDigest: 'not-a-digest' }),
-    'ghcr.io/acme/shop:v2',
-  );
+  // There is no per-app CI registry any more: with no declared image the app is served
+  // by the platform's shared SOFTWARE_RUNNER_IMAGE — never a fabricated per-app tag.
+  assert.equal(appImageRef({ slug: 'shop' }), config.softwareRunnerImage);
+  // Whitespace-only is treated as "not declared".
+  assert.equal(appImageRef({ slug: 'shop', runImage: '  ' }), config.softwareRunnerImage);
 });
 
 // ------------------------------------------------------------- Manifests -------
 
 test('deployment manifest: 1 replica, requests+limits, TCP readiness probe, image', () => {
-  const spec = runnerSpec(APP);
+  const spec = runnerSpec({ ...APP, runImage: 'registry.example.com/apps/shop:latest' });
   const m = buildDeploymentManifest(spec, NS) as any;
   assert.equal(m.kind, 'Deployment');
   assert.equal(m.metadata.namespace, NS);
@@ -133,8 +126,8 @@ test('deployment manifest: deployedAt stamps the pod template so a re-deploy ROL
 });
 
 test('deployment manifest: a DIGEST-pinned image drops the roll hack + Always-pull reliance', () => {
-  const digest = 'forgejo-http:3000/gitea_admin/shop@sha256:' + 'b'.repeat(64);
-  const spec = runnerSpec({ ...APP, runImageDigest: digest });
+  const digest = 'registry.example.com/apps/shop@sha256:' + 'b'.repeat(64);
+  const spec = runnerSpec({ ...APP, runImage: digest });
   assert.equal(spec.image, digest, 'the runner serves the exact captured digest');
   const m = buildDeploymentManifest(spec, NS, '2026-08-04T00:00:00.000Z') as any;
   const c = m.spec.template.spec.containers[0];
@@ -145,7 +138,7 @@ test('deployment manifest: a DIGEST-pinned image drops the roll hack + Always-pu
   // digest IS the pod-template change, so Kubernetes rolls honestly on its own.
   assert.equal(m.spec.template.metadata.annotations, undefined, 'no roll-hack stamp on a digest-pinned deploy');
   // A mutable :latest spec still keeps both (unchanged behaviour for the fallback path).
-  const latest = buildDeploymentManifest(runnerSpec(APP), NS, '2026-08-04T00:00:00.000Z') as any;
+  const latest = buildDeploymentManifest(runnerSpec({ ...APP, runImage: 'registry.example.com/apps/shop:latest' }), NS, '2026-08-04T00:00:00.000Z') as any;
   assert.equal(latest.spec.template.spec.containers[0].imagePullPolicy, 'Always');
   assert.ok(latest.spec.template.metadata.annotations['soa.sovereign-os/deployed-at']);
 });

@@ -232,7 +232,7 @@ export default function AgentEditor({
             Every tool call this agent makes is forced through the governed gateway (LiteLLM → OPA →
             Langfuse). Run the system or press Build to generate traces; they appear in Monitoring
             (Langfuse) under principal <span className="mono">{systemId}:{agent.id}</span>. File
-            versions are tracked in the system’s Forgejo repo.
+            versions are tracked in the system’s own version history.
           </p>
         </div>
       ) : null}

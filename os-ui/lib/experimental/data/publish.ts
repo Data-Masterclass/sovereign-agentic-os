@@ -4,21 +4,8 @@
 import type { ExecuteIdentity } from '@/lib/infra/governed';
 import { roleAtLeast } from '../../core/session.ts';
 import { visibilityFor, type Dataset } from './dataset-schema.ts';
-import {
-  applyApprovedPromotion,
-  clearDomainTableStale,
-  assertPromoteTargetFree,
-  getDataset,
-  listGovernedDatasets,
-  requireDomainTableMaterialized,
-  validatePromotion,
-  type MaterializationVerifier,
-  type Principal,
-  type PromotionRequest,
-} from './store.ts';
+import { applyApprovedPromotion, clearDomainTableStale, assertPromoteTargetFree, getDataset, requireDomainTableMaterialized, validatePromotion, type MaterializationVerifier, type Principal, type PromotionRequest } from './store.ts';
 import { publishPlan } from './transform.ts';
-import { buildCubeModels } from './cube-models.ts';
-import { cubeName } from './metrics.ts';
 import type { DataBuildReport } from './build/orchestrate.ts';
 
 /**
@@ -72,8 +59,6 @@ export type PublishOutcome =
       fqn: string;
       mode: string;
       report: DataBuildReport;
-      /** The Cube view now in the `/api/cube/models` payload (null when no Gold). */
-      cubeView: string | null;
       dataset: Dataset;
     }
   | { ok: false; fqn: string; mode?: string; report?: DataBuildReport; error: string };
@@ -151,13 +136,7 @@ export async function publishApprovedPromotion(
   //    artifact kind (view vs table) so demote/reconcile pick the right path.
   const dataset = applyApprovedPromotion(req, approver, plan.artifact);
 
-  // 8. The Cube leg (T7): governed datasets with a built Gold now appear in the
-  //    `/api/cube/models` payload the sync sidecar delivers (≤60s on the cluster).
-  const view = buildCubeModels(listGovernedDatasets()).models.find(
-    (m) => m.name === cubeName(dataset), // #155: the dataset's (possibly namespaced) cube name
-  );
-
-  return { ok: true, fqn: plan.target, mode: report.mode, report, cubeView: view?.view ?? null, dataset };
+  return { ok: true, fqn: plan.target, mode: report.mode, report, dataset };
 }
 
 export type RematerializeOutcome =

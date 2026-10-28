@@ -8,10 +8,10 @@ import { listFiles, readFile, writeFile } from '@/lib/agents/store';
 export const dynamic = 'force-dynamic';
 
 /**
- * The system's mock-Forgejo file API (whitelisted to system.yaml + per-agent
- * AGENT.md/MEMORY.md, which project onto the one source).
+ * The system's file API (whitelisted to system.yaml + per-agent AGENT.md/MEMORY.md,
+ * which project onto the one source in the agent store).
  *   GET  ?path=…  → one file (content + sha)   ·   GET → the file list
- *   PUT          → commit (optimistic-concurrency on sha)
+ *   PUT          → save (optimistic-concurrency on sha)
  */
 
 export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {

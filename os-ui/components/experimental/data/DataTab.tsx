@@ -24,18 +24,14 @@ type TabView =
  * The optional `openDatasetId` / `onDatasetOpened` pair lets the Catalog sub-tab
  * open a specific dataset in the builder without lifting shared state into the page
  * component — the parent sets `openDatasetId`, DataTab consumes it once and calls
- * `onDatasetOpened` to clear it (one-shot handoff). `onDetailChange` tells the page
- * whether a dataset is open, so it can hide its own tab-level Talk copilot (the
- * builder surfaces Talk itself in the Use stage).
+ * `onDatasetOpened` to clear it (one-shot handoff).
  */
 export default function DataTab({
   openDatasetId,
   onDatasetOpened,
-  onDetailChange,
 }: {
   openDatasetId?: string | null;
   onDatasetOpened?: () => void;
-  onDetailChange?: (open: boolean) => void;
 }) {
   const [view, setView] = useState<TabView>({ kind: 'tiles' });
 
@@ -44,7 +40,6 @@ export default function DataTab({
   useTabNavReset(() => setView({ kind: 'tiles' }));
 
   // Tell the page whether a dataset is open (so it can hide its own Talk copilot).
-  useEffect(() => { onDetailChange?.(view.kind === 'detail'); }, [view.kind, onDetailChange]);
 
   // One-shot handoff: when the catalog (or any external caller) sets openDatasetId,
   // jump to the detail view and immediately clear the signal so it doesn't re-fire.

@@ -13,7 +13,6 @@ function spyExecutors(over: Partial<Executors> = {}): { ex: Executors; calls: Re
   const ex: Executors = {
     async authorize() { return { allowed: true, policy: 'opa-allow' }; },
     async trinoQuery(_sql, principal) { calls.trinoPrincipal = principal; return { columns: ['x'], rows: [['1']] }; },
-    async cubeQuery(_q, sc) { calls.cubeSecurityContext = sc; return { rows: [{ revenue: 100 }] }; },
     async trace(e) { calls.traced = e; return true; },
     ...over,
   };
@@ -41,14 +40,6 @@ test('domain query forwards the user as the Trino principal (OPA RLS, R3)', asyn
   const r = await runAgentTool(amir, { scope: 'domain', kind: 'query', sql: 'select 1' }, ex);
   assert.equal(r.source, 'trino');
   assert.equal(calls.trinoPrincipal, 'amir'); // the user, not a service account
-});
-
-test('metrics resolve under the per-user Cube securityContext (R3)', async () => {
-  const { ex, calls } = spyExecutors();
-  await runAgentTool(amir, { scope: 'domain', kind: 'metrics', query: { measures: ['Orders.revenue'] } }, ex);
-  const sc = calls.cubeSecurityContext as Record<string, unknown>;
-  assert.equal(sc.sub, 'amir');
-  assert.equal(sc.region, 'DE'); // full claims propagate to Cube
 });
 
 test('R2: a service-account identity cannot run the tool (delegation refuses it)', async () => {

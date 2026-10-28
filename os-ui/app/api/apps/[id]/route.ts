@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
-import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, refreshActionsStage, refreshBuildStage, reconcileBuiltStatus, setAutoRepairEnabled, setAppServeMode, normalizeServeMode, type AppEpic } from '@/lib/experimental/software/apps';
+import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, reconcileBuiltStatus, setAppServeMode, normalizeServeMode, type AppEpic } from '@/lib/experimental/software/apps';
 import { normalizeContextGrants } from '@/lib/core/context-grants';
 import { normalizeAgentGrants } from '@/lib/experimental/software/app-agent-grants';
 import { reconcileDeployApproval } from '@/lib/experimental/software/review';
@@ -11,7 +11,7 @@ import { getConnectionByApp } from '@/lib/infra/app-registry';
 
 export const dynamic = 'force-dynamic';
 
-/** One app's full home-of-record (design/data/docs/chat/pipeline/MCP). */
+/** One app's full home-of-record (design/data/docs/chat/MCP). */
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
   const app = await getAppForUser(id, user);
@@ -20,18 +20,9 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   // reconcile it to its true state on load. Idempotent + fail-soft (never blocks
   // the load); mutates the same in-cache app object, so the response is healed.
   await reconcileDeployApproval(app);
-  // SELF-HEAL 2: recompute the pipeline `actions` stage from live Forgejo (30s
-  // TTL) — 'ok' only when the latest push really produced an Actions run, and a
-  // disabled repo Actions unit is auto-enabled. Same in-cache mutate as above.
-  await refreshActionsStage(app);
-  // SELF-HEAL 2b (Phase B): poll the OS build service's in-flight Kaniko build — on
-  // success it pins the runner to the pushed DIGEST and reconciles the `harbor` (image
-  // build) stage honestly. No-op (returns null-ish) when the build service is OFF, so
-  // the Forgejo Actions path stays authoritative there. Fail-soft, same in-cache mutate.
-  await refreshBuildStage(app).catch(() => null);
-  // SELF-HEAL 3: story built-ness must be EARNED — demote any `done`/`building` claim on
-  // an app with no committed code (heals the "N stories built but repo empty / Test
-  // disabled" phantom). Runs AFTER refreshActionsStage so a 404'd repo reads as failing.
+  // SELF-HEAL 2: story built-ness must be EARNED — demote any `done`/`building` claim on
+  // an app with no generated files (heals the "N stories built but no code / Test
+  // disabled" phantom).
   reconcileBuiltStatus(app);
   const connection = getConnectionByApp(app.id);
   return NextResponse.json({ user, app, connection });
@@ -46,13 +37,6 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
 export const PATCH = withRoute<{ id: string }>(async ({ user, params, req }) => {
   const { id } = params;
   const body = await req.json();
-
-  // The app-level auto-repair opt-out toggle (Phase C). A dedicated boolean field so a
-  // simple settings switch flips it without touching docs/design — edit-scoped in the lib.
-  if (typeof body?.autoRepairEnabled === 'boolean') {
-    const app = await setAutoRepairEnabled(id, user, body.autoRepairEnabled);
-    return NextResponse.json({ app });
-  }
 
   // Phase D: the serve-mode toggle ('image' | 'runtime'). Edit-scoped in the lib, which
   // ALSO refuses 'runtime' for a non-Vite shape (400) — a dedicated field so the Publish
@@ -86,8 +70,8 @@ export const PATCH = withRoute<{ id: string }>(async ({ user, params, req }) => 
 
 /**
  * POST → app actions. Today exactly `rename` (change the DISPLAY name only). The
- * store freezes the physical `slug` (repo/image/container/CI identity), so no
- * Forgejo repo, container image, subdomain or CI target ever moves. Edit-scoped
+ * store freezes the physical `slug` (image/container identity), so no container
+ * image or subdomain ever moves. Edit-scoped
  * (owner or in-domain admin) — a mere viewer is rejected 403. Mirrors the Data
  * tab's dataset rename route (parity rollout).
  */

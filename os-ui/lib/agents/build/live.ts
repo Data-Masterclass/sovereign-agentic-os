@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type Capability, type System, parseSystem, serializeSystem } from '../system-schema.ts';
+import { type Capability, type System } from '../system-schema.ts';
 import {
   type RoutingTable,
   ACTIVITIES,
@@ -22,16 +22,18 @@ import {
 } from './runtime-contract.ts';
 
 /**
- * The 5 LIVE Build adapters (Approach A) — the real apply→verify against the
+ * The 4 LIVE Build adapters (Approach A) — the real apply→verify against the
  * services, replacing {@link makeMockAdapters}. They share the SAME
- * {@link BuildAdapter} interface, the same run order (forgejo → opa → litellm →
- * langgraph → langfuse) and the same cardinal rule (a row is ✓ ONLY when both
- * apply AND verify pass). Every backend is injected as a small client interface so
- * this module stays PURE and unit-testable against in-memory fakes; the real
- * fetch-backed clients live in `live-clients.ts` (server-only).
+ * {@link BuildAdapter} interface, the same run order (opa → litellm → langgraph →
+ * langfuse) and the same cardinal rule (a row is ✓ ONLY when both apply AND verify
+ * pass). Every backend is injected as a small client interface so this module stays
+ * PURE and unit-testable against in-memory fakes; the real fetch-backed clients live
+ * in `live-clients.ts` (server-only).
  *
- *   • forgejo  — write system.yaml + agents/<id>/AGENT.md + MEMORY.md (sha-checked);
- *                verify reads back + parseSystem round-trips.
+ * There is NO git backend: a system's `system.yaml` + per-agent AGENT.md/MEMORY.md
+ * live in the agent store (the durable record + its version log), so Build has no
+ * repo step — it provisions governance, routing, the graph and tracing.
+ *
  *   • opa      — PUT grants for principal os-<id> (+ connection_<id>; Write-approval
  *                merged into requires_approval); verify probes allow/deny/approval.
  *   • litellm  — idempotent /key/generate (alias os-<id>, routed models, budget +
@@ -43,12 +45,6 @@ import {
  */
 
 // ----------------------------------------------------------------- clients -------
-
-// The Forgejo client contract is an EXTERNAL-service boundary → it lives in
-// `lib/infra` (a tab must not own a shape core/other-tabs depend on). Re-exported
-// here so existing importers of this module keep working unchanged.
-export type { ForgejoClient, ForgejoCommit, ForgejoCommitFiles } from '../../infra/forgejo.ts';
-import type { ForgejoClient } from '../../infra/forgejo.ts';
 
 export interface OpaClient {
   /** PUT the principal's allowed tools (in-memory data document). */
@@ -101,7 +97,6 @@ export const DEFAULT_KEY_CAPS: KeyCaps = {
 };
 
 export type LiveDeps = {
-  forgejo: ForgejoClient;
   opa: OpaClient;
   litellm: LiteLlmClient;
   runtime: RuntimeClient;
@@ -173,42 +168,6 @@ function pending(detail: string): StepResult {
 
 export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
   const caps = deps.caps ?? DEFAULT_KEY_CAPS;
-
-  const forgejo: BuildAdapter = {
-    tool: 'forgejo',
-    async apply(ctx) {
-      const sys = ctx.system;
-      const repo = `os-${ctx.systemId ?? 'sys'}`;
-      await deps.forgejo.ensureRepo(repo);
-      const put = async (path: string, content: string) => {
-        const cur = await deps.forgejo.readFile(repo, path);
-        await deps.forgejo.writeFile(repo, path, content, cur?.sha);
-      };
-      await put('system.yaml', serializeSystem(sys));
-      for (const a of sys.agents) {
-        await put(`agents/${a.id}/AGENT.md`, a.agent_md ?? '');
-        await put(`agents/${a.id}/MEMORY.md`, a.memory_md ?? '');
-      }
-      return ok(`wrote system.yaml + ${sys.agents.length * 2} agent file(s) to ${repo}`);
-    },
-    async verify(ctx) {
-      const repo = `os-${ctx.systemId ?? 'sys'}`;
-      const f = await deps.forgejo.readFile(repo, 'system.yaml');
-      if (!f) return fail('system.yaml is not in the repo');
-      try {
-        const reparsed = parseSystem(f.content);
-        if (reparsed.agents.length !== ctx.system.agents.length) return fail('round-trip lost agents');
-        for (const a of ctx.system.agents) {
-          if (!(await deps.forgejo.readFile(repo, `agents/${a.id}/AGENT.md`))) {
-            return fail(`AGENT.md missing for ${a.id}`);
-          }
-        }
-        return ok('files present + parseSystem round-trips');
-      } catch (e) {
-        return fail((e as Error).message);
-      }
-    },
-  };
 
   const opa: BuildAdapter = {
     tool: 'opa',
@@ -316,5 +275,5 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
     },
   };
 
-  return [forgejo, opa, litellm, langgraph, langfuse];
+  return [opa, litellm, langgraph, langfuse];
 }

@@ -1,42 +1,42 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import type { Dataset, Measure } from '../../data/index.ts';
+import type { DelegatedToken } from '../../data/index.ts';
 import { type BuildAdapter, type MetricBuildContext, ok, fail } from './adapter.ts';
-import { buildCubeQuery, type ExploreSpec } from '../explorer.ts';
 
 /**
- * The LIVE Metric build adapters — real apply→verify against Cube, behind the same
- * {@link BuildAdapter} interface as the mocks. Two adapters:
+ * The Metric build adapter — apply→verify against the governed Trino read path, behind
+ * the same {@link BuildAdapter} interface as every other Build. ONE adapter:
  *
- *   • `cube` — (re)load the measures/views YAML, then VERIFY the measure RESOLVES on its
- *     canonical member (the agent metrics tool's path) — no ✓ for a measure that never
- *     resolves;
- *   • `metric-explorer` — run the explorer query UNDER the viewer's security context
- *     (R3 RLS), then VERIFY metric-CONSISTENCY: the explorer's value for the member
- *     equals the measure's resolved value (the "numbers match the agent" guarantee).
+ *   • `trino` — APPLY runs the metric's compiled governed SQL over the gold mart UNDER
+ *     THE VIEWER'S delegated identity (R3 — Trino/OPA row/column security), exactly the
+ *     path the explorer, the dashboards and the agent `metrics` tool serve from; VERIFY
+ *     proves the canonical member resolved to a number — no ✓ for a measure that never
+ *     resolves. Because every consumer runs the same compiled SQL, "the numbers match"
+ *     holds by construction.
  *
- * Pure: the Cube client is injected so the adapters are unit-tested against an in-memory
- * Cube; the fetch-backed client lives in live-clients.ts. A network failure throws or
- * returns falsy ⇒ ✗, never a false ✓.
+ * Pure: the explore function is injected so the adapter is unit-tested against an
+ * in-memory fake; the real one is `exploreMetric` (explore-server.ts), which already
+ * carries the honest offline-mock and the loud outage gate.
  */
 
-export interface MetricCubeClient {
-  /** Validate + (re)load the generated Cube measures/views schema. */
-  reload(view: string, schema: string): Promise<void>;
-  /** Resolve a measure member (the agent metrics tool path) — number or null. */
-  resolveMeasure(member: string): Promise<number | null>;
-  /** Run an explorer query under a security context (R3 RLS at Cube). */
-  explore(query: ReturnType<typeof buildCubeQuery>, securityContext: Record<string, unknown>): Promise<{ rows: Record<string, unknown>[] }>;
-}
+/** The slice of an explore result the build needs (structurally `ExploreServerResult`). */
+export type MetricExploreResult = {
+  rows: Record<string, unknown>[];
+  mode: 'live' | 'live (sql)' | 'offline-mock' | 'unavailable';
+  pending?: boolean;
+  unavailable?: boolean;
+  warning?: string;
+};
 
-export type MetricLiveDeps = { cube: MetricCubeClient };
+export type MetricExplore = (dataset: Dataset, measure: Measure, token: DelegatedToken) => Promise<MetricExploreResult>;
 
-function viewOf(member: string): string {
-  return member.split('.')[0];
-}
+export type MetricLiveDeps = { explore: MetricExplore };
 
-/** Sum the member's value across the explorer rows (the explorer's number for the KPI). */
-function explorerValue(rows: Record<string, unknown>[], member: string): number | null {
+/** Sum the member's value across the rows (the number for the KPI); null if any row
+ *  carries a non-numeric value or there are no rows. */
+export function memberValue(rows: Record<string, unknown>[], member: string): number | null {
   if (rows.length === 0) return null;
   let total = 0;
   for (const r of rows) {
@@ -48,47 +48,23 @@ function explorerValue(rows: Record<string, unknown>[], member: string): number 
 }
 
 export function makeMetricAdapters(deps: MetricLiveDeps): Record<string, BuildAdapter<MetricBuildContext>> {
-  const cube: BuildAdapter<MetricBuildContext> = {
-    tool: 'cube',
+  const trino: BuildAdapter<MetricBuildContext> = {
+    tool: 'trino',
     async apply(ctx) {
-      if (!ctx.schema) return fail('no Cube measures/views schema generated');
-      await deps.cube.reload(viewOf(ctx.member), ctx.schema);
-      return ok(`reloaded Cube measure '${ctx.measure.name}' on '${viewOf(ctx.member)}'`);
+      const r = await deps.explore(ctx.dataset, ctx.measure, ctx.token);
+      if (r.unavailable) return fail(r.warning ?? 'the governed lakehouse (Trino) is unreachable — no number computed');
+      ctx.outcome = r;
+      if (r.pending) return ok(`compiled '${ctx.member}' as governed SQL — value pending`);
+      return ok(`ran governed SQL for '${ctx.member}' as the viewer (${r.rows.length} row(s), ${r.mode})`);
     },
     async verify(ctx) {
-      const v = await deps.cube.resolveMeasure(ctx.member);
-      if (v === null) return fail(`metric '${ctx.member}' did not resolve`);
-      return ok(`metric '${ctx.member}' resolves (= ${v})`);
+      const r = ctx.outcome;
+      if (!r) return fail(`'${ctx.member}' was not computed`);
+      if (r.pending) return fail(`metric '${ctx.member}' did not resolve yet — ${r.warning ?? 'it needs a time slice to compute'}`);
+      const v = memberValue(r.rows, ctx.member);
+      if (v === null) return fail(`metric '${ctx.member}' did not resolve to a number`);
+      return ok(`'${ctx.member}' = ${v} via governed Trino SQL (${r.mode})`);
     },
   };
-
-  const explorer: BuildAdapter<MetricBuildContext> = {
-    tool: 'metric-explorer',
-    async apply(ctx) {
-      const spec: ExploreSpec = { member: ctx.member, dimensions: [] };
-      const { rows } = await deps.cube.explore(buildCubeQuery(spec), ctx.securityContext);
-      if (explorerValue(rows, ctx.member) === null) return fail(`explorer returned no usable rows for '${ctx.member}'`);
-      return ok(`explorer resolved '${ctx.member}' for the viewer (${rows.length} row(s), RLS applied)`);
-    },
-    async verify(ctx) {
-      // Metric-consistency: the explorer and the agent metrics tool resolve the SAME
-      // canonical member at Cube. Both must resolve. When they run under the same identity
-      // the totals are equal (the strong "numbers match" message + the offline-mock and
-      // the consistency/gate unit tests). Under per-viewer RLS the explorer carries the
-      // viewer's securityContext while the agent-path scalar here is unscoped, so an
-      // identity-scoped value difference is legitimate and must NOT fail the build —
-      // only a non-resolution does.
-      const spec: ExploreSpec = { member: ctx.member, dimensions: [] };
-      const [{ rows }, agentValue] = await Promise.all([
-        deps.cube.explore(buildCubeQuery(spec), ctx.securityContext),
-        deps.cube.resolveMeasure(ctx.member),
-      ]);
-      const exploreVal = explorerValue(rows, ctx.member);
-      if (exploreVal === null || agentValue === null) return fail('metric did not resolve on both the explorer and the agent path');
-      if (exploreVal === agentValue) return ok(`numbers match: explorer == agent == ${agentValue} for '${ctx.member}'`);
-      return ok(`explorer (${exploreVal}) + agent (${agentValue}) both resolve '${ctx.member}' (RLS-scoped per identity)`);
-    },
-  };
-
-  return { cube, 'metric-explorer': explorer };
+  return { trino };
 }

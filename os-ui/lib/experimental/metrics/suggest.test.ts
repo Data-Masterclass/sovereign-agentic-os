@@ -13,10 +13,6 @@ import {
 
 const CTX: SuggestContext = {
   goal: 'grow revenue',
-  pillars: [
-    { id: 'pil_growth', name: 'Growth', description: 'grow net revenue' },
-    { id: 'pil_ret', name: 'Retention', description: 'keep customers' },
-  ],
   omSections: [{ id: 'strategy', title: 'Strategy', content: 'win on price' }],
   workflows: [
     {
@@ -52,23 +48,21 @@ const CTX: SuggestContext = {
 test('suggestMetricsMessages grounds the prompt in the real context', () => {
   const msgs = suggestMetricsMessages(CTX);
   assert.equal(msgs[0].role, 'system');
-  // datasets, columns, pillars, workflow hard rules all appear in the user prompt
+  // datasets, columns, workflow hard rules all appear in the user prompt
   assert.match(msgs[1].content, /ds_orders/);
   assert.match(msgs[1].content, /net_amount/);
-  assert.match(msgs[1].content, /pil_growth/);
   assert.match(msgs[1].content, /wf_checkout/);
   assert.match(msgs[1].content, /never store raw card numbers/);
   assert.match(msgs[1].content, /grow revenue/);
 });
 
-test('parseCandidates keeps a valid candidate and grounds its pillar/process', () => {
+test('parseCandidates keeps a valid candidate and grounds its process', () => {
   const raw = JSON.stringify({
     candidates: [
       {
         name: 'Revenue',
         description: 'total net revenue',
         why: 'serves Growth',
-        pillarId: 'pil_growth',
         processId: 'wf_checkout',
         datasetId: 'ds_orders',
         form: { name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: ['region'] },
@@ -82,9 +76,8 @@ test('parseCandidates keeps a valid candidate and grounds its pillar/process', (
   assert.equal(c.form.aggregation, 'sum');
   assert.equal(c.form.column, 'net_amount');
   assert.deepEqual(c.form.dimensions, ['region']);
-  assert.equal(c.pillarId, 'pil_growth');
   assert.equal(c.processId, 'wf_checkout');
-  assert.deepEqual(grounding, { pillars: 2, omSections: 1, workflows: 1, datasets: 2 });
+  assert.deepEqual(grounding, { omSections: 1, workflows: 1, datasets: 2 });
 });
 
 test('parseCandidates drops a candidate on an INVISIBLE dataset (never fabricates access)', () => {
@@ -99,16 +92,15 @@ test('parseCandidates drops a candidate on an INVISIBLE dataset (never fabricate
   assert.equal(candidates[0].name, 'Revenue');
 });
 
-test('parseCandidates drops a fabricated column and clears an invented pillar/process', () => {
+test('parseCandidates drops a fabricated column and clears an invented process', () => {
   const raw = JSON.stringify({
     candidates: [
       // fabricated base column → dropped entirely (a sum needs a real column)
       { name: 'Bad', datasetId: 'ds_orders', form: { name: 'Bad', aggregation: 'sum', column: 'not_a_col', dimensions: [] } },
-      // invented pillar/process ids → cleared; ghost dimension → filtered out
+      // invented process id → cleared; ghost dimension → filtered out
       {
         name: 'Orders',
         datasetId: 'ds_orders',
-        pillarId: 'pil_nope',
         processId: 'wf_nope',
         form: { name: 'Orders', aggregation: 'count', column: '', dimensions: ['region', 'ghost'] },
       },
@@ -120,8 +112,8 @@ test('parseCandidates drops a fabricated column and clears an invented pillar/pr
   assert.equal(c.name, 'Orders');
   assert.equal(c.form.column, ''); // count → no column
   assert.deepEqual(c.form.dimensions, ['region']); // "ghost" dropped
-  assert.equal(c.pillarId, undefined); // invented → cleared
-  assert.equal(c.processId, undefined);
+  assert.equal(c.processId, undefined); // invented → cleared
+
 });
 
 test('parseCandidates keeps crossEntity only for datasets the caller can see', () => {

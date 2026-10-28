@@ -31,13 +31,12 @@ import { queryRun } from '@/lib/infra/governed';
 import { publishPromotionLive } from '@/lib/experimental/data/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/experimental/data/panels';
-import { scaffoldCubeYaml } from '@/lib/experimental/data/metrics';
 import { ingestAndRegisterBronze } from '@/lib/experimental/data/ingest';
 import { buildStage, commitLayerVersion } from '@/lib/experimental/data/build/server';
 import {
   silverPlan,
   goldJoinPlan,
-  goldMeasureToCube,
+  goldMeasureToModel,
   CAST_TYPES,
   type TransformOp,
   type ResolvedJoin,
@@ -99,25 +98,6 @@ import { fromTiles, type ChartSpec } from '@/lib/experimental/dashboards/model';
 import { claimsFromUser, delegate } from '@/lib/experimental/data/identity';
 
 import {
-  createBet,
-  getBet,
-  updateBet,
-  addComponent,
-  archiveBet,
-  unarchiveBet,
-  deleteBet,
-  restoreBetVersion,
-  setBetWorkflow,
-  wireComponents,
-  unwireComponents,
-  canEdit as canEditBet,
-  type CreateBetInput,
-} from '@/lib/experimental/bigbets/store';
-import { getPillar } from '@/lib/experimental/strategy/pillars';
-import { deriveBetName, INTERPLAY_RELATIONS, type BigBet, type InterplayRelation, type Tab as BetTab, type ValueBasis } from '@/lib/experimental/bigbets';
-import { resolveLinkedComponent } from '@/lib/experimental/bigbets/attach-server';
-
-import {
   createSystem,
   writeFile as writeAgentFile,
   getSystemForEdit,
@@ -145,7 +125,8 @@ export const promotionTools: McpTool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['dataset', 'file', 'knowledge', 'connection', 'dashboard', 'model', 'app', 'agent_system'], description: 'What to promote (you must OWN it).' },
+        kind: { type: 'string', enum: ['dataset', 'file', 'knowledge', 'connection', 'dashboard', 'app', 'agent_system']
+, description: 'What to promote (you must OWN it).' },
         id: { type: 'string', description: 'The artifact id you own and have documented.' },
         visibility: { type: 'string', description: 'Requested asset visibility (dataset/file only; default domain).' },
         grants: { type: 'array', description: 'Optional explicit policy grants (dataset/file only; else a domain read grant).' },

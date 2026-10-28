@@ -20,7 +20,7 @@ export function canViewPolicyPlane(role: Role): boolean {
  * Policies view (governance-golden-path.md §2) — a consolidated, READ-ONLY view
  * of the whole policy plane, with Admin OVERRIDE. Editing lives in each tab; here
  * you SEE who-can-do-what end-to-end: capability profiles + agent safety presets
- * + per-artifact grants + domain defaults, as compiled to OPA / Cube / DLS.
+ * + per-artifact grants + domain defaults, as compiled to OPA / DLS.
  *
  * The plane is assembled from three live sources of truth:
  *   1. role-derived grants (compiled from `roles.ts`),
@@ -36,7 +36,7 @@ export type GrantRow = {
   source: 'role' | 'access-grant' | 'egress' | 'standing';
   domain: string;
   /** Backing engine the grant compiles to. */
-  compiledTo: 'OPA' | 'Cube' | 'OpenSearch-DLS';
+  compiledTo: 'OPA' | 'OpenSearch-DLS';
 };
 
 // Dynamic plane state (access grants + revocations). The egress allowlist is NO
@@ -162,9 +162,9 @@ export function consolidatedPlane(
 export function policySources(): { name: string; authoredIn: string; compiledTo: string; rights: string[] }[] {
   return [
     { name: 'Creator (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA', rights: ROLE_RIGHTS['creator'] },
-    { name: 'Builder (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA/Cube', rights: ROLE_RIGHTS.builder },
-    { name: 'Domain admin (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA/Cube', rights: ROLE_RIGHTS.domain_admin },
-    { name: 'Admin (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA/Cube/DLS', rights: ROLE_RIGHTS.admin },
+    { name: 'Builder (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA', rights: ROLE_RIGHTS.builder },
+    { name: 'Domain admin (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA', rights: ROLE_RIGHTS.domain_admin },
+    { name: 'Admin (capability profile)', authoredIn: 'Connections', compiledTo: 'OPA/DLS', rights: ROLE_RIGHTS.admin },
   ];
 }
 

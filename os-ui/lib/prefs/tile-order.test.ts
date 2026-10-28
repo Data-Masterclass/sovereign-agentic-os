@@ -7,7 +7,7 @@
  *   1. applyTileOrder pure function — the merge rule (saved first, new appended,
  *      stale ids dropped).
  *   2. Store round-trip — getTileOrder / setTileOrder persist through the in-
- *      process cache (globalThis singleton, same pattern as pillars/bigbets tests).
+ *      process cache (globalThis singleton, same pattern as the other store tests).
  *   3. Route gate invariants — unknown surface rejected (400), session-user-only
  *      (userId never comes from the body), 401 on unauthenticated — tested at the
  *      handler level without a running Next.js server.
@@ -68,38 +68,38 @@ test('applyTileOrder: duplicated ids in savedOrder do NOT duplicate items (regre
 
 test('store: getTileOrder returns [] for a user with no saved preference', async () => {
   __resetForTests();
-  const order = await getTileOrder('user1', 'strategy.pillars');
+  const order = await getTileOrder('user1', 'dashboard.list');
   assert.deepEqual(order, []);
 });
 
 test('store: setTileOrder persists and getTileOrder retrieves it (cross-call singleton)', async () => {
   __resetForTests();
-  await setTileOrder('user1', 'strategy.pillars', ['pillar-c', 'pillar-a', 'pillar-b']);
-  const order = await getTileOrder('user1', 'strategy.pillars');
-  assert.deepEqual(order, ['pillar-c', 'pillar-a', 'pillar-b']);
+  await setTileOrder('user1', 'dashboard.list', ['tile-c', 'tile-a', 'tile-b']);
+  const order = await getTileOrder('user1', 'dashboard.list');
+  assert.deepEqual(order, ['tile-c', 'tile-a', 'tile-b']);
 });
 
 test('store: different users have independent preferences for the same surface', async () => {
   __resetForTests();
-  await setTileOrder('user1', 'bigbets.list', ['bet-2', 'bet-1']);
-  await setTileOrder('user2', 'bigbets.list', ['bet-1', 'bet-2']);
-  assert.deepEqual(await getTileOrder('user1', 'bigbets.list'), ['bet-2', 'bet-1']);
-  assert.deepEqual(await getTileOrder('user2', 'bigbets.list'), ['bet-1', 'bet-2']);
+  await setTileOrder('user1', 'data.list', ['bet-2', 'bet-1']);
+  await setTileOrder('user2', 'data.list', ['bet-1', 'bet-2']);
+  assert.deepEqual(await getTileOrder('user1', 'data.list'), ['bet-2', 'bet-1']);
+  assert.deepEqual(await getTileOrder('user2', 'data.list'), ['bet-1', 'bet-2']);
 });
 
 test('store: different surfaces are independent for the same user', async () => {
   __resetForTests();
-  await setTileOrder('user1', 'strategy.pillars', ['p1', 'p2']);
-  await setTileOrder('user1', 'bigbets.list', ['b2', 'b1']);
-  assert.deepEqual(await getTileOrder('user1', 'strategy.pillars'), ['p1', 'p2']);
-  assert.deepEqual(await getTileOrder('user1', 'bigbets.list'), ['b2', 'b1']);
+  await setTileOrder('user1', 'dashboard.list', ['p1', 'p2']);
+  await setTileOrder('user1', 'data.list', ['b2', 'b1']);
+  assert.deepEqual(await getTileOrder('user1', 'dashboard.list'), ['p1', 'p2']);
+  assert.deepEqual(await getTileOrder('user1', 'data.list'), ['b2', 'b1']);
 });
 
 test('store: setTileOrder trims to ORDER_LIMIT (500)', async () => {
   __resetForTests();
   const big = Array.from({ length: 600 }, (_, i) => `id-${i}`);
-  await setTileOrder('user1', 'strategy.pillars', big);
-  const order = await getTileOrder('user1', 'strategy.pillars');
+  await setTileOrder('user1', 'dashboard.list', big);
+  const order = await getTileOrder('user1', 'dashboard.list');
   assert.equal(order.length, 500);
   assert.equal(order[0], 'id-0');
   assert.equal(order[499], 'id-499');
@@ -107,17 +107,17 @@ test('store: setTileOrder trims to ORDER_LIMIT (500)', async () => {
 
 test('store: overwriting a preference replaces it (not appends)', async () => {
   __resetForTests();
-  await setTileOrder('user1', 'strategy.pillars', ['a', 'b', 'c']);
-  await setTileOrder('user1', 'strategy.pillars', ['c', 'a']);
-  const order = await getTileOrder('user1', 'strategy.pillars');
+  await setTileOrder('user1', 'dashboard.list', ['a', 'b', 'c']);
+  await setTileOrder('user1', 'dashboard.list', ['c', 'a']);
+  const order = await getTileOrder('user1', 'dashboard.list');
   assert.deepEqual(order, ['c', 'a']);
 });
 
 test('store: __resetForTests clears all cached preferences', async () => {
   __resetForTests();
-  await setTileOrder('user1', 'strategy.pillars', ['x', 'y']);
+  await setTileOrder('user1', 'dashboard.list', ['x', 'y']);
   __resetForTests();
-  const order = await getTileOrder('user1', 'strategy.pillars');
+  const order = await getTileOrder('user1', 'dashboard.list');
   assert.deepEqual(order, [], 'should be empty after reset (cache wiped, OS offline)');
 });
 
@@ -125,12 +125,12 @@ test('store: __resetForTests clears all cached preferences', async () => {
 
 test('surface allowlist: TILE_ORDER_SURFACES contains the two wired surfaces', () => {
   assert.ok(
-    (TILE_ORDER_SURFACES as readonly string[]).includes('strategy.pillars'),
-    'strategy.pillars must be in allowlist',
+    (TILE_ORDER_SURFACES as readonly string[]).includes('dashboard.list'),
+    'dashboard.list must be in allowlist',
   );
   assert.ok(
-    (TILE_ORDER_SURFACES as readonly string[]).includes('bigbets.list'),
-    'bigbets.list must be in allowlist',
+    (TILE_ORDER_SURFACES as readonly string[]).includes('data.list'),
+    'data.list must be in allowlist',
   );
 });
 

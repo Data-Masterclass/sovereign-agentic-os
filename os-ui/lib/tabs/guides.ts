@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * The 12 golden-path GUIDES — the rich, self-describing docs an AI reads on
+ * The golden-path GUIDES — the rich, self-describing docs an AI reads on
  * connect (as `sovereign-os://guide/*` resources and via the `get_guide` tool).
  * Each lives in `lib/tabs/guides/<path>.guide.md`. Unlike the token-minimal
  * `*.context.md` briefs, a guide teaches the full pathway: what it is · the exact
@@ -26,11 +26,7 @@ export const GUIDE_PATHS = [
   'software',
   'metrics',
   'dashboards',
-  'bigbets',
   'files',
-  'science',
-  'strategy',
-  'marketplace',
   'monitoring',
 ] as const;
 export type GuidePath = (typeof GUIDE_PATHS)[number];
@@ -67,12 +63,9 @@ const TITLES: Record<GuidePath, string> = {
   software: 'Software — golden path',
   metrics: 'Metrics — golden path',
   dashboards: 'Dashboards — golden path',
-  bigbets: 'Big Bets — golden path',
   files: 'Files — golden path',
-  science: 'Science — golden path',
-  strategy: 'Strategy — golden path',
-  marketplace: 'Marketplace — golden path',
   monitoring: 'Monitoring — golden path',
+
 };
 export function guideTitle(path: GuidePath): string {
   return TITLES[path];

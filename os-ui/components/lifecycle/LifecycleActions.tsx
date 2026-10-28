@@ -96,8 +96,8 @@ export default function LifecycleActions({
         }
         onChanged?.();
       } catch (e) {
-        // Surface the server's reason (e.g. "This pillar still has 1 linked big
-        // bet — unlink them first") instead of swallowing it: the try/finally had
+        // Surface the server's reason instead of swallowing it: the try/finally had
+
         // no catch, so a blocked delete/archive looked like a silent no-op.
         const msg = (e as Error).message || 'Action failed';
         setErr(msg);

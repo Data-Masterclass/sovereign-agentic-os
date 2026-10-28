@@ -822,8 +822,8 @@ export function requestPromotion(
  * NOT required — but the approver must be a domain Builder/Admin (role gate), and
  * the docs gate is re-checked. This is the Creator→Builder handoff: it moves the
  * file dataset→asset, RE-GOVERNS it (the bytes move from the owner prefix to the
- * DOMAIN prefix — deepLink re-derived), sets the policy grants, and emits OM
- * lineage. The same DLS filter then makes it visible to the domain, denied to others.
+ * DOMAIN prefix — deepLink re-derived), sets the policy grants, and emits a
+ * lineage edge. The same DLS filter then makes it visible to the domain, denied to others.
  */
 export function applyApprovedFilePromotion(req: FilePromotionRequest, approver: Principal): FileAsset {
   const rec = get(req.fileId);

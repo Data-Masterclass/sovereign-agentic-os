@@ -210,10 +210,6 @@ export const fabricProvider: WarehouseProvider = {
       'OneLake exposes no native metastore for a generic SHOW SCHEMAS probe; ' +
       'reachability is verified per configured Delta table location on a live tenant.',
   },
-  openMetadata: {
-    connectorType: 'DeltaLake',
-    configKeys: ['configSource', 'connection', 'schemaFilterPattern'],
-  },
   // Brutally honest: this whole path is unverified against a real Fabric tenant.
   liveVerificationRequired: [
     'OneLake ABFS auth on the Trino native Azure filesystem: not a documented first-class Trino path (trino-476) — the azure.* / azure.oauth.* keys are UNVERIFIED against a live Fabric workspace',

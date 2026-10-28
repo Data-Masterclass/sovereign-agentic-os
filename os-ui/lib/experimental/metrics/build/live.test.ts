@@ -4,55 +4,59 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runAdapter, type MetricBuildContext } from './adapter.ts';
-import { makeMockMetricAdapters, newMetricMock } from './mocks.ts';
-import { scaffoldCubeYaml } from '../../data/metrics.ts';
+import { makeMetricAdapters, memberValue, type MetricExplore } from './live.ts';
 import { measureMember } from '../model.ts';
 import { goldSales } from '../fixtures.ts';
+import { claimsFromUser, delegate, propagate } from '../../data/identity.ts';
 
 function ctx(): MetricBuildContext {
   const dataset = goldSales();
   const measure = dataset.measures[0];
-  return {
-    dataset,
-    measure,
-    schema: scaffoldCubeYaml(dataset),
-    member: measureMember(dataset, measure),
-    securityContext: { sub: 'amir', region: 'DE' },
-  };
+  const token = delegate(claimsFromUser({ id: 'amir', domains: ['sales'], role: 'creator', attributes: { region: 'DE' } }), 'domain');
+  return { dataset, measure, member: measureMember(dataset, measure), token };
 }
 
-test('cube adapter: ✓ only after a real reload + the measure resolves', async () => {
-  const backend = newMetricMock();
-  const adapters = makeMockMetricAdapters(backend);
+/** An in-memory governed read path: one row per region the viewer may see (RLS from the token). */
+const rlsExplore: MetricExplore = async (_d, _m, token) => {
+  const region = propagate(token).securityContext.region as string | undefined;
+  const all = [{ 'Sales.region': 'DE', 'Sales.revenue': 1000 }, { 'Sales.region': 'FR', 'Sales.revenue': 2000 }];
+  return { rows: region ? all.filter((r) => r['Sales.region'] === region) : all, mode: 'live (sql)' };
+};
+
+test('trino adapter: ✓ only after the governed SQL ran AND the member resolved to a number', async () => {
+  const adapters = makeMetricAdapters({ explore: rlsExplore });
   const c = ctx();
-  const row = await runAdapter(adapters.cube, c);
+  const row = await runAdapter(adapters.trino, c);
   assert.equal(row.status, 'ok', row.error);
   assert.ok(row.applied && row.verified);
+  assert.match(row.detail, /'Sales\.revenue' = 1000 via governed Trino SQL/); // the viewer's (DE) rows only
 });
 
-test('metric-explorer adapter: verify is the consistency proof (explorer == agent)', async () => {
-  const backend = newMetricMock();
-  const adapters = makeMockMetricAdapters(backend);
-  const c = ctx();
-  await runAdapter(adapters.cube, c); // load first
-  const row = await runAdapter(adapters['metric-explorer'], c);
-  assert.equal(row.status, 'ok', row.error);
-  assert.match(row.detail, /numbers match/);
+test('no false ✓: the member did not resolve to a number → ✗', async () => {
+  const adapters = makeMetricAdapters({ explore: async () => ({ rows: [{ 'Sales.revenue': 'n/a' }], mode: 'live (sql)' }) });
+  const row = await runAdapter(adapters.trino, ctx());
+  assert.equal(row.status, 'fail');
+  assert.ok(row.applied && !row.verified);
+  assert.match(row.error ?? '', /did not resolve to a number/);
 });
 
-test('no false ✓: an empty schema fails apply (nothing reloaded)', async () => {
-  const backend = newMetricMock();
-  const adapters = makeMockMetricAdapters(backend);
-  const c = { ...ctx(), schema: '' };
-  const row = await runAdapter(adapters.cube, c);
+test('no false ✓: verify WITHOUT apply never passes (nothing was computed)', async () => {
+  const adapters = makeMetricAdapters({ explore: rlsExplore });
+  const row = await adapters.trino.verify(ctx());
+  assert.equal(row.ok, false);
+});
+
+test('an unreachable lakehouse fails apply with the honest outage message', async () => {
+  const adapters = makeMetricAdapters({ explore: async () => ({ rows: [], mode: 'unavailable', unavailable: true, warning: 'Trino is unreachable' }) });
+  const row = await runAdapter(adapters.trino, ctx());
   assert.equal(row.status, 'fail');
   assert.equal(row.applied, false);
+  assert.match(row.error ?? '', /unreachable/);
 });
 
-test('no false ✓: a measure that was never loaded does not resolve', async () => {
-  const backend = newMetricMock();
-  const adapters = makeMockMetricAdapters(backend);
-  // verify the cube adapter WITHOUT applying — resolveMeasure returns null → ✗
-  const row = await adapters.cube.verify(ctx());
-  assert.equal(row.ok, false);
+test('memberValue sums the member across rows and refuses non-numeric cells', () => {
+  assert.equal(memberValue([{ 'Sales.revenue': 1 }, { 'Sales.revenue': '2' }], 'Sales.revenue'), 3);
+  assert.equal(memberValue([{ revenue: 5 }], 'Sales.revenue'), 5); // leaf-keyed rows too
+  assert.equal(memberValue([], 'Sales.revenue'), null);
+  assert.equal(memberValue([{ 'Sales.revenue': 'x' }], 'Sales.revenue'), null);
 });

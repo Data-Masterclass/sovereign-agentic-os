@@ -28,7 +28,7 @@ export type { ArtifactVersion };
 export type { ManualScope };
 
 /**
- * Knowledge workflow store — the mock Forgejo repo behind the Knowledge tab
+ * Knowledge workflow store — the durable record behind the Knowledge tab
  * (kind-only, in-process; no STACKIT). Each workflow is a single canonical
  * `workflow.md` string. The store enforces the Creator(participant)/Builder role
  * gate: participants can create + edit drafts; builders (and admins) publish a
@@ -99,7 +99,7 @@ function uid(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
 }
 
-/** Stable content sha for optimistic concurrency (mock Forgejo). */
+/** Stable content sha for optimistic concurrency. */
 export function sha(content: string): string {
   let h = 0;
   for (let i = 0; i < content.length; i++) h = (Math.imul(31, h) + content.charCodeAt(i)) | 0;

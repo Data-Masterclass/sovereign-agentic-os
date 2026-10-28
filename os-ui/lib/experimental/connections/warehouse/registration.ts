@@ -35,8 +35,6 @@ export type CatalogRegistration = {
   envVars: string[];
   /** Vault secret keys backing those env vars (mounted via secretKeyRef). */
   secretKeys: string[];
-  /** OpenMetadata connector type + config keys for the ingestion stub. */
-  openMetadata: { connectorType: string; configKeys: string[] };
   /** The exact `.Values.trino.externalCatalogs[]` YAML entry to paste. */
   valuesSnippet: string;
 };
@@ -59,8 +57,8 @@ function indent(text: string, spaces: number): string {
 
 /**
  * Render the GitOps registration for a warehouse source: the catalog props (pure,
- * from the provider), the secret plumbing it needs, the OM ingestion hint, and the
- * ready-to-paste `values.yaml` snippet. Pure + total: it delegates the actual prop
+ * from the provider), the secret plumbing it needs, and the ready-to-paste
+ * `values.yaml` snippet. Pure + total: it delegates the actual prop
  * generation to `trinoCatalogProps`, which throws on a malformed source.
  */
 export function catalogRegistration(source: WarehouseSource): CatalogRegistration {
@@ -96,7 +94,6 @@ export function catalogRegistration(source: WarehouseSource): CatalogRegistratio
     props,
     envVars,
     secretKeys,
-    openMetadata: provider.openMetadata,
     valuesSnippet,
   };
 }

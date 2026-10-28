@@ -14,10 +14,6 @@ import { freezeCertifiedKnowledgeBundle } from '@/lib/experimental/knowledge/okf
 import { getDashboard, demoteDashboard } from '@/lib/experimental/dashboards';
 import { getConnectionForUser, promoteConnection, demoteConnection, approveOnce } from '@/lib/experimental/connections';
 import { approveExposureActions } from '@/lib/experimental/connections/exposures';
-import { resolveOmCatalog, applyOmSyncForConnection, applyDqSyncForConnection } from '@/lib/experimental/connections/openmetadata';
-import { applyCatalogIngest } from '@/lib/experimental/connections/openmetadata-ingest';
-import { getDataset } from '@/lib/experimental/data';
-import { getModel, demoteModel } from '@/lib/experimental/science';
 import { getArtifact, promoteArtifact, demoteArtifact } from '@/lib/core/artifacts';
 import { getAppForUser, promoteApp } from '@/lib/experimental/software/apps';
 import { demoteApp } from '@/lib/experimental/software/lifecycle';
@@ -27,7 +23,7 @@ import { getSystem, demoteSystem } from '@/lib/agents/store';
 /**
  * THE UNIFIED PROMOTION / CERTIFICATION LADDER — the ONE filing + enforcement
  * point shared by BOTH the MCP tools and the UI routes (mcp-v2 P0.2). It closes
- * the governance back door where knowledge / connections / models / artifacts /
+ * the governance back door where knowledge / connections / artifacts /
  * dashboards / apps used to promote DIRECTLY, bypassing the approval queue.
  *
  * Two canonical rungs (owner decision, do NOT relitigate):
@@ -45,8 +41,8 @@ import { getSystem, demoteSystem } from '@/lib/agents/store';
 
 /** The formerly-DIRECT ladder kinds this module governs (dataset/file keep their
  *  own already-two-step rails in write-tools). */
-export type LadderKind = 'knowledge' | 'personal_knowledge' | 'connection' | 'model' | 'artifact' | 'dashboard' | 'app' | 'agent_system';
-export const LADDER_KINDS: readonly LadderKind[] = ['knowledge', 'personal_knowledge', 'connection', 'model', 'artifact', 'dashboard', 'app', 'agent_system'] as const;
+export type LadderKind = 'knowledge' | 'personal_knowledge' | 'connection' | 'artifact' | 'dashboard' | 'app' | 'agent_system';
+export const LADDER_KINDS: readonly LadderKind[] = ['knowledge', 'personal_knowledge', 'connection', 'artifact', 'dashboard', 'app', 'agent_system'] as const;
 export function isLadderKind(x: string): x is LadderKind {
   return (LADDER_KINDS as readonly string[]).includes(x);
 }
@@ -91,15 +87,7 @@ export async function resolveLadderArtifact(kind: LadderKind, id: string, user: 
       const c = await getConnectionForUser(id, user); // throws 403/404
       return { owner: c.owner, domain: c.domain, name: c.name, visibility: c.visibility };
     }
-    case 'model': {
-      const m = getModel(id);
-      if (!m) fail('Model not found', 404);
-      // getModel is unscoped — enforce visibility here (owner, or in-domain for
-      // Domain+ tiers, or admin) so a forged id cannot leak another's Personal model.
-      const canSee = m.owner === user.id || user.role === 'admin' || (m.tier !== 'Personal' && user.domains.includes(m.domain));
-      if (!canSee) fail('Model not found', 404);
-      return { owner: m.owner, domain: m.domain, name: m.name, visibility: m.tier };
-    }
+
     case 'artifact': {
       const a = await getArtifact(id);
       if (!a) fail('Artifact not found', 404);
@@ -208,7 +196,7 @@ export function buildEffectDeps(): EffectDeps {
     },
     decideDeploy: async (cardId, approver, decision) => {
       const { app } = await decideDeploy(cardId, asCurrentUser(approver), decision);
-      return { appName: app.name, state: app.deploy.state, live: app.pipeline.live === 'ok' };
+      return { appName: app.name, state: app.deploy.state, live: Boolean(app.deploy.previewUrl) };
     },
     enableExposureActions: (exposureId, approver) => approveExposureActions(exposureId, asCurrentUser(approver)),
     freezeKnowledgeBundle: (workflowId, approver) => freezeCertifiedKnowledgeBundle(workflowId, { id: approver.id, role: approver.role, domains: approver.domains }),
@@ -223,42 +211,6 @@ export function buildEffectDeps(): EffectDeps {
         ? `executor reported failure: ${((res.result as { reason?: string }).reason) ?? 'no reason given'}`
         : res.reason;
       return { ok: ok && !execFailed, reason };
-    },
-    applyOmSync: async (payload, approver) => {
-      const user = asCurrentUser(approver);
-      const c = await resolveOmCatalog(payload.connId, user); // DLS guard (404)
-      const dataset = getDataset(payload.datasetId, { id: user.id, role: user.role, domains: user.domains });
-      const runId = `approval-${Date.now()}`;
-
-      // DQ-only trigger (`sync_quality_to_catalog`) ⇒ provision TestSuites/TestCases; the
-      // metadata leg (`apply_om_sync`) syncs the tables/lineage/tags as before.
-      if (payload.syncDq) {
-        const dq = await applyDqSyncForConnection(c, dataset, { runId });
-        const summary = dq.refused
-          ? `refused (${dq.refused})`
-          : `${dq.applied.suites} TestSuite, ${dq.applied.testCases} TestCase(s)` +
-            (dq.errors.length ? `; ${dq.errors.length} error(s)` : '');
-        return { ok: dq.ok, summary, live: true };
-      }
-
-      const result = await applyOmSyncForConnection(c, dataset, {
-        runId,
-        humanServiceFqn: payload.humanServiceFqn ?? undefined,
-      });
-      const summary = result.refused
-        ? `refused (${result.refused})`
-        : `${result.applied.creates} create/update, ${result.applied.patches} annotation(s), ${result.applied.edges} lineage edge(s)` +
-          (result.conflicts.length ? `; ${result.conflicts.length} conflict(s) yielded` : '') +
-          (result.errors.length ? `; ${result.errors.length} error(s)` : '');
-      return { ok: result.ok, summary, live: true };
-    },
-    refreshCatalog: async (payload, approver) => {
-      // #147 — the APPROVED bulk refresh: fold the additive metadata + DQ write-back
-      // over every governed mart the approver may see (DLS), recomputed server-side.
-      const out = await applyCatalogIngest(asCurrentUser(approver), {
-        humanServiceFqn: payload.humanServiceFqn ?? undefined,
-      });
-      return { ok: out.ok, summary: out.summary, live: out.connectionName !== null };
     },
   };
 }
@@ -360,8 +312,8 @@ export async function promoteOrRequest(
 
 /** The ladder kinds a DEMOTE (revoke sharing) is wired for — the reverse of the
  *  UI direct-promote buttons. dataset/file keep their own lifecycle/transition rails. */
-export type DemotableKind = Extract<LadderKind, 'artifact' | 'app' | 'connection' | 'personal_knowledge' | 'agent_system' | 'dashboard' | 'model'>;
-const DEMOTABLE: readonly DemotableKind[] = ['artifact', 'app', 'connection', 'personal_knowledge', 'agent_system', 'dashboard', 'model'] as const;
+export type DemotableKind = Extract<LadderKind, 'artifact' | 'app' | 'connection' | 'personal_knowledge' | 'agent_system' | 'dashboard'>;
+const DEMOTABLE: readonly DemotableKind[] = ['artifact', 'app', 'connection', 'personal_knowledge', 'agent_system', 'dashboard'] as const;
 export function isDemotableKind(x: string): x is DemotableKind {
   return (DEMOTABLE as readonly string[]).includes(x);
 }
@@ -429,13 +381,7 @@ export async function demoteThroughSeam(
       result = { id: d.id, name: d.spec.name, visibility: d.tier };
       break;
     }
-    case 'model': {
-      // The science Actor role: a creator maps to 'user' (no manage rights); the
-      // isAgent:false invariant holds — only humans reach this seam.
-      const m = demoteModel(id, { id: user.id, role: user.role === 'creator' ? 'user' : user.role, domains: user.domains, isAgent: false });
-      result = { id: m.model, name: m.name, visibility: m.tier };
-      break;
-    }
+
     default:
       fail(`Unknown demotable kind ${kind}`, 400);
   }

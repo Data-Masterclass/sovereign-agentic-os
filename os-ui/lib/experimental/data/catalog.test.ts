@@ -33,32 +33,26 @@ function seedOrders(owner: Principal = amir): string {
 }
 
 const noTrino = async (): Promise<CatalogAsset[]> => [];
-const noOm = async () => ({ assets: null, status: 'not configured — skipped' });
 
 // --------------------------------------------------------------- union + labels --
 
-test('assembleCatalog unions all three sources and labels every asset', async () => {
+test('assembleCatalog unions both sources and labels every asset', async () => {
   const registry: CatalogAsset[] = [
     { name: 'Orders', fqn: 'iceberg.sales.silver_orders', description: '', type: 'dataset', source: 'registry' },
   ];
   const trino = async (): Promise<CatalogAsset[]> => [
     { name: 'gold_northpeak_commerce', fqn: 'iceberg.sales.gold_northpeak_commerce', description: '', type: 'iceberg table', source: 'trino' },
   ];
-  const om = async () => ({
-    assets: [{ name: 'dim_region', fqn: 'om.sales.dim_region', description: 'regions', type: 'table', source: 'openmetadata' as const }],
-    status: 'OpenMetadata catalog',
-  });
-
-  const result = await assembleCatalog({ schema: 'sales', registry, trino, openmetadata: om });
+  const result = await assembleCatalog({ schema: 'sales', registry, trino });
 
   assert.equal(result.source, 'union');
-  assert.equal(result.assets.length, 3);
+  assert.equal(result.assets.length, 2);
   // Every source contributed and is labelled ok with its count.
   const byName = Object.fromEntries(result.sources.map((s) => [s.source, s]));
-  assert.deepEqual([byName.registry.ok, byName.trino.ok, byName.openmetadata.ok], [true, true, true]);
-  assert.deepEqual([byName.registry.count, byName.trino.count, byName.openmetadata.count], [1, 1, 1]);
+  assert.deepEqual([byName.registry.ok, byName.trino.ok], [true, true]);
+  assert.deepEqual([byName.registry.count, byName.trino.count], [1, 1]);
   // Each asset carries an honest source label.
-  assert.deepEqual(result.assets.map((a) => a.source).sort(), ['openmetadata', 'registry', 'trino']);
+  assert.deepEqual(result.assets.map((a) => a.source).sort(), ['registry', 'trino']);
 });
 
 // -------------------------------------------------- never 500 on a missing schema --
@@ -71,7 +65,7 @@ test('assembleCatalog does NOT throw when the Trino schema is absent — honest 
     throw new Error("Trino query failed: line 1:1: Schema 'sales' does not exist");
   };
 
-  const result = await assembleCatalog({ schema: 'sales', registry, trino: trinoMissing, openmetadata: noOm });
+  const result = await assembleCatalog({ schema: 'sales', registry, trino: trinoMissing });
 
   // No throw; the registry asset still surfaces.
   assert.equal(result.assets.length, 1);
@@ -87,64 +81,12 @@ test('trinoStatus classifies a missing schema as not-materialized, other errors 
   assert.match(trinoStatus(new Error('Could not reach query-tool'), 'sales'), /warehouse unreachable/);
 });
 
-test('OpenMetadata without a bot token is skipped honestly, not a fallback', async () => {
-  const result = await assembleCatalog({ schema: 'sales', registry: [], trino: noTrino, openmetadata: noOm });
-  const om = result.sources.find((s) => s.source === 'openmetadata')!;
-  assert.equal(om.ok, false);
-  assert.equal(om.count, 0);
-  assert.match(om.status, /skipped/);
-});
-
 test('an empty warehouse yields a valid empty catalog (registry-only), never an error', async () => {
-  const result = await assembleCatalog({ schema: 'sales', registry: [], trino: noTrino, openmetadata: noOm });
+  const result = await assembleCatalog({ schema: 'sales', registry: [], trino: noTrino });
   assert.equal(result.assets.length, 0);
   assert.equal(result.source, 'union');
-  assert.equal(result.sources.length, 3); // all three reported, honestly
-});
-
-// ---------------------------------------- external OM connection discovery fold --
-
-test('assembleCatalog folds in an external OM connection when one is present + reachable', async () => {
-  const registry: CatalogAsset[] = [
-    { name: 'Orders', fqn: 'iceberg.sales.silver_orders', description: '', type: 'dataset', source: 'registry' },
-  ];
-  const omConnection = async () => ({
-    assets: [{ name: 'ext_orders', fqn: 'iceberg.sales.gold_ext', description: 'ext', type: 'table', source: 'om-connection' as const }],
-    status: 'external catalog "Prod OM" · 1 discoverable table · 2 domains · 1 data product (DLS-scoped)',
-    ok: true,
-    count: 1,
-    severity: 'ok' as const,
-  });
-
-  const result = await assembleCatalog({ schema: 'sales', registry, trino: noTrino, openmetadata: noOm, omConnection });
-
-  const src = result.sources.find((s) => s.source === 'om-connection')!;
-  assert.ok(src);
-  assert.equal(src.ok, true);
-  assert.equal(src.count, 1);
-  assert.match(src.status, /DLS-scoped/);
-  assert.ok(result.assets.some((a) => a.source === 'om-connection'));
-});
-
-test('assembleCatalog degrades honestly when the external OM is unreachable — no 500', async () => {
-  const omConnection = async () => ({
-    assets: null,
-    status: 'reconnecting to external catalog "Prod OM"…',
-    ok: false,
-    count: 0,
-    severity: 'warn' as const,
-  });
-  const result = await assembleCatalog({ schema: 'sales', registry: [], trino: noTrino, openmetadata: noOm, omConnection });
-  const src = result.sources.find((s) => s.source === 'om-connection')!;
-  assert.equal(src.ok, false);
-  assert.equal(src.severity, 'warn');
-  assert.match(src.status, /reconnecting/i);
-});
-
-test('assembleCatalog omits the om-connection source entirely when none is connected', async () => {
-  const result = await assembleCatalog({ schema: 'sales', registry: [], trino: noTrino, openmetadata: noOm });
-  assert.ok(!result.sources.some((s) => s.source === 'om-connection'));
-  assert.equal(result.sources.length, 3); // registry + trino + openmetadata only
+  assert.equal(result.sources.length, 2); // registry + trino, both reported honestly
+  assert.ok(result.sources.every((s) => s.source === 'registry' || s.source === 'trino'));
 });
 
 // ------------------------------------------------------------- DLS scoping holds --

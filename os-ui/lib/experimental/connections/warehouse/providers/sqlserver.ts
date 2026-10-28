@@ -131,10 +131,6 @@ export const sqlServerProvider: WarehouseProvider = {
     kind: 'sql',
     query: (source) => `SHOW SCHEMAS FROM ${source.catalog}`,
   },
-  openMetadata: {
-    connectorType: 'Mssql',
-    configKeys: ['hostPort', 'database', 'username', 'schemaFilterPattern'],
-  },
   liveVerificationRequired: [
     'SQL Server reachability from the Trino pod (host:port, network policy, TLS) on a live server',
     'login acceptance + least-privilege read (db_datareader) on the pinned database',

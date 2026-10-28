@@ -3,20 +3,16 @@
  */
 import 'server-only';
 import { config } from '@/lib/core/config';
-import { cubeLoad, executeRun, queryRun } from '@/lib/infra/governed';
+import { executeRun, queryRun } from '@/lib/infra/governed';
 import { serviceBearerHeader } from '@/lib/infra/service-bearer';
 import { listUsers as userRoster } from '@/lib/platform-admin/users';
-import { importDashboardBundle } from '@/lib/experimental/superset/client';
 import {
-  type CubeClient,
   type DataLiveDeps,
   type DbtClient,
   type DbtTrinoClient,
   type DltClient,
-  type OmClient,
   type PolicyClient,
   type PolicyRoster,
-  type SupersetClient,
   type TrinoClient,
 } from './live.ts';
 
@@ -25,11 +21,8 @@ import {
  * use `config` (in-cluster Service URLs) and never reach the browser. Kept separate
  * from the PURE `live.ts` adapter logic so the adapters stay unit-testable against
  * fakes. A network/HTTP failure throws or returns falsy so the adapter reports ✗.
- *
- * Exact request shapes (Cube meta/load, Superset import/list, OM lineage) are the
- * documented community endpoints; they are validated end-to-end on the real deploy
- * (m3i.16). On a laptop the services are unreachable, so the server boundary falls
- * back to the offline-mock — these are exercised when a cluster is up.
+ * On a laptop the services are unreachable, so the server boundary falls back to the
+ * offline-mock — these are exercised when a cluster is up.
  */
 
 async function withTimeout(url: string, init: RequestInit, ms = 5000): Promise<Response | null> {
@@ -44,90 +37,10 @@ async function withTimeout(url: string, init: RequestInit, ms = 5000): Promise<R
   }
 }
 
-// -------------------------------------------------------------------- Cube -------
-
-export function realCube(): CubeClient {
-  return {
-    async reload(_name, _schema) {
-      // Cube schema is git-deployed (Forgejo → Cube), not hot-pushed at runtime; the
-      // adapter's job is to confirm Cube has loaded a usable model, so we validate the
-      // metadata endpoint is serving. A 4xx/5xx or unreachable → throw → ✗.
-      const res = await withTimeout(`${config.cubeUrl}/cubejs-api/v1/meta`, { method: 'GET' });
-      if (!res || !res.ok) throw new Error(`Cube /meta not ready (${res?.status ?? 'unreachable'})`);
-    },
-    async resolveMeasure(view, measure) {
-      // Resolve the measure on the curated view (the agent metrics tool path).
-      const member = `${view.replace(/\s+/g, '')}.${measure}`;
-      try {
-        const { rows } = await cubeLoad({ measures: [member], limit: 1 });
-        if (rows.length === 0) return null;
-        const v = Number(rows[0][member] ?? rows[0][measure]);
-        return Number.isNaN(v) ? 0 : v;
-      } catch {
-        return null;
-      }
-    },
-  };
-}
-
-// ----------------------------------------------------------------- Superset ------
-
-export function realSuperset(): SupersetClient {
-  // In-cluster Service URL (the import must reach Superset itself, not the optional
-  // browser console link) — mirrors the Dashboards build client.
-  const base = config.supersetInternalUrl;
-  return {
-    async importBundle(_name, bundle) {
-      // Build the real import_assets ZIP from the manifest and POST it multipart
-      // (formData + overwrite + passwords, with CSRF). A non-2xx throws → ✗ → the
-      // offline-mock fallback when Superset is not reachable/authed on a laptop.
-      await importDashboardBundle(base, bundle);
-    },
-    async dashboardExists(name) {
-      const q = encodeURIComponent(JSON.stringify({ filters: [{ col: 'dashboard_title', opr: 'ct', value: name }] }));
-      const res = await withTimeout(`${base}/api/v1/dashboard/?q=${q}`, { method: 'GET' });
-      if (!res || !res.ok) return false;
-      const d = (await res.json().catch(() => ({}))) as { count?: number };
-      return (d.count ?? 0) > 0;
-    },
-  };
-}
-
-// ------------------------------------------------------------ OpenMetadata -------
-
-export function realOm(): OmClient {
-  const base = config.openmetadataApiUrl;
-  return {
-    async pushExposure(_name, _yaml) {
-      // Exposures ride in on the dbt artifacts ingestion; the adapter confirms the OM
-      // API is serving so the edge can land. Unreachable → throw → ✗.
-      const res = await withTimeout(`${base}/api/v1/system/version`, { method: 'GET' });
-      if (!res || !res.ok) throw new Error(`OpenMetadata API not ready (${res?.status ?? 'unreachable'})`);
-    },
-    async hasLineage(fqn) {
-      // Best-effort: the table entity exists in the catalog (its lineage is built from
-      // the same dbt artifacts). A miss → false → ✗.
-      const res = await withTimeout(`${base}/api/v1/tables/name/${encodeURIComponent(fqn)}`, { method: 'GET' });
-      return Boolean(res && res.ok);
-    },
-  };
-}
-
 /**
- * Is the live data stack reachable? Cube is the irreplaceable dependency for the
- * metric/dashboard builds (the one live execution can't fake), so its health is the
- * switch between the LIVE path and the honest offline-mock.
- */
-export async function liveDataReachable(): Promise<boolean> {
-  const res = await withTimeout(`${config.cubeUrl}/cubejs-api/v1/meta`, { method: 'GET' }, 2500);
-  return Boolean(res && res.ok);
-}
-
-/**
- * Is the governed WRITE path (query-tool → Trino) reachable? The Silver/Gold
- * transform CTAS never touches Cube, so gating those stages on Cube health would
- * silently offline-mock a transform that could have run for real (and vice versa).
- * This probes the service the transform actually writes through.
+ * Is the governed WRITE path (query-tool → Trino) reachable? Every stage's real work is
+ * a governed CTAS/probe through the query-tool, so this is the switch between the LIVE
+ * path and the honest offline-mock — it probes the service the build actually writes through.
  */
 export async function queryToolReachable(): Promise<boolean> {
   const res = await withTimeout(`${config.queryToolUrl}/health`, { method: 'GET' }, 2500);
@@ -322,8 +235,7 @@ export function realTrino(): TrinoClient {
 
 export function realPolicy(): PolicyClient {
   // Push the compiled `data.governance` bundle to OPA (the EXISTING package trino
-  // rego reads it). Cube access policies are git-deployed (Forgejo → Cube), so here we
-  // push the OPA half; an unreachable OPA → throw → ✗.
+  // rego reads it); an unreachable OPA → throw → ✗.
   return {
     async push(opa) {
       // `tables` is fully recomputed each compile, so a wholesale replace is correct.
@@ -358,7 +270,6 @@ export async function buildRoster(): Promise<PolicyRoster> {
 
 export async function makeRealClients(): Promise<DataLiveDeps> {
   return {
-    cube: realCube(), superset: realSuperset(), om: realOm(),
     dlt: realDlt(), dbt: realDbt(), dbtTrino: realDbtTrino(), trino: realTrino(), policy: realPolicy(),
     roster: await buildRoster(),
   };

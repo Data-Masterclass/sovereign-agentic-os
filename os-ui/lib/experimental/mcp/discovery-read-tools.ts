@@ -17,52 +17,9 @@ import { listFiles, searchFiles, getFile } from '@/lib/experimental/files/store'
 import { listMetrics } from '@/lib/experimental/metrics/store';
 import { listDashboards, getDashboard } from '@/lib/experimental/dashboards/store';
 import { normalizePanel, panelMetrics } from '@/lib/experimental/dashboards/model';
-import { listBets, getSolution } from '@/lib/experimental/bigbets/store';
-import { buildBetView } from '@/lib/experimental/bigbets/server';
-import {
-  listAppsForUser,
-  getAppForUser,
-  listAppFilesForViewer,
-  readAppFileForViewer,
-  templateFiles,
-  refreshActionsStage,
-} from '@/lib/experimental/software/apps';
-import { forgejoReachable, getSnapshot } from '@/lib/experimental/software/server';
-import { getReviewCard, listReviewCards, PREVIEW_PENDING_NOTE } from '@/lib/experimental/software/review';
-import {
-  listConnectionsForUser,
-  getConnectionForUser,
-  createConnection,
-  testConnection,
-  callConnectionTool,
-  warehouseRegistration,
-  registerWarehouseCatalog,
-  discoverWarehouse,
-  importWarehouseTable,
-  CONNECTION_TEMPLATES,
-  isPersonalConnectable,
-  type ConnectionTemplateKey,
-  type WarehouseCreateInput,
-  type AirflowCreateInput,
-} from '@/lib/experimental/connections';
-import type { AirflowAuthType } from '@/lib/experimental/connections/schema';
-import {
-  resolveOmCatalog,
-  omListDomains,
-  omListDataProducts,
-  omListTables,
-  omSearch,
-  omLineage,
-  previewOmSyncForConnection,
-  previewDqSyncForConnection,
-} from '@/lib/experimental/connections/openmetadata';
-import { previewCatalogIngest } from '@/lib/experimental/connections/openmetadata-ingest';
-import { WAREHOUSE_PROVIDERS } from '@/lib/experimental/connections/warehouse/registry';
-import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/experimental/connections/warehouse/types';
-import { promoteThroughSeam } from '@/lib/governance/ladder';
-import { enqueue } from '@/lib/governance/approvals';
-import { scaffoldCubeYaml, cubeViewName } from '@/lib/experimental/data/metrics';
-import { cubeDeliverable } from '@/lib/experimental/data/cube-models';
+import { listAppsForUser, getAppForUser } from '@/lib/experimental/software/apps';
+import { getConnectionForUser } from '@/lib/experimental/connections';
+import { viewName, metricSqlReady } from '@/lib/experimental/data/metrics';
 import { loadGuide, isGuidePath, GUIDE_PATHS, type GuidePath } from '@/lib/tabs/guides';
 import { config } from '@/lib/core/config';
 import { queryRun } from '@/lib/infra/governed';
@@ -82,8 +39,6 @@ import { getMetric } from '@/lib/experimental/metrics/store';
 import { exploreMetric } from '@/lib/experimental/metrics/build/explore-server';
 import type { Granularity } from '@/lib/experimental/metrics/explorer';
 import { claimsFromUser, delegate } from '@/lib/experimental/data/identity';
-import { listModelsForUser, type ModelViewer } from '@/lib/experimental/science';
-import { CHURN, DEFAULT_FEATURES } from '@/lib/experimental/science/churn';
 import {
   consecutiveErrorCount,
   currentWatermark,
@@ -136,7 +91,7 @@ export const readTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Read one dataset you can see (also called: table, data product) — medallion versions, docs, tier, data-quality rules — plus its semantic-layer state: `cube.ready` is true when the dataset is shared/certified AND its Gold is built — it is then AUTO-REGISTERED as a queryable Cube model (view `cube.view`, dimensions from the gold columns, count fallback) WITHOUT any define_metric step. `queryable` names the physical FQN + layer this dataset resolves to for YOU — Gold by default, or the medallion `layer` your data grant selects (bronze/silver). Path: DISCOVERY for the Data golden path. Before: list_datasets. After: add_dataset_version / document_dataset / define_quality_rules → run_quality_checks / define_metric (only to ADD measures — the model is already queryable). Governance: read-only; an id you cannot see returns not_found (no existence leak).',
+      'Read one dataset you can see (also called: table, data product) — medallion versions, docs, tier, data-quality rules — plus its metric state: `metrics.ready` is true when its Gold is built — its view (`metrics.view`, dimensions from the gold columns, count fallback) is then queryable as governed SQL WITHOUT any define_metric step. `queryable` names the physical FQN + layer this dataset resolves to for YOU — Gold by default, or the medallion `layer` your data grant selects (bronze/silver). Path: DISCOVERY for the Data golden path. Before: list_datasets. After: add_dataset_version / document_dataset / define_quality_rules → run_quality_checks / define_metric (only to ADD measures — the model is already queryable). Governance: read-only; an id you cannot see returns not_found (no existence leak).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -150,10 +105,9 @@ export const readTools: McpTool[] = [
       const id = str(args.datasetId).trim();
       if (!id) fail('get_dataset needs a `datasetId`', 400);
       const d = getDataset(id, P(user));
-      // Reflect the Cube auto-registration (the SAME gate cube-models delivers on):
-      // shared/certified + Gold built ⇒ a queryable model appears in /api/cube/models
-      // with no manual metric step. Kept honest — never claims ready before the gate.
-      const ready = cubeDeliverable(d);
+      // Reflect the metric read path's gate: a built Gold ⇒ the view is queryable as
+      // governed SQL with no manual metric step. Kept honest — never claims ready before it.
+      const ready = metricSqlReady(d).ok;
       // Which physical layer this dataset resolves to for the caller. The requested
       // layer comes from the agent's data grant (injected by the run path) or an
       // explicit arg; Gold is the serving default. Graceful fallback: if the requested
@@ -167,15 +121,13 @@ export const readTools: McpTool[] = [
         // dataset born `origin:'connected'` carries a `connected` block naming its mode,
         // tier, honesty status, external source + real freshness (never fabricated).
         connected: await connectedBlock(d),
-        cube: {
+        metrics: {
           ready,
-          view: ready ? cubeViewName(d) : null,
+          view: ready ? viewName(d) : null,
           measures: d.measures.length ? d.measures.map((m) => m.name) : ['count'],
           note: ready
-            ? 'Auto-registered as a Cube model on publish — queryable now (dimensions from the gold columns; add measures with define_metric).'
-            : d.tier === 'dataset'
-              ? 'Not yet: promote to a shared asset and build Gold first.'
-              : 'Not yet: build the Gold layer first.',
+            ? 'Queryable now as governed SQL over the Gold (dimensions from the gold columns; add measures with define_metric).'
+            : metricSqlReady(d).message ?? 'Not yet: build the Gold layer first.',
         },
       };
     },
@@ -354,7 +306,7 @@ export const readTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'EVALUATE a governed metric (also called: KPI, measure, indicator) — resolve its canonical Cube member and return the number(s), optionally sliced by dimensions/time. This is how "what is revenue this month" resolves through the SEMANTIC LAYER, not raw SQL: no SQL is accepted or generated here BY CONSTRUCTION — the tool builds a Cube load query from the member, and Cube applies per-viewer row-level security from YOUR delegated identity (securityContext), exactly like the Metrics explorer and every dashboard. Two viewers get two different row sets; the number can never drift from the charts. Path: the read half of the Metrics golden path. Before: list_metrics (take a metric `id`, shaped `<datasetId>.<measure>`). After: chart the same member with create_dashboard, or wire it into an agent. Governance: read-only; a metric on a dataset you cannot see → not_found; offline the OS answers with the honestly-labelled offline-mock resolver (mode is always stated).',
+      'EVALUATE a governed metric (also called: KPI, measure, indicator) — resolve its canonical member and return the number(s), optionally sliced by dimensions/time. This is how "what is revenue this month" resolves through the SEMANTIC LAYER, not raw SQL: no SQL is accepted or generated here BY CONSTRUCTION — the tool builds a Cube load query from the member, and Cube applies per-viewer row-level security from YOUR delegated identity (securityContext), exactly like the Metrics explorer and every dashboard. Two viewers get two different row sets; the number can never drift from the charts. Path: the read half of the Metrics golden path. Before: list_metrics (take a metric `id`, shaped `<datasetId>.<measure>`). After: chart the same member with create_dashboard, or wire it into an agent. Governance: read-only; a metric on a dataset you cannot see → not_found; offline the OS answers with the honestly-labelled offline-mock resolver (mode is always stated).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -376,7 +328,7 @@ export const readTools: McpTool[] = [
       // canView guard: getMetric resolves through getDataset (403/404 — no leak).
       const record = getMetric(metricId, P(user));
       // R2/R3: the load runs under YOUR delegated identity — the securityContext is
-      // derived from the session claims (never a service account), so Cube's RLS is
+      // derived from the session claims (never a service account), so Trino/OPA RLS is
       // the caller's. Same path as the Metrics explorer route.
       const token = delegate(claimsFromUser({ id: user.id, domains: user.domains, role: user.role }), 'domain');
       const result = await exploreMetric(record.dataset, record.measure, token, {
@@ -399,18 +351,9 @@ export const readTools: McpTool[] = [
     tab: 'dashboards',
     minRole: 'creator',
     description:
-      'List the dashboards you can see (also called: reports, business intelligence (BI), data visualizations) — My · Domain · Company. Path: DISCOVERY for the Dashboards golden path (guide: sovereign-os://guide/path/dashboards). Before: whoami. After: create_dashboard, or attach one to a big bet. Governance: read-only, DLS-scoped.',
+      'List the dashboards you can see (also called: reports, business intelligence (BI), data visualizations) — My · Domain · Company. Path: DISCOVERY for the Dashboards golden path (guide: sovereign-os://guide/path/dashboards). Before: whoami. After: create_dashboard. Governance: read-only, DLS-scoped.',
     inputSchema: NO_ARGS,
     call: async (user) => listDashboards(P(user)),
-  },
-  {
-    name: 'list_big_bets',
-    tab: 'bigbets',
-    minRole: 'creator',
-    description:
-      'List the Big Bets you can see (also called: initiatives, strategic investments, projects) — roadmaps over real OS components. Path: DISCOVERY for the Big Bets golden path (guide: sovereign-os://guide/path/bigbets). Before: whoami + list_datasets/list_dashboards/list_agent_systems (the bet tracks REAL components). After: create_big_bet. Governance: read-only, DLS-scoped.',
-    inputSchema: NO_ARGS,
-    call: async (user) => listBets(P(user)),
   },
   // get_agent_system moved to discovery-base-tools.ts (tab: 'agents' is base).
   {
@@ -467,10 +410,8 @@ export const readTools: McpTool[] = [
         owner: a.owner,
         domain: a.domain,
         visibility: a.visibility,
-        mode: a.mode,
         repo: a.repo,
         subdomain: a.subdomain,
-        pipeline: a.pipeline,
         designDecisions: a.designDecisions,
         dataDescriptions: a.dataDescriptions,
         docs: a.docs,

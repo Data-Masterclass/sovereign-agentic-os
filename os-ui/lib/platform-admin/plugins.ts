@@ -5,7 +5,7 @@
  * Plugins & Marketplace adapter. Admins CURATE which plugins (MCP servers,
  * skills, tool bundles) are installed and which domains may use them, and manage
  * the EXTERNAL STACKIT marketplace registration (distinct from the internal
- * cross-domain product Marketplace tab). Install is a trust decision: a plugin
+ * cross-domain Company-scope product catalogue). Install is a trust decision: a plugin
  * carries a signed/scanned status before an Admin may approve it.
  *
  * DURABILITY: plugin enablement (install → approve → allowed domains) and the

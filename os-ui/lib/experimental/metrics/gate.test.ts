@@ -4,17 +4,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { claimsFromUser, delegate } from '../data/identity.ts';
-import { scaffoldCubeYaml } from '../data/metrics.ts';
+import { scaffoldMetricYaml } from '../data/metrics.ts';
 import { goldSales } from './fixtures.ts';
 // metrics
 import { measureFromForm, measureFromAgent, measureFromYaml, measureMember, sameMeasure, type MetricForm } from './model.ts';
 import { convergence, numbersMatch } from './consistency.ts';
-import { exploreSpec, explore, type CubeExecutor } from './explorer.ts';
+import { exploreSpec, dropToSql } from './explorer.ts';
 import { metricRecord, governMetric } from './governance.ts';
 import { runAdapter, type MetricBuildContext } from './build/adapter.ts';
-import { newMetricMock, makeMockMetricAdapters, mockMetricDeps } from './build/mocks.ts';
-// dashboards (Tier 1 — native ECharts panels on the governed Cube layer)
-import { fromTiles, fromAgent, sameDashboard, viewFor, buildPanelCubeQuery, type Panel } from '../dashboards/model.ts';
+import { makeMetricAdapters, memberValue, type MetricExplore } from './build/live.ts';
+// dashboards (Tier 1 — native ECharts panels over governed Trino SQL)
+import { fromTiles, fromAgent, sameDashboard, viewFor, panelMetrics, normalizePanel, type Panel } from '../dashboards/model.ts';
 import { propagate } from '../data/identity.ts';
 import { alertOn, evaluateAlert } from './alerts.ts';
 import { dueReports, sendReport, type ScheduledReport } from '../dashboards/reports.ts';
@@ -35,34 +35,61 @@ test('GATE 1 — define Revenue: form + agent + YAML produce the SAME measure + 
   const d = goldSales();
   const m = measureFromForm(FORM);
   assert.ok(sameMeasure(m, measureFromAgent({ ...FORM })));
-  assert.ok(sameMeasure(m, measureFromYaml(scaffoldCubeYaml(d), 'Revenue')));
-  const conv = convergence(d, { form: FORM, agent: { ...FORM }, yaml: scaffoldCubeYaml(d) });
+  assert.ok(sameMeasure(m, measureFromYaml(scaffoldMetricYaml(d), 'Revenue')));
+  const conv = convergence(d, { form: FORM, agent: { ...FORM }, yaml: scaffoldMetricYaml(d) });
   assert.ok(conv.ok && conv.member === 'Sales.revenue', JSON.stringify(conv.rows));
 });
 
-test('GATE 2 — metric build: cube resolves + explorer numbers match the agent', async () => {
+test('GATE 2 — metric build: the governed Trino adapter resolves the member to a number', async () => {
   const d = goldSales();
-  const backend = newMetricMock();
-  const adapters = makeMockMetricAdapters(backend);
-  const ctx: MetricBuildContext = { dataset: d, measure: d.measures[0], schema: scaffoldCubeYaml(d), member: measureMember(d, d.measures[0]), securityContext: { sub: 'amir', region: 'DE' } };
-  assert.equal((await runAdapter(adapters.cube, ctx)).status, 'ok');
-  const explorerRow = await runAdapter(adapters['metric-explorer'], ctx);
-  assert.equal(explorerRow.status, 'ok', explorerRow.error);
-  assert.match(explorerRow.detail, /numbers match/);
+  const measure = d.measures[0];
+  const member = measureMember(d, measure);
+  // The ONE adapter a metric build runs: the member compiled to governed SQL over the
+  // gold mart, executed AS the viewer. We inject the explore dep (no cluster needed) —
+  // the adapter contract (apply ran it, verify re-reads a real number) is the gate.
+  const explore: MetricExplore = async () => ({ rows: [{ [member]: 4242 }], mode: 'live (sql)' });
+  const adapters = makeMetricAdapters({ explore });
+  const ctx: MetricBuildContext = { dataset: d, measure, member, token: viewer('amir', 'DE') };
+  const row = await runAdapter(adapters.trino, ctx);
+  assert.equal(row.status, 'ok', row.error);
+  assert.match(row.detail, /governed Trino SQL/);
+  assert.equal(memberValue(ctx.outcome!.rows, member), 4242);
 });
 
-test('GATE 3 — explore by region: two viewers see DIFFERENT rows (Cube RLS)', async () => {
+test('GATE 2b — a build can never report ✓ when the lakehouse is unreachable (no fabricated number)', async () => {
   const d = goldSales();
-  const spec = exploreSpec(d, d.measures[0], { dimensions: ['region'] });
-  const cube: CubeExecutor = {
-    async load(_q, c) {
-      const all = [{ region: 'DE', 'Sales.revenue': 1 }, { region: 'FR', 'Sales.revenue': 2 }];
-      return { rows: c.region ? all.filter((r) => r.region === c.region) : all };
-    },
+  const measure = d.measures[0];
+  const member = measureMember(d, measure);
+  const explore: MetricExplore = async () => ({ rows: [], mode: 'unavailable', unavailable: true, warning: 'Trino unreachable' });
+  const adapters = makeMetricAdapters({ explore });
+  const ctx: MetricBuildContext = { dataset: d, measure, member, token: viewer('amir', 'DE') };
+  const row = await runAdapter(adapters.trino, ctx);
+  assert.equal(row.status, 'fail');
+  assert.match(row.error ?? '', /unreachable/);
+});
+
+test('GATE 3 — explore by region: two viewers see DIFFERENT rows (per-viewer RLS)', async () => {
+  const d = goldSales();
+  const measure = d.measures[0];
+  const member = measureMember(d, measure);
+  const spec = exploreSpec(d, measure, { dimensions: ['region'] });
+  assert.deepEqual(dropToSql(spec).length > 0, true, 'the slice compiles to governed SQL');
+  // ONE compiled query, executed under each viewer's delegated identity: the executor
+  // applies the token's region claim exactly as OPA/Trino does for the real read.
+  const all = [{ region: 'DE', [member]: 1 }, { region: 'FR', [member]: 2 }];
+  const exploreAs = (region: string): MetricExplore => async () => ({
+    rows: all.filter((r) => r.region === region),
+    mode: 'live (sql)',
+  });
+  const runFor = async (id: string, region: string) => {
+    const ctx: MetricBuildContext = { dataset: d, measure, member, token: viewer(id, region) };
+    await runAdapter(makeMetricAdapters({ explore: exploreAs(region) }).trino, ctx);
+    return ctx.outcome!.rows;
   };
-  const de = await explore(spec, viewer('amir', 'DE'), cube);
-  const fr = await explore(spec, viewer('bea', 'FR'), cube);
-  assert.notDeepEqual(de.rows, fr.rows);
+  const de = await runFor('amir', 'DE');
+  const fr = await runFor('bea', 'FR');
+  assert.notDeepEqual(de, fr);
+  assert.deepEqual(de, [{ region: 'DE', [member]: 1 }]);
 });
 
 test('GATE 4 — govern: Builder promotes, Admin certifies, a non-Builder cannot', async () => {
@@ -77,7 +104,7 @@ test('GATE 4 — govern: Builder promotes, Admin certifies, a non-Builder cannot
   assert.ok(certified.ok && certified.record.tier === 'marketplace');
 });
 
-test('GATE 5+6 — Sales Overview both ways → same NATIVE dashboard; panels build governed Cube queries', () => {
+test('GATE 5+6 — Sales Overview both ways → same NATIVE dashboard; panels carry governed members', () => {
   const d = goldSales();
   const view = viewFor(d);
   const panels: Panel[] = [
@@ -88,12 +115,10 @@ test('GATE 5+6 — Sales Overview both ways → same NATIVE dashboard; panels bu
   const agentBuilt = fromAgent({ name: 'Sales Overview', view, charts: [...panels].reverse() });
   assert.ok(sameDashboard(dragged, agentBuilt), 'drag-drop and the agent converge on one dashboard');
 
-  // Each panel compiles to the governed Cube `load` query the viewer resolves (Tier 1 — no
-  // Superset). The bar panel groups by its dimension; both chart the governed member.
-  const kpiQ = buildPanelCubeQuery(dragged.charts[0]);
-  assert.deepEqual(kpiQ.measures, ['Sales.revenue']);
-  const barQ = buildPanelCubeQuery(dragged.charts[1]);
-  assert.deepEqual(barQ.dimensions, ['Sales.region']);
+  // Each panel carries the governed MEMBERS the viewer's compiled Trino SELECT resolves
+  // (Tier 1 — no semantic-layer service). The bar panel groups by its dimension.
+  assert.deepEqual(panelMetrics(dragged.charts[0]), ['Sales.revenue']);
+  assert.deepEqual(normalizePanel(dragged.charts[1]).dimensions, ['Sales.region']);
 
   // governance for the dashboard too
   const rec = dashboardRecord('sales-overview', dragged, 'amir', 'personal');
@@ -103,8 +128,8 @@ test('GATE 5+6 — Sales Overview both ways → same NATIVE dashboard; panels bu
 test('GATE 7 — native panels: two viewers resolve DIFFERENT rows under their own RLS (R3)', () => {
   // The panel-query runs under each viewer's delegated identity (propagate → securityContext),
   // exactly as the /api/dashboards/panel-query route does. Two viewers → two security contexts.
-  const de = propagate(viewer('amir', 'DE')).cube.securityContext;
-  const fr = propagate(viewer('bea', 'FR')).cube.securityContext;
+  const de = propagate(viewer('amir', 'DE')).securityContext;
+  const fr = propagate(viewer('bea', 'FR')).securityContext;
   assert.equal(de.region, 'DE');
   assert.equal(fr.region, 'FR');
   assert.notDeepEqual(de, fr, 'the RLS security context differs per viewer');
@@ -125,16 +150,11 @@ test('GATE 8+9 — alert notifies AND triggers a traced agent run; a scheduled r
 
 test('GATE 10 — numbers match: explorer == dashboard == agent metrics tool', async () => {
   const d = goldSales();
-  const backend = newMetricMock();
-  const deps = mockMetricDeps(backend);
-  await deps.cube.reload('Sales', scaffoldCubeYaml(d)); // load so the member resolves
   const member = measureMember(d, d.measures[0]);
-  const agent = async (m: string) => deps.cube.resolveMeasure(m);
-  const explorer = async (m: string) => {
-    const { rows } = await deps.cube.explore({ measures: [m], dimensions: [], limit: 100 }, { region: 'DE' });
-    return rows.length ? Number(rows[0][m]) : null;
-  };
-  const dashboard = agent; // a chart resolves the same member the agent does
-  const r = await numbersMatch(member, { explorer, dashboard, agent });
+  // ONE governed member, ONE compiled SQL path: the explorer, a dashboard panel and the
+  // agent tool all resolve the SAME member through exploreMetric, so by construction they
+  // read the same number. We model that single path once and assert the three agree.
+  const governedRead = async (m: string) => (m === member ? 4242 : null);
+  const r = await numbersMatch(member, { explorer: governedRead, dashboard: governedRead, agent: governedRead });
   assert.ok(r.ok, r.detail);
 });

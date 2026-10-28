@@ -5,12 +5,12 @@ import 'server-only';
 import { type EntityIndex } from './gaps.ts';
 
 /**
- * Mock entity resolver (kind-only). The real resolver would query OpenMetadata
+ * Mock entity resolver (kind-only). The real resolver would query the data registry
  * (data products), the app-registry (Software tab), the agent store (Agents tab)
  * and the files index (Unstructured tab) to learn which step-link targets exist.
  *
  * A fresh tenant has no entities, so the index is empty. The live
- * OpenMetadata/registry wiring replaces the body without touching the pure
+ * registry wiring replaces the body without touching the pure
  * `gaps.ts` logic or the UI.
  */
 export async function resolveEntityIndex(_domain: string): Promise<EntityIndex> {

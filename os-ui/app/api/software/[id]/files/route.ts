@@ -9,15 +9,14 @@ export const dynamic = 'force-dynamic';
 
 /**
  * In-browser code editor backend for the Software golden path (Layer 3). Reads
- * and commits an app's source straight from its per-app Forgejo repo:
+ * and writes an app's source in its own governed file store (no git server):
  *
  *   GET  /api/software/{id}/files            → flat recursive file list (tree)
  *   GET  /api/software/{id}/files?path=a/b   → one file's content + blob SHA
- *   PUT  /api/software/{id}/files            → save = commit to Forgejo (main)
+ *   PUT  /api/software/{id}/files            → save the file (sha-checked)
  *
  * Builder/Admin-gated AND domain-scoped server-side (in lib/apps.ts), so the
- * role gate holds even if the UI is bypassed. Forgejo-unreachable degrades to a
- * clear 502, never a crash.
+ * role gate holds even if the UI is bypassed.
  */
 
 export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {

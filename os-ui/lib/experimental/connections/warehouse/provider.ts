@@ -18,8 +18,7 @@
  *   - what capabilities it exposes (`capabilities`),
  *   - what CREDENTIAL fields the editor collects (`credentialFields`),
  *   - what SECRET material the deploy layer must mount (`secretMaterial`),
- *   - how a "test connection" probe works (`testProbe`),
- *   - how it maps into OpenMetadata ingestion (`openMetadata`), and
+ *   - how a "test connection" probe works (`testProbe`), and
  *   - honestly, what still needs LIVE customer creds to verify
  *     (`liveVerificationRequired`).
  */
@@ -65,7 +64,7 @@ export type SecretMaterial = {
  *   - `quote`      — the character a provider wraps an identifier in when it must be
  *                    passed to the ENGINE verbatim (Snowflake `"`, BigQuery/Databricks
  *                    backtick). Trino itself always double-quotes; this is the engine's
- *                    OWN quote, surfaced so discovery/OM/agents can reason about casing.
+ *                    OWN quote, surfaced so discovery/agents can reason about casing.
  *   - `unquotedCase` — what the engine does to an UNQUOTED identifier: Snowflake
  *                    upper-cases it, BigQuery/Databricks/Glue preserve/lower-case it.
  *                    Discovery has to match case-insensitively when this is not
@@ -137,7 +136,6 @@ export type WarehouseProvider = {
   credentialFields: CredentialField[];
   secretMaterial: SecretMaterial;
   testProbe: TestProbe;
-  openMetadata: { connectorType: string; configKeys: string[] };
   /** Honest: what needs live customer creds to verify (empty = fully verifiable). */
   liveVerificationRequired: string[];
 

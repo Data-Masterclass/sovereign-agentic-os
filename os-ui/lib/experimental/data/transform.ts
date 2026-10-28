@@ -503,12 +503,12 @@ export function compileGoldJoin(spec: GoldJoinSpec): string {
 
 /**
  * Map a compiled {@link GoldMeasure} to the Cube {@link Measure} recorded in
- * `dataset.yaml` (feeds `scaffoldCubeYaml` in T7). The Gold CTAS pre-aggregates each
+ * `dataset.yaml` (feeds `scaffoldMetricYaml` in T7). The Gold CTAS pre-aggregates each
  * measure into a column named `m.name`; Cube re-aggregates THAT column. sum/min/max
  * re-aggregate exactly; count(_distinct) become a `sum` of partial counts; avg is
  * approximate over pre-aggregated groups (documented — no faked exactness).
  */
-export function goldMeasureToCube(m: GoldMeasure): Measure {
+export function goldMeasureToModel(m: GoldMeasure): Measure {
   const type = m.agg === 'count' || m.agg === 'count_distinct' ? 'sum' : m.agg;
   return { name: m.name, type, sql: m.name };
 }

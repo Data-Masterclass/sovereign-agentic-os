@@ -4,11 +4,11 @@
 /**
  * The "Suggest metrics" agent (pure core).
  *
- * Given the caller's STRATEGY + OPERATING-MODEL + WORKFLOW context and the datasets
- * they can actually see, propose 3–6 candidate metrics grounded in that context.
- * This is the strategy-aware sibling of {@link ./agent.ts}: agent.ts turns ONE goal on
+ * Given the caller's OPERATING-MODEL + WORKFLOW context and the datasets they can
+ * actually see, propose 3–6 candidate metrics grounded in that context.
+ * This is the context-aware sibling of {@link ./agent.ts}: agent.ts turns ONE goal on
  * ONE dataset into a metric; this proposes SEVERAL metrics across the datasets the
- * business's strategy implies matter, before a dataset is even chosen.
+ * business's operating model implies matter, before a dataset is even chosen.
  *
  * Transport-free by design (the caller makes the LLM call through the ONE governed
  * assistant helper): this module only (a) builds the token-budgeted prompt from the
@@ -39,8 +39,6 @@ export type SuggestDataset = {
   deliverable: boolean;
 };
 
-/** A strategic pillar the caller can view (grounds a candidate's `pillarId`). */
-export type SuggestPillar = { id: string; name: string; description: string };
 
 /** A business process (a governed Workflow) the caller can view — grounds `processId`.
  *  `hardRules` are the workflow's HARD (enforced) rules, verbatim; `steps` are the
@@ -59,7 +57,6 @@ export type SuggestOmSection = { id: string; title: string; content: string };
 /** The full, ALREADY-GOVERNED context the server assembles under the caller. */
 export type SuggestContext = {
   goal?: string;
-  pillars: SuggestPillar[];
   omSections: SuggestOmSection[];
   workflows: SuggestWorkflow[];
   datasets: SuggestDataset[];
@@ -73,16 +70,14 @@ export type CrossEntity = { note: string; datasets: string[] };
 
 /**
  * ONE proposed metric. `form` is the exact {@link MetricForm} the builder pre-fills
- * (so one click lands on Refine). `pillarId` / `processId` are grounding handles that
- * MUST resolve to a real, visible pillar / workflow or they are dropped (never faked).
+ * (so one click lands on Refine). `processId` is a grounding handle that MUST resolve
+ * to a real, visible workflow or it is dropped (never faked).
  */
 export type Candidate = {
   name: string;
   description: string;
   /** One-line rationale ("why this metric matters", tied to the grounding). */
   why: string;
-  /** A real, visible pillar id, or omitted. */
-  pillarId?: string;
   /** A real, visible workflow (business-process) id, or omitted. */
   processId?: string;
   /** A dataset the caller can see (else the candidate is dropped). */
@@ -94,7 +89,7 @@ export type Candidate = {
 };
 
 /** Honest counts of what actually grounded the suggestions (drives the UI banner). */
-export type Grounding = { pillars: number; omSections: number; workflows: number; datasets: number };
+export type Grounding = { omSections: number; workflows: number; datasets: number };
 
 export type SuggestResult = { candidates: Candidate[]; grounding: Grounding };
 
@@ -124,11 +119,6 @@ function trimToBudget(blocks: string[], budget: number): string[] {
   return kept;
 }
 
-function renderPillars(pillars: SuggestPillar[]): string {
-  if (pillars.length === 0) return '';
-  const lines = pillars.map((p) => `- [${p.id}] ${p.name}: ${p.description}`.trim());
-  return `STRATEGIC PILLARS (a candidate SHOULD serve one — cite its id as pillarId):\n${lines.join('\n')}`;
-}
 
 function renderOm(sections: SuggestOmSection[]): string {
   if (sections.length === 0) return '';
@@ -170,7 +160,7 @@ function renderDatasets(datasets: SuggestDataset[]): string {
 export function suggestMetricsMessages(ctx: SuggestContext): AssistantMessage[] {
   const system = [
     'You are the Metric-Suggestion agent for the Sovereign Agentic OS semantic layer.',
-    "Given a business's strategy, operating model, processes and the datasets the user can",
+    "Given a business's operating model, processes and the datasets the user can",
     'see, propose 3 to 6 HIGH-VALUE candidate metrics that a business leader would track.',
     '',
     'HARD RULES:',
@@ -183,22 +173,21 @@ export function suggestMetricsMessages(ctx: SuggestContext): AssistantMessage[] 
     '  invent a join. Instead pick the primary datasetId, propose the best single-dataset',
     '  form you can, and set `crossEntity` = {note, datasets:[ids needed]} so the user knows',
     '  to build a curated (joined) dataset in Data first.',
-    '• Ground each candidate: set `pillarId` to a real pillar id when it serves one, and',
-    '  `processId` to a real workflow id when it measures a process step. Omit if none fits.',
+    '• Ground each candidate: set `processId` to a real workflow id when it measures a',
+    '  process step. Omit if none fits.',
     `• Allowed aggregations: ${MEASURE_TYPES.join(', ')}. For "count" leave column empty; for`,
     '  sum/avg/min/max/count_distinct* pick exactly one real numeric column; for "number"',
     '  (a ratio) set form.aggregation="number" and reference two existing measures in why.',
     '',
     'Respond with STRICT JSON ONLY (no prose, no code fences):',
     '{"candidates":[{"name":"<human name>","description":"<one sentence>","why":"<one line>",',
-    '"pillarId":"<id or omit>","processId":"<id or omit>","datasetId":"<id>",',
+    '"processId":"<id or omit>","datasetId":"<id>",',
     '"form":{"name":"<name>","aggregation":"<allowed>","column":"<column or empty>","dimensions":["<column>",...]},',
     '"crossEntity":{"note":"<why a curated dataset is needed>","datasets":["<id>",...]}}]}',
   ].join('\n');
 
   const contextBlocks = trimToBudget(
     [
-      renderPillars(ctx.pillars),
       renderOm(ctx.omSections),
       renderWorkflows(ctx.workflows),
       renderDatasets(ctx.datasets),
@@ -209,7 +198,7 @@ export function suggestMetricsMessages(ctx: SuggestContext): AssistantMessage[] 
   const user = [
     ctx.goal ? `The user's goal: ${ctx.goal}` : 'The user has not stated a specific goal — propose the metrics this business most needs.',
     '',
-    contextBlocks.join('\n\n') || '(no strategy or datasets are visible yet)',
+    contextBlocks.join('\n\n') || '(no operating model or datasets are visible yet)',
     '',
     'Produce the JSON now.',
   ].join('\n');
@@ -241,7 +230,6 @@ function extractJson(text: string): Record<string, unknown> | null {
 /** The honest grounding counts of the assembled context (what actually informed the ask). */
 export function groundingOf(ctx: SuggestContext): Grounding {
   return {
-    pillars: ctx.pillars.length,
     omSections: ctx.omSections.length,
     workflows: ctx.workflows.length,
     datasets: ctx.datasets.length,
@@ -251,8 +239,8 @@ export function groundingOf(ctx: SuggestContext): Grounding {
 /**
  * Parse + VALIDATE the model's JSON into real candidates against the REAL context.
  * Server-side mirror of {@link ./agent.ts parseMetricProposal}: a candidate is DROPPED
- * (never trusted) when its dataset isn't visible or its column isn't real; pillar /
- * process ids that don't resolve are cleared (not faked); a cross-entity note keeps
+ * (never trusted) when its dataset isn't visible or its column isn't real; process
+ * ids that don't resolve are cleared (not faked); a cross-entity note keeps
  * only the visible datasets it names. An unparseable response is an honest error.
  */
 export function parseCandidates(raw: string, ctx: SuggestContext): SuggestResult {
@@ -261,7 +249,6 @@ export function parseCandidates(raw: string, ctx: SuggestContext): SuggestResult
   const list = Array.isArray(obj.candidates) ? obj.candidates : [];
 
   const byDataset = new Map(ctx.datasets.map((d) => [d.id, d]));
-  const pillarIds = new Set(ctx.pillars.map((p) => p.id));
   const workflowIds = new Set(ctx.workflows.map((w) => w.id));
   const datasetIds = new Set(ctx.datasets.map((d) => d.id));
 
@@ -300,9 +287,8 @@ export function parseCandidates(raw: string, ctx: SuggestContext): SuggestResult
       form,
     };
 
-    const pillarId = String(c.pillarId ?? '').trim();
-    if (pillarId && pillarIds.has(pillarId)) cand.pillarId = pillarId;
-    const processId = String(c.processId ?? '').trim();
+    const processId
+ = String(c.processId ?? '').trim();
     if (processId && workflowIds.has(processId)) cand.processId = processId;
 
     const ce = c.crossEntity as Record<string, unknown> | undefined;

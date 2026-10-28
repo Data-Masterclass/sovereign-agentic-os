@@ -69,8 +69,8 @@ export default function GrantStage({
       loadAvailable: async () => ({ items: [] }),
       renderPicker: () => {
         if (meta.members) {
-          // Plan Items — the three sub-kinds (Operating Model · Strategy · Big Bets) as one
-          // row with a labelled ResourcePicker each, all writing the shared `plan` list.
+          // Plan Items — the sub-kinds (Operating Model) as one row with a labelled
+          // ResourcePicker each, all writing the shared `plan` list.
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {meta.members.map((m) => (
@@ -79,7 +79,8 @@ export default function GrantStage({
                   <ResourcePicker
                     systemId={systemId} system={system}
                     kind={m.field as 'plan'}
-                    feedKind={m.feedKind as 'operating-manual' | 'strategy' | 'big-bets'}
+                    feedKind={m.feedKind as 'operating-manual'}
+
                     label={m.label}
                     hideLabel
                     canEdit={canEdit} onCommit={onCommit}

@@ -146,15 +146,13 @@ export type RailSegment = {
  * and Deploy reflects the real gate state (none/requested→in-review/live). PURE.
  */
 export function buildStatusRail(app: {
-  pipeline?: Record<string, string>;
   repo?: { seeded?: string[] };
   deploy?: { state?: string; previewUrl?: string | null; reviewCardId?: string | null; releases?: number };
 }): RailSegment[] {
-  const pipeline = app.pipeline ?? {};
   const deploy = app.deploy ?? {};
-  const committed = pipeline.forgejo === 'ok' || (app.repo?.seeded?.length ?? 0) > 0;
+  const committed = (app.repo?.seeded?.length ?? 0) > 0;
 
-  // Repo — committed once the scaffold/commit landed.
+  // Repo — committed once the scaffold landed in the source tree.
   const repo: RailSegment = committed
     ? { label: 'Repo', value: 'committed', tone: 'ok' }
     : { label: 'Repo', value: 'none', tone: 'neutral' };

@@ -59,7 +59,7 @@ export function errorResponse(e: unknown): NextResponse {
 // them hand-rolled. `withRoute` models exactly one default status per route —
 // the shape the vast majority of tab routes already have. It is also NOT for
 // routes that stream, return binary, use a custom envelope (`failResponse`),
-// or are intentionally UNAUTHENTICATED (cube model-sync). Leave those alone.
+// or are intentionally UNAUTHENTICATED. Leave those alone.
 
 /**
  * The handler `withRoute` wraps. It receives the authenticated user, the parsed
@@ -154,7 +154,7 @@ export type WithRouteOpts = {
  *
  * SKIP (leave hand-rolled, count them): any route whose catch branches on status
  * mid-handler (OPA 403 / downstream 502 / mixed invalid-JSON-vs-default), any
- * streaming/binary/custom-envelope route, and the unauthenticated cube model route.
+ * streaming/binary/custom-envelope route.
  */
 export function withRoute<P = Record<string, string>, B = unknown>(
   handler: RouteHandler<P, B>,

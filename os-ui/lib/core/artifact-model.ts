@@ -47,7 +47,7 @@ export type Artifact = {
   origin: ArtifactOrigin;
   /** When origin='certified-copy', the Certified catalog artifact this came from. */
   sourceId?: string;
-  /** Free-form, type-specific payload (sql, cube schema, langgraph spec, …). */
+  /** Free-form, type-specific payload (sql, metric model, langgraph spec, …). */
   spec?: Record<string, unknown>;
   tags: string[];
   /** Soft-archived: retained + reversible, hidden from the working lists. */

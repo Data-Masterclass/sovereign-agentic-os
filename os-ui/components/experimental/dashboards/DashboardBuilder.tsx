@@ -16,7 +16,6 @@ import DomainTag from '@/components/DomainTag';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import BusyProgress from '@/components/core/BusyProgress';
 import type { ViewMode } from '@/lib/core/view-mode';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import DashboardGrid from './DashboardGrid';
 import PanelBuilder from './PanelBuilder';
 import Reports from './Reports';
@@ -200,7 +199,7 @@ export default function DashboardBuilder({
     const trimmed = name.trim();
     if (!trimmed) return setBuildErr('Give the dashboard a name.');
     if (charts.length === 0) return setBuildErr('Add at least one panel on a governed metric.');
-    if (multiView) return setBuildErr(`A dashboard binds to one Cube view — these panels span ${views.join(', ')}. Keep panels from a single view.`);
+    if (multiView) return setBuildErr(`A dashboard binds to one governed view — these panels span ${views.join(', ')}. Keep panels from a single view.`);
     setBuilding(true);
     try {
       // EDITING keeps the identity: an existing dashboard (or one already saved this
@@ -292,7 +291,7 @@ export default function DashboardBuilder({
                   className="btn ghost sm"
                   style={{ flex: 'none' }}
                   onClick={() => { setNameDraft(displayName); setRenameErr(''); setRenaming(true); }}
-                  title="Rename this dashboard (the Cube view binding stays stable)"
+                  title="Rename this dashboard (the governed view binding stays stable)"
                   aria-label="Rename this dashboard"
                 >✎ Rename</button>
               ) : null}
@@ -374,7 +373,7 @@ export default function DashboardBuilder({
           defaultFilters={activeFilters}
         />
       ) : built ? (
-        <div {...anchorAttr(ANCHORS.dashboards.view)}>
+        <div>
           <DashboardGrid
             view={built.view}
             panels={gridPanels}
@@ -386,10 +385,10 @@ export default function DashboardBuilder({
             initialFilters={savedFilters}
             onFiltersChange={setActiveFilters}
           />
-          <div {...anchorAttr(ANCHORS.dashboards.govern)} style={{ marginTop: 24 }}>
+          <div style={{ marginTop: 24 }}>
             <div className="section-title">Reports</div>
             <Reports dashboard={built} />
-            {/* Connected tools (Power BI / Tableau / Superset) is REMOVED from View for now —
+            {/* Connected tools (Power BI / Tableau) is REMOVED from View for now —
                 the connections are unverified; restore <ConnectTools /> once each is proven live. */}
           </div>
         </div>
@@ -434,12 +433,12 @@ function EditPane({
   defaultFilters: PanelFilter[];
 }) {
   return (
-    <div style={{ display: 'grid', gap: 16, marginTop: 4 }} {...anchorAttr(ANCHORS.dashboards.design)}>
-      <div className="agent-editor" style={{ marginTop: 0 }} {...anchorAttr(ANCHORS.dashboards.define)}>
+    <div style={{ display: 'grid', gap: 16, marginTop: 4 }}>
+      <div className="agent-editor" style={{ marginTop: 0 }}>
         <label className="comp-label">Dashboard name</label>
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Sales overview" />
         <div className="hint" style={{ marginTop: 6 }}>
-          Cube view: <code>{view || '—'}</code> · a dashboard binds to ONE governed view; add panels to bind it.
+          Governed view: <code>{view || '—'}</code> · a dashboard binds to ONE governed view; add panels to bind it.
         </div>
       </div>
 
@@ -490,7 +489,7 @@ function EditPane({
 
       {multiView ? (
         <div className="hint" style={{ color: 'var(--warn-text, inherit)' }}>
-          These panels span more than one Cube view (<strong>{views.join(', ')}</strong>). A dashboard binds to a single view — keep panels from one view.
+          These panels span more than one governed view (<strong>{views.join(', ')}</strong>). A dashboard binds to a single view — keep panels from one view.
         </div>
       ) : null}
 
@@ -507,7 +506,7 @@ function EditPane({
         </div>
       ) : null}
 
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }} {...anchorAttr(ANCHORS.dashboards.build)}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <span className="hint" style={{ marginTop: 0 }}>
           Save the dashboard. It renders natively — Apache ECharts on your governed metrics,
           row-level-security scoped to each viewer. No BI-tool import step.
@@ -563,7 +562,7 @@ function DashboardDeveloperView({
         <p className="hint" style={{ marginTop: 4 }}>
           Read-only — the native panel/view config persisted for this dashboard. Each panel
           resolves its governed query at View time (Apache ECharts), so there is no
-          Superset import step. Add panels in the Simple flow to see the full spec.
+          Add panels in the Simple flow to see the full spec.
         </p>
         {spec ? (
           <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>

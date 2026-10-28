@@ -89,19 +89,14 @@ test('allToolsForKind covers read ∪ write for pruning', () => {
 
 type ChipGrants = Pick<Grants, 'data' | 'knowledge' | 'files' | 'connections' | 'metrics' | 'plan'>;
 
-/** A grants object where every resource list is populated. The plan list carries all
- * three plan targets (manual + pillar + big bet) so both plan-gated chips surface. */
+/** A grants object where every resource list is populated. */
 const FULL_GRANTS: ChipGrants = {
   data: [{ id: 'ds_sales', capability: 'Read' }],
   knowledge: [{ id: 'wf_playbook', capability: 'Read' }],
   files: [{ id: '', capability: 'Read', folder: { path: '/reports', scope: 'domain' } }],
   connections: [{ id: 'conn_crm', capability: 'Read' }],
   metrics: [{ id: 'mt_revenue', capability: 'Read' }],
-  plan: [
-    { id: 'manual:domain', capability: 'Read' },
-    { id: 'pillar:p_1', capability: 'Read' },
-    { id: 'bigbet:b_1', capability: 'Read' },
-  ],
+  plan: [{ id: 'manual:domain', capability: 'Read' }],
 };
 
 /** Grants where only data was granted. */
@@ -134,7 +129,6 @@ test('capabilityChipsForGrants: ungranted kind is not offered', () => {
   assert.ok(!ids.includes('use-connection'), 'use-connection must not appear when connections not granted');
   assert.ok(!ids.includes('query-metrics'), 'query-metrics must not appear when metrics not granted');
   assert.ok(!ids.includes('create-files'), 'create-files must not appear when files not granted');
-  assert.ok(!ids.includes('use-goals'), 'use-goals must not appear when no goal plan granted');
   assert.ok(!ids.includes('read-operating-manual'), 'operating-manual must not appear when no manual granted');
 });
 
@@ -150,25 +144,17 @@ test('capabilityChipsForGrants: granting a files folder surfaces the Files chip'
   assert.ok(!ids.includes('read-data'));
 });
 
-test('capabilityChipsForGrants: a Strategic-Pillar plan grant surfaces goals, not the manual', () => {
-  const grants: ChipGrants = { ...EMPTY_GRANTS, plan: [{ id: 'pillar:p_1', capability: 'Read' }] };
+test('capabilityChipsForGrants: an unrecognised plan grant surfaces no plan chip', () => {
+  const grants: ChipGrants = { ...EMPTY_GRANTS, plan: [{ id: 'nonsense', capability: 'Read' }] };
   const ids = capabilityChipsForGrants(grants, null).map((c) => c.id);
-  assert.ok(ids.includes('use-goals'), 'a pillar grant surfaces the goals chip');
-  assert.ok(!ids.includes('read-operating-manual'), 'a pillar grant must NOT surface the operating-manual chip');
+  assert.ok(!ids.includes('read-operating-manual'), 'an unrecognised plan grant must NOT surface the operating-manual chip');
 });
 
-test('capabilityChipsForGrants: a Big-Bet plan grant surfaces the goals chip', () => {
-  const grants: ChipGrants = { ...EMPTY_GRANTS, plan: [{ id: 'bigbet:b_1', capability: 'Read' }] };
-  const ids = capabilityChipsForGrants(grants, null).map((c) => c.id);
-  assert.ok(ids.includes('use-goals'), 'a big-bet grant surfaces the goals chip');
-  assert.ok(!ids.includes('read-operating-manual'));
-});
-
-test('capabilityChipsForGrants: an Operating-Model plan grant surfaces the manual, not goals', () => {
+test('capabilityChipsForGrants: an Operating-Model plan grant surfaces the manual', () => {
   const grants: ChipGrants = { ...EMPTY_GRANTS, plan: [{ id: 'manual:domain', capability: 'Read' }] };
   const ids = capabilityChipsForGrants(grants, null).map((c) => c.id);
   assert.ok(ids.includes('read-operating-manual'), 'a manual grant surfaces the operating-manual chip');
-  assert.ok(!ids.includes('use-goals'), 'a manual grant must NOT surface the goals chip');
+
 });
 
 test('capabilityChipsForGrants: full grants → all chips offered (catalog null = no catalog filter)', () => {
@@ -187,7 +173,7 @@ test('capabilityChipsForGrants: catalog filtering removes chips whose tools are 
   assert.ok(!ids.includes('use-connection'), 'connection tools missing → hidden');
   assert.ok(!ids.includes('query-metrics'), 'metric tools missing → hidden');
   assert.ok(!ids.includes('create-files'), 'file tools missing → hidden');
-  assert.ok(!ids.includes('use-goals'), 'goals tools missing → hidden');
+
 });
 
 test('Auto default: agent.tools === undefined means Auto (no chip implies no tools set)', () => {
@@ -270,11 +256,10 @@ test('toolsForCapabilityChipsInPool: result is ALWAYS ⊆ pool (subset invariant
   assert.ok(!tools.includes('search_knowledge'), 'ungranted knowledge chip adds no tools');
 });
 
-test('toolsForCapabilityChipsInPool: plan chips resolve read tools from the pool', () => {
-  const pool = ['get_pillar', 'list_pillars', 'get_big_bet', 'list_big_bets', 'get_operating_manual'];
-  const goals = toolsForCapabilityChipsInPool(['use-goals'], pool);
-  assert.ok(goals.includes('get_pillar') && goals.includes('get_big_bet'), 'goal read tools resolved');
+test('toolsForCapabilityChipsInPool: plan chip resolves its read tool from the pool', () => {
+  const pool = ['get_operating_manual'];
   const manual = toolsForCapabilityChipsInPool(['read-operating-manual'], pool);
+
   assert.ok(manual.includes('get_operating_manual'), 'manual read tool resolved');
 });
 

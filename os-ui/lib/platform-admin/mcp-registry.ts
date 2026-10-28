@@ -135,8 +135,8 @@ export function roleCanSee(role: Role, minRole: Role): boolean {
 const TAB_TITLES: Record<string, string> = {
   software: 'Software',
   data: 'Data',
-  science: 'Science',
   knowledge: 'Knowledge',
+
   agents: 'Agents',
 };
 
@@ -300,26 +300,6 @@ export const STACK_MCP_SERVERS: StackServerInput[] = [
       { name: 'sovereign_query', description: 'Run a governed, read-only SQL query over the Iceberg marts.' },
     ],
     live: true,
-  },
-  {
-    id: 'superset',
-    name: 'Superset',
-    description: 'Dashboards & charts over the governed marts. MCP surface comes online as Superset is enabled.',
-    url: 'http://superset:8088/mcp',
-    transport: 'http',
-    tools: [],
-    live: false,
-    status: 'coming online',
-  },
-  {
-    id: 'openmetadata',
-    name: 'OpenMetadata',
-    description: 'Catalog, lineage & glossary. MCP surface comes online as OpenMetadata is enabled.',
-    url: 'http://openmetadata:8585/mcp',
-    transport: 'http',
-    tools: [],
-    live: false,
-    status: 'coming online',
   },
   {
     id: 'dbt',

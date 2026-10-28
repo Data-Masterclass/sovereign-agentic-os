@@ -459,7 +459,7 @@ export default function WorkflowView({
 
   return (
     <ConfirmProvider>
-      <PageHeader title="Knowledge" crumb={data.title} tutorial="knowledge" />
+      <PageHeader title="Knowledge" crumb={data.title} />
       <div className="content">
         {/* Header */}
         <div className="k-detail-head">

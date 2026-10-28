@@ -5,7 +5,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { roleAtLeast } from '@/lib/core/session';
 
 type Preview = {
@@ -388,7 +387,6 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                           style={{ padding: '5px 14px' }}
                           disabled={isBusy}
                           onClick={() => decide(a.id, 'approve')}
-                          {...anchorAttr(ANCHORS.governance.approve)}
                         >
                           {busy === `${a.id}:approve` ? <span className="spin" /> : 'Approve'}
                         </button>
@@ -403,7 +401,6 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                             }}
                             disabled={isBusy}
                             onClick={() => decide(a.id, 'approve', true)}
-                            {...anchorAttr(ANCHORS.governance.remember)}
                           >
                             {busy === `${a.id}:approve:remember` ? (
                               <span className="spin" />

@@ -10,7 +10,6 @@ import {
   type ArtifactOrigin,
 } from '@/lib/core/artifact-model';
 import { canPromote } from '@/lib/core/session';
-import { roleRank } from '@/lib/governance/roles';
 import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
 import type { CurrentUser } from '@/lib/core/auth';
 import { osMirror } from '@/lib/infra/os-mirror';
@@ -303,41 +302,6 @@ export async function demoteArtifact(artId: string, user: CurrentUser): Promise<
   map.set(a.id, a);
   writeThrough(a);
   return a;
-}
-
-/** Add a Certified Marketplace artifact into the caller's own workspace. */
-export async function addFromMarketplace(artId: string, user: CurrentUser): Promise<Artifact> {
-  // Security: importing a cross-domain Certified item into your workspace is a
-  // Builder+ action. A participant/creator must request it through Governance;
-  // they cannot self-import (checked BEFORE any lookup so the answer is uniform).
-  if (roleRank(user.role) < roleRank('builder')) {
-    throw withStatus(new Error('Importing from the Marketplace requires a Builder or Admin — request access via Governance'), 403);
-  }
-  const map = await getCache();
-  const src = map.get(artId);
-  if (!src || src.visibility !== 'Certified' || src.origin !== 'authored') {
-    throw withStatus(new Error('Not a Certified Marketplace artifact'), 404);
-  }
-  // Idempotent: if the user already added this source, return the existing copy.
-  const existing = [...map.values()].find(
-    (a) => a.origin === 'certified-copy' && a.sourceId === artId && a.owner === user.id,
-  );
-  if (existing) return existing;
-  const t = now();
-  const copy: Artifact = {
-    ...src,
-    id: id(`${src.type}_cert`),
-    owner: user.id,
-    // Keep the certifying domain as a label so the user sees where it came from.
-    domain: src.domain,
-    origin: 'certified-copy',
-    sourceId: artId,
-    createdAt: t,
-    updatedAt: t,
-  };
-  map.set(copy.id, copy);
-  writeThrough(copy);
-  return copy;
 }
 
 export async function updateArtifact(

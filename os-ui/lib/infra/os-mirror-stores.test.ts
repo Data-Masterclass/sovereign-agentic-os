@@ -218,28 +218,6 @@ test('users (os-users): fresh boot seeds the bootstrap admin DURABLY + round-tri
   }
 });
 
-// --------------------------------------------------------------------- pillars --
-
-test('strategy pillars (os-strategy-pillars): fresh-boot bootstrap + round-trip hydration', async () => {
-  const os = fakeCluster();
-  const pillars = await import('../experimental/strategy/pillars.ts');
-  try {
-    pillars.__resetForTests();
-    const p = await pillars.createPillar(admin, { name: 'Grow NRR', scope: 'tenant' });
-    await settle();
-    assertBootstrapSequence(os.log, 'os-strategy-pillars');
-
-    pillars.__resetForTests(); // pod roll
-    const list = await pillars.listPillars(admin);
-    assert.equal(list.length, 1);
-    assert.equal(list[0].id, p.id);
-    assert.equal(list[0].name, 'Grow NRR');
-  } finally {
-    os.restore();
-    pillars.__resetForTests();
-  }
-});
-
 // ------------------------------------------------------------------ tile order --
 
 test('tile-order prefs (os-user-prefs): fresh-boot bootstrap + round-trip hydration', async () => {
@@ -356,38 +334,6 @@ test('dashboards (os-dashboards): fresh-boot bootstrap + round-trip hydration', 
   }
 });
 
-// -------------------------------------------------------------------- big bets --
-
-test('big bets (os-bigbets): fresh-boot bootstrap + round-trip hydration', async () => {
-  const os = fakeCluster();
-  const bets = await import('../experimental/bigbets/store.ts');
-  try {
-    bets.__resetBets();
-    await bets.ensureHydrated();
-    const p = { id: 'u1', domains: ['sales'], role: 'builder' as const };
-    const bet = bets.createBet(p, {
-      name: 'Grow NRR',
-      problem: { who: 'sales', need: 'increase retention', obstacle: '', impact: '' },
-      pillarId: 'pillar_1',
-      metricId: 'metric_1',
-      targetValue: 500000,
-      goLive: '2026-12-31',
-    });
-    await settle();
-    assertBootstrapSequence(os.log, 'os-bigbets');
-    assert.equal((os.docsOf('os-bigbets').get(bet.id) as { id: string }).id, bet.id);
-
-    bets.__resetBets(); // pod roll
-    await bets.ensureHydrated();
-    const list = bets.listBets(p);
-    assert.equal(list.length, 1);
-    assert.equal(list[0].name, 'Grow NRR');
-  } finally {
-    os.restore();
-    bets.__resetBets();
-  }
-});
-
 // -------------------------------------------------------------- knowledge store --
 
 test('knowledge workflows (os-knowledge-records): fresh-boot bootstrap + round-trip hydration', async () => {
@@ -461,28 +407,6 @@ test('standing policies (os-standing-policies): fresh-boot bootstrap + round-tri
   } finally {
     os.restore();
     standing.__resetStanding();
-  }
-});
-
-// --------------------------------------------------------- strategy snapshots --
-
-test('strategy snapshots (os-strategy-snapshots): pre-seeded doc survives round-trip hydration', async () => {
-  const os = fakeCluster();
-  const snaps = await import('../experimental/strategy/snapshots.ts');
-  try {
-    snaps.__resetSnapshotsForTests();
-    // Pre-seed the cluster (simulates a prior run's write-through).
-    const snap = { pillarId: 'p1', month: '2026-01', at: new Date().toISOString(), valueGenerated: 100, activeCreators: 5, activeBuilders: 3, certified: {} };
-    os.seed('os-strategy-snapshots', 'p1:2026-01', snap);
-
-    await snaps.ensureHydrated();
-    const history = snaps.snapshotHistory('p1');
-    assert.equal(history.length, 1);
-    assert.equal(history[0].valueGenerated, 100);
-    assert.equal(history[0].month, '2026-01');
-  } finally {
-    os.restore();
-    snaps.__resetSnapshotsForTests();
   }
 });
 
@@ -715,32 +639,6 @@ test('agent memory (os-agent-memory): curated fact survives pod roll via hydrati
   }
 });
 
-test('marketplace (os-marketplace-*): grant + deprecated survive pod roll via hydration', async () => {
-  const os = fakeCluster();
-  const mkt = await import('../experimental/marketplace/store.ts');
-  try {
-    mkt.__resetMarketplace();
-    mkt.putGrant({ id: 'grant_t1', listingId: 'mock-1', grantee: { kind: 'domain', id: 'sales' }, mode: 'reference', grantedBy: 'admin', grantedAt: new Date().toISOString() } as Parameters<typeof mkt.putGrant>[0]);
-    mkt.recordAudit({ action: 'import', listingId: 'mock-1', actor: 'admin', domain: 'sales' } as Parameters<typeof mkt.recordAudit>[0]);
-    mkt.setDeprecated('mock-old');
-    await settle();
-    assertBootstrapSequence(os.log, 'os-marketplace-grants');
-    assertBootstrapSequence(os.log, 'os-marketplace-audit');
-    assertBootstrapSequence(os.log, 'os-marketplace-deprecated');
-    assert.ok(os.docsOf('os-marketplace-grants').has('grant_t1'));
-    assert.ok(os.docsOf('os-marketplace-deprecated').has('mock-old'));
-
-    mkt.__resetMarketplace(); // pod roll
-    await mkt.ensureHydrated();
-    assert.ok(mkt.getGrant('grant_t1'), 'grant survives roll');
-    assert.equal(mkt.listAudit().length, 1, 'audit entry survives roll');
-    assert.ok(mkt.isDeprecated('mock-old'), 'deprecated flag survives roll');
-  } finally {
-    os.restore();
-    mkt.__resetMarketplace();
-  }
-});
-
 // --------------------------------------- bootstrap-only spot-checks (legacy) --
 // These duplicates of the write-only tests kept for regression; the full
 // round-trip hydration tests above supersede them for coverage purposes.
@@ -793,65 +691,5 @@ test('agent memory (os-agent-memory): first fact on a fresh cluster bootstraps t
   }
 });
 
-test('marketplace (os-marketplace-*): first grant/audit on a fresh cluster bootstraps their indices and persists', async () => {
-  const os = fakeCluster();
-  const mkt = await import('../experimental/marketplace/store.ts');
-  try {
-    osMirror({ index: 'os-marketplace-grants' }).__reset();
-    osMirror({ index: 'os-marketplace-audit' }).__reset();
-    mkt.putGrant({ id: 'grant_t1', listingId: 'mock-1', grantee: { kind: 'domain', id: 'sales' }, mode: 'reference', grantedBy: 'admin', grantedAt: new Date().toISOString() } as Parameters<typeof mkt.putGrant>[0]);
-    mkt.recordAudit({ action: 'import', listingId: 'mock-1', actor: 'admin', domain: 'sales' } as Parameters<typeof mkt.recordAudit>[0]);
-    await settle();
-    assertBootstrapSequence(os.log, 'os-marketplace-grants');
-    assertBootstrapSequence(os.log, 'os-marketplace-audit');
-    assert.ok(os.docsOf('os-marketplace-grants').has('grant_t1'));
-  } finally {
-    os.restore();
-  }
-});
-
 // -------------------------------------------------------------- science models --
 
-test('science models (os-science-models): fresh-boot bootstrap + round-trip hydration + delete-through', async () => {
-  const os = fakeCluster();
-  const svc = await import('../experimental/science/model-service.ts');
-  const sara = { id: 'sara', role: 'user' as const, domains: ['sales'], isAgent: false };
-  const spec = {
-    sourceDataProductFqn: 'sales.customer_360',
-    targetColumn: 'churned',
-    taskType: 'binary_classification' as const,
-    algorithm: 'logistic',
-    features: ['recency_days', 'tenure_months'],
-    trainTestSplit: 0.8,
-    optimizeMetric: 'auc',
-  };
-  try {
-    svc._resetModels();
-    await svc.ensureModelsHydrated();
-    const m = svc.createModel({ name: 'Lead scoring', spec }, sara);
-    await settle();
-    assertBootstrapSequence(os.log, 'os-science-models');
-    assert.equal((os.docsOf('os-science-models').get(m.model) as { model: string }).model, 'lead_scoring');
-
-    // Pod roll: in-process registry gone, cluster kept → the model hydrates back
-    // unchanged (THE P0: user models used to vanish on every pod restart).
-    svc._resetModels();
-    await svc.ensureModelsHydrated();
-    const back = svc.getModel('lead_scoring');
-    assert.ok(back, 'model survives the pod roll');
-    assert.equal(back!.name, 'Lead scoring');
-    assert.equal(back!.owner, 'sara');
-    assert.equal(back!.spec?.targetColumn, 'churned');
-
-    // Delete writes through — after another roll the model stays deleted.
-    svc.setModelArchived('lead_scoring', sara, true);
-    svc.deleteModel('lead_scoring', sara);
-    await settle();
-    svc._resetModels();
-    await svc.ensureModelsHydrated();
-    assert.equal(svc.getModel('lead_scoring'), null, 'deleted model stays deleted across pod rolls');
-  } finally {
-    os.restore();
-    svc._resetModels();
-  }
-});

@@ -59,8 +59,8 @@ test('harbor is NOT in the registry (off by default)', () => {
   assert.equal(BY_ID['harbor'], undefined, 'harbor is disabled (enabled:false) in the chart and must not appear in the registry');
 });
 
-test('core components (toggle:false) include os-ui, argocd, postgres, dbt, trino', () => {
-  const cores = ['os-ui', 'argocd', 'postgres', 'dbt', 'trino'];
+test('core components (toggle:false) include os-ui, postgres, dbt, trino', () => {
+  const cores = ['os-ui', 'postgres', 'dbt', 'trino'];
   for (const id of cores) {
     const c = BY_ID[id];
     assert.ok(c, `${id} must be in registry`);

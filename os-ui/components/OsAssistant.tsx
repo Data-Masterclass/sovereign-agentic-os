@@ -28,19 +28,16 @@ import Markdown from '@/components/Markdown';
 // only for the little "Context:" hint in the header; the server is authoritative.
 const TAB_LABELS: Record<string, string> = {
   data: 'Data',
-  science: 'Science',
   knowledge: 'Knowledge',
   agents: 'Agents',
   software: 'Software',
   unstructured: 'Files',
   metrics: 'Metrics',
   dashboards: 'Dashboards',
-  'big-bets': 'Big Bets',
   connections: 'Connections',
   governance: 'Governance',
-  marketplace: 'Marketplace',
-  strategy: 'Strategy',
   monitoring: 'Monitoring',
+
 };
 
 function tabLabel(pathname: string): string {

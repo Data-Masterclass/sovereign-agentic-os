@@ -8,7 +8,6 @@ import {
   persistApp,
   listAllAppsInternal,
   removeAppInternal,
-  deleteAppRepo,
   rehydrateConnection,
   withStatus,
   type App,
@@ -32,7 +31,7 @@ import { getArtifact, demoteArtifact } from '@/lib/core/artifacts';
  *   • CONSUME a granted Connection/Data/Knowledge/other-app MCP — OPA-scoped,
  *     NEVER embedding raw credentials (the reference is recorded, not a secret).
  *
- * The lineage check is the security-relevant part: it mirrors the OpenMetadata
+ * The lineage check is the security-relevant part: it mirrors the governed lineage-store
  * lineage gate ("blocked while a dependency is in use") with an in-process
  * consumer scan so it is demonstrable offline.
  */
@@ -57,7 +56,6 @@ export async function archiveApp(appId: string, user: CurrentUser): Promise<App>
   app.status = 'archived';
   app.deploy.state = 'building'; // scaled to zero, no longer live/preview
   app.deploy.previewUrl = null;
-  app.pipeline.live = 'disabled';
   // Scale the in-cluster runner to zero (retains the objects so unarchive can
   // re-provision). Best-effort + honestly reported; a stopped/absent/offline
   // runner never blocks the archive.
@@ -85,7 +83,6 @@ export async function unarchiveApp(appId: string, user: CurrentUser): Promise<Ap
   if (app.status === 'active') return app;
   app.status = 'active';
   app.deploy.state = 'preview';
-  app.pipeline.live = 'pending';
   // Symmetric with archiveApp's teardown: re-arm the OPA profile AND re-register
   // the app-registry connection so the MCP is callable again AND reappears in the
   // Connections tab immediately — not only after the next pod restart re-hydrates.
@@ -143,13 +140,11 @@ export async function deleteApp(appId: string, user: CurrentUser): Promise<{ del
       409,
     );
   }
-  // PHYSICALLY tear down the app's live resources before removing the record so a
-  // delete never orphans running pods or a live repo. Both are best-effort + HONEST:
-  //   • the in-cluster runner (Ingress+Service+Deployment) — 404/offline is benign;
-  //   • the per-app Forgejo repo (created at build) — 404/unreachable is reported,
-  //     never a silent "repo gone".
+  // PHYSICALLY tear down the app's live runner (Ingress+Service+Deployment) before
+  // removing the record so a delete never orphans running pods — best-effort + HONEST
+  // (404/offline is benign). The durable source tree is dropped with the record
+  // (removeAppInternal → deleteSnapshot).
   const teardown = await deleteRunner({ slug: app.slug });
-  const repo = await deleteAppRepo(app);
   removeConnection(app.id);
   unregisterConnectionProfile(app.mcpPrincipal);
   await removeAppInternal(app.id);
@@ -161,8 +156,6 @@ export async function deleteApp(appId: string, user: CurrentUser): Promise<{ del
       deleted: app.id,
       runner: teardown.action,
       runnerLive: teardown.live,
-      repo: repo.action,
-      repoOk: repo.ok,
     },
     decision: 'allow',
   });

@@ -10,7 +10,7 @@ import { listLineage } from '@/lib/experimental/files/lineage';
 
 export const dynamic = 'force-dynamic';
 
-/** The file's OpenMetadata lineage edges (promoted / certified / derived). */
+/** The file's lineage edges (promoted / certified / derived). */
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
   getFile(id, user); // view-scope guard

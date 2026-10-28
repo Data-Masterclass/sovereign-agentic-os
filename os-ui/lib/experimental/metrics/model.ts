@@ -3,7 +3,7 @@
  */
 import yaml from 'js-yaml';
 import type { Dataset, Measure, MeasureFilter, RollingWindow } from '../data/index.ts';
-import { MEASURE_TYPES, type MeasureType, cubeViewName, slug } from '@/lib/experimental/data';
+import { MEASURE_TYPES, type MeasureType, viewName, slug } from '@/lib/experimental/data';
 import { assertFormulaRefs, compileFormula } from './formula.ts';
 
 /**
@@ -16,7 +16,7 @@ import { assertFormulaRefs, compileFormula } from './formula.ts';
  *   • hand-edited Cube YAML.
  *
  * All three produce the SAME {@link Measure} and the SAME canonical MEMBER. The member
- * is the single source of the number: the explorer, Superset dashboards and the agent
+ * is the single source of the number: the explorer, the OS dashboards and the agent
  * `metrics` tool all resolve `measureMember(dataset, measure)` — so the BI layer and the
  * agents can never disagree (metric-consistency, proven in consistency.ts).
  *
@@ -117,16 +117,16 @@ export function measureName(name: string): string {
 /**
  * The CANONICAL member every consumer resolves — `${ViewNoSpaces}.${measure}`. This is
  * byte-for-byte the string the live Cube client (lib/data) builds for the agent
- * `metrics` tool, so define-here / explore-here / chart-in-Superset / ask-the-agent all
+ * `metrics` tool, so define-here / explore-here / chart-on-a-dashboard / ask-the-agent all
  * read the identical number. Changing this formula would split the number — don't.
  */
 export function measureMember(dataset: Dataset, measure: Measure): string {
-  return `${cubeViewName(dataset).replace(/\s+/g, '')}.${measure.name}`;
+  return `${viewName(dataset).replace(/\s+/g, '')}.${measure.name}`;
 }
 
 /** A dimension member on the same view (for slicing in the explorer / charts). */
 export function dimensionMember(dataset: Dataset, dimension: string): string {
-  return `${cubeViewName(dataset).replace(/\s+/g, '')}.${dimension}`;
+  return `${viewName(dataset).replace(/\s+/g, '')}.${dimension}`;
 }
 
 // ----------------------------------------------------- the three define paths ---

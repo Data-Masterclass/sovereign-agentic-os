@@ -133,10 +133,6 @@ export const kafkaProvider: WarehouseProvider = {
     kind: 'sql',
     query: (source) => `SHOW SCHEMAS FROM ${source.catalog}`,
   },
-  openMetadata: {
-    connectorType: 'Kafka',
-    configKeys: ['bootstrapServers', 'topics'],
-  },
   liveVerificationRequired: [
     'broker reachability from the Trino pod (kafka.nodes, network policy) against a live cluster',
     'SSL handshake with the broker certificates (JVM default truststore) where securityProtocol=SSL',

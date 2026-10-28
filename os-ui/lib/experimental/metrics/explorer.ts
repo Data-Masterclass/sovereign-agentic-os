@@ -2,7 +2,6 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset, Measure, RollingWindow } from '../data/index.ts';
-import { type DelegatedToken, propagate } from '@/lib/experimental/data';
 import { dimensionMember, measureMember } from './model.ts';
 import { goldMartFqn, viewMembers } from '@/lib/experimental/data';
 
@@ -11,14 +10,12 @@ import { goldMartFqn, viewMembers } from '@/lib/experimental/data';
  *
  * R3 is the whole point here: the query is resolved under the VIEWER'S identity
  * (`securityContext`), never a shared service identity, so two people exploring the same
- * metric see DIFFERENT rows. Since the metrics→Trino migration (Phase 1) the live read
- * path is governed Trino SQL run AS the viewer — Cube is off the metric read path (it
- * only serves dashboards now). We derive the security context from the same delegated
- * token the agent `metrics` tool uses ({@link propagate}), so the explorer and the agent
- * are the same row-filtered query. Pure: the executor is injected, unit-tested with an
- * in-memory executor that honours the security context.
+ * metric see DIFFERENT rows. The live read path is governed Trino SQL run AS the viewer
+ * ({@link previewTrinoSql}); the same delegated token drives the agent `metrics` tool, so
+ * the explorer and the agent are the same row-filtered query. Pure: the slice→spec and
+ * spec→SQL compilation is unit-tested without a backend.
  *
- * Analysts can `dropToSql` to Trino for ad-hoc work beyond the metric.
+ * Analysts can `dropToSql` for ad-hoc work beyond the metric.
  */
 
 export type Granularity = 'day' | 'week' | 'month' | 'quarter' | 'year';
@@ -39,7 +36,7 @@ export type ExploreSpec = {
   /** Equality filters narrowing the rows BEFORE aggregation (drill-down). */
   filters?: ExploreFilter[];
   /** LOUD-degradation record (Northpeak fix): slice members the view does NOT expose,
-   *  dropped from the query so Cube doesn't 400 — but REPORTED, never silent. A non-empty
+   *  dropped from the query (they are not view members) — but REPORTED, never silent. A non-empty
    *  list means the rendered result is NOT sliced the way the caller asked. */
   dropped?: string[];
 };
@@ -58,8 +55,8 @@ export function exploreSpec(
   } = {},
 ): ExploreSpec {
   // Reconcile against the view's member set: a slice on a non-member (classically the
-  // dataset PRIMARY KEY, which is a cube dimension but excluded from the view) would 400
-  // at Cube, so it is dropped from the QUERY — but NEVER silently (Northpeak fix): every
+  // dataset PRIMARY KEY, which is a model dimension but excluded from the view) is not
+  // servable, so it is dropped from the QUERY — but NEVER silently (Northpeak fix): every
   // dropped member is recorded on `spec.dropped` so the caller must surface an honest
   // "not sliced by X" warning instead of rendering a de-dimensioned chart as if it were fine.
   const members = viewMembers(dataset);
@@ -86,60 +83,17 @@ export function exploreSpec(
   };
 }
 
-/** A Cube REST `load` query (the shape Cube's /v1/load accepts). */
-export type CubeQuery = {
-  measures: string[];
-  dimensions: string[];
-  timeDimensions?: { dimension: string; granularity: Granularity }[];
-  limit: number;
-};
-
-export function buildCubeQuery(spec: ExploreSpec): CubeQuery {
-  return {
-    measures: [spec.member],
-    dimensions: spec.dimensions,
-    timeDimensions:
-      spec.timeDimension && spec.granularity
-        ? [{ dimension: spec.timeDimension, granularity: spec.granularity }]
-        : undefined,
-    limit: spec.limit ?? 100,
-  };
-}
-
-/** The injected Cube executor — resolves a query UNDER a security context (RLS at Cube). */
-export type CubeExecutor = {
-  load(query: CubeQuery, securityContext: Record<string, unknown>): Promise<{ rows: Record<string, unknown>[] }>;
-};
-
-export type ExploreResult = {
-  member: string;
-  securityContext: Record<string, unknown>;
-  rows: Record<string, unknown>[];
-};
-
 /**
- * Explore a metric under the viewer's delegated identity. R3: the security context is
- * derived from the token (not a service account — {@link propagate} asserts delegation),
- * so the row filter is the viewer's. Two tokens → two security contexts → two row sets.
- */
-export async function explore(spec: ExploreSpec, token: DelegatedToken, exec: CubeExecutor): Promise<ExploreResult> {
-  const { cube } = propagate(token); // throws if the token isn't user-delegated (R2/R3)
-  const { rows } = await exec.load(buildCubeQuery(spec), cube.securityContext);
-  return { member: spec.member, securityContext: cube.securityContext, rows };
-}
-
-/**
- * Drop to SQL — the analyst escape hatch. Cube exposes each view as a SQL table (the SQL
- * API, Postgres protocol); the same member is `"View"."measure"`, so the SQL the analyst
- * sees still resolves the governed metric (and Cube still applies RLS). For ad-hoc work
- * beyond the metric they can point this at Trino.
+ * Drop to SQL — the analyst escape hatch: the metric's member as a view-shaped SELECT
+ * (`"View"."measure"`), so the SQL the analyst sees still names the governed metric. The
+ * executable form is {@link previewTrinoSql} (the compiled SELECT over the physical mart).
  */
 export function dropToSql(spec: ExploreSpec): string {
   const [view, measure] = spec.member.split('.');
   const dims = spec.dimensions.map((d) => `"${d.split('.')[1]}"`);
   const select = [...dims, `"${measure}"`].join(', ');
   const groupBy = dims.length ? `\nGROUP BY ${dims.join(', ')}` : '';
-  return `-- Cube SQL API (RLS still applies). Repoint at Trino for ad-hoc beyond the metric.\nSELECT ${select}\nFROM "${view}"${groupBy}\nLIMIT ${spec.limit ?? 100}`;
+  return `-- Governed metric view (RLS applies at Trino). Use the compiled SQL for ad-hoc work beyond the metric.\nSELECT ${select}\nFROM "${view}"${groupBy}\nLIMIT ${spec.limit ?? 100}`;
 }
 
 // ------------------------------------------------- pre-save preview (Trino) ----
@@ -147,7 +101,7 @@ export function dropToSql(spec: ExploreSpec): string {
 /** One measure's BASE aggregate expression over the gold mart — the per-row-group
  *  aggregate, IGNORING any rolling window (the window is layered on top by
  *  {@link windowTrinoSql}). Guided measure filters become `FILTER (WHERE …)` (the
- *  `{CUBE}.` prefix drops — the mart IS the cube's table); a ratio (`number`) expands its
+ *  `{CUBE}.` placeholder drops — the mart IS the model's table); a ratio (`number`) expands its
  *  sibling measures ONE level. Returns null for a ratio whose siblings have no SQL form. */
 function baseAggExpr(m: Measure, siblings: Measure[]): string | null {
   const filter = m.filters?.length
@@ -243,7 +197,7 @@ function windowFrame(win: RollingWindow, granularity: Granularity): string | nul
  * The SERVE SQL for a ROLLING-WINDOW / RUNNING-TOTAL measure (Phase 2). A window measure
  * aggregates the base measure per time bucket, then runs a window accumulator over that
  * bucketed series — SUM for a running total / trailing sum, AVG for a trailing average.
- * Faithful to Cube's `rolling_window`: the frame is over the ORDER BY the time bucket,
+ * Faithful to the measure's `rolling_window`: the frame is over the ORDER BY the time bucket,
  * partitioned by any group-by dimensions.
  *
  * A window measure REQUIRES a time dimension + granularity in the slice (`spec.timeDimension`
@@ -280,7 +234,7 @@ function windowTrinoSql(dataset: Dataset, measure: Measure, spec: ExploreSpec, f
 /**
  * The metric SERVE SQL (metrics→Trino migration, Phase 1): the number a metric produces,
  * computed as ONE governed Trino SELECT over the dataset's PHYSICAL gold mart. This is now
- * the PRIMARY read path for every metric (saved + unsaved) — Cube is off the metric read
+ * the PRIMARY read path for every metric (saved + unsaved) — the one metric read
  * path — so it must target the TIER-AWARE physical gold FQN: the caller passes `readTarget`
  * (personal `iceberg.personal_<owner>.gold_<slug>` for a personal dataset, the domain
  * `iceberg.<domain>.gold_<slug>` otherwise). The gold FQN's SCHEMA and the Trino session
@@ -314,8 +268,8 @@ export function previewTrinoSql(dataset: Dataset, measure: Measure, spec: Explor
 }
 
 /** Map a governed-SQL result (column names + string rows) onto the SAME row shape the
- *  Cube path returns (keys = full `View.member` strings), so the pre-save preview and
- *  the post-save Cube result render identically. The measure column is numeric. */
+ *  explorer returns (keys = full `View.member` strings), so the pre-save preview and
+ *  the post-save result render identically. The measure column is numeric. */
 export function sqlRowsToExploreRows(columns: string[], rows: string[][], spec: ExploreSpec): Record<string, unknown>[] {
   const measureLeaf = spec.member.split('.')[1];
   const memberFor = (col: string): string => {

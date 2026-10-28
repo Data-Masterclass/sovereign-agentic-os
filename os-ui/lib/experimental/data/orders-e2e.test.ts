@@ -15,9 +15,7 @@ import {
 } from './store.ts';
 import { orchestrateStage } from './build/orchestrate.ts';
 import { makeMockAdapters, newMockBackends, MOCK_ROSTER } from './build/mocks.ts';
-import { CUBE_ARTIFACT, DASHBOARD_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldDashboardBundle, scaffoldExposureYaml } from './metrics.ts';
-import { compilePolicy, tableFqn, cubeFor } from './policy/compiler.ts';
-import { runConformance, evaluateOpa } from './policy/conformance.ts';
+import { compilePolicy, evaluateOpa, tableFqn } from './policy/compiler.ts';
 import { lineageFor } from './lineage.ts';
 import { runAgentTool, type Executors } from './agent-tools.ts';
 import { claimsFromUser } from './identity.ts';
@@ -34,30 +32,23 @@ const finBuilder: Principal = { id: 'fatima', domains: ['finance'], role: 'build
 beforeEach(() => __resetStore());
 
 function ctxFor(d: Dataset) {
-  return {
-    dataset: d,
-    artifacts: {
-      [CUBE_ARTIFACT(d)]: scaffoldCubeYaml(d),
-      [EXPOSURE_ARTIFACT]: scaffoldExposureYaml(d),
-      [DASHBOARD_ARTIFACT(d)]: scaffoldDashboardBundle(d),
-    },
-  };
+  return { dataset: d, artifacts: {} };
 }
 async function build(d: Dataset, stage: Parameters<typeof orchestrateStage>[0]) {
   return orchestrateStage(stage, ctxFor(d), makeMockAdapters(newMockBackends()));
 }
 
-test('Orders: ingest → Silver dataset → promote → Gold asset → certify → metric → dashboard, governed + conformant', async () => {
+test('Orders: ingest → Silver dataset → promote → Gold asset → certify → metric, governed', async () => {
   // 1. Creator ingests + cleans (Bronze, Silver dataset in DuckDB)
   const d0 = createDataset(amir, { name: 'Orders' });
   buildVersion(d0.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
-  assert.equal((await build(getDataset(d0.id, amir), 'bronze')).ok, true); // dlt → om
+  assert.equal((await build(getDataset(d0.id, amir), 'bronze')).ok, true); // dlt
   buildVersion(d0.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql' });
   setDocs(d0.id, amir, {
     description: 'Sales orders — the worked example.',
     columns: [{ name: 'order_id', description: 'Key.' }, { name: 'order_date', description: 'When.' }, { name: 'net_amount', description: 'EUR net.' }],
   });
-  assert.equal((await build(getDataset(d0.id, amir), 'silver')).ok, true); // dbt → om
+  assert.equal((await build(getDataset(d0.id, amir), 'silver')).ok, true); // dbt
 
   // 2. Builder promotes (separation of duties; the dataset is private to amir)
   const req = requestPromotion(d0.id, amir, { visibility: 'domain' });
@@ -66,19 +57,18 @@ test('Orders: ingest → Silver dataset → promote → Gold asset → certify �
   const promoteBuild = await build(getDataset(d0.id, sara), 'promote'); // policy → dbt-trino → trino (T8)
   assert.equal(promoteBuild.ok, true);
   assert.deepEqual(promoteBuild.rows.map((r) => r.tool), ['policy', 'dbt-trino', 'trino']);
-  assert.match(promoteBuild.rows.find((r) => r.tool === 'policy')!.detail, /conformant/);
+  assert.match(promoteBuild.rows.find((r) => r.tool === 'policy')!.detail, /OPA governance covers/);
 
   // 3. Harmonize to Gold (on the asset), then Admin certifies → Gold Data Product
   buildVersion(d0.id, sara, 'gold', { quality: 'passing', artifact: 'gold/mart_orders.sql' });
   assert.equal((await build(getDataset(d0.id, sara), 'gold')).ok, true);
   const product = certify(d0.id, sara, { level: 'gold', visibility: 'shared' });
   assert.equal(product.tier, 'product');
-  assert.equal((await build(product, 'certify')).ok, true); // om → policy (conformance gate)
+  assert.equal((await build(product, 'certify')).ok, true); // policy
 
-  // 4. Define a metric on the governed Gold (Cube handover), then build the dashboard
+  // 4. Define a metric on the governed Gold (served as governed Trino SQL)
   const withMetric = defineMeasure(d0.id, sara, { name: 'revenue', type: 'sum', sql: 'net_amount' });
-  assert.equal((await build(withMetric, 'metric')).ok, true); // cube → om
-  assert.equal((await build(withMetric, 'dashboard')).ok, true); // superset → om
+  assert.equal(withMetric.measures.map((m) => m.name).includes('revenue'), true);
 
   // 5. Lineage spans both axes; transparency green
   const lin = lineageFor(getDataset(d0.id, sara));
@@ -86,9 +76,10 @@ test('Orders: ingest → Silver dataset → promote → Gold asset → certify �
   assert.ok(lin.edges.some((e) => e.from === 'v:gold' && e.to === 'm:revenue'));
   assert.equal(lin.transparency.ok, true);
 
-  // 6. Another domain imports it (Builder+) → conformance still green
+  // 6. Another domain imports it (Builder+) → the compiled OPA bundle entitles the importer
   importProduct(d0.id, finBuilder);
-  assert.equal(runConformance([getDataset(d0.id, kenji)], MOCK_ROSTER).ok, true);
+  const imported = getDataset(d0.id, kenji);
+  assert.equal(evaluateOpa(compilePolicy([imported], MOCK_ROSTER).opa, { user: 'kenji', domains: ['finance'] }, tableFqn(imported)).entitled, true);
 });
 
 test('Orders both ways: the data agent reads exactly the governed product the UI built', async () => {
@@ -117,7 +108,6 @@ test('Orders both ways: the data agent reads exactly the governed product the UI
         const entitled = evaluateOpa(compiled.opa, id, fqn).entitled;
         return { columns: ['order_id', 'net_amount'], rows: entitled ? [['1', '100']] : [] }; // RLS: no rows if not entitled
       },
-      async cubeQuery() { return { rows: [{ revenue: 100 }] }; },
       async trace() { return true; },
     };
   }
@@ -141,11 +131,6 @@ test('Orders both ways: the data agent reads exactly the governed product the UI
     execFor(),
   );
   assert.equal(zoeRes.rows!.length, 0); // governed-denied → no rows
-
-  // the metrics tool resolves the SAME Cube view the UI defined.
-  const metric = await runAgentTool(amirClaims, { scope: 'domain', kind: 'metrics', query: { measures: [`${cubeFor(governed)}.revenue`] } }, execFor());
-  assert.equal(metric.source, 'cube');
-  assert.equal((metric.data as { revenue: number }[])[0].revenue, 100);
 
   // personal scope never touches the governed product — it stays in the user's sandbox.
   await assert.rejects(

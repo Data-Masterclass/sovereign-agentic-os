@@ -250,10 +250,6 @@ export const databricksProvider: WarehouseProvider = {
     kind: 'sql',
     query: (source) => `SHOW SCHEMAS FROM ${source.catalog}`,
   },
-  openMetadata: {
-    connectorType: 'DeltaLake',
-    configKeys: ['metastoreConnection', 'configSource', 'connection', 'databaseFilterPattern'],
-  },
   // Rendering is verified purely against the Trino 476 docs for the storage/Thrift/Glue
   // path. Unity mode and all live auth need a real Databricks workspace, which cannot
   // be created here.

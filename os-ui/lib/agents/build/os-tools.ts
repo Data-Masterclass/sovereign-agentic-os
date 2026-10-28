@@ -63,7 +63,7 @@ export const OS_TOOL_ALIASES: Record<string, string> = {
   retrieve: 'search_knowledge',
   metrics: 'list_metrics',
   files_retrieve: 'search_files',
-  predict: 'science_predict',
+
   write_file: 'upload_file',
 };
 
@@ -333,7 +333,7 @@ const WRITE_TOOL_TAB = new Map<string, string>(Object.entries(WRITE_TOOL_TABS));
 const TAB_LABEL: Record<string, string> = {
   data: 'Data', knowledge: 'Knowledge', files: 'Files', metrics: 'Metrics',
   dashboards: 'Dashboards', connections: 'Connections', software: 'Software',
-  agents: 'Agents', strategy: 'Strategy', science: 'Science',
+  agents: 'Agents',
 };
 
 /** One run's write accounting — direct My-scope writes vs writes held for approval. */
@@ -427,45 +427,20 @@ export type WriteScope = 'personal' | 'domain' | 'company';
  *   - `publish_knowledge`  — flips a workflow My→Domain (domain_admin gate).
  *   - `request_promotion`  — files a My→Domain promotion request (domain_admin).
  *   - `approve_promotion`  — APPLIES a Domain promotion (domain_admin).
- *   - `promote_pillar`     — raises a pillar one tier (Domain needs Builder+, Company
- *                            Admin; conservatively routed to domain_admin — the
- *                            in-lib canPromotePillar re-checks the Company->Admin gate).
- *
- * `create_pillar` / `update_pillar` are scope-parametric (a `scope` arg can select
- * Domain/Company); their target is resolved per-call in {@link writeTargetScope}.
  */
-const ESCALATING_DOMAIN_TOOLS = new Set(['publish_knowledge', 'request_promotion', 'approve_promotion', 'promote_pillar']);
-
-/**
- * The scope a scope-parametric write tool selects via its `scope` arg (e.g.
- * `create_pillar {scope:'domain'|'tenant'}`). `tenant`/`company` -> Company; `domain`
- * -> Domain; `personal` -> Personal; absent/unknown -> undefined (caller defaults to My).
- */
-function scopeFromArgs(args: unknown): WriteScope | undefined {
-  if (!args || typeof args !== 'object') return undefined;
-  const raw = (args as Record<string, unknown>).scope;
-  if (raw === 'tenant' || raw === 'company') return 'company';
-  if (raw === 'domain') return 'domain';
-  if (raw === 'personal') return 'personal';
-  return undefined;
-}
+const ESCALATING_DOMAIN_TOOLS = new Set(['publish_knowledge', 'request_promotion', 'approve_promotion']);
 
 /**
  * The TARGET SCOPE of a granted write tool call. Conservative + fail-closed:
- *   - a scope-parametric tool (create_pillar/update_pillar) reads its `scope` arg —
- *     `domain` -> Domain, `tenant` -> Company, else Personal (the create default);
  *   - the escalation family (promote/publish/approve) -> Domain (the My->Domain gate);
  *   - everything else (create_/ingest_/author_/upload_/build_/transform_/document_/
  *     define_/attach_/wire_/update_/archive_ ... on a My artifact) -> Personal.
  * A write only crosses a governance boundary when THIS says Domain/Company, so a
  * personal create is never held.
  */
-export function writeTargetScope(mcpName: string, args?: unknown): WriteScope {
-  // Scope-parametric create/update: the arg picks the lane (My-default).
-  if (mcpName === 'create_pillar' || mcpName === 'update_pillar') {
-    return scopeFromArgs(args) ?? 'personal';
-  }
+export function writeTargetScope(mcpName: string): WriteScope {
   if (ESCALATING_DOMAIN_TOOLS.has(mcpName)) return 'domain';
+
   return 'personal';
 }
 
@@ -493,11 +468,10 @@ export function writeTargetScope(mcpName: string, args?: unknown): WriteScope {
 export function holdDecision(
   preset: SafetyPreset,
   mcpName: string,
-  args?: unknown,
 ): { held: false } | { held: true; approverRole: 'domain_admin' | 'admin' } {
   // read-only blocks every write, regardless of target.
   if (preset === 'read-only') return { held: true, approverRole: 'admin' };
-  const scope = writeTargetScope(mcpName, args);
+  const scope = writeTargetScope(mcpName);
   if (scope === 'company') return { held: true, approverRole: 'admin' };
   if (scope === 'domain') return { held: true, approverRole: 'domain_admin' };
   // personal -> never held (the create default): gate 2 is the authority.
@@ -696,14 +670,14 @@ export function grantedToolExecutor(
     // Ownership stays intact: a personal write dispatched at gate 2 runs under
     // `canManageArtifact` (personal → owner-only), so a non-owner is still refused.
     if (WRITE_APPROVAL_NAMES.has(mcpName)) {
-      const decision = holdDecision(sys.safetyPreset, mcpName, args);
+      const decision = holdDecision(sys.safetyPreset, mcpName);
       if (decision.held) {
         // A held write is NEVER executed — record the human-in-the-loop request,
         // routed to the correct admin for the escalation (domain_admin / admin).
         deps.enqueue({
           kind: 'connection_write',
           title: `Approval needed: ${mcpName}`,
-          detail: `System '${systemId}' agent attempted a ${writeTargetScope(mcpName, args)}-scope write '${mcpName}' during a run — Domain/Company writes are held for admin approval.`,
+          detail: `System '${systemId}' agent attempted a ${writeTargetScope(mcpName)}-scope write '${mcpName}' during a run — Domain/Company writes are held for admin approval.`,
           agent: sysPrincipal,
           domain: sys.system.domain,
           requestedBy: user.id,
@@ -726,7 +700,8 @@ export function grantedToolExecutor(
     // Honest decision note: a granted WRITE that reached gate 2 is a My-scope write that
     // ran DIRECTLY (the My-direct rule) — record it as such, not a bare 'allow', so the
     // trace tells the truth about WHY no approval was needed.
-    const wroteDirectly = WRITE_APPROVAL_NAMES.has(mcpName) && writeTargetScope(mcpName, args) === 'personal';
+    const wroteDirectly = WRITE_APPROVAL_NAMES.has(mcpName) && writeTargetScope(mcpName) === 'personal';
+
     await safeTrace(deps, sysPrincipal, mcpName, args, 'allow', wroteDirectly ? 'allow (own My scope)' : undefined);
 
     if (res?.error) return { text: `Error: ${res.error.message}`, isError: true };

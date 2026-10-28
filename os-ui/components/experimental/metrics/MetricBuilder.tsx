@@ -18,8 +18,6 @@ import DomainTag from '@/components/DomainTag';
 import { useToast } from '@/components/core/Toast';
 import BuilderModeToggle from '@/components/core/BuilderModeToggle';
 import type { ViewMode } from '@/lib/core/view-mode';
-import TalkTo from '@/components/talk/TalkTo';
-import { TALK_PRESENTATION } from '@/lib/talk/schema';
 import BusyProgress from '@/components/core/BusyProgress';
 import MetricStageAssistant from './MetricStageAssistant';
 import ExploreMetric from './ExploreMetric';
@@ -185,7 +183,7 @@ function useDataset(datasetId: string): DatasetDetail {
           // (metricSqlReady, lib/data/metrics.ts) — a PERSONAL dataset with built Gold
           // serves metrics with no promotion. The only thing that blocks defining a metric
           // is an UNBUILT Gold. (Cube semantic-layer registration additionally needs a
-          // governed tier — metricCubeReady — but that's the dashboards path, not serving.)
+          // governed tier — metricModelReady — but that's the dashboards path, not serving.)
           const deliverable = Boolean(ds?.versions?.gold?.built);
           if (!live) return;
           setState({
@@ -327,7 +325,7 @@ function describeDefinition(form: Form): string {
  * to · the source dataset + layer · usable dimensions · the live preview · Talk to Metric ·
  * Alerts). Save is the SAME define/validation flow — it lands you in View. Promotion +
  * lifecycle live in the detail HEADER. Reuses existing pieces (ExploreMetric, Alerts,
- * TalkTo, PromoteButton, LifecycleActions) without rewriting them.
+ * PromoteButton, LifecycleActions) without rewriting them.
  */
 export default function MetricBuilder({
   existing,
@@ -607,7 +605,7 @@ export default function MetricBuilder({
         <BuilderModeToggle
           mode={viewMode}
           onChange={setModePersisted}
-          developerHint="The raw Cube measure YAML this metric generates"
+          developerHint="The raw measure YAML this metric generates"
         />
       </div>
 
@@ -631,13 +629,13 @@ export default function MetricBuilder({
             <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
               {saved.name}
               {/* Rename must be DISCOVERABLE — a labelled button (mirrors the Data tab). The
-                  physical Cube member stays frozen; only the display label changes. */}
+                  physical member stays frozen; only the display label changes. */}
               {canManage ? (
                 <button
                   className="btn ghost sm"
                   style={{ flex: 'none' }}
                   onClick={() => { setNameDraft(saved.name); setRenameErr(''); setRenaming(true); }}
-                  title="Rename this metric (the Cube member stays stable)"
+                  title="Rename this metric (the governed member stays stable)"
                   aria-label="Rename this metric"
                 >✎ Rename</button>
               ) : null}
@@ -1004,14 +1002,9 @@ export default function MetricBuilder({
         </div>
 
       ) : saved ? (
-        /* ── View — read-first, LEADING with Talk (the OS-wide contract, mirroring Data):
-              Talk to Metrics · definition · governed SQL · data underneath · usable
+        /* ── View — read-first: definition · governed SQL · data underneath · usable
               dimensions · live preview · Alerts ── */
         <div>
-          {/* 1. Talk to this metric — the primary way to USE it, at the very top of View. */}
-          <div className="section-title" style={{ marginTop: 4 }}>{TALK_PRESENTATION.metrics.title}</div>
-          <TalkTo tab="metrics" {...TALK_PRESENTATION.metrics} />
-
           {/* Definition in plain terms + the data underneath */}
           <div className="guided-panel" style={{ marginTop: 28 }}>
             <span className="comp-label" style={{ margin: 0 }}>Definition</span>
@@ -1156,13 +1149,13 @@ function MetricDeveloperView({
   form: Form;
   datasetId: string;
 }) {
-  if (result?.cube) {
+  if (result?.definitionYaml) {
     return (
       <div className="grant-block" style={{ marginTop: 4 }}>
-        <div className="comp-label">Cube model YAML</div>
+        <div className="comp-label">Metric model YAML</div>
         <p className="hint" style={{ marginTop: 4 }}>Read-only — the generated measure block.</p>
         <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
-          {result.cube}
+          {result.definitionYaml}
         </pre>
         {result.member ? (
           <p className="hint" style={{ marginTop: 8 }}>
@@ -1182,7 +1175,7 @@ function MetricDeveloperView({
 
   return (
     <div className="grant-block" style={{ marginTop: 4 }}>
-      <div className="comp-label">Cube measure payload (preview)</div>
+      <div className="comp-label">Measure payload (preview)</div>
       <p className="hint" style={{ marginTop: 4 }}>Not saved yet — the config that will be submitted:</p>
       {preview ? (
         <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>

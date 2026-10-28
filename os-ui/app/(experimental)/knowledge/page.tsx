@@ -19,8 +19,6 @@ import type { FiledApproval } from '@/lib/governance/approval-notice';
 import DomainTag from '@/components/DomainTag';
 import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
 import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
-import TalkTo from '@/components/talk/TalkTo';
-import { TALK_PRESENTATION } from '@/lib/talk/schema';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
 import FolderLayout from '@/components/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@/lib/folders/client';
@@ -441,7 +439,7 @@ function KnowledgePageInner() {
 
   return (
     <>
-      <PageHeader title="Knowledge" crumb="personal notes · domain · company" tutorial="knowledge" />
+      <PageHeader title="Knowledge" crumb="personal notes · domain · company" />
       <div className="content">
 
         {openEntry ? renderDetail(openEntry) : (<>
@@ -592,16 +590,6 @@ function KnowledgePageInner() {
                   )
                 )}
               </FolderLayout>
-            </div>
-          );
-        })()}
-
-        {/* Talk to Knowledge — governed retrieval over knowledge entries. */}
-        {(() => {
-          const talk = TALK_PRESENTATION.knowledge;
-          return (
-            <div style={{ marginTop: 40 }}>
-              <TalkTo tab="knowledge" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
             </div>
           );
         })()}

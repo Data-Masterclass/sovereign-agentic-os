@@ -48,7 +48,8 @@ test('suggestedGrants: drops unknown kinds, empty ids, bad access', () => {
 
 test('suggestedGrants: kinds outside the allowed set are dropped', () => {
   const r = normalizeAgentAssistantReply(
-    { message: 'm', suggestedGrants: [{ kind: 'data', id: 'ds_1' }, { kind: 'strategy', id: 'pillar:p1' }] },
+    { message: 'm', suggestedGrants: [{ kind: 'data', id: 'ds_1' }, { kind: 'operating-manual', id: 'manual:domain' }
+] },
     ['data'], // restrict to data only
   );
   const g = r.suggestions.suggestedGrants!;

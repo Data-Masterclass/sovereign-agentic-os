@@ -2,14 +2,13 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset } from '../data/index.ts';
-import { cubeViewName } from '@/lib/experimental/data';
-import type { CubeQuery } from '../../infra/governed.ts';
+import { viewName } from '@/lib/experimental/data';
 import type { Granularity } from '../metrics/explorer.ts';
 
 /**
  * The Dashboards tab CONSUMES governed metrics (it never defines them — that's the
- * Metrics tab). A dashboard is a NATIVE spec — a Cube view + panels (Tier 1: rendered
- * with Apache ECharts on the governed Cube layer, per-viewer RLS) — buildable two ways at
+ * Metrics tab). A dashboard is a NATIVE spec — a governed view + panels (Tier 1: rendered
+ * with Apache ECharts over governed Trino SQL, per-viewer RLS) — buildable two ways at
  * once (DUAL-MODE) that MUST land the same artifact:
  *
  *   • drag-and-drop (the user assembles panels), or
@@ -20,26 +19,27 @@ import type { Granularity } from '../metrics/explorer.ts';
  * both ways" yields one identical spec. Panels reference governed metric MEMBERS (from the
  * Metrics tab) so the dashboard's numbers match the explorer + the agent.
  *
- * {@link buildPanelCubeQuery} turns a panel into the exact Cube `load` query the viewer's
- * governed request resolves (RLS applied at Cube). Pure + tested.
+ * A panel's numbers are resolved by `runPanelQuery` (dashboards/build/panel-query.ts) through
+ * the SAME compiled governed-Trino SQL path the Metrics explorer uses, under the viewer's
+ * delegated identity. This module is the pure, tested SPEC model only — no query execution.
  */
 
 /** The native panel viz types. `big_number_total` is the legacy alias of `big_number`;
  *  both remain valid so a seeded/legacy spec never breaks. */
 export type VizType = 'big_number_total' | 'big_number' | 'line' | 'area' | 'bar' | 'pie' | 'table';
 
-/** A Cube `filters` clause (governed.ts shape). */
+/** A panel filter clause: an equality/comparison pushed into the governed WHERE. */
 export type PanelFilter = { member: string; operator: string; values: string[] };
 
-/** A panel's position on the dashboard grid (Superset-style 12-col units). Optional —
+/** A panel's position on the dashboard grid (12-column units). Optional —
  *  the native grid falls back to a flow layout when absent. */
 export type GridPos = { x: number; y: number; w: number; h: number };
 
 /**
- * A native dashboard panel: one Apache-ECharts tile on the governed Cube view. A panel
- * charts one-or-more governed metric MEMBERS, optionally grouped by dimensions and/or a
- * time dimension at a chosen grain, optionally pre-filtered — all resolved live at Cube
- * under the viewer's RLS. Replaces the old Superset `ChartSpec`.
+ * A native dashboard panel: one Apache-ECharts tile on a governed view. A panel charts
+ * one-or-more governed metric MEMBERS, optionally grouped by dimensions and/or a time
+ * dimension at a chosen grain, optionally pre-filtered — all resolved live as governed
+ * Trino SQL under the viewer's RLS.
  */
 export type Panel = {
   name: string;
@@ -55,7 +55,7 @@ export type Panel = {
   timeDimension?: string;
   /** Time grain for the time dimension (reuses the metrics Granularity). */
   timeGrain?: Granularity;
-  /** Optional Cube filters pushed into the query (governed.ts filter shape). */
+  /** Optional filters pushed into the governed query's WHERE clause. */
   filters?: PanelFilter[];
   /** Optional grid position for layout. */
   gridPos?: GridPos;
@@ -81,13 +81,11 @@ export function normalizePanel(p: Panel): Panel {
 
 export type DashboardSpec = {
   name: string;
-  /** The Cube view (one dataset's view) the dataset binds to. */
+  /** The governed view (one dataset's view) the dashboard binds to. */
   view: string;
   charts: ChartSpec[];
-  /** The OS domain the dashboard's data belongs to. When set, the Superset dataset is
-   *  built on the Cube SQL API (Postgres-wire) as the domain's `bi_<domain>` principal —
-   *  the ONLY endpoint that actually serves the Cube view's rows (Trino has no such view).
-   *  When absent (legacy), the bundle falls back to the direct-Trino shape (no rows). */
+  /** The OS domain the dashboard's data belongs to — scopes the governed read and the
+   *  external BI (Power BI / Tableau) connection export. Optional for legacy specs. */
   domain?: string;
   /** Default cross-filter chips saved WITH the dashboard: View opens narrowed to these
    *  (the same equality shape every panel pushes into its governed WHERE), Edit shows them
@@ -96,9 +94,9 @@ export type DashboardSpec = {
   filters?: PanelFilter[];
 };
 
-/** The Cube view a dashboard is built on (one per gold dataset). */
+/** The governed view a dashboard is built on (one per gold dataset). */
 export function viewFor(dataset: Dataset): string {
-  return cubeViewName(dataset);
+  return viewName(dataset);
 }
 
 /** A panel's dedupe/identity key: viz type + metric members + the FULL slice (dimensions,
@@ -162,27 +160,9 @@ export function sameDashboard(a: DashboardSpec, b: DashboardSpec): boolean {
   return as.every((k, i) => k === bs[i]);
 }
 
-/**
- * The governed Cube `load` query for a native panel (Tier 1). Charts the panel's metric
- * MEMBERS as measures, groups by its dimensions + time dimension (at the chosen grain),
- * and pushes any filters through — the exact shape {@link cubeLoad} POSTs to Cube, so RLS
- * still applies. A `pie`/`bar` panel groups by its first dimension; a `line`/`area` panel
- * trends over its time dimension. Pure — the RLS security context is added at the server.
- */
-export function buildPanelCubeQuery(panel: Panel): CubeQuery {
-  const p = normalizePanel(panel);
-  const query: CubeQuery = { measures: p.metrics, limit: 1000 };
-  if (p.dimensions && p.dimensions.length) query.dimensions = p.dimensions;
-  if (p.timeDimension) {
-    query.timeDimensions = [{ dimension: p.timeDimension, ...(p.timeGrain ? { granularity: p.timeGrain } : {}) }];
-  }
-  if (p.filters && p.filters.length) query.filters = p.filters;
-  return query;
-}
-
 /** The full member set a panel REQUESTS from the served model (measures + group-by
- *  dimensions + the time dimension). The Cube query must be able to resolve every one of
- *  these; a member the served model lacks means the panel would render wrong (silently). */
+ *  dimensions + the time dimension). The governed query must be able to resolve every one
+ *  of these; a member the served model lacks means the panel would render wrong (silently). */
 export function panelRequestedMembers(panel: Panel): string[] {
   const p = normalizePanel(panel);
   const out = [...p.metrics];
@@ -195,8 +175,8 @@ export function panelRequestedMembers(panel: Panel): string[] {
 export type ServedModel = { measures: string[]; dimensions: string[]; timeDimensions: string[] };
 
 /**
- * The members a panel requests that the SERVED Cube model does NOT expose — the Northpeak
- * silent-degradation guard. When a promoted dataset's domain table is missing/stale, its Cube
+ * The members a panel requests that the SERVED model does NOT expose — the Northpeak
+ * silent-degradation guard. When a promoted dataset's domain table is missing/stale, its
  * view can't be served with those dimensions, so a group-by would vanish and the chart collapse
  * to a single bar. This returns exactly which members are absent so the caller can WARN loudly
  * instead of silently dropping the group-by. Empty result ⇒ every requested member resolves.

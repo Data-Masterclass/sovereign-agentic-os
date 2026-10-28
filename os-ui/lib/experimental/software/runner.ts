@@ -18,9 +18,9 @@ import type { ResourceFootprint } from './model.ts';
  * idempotent upserts (GET → PUT-with-resourceVersion or POST), an injectable k8s
  * client (unit-testable without a cluster), and HONEST degradation — when the API
  * server is unreachable it returns `{ live:false }` and NEVER claims the app is
- * running. Building images in-cluster is out of scope: the image ref is the app's
- * CI-published artifact (Forgejo/Harbor registry convention) or an explicit
- * prebuilt `runImage`; a missing image surfaces as `failed`, never a fake URL.
+ * running. Building images in-cluster is out of scope: the image ref is an explicit
+ * prebuilt `runImage` (or the platform's SOFTWARE_RUNNER_IMAGE default); a missing
+ * image surfaces as `failed`, never a fake URL.
  */
 
 export type RunnerK8s = (
@@ -34,14 +34,8 @@ export type RunnerApp = {
   slug: string;
   /** The app's per-app host (App.subdomain: `<slug>.<domain>.<appsDomain>`). */
   host: string;
-  /** Explicit prebuilt image ref; when unset the registry convention is used. */
+  /** Explicit prebuilt image ref; when unset the platform default image is used. */
   runImage?: string;
-  /**
-   * The DIGEST-pinned image ref (`<registry>/<slug>@sha256:…`) from the OS build
-   * service's last successful build (Phase B). When set it WINS over `runImage`/`:latest`
-   * and the runner serves this exact, immutable digest — deleting the `:latest` roll hack.
-   */
-  runImageDigest?: string;
   footprint: ResourceFootprint;
 };
 
@@ -110,26 +104,14 @@ export function runnerName(slug: string): string {
 }
 
 /**
- * The image the runner serves. Precedence: an explicit prebuilt `runImage` wins;
- * else the CI-published registry convention `<registry>/<slug>:latest` — the REAL
- * app image the builder shipped; else, only when no registry is configured at all,
- * a platform placeholder (`SOFTWARE_RUNNER_IMAGE`, e.g. a teaching stub). We never
- * BUILD here — a not-yet-published image simply fails readiness, honestly.
- *
- * NB: the registry image MUST win over `softwareRunnerImage`. Previously the global
- * placeholder (SOFTWARE_RUNNER_IMAGE=traefik/whoami) shadowed every real image, so
- * all apps ran the whoami stub on port 80 and never passed the 8080 readiness probe.
+ * The image the runner serves: an explicit prebuilt `runImage` wins; else the
+ * platform default (`SOFTWARE_RUNNER_IMAGE`, e.g. a teaching stub). We never BUILD
+ * here — a missing/unpublished image simply fails readiness, honestly.
  */
-export function appImageRef(app: { slug: string; runImage?: string; runImageDigest?: string }): string {
-  // A digest from the OS build service is the AUTHORITATIVE serving ref — immutable,
-  // unambiguous, and it makes every deploy a real (digest-changed) rollout. It wins
-  // over an explicit `runImage` and the `:latest` convention alike.
-  const digest = (app.runImageDigest ?? '').trim();
-  if (digest && isDigestRef(digest)) return digest;
+export function appImageRef(app: { slug: string; runImage?: string }): string {
   const explicit = (app.runImage ?? '').trim();
   if (explicit) return explicit;
-  if (config.harborRegistry) return `${config.harborRegistry}/${app.slug}:latest`;
-  return config.softwareRunnerImage || `${config.harborRegistry}/${app.slug}:latest`;
+  return config.softwareRunnerImage;
 }
 
 /** Build the concrete runnable spec from an app (image + host + footprint). */
@@ -147,8 +129,7 @@ export function runnerSpec(app: RunnerApp): RunnerSpec {
 /**
  * The pull policy for a serving image. A DIGEST ref is content-addressed and immutable,
  * so `IfNotPresent` is correct AND cheaper (never re-pulls the same digest); a mutable
- * `:latest` still needs `Always` to defeat the node cache after a CI push. This is what
- * lets the digest path DROP the `imagePullPolicy: Always` reliance for pinned images.
+ * tag still needs `Always` to defeat the node cache after a re-push.
  */
 export function pullPolicyFor(image: string): 'IfNotPresent' | 'Always' {
   return isDigestRef(image) ? 'IfNotPresent' : 'Always';

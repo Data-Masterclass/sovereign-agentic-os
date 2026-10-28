@@ -141,7 +141,7 @@ test('SELF-HEAL: a live app whose runner is ABSENT is re-provisioned on status p
   assert.ok(calls.some((c) => c.method === 'POST' && c.path.endsWith('/deployments')), 're-provisioned the Deployment');
   assert.equal(status.phase, 'running', 're-read sees the healed pod running');
   app = await getAppForUser(appId, creator);
-  assert.equal(app.pipeline.live, 'ok', 'pipeline.live flips to ok once the pod runs');
+  assert.equal(app.deploy.state, 'live', 'the app stays live once the pod runs');
   assert.ok(app.deploy.previewUrl, 'a served URL is now recorded');
 });
 

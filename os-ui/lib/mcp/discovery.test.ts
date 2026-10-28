@@ -6,12 +6,10 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { handleRpc, toolsForTab, ALL_MCP_TOOLS, type JsonRpcResponse } from './server.ts';
 import { GUIDE_PATHS, loadGuide, type GuidePath } from '@/lib/tabs/guides';
-import { config } from '@/lib/core/config';
 import { __resetStore as resetData } from '@/lib/experimental/data/store';
 
 /**
- * The DISCOVERY tools (thin governed adapters) + the science_predict run-as-user
- * fix + the guide↔tool-name drift guard.
+ * The DISCOVERY tools (thin governed adapters) + the guide↔tool-name drift guard.
  */
 
 const cara: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' };
@@ -53,10 +51,10 @@ test('the discovery + connection tools are all registered on the overarching end
   const names = ALL_MCP_TOOLS.map((t) => t.name);
   for (const n of [
     'list_datasets', 'get_dataset', 'list_knowledge', 'get_knowledge', 'list_files', 'search_files',
-    'list_metrics', 'list_dashboards', 'list_big_bets', 'get_agent_system', 'list_software', 'get_software',
+    'list_metrics', 'list_dashboards', 'get_agent_system', 'list_software', 'get_software',
     'list_connections', 'get_connection', 'create_connection', 'test_connection', 'promote_connection', 'get_guide',
     // Wave B — operate & read-back parity.
-    'get_metric', 'get_dashboard', 'get_big_bet', 'get_file', 'read_app_files', 'get_software_status', 'list_connection_templates',
+    'get_metric', 'get_dashboard', 'get_file', 'read_app_files', 'get_software_status', 'list_connection_templates',
   ]) assert.ok(names.includes(n), `missing discovery tool ${n}`);
 });
 
@@ -66,51 +64,6 @@ test('connections is a real MCP tab and promote_connection is Domain-admin-gated
   assert.ok(names.includes('create_connection') && names.includes('test_connection'));
   const promote = conn.find((t) => t.name === 'promote_connection');
   assert.equal(promote?.minRole, 'domain_admin', 'promote_connection now needs a Domain admin (rung-1 promotion)');
-});
-
-test('science_predict: runs AS THE CALLER (principal user:<id>), never the hardcoded sales-assistant', async () => {
-  const prev = config.mlEnabled;
-  (config as { mlEnabled: boolean }).mlEnabled = true;
-  try {
-    const { text } = await callTool(cara, 'science_predict', { account: 'acme' });
-    assert.ok(!text.includes('sales-assistant'), 'the hardcoded service principal is gone');
-    assert.match(text, /user:cara/, 'the predict door runs under the caller’s own principal');
-  } finally {
-    (config as { mlEnabled: boolean }).mlEnabled = prev;
-  }
-});
-
-test('science_predict: takes a `model` param (generic); default stays churn_model (back-compat)', async () => {
-  const prev = config.mlEnabled;
-  (config as { mlEnabled: boolean }).mlEnabled = true;
-  const tool = ALL_MCP_TOOLS.find((t) => t.name === 'science_predict');
-  assert.ok(tool, 'science_predict registered');
-  const props = (tool!.inputSchema as { properties: Record<string, unknown> }).properties;
-  assert.ok(props.model, 'the schema exposes the model param');
-  try {
-    // Default (no model) targets the churn slice.
-    const churn = await callTool(cara, 'science_predict', { account: 'acme' });
-    assert.match(churn.text, /churn_model/);
-    // An explicit unknown model is a governed deny that NAMES the model — proof
-    // the param reaches the policy gate (no silent churn fallback).
-    const other = await callTool(cara, 'science_predict', { model: 'lead_scoring', account: 'acme' });
-    assert.match(other.text, /lead_scoring/);
-    assert.ok(!other.text.includes('churn_model'), 'an explicit model is never silently swapped for churn');
-  } finally {
-    (config as { mlEnabled: boolean }).mlEnabled = prev;
-  }
-});
-
-test('science_predict: 404 (not_found) when ml.enabled is false', async () => {
-  const prev = config.mlEnabled;
-  (config as { mlEnabled: boolean }).mlEnabled = false;
-  try {
-    const { r } = await callTool(cara, 'science_predict', {});
-    assert.equal(r.isError, true);
-    assert.equal((r.structuredContent as { error: { code: string } }).error.code, 'not_found');
-  } finally {
-    (config as { mlEnabled: boolean }).mlEnabled = prev;
-  }
 });
 
 // --- Guide ↔ tool-name drift guard -------------------------------------------
@@ -130,9 +83,7 @@ const PATH_PRIMARY: Partial<Record<GuidePath, string[]>> = {
   software: ['create_software', 'design_software', 'generate_app_spec', 'set_app_spec', 'get_app_spec'],
   metrics: ['define_metric', 'query_metric', 'get_metric', 'preview_metric', 'promote_metric'],
   dashboards: ['create_dashboard', 'get_dashboard'],
-  bigbets: ['create_big_bet', 'get_big_bet', 'attach_component', 'update_big_bet'],
   files: ['upload_file', 'request_promotion', 'get_file'],
-  science: ['science_predict', 'list_models', 'get_model', 'create_model', 'train_model', 'get_model_status'],
 };
 
 test('every guide invokes ONLY tools that exist, and each pathway guide names its core tools', () => {
@@ -156,12 +107,10 @@ test('every guide invokes ONLY tools that exist, and each pathway guide names it
 });
 
 // Dispatch resolves a tool by its FIRST name match, so two tools sharing a name make
-// the second unreachable (the old Airflow `list_datasets` shadowed by the Data one —
-// now `list_airflow_assets`). Guard: every registered MCP tool name is unique.
+// the second unreachable. Guard: every registered MCP tool name is unique.
 test('MCP tool names are unique (no shadowed/unreachable tools)', () => {
   const seen = new Map<string, number>();
   for (const t of ALL_MCP_TOOLS) seen.set(t.name, (seen.get(t.name) ?? 0) + 1);
   const dupes = [...seen.entries()].filter(([, n]) => n > 1).map(([name]) => name);
   assert.deepEqual(dupes, [], `duplicate MCP tool names: ${dupes.join(', ')}`);
-  assert.ok(seen.has('list_airflow_assets'), 'the Airflow asset-list tool is registered under its own name');
 });

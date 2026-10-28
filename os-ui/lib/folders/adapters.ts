@@ -18,10 +18,8 @@ import '../experimental/knowledge/folder-adapter.ts';
 import '../experimental/metrics/folder-adapter.ts';
 // Wave-2 parity rollout — every artifact tab is foldered.
 import '../experimental/dashboards/folder-adapter.ts';
-import '../experimental/science/folder-adapter.ts';
 import '../agents/folder-adapter.ts';
 import '../experimental/software/folder-adapter.ts';
 import '../experimental/connections/folder-adapter.ts';
-import '../experimental/bigbets/folder-adapter.ts';
-import '../experimental/strategy/folder-adapter.ts';
 import '../experimental/knowledge/workflow-folder-adapter.ts';
+

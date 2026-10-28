@@ -4,7 +4,6 @@
 import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import { completeWithEscalation } from '@/lib/assistant/escalate';
-import { listPillars } from '@/lib/experimental/strategy/pillars';
 import { resolveManual, type ManualScope } from '@/lib/experimental/knowledge/manual';
 import { getDomainKnowledge, listWorkflows, getWorkflow } from '@/lib/experimental/knowledge/store';
 import { listDatasets, getDataset } from '@/lib/experimental/data/store';
@@ -16,7 +15,6 @@ import {
   type SuggestContext,
   type SuggestDataset,
   type SuggestOmSection,
-  type SuggestPillar,
   type SuggestWorkflow,
   type SuggestResult,
 } from './suggest.ts';
@@ -29,7 +27,7 @@ export type { SuggestResult } from './suggest.ts';
  * the SAME validated model call under the caller (MCP parity by construction).
  *
  * Everything is read UNDER the caller's identity through the existing governed libs:
- * `listPillars(user)` (canView-filtered), the three Operating-Model scopes via
+ * the three Operating-Model scopes via
  * `resolveManual` (only where `canView`), `listWorkflows(user)` + `getWorkflow` for
  * the visible processes' steps + HARD rules, and `listDatasets(user)` + `getDataset`
  * for the datasets the caller can see with their real columns/measures. Nothing is
@@ -106,12 +104,10 @@ function gatherDatasets(user: CurrentUser): SuggestDataset[] {
 
 /** Assemble the FULL governed suggest-context under the caller. */
 export async function assembleSuggestContext(user: CurrentUser, goal?: string): Promise<SuggestContext> {
-  const pillars = await listPillars(user);
-  const suggestPillars: SuggestPillar[] = pillars.map((p) => ({ id: p.id, name: p.name, description: p.description }));
   return {
     goal: goal?.trim() || undefined,
-    pillars: suggestPillars,
     omSections: gatherOmSections(user),
+
     workflows: gatherWorkflows(user),
     datasets: gatherDatasets(user),
   };

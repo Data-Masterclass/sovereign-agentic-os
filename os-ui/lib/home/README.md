@@ -60,7 +60,7 @@ and never duplicates their logic**:
 |-----------------------|--------------------------------|---------------|
 | What needs me         | `lib/approvals` (Governance)   | **LIVE**      |
 | My WIP                | `lib/artifacts` + `lib/apps`   | **LIVE**      |
-| Recent activity       | `lib/artifacts` (registry/OM)  | **LIVE**      |
+| Recent activity       | `lib/artifacts` (registry)     | **LIVE**      |
 | Domain pulse          | `lib/home/stubs` (Strategy)    | **MOCK**      |
 | Health & cost         | `lib/home/stubs` (Monitoring)  | **MOCK**      |
 | Ask anything          | `lib/home/assistant`           | **LIVE**      |

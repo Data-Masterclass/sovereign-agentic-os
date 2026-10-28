@@ -9,7 +9,6 @@
 - `request_promotion(kind, id)` — file a Personal→Domain promotion (owner-only). `approve_promotion(approvalId)` applies it.
 - `request_certification(kind, id, mode?)` — file a Domain→Company certification (to the cross-domain Marketplace) (Builder/Domain-admin in-domain) → Admin decides.
 - `get_lineage(ref)` — normalized lineage graph for any artifact.
-- `import_product(listingId, mode?)` — governed marketplace grant.
 - `get_policy_view()` — read-only policy plane (role grants + access grants + egress + standing), gated on the policy.view right (Builder+).
 - `get_cost()` — spend caps in scope + near/over alerts (creator sees own domain).
 

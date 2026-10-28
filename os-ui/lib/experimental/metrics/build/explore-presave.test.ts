@@ -16,7 +16,7 @@ import { goldSales } from '../fixtures.ts';
 import { claimsFromUser, delegate } from '../../data/identity.ts';
 import { previewTrinoSql, sqlRowsToExploreRows, exploreSpec } from '../explorer.ts';
 
-const calls: { queryRun: { sql: string; principal?: string }[]; cubeLoad: number } = { queryRun: [], cubeLoad: 0 };
+const calls: { queryRun: { sql: string; principal?: string }[] } = { queryRun: [] };
 
 mock.module('@/lib/infra/governed', {
   namedExports: {
@@ -24,17 +24,12 @@ mock.module('@/lib/infra/governed', {
       calls.queryRun.push({ sql, principal });
       return { engine: 'trino', tables: [], columns: ['revenue'], rows: [['123.5']], rowCount: 1 };
     },
-    cubeLoad: async () => {
-      calls.cubeLoad++;
-      return { rows: [{ 'Sales.revenue': 999 }], annotation: {} };
-    },
   },
 });
 
 mock.module('./live-clients.ts', {
   namedExports: {
     liveMetricsReachable: async () => true, // force LIVE
-    isCubeSyncLag: (e: unknown) => /not found/i.test((e as Error)?.message ?? ''),
   },
 });
 
@@ -46,13 +41,12 @@ function domainToken() {
 }
 
 test('UNSAVED draft → governed SQL path: queryRun under the viewer, mode live (sql), NO Cube query', async () => {
-  calls.queryRun = []; calls.cubeLoad = 0;
+  calls.queryRun = [];
   const dataset = goldSales();
   const measure = dataset.measures[0]; // revenue (sum of net_amount)
   const r = await exploreMetric(dataset, measure, domainToken(), {}, { unsaved: true });
 
   assert.equal(r.mode, 'live (sql)', 'honestly labelled as the SQL preview, not Cube-served');
-  assert.equal(calls.cubeLoad, 0, 'Cube is NEVER queried for a member that cannot exist yet');
   assert.equal(calls.queryRun.length, 1, 'exactly one governed Trino query');
   assert.equal(calls.queryRun[0].principal, 'amir', "runs under the VIEWER's delegated identity (R3)");
   assert.match(calls.queryRun[0].sql, /SUM\(CAST\(net_amount AS double\)\)/);
@@ -66,12 +60,11 @@ test('UNSAVED draft → governed SQL path: queryRun under the viewer, mode live 
 test('SAVED metric → ALSO governed SQL now (Cube off the read path): live (sql), no Cube query', async () => {
   // The migration's core behaviour change: a saved metric no longer resolves via Cube; it is
   // served as the SAME governed Trino SELECT as an unsaved draft.
-  calls.queryRun = []; calls.cubeLoad = 0;
+  calls.queryRun = [];
   const dataset = goldSales();
   const r = await exploreMetric(dataset, dataset.measures[0], domainToken());
 
   assert.equal(r.mode, 'live (sql)', 'served directly as governed Trino SQL, not via Cube');
-  assert.equal(calls.cubeLoad, 0, 'Cube is OFF the metric read path (Phase 1)');
   assert.equal(calls.queryRun.length, 1, 'exactly one governed Trino query');
   assert.match(calls.queryRun[0].sql, /FROM iceberg\.sales\.gold_sales/, 'reads the DOMAIN gold mart');
   assert.deepEqual(r.rows, [{ 'Sales.revenue': 123.5 }]);
@@ -80,26 +73,24 @@ test('SAVED metric → ALSO governed SQL now (Cube off the read path): live (sql
 test('PERSONAL dataset metric → reads the OWNER personal lane, run AS the owner uid', async () => {
   // The migration ENABLES metrics on personal gold: tier "dataset" → the private lane FQN,
   // read under the owner's delegated subject (OPA is_owned_personal grants it).
-  calls.queryRun = []; calls.cubeLoad = 0;
+  calls.queryRun = [];
   const dataset = goldSales({ tier: 'dataset', visibility: 'private' });
   const r = await exploreMetric(dataset, dataset.measures[0], domainToken());
 
   assert.equal(r.mode, 'live (sql)');
-  assert.equal(calls.cubeLoad, 0);
   assert.equal(calls.queryRun.length, 1);
   assert.match(calls.queryRun[0].sql, /FROM iceberg\.personal_amir\.gold_sales/, 'reads the owner private lane');
   assert.equal(calls.queryRun[0].principal, 'amir', 'runs AS the owner uid (is_owned_personal)');
 });
 
 test('UNSAVED rolling window → honest pending (no SQL form, still no Cube query, no fake rows)', async () => {
-  calls.queryRun = []; calls.cubeLoad = 0;
+  calls.queryRun = [];
   const dataset = goldSales();
   const measure = { ...dataset.measures[0], rollingWindow: { trailing: '7 day', offset: 'end' as const } };
   const r = await exploreMetric(dataset, measure, domainToken(), {}, { unsaved: true });
 
   assert.equal(r.pending, true);
   assert.deepEqual(r.rows, []);
-  assert.equal(calls.cubeLoad, 0);
   assert.equal(calls.queryRun.length, 0);
 });
 

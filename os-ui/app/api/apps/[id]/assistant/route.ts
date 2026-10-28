@@ -29,7 +29,7 @@ export const dynamic = 'force-dynamic';
  *
  * READ-ONLY over the app: it loads the app under the caller's governance (so a user who
  * can't see the app can't ask about it) and feeds REAL state — the purpose, the epics,
- * the pipeline, the deploy state — plus, for Define, the caller's DLS-scoped grantable
+ * the deploy state — plus, for Define, the caller's DLS-scoped grantable
  * artifacts, so every suggestion references real ids, never invented ones.
  *
  * Response:
@@ -219,7 +219,6 @@ function contextBlock(
     template: string;
     epics: { title: string; requirements?: { technical?: string; ux?: string; governance?: string }; stories: { id?: string; title: string; status?: string; spec?: { features?: string[]; nfrs?: string[]; rules?: string[] } }[] }[];
     surface: { ui: boolean; api: boolean };
-    pipeline: Record<string, string>;
     deploy: { state: string; previewUrl: string | null; releases: number };
     manifest: { missing: string[] };
     mcpTools: { name: string; write: boolean }[];
@@ -229,7 +228,6 @@ function contextBlock(
   bindable: string,
 ): string {
   const surface = [app.surface.ui ? 'UI' : '', app.surface.api ? 'API' : ''].filter(Boolean).join(' + ') || 'unknown';
-  const pipeline = Object.entries(app.pipeline).map(([k, v]) => `${k}=${v}`).join(', ') || '(no pipeline yet)';
   const head = `App "${app.name || '(unnamed)'}" (${surface}). Description: ${app.description || '(none)'}.`;
   switch (stage) {
     case 'define':
@@ -256,7 +254,7 @@ function contextBlock(
       return head;
     case 'test':
       return [
-        `App "${app.name}". Deploy state: ${app.deploy.state}. Preview URL: ${app.deploy.previewUrl ? 'served' : 'not yet'}. Pipeline: ${pipeline}.`,
+        `App "${app.name}". Deploy state: ${app.deploy.state}. Preview URL: ${app.deploy.previewUrl ? 'served' : 'not yet'}.`,
         `Purpose: ${app.purpose || '(none)'}`,
         'Stories to test (title — spec):',
         specDigest(app.epics),

@@ -59,11 +59,8 @@ test('GAP 2: the agents-systems create route no longer accepts a client visibili
   assert.match(read('app/api/agents/systems/[id]/promote/route.ts'), /promoteOrRequest|promoteThroughSeam/);
 });
 
-test('GAP 3: marketplace import paths gate on Builder+ (rank-based — domain_admin inherits)', () => {
-  assert.match(read('lib/experimental/marketplace/adapters.ts'), /!roleAtLeast\(viewer\.role, 'builder'\)/, 'GovernedImportAdapter.import gates Builder+');
-  assert.match(read('lib/core/artifacts.ts'), /roleRank\(user\.role\) < roleRank\('builder'\)/, 'addFromMarketplace gates Builder+');
+test('GAP 3: data-product import gates on Builder+ (rank-based — domain_admin inherits)', () => {
   assert.match(read('lib/experimental/data/store.ts'), /!roleAtLeast\(importer\.role, 'builder'\)/, 'importProduct gates Builder+');
-  assert.match(read('lib/core/tabs.ts'), /Marketplace'[^\n]*role: 'Builder/, 'Marketplace tab carries a role hint');
 });
 
 test('GAP 7 (consolidation): the duplicate governance users route is GONE; user admin is the single Admin surface', () => {
@@ -86,15 +83,6 @@ test('GAP 8 (4-rank migration): the Platform-group user routes stay requireAdmin
     assert.match(read(p), /requireAdmin/, `${p} must stay admin-only`);
   }
   assert.match(read('app/api/platform-admin/access/route.ts'), /adminCtx/, 'platform-admin access stays adminCtx-gated');
-});
-
-test('GAP 4: science predict routes bind identity to the session, never the body', () => {
-  for (const p of ['app/api/science/predict/route.ts', 'app/api/science/predict/rest/route.ts']) {
-    const src = read(p);
-    assert.match(src, /domains: user\.domains/, `${p} derives domains from the session`);
-    assert.doesNotMatch(src, /body\.principal/, `${p} must not read a client principal`);
-    assert.doesNotMatch(src, /body\.domain\b/, `${p} must not read a client domain`);
-  }
 });
 
 test('GAP 5: the unauthenticated knowledge GET route is gone; retrieve callers pass a DLS principal', () => {
@@ -150,9 +138,6 @@ test('LOCKDOWN 5: the remaining proxy read routes require a session', () => {
   for (const p of [
     'app/api/gateway/route.ts',
     'app/api/chat/route.ts',
-    'app/api/science/route.ts',
-    'app/api/science/churn/route.ts',
-    'app/api/orchestration/route.ts',
     'app/api/catalog/route.ts',
   ]) {
     assert.match(read(p), /requireUser/, `${p} must require a session`);
@@ -180,7 +165,6 @@ test('LOCKDOWN 7: sign-in and sign-out do a full-page navigation to bust the rou
 
 // Routes whose GET returns 401 for an anonymous caller (requireUser is enough).
 const USER_GATED_GETS = [
-  'app/api/software/route.ts',
   'app/api/agents/route.ts',
   'app/api/status/route.ts',
   'app/api/agents/models/route.ts',
@@ -208,12 +192,6 @@ for (const p of USER_GATED_GETS) {
   });
 }
 
-test('LEAK-FIX: /api/software GET scopes private repos to admins (no cross-user private recon)', () => {
-  // The repo listing logic was lifted into lib/software/repos.ts (the route is now a
-  // thin auth+parse+shape wrapper); the admin-only private-repo scope lives there.
-  const src = read('lib/experimental/software/repos.ts');
-  assert.match(src, /user\.role === 'admin' \? all : all\.filter\(\(r\) => !r\.private\)/, 'non-admins never see private repos');
-});
 
 test('ROLE-PERMS: the role-permissions API is admin-only on both verbs', () => {
   const src = read('app/api/platform-admin/roles/route.ts');
@@ -234,19 +212,6 @@ test('PLATFORM-GATE 1: /components has a server-side admin layout', () => {
   assert.match(src, /role !== 'admin'/, 'app/(govern)/components/layout.tsx must gate non-admins');
 });
 
-test('PLATFORM-GATE 2: /console is builder+ for the governed Query surface; the raw Shell stays admin-only', () => {
-  // /terminal + /admin-query were consolidated into /console (Shell | Query switch).
-  // The page is now builder+ (governed Query — OPA/RLS per caller). The page re-checks
-  // that gate, and gates the raw Shell (arbitrary command execution) to admins only
-  // via canShell; the admin-query API + terminal broker enforce the same server-side.
-  const src = read('app/(build)/console/page.tsx');
-  assert.match(src, /roleAtLeast\(user\.role, 'builder'\)/, 'app/(build)/console/page.tsx must have a builder+ page gate');
-  assert.match(src, /canShell=\{user\.role === 'admin'\}/, 'app/(build)/console/page.tsx must gate the raw Shell to admins');
-  // The Query API must be builder+, and Cube mode must stay admin-only.
-  const api = read('app/api/admin-query/route.ts');
-  assert.match(api, /roleAtLeast\(u\.role, 'builder'\)/, 'admin-query must gate to builder+');
-  assert.match(api, /mode === 'cube'[\s\S]*?u\.role !== 'admin'/, 'admin-query Cube mode must stay admin-only');
-});
 
 test('PLATFORM-GATE 3: /about is open to all roles (moved from Admin group to Entry for transparency)', () => {
   // About / Licenses (open-source component list) is purely informational.
@@ -273,9 +238,6 @@ test('PLATFORM-GATE 4: consolidated tab gates — Policies & Approvals is builde
   // About / Licenses: moved to Entry — visible to all roles, no minRole.
   const aboutBlock = src.match(/label: 'About \/ Licenses'[^}]*/s)?.[0] ?? '';
   assert.doesNotMatch(aboutBlock, /minRole/, "About / Licenses must not declare minRole (all-roles visible)");
-  // Tutorials must NOT carry minRole (visible to all — students need it).
-  const tutBlock = src.match(/label: 'Tutorials'[^}]*/s)?.[0] ?? '';
-  assert.doesNotMatch(tutBlock, /minRole/, "Tutorials must not declare minRole (all-roles visible)");
   // Terminal and Query must be gone from the nav (merged into Console).
   assert.doesNotMatch(src, /label: 'Terminal'/, "Terminal tab must be gone (merged into Console)");
   assert.doesNotMatch(src, /label: 'Query'/, "Query tab must be gone (merged into Console)");
@@ -313,7 +275,6 @@ const UNAUTHENTICATED_BY_DESIGN = new Set([
   'app/api/auth/login/route.ts',
   'app/api/mcp/route.ts',
   'app/api/mcp/[tab]/route.ts',
-  'app/api/cube/models/route.ts',
   'app/api/agents/scheduled-run/route.ts',
   'app/api/agents/tool/route.ts',
 ]);

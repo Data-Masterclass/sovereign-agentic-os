@@ -19,7 +19,7 @@ import {
  *   1. DEFINE-time convergence: form / agent / YAML are three doors to ONE artifact.
  *      {@link convergence} proves they yield the identical Measure + member, so the
  *      define UX can offer all three without ever forking the definition.
- *   2. RESOLVE-time agreement: the explorer, Superset dashboards and the agent `metrics`
+ *   2. RESOLVE-time agreement: the explorer, the OS dashboards and the agent `metrics`
  *      tool all read the SAME canonical member. {@link numbersMatch} proves that, for a
  *      member, every consumer returns the identical value (the kind-gate "numbers
  *      match the agent's metrics tool" check, at the unit level).

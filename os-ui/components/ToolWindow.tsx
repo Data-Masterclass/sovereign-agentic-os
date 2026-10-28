@@ -15,7 +15,7 @@ import { onEscape, isBackdropClick } from '@/lib/core/overlay-dismiss';
  *
  * Not every tool can live in the frame: SPAs that load root-absolute assets
  * (`/_next/*`, `/static/*`) collide with the OS's own routes behind the
- * `/tools/<key>` prefix and render blank (how the Superset embed died), and
+ * `/tools/<key>` prefix and render blank, and
  * WebSocket tools can't run over the HTTP proxy at all. `/api/tools/<key>`
  * reports which mode a tool gets; for `own-tab` tools the frame area shows the
  * Tier-2 card — the tool's own console link in its own tab — instead of a

@@ -6,7 +6,7 @@ import { roleAtLeast, type Role } from '../core/session';
 
 /**
  * `system.yaml` — the SINGLE source of truth for an agent system (Agents tab,
- * Approach A). Files in Forgejo are authoritative; this module turns the YAML
+ * Approach A). The stored files are authoritative; this module turns the YAML
  * text into a normalized {@link System} (and back), applying the locked defaults
  * (state `{messages: add_messages}`, empty grants, empty routing overrides).
  *

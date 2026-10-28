@@ -15,11 +15,9 @@ import {
  * #28: real flag-gating for resources/templates — the underlying file's
  * unconditional RESOURCES/RESOURCE_TEMPLATES filtered by each item's own
  * `tab` field against TAB_FEATURES ('meta' is cross-cutting, always in).
- * bigbets' MCP tab is 'bigbets' but its UI feature key is 'big-bets'
- * (hyphenated) — same mapping as register-experimental.ts.
  */
-const enabled = (tab: string): boolean =>
-  tab === 'meta' || TAB_FEATURES.has(tab === 'bigbets' ? 'big-bets' : tab);
+const enabled = (tab: string): boolean => tab === 'meta' || TAB_FEATURES.has(tab);
+
 
 export const RESOURCES: McpResource[] = ALL_RESOURCES.filter((r) => enabled(r.tab));
 export const RESOURCE_TEMPLATES: McpResourceTemplate[] = ALL_RESOURCE_TEMPLATES.filter((r) => enabled(r.tab));

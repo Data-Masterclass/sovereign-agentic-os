@@ -12,7 +12,7 @@ import { type TileOrderSurface, ORDER_LIMIT } from './tile-order-pure';
  * wide tile-reorder mechanism. Persists via the standard dual pattern:
  * authoritative in-process globalThis-pinned Map (works with NO cluster) plus
  * best-effort OpenSearch write-through to "os-user-prefs" for durability on a
- * real deploy. Same pattern as lib/marketplace/store.ts and lib/agents/store.ts.
+ * real deploy. Same pattern as lib/agents/store.ts.
  *
  * The session user is the only valid caller — enforced at the route layer, not
  * here, so this module stays free of Next.js request context.

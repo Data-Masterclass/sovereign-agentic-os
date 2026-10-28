@@ -4,9 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Dataset, Measure } from '../data/index.ts';
-import { deregisterPlan, deregisterCubeMembers } from './physical-delete.ts';
+import { deregisterPlan, deregisterViewMembers } from './physical-delete.ts';
 
-// deregisterPlan reads only name/domain (via cubeName/cubeViewName/measureMember); a
+// deregisterPlan reads only name/domain (via modelName/viewName/measureMember); a
 // minimal cast keeps the planner test free of the full dataset builder.
 function ds(): Dataset {
   return { id: 'ds_orders', name: 'Orders', owner: 'amir', domain: 'sales' } as unknown as Dataset;
@@ -14,7 +14,7 @@ function ds(): Dataset {
 
 const revenue: Measure = { name: 'revenue', type: 'sum', sql: 'net_amount' };
 
-test('deregisterPlan: one Cube member per metric (its canonical member + cube)', () => {
+test('deregisterPlan: one member per metric (its canonical member + model)', () => {
   const plan = deregisterPlan(ds(), revenue);
   assert.equal(plan.length, 1);
   assert.equal(plan[0].member, 'Orders.revenue');
@@ -22,9 +22,9 @@ test('deregisterPlan: one Cube member per metric (its canonical member + cube)',
   assert.equal(plan[0].cube, 'orders');
 });
 
-test('deregisterCubeMembers: DELETE physically removes the measure — reports ok', () => {
+test('deregisterViewMembers: DELETE physically removes the measure — reports ok', () => {
   const calls: { datasetId: string; measure: string }[] = [];
-  const report = deregisterCubeMembers('ds_orders', ds(), revenue, (datasetId, measure) => {
+  const report = deregisterViewMembers('ds_orders', ds(), revenue, (datasetId, measure) => {
     calls.push({ datasetId, measure });
     return { removed: true };
   });
@@ -32,17 +32,17 @@ test('deregisterCubeMembers: DELETE physically removes the measure — reports o
   assert.equal(report.length, 1);
   assert.equal(report[0].target, 'Orders.revenue');
   assert.equal(report[0].ok, true);
-  assert.match(report[0].reason, /de-registered from Cube model/);
+  assert.match(report[0].reason, /de-registered from model/);
 });
 
-test('deregisterCubeMembers: honest when the measure was already absent (removed=false)', () => {
-  const report = deregisterCubeMembers('ds_orders', ds(), revenue, () => ({ removed: false }));
+test('deregisterViewMembers: honest when the measure was already absent (removed=false)', () => {
+  const report = deregisterViewMembers('ds_orders', ds(), revenue, () => ({ removed: false }));
   assert.equal(report[0].ok, false);
   assert.match(report[0].reason, /already absent/);
 });
 
-test('deregisterCubeMembers: honest when de-registration throws (e.g. not permitted)', () => {
-  const report = deregisterCubeMembers('ds_orders', ds(), revenue, () => {
+test('deregisterViewMembers: honest when de-registration throws (e.g. not permitted)', () => {
+  const report = deregisterViewMembers('ds_orders', ds(), revenue, () => {
     throw new Error('Not permitted to edit this dataset');
   });
   assert.equal(report[0].ok, false);

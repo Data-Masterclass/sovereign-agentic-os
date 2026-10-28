@@ -7,13 +7,13 @@ import { useEffect, useState } from 'react';
 import { type DatasetGroups, datasetLayerLabel } from './shared';
 
 /**
- * The strategy-grounded "Suggest metrics" panel — the calm entry point at Define. It
- * works with NO dataset chosen: the server assembles the caller's pillars, operating
+ * The context-grounded "Suggest metrics" panel — the calm entry point at Define. It
+ * works with NO dataset chosen: the server assembles the caller's operating
  * model, processes and visible datasets, and returns 3–6 grounded candidates. One click
  * on a card pre-fills the dataset + full form and lands the builder on Refine.
  *
  * Honest by construction: the grounding banner names what actually informed the ask (and
- * links to Strategy / Operating Model when they're empty), and an offline assistant shows
+ * links to the Operating Model when it's empty), and an offline assistant shows
  * the route's own 503/402 message — never a fabricated suggestion.
  */
 
@@ -24,13 +24,12 @@ export type Candidate = {
   name: string;
   description: string;
   why: string;
-  pillarId?: string;
   processId?: string;
   datasetId: string;
   form: MetricFormLite;
   crossEntity?: CrossEntity;
 };
-type Grounding = { pillars: number; omSections: number; workflows: number; datasets: number };
+type Grounding = { omSections: number; workflows: number; datasets: number };
 type SuggestResult = { candidates: Candidate[]; grounding: Grounding };
 
 /** A one-line human summary of the measure shape (no jargon). */
@@ -85,7 +84,7 @@ export default function SuggestPanel({
       if (!res.ok) throw new Error((data.error as string | undefined) ?? `Request failed (${res.status})`);
       setResult({
         candidates: Array.isArray(data.candidates) ? (data.candidates as Candidate[]) : [],
-        grounding: (data.grounding as Grounding) ?? { pillars: 0, omSections: 0, workflows: 0, datasets: 0 },
+        grounding: (data.grounding as Grounding) ?? { omSections: 0, workflows: 0, datasets: 0 },
       });
     } catch (e) {
       setError((e as Error).message);
@@ -95,7 +94,7 @@ export default function SuggestPanel({
   };
 
   const g = result?.grounding;
-  const strategyThin = !!g && g.pillars === 0 && g.omSections === 0 && g.workflows === 0;
+  const contextThin = !!g && g.omSections === 0 && g.workflows === 0;
 
   return (
     <div className="guided-panel">
@@ -103,7 +102,7 @@ export default function SuggestPanel({
         <div style={{ flex: 1, minWidth: 220 }}>
           <span className="comp-label" style={{ margin: 0 }}>Suggest metrics</span>
           <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
-            Let the assistant propose metrics from your strategy and data — no dataset needed.
+            Let the assistant propose metrics from your operating model and data — no dataset needed.
           </p>
         </div>
         <button className="btn" onClick={ask} disabled={busy} style={{ whiteSpace: 'nowrap' }}>
@@ -129,18 +128,18 @@ export default function SuggestPanel({
           <div className="stub-page" style={{ marginTop: 12 }}>
             {g && g.datasets === 0
               ? 'No datasets are visible to you yet — build or get access to a governed Gold dataset in Data, then try again.'
-              : 'No grounded suggestions this time. Add a goal above, or refine your Strategy and Operating Model, and try again.'}
+              : 'No grounded suggestions this time. Add a goal above, or refine your Operating Model, and try again.'}
           </div>
         ) : (
           <>
-            {strategyThin ? (
+            {contextThin ? (
               <p className="hint" style={{ marginTop: 12 }}>
-                These are grounded in your data only. Define <a href="/strategy">Strategic Pillars</a> and
-                your <a href="/knowledge">Operating Model</a> to get strategy-grounded suggestions.
+                These are grounded in your data only. Define
+                your <a href="/knowledge">Operating Model</a> to get context-grounded suggestions.
               </p>
             ) : (
               <p className="hint" style={{ marginTop: 12 }}>
-                Grounded in {g!.pillars} pillar{g!.pillars === 1 ? '' : 's'}, {g!.omSections} operating-model
+                Grounded in {g!.omSections} operating-model
                 section{g!.omSections === 1 ? '' : 's'}, {g!.workflows} process{g!.workflows === 1 ? '' : 'es'} and{' '}
                 {g!.datasets} dataset{g!.datasets === 1 ? '' : 's'} you can see.
               </p>
@@ -154,8 +153,8 @@ export default function SuggestPanel({
                     <div style={{ fontWeight: 600 }}>{c.name}</div>
                     {c.why ? <p className="hint" style={{ marginTop: 4 }}>{c.why}</p> : null}
                     <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                      {c.pillarId ? <span className="badge">pillar</span> : null}
-                      {c.processId ? <span className="badge">process</span> : null}
+                      {c.processId
+ ? <span className="badge">process</span> : null}
                       <span className="badge muted">
                         {meta ? `${meta.name} · ${datasetLayerLabel(meta.tier)}` : c.datasetId}
                       </span>

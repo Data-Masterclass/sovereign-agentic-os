@@ -45,13 +45,11 @@ export type FolderTab =
   | 'metrics'
   // Wave-2 parity rollout: every artifact tab is foldered under the same registry.
   | 'dashboards'
-  | 'science'
   | 'agents'
   | 'software'
   | 'connections'
-  | 'bigbets'
-  | 'pillars'
   | 'workflows';
+
 export type FolderScope = 'personal' | 'domain';
 
 /** The acting principal — the id/role/domains the edit-scope gate reads. */

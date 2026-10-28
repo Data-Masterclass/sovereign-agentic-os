@@ -17,7 +17,7 @@ import { getConnectionForUser } from '@/lib/experimental/connections/store';
  * thin SERVER-SIDE bridge that resolves the connection under the caller's identity
  * (DLS) and dereferences the vaulted secret HERE (never leaves the server).
  *
- * Same discipline as `lib/data/openmetadata`: every call NEVER throws to the caller
+ * Same discipline as the other connection clients: every call NEVER throws to the caller
  * — it degrades to `{ ok:false, reason }` so honest errors surface without crashing.
  *
  * PATH SHAPES: Airflow's stable REST API is v2 (`/api/v2/...`); older deployments

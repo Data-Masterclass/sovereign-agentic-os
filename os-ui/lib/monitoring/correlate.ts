@@ -17,7 +17,7 @@ import { canSee } from './scope-core.ts';
  * their token sets intersect, so correlation is bidirectional regardless of which
  * side authored the link (a run points at its pipeline; the pipeline need not
  * point back). On a live cluster the tokens come from Langfuse trace metadata +
- * OpenMetadata lineage + the Governance audit/cap ids; offline from the fixtures.
+ * the OS lineage graph + the Governance audit/cap ids; offline from the fixtures.
  *
  * SCOPE-SAFE: the component is grown only through items the viewer may see, so
  * correlation can never leak a node/pipeline/artifact out of scope (e.g. a User

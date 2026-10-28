@@ -11,9 +11,9 @@ import { getMetric, listMetrics } from '../../metrics/store.ts';
 import { type Panel, normalizePanel, panelMetrics } from '../model.ts';
 
 /**
- * Server boundary for a NATIVE dashboard panel (Tier 1). Since Phase 2 a panel resolves its
- * numbers through the SAME compiled-SQL path the Metrics tab uses ({@link exploreMetric}) —
- * NOT Cube — so a chart's number is BY CONSTRUCTION the same number the explorer + the agent
+ * Server boundary for a NATIVE dashboard panel (Tier 1). A panel resolves its numbers
+ * through the SAME compiled-SQL path the Metrics tab uses ({@link exploreMetric}), so a
+ * chart's number is BY CONSTRUCTION the same number the explorer + the agent
  * `metrics` tool show for the same member, slice and viewer. Each panel measure is resolved to
  * its governed metric (dataset + measure) via the registry, then served as ONE governed Trino
  * SELECT run UNDER THE VIEWER'S delegated identity (R3): {@link propagate} inside exploreMetric
@@ -93,7 +93,7 @@ export type PanelQueryDeps = {
 
 /**
  * Run one panel's governed query as the viewer, resolving numbers through the compiled-SQL
- * metrics path (Phase 2 — Cube is off the dashboards read path). `token` is the viewer's
+ * metrics path. `token` is the viewer's
  * delegated token (R2/R3); `user` scopes the registry resolver to what the viewer may see.
  * A panel with no metrics resolves to an empty result (nothing to chart).
  *
@@ -111,8 +111,7 @@ export async function runPanelQuery(
   user: Principal,
   deps: PanelQueryDeps = {},
 ): Promise<PanelQueryResult> {
-  const { cube } = propagate(token); // throws if the token isn't user-delegated (R2/R3)
-  const securityContext = cube.securityContext;
+  const { securityContext } = propagate(token); // throws if the token isn't user-delegated (R2/R3)
   const resolve = deps.resolve ?? registryResolver(user);
   const explore = deps.explore ?? exploreMetric;
   const p = normalizePanel(panel);

@@ -115,7 +115,7 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
         type: 'string',
         enum: ['spec', 'code'],
         description:
-          "Serving kind. 'spec' (DEFAULT) creates a DECLARATIVE app served same-origin by the OS renderer — no Forgejo repo / CI / registry / pod; author it with set_app_spec or scaffold it with generate_app_spec (the spec IS the app). 'code' is the ADVANCED coded path (raw code + image build) — DISABLED unless a platform admin has enabled coded apps (createApp fails closed with 403 otherwise).",
+          "Serving kind. 'spec' (DEFAULT) creates a DECLARATIVE app served same-origin by the OS renderer — no source tree / registry / pod; author it with set_app_spec or scaffold it with generate_app_spec (the spec IS the app). 'code' is the ADVANCED coded path (raw code + image build) — DISABLED unless a platform admin has enabled coded apps (createApp fails closed with 403 otherwise).",
       },
     },
     required: ['name'],

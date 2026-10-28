@@ -46,7 +46,7 @@ export type AppConnection = {
  * separately, so a module-scoped Map would give every route its own empty copy: a
  * connection registered by the app-create route would be invisible to the
  * Connections / agent-governed routes. Pinning makes the registry a true singleton
- * and survives dev HMR. (Same reason marketplace/approvals/agents stores pin.)
+ * and survives dev HMR. (Same reason approvals/agents stores pin.)
  */
 type RegistryState = { grants: Map<string, Set<string>>; conns: Map<string, AppConnection> };
 const STATE_KEY = Symbol.for('soa.app-registry.state');

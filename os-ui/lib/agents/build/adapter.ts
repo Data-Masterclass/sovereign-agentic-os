@@ -6,8 +6,8 @@ import { type IR } from '../langgraph-compile.ts';
 
 /**
  * The ONE Build adapter interface (Approach A). Pressing Build runs each tool's
- * adapter: `apply` performs the real setup (LangGraph reload, Forgejo write,
- * LiteLLM key+routing, OPA policy, Langfuse project), then `verify` runs a probe
+ * adapter: `apply` performs the real setup (LangGraph reload, LiteLLM key+routing,
+ * OPA policy, Langfuse project), then `verify` runs a probe
  * that it actually worked. Per-tool best-path; mocked in kind.
  *
  * The cardinal rule (tested): a row is ✓ ONLY when BOTH apply AND verify pass.
@@ -38,7 +38,7 @@ export type BuildContext = {
 };
 
 export interface BuildAdapter {
-  /** Tool key shown in the Build table: langgraph | forgejo | litellm | opa | langfuse. */
+  /** Tool key shown in the Build table: langgraph | litellm | opa | langfuse. */
   tool: string;
   apply(ctx: BuildContext): Promise<StepResult>;
   verify(ctx: BuildContext): Promise<StepResult>;

@@ -15,7 +15,7 @@
  *   - `privatePrefix`      — the user's object-storage upload prefix (MinIO).
  *   - `pullExtract`        — pull a Trino-authorized, already-masked extract.
  *   - `assertScopedToSelf` — reject a personal query that reaches a governed catalog.
- *   - `promotePlan`        — the ONLY personal→shared path (dbt-trino → Iceberg + OM).
+ *   - `promotePlan`        — the ONLY personal→shared path (dbt-trino → Iceberg).
  *
  * Pure (dependency-injected) so the invariants are unit-tested without a live backend;
  * the API route wires the real governed query path.
@@ -84,7 +84,7 @@ export function assertScopedToSelf(sql: string): void {
 export interface PromotePlan {
   engine: 'dbt-trino';
   target: string;
-  catalog: 'openmetadata';
+  catalog: 'os-registry';
   domain: string;
   owner: string;
   visibility: string;
@@ -100,7 +100,7 @@ function slug(name: string): string {
 
 /**
  * Promote a personal dataset into the governed lane — the ONLY personal→shared
- * path. dbt-trino writes it as a governed Iceberg product; OpenMetadata catalogs
+ * path. dbt-trino writes it as a governed Iceberg product; the OS registry catalogs
  * it (owner/domain/visibility/lineage). Production transforms stay dbt-trino.
  */
 export function promotePlan(
@@ -113,7 +113,7 @@ export function promotePlan(
     // shape as store-fqn.domainSchema — so a hyphenated domain (`agentic-leader-q3-2026`)
     // targets the real Iceberg schema (`agentic_leader_q3_2026`) instead of a SYNTAX_ERROR.
     target: `iceberg.${slug(meta.domain)}.${slug(d.name)}`,
-    catalog: 'openmetadata',
+    catalog: 'os-registry',
     domain: meta.domain,
     owner: meta.owner,
     visibility: meta.visibility,

@@ -18,11 +18,11 @@ import type { ExecuteIdentity } from '@/lib/infra/governed';
 export type StepResult = { ok: boolean; detail: string; error?: string };
 
 /** The lifecycle stages a Build runs (brief §"stage→adapter-set"). */
-export type DataStage = 'bronze' | 'silver' | 'gold' | 'metric' | 'dashboard' | 'promote' | 'certify';
+export type DataStage = 'bronze' | 'silver' | 'gold' | 'promote' | 'certify';
 
 export type DataBuildContext = {
   dataset: Dataset;
-  /** Generated tool-native files for this build (cube yaml, exposure, bundle…). */
+  /** Build inputs keyed by artifact name (e.g. the uploaded object's key for a Bronze ingest). */
   artifacts: Record<string, string>;
   /** The acting principal (delegated identity) — forwarded to governed probes. */
   principal?: string;
@@ -51,7 +51,7 @@ export type DataBuildContext = {
 };
 
 export interface DataAdapter {
-  /** Tool key shown in the Build table: dlt | dbt | dbt-trino | trino | cube | superset | om | policy. */
+  /** Tool key shown in the Build table: dlt | dbt | dbt-trino | trino | policy. */
   tool: string;
   apply(ctx: DataBuildContext): Promise<StepResult>;
   verify(ctx: DataBuildContext): Promise<StepResult>;

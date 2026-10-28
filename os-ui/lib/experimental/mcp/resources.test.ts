@@ -47,25 +47,23 @@ test('initialize: declares resources + prompts capabilities and ALWAYS carries o
   assert.match(text, /never domain_admin\/admin/, 'states the domain_admin ceiling (cannot mint domain_admin/admin)');
 });
 
-test('resources/list: exposes the 12 guides + the 10 my/* inventories, annotated for the assistant', async () => {
+test('resources/list: exposes the 10 guides + the 9 my/* inventories, annotated for the assistant', async () => {
   const r = result(await rpc(cara, 'resources/list'));
   const list = r.resources as { uri: string; annotations: { audience: string[] } }[];
   const uris = list.map((x) => x.uri);
-  // 12 static guides.
+  // 10 static guides — one per tab that still exists.
   for (const u of [
     'sovereign-os://guide/overview', 'sovereign-os://guide/governance',
     'sovereign-os://guide/path/data', 'sovereign-os://guide/path/knowledge',
     'sovereign-os://guide/path/connections', 'sovereign-os://guide/path/agents',
     'sovereign-os://guide/path/software', 'sovereign-os://guide/path/metrics',
-    'sovereign-os://guide/path/dashboards', 'sovereign-os://guide/path/bigbets',
-    'sovereign-os://guide/path/files', 'sovereign-os://guide/path/science',
+    'sovereign-os://guide/path/dashboards', 'sovereign-os://guide/path/files',
   ]) assert.ok(uris.includes(u), `missing guide ${u}`);
-  // 11 dynamic inventories.
+  // 9 dynamic inventories.
   for (const u of [
     'sovereign-os://my/identity', 'sovereign-os://my/datasets', 'sovereign-os://my/knowledge',
     'sovereign-os://my/connections', 'sovereign-os://my/files', 'sovereign-os://my/metrics',
     'sovereign-os://my/dashboards', 'sovereign-os://my/agents', 'sovereign-os://my/software',
-    'sovereign-os://my/bigbets', 'sovereign-os://my/science',
   ]) assert.ok(uris.includes(u), `missing inventory ${u}`);
   assert.ok(list.every((x) => x.annotations.audience.includes('assistant')));
 });

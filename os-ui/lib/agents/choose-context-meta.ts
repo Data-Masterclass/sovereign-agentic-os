@@ -112,8 +112,9 @@ export const AGENT_CONTEXT_META: Record<AgentContextType, AgentContextMeta> = {
   },
   plan: {
     type: 'plan', label: 'Plan Items',
-    blurb: 'Your strategy, big bets and operating model — each loaded on demand via its governed read tool, scope-checked as you.',
-    members: [memberByKey('strategy'), memberByKey('bigbets'), memberByKey('operating-manual')],
+    blurb: 'Your operating model — loaded on demand via its governed read tool, scope-checked as you.',
+    members: [memberByKey('operating-manual')],
+
   },
 };
 

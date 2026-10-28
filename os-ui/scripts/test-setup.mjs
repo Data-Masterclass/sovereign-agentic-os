@@ -5,7 +5,7 @@
 // full install (every tab on) instead of the base-only production default —
 // the few tests that DO test gating (marketplace/strategy-tools.test.ts) use
 // their own local tool list and don't depend on this.
-process.env.OS_ENABLED_TABS = 'home,cockpit,tutorials,mcp,about,strategy,big-bets,operating-model,workflows,marketplace,data,metrics,files,knowledge,connections,agents,dashboards,software,science,console,governance,monitoring,components,llm-gateway,admin';
+process.env.OS_ENABLED_TABS = 'home,mcp,about,strategy,big-bets,operating-model,workflows,marketplace,data,metrics,files,knowledge,connections,agents,dashboards,software,science,console,governance,monitoring,components,llm-gateway,admin';
 
 import { register } from 'node:module';
 register('./test-alias-hook.mjs', import.meta.url);

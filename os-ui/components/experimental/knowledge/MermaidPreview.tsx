@@ -12,7 +12,7 @@ import type { Workflow } from '@/lib/experimental/knowledge/schema';
  * markdown + the visual swimlane are the two EDITABLE surfaces; Mermaid is
  * generated one-way from them). We emit the diagram SOURCE (pure `renderMermaid`)
  * rather than bundling the heavy mermaid runtime, keeping the OS air-gap clean —
- * the source renders in Forgejo/any markdown viewer and is copy-pasteable. This is
+ * the source renders in any markdown viewer and is copy-pasteable. This is
  * honest about being a derived artifact, not a second editor.
  */
 export default function MermaidPreview({ workflow }: { workflow: Workflow }) {

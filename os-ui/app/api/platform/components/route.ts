@@ -30,13 +30,8 @@ export const runtime = 'nodejs';
 function consoleUrlFor(id: string): string {
   const urls: Record<string, string> = {
     langfuse: config.langfuseConsoleUrl,
-    superset: config.supersetUrl,
-    argocd: config.argocdUrl,
-    openmetadata: config.openmetadataUrl,
     dagster: config.dagsterConsoleUrl,
-    forgejo: config.forgejoConsoleUrl,
     'opensearch-dashboards': config.opensearchDashboardsUrl,
-    cube: config.cubeConsoleUrl,
     jupyterhub: config.jupyterhubConsoleUrl,
     mlflow: config.mlflowConsoleUrl,
     featureform: config.featureformConsoleUrl,

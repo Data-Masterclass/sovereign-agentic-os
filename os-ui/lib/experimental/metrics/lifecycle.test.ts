@@ -12,7 +12,6 @@ import {
   getDataset,
   type Principal,
 } from '../data/store.ts';
-import { buildCubeModels } from '../data/cube-models.ts';
 import { listMetrics } from './store.ts';
 import {
   __resetLifecycle,
@@ -39,17 +38,16 @@ function seed(): string {
   buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
   buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql' });
   buildVersion(d.id, amir, 'gold', { quality: 'passing', artifact: 'gold/orders.sql' });
-  transition(d.id, amir, 'promote'); // dataset → asset (deliverable to Cube)
+  transition(d.id, amir, 'promote'); // dataset → asset (governed)
   defineMeasure(d.id, amir, { name: 'revenue', type: 'sum', sql: 'net_amount' });
   return d.id;
 }
 
-function cubeMeasuresFor(datasetId: string): string[] {
+/** The measure members the dataset currently serves (every consumer resolves from `d.measures`;
+ *  a measure-less dataset serves the default `count`, as the model YAML does). */
+function measuresFor(datasetId: string): string[] {
   const d = getDataset(datasetId, amir);
-  const payload = buildCubeModels([d]);
-  // #155: a NEW dataset's cube is domain-namespaced (`sales__orders` for amir's sales domain).
-  const model = payload.models.find((m) => m.name === 'sales__orders');
-  return model?.measures ?? [];
+  return d.measures.length ? d.measures.map((m) => m.name) : ['count'];
 }
 
 test('MOVE puts a metric in a folder (rides the overlay); folder survives archive/restore', () => {
@@ -83,7 +81,7 @@ test('RENAME changes the DISPLAY name but FREEZES the Cube member + measure.name
   // Before: the display name is the machine name, and the Cube member is `revenue`.
   const before = listMetrics(amir);
   assert.equal([...before.mine, ...before.domain].find((m) => m.id === mid)?.name, 'revenue');
-  assert.deepEqual(cubeMeasuresFor(id), ['revenue'], 'member present before rename');
+  assert.deepEqual(measuresFor(id), ['revenue'], 'member present before rename');
 
   const res = renameMetric(mid, amir, 'Net Revenue');
   assert.equal(res.label, 'Net Revenue');
@@ -93,7 +91,7 @@ test('RENAME changes the DISPLAY name but FREEZES the Cube member + measure.name
   const summary = [...after.mine, ...after.domain, ...after.marketplace].find((m) => m.id === mid);
   assert.equal(summary?.name, 'Net Revenue', 'display name is the new label');
   assert.equal(summary?.member.endsWith('.revenue'), true, 'the Cube member is frozen to .revenue');
-  assert.deepEqual(cubeMeasuresFor(id), ['revenue'], 'the Cube measure member never moved');
+  assert.deepEqual(measuresFor(id), ['revenue'], 'the Cube measure member never moved');
 });
 
 test('RENAME is edit-scoped (a non-owner from another domain is denied) and rejects an empty name', () => {
@@ -108,7 +106,7 @@ test('RENAME is edit-scoped (a non-owner from another domain is denied) and reje
 
 test('DELETE physically de-registers the measure from the Cube model + honest report', () => {
   const id = seed();
-  assert.deepEqual(cubeMeasuresFor(id), ['revenue'], 'revenue is a delivered Cube measure before delete');
+  assert.deepEqual(measuresFor(id), ['revenue'], 'revenue is a delivered Cube measure before delete');
 
   const report = deleteMetric(`${id}.revenue`, amir);
   assert.equal(report.recordDeleted, true);
@@ -116,9 +114,9 @@ test('DELETE physically de-registers the measure from the Cube model + honest re
   assert.equal(report.physical[0].target, 'sales__Orders.revenue'); // #155: namespaced member
   assert.equal(report.physical[0].ok, true);
 
-  // Physical de-registration: the measure is gone from /api/cube/models (falls back to
+  // Physical de-registration: the measure is gone from the served metric model (falls back to
   // the YAML default `count` once there are no measures) — it stops being queryable.
-  assert.deepEqual(cubeMeasuresFor(id), ['count'], 'revenue no longer delivered to Cube');
+  assert.deepEqual(measuresFor(id), ['count'], 'revenue no longer delivered to Cube');
   assert.equal(getDataset(id, amir).measures.length, 0, 'measure physically removed from dataset');
 });
 
@@ -133,7 +131,7 @@ test('ARCHIVE hides the metric but KEEPS the Cube model (reversible, not physica
   // ...but still visible with includeArchived, and the Cube measure is UNTOUCHED.
   const withArchived = listMetrics(amir, { includeArchived: true });
   assert.equal([...withArchived.mine, ...withArchived.domain].some((m) => m.id === `${id}.revenue`), true);
-  assert.deepEqual(cubeMeasuresFor(id), ['revenue'], 'archive did NOT physically de-register');
+  assert.deepEqual(measuresFor(id), ['revenue'], 'archive did NOT physically de-register');
 
   unarchiveMetric(`${id}.revenue`, amir);
   assert.equal(isMetricArchived(`${id}.revenue`), false);
@@ -148,7 +146,7 @@ test('DELETE is restorable — the measure is snapshotted and can be re-defined'
   assert.ok(history.length >= 1, 'delete captured a version snapshot');
 
   restoreMetricVersion(`${id}.revenue`, amir, 1);
-  assert.deepEqual(cubeMeasuresFor(id), ['revenue'], 'restore re-delivers the measure to Cube');
+  assert.deepEqual(measuresFor(id), ['revenue'], 'restore re-delivers the measure to Cube');
 });
 
 test('lifecycle is edit-scoped — a non-owner outside the domain cannot archive/delete', () => {

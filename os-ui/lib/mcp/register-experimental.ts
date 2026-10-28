@@ -22,8 +22,7 @@ import { config } from '@/lib/core/config';
  * explicitly instead of relying on import order. Registration is a one-time
  * decision per process — changing OS_ENABLED_TABS needs a restart.
  *
- * bigbets' MCP tab is 'bigbets' but its UI feature key is 'big-bets'
- * (hyphenated) — mapped explicitly below. exposure-write-tools mixes
+ * exposure-write-tools mixes
  * tab:'connections' and tab:'data' in one file: each tool goes to the bundle of
  * its own tab, so enabling `data` without `connections` still exposes the
  * data-tab exposure tools.
@@ -45,10 +44,9 @@ const byTab = (tools: McpTool[], tab: string) => tools.filter((t) => t.tab === t
 
 const BUNDLES: BundleSpec[] = [
   // #28 step 1: server.ts's former inline tools (platform, query_data,
-  // science_predict, search_knowledge) — extracted but still unconditional.
+  // search_knowledge) — extracted but still unconditional.
   { name: 'platform-tools', load: async () => (await import('@/lib/experimental/mcp/platform-tools')).platformTools },
   { name: 'data-query', load: async () => (await import('@/lib/experimental/mcp/data-query-tools')).dataQueryTools },
-  { name: 'science-predict', load: async () => (await import('@/lib/experimental/mcp/science-predict-tools')).sciencePredictTools },
   { name: 'knowledge-search', load: async () => (await import('@/lib/experimental/mcp/knowledge-search-tools')).knowledgeSearchTools },
   {
     feature: 'data',
@@ -120,19 +118,7 @@ const BUNDLES: BundleSpec[] = [
       return [...write.dashboardWriteTools, ...byTab(read.readTools, 'dashboards'), ...byTab(waveb.waveBReadTools, 'dashboards')];
     },
   },
-  {
-    feature: 'big-bets',
-    name: 'bigbet-write',
-    load: async () => {
-      const [write, read, waveb] = await Promise.all([
-        import('@/lib/experimental/mcp/bigbet-write-tools'),
-        import('@/lib/experimental/mcp/discovery-read-tools'),
-        import('@/lib/experimental/mcp/discovery-waveb-tools'),
-      ]);
-      return [...write.bigbetWriteTools, ...byTab(read.readTools, 'bigbets'), ...byTab(waveb.waveBReadTools, 'bigbets')];
-    },
-    hydrate: () => import('@/lib/experimental/bigbets/store').then((m) => m.ensureHydrated()),
-  },
+
   {
     feature: 'software',
     name: 'software-write',
@@ -145,59 +131,23 @@ const BUNDLES: BundleSpec[] = [
       return [...write.softwareWriteTools, ...byTab(read.readTools, 'software'), ...byTab(waveb.waveBReadTools, 'software')];
     },
   },
-  {
-    feature: 'science',
-    name: 'science-write',
-    load: async () => {
-      const [write, discover] = await Promise.all([
-        import('@/lib/experimental/mcp/science-write-tools'),
-        import('@/lib/experimental/mcp/discovery-science-tools'),
-      ]);
-      return [...write.scienceWriteTools, ...discover.scienceTools];
-    },
-  },
+
   {
     feature: 'connections',
     name: 'exposure-write',
     load: async () => {
-      const [exposure, conn, airflow, warehouse, om] = await Promise.all([
+      const [exposure, conn] = await Promise.all([
         import('@/lib/experimental/mcp/exposure-write-tools'),
         import('@/lib/experimental/mcp/discovery-connection-tools'),
-        import('@/lib/experimental/mcp/discovery-airflow-tools'),
-        import('@/lib/experimental/mcp/discovery-warehouse-tools'),
-        import('@/lib/experimental/mcp/discovery-om-tools'),
       ]);
       return [
         // the tab:'data' exposure tools live in the `data` bundle above
         ...exposure.exposureWriteTools.filter((t) => t.tab !== 'data'),
         ...conn.connectionTools,
-        ...airflow.airflowTools,
-        // Preserves discovery-tools.ts's old operator-config gates: these two
-        // surface only when the operator actually enabled that connector.
-        ...(config.externalConnectorsEnabled ? warehouse.warehouseTools : []),
-        ...(config.openmetadataConnectEnabled ? om.omCatalogTools : []),
       ];
     },
   },
-  {
-    feature: 'strategy',
-    name: 'strategy',
-    load: async () => {
-      const m = await import('@/lib/experimental/mcp/strategy-tools');
-      return [...m.strategyReadTools, ...m.strategyWriteTools];
-    },
-  },
-  {
-    feature: 'marketplace',
-    name: 'marketplace',
-    load: async () => {
-      const [m, gov] = await Promise.all([
-        import('@/lib/experimental/mcp/marketplace-tools'),
-        import('@/lib/mcp/governance-tools'),
-      ]);
-      return [...m.marketplaceReadTools, ...m.marketplaceWriteTools, ...gov.governanceMarketplaceTools];
-    },
-  },
+
 ];
 
 /**

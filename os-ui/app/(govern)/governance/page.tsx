@@ -6,7 +6,6 @@
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import ApprovalsInbox from '@/components/governance/ApprovalsInbox';
 import PoliciesView from '@/components/governance/PoliciesView';
 import AuditLog from '@/components/governance/AuditLog';
@@ -20,13 +19,6 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'audit', label: 'Audit' },
   { id: 'cost', label: 'Cost & limits' },
 ];
-
-/** Stable tutorial coach-mark targets on the section switcher. */
-const SECTION_ANCHOR: Partial<Record<Section, string>> = {
-  inbox: ANCHORS.governance.sandbox,
-  audit: ANCHORS.governance.audit,
-  cost: ANCHORS.governance.cost,
-};
 
 export default function GovernancePage() {
   return (
@@ -48,7 +40,6 @@ function GovernancePageInner() {
       <PageHeader
         title="Governance"
         crumb="control plane · approve · policy · audit · cost"
-        tutorial="governance"
       />
       <div className="content">
         <div className="tabstrip" style={{ marginBottom: 24 }}>
@@ -56,7 +47,6 @@ function GovernancePageInner() {
             <button
               key={s.id}
               className={section === s.id ? 'active' : ''}
-              {...(SECTION_ANCHOR[s.id] ? anchorAttr(SECTION_ANCHOR[s.id]!) : {})}
               onClick={() => setSection(s.id)}
             >
               {s.label}

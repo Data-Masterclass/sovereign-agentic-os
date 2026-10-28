@@ -187,9 +187,9 @@ function setArtifactGrantCapability(
     }
   }
   // Provision the matching tools (ADD-only — never removes a hand-picked tool). Plan
-  // grants are heterogeneous (manual / pillar / bet), so each grant provisions the
-  // read tool for its OWN target (`planToolsForId`); every other kind uses the flat
-  // per-kind map.
+  // grants provision the read tool for their OWN target (`planToolsForId`); every
+  // other kind uses the flat per-kind map.
+
   const provision = kind === 'plan' && id ? planToolsForId(id, cap) : toolsForGrant(kind, cap);
   for (const t of provision) if (!sys.grants.tools.includes(t)) sys.grants.tools.push(t);
   // A Read grant of Files strips only the write tool (files have no id list, so a

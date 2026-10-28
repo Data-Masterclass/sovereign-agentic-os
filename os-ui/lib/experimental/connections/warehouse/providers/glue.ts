@@ -115,10 +115,6 @@ export const glueProvider: WarehouseProvider = {
     kind: 'sql',
     query: (source) => `SHOW SCHEMAS FROM ${source.catalog}`,
   },
-  openMetadata: {
-    connectorType: 'Glue',
-    configKeys: ['awsRegion', 'awsConfig', 'databaseFilterPattern'],
-  },
   // Region + IRSA rendering are verified purely; the actual Glue reachability and
   // IAM-role assumption can only be confirmed against a real AWS account.
   liveVerificationRequired: [

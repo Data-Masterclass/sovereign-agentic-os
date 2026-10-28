@@ -173,7 +173,7 @@ test('dataset_promote passes the APPROVER identity (real role + domains) to the 
         got = approver;
         return {
           ok: true, fqn: req.target, mode: 'live',
-          report: { ok: true, rows: [], skipped: [] }, cubeView: 'Orders',
+          report: { ok: true, rows: [], skipped: [] },
           dataset: { name: req.datasetName, id: req.datasetId, tier: 'asset' } as never,
         };
       },
@@ -182,7 +182,7 @@ test('dataset_promote passes the APPROVER identity (real role + domains) to the 
   assert.deepEqual(got, { id: 'bea', role: 'builder', domains: ['sales'] });
   assert.equal(r.ok, true);
   assert.equal(r.live, true);
-  assert.deepEqual(r.publish, { ok: true, fqn: 'iceberg.sales.gold_orders', mode: 'live', cubeView: 'Orders' });
+  assert.deepEqual(r.publish, { ok: true, fqn: 'iceberg.sales.gold_orders', mode: 'live' });
   assert.match(r.applied, /iceberg\.sales\.gold_orders/);
 });
 

@@ -9,9 +9,9 @@ import 'server-only';
  * A thin, per-viewer/OPA aggregator that REUSES the existing per-tab data
  * sources and never duplicates their logic:
  *   • approvals  → lib/approvals (Governance queue)            [LIVE]
- *   • my WIP +   → lib/artifacts + lib/apps (registry/OM)      [LIVE]
+ *   • my WIP +   → lib/artifacts + lib/apps (registry)         [LIVE]
  *     recent activity
- *   • domain pulse → lib/home/stubs (Strategy roll-up)         [LIVE]
+ *   • domain pulse → lib/home/stubs (user directory)           [LIVE]
  *   • health & cost → lib/home/stubs (Governance cost store)   [LIVE]
  *
  * It fetches the raw rows, then hands them to the PURE scope.ts shapers which
@@ -24,8 +24,6 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { listApprovals } from '@/lib/governance/approvals';
 import { listForUser, listMarketplace } from '@/lib/core/artifacts';
 import { listAppsForUser } from '@/lib/experimental/software';
-import { listBets } from '@/lib/experimental/bigbets';
-import { listPillars } from '@/lib/experimental/strategy';
 import {
   hasAuthored,
   whatNeedsMe,
@@ -76,15 +74,13 @@ export async function homeFeed(user: CurrentUser): Promise<HomeFeed> {
   const domain = user.domains[0] ?? 'default';
 
   // LIVE registry/governance rows, each fetched scoped to the viewer.
-  const [artifactsRaw, appsRaw, marketRaw, betsRaw, pillarsRaw] = await Promise.all([
+  const [artifactsRaw, appsRaw, marketRaw] = await Promise.all([
     listForUser(user), // RLS: Personal(own) + Shared(in-domain) + certified copies
     listAppsForUser(user), // RLS: Personal(own) + Shared(in-domain) + Certified
     // Certified catalog is cross-domain by design (Marketplace) — used ONLY to
     // surface "newly certified" in Recent activity (discovery), never in the
     // entitlement-sensitive What-needs-me / My-WIP modules.
     listMarketplace(),
-    Promise.resolve(listBets(user)), // RLS: canView (owner/member/in-domain)
-    listPillars(user), // RLS: tenant pillars + the viewer's domain pillars
   ]);
   // Approvals are listed per the viewer's domains only (then scope.ts further
   // gates decide-rights by role / requester) — cross-domain never enters.
@@ -133,11 +129,6 @@ export async function homeFeed(user: CurrentUser): Promise<HomeFeed> {
 
   const persona = personaFor(user.role, hasAuthored(viewer, artifacts, apps));
 
-  // Scoped inputs for the "top items" board (already entitlement-filtered above
-  // / by the scoped list calls). Shaped by the pure topItems() shaper.
-  const bets = betsRaw.map((b) => ({ id: b.id, name: b.name, domain: b.domain, status: b.status, updatedAt: b.updatedAt }));
-  const pillars = pillarsRaw.map((p) => ({ id: p.id, name: p.name, scope: p.scope, domain: p.domain, updatedAt: p.updatedAt }));
-
   return {
     persona,
     personaLabel: personaLabel(persona),
@@ -149,16 +140,9 @@ export async function homeFeed(user: CurrentUser): Promise<HomeFeed> {
     wip: myWip(viewer, artifacts, apps),
     // Shared in-domain events (scoped) + newly Certified products (cross-domain).
     recent: recentActivity(viewer, [...artifacts, ...market]),
-    pulse: await domainPulseStub(domain, { pillars: pillarsRaw, bets: betsRaw }), // LIVE
+    pulse: await domainPulseStub(domain), // LIVE
     health: healthCostStub(user.id, domain), // LIVE
-    topItems: topItems(viewer, artifacts, apps, bets, pillars),
+    topItems: topItems(viewer, artifacts, apps),
+
   };
 }
-
-/**
- * The **Cockpit feed** — the canonical name for the OPA/RLS-scoped aggregate the
- * `/cockpit` route renders (modules + top-items board). It is the SAME governed
- * aggregator as `homeFeed`; Home reads only its launcher slice, the Cockpit reads
- * the modules + board. Kept as one source so the two surfaces can never drift.
- */
-export const cockpitFeed = homeFeed;

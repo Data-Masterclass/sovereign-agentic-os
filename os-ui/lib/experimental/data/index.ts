@@ -15,9 +15,6 @@ export * from './store.ts';
 // Dataset schema types (Layer, Dataset, Grant, ColumnDoc, etc.).
 export * from './schema.ts';
 
-// OpenMetadata client — the governed catalog's system-of-record probe/pull.
-export * from './openmetadata.ts';
-
 // -----------------------------------------------------------------------------
 // Cross-tab shared surface (ARCHITECTURE.md contract).
 //
@@ -33,15 +30,15 @@ export * from './openmetadata.ts';
 export {
   MEASURE_TYPES,
   slug,
-  cubeName,
-  cubeViewName,
+  modelName,
+  viewName,
   goldMartFqn,
   viewMembers,
   metricSqlReady,
-  scaffoldCubeYaml,
+  scaffoldMetricYaml,
   inferDimType,
 } from './metrics.ts';
-export type { MeasureType, CubeDimType } from './metrics.ts';
+export type { MeasureType, DimensionType } from './metrics.ts';
 
 // Delegated-identity primitives (data/identity.ts) — the governed token the
 // Metrics/Dashboards query path delegates + propagates to Cube/Trino.

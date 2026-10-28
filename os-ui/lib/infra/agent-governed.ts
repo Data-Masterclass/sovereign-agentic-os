@@ -338,12 +338,12 @@ export async function trace(event: TraceEvent): Promise<TraceRecord> {
 // ------------------------------------------- Governed metrics/retrieve facts --
 
 /**
- * Neutral reference facts for the governed `metrics`/`retrieve` tool doors (the
- * agent-side mirror of the data spine). The `metrics` tool reads the SAME Cube
- * `daily_revenue` measure the Sales dashboard (`/api/metrics`) uses, so a tool
- * answer can't drift from the dashboard's. When Cube is off we fall back to a
- * deterministic seed and say so, rather than failing the offline-mock flow. No
- * customer/worked-example content is baked in here.
+ * Neutral reference facts for the sample-agent `metrics`/`retrieve` tool doors (the
+ * agent-side mirror of the data spine). These are REFERENCE facts for the sample agent
+ * only — the real, governed metric read is the MCP `query_metric` tool / the Metrics tab
+ * explorer, which compiles the member to Trino SQL under the caller's delegated identity.
+ * This door answers from a deterministic seed and LABELS it as such, so a sample run can
+ * never be mistaken for a governed number. No customer/worked-example content is baked in.
  */
 export const SALES = {
   principal: 'sales-assistant',
@@ -352,43 +352,20 @@ export const SALES = {
   ordersMeasure: 'daily_revenue.total_orders',
   dateDim: 'daily_revenue.order_date',
   lastQuarter: { label: 'Q1 2026', start: '2026-01-01', end: '2026-03-31' },
-  // Deterministic offline seed = what the local Cube serves for Q1 2026.
+  // Deterministic reference seed for Q1 2026.
   seed: { revenue: 48250, orders: 19 },
 } as const;
 
-export type MetricsResult = { value: number; source: 'cube' | 'seed-offline'; measure: string };
+export type MetricsResult = { value: number; source: 'seed-offline'; measure: string };
 
-/** The governed `metrics` tool: resolve a scalar from the same Cube the BI uses. */
+/**
+ * The sample-agent `metrics` tool door. Resolves a scalar from the deterministic
+ * reference seed and labels the source honestly (`seed-offline`) — it never claims to
+ * have read the governed lakehouse. Callers that need a REAL governed number use the
+ * MCP `query_metric` tool, which runs the member's compiled Trino SQL under the
+ * caller's own delegated identity (per-viewer row/column security).
+ */
 export async function metricsTool(measure: string): Promise<MetricsResult> {
-  const query = {
-    measures: [measure],
-    timeDimensions: [
-      { dimension: SALES.dateDim, granularity: 'day', dateRange: [SALES.lastQuarter.start, SALES.lastQuarter.end] },
-    ],
-  };
-  const res = await withTimeout(
-    `${config.cubeUrl}/cubejs-api/v1/load`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ query }),
-    },
-    8000,
-  );
-  if (res && res.ok) {
-    try {
-      const data = JSON.parse(await res.text());
-      const rows: Record<string, unknown>[] = Array.isArray(data?.data) ? data.data : [];
-      let total = 0;
-      for (const r of rows) {
-        const v = Number(r[measure]);
-        if (!Number.isNaN(v)) total += v;
-      }
-      return { value: total, source: 'cube', measure };
-    } catch {
-      /* fall through to seed */
-    }
-  }
   const seed = measure.includes('orders') ? SALES.seed.orders : SALES.seed.revenue;
   return { value: seed, source: 'seed-offline', measure };
 }

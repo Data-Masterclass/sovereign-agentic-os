@@ -16,7 +16,7 @@ import type { ScaffoldFile } from './model.ts';
  * Checks an app's MERGED tree (its prior tree + the incoming commit) IN-PROCESS
  * against the vendored `@sovereign-os/ui` + `@sovereign-os/app-sdk` BEFORE
  * `commitToApp` writes anything. This closes the one build step that had no feedback
- * loop: the compiler was minutes away in Forgejo Actions and its errors never reached
+ * loop: the compiler used to be minutes away in CI and its errors never reached
  * the agent. Now a commit that would not compile is REJECTED with the exact diagnostics,
  * fed back into the same build turn so the agent iterates against real compiler output.
  *

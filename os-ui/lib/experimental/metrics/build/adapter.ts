@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Dataset, Measure } from '../../data/index.ts';
+import type { Dataset, Measure, DelegatedToken } from '../../data/index.ts';
+import type { MetricExploreResult } from './live.ts';
 
 /**
  * The ONE adapter interface for the Metrics + Dashboards builds (the Opus deliverable),
@@ -24,7 +25,7 @@ export function fail(error: string): StepResult {
 }
 
 export interface BuildAdapter<Ctx> {
-  /** Tool key shown in the Build table (cube | metric-explorer | superset | embed …). */
+  /** Tool key shown in the Build table (trino | embed …). */
   tool: string;
   apply(ctx: Ctx): Promise<StepResult>;
   verify(ctx: Ctx): Promise<StepResult>;
@@ -57,14 +58,14 @@ export async function runAdapter<Ctx>(adapter: BuildAdapter<Ctx>, ctx: Ctx): Pro
   }
 }
 
-/** The context a Metric build runs against (define a measure → cube → explore). */
+/** The context a Metric build runs against (define a measure → run its governed SQL). */
 export type MetricBuildContext = {
   dataset: Dataset;
   measure: Measure;
-  /** The generated Cube measures/views YAML (the cube_dbt artifact). */
-  schema: string;
   /** The canonical member every consumer resolves. */
   member: string;
-  /** The viewer's Cube security context (R3) for the explorer probe. */
-  securityContext: Record<string, unknown>;
+  /** The viewer's delegated token (R3) — the governed SQL runs AS this identity. */
+  token: DelegatedToken;
+  /** Set by the adapter's apply: the explore result verify checks (never pre-filled). */
+  outcome?: MetricExploreResult;
 };

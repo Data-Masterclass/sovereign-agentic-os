@@ -5,7 +5,6 @@ import { NextResponse } from 'next/server';
 import { roleModel } from '@/lib/models/roles';
 import { requireUser } from '@/lib/core/auth';
 import { getAppForUser, saveChat } from '@/lib/experimental/software/apps';
-import { scheduleRepairCheck } from '@/lib/experimental/software/ci-repair';
 import { getSnapshot } from '@/lib/experimental/software/snapshot';
 import { diffTrees, type FileChange } from '@/lib/experimental/software/build-changeset';
 import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
@@ -173,13 +172,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         // A closing activity line summarizing the real committed changeset.
         const summary = mode === 'build' ? committedSummaryLine(app.name, changes) : null;
         if (summary) send({ type: 'activity', line: { tool: 'commit', text: summary, isError: false } });
-        // PHASE C — if this build turn committed, schedule a ONE-SHOT best-effort CI check
-        // ~2.5 min out (no cron here). Its failing branch fires the bounded auto-repair.
-        // A pod restart loses the pending timer — acceptable (the next on-load refresh
-        // re-detects any failure). Skipped for a no-op turn or a non-live app.
-        if (mode === 'build' && changes.length > 0 && app.mode === 'live') {
-          scheduleRepairCheck(app.id);
-        }
       } catch (e) {
         // HONEST failure (0.6.110): route the thrown error through the typed classifier
         // instead of blanket-labelling every non-abort exception "LiteLLM unreachable".

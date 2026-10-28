@@ -7,7 +7,6 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useUser } from '@/lib/useUser';
 import { canManageArtifact } from '@/lib/governance/edit-scope';
 import { roleAtLeast } from '@/lib/core/session';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import LineagePanel from './LineagePanel';
 import RefinePanel from './RefinePanel';
 import GoldJoinPanel from './GoldJoinPanel';
@@ -20,8 +19,6 @@ import BuildResultDialog, { type BuildResult } from './BuildResultDialog';
 import QueryError from './QueryError';
 import { shouldAutoGold } from '@/lib/experimental/data/auto-gold';
 import AiAction, { type CleanDraft, type DefineDraft } from './StageAssistant';
-import TalkTo from '@/components/talk/TalkTo';
-import { TALK_PRESENTATION } from '@/lib/talk/schema';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import DemoteButton from '@/components/lifecycle/DemoteButton';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
@@ -236,8 +233,8 @@ function physicalFqn(d: Dataset, layer: Layer): string {
   return `iceberg.${schema}.${layer}_${physicalSlug(d)}`;
 }
 
-/** Whether a dataset would be delivered to the Cube semantic layer (mirrors cubeDeliverable). */
-function isCubeReady(d: Dataset): boolean {
+/** Whether a dataset's governed metric model can be served (mirrors metricDeliverable). */
+function isMetricReady(d: Dataset): boolean {
   return d.tier !== 'dataset' && d.versions.gold.built;
 }
 
@@ -256,7 +253,7 @@ const TIER_WORD: Record<Dataset['tier'], string> = { dataset: 'Personal dataset'
 // values, mirrored to the same nouns ("Shared"→"Domain").
 const VIS_WORD: Record<string, string> = { private: 'Private', domain: 'Domain', shared: 'Domain', public: 'Public' };
 
-/** "Show the code" — the same Forgejo-versioned files the panels + agent edit. */
+/** "Show the code" — the same versioned files the panels + agent edit. */
 function CodeDrawer({ datasetId }: { datasetId: string }) {
   const [files, setFiles] = useState<string[]>([]);
   const [path, setPath] = useState('dataset.yaml');
@@ -387,7 +384,7 @@ function ConnectedBuild({ datasetId }: { datasetId: string }) {
         </a>
       </div>
 
-      {/* Dashboards bound to this dataset's Cube view. */}
+      {/* Dashboards bound to this dataset's governed view. */}
       <div className="section-title" style={{ marginTop: 20 }}>
         Dashboards
         {dashboards.rows.length > 0 ? <span className="count-pill">{dashboards.rows.length}</span> : null}
@@ -434,7 +431,7 @@ function ConnectedBuild({ datasetId }: { datasetId: string }) {
  * The Data builder — a plain View⇄Edit surface (the OS-wide contract, mirroring
  * MetricBuilder/DashboardBuilder). The staged StageShell walk retired (0.6.44): the same
  * bodies (BronzePanel, RefinePanel, GoldJoinPanel, docs + quality editor, ExplorePanel,
- * LineagePanel, TalkTo, the DQ dashboard) are re-hosted UNCHANGED as flat Edit/View
+ * LineagePanel, the DQ dashboard) are re-hosted UNCHANGED as flat Edit/View
  * sections rather than behind a stepper.
  *
  *   VIEW (tile click lands here) — Talk to Data · statistics · layer-named preview · the
@@ -477,8 +474,6 @@ export default function DataBuilder({
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [checks, setChecks] = useState<DataCheck[]>([]);
   const [loadErr, setLoadErr] = useState('');
-  // Catalog handshake (folded in — no separate Catalog tab): the OpenMetadata deep link.
-  const [omUrl, setOmUrl] = useState<string | null>(null);
 
   // ---- docs editing ----
   const [desc, setDesc] = useState('');
@@ -548,7 +543,7 @@ export default function DataBuilder({
   const [autoGolding, setAutoGolding] = useState(false);
 
   // ---- inline rename of the display name (edit-gated; the physical slug is frozen
-  //      server-side so no Iceberg/Cube/dbt table ever moves) ----
+  //      server-side so no Iceberg/dbt table ever moves) ----
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [renameErr, setRenameErr] = useState('');
@@ -645,21 +640,6 @@ export default function DataBuilder({
       await load();
     } catch (e) { setRematErr((e as Error).message); } finally { setRematBusy(false); }
   }, [datasetId, load]);
-
-  // Best-effort OpenMetadata deep link from the catalog union.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/catalog', { cache: 'no-store' });
-        if (!res.ok) return;
-        const data = (await res.json()) as { assets?: { datasetId?: string; omUrl?: string }[] };
-        const hit = (data.assets ?? []).find((a) => a.datasetId === datasetId && a.omUrl);
-        if (!cancelled && hit?.omUrl) setOmUrl(hit.omUrl);
-      } catch { /* catalog offline — the builder stands on the registry alone */ }
-    })();
-    return () => { cancelled = true; };
-  }, [datasetId]);
 
   const saveDocs = useCallback(async () => {
     setDocsErr(''); setDocsOk(''); setDocsBusy(true);
@@ -1036,7 +1016,7 @@ export default function DataBuilder({
 
   const layer = furthestBuilt(dataset.versions);
   const fqn = layer ? physicalFqn(dataset, layer) : null;
-  const cubeReady = isCubeReady(dataset);
+  const metricReady = isMetricReady(dataset);
   const published = !!dataset.certification;
   const canEdit = !!user && canManageArtifact(user, { owner: dataset.owner, domain: dataset.domain });
   const isAdmin = user?.role === 'admin';
@@ -1045,7 +1025,6 @@ export default function DataBuilder({
   const colNames = dataset.columns.map((c) => c.name).filter(Boolean);
   const canRefineSilver = dataset.versions.bronze.built;
   const canHarmonizeGold = dataset.versions.silver.built;
-  const talk = TALK_PRESENTATION.data;
 
   // The governed promote/certify affordance — in the detail HEADER (beside the lifecycle
   // controls), so promotion is reachable from both View and Edit, mirroring the
@@ -1211,7 +1190,7 @@ export default function DataBuilder({
   };
 
   // Rename the dataset (display name only). The store freezes the physical slug before
-  // the name changes, so every FQN/Cube/dbt identity stays pinned to the real table.
+  // the name changes, so every FQN/dbt identity stays pinned to the real table.
   const rename = async () => {
     const name = nameDraft.trim();
     setRenameErr('');
@@ -1235,7 +1214,7 @@ export default function DataBuilder({
         <BuilderModeToggle
           mode={viewMode}
           onChange={setModePersisted}
-          developerHint="The raw technical surface — dbt/Cube artifacts, FQNs, RLS summary"
+          developerHint="The raw technical surface — dbt artifacts, FQNs, the metric model, RLS summary"
         />
       </div>
 
@@ -1344,7 +1323,7 @@ export default function DataBuilder({
         ) : null}
 
         {mode === 'edit' && !curated && !isConnected ? (
-          <div {...anchorAttr(ANCHORS.data.load)} style={{ order: 1 }}>
+          <div style={{ order: 1 }}>
             <div className="section-title" style={{ marginTop: 0 }}>Ingestion</div>
             {canEdit ? (
               <BronzePanel
@@ -1380,7 +1359,7 @@ export default function DataBuilder({
             Internal anchor id (data.document) is UNCHANGED. Curated renders this AFTER
             Composition (order 2 vs Composition's 1); ingested renders it after Ingestion. */}
         {mode === 'edit' ? (
-          <div {...anchorAttr(ANCHORS.data.document)} style={{ order: 2 }}>
+          <div style={{ order: 2 }}>
             <div className="section-title" style={{ marginTop: 0 }}>Documentation</div>
             {/* Provenance: docs auto-drafted after ingestion, awaiting a human review. Cleared
                 the moment anyone saves the section (the write drops docsProvenance). */}
@@ -1455,7 +1434,7 @@ export default function DataBuilder({
             successful build the pass-through Gold fires automatically (metrics need Gold).
             Sits AFTER Documentation (order 3), before Checks. */}
         {mode === 'edit' && canEdit && !curated && !isConnected ? (
-          <div {...anchorAttr(ANCHORS.data.clean)} style={{ order: 3 }}>
+          <div style={{ order: 3 }}>
             <div className="section-title" style={{ marginTop: 0 }}>Transformation</div>
             {/* AI, built into the flow: fill the cleaning plan below ("Clean it up"). */}
             <div className="row" style={{ justifyContent: 'flex-end', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 14 }}>
@@ -1500,7 +1479,7 @@ export default function DataBuilder({
           <div style={{ order: curated ? 1 : 3 }}>
             {canEdit ? (
               <>
-                <div className="section-title" style={{ marginTop: 0, alignItems: 'flex-start', flexWrap: 'wrap' }} {...anchorAttr(ANCHORS.data.harmonize)}>
+                <div className="section-title" style={{ marginTop: 0, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                   Composition
                   <span className="hint" style={{ margin: '0 0 0 10px' }}>
                     {curated ? 'combine trusted datasets into one governed table' : 'this dataset carries legacy joins — kept editable'}
@@ -1529,7 +1508,7 @@ export default function DataBuilder({
             ("Custom checks") live here. Plain-language section title. Internal anchor id
             (data.validate) is UNCHANGED. */}
         {mode === 'edit' ? (
-          <div {...anchorAttr(ANCHORS.data.validate)} style={{ order: 4 }}>
+          <div style={{ order: 4 }}>
             <div className="section-title" style={{ marginTop: 0 }}>Checks</div>
             {/* AI, built into the flow: one big action at the top — explain the profile's
                 suggested checks, or (none yet) suggest which quality rules to author. */}
@@ -1831,17 +1810,11 @@ export default function DataBuilder({
 
             {dataSuppressed ? (
               <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>
-                Talk, preview and statistics are unavailable while the source is revoked.
+                Preview and statistics are unavailable while the source is revoked.
               </p>
             ) : (
             <>
-            {/* 1. Talk to Data — the primary way to USE the data (no example chips: the
-                   viewer knows their own questions; the surface stays calm). */}
-            <div {...anchorAttr(ANCHORS.data.query)} style={{ marginTop: 0 }}>
-              <TalkTo tab="data" title={talk.title} blurb={talk.blurb} examples={[]} />
-            </div>
-
-            {/* 2. Data preview — Gold by default (the highest built layer); the
+            {/* Data preview — Gold by default (the highest built layer); the
                    bronze·silver·gold toggle lives IN the preview heading. */}
             {(() => {
               const shownLayer = viewLayer ?? layer;
@@ -1999,7 +1972,7 @@ export default function DataBuilder({
       {dataset.tier !== 'dataset' && dataset.domainTableStale ? (
         <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2, rgba(0,0,0,0.02))' }}>
           <span role="alert" style={{ fontSize: 13 }}>
-            <strong>Domain table not materialized.</strong> The shared copy Cube and dashboards read isn’t in the warehouse — re-materialize to serve it.
+            <strong>Domain table not materialized.</strong> The shared copy metrics and dashboards read isn’t in the warehouse — re-materialize to serve it.
           </span>
           {user && roleAtLeast(user.role, 'builder') ? (
             <button className="btn" disabled={rematBusy} onClick={rematerialize} title="Re-run the stored publish CTAS to rebuild the governed domain table">
@@ -2024,14 +1997,12 @@ export default function DataBuilder({
         <span className={`badge ${TIER_BADGE[dataset.tier]}`} style={{ alignSelf: 'center' }} title={`Tier: ${dataset.tier} · Visibility: ${dataset.visibility}`}>
           {VIS_WORD[dataset.visibility] ?? dataset.visibility}
         </span>
-        {cubeReady ? (
-          <span className="status-chip s-searchable" title="Gold table governed + built — Cube model sync can deliver it" style={{ cursor: 'default' }}>✓ Cube model ready</span>
+        {metricReady ? (
+          <span className="status-chip s-searchable" title="Gold table governed + built — the governed metric model can serve it" style={{ cursor: 'default' }}>✓ Metric model ready</span>
         ) : (
-          <span className="status-chip s-stored" title={dataset.tier === 'dataset' ? 'Cube model: promote to a data asset and build Gold first' : 'Cube model: build the Gold layer first'} style={{ cursor: 'default' }}>Cube model not ready</span>
+          <span className="status-chip s-stored" title={dataset.tier === 'dataset' ? 'Metric model: promote to a data asset and build Gold first' : 'Metric model: build the Gold layer first'} style={{ cursor: 'default' }}>Metric model not ready</span>
         )}
-        {omUrl ? (
-          <a className="status-chip s-searchable" href={omUrl} target="_blank" rel="noopener noreferrer" title="Open this dataset's entity in the OpenMetadata catalog">catalog · OpenMetadata ↗</a>
-        ) : null}
+
         {published ? (
           <span className={`badge cert-${dataset.certification!.level}`} title={`Certified ${dataset.certification!.level} by ${dataset.certification!.by} on ${formatDate(dataset.certification!.at)}`} style={{ cursor: 'default' }}>
             ✓ certified data product · {dataset.certification!.level}
@@ -2053,7 +2024,7 @@ export default function DataBuilder({
  *      dataset state, same derivation as physicalFqn() above.
  *   2. The dbt SQL artifact(s) — fetched from the existing files endpoint (the SAME
  *      source CodeDrawer uses in Publish; no new endpoint).
- *   3. The Cube model YAML — fetched from the cluster-internal /api/cube/models
+ *   3. The metric model YAML — generated from the governed dataset itself
  *      endpoint which builds it from the SAME registry the builder holds.
  *   4. Governance/RLS summary — tier, visibility, domain, certification status.
  *
@@ -2087,32 +2058,29 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
     })();
   }, [datasetId]);
 
-  /* ── Cube model YAML — from /api/cube/models, filtered to this dataset ── */
-  const [cubeYaml, setCubeYaml] = useState<string | null>(null);
-  const [cubeErr, setCubeErr] = useState('');
+  /* ── Metric model YAML — the OS's OWN definition for this dataset ───────── */
+  // Generated server-side from the governed dataset (gold columns → dimensions,
+  // declared measures → measures): EXACTLY the definition the metric path compiles to
+  // Trino SQL. No external semantic-layer service is involved.
+  const [metricYaml, setMetricYaml] = useState<string | null>(null);
+  const [modelErr, setModelErr] = useState('');
   useEffect(() => {
-    if (!isCubeReady(dataset)) return; // only worth fetching if Gold + governed
+    if (!isMetricReady(dataset)) return; // only worth fetching if Gold + governed
     (async () => {
-      setCubeErr('');
+      setModelErr('');
       try {
-        const res = await fetch('/api/cube/models', { cache: 'no-store' });
-        if (!res.ok) { setCubeErr('Cube model endpoint unavailable'); return; }
-        type CubeEntry = { name: string; file: string; model: string };
-        const data = (await res.json()) as { models: CubeEntry[] };
-        const dsSlug = dataset.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'dataset';
-        const hit = (data.models ?? []).find(
-          (m: CubeEntry) => m.name === dsSlug || m.name.endsWith(`__${dsSlug}`) ||
-            m.file.includes(dsSlug)
-        );
-        setCubeYaml(hit?.model ?? null);
+        const res = await fetch(`/api/data/datasets/${datasetId}/metric-model`, { cache: 'no-store' });
+        if (!res.ok) { setModelErr('Metric model unavailable'); return; }
+        const data = (await res.json()) as { model?: string };
+        setMetricYaml(data.model ?? null);
       } catch (e) {
-        setCubeErr((e as Error).message);
+        setModelErr((e as Error).message);
       }
     })();
-  }, [dataset]);
+  }, [dataset, datasetId]);
 
   const builtLayers = (['bronze', 'silver', 'gold'] as Layer[]).filter((l) => dataset.versions[l].built);
-  const cubeReady = isCubeReady(dataset);
+  const metricReady = isMetricReady(dataset);
 
   return (
     <div style={{ marginTop: 4 }}>
@@ -2168,20 +2136,20 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
         )}
       </div>
 
-      {/* 3 ── Cube model YAML */}
+      {/* 3 ── Metric model YAML */}
       <div className="grant-block" style={{ marginBottom: 16 }}>
-        <div className="comp-label">Cube model YAML</div>
-        {cubeErr ? <div className="error" style={{ marginTop: 8 }}>{cubeErr}</div> : null}
-        {cubeReady && cubeYaml ? (
+        <div className="comp-label">Metric model YAML</div>
+        {modelErr ? <div className="error" style={{ marginTop: 8 }}>{modelErr}</div> : null}
+        {metricReady && metricYaml ? (
           <pre className="codeblock" style={{ marginTop: 8, fontSize: 11, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
-            {cubeYaml}
+            {metricYaml}
           </pre>
-        ) : cubeReady && !cubeErr ? (
+        ) : metricReady && !modelErr ? (
           <p className="hint" style={{ marginTop: 8 }}>
-            Cube model pending — the sidecar will sync it once the Gold build is picked up.
+            Metric model pending — build the Gold layer to generate it.
             Reload to check.
           </p>
-        ) : !cubeReady ? (
+        ) : !metricReady ? (
           <p className="hint" style={{ marginTop: 8 }}>
             Not available: {dataset.tier === 'dataset' ? 'promote this dataset to a governed asset first, then build Gold.' : 'build the Gold layer first (in Harmonize).'}
           </p>
@@ -2200,8 +2168,8 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
           <span className="mono" style={{ fontSize: 12 }}>{dataset.owner}</span>
           <span className="muted">Domain</span>
           <span>{dataset.domain}</span>
-          <span className="muted">Cube-ready</span>
-          <span>{cubeReady ? <span className="status-chip s-searchable" style={{ cursor: 'default' }}>✓ yes</span> : <span className="status-chip s-stored" style={{ cursor: 'default' }}>no</span>}</span>
+          <span className="muted">Metric-ready</span>
+          <span>{metricReady ? <span className="status-chip s-searchable" style={{ cursor: 'default' }}>✓ yes</span> : <span className="status-chip s-stored" style={{ cursor: 'default' }}>no</span>}</span>
           {dataset.certification ? (
             <>
               <span className="muted">Certified</span>

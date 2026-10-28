@@ -7,36 +7,19 @@ import { type DataStage } from './adapter.ts';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
 import { orchestrateStage, type DataBuildReport } from './orchestrate.ts';
 import { makeMockAdapters, newMockBackends } from './mocks.ts';
-import { makeRealClients, liveDataReachable, queryToolReachable, probeQueryable } from './live-clients.ts';
+import { makeRealClients, queryToolReachable, probeQueryable } from './live-clients.ts';
 import { makeLiveAdapters } from './live.ts';
 import { buildVersion, type Principal } from '../store.ts';
 import { stageArtifact } from '../panels.ts';
 import { layerTarget, passThroughPlan, resolvePassThroughSource } from '../transform.ts';
-import {
-  CUBE_ARTIFACT,
-  DASHBOARD_ARTIFACT,
-  EXPOSURE_ARTIFACT,
-  scaffoldCubeYaml,
-  scaffoldDashboardBundle,
-  scaffoldExposureYaml,
-} from '../metrics.ts';
 
 /**
- * Server boundary for a Data Build (mirrors lib/agents/build/server.ts). It
- * generates the stage's tool-native artifacts from the dataset, then runs the
- * stage's adapter-set against the LIVE services when the stack is reachable, or the
- * honest in-process OFFLINE-MOCK otherwise — labelled either way. Same adapter
- * logic both paths, so a ✓ always means a real apply+verify passed.
+ * Server boundary for a Data Build (mirrors lib/agents/build/server.ts). It runs the
+ * stage's adapter-set against the LIVE services when the governed query path is
+ * reachable, or the honest in-process OFFLINE-MOCK otherwise — labelled either way.
+ * Same adapter logic both paths, so a ✓ always means a real apply+verify passed.
  */
 export type BuildMode = 'live' | 'offline-mock';
-
-function artifactsFor(d: Dataset): Record<string, string> {
-  return {
-    [CUBE_ARTIFACT(d)]: scaffoldCubeYaml(d),
-    [EXPOSURE_ARTIFACT]: scaffoldExposureYaml(d),
-    [DASHBOARD_ARTIFACT(d)]: scaffoldDashboardBundle(d),
-  };
-}
 
 export async function buildStage(
   dataset: Dataset,
@@ -50,7 +33,7 @@ export async function buildStage(
 ): Promise<DataBuildReport & { mode: BuildMode }> {
   const ctx = {
     dataset,
-    artifacts: artifactsFor(dataset),
+    artifacts: {},
     principal,
     transformSql: write?.transformSql,
     identity: write?.identity,
@@ -58,17 +41,9 @@ export async function buildStage(
     releaseSchema: write?.releaseSchema,
     targetFqn: write?.targetFqn,
   };
-  // The live/offline switch probes the service the stage ACTUALLY depends on.
-  // Silver/Gold AND promote are a governed CTAS through the query-tool (Trino) — Cube is
-  // NOT their essential dependency (promote's core act is a CREATE-OR-REPLACE into the
-  // domain schema; the Cube model is a downstream best-effort registration). Gating promote
-  // on Cube silently OFFLINE-MOCKED the CTAS whenever Cube was slow/down — e.g. a
-  // reconcile sweep hammering Cube would fabricate a "refreshed" that never landed a table.
-  // Only the metric/dashboard stages keep Cube as the irreplaceable dependency.
-  const reachable = stage === 'silver' || stage === 'gold' || stage === 'promote'
-    ? await queryToolReachable()
-    : await liveDataReachable();
-  if (reachable) {
+  // The live/offline switch probes the service every stage ACTUALLY depends on: the
+  // governed query-tool (Trino) the CTAS/probes run through.
+  if (await queryToolReachable()) {
     const report = await orchestrateStage(stage, ctx, makeLiveAdapters(await makeRealClients()));
     return { ...report, mode: 'live' };
   }

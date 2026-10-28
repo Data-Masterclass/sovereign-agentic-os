@@ -6,9 +6,6 @@ import { config } from '@/lib/core/config';
 import { recentTraces } from '@/lib/infra/agent-governed';
 import { type Decision } from '../gateway.ts';
 import {
-  type ForgejoClient,
-  type ForgejoCommit,
-  type ForgejoCommitFiles,
   type LangfuseClient,
   type LiteLlmClient,
   type LiteLlmKeyInput,
@@ -24,7 +21,7 @@ import {
 } from './runtime-contract.ts';
 
 /**
- * The REAL fetch-backed clients for the 5 live Build adapters. Server-only: they
+ * The REAL fetch-backed clients for the 4 live Build adapters. Server-only: they
  * use `config` (credentials, in-cluster Service URLs) and never reach the browser.
  * Kept separate from the PURE `live.ts` adapter logic so the adapters stay
  * unit-testable against fakes; these thin wrappers are exercised by the kind gate.
@@ -49,120 +46,6 @@ async function withTimeout(
   } finally {
     clearTimeout(timer);
   }
-}
-
-// ------------------------------------------------------------------- Forgejo -----
-
-function forgejoAuth(): string {
-  return 'Basic ' + Buffer.from(`${config.forgejoUser}:${config.forgejoPassword}`).toString('base64');
-}
-
-function encodePath(p: string): string {
-  return p.split('/').map(encodeURIComponent).join('/');
-}
-
-export function realForgejo(fetchImpl: typeof fetch = fetch): ForgejoClient {
-  const owner = config.forgejoRepoOwner;
-  const api = (method: string, path: string, body?: unknown) =>
-    withTimeout(`${config.forgejoUrl}/api/v1${path}`, {
-      method,
-      headers: { authorization: forgejoAuth(), accept: 'application/json', 'content-type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    }, 4000, fetchImpl);
-  const readContents = async (repo: string, path: string) => {
-    const res = await api('GET', `/repos/${owner}/${repo}/contents/${encodePath(path)}?ref=main`);
-    if (!res || !res.ok) return null;
-    const d = (await res.json().catch(() => null)) as { content?: string; encoding?: string; sha?: string } | null;
-    if (!d || typeof d.content !== 'string') return null;
-    const content = d.encoding === 'base64' ? Buffer.from(d.content, 'base64').toString('utf8') : d.content;
-    return { content, sha: String(d.sha ?? '') };
-  };
-  /** A single file's decoded content AT an arbitrary git ref (sha/branch), or null. */
-  const readAtRef = async (repo: string, path: string, ref: string): Promise<string | null> => {
-    const res = await api('GET', `/repos/${owner}/${repo}/contents/${encodePath(path)}?ref=${encodeURIComponent(ref)}`);
-    if (!res || !res.ok) return null;
-    const d = (await res.json().catch(() => null)) as { content?: string; encoding?: string } | null;
-    if (!d || typeof d.content !== 'string') return null;
-    return d.encoding === 'base64' ? Buffer.from(d.content, 'base64').toString('utf8') : d.content;
-  };
-  /** Directory listing (names) at a ref via the contents API, [] when absent. */
-  const listDirAtRef = async (repo: string, dir: string, ref: string): Promise<string[]> => {
-    const res = await api('GET', `/repos/${owner}/${repo}/contents/${encodePath(dir)}?ref=${encodeURIComponent(ref)}`);
-    if (!res || !res.ok) return [];
-    const d = (await res.json().catch(() => null)) as { name?: string }[] | null;
-    return Array.isArray(d) ? d.map((e) => String(e?.name ?? '')).filter(Boolean) : [];
-  };
-  return {
-    async ensureRepo(repo) {
-      // Idempotent: create the system repo; a 409 (exists) is fine.
-      await api('POST', '/user/repos', { name: repo, private: true, auto_init: true, default_branch: 'main' });
-    },
-    readFile: readContents,
-    async writeFile(repo, path, content, sha, message) {
-      // Forgejo's contents API splits create vs update: POST = CreateFile (new file),
-      // PUT = UpdateFile (REQUIRES `sha`). Using PUT to create a not-yet-existing
-      // file 422s ("sha is required") — the Build failure. So: POST when we have no
-      // sha, PUT+sha when the file already exists.
-      const url = `/repos/${owner}/${repo}/contents/${encodePath(path)}`;
-      const b64 = Buffer.from(content, 'utf8').toString('base64');
-      const commitMessage = message ?? `Build: sync ${path}`;
-      const write = (method: 'POST' | 'PUT', withSha?: string) =>
-        api(method, url, { content: b64, message: commitMessage, branch: 'main', ...(withSha ? { sha: withSha } : {}) });
-
-      let res = sha ? await write('PUT', sha) : await write('POST');
-      // Create race: the file already existed (POST → 422). Re-read its sha + update.
-      if (res && res.status === 422 && !sha) {
-        const cur = await readContents(repo, path);
-        if (cur?.sha) res = await write('PUT', cur.sha);
-      }
-      if (!res || !res.ok) throw new Error(`Forgejo write ${path} failed (${res?.status ?? 'unreachable'})`);
-      const d = (await res.json().catch(() => ({}))) as { content?: { sha?: string } };
-      return { sha: String(d?.content?.sha ?? '') };
-    },
-    async deleteRepo(repo) {
-      // Idempotent: a 404 means the repo is already gone. A null (unreachable) or a
-      // rejected delete throws so the DELETE path can flag an orphan honestly.
-      const res = await api('DELETE', `/repos/${owner}/${repo}`);
-      if (!res) throw new Error(`Forgejo deleteRepo ${repo} failed (unreachable)`);
-      if (res.status === 404) return { deleted: true };
-      if (res.status === 204 || res.status === 200) return { deleted: true };
-      throw new Error(`Forgejo deleteRepo ${repo} failed (${res.status})`);
-    },
-    async listCommits(repo, opts): Promise<ForgejoCommit[] | null> {
-      // Gitea/Forgejo list-commits API, newest first. A 404 (repo/branch absent) or
-      // an unreachable Forgejo → null so the caller falls back to snapshot history.
-      const limit = opts?.limit ?? 30;
-      const res = await api('GET', `/repos/${owner}/${repo}/commits?sha=main&limit=${limit}`);
-      if (!res || !res.ok) return null;
-      const d = (await res.json().catch(() => null)) as
-        | { sha?: string; commit?: { message?: string; author?: { name?: string; date?: string } } }[]
-        | null;
-      if (!Array.isArray(d)) return null;
-      return d.map((c) => ({
-        sha: String(c.sha ?? ''),
-        message: String(c.commit?.message ?? '').trim(),
-        author: String(c.commit?.author?.name ?? 'unknown'),
-        date: String(c.commit?.author?.date ?? ''),
-      })).filter((c) => c.sha);
-    },
-    async getCommitFiles(repo, sha): Promise<ForgejoCommitFiles | null> {
-      // Read the whitelisted set (system.yaml + every agents/<id>/{AGENT,MEMORY}.md)
-      // exactly as they were at `sha`, via the contents-at-ref API. A missing
-      // system.yaml at the ref → null (nothing safe to restore); an unreachable
-      // Forgejo also → null so restore fails loudly instead of clobbering HEAD.
-      const sysYaml = await readAtRef(repo, 'system.yaml', sha);
-      if (sysYaml === null) return null;
-      const files: ForgejoCommitFiles = { 'system.yaml': sysYaml };
-      for (const agentId of await listDirAtRef(repo, 'agents', sha)) {
-        for (const name of ['AGENT.md', 'MEMORY.md']) {
-          const path = `agents/${agentId}/${name}`;
-          const content = await readAtRef(repo, path, sha);
-          if (content !== null) files[path] = content;
-        }
-      }
-      return files;
-    },
-  };
 }
 
 // ---------------------------------------------------------------------- OPA ------
@@ -341,7 +224,6 @@ export async function runtimeReachable(): Promise<boolean> {
 /** Assemble the real client set for the live Build adapters (server boundary). */
 export function makeRealClients(): LiveDeps {
   return {
-    forgejo: realForgejo(),
     opa: realOpa(),
     litellm: realLitellm(),
     runtime: realRuntime(),

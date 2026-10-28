@@ -1,6 +1,6 @@
 # Software tab — build context
 
-**Purpose:** Define → design → build → test → governed-publish real apps that live in sovereign Git (Forgejo) and ship Forgejo Actions → Harbor → Argo CD to a live subdomain.
+**Purpose:** Define → design → build → test → governed-publish real apps. There is NO git server and NO CI: an app is a spec + design + generated files the OS stores, previews and verifies, and serves on a live subdomain after a Builder approves the deploy.
 
 **Guided flow — five stages, each ONE function (UI):**
 - **Define** — name, purpose, **template pick** (Application = the `sovereign-app` scaffold: OS sign-in + Admin + user directory + multi-tenant, and the DEFAULT; Website; APIs only; Empty), and governed context grants. Template locks at creation. The full Define context (template + name/description + purpose) is threaded into every downstream Design spec-draft and Build code-generation prompt — features are grounded in what the app IS.
@@ -12,7 +12,7 @@
 **Model tier per stage:** Define — no LLM · **Design — reasoning** (all planning + spec) · **Build — standard only** (codegen from finalized spec, deterministic sequencing, no reasoning escalation) · **Test — reasoning** (verify vs spec) · Publish — no LLM. Each stage shows an honest tier badge.
 
 **Tools (MCP `software`):**
-- `create_software(name, description?, template?, domain?)` — new governed app. Seeds a REAL build→push CI workflow + `REGISTRY_PASS` secret into the app's Forgejo repo, so the app image AUTO-BUILDS on every commit to main (Forgejo Actions → registry) with no manual build step.
+- `create_software(name, description?, template?, domain?)` — new governed app. Seeds the app's starting source tree into its own governed file store (no repo, no CI); the OS previews and serves it directly.
 - `commit(appId, files[], message?)` — write files (re-parsed each commit). A commit pushes main and triggers the auto-build; watch it via `get_software_status`.
 - `start_preview(appId)` — private sandbox, no review.
 - `request_deploy(appId)` — opens a Builder review card; `decide_deploy(cardId, decision)` — Builder/Admin only.

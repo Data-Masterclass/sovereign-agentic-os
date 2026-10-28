@@ -11,8 +11,6 @@ import { __resetStore as resetData } from '@/lib/experimental/data/store';
 import { __resetStore as resetKnowledge } from '@/lib/experimental/knowledge/store';
 import { __resetStore as resetFiles } from '@/lib/experimental/files/store';
 import { __resetDashboards } from '@/lib/experimental/dashboards/store';
-import { __resetBets } from '@/lib/experimental/bigbets/store';
-import { __resetForTests as resetPillars, createPillar } from '@/lib/experimental/strategy/pillars';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
 import { __resetApprovals } from '@/lib/governance/approvals';
 
@@ -40,10 +38,8 @@ function resetAll(): void {
   resetKnowledge();
   resetFiles();
   __resetDashboards();
-  __resetBets();
   resetAgents();
   __resetApprovals();
-  resetPillars();
 }
 
 async function raw(user: CurrentUser, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -223,8 +219,6 @@ test('P0.4 the ladder is the ONLY promotion path: no direct promote/certify/tier
     promoteApp: ['lib/experimental/software/apps.ts', 'lib/governance/ladder.ts'],
     promoteArtifact: ['lib/core/artifacts.ts', 'lib/experimental/software/apps.ts', 'lib/governance/ladder.ts'], // apps.ts = documented cascade
     transitionDashboard: ['lib/experimental/dashboards/store.ts', 'lib/governance/effects.ts'],
-    promoteModel: ['lib/experimental/science/model-service.ts', 'lib/governance/effects.ts'],
-    certifyModel: ['lib/experimental/science/model-service.ts', 'lib/governance/effects.ts'],
     promoteSystem: ['lib/agents/store.ts', 'lib/governance/effects.ts'], // the fix: agent_system now on the ladder
     // dataset tier relabel (the `transition` alias): only the guarded metrics-govern
     // routes may call it, and ONLY for a NON-materialising asset→product move (they
@@ -263,39 +257,6 @@ test('P0.5 get_lineage returns a normalized graph, scoped at the root (not_found
   // A malformed ref is a typed bad_request, never a crash.
   const eBad = err(await raw(cara, 'get_lineage', { ref: 'not-a-ref' }));
   assert.equal(eBad.code, 'bad_request');
-});
-
-test('P0.5 get_lineage redacts per-node: a bet component the caller cannot see renders {redacted:true}', async () => {
-  resetAll();
-  // ben (builder, sales) owns an ACTIVE bet + a PERSONAL dashboard component.
-  const pillar = await createPillar(ben, { name: 'Retention', scope: 'domain', domain: 'sales' });
-  const bet = await call<{ id: string }>(ben, 'create_big_bet', { problem: 'Churn is rising', pillarId: pillar.id, owner: 'ben', targetValue: 100000 });
-  const dash = await call<{ id: string }>(ben, 'create_dashboard', { name: 'Ops', view: 'Orders', charts: [{ name: 'n', vizType: 'big_number_total', metric: 'Orders.revenue' }] });
-  await call(ben, 'attach_component', { betId: bet.id, kind: 'dashboard', id: dash.id });
-
-  // cara (creator, sales) can see the bet summary but NOT ben's personal dashboard detail.
-  const g = await call<{ nodes: { id: string; redacted?: boolean }[] }>(cara, 'get_lineage', { ref: `bet:${bet.id}` });
-  const compNode = g.nodes.find((n) => n.id === dash.id);
-  assert.ok(compNode, 'the component node exists (existence is not hidden)');
-  assert.equal(compNode!.redacted, true, 'a component the caller cannot see is redacted (existence without content)');
-
-  // The OWNER sees it un-redacted.
-  const gOwner = await call<{ nodes: { id: string; redacted?: boolean }[] }>(ben, 'get_lineage', { ref: `bet:${bet.id}` });
-  assert.notEqual(gOwner.nodes.find((n) => n.id === dash.id)?.redacted, true);
-});
-
-// ============================ 6. IMPORT_PRODUCT ==============================
-test('P0.6 import_product is wired on the marketplace surface; an unknown listing → not_found', async () => {
-  resetAll();
-  // The tenant catalog seeds EMPTY (listings appear only via governed certification);
-  // the full grant/pending loop is the P8 live smoke. Here we prove the tool is
-  // registered + governed: an unknown listing is a typed not_found, never a crash.
-  const e = err(await raw(ben, 'import_product', { listingId: 'lst_does_not_exist' }));
-  assert.equal(e.code, 'not_found');
-
-  // A creator hits the Builder+ gate for a non-read-grant (fork) import.
-  const eFork = err(await raw(cara, 'import_product', { listingId: 'lst_x', mode: 'fork' }));
-  assert.equal(eFork.code, 'forbidden');
 });
 
 // ===================== REVIEW FIXES (adversarial review round) =================

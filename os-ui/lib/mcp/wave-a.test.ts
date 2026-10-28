@@ -9,13 +9,10 @@ import { ALL_WRITE_TOOLS, __setRunOsTeamForTests } from './write-tools.ts';
 import { __resetStore as resetData } from '@/lib/experimental/data/store';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
 import { __resetApprovals } from '@/lib/governance/approvals';
-import { _resetModels, upsertModel } from '@/lib/experimental/science';
-import type { ServiceModel } from '@/lib/experimental/science/types';
 
 /**
  * MCP WAVE A — the physical data pipeline (ingest→profile→silver→gold), the
- * semantic-layer read (query_metric), the agents run door (run_agent_system) and
- * the Science read surface (list_models/get_model + my/science). Every tool is a
+ * semantic-layer read (query_metric) and the agents run door (run_agent_system). Every tool is a
  * THIN wrapper over the same governed lib the UI calls, driven here exactly as an
  * AI client would (over handleRpc), asserting:
  *   • identity is threaded = the CALLER (never a body value),
@@ -32,7 +29,6 @@ function resetAll(): void {
   resetData();
   resetAgents();
   __resetApprovals();
-  _resetModels();
 }
 
 async function call(user: CurrentUser, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -54,7 +50,7 @@ function errorOf(r: Record<string, unknown>): ToolError {
 // ---- REGISTRY INVARIANTS ------------------------------------------------------
 
 const NEW_WRITE = ['ingest_dataset', 'transform_silver', 'build_gold_join', 'run_agent_system'];
-const NEW_READ = ['profile_dataset', 'query_metric', 'list_models', 'get_model'];
+const NEW_READ = ['profile_dataset', 'query_metric'];
 
 test('WAVE A registry: every new tool is registered, exampled, and R/W-classified correctly', async () => {
   const byName = new Map(ALL_MCP_TOOLS.map((t) => [t.name, t]));
@@ -334,58 +330,3 @@ test('run_agent_system: a system the caller cannot run → typed forbidden; a he
 });
 
 // ---- SCIENCE READ SURFACE ------------------------------------------------------
-
-const CHURN_MODEL: ServiceModel = {
-  id: 'm_churn',
-  model: 'churn_model',
-  name: 'Churn risk',
-  owner: 'ben',
-  domain: 'sales',
-  tier: 'Domain',
-  stage: 'Production',
-  frontDoors: ['rest', 'mcp'],
-  versions: [{ version: '2', stage: 'Production', auc: 0.91, certified: true, runId: 'run_1' }],
-};
-
-test('list_models: RLS-scoped + honest about ml.enabled; another user’s Personal model never appears', async () => {
-  resetAll();
-  // Empty tenant: an empty list + the honest serving note (ml disabled in tests).
-  const empty = payload<{ mlEnabled: boolean; note?: string; models: unknown[] }>(await call(creator, 'list_models'));
-  assert.equal(empty.mlEnabled, false);
-  assert.match(empty.note ?? '', /ml\.enabled/, 'says plainly that predict will 404');
-  assert.deepEqual(empty.models, []);
-
-  upsertModel(CHURN_MODEL);
-  upsertModel({ ...CHURN_MODEL, id: 'm_p', model: 'ops_personal', name: 'Ops private', owner: 'dan', domain: 'ops', tier: 'Personal' });
-
-  const cara = payload<{ models: { model: string }[] }>(await call(creator, 'list_models'));
-  assert.deepEqual(cara.models.map((m) => m.model), ['churn_model'], 'sales creator sees the sales Domain model, NOT dan’s Personal one');
-});
-
-test('get_model: the full card (features, bands, metrics, serving); out-of-scope → not_found (no existence leak)', async () => {
-  resetAll();
-  upsertModel(CHURN_MODEL);
-  const card = payload<{ model: string; features: string[]; scoreBands: Record<string, string>; metrics: { auc: number }; tier: string; frontDoors: string[] }>(
-    await call(creator, 'get_model', { model: 'churn_model' }),
-  );
-  assert.equal(card.model, 'churn_model');
-  assert.deepEqual(card.features, ['recency_days', 'order_frequency', 'monetary_value', 'tenure_months']);
-  assert.equal(card.metrics.auc, 0.91);
-  assert.ok(card.scoreBands.high, 'the churn score bands are stated');
-  assert.deepEqual(card.frontDoors, ['rest', 'mcp']);
-
-  const e = errorOf(await call(outsider, 'get_model', { model: 'churn_model' })); // dan is in ops — Domain scope excludes him
-  assert.equal(e.code, 'not_found', 'unseeable == unknown, mirroring the predict gate');
-});
-
-test('my/science resource: the caller’s scoreable-model inventory, matching the other my/* resources', async () => {
-  resetAll();
-  upsertModel(CHURN_MODEL);
-  const res = await handleRpc(creator, { jsonrpc: '2.0', id: 1, method: 'resources/read', params: { uri: 'sovereign-os://my/science' } });
-  assert.ok(res && 'result' in res);
-  const contents = ((res as JsonRpcResponse).result as { contents: { mimeType: string; text: string }[] }).contents;
-  assert.equal(contents[0].mimeType, 'application/json');
-  const inv = JSON.parse(contents[0].text) as { mlEnabled: boolean; models: { model: string }[] };
-  assert.equal(inv.mlEnabled, false);
-  assert.deepEqual(inv.models.map((m) => m.model), ['churn_model']);
-});

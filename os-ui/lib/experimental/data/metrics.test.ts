@@ -4,24 +4,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  scaffoldCubeYaml,
-  scaffoldExposureYaml,
-  scaffoldDashboardBundle,
+  scaffoldMetricYaml,
   inferDimType,
-  cubeName,
-  cubeViewName,
-  legacyCubeName,
-  legacyCubeViewName,
-  cubeNameMatches,
-  cubeViewNameMatches,
+  modelName,
+  viewName,
+  legacyModelName,
+  legacyViewName,
+  modelNameMatches,
+  viewNameMatches,
   CUBE_ARTIFACT,
   goldMartFqn,
   goldOutputColumns,
-  metricGoldReady,
   metricSqlReady,
-  metricCubeReady,
   viewMembers,
-  PROMOTE_FIRST_MESSAGE,
 } from './metrics.ts';
 import { emptyVersions, type Dataset } from './dataset-schema.ts';
 
@@ -43,7 +38,7 @@ function gold(over: Partial<Dataset> = {}): Dataset {
 }
 
 test('cube_dbt scaffolds dimensions from columns; user-named measure is included', () => {
-  const yaml = scaffoldCubeYaml(gold());
+  const yaml = scaffoldMetricYaml(gold());
   assert.match(yaml, /sql_table: iceberg\.sales\.gold_orders/);
   assert.match(yaml, /name: revenue\n\s+type: sum\n\s+sql: net_amount/);
   assert.match(yaml, /name: order_id[\s\S]*primary_key: true/); // PK dimension
@@ -69,7 +64,7 @@ test('goldOutputColumns: a Gold JOIN projects its OWN output columns (aliases + 
   assert.equal(cols[1].description, 'Value.'); // doc carried via the SOURCE column
   assert.equal(cols[2].description, ''); // joined column has no base doc
   // …and the Cube scaffold binds its dimensions to the SAME gold output set.
-  const yaml = scaffoldCubeYaml(d);
+  const yaml = scaffoldMetricYaml(d);
   assert.match(yaml, /- name: product_name/);
   assert.match(yaml, /- name: net\n/);
   assert.doesNotMatch(yaml, /- name: region/); // unprojected base column is NOT a dim
@@ -91,7 +86,7 @@ test('goldOutputColumns: derived field names appear in the output set (dims + de
   });
   assert.deepEqual(goldOutputColumns(d).map((c) => c.name), ['order_id', 'margin']);
   // …and the Cube scaffold binds a dimension to the derived output column.
-  assert.match(scaffoldCubeYaml(d), /- name: margin/);
+  assert.match(scaffoldMetricYaml(d), /- name: margin/);
 });
 
 test('goldOutputColumns: a derived-only spec (no dims) still surfaces the derived column', () => {
@@ -114,23 +109,8 @@ test('dim types are inferred cube_dbt-style from the column names', () => {
   assert.equal(inferDimType('region'), 'string');
 });
 
-test('one dbt exposure per view, depending on the gold mart', () => {
-  const y = scaffoldExposureYaml(gold());
-  assert.match(y, /name: orders_metrics/);
-  assert.match(y, /ref\('mart_orders'\)/);
-  assert.match(y, /name: amir/); // owner
-});
-
-test('a dashboard bundle binds the Cube view to the query service', () => {
-  const b = JSON.parse(scaffoldDashboardBundle(gold()));
-  assert.equal(b.database_service_name, 'trino');
-  assert.equal(b.dataset.name, 'Orders');
-  assert.equal(b.charts[0].metric, 'revenue');
-  assert.equal(b.depends_on_exposure, 'orders_metrics');
-});
-
 test('a measure-less gold still scaffolds a count cube (so the view is valid)', () => {
-  const y = scaffoldCubeYaml(gold({ measures: [] }));
+  const y = scaffoldMetricYaml(gold({ measures: [] }));
   assert.match(y, /name: count\n\s+type: count/);
   // #142: the default cube-level `count` must ALSO be in the view `includes`, or the
   // view exposes no measure at all (the empty Northpeak_Campaigns symptom).
@@ -138,7 +118,7 @@ test('a measure-less gold still scaffolds a count cube (so the view is valid)', 
 });
 
 test('the richer Cube measure fields emit only when present (plain measures unchanged)', () => {
-  const y = scaffoldCubeYaml(gold({
+  const y = scaffoldMetricYaml(gold({
     measures: [{
       name: 'completed_revenue', type: 'sum', sql: 'net_amount',
       filters: [{ sql: "{CUBE}.status = 'completed'" }],
@@ -152,37 +132,17 @@ test('the richer Cube measure fields emit only when present (plain measures unch
   assert.match(y, /format: currency/);
   assert.match(y, /drill_members: \[order_id, region\]/);
   // A plain measure alongside it emits NO rich blocks (no leakage).
-  const plain = scaffoldCubeYaml(gold());
+  const plain = scaffoldMetricYaml(gold());
   assert.doesNotMatch(plain, /filters:|rolling_window:|format:|drill_members:/);
 });
 
 test('handover names line up across cube + exposure + dashboard', () => {
   const d = gold();
   assert.equal(goldMartFqn(d), 'iceberg.sales.gold_orders');
-  assert.equal(cubeViewName(d), 'Orders');
+  assert.equal(viewName(d), 'Orders');
 });
 
-test('#91 metric guard FAIL-CLOSED: unpromoted personal gold is rejected with the clear message', () => {
-  // A built Gold that is still tier=dataset (personal lane) — Cube can't read it.
-  const personal = gold({ tier: 'dataset', visibility: 'private' });
-  const r = metricGoldReady(personal);
-  assert.equal(r.ok, false);
-  assert.equal(r.message, PROMOTE_FIRST_MESSAGE);
-  assert.match(r.message!, /Promote this dataset to Shared first/);
-});
-
-test('#91 metric guard: a governed (asset) built Gold is ready', () => {
-  assert.deepEqual(metricGoldReady(gold()), { ok: true });
-});
-
-test('#91 metric guard: a governed dataset without a built Gold is rejected', () => {
-  const noGold = gold();
-  noGold.versions.gold.built = false;
-  assert.equal(metricGoldReady(noGold).ok, false);
-  assert.match(metricGoldReady(noGold).message!, /built Gold/);
-});
-
-// -------- metrics→Trino migration (Phase 1): SQL-ready vs Cube-ready gate SPLIT --------
+// -------- metrics→Trino: the SQL-ready gate --------
 
 test('metricSqlReady: a PERSONAL built Gold is now READY (define/preview/explore drop promote-first)', () => {
   // The whole point of Phase 1 — a metric serves as governed Trino SQL over the personal
@@ -210,22 +170,9 @@ test('metricSqlReady: a LIVE connected dataset is EXCLUDED as a metric source (s
   assert.match(r.message!, /synced copy/i);
 });
 
-test('metricCubeReady: the Cube-registration promote-first rule is PRESERVED for personal gold', () => {
-  const personal = gold({ tier: 'dataset', visibility: 'private' });
-  const r = metricCubeReady(personal);
-  assert.equal(r.ok, false);
-  assert.equal(r.message, PROMOTE_FIRST_MESSAGE);
-  // …and a governed built Gold is cube-ready.
-  assert.deepEqual(metricCubeReady(gold()), { ok: true });
-});
-
-test('metricGoldReady stays a back-compat alias for the Cube rule', () => {
-  assert.equal(metricGoldReady, metricCubeReady);
-});
-
 test('#91 dim reconciliation: drill_members naming a NON-mart column are dropped from the cube', () => {
   // net_amount + region are mart columns; ghost_col is NOT — it must never be emitted.
-  const y = scaffoldCubeYaml(gold({
+  const y = scaffoldMetricYaml(gold({
     measures: [{ name: 'revenue', type: 'sum', sql: 'net_amount', drillMembers: ['region', 'ghost_col', 'net_amount'] }],
   }));
   assert.match(y, /drill_members: \[region, net_amount\]/); // known members kept, in order
@@ -233,7 +180,7 @@ test('#91 dim reconciliation: drill_members naming a NON-mart column are dropped
 });
 
 test('#91 dim reconciliation: an all-unknown drill_members list emits NO drill_members block', () => {
-  const y = scaffoldCubeYaml(gold({
+  const y = scaffoldMetricYaml(gold({
     measures: [{ name: 'revenue', type: 'sum', sql: 'net_amount', drillMembers: ['nope', 'gone'] }],
   }));
   assert.doesNotMatch(y, /drill_members:/);
@@ -246,7 +193,7 @@ test('viewMembers = the Cube VIEW includes set: measures + non-PK dims, PK EXCLU
   // …the PRIMARY KEY (order_id) is a cube dimension but NOT a view member (the 400 fix).
   assert.equal(members.has('order_id'), false);
   // viewMembers stays in lockstep with the YAML `includes` list.
-  const yaml = scaffoldCubeYaml(gold());
+  const yaml = scaffoldMetricYaml(gold());
   assert.match(yaml, /includes: \[revenue, order_date, region, net_amount\]/);
 });
 
@@ -266,56 +213,54 @@ test('viewMembers matches a PK named like the dataset (e.g. campaign_id) — the
 // ------------------------------------------------------ #155 domain-namespaced cube ---
 
 test('#155 legacy dataset (no marker) keeps its EXACT un-namespaced identity (byte-stable)', () => {
-  const d = gold(); // no cubeNamespaced → the pre-#155 / live-tenant shape
-  assert.equal(cubeName(d), 'orders');
-  assert.equal(cubeViewName(d), 'Orders');
+  const d = gold(); // no viewNamespaced → the pre-#155 / live-tenant shape
+  assert.equal(modelName(d), 'orders');
+  assert.equal(viewName(d), 'Orders');
   assert.equal(CUBE_ARTIFACT(d), 'metrics/orders.cube.yml');
   // The whole model YAML is unchanged from before #155 — the live Cube model is untouched.
-  assert.match(scaffoldCubeYaml(d), /- name: orders\n/);
-  assert.match(scaffoldCubeYaml(d), /- name: Orders\n/);
-  assert.match(scaffoldExposureYaml(d), /name: orders_metrics/);
+  assert.match(scaffoldMetricYaml(d), /- name: orders\n/);
+  assert.match(scaffoldMetricYaml(d), /- name: Orders\n/);
 });
 
 test('#155 new dataset (marker) gets a DOMAIN-NAMESPACED cube name / view / file', () => {
-  const d = gold({ cubeNamespaced: true });
-  assert.equal(cubeName(d), 'sales__orders');
-  assert.equal(cubeViewName(d), 'sales__Orders');
+  const d = gold({ viewNamespaced: true });
+  assert.equal(modelName(d), 'sales__orders');
+  assert.equal(viewName(d), 'sales__Orders');
   assert.equal(CUBE_ARTIFACT(d), 'metrics/sales__orders.cube.yml');
-  assert.match(scaffoldCubeYaml(d), /- name: sales__orders\n/);
-  assert.match(scaffoldCubeYaml(d), /- name: sales__Orders\n/);
-  assert.match(scaffoldExposureYaml(d), /name: sales__orders_metrics/);
+  assert.match(scaffoldMetricYaml(d), /- name: sales__orders\n/);
+  assert.match(scaffoldMetricYaml(d), /- name: sales__Orders\n/);
 });
 
 test('#155 two domains, SAME dataset name → DISTINCT cube/view/file identities (no collision)', () => {
-  const sales = gold({ domain: 'sales', name: 'Sales', cubeNamespaced: true });
-  const finance = gold({ domain: 'finance', name: 'Sales', cubeNamespaced: true });
+  const sales = gold({ domain: 'sales', name: 'Sales', viewNamespaced: true });
+  const finance = gold({ domain: 'finance', name: 'Sales', viewNamespaced: true });
   // cube name, view name and the emitted model file are all distinct per domain…
-  assert.notEqual(cubeName(sales), cubeName(finance));
-  assert.notEqual(cubeViewName(sales), cubeViewName(finance));
+  assert.notEqual(modelName(sales), modelName(finance));
+  assert.notEqual(viewName(sales), viewName(finance));
   assert.notEqual(CUBE_ARTIFACT(sales), CUBE_ARTIFACT(finance));
-  assert.equal(cubeName(sales), 'sales__sales');
-  assert.equal(cubeName(finance), 'finance__sales');
+  assert.equal(modelName(sales), 'sales__sales');
+  assert.equal(modelName(finance), 'finance__sales');
   assert.equal(CUBE_ARTIFACT(sales), 'metrics/sales__sales.cube.yml');
   assert.equal(CUBE_ARTIFACT(finance), 'metrics/finance__sales.cube.yml');
 });
 
 test('#155 back-compat resolver: a namespaced dataset still answers to its LEGACY bare name', () => {
-  const d = gold({ domain: 'sales', name: 'Sales', cubeNamespaced: true });
+  const d = gold({ domain: 'sales', name: 'Sales', viewNamespaced: true });
   // The legacy names an existing dashboard / Power BI query / metric member would use…
-  assert.equal(legacyCubeName(d), 'sales');
-  assert.equal(legacyCubeViewName(d), 'Sales');
+  assert.equal(legacyModelName(d), 'sales');
+  assert.equal(legacyViewName(d), 'Sales');
   // …still resolve to this dataset, alongside the new namespaced name.
-  assert.ok(cubeNameMatches(d, 'sales'));          // legacy reference resolves
-  assert.ok(cubeNameMatches(d, 'sales__sales'));   // new namespaced name resolves
-  assert.ok(!cubeNameMatches(d, 'finance__sales')); // another domain's cube does NOT
-  assert.ok(cubeViewNameMatches(d, 'Sales'));         // legacy view reference resolves
-  assert.ok(cubeViewNameMatches(d, 'sales__Sales'));  // new namespaced view resolves
+  assert.ok(modelNameMatches(d, 'sales'));          // legacy reference resolves
+  assert.ok(modelNameMatches(d, 'sales__sales'));   // new namespaced name resolves
+  assert.ok(!modelNameMatches(d, 'finance__sales')); // another domain's cube does NOT
+  assert.ok(viewNameMatches(d, 'Sales'));         // legacy view reference resolves
+  assert.ok(viewNameMatches(d, 'sales__Sales'));  // new namespaced view resolves
 });
 
 test('#155 legacy dataset resolves under its bare name (matcher is a superset of legacy)', () => {
   const d = gold(); // no marker
-  assert.ok(cubeNameMatches(d, 'orders'));
-  assert.ok(cubeViewNameMatches(d, 'Orders'));
+  assert.ok(modelNameMatches(d, 'orders'));
+  assert.ok(viewNameMatches(d, 'Orders'));
 });
 
 // ---------------------------------- FROZEN slug — Cube/dbt identity stability on rename --
@@ -324,33 +269,31 @@ test('#155 legacy dataset resolves under its bare name (matcher is a superset of
 // pinned to the original physical identity — a live dashboard/metric never breaks.
 test('rename freezes the Cube + dbt identity (legacy, un-namespaced dataset)', () => {
   const before = gold({ name: 'Orders' });          // no slug → slug("Orders") = "orders"
-  assert.equal(cubeName(before), 'orders');
-  assert.equal(cubeViewName(before), 'Orders');
+  assert.equal(modelName(before), 'orders');
+  assert.equal(viewName(before), 'Orders');
   assert.equal(goldMartFqn(before), 'iceberg.sales.gold_orders');
-  assert.match(scaffoldExposureYaml(before), /ref\('mart_orders'\)/);
 
   // Rename "Orders" → "Sales Orders" pins slug="orders" (what renameDataset does).
   const after = gold({ name: 'Sales Orders', slug: 'orders' });
-  assert.equal(cubeName(after), 'orders', 'cube name must NOT move to sales_orders');
+  assert.equal(modelName(after), 'orders', 'cube name must NOT move to sales_orders');
   // The view stays anchored to the frozen slug BUT may not EQUAL the cube name: Cube
   // rejects the entire schema on "conflicting cube and view name" (one bad model 500s
   // /meta for every dataset), so the identifier is disambiguated by case — Cube
-  // identifiers are case-sensitive. legacyCubeViewName + cubeViewNameMatches keep any
+  // identifiers are case-sensitive. legacyViewName + viewNameMatches keep any
   // stored reference to the old name resolving, so nothing that referenced it breaks.
-  assert.equal(cubeViewName(after), 'Orders', 'view anchored to the frozen slug, disambiguated from the cube');
-  assert.notEqual(cubeViewName(after), cubeName(after), 'a view may never share its cube name');
+  assert.equal(viewName(after), 'Orders', 'view anchored to the frozen slug, disambiguated from the cube');
+  assert.notEqual(viewName(after), modelName(after), 'a view may never share its cube name');
   assert.equal(goldMartFqn(after), 'iceberg.sales.gold_orders', 'gold mart FQN frozen');
-  assert.match(scaffoldExposureYaml(after), /ref\('mart_orders'\)/);
   assert.doesNotMatch(goldMartFqn(after), /sales_orders/);
 });
 
 // The SAME freeze holds for a #155 namespaced dataset — only the domain prefix + frozen slug.
 test('rename freezes the Cube identity (namespaced #155 dataset)', () => {
-  const after = gold({ name: 'Sales Orders', slug: 'orders', cubeNamespaced: true });
-  assert.equal(cubeName(after), 'sales__orders');
+  const after = gold({ name: 'Sales Orders', slug: 'orders', viewNamespaced: true });
+  assert.equal(modelName(after), 'sales__orders');
   // Disambiguated from the cube name (same rule as the legacy test above) — never equal.
-  assert.equal(cubeViewName(after), 'sales__Orders');
-  assert.notEqual(cubeViewName(after), cubeName(after), 'a view may never share its cube name');
+  assert.equal(viewName(after), 'sales__Orders');
+  assert.notEqual(viewName(after), modelName(after), 'a view may never share its cube name');
   // The legacy bare name still resolves to the frozen slug (back-compat unbroken).
-  assert.ok(cubeNameMatches(after, 'orders'));
+  assert.ok(modelNameMatches(after, 'orders'));
 });

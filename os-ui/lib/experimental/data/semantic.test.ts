@@ -121,5 +121,5 @@ test('MetricFlow semantic: join-aware — dimensions follow goldOutputColumns, n
 
 test('the semantic artifact path namespaces like the cube artifact', () => {
   assert.equal(SEMANTIC_ARTIFACT(gold()), 'semantic/orders.yml');
-  assert.equal(SEMANTIC_ARTIFACT(gold({ cubeNamespaced: true })), 'semantic/sales__orders.yml');
+  assert.equal(SEMANTIC_ARTIFACT(gold({ viewNamespaced: true })), 'semantic/sales__orders.yml');
 });

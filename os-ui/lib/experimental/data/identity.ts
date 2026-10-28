@@ -10,12 +10,12 @@ import { privatePrefix } from './personal-lane.ts';
  *
  *   R2 — agents run UNDER THE USER's delegated identity, never a service account.
  *        `delegate()` mints a DOWNSCOPED token bound to the user's `sub`; passing a
- *        service account is refused. If a superuser identity reached OPA/Cube, RLS
+ *        service account is refused. If a superuser identity reached OPA/Trino, RLS
  *        would collapse — so this is a platform invariant, not an option.
- *   R3 — that ONE identity propagates Superset -> Cube -> Trino. `propagate()`
- *        derives all three consumer identities from the SAME claims: Trino gets the
- *        coarse `user` + `groups` (low-card attributes encoded as groups, R1), Cube
- *        gets the full claims as `securityContext`. No shared service identity for reads.
+ *   R3 — that ONE identity propagates to every consumer hop. `propagate()` derives the
+ *        consumer identities from the SAME claims: Trino gets the coarse `user` +
+ *        `groups` (low-card attributes encoded as groups, R1); the full claims are
+ *        reported as the `securityContext`. No shared service identity for reads.
  *   Personal lane — the agent's `personal` scope can reach ONLY the user's own
  *        private prefix (`privatePrefix`) / `personal_<uid>` Iceberg schema, never
  *        another user's data. Its queries run through the SAME governed Trino path.
@@ -59,7 +59,7 @@ export class IdentityError extends Error {
 }
 
 /** Service-account principals are refused as delegated identities (R2). */
-const SERVICE_ACCOUNT = /^(svc[-_]|service[-_]|system$|root$|trino$|cube$|superset$)/i;
+const SERVICE_ACCOUNT = /^(svc[-_]|service[-_]|system$|root$|trino$|polaris$)/i;
 
 export function isServiceAccount(sub: string): boolean {
   return SERVICE_ACCOUNT.test(sub);
@@ -113,17 +113,19 @@ export function trinoGroups(claims: Claims): string[] {
 }
 
 export type TrinoIdentity = { user: string; groups: string[] };
-export type CubeIdentity = { securityContext: Record<string, unknown> };
 export type ConsumerIdentities = {
   trino: TrinoIdentity;
-  cube: CubeIdentity;
+  /** The viewer's full RLS context (sub, domains, role, scope, imports + every low-card
+   *  attribute) — what the explorer/dashboards report back as "the rows you see". */
+  securityContext: Record<string, unknown>;
   /** Present ONLY for the personal scope: the user's own sandbox prefix. */
   sandboxPrefix: string | null;
 };
 
 /**
- * R3 — derive the Superset->Cube->Trino identities from one delegated token, so the
- * SAME user identity is enforced at every hop (no shared service identity). The
+ * R3 — derive the consumer identities from one delegated token, so the SAME user
+ * identity is enforced at every hop (no shared service identity): the Trino
+ * user+groups the governed query path forwards, and the full security context. The
  * personal sandbox prefix is exposed only for the `personal` scope, and only ever the
  * caller's own prefix.
  */
@@ -132,15 +134,13 @@ export function propagate(token: DelegatedToken): ConsumerIdentities {
   const claims: Claims = { sub: token.sub, domains: token.domains, role: token.role, attributes: token.attributes };
   return {
     trino: { user: token.sub, groups: trinoGroups(claims) },
-    cube: {
-      securityContext: {
-        sub: token.sub,
-        domains: token.domains,
-        role: token.role,
-        scope: token.scope,
-        imported: token.imported,
-        ...token.attributes,
-      },
+    securityContext: {
+      sub: token.sub,
+      domains: token.domains,
+      role: token.role,
+      scope: token.scope,
+      imported: token.imported,
+      ...token.attributes,
     },
     sandboxPrefix: token.scope === 'personal' ? privatePrefix(token.sub) : null,
   };

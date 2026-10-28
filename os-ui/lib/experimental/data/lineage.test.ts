@@ -30,10 +30,10 @@ test('lineage chains bronze→silver→gold (refinement, column-level)', () => {
   assert.deepEqual(g.nodes.find((n) => n.id === 'v:gold')!.columns, ['order_id', 'net_amount']);
 });
 
-test('consumption axis: gold → metric → dashboard', () => {
+test('consumption axis: gold → metric', () => {
   const g = lineageFor(ds());
   assert.ok(g.edges.some((e) => e.from === 'v:gold' && e.to === 'm:revenue' && e.kind === 'metric'));
-  assert.ok(g.edges.some((e) => e.from === 'm:revenue' && e.to === 'dash' && e.kind === 'dashboard'));
+  assert.ok(!g.nodes.some((n) => n.kind === 'dashboard'), 'no placeholder dashboard node — dashboards are native and registry-backed');
 });
 
 test('reuse axis: recorded join upstreams feed the Gold node (multi-upstream)', () => {

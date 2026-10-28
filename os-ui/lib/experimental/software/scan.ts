@@ -8,7 +8,7 @@ import type { ScanCategory, ScanFinding, ScanResult, ScaffoldFile } from './mode
  * §D — CI runs tests + a security scan: SAST · deps · secret-scan). This is a
  * REAL, deterministic baseline that runs offline (no external scanner needed) so
  * the deploy-review gate is demonstrable on a laptop; a live deploy swaps in the
- * Forgejo-Actions scanners (Semgrep / Trivy / gitleaks) behind the same shape.
+ * real scanners (Semgrep / Trivy / gitleaks) behind the same shape.
  *
  * The gate rule (tested): a deploy MAY proceed only when `passed` is true, i.e.
  * NO secret leaked and NO high/critical SAST or dependency finding. A leaked

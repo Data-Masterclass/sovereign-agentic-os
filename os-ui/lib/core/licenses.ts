@@ -36,12 +36,7 @@ export const COMPONENTS: Component[] = [
   { name: 'Apache Polaris', license: 'Apache-2.0', layer: 'Structured Data', note: 'Iceberg REST catalog.' },
   { name: 'Trino', license: 'Apache-2.0', layer: 'Structured Data', note: 'Distributed SQL query engine over Iceberg (query-tool).' },
   { name: 'dbt Core', license: 'Apache-2.0', layer: 'Structured Data', note: 'Transforms raw data into the warehouse.' },
-  { name: 'Cube', license: 'Apache-2.0', layer: 'Metrics', note: 'Semantic / metrics layer over the warehouse.' },
-  { name: 'OpenMetadata', license: 'Apache-2.0', layer: 'Governance', note: 'Data catalog + lineage + profiler.' },
   { name: 'Dagster', license: 'Apache-2.0', layer: 'Orchestration', note: 'Orchestrates the data tier (dbt assets).' },
-
-  // ---- BI ----
-  { name: 'Apache Superset', license: 'Apache-2.0', layer: 'Dashboards', note: 'Self-service dashboards & SQL Lab.' },
 
   // ---- Storage & infra ----
   { name: 'PostgreSQL', license: 'PostgreSQL', layer: 'Infrastructure', note: 'Infra database (via CloudNativePG operator).' },
@@ -49,10 +44,6 @@ export const COMPONENTS: Component[] = [
   { name: 'ClickHouse', license: 'Apache-2.0', layer: 'Monitoring', note: "Langfuse v3's analytics backend." },
   { name: 'MinIO', license: 'AGPL-3.0', layer: 'Infrastructure', note: 'S3-compatible object storage (local stand-in).' },
   { name: 'Valkey', license: 'BSD-3-Clause', layer: 'Infrastructure', note: 'Redis-protocol queue/cache (not Redis).' },
-
-  // ---- Delivery & GitOps ----
-  { name: 'Forgejo', license: 'GPL-3.0-or-later', layer: 'Software', note: 'Sovereign Git hosting + Actions CI.' },
-  { name: 'Argo CD', license: 'Apache-2.0', layer: 'Software', note: 'GitOps continuous delivery.' },
 
   // ---- Governance & egress ----
   { name: 'Open Policy Agent', license: 'Apache-2.0', layer: 'Governance', note: 'Default-deny tool authorization.' },

@@ -3,15 +3,12 @@
  */
 
 /**
- * Files catalog + lineage (OpenMetadata, mock-tolerant). Every governed event a
- * file goes through — indexed, promoted, certified, or distilled via "Use as" —
- * is recorded here as a lineage edge. The record is **always** kept in-process
- * (authoritative on a laptop with no OpenMetadata); the server boundary
- * best-effort mirrors it to the real OM REST API when one is reachable, exactly
- * like `lib/approvals.ts`' OpenSearch write-through.
+ * Files lineage (in-process ring). Every governed event a file goes through —
+ * indexed, promoted, certified, or distilled via "Use as" — is recorded here as a
+ * lineage edge. The ring IS the record: the OS registry is the system of record for
+ * lineage, so there is no external catalog mirror.
  *
- * Pure module (no server/network) so the store + tests record lineage directly;
- * the OM push lives in the server layer.
+ * Pure module (no server/network) so the store + tests record lineage directly.
  */
 
 export type LineageKind =

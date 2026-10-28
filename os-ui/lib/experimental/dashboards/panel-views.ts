@@ -1,18 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { CubeMetaView } from '../../infra/governed.ts';
-
 /**
- * The Tier-1 panel builder PALETTE, scoped to the caller's governed views. Since the
- * metrics→Trino migration (Phase 2) every panel is SERVED as governed SQL resolved
- * through the metrics REGISTRY — so the registry is the ONE palette source: what it
- * offers is exactly what the executor can compute. Cube's /meta no longer decides
- * anything here (it only serves the Power BI bridge until Phase 3 removes it) — the
- * old "is Cube serving this view?" distinction is gone, and with it the false
- * "Cube is not serving X" warning on perfectly renderable panels. Pure + unit-tested:
- * given the members the caller can see (from listMetrics), one entry per entitled
- * view — never a view they can't see.
+ * The Tier-1 panel builder PALETTE, scoped to the caller's governed views. Every panel is
+ * SERVED as governed SQL resolved through the metrics REGISTRY — so the registry is the
+ * ONE palette source: what it offers is exactly what the executor can compute. Pure +
+ * unit-tested: given the members the caller can see (from listMetrics), one entry per
+ * entitled view — never a view they can't see.
  */
 
 export type PanelView = {
@@ -20,8 +14,8 @@ export type PanelView = {
   measures: string[];
   dimensions: string[];
   timeDimensions: string[];
-  /** Always TRUE since Phase 2 — panels serve as governed SQL from the registry, so
-   *  every entitled view is servable. Kept for response-shape compatibility. */
+  /** Always TRUE — panels serve as governed SQL from the registry, so every entitled
+   *  view is servable. Kept for response-shape compatibility. */
   served: boolean;
 };
 
@@ -36,7 +30,7 @@ export function viewOfMember(member: string): string {
  *  goldOutputColumns), keyed by view name. */
 export type RegistryViewDims = Map<string, { dimensions: string[]; timeDimensions: string[] }>;
 
-export function narrowCubeMeta(members: string[], _meta: CubeMetaView[], registryDims?: RegistryViewDims): PanelView[] {
+export function panelViewsFor(members: string[], registryDims?: RegistryViewDims): PanelView[] {
   const allowedViews = new Set<string>();
   const registryMeasures = new Map<string, Set<string>>();
   for (const member of members) {
@@ -47,8 +41,7 @@ export function narrowCubeMeta(members: string[], _meta: CubeMetaView[], registr
     registryMeasures.get(view)!.add(member);
   }
   // Registry-only, deliberately: the SQL executor resolves panels through the SAME
-  // registry, so palette == executor capability by construction (`_meta` is ignored
-  // and kept only for call-site compatibility until Phase 3 deletes it).
+  // registry, so palette == executor capability by construction.
   return [...allowedViews].map((view) => {
     const reg = registryDims?.get(view);
     return {

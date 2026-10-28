@@ -4,7 +4,8 @@
 
 /**
  * The EXPOSE guided path as a shared-core staged model — Catalog · Organize · Assign · Review.
- * Pure and framework-free (mirrors components/science/stages.ts and lib/data/stages.ts) so the
+ * Pure and framework-free (mirrors lib/data/stages.ts) so the
+
  * gating and ✓ rules ride the unit-tested core primitive (lib/core/stages.ts); the React skin
  * is components/connections/ExposePanel.tsx on components/core/StageShell.tsx.
  *

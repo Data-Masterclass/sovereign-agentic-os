@@ -487,7 +487,7 @@ test('gateActivityNote + gateLineFromStep render the feed step in the existing l
 
   // A non-gate commit failure yields NO gate line (the ⚠ commit line names it).
   assert.equal(
-    gateLineFromStep({ tool: 'commit', args: {}, result: 'Error: Forgejo unreachable', isError: true }),
+    gateLineFromStep({ tool: 'commit', args: {}, result: 'Error: file store unreachable', isError: true }),
     null,
   );
   // Non-commit tools never get a gate line.

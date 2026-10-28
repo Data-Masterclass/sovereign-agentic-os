@@ -4,10 +4,10 @@
 /**
  * Tab visibility gate tests for the consolidated nav. The five-section matrix
  * (5 tabs each):
- *   Ungrouped (entry): Home, Cockpit, Tutorials, MCP (builder+), About / Licenses
- *   Plan:    Strategy, Big Bets, Operating Model, Marketplace
+ *   Ungrouped (entry): Home, MCP (builder+), About / Licenses
+ *   Plan:    Operating Model
  *   Context: Knowledge, Files, Data, Connections, Metrics
- *   Build:   Agents, Software, Science, Dashboards, Console (admin)
+ *   Build:   Agents, Software, Dashboards, Console (admin)
  *   Govern:  Governance (builder+), Monitoring (builder+),
  *            Components (admin), LLM Gateway (builder+), Admin (admin)
  *
@@ -26,7 +26,7 @@ import type { Role } from './session.ts';
 
 // Flat label list for a given role after filtering.
 function visibleLabels(role: Role): string[] {
-  return filterTabGroups(TAB_GROUPS, role, undefined, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
+  return filterTabGroups(TAB_GROUPS, role, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
 }
 
 const ENTRY_GROUP   = TAB_GROUPS.find((g) => !g.heading)!;
@@ -40,7 +40,7 @@ assert.ok(PLAN_GROUP,    'Plan group must exist in TAB_GROUPS');
 assert.ok(CONTEXT_GROUP, 'Context group must exist in TAB_GROUPS');
 assert.ok(BUILD_GROUP,   'Build group must exist in TAB_GROUPS');
 assert.ok(GOVERN_GROUP,  'Manage group must exist in TAB_GROUPS');
-// TAB-VIS / TAB-LAYER tests below predate OS_ENABLED_TABS and check role/layer
+// TAB-VIS tests below predate OS_ENABLED_TABS and check role
 // gating in isolation — they assume every tab is reachable (a full deployment).
 // Pass this explicit "everything enabled" set so the base default doesn't
 // change what they're testing. TAB-FEATURE tests further down exercise the
@@ -63,17 +63,17 @@ const ADMIN_ONLY_LABELS = TAB_GROUPS
 
 // ---- Group membership -------------------------------------------------------
 
-test('TAB-SET entry group is exactly Home + Cockpit + Tutorials + MCP + About / Licenses', () => {
+test('TAB-SET entry group is exactly Home + MCP + About / Licenses', () => {
   assert.deepEqual(
     ENTRY_GROUP.tabs.map((t) => t.label),
-    ['Home', 'Cockpit', 'Tutorials', 'MCP', 'About / Licenses'],
+    ['Home', 'MCP', 'About / Licenses'],
   );
 });
 
-test('TAB-SET Plan group is Strategy, Big Bets, Operating Model, Marketplace', () => {
+test('TAB-SET Plan group is Operating Model', () => {
   assert.deepEqual(
     PLAN_GROUP.tabs.map((t) => t.label),
-    ['Strategy', 'Big Bets', 'Operating Model', 'Marketplace'],
+    ['Operating Model'],
   );
 });
 
@@ -84,10 +84,10 @@ test('TAB-SET Context group is Data, Metrics, Files, Knowledge (usage order)', (
   );
 });
 
-test('TAB-SET Build group is Workflows, Agents, Dashboards, Software, Science, Console', () => {
+test('TAB-SET Build group is Workflows, Agents, Dashboards, Software, Console', () => {
   assert.deepEqual(
     BUILD_GROUP.tabs.map((t) => t.label),
-    ['Workflows', 'Agents', 'Dashboards', 'Software', 'Science', 'Console'],
+    ['Workflows', 'Agents', 'Dashboards', 'Software', 'Console'],
   );
 });
 
@@ -146,16 +146,8 @@ test('TAB-SET About / Licenses is in the Entry group with no minRole (all roles 
   assert.equal(about!.href, '/about', 'About / Licenses must link to /about');
 });
 
-test('TAB-SET Tutorials is in the entry group with no minRole', () => {
-  const tut = ENTRY_GROUP.tabs.find((t) => t.label === 'Tutorials');
-  assert.ok(tut, 'Tutorials must be in the entry group');
-  assert.equal(tut!.minRole, undefined, 'Tutorials must have no minRole');
-});
-
-test('TAB-SET Marketplace is in the Plan group; MCP is in the entry group', () => {
-  assert.ok(PLAN_GROUP.tabs.some((t) => t.label === 'Marketplace'), 'Marketplace under Plan');
+test('TAB-SET MCP is in the entry group', () => {
   assert.ok(ENTRY_GROUP.tabs.some((t) => t.label === 'MCP'), 'MCP in the entry group');
-  assert.ok(!ENTRY_GROUP.tabs.some((t) => t.label === 'Marketplace'), 'Marketplace no longer at the top');
 });
 
 // ---- Visibility checks ------------------------------------------------------
@@ -165,7 +157,6 @@ test('TAB-VIS creator: sees no admin-only tabs at all', () => {
   for (const l of ADMIN_ONLY_LABELS) {
     assert.ok(!labels.includes(l), `creator must not see admin-only tab: ${l}`);
   }
-  assert.ok(labels.includes('Tutorials'), 'creator must still see Tutorials');
   assert.ok(labels.includes('About / Licenses'), 'creator must see About / Licenses (no minRole)');
   assert.ok(!labels.includes('Monitoring'), 'creator must not see Monitoring (builder+)');
   assert.ok(!labels.includes('LLM Gateway'), 'creator must not see LLM Gateway (builder+)');
@@ -183,7 +174,7 @@ test('TAB-VIS builder sees the builder-gated tabs (Monitoring, LLM Gateway, MCP,
 });
 
 test('TAB-VIS creator: Manage group shows only the ungated tab (Connections)', () => {
-  const groups = filterTabGroups(TAB_GROUPS, 'creator', undefined, ALL_FEATURES);
+  const groups = filterTabGroups(TAB_GROUPS, 'creator', ALL_FEATURES);
   const manage = groups.find((g) => g.heading === 'Manage');
   assert.ok(manage, 'Manage group must be present for creator (Connections is ungated)');
   assert.deepEqual(manage!.tabs.map((t) => t.label), ['Connections'],
@@ -191,7 +182,7 @@ test('TAB-VIS creator: Manage group shows only the ungated tab (Connections)', (
 });
 
 test('TAB-VIS builder: Manage group is visible and includes Governance', () => {
-  const groups = filterTabGroups(TAB_GROUPS, 'builder', undefined, ALL_FEATURES);
+  const groups = filterTabGroups(TAB_GROUPS, 'builder', ALL_FEATURES);
   const govern = groups.find((g) => g.heading === 'Manage');
   assert.ok(govern, 'Manage group must be present for builder');
   assert.ok(govern!.tabs.some((t) => t.label === 'Governance'), 'builder must see Governance');
@@ -201,14 +192,14 @@ test('TAB-VIS builder: Manage group is visible and includes Governance', () => {
 });
 
 test('TAB-VIS builder: Console tab in Build group is visible (governed Query surface)', () => {
-  const groups = filterTabGroups(TAB_GROUPS, 'builder', undefined, ALL_FEATURES);
+  const groups = filterTabGroups(TAB_GROUPS, 'builder', ALL_FEATURES);
   const build = groups.find((g) => g.heading === 'Build');
   assert.ok(build, 'Build group must be present for builder');
   assert.ok(build!.tabs.some((t) => t.label === 'Console'), 'builder must see Console (Query is builder+; the raw Shell inside stays admin-only)');
 });
 
 test('TAB-VIS creator: Console tab is still hidden (builder+)', () => {
-  const groups = filterTabGroups(TAB_GROUPS, 'creator', undefined, ALL_FEATURES);
+  const groups = filterTabGroups(TAB_GROUPS, 'creator', ALL_FEATURES);
   const build = groups.find((g) => g.heading === 'Build');
   assert.ok(!build!.tabs.some((t) => t.label === 'Console'), 'creator must not see Console (builder+)');
 });
@@ -218,7 +209,6 @@ test('TAB-VIS domain_admin: sees no admin-only tabs', () => {
   for (const l of ADMIN_ONLY_LABELS) {
     assert.ok(!labels.includes(l), `domain_admin must not see admin-only tab: ${l}`);
   }
-  assert.ok(labels.includes('Tutorials'), 'domain_admin must see Tutorials');
   assert.ok(labels.includes('About / Licenses'), 'domain_admin must see About / Licenses');
   assert.ok(labels.includes('Governance'), 'domain_admin must see Governance (builder+)');
 });
@@ -229,7 +219,6 @@ test('TAB-VIS admin: sees all tabs including Console, Admin, Components', () => 
     assert.ok(labels.includes(l), `admin must see tab: ${l}`);
   }
   assert.ok(labels.includes('Governance'), 'admin must see Governance');
-  assert.ok(labels.includes('Tutorials'), 'admin must see Tutorials');
   assert.ok(labels.includes('About / Licenses'), 'admin must see About / Licenses');
   assert.ok(labels.includes('Console'), 'admin must see Console');
   assert.ok(!labels.includes('Settings'), 'standalone Settings tab must not appear in nav');
@@ -295,7 +284,7 @@ test('TAB-VIS entry/Context/Build/Plan tabs are open to creators except the MCP 
       }
       assert.equal(tab.minRole, undefined,
         `${group.heading ?? 'Entry'} group tab "${tab.label}" must not have minRole`);
-      assert.equal(tabVisible(tab, 'creator', undefined, ALL_FEATURES), true,
+      assert.equal(tabVisible(tab, 'creator', ALL_FEATURES), true,
         `${group.heading ?? 'Entry'} group tab "${tab.label}" hidden from creator`);
     }
   }
@@ -303,55 +292,9 @@ test('TAB-VIS entry/Context/Build/Plan tabs are open to creators except the MCP 
 
 // ---- 5-tab uniformity -------------------------------------------------------
 
-test('TAB-SET section sizes are fixed (Entry 5, Plan 4, Context 4, Build 6, Manage 6)', () => {
+test('TAB-SET section sizes are fixed (Entry 3, Plan 1, Context 4, Build 5, Manage 6)', () => {
   const sizes = Object.fromEntries(TAB_GROUPS.map((g) => [g.heading ?? 'Entry', g.tabs.length]));
-  assert.deepEqual(sizes, { Entry: 5, Plan: 4, Context: 4, Build: 6, Manage: 6 });
-});
-
-// ---- Layer gating (Science ⇔ the domain's Science layer, layers.ml) ---------
-
-test('TAB-LAYER Science carries requiresLayer=ml; no other tab is layer-gated', () => {
-  const science = BUILD_GROUP.tabs.find((t) => t.label === 'Science');
-  assert.ok(science, 'Science tab must exist in Build group');
-  assert.equal(science!.requiresLayer, 'ml', 'Science must be gated on the ml (Science) layer');
-  const others = TAB_GROUPS.flatMap((g) => g.tabs).filter((t) => t.label !== 'Science');
-  for (const t of others) assert.equal(t.requiresLayer, undefined, `only Science is layer-gated, not "${t.label}"`);
-});
-
-test('TAB-LAYER Science hidden when the active domain explicitly has ml:false (every role)', () => {
-  for (const role of ['creator', 'builder', 'domain_admin', 'admin'] as Role[]) {
-    const labels = filterTabGroups(TAB_GROUPS, role, { ml: false }, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
-    assert.ok(!labels.includes('Science'), `${role} must not see Science when ml is explicitly off`);
-  }
-});
-
-test('TAB-LAYER Science visible when ml:true', () => {
-  const labels = filterTabGroups(TAB_GROUPS, 'creator', { ml: true }, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
-  assert.ok(labels.includes('Science'), 'Science must show when the layer is on');
-});
-
-test('TAB-LAYER unknown/absent layers FAIL OPEN — Science stays visible', () => {
-  for (const layers of [undefined, null, {}]) {
-    const labels = filterTabGroups(TAB_GROUPS, 'creator', layers, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
-    assert.ok(labels.includes('Science'), `Science must fail open for layers=${JSON.stringify(layers)}`);
-  }
-});
-
-test('TAB-LAYER minRole filtering is unaffected by the layers argument', () => {
-  for (const layers of [{ ml: false }, { ml: true }, null]) {
-    const creator = filterTabGroups(TAB_GROUPS, 'creator', layers, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
-    assert.ok(!creator.includes('Console'), 'creator still must not see Console (builder+)');
-    assert.ok(!creator.includes('MCP'), 'creator still must not see MCP (builder+)');
-    const admin = filterTabGroups(TAB_GROUPS, 'admin', layers, ALL_FEATURES).flatMap((g) => g.tabs.map((t) => t.label));
-    assert.ok(admin.includes('Components'), 'admin still sees Components regardless of layers');
-  }
-});
-
-test('TAB-LAYER tabVisible combines both gates: layer off wins even for admin', () => {
-  const science = BUILD_GROUP.tabs.find((t) => t.label === 'Science')!;
-  assert.equal(tabVisible(science, 'admin', { ml: false }, ALL_FEATURES), false, 'ml:false hides Science even for admin');
-  assert.equal(tabVisible(science, 'admin', { ml: true }, ALL_FEATURES), true);
-  assert.equal(tabVisible(science, null, { ml: false }, ALL_FEATURES), false, 'layer gate applies even when role is unknown');
+  assert.deepEqual(sizes, { Entry: 3, Plan: 1, Context: 4, Build: 5, Manage: 6 });
 });
 
 // ---- Feature gating (OS_ENABLED_TABS) ---------------------------------------
@@ -366,7 +309,7 @@ test('TAB-FEATURE every tab has a feature key', () => {
 });
 
 test('TAB-FEATURE default (OS_ENABLED_TABS unset) is exactly the base tab set', () => {
-  const expected = ['home', 'about', 'agents', 'monitoring', 'llm-gateway', 'mcp', 'governance', 'tutorials', 'admin', 'components'];
+  const expected = ['home', 'about', 'agents', 'monitoring', 'llm-gateway', 'mcp', 'governance', 'admin', 'components'];
   assert.deepEqual([...parseEnabledTabs(undefined)].sort(), expected.sort());
   assert.deepEqual([...BASE_FEATURES].sort(), expected.sort());
 });
@@ -380,7 +323,7 @@ test('TAB-FEATURE tabVisible hides a tab whose feature is not enabled, for every
   assert.equal(DEFAULT_FEATURES.has(data.feature!), false, 'this test assumes "data" is not in the default base set');
   for (const role of ['creator', 'builder', 'domain_admin', 'admin', null, undefined] as (Role | null | undefined)[]) {
     assert.equal(tabVisible(data, role), false, `${role} must not see Data when its feature is disabled`);
-    assert.equal(tabVisible(data, role, undefined, new Set(['data'])), true, `${role} sees Data once enabled`);
+    assert.equal(tabVisible(data, role, new Set(['data'])), true, `${role} sees Data once enabled`);
   }
 });
 
@@ -402,7 +345,7 @@ test('TAB-FEATURE filterTabGroups: with the default set, admin sees only base-fe
 });
 
 test('TAB-FEATURE filterTabGroups: an empty enabled set hides every tab (sidebar loading state)', () => {
-  assert.deepEqual(filterTabGroups(TAB_GROUPS, 'admin', undefined, new Set()), []);
+  assert.deepEqual(filterTabGroups(TAB_GROUPS, 'admin', new Set()), []);
 });
 
 // ---- parseEnabledTabs --------------------------------------------------------
@@ -414,7 +357,7 @@ test('TAB-PARSE empty / whitespace / only-commas fall back to the base set', () 
 });
 
 test('TAB-PARSE trims, drops empties, and REPLACES (does not extend) the base set', () => {
-  assert.deepEqual([...parseEnabledTabs(' home, data ,,science ')].sort(), ['data', 'home', 'science']);
+  assert.deepEqual([...parseEnabledTabs(' home, data ,,metrics ')].sort(), ['data', 'home', 'metrics']);
 });
 
 test('TAB-PARSE "*" enables every tab', () => {
@@ -425,7 +368,7 @@ test('TAB-PARSE "*" enables every tab', () => {
 test('TAB-PARSE keeps unknown keys (so they can be warned about) without enabling any tab', () => {
   const set = parseEnabledTabs('home,admin,bogus');
   assert.ok(set.has('bogus'));
-  assert.equal(filterTabGroups(TAB_GROUPS, 'admin', undefined, set).flatMap((g) => g.tabs).length, 2);
+  assert.equal(filterTabGroups(TAB_GROUPS, 'admin', set).flatMap((g) => g.tabs).length, 2);
 });
 
 // ---- enabledTabsWarnings -----------------------------------------------------

@@ -8,9 +8,7 @@ import Link from 'next/link';
 import CodePanel from '@/components/CodePanel';
 import LifecycleActions from '@/components/lifecycle/LifecycleActions';
 import ReviewCard, { type ReviewCardData } from '@/components/ReviewCard';
-import ProgressStepper from '@/components/core/ProgressStepper';
 import DomainTag from '@/components/DomainTag';
-import { useToolWindow } from '@/components/ToolWindowProvider';
 import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
 import type { FiledApproval } from '@/lib/governance/approval-notice';
 import { roleAtLeast, type Role as SessionRole } from '@/lib/core/session';
@@ -59,7 +57,6 @@ import RefinementList, { type RefineHandlers } from './RefinementList';
 import { buildableBatch } from './refinement-view';
 import StageConversation from '@/components/core/StageConversation';
 import { initialStageState, canEnter, isSatisfied, markDone, type StageState } from '@/lib/core/stages';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { buildStatusRail } from '@/lib/experimental/software/build-activity';
 import { type BuildTarget } from '@/lib/experimental/software/build-target';
 import { everyStoryHasSpec, specHasContent, storiesMissingSpec, designLadder, type StorySpec } from '@/lib/experimental/software/story-spec';
@@ -78,7 +75,6 @@ import DesignEpicDetail from './DesignEpicDetail';
 import SpecTree, { type SpecNode } from './SpecTree';
 import SpecDetailPanel from './SpecDetailPanel';
 import { SW_STAGES, type SwStageId, type SwCtx } from './stages';
-import { derivePipelineView, type PipelineView } from '@/lib/experimental/software/pipeline-view';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type Tool = { name: string; description: string; write: boolean };
@@ -110,7 +106,6 @@ export type SoftwareApp = {
   owner: string;
   domain: string;
   visibility: Visibility;
-  mode: 'live' | 'offline';
   /**
    * How the app is served: 'image' (default, per-app image), 'runtime' (OS bundles the tree), or
    * 'spec' (AppSpec Phase 4 — the OS renders a declarative spec same-origin, no code/pod).
@@ -120,9 +115,8 @@ export type SoftwareApp = {
   spec?: AppSpecValue;
   /** The AUTOSAVED candidate spec (os-ui 0.6.135) — what the composer edits; Publish promotes it to `spec`. */
   draftSpec?: AppSpecValue;
-  repo: { fullName: string; htmlUrl: string; seeded: string[] };
+  repo: { seeded: string[] };
   subdomain: string;
-  pipeline: Record<string, string>;
   chat: ChatMsg[];
   mcpPrincipal: string;
   mcpTools: Tool[];
@@ -187,7 +181,7 @@ function promoteLabel(v: Visibility): string | null {
  * Developer toggle (components/core/BuilderModeToggle). Simple is the five-stage flow;
  * Developer surfaces the REAL raw app files (the in-browser code panel that commits) beside
  * the build/deploy console. Every gate reads the REAL app state handed in (`app.purpose`,
- * `app.epics`, `app.pipeline`, `deploy.state`, `deploy.previewUrl`, `deploy.releases`), so a
+ * `app.epics`, `app.repo.seeded`, `deploy.state`, `deploy.previewUrl`, `deploy.releases`), so a
  * fresh app opens on Define (never Preview) and walks forward as its real state settles.
  */
 export default function SoftwareBuilder({
@@ -203,7 +197,6 @@ export default function SoftwareBuilder({
   reviewCard: ReviewCardData | null;
   onReload: () => void;
 }) {
-  const { openTool } = useToolWindow();
   const { notifyApprovalFiled } = useApprovalNotifier();
 
   const [busy, setBusy] = useState(false);
@@ -343,7 +336,7 @@ export default function SoftwareBuilder({
   const agentGrants = useMemo(() => normalizeAgentGrants(app.agents), [app.agents]);
 
   // The live ctx the stage gates/✓ read — REAL app state, never faked.
-  const committed = app.pipeline.forgejo === 'ok' || app.repo.seeded.length > 0;
+  const committed = app.repo.seeded.length > 0;
   // Choose Context is RESOLVED when no data-needing story is left ungrounded — i.e. the
   // 0.6.101 build-gate warning is empty (a dataset is bound, or no story implies a data
   // need). This is the SAME honest signal Build reads, so the gate and the stage agree.
@@ -475,26 +468,6 @@ export default function SoftwareBuilder({
     }
   }
 
-  // Manual recovery for an app whose Forgejo repo vanished (pipeline.forgejo ===
-  // 'failing', the honest repo-404 signal). Calls the existing audited heal endpoint;
-  // a normal build then commits + rebuilds from the re-provisioned scaffold.
-  async function healRepo() {
-    if (busy) return;
-    setBusy(true);
-    setDeployMsg('');
-    try {
-      const res = await fetch(`/api/apps/${app.id}/deploy?action=heal-repo`, { method: 'POST' });
-      const body = await res.json();
-      if (!res.ok) setDeployMsg(`✗ ${body.error ?? body.heal?.detail ?? 'Heal failed.'}`);
-      else setDeployMsg(`✓ ${body.heal?.detail ?? 'Repository re-provisioned.'} Re-run your build to rebuild from the recovered scaffold.`);
-      onReload();
-    } catch (e) {
-      setDeployMsg((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function promote() {
     if (busy) return;
     setBusy(true);
@@ -593,16 +566,6 @@ export default function SoftwareBuilder({
     }
   }
 
-  // The ONE honest pipeline derivation — shared with Publish so Test and Publish
-  // can never disagree. A live/serving app shows all upstream stages complete;
-  // a real failure surfaces the same marked stage in both surfaces.
-  const pipe = useMemo(
-    // A declarative (spec) app has no image/runtime pipeline; pass undefined so the view falls back
-    // to the plain pipeline reflection rather than the image/runtime-specific derivations.
-    () => derivePipelineView(app.pipeline, { state: app.deploy.state, releases: app.deploy.releases, serveMode: app.serveMode === 'spec' ? undefined : app.serveMode }),
-    [app.pipeline, app.deploy.state, app.deploy.releases, app.serveMode],
-  );
-
   return (
     <>
       {/* Persistent header — badges + prominent promote/demote + the view toggle. */}
@@ -619,10 +582,6 @@ export default function SoftwareBuilder({
           ) : null}
           <span className={dep.cls}>{dep.label}</span>
           <span className="badge muted">{version}</span>
-          {/* "git not ready" is a CODED-app concept (its source lives in a Forgejo repo). A
-              declarative/spec app serves from its spec via the platform runtime and needs no
-              per-app repo, so the badge is misleading noise there — show it for coded apps only. */}
-          {!isSpecApp && app.mode === 'offline' ? <span className="badge muted">git not ready</span> : null}
         </div>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           {/* The top-level Simple⇄Developer toggle drives the RAW CODE-FILES view
@@ -748,7 +707,7 @@ export default function SoftwareBuilder({
           {stage.current === 'publish' && app.serveMode !== 'spec' ? (
             <>
               <TestStage
-                app={app} epics={epics} surface={surface} pipe={pipe}
+                app={app} epics={epics} surface={surface}
                 busy={busy} onPreview={() => deployAction('preview')}
                 deployMsg={deployMsg}
                 offlineAck={previewAck} onOfflineAck={() => { setPreviewAck(true); setStage((s) => markDone(s, 'publish')); }}
@@ -762,23 +721,16 @@ export default function SoftwareBuilder({
               />
               <div className="section-title" style={{ marginTop: 24 }}>Publish &amp; go live</div>
               <PublishStage
-                app={app} surface={surface} user={user} pipe={pipe}
+                app={app} surface={surface} user={user}
                 connTools={connection?.tools ?? app.mcpTools}
                 reviewCard={reviewCard}
                 publishLabel={publishLabel} publishDisabled={publishDisabled} inReview={inReview}
                 onPublish={() => deployAction()} deployMsg={deployMsg}
                 toolOut={toolOut} toolNote={toolNote} onCallTool={callTool}
-                onOpenRepo={() => {
-                  // Open the EXTERNAL browsable repo URL directly — Forgejo's console is a
-                  // full app whose root-relative assets/redirects break inside the embedding
-                  // proxy (the 404 the user hit). The htmlUrl is now the external host.
-                  if (app.repo.htmlUrl) window.open(app.repo.htmlUrl, '_blank', 'noreferrer');
-                  else if (app.repo.fullName) openTool('forgejo', `${app.name} · repo`, app.repo.fullName);
-                }}
                 canPromoteUI={canPromoteUI} onPromote={promote}
                 canDemoteUI={canDemoteUI} demoteLabel={demoteLabel} confirmDemoteLabel={confirmDemoteLabel}
                 confirmDemote={confirmDemote} setConfirmDemote={setConfirmDemote} onDemote={demote}
-                busy={busy} onLifecycle={lifecycle} msg={msg} onHealRepo={healRepo}
+                busy={busy} onLifecycle={lifecycle} msg={msg}
                 canEdit={canEdit} onSetServeMode={setServeMode}
               />
             </>
@@ -793,7 +745,7 @@ export default function SoftwareBuilder({
 
 /**
  * The Developer view — the RAW technical surface. Left: the real in-browser code
- * panel (the app's committed file tree; edits commit to the sovereign repo). Right:
+ * panel (the app's generated file tree; edits save through the governed file door). Right:
  * the honest build/deploy console (the actual last deploy/tool output + status
  * message). Nothing fabricated — a non-Builder sees the files read-only note from
  * CodePanel and the console; only Builders get the editor.
@@ -825,7 +777,6 @@ function DeveloperSurface({
         ) : (
           <p className="hint" style={{ marginTop: 4 }}>
             No console output yet — run a preview, publish, or call a tool from the Simple flow and the real output appears here.
-            Pipeline: <span className="mono">{Object.entries(app.pipeline).map(([k, v]) => `${k}=${v}`).join(', ')}</span>.
           </p>
         )}
       </div>
@@ -833,11 +784,11 @@ function DeveloperSurface({
       {/* Code — BELOW, full width (code needs the space). */}
       <div style={{ marginTop: 16 }}>
         {canEditCode ? (
-          <CodePanel appId={app.id} repoFullName={app.repo.fullName} />
+          <CodePanel appId={app.id} appName={app.name} />
         ) : (
           <div className="grant-block">
             <div className="comp-label">App files</div>
-            <p className="hint" style={{ marginTop: 4 }}>Editing the code is builder-only. Repo: <span className="mono">{app.repo.fullName || '(not scaffolded)'}</span>.</p>
+            <p className="hint" style={{ marginTop: 4 }}>Editing the code is builder-only.</p>
           </div>
         )}
       </div>
@@ -900,7 +851,7 @@ function DefineStage({
   );
 
   return (
-    <div className="agent-editor" {...anchorAttr(ANCHORS.software.define)}>
+    <div className="agent-editor">
       <StageConversation
         context={
           <>
@@ -1070,7 +1021,7 @@ function ContextStage({
   );
 
   return (
-    <div {...anchorAttr(ANCHORS.software.context)}>
+    <div>
       <StageConversation
         context={
           <>
@@ -1193,7 +1144,7 @@ function DesignStage({
   }
 
   return (
-    <div {...anchorAttr(ANCHORS.software.design)}>
+    <div>
       <DesignLadder ladder={ladder} nextKey={nextRung?.key ?? null} />
       <StageConversation
         reverse
@@ -1319,13 +1270,12 @@ function withStoryStatus(epics: Epic[], epicId: string, storyId: string, status:
 
 /**
  * Persistent Build ▸ Preview ▸ Deploy status rail. Read-only, wired to the SAME
- * live state the stage already reads (`app.pipeline`, `app.deploy.*`) — it is the
+ * live state the stage already reads (`app.repo.seeded`, `app.deploy.*`) — it is the
  * honest single-glance answer to "where is this app?". Never fabricates a state it
  * can't see (Preview is live only when a URL is actually served).
  */
 function BuildStatusRail({ app }: { app: SoftwareApp }) {
   const segments = buildStatusRail(app);
-  const sha = app.repo.seeded.length > 0 || app.pipeline.forgejo === 'ok' ? app.repo.fullName.split('/').pop() : null;
   return (
     <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--panel)', marginBottom: 12 }}>
       {segments.map((seg, i) => (
@@ -1832,7 +1782,7 @@ function BuildStage({
   );
 
   return (
-    <div {...anchorAttr(ANCHORS.software.build)}>
+    <div>
       <BuildStatusRail app={app} />
       <div style={{ marginTop: 4, marginBottom: 12 }}>
         <TeamPanel onBuilt={onBuilt} />
@@ -1907,13 +1857,12 @@ function BuildStage({
  * conversation: the LLM tester; outcome: the live-pod iframe.
  */
 function TestStage({
-  app, epics, surface, pipe, busy, onPreview, deployMsg, offlineAck, onOfflineAck, connTools,
+  app, epics, surface, busy, onPreview, deployMsg, offlineAck, onOfflineAck, connTools,
   improvements, onAddImprovements, onGoBuild, onGoDesign, refineHandlers, storyTitleOf,
 }: {
   app: SoftwareApp;
   epics: Epic[];
   surface: { ui: boolean; api: boolean };
-  pipe: PipelineView;
   busy: boolean;
   onPreview: () => void;
   deployMsg: string;
@@ -2033,16 +1982,6 @@ function TestStage({
           </div>
         </div>
 
-        <div className="sw-health">
-          <ProgressStepper
-            steps={pipe.steps}
-            active={pipe.active}
-            done={pipe.done}
-            ok={pipe.ok}
-            commentary={pipe.commentary}
-          />
-        </div>
-
         {surface.api && showApi ? (
           <div className="sw-api">
             <div className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
@@ -2084,7 +2023,7 @@ function TestStage({
   );
 
   return (
-    <div {...anchorAttr(ANCHORS.software.test)}>
+    <div>
       <StageConversation
         context={
           <>
@@ -2139,17 +2078,16 @@ function TestStage({
 /* ─────────────────────────── Publish (replaces Operate) ─────────────────────────── */
 
 function PublishStage({
-  app, surface, user, pipe, connTools, reviewCard,
+  app, surface, user, connTools, reviewCard,
   publishLabel, publishDisabled, inReview, onPublish, deployMsg,
-  toolOut, toolNote, onCallTool, onOpenRepo,
+  toolOut, toolNote, onCallTool,
   canPromoteUI, onPromote, canDemoteUI, demoteLabel, confirmDemoteLabel,
-  confirmDemote, setConfirmDemote, onDemote, busy, onLifecycle, msg, onHealRepo,
+  confirmDemote, setConfirmDemote, onDemote, busy, onLifecycle, msg,
   canEdit, onSetServeMode,
 }: {
   app: SoftwareApp;
   surface: { ui: boolean; api: boolean };
   user: { id: string; role: SessionRole };
-  pipe: PipelineView;
   connTools: Tool[];
   reviewCard: ReviewCardData | null;
   publishLabel: string;
@@ -2160,7 +2098,6 @@ function PublishStage({
   toolOut: string;
   toolNote: string;
   onCallTool: (tool: string) => void;
-  onOpenRepo: () => void;
   canPromoteUI: string | null;
   onPromote: () => void;
   canDemoteUI: boolean;
@@ -2172,7 +2109,6 @@ function PublishStage({
   busy: boolean;
   onLifecycle: (action: string) => void;
   msg: string;
-  onHealRepo: () => void;
   canEdit: boolean;
   onSetServeMode: (mode: 'image' | 'runtime') => void;
 }) {
@@ -2211,7 +2147,6 @@ function PublishStage({
         {deployMsg ? <div className={deployMsg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 10 }}>{deployMsg}</div> : null}
         <div className="row" style={{ marginTop: 10, gap: 12, alignItems: 'center' }}>
           <Link className="sw-quiet-link" href="/software/reviews">Deploy reviews →</Link>
-          {app.repo.htmlUrl ? <a className="sw-quiet-link" href={app.repo.htmlUrl} target="_blank" rel="noreferrer">Native ↗</a> : null}
           <span className="muted" style={{ fontSize: 12 }}>{app.deploy.releases > 0 ? `${app.deploy.releases} release${app.deploy.releases === 1 ? '' : 's'} shipped` : 'No releases yet'}</span>
         </div>
 
@@ -2292,7 +2227,7 @@ function PublishStage({
   );
 
   return (
-    <div {...anchorAttr(ANCHORS.software.publish)}>
+    <div>
       <StageConversation
         context={
           <>
@@ -2328,54 +2263,17 @@ function PublishStage({
                   {surface.ui && app.deploy.previewUrl ? (
                     <a href={app.deploy.previewUrl} target="_blank" rel="noreferrer" className="btn">Open app UI ↗</a>
                   ) : null}
-                  {app.repo.fullName ? <button type="button" className="btn ghost" onClick={onOpenRepo}>Repo →</button> : null}
                 </div>
               </div>
 
               {/* HONEST "no app link yet" reason — a UI app with no served URL is not a
-                  silent blank: say WHY (the image build/runner hasn't produced a URL) and
-                  point at the pipeline below, so Publish never looks broken when it's pending. */}
+                  silent blank: say WHY, so Publish never looks broken when it's pending. */}
               {surface.ui && !app.deploy.previewUrl ? (
                 <p className="hint" style={{ marginTop: 6 }}>
                   {app.deploy.state === 'live'
-                    ? 'Published — no live app URL yet: the container image build must succeed and the runner start serving before the link appears. Track the stages below (a failed stage shows the reason).'
-                    : 'No app link yet — the app goes live after Publish is approved and the image build succeeds. Track progress in the stages below.'}
+                    ? 'Published — no live app URL yet: the runner must start serving before the link appears.'
+                    : 'No app link yet — the app goes live once Publish is approved and the runner starts serving it.'}
                 </p>
-              ) : null}
-
-              {/* ── Live DEPLOY stepper — the SAME shared pipeline-view derivation Test reads,
-                   rendered on the core ProgressStepper so a deploy/go-live is VISIBLE as it
-                   runs (Scaffold → Build image → Registry → Deploy → Live), never a silent
-                   badge flip. A real failure surfaces the marked stage here too. ── */}
-              <div className="sw-health">
-                <ProgressStepper
-                  steps={pipe.steps}
-                  active={pipe.active}
-                  done={pipe.done}
-                  ok={pipe.ok}
-                  commentary={pipe.commentary}
-                />
-              </div>
-
-              {/* REPO NOT READY → manual heal. Two honest states, one recovery:
-                  • `pipeline.forgejo === 'failing'` — the repo VANISHED (404); refreshActionsStage
-                    downgrades a repo that once existed.
-                  • `app.mode === 'offline'` (code apps only) — the repo was NEVER created because
-                    Forgejo was UNREACHABLE at create time. When Forgejo is up again the app can be
-                    stuck offline with no way to recover; `healAppRepo` re-probes and, on a genuine
-                    404, re-provisions the scaffold. A spec app has no repo, so it is excluded.
-                  Both re-run the SAME audited heal endpoint; a subsequent build commits + rebuilds. */}
-              {app.serveMode !== 'spec' && (app.pipeline.forgejo === 'failing' || app.mode === 'offline') ? (
-                <div className="hint" style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span>
-                    {app.pipeline.forgejo === 'failing'
-                      ? 'The app’s repository is missing (404) — CI cannot build until it is re-provisioned.'
-                      : 'The app’s git repository was never created (Forgejo was unreachable at the time) — reconnect to build.'}
-                  </span>
-                  <button className="btn ghost sm" onClick={onHealRepo} disabled={busy} title="Re-probe Forgejo and provision the repo from the scaffold + any surviving snapshot">
-                    {busy ? <span className="spin" /> : app.pipeline.forgejo === 'failing' ? 'Heal repository' : 'Reconnect git'}
-                  </button>
-                </div>
               ) : null}
             </div>
 

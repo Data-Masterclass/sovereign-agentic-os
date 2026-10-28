@@ -19,7 +19,7 @@ export const GET = withRoute(async ({ user }) => {
 }, { defaultStatus: 500 });
 
 /**
- * New software: scaffold a per-app Forgejo repo, auto-generate its MCP +
+ * New software: scaffold the app's source tree, auto-generate its MCP +
  * Connection, register the app's data/files as Personal artifacts, and create
  * the app's page (home of record). One act = a governed connection + agent tool.
  */

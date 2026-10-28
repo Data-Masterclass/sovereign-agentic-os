@@ -153,10 +153,6 @@ export const postgresProvider: WarehouseProvider = {
     kind: 'sql',
     query: (source) => `SHOW SCHEMAS FROM ${source.catalog}`,
   },
-  openMetadata: {
-    connectorType: 'Postgres',
-    configKeys: ['hostPort', 'database', 'username', 'schemaFilterPattern'],
-  },
   // Prop rendering is verified purely; the real DB reachability + credential acceptance
   // can only be confirmed against a live PostgreSQL server by the operator.
   liveVerificationRequired: [

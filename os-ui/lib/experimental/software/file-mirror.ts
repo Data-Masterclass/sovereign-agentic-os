@@ -9,7 +9,7 @@ import type { ScaffoldFile } from './model.ts';
  * DURABLE app-source mirror — the fix for the single-point-of-failure that lost
  * two built stories live (northpeak-products). The app RECORD (os-apps) stores
  * file NAMES only; the FULL committed tree (path + content) lived ONLY in an
- * in-process `globalThis` snapshot that dies on every pod restart AND in Forgejo.
+ * in-process `globalThis` snapshot that dies on every pod restart.
  * A lost repo therefore meant unrecoverable source.
  *
  * This module keeps that fast in-process snapshot as the authoritative,
@@ -19,7 +19,7 @@ import type { ScaffoldFile } from './model.ts';
  *   • `snapshotFiles(appId, files)` — sets the in-process Map AND fire-and-forget
  *     write-throughs the whole tree to `os-app-files` (one doc per app). Every
  *     call site is a VERIFIED-real tree: `commitToApp` after its honesty gate, an
- *     editor save after a confirmed Forgejo PUT, or a successful LIVE repo read.
+ *     editor save, or a governed commit through the front door.
  *     A rejected commit never reaches here, so the mirror never persists a
  *     phantom (respects the 0.6.54 honest-commit contract).
  *   • `getSnapshot(appId)` — synchronous Map read, signature unchanged.

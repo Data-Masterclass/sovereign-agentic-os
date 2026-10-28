@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { postJson, panelMetrics } from './shared';
-import type { CubeMetaResponse, Panel, PanelQueryResponse, PanelViewMeta } from './shared';
+import type { PanelViewsResponse, Panel, PanelQueryResponse, PanelViewMeta } from './shared';
 import PanelChart, { type DrillRequest } from './PanelChart';
 
 const leaf = (member: string) => (member.includes('.') ? member.slice(member.lastIndexOf('.') + 1) : member);
@@ -38,9 +38,9 @@ export default function DrillDrawer({
   const [meta, setMeta] = useState<PanelViewMeta | null>(null);
   useEffect(() => {
     let alive = true;
-    fetch('/api/dashboards/cube-meta', { cache: 'no-store' })
+    fetch('/api/dashboards/views', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { views: [] }))
-      .then((d: CubeMetaResponse) => { if (alive) setMeta(d.views?.find((v) => v.view === view) ?? null); })
+      .then((d: PanelViewsResponse) => { if (alive) setMeta(d.views?.find((v) => v.view === view) ?? null); })
       .catch(() => { if (alive) setMeta(null); });
     return () => { alive = false; };
   }, [view]);

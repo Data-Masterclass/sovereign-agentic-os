@@ -3,12 +3,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSystem } from '../system-schema.ts';
 import { compile } from '../langgraph-compile.ts';
 import { type Decision } from '../gateway.ts';
 import { orchestrateBuild } from './orchestrate.ts';
 import {
-  type ForgejoClient,
   type OpaClient,
   type LiteLlmClient,
   type RuntimeClient,
@@ -20,7 +18,7 @@ import { type ReloadRequest, type RunRequest, type RunResponse } from './runtime
 
 /**
  * Live-adapter unit tests run the REAL adapter logic against in-memory FAKES that
- * behave like Forgejo / OPA / LiteLLM / the runtime / Langfuse — so apply→verify
+ * behave like OPA / LiteLLM / the runtime / Langfuse — so apply→verify
  * is genuinely exercised (the cardinal rule: ✓ only when both pass) without any
  * network or STACKIT.
  */
@@ -41,33 +39,6 @@ edges:
 `;
 
 // --------------------------------------------------------------- fakes ----------
-
-function fakeForgejo(): ForgejoClient & { files: Map<string, { content: string; sha: string }> } {
-  const files = new Map<string, { content: string; sha: string }>();
-  const sha = (c: string) => String(c.length) + ':' + c.slice(0, 4);
-  return {
-    files,
-    async ensureRepo() {},
-    async readFile(_repo, path) {
-      return files.get(path) ?? null;
-    },
-    async writeFile(_repo, path, content) {
-      const rec = { content, sha: sha(content) };
-      files.set(path, rec);
-      return { sha: rec.sha };
-    },
-    async deleteRepo() {
-      files.clear();
-      return { deleted: true };
-    },
-    async listCommits() {
-      return [];
-    },
-    async getCommitFiles() {
-      return {};
-    },
-  };
-}
 
 function fakeOpa(): OpaClient & { grants: Map<string, Set<string>>; approval: Set<string> } {
   const grants = new Map<string, Set<string>>();
@@ -152,7 +123,6 @@ function fakeLangfuse(): LangfuseClient & { projects: Set<string>; traces: Map<s
 }
 
 function deps(): LiveDeps & {
-  forgejo: ReturnType<typeof fakeForgejo>;
   opa: ReturnType<typeof fakeOpa>;
   litellm: ReturnType<typeof fakeLitellm>;
   langfuse: ReturnType<typeof fakeLangfuse>;
@@ -172,7 +142,6 @@ function deps(): LiveDeps & {
     },
   };
   return {
-    forgejo: fakeForgejo(),
     opa,
     litellm: fakeLitellm(),
     runtime: tracedRuntime,
@@ -182,7 +151,7 @@ function deps(): LiveDeps & {
 
 // --------------------------------------------------------------- tests ----------
 
-test('the 5 live adapters build all-green against the fakes', async () => {
+test('the 4 live adapters build all-green against the fakes', async () => {
   const d = deps();
   const report = await orchestrateBuild({
     yaml: YAML,
@@ -191,17 +160,8 @@ test('the 5 live adapters build all-green against the fakes', async () => {
     probe: 'gate probe',
   });
   assert.equal(report.ok, true, JSON.stringify(report.rows, null, 2));
-  assert.deepEqual(report.rows.map((r) => r.tool).sort(), ['forgejo', 'langfuse', 'langgraph', 'litellm', 'opa']);
+  assert.deepEqual(report.rows.map((r) => r.tool).sort(), ['langfuse', 'langgraph', 'litellm', 'opa']);
   for (const r of report.rows) assert.equal(r.status, 'ok', `${r.tool}: ${r.error ?? ''}`);
-});
-
-test('forgejo wrote system.yaml + per-agent files and verify round-trips parseSystem', async () => {
-  const d = deps();
-  await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
-  assert.ok(d.forgejo.files.has('system.yaml'));
-  assert.ok(d.forgejo.files.has('agents/worker/AGENT.md'));
-  assert.ok(d.forgejo.files.has('agents/supervisor/MEMORY.md'));
-  assert.doesNotThrow(() => parseSystem(d.forgejo.files.get('system.yaml')!.content));
 });
 
 test('opa grants the system principal + holds the write tool for approval', async () => {
@@ -261,16 +221,13 @@ test('langfuse ensures the project and verify sees the run trace', async () => {
   assert.ok((await d.langfuse.tracesFor('os-sys_live')) > 0);
 });
 
-test('CARDINAL RULE — a failing verify surfaces ✗ (forgejo round-trip broken)', async () => {
+test('CARDINAL RULE — a failing verify surfaces ✗ (opa grants silently dropped)', async () => {
   const d = deps();
-  // Corrupt the repo read so verify cannot parse system.yaml back.
-  const original = d.forgejo.writeFile.bind(d.forgejo);
-  d.forgejo.writeFile = async (repo, path, content, sha) => {
-    if (path === 'system.yaml') return original(repo, path, ': not : valid : yaml :', sha);
-    return original(repo, path, content, sha);
-  };
+  // apply "succeeds" but writes nothing, so the verify probe cannot resolve the
+  // granted tool → the row must read ✗ and the whole build must fail.
+  d.opa.putGrants = async () => {};
   const report = await orchestrateBuild({ yaml: YAML, systemId: 'sys_bad', adapters: makeLiveAdapters(d), probe: 'p' });
-  const forgejo = report.rows.find((r) => r.tool === 'forgejo')!;
-  assert.equal(forgejo.status, 'fail');
+  const opa = report.rows.find((r) => r.tool === 'opa')!;
+  assert.equal(opa.status, 'fail');
   assert.equal(report.ok, false);
 });

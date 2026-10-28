@@ -145,10 +145,6 @@ export const bigqueryProvider: WarehouseProvider = {
     kind: 'sql',
     query: (source) => `SHOW SCHEMAS FROM ${source.catalog}`,
   },
-  openMetadata: {
-    connectorType: 'BigQuery',
-    configKeys: ['project-id', 'credentials', 'databaseFilterPattern'],
-  },
   // Prop rendering (both auth branches) is verified purely; the actual GCP path can
   // only be confirmed against a real project by the operator.
   liveVerificationRequired: [

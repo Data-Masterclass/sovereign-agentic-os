@@ -17,7 +17,7 @@ import { createFolder, type FolderScope } from '../../folders/index.ts';
 import { type ArtifactVersion, versionLog } from '../../core/versioning.ts';
 import {
   type PhysicalDeleteReport,
-  deregisterCubeMembers,
+  deregisterViewMembers,
 } from './physical-delete.ts';
 
 /**
@@ -28,12 +28,12 @@ import {
  * carry:
  *
  *   • ARCHIVE — a reversible soft-hide flag keyed by metric id (`datasetId.measure`).
- *     Archive KEEPS the measure (and thus its Cube model member) — a governance hide,
+ *     Archive KEEPS the measure (and thus its member) — a governance hide,
  *     not a physical removal — so an archived metric restores instantly.
  *   • VERSIONS — per-metric history (the reused `versionLog`); the measure is snapshotted
  *     before a destructive op so a delete/restore can itself be undone.
- *   • DELETE — PHYSICAL: de-register the Cube measure via `lib/metrics/physical-delete`
- *     (the injected `removeMeasure` drops it from `/api/cube/models`), snapshot it for
+ *   • DELETE — PHYSICAL: de-register the measure via `lib/metrics/physical-delete`
+ *     (the injected `removeMeasure` drops it from the dataset's measures), snapshot it for
  *     restore, then forget the archive flag. Honest `{ recordDeleted, physical[] }` report.
  *
  * Same shape + durability as the other stores: an authoritative in-process flag map, a
@@ -169,7 +169,7 @@ export function moveMetric(metricId: string, user: Principal, folder: string): {
 
 /**
  * RENAME a metric — change its DISPLAY name ONLY. A metric IS a measure on a governed
- * dataset, so its physical identity is the Cube member `${View}.${measure.name}`. Renaming
+ * dataset, so its physical identity is the member `${View}.${measure.name}`. Renaming
  * writes the measure's `label` (surfaced everywhere the name shows) and FREEZES `measure.name`
  * — mirroring how a dataset rename freezes its physical slug — so the member / sql / semantic
  * declaration never move and no consumer is orphaned. Edit-scoped (owner or in-domain admin,
@@ -206,7 +206,7 @@ function requireDatasetEdit(metricId: string, user: Principal): string {
 }
 
 /**
- * ARCHIVE a metric: a reversible soft-hide. The measure (and its Cube model member) are
+ * ARCHIVE a metric: a reversible soft-hide. The measure (and its member) are
  * KEPT — this only flips the lifecycle flag. Edit-scoped (getDataset re-checks canEdit).
  */
 export function archiveMetric(metricId: string, user: Principal): { id: string; archived: true } {
@@ -231,17 +231,17 @@ export function listMetricVersions(metricId: string, user: Principal): ArtifactV
 
 /**
  * DELETE a metric — PHYSICAL. Snapshot the measure first (so the delete is restorable),
- * then de-register it from its Cube model via the injected `removeMeasure` (drops it from
- * `/api/cube/models` → stops being queryable), then forget the archive flag. Returns an
+ * then de-register it from its model via the injected `removeMeasure` (drops it from the
+ * dataset's measures → stops being queryable), then forget the archive flag. Returns an
  * honest report: `recordDeleted` (the lifecycle flag/registry side) + `physical[]` (the
- * Cube de-registration outcome, honest when the measure was already absent). Edit-scoped.
+ * de-registration outcome, honest when the measure was already absent). Edit-scoped.
  */
 export function deleteMetric(metricId: string, user: Principal): PhysicalDeleteReport {
   const { datasetId, measure } = requireMeasure(metricId, user);
   // Snapshot the measure so restore can re-define exactly what was dropped.
   versions.record(metricId, user.id, { measure }, 'delete metric');
   const d = getDataset(datasetId, user);
-  const physical = deregisterCubeMembers(datasetId, d, measure, (dsId, m) => removeMeasure(dsId, user, m));
+  const physical = deregisterViewMembers(datasetId, d, measure, (dsId, m) => removeMeasure(dsId, user, m));
   // Forget the lifecycle flag (the registry side of the delete).
   lc().flags.delete(metricId);
   mirror.deleteThrough(metricId);

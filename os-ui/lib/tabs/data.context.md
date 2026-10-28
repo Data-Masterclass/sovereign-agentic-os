@@ -1,6 +1,6 @@
 # Data tab — build context
 
-**Purpose:** Query and build governed data products over the Iceberg marts (Trino) + Cube semantic layer; raw → staging → mart via dbt, registered in OpenMetadata.
+**Purpose:** Query and build governed data products over the Iceberg marts (Trino) + Cube semantic layer; raw → staging → mart via dbt, registered in the governed data registry.
 
 **Single engine:** ONE governed query engine — Trino/Iceberg. Your OWN data is a physical Iceberg table in `iceberg.personal_<uid>.*`, read AS you through the SAME governed path (owner-principal) as shared marts; there is no separate personal query engine. Promoted assets/products live in the domain schema.
 

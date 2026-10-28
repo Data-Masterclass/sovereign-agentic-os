@@ -6,22 +6,18 @@
  *   • DOMAIN (Shared) artifact   → owner, in-domain domain_admin, or platform admin (any domain).
  *   • COMPANY (Certified) artifact → owner, source-domain domain_admin, or platform admin.
  *
- * Asserted through the CENTRAL function plus representative tabs: Big Bets
- * (its own `canEdit`), Folders (`createFolder` + the manage gate on rename), and
- * Strategy pillars (its own `canEditPillar`).
+ * Asserted through the CENTRAL function plus a representative tab: Folders
+ * (`createFolder` + the manage gate on rename).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { canManageArtifact } from './edit-scope.ts';
-import { canEdit as canEditBet } from '../experimental/bigbets/store.ts';
-import type { BigBet } from '../experimental/bigbets/model.ts';
 import {
   createFolder,
   renameFolder,
   __resetStore,
 } from '../folders/folder-store.ts';
-import { canEditPillar } from '../experimental/strategy/model.ts';
 import type { Role } from '../core/session.ts';
 
 const u = (id: string, role: Role, domains: string[]) => ({ id, role, domains });
@@ -60,43 +56,6 @@ test('central: domain_admin is DENIED any (not-own) PERSONAL artifact', () => {
 test('central: a plain creator manages only own (DENIED a peer DOMAIN artifact)', () => {
   assert.equal(canManageArtifact(plainCreator, { owner: 'sara', domain: 'sales', scope: 'shared' }), false);
   assert.equal(canManageArtifact(plainBuilder, { owner: 'sara', domain: 'sales', scope: 'shared' }), false);
-});
-
-// ============================================================ Big Bets tab ==
-
-// A big bet is a DOMAIN-scoped strategic object (no owner-private tier) — it edits
-// under the SHARED rule; a cross-domain bet is admin-only.
-const bet = (over: Partial<BigBet>): BigBet =>
-  ({
-    id: 'bet_1', name: 'Bet', domain: 'sales', owner: 'sara',
-    crossDomain: false, members: ['sara'],
-    problem: {} as BigBet['problem'], targetValue: 0,
-    valueBasis: 'owner-declared' as BigBet['valueBasis'],
-    allocation: 'even' as BigBet['allocation'], goLive: '2026-01-01',
-    status: 'draft', components: [], createdBy: 'sara',
-    createdAt: '', updatedAt: '', ...over,
-  }) as BigBet;
-
-test('bigbets: owner edits own bet', () => {
-  assert.equal(canEditBet(bet({}), owner), true);
-});
-test('bigbets: admin edits a (domain) bet of another domain', () => {
-  assert.equal(canEditBet(bet({}), platformAdmin), true);
-});
-test('bigbets: in-domain domain_admin edits a domain bet', () => {
-  assert.equal(canEditBet(bet({}), inDomainAdmin), true);
-});
-test('bigbets: other-domain domain_admin DENIED a domain bet', () => {
-  assert.equal(canEditBet(bet({}), otherDomainAdmin), false);
-});
-test('bigbets: a plain creator/builder (non-owner) cannot edit', () => {
-  assert.equal(canEditBet(bet({}), plainCreator), false);
-  assert.equal(canEditBet(bet({}), plainBuilder), false);
-});
-test('bigbets: a CROSS-DOMAIN bet is admin-only (but its owner still edits)', () => {
-  assert.equal(canEditBet(bet({ crossDomain: true }), platformAdmin), true);
-  assert.equal(canEditBet(bet({ crossDomain: true }), inDomainAdmin), false);
-  assert.equal(canEditBet(bet({ crossDomain: true, owner: 'sara' }), owner), true);
 });
 
 // ============================================================== Folders tab ==
@@ -149,23 +108,4 @@ test('folders: a platform admin creates any domain folder', () => {
   __resetStore();
   // Admin belongs to 'platform' — create in a domain they administer tenant-wide.
   assert.ok(createFolder(u('alex', 'admin', ['sales']), { tab: 'files', scope: 'domain', domain: 'sales', path: '/d' }));
-});
-
-// ============================================================ Strategy tab ==
-
-const pillar = (scope: 'personal' | 'domain' | 'tenant', over: { owner?: string; domain?: string } = {}) =>
-  ({ scope, domain: over.domain ?? 'sales', owner: over.owner ?? 'sara' });
-
-test('strategy: admin may NOT edit another user PERSONAL (My) pillar', () => {
-  assert.equal(canEditPillar(platformAdmin, pillar('personal')), false);
-  assert.equal(canEditPillar(inDomainAdmin, pillar('personal')), false);
-});
-test('strategy: owner edits own PERSONAL pillar', () => {
-  assert.equal(canEditPillar(owner, pillar('personal')), true);
-});
-test('strategy: admin (any domain) edits a DOMAIN pillar', () => {
-  assert.equal(canEditPillar(platformAdmin, pillar('domain')), true);
-});
-test('strategy: admin edits a COMPANY (tenant) pillar', () => {
-  assert.equal(canEditPillar(platformAdmin, pillar('tenant', { domain: 'tenant' })), true);
 });

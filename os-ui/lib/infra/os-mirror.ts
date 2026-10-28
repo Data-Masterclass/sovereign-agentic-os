@@ -6,7 +6,7 @@ import { config } from '../core/config.ts';
 /**
  * The ONE durable-mirror core every in-process store shares (approvals, audit,
  * artifacts, apps, connections, datasets, domains, users, pillars, prefs,
- * role-config, marketplace, agent-memory). Each store keeps its authoritative
+ * role-config, agent-memory). Each store keeps its authoritative
  * in-process Map — this helper only handles the best-effort OpenSearch mirror:
  * probe, index bootstrap, hydration and fire-and-forget write/delete-through.
  *

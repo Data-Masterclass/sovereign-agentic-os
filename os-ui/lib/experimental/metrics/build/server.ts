@@ -3,21 +3,18 @@
  */
 import 'server-only';
 import type { Dataset, Measure } from '../../data/index.ts';
-import { type DelegatedToken, propagate } from '@/lib/experimental/data';
-import { scaffoldCubeYaml } from '@/lib/experimental/data';
+import type { DelegatedToken } from '@/lib/experimental/data';
 import { measureMember } from '../model.ts';
 import { type BuildRow, type MetricBuildContext, runAdapter } from './adapter.ts';
-import { makeMetricAdapters } from './live.ts';
-import { makeMockMetricAdapters, newMetricMock } from './mocks.ts';
-import { makeRealMetricClients, liveMetricsReachable } from './live-clients.ts';
+import { type MetricLiveDeps, makeMetricAdapters } from './live.ts';
+import { exploreMetric } from './explore-server.ts';
 
 /**
- * Server boundary for a Metric build (mirrors lib/data/build/server.ts). It scaffolds
- * the Cube measures/views YAML, derives the canonical member + the viewer's R3 security
- * context from the delegated token, then runs the `cube` + `metric-explorer` adapters
- * against LIVE Cube when reachable, or the honest offline-MOCK otherwise — labelled
- * either way. Same adapter logic both paths, so a ✓ is a real apply+verify (the measure
- * resolves AND the explorer's number matches the agent's).
+ * Server boundary for a Metric build (mirrors lib/data/build/server.ts). It derives the
+ * canonical member, then runs the `trino` adapter: the metric's compiled governed SQL over
+ * the gold mart AS the viewer (R3), verified to resolve to a number. `exploreMetric`
+ * decides live vs the honest offline-mock (and the loud outage gate), so the report's
+ * mode is whatever the read path honestly ran as.
  */
 
 export type BuildMode = 'live' | 'offline-mock';
@@ -27,40 +24,24 @@ export type MetricBuildReport = {
   member: string;
   mode: BuildMode;
   /**
-   * Live only: the measure didn't resolve yet because the model-sync sidecar hasn't
-   * pushed it to Cube (sync lag), NOT a genuine failure. The metric is persisted; its
-   * live value appears within a few seconds. Distinguishes "syncing" from "broken".
+   * The measure didn't resolve yet because its number needs a slice the build doesn't
+   * supply (a rolling-window / running-total metric needs a time dimension), NOT a
+   * genuine failure. The metric is persisted; the explorer computes it with a time slice.
    */
   pending?: boolean;
 };
 
-function contextFor(dataset: Dataset, measure: Measure, token: DelegatedToken): MetricBuildContext {
-  return {
-    dataset,
-    measure,
-    schema: scaffoldCubeYaml(dataset),
-    member: measureMember(dataset, measure),
-    securityContext: propagate(token).cube.securityContext, // R3 — the viewer's identity
-  };
-}
-
-export async function buildMetric(dataset: Dataset, measure: Measure, token: DelegatedToken): Promise<MetricBuildReport> {
-  const ctx = contextFor(dataset, measure, token);
-  const adapters = (await liveMetricsReachable())
-    ? { set: makeMetricAdapters(makeRealMetricClients()), mode: 'live' as const }
-    : { set: makeMockMetricAdapters(newMetricMock()), mode: 'offline-mock' as const };
-  const rows: BuildRow[] = [];
-  for (const tool of ['cube', 'metric-explorer']) {
-    rows.push(await runAdapter(adapters.set[tool], ctx));
-  }
+export async function buildMetric(
+  dataset: Dataset,
+  measure: Measure,
+  token: DelegatedToken,
+  deps: MetricLiveDeps = { explore: exploreMetric },
+): Promise<MetricBuildReport> {
+  const ctx: MetricBuildContext = { dataset, measure, member: measureMember(dataset, measure), token };
+  const adapters = makeMetricAdapters(deps);
+  const rows = [await runAdapter(adapters.trino, ctx)];
   const ok = rows.every((r) => r.status === 'ok');
-  // PENDING (live only): the sole reason the build isn't green is that the measure hasn't
-  // resolved yet — the sidecar hasn't pushed it to Cube. resolveMeasure returned null (we
-  // fail-soft the "not found for path" 400), so every failing row is a non-resolution, not
-  // a genuine error. The metric IS persisted; the value converges within a few seconds.
-  const pending =
-    !ok &&
-    adapters.mode === 'live' &&
-    rows.every((r) => r.status === 'ok' || /did not resolve|no usable rows|did not resolve on both/i.test(r.detail));
-  return { rows, ok, member: ctx.member, mode: adapters.mode, ...(pending ? { pending: true } : {}) };
+  const mode: BuildMode = ctx.outcome?.mode === 'offline-mock' ? 'offline-mock' : 'live';
+  const pending = !ok && ctx.outcome?.pending === true;
+  return { rows, ok, member: ctx.member, mode, ...(pending ? { pending: true } : {}) };
 }

@@ -6,7 +6,7 @@
  *
  * The single place the per-provider `WarehouseProvider` objects are wired together.
  * `trinoCatalogProps` (catalog-props.ts) dispatches through `providerFor(platform)`;
- * the deploy / editor / OM layers read the rest of each provider's metadata. Adding
+ * the deploy / editor layers read the rest of each provider's metadata. Adding
  * a platform means adding its file + one line here — no shared switch to fight over.
  */
 

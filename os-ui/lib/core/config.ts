@@ -99,10 +99,6 @@ export const config = {
   // the SAME shared runtime bearer (Secret-mounted) the agent schedules use.
   dataSyncUrlBase: base(env('DATA_SYNC_URL_BASE', 'http://os-ui:3000/api/data/datasets')),
 
-  // ml-agent (LangGraph Science driver): GET {ML_AGENT_URL}/health, /models;
-  // POST /run. Off by default (opt-in Science component); probed gracefully.
-  mlAgentUrl: base(env('ML_AGENT_URL', 'http://ml-agent:8000')),
-
   // Shared service bearer for the in-cluster data-plane services (query-tool +
   // data-runner). Defense-in-depth BEHIND the NetworkPolicies: those services trust
   // the principal/role/domains in the request body, and only os-ui is meant to call
@@ -339,25 +335,6 @@ export const config = {
   // degrades gracefully. Admin-overridable via LITELLM_TOOLS_MODEL / the `tools`
   // role to pin tool-calling back to the reasoning model if desired.
   litellmToolsModel: env('LITELLM_TOOLS_MODEL', env('LITELLM_EXEC_MODEL', 'sovereign-default')),
-  // ---- "Talk to <tab>" copilots (lib/talk) — cost tier + escalation. The five
-  // Context-tab copilots (Talk-to-Data/Knowledge/Files/Connections/Metrics) are the
-  // OS's highest-traffic reasoning surface. They now answer on the CHEAP `standard`
-  // tier by DEFAULT and escalate to the `reasoning` tier only when the standard
-  // answer comes back weak (empty / too short / low-confidence / errored). This cuts
-  // the reasoning-token share dramatically without hurting hard-answer quality.
-  //   • TALK_COPILOT_TIER — the model ROLE the copilots use first ('standard' |
-  //     'reasoning' | 'tools'). Never a bare model name: it resolves through
-  //     `roleModel(role)` so an admin's role override / env alias still applies.
-  //     Set to 'reasoning' to pin the old always-235B behaviour.
-  //   • TALK_ESCALATE_TO_REASONING — when true (default), a weak first answer is
-  //     retried ONCE on the reasoning tier. Set 'false' to disable escalation (pure
-  //     single-tier copilots). No-op when the primary tier already IS reasoning.
-  talkCopilotTier: (() => {
-    const v = env('TALK_COPILOT_TIER', 'standard').trim();
-    return v === 'reasoning' || v === 'standard' || v === 'tools' ? v : 'standard';
-  })() as 'reasoning' | 'standard' | 'tools',
-  talkEscalateToReasoning: env('TALK_ESCALATE_TO_REASONING', 'true').toLowerCase() !== 'false',
-
   // Ask-the-OS assistant + single-agent runs: max PLAN→ACT tool-call rounds per
   // turn. Raised over time (8 → 30 → 50) so multi-step builds (ingest → silver →
   // gold → metric → publish) finish in one conversation. Tunable via env.
@@ -451,81 +428,14 @@ export const config = {
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
   dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),
 
-  // Cube (Metrics / semantic layer): POST {CUBE_URL}/cubejs-api/v1/load
-  // with a Cube query. No auth in dev (CUBEJS_DEV_MODE); add a JWT on STACKIT.
-  cubeUrl: base(env('CUBE_URL', 'http://cube:4000')),
-
-  // Cube model-sync (GET /api/cube/models): embed the compiled Cube access policy
-  // (member_level excludes) into the delivered model YAML. Default on; set
-  // CUBE_EMBED_ACCESS_POLICY=false to serve plain models if a Cube version rejects
-  // `access_policy` blocks (data-tab-plan risk #2 fallback — the full policy still
-  // rides in the JSON payload for audit + the Trino-OPA enforcement path).
-  cubeEmbedAccessPolicy: env('CUBE_EMBED_ACCESS_POLICY', 'true') !== 'false',
-
-  // Cube SQL API (Postgres-wire) for Power BI / BI-tool consumption. When the operator
-  // enables `cube.sqlApi` (Helm) they set these to the exposed host + port so the
-  // /api/powerbi/connection-info route can hand a builder the exact PostgreSQL
-  // connection fields for THEIR domain. Defaults describe the in-cluster Service; an
-  // external ingress overrides CUBE_SQL_HOST/PORT. `enabled` gates the affordance so
-  // the UI/doc never advertise a port the operator hasn't opened.
-  cubeSqlApiEnabled: env('CUBE_SQL_API_ENABLED', 'false') === 'true',
-  cubeSqlHost: env('CUBE_SQL_HOST', 'cube-sql'),
-  cubeSqlPort: Number(env('CUBE_SQL_PORT', '15432')),
-  // The k8s Secret holding CUBEJS_SQL_PASSWORD — surfaced to builders as a reference
-  // (vault path), never dereferenced into any browser-visible JSON.
-  cubeSqlPasswordSecret: env('CUBE_SQL_PASSWORD_SECRET', 'cube-sql-secrets'),
-  // The Cube SQL API password itself — SERVER-ONLY. Mounted into os-ui from the
-  // `cube-sql-secrets` Secret. Used ONLY to fill the Superset import `passwords` map when
-  // a dashboard's dataset is built on the Cube SQL API (so the domain's `bi_<domain>`
-  // connection can actually read the view's rows). EMPTY by default ⇒ the Cube SQL
-  // dashboard path degrades honestly (no password ⇒ Superset connection can't read) until
-  // the operator mounts the secret. NEVER sent to the browser.
-  cubeSqlPassword: env('CUBE_SQL_PASSWORD', ''),
-
-  // OpenMetadata (catalog & lineage): server-side REST API base. OFF by default
-  // locally (~2.5 GB JVM) — the Data/Unstructured surfaces probe it and degrade
-  // to the query-tool catalog / OpenSearch index when it's unreachable.
-  openmetadataApiUrl: base(env('OPENMETADATA_API_URL', 'http://openmetadata:8585')),
-  // OpenMetadata bot JWT (server-only). OM requires a Bearer token — an
-  // unauthenticated call 401s. When this is set the catalog sends it; when it is
-  // EMPTY (the default until a bot token is minted into the os-ui Secret) the
-  // catalog SKIPS OpenMetadata entirely and reports it honestly, rather than
-  // firing a doomed 401 and silently degrading. See app/api/catalog/route.ts.
-  openmetadataJwt: env('OPENMETADATA_JWT', ''),
-  // The OpenMetadata SERVICE name the Trino/Iceberg lakehouse is ingested under
-  // (OM entity FQNs are `<service>.<catalog>.<schema>.<table>`). Used ONLY to build
-  // browser deep links from a governed mart (`iceberg.<schema>.<table>`) to its OM
-  // entity page — see lib/data/openmetadata.ts omEntityUrl. Must match the OM
-  // ingestion pipeline's service name; defaults to `trino`.
-  openmetadataService: env('OPENMETADATA_SERVICE', 'trino'),
-
-  // ---- Layer-4 (Science / ML) ENABLEMENT. Off by default; an Admin enables
-  // Science per domain (`ml.enabled=true`) + sets GPU quotas. When OFF, the
-  // Science tab + its APIs short-circuit to a disabled surface (the capability
-  // is not in the cohort-1 path). When ON, the flow is demonstrable even with no
-  // live backend (deterministic seed). Distinct from backend REACHABILITY below.
-  mlEnabled: env('ML_ENABLED', 'false').toLowerCase() === 'true',
-
-  // ---- Layer-4 (Science / ML) backends. Off by default; the Science surface
-  // pings these server-side and degrades gracefully when a service is absent.
+  // ---- Layer-4 (ML) backends. Off by default; the OS pings these server-side
+  // and degrades gracefully when a service is absent.
   // In-cluster Service defaults; point at port-forwards locally. -------------
   jupyterhubUrl: base(env('JUPYTERHUB_URL', 'http://proxy-public:80')),
   mlflowUrl: base(env('MLFLOW_URL', 'http://mlflow:5000')),
   featureformUrl: base(env('FEATUREFORM_URL', 'http://featureform:7878')),
-  kserveUrl: base(env('KSERVE_URL', 'http://kserve:80')),
 
-  // ---- Science TRAINING RUNTIME. A per-model batch/v1 Job (lib/science/training.ts)
-  // trains a small CPU sklearn model from the governed Gold product THROUGH Trino
-  // (a read-only BI/science principal), logs to MLflow and uploads the artifact to
-  // s3://mlflow/models/<model>/ for a per-model KServe InferenceService. These fill
-  // the injected TrainingRuntime; the AWS creds are pulled from the named Secret by
-  // the job (never inlined). Chart-set from the same values the seed hook uses. ---
-  mlTrainerImage: env('ML_TRAINER_IMAGE', 'sovereign-os/ml-trainer:0.1.0'),
-  awsCliImage: env('AWS_CLI_IMAGE', 'amazon/aws-cli:2.31.13'),
-  s3SecretName: env('S3_SECRET_NAME', 'object-storage-credentials'),
-  // (s3Region + s3Endpoint are defined above — reused by the trainer runtime.)
-  // The trainer reads Gold via the governed query engine (least-privilege read
-  // principal — the SAME Trino/OPA path the `query` tool uses, never a write role).
+  // Direct Trino coordinates (reachability probes).
   trinoHost: env('TRINO_HOST', 'trino'),
   // Kubernetes injects docker-link vars for every Service: a Service named `trino`
   // gives EVERY pod TRINO_PORT="tcp://<ip>:8080", which Number() turns into NaN and
@@ -533,36 +443,16 @@ export const config = {
   // to offline-mock this way). Strip everything up to the last colon so both a plain
   // port and the k8s link form parse.
   trinoPort: Number(env('TRINO_PORT', '8080').replace(/^.*:/, '')) || 8080,
-  trinoReadUser: env('TRINO_SCIENCE_USER', 'science-reader'),
   trinoCatalog: env('TRINO_CATALOG', 'iceberg'),
 
   // ---- External-warehouse connectors (Phase 1, opt-in). GATED OFF by default:
   // federating an external lakehouse (AWS Glue today) as a governed Trino catalog
   // is code-complete + unit-tested but NOT yet validated against a live source, so
   // nothing appears in the UI/runtime until an operator deliberately enables it.
-  // When ON, a "warehouse catalog" connection renders Trino catalog props, mirrors
-  // to OpenMetadata and exposes read-only federated datasets (import = CTAS reuses
-  // the existing materialize path). See docs/external-warehouse-connectors.md.
+  // When ON, a "warehouse catalog" connection renders Trino catalog props and exposes
+  // read-only federated datasets (import = CTAS reuses the existing materialize path).
+  // See docs/external-warehouse-connectors.md.
   externalConnectorsEnabled: env('EXTERNAL_CONNECTORS_ENABLED', '').toLowerCase() === 'true',
-
-  // ---- External OpenMetadata connection (Phase 1, read/discover only). GATED
-  // OFF by default: modelling an EXTERNAL OpenMetadata instance as a first-class
-  // Connection (base URL + vaulted bot JWT + optional default OM Service) and
-  // folding its domains/data-products/tables into the catalog as DLS-scoped
-  // discovery context is code-complete + unit-tested but inert until an operator
-  // deliberately connects an OM. This is READ-ONLY by construction — no writes to
-  // OM in this phase. Distinct from the bundled in-cluster OM (openmetadataApiUrl
-  // above), which is unchanged. See docs/openmetadata-connectors.md (Phase 1).
-  openmetadataConnectEnabled: env('OPENMETADATA_CONNECT_ENABLED', '').toLowerCase() === 'true',
-
-  // ---- OpenMetadata DQ write-back (Phase 2 DQ). GATED OFF by default: pushing
-  // OS-authored data-quality rules + results into OM as first-class TestSuites /
-  // TestCases / testCaseResults (the DQ leg of the integrity-safe write-back). When
-  // OFF, the per-run result-append is a NO-OP and the governed `sync_quality_to_catalog`
-  // trigger reports it honestly — the OS-side DQ run ALWAYS succeeds regardless. Writes
-  // additionally fail closed outside the tested OM version range and require the
-  // least-privilege writer bot. See docs/research/data-quality-plan.md (D4).
-  openmetadataDqWritebackEnabled: env('OPENMETADATA_DQ_WRITEBACK_ENABLED', '').toLowerCase() === 'true',
 
   // ---- Operational-system ACTION tools (operational-system-connections.md,
   // Phase 3). GATED OFF by default: the entity-generic Salesforce action tools
@@ -574,16 +464,6 @@ export const config = {
   // the executor is not registered (calls fall to the labelled offline mock), and
   // the action toggles never render. Nil-safe (an unset/empty value ⇒ OFF).
   operationalActionsEnabled: env('OPERATIONAL_ACTIONS_ENABLED', '').toLowerCase() === 'true',
-
-  // ---- Analytics-monorepo APPLY (#146 Phase 1). GATED OFF by default: the
-  // registry-apply enforcement point — THE only door from git into compute
-  // (plan §3 step 6). When OFF, `POST/GET /api/analytics/apply` reports it
-  // honestly and writes nothing; when ON it still requires admin / an admin
-  // service-principal session and re-runs OPA/tier/promotion checks as the mapped
-  // principal, REJECTING any pushed OS-managed file the emitters can't round-trip
-  // (single-writer invariant — the registry stays authoritative). The end-to-end
-  // path is live-verify-pending (needs Forgejo + analyticsRepo.enabled + Actions).
-  analyticsApplyEnabled: env('ANALYTICS_APPLY_ENABLED', '').toLowerCase() === 'true',
 
   // ---- Per-user git token mint (#146 Phase 2, Option B — ADR 0006). GATED OFF by
   // default: mints a SHORT-TTL, repo-scoped Forgejo access token for the caller's
@@ -600,14 +480,6 @@ export const config = {
   // it names each token with its mint epoch, returns `expiresAt`, and the central
   // revoke path (`sos login` refresh / deactivation hook) deletes expired/old tokens.
   gitTokenTtlSeconds: Number(env('GIT_TOKEN_TTL_SECONDS', '')) || 3600,
-
-  // ---- OpenMetadata catalog ingestion (#147). GATED OFF by default: the governed
-  // "refresh catalog" orchestrator folds the additive metadata + DQ write-back over
-  // EVERY governed gold/silver mart so OM reflects the live lakehouse in one pass.
-  // When OFF, the `refresh_catalog` trigger reports it honestly and writes nothing;
-  // when ON it still requires an om-catalog connection + the least-privilege writer bot
-  // and fails closed outside the tested OM version range. Read paths are unaffected.
-  openmetadataIngestEnabled: env('OPENMETADATA_INGEST_ENABLED', '').toLowerCase() === 'true',
 
   // ---- Folder grants (Wave 3 agent-grant kernel). The MAX number of folder
   // grants one agent may carry — a folder grant resolves at run time to every
@@ -630,15 +502,9 @@ export const config = {
   // an EXPLICIT empty value from the chart (tool exposed via ingress but with no
   // public host) yields "" and the UI hides the "Open" link instead of linking
   // to a dead localhost address on a real deployment. -------------------------
-  supersetUrl: base(consoleEnv('SUPERSET_URL', 'http://localhost:8088')),
-  // Internal (in-cluster) Superset Service — the target of the same-origin
-  // /tools/superset reverse proxy (lib/tool-proxy.ts). Server-only; the browser
-  // never sees it. Distinct from supersetUrl (the optional native console link).
-  supersetInternalUrl: base(env('SUPERSET_INTERNAL_URL', 'http://agentic-os-superset:8088')),
   langfuseConsoleUrl: base(consoleEnv('LANGFUSE_CONSOLE_URL', 'http://localhost:3000')),
   forgejoConsoleUrl: base(consoleEnv('FORGEJO_CONSOLE_URL', 'http://localhost:3001')),
   argocdUrl: base(consoleEnv('ARGOCD_URL', 'http://localhost:8080')),
-  openmetadataUrl: base(consoleEnv('OPENMETADATA_URL', 'http://localhost:8585')),
   dagsterConsoleUrl: base(consoleEnv('DAGSTER_CONSOLE_URL', 'http://localhost:3070')),
   opensearchDashboardsUrl: base(
     consoleEnv('OPENSEARCH_DASHBOARDS_URL', 'http://localhost:5601'),
@@ -648,13 +514,11 @@ export const config = {
   opensearchDashboardsInternalUrl: base(
     env('OPENSEARCH_DASHBOARDS_INTERNAL_URL', 'http://opensearch-dashboards:5601'),
   ),
-  cubeConsoleUrl: base(consoleEnv('CUBE_CONSOLE_URL', 'http://localhost:4001')),
 
   // Layer-4 consoles (browser-reachable; default to local port-forwards).
   jupyterhubConsoleUrl: base(consoleEnv('JUPYTERHUB_CONSOLE_URL', 'http://localhost:8000')),
   mlflowConsoleUrl: base(consoleEnv('MLFLOW_CONSOLE_URL', 'http://localhost:5000')),
   featureformConsoleUrl: base(consoleEnv('FEATUREFORM_CONSOLE_URL', 'http://localhost:7878')),
-  kserveConsoleUrl: base(consoleEnv('KSERVE_CONSOLE_URL', 'http://localhost:8080')),
 } as const;
 
 export type AppConfig = typeof config;

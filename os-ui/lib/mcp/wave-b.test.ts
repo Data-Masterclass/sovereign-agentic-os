@@ -10,17 +10,13 @@ import { __resetStore as resetData } from '@/lib/experimental/data/store';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
 import { __resetStore as resetFiles } from '@/lib/experimental/files/store';
 import { __resetDashboards } from '@/lib/experimental/dashboards/store';
-import { __resetBets, auditLog } from '@/lib/experimental/bigbets/store';
-import { __resetSources, __resetStrategy, __seedStrategy } from '@/lib/experimental/bigbets';
 import { __resetApprovals } from '@/lib/governance/approvals';
 import { __resetAppsCache } from '@/lib/experimental/software/apps';
-import { __resetForTests as resetPillars, createPillar } from '@/lib/experimental/strategy/pillars';
 
 /**
- * MCP WAVE B — operate & read-back parity. Seven single-reads (get_metric,
- * get_dashboard, get_big_bet, get_file, read_app_files, get_software_status,
- * list_connection_templates) + two Big-Bet operate writes (attach_component,
- * update_big_bet). Every tool is a THIN wrapper over the same governed lib the
+ * MCP WAVE B — operate & read-back parity. Six single-reads (get_metric,
+ * get_dashboard, get_file, read_app_files, get_software_status,
+ * list_connection_templates). Every tool is a THIN wrapper over the same governed lib the
  * UI calls, driven here exactly as an AI client would (over handleRpc), asserting:
  *   • identity is threaded = the CALLER (never a body value),
  *   • governance negatives are TYPED errors (forbidden/not_found/bad_request),
@@ -38,12 +34,8 @@ function resetAll(): void {
   resetAgents();
   resetFiles();
   __resetDashboards();
-  __resetBets();
-  __resetSources();
-  __resetStrategy();
   __resetApprovals();
   __resetAppsCache();
-  resetPillars();
 }
 
 async function call(user: CurrentUser, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -67,16 +59,12 @@ function errorOf(r: Record<string, unknown>): ToolError {
 const NEW_READ: { name: string; tab: string }[] = [
   { name: 'get_metric', tab: 'metrics' },
   { name: 'get_dashboard', tab: 'dashboards' },
-  { name: 'get_big_bet', tab: 'bigbets' },
   { name: 'get_file', tab: 'files' },
   { name: 'read_app_files', tab: 'software' },
   { name: 'get_software_status', tab: 'software' },
   { name: 'list_connection_templates', tab: 'connections' },
 ];
-const NEW_WRITE: { name: string; tab: string }[] = [
-  { name: 'attach_component', tab: 'bigbets' },
-  { name: 'update_big_bet', tab: 'bigbets' },
-];
+const NEW_WRITE: { name: string; tab: string }[] = [];
 
 test('WAVE B registry: every new tool is registered under its tab, exampled, floored at creator, R/W-classified', async () => {
   const byName = new Map(ALL_MCP_TOOLS.map((t) => [t.name, t]));
@@ -113,10 +101,10 @@ async function definedMetric(): Promise<string> {
   return `${ds.id}.revenue`;
 }
 
-test('get_metric: reads back the definition, canonical member and Cube YAML define_metric registered', async () => {
+test('get_metric: reads back the definition, canonical member and the metric YAML define_metric registered', async () => {
   resetAll();
   const metricId = await definedMetric();
-  const m = payload<{ id: string; member: string; tier: string; datasetId: string; definition: { aggregation: string; column: string | null; dimensions: string[] }; cube: string }>(
+  const m = payload<{ id: string; member: string; tier: string; datasetId: string; definition: { aggregation: string; column: string | null; dimensions: string[] }; definitionYaml: string }>(
     await call(builder, 'get_metric', { metricId }),
   );
   assert.equal(m.id, metricId);
@@ -125,7 +113,7 @@ test('get_metric: reads back the definition, canonical member and Cube YAML defi
   assert.equal(m.definition.aggregation, 'sum');
   assert.equal(m.definition.column, 'net_amount');
   assert.ok(m.definition.dimensions.includes('order_id'), 'sliceable dimensions = the gold columns');
-  assert.match(m.cube, /name: revenue\n\s+type: sum/, 'the generated Cube YAML carries the measure');
+  assert.match(m.definitionYaml, /name: revenue\n\s+type: sum/, 'the generated metric YAML carries the measure');
 });
 
 test('get_metric: unseeable dataset → typed forbidden; garbage id → typed not_found (no leak)', async () => {
@@ -159,151 +147,6 @@ test('get_dashboard: reads back the charts + governed members; visibility-scoped
   const e = errorOf(await call(outsider, 'get_dashboard', { dashboardId: created.id }));
   assert.equal(e.code, 'forbidden');
   const missing = errorOf(await call(builder, 'get_dashboard', { dashboardId: 'dash_nope' }));
-  assert.equal(missing.code, 'not_found');
-});
-
-// ---- GET_BIG_BET + the operate writes -------------------------------------------
-
-// Seed a REAL, viewable strategy pillar (create_big_bet re-resolves pillarId
-// through canViewPillar) AND mirror it into the sources bridge under the SAME id
-// so get_big_bet renders the pillar/metric card. Returns the real pillar id.
-async function seedStrategy(): Promise<string> {
-  const pillar = await createPillar(builder, { name: 'Retention', scope: 'domain', domain: 'sales' });
-  __seedStrategy(
-    { id: 'metric_nrr', name: 'Net Revenue Retention', cubeMeasure: 'nrr', unit: '€', baseline: 100, current: 150, rls: { ben: 400 } },
-    { id: pillar.id, name: 'Retention', scope: 'tenant', metricId: 'metric_nrr' },
-  );
-  return pillar.id;
-}
-
-test('get_big_bet: the full bet card, with the realized value resolved RLS-scoped to THE CALLER', async () => {
-  resetAll();
-  const pillarId = await seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising among SMB accounts', pillarId, metricId: 'metric_nrr', owner: 'ben', solution: 'Outreach', targetValue: 250000 }));
-
-  // Ben's entitled `current` is RLS-overridden to 400 → uplift realized = 300.
-  const forBen = payload<{ value: { realized: number }; status: string; pillar: { name: string }; metric: { name: string }; solution: string }>(
-    await call(builder, 'get_big_bet', { betId: bet.id }),
-  );
-  assert.equal(forBen.status, 'active', 'a Builder-created bet is active');
-  assert.equal(forBen.solution, 'Outreach');
-  assert.equal(forBen.pillar.name, 'Retention');
-  assert.equal(forBen.metric.name, 'Net Revenue Retention');
-  assert.equal(forBen.value.realized, 300, 'realized value resolved under BEN’s RLS row (400 − 100)');
-
-  // Cara (domain peer, no RLS override) sees the default current → 50.
-  const forCara = payload<{ value: { realized: number } }>(await call(creator, 'get_big_bet', { betId: bet.id }));
-  assert.equal(forCara.value.realized, 50, 'the SAME bet resolves a different number under Cara’s identity — the viewer is the session caller');
-});
-
-test('get_big_bet: out-of-domain viewer → typed forbidden; unknown id → typed not_found', async () => {
-  resetAll();
-  const pillarId = await seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Sales-domain bet', pillarId }));
-  const e = errorOf(await call(outsider, 'get_big_bet', { betId: bet.id }));
-  assert.equal(e.code, 'forbidden');
-  const missing = errorOf(await call(builder, 'get_big_bet', { betId: 'bet_nope' }));
-  assert.equal(missing.code, 'not_found');
-});
-
-test('attach_component: re-resolves the id through its own canView gate, links AS THE CALLER, and get_big_bet reads it back', async () => {
-  resetAll();
-  const pillarId = await seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising', pillarId }));
-  const ds = payload<{ id: string }>(await call(builder, 'create_dataset', { name: 'Churn mart' }));
-  payload(await call(builder, 'add_dataset_version', { datasetId: ds.id, layer: 'bronze' }));
-
-  const r = payload<{ refId: string; artifactId: string; tab: string; title: string; origin: string }>(
-    await call(builder, 'attach_component', { betId: bet.id, kind: 'dataset', id: ds.id, plannedReady: '2026-09-01' }),
-  );
-  assert.equal(r.artifactId, ds.id, 'the bet references the REAL dataset id — never a copy');
-  assert.equal(r.tab, 'data');
-  assert.equal(r.title, 'Churn mart');
-  assert.equal(r.origin, 'linked');
-  assert.equal(auditLog(bet.id)[0].actor, 'ben', 'the link is audited under the SESSION caller');
-
-  const view = payload<{ components: { artifactId: string; status: { derived: string }; artifact: { title: string; lifecycle: string } }[] }>(
-    await call(builder, 'get_big_bet', { betId: bet.id }),
-  );
-  assert.equal(view.components.length, 1);
-  assert.equal(view.components[0].artifactId, ds.id);
-  assert.equal(view.components[0].artifact.title, 'Churn mart');
-  assert.equal(view.components[0].artifact.lifecycle, 'building', 'lifecycle mirrors the real store (bronze built, not promoted)');
-  assert.equal(view.components[0].status.derived, 'in-progress', 'progress is DERIVED from the artifact, never hand-set');
-});
-
-test('attach_component: a creator can grow their own DRAFT; dashboards and agent systems attach through the same gates', async () => {
-  resetAll();
-  const pillarId = await seedStrategy();
-  const bet = payload<{ id: string; status: string }>(await call(creator, 'create_big_bet', { problem: 'Cara’s draft initiative', pillarId }));
-  assert.equal(bet.status, 'draft');
-  const dash = payload<{ id: string }>(await call(creator, 'create_dashboard', { name: 'My view', view: 'Orders', charts: [{ name: 'N', vizType: 'line', metric: 'Orders.n' }] }));
-  const sys = payload<{ id: string }>(await call(creator, 'create_agent_system', { name: 'My triage', template: 'analyze' }));
-
-  const d = payload<{ tab: string }>(await call(creator, 'attach_component', { betId: bet.id, kind: 'dashboard', id: dash.id }));
-  assert.equal(d.tab, 'dashboard');
-  const a = payload<{ tab: string }>(await call(creator, 'attach_component', { betId: bet.id, kind: 'agent-system', id: sys.id }));
-  assert.equal(a.tab, 'agent');
-
-  const view = payload<{ components: unknown[] }>(await call(creator, 'get_big_bet', { betId: bet.id }));
-  assert.equal(view.components.length, 2);
-});
-
-test('attach_component: a forged id → typed not_found; an unseen component → typed forbidden; a non-editor → typed forbidden', async () => {
-  resetAll();
-  const pillarId = await seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising', pillarId }));
-
-  // Forged id: nothing is attached, the error is typed.
-  const forged = errorOf(await call(builder, 'attach_component', { betId: bet.id, kind: 'dataset', id: 'ds_forged' }));
-  assert.equal(forged.code, 'not_found');
-
-  // A component the caller cannot SEE (Dan's personal dataset in ops) → forbidden.
-  const secret = payload<{ id: string }>(await call(outsider, 'create_dataset', { name: 'Dan secret' }));
-  const unseen = errorOf(await call(builder, 'attach_component', { betId: bet.id, kind: 'dataset', id: secret.id }));
-  assert.equal(unseen.code, 'forbidden', 'canView is re-checked per component — never attach unseen components');
-
-  // A domain peer who may VIEW but not EDIT the bet → forbidden before any side effect.
-  const ownDs = payload<{ id: string }>(await call(creator, 'create_dataset', { name: 'Cara set' }));
-  const noEdit = errorOf(await call(creator, 'attach_component', { betId: bet.id, kind: 'dataset', id: ownDs.id }));
-  assert.equal(noEdit.code, 'forbidden');
-  const view = payload<{ components: unknown[] }>(await call(builder, 'get_big_bet', { betId: bet.id }));
-  assert.equal(view.components.length, 0, 'nothing was attached by any denied call');
-});
-
-test('update_big_bet: the owner updates solution/status/realized value through the store’s own gate; honesty note on basis', async () => {
-  resetAll();
-  const pillarId = await seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Churn is rising', pillarId, targetValue: 250000 }));
-
-  // Realized value under the default uplift basis → the response says it won't count yet.
-  const first = payload<{ ownerDeclaredValue: number; valueBasis: string; note?: string }>(
-    await call(builder, 'update_big_bet', { betId: bet.id, solution: 'Health-score outreach', realizedValue: 120000 }),
-  );
-  assert.equal(first.ownerDeclaredValue, 120000);
-  assert.equal(first.valueBasis, 'uplift');
-  assert.match(first.note ?? '', /owner-declared/, 'the honesty note names the basis mismatch');
-
-  // Switch the basis → the declared value now resolves as the bet's realized value.
-  payload(await call(builder, 'update_big_bet', { betId: bet.id, valueBasis: 'owner-declared', status: 'shipped' }));
-  const view = payload<{ status: string; solution: string; value: { realized: number; basis: string } }>(
-    await call(builder, 'get_big_bet', { betId: bet.id }),
-  );
-  assert.equal(view.status, 'shipped');
-  assert.equal(view.solution, 'Health-score outreach');
-  assert.equal(view.value.basis, 'owner-declared');
-  assert.equal(view.value.realized, 120000, 'the declared value reads back through the same value model as the UI');
-});
-
-test('update_big_bet: a non-editor → typed forbidden; an empty patch → typed bad_request; unknown → not_found', async () => {
-  resetAll();
-  const pillarId = await seedStrategy();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Sales bet', pillarId }));
-  const peer = errorOf(await call(creator, 'update_big_bet', { betId: bet.id, status: 'archived' }));
-  assert.equal(peer.code, 'forbidden', 'a domain peer may view but not edit — the store’s own gate, no new floors');
-  const empty = errorOf(await call(builder, 'update_big_bet', { betId: bet.id }));
-  assert.equal(empty.code, 'bad_request');
-  const missing = errorOf(await call(builder, 'update_big_bet', { betId: 'bet_nope', status: 'active' }));
   assert.equal(missing.code, 'not_found');
 });
 
@@ -414,7 +257,7 @@ test('get_software_status: one honest card — NO preview/live URL is ever claim
   // (declarative is the default now; coded apps are enabled process-wide by the test harness).
   const app = payload<{ id: string }>(await call(builder, 'create_software', { name: 'Renewals', kind: 'code' }));
 
-  const fresh = payload<{ preview: { state: string; url: string | null; note?: string }; deploy: { state: string; liveUrl: string | null; review: unknown; releases: number }; build: { pipeline: Record<string, string>; repo: string } }>(
+  const fresh = payload<{ preview: { state: string; url: string | null; note?: string }; deploy: { state: string; liveUrl: string | null; review: unknown; releases: number }; build: { lastCommit: unknown; updatedAt: string } }>(
     await call(builder, 'get_software_status', { appId: app.id }),
   );
   assert.equal(fresh.preview.state, 'building');
@@ -423,7 +266,7 @@ test('get_software_status: one honest card — NO preview/live URL is ever claim
   assert.equal(fresh.deploy.liveUrl, null);
   assert.equal(fresh.deploy.review, null, 'no review has been requested yet');
   assert.equal(fresh.deploy.releases, 0);
-  assert.equal(fresh.build.pipeline.forgejo, 'offline', 'the pipeline states reflect reachability, not a sham');
+  assert.equal(fresh.build.lastCommit, null, 'a fresh app has no governed commit yet');
 
   // Start a preview → the state moves, but the URL stays honestly null (Phase 1).
   payload(await call(builder, 'start_preview', { appId: app.id }));
@@ -441,22 +284,22 @@ test('list_connection_templates: the catalog from the SAME registry create_conne
   const r = payload<{ templates: { key: string; personal: boolean; minRoleToCreate: string; requiredFields: string[]; tools: { name: string; mode: string }[] }[]; note: string }>(
     await call(creator, 'list_connection_templates'),
   );
-  // Flag-off default: the external-warehouse + om-catalog templates are hidden
-  // (EXTERNAL_CONNECTORS_ENABLED / OPENMETADATA_CONNECT_ENABLED off), so the catalog
+  // Flag-off default: the external-warehouse template is hidden
+  // (EXTERNAL_CONNECTORS_ENABLED off), so the catalog
   // is the user-facing templates (gdrive, onedrive, notion-mcp, airflow, github,
   // supabase, atlassian, salesforce-api, kajabi-api, sap-odata, odata-v4,
   // workday-raas, slack, gmail, gcal, outlook, teams, entra, purview, ai-foundry,
   // sagemaker, gcp-identity, gcp-directory, snowflake-governance, generic-api,
   // generic-mcp) + the `database` internal building block — warehouse does NOT appear.
-  assert.equal(r.templates.length, 27, 'the full template catalog (every template except the flag-gated warehouse + om-catalog)');
+  assert.equal(r.templates.length, 27, 'the full template catalog (every template except the flag-gated warehouse)');
   assert.ok(!r.templates.some((t) => t.key === 'warehouse'), 'warehouse hidden when external connectors are off');
 
   // ONE source of truth: the listed keys are exactly the keys create_connection accepts
-  // in THIS deployment — its enum minus the flag-gated `warehouse` + `om-catalog`
-  // (both rejected flag-off, so both hidden from the catalog too).
+  // in THIS deployment — its enum minus the flag-gated `warehouse`
+  // (rejected flag-off, so hidden from the catalog too).
   const createTool = ALL_MCP_TOOLS.find((t) => t.name === 'create_connection')!;
   const accepted = ((createTool.inputSchema.properties.template as { enum: string[] }).enum ?? [])
-    .filter((k) => k !== 'warehouse' && k !== 'om-catalog')
+    .filter((k) => k !== 'warehouse')
     .slice()
     .sort();
   assert.deepEqual(r.templates.map((t) => t.key).sort(), accepted, 'catalog keys === create_connection’s accepted keys (flag-off)');

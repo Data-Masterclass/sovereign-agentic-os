@@ -185,13 +185,12 @@ test('generate_app_spec is advertised as a governed declarative tool (creator fl
   assert.equal(tool!.write, false, 'it persists nothing — set_app_spec publishes');
 });
 
-test('SPEC APP: create_software kind:spec skips the image pipeline (no repo, stages disabled, serveMode spec)', async () => {
+test('SPEC APP: create_software kind:spec scaffolds no source tree (serveMode spec)', async () => {
   __resetStore();
   __resetAppsCache();
   const app = (await callPlatformMcp(amir, 'create_software', { name: 'Spec App', domain: 'sales', kind: 'spec' })) as App;
   assert.equal(serveModeOf(app), 'spec', 'a spec app is served declaratively from creation');
-  assert.equal(app.repo.fullName, '', 'no per-app Forgejo repo is scaffolded');
-  assert.ok(Object.values(app.pipeline).every((s) => s === 'disabled'), 'every image-pipeline stage is disabled');
+  assert.deepEqual(app.repo.seeded, [], 'a spec app scaffolds no source tree');
 
   // The DEFAULT kind is now 'spec' (0.6.136 declarative-first) — creating with no kind is a spec app.
   const def = (await callPlatformMcp(amir, 'create_software', { name: 'Default App', domain: 'sales' })) as App;

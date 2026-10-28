@@ -38,11 +38,11 @@ test('an errored step ALWAYS renders as a warning with the real reason, never a 
   const l = toolCallToLine({
     tool: 'commit',
     args: { appId: 'a1', files: [{ path: 'a.ts' }] },
-    result: 'Error: forgejo unreachable',
+    result: 'Error: compile gate rejected the tree',
     isError: true,
   });
   assert.equal(l.isError, true);
-  assert.equal(l.text, '⚠ commit failed: forgejo unreachable');
+  assert.equal(l.text, '⚠ commit failed: compile gate rejected the tree');
   assert.doesNotMatch(l.text, /Committed/); // NOT a success line
 });
 
@@ -70,13 +70,12 @@ test('committedSummaryLine returns null for an empty changeset', () => {
 });
 
 test('buildStatusRail: fresh app reads Repo none · Preview none · Deploy none', () => {
-  const rail = buildStatusRail({ pipeline: {}, repo: { seeded: [] }, deploy: { state: 'building', previewUrl: null, releases: 0 } });
+  const rail = buildStatusRail({ repo: { seeded: [] }, deploy: { state: 'building', previewUrl: null, releases: 0 } });
   assert.deepEqual(rail.map((s) => `${s.label}:${s.value}`), ['Repo:none', 'Preview:none', 'Deploy:none']);
 });
 
 test('buildStatusRail: a committed repo + served preview + release reads all ok', () => {
   const rail = buildStatusRail({
-    pipeline: { forgejo: 'ok' },
     repo: { seeded: ['a'] },
     deploy: { state: 'live', previewUrl: 'https://x', releases: 2 },
   });
@@ -88,14 +87,14 @@ test('buildStatusRail: a committed repo + served preview + release reads all ok'
 });
 
 test('buildStatusRail is HONEST: preview provisioning (state preview, NO url) is not "live"', () => {
-  const rail = buildStatusRail({ pipeline: { forgejo: 'ok' }, repo: { seeded: ['a'] }, deploy: { state: 'preview', previewUrl: null, releases: 0 } });
+  const rail = buildStatusRail({ repo: { seeded: ['a'] }, deploy: { state: 'preview', previewUrl: null, releases: 0 } });
   const preview = rail.find((s) => s.label === 'Preview')!;
   assert.equal(preview.value, 'provisioning');
   assert.equal(preview.tone, 'active');
 });
 
 test('buildStatusRail: a filed deploy review reads in-review (not live)', () => {
-  const rail = buildStatusRail({ pipeline: { forgejo: 'ok' }, repo: { seeded: ['a'] }, deploy: { state: 'review', reviewCardId: 'c1', releases: 0 } });
+  const rail = buildStatusRail({ repo: { seeded: ['a'] }, deploy: { state: 'review', reviewCardId: 'c1', releases: 0 } });
   const dep = rail.find((s) => s.label === 'Deploy')!;
   assert.equal(dep.value, 'in-review');
   assert.equal(dep.tone, 'active');

@@ -9,7 +9,7 @@ import { loader } from '@monaco-editor/react';
 
 /**
  * One whitelisted file of an agent system, edited in Monaco and committed back to
- * the system's (mock) Forgejo repo through /api/agents/systems/{id}/files with
+ * the system's stored files through /api/agents/systems/{id}/files with
  * optimistic-concurrency on the blob sha. This is one of the THREE interchangeable
  * editors over the single source (canvas · this file editor · agent-system chat);
  * a Save here surfaces in the canvas + agent editor after the parent reloads.

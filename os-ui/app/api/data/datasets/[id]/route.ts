@@ -5,14 +5,12 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
-import { requireUser } from '@/lib/core/auth';
 import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset, renameDataset, listAllDatasets } from '@/lib/experimental/data/store';
 import { dropPhysicalTables, sharedFootprintFqns } from '@/lib/experimental/data/physical-delete';
 import { domainTableMissing } from '@/lib/experimental/data/reconcile-server';
 import { executeRun } from '@/lib/infra/governed';
 import { stepperStages } from '@/lib/experimental/data/panels';
 import { goldOutputColumns } from '@/lib/experimental/data/metrics';
-import { firstOmCatalogFor, omSoftDeleteForConnection, omReactivateForConnection } from '@/lib/experimental/connections/openmetadata';
 import { appSlugFromRequest, checkAppGrant } from '@/lib/experimental/software/app-origin';
 
 export const dynamic = 'force-dynamic';
@@ -54,17 +52,11 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
  * Edit-scoped in the store (owner or in-domain Admin), so a mere viewer is
  * rejected 403 — restoring/archiving obeys the same authz as editing.
  *
- * Best-effort OM soft-delete / reactivation fires AFTER the OS archive succeeds.
- * An unreachable OM or an untested OM version is silently swallowed — the OS
- * archive/restore is authoritative and NEVER blocked by an OM error.
- *
- * SKIP: uses Promise.all([requireUser(), requirePrincipal()]) — two parallel gates.
+ * SKIP: dispatches on body.action with a shared gate — left hand-rolled.
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    // requireUser for OM connection lookup (needs CurrentUser); requirePrincipal for
-    // the store (needs Principal). Both share the same session; the cost is negligible.
-    const [user, principal] = await Promise.all([requireUser(), requirePrincipal()]);
+    const principal = await requirePrincipal();
     const { id } = await ctx.params;
     const body = (await req.json().catch(() => ({}))) as { action?: string; name?: string };
     switch (body.action) {
@@ -76,18 +68,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       }
       case 'archive': {
         const summary = archiveDataset(id, principal);
-        // Best-effort OM soft-delete — fire-and-forget; the archive already succeeded.
-        void firstOmCatalogFor(user).then((c) => {
-          if (c) void omSoftDeleteForConnection(c, summary);
-        }).catch(() => {});
         return NextResponse.json({ dataset: summary });
       }
       case 'unarchive': {
         const summary = unarchiveDataset(id, principal);
-        // Best-effort OM reactivation.
-        void firstOmCatalogFor(user).then((c) => {
-          if (c) void omReactivateForConnection(c, summary);
-        }).catch(() => {});
         return NextResponse.json({ dataset: summary });
       }
       default:

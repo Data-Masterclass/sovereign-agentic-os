@@ -57,7 +57,6 @@ const CURATED: Record<string, ConnectorIdentity> = {
   // Warehouses / data
   'database':     { monogram: 'PG', accent: '#31648C', value: 'Connect a PostgreSQL database as a governed source.' },
   'warehouse':    { monogram: 'WH', accent: '#8A6516', value: 'Federate an external warehouse as one governed catalog — query live, import tables.' },
-  'om-catalog':   { monogram: 'OM', accent: '#3FB950', value: 'Read an OpenMetadata catalog — discover tables and lineage.' },
   'airflow':      { monogram: 'AF', accent: '#017CEE', value: 'Reach Apache Airflow — see and trigger your pipelines.' },
   // Developer / open source
   'github':       { monogram: 'GH', accent: '#5A6270', value: 'Work with GitHub — repos, issues and pull requests, under policy.' },

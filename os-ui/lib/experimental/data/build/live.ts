@@ -3,18 +3,8 @@
  */
 import { type DataAdapter, type DataStage, type StepResult } from './adapter.ts';
 import type { ExecuteIdentity } from '@/lib/infra/governed';
-import { transparencyGate, gateReason } from '../transparency.ts';
-import {
-  CUBE_ARTIFACT,
-  DASHBOARD_ARTIFACT,
-  EXPOSURE_ARTIFACT,
-  cubeName,
-  cubeViewName,
-  goldMartFqn,
-} from '../metrics.ts';
 import { assetTarget, domainSchema, physicalSlug } from '../store-fqn.ts';
-import { type CubeAccessPolicy, type OpaBundle, compilePolicy } from '../policy/compiler.ts';
-import { runConformance } from '../policy/conformance.ts';
+import { type OpaBundle, compilePolicy, tableFqn } from '../policy/compiler.ts';
 
 /**
  * The LIVE Data Build adapters — real apply→verify against the services, behind the
@@ -24,30 +14,11 @@ import { runConformance } from '../policy/conformance.ts';
  * (server-only). A network/HTTP failure surfaces as a throw or falsy result so the
  * row reports ✗ honestly — never a false ✓.
  *
- * Phase 5 implements the Metric + Dashboard stages' adapters (cube · superset · om);
- * Phase 6 adds dlt · dbt · dbt-trino · trino · policy under the same factory.
+ * Adapters: dlt · dbt · dbt-trino · trino · policy — every stage runs through the
+ * governed Trino/OPA path.
  */
 
 // ----------------------------------------------------------------- clients -------
-
-export interface CubeClient {
-  /** Validate + (re)load the generated Cube schema (the cube_dbt YAML). */
-  reload(name: string, schema: string): Promise<void>;
-  /** Resolve a measure on a probe query — returns the number, or null if it can't. */
-  resolveMeasure(view: string, measure: string): Promise<number | null>;
-}
-
-export interface SupersetClient {
-  importBundle(name: string, bundle: string): Promise<void>;
-  dashboardExists(name: string): Promise<boolean>;
-}
-
-export interface OmClient {
-  /** Push a dbt `exposure` so the mart→metric/dashboard edge lands in OpenMetadata. */
-  pushExposure(name: string, yaml: string): Promise<void>;
-  /** Does the catalog have a lineage edge for this FQN (the upstream mart)? */
-  hasLineage(fqn: string): Promise<boolean>;
-}
 
 /** The artifact key carrying the uploaded object's MinIO key into the Bronze build,
  *  so the dlt adapter's `apply` can hand it to the data-runner /ingest call. */
@@ -104,17 +75,14 @@ export interface TrinoClient {
 }
 
 export interface PolicyClient {
-  /** Push the compiled OPA `data.governance` bundle + Cube access policies. */
-  push(opa: OpaBundle, cube: CubeAccessPolicy[]): Promise<void>;
+  /** Push the compiled OPA `data.governance` bundle. */
+  push(opa: OpaBundle): Promise<void>;
 }
 
 /** Minimal roster shape for the policy adapter (id → domains). */
 export type PolicyRoster = Record<string, { domains: string[]; clearances?: string[] }>;
 
 export type DataLiveDeps = {
-  cube: CubeClient;
-  superset: SupersetClient;
-  om: OmClient;
   dlt: DltClient;
   dbt: DbtClient;
   dbtTrino: DbtTrinoClient;
@@ -133,94 +101,22 @@ function fail(error: string): StepResult {
 
 // --------------------------------------------------------- stage → adapter-set ---
 
-/** Which tools each stage's Build runs (brief §"stage→adapter-set"). Stages whose
- *  adapters arrive in Phase 6 list them here; the orchestrator runs only the ones
- *  present in the adapter map, so it never fakes a ✓ for an unimplemented tool. */
+/** Which tools each stage's Build runs (brief §"stage→adapter-set"). The orchestrator
+ *  runs only the ones present in the adapter map, so it never fakes a ✓ for a tool that
+ *  isn't implemented. `policy` runs FIRST on promote so the compiled OPA governance for
+ *  the promoted FQN is live BEFORE the table materializes (no window where the new
+ *  domain table exists without its row filters). */
 export const ADAPTER_SET: Record<DataStage, string[]> = {
-  bronze: ['dlt', 'om'],
-  silver: ['dbt', 'om'],
-  gold: ['dbt', 'om'],
-  metric: ['cube', 'om'],
-  dashboard: ['superset', 'om'],
-  // T8 — publish for real. `policy` runs FIRST so the compiled OPA governance for
-  // the promoted FQN is live BEFORE the table materializes (no window where the new
-  // domain table exists without its row filters). `om` is intentionally NOT in this
-  // set: the promoted table's OM lineage lands via the dbt-artifacts ingestion (M2),
-  // and the Catalog already lists governed registry assets via the T0.2 union — a
-  // hard OM dependency here would block every real publish on a catalog side-car.
+  bronze: ['dlt'],
+  silver: ['dbt'],
+  gold: ['dbt'],
   promote: ['policy', 'dbt-trino', 'trino'],
-  certify: ['om', 'policy'],
+  certify: ['policy'],
 };
 
 // ----------------------------------------------------------------- adapters ------
 
 export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter> {
-  const cube: DataAdapter = {
-    tool: 'cube',
-    async apply(ctx) {
-      const name = cubeName(ctx.dataset); // #155: the (possibly namespaced) cube identity
-      const schema = ctx.artifacts[CUBE_ARTIFACT(ctx.dataset)];
-      if (!schema) return fail('no Cube model generated');
-      await deps.cube.reload(name, schema);
-      return ok(`reloaded Cube model '${name}' (${ctx.dataset.measures.length} measure(s))`);
-    },
-    async verify(ctx) {
-      const view = cubeViewName(ctx.dataset);
-      const measure = ctx.dataset.measures[0]?.name ?? 'count';
-      const value = await deps.cube.resolveMeasure(view, measure);
-      if (value === null) return fail(`metric '${measure}' did not resolve on view '${view}'`);
-      return ok(`metric '${measure}' resolves on '${view}' (= ${value})`);
-    },
-  };
-
-  const superset: DataAdapter = {
-    tool: 'superset',
-    async apply(ctx) {
-      const view = cubeViewName(ctx.dataset);
-      const bundle = ctx.artifacts[DASHBOARD_ARTIFACT(ctx.dataset)];
-      if (!bundle) return fail('no Superset bundle generated');
-      await deps.superset.importBundle(`${view} Overview`, bundle);
-      return ok(`imported Superset dashboard '${view} Overview'`);
-    },
-    async verify(ctx) {
-      const view = cubeViewName(ctx.dataset);
-      const exists = await deps.superset.dashboardExists(`${view} Overview`);
-      if (!exists) return fail(`dashboard '${view} Overview' not found after import`);
-      return ok(`dashboard '${view} Overview' loads`);
-    },
-  };
-
-  // The transparency gate blocks GOVERNED catalog entry + consumption — not a raw
-  // Bronze load or an intermediate Silver model still in the sandbox.
-  const GATED: ReadonlySet<DataStage> = new Set(['metric', 'dashboard', 'promote', 'certify']);
-  const om: DataAdapter = {
-    tool: 'om',
-    async apply(ctx) {
-      const exposure = ctx.artifacts[EXPOSURE_ARTIFACT];
-      if (ctx.stage === 'metric' || ctx.stage === 'dashboard') {
-        if (!exposure) return fail('no dbt exposure generated');
-        await deps.om.pushExposure(`${cubeName(ctx.dataset)}_metrics`, exposure);
-        return ok('pushed dbt exposure (mart→metric edge)');
-      }
-      // Refinement/promotion: the dbt/dlt artifacts ingestion owns the catalog entry;
-      // pushing the exposure also seeds the upstream edge the gated stages verify.
-      if (exposure) await deps.om.pushExposure(`${cubeName(ctx.dataset)}_lineage`, exposure);
-      return ok(`catalogued ${ctx.stage ?? 'artifact'} in OpenMetadata`);
-    },
-    async verify(ctx) {
-      // For governed/consumption stages the transparency GATE is enforced (no ✓ for an
-      // undocumented/orphan artifact) + the upstream lineage edge must be present.
-      if (ctx.stage && GATED.has(ctx.stage)) {
-        const gate = transparencyGate(ctx.dataset);
-        if (!gate.ok) return fail(gateReason(gate));
-        const edge = await deps.om.hasLineage(goldMartFqn(ctx.dataset));
-        if (!edge) return fail('no upstream lineage edge in the catalog');
-        return ok('transparency gate green + upstream lineage edge present');
-      }
-      return ok(`${ctx.stage ?? 'artifact'} catalogued`);
-    },
-  };
-
   // ----------------------------------------------- bronze / silver / gold ------
 
   const dlt: DataAdapter = {
@@ -328,16 +224,18 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
     tool: 'policy',
     async apply(ctx) {
       const compiled = compilePolicy([ctx.dataset], deps.roster);
-      await deps.policy.push(compiled.opa, compiled.cube);
-      return ok(`compiled 1 source → OPA (${Object.keys(compiled.opa.tables).length} table) + Cube (${compiled.cube.length} policy)`);
+      await deps.policy.push(compiled.opa);
+      return ok(`compiled 1 source → OPA (${Object.keys(compiled.opa.tables).length} table)`);
     },
     async verify(ctx) {
-      // The conformance gate: OPA path == Cube path, else ✗ (data-policy-compiler.md).
-      const r = runConformance([ctx.dataset], deps.roster);
-      if (!r.ok) return fail(`policy drift: ${r.mismatches[0]?.reason ?? 'OPA ≠ Cube'} (${r.mismatches.length} mismatch)`);
-      return ok(`OPA == Cube across ${r.checks} check(s) — conformant`);
+      // The compiled bundle must govern the exact FQN this dataset materializes — a
+      // dataset the compiler skipped (not governed) would otherwise publish ungoverned.
+      const compiled = compilePolicy([ctx.dataset], deps.roster);
+      const fqn = tableFqn(ctx.dataset);
+      if (!compiled.opa.tables[fqn]) return fail(`no OPA governance compiled for ${fqn}`);
+      return ok(`OPA governance covers ${fqn}`);
     },
   };
 
-  return { cube, superset, om, dlt, dbt, 'dbt-trino': dbtTrino, trino, policy };
+  return { dlt, dbt, 'dbt-trino': dbtTrino, trino, policy };
 }

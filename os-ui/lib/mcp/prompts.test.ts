@@ -27,31 +27,20 @@ async function rpc(user: CurrentUser, method: string, params?: Record<string, un
 const EXPECTED = [
   'build_data_product', 'author_and_publish_knowledge', 'connect_data_source',
   'build_agent_system', 'build_and_ship_software', 'define_metric', 'build_dashboard',
-  'create_big_bet', 'upload_and_share_file', 'score_and_wire_prediction',
-  // mcp-v2 surfaces wave — one golden-path prompt per new surface.
-  'frame_strategy', 'reuse_from_marketplace', 'work_the_queue', 'check_my_runs',
+  'upload_and_share_file',
+  // mcp-v2 surfaces wave — one golden-path prompt per surface.
+  'work_the_queue', 'check_my_runs',
   'orient_me',
 ];
 
-test('prompts/list: exposes exactly the 15 golden-path prompts', async () => {
+test('prompts/list: exposes exactly the 11 golden-path prompts', async () => {
   const r = result(await rpc(creator, 'prompts/list'));
   const names = (r.prompts as { name: string }[]).map((p) => p.name);
-  assert.equal(PROMPTS.length, 15);
+  assert.equal(PROMPTS.length, 11);
   for (const n of EXPECTED) assert.ok(names.includes(n), `missing prompt ${n}`);
-  assert.equal(names.length, 15);
+  assert.equal(names.length, 11);
 });
 
-test('prompts/get: score_and_wire_prediction renders the Science golden path honestly', async () => {
-  const r = result(await rpc(creator, 'prompts/get', { name: 'score_and_wire_prediction', arguments: { model: 'churn_model' } }));
-  const text = (r.messages as { content: { text: string } }[])[0].content.text;
-  assert.match(text, /YOUR ROLE: creator/, 'a live role banner');
-  assert.match(text, /list_models/, 'discovers scoreable models first');
-  assert.match(text, /get_model/, 'reads the model card');
-  assert.match(text, /science_predict/, 'scores through the governed door');
-  assert.match(text, /ml\.enabled=false/, 'states the honest ml-disabled behaviour');
-  assert.match(text, /⛔/, 'the human promote gate is marked');
-  assert.match(text, /Science — golden path/i, 'the science guide is embedded');
-});
 
 test('prompts/get: returns a rendered user message with the live role banner + step script + guide', async () => {
   const r = result(await rpc(creator, 'prompts/get', { name: 'build_data_product', arguments: { name: 'Orders' } }));

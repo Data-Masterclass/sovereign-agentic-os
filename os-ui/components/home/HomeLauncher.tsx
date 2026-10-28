@@ -3,14 +3,12 @@
  */
 import Link from 'next/link';
 import type { LauncherCard } from '@/lib/home/launcher';
-import type { GoldenPathKey } from '@/lib/tutorials';
-import TutorialLink from '@/components/tutorials/TutorialLink';
 import PathIllustration from './illustrations';
 
 /**
  * The illustrated golden-path launcher — Home's centerpiece. One card per path:
  * a custom illustration, a one-line explainer, a role-aware primary action that
- * deep-links into the tab's flow, and a "How it works" tutorial link. Paths the
+ * deep-links into the tab's flow. Paths the
  * viewer can't act on are explained-but-dimmed (still learnable). Server-rendered
  * from the pure launcher adapter — no client JS needed for the gallery itself.
  */
@@ -41,7 +39,6 @@ export default function HomeLauncher({ cards }: { cards: LauncherCard[] }) {
                 <span aria-hidden="true"> →</span>
               </Link>
             )}
-            <TutorialLink tutorial={c.id as GoldenPathKey} variant="card" />
           </div>
         </div>
       ))}

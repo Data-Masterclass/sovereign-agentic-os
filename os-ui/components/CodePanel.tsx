@@ -9,13 +9,12 @@ import { loader } from '@monaco-editor/react';
 
 /**
  * In-browser code editor for the Software golden path (Layer 3), shown beside
- * the OpenCode build assistant. A file tree of the app's Forgejo repo on the
- * left, a Monaco editor on the right; Save commits back to Forgejo.
+ * the OpenCode build assistant. A file tree of the app's generated source on the
+ * left, a Monaco editor on the right; Save writes the file back through the OS.
  *
  * Monaco is LAZY-LOADED (next/dynamic, ssr:false) so it never runs at SSR time
- * and stays out of the initial bundle. All repo access goes through the
- * Builder/Admin-gated server route at /api/software/{id}/files — no Forgejo
- * URL, credential or token ever reaches the browser.
+ * and stays out of the initial bundle. All file access goes through the
+ * Builder/Admin-gated server route at /api/software/{id}/files.
  *
  * SOVEREIGNTY / air-gap: @monaco-editor/loader defaults to loading the Monaco
  * `vs/` bundle from the jsDelivr CDN. We pin it to a SAME-ORIGIN path served from
@@ -82,7 +81,7 @@ function useMonacoTheme(): 'vs-dark' | 'light' {
   return dark ? 'vs-dark' : 'light';
 }
 
-export default function CodePanel({ appId, repoFullName }: { appId: string; repoFullName: string }) {
+export default function CodePanel({ appId, appName }: { appId: string; appName: string }) {
   const monacoTheme = useMonacoTheme();
   const [meta, setMeta] = useState<FileMeta | null>(null);
   const [treeError, setTreeError] = useState('');
@@ -159,7 +158,7 @@ export default function CodePanel({ appId, repoFullName }: { appId: string; repo
       else {
         setFile({ path: file.path, content: value, sha: body.sha ?? file.sha });
         setMessage('');
-        setSaveMsg('✓ Committed to Forgejo.');
+        setSaveMsg('✓ Saved.');
       }
     } catch (e) {
       setSaveMsg(`✗ ${(e as Error).message}`);
@@ -171,8 +170,8 @@ export default function CodePanel({ appId, repoFullName }: { appId: string; repo
   return (
     <div className="code-panel">
       <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-        View, edit and commit <strong>{repoFullName}</strong> in-browser. Save writes a commit to the
-        app&apos;s Forgejo repo on <span className="mono">main</span>; CI → Harbor → Argo CD pick it up.
+        View and edit <strong>{appName}</strong>&apos;s source in-browser. Save writes the file back to
+        the app&apos;s governed file store — the preview and verify steps read the same tree.
       </p>
 
       <div className="code-grid">

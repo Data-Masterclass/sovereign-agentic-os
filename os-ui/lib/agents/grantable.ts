@@ -9,15 +9,11 @@ import { listMetrics } from '@/lib/experimental/metrics/store';
 import { listConnectionsForUser } from '@/lib/experimental/connections';
 import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/experimental/files/store';
 import { resolveManual } from '@/lib/experimental/knowledge/manual';
-import { listPillars } from '@/lib/experimental/strategy/pillars';
-import { listBets, ensureHydrated as ensureBetsHydrated } from '@/lib/experimental/bigbets/store';
 import {
   MANUAL_SCOPES,
   planGrantId,
   manualLabel,
   manualAvailableScope,
-  pillarPlanId,
-  bigBetPlanId,
 } from '@/lib/agents/plan-grants';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { AgentGrantKind } from '@/lib/agents/assistant-suggestions';
@@ -36,12 +32,6 @@ import type { AgentGrantKind } from '@/lib/agents/assistant-suggestions';
 
 export type GrantableItem = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace' };
 export type GrantableGroups = Partial<Record<AgentGrantKind, GrantableItem[]>>;
-
-function pillarScopeBucket(scope: 'personal' | 'tenant' | string): 'personal' | 'domain' | 'marketplace' {
-  if (scope === 'personal') return 'personal';
-  if (scope === 'tenant') return 'marketplace';
-  return 'domain';
-}
 
 /** Resolve the grantable feed for ONE kind (the caller's DLS-scoped, grantable set). */
 async function listOne(systemId: string, user: CurrentUser, kind: AgentGrantKind): Promise<GrantableItem[]> {
@@ -92,19 +82,7 @@ async function listOne(systemId: string, user: CurrentUser, kind: AgentGrantKind
       .filter((scope) => resolveManual(scope, user).canView)
       .map((scope) => ({ id: planGrantId(scope), name: manualLabel(scope), scope: manualAvailableScope(scope) }));
   }
-  if (kind === 'strategy') {
-    const pillars = await listPillars(user);
-    return pillars.map((p) => ({ id: pillarPlanId(p.id), name: p.name, scope: pillarScopeBucket(p.scope) }));
-  }
-  if (kind === 'big-bets') {
-    await ensureBetsHydrated();
-    const bets = listBets(principal);
-    return bets.map((b) => ({
-      id: bigBetPlanId(b.id),
-      name: b.name,
-      scope: b.owner === user.id ? ('personal' as const) : b.crossDomain ? ('marketplace' as const) : ('domain' as const),
-    }));
-  }
+
   // connections
   const conns = await listConnectionsForUser(user);
   return conns.map((c) => ({

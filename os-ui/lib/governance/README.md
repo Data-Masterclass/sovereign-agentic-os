@@ -21,9 +21,9 @@ promote/certify · run the queued action) **and** writes **audit** + (optionally
 
 | UI section | Adapter (lib) | What Approve does | Live backend | Offline-mock |
 |---|---|---|---|---|
-| **Approvals inbox** | `effects.ts` (per-source) | deploy · grant · egress · promote · run | Argo / OPA / egress proxy / OpenMetadata | marked `live:false`, plane mutated in-process |
+| **Approvals inbox** | `effects.ts` (per-source) | deploy · grant · egress · promote · run | Argo / OPA / egress proxy | marked `live:false`, plane mutated in-process |
 | **Policies** | `policy-view.ts` | Admin **override** (revoke a grant) | reads live OPA grants | role-derived plane compiled in-process |
-| **Audit** | `audit.ts` | — (records every effect) | Langfuse mirror + OpenMetadata lineage | hash-chained in-process log |
+| **Audit** | `audit.ts` | — (records every effect) | Langfuse mirror + registry lineage | hash-chained in-process log |
 | **Cost & limits** | `cost.ts` | set cap → enforce over-cap | LiteLLM budgets | in-process caps + `checkCap` |
 | **Users & access** | `roles.ts` (+ `lib/platform-admin`) | role-per-domain → **OPA grants** | OS-native identities (scrypt, `lib/core/password.ts`) + OPA write-through | in-process directory + compile |
 
@@ -84,7 +84,7 @@ scope (Builder=domain vs Admin=tenant; non-Builder can't deploy), approval→eff
 
 ## What's mocked on `kind`
 
-Argo deploy, the egress proxy, OpenMetadata promote, and live LiteLLM calls are
+Argo deploy, the egress proxy, and live LiteLLM calls are
 **mocked** (marked `live:false`). The **policy/access/egress plane is real
 in-process** (so the consumer truly can query, the endpoint truly is allowlisted).
 Identities are OS-native (no external IdP). A real deploy reconciles these into

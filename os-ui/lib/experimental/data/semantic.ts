@@ -3,7 +3,7 @@
  */
 import type { Dataset, Measure, ColumnDoc } from './dataset-schema.ts';
 import { physicalSlug } from './store-fqn.ts';
-import { cubeName, goldOutputColumns, inferDimType } from './metrics.ts';
+import { modelName, goldOutputColumns, inferDimType } from './metrics.ts';
 
 /**
  * The MetricFlow-style SEMANTIC DECLARATION artifact (Phase 1 of the Cube→Trino
@@ -21,7 +21,7 @@ import { cubeName, goldOutputColumns, inferDimType } from './metrics.ts';
  *   - measures: one per named aggregate measure (MetricFlow `agg` + `expr`);
  *   - metrics: one `simple` metric per aggregate measure, one `derived` metric per ratio.
  *
- * Pure + unit-tested (mirrors scaffoldCubeYaml) so the panel preview, the stored artifact
+ * Pure + unit-tested (mirrors scaffoldMetricYaml) so the panel preview, the stored artifact
  * and any future compiler all read exactly the same declaration.
  */
 
@@ -81,7 +81,7 @@ export function scaffoldSemanticYaml(d: Dataset): string {
   // a dimension may not share a name — the same rule the cube scaffold applies).
   const dimCols = cols.filter((c) => c.name !== pk && !measureNames.has(c.name));
 
-  const model = cubeName(d); // the same frozen, (possibly) domain-namespaced identity
+  const model = modelName(d); // the same frozen, (possibly) domain-namespaced identity
   const lines: string[] = ['semantic_models:', `  - name: ${model}`, `    model: ref('mart_${physicalSlug(d)}')`];
 
   // entities — the primary key, so a metric can be joined/grained on it.
@@ -125,4 +125,4 @@ export function scaffoldSemanticYaml(d: Dataset): string {
 
 /** One semantic declaration file per dataset — `semantic/<base>.yml`, the SAME namespacing
  *  scheme as the cube artifact so a dataset's declarations sit together and never collide. */
-export const SEMANTIC_ARTIFACT = (d: Dataset) => `semantic/${cubeName(d)}.yml`;
+export const SEMANTIC_ARTIFACT = (d: Dataset) => `semantic/${modelName(d)}.yml`;

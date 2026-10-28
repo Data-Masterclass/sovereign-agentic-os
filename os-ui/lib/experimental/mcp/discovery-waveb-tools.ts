@@ -16,8 +16,6 @@ import { listFiles, searchFiles, getFile } from '@/lib/experimental/files/store'
 import { listMetrics } from '@/lib/experimental/metrics/store';
 import { listDashboards, getDashboard } from '@/lib/experimental/dashboards/store';
 import { normalizePanel, panelMetrics } from '@/lib/experimental/dashboards/model';
-import { listBets, getSolution } from '@/lib/experimental/bigbets/store';
-import { buildBetView } from '@/lib/experimental/bigbets/server';
 import { getSystem } from '@/lib/agents/store';
 import {
   listAppsForUser,
@@ -25,47 +23,13 @@ import {
   listAppFilesForViewer,
   readAppFileForViewer,
   templateFiles,
-  refreshActionsStage,
-  refreshBuildStage,
   dirListing,
 } from '@/lib/experimental/software/apps';
-import { forgejoReachable, getSnapshot, hydrateSnapshot } from '@/lib/experimental/software/server';
+import { getSnapshot, hydrateSnapshot } from '@/lib/experimental/software/server';
 import { getReviewCard, listReviewCards, reconcileDeployStatus, previewNoteForRunner } from '@/lib/experimental/software/review';
 import type { RunnerStatus } from '@/lib/experimental/software/runner';
-import {
-  listConnectionsForUser,
-  getConnectionForUser,
-  createConnection,
-  testConnection,
-  callConnectionTool,
-  warehouseRegistration,
-  registerWarehouseCatalog,
-  discoverWarehouse,
-  importWarehouseTable,
-  CONNECTION_TEMPLATES,
-  isPersonalConnectable,
-  type ConnectionTemplateKey,
-  type WarehouseCreateInput,
-  type AirflowCreateInput,
-} from '@/lib/experimental/connections';
-import type { AirflowAuthType } from '@/lib/experimental/connections/schema';
-import {
-  resolveOmCatalog,
-  omListDomains,
-  omListDataProducts,
-  omListTables,
-  omSearch,
-  omLineage,
-  previewOmSyncForConnection,
-  previewDqSyncForConnection,
-} from '@/lib/experimental/connections/openmetadata';
-import { previewCatalogIngest } from '@/lib/experimental/connections/openmetadata-ingest';
-import { WAREHOUSE_PROVIDERS } from '@/lib/experimental/connections/warehouse/registry';
-import { WAREHOUSE_PLATFORMS, type WarehousePlatform } from '@/lib/experimental/connections/warehouse/types';
-import { promoteThroughSeam } from '@/lib/governance/ladder';
-import { enqueue } from '@/lib/governance/approvals';
-import { scaffoldCubeYaml, cubeViewName } from '@/lib/experimental/data/metrics';
-import { cubeDeliverable } from '@/lib/experimental/data/cube-models';
+import { getConnectionForUser } from '@/lib/experimental/connections';
+import { scaffoldMetricYaml } from '@/lib/experimental/data/metrics';
 import { loadGuide, isGuidePath, GUIDE_PATHS, type GuidePath } from '@/lib/tabs/guides';
 import { config } from '@/lib/core/config';
 import { queryRun } from '@/lib/infra/governed';
@@ -85,8 +49,6 @@ import { getMetric } from '@/lib/experimental/metrics/store';
 import { exploreMetric } from '@/lib/experimental/metrics/build/explore-server';
 import type { Granularity } from '@/lib/experimental/metrics/explorer';
 import { claimsFromUser, delegate } from '@/lib/experimental/data/identity';
-import { listModelsForUser, type ModelViewer } from '@/lib/experimental/science';
-import { CHURN, DEFAULT_FEATURES } from '@/lib/experimental/science/churn';
 
 // ====================== WAVE B — OPERATE & READ-BACK PARITY ===================
 // Single-read + honest-status tools: an AI that cannot re-read its artifacts
@@ -113,7 +75,7 @@ export const waveBReadTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'Read ONE governed metric (also called: KPI, measure, indicator) — its definition (aggregation + aggregated column), the gold dataset it is defined on, its tier + owner, the canonical Cube member every consumer resolves, and the generated Cube YAML. Purpose: read back exactly what define_metric registered so you iterate on the real definition instead of guessing. Before: list_metrics (take the `id`, shaped `<datasetId>.<measure>`). After: query_metric to evaluate the number, or create_dashboard to chart the member. Governance: read-only, resolved through the SAME dataset canView gate as list_metrics — a metric on a dataset you cannot see is a typed not_found/forbidden (no existence leak).',
+      'Read ONE governed metric (also called: KPI, measure, indicator) — its definition (aggregation + aggregated column), the gold dataset it is defined on, its tier + owner, the canonical member every consumer resolves, and the generated metric YAML. Purpose: read back exactly what define_metric registered so you iterate on the real definition instead of guessing. Before: list_metrics (take the `id`, shaped `<datasetId>.<measure>`). After: query_metric to evaluate the number, or create_dashboard to chart the member. Governance: read-only, resolved through the SAME dataset canView gate as list_metrics — a metric on a dataset you cannot see is a typed not_found/forbidden (no existence leak).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -137,14 +99,10 @@ export const waveBReadTools: McpTool[] = [
         definition: {
           aggregation: r.measure.type,
           column: r.measure.sql || null,
-          // The sliceable dimensions come from the gold columns (cube_dbt contract).
+          // The sliceable dimensions come from the gold columns.
           dimensions: r.dataset.columns.map((c) => c.name),
         },
-        // Whether the dataset's Cube model is auto-registered + queryable (the SAME
-        // shared+gold gate publish delivers on) — the measure resolves once ready.
-        cubeReady: cubeDeliverable(r.dataset),
-        cubeView: cubeDeliverable(r.dataset) ? cubeViewName(r.dataset) : null,
-        cube: scaffoldCubeYaml(r.dataset),
+        definitionYaml: scaffoldMetricYaml(r.dataset),
       };
     },
   },
@@ -153,7 +111,7 @@ export const waveBReadTools: McpTool[] = [
     tab: 'dashboards',
     minRole: 'creator',
     description:
-      'Read ONE dashboard you can see (also called: report, business intelligence (BI), data visualization) — its charts with their governed metric members, the Cube view they bind to, tier and owner. Purpose: read back exactly what create_dashboard saved so you can iterate (create_dashboard with the same `id` replaces it) or attach it to a Big Bet. Before: list_dashboards. After: query_metric on a chart’s member to read the same number, or attach_component to put it on a bet. Governance: read-only, the SAME visibility rule as list_dashboards (My · Domain · Company) — an unseeable id is a typed not_found/forbidden (no existence leak).',
+      'Read ONE dashboard you can see (also called: report, business intelligence (BI), data visualization) — its charts with their governed metric members, the governed view they bind to, tier and owner. Purpose: read back exactly what create_dashboard saved so you can iterate (create_dashboard with the same `id` replaces it) Before: list_dashboards. After: query_metric on a chart’s member to read the same number. Governance: read-only, the SAME visibility rule as list_dashboards (My · Domain · Company) — an unseeable id is a typed not_found/forbidden (no existence leak).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -179,82 +137,6 @@ export const waveBReadTools: McpTool[] = [
           const p = normalizePanel(c);
           return { ...p, metric: panelMetrics(p)[0] };
         }),
-      };
-    },
-  },
-  {
-    name: 'get_big_bet',
-    tab: 'bigbets',
-    minRole: 'creator',
-    description:
-      'Read ONE Big Bet you can see (also called: initiative, strategic investment, project) — the problem + solution, pillar and north-star metric, the € target vs the REALIZED value (resolved RLS-scoped to YOU), the attached component references with their live derived status, completion and status. Purpose: the read-back half of the Big Bets golden path — progress is DERIVED from the components’ real lifecycle, never hand-set, so read it here instead of assuming. Before: list_big_bets. After: attach_component to grow the roadmap, update_big_bet to record the solution/status/realized value. Governance: read-only, the store’s own view scope (members + domain peers; cross-domain bets are members/Admin-only) — an unseeable id is a typed not_found/forbidden, and a not-yet-shared component’s detail is redacted to null for non-members (no governance shortcut).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        betId: { type: 'string', description: 'Big Bet id from list_big_bets.' },
-      },
-      required: ['betId'],
-      examples: [{ betId: 'bet_ab12cd34' }],
-    },
-    call: async (user, args) => {
-      const betId = str(args.betId).trim();
-      if (!betId) fail('get_big_bet needs a `betId` (from list_big_bets)', 400);
-      const view = await buildBetView(betId, user); // canView guard (403/404), RLS-scoped value
-      const { bet } = view;
-      return {
-        id: bet.id,
-        name: bet.name,
-        status: bet.status,
-        domain: bet.domain,
-        crossDomain: bet.crossDomain,
-        owner: bet.owner,
-        problem: bet.problem,
-        solution: bet.solution ?? null,
-        pillar: view.pillar,
-        metric: view.metric,
-        value: view.value.realized,
-        goLive: bet.goLive,
-        goLiveRealistic: view.roadmap.goLiveRealistic,
-        signal: view.roadmap.signal,
-        completion: view.completion,
-        components: view.components.map((c) => ({
-          refId: c.ref.id,
-          artifactId: c.ref.artifactId,
-          tab: c.ref.tab,
-          plannedReady: c.ref.plannedReady,
-          status: c.status,
-          // Redacted to null when the viewer may not see a not-yet-shared component.
-          artifact: c.artifact,
-        })),
-        canEdit: view.canEdit,
-        sourceMode: view.sourceMode,
-      };
-    },
-  },
-  {
-    name: 'get_bet_solution',
-    tab: 'bigbets',
-    minRole: 'creator',
-    description:
-      'Read a Big Bet’s SOLUTION BLUEPRINT — the runtime interplay graph the Design canvas renders: the anchor workflow ref, every attached ComponentRef (id · tab · role), the typed interplay edges (consumes/produces/triggers/feeds/monitors) and the saved canvas positions. Distinct from get_big_bet’s roadmap (build order): this is how the FINISHED pieces work together at run time. Purpose: read the blueprint back before set_bet_workflow / attach_bet_component / wire_bet_components mutate it (you need the ComponentRef ids + edge ids from here). Governance: read-only through the store’s OWN view scope (members + domain peers; cross-domain bets are members/Admin-only) — an unseeable id is a typed not_found/forbidden.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        betId: { type: 'string', description: 'Big Bet id from list_big_bets.' },
-      },
-      required: ['betId'],
-      examples: [{ betId: 'bet_ab12cd34' }],
-    },
-    call: async (user, args) => {
-      const betId = str(args.betId).trim();
-      if (!betId) fail('get_bet_solution needs a `betId` (from list_big_bets)', 400);
-      const sol = getSolution(betId, P(user)); // view gate (403/404)
-      return {
-        betId,
-        anchor: sol.anchor ? { refId: sol.anchor.id, artifactId: sol.anchor.artifactId, tab: sol.anchor.tab } : null,
-        nodes: sol.nodes.map((n) => ({ refId: n.id, artifactId: n.artifactId, tab: n.tab, role: n.role ?? 'component' })),
-        edges: sol.edges.map((e) => ({ edgeId: e.id, from: e.from, to: e.to, relation: e.relation })),
-        positions: sol.positions,
       };
     },
   },
@@ -323,24 +205,10 @@ export const waveBReadTools: McpTool[] = [
       if (!appId) fail('read_app_files needs an `appId` (from list_software)', 400);
       const path = str(args.path).trim().replace(/\/+$/, ''); // tolerate a trailing slash
       const app = await getAppForUser(appId, user); // visibility guard (404)
-      if (await forgejoReachable()) {
-        const tree = await listAppFilesForViewer(appId, user);
-        if (!path) return { appId, mode: 'live', branch: tree.branch, files: tree.files };
-        // A DIRECTORY path returns its immediate children (never "not an editable file",
-        // the dead end the build agent hit on `src/epics`) — check the tree BEFORE the
-        // file read so a directory is answered with a listing, not a 400.
-        const dir = dirListing(tree.files, path);
-        if (dir.length > 0 && !tree.files.includes(path)) {
-          return { appId, mode: 'live', branch: tree.branch, kind: 'dir', path, entries: dir };
-        }
-        const f = await readAppFileForViewer(appId, user, path);
-        const body = truncated(f.content, APP_FILE_CAP);
-        return { appId, mode: 'live', kind: 'file', path: f.path, content: body.text, contentNote: body.note, sha: f.sha };
-      }
-      // Offline: the last tree committed through the governed commit door (or the
-      // template seed for a fresh app) — labelled honestly, never a fabrication.
-      // Hydrate the durable mirror first so this survives a pod restart (the tree is
-      // no longer lost when the process that committed it is gone).
+      // The last tree committed through the governed commit door (or the template seed
+      // for a fresh app) — the OS's own snapshot store is the source of truth now that
+      // there is no external git forge. Hydrate the durable mirror first so this
+      // survives a pod restart (the tree is not lost when the committing process is gone).
       await hydrateSnapshot(app.id);
       const tree = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
       const note = 'Forgejo is unreachable — this is the app’s last governed-commit tree (or the template seed for a fresh app), labelled offline-mock.';
@@ -364,7 +232,7 @@ export const waveBReadTools: McpTool[] = [
     tab: 'software',
     minRole: 'creator',
     description:
-      'Read ONE app’s HONEST status card: preview state (with a URL only when a runner actually serves one — never fabricated), deploy state (requested / approved / denied, with the reviewer and note), release count, the build pipeline stages and the last governed commit. Purpose: the single read that tells you where an app truly is in create → preview → review → live, so you never act on a claimed-but-not-served URL. Before: list_software / get_software. After: start_preview or request_deploy (or fix and re-commit after a denial). Governance: read-only, the same visibility gate as get_software — an unseeable app is a typed not_found. Honesty rule, enforced: `preview.url` and `deploy.liveUrl` are null unless the workload is actually served; a pending runner or an offline cluster is SAID, not papered over.',
+      'Read ONE app’s HONEST status card: preview state (with a URL only when a runner actually serves one — never fabricated), deploy state (requested / approved / denied, with the reviewer and note), release count and the last governed commit. Purpose: the single read that tells you where an app truly is in create → preview → review → live, so you never act on a claimed-but-not-served URL. Before: list_software / get_software. After: start_preview or request_deploy (or fix and re-commit after a denial). Governance: read-only, the same visibility gate as get_software — an unseeable app is a typed not_found. Honesty rule, enforced: `preview.url` and `deploy.liveUrl` are null unless the workload is actually served; a pending runner or an offline cluster is SAID, not papered over.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -394,25 +262,17 @@ export const waveBReadTools: McpTool[] = [
       // Honest preview note from the FRESH runner status (running ⇒ served URL, no note;
       // provisioned-not-running ⇒ image build in progress; offline/null ⇒ unreachable).
       const previewNote = previewNoteForRunner(runner);
-      // HONEST `actions` stage: re-verified against live Forgejo on every status
-      // read — 'ok' only when the latest push on main actually produced a run;
-      // a disabled repo Actions unit is auto-healed (see refreshActionsStage).
-      const actions = await refreshActionsStage(app, { force: true });
-      // Phase B: poll the OS build service's in-flight build too (digest capture +
-      // honest harbor stage). Null-ish/OFF states still yield an honest note.
-      const osBuild = await refreshBuildStage(app).catch(() => null);
       const openCard = app.deploy.reviewCardId ? await getReviewCard(app.deploy.reviewCardId) : null;
       const latest = openCard ?? (await listReviewCards({ domain: app.domain })).find((c) => c.appId === app.id) ?? null;
       const isLive = app.deploy.state === 'live';
-      // NEVER claim a working URL that is not actually served: live state alone is
-      // not enough — the pipeline must be ok AND the app created against a live stack.
-      const liveServed = isLive && app.pipeline.live === 'ok' && app.mode === 'live';
+      // NEVER claim a working URL that is not actually served: live state alone is not
+      // enough — a runner must actually be serving the workload right now.
+      const liveServed = isLive && runner?.phase === 'running' && runner.ready >= 1;
       const lastCommit = [...app.chat].reverse().find((m) => m.role === 'assistant' && m.content.startsWith('Committed:')) ?? null;
       return {
         appId: app.id,
         name: app.name,
         status: app.status,
-        mode: app.mode,
         preview: {
           state: app.deploy.state,
           url: app.deploy.previewUrl,
@@ -438,16 +298,6 @@ export const waveBReadTools: McpTool[] = [
             : {}),
         },
         build: {
-          pipeline: app.pipeline,
-          ...(actions.note ? { actionsNote: actions.note } : {}),
-          ...(osBuild?.note ? { osBuildNote: osBuild.note } : {}),
-          // WHICH system produced the SERVING image — truthful, never inferred:
-          // 'os-build-service' only when a captured digest actually pins the runner.
-          builtBy: app.runImageDigest ? 'os-build-service' : 'forgejo-actions',
-          repo: app.repo.fullName,
-          // htmlUrl is healed to the EXTERNAL browsable URL on load (hydrateAppDoc),
-          // so even apps scaffolded before the fix surface a link that resolves.
-          repoUrl: app.repo.htmlUrl,
           lastCommit: lastCommit ? { message: lastCommit.content, at: lastCommit.at } : null,
           updatedAt: app.updatedAt,
         },

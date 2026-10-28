@@ -31,7 +31,7 @@ import {
   visibilityFor,
 } from './dataset-schema.ts';
 import { transparencyGate, gateReason } from './transparency.ts';
-import { CUBE_ARTIFACT, EXPOSURE_ARTIFACT, scaffoldCubeYaml, scaffoldExposureYaml, metricSqlReady, metricCubeReady } from './metrics.ts';
+import { CUBE_ARTIFACT, scaffoldMetricYaml, metricSqlReady } from './metrics.ts';
 import { SEMANTIC_ARTIFACT, scaffoldSemanticYaml } from './semantic.ts';
 import { assetTarget, productTarget, reuseSourceFqn, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from './store-fqn.ts';
 import { config } from '../../core/config.ts';
@@ -286,7 +286,7 @@ export function __seedDatasetForTest(input: {
     grants: [],
     measures: [],
     columns: input.columns ?? [],
-    cubeNamespaced: true,
+    viewNamespaced: true,
   };
   const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
   ds().store.set(rec.id, rec);
@@ -594,11 +594,11 @@ export function builtLayerFqn(
 
 /**
  * All governed datasets (shared assets + certified products), UNSCOPED — the source
- * the Cube model-sync sidecar reads via `GET /api/cube/models`. Deliberately not
+ * the governed metric model is generated from. Deliberately not
  * user-scoped: it emits ONLY governed tiers, so a private `dataset` (owner-only,
  * personal lane) NEVER appears — the endpoint hands out model definitions + access
  * policies, never row data, and is cluster-internal (see that route's trust-boundary
- * note). The physical "Gold is built" gate lives in `cube-models.cubeDeliverable`.
+ * note). The physical "Gold is built" gate lives in `cube-models.metricDeliverable`.
  */
 export function listGovernedDatasets(): Dataset[] {
   ensureSeeded();
@@ -774,7 +774,7 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
     columns: [],
     // #155: every NEW dataset gets the domain-namespaced cube identity. Existing datasets
     // (no marker) keep their legacy un-namespaced name — so live Cube models are untouched.
-    cubeNamespaced: true,
+    viewNamespaced: true,
     // TWO-PATH create: only the curated birth is recorded (absent ⇒ ingest, byte-stable).
     ...(input.origin === 'curated' ? { origin: 'curated' as const } : {}),
   };
@@ -853,7 +853,7 @@ export function adoptConnectedDataset(
     grants: [],
     measures: [],
     columns: [],
-    cubeNamespaced: true,
+    viewNamespaced: true,
     origin: 'connected',
     connected: input.connected,
     // A sync-mode adoption carries its sync config from birth (the scheduler lands the copy).
@@ -1275,9 +1275,9 @@ function carryQuality(d: Dataset, layer: Layer): Quality {
  * Define a metric on the GOLD version. Since the metrics→Trino migration (Phase 1) a metric
  * is a VIRTUAL DECLARATION served as governed Trino SQL over the physical gold mart, read AS
  * the viewer — so defining one requires ONLY a BUILT Gold, of ANY tier (a personal dataset's
- * metric reads its own personal lane). We always emit the portable MetricFlow-style SEMANTIC
- * declaration; the Cube model + dbt exposure artifacts are emitted ONLY for a CUBE-ready
- * (governed) dataset, so a broken cube is never registered on personal gold (#91 preserved).
+ * metric reads its own personal lane). We emit the portable MetricFlow-style SEMANTIC
+ * declaration plus the metric model YAML (the YAML door of define) — both are declarations
+ * served as Trino SQL, so they are emitted for every tier.
  */
 export function defineMeasure(id: string, user: Principal, measure: Measure): Dataset {
   const rec = get(id);
@@ -1287,7 +1287,7 @@ export function defineMeasure(id: string, user: Principal, measure: Measure): Da
   const ready = metricSqlReady(d);
   if (!ready.ok) fail(ready.message ?? 'This dataset is not ready for a metric', 400);
   // Define is an UPSERT keyed by the measure name (a metric's frozen physical identity is
-  // its Cube member `${View}.${name}` — there is never two same-named measures on one
+  // its member `${View}.${name}` — there is never two same-named measures on one
   // dataset). A re-save of an existing measure name is an EDIT of THAT metric: replace it
   // IN PLACE (preserving order + its DISPLAY `label`, which the define form never carries),
   // never a false "already defined" 409. A new name appends.
@@ -1298,32 +1298,25 @@ export function defineMeasure(id: string, user: Principal, measure: Measure): Da
   } else {
     d.measures.push(measure);
   }
-  // The portable MetricFlow-style semantic declaration is ALWAYS emitted (it is served as
-  // Trino SQL, works on personal gold). The cube_dbt model + dbt exposure are CUBE artifacts
-  // — emit them ONLY when the dataset is cube-ready (governed), never on personal gold where
-  // the cube's `cube-*` principal can't read the personal lane (#91 fail-closed preserved).
-  const artifacts: Record<string, string> = {
+  // Both declarations are served as Trino SQL (they work on personal gold too), so both
+  // are emitted for every tier.
+  rec.artifacts = {
     ...(rec.artifacts ?? {}),
     [SEMANTIC_ARTIFACT(d)]: scaffoldSemanticYaml(d),
+    [CUBE_ARTIFACT(d)]: scaffoldMetricYaml(d),
   };
-  if (metricCubeReady(d).ok) {
-    artifacts[CUBE_ARTIFACT(d)] = scaffoldCubeYaml(d);
-    artifacts[EXPOSURE_ARTIFACT] = scaffoldExposureYaml(d);
-  }
-  rec.artifacts = artifacts;
   persist(rec, d, { author: user.id, summary: `${at >= 0 ? 'update' : 'define'} metric ${measure.name}` });
   return d;
 }
 
 /**
  * PHYSICALLY de-register a metric (the delete side of the Metrics lifecycle): drop a
- * defined measure from the Gold dataset. Because the Cube-models payload
- * (`/api/cube/models`, `buildCubeModels`) is built from `d.measures`, removing the
- * measure removes its Cube model member — the metric stops being queryable. Edit-scoped
- * (owner or domain admin, via {@link editOf}). Regenerates the cube_dbt/exposure
- * artifacts (or drops them when the last measure goes) so they always match the
- * measures. Returns whether a measure was actually removed so the caller can report
- * honestly. Archive (the reversible soft-hide) must NEVER call this.
+ * defined measure from the Gold dataset. Every consumer (explorer, dashboards, the agent
+ * `metrics` tool) resolves members from `d.measures`, so removing the measure removes the
+ * member — the metric stops being queryable. Edit-scoped (owner or domain admin, via
+ * {@link editOf}). Regenerates the metric artifacts (or drops them when the last measure
+ * goes) so they always match the measures. Returns whether a measure was actually removed
+ * so the caller can report honestly. Archive (the reversible soft-hide) must NEVER call this.
  */
 export function removeMeasure(id: string, user: Principal, measureName: string): { removed: boolean } {
   const rec = get(id);
@@ -1334,16 +1327,11 @@ export function removeMeasure(id: string, user: Principal, measureName: string):
   const artifacts = { ...(rec.artifacts ?? {}) };
   if (d.measures.length > 0) {
     artifacts[SEMANTIC_ARTIFACT(d)] = scaffoldSemanticYaml(d);
-    // Cube artifacts only for a cube-ready (governed) dataset — never registered on personal gold.
-    if (metricCubeReady(d).ok) {
-      artifacts[CUBE_ARTIFACT(d)] = scaffoldCubeYaml(d);
-      artifacts[EXPOSURE_ARTIFACT] = scaffoldExposureYaml(d);
-    }
+    artifacts[CUBE_ARTIFACT(d)] = scaffoldMetricYaml(d);
   } else {
     // Last measure gone → the metric artifacts no longer exist for this dataset.
     delete artifacts[SEMANTIC_ARTIFACT(d)];
     delete artifacts[CUBE_ARTIFACT(d)];
-    delete artifacts[EXPOSURE_ARTIFACT];
   }
   rec.artifacts = artifacts;
   persist(rec, d, { author: user.id, summary: `remove metric ${measureName}` });
@@ -1615,11 +1603,6 @@ export function applyApprovedPromotion(
   // clears any stray marker so a demote→re-promote round-trip that flips models stays honest).
   if (artifact === 'view') d.domainArtifact = 'view';
   else delete d.domainArtifact;
-  // #146: a governed shared asset becomes part of the analytics-as-code estate —
-  // mark it git-backed so the promote hook records its dbt model + schema.yml in the
-  // `analytics` mono-repo (observability mirror; the runtime CTAS is unchanged). The
-  // flag is sticky + persisted (parseDataset carries it forward through certify).
-  d.gitBacked = true;
   persist(rec, d);
   return d;
 }
@@ -1706,7 +1689,7 @@ export type CertificationRequest = {
 };
 
 /**
- * Certify an asset → Data Product (Admin only). Sets the OpenMetadata certification
+ * Certify an asset → Data Product (Admin only). Sets the certification
  * trust badge, broadens visibility and lists it in the marketplace (tier `product`).
  * Admin-gated by role + domain (NOT ownership — an Admin certifies any asset in the
  * domain); the transparency gate is re-checked. Used by both the direct-Admin path
@@ -1897,12 +1880,8 @@ export function listFiles(id: string, user: Principal): { files: string[]; datas
     if (a) files.push(a);
   }
   // Metric artifacts appear once a measure exists: the portable MetricFlow semantic
-  // declaration always; the cube_dbt model + dbt exposure only for a cube-ready (governed)
-  // dataset (they aren't emitted on personal gold).
-  if (d.measures.length > 0) {
-    files.push(SEMANTIC_ARTIFACT(d));
-    if (metricCubeReady(d).ok) files.push(CUBE_ARTIFACT(d), EXPOSURE_ARTIFACT);
-  }
+  // declaration + the metric model YAML.
+  if (d.measures.length > 0) files.push(SEMANTIC_ARTIFACT(d), CUBE_ARTIFACT(d));
   return { files, dataset: d };
 }
 
@@ -1914,7 +1893,7 @@ export function readFile(id: string, user: Principal, path: string): RepoFile {
     return { path, content, sha: sha(content) };
   }
   const isVersion = (['bronze', 'silver', 'gold'] as Layer[]).some((l) => d.versions[l].artifact === path);
-  const isMetric = d.measures.length > 0 && (path === SEMANTIC_ARTIFACT(d) || path === CUBE_ARTIFACT(d) || path === EXPOSURE_ARTIFACT);
+  const isMetric = d.measures.length > 0 && (path === SEMANTIC_ARTIFACT(d) || path === CUBE_ARTIFACT(d));
   if (!isVersion && !isMetric) fail(`Path '${path}' is not part of this dataset`, 404);
   // The authored/generated body if present; otherwise a stub the live adapter
   // (Phase 6) materialises on Build.

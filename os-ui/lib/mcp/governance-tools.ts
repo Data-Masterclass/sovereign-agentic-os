@@ -11,10 +11,8 @@ import { applyEffect } from '@/lib/governance/effects';
 import { buildEffectDeps, fileArtifactCertification, isLadderKind, type LadderKind } from '@/lib/governance/ladder';
 import { remember } from '@/lib/governance/standing';
 import { record as audit } from '@/lib/governance/audit';
-// getLineage and importAdapter are dynamically imported at their call sites
-// below, not statically here, so they don't bundle experimental code into
-// the base build.
-import type { ImportMode } from '@/lib/experimental/marketplace/types';
+// getLineage is dynamically imported at its call site below, not statically
+// here, so it doesn't bundle experimental code into the base build.
 import { canViewPolicyPlane, consolidatedPlane, listEgress, policySources } from '@/lib/governance/policy-view';
 import { listStanding } from '@/lib/governance/standing';
 import { listCaps, checkCap } from '@/lib/governance/cost';
@@ -25,7 +23,7 @@ import { roleAtLeast } from '@/lib/core/session';
  * THE GOVERNANCE QUEUE + LADDER META-TOOLS (mcp-v2 P0). These wrap the EXISTING
  * approvals + roles + effects libs — no new store, no second governance path. They
  * turn every gated golden path into an agent-completable loop:
- *   • a creator files (request_promotion / request_certification / import_product);
+ *   • a creator files (request_promotion / request_certification);
  *   • they poll `get_request`;
  *   • a decider works `list_approvals` → `decide_approval` (the approval IS the action).
  *
@@ -196,19 +194,19 @@ export const governanceTools: McpTool[] = [
   {
     name: 'request_certification',
     tab: 'governance',
-    extraTabs: ['marketplace'],
     minRole: 'builder',
     description:
       'FILE a rung-2 CERTIFICATION request (a Domain asset → Company scope, the cross-domain Marketplace storefront) — the domain vouches for its artifact. Works for any kind: dataset, knowledge, connection, dashboard, model, app. Path: the certify step of the ladder. Before: the artifact is already a Domain asset (promote it to Domain first with request_promotion). After: a platform ADMIN runs `decide_approval`. Governance: TRIGGER = a Builder/Domain-admin IN the artifact’s domain (owner-not-required — the domain vouches); APPROVE = a platform Admin only. Returns the pending handle; it does NOT certify.',
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['dataset', 'knowledge', 'connection', 'dashboard', 'model', 'app', 'agent_system'], description: 'What to certify (a Domain asset).' },
+        kind: { type: 'string', enum: ['dataset', 'knowledge', 'connection', 'dashboard', 'app', 'agent_system'], description: 'What to certify (a Domain asset).' },
         id: { type: 'string', description: 'The domain asset id.' },
         mode: { type: 'string', description: 'Optional marketplace consumption mode (e.g. read-in-place | fork-allowed for models).' },
       },
       required: ['kind', 'id'],
-      examples: [{ kind: 'knowledge', id: 'wf_ab12cd' }, { kind: 'model', id: 'churn_model', mode: 'read-in-place' }],
+      examples: [{ kind: 'knowledge', id: 'wf_ab12cd' }],
+
     },
     call: async (user, args) => {
       const kind = str(args.kind).trim();
@@ -227,60 +225,22 @@ export const governanceTools: McpTool[] = [
   {
     name: 'get_lineage',
     tab: 'governance',
-    extraTabs: ['data', 'metrics', 'dashboards', 'science', 'marketplace', 'bigbets', 'software'],
+    extraTabs: ['data', 'metrics', 'dashboards', 'software'],
     minRole: 'creator',
     description:
-      'Get ONE normalized lineage graph `{nodes, edges}` for any artifact: `dataset:<id>`, `metric:<id>`, `dashboard:<id>`, `model:<id>`, `listing:<id>`, `bet:<id>` or `app:<id>`. Path: understand what an artifact is built from + who consumes it, across tabs. Governance: read-only, scoped — an unseeable ROOT is not_found; individual nodes you cannot see render as `{redacted:true, kind}` (existence, never content).',
+      'Get ONE normalized lineage graph `{nodes, edges}` for any artifact: `dataset:<id>`, `metric:<id>`, `dashboard:<id>` or `app:<id>`. Path: understand what an artifact is built from + who consumes it, across tabs. Governance: read-only, scoped — an unseeable ROOT is not_found; individual nodes you cannot see render as `{redacted:true, kind}` (existence, never content).',
     inputSchema: {
       type: 'object',
-      properties: { ref: { type: 'string', description: 'A "<kind>:<id>" reference, e.g. "dataset:ds_ab12cd" or "bet:bet_ab12cd34".' } },
+      properties: { ref: { type: 'string', description: 'A "<kind>:<id>" reference, e.g. "dataset:ds_ab12cd" or "app:app_ab12cd34".' } },
       required: ['ref'],
-      examples: [{ ref: 'dataset:ds_ab12cd' }, { ref: 'bet:bet_ab12cd34' }],
+      examples: [{ ref: 'dataset:ds_ab12cd' }, { ref: 'app:app_ab12cd34' }],
+
     },
     call: async (user, args) => {
       const ref = str(args.ref).trim();
       if (!ref) fail('get_lineage needs a `ref` (e.g. "dataset:ds_ab12cd")', 400);
       const { getLineage } = await import('@/lib/experimental/lineage/unified');
       return getLineage(ref, user);
-    },
-  },
-  {
-    name: 'import_product',
-    tab: 'marketplace',
-    minRole: 'creator',
-    description:
-      'Import a certified marketplace listing into your domain — as a GOVERNED policy-compiler GRANT (RLS-scoped), NEVER a bytes copy (except explicit fork/instance/template modes, which are Builder+). Path: reuse from the marketplace. Governance: an OPEN-policy grant is compiled NOW (OPA row-filter / Cube RLS / OpenSearch DLS per type+mode); an APPROVAL-policy import returns the pending handle (the owner’s domain approves via decide_approval). Read-grant is a creator right; fork/instance/template need Builder+ (re-checked in-lib).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        listingId: { type: 'string', description: 'The certified listing id (from browse_marketplace).' },
-        mode: { type: 'string', enum: ['read-grant', 'fork', 'deploy-instance', 'template'], description: 'Import mode (default = the listing’s default; fork/instance/template are Builder+).' },
-      },
-      required: ['listingId'],
-      examples: [{ listingId: 'lst_ab12cd', mode: 'read-grant' }],
-    },
-    call: async (user, args) => {
-      const listingId = str(args.listingId).trim();
-      if (!listingId) fail('import_product needs a `listingId`', 400);
-      const mode = (str(args.mode) || undefined) as ImportMode | undefined;
-      const viewer = { id: user.id, domains: user.domains, role: user.role };
-      const { importAdapter } = await import('@/lib/experimental/marketplace');
-      const result = await importAdapter.import(listingId, viewer, mode);
-      if (result.pending) {
-        // Approval-policy import → the canonical pending handle (the owner domain decides).
-        const a = result.grant.approvalId ? getApproval(result.grant.approvalId) : null;
-        if (a) return pendingHandle(a, { grantId: result.grant.id, mode: result.grant.mode, note: result.note });
-        return { status: 'pending', requestId: result.grant.approvalId ?? result.grant.id, grantId: result.grant.id, mode: result.grant.mode, note: result.note };
-      }
-      return {
-        status: 'granted',
-        grantId: result.grant.id,
-        mode: result.grant.mode,
-        enforcedBy: result.grant.enforcedBy,
-        scope: result.grant.scope,
-        derivedId: result.grant.derivedId ?? null,
-        note: result.note,
-      };
     },
   },
   {
@@ -340,10 +300,4 @@ export const governanceTools: McpTool[] = [
   },
 ];
 
-// governanceTools minus import_product (tab: 'marketplace', moves out later).
 export const governanceBaseTools: McpTool[] = governanceTools.filter((t) => t.tab === 'governance');
-
-// #28: import_product stays in this file (its dynamic-import fix lives here),
-// but it's tab:'marketplace' (non-base) so it registers via the marketplace
-// bundle, not the always-on governance-base one.
-export const governanceMarketplaceTools: McpTool[] = governanceTools.filter((t) => t.tab === 'marketplace');

@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scaffoldCubeYaml } from '../data/metrics.ts';
+import { scaffoldMetricYaml } from '../data/metrics.ts';
 import {
   formFromMeasure,
   measureFromForm,
@@ -24,7 +24,7 @@ test('form / agent / YAML all produce the IDENTICAL measure (the same artifact)'
   const d = goldSales();
   const fromForm = measureFromForm(REVENUE_FORM);
   const fromAgent = measureFromAgent({ ...REVENUE_FORM }); // agent returns the same structured proposal
-  const fromYaml = measureFromYaml(scaffoldCubeYaml(d), 'Revenue');
+  const fromYaml = measureFromYaml(scaffoldMetricYaml(d), 'Revenue');
   // The activated slice-by dimensions now RIDE ON the measure (Bug A: they were dropped
   // on persist, so Edit re-opened with none). They are a curation hint OFF `sameMeasure`,
   // so the form/agent/YAML convergence gate still holds even though YAML doesn't carry them.
@@ -38,7 +38,7 @@ test('form / agent / YAML all produce the IDENTICAL measure (the same artifact)'
 test('measureMember is the canonical member the agent metrics tool also builds', () => {
   const d = goldSales();
   const m = measureFromForm(REVENUE_FORM);
-  // live-clients realCube builds `${cubeViewName(d).replace(/\s+/g,'')}.${measure}`.
+  // live-clients realMetrics builds `${viewName(d).replace(/\s+/g,'')}.${measure}`.
   assert.equal(measureMember(d, m), 'Sales.revenue');
 });
 

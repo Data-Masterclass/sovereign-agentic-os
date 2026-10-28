@@ -22,7 +22,7 @@ import type { MemberResolver } from './panel-query.ts';
 // the security-context region, so the RLS guarantee is proven without a live cluster. On the
 // local profile the honesty gate keeps the mock (not 'unavailable').
 mock.module('../../metrics/build/live-clients.ts', {
-  namedExports: { liveMetricsReachable: async () => false, isCubeSyncLag: () => false },
+  namedExports: { liveMetricsReachable: async () => false },
 });
 mock.module('@/lib/core/config', {
   namedExports: { config: { deploymentProfile: 'local' } },

@@ -38,8 +38,8 @@ test('the flat/foldered types bind to exactly one resource member; Plan collapse
   // Plan Items = Operating Model · Strategy · Big Bets collapsed into one row.
   const plan = AGENT_CONTEXT_META.plan;
   assert.equal(plan.member, undefined);
-  assert.equal(plan.members?.length, 3);
-  // All three plan sub-members write the SAME `plan` grant list.
+  assert.equal(plan.members?.length, 1);
+  // Every plan sub-member writes the SAME `plan` grant list.
   for (const m of plan.members!) assert.equal(m.field, 'plan');
 });
 
@@ -70,7 +70,8 @@ test('agentContextGrantedCount: sums per-field for a single member, and once for
   const by = (field: string | undefined) => counts[field ?? ''] ?? 0;
   assert.equal(agentContextGrantedCount('data', by), 2);
   assert.equal(agentContextGrantedCount('connections', by), 0);
-  // Plan Items counts the shared `plan` list ONCE (its three sub-members share it).
+  // Plan Items counts the shared `plan` list ONCE (its sub-members share it).
+
   assert.equal(agentContextGrantedCount('plan', by), 5);
 });
 

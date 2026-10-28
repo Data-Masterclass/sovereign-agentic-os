@@ -22,7 +22,7 @@ export const dynamic = 'force-dynamic';
  * no separate personal query engine.
  *   - upload        : a file lands a real iceberg.personal_<uid> table (multipart route)
  *   - pull-extract  : runs THROUGH Trino (OPA-masked) -> a private extract
- *   - promote       : the ONLY path to shared — dbt-trino writes Iceberg + OM
+ *   - promote       : the ONLY path to shared — dbt-trino writes Iceberg
  */
 
 // Per-user in-process store (best-effort; mirrors the artifact-registry pattern).
@@ -140,7 +140,7 @@ export async function POST(req: Request) {
         owner: user.id,
         visibility: body.visibility || 'shared',
       });
-      // Scaffold: hand to the governed lane (dbt-trino + OpenMetadata). The actual
+      // Scaffold: hand to the governed lane (dbt-trino). The actual
       // build is the dbt-build path; here we return the plan to review/confirm.
       return NextResponse.json({ ok: true, scaffolded: true, plan });
     }

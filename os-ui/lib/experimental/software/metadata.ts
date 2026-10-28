@@ -21,7 +21,8 @@ import type { AppManifest, AppSurface, ConsumedResource, OpenApiSpec, ScaffoldFi
 /** The canonical app.yaml the in-app chat / Platform MCP write on every app. */
 export function renderAppYaml(m: {
   name: string;
-  owner: string;
+  /** Emitted only when given — an absent owner falls back to the creator at parse time. */
+  owner?: string;
   description: string;
   connections?: string[];
   data?: string[];
@@ -34,7 +35,7 @@ export function renderAppYaml(m: {
       apiVersion: 'software.sovereign-os/v1',
       kind: 'App',
       name: m.name,
-      owner: m.owner,
+      ...(m.owner ? { owner: m.owner } : {}),
       description: m.description,
       // Only write `surface` when the creator DECLARED one — an absent key keeps
       // the app on the heuristic (and the seed file byte-stable when undeclared).

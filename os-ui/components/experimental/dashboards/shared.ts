@@ -50,9 +50,9 @@ export type MetricGroups = { mine: MetricSummary[]; domain: MetricSummary[]; mar
 
 export type VizType = 'big_number_total' | 'big_number' | 'line' | 'area' | 'bar' | 'pie' | 'table';
 export type PanelFilter = { member: string; operator: string; values: string[] };
-/** A panel's position on the 12-col grid (Superset-style units). Mirrors lib model GridPos. */
+/** A panel's position on the 12-col grid. Mirrors lib model GridPos. */
 export type GridPos = { x: number; y: number; w: number; h: number };
-/** A native dashboard panel (Tier 1 — ECharts on the governed Cube layer). `metric` is the
+/** A native dashboard panel (Tier 1 — ECharts on the governed metric layer). `metric` is the
  *  legacy single-member alias; `metrics` is authoritative. */
 export type Panel = {
   name: string;
@@ -75,11 +75,9 @@ export function panelMetrics(p: Panel): string[] {
   return p.metric ? [p.metric] : [];
 }
 
-/** A view's palette from GET /api/dashboards/cube-meta (narrowed to governed views).
- *  `served:false` ⇒ Cube does not currently serve this view (registry-fallback palette) —
- *  the builder warns loudly; charts still bind their real members and are flagged at render. */
+/** A view's palette from GET /api/dashboards/views (narrowed to governed views). */
 export type PanelViewMeta = { view: string; measures: string[]; dimensions: string[]; timeDimensions: string[]; served?: boolean };
-export type CubeMetaResponse = { views: PanelViewMeta[] };
+export type PanelViewsResponse = { views: PanelViewMeta[] };
 
 /** GET /api/dashboards/[id] — the panels + binding for an existing dashboard. `filters` are
  *  the default cross-filter chips saved with it (P1-3); absent on legacy specs. */
@@ -90,7 +88,7 @@ export type PanelQueryResponse = {
   rows: Record<string, unknown>[];
   mode: EmbedMode;
   pending?: boolean;
-  /** LOUD degradation notice: a requested member isn't in the served Cube model (the
+  /** LOUD degradation notice: a requested member isn't in the served model (the
    *  dataset's domain table may need re-promotion). Rendered inline, never swallowed. */
   warning?: string;
   missingMembers?: string[];
@@ -98,11 +96,11 @@ export type PanelQueryResponse = {
   sql: string;
 };
 
-/** Whether a panel resolved against live Cube or the honest offline-mock. */
+/** Whether a panel resolved against the live lakehouse or the honest offline-mock. */
 export type EmbedMode = 'live' | 'offline-mock';
 
 /** POST /api/dashboards/build — persist-only (Tier-1 native dashboards render at VIEW time,
- *  there is no Superset build/import step). Returns the saved spec. */
+ *  there is no external build/import step). Returns the saved spec. */
 export type BuildResponse = { id: string; spec: { name: string; view: string; charts: Panel[] } };
 
 export type Comparator = 'lt' | 'lte' | 'gt' | 'gte';
@@ -182,7 +180,7 @@ export function metricTierSections(list: MetricSummary[]): { key: keyof MetricTi
   ).filter((s) => s.metrics.length > 0);
 }
 
-/** The FRIENDLY dataset name for a Cube view id — the panel builder charts one view, and
+/** The FRIENDLY dataset name for a view id — the panel builder charts one view, and
  *  every metric on that view shares its dataset, so the first matching metric's
  *  `datasetName` is the human name to show instead of the UPPER_SNAKE view identifier.
  *  Falls back to the raw view id only if no metric on that view is available. */

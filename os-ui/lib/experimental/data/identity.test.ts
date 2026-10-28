@@ -44,12 +44,12 @@ test('R1: low-cardinality attributes + domain + role become Trino groups', () =>
   assert.deepEqual(trinoGroups(claims), ['domain:sales', 'region:DE', 'role:builder']);
 });
 
-test('R3: one identity propagates to Trino (user+groups) and Cube (securityContext)', () => {
+test('R3: one identity propagates to Trino (user+groups) and the full securityContext', () => {
   const ids = propagate(delegate(claims, 'domain'));
   assert.equal(ids.trino.user, 'amir');
   assert.ok(ids.trino.groups.includes('domain:sales'));
-  assert.equal(ids.cube.securityContext.sub, 'amir');
-  assert.equal(ids.cube.securityContext.region, 'DE'); // full claims, richer than Trino
+  assert.equal(ids.securityContext.sub, 'amir');
+  assert.equal(ids.securityContext.region, 'DE'); // full claims, richer than Trino
 });
 
 test('personal lane: sandbox prefix is exposed only for personal scope, and only the user’s own', () => {

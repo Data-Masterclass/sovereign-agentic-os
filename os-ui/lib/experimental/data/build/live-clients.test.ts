@@ -21,7 +21,6 @@ mock.module('@/lib/infra/governed', {
   namedExports: {
     queryRun: async () => ({ engine: 'trino', tables: [], columns: [], rows: [], rowCount: 0 }),
     executeRun: async () => ({ ok: true, rowsAffected: null }),
-    cubeLoad: async () => ({ rows: [], annotation: {} }),
   },
 });
 

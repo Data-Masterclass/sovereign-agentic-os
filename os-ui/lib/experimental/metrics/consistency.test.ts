@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scaffoldCubeYaml } from '../data/metrics.ts';
+import { scaffoldMetricYaml } from '../data/metrics.ts';
 import { convergence, numbersMatch, consistencyCheck } from './consistency.ts';
 import { measureFromForm, type MetricForm } from './model.ts';
 import { goldSales } from './fixtures.ts';
@@ -12,14 +12,14 @@ const FORM: MetricForm = { name: 'Revenue', aggregation: 'sum', column: 'net_amo
 
 test('convergence proves form/agent/YAML are one artifact + member', () => {
   const d = goldSales();
-  const r = convergence(d, { form: FORM, agent: { ...FORM }, yaml: scaffoldCubeYaml(d) });
+  const r = convergence(d, { form: FORM, agent: { ...FORM }, yaml: scaffoldMetricYaml(d) });
   assert.ok(r.ok, JSON.stringify(r.rows));
   assert.equal(r.member, 'Sales.revenue');
 });
 
 test('convergence FAILS when the agent diverges from the form (caught, not shipped)', () => {
   const d = goldSales();
-  const r = convergence(d, { form: FORM, agent: { ...FORM, aggregation: 'avg' }, yaml: scaffoldCubeYaml(d) });
+  const r = convergence(d, { form: FORM, agent: { ...FORM, aggregation: 'avg' }, yaml: scaffoldMetricYaml(d) });
   assert.equal(r.ok, false);
   assert.ok(r.rows.some((x) => x.name === 'form == agent' && !x.ok));
 });

@@ -24,7 +24,7 @@ import {
  * cascade stays fail-closed. Registered at import (mirrors lib/data/folder-adapter.ts).
  *
  * NOTE: an agent-system DELETE is PHYSICAL in the store (drops the in-process record +
- * mirror doc + version log). The API route additionally purges the Forgejo repo + any
+ * mirror doc + version log). The API route additionally purges any
  * schedule CronJob; the folder cascade reuses the store's `deleteSystem` (record-level),
  * which is all the archived-only folder-delete discipline needs.
  */

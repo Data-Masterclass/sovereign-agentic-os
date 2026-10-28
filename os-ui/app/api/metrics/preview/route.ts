@@ -50,17 +50,12 @@ export const POST = withRoute<Record<string, string>, {
   const ready = metricSqlReady(dataset);
   if (!ready.ok) return NextResponse.json({ error: ready.message }, { status: 400 });
   const draft = { ...dataset, measures: [...dataset.measures.filter((m) => m.name !== measure.name), measure] };
-  // UNSAVED = no identical persisted measure: Cube can't know this member yet (the
-  // sidecar only ships persisted metrics), so exploreMetric previews it via governed
-  // SQL ('live (sql)') instead of querying Cube for a member that can't exist.
-  const unsaved = !dataset.measures.some((m) => sameMeasure(m, measure));
-
   const { token } = await delegatedToken('domain', { region: body.viewerRegion });
   const result = await exploreMetric(draft, measure, token, {
     dimensions: body.dimensions,
     timeDimension: body.timeDimension,
     granularity: body.granularity,
     limit: body.limit,
-  }, { unsaved });
+  });
   return NextResponse.json({ datasetId, measure, ...result });
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, parse: true });

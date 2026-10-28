@@ -5,10 +5,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { postJson, VIZ_TYPES, panelMetrics, metricTierSections, viewDatasetName } from './shared';
-import type { CubeMetaResponse, MetricSummary, Panel, PanelQueryResponse, PanelViewMeta, VizType } from './shared';
+import type { PanelViewsResponse, MetricSummary, Panel, PanelQueryResponse, PanelViewMeta, VizType } from './shared';
 import PanelChart from './PanelChart';
 
-/** The Cube view a metric member belongs to (`View.measure` → `View`). */
+/** The governed view a metric member belongs to (`View.measure` → `View`). */
 const viewOf = (member: string) => (member.includes('.') ? member.slice(0, member.indexOf('.')) : member);
 const leaf = (member: string) => (member.includes('.') ? member.slice(member.lastIndexOf('.') + 1) : member);
 
@@ -77,12 +77,12 @@ function MetricChip({ m, selected, onToggle }: { m: MetricSummary; selected: boo
 /**
  * The native panel designer (Tier 1). Pick one-or-more governed metric members from the
  * palette (already fetched by the tab), choose a viz type, and — for charts — group by a
- * dimension or trend over a time dimension at a grain, from the caller's governed cube-meta.
+ * dimension or trend over a time dimension at a grain, from the caller's governed palette.
  * A LIVE preview resolves the exact panel-query the grid will run (per-viewer RLS), so what
  * you see is what the dashboard renders. "Add panel" hands the finished panel to the host.
  *
  * The single-view guard is honoured: only members on the bound `view` are selectable, so a
- * dashboard's panels can never span two Cube views.
+ * dashboard's panels can never span two views.
  */
 export default function PanelBuilder({
   view,
@@ -93,7 +93,7 @@ export default function PanelBuilder({
   onCancelEdit,
   initialMetrics,
 }: {
-  /** The bound Cube view (empty until the first metric is chosen). */
+  /** The bound view (empty until the first metric is chosen). */
   view: string;
   /** The metric registry palette (MetricSummary[]) already fetched by DashboardsTab. */
   palette: MetricSummary[];
@@ -135,13 +135,13 @@ export default function PanelBuilder({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editKey]);
 
-  // The governed cube-meta for the caller's views (narrowed server-side).
+  // The governed palette for the caller's views (narrowed server-side).
   const [meta, setMeta] = useState<PanelViewMeta[] | null>(null);
   useEffect(() => {
     let alive = true;
-    fetch('/api/dashboards/cube-meta', { cache: 'no-store' })
+    fetch('/api/dashboards/views', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { views: [] }))
-      .then((d: CubeMetaResponse) => { if (alive) setMeta(d.views ?? []); })
+      .then((d: PanelViewsResponse) => { if (alive) setMeta(d.views ?? []); })
       .catch(() => { if (alive) setMeta([]); });
     return () => { alive = false; };
   }, []);

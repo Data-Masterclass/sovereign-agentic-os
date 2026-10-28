@@ -9,7 +9,7 @@
  * components render it identically across every tab.
  *
  * Delete is REAL: it purges the backing resource (Iceberg tables, MinIO objects,
- * k8s apps, Forgejo repos, Superset dashboards, Cube models, vault secrets,
+ * k8s apps, app repos, dashboards, metric models, vault secrets,
  * OpenSearch vectors). The copy names that consequence per artifact kind so the
  * user knows exactly what disappears — and shared/certified artifacts, which
  * affect other people, additionally require typing the name to confirm.
@@ -24,10 +24,7 @@ export type ArtifactKind =
   | 'dashboard'
   | 'metric'
   | 'connection'
-  | 'knowledge'
-  | 'bigbet'
-  | 'pillar'
-  | 'model';
+  | 'knowledge';
 
 /** Visibility tier — Shared/Certified artifacts affect others, so delete is gated harder. */
 export type Visibility = 'personal' | 'shared' | 'certified' | string;
@@ -38,13 +35,10 @@ const BACKING: Record<ArtifactKind, string> = {
   file: 'deletes the stored file',
   app: 'tears down the running app and its repo',
   agent: 'removes its repo and schedule',
-  dashboard: 'deletes the Superset dashboard',
+  dashboard: 'deletes the native dashboard spec',
   metric: 'removes it from the semantic layer',
   connection: 'purges its stored credential',
   knowledge: 'removes it from the search index',
-  bigbet: 'deletes the bet and its plan',
-  pillar: 'deletes the strategic pillar and its targets',
-  model: 'tears down its serving endpoint and registry entry',
 };
 
 /** Human noun for a kind, for prose ("this dataset", "this app"). */
@@ -57,10 +51,8 @@ const NOUN: Record<ArtifactKind, string> = {
   metric: 'metric',
   connection: 'connection',
   knowledge: 'knowledge item',
-  bigbet: 'big bet',
-  pillar: 'strategic pillar',
-  model: 'model',
 };
+
 
 export type ConfirmCopy = {
   title: string;

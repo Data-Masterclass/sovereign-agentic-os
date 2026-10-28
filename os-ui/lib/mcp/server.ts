@@ -60,16 +60,16 @@ export type JsonSchema = {
  * the ONE registry below (`/api/mcp/<tab>`) — a scoped lens, never a second
  * governance path. The overarching `/api/mcp` endpoint still serves them all.
  */
-// `governance` + `marketplace` were the first mcp-v2 cross-cutting surfaces (P0):
-// the approval queue + ladder + lineage + marketplace import. The mcp-v2 surfaces
-// wave adds `strategy` (pillars/value) + `monitoring` (runs/traces, read-only) as
-// full tabs alongside the marketplace/governance READ additions. `platform` lands
+// `governance` was the first mcp-v2 cross-cutting surface (P0): the approval
+// queue + ladder + lineage. The mcp-v2 surfaces wave adds `monitoring`
+// (runs/traces, read-only) as a full tab alongside the governance
+// READ additions. `platform` lands
 // WHEN its tools ship (every declared tab must carry ≥1 tool — the tabs.test invariant).
 // `operating-manual` is the Plan-group tab that owns the My/Domain/Company
 // Operating Model — its four MCP tools (get/update/list-versions/restore) wrap the
 // governed manual store, so the tab now carries a real MCP surface. (The tab id + tool
 // identifiers keep the `manual` name for wire stability; the product name is "Operating Model".)
-export const MCP_TABS = ['software', 'data', 'science', 'knowledge', 'agents', 'files', 'metrics', 'dashboards', 'bigbets', 'connections', 'governance', 'marketplace', 'strategy', 'monitoring', 'operating-manual'] as const;
+export const MCP_TABS = ['software', 'data', 'knowledge', 'agents', 'files', 'metrics', 'dashboards', 'connections', 'governance', 'monitoring', 'operating-manual'] as const;
 export type McpTab = (typeof MCP_TABS)[number];
 export function isMcpTab(x: string): x is McpTab {
   return (MCP_TABS as readonly string[]).includes(x);
@@ -137,11 +137,12 @@ function capabilitySummary(role: Role): { can: string[]; cannot: string[] } {
   const admin = roleCanUse(role, 'admin');
   return {
     can: [
-      'create datasets, files, knowledge workflows, metrics, dashboards, big bets and agent systems in your own domain(s)',
+      'create datasets, files, knowledge workflows, metrics, dashboards and agent systems in your own domain(s)',
       'build, document and query your own work',
       ...(builder ? ['promote/publish your work to a SHARED domain asset (dataset/file/workflow/agent)'] : []),
       ...(domainAdmin && !admin ? ['administer users in your OWN domain(s): invite, edit, deactivate, assign roles up to builder'] : []),
-      ...(admin ? ['certify to the cross-domain marketplace', 'own a cross-domain big bet', 'administer users tenant-wide (incl. appointing domain admins)'] : []),
+      ...(admin ? ['certify to the cross-domain marketplace', 'administer users tenant-wide (incl. appointing domain admins)'] : []),
+
     ],
     cannot: [
       ...(!builder ? ['promote/publish to a shared domain asset — that is Builder+ (ask a Builder, or keep it Personal)'] : []),
@@ -208,11 +209,12 @@ const discoveryTools: McpTool[] = [
   },
 ];
 
-// #28: these 4 clusters used to be inline in server.ts, ahead of everything
+// #28: these 3 clusters used to be inline in server.ts, ahead of everything
 // else in ALL_MCP_TOOLS — pulled by name (not the flatMap order below) so
 // order-sensitive consumers (e.g. grantedToolSpecs) see the same position.
 const platformTools = getBundleTools('platform-tools');
-const crossTools = [...getBundleTools('data-query'), ...getBundleTools('science-predict')];
+const crossTools = getBundleTools('data-query');
+
 const knowledgeTools = getBundleTools('knowledge-search');
 const PINNED_NAMES = new Set([...platformTools, ...crossTools, ...knowledgeTools].map((t) => t.name));
 

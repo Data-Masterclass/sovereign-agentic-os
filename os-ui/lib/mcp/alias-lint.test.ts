@@ -21,14 +21,8 @@ import assert from 'node:assert/strict';
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
 import { ALL_MCP_TOOLS } from './server.ts';
-import { strategyReadTools, strategyWriteTools } from '@/lib/experimental/mcp/strategy-tools.ts';
-import { marketplaceReadTools, marketplaceWriteTools } from '@/lib/experimental/mcp/marketplace-tools.ts';
 
-// ALL_MCP_TOOLS only carries non-base bundles whose feature flag is on in THIS
-// process. This lint checks tool descriptions, not registration state, so it
-// supplements ALL_MCP_TOOLS with the bundles being flag-gated directly —
-// otherwise the "pillar" family (strategy) would look like it vanished.
-const CHECK_TOOLS = [...ALL_MCP_TOOLS, ...strategyReadTools, ...strategyWriteTools, ...marketplaceReadTools, ...marketplaceWriteTools];
+const CHECK_TOOLS = [...ALL_MCP_TOOLS];
 
 // ─── Approved alias map ────────────────────────────────────────────────────────
 // key = family label; value = aliases that MUST appear in the family's primary
@@ -38,8 +32,6 @@ const ALIAS_MAP: Record<string, string[]> = {
   curated_dataset: ['360 view', 'data mart', 'aggregated dataset', 'platinum dataset'],
   metric: ['kpi', 'measure', 'indicator'],
   dashboard: ['report', 'business intelligence (bi)', 'data visualization'],
-  big_bet: ['initiative', 'strategic investment', 'project'],
-  pillar: ['strategic goal', 'objective', 'north star'],
   agent_system: ['ai team', 'assistant team'],
   connection: ['integration', 'data source', 'google', 'microsoft', 'aws', 'snowflake', 'databricks'],
   // Business process / workflow family: the rename wave added "workflow, process workflow";
@@ -55,8 +47,6 @@ const FAMILY_PRIMARY_TOOLS: Record<string, string[]> = {
   curated_dataset: ['build_gold_join'],
   metric: ['define_metric', 'list_metrics', 'get_metric', 'query_metric'],
   dashboard: ['create_dashboard', 'list_dashboards', 'get_dashboard'],
-  big_bet: ['create_big_bet', 'list_big_bets', 'get_big_bet'],
-  pillar: ['create_pillar', 'list_pillars', 'get_pillar'],
   agent_system: ['create_agent_system', 'list_agent_systems', 'get_agent_system'],
   connection: ['create_connection', 'list_connections', 'get_connection', 'list_connection_templates'],
   business_process: ['author_knowledge', 'list_knowledge', 'get_knowledge'],

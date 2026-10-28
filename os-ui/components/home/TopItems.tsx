@@ -7,7 +7,8 @@ import type { TopGroup } from '@/lib/home/scope';
 /**
  * "Top items per artifact" — a scannable board of the viewer's most-notable
  * entries per registry type (datasets, metrics, dashboards, agents, knowledge,
- * files, connections, software, big bets, strategy pillars). Every row deep-links
+ * files, connections, software). Every row deep-links
+
  * into its owning tab. The data is OPA/RLS-scoped upstream (lib/home/feed →
  * scope.topItems), so nothing cross-domain or another user's Personal item can
  * appear. Empty types are omitted; a fresh tenant shows an honest empty state.

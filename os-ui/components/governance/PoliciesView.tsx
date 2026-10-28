@@ -10,7 +10,7 @@ type GrantRow = {
   tool: string;
   source: 'role' | 'access-grant' | 'egress' | 'standing';
   domain: string;
-  compiledTo: 'OPA' | 'Cube' | 'OpenSearch-DLS';
+  compiledTo: 'OPA' | 'OpenSearch-DLS';
 };
 
 type PolicyPlane = {

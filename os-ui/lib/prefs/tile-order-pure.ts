@@ -8,15 +8,13 @@
 
 // Known surfaces — extend this list when new tabs wire the hook.
 export const TILE_ORDER_SURFACES = [
-  'strategy.pillars',
-  'bigbets.list',
   'dashboard.list',
   'data.list',
   'agents.list',
   'software.list',
   'metrics.list',
-  'science.list',
   'knowledge.list',
+
   'files.list',
   'connections.list',
 ] as const;

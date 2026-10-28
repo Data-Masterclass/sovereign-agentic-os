@@ -73,7 +73,6 @@ const TEMPLATE_STACK: Record<string, StackId> = {
   // Open source / self-hosted
   'notion-mcp':          'opensource',
   'database':            'opensource',
-  'om-catalog':          'opensource',
   'airflow':             'opensource',
   'github':              'opensource',
   'supabase':            'opensource',

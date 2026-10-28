@@ -54,8 +54,8 @@ export type Settings = {
   standardFirstEscalation: boolean;
   // CODED (custom) APPS — the platform decision (os-ui 0.6.133). When OFF (the
   // DEFAULT), only DECLARATIVE (spec) no-code apps can be created; the coded path
-  // (`kind:'code'` / image|runtime serveMode — the agent writes code + a Forgejo
-  // repo + an image build) is disabled everywhere (UI, API, MCP). The coded path
+  // (`kind:'code'` / image|runtime serveMode — the agent writes code + an image
+  // build) is disabled everywhere (UI, API, MCP). The coded path
   // has been higher-risk and unstable, so we stand behind Declarative by default;
   // a PLATFORM admin (not a domain admin) may turn it back on. Fail-closed: the UI
   // is not the gate — createApp + the create route + the MCP surface all enforce it.

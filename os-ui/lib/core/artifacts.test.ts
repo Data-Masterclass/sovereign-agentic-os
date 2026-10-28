@@ -3,15 +3,13 @@
  */
 /**
  * Artifact security tests — the fail-open gaps this suite pins closed:
- *   • Marketplace IMPORT (addFromMarketplace) is Builder+ (a creator/participant
- *     cannot self-import a cross-domain Certified item).
  *   • The demo seed is EMPTY by default so a fresh cohort tenant starts clean.
  * Pure module (no cluster): getCache's OpenSearch probe fails fast offline, so
  * everything runs in-process.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { seed, createArtifact, promoteArtifact, demoteArtifact, addFromMarketplace, getArtifact, updateArtifact, deleteArtifact, listForUser, archiveArtifact, listArtifactVersions, restoreArtifactVersion, __resetArtifactsCache } from './artifacts.ts';
+import { seed, createArtifact, promoteArtifact, demoteArtifact, getArtifact, updateArtifact, deleteArtifact, listForUser, archiveArtifact, listArtifactVersions, restoreArtifactVersion, __resetArtifactsCache } from './artifacts.ts';
 import type { CurrentUser } from './auth.ts';
 
 const admin: CurrentUser = { id: 'arya', name: 'Arya', domains: ['sales'], role: 'admin' };
@@ -19,7 +17,6 @@ const builder: CurrentUser = { id: 'sara', name: 'Sara', domains: ['sales'], rol
 // Promoting Personal→Shared now requires domain_admin+; `domainAdmin` is the in-domain approver.
 const domainAdmin: CurrentUser = { id: 'dana', name: 'Dana', domains: ['sales'], role: 'domain_admin' };
 const creator: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' };
-const participant: CurrentUser = { id: 'amir', name: 'Amir', domains: ['sales'], role: 'creator' };
 
 /** Admin authors a Certified Marketplace artifact via the governed ladder. */
 async function certified(): Promise<string> {
@@ -37,20 +34,6 @@ test('SECURITY: the demo seed is empty unless SEED_DEMO_ARTIFACTS=1', () => {
   assert.ok(seed().length > 0, 'the teaching flag re-enables the worked-example seed');
   if (prev === undefined) delete process.env.SEED_DEMO_ARTIFACTS;
   else process.env.SEED_DEMO_ARTIFACTS = prev;
-});
-
-test('SECURITY: a creator cannot self-import a Certified Marketplace artifact', async () => {
-  const id = await certified();
-  await assert.rejects(() => addFromMarketplace(id, creator), /Builder or Admin/i);
-  await assert.rejects(() => addFromMarketplace(id, participant), /Builder or Admin/i);
-});
-
-test('a Builder (and Admin) may import from the Marketplace', async () => {
-  const id = await certified();
-  const copy = await addFromMarketplace(id, builder);
-  assert.equal(copy.owner, builder.id);
-  assert.equal(copy.origin, 'certified-copy');
-  assert.equal(copy.sourceId, id);
 });
 
 test('DEMOTE: revoke sharing lowers Certified → Shared → Personal one step at a time', async () => {

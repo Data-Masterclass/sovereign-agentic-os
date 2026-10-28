@@ -11,9 +11,10 @@
  * base — the deploy state machine, the Builder review card + security scan, the
  * declared/consumed resource manifest, and the adapter result shapes.
  *
- * Every effectful step the adapters perform reports `mode: 'live' | 'offline-mock'`
- * exactly like `lib/agents/build/server.ts`, so the golden path is honest about
- * what ran against a real cluster vs the in-process teaching fallback.
+ * Every effectful step reports `mode: 'live' | 'offline-mock'` exactly like
+ * `lib/agents/build/server.ts`, so the golden path is honest about what ran against
+ * a real cluster vs the in-process teaching fallback (e.g. the deterministic baseline
+ * security scan is labelled `offline-mock`).
  */
 
 export type RunMode = 'live' | 'offline-mock';
@@ -208,14 +209,6 @@ export type AdapterStep = {
   mode: RunMode;
   detail: string;
   error?: string;
-  /**
-   * A commit/scaffold failed SPECIFICALLY because the app's Forgejo repo no longer
-   * exists (a repo-level 404), NOT a per-file failure (a new-file 404 is a POST
-   * create, a stale-blob 422 is a sha conflict). Set only by the live backend when
-   * a write's 404 was confirmed against a repo-existence probe. `commitToApp` reads
-   * this to auto-heal (re-provision + retry) exactly once; nothing else consults it.
-   */
-  repoMissing?: boolean;
   /**
    * VERIFY-BEFORE-COMMIT outcome recorded on the commit (compile-gate.ts). A commit
    * that reaches the caller either COMPILED (`{ gated: true, ok: true }` — a red gate

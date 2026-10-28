@@ -12,12 +12,9 @@ import { listWorkflows, getWorkflow, getManual } from '@/lib/experimental/knowle
 import { listFiles, getFile } from '@/lib/experimental/files/store';
 import { listMetrics } from '@/lib/experimental/metrics/store';
 import { listDashboards, getDashboard } from '@/lib/experimental/dashboards/store';
-import { listBets, getBet } from '@/lib/experimental/bigbets/store';
 import { listSystems, getSystem } from '@/lib/agents/store';
 import { listAppsForUser, getAppForUser } from '@/lib/experimental/software/apps';
 import { listConnectionsForUser, getConnectionForUser } from '@/lib/experimental/connections';
-import { listModelsForUser } from '@/lib/experimental/science';
-import { listPillars } from '@/lib/experimental/strategy/pillars';
 import { config } from '@/lib/core/config';
 import { loadGuide, guideTitle, type GuidePath } from '@/lib/tabs/guides';
 import { loadBuildSpec } from '@/lib/tabs/build-spec';
@@ -76,11 +73,7 @@ const GUIDE_DEFS: GuideDef[] = [
   { uri: 'sovereign-os://guide/path/software', path: 'software', tab: 'software' },
   { uri: 'sovereign-os://guide/path/metrics', path: 'metrics', tab: 'metrics' },
   { uri: 'sovereign-os://guide/path/dashboards', path: 'dashboards', tab: 'dashboards' },
-  { uri: 'sovereign-os://guide/path/bigbets', path: 'bigbets', tab: 'bigbets' },
   { uri: 'sovereign-os://guide/path/files', path: 'files', tab: 'files' },
-  { uri: 'sovereign-os://guide/path/science', path: 'science', tab: 'science' },
-  { uri: 'sovereign-os://guide/path/strategy', path: 'strategy', tab: 'strategy' },
-  { uri: 'sovereign-os://guide/path/marketplace', path: 'marketplace', tab: 'marketplace' },
   { uri: 'sovereign-os://guide/path/monitoring', path: 'monitoring', tab: 'monitoring' },
 ];
 
@@ -109,7 +102,7 @@ const buildSpecResource: McpResource = {
   name: 'build-spec-software',
   title: 'Build spec — Software (advanced coded path)',
   description:
-    'The canonical build spec for the ADVANCED coded path (kind:"code" — raw code + Forgejo + image build, disabled unless a platform admin enables coded apps): template tree + conventions, tool sequence, governance, elicitation questions, pre-deploy checklist. For the DEFAULT declarative path (author an AppSpec with generate_app_spec / set_app_spec — no repo/CI/pod) read sovereign-os://guide/path/software instead.',
+    'The canonical build spec for the ADVANCED coded path (kind:"code" — raw code + image build, no git server and no CI, disabled unless a platform admin enables coded apps): template tree + conventions, tool sequence, governance, elicitation questions, pre-deploy checklist. For the DEFAULT declarative path (author an AppSpec with generate_app_spec / set_app_spec — no source tree, no pod) read sovereign-os://guide/path/software instead.',
   mimeType: 'text/markdown',
   tab: 'software',
   minRole: 'creator',
@@ -210,40 +203,6 @@ const myResources: McpResource[] = [
     minRole: 'creator',
     read: async (user) => json(await listAppsForUser(user)),
   },
-  {
-    uri: 'sovereign-os://my/science',
-    name: 'my-science',
-    title: 'My models',
-    description: 'ML models you can score through the governed predict door (tier-scoped: My · Domain · Company), plus whether serving (ml.enabled) is on. Honest: predict 404s while ml is disabled.',
-    mimeType: 'application/json',
-    tab: 'science',
-    minRole: 'creator',
-    read: async (user) =>
-      json({
-        mlEnabled: config.mlEnabled,
-        models: listModelsForUser({ id: user.id, domains: user.domains }),
-      }),
-  },
-  {
-    uri: 'sovereign-os://my/pillars',
-    name: 'my-pillars',
-    title: 'My strategy pillars',
-    description: 'Strategy pillars you can see (tenant + your domain), the value spine bets roll up to. Reuse before creating.',
-    mimeType: 'application/json',
-    tab: 'strategy',
-    minRole: 'creator',
-    read: async (user) => json(await listPillars(user)),
-  },
-  {
-    uri: 'sovereign-os://my/bigbets',
-    name: 'my-bigbets',
-    title: 'My big bets',
-    description: 'Big Bets you can see — initiative roadmaps over real OS components.',
-    mimeType: 'application/json',
-    tab: 'bigbets',
-    minRole: 'creator',
-    read: async (user) => json(listBets(P(user))),
-  },
 ];
 
 export const RESOURCES: McpResource[] = [...guideResources, buildSpecResource, ...myResources];
@@ -319,16 +278,6 @@ export const RESOURCE_TEMPLATES: McpResourceTemplate[] = [
     tab: 'dashboards',
     minRole: 'creator',
     read: async (user, p) => json(getDashboard(p.id, P(user))),
-  },
-  {
-    uriTemplate: 'sovereign-os://bet/{id}',
-    name: 'bet',
-    title: 'Big Bet by id',
-    description: 'One Big Bet you can see (components, target, status).',
-    mimeType: 'application/json',
-    tab: 'bigbets',
-    minRole: 'creator',
-    read: async (user, p) => json(getBet(p.id, P(user))),
   },
 ];
 

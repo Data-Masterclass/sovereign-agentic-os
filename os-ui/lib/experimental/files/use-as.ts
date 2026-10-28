@@ -13,7 +13,7 @@ import { createDataset, buildVersion } from '@/lib/experimental/data';
  *     a tacit note), ingested into the knowledge index.
  *   → Data: the file seeds a GUIDED Bronze import (decision #6 — pre-filled, NOT
  *     silent), via the REUSED lib/data primitives (createDataset + buildVersion).
- * Both record a file → derived-artifact lineage edge in OpenMetadata (mock-tolerant).
+ * Both record a file → derived-artifact lineage edge in the files lineage ring.
  *
  * lib/data is imported READ-ONLY (we call its createDataset/buildVersion; we never
  * modify it). server-only: it ingests + reaches the catalog.

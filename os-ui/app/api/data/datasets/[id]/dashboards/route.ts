@@ -6,7 +6,7 @@ import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { requirePrincipal } from '@/lib/experimental/data/server';
 import { getDataset } from '@/lib/experimental/data/store';
-import { cubeViewName } from '@/lib/experimental/data/metrics';
+import { viewName } from '@/lib/experimental/data/metrics';
 import { getDashboardsForView, ensureHydrated } from '@/lib/experimental/dashboards/store';
 
 export const dynamic = 'force-dynamic';
@@ -21,6 +21,6 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   await ensureHydrated();
   const { id } = params;
   const dataset = getDataset(id, user);
-  const view = cubeViewName(dataset);
+  const view = viewName(dataset);
   return NextResponse.json({ dashboards: getDashboardsForView(view, user) });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

@@ -29,7 +29,6 @@ import { setEntrypoint } from '@/lib/agents/canvas-edit';
 import { canSaveFromResult, DATA_NON_TABULAR_NOTE } from '@/lib/agents/output-save';
 import { AGENT_TEMPLATES, agentTemplate, type AgentTemplateKey } from '@/lib/agents/agent-templates';
 import StageShell from '@/components/core/StageShell';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
 import { usePublishPageContext } from '@/components/core/PageContext';
 import {
   advance, goTo, initialStageState, isSatisfied, markDone,
@@ -232,7 +231,7 @@ export default function SimpleBuilder({
       {err ? <div className="error" style={{ marginBottom: 12 }}>{err}</div> : null}
 
       {phase === 'define' ? (
-        <div {...anchorAttr(ANCHORS.agents.define)}>
+        <div>
           {assistant}
           <DefineStep
             systemId={systemId}
@@ -246,7 +245,7 @@ export default function SimpleBuilder({
       ) : null}
 
       {phase === 'grant' ? (
-        <div {...anchorAttr(ANCHORS.agents.tools)}>
+        <div>
           {assistant}
           <GrantStage systemId={systemId} system={system} canEdit={editable} onCommit={commit} />
           <div className="row" style={{ justifyContent: 'space-between', marginTop: 18 }}>
@@ -301,7 +300,7 @@ export default function SimpleBuilder({
       ) : null}
 
       {phase === 'run' ? (
-        <div className="sb-run" {...anchorAttr(ANCHORS.agents.run)}>
+        <div className="sb-run">
           {assistant}
           <h2 className="sb-section-title" style={{ marginTop: 0 }}>Run</h2>
           <p className="hint" style={{ marginTop: 0 }}>

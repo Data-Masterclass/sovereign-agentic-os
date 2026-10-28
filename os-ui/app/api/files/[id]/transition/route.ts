@@ -7,8 +7,6 @@ import type { CurrentUser } from '@/lib/core/auth';
 import { requirePrincipal } from '@/lib/experimental/files/server';
 import { transition } from '@/lib/experimental/files/store';
 import { reindexById } from '@/lib/experimental/files/pipeline-server';
-import { listLineage } from '@/lib/experimental/files/lineage';
-import { pushLineage } from '@/lib/experimental/files/catalog';
 import type { DataVisibility, Grant, Transition } from '@/lib/experimental/data';
 
 export const dynamic = 'force-dynamic';
@@ -32,8 +30,5 @@ export const POST = withRoute<{ id: string }, { transition?: Transition; visibil
   const asset = transition(id, user, t, { visibility: body.visibility, grants: body.grants });
   // The tier/grants changed → re-index so the indexed DLS metadata follows.
   await reindexById(id);
-  // Best-effort OM catalog mirror of the latest lineage edge (mock-tolerant).
-  const latest = listLineage(id)[0];
-  if (latest) void pushLineage(latest);
   return NextResponse.json({ asset });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

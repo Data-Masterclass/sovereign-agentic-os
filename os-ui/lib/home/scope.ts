@@ -192,7 +192,7 @@ export function recentActivity(viewer: Viewer, artifacts: ArtifactInput[]): Acti
     if (a.visibility === 'Shared' && viewer.domains.includes(a.domain)) {
       out.push({ id: a.id, name: a.name, type: a.type, event: 'shared', domain: a.domain, href: TAB_FOR_TYPE[a.type] ?? '/data', at: a.updatedAt });
     } else if (a.visibility === 'Certified') {
-      out.push({ id: a.id, name: a.name, type: a.type, event: 'certified', domain: a.domain, href: '/marketplace', at: a.updatedAt });
+      out.push({ id: a.id, name: a.name, type: a.type, event: 'certified', domain: a.domain, href: TAB_FOR_TYPE[a.type] ?? '/data', at: a.updatedAt });
     }
   }
   return out.sort((x, y) => y.at.localeCompare(x.at)).slice(0, 8);
@@ -225,10 +225,10 @@ export function cockpitOrder(persona: HomePersona): ModuleKey[] {
 /**
  * "Top items per artifact" — a scannable board of the viewer's most-notable
  * entries per registry type (datasets, metrics, dashboards, agents, knowledge,
- * files, connections, software, big bets, strategy pillars), each deep-linking
+ * files, connections, software), each deep-linking
  * into its owning tab. PURE: it shapes ONLY the pre-scoped rows the feed adapter
- * already fetched with the viewer's identity (listForUser / listAppsForUser /
- * listBets / listPillars), so the same RLS boundary holds — nothing cross-domain
+ * already fetched with the viewer's identity (listForUser / listAppsForUser),
+ * so the same RLS boundary holds — nothing cross-domain
  * and no other user's Personal item can appear. Empty types are omitted (honest
  * empty state); each group keeps a `count` so the UI can say "+N more".
  */
@@ -244,7 +244,7 @@ export type TopItem = {
 
 export type TopGroup = {
   key: string;
-  /** Plural, human label ("Datasets", "Big Bets", "Strategy pillars"). */
+  /** Plural, human label ("Datasets", "Metrics"). */
   label: string;
   /** Single-glyph marker, matching the sidebar's visual language. */
   icon: string;
@@ -255,8 +255,6 @@ export type TopGroup = {
   items: TopItem[];
 };
 
-export type TopBetInput = { id: string; name: string; domain: string; status: string; updatedAt: string };
-export type TopPillarInput = { id: string; name: string; scope: string; domain?: string; updatedAt: string };
 
 /** Per-artifact-type display config + canonical board order. */
 const TOP_TYPES: { type: string; key: string; label: string; icon: string; tab: string }[] = [
@@ -282,8 +280,6 @@ export function topItems(
   viewer: Viewer,
   artifacts: ArtifactInput[],
   apps: AppInput[],
-  bets: TopBetInput[],
-  pillars: TopPillarInput[],
 ): TopGroup[] {
   const groups: TopGroup[] = [];
   const byRecent = (a: { updatedAt: string }, b: { updatedAt: string }) => b.updatedAt.localeCompare(a.updatedAt);
@@ -327,43 +323,6 @@ export function topItems(
     });
   }
 
-  // Big Bets — scoped by listBets (canView). Tone tracks lifecycle status.
-  const betRows = [...bets].sort(byRecent);
-  if (betRows.length > 0) {
-    groups.push({
-      key: 'big-bets',
-      label: 'Big Bets',
-      icon: '◆',
-      tab: '/big-bets',
-      count: betRows.length,
-      items: betRows.slice(0, TOP_PER_GROUP).map((b) => ({
-        id: b.id,
-        name: b.name,
-        meta: `${b.status}${viewer.domains.length > 1 ? ` · ${b.domain}` : ''}`,
-        href: `/big-bets/${b.id}`,
-        tone: b.status,
-      })),
-    });
-  }
-
-  // Strategy pillars — scoped by listPillars (tenant + viewer-domain only).
-  const pillarRows = [...pillars].sort(byRecent);
-  if (pillarRows.length > 0) {
-    groups.push({
-      key: 'strategy',
-      label: 'Strategy pillars',
-      icon: '▲',
-      tab: '/strategy',
-      count: pillarRows.length,
-      items: pillarRows.slice(0, TOP_PER_GROUP).map((p) => ({
-        id: p.id,
-        name: p.name,
-        meta: p.scope === 'tenant' ? 'Tenant-wide' : `Domain${p.domain ? ` · ${p.domain}` : ''}`,
-        href: '/strategy',
-        tone: p.scope === 'tenant' ? 'certified' : 'shared',
-      })),
-    });
-  }
-
   return groups;
+
 }

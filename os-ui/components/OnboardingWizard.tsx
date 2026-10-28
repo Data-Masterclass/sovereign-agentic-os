@@ -93,9 +93,6 @@ export default function OnboardingWizard({ user, onDone }: OnboardingWizardProps
                   </span>
                 ))}
               </div>
-              <p className="wiz-text">
-                New here? Open <strong>Tutorials</strong> for guided walkthroughs of each path.
-              </p>
             </>
           )}
 

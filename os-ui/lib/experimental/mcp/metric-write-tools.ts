@@ -31,13 +31,13 @@ import { queryRun } from '@/lib/infra/governed';
 import { publishPromotionLive } from '@/lib/experimental/data/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/experimental/data/panels';
-import { scaffoldCubeYaml } from '@/lib/experimental/data/metrics';
+import { scaffoldMetricYaml } from '@/lib/experimental/data/metrics';
 import { ingestAndRegisterBronze } from '@/lib/experimental/data/ingest';
 import { buildStage, commitLayerVersion } from '@/lib/experimental/data/build/server';
 import {
   silverPlan,
   goldJoinPlan,
-  goldMeasureToCube,
+  goldMeasureToModel,
   CAST_TYPES,
   type TransformOp,
   type ResolvedJoin,
@@ -100,25 +100,6 @@ import { fromTiles, type ChartSpec } from '@/lib/experimental/dashboards/model';
 import { claimsFromUser, delegate } from '@/lib/experimental/data/identity';
 
 import {
-  createBet,
-  getBet,
-  updateBet,
-  addComponent,
-  archiveBet,
-  unarchiveBet,
-  deleteBet,
-  restoreBetVersion,
-  setBetWorkflow,
-  wireComponents,
-  unwireComponents,
-  canEdit as canEditBet,
-  type CreateBetInput,
-} from '@/lib/experimental/bigbets/store';
-import { getPillar } from '@/lib/experimental/strategy/pillars';
-import { deriveBetName, INTERPLAY_RELATIONS, type BigBet, type InterplayRelation, type Tab as BetTab, type ValueBasis } from '@/lib/experimental/bigbets';
-import { resolveLinkedComponent } from '@/lib/experimental/bigbets/attach-server';
-
-import {
   createSystem,
   writeFile as writeAgentFile,
   getSystemForEdit,
@@ -137,7 +118,8 @@ export const metricWriteTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'Suggest 3–6 high-value candidate metrics grounded in the caller\'s STRATEGY (pillars), OPERATING MODEL, business PROCESSES (workflows) and the datasets they can see — the same governed context the Metrics tab "Suggest metrics" button uses. Read-only: proposes candidates, defines nothing. Each candidate carries name/description/why, an optional real pillarId + processId (workflow) it grounds on, a visible datasetId, a ready-to-define `form` (aggregation + real column + dimensions), and an optional `crossEntity` flag when its inputs span datasets (build a curated/joined dataset in Data first — never an invented join). Candidates whose dataset isn\'t visible or whose columns aren\'t real are dropped; `grounding` reports how much strategy/OM/process/data context actually informed the suggestions. Runs the reasoning model AS you; audited + cost-capped.',
+      'Suggest 3–6 high-value candidate metrics grounded in the caller\'s OPERATING MODEL, business PROCESSES (workflows) and the datasets they can see — the same governed context the Metrics tab "Suggest metrics" button uses. Read-only: proposes candidates, defines nothing. Each candidate carries name/description/why, an optional real processId (workflow) it grounds on, a visible datasetId, a ready-to-define `form` (aggregation + real column + dimensions), and an optional `crossEntity` flag when its inputs span datasets (build a curated/joined dataset in Data first — never an invented join). Candidates whose dataset isn\'t visible or whose columns aren\'t real are dropped; `grounding` reports how much OM/process/data context actually informed the suggestions. Runs the reasoning model AS you; audited + cost-capped.',
+
     inputSchema: {
       type: 'object',
       properties: {
@@ -156,7 +138,7 @@ export const metricWriteTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'Define a governed metric (also called: KPI, measure, indicator) on a dataset’s built GOLD version — the one definition of a number (Cube member). The dataset must already be a governed asset/product (promote it in Data first). Returns the canonical member + the generated Cube YAML. THE FULL MEASURE MODEL (same as the Metrics tab form — all optional, a plain call yields exactly {name,type,sql}): `aggregation` — count · count_distinct · count_distinct_approx (fast approximate distinct) · sum · avg · min · max · number (a DERIVED/ratio measure). `filter` — a FILTERED measure: aggregate only rows where {column op value} (op: equals|notEquals|gt|gte|lt|lte|set|notSet). `runningTotal` — a cumulative running total from the beginning of time. `rollingWindow` — a trailing time window (last N day|week|month|quarter|year), mutually exclusive with runningTotal. `ratio` — for aggregation "number", a derived measure numerator/denominator over two OTHER measures on the same cube. `format` — display format (currency|percent|number…). `drillMembers` — drill-down members exposed for exploration. `dimensions` — the slice-by columns this metric is meant to be explored by (a curation hint, persisted on the measure and rehydrated on edit). `timeDimension`+`granularity` are query-time (query_metric), not part of the definition. UPSERT: define is keyed by the metric name — re-defining a metric of the SAME name on the same dataset UPDATES it in place (no false "already defined"), a new name adds one.',
+      'Define a governed metric (also called: KPI, measure, indicator) on a dataset’s built GOLD version — the one definition of a number (its `View.measure` member). The dataset must already be a governed asset/product (promote it in Data first). Returns the canonical member + the generated Cube YAML. THE FULL MEASURE MODEL (same as the Metrics tab form — all optional, a plain call yields exactly {name,type,sql}): `aggregation` — count · count_distinct · count_distinct_approx (fast approximate distinct) · sum · avg · min · max · number (a DERIVED/ratio measure). `filter` — a FILTERED measure: aggregate only rows where {column op value} (op: equals|notEquals|gt|gte|lt|lte|set|notSet). `runningTotal` — a cumulative running total from the beginning of time. `rollingWindow` — a trailing time window (last N day|week|month|quarter|year), mutually exclusive with runningTotal. `ratio` — for aggregation "number", a derived measure numerator/denominator over two OTHER measures on the same cube. `format` — display format (currency|percent|number…). `drillMembers` — drill-down members exposed for exploration. `dimensions` — the slice-by columns this metric is meant to be explored by (a curation hint, persisted on the measure and rehydrated on edit). `timeDimension`+`granularity` are query-time (query_metric), not part of the definition. UPSERT: define is keyed by the metric name — re-defining a metric of the SAME name on the same dataset UPDATES it in place (no false "already defined"), a new name adds one.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -187,7 +169,7 @@ export const metricWriteTools: McpTool[] = [
         },
         ratio: {
           type: 'object',
-          description: 'For aggregation "number": a derived measure = numerator / denominator, each an EXISTING measure member name on the same cube.',
+          description: 'For aggregation "number": a derived measure = numerator / denominator, each an EXISTING measure member name on the same dataset.',
           properties: {
             numerator: { type: 'string' },
             denominator: { type: 'string' },
@@ -242,8 +224,8 @@ export const metricWriteTools: McpTool[] = [
         datasetId,
         measure,
         member: build.member,
-        cube: scaffoldCubeYaml(dataset),
-        ...(build.pending ? { pending: true, note: 'Metric saved — live value appears within ~30 s as the query engine syncs.' } : {}),
+        cube: scaffoldMetricYaml(dataset),
+        ...(build.pending ? { pending: true, note: 'Metric saved — add a time dimension to the slice to compute this window metric.' } : {}),
       };
     },
   },
@@ -281,16 +263,13 @@ export const metricWriteTools: McpTool[] = [
       const measure = measureFromForm(form);
       const dataset = getDataset(datasetId, P(user));
       const draft = { ...dataset, measures: [...dataset.measures.filter((m) => m.name !== measure.name), measure] };
-      // UNSAVED draft → exploreMetric previews via governed SQL ('live (sql)') instead
-      // of querying Cube for a member the sidecar hasn't (and can't have) delivered.
-      const unsaved = !dataset.measures.some((m) => sameMeasure(m, measure));
       const token = mcpToken(user);
       const result = await exploreMetric(draft, measure, token, {
         dimensions: strArr(args.dimensions),
         timeDimension: str(args.timeDimension) || undefined,
         granularity: (str(args.granularity) as Granularity) || undefined,
         limit: typeof args.limit === 'number' ? Math.min(args.limit, 100) : 20,
-      }, { unsaved });
+      });
       return { datasetId, measure, ...result };
     },
   },

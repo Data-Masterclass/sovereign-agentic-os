@@ -223,11 +223,6 @@ export type Connection = {
   /** For a `warehouse` template only: the non-secret federation config (platform,
    *  catalog, region/account/…). Absent on every other connection type. */
   warehouse?: WarehouseConnectionConfig;
-  /** For an `om-catalog` template only: the OM build version last detected + the
-   *  optional default OM Service name. Non-secret; the bot JWT lives in the vault.
-   *  Version is recorded so the client picks stable API shapes (and, in Phase 2,
-   *  refuses writes on an unknown version — Phase 1 never writes). */
-  om?: { service?: string; version?: string };
   /** For an `airflow` template only: the non-secret REST config (auth type, basic
    *  username, optional trigger allowlist). The password/token lives in the vault. */
   airflow?: AirflowConnectionConfig;
@@ -289,11 +284,6 @@ export type ConnectionTemplateKey =
   // fields render generically from the provider registry. Gated OFF behind
   // EXTERNAL_CONNECTORS_ENABLED — it is NOT user-facing until an operator enables it.
   | 'warehouse'
-  // External OpenMetadata catalog (read/discover only). ONE template: base URL +
-  // a vaulted bot JWT + an optional default OM Service name. Gated OFF behind
-  // OPENMETADATA_CONNECT_ENABLED — inert until an operator connects an OM. Every
-  // tool is read-only by construction (Phase 1 never writes to OM).
-  | 'om-catalog'
   // Apache Airflow REST API (v2 `/api/v2/...`, older `/api/v1/...`). A governed
   // outbound connection to a customer's Airflow so OS agents can trigger + monitor
   // DAGs. Read tools (list DAGs, get a run) auto-allow; `trigger_dag` is a real
@@ -616,28 +606,6 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
       { name: 'list_tables', description: 'List tables in a schema (read).', write: false, mode: 'Read' },
       { name: 'query', description: 'Governed live read over the federated catalog (read).', write: false, mode: 'Read', limits: { dataScope: 'the federated external catalog' } },
       { name: 'import_table', description: 'Materialize one external table into the OS Iceberg lakehouse via CTAS (write).', write: true, mode: 'Off' },
-    ],
-  },
-  {
-    // External OpenMetadata catalog — modelled as a first-class Connection. READ /
-    // DISCOVER ONLY: the preset exposes ONLY read tools; there is NO write tool at
-    // all (Phase 1 never POSTs/PUTs/PATCHes OM — the scoped write path is Phase 2).
-    // The secret is the OM bot JWT (vaulted secretRef, never on the record); the
-    // endpoint is the OM base URL; the optional default OM Service is a non-secret
-    // config on the record. Gated OFF behind OPENMETADATA_CONNECT_ENABLED.
-    key: 'om-catalog',
-    label: 'OpenMetadata catalog (external · read-only)',
-    type: 'API',
-    connector: 'api',
-    auth: 'service',
-    endpointHint: 'https://openmetadata.example.com',
-    secretKey: 'om-bot-jwt',
-    tools: [
-      { name: 'list_domains', description: 'List OM domains (read).', write: false, mode: 'Read' },
-      { name: 'list_data_products', description: 'List OM data products (read).', write: false, mode: 'Read' },
-      { name: 'list_tables', description: 'List OM tables with description/owners/tags (read).', write: false, mode: 'Read' },
-      { name: 'search_catalog', description: 'Search the OM catalog (read).', write: false, mode: 'Read' },
-      { name: 'get_om_lineage', description: 'Read lineage for an OM entity by FQN (read).', write: false, mode: 'Read' },
     ],
   },
   {
@@ -1145,8 +1113,8 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
  * NOT in this list is kept only as an internal building block (Marketplace import, the
  * connections gate, adapter tests) and is deliberately NOT offered in the create picker,
  * so a user can never stand up a non-working mock connection. Keep this list in sync as
- * connectors are wired; the flag-gated `warehouse` / `om-catalog` templates are surfaced
- * separately by their operator flags, not through this list.
+ * connectors are wired; the flag-gated `warehouse` template is surfaced separately by
+ * its operator flag, not through this list.
  */
 export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'generic-api', 'generic-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'gcp-directory', 'snowflake-governance', 'salesforce-api', 'kajabi-api', 'sap-odata', 'odata-v4', 'workday-raas'];
 
@@ -1155,7 +1123,7 @@ export function isUserFacingTemplate(key: string): boolean {
 }
 
 /** The templates offered in the Connections tab (the wired connectors — see
- *  USER_FACING_TEMPLATE_KEYS; flag-gated warehouse/om-catalog are surfaced separately). */
+ *  USER_FACING_TEMPLATE_KEYS; the flag-gated warehouse template is surfaced separately). */
 export function userFacingTemplates(): ConnectionTemplate[] {
   return CONNECTION_TEMPLATES.filter((t) => isUserFacingTemplate(t.key));
 }

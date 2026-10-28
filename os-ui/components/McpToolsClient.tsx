@@ -30,7 +30,6 @@ const TAB_LABELS: Record<string, string> = {
   software: 'Software',
   agents: 'Agents',
   governance: 'Governance',
-  marketplace: 'Marketplace',
   strategy: 'Strategy',
   monitoring: 'Monitoring',
   meta: 'Meta / Discovery',
@@ -39,8 +38,9 @@ const TAB_LABELS: Record<string, string> = {
 // Matches MCP_TABS order; meta (cross-cutting discovery tools) last.
 const TAB_ORDER = [
   'data', 'knowledge', 'files', 'metrics', 'dashboards',
-  'bigbets', 'connections', 'science', 'software', 'agents',
-  'governance', 'marketplace', 'strategy', 'monitoring', 'meta',
+  'connections', 'software', 'agents',
+  'governance', 'monitoring', 'meta',
+
 ];
 
 const ROLE_LABEL: Record<string, string> = {

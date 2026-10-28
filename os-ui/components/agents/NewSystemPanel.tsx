@@ -4,7 +4,6 @@
 'use client';
 
 import { useState } from 'react';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { TEMPLATES, type TemplateKey } from '@/lib/agents/templates';
 import { getUrlParam } from '@/lib/core/url-params';
 import { useToast } from '@/components/core/Toast';
@@ -49,7 +48,7 @@ export default function NewSystemPanel({ onCreated }: { onCreated: (id: string) 
   };
 
   return (
-    <div className="card new-system" {...anchorAttr(ANCHORS.agents.define)}>
+    <div className="card new-system">
       <h3 style={{ marginTop: 0 }}>New agent system</h3>
       <p className="hint" style={{ marginTop: 0 }}>Pick a starting point — you can change everything after.</p>
 

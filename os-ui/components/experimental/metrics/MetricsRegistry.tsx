@@ -121,7 +121,7 @@ function MetricCard({
           <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_WORD[m.tier]}</span>
         </div>
       </div>
-      {/* The Cube member is the metric's TECHNICAL identity (a domain-namespaced
+      {/* The governed member is the metric's TECHNICAL identity (a domain-namespaced
           `<VIEW>.<measure>`) — it made the tile unreadable, so it no longer rides the tile
           face. The clean metric NAME (above) is the identity here; the full member + source
           dataset are on the name's hover title for discoverability. */}

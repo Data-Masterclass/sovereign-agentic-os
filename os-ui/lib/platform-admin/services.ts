@@ -30,7 +30,6 @@ const PROBES: Probe[] = [
   { key: 'opensearch', label: 'Retrieval', url: `${config.opensearchUrl}/_cluster/health` },
   { key: 'litellm', label: 'Gateway', url: `${config.litellmUrl}/health/liveliness` },
   { key: 'opa', label: 'Policy', url: `${config.opaUrl}/health` },
-  { key: 'forgejo', label: 'Software', url: `${config.forgejoUrl}/api/healthz` },
   { key: 'dagster', label: 'Orchestration', url: `${config.dagsterUrl}/server_info` },
   { key: 'langfuse', label: 'Observability', url: `${config.langfuseUrl}/api/public/health` },
 ];

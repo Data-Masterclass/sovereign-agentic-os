@@ -39,7 +39,7 @@ import { osMirror } from '../infra/os-mirror.ts';
 /** A component / golden path (a matrix row). */
 export type Component =
   | 'data' | 'knowledge' | 'files' | 'agents' | 'software' | 'metrics'
-  | 'dashboards' | 'bigbets' | 'connections' | 'marketplace' | 'governance' | 'platform';
+  | 'dashboards' | 'connections' | 'marketplace' | 'governance' | 'platform';
 
 /** A capability a role may hold on a component (a cell toggle). */
 export type Capability = 'view' | 'create' | 'run' | 'request' | 'approve' | 'manage';
@@ -52,7 +52,6 @@ export const COMPONENTS: { id: Component; label: string; hint: string }[] = [
   { id: 'software', label: 'Software', hint: 'Apps: build → preview → deploy' },
   { id: 'metrics', label: 'Metrics', hint: 'Semantic metrics' },
   { id: 'dashboards', label: 'Dashboards', hint: 'Dashboards & boards' },
-  { id: 'bigbets', label: 'Big Bets', hint: 'Cross-domain bets' },
   { id: 'connections', label: 'Connections', hint: 'External tools & egress' },
   { id: 'marketplace', label: 'Marketplace', hint: 'Shared / certified catalogue' },
   { id: 'governance', label: 'Governance', hint: 'Approvals, policy, memberships' },
@@ -70,7 +69,7 @@ export const CAPABILITIES: { id: Capability; label: string; glyph: string; hint:
 
 const COMPONENT_IDS = COMPONENTS.map((c) => c.id);
 const CAPABILITY_IDS = CAPABILITIES.map((c) => c.id);
-const WORK: Component[] = ['data', 'knowledge', 'files', 'agents', 'software', 'metrics', 'dashboards', 'bigbets', 'connections'];
+const WORK: Component[] = ['data', 'knowledge', 'files', 'agents', 'software', 'metrics', 'dashboards', 'connections'];
 
 export type RoleMatrix = Record<Role, Record<Component, Capability[]>>;
 
@@ -152,7 +151,7 @@ function buildDefault(): RoleMatrix {
   // and the domain-governance approvals (view/approve). An approver, NOT a
   // people-admin — no `manage @ governance`, no egress, no tenant/platform powers.
   const builder = workBase();
-  for (const c of ['data', 'knowledge', 'files', 'agents', 'software', 'metrics', 'dashboards', 'bigbets'] as Component[]) {
+  for (const c of ['data', 'knowledge', 'files', 'agents', 'software', 'metrics', 'dashboards'] as Component[]) {
     builder[c] = caps('view', 'create', 'run', 'request', 'approve');
   }
   builder.marketplace = caps('view', 'approve');
@@ -163,7 +162,8 @@ function buildDefault(): RoleMatrix {
   // in-domain connections approvals. Still NO tenant/platform powers — every
   // Platform cell stays empty (admin-only).
   const domainAdmin = workBase();
-  for (const c of ['data', 'knowledge', 'files', 'agents', 'software', 'metrics', 'dashboards', 'bigbets'] as Component[]) {
+  for (const c of ['data', 'knowledge', 'files', 'agents', 'software', 'metrics', 'dashboards'] as Component[]) {
+
     domainAdmin[c] = caps('view', 'create', 'run', 'request', 'approve');
   }
   domainAdmin.connections = caps('view', 'create', 'run', 'request', 'approve');

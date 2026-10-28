@@ -55,9 +55,6 @@ export const connectionTools: McpTool[] = [
         // The `warehouse` template appears ONLY when the operator enabled external
         // connectors — otherwise it is hidden exactly like it is in the UI picker.
         .filter((t) => t.key !== 'warehouse' || config.externalConnectorsEnabled)
-        // Same for the external `om-catalog` template — hidden until an operator
-        // enables OPENMETADATA_CONNECT_ENABLED (Phase 1 default OFF).
-        .filter((t) => t.key !== 'om-catalog' || config.openmetadataConnectEnabled)
         .map((t) => {
           const personal = isPersonalConnectable(t);
           return {
@@ -151,10 +148,6 @@ export const connectionTools: McpTool[] = [
             fields: { type: 'object', description: 'Flat field map keyed by the provider credential-field keys (e.g. {region:"eu-central-1"}).' },
           },
           required: ['platform', 'catalog', 'fields'],
-        },
-        omService: {
-          type: 'string',
-          description: 'For template="om-catalog" ONLY (OpenMetadata connections must be enabled): the optional default OM Service name. The endpoint is the OM base URL; credential is the bot JWT.',
         },
         airflow: {
           type: 'object',
@@ -265,7 +258,6 @@ export const connectionTools: McpTool[] = [
         credential: str(args.credential),
         domain: str(args.domain) || undefined,
         warehouse,
-        omService: template === 'om-catalog' ? str(args.omService) || undefined : undefined,
         airflow,
         atlassian,
         odata,

@@ -19,8 +19,8 @@ import { osMirror } from '@/lib/infra/os-mirror';
 /**
  * The unified Governance approval queue. The first kinds are the original
  * agent write-backs (held by the governed-tool spine: connection writes,
- * knowledge certify, file/dataset promotion + certification, app deploy,
- * marketplace import); the rest are the async Governance sources consolidated by
+ * knowledge certify, file/dataset promotion + certification, app deploy); the
+ * rest are the async Governance sources consolidated by
  * the control plane (governance-golden-path.md §1): a Software deploy-review, an
  * autonomous out-of-policy action, an access/import request, an egress endpoint
  * request, a promote/certify. Inline (attended) write-approvals stay in the run
@@ -33,7 +33,6 @@ export type ApprovalKind =
   | 'dataset_promote'
   | 'dataset_certify'
   | 'app_deploy'
-  | 'marketplace_import'
   | 'deploy_review'
   | 'autonomous_out_of_policy'
   | 'access_request'
@@ -110,12 +109,12 @@ export type ApprovalEffect = {
   applied: string;
   live: boolean;
   standingPolicyId?: string;
-  publish?: { ok: boolean; fqn: string; error?: string; mode?: string; cubeView?: string | null };
+  publish?: { ok: boolean; fqn: string; error?: string; mode?: string };
 };
 
 // Pinned to globalThis so the queue is a TRUE singleton across separately
-// bundled Next.js route handlers (the marketplace import route enqueues; the
-// governance route reads) and survives dev HMR.
+// bundled Next.js route handlers (one route enqueues; the governance route
+// reads) and survives dev HMR.
 type ApprovalsState = { queue: Map<string, Approval>; hydration: Promise<void> | null };
 const QUEUE_KEY = Symbol.for('soa.approvals.queue');
 function approvalsState(): ApprovalsState {

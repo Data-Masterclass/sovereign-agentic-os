@@ -38,5 +38,4 @@ test('catalogRegistration surfaces the secret env plumbing for Snowflake', () =>
   // The prop references the env var; the PEM itself is NEVER in the snippet.
   assert.match(reg.valuesSnippet, /connection-private-key=\$\{ENV:SNOWFLAKE_PRIVATE_KEY\}/);
   assert.match(reg.valuesSnippet, /- name: SNOWFLAKE_PRIVATE_KEY/);
-  assert.equal(reg.openMetadata.connectorType, 'Snowflake');
 });

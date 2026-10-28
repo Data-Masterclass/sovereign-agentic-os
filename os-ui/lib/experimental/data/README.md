@@ -117,7 +117,7 @@ else.
 - **Reused real backends:** the central Trino query-tool, the DuckDB **sandbox "My
   data" lane**, Cube + Superset on Trino, the governed-tool spine, the approvals/
   Governance queue, the `package trino` OPA policy.
-- **Live adapters** call the real Cube / Superset / OpenMetadata / query-tool / OPA when
+- **Live adapters** call the real Cube / Superset / query-tool / OPA when
   reachable; on a laptop (`kind`, no services) the **offline-mock** runs the identical
   logic. The registry/store is in-process and maps 1:1 to Supabase.
 - **Out-of-band by design:** dlt/dbt/dbt-trino run via Dagster/CI; their adapters

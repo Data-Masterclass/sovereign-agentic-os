@@ -38,10 +38,10 @@ function actThenFinish(
 test('mcpTabForPath maps app routes to their MCP tab (and null for overview pages)', () => {
   assert.equal(mcpTabForPath('/data'), 'data');
   assert.equal(mcpTabForPath('/data/some-product'), 'data'); // nested route → same tab
-  assert.equal(mcpTabForPath('/big-bets'), 'bigbets'); // href ≠ tab id
+
   assert.equal(mcpTabForPath('/unstructured'), 'files'); // Files lives at /unstructured
   assert.equal(mcpTabForPath('/'), null);
-  assert.equal(mcpTabForPath('/cockpit'), null); // no governed tool surface
+  assert.equal(mcpTabForPath('/about'), null); // no governed tool surface
   assert.equal(mcpTabForPath(''), null);
 });
 

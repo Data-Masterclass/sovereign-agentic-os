@@ -5,11 +5,9 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import type { CurrentUser } from '@/lib/core/auth';
 import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
-import { requireUser } from '@/lib/core/auth';
 import { getDataset, addCheck, removeCheck, updateCheckDescriptions, builtLayerFqn } from '@/lib/experimental/data/store';
 import { queryRun } from '@/lib/infra/governed';
 import { runAndRecord } from '@/lib/experimental/data/dq-run-server';
-import { omDqAppenderFor } from '@/lib/experimental/connections/openmetadata';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/experimental/data';
 
 export const dynamic = 'force-dynamic';
@@ -37,7 +35,7 @@ function numOrUndef(v: unknown): number | undefined {
 }
 
 /**
- * SKIP: POST calls requireUser() mid-handler (for OM DQ appender) — left hand-rolled.
+ * SKIP: POST dispatches on body.action with per-branch gates — left hand-rolled.
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
@@ -63,16 +61,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       // durable time-series. Run AS the owner for a personal dataset (personal_<uid>), else
       // the caller's domain principal — NEVER trusted from the body; the same resolver
       // preview/profile use, so OPA governs exactly what the owner may read.
-      // Best-effort OM DQ result-appender (null unless the flag is on AND an OM is
-      // connected). Non-blocking: it never throws and never fakes success, so the DQ run
-      // succeeds regardless of OM's state. `requireUser` gives the CurrentUser the OM
-      // connection lookup needs (same session as the `requirePrincipal` above).
-      const omAppend = await omDqAppenderFor(await requireUser(), dataset).catch(() => null);
       const outcome = await runAndRecord(dataset, {
         fqn: resolved?.fqn ?? null,
         queryFn: (sql) => queryRun(sql, resolved?.principal),
         ownerId: user.id,
-        omAppend: omAppend ?? undefined,
       });
       return NextResponse.json({
         fqn: outcome.fqn,

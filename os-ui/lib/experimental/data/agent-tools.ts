@@ -26,20 +26,19 @@ export type { AgentScope } from './identity.ts';
  * AS the owner so Trino's OPA plugin governs `personal_<uid>` ownership.
  *
  * Enforcement is layered: delegation (R2) + OPA (tool/domain) + Trino RLS (the
- * forwarded user, R3) + Cube securityContext (R3) + per-user prefix binding. Pure —
+ * forwarded user, R3) + per-user prefix binding. Pure —
  * the backends are injected — so the scoping is unit-tested without live services; the
  * route wires the real governed executors.
  */
 
-export type ToolKind = 'query' | 'metrics';
-export type AgentToolInput = { scope: AgentScope; kind: ToolKind; sql?: string; query?: unknown };
+export type ToolKind = 'query';
+export type AgentToolInput = { scope: AgentScope; kind: ToolKind; sql?: string };
 
 export type Grid = { columns: string[]; rows: string[][] };
 
 export type Executors = {
   authorize(principal: string, tool: string): Promise<{ allowed: boolean; policy: string }>;
   trinoQuery(sql: string, principal: string): Promise<Grid>;
-  cubeQuery(query: unknown, securityContext: Record<string, unknown>): Promise<{ rows: Record<string, unknown>[] }>;
   trace(event: Record<string, unknown>): Promise<boolean>;
 };
 
@@ -47,10 +46,9 @@ export type AgentToolResult = {
   ok: boolean;
   scope: AgentScope;
   policy: string;
-  source: 'trino' | 'cube';
+  source: 'trino';
   columns?: string[];
   rows?: string[][];
-  data?: Record<string, unknown>[];
   traced: boolean;
   error?: string;
 };
@@ -67,7 +65,7 @@ export class AgentToolError extends Error {
 export async function runAgentTool(claims: Claims, input: AgentToolInput, ex: Executors): Promise<AgentToolResult> {
   // R2 — a user-bound, downscoped token (delegate() refuses a service account).
   const token = delegate(claims, input.scope);
-  // R3 — the same identity for Trino (user+groups) + Cube (securityContext) + sandbox.
+  // R3 — the same identity for Trino (user+groups) + sandbox.
   const ids = propagate(token);
 
   const authz = await ex.authorize(token.sub, input.kind);
@@ -76,7 +74,6 @@ export async function runAgentTool(claims: Claims, input: AgentToolInput, ex: Ex
   }
 
   if (input.scope === 'personal') {
-    if (input.kind !== 'query') throw new AgentToolError('the personal lane is a query lane — use a query, not metrics', 400);
     const sql = input.sql ?? '';
     assertScopedToSelf(sql); // never reach a governed mart from the personal lane
     assertOwnSandbox(token, ids.sandboxPrefix!); // only the caller's own prefix
@@ -88,13 +85,8 @@ export async function runAgentTool(claims: Claims, input: AgentToolInput, ex: Ex
     return { ok: true, scope: 'personal', policy: authz.policy, source: 'trino', columns: grid.columns, rows: grid.rows, traced };
   }
 
-  // domain / marketplace — governed Trino (ad-hoc) or Cube (metrics) under the user.
-  if (input.kind === 'query') {
-    const grid = await ex.trinoQuery(input.sql ?? '', ids.trino.user); // principal → Trino OPA RLS
-    const traced = await ex.trace({ principal: token.sub, scope: input.scope, tool: 'query', source: 'trino' });
-    return { ok: true, scope: input.scope, policy: authz.policy, source: 'trino', columns: grid.columns, rows: grid.rows, traced };
-  }
-  const res = await ex.cubeQuery(input.query ?? {}, ids.cube.securityContext); // R3 securityContext
-  const traced = await ex.trace({ principal: token.sub, scope: input.scope, tool: 'metrics', source: 'cube' });
-  return { ok: true, scope: input.scope, policy: authz.policy, source: 'cube', data: res.rows, traced };
+  // domain / marketplace — governed Trino under the user.
+  const grid = await ex.trinoQuery(input.sql ?? '', ids.trino.user); // principal → Trino OPA RLS
+  const traced = await ex.trace({ principal: token.sub, scope: input.scope, tool: 'query', source: 'trino' });
+  return { ok: true, scope: input.scope, policy: authz.policy, source: 'trino', columns: grid.columns, rows: grid.rows, traced };
 }

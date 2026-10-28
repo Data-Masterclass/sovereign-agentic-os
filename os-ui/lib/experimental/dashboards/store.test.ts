@@ -97,7 +97,7 @@ test('archive / delete / restore obey edit-scope (a non-owner without manage rig
 
 test('P1-1: getDashboard resolves spec.name before deleteDashboard removes the record (live-cleanup prerequisite)', () => {
   // The DELETE route must resolve the dashboard name BEFORE deleting the OS record so the
-  // live Superset cleanup can find it by title. This test verifies the ordering contract:
+  // a downstream cleanup can find it by title. This test verifies the ordering contract:
   // getDashboard succeeds while the record exists, and throws 404 after deleteDashboard.
   saveDashboard(builder, 'dash_del', { name: 'Deletion Target', view: 'v', charts: [] });
   const before = getDashboard('dash_del', builder);

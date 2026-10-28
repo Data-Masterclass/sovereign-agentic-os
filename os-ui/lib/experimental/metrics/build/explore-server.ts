@@ -8,10 +8,9 @@ import { type DelegatedToken, propagate } from '@/lib/experimental/data';
 import type { Dataset, Measure } from '../../data/index.ts';
 import { personalSchema, domainSchema, physicalSlug } from '../../data/store-fqn.ts';
 import {
-  type CubeExecutor,
+  type ExploreSpec,
   type Granularity,
   dropToSql,
-  explore,
   exploreSpec,
   previewTrinoSql,
   sqlRowsToExploreRows,
@@ -19,10 +18,9 @@ import {
 import { liveMetricsReachable } from './live-clients.ts';
 
 /**
- * Server boundary for the metric explorer. Since the metrics→Trino migration (Phase 1) a
- * metric is a VIRTUAL DECLARATION served as ONE governed Trino SELECT over the physical gold
- * mart, run UNDER the viewer's delegated identity (R3 — Trino/OPA row/column security). Cube
- * is OFF the metric read path (it stays on dashboards until Phase 2). On the local/teaching
+ * Server boundary for the metric explorer. A metric is a VIRTUAL DECLARATION served as ONE
+ * governed Trino SELECT over the physical gold mart, run UNDER the viewer's delegated
+ * identity (R3 — Trino/OPA row/column security). On the local/teaching
  * laptop, where no backend exists, an honest offline-MOCK filters by the viewer's region so
  * the "two viewers see different rows" guarantee still holds. Returns the rows + the exact
  * SQL that ran, honestly labelled 'live (sql)' / 'offline-mock' / 'unavailable'.
@@ -49,8 +47,8 @@ function metricsMustBeLive(): boolean {
  * The TIER-AWARE physical gold FQN a metric read targets — the linchpin of personal-dataset
  * metrics (metrics→Trino migration, Phase 1). A PERSONAL dataset (tier 'dataset') has its gold
  * ONLY in the owner's private lane (`iceberg.personal_<owner>.gold_<slug>`); a governed
- * asset/product has it in the domain schema (`iceberg.<domain>.gold_<slug>` — the same FQN
- * Cube bound to). The read runs under the delegated token's SUBJECT (R3): for a personal
+ * asset/product has it in the domain schema (`iceberg.<domain>.gold_<slug>`). The read runs
+ * under the delegated token's SUBJECT (R3): for a personal
  * dataset that subject IS the owner, so Trino/OPA's `is_owned_personal` grants the private
  * lane; for a governed dataset the subject's groups carry the domain membership OPA gates on.
  * TIER, not ownership, decides the schema — a governed dataset's owner still reads the shared
@@ -62,11 +60,11 @@ function goldReadTarget(dataset: Dataset, token: DelegatedToken): string {
 }
 
 /**
- * The offline-mock executor: a tiny region-partitioned table that ENFORCES the security
- * context exactly like Cube would, so the RLS demo is real offline. Deterministic value
- * per (member, region) so numbers are stable + the agent path agrees.
+ * The offline-mock rows: a tiny region-partitioned table that ENFORCES the security
+ * context exactly like Trino/OPA would, so the RLS demo is real offline. Deterministic
+ * value per (member, region) so numbers are stable + the agent path agrees.
  */
-function mockExecutor(): CubeExecutor {
+function mockRows(spec: ExploreSpec, ctx: Record<string, unknown>): Record<string, unknown>[] {
   const REGIONS = ['DE', 'FR', 'US'];
   const valueOf = (member: string, region: string) => {
     const s = `${member}:${region}`;
@@ -74,20 +72,13 @@ function mockExecutor(): CubeExecutor {
     for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
     return Math.abs(h % 90000) + 10000;
   };
-  return {
-    async load(query, ctx) {
-      const member = query.measures[0];
-      const viewerRegion = ctx.region as string | undefined;
-      const regions = viewerRegion ? REGIONS.filter((r) => r === viewerRegion) : REGIONS;
-      const byRegion = query.dimensions.some((d) => d.endsWith('.region'));
-      if (byRegion) {
-        const regionDim = query.dimensions.find((d) => d.endsWith('.region'))!;
-        return { rows: regions.map((r) => ({ [regionDim]: r, [member]: valueOf(member, r) })) };
-      }
-      const total = regions.reduce((sum, r) => sum + valueOf(member, r), 0);
-      return { rows: [{ [member]: total }] };
-    },
-  };
+  const member = spec.member;
+  const viewerRegion = ctx.region as string | undefined;
+  const regions = viewerRegion ? REGIONS.filter((r) => r === viewerRegion) : REGIONS;
+  const regionDim = spec.dimensions.find((d) => d.endsWith('.region'));
+  if (regionDim) return regions.map((r) => ({ [regionDim]: r, [member]: valueOf(member, r) }));
+  const total = regions.reduce((sum, r) => sum + valueOf(member, r), 0);
+  return [{ [member]: total }];
 }
 
 export type ExploreServerResult = {
@@ -96,7 +87,8 @@ export type ExploreServerResult = {
   securityContext: Record<string, unknown>;
   sql: string;
   mode: ExploreMode;
-  /** True when Cube is up but the just-defined measure hasn't sync'd yet (soft "syncing"). */
+  /** True when the metric compiles but has no number for this slice yet (a window metric
+   *  needs a time dimension) — a soft "pending", never a fabricated value. */
   pending?: boolean;
   /** True on a real deployment when the semantic layer is unreachable — no number is
    *  returned (rows: []) rather than a fabricated one. The UI shows an honest outage. */
@@ -119,13 +111,6 @@ export async function exploreMetric(
     /** Equality filters (bare column names) — the drill-down shape; reconciled + WHERE'd
      *  by the explorer (a filter on a non-member is dropped LOUDLY, never silently). */
     filters?: { column: string; values: string[] }[];
-  } = {},
-  opts: {
-    /** LEGACY flag from the Cube era: true when this measure is a pre-save draft. Since the
-     *  metrics→Trino migration (Phase 1) EVERY metric read serves via governed Trino SQL —
-     *  Cube is off the read path — so this no longer decides the read path (the SQL path is
-     *  primary for saved + unsaved alike). Kept for call-site compatibility. */
-    unsaved?: boolean;
   } = {},
 ): Promise<ExploreServerResult> {
   const spec = exploreSpec(dataset, measure, slice);
@@ -159,18 +144,16 @@ export async function exploreMetric(
       : {}),
   };
   if (live) {
-    // PRIMARY read path (metrics→Trino migration, Phase 1): compute the number as ONE
-    // governed Trino SELECT over the TIER-AWARE physical gold mart, under the viewer's
-    // delegated identity (R3 — Trino/OPA row/column security applies exactly as the working
-    // "live (sql)" preview already did). Cube is off the metric read path — this serves saved
-    // AND unsaved metrics alike, so a personal-dataset metric (read AS its owner from the
-    // personal lane) now works. Honestly labelled 'live (sql)'.
+    // THE read path: compute the number as ONE governed Trino SELECT over the TIER-AWARE
+    // physical gold mart, under the viewer's delegated identity (R3 — Trino/OPA row/column
+    // security). Serves saved AND unsaved metrics alike, so a personal-dataset metric (read
+    // AS its owner from the personal lane) works. Honestly labelled 'live (sql)'.
     const identities = propagate(token); // throws if the token isn't user-delegated (R2/R3)
     const readTarget = goldReadTarget(dataset, token);
     const sql = previewTrinoSql(dataset, measure, spec, readTarget);
     if (!sql) {
       // No faithful SQL form for this slice. A rolling-window / running-total measure serves
-      // as governed SQL (Phase 2) but REQUIRES a time dimension + granularity — a window with
+      // as governed SQL but REQUIRES a time dimension + granularity — a window with
       // no series, or an inexpressible trailing frame, has no honest number, so we return an
       // explicit pending with a clear reason rather than a fabricated value.
       const reason = measure.rollingWindow
@@ -179,7 +162,7 @@ export async function exploreMetric(
       return {
         ...base,
         rows: [],
-        securityContext: identities.cube.securityContext,
+        securityContext: identities.securityContext,
         pending: true,
         ...(reason ? { warning: reason } : {}),
       };
@@ -193,11 +176,11 @@ export async function exploreMetric(
       sql,
       mode: 'live (sql)',
       rows: sqlRowsToExploreRows(result.columns, result.rows, spec),
-      securityContext: identities.cube.securityContext,
+      securityContext: identities.securityContext,
     };
   }
   // Not live: the honest offline-MOCK (local/teaching only — the honesty gate above already
-  // returned 'unavailable' on a real deployment). Cube's in-memory mock enforces the same RLS.
-  const result = await explore(spec, token, mockExecutor());
-  return { ...base, rows: result.rows, securityContext: result.securityContext };
+  // returned 'unavailable' on a real deployment). The in-memory rows enforce the same RLS.
+  const { securityContext } = propagate(token); // throws if the token isn't user-delegated (R2/R3)
+  return { ...base, rows: mockRows(spec, securityContext), securityContext };
 }

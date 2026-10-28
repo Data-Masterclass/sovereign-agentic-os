@@ -32,15 +32,8 @@ const AGENTS: AgentDef[] = [
     url: `${config.sampleAgentUrl}/health`,
     optional: false,
   },
-  {
-    key: 'ml-agent',
-    name: 'ML agent',
-    role: 'features → train → deploy (Science / Layer-4 pipeline driver)',
-    runtime: 'LangGraph',
-    url: `${config.mlAgentUrl}/health`,
-    optional: true,
-  },
 ];
+
 
 // The Hermes autonomous runtime — a SECOND Layer-1 engine next to LangGraph,
 // gated OFF by default (chart `hermes.enabled`). Listed always so the Agent tab

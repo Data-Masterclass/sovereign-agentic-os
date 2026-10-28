@@ -26,13 +26,10 @@ const {
   moveApp,
   getAppForUser,
   templateFiles,
-  containerVersionsToPrune,
-  REGISTRY_KEEP_VERSIONS,
   dirListing,
-  repoHtmlUrl,
-  repoSharedByLiveApp,
   patchAppDesign,
   reconcileBuiltStatus,
+  hasBuiltCode,
   normalizeAppMembers,
   listAppMembers,
   addAppMember,
@@ -46,10 +43,6 @@ import type { App, AppEpic } from './apps.ts';
 const { config } = await import('../../core/config.ts');
 
 /** Minimal App stub — only the fields repoSharedByLiveApp reads matter. */
-function appStub(id: string, slug: string, status: 'active' | 'archived'): App {
-  return { id, slug, status, repo: { fullName: `gitea_admin/${slug}`, htmlUrl: '', seeded: [] } } as unknown as App;
-}
-
 const APP_KEY = Symbol.for('soa.apps.cache');
 const user = { id: 'u1', name: 'U1', domains: ['sales'], role: 'admin' as const };
 
@@ -322,68 +315,11 @@ test('active-domain: a My app created in domain A is hidden when domain B is act
   assert.equal((await listAppsForUser(allDomains)).some((a) => a.name === 'SalesApp'), true, 'shown under All Domains');
 });
 
-// -------------------------------------------------------------------- registry prune --
-//
-// The pure prune policy behind the CI "Prune old registry versions" step: keep the
-// newest N immutable SHA tags plus the protected `latest`, DELETE the rest. Proves
-// DELETEs are issued only for versions beyond the newest 2 — and NONE when <= 2 exist.
-
-test('containerVersionsToPrune: deletes versions beyond the newest 2 (by push time)', () => {
-  // Five real builds + the floating latest, given out of order to prove sorting.
-  const versions = [
-    { version: 'latest', created_at: '2026-07-31T10:00:00Z' },
-    { version: 'sha-oldest', created_at: '2026-07-27T09:00:00Z' },
-    { version: 'sha-newest', created_at: '2026-07-31T09:59:00Z' },
-    { version: 'sha-mid1', created_at: '2026-07-29T12:00:00Z' },
-    { version: 'sha-mid2', created_at: '2026-07-30T08:00:00Z' },
-    { version: 'sha-old2', created_at: '2026-07-28T06:00:00Z' },
-  ];
-  const toDelete = containerVersionsToPrune(versions, 2);
-  // Newest 2 SHA tags (sha-newest, sha-mid2) + latest are kept; the 3 older SHA tags go.
-  assert.deepEqual(toDelete, ['sha-mid1', 'sha-old2', 'sha-oldest'], 'deletes exactly the 3 oldest SHA tags');
-  assert.equal(toDelete.includes('latest'), false, 'never deletes the protected latest tag');
-  assert.equal(toDelete.includes('sha-newest'), false, 'keeps the newest');
-  assert.equal(toDelete.includes('sha-mid2'), false, 'keeps the 2nd-newest');
-});
-
-test('containerVersionsToPrune: returns [] when <= keep prunable versions exist', () => {
-  assert.deepEqual(containerVersionsToPrune([], 2), [], 'no versions → nothing to delete');
-  assert.deepEqual(
-    containerVersionsToPrune(
-      [{ version: 'latest', created_at: '2026-07-31T10:00:00Z' }, { version: 'sha-a', created_at: '2026-07-31T09:00:00Z' }],
-      2,
-    ),
-    [],
-    'one SHA tag (+ latest) → nothing to delete',
-  );
-  assert.deepEqual(
-    containerVersionsToPrune(
-      [
-        { version: 'sha-a', created_at: '2026-07-31T09:00:00Z' },
-        { version: 'sha-b', created_at: '2026-07-30T09:00:00Z' },
-      ],
-      2,
-    ),
-    [],
-    'exactly 2 SHA tags → nothing to delete',
-  );
-});
-
-test('containerVersionsToPrune: default keep is REGISTRY_KEEP_VERSIONS (2)', () => {
-  assert.equal(REGISTRY_KEEP_VERSIONS, 2);
-  const versions = [
-    { version: 'a', created_at: '2026-07-31T00:00:00Z' },
-    { version: 'b', created_at: '2026-07-30T00:00:00Z' },
-    { version: 'c', created_at: '2026-07-29T00:00:00Z' },
-  ];
-  assert.deepEqual(containerVersionsToPrune(versions), ['c'], 'default keeps newest 2, deletes 1');
-});
-
 // ------------------------------------------------ rename: display name + FROZEN slug --
 
 const owner = { id: 'ro1', name: 'RO1', domains: ['sales'], role: 'creator' as const };
 
-test('renameApp: the physical slug (repo/image/container/CI identity) stays FROZEN across a rename', async () => {
+test('renameApp: the physical slug (image/container/host identity) stays FROZEN across a rename', async () => {
   __resetAppsCache();
   const app = await createApp(owner, { name: 'Renewals Tracker', template: 'service' });
   const frozenSlug = app.slug;
@@ -396,7 +332,6 @@ test('renameApp: the physical slug (repo/image/container/CI identity) stays FROZ
   // are all keyed off slug, which is byte-identical to before the rename.
   assert.equal(renamed.slug, frozenSlug, 'slug FROZEN — image/repo/container identity never moves');
   assert.equal(renamed.subdomain.split('.')[0], frozenSlug, 'the per-app host is unchanged');
-  assert.equal(renamed.repo.fullName.split('/')[1] || frozenSlug, frozenSlug, 'the CI repo name is unchanged');
 });
 
 test('renameApp: owner allowed; shared admits an in-domain domain_admin; a non-owner non-admin denied; empty rejected', async () => {
@@ -465,18 +400,6 @@ test('moveApp: sets the folder (edit-scoped), normalises the path, and is visibl
   );
 });
 
-test('repoHtmlUrl: the EXTERNAL browsable URL, not Forgejo’s in-cluster html_url (the repo-404 fix)', () => {
-  const base = config.forgejoConsoleUrl.replace(/\/+$/, '');
-  // Built from the external console URL + full name — never the internal ROOT_URL.
-  assert.equal(repoHtmlUrl('gitea_admin/my-app'), `${base}/gitea_admin/my-app`);
-  // No double slash when the full name carries a leading slash.
-  assert.equal(repoHtmlUrl('/gitea_admin/my-app'), `${base}/gitea_admin/my-app`);
-  // A cluster-internal host is NEVER produced from a well-formed full name.
-  assert.doesNotMatch(repoHtmlUrl('gitea_admin/my-app'), /forgejo-http:3000/);
-  // Empty full name degrades to the base console URL, not a dangling slash.
-  assert.equal(repoHtmlUrl(''), base);
-});
-
 test('dirListing: immediate children only, dirs before files, deduped', () => {
   const files = [
     'src/App.tsx',
@@ -510,35 +433,6 @@ test('dirListing: immediate children only, dirs before files, deduped', () => {
   );
 });
 
-// -------------------------------------------- repo-delete guard (shared slug) --
-
-test('repoSharedByLiveApp: another ACTIVE app on the same slug blocks the delete', () => {
-  const self = appStub('app_new', 'northpeak-products', 'active');
-  const peer = appStub('app_old', 'northpeak-products', 'active');
-  assert.equal(
-    repoSharedByLiveApp(self, [self, peer]),
-    'app_old',
-    'a live peer sharing the slug is returned (delete must be skipped)',
-  );
-});
-
-test('repoSharedByLiveApp: self is excluded and no peer → null (delete proceeds)', () => {
-  const self = appStub('app_solo', 'solo-app', 'active');
-  assert.equal(repoSharedByLiveApp(self, [self]), null, 'an app never blocks its own delete');
-  const other = appStub('app_other', 'a-different-slug', 'active');
-  assert.equal(repoSharedByLiveApp(self, [self, other]), null, 'a different slug does not block');
-});
-
-test('repoSharedByLiveApp: an ARCHIVED peer on the same slug does NOT block', () => {
-  const self = appStub('app_new', 'shared-slug', 'active');
-  const archived = appStub('app_arch', 'shared-slug', 'archived');
-  assert.equal(
-    repoSharedByLiveApp(self, [self, archived]),
-    null,
-    'archived peers do not veto a delete — only live apps count',
-  );
-});
-
 // -------------------------------------------- earned built-ness (phantom fix) --
 
 const epicsWithStory = (status: 'todo' | 'building' | 'done'): AppEpic[] => [
@@ -551,23 +445,23 @@ const epicsWithStory = (status: 'todo' | 'building' | 'done'): AppEpic[] => [
   } as unknown as AppEpic,
 ];
 
-test('patchAppDesign REFUSES to flip a story to done on an app with NO committed code', async () => {
+test('patchAppDesign REFUSES to flip a story to done on an app with NO built code (template seed only)', async () => {
   __resetAppsCache();
   const owner = { id: 'eb1', name: 'EB1', domains: ['sales'], role: 'admin' as const };
   const app = await createApp(owner, { name: 'PhantomGuard', template: 'sovereign-app' });
-  // No real commit: offline scaffold, empty seeded repo, no snapshot pages.
-  assert.notEqual(app.pipeline.forgejo, 'ok');
+  // Only the template seed exists — no story page, no file beyond the scaffold.
+  assert.equal(hasBuiltCode(app), false);
   const after = await patchAppDesign(app.id, owner, { epics: epicsWithStory('done') });
   assert.equal(after.epics?.[0].stories[0].status, 'todo', 'a self-reported done is forced back to todo — built-ness is earned');
 });
 
-test('patchAppDesign KEEPS done when the app has a real commit (forgejo ok)', async () => {
+test('patchAppDesign KEEPS done when the app has generated files', async () => {
   __resetAppsCache();
   const owner = { id: 'eb2', name: 'EB2', domains: ['sales'], role: 'admin' as const };
   const app = await createApp(owner, { name: 'RealCommit', template: 'sovereign-app' });
-  app.pipeline.forgejo = 'ok'; // a real repo with a landed commit
+  app.repo.seeded = ['src/App.tsx']; // a real generated source tree
   const after = await patchAppDesign(app.id, owner, { epics: epicsWithStory('done') });
-  assert.equal(after.epics?.[0].stories[0].status, 'done', 'a genuinely-committed app trusts the earned status');
+  assert.equal(after.epics?.[0].stories[0].status, 'done', 'an app with real generated code trusts the earned status');
 });
 
 test('reconcileBuiltStatus demotes phantom done/building when nothing is committed', async () => {
@@ -753,18 +647,4 @@ test('membership: getAppBySlugForUser resolves the deployed app for a viewer, ho
   assert.equal(denied, null, 'a non-visible app is not resolvable by slug');
   // Unknown slug ⇒ null (a deleted deploy degrades honestly).
   assert.equal(await getAppBySlugForUser('no-such-slug', owner), null);
-});
-
-test('Phase B flag OFF: refreshBuildStage says WHY honestly and leaves Actions authoritative', async () => {
-  // SOFTWARE_BUILD_SERVICE is unset in this file's process → the build service is OFF.
-  __resetAppsCache();
-  const { refreshBuildStage } = await import('./apps.ts');
-  const { BUILD_SERVICE_OFF_NOTE } = await import('./build-service.ts');
-  const app = await createApp(user, { name: 'Off Flag App', template: 'vite-os' });
-  const before = app.pipeline.harbor;
-  const out = await refreshBuildStage(app);
-  assert.ok(out, 'the OFF state is still reported, never silent');
-  assert.equal(out.status, before, 'the stage is untouched — Forgejo Actions stays authoritative');
-  assert.equal(out.note, BUILD_SERVICE_OFF_NOTE, 'the note states the flag/RBAC cause + the Actions fallback');
-  assert.equal(app.runImageDigest, undefined, 'no digest is ever pinned while the service is off');
 });

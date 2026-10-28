@@ -35,7 +35,7 @@ export type GrantField = keyof Pick<Grants, 'data' | 'knowledge' | 'metrics' | '
 /** The `…/grants/available?kind=` feed a member browses. */
 export type FeedKind =
   | 'data' | 'knowledge' | 'files' | 'connections' | 'metric'
-  | 'operating-manual' | 'strategy' | 'big-bets';
+  | 'operating-manual';
 
 export type ResourceMember = {
   /** Stable key — used in UI state + tests. */
@@ -66,24 +66,16 @@ export function isWorkflowId(id: string): boolean {
 /**
  * The ordered members of both sections. Data · Knowledge · Files · Connections ·
  * Metrics are wireable (they already have grant lists + available feeds). Workflows is
- * wireable via the shared knowledge feed, filtered to `wf_…` ids. The three Plan-item
- * kinds are all wireable through the ONE `plan` grant list, each with its own available
- * feed: Operating Model (`operating-manual` feed → `get_operating_manual`), Strategy
- * (`strategy` feed → `get_pillar`) and Big Bets (`big-bets` feed → `get_big_bet`). A
- * granted plan item is loaded at run time via its governed read tool, RLS/DLS-checked
- * as the caller in-store — read-only, never widening.
+ * wireable via the shared knowledge feed, filtered to `wf_…` ids. The Plan-item kind
+ * Operating Model is wireable through the `plan` grant list with its own available feed
+ * (`operating-manual` feed → `get_operating_manual`). A granted plan item is loaded at
+ * run time via its governed read tool, RLS/DLS-checked as the caller in-store —
+ * read-only, never widening.
  */
 export const RESOURCE_MEMBERS: ResourceMember[] = [
   // ① Plan Items
   {
-    key: 'strategy', label: 'Strategy', section: 'plan', wireable: true,
-    field: 'plan', feedKind: 'strategy',
-  },
-  {
-    key: 'bigbets', label: 'Big Bets', section: 'plan', wireable: true,
-    field: 'plan', feedKind: 'big-bets',
-  },
-  {
+
     key: 'operating-manual', label: 'Operating Model', section: 'plan', wireable: true,
     field: 'plan', feedKind: 'operating-manual',
   },

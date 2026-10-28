@@ -27,8 +27,8 @@ export const dynamic = 'force-dynamic';
  *
  *  1. legacy `{ instruction }` — the original one-shot scaffold: it edits the SAME
  *     system.yaml the canvas/Monaco edit and commits it through the store's whitelisted,
- *     sha-checked write, so the result is identical to the manual path (tutorial + MCP
- *     callers depend on this — UNCHANGED).
+ *     sha-checked write, so the result is identical to the manual path (MCP callers
+ *     depend on this — UNCHANGED).
  *
  *  2. chat `{ stage, messages }` — the per-stage assistant (Define · Grant · Design ·
  *     Build · Run · Evaluate). Runs the ONE governed model (`assistantComplete`:
@@ -136,7 +136,7 @@ function systemFor(stage: Stage): string {
         'You NEVER mutate anything. You only suggest; the user clicks Apply to accept.',
         'Respond with STRICT JSON only (no prose outside it, no code fences), matching:',
         '{ "message": string (markdown),',
-        '  "suggestedGrants"?: [ { "kind": "data"|"knowledge"|"files"|"connections"|"metric"|"operating-manual"|"strategy"|"big-bets", "id": exact id from the grantable list, "access"?: "read-only"|"read-propose"|"read-write", "reason": short why } ] }',
+        '  "suggestedGrants"?: [ { "kind": "data"|"knowledge"|"files"|"connections"|"metric"|"operating-manual", "id": exact id from the grantable list, "access"?: "read-only"|"read-propose"|"read-write", "reason": short why } ] }',
         'Only propose grants whose id appears in the grantable list. Prefer read-only unless the goal clearly needs writes. If nothing fits, omit the field.',
       ].join('\n');
     case 'design':

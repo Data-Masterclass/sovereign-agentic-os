@@ -73,7 +73,7 @@ function DashboardsTabInner() {
 
   return (
     <>
-      <PageHeader title="Dashboards" crumb="define · design · build · view · govern — on governed metrics" tutorial="dashboards" />
+      <PageHeader title="Dashboards" crumb="define · design · build · view · govern — on governed metrics" />
       <div className="content">
         {view.kind === 'builder' ? (
           <DashboardBuilder

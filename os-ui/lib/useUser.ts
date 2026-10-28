@@ -15,9 +15,7 @@ export type Me = {
   allDomains?: string[];
   /** The chosen active operating domain, or null = all domains. */
   activeDomain?: string | null;
-  /** The active domain's optional-layer flags (layers.ml = Science layer), or
-   *  null = unknown — layer-gated tabs fail OPEN on null (lib/core/tabs.ts). */
-  activeDomainLayers?: { ml?: boolean } | null;
+
   /** Enabled tab feature keys for this deployment (OS_ENABLED_TABS), read live
    *  from the server so a 'use client' sidebar never bakes in a build-time
    *  default. */

@@ -10,13 +10,10 @@ import { __resetApprovals } from '@/lib/governance/approvals';
 
 /**
  * The deploy-scan SECURITY fixes:
- *   1. LIVE-TREE SCAN — `requestDeploy` scans the app's REAL Forgejo repo tree
- *      when reachable (editor saves + direct git pushes included), labelled
- *      `live`; previously it only ever saw the in-process commit snapshot, so a
- *      pasted AWS key shipped with a clean "scan passed" card.
- *   2. EDITOR SAVES feed the snapshot — offline, a `saveAppFile` secret is now
- *      visible to the scan (it previously bypassed the snapshot entirely).
- *   3. DURABLE CARDS — review cards survive a pod roll via the os-mirror
+ *   1. EDITOR SAVES feed the scan — a `saveAppFile` secret is visible to the
+ *      deploy scan (it previously bypassed the snapshot entirely), so a pasted
+ *      AWS key can no longer ship with a clean "scan passed" card.
+ *   2. DURABLE CARDS — review cards survive a pod roll via the os-mirror
  *      pattern (`os-software-reviews`), so /software/reviews keeps its scan/diff.
  */
 
@@ -41,52 +38,11 @@ function stubFetch(handler: (url: string, init?: RequestInit) => Response | null
   };
 }
 
-test('SCAN READS THE LIVE TREE: a secret in the Forgejo repo (never committed via the OS) fails the deploy scan', async () => {
-  __resetApprovals();
-  __resetReviewCards();
-  // The live repo contains a leaked key that NEVER flowed through commitToApp —
-  // exactly the editor-save / direct-git-push blind spot.
-  const restore = stubFetch((url, init) => {
-    const method = init?.method ?? 'GET';
-    if (method === 'GET' && /\/api\/v1\/repos\/[^/]+\/[^/]+\/git\/trees\/main/.test(url)) {
-      return json({ tree: [{ path: 'leak.ts', type: 'blob' }, { path: 'README.md', type: 'blob' }] });
-    }
-    const c = url.match(/\/api\/v1\/repos\/[^/]+\/[^/]+\/contents\/([^?]+)\?ref=main/);
-    if (method === 'GET' && c) {
-      const path = decodeURIComponent(c[1]);
-      const content = path === 'leak.ts' ? LEAKED : '# readme\n';
-      return json({ type: 'file', encoding: 'base64', content: Buffer.from(content, 'utf8').toString('base64'), sha: 'abc' });
-    }
-    return null; // Forgejo create/seed, OpenSearch, Langfuse, k8s… all offline
-  });
-  try {
-    const app = await createApp(creator, { name: 'Live Tree Scan', template: 'nextjs-supabase' });
-    const res = await requestDeploy(app.id, creator);
-    assert.equal(res.kind, 'review');
-    if (res.kind !== 'review') return;
-    assert.equal(res.card.scan.mode, 'live', 'scanned the live repo tree, honestly labelled');
-    assert.equal(res.card.scan.passed, false, 'the leaked key BLOCKS the deploy');
-    assert.ok(
-      res.card.scan.findings.some((f) => f.category === 'secrets' && f.path === 'leak.ts'),
-      'the finding points at the leaked file from the LIVE tree',
-    );
-    // The diff reflects what will actually ship (the live tree, not the template).
-    assert.ok(res.card.diff.files.some((f) => f.path === 'leak.ts'));
-    // ONE approver gate: the Governance item files at builder — the same rank
-    // decideDeploy enforces and the UI copy ("Builder-reviewed") promises.
-    assert.equal(res.approval.approverRole, 'builder');
-  } finally {
-    restore();
-    __resetApprovals();
-    __resetReviewCards();
-  }
-});
-
 test('EDITOR SAVE feeds the scan snapshot: a secret saved via saveAppFile fails the offline scan', async () => {
   __resetApprovals();
   __resetReviewCards();
-  // Forgejo accepts the editor save (PUT contents) but exposes NO readable tree,
-  // so the deploy scan must fall back to the snapshot — which now includes the save.
+  // The editor save lands in the app's durable file mirror, and the deploy scan reads
+  // that same snapshot — so a secret saved through the editor still blocks the deploy.
   const restore = stubFetch((url, init) => {
     if ((init?.method ?? 'GET') === 'PUT' && /\/api\/v1\/repos\/[^/]+\/[^/]+\/contents\//.test(url)) {
       return json({ content: { sha: 'new' }, commit: { html_url: null } });

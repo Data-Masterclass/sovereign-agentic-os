@@ -136,7 +136,6 @@ export type BuildBriefApp = {
   purpose?: string;
   template: string;
   subdomain: string;
-  repo: { fullName: string };
   designDecisions: string;
   dataDescriptions: string;
   docs: string;
@@ -159,10 +158,10 @@ export type BuildBriefApp = {
  * The per-app BUILD CHAT (Software golden path §2) — now genuinely AGENTIC. It
  * runs the shared PLAN → ACT → deploy(gated) harness scoped to the `software` MCP
  * tools: it plans with the reasoning tier, then acts with the exec tier, calling
- * the SAME governed pipeline the UI + MCP use — `commit` (scaffold + commit to
- * Forgejo → auto-MCP → CI scan), `start_preview`, and `request_deploy` (which
+ * the SAME governed pipeline the UI + MCP use — `commit` (write the source tree →
+ * auto-MCP → security scan), `start_preview`, and `request_deploy` (which
  * opens the Builder review gate; it never goes live on its own). THIS app's full
- * context (design decisions, data model, docs, repo, and its appId) is injected
+ * context (design decisions, data model, docs, and its appId) is injected
  * so the agent builds coherently; the running conversation is persisted under the
  * app (home of record).
  */
@@ -178,14 +177,13 @@ export function appContext(
   const isSovereignApp = app.template === 'sovereign-app';
   const stackLine =
     app.template === 'api-service'
-      ? 'It is an APIs-only service (zero-dependency Node HTTP server, NO user interface) that lives in its own Forgejo repo'
+      ? 'It is an APIs-only service (zero-dependency Node HTTP server, NO user interface)'
       : isGovernedFrontend
-        ? 'It is a Vite + React governed OS-frontend app that lives in its own Forgejo repo'
-        : 'It is a governed app that lives in its own Forgejo repo';
+        ? 'It is a Vite + React governed OS-frontend app'
+        : 'It is a governed app';
   const lines = [
     `You are the build assistant for the "${app.name}" application (appId: ${app.id}).`,
-    stackLine,
-    `(${app.repo.fullName}) and ships via Forgejo Actions → Harbor → Argo CD to`,
+    `${stackLine} whose source lives in the OS's governed source tree and is served at`,
     `${app.subdomain}.`,
     // The full Define context (template + name + description + purpose) grounds every
     // code change — features are built from what the app IS, never invented.

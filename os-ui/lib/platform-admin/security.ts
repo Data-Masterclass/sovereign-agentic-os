@@ -43,7 +43,7 @@ const DEFAULT_ALLOW = ['example.com', 'github.com', 'salesforce.com', 'notion.co
 
 // Pinned to globalThis so the egress allowlist + requests are a TRUE singleton
 // across separately-bundled App Router route handlers (approve in one route,
-// read in another). Same pattern as lib/marketplace/store.ts.
+// read in another). Same pattern as lib/governance/approvals.ts.
 const ALLOW_KEY = Symbol.for('soa.platform-admin.egress-allow');
 function allow(): Set<string> {
   const g = globalThis as unknown as Record<symbol, Set<string> | undefined>;

@@ -17,7 +17,6 @@ function baseApp(overrides: Partial<BuildBriefApp> = {}): BuildBriefApp {
     name: 'Demo',
     template: 'vite-os',
     subdomain: 'demo.example',
-    repo: { fullName: 'org/demo' },
     designDecisions: '',
     dataDescriptions: '',
     docs: '',

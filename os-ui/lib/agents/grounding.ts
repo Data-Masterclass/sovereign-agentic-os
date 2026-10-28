@@ -8,14 +8,7 @@ import { getPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from '
 import { getMetric } from '@/lib/experimental/metrics/store';
 import { getConnectionForUser } from '@/lib/experimental/connections/store';
 import { resolveManual } from '@/lib/experimental/knowledge/manual';
-import { getPillar } from '@/lib/experimental/strategy/pillars';
-import { getBet, ensureHydrated as ensureBetsHydrated } from '@/lib/experimental/bigbets/store';
-import {
-  manualScopeOfPlanId,
-  manualLabel,
-  pillarIdOfPlanId,
-  bigBetIdOfPlanId,
-} from '@/lib/agents/plan-grants';
+import { manualScopeOfPlanId, manualLabel } from '@/lib/agents/plan-grants';
 import type { System } from '@/lib/agents/system-schema';
 import type { CurrentUser } from '@/lib/core/auth';
 import type { GroundingContext, GroundedResource } from '@/lib/agents/propose-team';
@@ -54,30 +47,12 @@ function resolveNames(ids: string[], resolve: (id: string) => string | null): Gr
   return out;
 }
 
-/** Resolve one plan-grant id (`manual:*` / `pillar:*` / `bigbet:*`) to a display name. */
-async function resolvePlanName(id: string, user: CurrentUser): Promise<string | null> {
+/** Resolve one plan-grant id (`manual:*`) to a display name. */
+function resolvePlanName(id: string, user: CurrentUser): string | null {
   const manualScope = manualScopeOfPlanId(id);
   if (manualScope) {
     const res = resolveManual(manualScope, user);
     return res.canView ? manualLabel(manualScope) : null;
-  }
-  const pillarId = pillarIdOfPlanId(id);
-  if (pillarId) {
-    try {
-      const p = await getPillar(user, pillarId);
-      return p.name;
-    } catch {
-      return null;
-    }
-  }
-  const betId = bigBetIdOfPlanId(id);
-  if (betId) {
-    try {
-      const b = getBet(betId, principalOf(user));
-      return b.name;
-    } catch {
-      return null;
-    }
   }
   return null;
 }
@@ -95,7 +70,6 @@ export async function resolveSystemGrounding(system: System, user: CurrentUser):
     ensureDataHydrated().catch(() => {}),
     ensureWorkflowsHydrated().catch(() => {}),
     ensurePersonalHydrated().catch(() => {}),
-    ensureBetsHydrated().catch(() => {}),
   ]);
   const p = principalOf(user);
 
@@ -126,11 +100,12 @@ export async function resolveSystemGrounding(system: System, user: CurrentUser):
     }
   }
 
-  // Plan items (Operating Model / Pillars / Big Bets) — resolved by encoded id.
+  // Plan items (Operating Model) — resolved by encoded id.
   const plan: GroundedResource[] = [];
   for (const item of g.plan) {
     if (!item.id) continue;
-    const name = await resolvePlanName(item.id, user);
+    const name = resolvePlanName(item.id, user);
+
     if (name) plan.push({ id: item.id, name });
   }
 

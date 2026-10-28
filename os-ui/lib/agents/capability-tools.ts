@@ -37,8 +37,7 @@ import { planTargetOf } from './plan-grants.ts';
  * grant list (file tools act over the caller's own DLS), so it is provisioned by
  * tools alone; the others also carry a `grants.<kind>` id list. `metrics` and `plan`
  * are read-only (no agent author path), so they provision read tools only. `plan`
- * holds heterogeneous Plan grants — Operating Manual (`manual:*`), Strategic Pillar
- * (`pillar:*`) and Big Bet (`bigbet:*`) — each of which provisions its OWN governed
+ * holds Operating Manual grants (`manual:*`), each of which provisions its governed
  * read tool (see {@link planToolsForId}); the store DLS/scope-checks the request. */
 export type GrantKind = 'data' | 'knowledge' | 'files' | 'connections' | 'metrics' | 'plan';
 
@@ -104,17 +103,14 @@ export function allToolsForKind(kind: GrantKind): string[] {
 
 /**
  * The governed READ tools a single `grants.plan` grant provisions, chosen by which
- * plan target its id encodes. A manual grant provisions the manual read tool; a pillar
- * grant provisions `get_pillar` (+ `list_pillars` for discovery); a bet grant provisions
- * `get_big_bet` (+ `list_big_bets`). Each tool DLS/scope-checks the request inside its
- * store at run time — read-only, never widening beyond what the caller may view. An
- * unrecognised id provisions nothing (fail-closed). Plan grants are always read-only,
- * so `capability` only gates Off/Blocked (which grant nothing).
+ * plan target its id encodes. A manual grant provisions the manual read tool, which
+ * DLS/scope-checks the request inside its store at run time — read-only, never
+ * widening beyond what the caller may view. An unrecognised id provisions nothing
+ * (fail-closed). Plan grants are always read-only, so `capability` only gates
+ * Off/Blocked (which grant nothing).
  */
-const PLAN_TOOLS_BY_TARGET: Record<'manual' | 'pillar' | 'bigbet', string[]> = {
+const PLAN_TOOLS_BY_TARGET: Record<'manual', string[]> = {
   manual: ['get_operating_manual'],
-  pillar: ['get_pillar', 'list_pillars'],
-  bigbet: ['get_big_bet', 'list_big_bets'],
 };
 
 export function planToolsForId(id: string, capability: Capability): string[] {
@@ -200,17 +196,7 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
     grantKind: 'metrics',
     tools: READ_TOOLS.metrics,
   },
-  {
-    id: 'use-goals',
-    label: 'Use goals',
-    description: "Read the team's strategic pillars and big bets that were granted.",
-    domain: 'Goals',
-    grantKind: 'plan',
-    // The pillar + big-bet governed read tools (the two GOAL plan targets) — kept in
-    // step with what `planToolsForId` provisions for a pillar/bet grant so the chip
-    // round-trips against a granted goal.
-    tools: [...PLAN_TOOLS_BY_TARGET.pillar, ...PLAN_TOOLS_BY_TARGET.bigbet],
-  },
+
   {
     id: 'read-operating-manual',
     label: 'Read operating manual',
@@ -227,10 +213,8 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
  *
  * 1. A chip whose `grantKind` is non-null is only offered when `grants[grantKind]`
  *    has at least one entry (i.e. the team was actually granted that resource). The
- *    `plan` grant is heterogeneous — an Operating-Model grant (`manual:*`) surfaces the
- *    operating-manual chip, while a Strategic-Pillar/Big-Bet grant (`pillar:*`/`bigbet:*`)
- *    surfaces the goals chip — so plan chips gate on the plan-grant TARGETS, not merely
- *    on a non-empty list (see {@link planChipMatches}).
+ *    `plan` chip gates on the plan-grant TARGET (an Operating-Model grant, `manual:*`),
+ *    not merely on a non-empty list (see {@link planChipMatches}).
  * 2. Every tool in a chip's `tools` list must appear in `catalog` (the role-scoped
  *    list from the platform) — if any tool is absent the chip is not offered.
  *    When `catalog` is `null` (still loading) no filtering by catalog is applied.
@@ -246,7 +230,7 @@ export function capabilityChipsForGrants(
     if (chip.grantKind !== null) {
       const list = grants[chip.grantKind];
       if (!Array.isArray(list) || list.length === 0) return false;
-      // Plan grants are heterogeneous — surface by the specific plan target.
+      // Plan grants surface by the specific plan target.
       if (chip.grantKind === 'plan' && !planChipMatches(chip.id, list)) return false;
     }
     // All tools must be in the catalog (when catalog has loaded).
@@ -256,17 +240,15 @@ export function capabilityChipsForGrants(
 }
 
 /**
- * Whether a plan-gated chip is warranted by the plan grants held. The goals chip
- * (`use-goals`) needs a `pillar:`/`bigbet:` grant; the operating-manual chip
- * (`read-operating-manual`) needs a `manual:` grant. Keeps the two plan chips from
- * both firing off one another's grant.
+ * Whether a plan-gated chip is warranted by the plan grants held: the operating-manual
+ * chip (`read-operating-manual`) needs a `manual:` grant.
  */
 function planChipMatches(chipId: string, planGrants: ArtifactGrant[]): boolean {
   const targets = new Set(planGrants.map((g) => planTargetOf(g.id)));
-  if (chipId === 'use-goals') return targets.has('pillar') || targets.has('bigbet');
   if (chipId === 'read-operating-manual') return targets.has('manual');
   return true;
 }
+
 
 /** The union of all tools for a set of chip ids. */
 export function toolsForCapabilityChips(chipIds: string[]): string[] {

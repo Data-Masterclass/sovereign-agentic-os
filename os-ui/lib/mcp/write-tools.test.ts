@@ -11,10 +11,8 @@ import { __resetStore as resetKnowledge } from '@/lib/experimental/knowledge/sto
 import { __resetStore as resetFiles } from '@/lib/experimental/files/store';
 import { __resetBlobs, getBlob } from '@/lib/experimental/files/object-store';
 import { __resetDashboards } from '@/lib/experimental/dashboards/store';
-import { __resetBets } from '@/lib/experimental/bigbets/store';
 import { __resetStore as resetAgents } from '@/lib/agents/store';
 import { __resetApprovals } from '@/lib/governance/approvals';
-import { __resetForTests as resetPillars } from '@/lib/experimental/strategy/pillars';
 
 /**
  * The governed MCP WRITE tools: each must delegate to the SAME lib function the UI
@@ -34,17 +32,8 @@ function resetAll(): void {
   resetFiles();
   __resetBlobs();
   __resetDashboards();
-  __resetBets();
   resetAgents();
   __resetApprovals();
-  resetPillars();
-}
-
-/** Create a real domain pillar (as a builder) and return its id — a Big Bet must
- *  be filed under a pillar the caller can view (containment). */
-async function seedPillar(user: CurrentUser = builder): Promise<string> {
-  const p = payload<{ id: string }>(await call(user, 'create_pillar', { name: 'Grow NRR', scope: 'domain', domain: 'sales' }));
-  return p.id;
 }
 
 async function call(user: CurrentUser, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -138,16 +127,9 @@ test('FILES: upload a documented file, then a builder promotes it to a domain as
   assert.equal(promoted.asset.tier, 'asset');
 });
 
-// ---- BIG BETS + AGENTS ------------------------------------------------------
-test('BIG BETS + AGENTS: create a bet and assemble + build an agent system as the caller', async () => {
+// ---- AGENTS -----------------------------------------------------------------
+test('AGENTS: assemble + build an agent system as the caller', async () => {
   resetAll();
-  const pillarId = await seedPillar();
-  const bet = payload<{ id: string; status: string }>(await call(builder, 'create_big_bet', {
-    problem: 'Churn is rising among SMB accounts', pillarId, owner: 'ben', targetValue: 250000,
-  }));
-  assert.ok(bet.id);
-  assert.equal(bet.status, 'active', 'a builder owns an ACTIVE bet');
-
   const sys = payload<{ id: string; visibility: string }>(await call(builder, 'create_agent_system', { name: 'Support triage', template: 'analyze' }));
   assert.ok(sys.id);
   assert.equal(sys.visibility, 'Personal', 'a new system is always Personal (sharing is the governed ladder)');
@@ -160,130 +142,6 @@ test('BIG BETS + AGENTS: create a bet and assemble + build an agent system as th
   // Build runs the governed adapters (offline-mock in the test env) — as the caller.
   const build = payload<{ mode: string }>(await call(builder, 'build_agent_system', { systemId: sys.id }));
   assert.ok(build.mode, 'build_agent_system returns a build report');
-});
-
-// ---- BIG BET containment: pillarId is required + view-gated ------------------
-test('BIG BET containment: create_big_bet needs a viewable pillarId', async () => {
-  resetAll();
-  // Missing pillarId → bad_request (400).
-  const missing = errorOf(await call(builder, 'create_big_bet', { problem: 'No pillar given' }));
-  assert.equal(missing.code, 'bad_request', 'a bet with no pillarId is refused');
-
-  // A pillarId the caller cannot view → typed forbidden/not_found (no existence leak).
-  const finPillar = payload<{ id: string }>(
-    await call({ id: 'fin', name: 'Fin', domains: ['finance'], role: 'builder' }, 'create_pillar', {
-      name: 'Finance spine', scope: 'domain', domain: 'finance',
-    }),
-  );
-  const unseen = errorOf(await call(builder, 'create_big_bet', { problem: 'Cross-domain grab', pillarId: finPillar.id }));
-  assert.ok(unseen.code === 'forbidden' || unseen.code === 'not_found', `no cross-domain pillar leak (got ${unseen.code})`);
-
-  // A real, viewable pillar → the bet is filed under it.
-  const pillarId = await seedPillar();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Real bet', pillarId }));
-  assert.ok(bet.id, 'a bet under a viewable pillar is created');
-});
-
-// ---- BIG BET lifecycle: archive · unarchive · delete · restore (gated) ------
-test('BIG BET lifecycle: owner archives → unarchives → restores → deletes; a creator draft owner runs their own', async () => {
-  resetAll();
-  const pillarId = await seedPillar();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Lifecycle bet', pillarId, targetValue: 100 }));
-  const betId = bet.id;
-
-  // archive → status archived.
-  const arch = payload<{ status: string }>(await call(builder, 'archive_big_bet', { betId }));
-  assert.equal(arch.status, 'archived', 'archive_big_bet soft-hides the bet');
-
-  // unarchive → back to active.
-  const un = payload<{ status: string }>(await call(builder, 'unarchive_big_bet', { betId }));
-  assert.equal(un.status, 'active', 'unarchive_big_bet returns it to the working list');
-
-  // An edit records a version; restore_big_bet_version rolls the content back.
-  payload(await call(builder, 'update_big_bet', { betId, name: 'Renamed bet' }));
-  const restored = payload<{ id: string }>(await call(builder, 'restore_big_bet_version', { betId, versionId: 1 }));
-  assert.equal(restored.id, betId, 'restore_big_bet_version returns the bet');
-
-  // delete → gone.
-  const del = payload<{ deleted: boolean }>(await call(builder, 'delete_big_bet', { betId }));
-  assert.equal(del.deleted, true, 'delete_big_bet permanently removes it');
-  const gone = errorOf(await call(builder, 'get_big_bet', { betId }));
-  assert.ok(gone.code === 'not_found' || gone.code === 'forbidden', 'the deleted bet is gone');
-});
-
-test('BIG BET lifecycle: a non-owner outsider cannot archive/delete someone elses bet (typed error)', async () => {
-  resetAll();
-  const pillarId = await seedPillar();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Owned by Ben', pillarId }));
-  // A builder in another domain — not the owner, not an admin — cannot edit.
-  const outsider: CurrentUser = { id: 'zed', name: 'Zed', domains: ['finance'], role: 'builder' };
-  const err = errorOf(await call(outsider, 'archive_big_bet', { betId: bet.id }));
-  assert.ok(err.code === 'forbidden' || err.code === 'not_found', `the store edit gate re-gates (got ${err.code})`);
-  const errDel = errorOf(await call(outsider, 'delete_big_bet', { betId: bet.id }));
-  assert.ok(errDel.code === 'forbidden' || errDel.code === 'not_found', `delete is edit-gated too (got ${errDel.code})`);
-});
-
-// ---- BIG BET SOLUTION BLUEPRINT (Phase 3): anchor · attach · wire · read -----
-test('SOLUTION: attach_bet_component re-resolves canView, set_bet_workflow anchors, wire validates + dedupes, get_bet_solution reads back', async () => {
-  resetAll();
-  const pillarId = await seedPillar();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Wire the solution', pillarId, targetValue: 100 }));
-
-  // Real components authored through their OWN governed stores (not forged ids).
-  const wf = payload<{ id: string }>(await call(builder, 'author_knowledge', { title: 'Retention playbook' }));
-  const sys = payload<{ id: string }>(await call(builder, 'create_agent_system', { name: 'Retention agent', template: 'analyze' }));
-
-  // attach_bet_component handles the extra kinds (knowledge, agent) — each re-resolved
-  // through its tab's canView gate before the reference is recorded.
-  const attWf = payload<{ refId: string; tab: string }>(await call(builder, 'attach_bet_component', { betId: bet.id, kind: 'knowledge', id: wf.id }));
-  const attSys = payload<{ refId: string; tab: string }>(await call(builder, 'attach_bet_component', { betId: bet.id, kind: 'agent', id: sys.id }));
-  assert.equal(attWf.tab, 'knowledge');
-  assert.equal(attSys.tab, 'agent');
-
-  // A forged/unseen id is a typed not_found/forbidden BEFORE anything attaches.
-  const forged = errorOf(await call(builder, 'attach_bet_component', { betId: bet.id, kind: 'knowledge', id: 'wf_does_not_exist' }));
-  assert.ok(forged.code === 'not_found' || forged.code === 'forbidden', `forged id refused (got ${forged.code})`);
-
-  // set_bet_workflow anchors the knowledge ref; a non-knowledge anchor is refused.
-  payload(await call(builder, 'set_bet_workflow', { betId: bet.id, refId: attWf.refId }));
-  const badAnchor = errorOf(await call(builder, 'set_bet_workflow', { betId: bet.id, refId: attSys.refId }));
-  assert.equal(badAnchor.code, 'bad_request', 'the anchor must be a knowledge component');
-
-  // wire_bet_components validates the relation + dedupes.
-  const badRel = errorOf(await call(builder, 'wire_bet_components', { betId: bet.id, from: attWf.refId, to: attSys.refId, relation: 'bogus' }));
-  assert.equal(badRel.code, 'bad_request', 'an invalid relation is refused');
-  const edge = payload<{ edgeId: string; relation: string }>(await call(builder, 'wire_bet_components', { betId: bet.id, from: attWf.refId, to: attSys.refId, relation: 'triggers' }));
-  assert.equal(edge.relation, 'triggers');
-  const dup = errorOf(await call(builder, 'wire_bet_components', { betId: bet.id, from: attWf.refId, to: attSys.refId, relation: 'triggers' }));
-  assert.equal(dup.code, 'conflict', 'a duplicate edge is refused');
-
-  // get_bet_solution reads the blueprint back — anchor, nodes (with roles), edges.
-  const sol = payload<{ anchor: { refId: string } | null; nodes: { refId: string; role: string }[]; edges: { edgeId: string }[] }>(
-    await call(builder, 'get_bet_solution', { betId: bet.id }),
-  );
-  assert.equal(sol.anchor?.refId, attWf.refId, 'the anchor is read back');
-  assert.equal(sol.nodes.find((n) => n.refId === attWf.refId)?.role, 'anchor-workflow');
-  assert.equal(sol.edges.length, 1, 'the one interplay edge is read back');
-
-  // unwire_bet_components removes it; an unknown edge id is a typed not_found.
-  payload(await call(builder, 'unwire_bet_components', { betId: bet.id, edgeId: edge.edgeId }));
-  const gone = errorOf(await call(builder, 'unwire_bet_components', { betId: bet.id, edgeId: edge.edgeId }));
-  assert.equal(gone.code, 'not_found', 'unwiring a missing edge is a typed not_found');
-});
-
-test('SOLUTION: a non-editor outsider is denied every blueprint write (edit-gate, typed forbidden)', async () => {
-  resetAll();
-  const pillarId = await seedPillar();
-  const bet = payload<{ id: string }>(await call(builder, 'create_big_bet', { problem: 'Owned by Ben', pillarId }));
-  const wf = payload<{ id: string }>(await call(builder, 'author_knowledge', { title: 'Ben SOP' }));
-  const att = payload<{ refId: string }>(await call(builder, 'attach_bet_component', { betId: bet.id, kind: 'knowledge', id: wf.id }));
-
-  // A builder in another domain — not the owner, not an admin — cannot edit the blueprint.
-  const outsider: CurrentUser = { id: 'zed', name: 'Zed', domains: ['finance'], role: 'builder' };
-  const a = errorOf(await call(outsider, 'set_bet_workflow', { betId: bet.id, refId: att.refId }));
-  assert.ok(a.code === 'forbidden' || a.code === 'not_found', `set_bet_workflow is edit-gated (got ${a.code})`);
-  const b = errorOf(await call(outsider, 'attach_bet_component', { betId: bet.id, kind: 'knowledge', id: wf.id }));
-  assert.ok(b.code === 'forbidden' || b.code === 'not_found', `attach_bet_component is edit-gated (got ${b.code})`);
 });
 
 // ---- THE CREATOR LOCKDOWN: create yes, promote/publish NO --------------------
@@ -447,14 +305,14 @@ test('RETIRE: role-gated — a creator is denied retiring another owner’s SHAR
 });
 
 // ---- CUBE auto-registration reflected in get_dataset -------------------------
-test('DISCOVERY: get_dataset reflects Cube auto-registration state (no manual metric needed)', async () => {
+test('DISCOVERY: get_dataset reflects metric-readiness (no manual metric needed)', async () => {
   resetAll();
   const d = payload<{ id: string }>(await call(creator, 'create_dataset', { name: 'Orders', domain: 'sales' }));
-  // A brand-new private dataset is NOT Cube-ready (not shared, no Gold).
-  const before = payload<{ cube: { ready: boolean; measures: string[] } }>(await call(creator, 'get_dataset', { datasetId: d.id }));
-  assert.equal(before.cube.ready, false);
+  // A brand-new private dataset is NOT metric-ready (no built Gold mart to serve from).
+  const before = payload<{ metrics: { ready: boolean; measures: string[] } }>(await call(creator, 'get_dataset', { datasetId: d.id }));
+  assert.equal(before.metrics.ready, false);
   // The measures default to the count fallback (queryable without define_metric).
-  assert.deepEqual(before.cube.measures, ['count']);
+  assert.deepEqual(before.metrics.measures, ['count']);
 });
 
 // ---- METRICS: define_metric returns pending flag + preview/promote tools ----

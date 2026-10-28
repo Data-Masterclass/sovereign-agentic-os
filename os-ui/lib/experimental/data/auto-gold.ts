@@ -47,7 +47,7 @@ export function shouldAutoGold(d: AutoGoldInput, just: 'bronze' | 'silver'): boo
   // sync engine (`iceberg.<domain>.gold_<slug>`, earned `versions.gold.built`) — there is no
   // bronze/silver to carry forward. A curated dataset composes its own Gold. The synced
   // Gold copy is still registered for Cube handover through the NORMAL governed path
-  // (`cubeDeliverable` = governed tier + built Gold, `metricCubeReady`) — it needs no
+  // (`metricDeliverable` = governed tier + built Gold, `metricModelReady`) — it needs no
   // pass-through here. So all connected/curated origins stay out of this UI trigger.
   if (d.origin === 'curated' || d.origin === 'connected') return false;
   const v = d.versions;

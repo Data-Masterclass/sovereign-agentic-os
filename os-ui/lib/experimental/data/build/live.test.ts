@@ -7,10 +7,6 @@ import { makeLiveAdapters, type DataLiveDeps } from './live.ts';
 import { makeMockAdapters, mockDeps, newMockBackends } from './mocks.ts';
 import { orchestrateStage } from './orchestrate.ts';
 import { runAdapter, type DataBuildContext } from './adapter.ts';
-import {
-  CUBE_ARTIFACT, DASHBOARD_ARTIFACT, EXPOSURE_ARTIFACT,
-  scaffoldCubeYaml, scaffoldDashboardBundle, scaffoldExposureYaml,
-} from '../metrics.ts';
 import { emptyVersions, type Dataset } from '../dataset-schema.ts';
 
 function gold(over: Partial<Dataset> = {}): Dataset {
@@ -26,81 +22,18 @@ function gold(over: Partial<Dataset> = {}): Dataset {
 }
 
 function ctxFor(d: Dataset): DataBuildContext {
-  return {
-    dataset: d,
-    artifacts: {
-      [CUBE_ARTIFACT(d)]: scaffoldCubeYaml(d),
-      [EXPOSURE_ARTIFACT]: scaffoldExposureYaml(d),
-      [DASHBOARD_ARTIFACT(d)]: scaffoldDashboardBundle(d),
-    },
-  };
+  return { dataset: d, artifacts: {} };
 }
 
-/** A live-shaped fake deps set we control to drive apply/verify outcomes. */
-function fakes(over: Partial<{ resolves: boolean; imported: boolean; lineage: boolean }> = {}): DataLiveDeps {
-  const o = { resolves: true, imported: true, lineage: true, ...over };
-  const dashboards = new Set<string>();
-  return {
-    // Base on the mock deps so the Phase-6 clients (dlt/dbt/dbt-trino/trino/policy +
-    // roster) are present; override cube/superset/om to steer the assertions.
-    ...mockDeps(newMockBackends()),
-    cube: {
-      async reload() {},
-      async resolveMeasure() { return o.resolves ? 4242 : null; },
-    },
-    superset: {
-      async importBundle(name) { if (o.imported) dashboards.add(name); },
-      async dashboardExists(name) { return dashboards.has(name); },
-    },
-    om: {
-      async pushExposure() {},
-      async hasLineage() { return o.lineage; },
-    },
-  };
+/** A live-shaped fake deps set (the in-process clients: dlt/dbt/dbt-trino/trino/policy + roster). */
+function fakes(): DataLiveDeps {
+  return mockDeps(newMockBackends());
 }
-
-test('metric stage ✓ when cube resolves AND om gate+lineage pass (live adapters)', async () => {
-  const r = await orchestrateStage('metric', ctxFor(gold()), makeLiveAdapters(fakes()));
-  assert.equal(r.ok, true);
-  assert.deepEqual(r.rows.map((x) => x.tool), ['cube', 'om']);
-  assert.ok(r.rows.every((x) => x.status === 'ok'));
-});
-
-test('cardinal rule: cube apply ok but the metric does NOT resolve → ✗ (no false green)', async () => {
-  const r = await orchestrateStage('metric', ctxFor(gold()), makeLiveAdapters(fakes({ resolves: false })));
-  assert.equal(r.ok, false);
-  const cube = r.rows.find((x) => x.tool === 'cube')!;
-  assert.equal(cube.applied, true);
-  assert.equal(cube.verified, false);
-  assert.equal(cube.status, 'fail');
-});
-
-test('om verify fails when the transparency gate is red (structural gap)', async () => {
-  // Docs are advisory now — the gate only reds on a STRUCTURAL gap (owner/domain/tier).
-  const bare = gold({ domain: '' });
-  const r = await orchestrateStage('metric', ctxFor(bare), makeLiveAdapters(fakes()));
-  const om = r.rows.find((x) => x.tool === 'om')!;
-  assert.equal(om.status, 'fail');
-  assert.match(om.error ?? '', /transparency gate|domain/);
-});
-
-test('dashboard stage ✓ when the bundle imports and the dashboard loads', async () => {
-  const r = await orchestrateStage('dashboard', ctxFor(gold()), makeLiveAdapters(fakes()));
-  assert.equal(r.ok, true);
-  assert.deepEqual(r.rows.map((x) => x.tool), ['superset', 'om']);
-});
-
-test('dashboard ✗ if the import silently did nothing (verify catches it)', async () => {
-  const r = await orchestrateStage('dashboard', ctxFor(gold()), makeLiveAdapters(fakes({ imported: false })));
-  const ss = r.rows.find((x) => x.tool === 'superset')!;
-  assert.equal(ss.applied, true);
-  assert.equal(ss.status, 'fail'); // dashboardExists → false
-});
 
 test('offline-mock runs the SAME adapter logic and agrees with live (no drift)', async () => {
-  const mock = await orchestrateStage('metric', ctxFor(gold()), makeMockAdapters(newMockBackends()));
+  const mock = await orchestrateStage('promote', ctxFor(gold()), makeMockAdapters(newMockBackends()));
   assert.equal(mock.ok, true);
-  assert.deepEqual(mock.rows.map((x) => x.tool), ['cube', 'om']);
+  assert.deepEqual(mock.rows.map((x) => x.tool), ['policy', 'dbt-trino', 'trino']);
 });
 
 test('bronze dlt adapter normalizes a hyphenated domain to a valid Trino schema (dash->underscore)', async () => {
@@ -176,19 +109,26 @@ test('promote ✗ if the materialized table is not queryable (dbt-trino/trino ch
   assert.equal(trino.status, 'fail');
 });
 
-test('policy adapter verify is the CONFORMANCE gate (OPA == Cube)', async () => {
+test('policy adapter verify checks the compiled OPA bundle governs the promoted FQN', async () => {
   const r = await orchestrateStage('certify', ctxFor(gold({ tier: 'product', visibility: 'shared' })), makeLiveAdapters(fakes()));
   const policy = r.rows.find((x) => x.tool === 'policy')!;
   assert.equal(policy.status, 'ok');
-  assert.match(policy.detail, /conformant/);
+  assert.match(policy.detail, /OPA governance covers iceberg\.sales\.gold_orders/);
+});
+
+test('policy adapter ✗ for a dataset the compiler does not govern (never an ungoverned publish)', async () => {
+  const r = await orchestrateStage('certify', ctxFor(gold({ tier: 'dataset', visibility: 'private' })), makeLiveAdapters(fakes()));
+  const policy = r.rows.find((x) => x.tool === 'policy')!;
+  assert.equal(policy.status, 'fail');
+  assert.match(policy.error ?? '', /no OPA governance compiled/);
 });
 
 test('runAdapter catches a thrown live-client error as ✗ (honest network failure)', async () => {
   const throwing = makeLiveAdapters({
     ...fakes(),
-    cube: { async reload() { throw new Error('Cube unreachable'); }, async resolveMeasure() { return 1; } },
+    policy: { async push() { throw new Error('OPA unreachable'); } },
   });
-  const row = await runAdapter(throwing.cube, ctxFor(gold()));
+  const row = await runAdapter(throwing.policy, ctxFor(gold({ tier: 'product', visibility: 'shared' })));
   assert.equal(row.status, 'fail');
   assert.match(row.error ?? '', /unreachable/);
 });

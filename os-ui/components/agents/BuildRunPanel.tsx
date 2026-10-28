@@ -30,7 +30,7 @@ import { agentDisplayName } from '@/lib/agents/build/eval-report';
 
 /**
  * Build = execute + verify (Task 4) and Run (Task 7). Build runs the 5 adapters
- * (forgejo / opa / litellm / langgraph / langfuse) apply→verify and shows an
+ * (opa / litellm / langgraph / langfuse) apply→verify and shows an
  * inline ✓/✗ row per tool with the exact error — a row is ✓ ONLY when BOTH apply
  * AND verify pass, so Build can never report success without a real check. Run
  * fires a test invocation through the governed gateway (every tool call OPA-checked
@@ -191,18 +191,17 @@ const NODE_STATUS_BADGE: Record<NodeStatus, string> = { ok: 'ok', denied: 'warn'
 const NODE_STATUS_LABEL: Record<NodeStatus, string> = { ok: '✓ ok', denied: 'denied', error: 'error', failed: '✗ failed' };
 
 /**
- * The real build phases — the SAME work the server's 5 adapters do (forgejo · opa ·
- * litellm · langgraph · langfuse), in order, described in plain words. The build route
+ * The real build phases — the SAME work the server's 4 adapters do (opa · litellm ·
+ * langgraph · langfuse), in order, described in plain words. The build route
  * is a single call (no per-stage stream), so the stepper advances through these on a
  * gentle timer while the build is in flight, then settles on the real ✓/✗ outcome the
  * moment the report lands. Honest: these are the actual phases, not invented steps.
  */
 const BUILD_STAGES: { key: string; label: string; tools: string[] }[] = [
-  { key: 'scaffold', label: 'Scaffolding agents…', tools: ['forgejo'] },
   { key: 'grants', label: 'Provisioning tools & grants…', tools: ['opa', 'litellm'] },
   { key: 'graph', label: 'Wiring the graph…', tools: ['langgraph'] },
   { key: 'trace', label: 'Linking traces…', tools: ['langfuse'] },
-  { key: 'commit', label: 'Committing agent files…', tools: [] },
+  { key: 'commit', label: 'Saving agent files…', tools: [] },
 ];
 
 /**
@@ -1093,7 +1092,7 @@ export default function BuildRunPanel({
         </div>
       ) : null}
       <p className="hint" style={{ marginTop: 0 }}>
-        Compiles system.yaml → LangGraph, writes the Forgejo files, registers the LiteLLM key +
+        Compiles system.yaml → LangGraph, saves the agent files, registers the LiteLLM key +
         routing and the OPA grants, links Langfuse — then verifies each with a probe. Mocked in kind.
       </p>
       {buildErr ? <div className="error">{buildErr}</div> : null}

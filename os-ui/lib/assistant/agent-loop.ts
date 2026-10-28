@@ -41,25 +41,22 @@ import { renderPageContext, type PageContext } from './page-context.ts';
 
 /**
  * Route → MCP tab. The app's nav hrefs don't all match the MCP tab ids (Files
- * lives at `/unstructured`; Big Bets at `/big-bets`), so map explicitly. Routes
- * with no governed tool surface (Home, Cockpit, Settings, Admin…) return null —
+ * lives at `/unstructured`), so map explicitly. Routes
+ * with no governed tool surface (Home, Settings, Admin…) return null —
  * the assistant is still fully available, just without a tab lens.
  */
 const PATH_TAB: Record<string, McpTab> = {
   data: 'data',
-  science: 'science',
   knowledge: 'knowledge',
   agents: 'agents',
   software: 'software',
   unstructured: 'files',
   metrics: 'metrics',
   dashboards: 'dashboards',
-  'big-bets': 'bigbets',
   connections: 'connections',
   governance: 'governance',
-  marketplace: 'marketplace',
-  strategy: 'strategy',
   monitoring: 'monitoring',
+
 };
 
 /** Resolve the current MCP tab from a browser pathname, or null (no tab lens). */

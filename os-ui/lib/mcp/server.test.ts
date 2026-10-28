@@ -50,7 +50,7 @@ test('tools/list: role-scoped — admin sees elevated tools, a creator does NOT'
   }
   // Both roles get the cross-OS read tools + a valid JSON Schema per tool.
   assert.ok(creatorNames.includes('query_data'));
-  assert.ok(creatorNames.includes('science_predict'));
+
   const list = listToolsForRole(admin.role);
   for (const t of list) assert.equal(t.inputSchema.type, 'object');
   assert.ok(adminNames.length > creatorNames.length);

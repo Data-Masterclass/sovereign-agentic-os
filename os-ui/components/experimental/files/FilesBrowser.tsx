@@ -7,7 +7,6 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useSearchParams } from 'next/navigation';
 import { useUser } from '@/lib/useUser';
 import { roleAtLeast } from '@/lib/core/session';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@/lib/core/scopes';
 import {
   itemsUnderFolder,
@@ -543,13 +542,12 @@ function FilesBrowserInner() {
         <div className="files-scope">
           {SCOPE_GROUPS.map((g) => (
             <button key={g.key} className={scope === g.key ? 'on' : ''}
-              {...(g.key === 'mine' ? anchorAttr(ANCHORS.files.sandbox) : {})}
               onClick={() => { setScope(g.key); setSel(null); setTag(null); setSelected(null); setPicked(new Set()); }}>
               {g.label('Files')}{counts ? ` (${counts[g.key]})` : ''}
             </button>
           ))}
         </div>
-        <div className="files-search" {...anchorAttr(ANCHORS.files.search)}>
+        <div className="files-search">
           <span className="sk">Search</span>
           <input value={query} placeholder="across names, tags, and content…"
             onChange={(e) => setQuery(e.target.value)} aria-label="Search files" />
@@ -584,7 +582,7 @@ function FilesBrowserInner() {
             surface; opening the created file lands you in View. */}
         <div className="files-new" style={{ position: 'relative' }}>
           <button className="btn" onClick={() => setNewOpen((v) => !v)} disabled={uploading}
-            aria-busy={uploading} aria-haspopup="menu" aria-expanded={newOpen} {...anchorAttr(ANCHORS.files.upload)}>
+            aria-busy={uploading} aria-haspopup="menu" aria-expanded={newOpen}>
             {uploading ? <><span className="spin" /> Uploading…</> : '＋ New'}
           </button>
           {newOpen ? (

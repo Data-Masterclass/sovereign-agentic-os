@@ -574,7 +574,7 @@ export function sanitizeWorkdayReports(
 
 export async function createConnection(
   user: CurrentUser,
-  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown; warehouse?: WarehouseCreateInput; omService?: string; airflow?: AirflowCreateInput; atlassian?: AtlassianCreateInput; odata?: ODataCreateInput; workday?: WorkdayCreateInput },
+  input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown; warehouse?: WarehouseCreateInput; airflow?: AirflowCreateInput; atlassian?: AtlassianCreateInput; odata?: ODataCreateInput; workday?: WorkdayCreateInput },
 ): Promise<Connection> {
   const tpl = templateByKey(input.template);
   if (!tpl) throw withStatus(new Error('Unknown connection template'), 400);
@@ -584,12 +584,6 @@ export async function createConnection(
   // change for any other template when the flag is off.
   if (tpl.key === 'warehouse' && !config.externalConnectorsEnabled) {
     throw withStatus(new Error('External-warehouse connectors are not enabled on this deployment'), 403);
-  }
-
-  // External OpenMetadata connections are gated OFF by default too — refuse to
-  // create one unless the operator has turned on OPENMETADATA_CONNECT_ENABLED.
-  if (tpl.key === 'om-catalog' && !config.openmetadataConnectEnabled) {
-    throw withStatus(new Error('External OpenMetadata connections are not enabled on this deployment'), 403);
   }
 
   // WHO CONNECTS (golden path): any user may connect a PERSONAL (per-user OAuth)
@@ -738,8 +732,6 @@ export async function createConnection(
     grants: [],
     health: 'untested',
     dataUsage: null,
-    // For an om-catalog connection, stamp the optional default OM Service (non-secret).
-    ...(tpl.key === 'om-catalog' ? { om: { service: (input.omService ?? '').trim() || undefined } } : {}),
     // For an airflow connection, stamp the non-secret REST config (auth type, Basic
     // username, optional trigger allowlist). The password/token stays in the vault.
     ...(tpl.key === 'airflow'
@@ -1236,7 +1228,7 @@ function executeIdentity(user: CurrentUser): ExecuteIdentity {
 /**
  * The GitOps registration snippet for a warehouse connection: the Trino catalog
  * props + the exact `values.trino.externalCatalogs` entry an operator pastes, plus
- * the secret env vars + OM hint. Registration is a values edit + rolling restart
+ * the secret env vars. Registration is a values edit + rolling restart
  * (the pod's catalog dir is a read-only ConfigMap) — this returns what to apply, it
  * never mutates the cluster. Visible to anyone who can see the connection.
  */

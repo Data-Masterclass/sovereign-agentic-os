@@ -6,7 +6,8 @@ preamble, and it is exposed over the MCP as the guide resource
 `sovereign-os://guide/build-spec/software` (referenced from the
 `build_and_ship_software` prompt). A drift test asserts all copies are identical.
 
-> Phase 1 status: **build + commit + iterate is real** (real Forgejo commits).
+> Phase 1 status: **build + save + iterate is real** (real file writes into the app's
+> own governed file store — there is no git server and no CI).
 > **Preview and live deploy are not yet available** — the in-cluster runner ships
 > in the next release. Never claim a working preview or live URL. The governed
 > review gate (`request_deploy` → Builder `decide_deploy`) is real; only the
@@ -14,15 +15,16 @@ preamble, and it is exposed over the MCP as the guide resource
 
 ## 1. What you are building on
 
-Next.js (App Router) + Supabase (Postgres, Auth, Storage), living in sovereign
-Git (Forgejo) inside the tenant boundary. Nothing leaves the tenant: all models
+Next.js (App Router) + Supabase (Postgres, Auth, Storage), with the app's source
+living in the OS's own governed file store inside the tenant boundary. There is no
+git server and no CI. Nothing leaves the tenant: all models
 and tools are in-tenant and governed. Every tool call runs **as the signed-in
 user** — OPA-authorized, DLS-filtered, Langfuse-audited. Consume granted
 resources **by reference** (`use_*`), never a raw credential.
 
 ## 2. The template (`nextjs-supabase`)
 
-`create_software` seeds this tree into the app's Forgejo repo. Each file has a job:
+`create_software` seeds this tree into the app's governed file store. Each file has a job:
 
 | File | Purpose |
 |---|---|
@@ -33,7 +35,7 @@ resources **by reference** (`use_*`), never a raw credential.
 | `manifests/app.yaml` | The Kubernetes Deployment manifest (image, port `8080`). |
 | `app.yaml` | **The metadata convention** — `name`, `owner`, `connections`, `data`, `knowledge`. Re-parsed on **every commit** to drive the app page + OPA profile. Keep it truthful. |
 | `openapi.yaml` | Drives the app's **auto-generated MCP tools**. Keep it in sync with your routes. |
-| `.app/decisions.md` | Append every design decision you make (versioned in git). |
+| `.app/decisions.md` | Append every design decision you make (kept in the app's version history). |
 
 Conventions:
 

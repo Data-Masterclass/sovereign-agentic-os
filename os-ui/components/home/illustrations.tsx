@@ -87,15 +87,6 @@ const ILLUS: Record<PathId, React.ReactNode> = {
       <path d="M19 17c-3 0-3 3-3 4.5s0 4.5 3 4.5M27 17c3 0 3 3 3 4.5s0 4.5-3 4.5" stroke={TEAL} />
     </Frame>
   ),
-  // Science — an orbital model + nucleus (ML).
-  science: (
-    <Frame wash="#e9e1f2">
-      <ellipse cx="22" cy="17" rx="20" ry="8" stroke={TEAL} />
-      <ellipse cx="22" cy="17" rx="20" ry="8" stroke={GOLD} transform="rotate(60 22 17)" />
-      <ellipse cx="22" cy="17" rx="20" ry="8" stroke={NAVY} transform="rotate(120 22 17)" />
-      <circle cx="22" cy="17" r="3.4" fill={MAGENTA} stroke="none" />
-    </Frame>
-  ),
   // Metrics — a gauge dial + needle (the agreed KPI).
   metrics: (
     <Frame wash="#f4e6c2">
@@ -113,26 +104,6 @@ const ILLUS: Record<PathId, React.ReactNode> = {
       <path d="M11 27v-7M19 27v-12M27 27v-5M35 27v-15" stroke={TEAL} />
       <path d="M9 12l8-4 8 5 10-7" stroke={GOLD} />
       <circle cx="35" cy="6" r="2" fill={MAGENTA} stroke="none" />
-    </Frame>
-  ),
-  // Big Bets — a flag planted on a rising arc (the initiative).
-  'big-bets': (
-    <Frame wash="#e9e1f2">
-      <path d="M2 32c10-2 18-12 22-20" stroke={GOLD_LT} />
-      <path d="M24 12V2l14 4-14 4" fill="#fff" stroke={MAGENTA} />
-      <path d="M24 12v20" stroke={NAVY} />
-      <path d="M14 32h26" stroke={GOLD} />
-      <circle cx="24" cy="2" r="1.8" fill={TEAL} stroke="none" />
-    </Frame>
-  ),
-  // Marketplace — a storefront awning over a tile grid (certified reuse).
-  marketplace: (
-    <Frame wash="#f4e6c2">
-      <path d="M4 12l3-8h30l3 8" fill="#fff" stroke={GOLD} />
-      <path d="M4 12c2 3 6 3 8 0s6 3 8 0 6 3 8 0 6 3 8 0" stroke={TEAL} />
-      <rect x="7" y="14" width="30" height="18" rx="3" fill="#fff" stroke={NAVY} />
-      <path d="M22 14v18M7 23h30" stroke={GOLD_LT} />
-      <circle cx="14.5" cy="18.5" r="1.6" fill={MAGENTA} stroke="none" />
     </Frame>
   ),
 };

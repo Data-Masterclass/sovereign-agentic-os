@@ -65,7 +65,7 @@ and surfaces the Governance cross-links (→ audit entry, → cost cap). Relatio
 are **link tokens** (each item's id + its `links` values), so correlation is
 bidirectional and **scope-safe**: the component is grown only through items the
 viewer may see — following a link never leaks an out-of-scope hop. On a live
-cluster the tokens come from Langfuse trace metadata + OpenMetadata lineage + the
+cluster the tokens come from Langfuse trace metadata + the OS lineage graph + the
 Governance audit/cap ids; offline they come from the fixtures.
 
 ### Live + offline-mock dual pattern

@@ -2,9 +2,9 @@
 
 ## What this is
 
-The Software tab is where apps are built and governed. An app is a **validated AppSpec of cookbook-pattern tabs over governed data**, served **same-origin** by the trusted OS renderer under the viewer's session — **no Forgejo repo, no CI, no image, no pod**. You author it declaratively (author the tabs over granted data), and it is **live at `/apps/<slug>` the moment its spec validates** — no build latency. Software is the most dependency-rich surface in the OS: it consumes governed datasets, published knowledge, promoted connections and governed metrics — all by reference, never by copying. A running app can also export its output back to the Bronze tier via `use_as_data`, closing the cross-tab spine loop.
+The Software tab is where apps are built and governed. An app is a **validated AppSpec of cookbook-pattern tabs over governed data**, served **same-origin** by the trusted OS renderer under the viewer's session — **no repo, no CI, no image, no pod**. You author it declaratively (author the tabs over granted data), and it is **live at `/apps/<slug>` the moment its spec validates** — no build latency. Software is the most dependency-rich surface in the OS: it consumes governed datasets, published knowledge, promoted connections and governed metrics — all by reference, never by copying. A running app can also export its output back to the Bronze tier via `use_as_data`, closing the cross-tab spine loop.
 
-**Declarative is the default and the golden path.** The historic CODED path (raw code + Forgejo + CI + image build) is an ADVANCED option that is **OFF by default** and **platform-admin-gated** — `create_software` with `kind:'code'` and the `commit` tool fail closed with a clear message unless a platform admin has enabled coded apps.
+**Declarative is the default and the golden path.** The CODED path (raw generated code + an image build, no git server and no CI) is an ADVANCED option that is **OFF by default** and **platform-admin-gated** — `create_software` with `kind:'code'` and the `commit` tool fail closed with a clear message unless a platform admin has enabled coded apps.
 
 ## The golden path (declarative — MCP)
 
@@ -31,7 +31,7 @@ The registry in `appspec/patterns.ts` is the source of truth; a spec referencing
 
 ## Advanced — the coded path (admin-enabled only)
 
-CODED apps (`kind:'code'`) build raw code through Forgejo + CI + an image build. This path is **DISABLED by default** and only works when a platform admin has enabled coded apps. When enabled, the staged flow is `create_software(kind:'code')` → `design_software` → `build_software` (returns the governed build directive + committed files, design-before-build gated) → author code → `commit` (Developer mode, Builder+; direct file write) → `verify_software` (5-dimension test) → `start_preview` / `request_deploy` → a Builder `decide_deploy`. `commit` is role-gated to Builder/Admin and fails closed (403) when coded apps are off — author a declarative app with `set_app_spec` instead.
+CODED apps (`kind:'code'`) build raw code into the app's own governed file store, which the OS previews, verifies and serves (no git server, no CI). This path is **DISABLED by default** and only works when a platform admin has enabled coded apps. When enabled, the staged flow is `create_software(kind:'code')` → `design_software` → `build_software` (returns the governed build directive + committed files, design-before-build gated) → author code → `commit` (Developer mode, Builder+; direct file write) → `verify_software` (5-dimension test) → `start_preview` / `request_deploy` → a Builder `decide_deploy`. `commit` is role-gated to Builder/Admin and fails closed (403) when coded apps are off — author a declarative app with `set_app_spec` instead.
 
 ## What to consider
 

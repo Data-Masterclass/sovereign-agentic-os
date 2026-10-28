@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scaffoldCubeYaml } from '../data/metrics.ts';
+import { scaffoldMetricYaml } from '../data/metrics.ts';
 import { goldSales } from './fixtures.ts';
 import {
   measureFromForm,
@@ -120,7 +120,7 @@ test('a rich measure round-trips through scaffold → YAML → parse (convergenc
   };
   const m = measureFromForm(form);
   const d = goldSales({ measures: [m] });
-  const yaml = scaffoldCubeYaml(d);
+  const yaml = scaffoldMetricYaml(d);
   assert.match(yaml, /filters:/);
   assert.match(yaml, /status = 'completed'/);
   assert.match(yaml, /format: currency/);
@@ -136,7 +136,7 @@ test('the define-route convergence gate passes for a rich (filtered) measure', (
   };
   const m = measureFromForm(form);
   const d = goldSales({ measures: [m] });
-  const yaml = scaffoldCubeYaml(d);
+  const yaml = scaffoldMetricYaml(d);
   const r = convergence(d, { form, agent: { ...form }, yaml });
   assert.ok(r.ok, JSON.stringify(r.rows));
   assert.equal(r.member, 'Sales.completed_revenue');
@@ -149,7 +149,7 @@ test('convergence FAILS when the form and hand-edited YAML disagree on a filter'
   };
   // The YAML is scaffolded from a DIFFERENT (unfiltered) measure — a real divergence.
   const plain = measureFromForm({ name: 'Completed revenue', aggregation: 'sum', column: 'net_amount', dimensions: [] });
-  const yaml = scaffoldCubeYaml(goldSales({ measures: [plain] }));
+  const yaml = scaffoldMetricYaml(goldSales({ measures: [plain] }));
   const r = convergence(goldSales(), { form, agent: { ...form }, yaml });
   assert.equal(r.ok, false, 'a filter present in the form but absent in the YAML must be caught');
 });

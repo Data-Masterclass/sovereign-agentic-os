@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Certify → Data Product (data-architecture-model.md), Admin-gated:
- *   POST { action:'certify' } — a domain ADMIN certifies directly (OM certification
+ *   POST { action:'certify' } — a domain ADMIN certifies directly (the certification
  *           badge + dataProduct + marketplace listing + broadened visibility).
  *   POST { action:'request' } — a Builder/owner requests certification; an Admin
  *           approves it in Governance (a `dataset_certify` approval). Mirrors promotion.

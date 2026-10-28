@@ -6,7 +6,7 @@
  * imports). One record per Supported Connector the Connections gallery renders:
  * the warehouse platforms (glue / snowflake / bigquery / databricks-delta / fabric /
  * postgresql / mysql / sqlserver / mongodb) and the user-facing templates
- * (gdrive / onedrive / notion-mcp / airflow / om-catalog).
+ * (gdrive / onedrive / notion-mcp / airflow).
  *
  * Each guide answers three questions honestly:
  *   • Prerequisites — what the USER must already have (their own cloud creds / apps).
@@ -752,24 +752,6 @@ const SNOWFLAKE_GOVERNANCE: InstallGuide = {
   caveat: '`SNOWFLAKE.ACCOUNT_USAGE` views have up to **~2 hours of latency** — they are for governance/audit, not real-time state. Every query runs on a **virtual warehouse and consumes credits** (prefer an XS auto-suspend warehouse). The JWT signer is verified against a deterministic vector; live reachability, the `IMPORTED PRIVILEGES` grant, and the registered public key are only confirmed against your real account at Test time.',
 };
 
-const OM_CATALOG: InstallGuide = {
-  key: 'om-catalog',
-  title: 'OpenMetadata catalog (external · read-only)',
-  summary: 'Connect an external OpenMetadata instance read-only for discovery and lineage. No writes in Phase 1.',
-  prerequisites: [
-    'The OpenMetadata **base URL** (e.g. `https://openmetadata.example.com`), reachable from the OS — host on the **egress allowlist**.',
-    'An OpenMetadata **bot JWT with read scope**. The JWT goes to Secrets Manager and is **never** on the record.',
-    'This connector is gated behind a deployment flag (`OPENMETADATA_CONNECT_ENABLED`); if you don\'t see the card, ask an admin to enable it.',
-  ],
-  steps: [
-    'On the OpenMetadata card, click **Connect**.',
-    'Enter the connection **name** and the OM **base URL**.',
-    'Paste the **bot JWT** (read scope) — stored once in Secrets Manager.',
-    'Create the connection, then **Test** on its card and browse OM domains / data products / tables / lineage.',
-  ],
-  whatTheOsDoes:
-    'Registers a **read/discover-only** connection to the external catalog. Exposes read tools (list domains / data products / tables, search, lineage) under policy — there is **no** write tool in Phase 1; scoped writes are a later phase.',
-};
 
 // ---- Registry ---------------------------------------------------------------
 
@@ -819,7 +801,7 @@ const GUIDES: InstallGuide[] = [
   GENERIC_API, GENERIC_MCP,
   GLUE, SNOWFLAKE, BIGQUERY, DATABRICKS, FABRIC,
   POSTGRESQL, MYSQL, SQLSERVER, MONGODB, KAFKA,
-  GDRIVE, ONEDRIVE, NOTION, AIRFLOW, OM_CATALOG,
+  GDRIVE, ONEDRIVE, NOTION, AIRFLOW,
   GITHUB, SUPABASE, ATLASSIAN, SALESFORCE, KAJABI,
   SAP_ODATA, ODATA_V4, WORKDAY,
   SLACK, GMAIL, GCAL, OUTLOOK, TEAMS,
@@ -832,7 +814,7 @@ const GUIDE_BY_KEY: Record<string, InstallGuide> = Object.fromEntries(GUIDES.map
 /**
  * Resolve a guide for a Supported Connector card. Warehouse cards pass the provider
  * `platform` (glue / snowflake / bigquery / databricks-delta / fabric); template
- * cards pass the template key (gdrive / onedrive / notion-mcp / airflow / om-catalog).
+ * cards pass the template key (gdrive / onedrive / notion-mcp / airflow).
  * Returns `undefined` when no guide is authored for that key.
  */
 export function installGuideFor(key: string): InstallGuide | undefined {

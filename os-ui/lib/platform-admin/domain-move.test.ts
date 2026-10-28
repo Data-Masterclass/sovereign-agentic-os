@@ -138,7 +138,8 @@ test('dataset move updates the yaml-embedded domain (scoping reads the yaml)', a
 
 test('MOVABLE_KINDS covers the expected artifact kinds and excludes metrics', async () => {
   const { MOVABLE_KINDS } = await import('./domain-move.ts');
-  for (const k of ['artifact', 'dataset', 'dashboard', 'file', 'workflow', 'knowledge', 'agent', 'model', 'pillar', 'bigbet', 'connection', 'app']) {
+  for (const k of ['artifact', 'dataset', 'dashboard', 'file', 'workflow', 'knowledge', 'agent', 'connection', 'app']) {
+
     assert.ok(MOVABLE_KINDS.includes(k), `expected kind ${k}`);
   }
   assert.ok(!MOVABLE_KINDS.includes('metric'), 'metrics have no domain of their own');

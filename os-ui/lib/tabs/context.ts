@@ -33,18 +33,15 @@ export function loadTabContext(tab: McpTab): string {
 const TITLES: Record<McpTab, string> = {
   software: 'Software',
   data: 'Data',
-  science: 'Science',
   knowledge: 'Knowledge',
   agents: 'Agents',
   files: 'Files',
   metrics: 'Metrics',
   dashboards: 'Dashboards',
-  bigbets: 'Big Bets',
   connections: 'Connections',
   governance: 'Governance',
-  marketplace: 'Marketplace',
-  strategy: 'Strategy',
   monitoring: 'Monitoring',
+
   // Intentionally ungrounded: there is no `operating-manual.context.md`, so
   // loadTabContext returns '' for it by design (it is a read-only reference tab).
   'operating-manual': 'Operating Model',

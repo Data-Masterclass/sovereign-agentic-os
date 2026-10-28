@@ -7,18 +7,13 @@ import { getDataset } from '@/lib/experimental/data/store';
 import { lineageFor } from '@/lib/experimental/data/lineage';
 import { getDashboard } from '@/lib/experimental/dashboards/store';
 import { panelMetrics } from '@/lib/experimental/dashboards/model';
-import { getModel } from '@/lib/experimental/science';
-import { getBet, canViewComponentDetail } from '@/lib/experimental/bigbets/store';
-import { buildComposition } from '@/lib/experimental/bigbets/composition';
 import { getAppForUser } from '@/lib/experimental/software/apps';
-import { listingAdapter } from '@/lib/experimental/marketplace';
 
 /**
  * `get_lineage(ref)` — ONE normalized lineage graph across every artifact kind
  * (mcp-v2 P0.3). A THIN dispatcher: it parses `kind:id` and routes to the EXISTING
  * per-artifact collector, then normalizes to `{nodes, edges}`. It re-implements no
- * collector. canView is enforced at the ROOT (an unseeable root is not_found) and
- * PER NODE for the cross-scope kinds (bet components, marketplace importers) —
+ * collector. canView is enforced at the ROOT (an unseeable root is not_found);
  * unviewable nodes render as `{redacted:true, kind}` (existence without content).
  */
 
@@ -26,8 +21,8 @@ export type UnifiedNode = { id: string; kind: string; label: string; redacted?: 
 export type UnifiedEdge = { from: string; to: string; rel: string };
 export type UnifiedLineage = { ref: string; kind: LineageRefKind; id: string; nodes: UnifiedNode[]; edges: UnifiedEdge[] };
 
-export type LineageRefKind = 'dataset' | 'metric' | 'dashboard' | 'model' | 'listing' | 'bet' | 'app';
-const REF_KINDS: readonly LineageRefKind[] = ['dataset', 'metric', 'dashboard', 'model', 'listing', 'bet', 'app'];
+export type LineageRefKind = 'dataset' | 'metric' | 'dashboard' | 'app';
+const REF_KINDS: readonly LineageRefKind[] = ['dataset', 'metric', 'dashboard', 'app'];
 
 function fail(message: string, status: number): never {
   const e = new Error(message) as Error & { status?: number };
@@ -73,46 +68,7 @@ export async function getLineage(ref: string, user: CurrentUser): Promise<Unifie
       }
       return out;
     }
-    case 'model': {
-      const m = getModel(id);
-      const canSee = m && (m.owner === user.id || user.role === 'admin' || (m.tier !== 'Personal' && user.domains.includes(m.domain)));
-      if (!m || !canSee) fail('Model not found', 404);
-      out.nodes.push({ id: m.model, kind: 'model', label: `${m.name} (${m.tier})` });
-      for (const v of m.versions) {
-        const vid = `${m.model}@${v.version}`;
-        out.nodes.push({ id: vid, kind: 'model-version', label: `v${v.version} · ${v.stage}` });
-        out.edges.push({ from: vid, to: m.model, rel: 'version' });
-      }
-      return out;
-    }
-    case 'listing': {
-      const detail = await listingAdapter.get(id, { id: user.id, domains: user.domains, role: user.role });
-      if (!detail) fail('Listing not found', 404);
-      out.nodes.push({ id: detail.id, kind: 'listing', label: detail.name });
-      for (const n of detail.lineage) {
-        const rel = n.relation === 'importer' ? 'imported-by' : 'built-from';
-        out.nodes.push({ id: n.id, kind: n.type, label: n.name });
-        if (n.relation === 'importer') out.edges.push({ from: detail.id, to: n.id, rel });
-        else out.edges.push({ from: n.id, to: detail.id, rel });
-      }
-      return out;
-    }
-    case 'bet': {
-      const bet = getBet(id, p); // throws 403/404
-      out.nodes.push({ id: bet.id, kind: 'bet', label: bet.name });
-      const comp = buildComposition(bet.components.map((c) => c.artifactId));
-      const byArtifact = new Map(bet.components.map((c) => [c.artifactId, c]));
-      for (const n of comp.nodes) {
-        const ref = byArtifact.get(n.id);
-        // Per-node redaction: a component whose detail this caller may not see
-        // renders as existence-without-content.
-        const visible = !ref || canViewComponentDetail(bet, ref, p);
-        out.nodes.push(visible ? { id: n.id, kind: n.tab, label: n.title } : { id: n.id, kind: n.tab, label: '', redacted: true });
-        out.edges.push({ from: bet.id, to: n.id, rel: n.upstream ? 'depends-on' : 'component' });
-      }
-      for (const e of comp.edges) out.edges.push({ from: e.from, to: e.to, rel: 'builds-on' });
-      return out;
-    }
+
     case 'app': {
       const app = await getAppForUser(id, user); // throws 403/404
       out.nodes.push({ id: app.id, kind: 'app', label: app.name });

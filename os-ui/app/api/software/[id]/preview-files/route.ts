@@ -19,19 +19,19 @@ export const dynamic = 'force-dynamic';
  *                               + `import '@sovereign-os/ui/theme.css'`
  *
  *   GET /api/software/{id}/preview-files
- *     → { files, sdk, ui, template, mode }   (each of files/sdk/ui is {path,content}[])
+ *     → { files, sdk, ui, template }   (each of files/sdk/ui is {path,content}[])
  *
- * No Forgejo credential ever reaches the browser: the server reads the repo (or
- * the committed snapshot/template fallback) and returns decoded text. The preview
+ * The server reads the app's durable file mirror (or the template seed for a fresh
+ * app) and returns decoded text. The preview
  * calls the OS same-origin AS the signed-in user, so governance still decides what
  * data renders — this route only ships the source, never any granted data.
  */
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
-  const { files, template, mode } = await previewFilesForApp(id, user);
+  const { files, template } = await previewFilesForApp(id, user);
   // Inject the SDK + design-system under node_modules so the bare imports resolve
   // in the in-browser bundler with no external registry / CDN egress.
   const sdk = readSdkSource('node_modules/@sovereign-os/app-sdk');
   const ui = readUiSource('node_modules/@sovereign-os/ui');
-  return NextResponse.json({ files, sdk, ui, template, mode });
+  return NextResponse.json({ files, sdk, ui, template });
 }, { defaultStatus: 500 });

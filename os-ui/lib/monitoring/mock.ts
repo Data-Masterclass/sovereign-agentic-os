@@ -17,7 +17,8 @@ import type { HealthItem, Alert, TraceDetail } from './types.ts';
  *       → the ingestion pod was OOMKilled and AUTO-RESTARTED (sys-4001) → system
  *         lens shows the self-heal → the run had already failed
  *   cost for the Sales domain (cost-5001) is NEARING the Governance cap → amber
- *   the mart_sales artifact (art-6001) is stale; the churn model (art-6002) drifts
+ *   the mart_sales artifact (art-6001) is stale
+
  *   a system alert NOTIFIES; a KPI/business alert is ABSENT here (Dashboards owns it)
  *
  * Scope fixtures: two different owners (`u_sales_rep` vs `u_other`) so the
@@ -209,18 +210,6 @@ export const MOCK_ARTIFACTS: HealthItem[] = [
     source: 'mock',
   },
   {
-    id: 'art-6002',
-    lens: 'artifacts',
-    title: 'churn-model (KServe serving)',
-    health: 'amber',
-    detail: 'Serving up · p95 prediction latency 240ms · drift score 0.18 (warn ≥ 0.15).',
-    owner: SALES_OWNER,
-    domain: SALES_DOMAIN,
-    metric: 0.18,
-    links: { artifactId: 'art-6002' },
-    source: 'mock',
-  },
-  {
     id: 'art-6003',
     lens: 'artifacts',
     title: 'mart_finance (data product)',
@@ -284,7 +273,7 @@ const MOCK_TRACE_DETAILS: Record<string, TraceDetail> = {
     logs: [
       `${ago(180)} INFO  supervisor start run=run-2002`,
       `${ago(180)} INFO  tool.retrieve hits=2`,
-      `${ago(180)} ERROR tool.metrics cube_rows=0 reason="mart_sales stale (freshness breach)"`,
+      `${ago(180)} ERROR tool.metrics rows=0 reason="mart_sales stale (freshness breach)"`,
       `${ago(180)} ERROR run aborted decision=fail`,
     ],
     links: { runId: 'run-2002', pipelineId: 'pl-3001', systemId: 'sys-4001', artifactId: 'art-6001', auditRef: 'audit-9007', capRef: 'cap-sales-monthly' },

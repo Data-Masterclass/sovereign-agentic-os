@@ -220,7 +220,7 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
           </div>
           {selectedTime && result.mode === 'offline-mock' ? (
             <p className="hint" style={{ marginTop: 0 }}>
-              Offline mock returns totals only — the time-series slice resolves against live Cube.
+              Offline mock returns totals only — the time-series slice resolves against live Trino.
             </p>
           ) : null}
           {result.rows.length === 0 ? (

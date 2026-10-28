@@ -52,12 +52,12 @@ test('a personal-lane query cannot reference a governed catalog/mart (the invari
   assert.doesNotThrow(() => assertScopedToSelf('select * from my_upload join sales_snapshot using (id)'));
 });
 
-test('promote is the ONLY personal->shared path: dbt-trino writes Iceberg + OpenMetadata', () => {
+test('promote is the ONLY personal->shared path: dbt-trino writes Iceberg, the OS registry catalogs it', () => {
   const d: PersonalDataset = { id: 'x', name: 'My Sales Cut', origin: 'extract', columns: [], rows: [] };
   const plan = promotePlan(d, { domain: 'sales', owner: 'alice', visibility: 'shared' });
   assert.equal(plan.engine, 'dbt-trino');
   assert.equal(plan.target, 'iceberg.sales.my_sales_cut');
-  assert.equal(plan.catalog, 'openmetadata');
+  assert.equal(plan.catalog, 'os-registry');
   assert.equal(plan.visibility, 'shared');
 });
 

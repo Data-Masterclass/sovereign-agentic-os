@@ -30,7 +30,7 @@ edges:
   - { from: supervisor, to: worker, type: supervise }
 `;
 
-test('a valid system builds all-green across the 5 adapters', async () => {
+test('a valid system builds all-green across the 4 adapters', async () => {
   const backends = newMockBackends();
   const report = await orchestrateBuild({
     yaml: SUP,
@@ -40,13 +40,12 @@ test('a valid system builds all-green across the 5 adapters', async () => {
   assert.equal(report.ok, true, JSON.stringify(report.rows, null, 2));
   assert.deepEqual(
     report.rows.map((r) => r.tool).sort(),
-    ['forgejo', 'langfuse', 'langgraph', 'litellm', 'opa'],
+    ['langfuse', 'langgraph', 'litellm', 'opa'],
   );
   for (const r of report.rows) assert.equal(r.status, 'ok', `${r.tool}: ${r.error ?? ''}`);
 
-  // The files really landed in the (mock) Forgejo repo.
-  assert.ok(backends.forgejo.files.has('system.yaml'));
-  assert.ok(backends.forgejo.files.has('agents/worker/AGENT.md'));
+  // The system's grants really landed in the (mock) OPA.
+  assert.ok(backends.opa.tools.size > 0);
   // The test invocation produced Langfuse traces (what the langfuse row verifies).
   assert.ok(backends.langfuse.traces.length > 0);
 });
@@ -58,7 +57,7 @@ test('a pending verify row does NOT fail the report (needs-a-run-first is neutra
     yaml: SUP,
     systemId: 'sys_pending',
     adapters: [
-      { tool: 'forgejo', apply: async () => ({ ok: true, detail: 'wrote' }), verify: async () => ({ ok: true, detail: 'read back' }) },
+      { tool: 'opa', apply: async () => ({ ok: true, detail: 'granted' }), verify: async () => ({ ok: true, detail: 'probed' }) },
       { tool: 'langfuse', apply: async () => ({ ok: true, detail: 'ensured' }), verify: async () => ({ ok: true, pending: true, detail: 'run the agent once, then Build again' }) },
     ],
   });

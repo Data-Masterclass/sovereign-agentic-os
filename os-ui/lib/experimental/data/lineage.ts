@@ -4,7 +4,7 @@
 import type { Dataset, Layer } from './dataset-schema.ts';
 import { transparencyGate, type GateResult } from './transparency.ts';
 import { slug, physicalSlug } from './store-fqn.ts';
-import { cubeViewName } from './metrics.ts';
+import { viewName } from './metrics.ts';
 
 /**
  * End-to-end lineage for one dataset, assembled from the single source — spanning
@@ -88,17 +88,14 @@ export function lineageFor(d: Dataset): LineageGraph {
     });
   }
 
-  // Consumption axis — metric(s) on Gold, then a dashboard on the view.
+  // Consumption axis — metric(s) on Gold (served as governed Trino SQL over the mart).
   const goldId = d.versions.gold.built ? 'v:gold' : null;
   if (goldId && d.measures.length > 0) {
     for (const m of d.measures) {
       const id = `m:${m.name}`;
-      nodes.push({ id, kind: 'metric', label: m.name, sublabel: `Cube · ${cubeViewName(d)} (${m.type})`, built: true });
+      nodes.push({ id, kind: 'metric', label: m.name, sublabel: `Metric · ${viewName(d)} (${m.type})`, built: true });
       edges.push({ from: goldId, to: id, kind: 'metric' });
     }
-    const dash = 'dash';
-    nodes.push({ id: dash, kind: 'dashboard', label: `${cubeViewName(d)} Overview`, sublabel: 'Superset on Cube', built: false });
-    for (const m of d.measures) edges.push({ from: `m:${m.name}`, to: dash, kind: 'dashboard' });
   }
 
   return {

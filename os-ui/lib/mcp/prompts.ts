@@ -48,7 +48,8 @@ const isAdmin = (role: Role) => rank(role) >= rank('admin');
 function roleBanner(user: CurrentUser): string {
   const gate = isBuilder(user.role)
     ? isAdmin(user.role)
-      ? 'You CAN approve promotions, deploys, AND certify to Company / own cross-domain bets / administer users tenant-wide.'
+      ? 'You CAN approve promotions, deploys, AND certify to Company / administer users tenant-wide.'
+
       : isDomainAdmin(user.role)
         ? 'You CAN approve promotions/deploys AND administer users in your own domain(s) (roles up to builder). You CANNOT certify to Company or appoint domain admins (Admin only).'
         : 'You CAN approve My→Domain promotions (promote to Domain) and deploys in your domain(s). You CANNOT certify to Company (Admin only) or administer users (Domain admin+).'
@@ -211,24 +212,6 @@ export const PROMPTS: McpPrompt[] = [
     ].join('\n'),
   },
   {
-    name: 'create_big_bet',
-    title: 'Frame a Big Bet',
-    description: 'Frame an initiative over REAL OS components and track its value.',
-    arguments: [arg('problem', 'The problem statement', true), arg('owner', 'Who owns the problem')],
-    tab: 'bigbets',
-    minRole: 'creator',
-    guide: 'bigbets',
-    script: (a) => [
-      `GOAL: frame a Big Bet for "${a.problem || '<problem>'}"${a.owner ? ` owned by ${a.owner}` : ''}.`,
-      'Steps:',
-      '1. whoami.',
-      '2. list_datasets + list_dashboards + list_agent_systems — the bet tracks REAL components.',
-      `3. create_big_bet(problem: "${a.problem || '<problem>'}"${a.owner ? `, owner: "${a.owner}"` : ''}) referencing a pillar + north-star metric.`,
-      '⛔ A creator files a DRAFT; an ACTIVE bet needs a Builder/Admin owner; cross-domain = Admin.',
-      '4. Attach the real component ids and track realized value vs target.',
-    ].join('\n'),
-  },
-  {
     name: 'upload_and_share_file',
     title: 'Upload & share a file',
     description: 'Upload a governed file with docs + tags, then promote it to a domain asset.',
@@ -244,65 +227,6 @@ export const PROMPTS: McpPrompt[] = [
       '3. upload_file(name, text, tags, description) — a description + ≥1 tag make it promote-eligible; restricted = stored-not-indexed.',
       '4. request_promotion(kind: "file", id) — file the promotion request.',
       '⛔ Builder+ only: approve_promotion(approvalId) re-governs the prefix + DLS. A creator STOPS here.',
-    ].join('\n'),
-  },
-  {
-    name: 'score_and_wire_prediction',
-    title: 'Score & wire a prediction',
-    description: 'Score a governed ML model through the predict door, then wire the score into an agent or app.',
-    arguments: [arg('model', 'Registry model name (e.g. churn_model)'), arg('account', 'The account/entity to score')],
-    tab: 'science',
-    minRole: 'creator',
-    guide: 'science',
-    script: (a) => [
-      `GOAL: score ${a.model ? `the model "${a.model}"` : 'a governed ML model'}${a.account ? ` for account ${a.account}` : ''} and wire the prediction into a governed consumer.`,
-      'Steps:',
-      '1. whoami — your identity + domains (tier scope decides which models you can call).',
-      '2. list_models — the models YOU can score (read sovereign-os://my/science). HONEST CHECK: if the response says ml.enabled=false, predictions will 404 — report that and stop; an Admin must enable ML. If the list is empty there is no model yet — never invent one; BUILD one instead: create_model(name, dataset, target, features?) → train_model(model) (fused launch) → poll get_model_status(model) until phase="deployed", then continue.',
-      `3. get_model(model${a.model ? `: "${a.model}"` : ''}) — read the card: feature names, default features, score bands, versions + metric (name + value), build state, real usage, last errors, tier and serving status.`,
-      `4. science_predict(model${a.model ? `: "${a.model}"` : ': "<registry name>"'}, ${a.account ? `account: "${a.account}"` : 'account'}, features?) — score through the GOVERNED predict door (never a raw model endpoint). Omitting \`model\` scores the seeded churn_model; the model must be DEPLOYED (buildState deployed). Use only feature names from the card. Read score / band / traceId back.`,
-      '5. Wire the score into a consumer through the same governed door:',
-      '   • an AGENT: grant the system the predict tool in system.yaml (commit_agent_files) — its calls run grant-scoped, as the runner;',
-      '   • an APP: consume by reference (use_data / the REST predict door) — never embed a model endpoint or secret.',
-      '⛔ Widening WHO can call the model is the promote ladder (Builder → Domain, Admin → Company), always a human — an agent can never promote a model.',
-    ].join('\n'),
-  },
-  {
-    name: 'frame_strategy',
-    title: 'Frame a strategy pillar',
-    description: 'Define a strategy pillar, link the Big Bets that move it, and track its value.',
-    arguments: [arg('name', 'The pillar / strategic objective', true), arg('domain', 'Your domain'), arg('value_metric', 'What number proves it (e.g. NRR)')],
-    tab: 'strategy',
-    minRole: 'creator',
-    guide: 'strategy',
-    script: (a) => [
-      `GOAL: frame the strategy pillar "${a.name || '<name>'}"${a.domain ? ` in domain ${a.domain}` : ''}${a.value_metric ? ` measured by ${a.value_metric}` : ''}.`,
-      'Steps:',
-      '1. whoami — confirm your role + domains (a domain pillar needs Builder+, a tenant pillar needs Admin).',
-      '2. list_pillars — reuse/extend an existing pillar before creating a new one.',
-      `3. create_pillar(name: "${a.name || '<name>'}"${a.domain ? `, scope: "domain", domain: "${a.domain}"` : ''}${a.value_metric ? `, valueMetric: { name: "${a.value_metric}" }` : ''}).`,
-      '⛔ Builder+ (domain) / Admin (tenant): create_pillar/update_pillar/link_bet_to_pillar/record_value_entry all re-gate. A creator STOPS here and hands off.',
-      '4. link_bet_to_pillar(pillarId, betId) — attach the real Big Bets that contribute (shares re-normalise). NOTE: bet ids resolve against a stub catalogue today.',
-      '5. record_value_entry(pillarId, value, month?) — track realized value; then get_pillar to read the RLS-scoped roll-up + history.',
-    ].join('\n'),
-  },
-  {
-    name: 'reuse_from_marketplace',
-    title: 'Reuse from the marketplace',
-    description: 'Find a certified product and reuse it as a governed grant — never a bytes copy.',
-    arguments: [arg('need', 'What you are looking for (e.g. a revenue dataset)', true), arg('type', 'Product type filter')],
-    tab: 'marketplace',
-    minRole: 'creator',
-    guide: 'marketplace',
-    script: (a) => [
-      `GOAL: reuse a certified product for "${a.need || '<need>'}"${a.type ? ` (type ${a.type})` : ''} instead of rebuilding it.`,
-      'Steps:',
-      '1. whoami.',
-      `2. browse_marketplace(q: "${a.need || '<need>'}"${a.type ? `, type: "${a.type}"` : ''}) — search the certified catalogue.`,
-      '3. get_listing(listingId) — read the detail, the RLS-filtered preview (your rows only), lineage, ratings, and any grants you already hold.',
-      '4. import_product(listingId, mode?) — an OPEN-policy read-grant is compiled NOW (governed, RLS-scoped); an APPROVAL-policy import returns a pending handle (the owner domain approves via decide_approval).',
-      '⛔ read-grant is a creator right; fork / deploy-instance / template modes are Builder+ (re-checked in-lib).',
-      '5. rate_listing(listingId, stars) — signal quality back to the catalogue.',
     ].join('\n'),
   },
   {
@@ -355,7 +279,7 @@ export const PROMPTS: McpPrompt[] = [
       '1. whoami — your identity, role, domains, and what you can/cannot do.',
       '2. list_capabilities — every tool split into available vs gated.',
       '3. Read sovereign-os://guide/overview and sovereign-os://guide/governance (or get_guide).',
-      '4. Read your inventories: sovereign-os://my/datasets, my/knowledge, my/connections, my/files, my/metrics, my/dashboards, my/agents, my/software, my/bigbets, my/science (or the list_* tools).',
+      '4. Read your inventories: sovereign-os://my/datasets, my/knowledge, my/connections, my/files, my/metrics, my/dashboards, my/agents, my/software (or the list_* tools).',
       '5. Summarize: "here is what exists, and here is what you may do" — then pick a golden-path prompt.',
     ].join('\n'),
   },

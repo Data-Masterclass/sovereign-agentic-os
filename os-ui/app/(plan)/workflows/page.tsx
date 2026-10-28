@@ -210,7 +210,7 @@ export default function WorkflowsPage() {
 
   return (
     <ConfirmProvider>
-      <PageHeader title="Workflows" crumb="steps · business rules · expert knowledge" tutorial="knowledge" />
+      <PageHeader title="Workflows" crumb="steps · business rules · expert knowledge" />
       <div className="content">
 
         <div className="row" style={{ marginTop: 18, justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 10 }}>

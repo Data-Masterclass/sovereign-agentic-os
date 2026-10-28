@@ -5,7 +5,6 @@ import 'server-only';
 import type { CurrentUser } from '@/lib/core/auth';
 import {
   getAppByIdInternal,
-  liveRepoFiles,
   persistApp,
   templateFiles,
   newId,
@@ -23,7 +22,7 @@ import {
 import { securityScan } from './scan.ts';
 import { resolveSurface } from './metadata.ts';
 import { ungrantedDatasetWarningForApp } from './dataset-guard.ts';
-import { getSnapshot, snapshotFiles, hydrateSnapshot } from './snapshot.ts';
+import { getSnapshot, hydrateSnapshot } from './snapshot.ts';
 import { deployApp, runnerStatus, type RunnerApp, type RunnerOpts, type RunnerOutcome, type RunnerStatus } from './runner.ts';
 import { roleAtLeast } from '@/lib/core/session';
 import { config } from '@/lib/core/config';
@@ -58,7 +57,7 @@ import type {
  *   • A failing security scan (secret leak / high/critical) BLOCKS approval.
  *
  * This holds regardless of which front door requested the deploy (chat, Platform
- * MCP, git push, git import) — they all converge here. Cards are in-process
+ * MCP, git import) — they all converge here. Cards are in-process
  * authoritative with a best-effort DURABLE mirror (`os-software-reviews`, the
  * same osMirror pattern as approvals) so a pod restart no longer empties the
  * `/software/reviews` inbox and loses the scan/diff; they also land in the
@@ -123,44 +122,28 @@ function isBuilder(user: CurrentUser): boolean {
   return roleAtLeast(user.role, 'builder');
 }
 
-/**
- * Re-provision the app's runner from its CURRENT record (esp. `runImageDigest`) —
- * the shared entry the Phase B build service calls to re-pin the pod to a freshly
- * built digest, so the footprint table + runner shape stay SINGLE-SOURCED here (no
- * duplicate FOOTPRINT in apps.ts, no import cycle: apps.ts dynamic-imports this).
- */
-export async function redeployRunnerForApp(app: App): Promise<RunnerOutcome> {
-  return deployApp(runnerAppFor(app));
-}
-
 /** The minimal runnable shape the in-cluster runner needs, derived from an app. */
 function runnerAppFor(app: App): RunnerApp {
   return {
     slug: app.slug,
     host: appHost(app),
     runImage: app.runImage,
-    // The OS build service's captured digest (Phase B) pins the serving image; when
-    // unset the runner keeps the `:latest`/CI convention (purely additive).
-    runImageDigest: app.runImageDigest,
     footprint: FOOTPRINT[app.template] ?? FOOTPRINT['nextjs-supabase'],
   };
 }
 
 /**
  * Reflect the REAL runner outcome onto the app's deploy fields — honestly. When
- * the cluster is unreachable we leave `previewUrl` null and `pipeline.live`
- * `pending` (never fabricate a live URL); the served URL only appears once the
- * pod is actually `running` (the status route reconciles it as readiness lands).
+ * the cluster is unreachable we leave `previewUrl` null (never fabricate a live
+ * URL); the served URL only appears once the pod is actually `running` (the status
+ * route reconciles it as readiness lands).
  */
 function applyRunnerOutcome(app: App, outcome: RunnerOutcome): void {
   if (!outcome.live) {
     app.deploy.previewUrl = null;
-    app.pipeline.live = 'pending';
     return;
   }
-  const running = outcome.phase === 'running';
-  app.deploy.previewUrl = running ? outcome.url : null;
-  app.pipeline.live = running ? 'ok' : 'pending';
+  app.deploy.previewUrl = outcome.phase === 'running' ? outcome.url : null;
 }
 
 /** The exact governed scope a deploy is asking for (the envelope under review). */
@@ -206,23 +189,14 @@ function diffFromFiles(files: ScaffoldFile[], changed?: DiffSummary['files']): D
 }
 
 /**
- * Gather the app's repo files for the scan/diff — the code that will ACTUALLY
- * ship. When Forgejo is reachable this is the LIVE repo tree (so editor saves
- * and direct git pushes are scanned, not just agent commits); the fetched tree
- * also refreshes the snapshot. Offline it falls back to the latest committed
- * snapshot (else the template seed), honestly labelled `offline-mock`.
+ * Gather the app's source files for the scan/diff — the code that will ACTUALLY
+ * ship: the durable source tree (every governed commit AND every editor save lands
+ * there), else the template seed for an app with no tree yet. Hydrated from the
+ * mirror first so a scan after a restart sees the app's REAL last committed tree.
  */
-async function appFilesForScan(app: App): Promise<{ files: ScaffoldFile[]; source: 'live-repo' | 'snapshot' }> {
-  const live = await liveRepoFiles(app);
-  if (live) {
-    // Also durably backfills the mirror (heal-forward for legacy apps).
-    snapshotFiles(app.id, live); // keep the offline fallback in step with reality
-    return { files: live, source: 'live-repo' };
-  }
-  // Offline: hydrate the durable mirror first so a scan after a restart sees the
-  // app's REAL last committed tree, not just the template seed.
+async function appFilesForScan(app: App): Promise<ScaffoldFile[]> {
   await hydrateSnapshot(app.id);
-  return { files: getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug), source: 'snapshot' };
+  return getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
 }
 
 // --------------------------------------------------------------- Preview -------
@@ -241,13 +215,13 @@ export const PREVIEW_PENDING_NOTE =
 /**
  * Honest pending-preview note. Distinguishes the two very different pending
  * states so we never claim "runner unreachable / API not reachable" when the
- * app IS provisioned and we're simply waiting on the image:
+ * app IS provisioned and we're simply waiting on the pod:
  *   • cluster unreachable (phase offline)  → PREVIEW_PENDING_NOTE
- *   • provisioned, pod not yet running     → image build in progress
+ *   • provisioned, pod not yet running     → image pull / start in progress
  */
 export const IMAGE_BUILDING_NOTE =
-  'Image build in progress — the app is provisioned and the preview URL appears once CI ' +
-  'publishes the image and the pod becomes ready.';
+  'Image build in progress — the app is provisioned and the preview URL appears once ' +
+  'its image is available and the pod becomes ready.';
 
 function previewPendingNote(outcome: RunnerOutcome): string {
   return outcome.live ? IMAGE_BUILDING_NOTE : PREVIEW_PENDING_NOTE;
@@ -349,9 +323,9 @@ export async function requestDeploy(
   }
   if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot deploy'), 409);
 
-  // The files under review: the LIVE repo tree when Forgejo is reachable (what
-  // will actually ship — editor saves + git pushes included), else the snapshot.
-  const { files, source } = await appFilesForScan(app);
+  // The files under review: the app's durable source tree (what will actually ship —
+  // editor saves + governed commits included).
+  const files = await appFilesForScan(app);
 
   // Resolve the app's UI/API surface at deploy from the code + manifest the agent
   // wrote (the deploy manifest reveals whether it binds a web server vs only an
@@ -370,10 +344,11 @@ export async function requestDeploy(
   // auto-deploy is forced onto the review card when there is a dataset warning.
   const datasetWarning = await ungrantedDatasetWarningForApp(app, files);
   const warnings = datasetWarning ? [datasetWarning] : [];
-  // The security scan runs on EVERY deploy request (CI scans every push), over
-  // the files resolved above — labelled `live` only when they came from the real
-  // repo. A routine update can only auto-deploy when BOTH in-envelope AND clean.
-  const scan = securityScan(files, opts.scanMode ?? (source === 'live-repo' ? 'live' : 'offline-mock'));
+  // The security scan runs on EVERY deploy request over the files resolved above —
+  // the deterministic baseline scanner, labelled `offline-mock` unless a caller injects
+  // a live scanner mode. A routine update can only auto-deploy when BOTH in-envelope
+  // AND clean.
+  const scan = securityScan(files, opts.scanMode ?? 'offline-mock');
 
   // Routine update within the approved envelope + a clean scan + NO dataset warning →
   // auto-deploy. An ungranted-dataset reference re-opens the review gate so it is seen.
@@ -489,8 +464,8 @@ async function applyDeployDecisionToApp(
     app.deploy.reviewCardId = null;
     app.deploy.releases += 1; // approved go-live ships a new release/version.
     // Provision the real in-cluster runner on the app's per-app host; the served
-    // URL + `pipeline.live = ok` only land once the pod is actually running
-    // (offline stays honestly pending — the go-live decision is still recorded).
+    // URL only lands once the pod is actually running (offline stays honestly
+    // pending — the go-live decision is still recorded).
     applyRunnerOutcome(app, await deployApp(runnerAppFor(app)));
   } else {
     app.deploy.state = 'preview'; // back to the free preview loop to fix it
@@ -650,8 +625,8 @@ export async function reconcileDeployApproval(app: App): Promise<boolean> {
  * Poll the app's REAL in-cluster runner status and reconcile the deploy fields
  * off ACTUAL pod state (the `deploying → running → failed` transition is driven
  * by the Deployment's readyReplicas/conditions, never a timer). The served URL
- * only appears once the pod is `running`; a failed rollout marks `pipeline.live`
- * accordingly. Offline (no cluster) mutates nothing — it cannot confirm state.
+ * only appears once the pod is `running`. Offline (no cluster) mutates nothing —
+ * it cannot confirm state.
  */
 export async function reconcileDeployStatus(
   appId: string,
@@ -689,11 +664,7 @@ export async function reconcileDeployStatus(
   }
 
   if (status.live) {
-    const running = status.phase === 'running';
-    app.deploy.previewUrl = running ? `https://${appHost(app)}` : null;
-    if (app.deploy.state === 'live') {
-      app.pipeline.live = running ? 'ok' : status.phase === 'failed' ? 'offline' : 'pending';
-    }
+    app.deploy.previewUrl = status.phase === 'running' ? `https://${appHost(app)}` : null;
     await persistApp(app);
   }
   return { app, status };

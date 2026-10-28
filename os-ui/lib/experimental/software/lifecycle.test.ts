@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
-import { createApp, deleteAppRepo, rehydrateConnection } from '@/lib/experimental/software/apps';
+import { createApp, rehydrateConnection } from '@/lib/experimental/software/apps';
 import { authorizeConnectionCall } from '@/lib/infra/agent-governed';
 import { getConnectionByApp } from '@/lib/infra/app-registry';
 import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource, dependentsOf, demoteApp } from './lifecycle.ts';
@@ -111,38 +111,6 @@ test('DEMOTE is lineage-aware — revoke blocked while another app depends on it
   // Unsharing the depended-on app is blocked (would orphan the consumer).
   await expectStatus(demoteApp(dep.id, owner), 409, /Revoke blocked/);
   assert.equal((await getAppByIdInternal(dep.id))!.visibility, 'Shared');
-});
-
-test('deleteAppRepo: PHYSICALLY deletes the per-app Forgejo repo, honest on 404 / unreachable', async () => {
-  const app = await createApp(owner, { name: 'Repo Del', template: 'service' });
-  const orig = globalThis.fetch;
-  try {
-    // Happy path: Forgejo confirms the repo delete (204).
-    let seen: { method?: string; url: string } | null = null;
-    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
-      seen = { method: init?.method, url: String(url) };
-      return new Response(null, { status: 204 });
-    }) as typeof fetch;
-    const ok = await deleteAppRepo(app);
-    assert.equal(ok.ok, true);
-    assert.equal(ok.action, 'deleted');
-    assert.equal(seen!.method, 'DELETE');
-    assert.match(seen!.url, /\/repos\//);
-
-    // Already gone (404) → benign no-op success.
-    globalThis.fetch = (async () => new Response(null, { status: 404 })) as typeof fetch;
-    assert.deepEqual((await deleteAppRepo(app)).action, 'noop');
-    assert.equal((await deleteAppRepo(app)).ok, true);
-
-    // Unreachable (network error) → honest failure (orphan flagged), never silent.
-    globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
-    const down = await deleteAppRepo(app);
-    assert.equal(down.ok, false);
-    assert.equal(down.live, false);
-    assert.match(down.detail, /unreachable/i);
-  } finally {
-    globalThis.fetch = orig;
-  }
 });
 
 test('Use as Data marks the Bronze snapshot', async () => {

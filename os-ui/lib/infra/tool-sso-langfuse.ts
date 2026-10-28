@@ -8,7 +8,7 @@ import { config } from '@/lib/core/config';
  * Langfuse single-sign-on for the embedded console (`/tools/langfuse`).
  *
  * Langfuse authenticates with NextAuth — it has NO trusted-proxy / remote-user
- * header mode (unlike Superset/Forgejo), so the header-injection path in
+ * header mode (unlike the header-SSO tools), so the header-injection path in
  * lib/tool-proxy.ts cannot log a user in. Instead this module performs the
  * NextAuth *credentials* sign-in SERVER-SIDE, using a server-only Langfuse
  * service account, and hands the resulting session cookie to the proxy. The OS

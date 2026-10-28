@@ -4,7 +4,7 @@
 
 /**
  * The latest known files per app, so the security scan + diff see what was
- * actually committed when Forgejo is unreachable (offline). Lives in its OWN
+ * actually committed through the governed door. Lives in its OWN
  * module (not server.ts) so BOTH the pipeline commit step (server.ts) and the
  * code-editor save path (apps.ts `saveAppFile`) can update it without an import
  * cycle — an editor save that skipped the snapshot was invisible to the deploy

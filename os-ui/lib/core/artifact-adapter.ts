@@ -8,8 +8,7 @@
  * delete cascade) is written ONCE in core and never drifts per tab.
  *
  * This mirrors two idioms already in the codebase: the warehouse provider registry
- * (`lib/connections/warehouse/registry.ts` → one map of providers) and the tutorial
- * registry. A tab implements a thin `ArtifactAdapter` wrapping its OWN store's item
+ * (`lib/connections/warehouse/registry.ts` → one map of providers). * registry. A tab implements a thin `ArtifactAdapter` wrapping its OWN store's item
  * ops and registers it at import; `lib/folders/folder-lifecycle.ts` then orchestrates
  * the folder-row op + a CASCADE over member items THROUGH the adapter.
  *

@@ -33,11 +33,12 @@ import type { OutputKind } from './system-schema.ts';
  */
 export type AgentGrantKind =
   | 'data' | 'knowledge' | 'files' | 'connections' | 'metric'
-  | 'operating-manual' | 'strategy' | 'big-bets';
+  | 'operating-manual';
 export const AGENT_GRANT_KINDS: AgentGrantKind[] = [
   'data', 'knowledge', 'files', 'connections', 'metric',
-  'operating-manual', 'strategy', 'big-bets',
+  'operating-manual',
 ];
+
 
 /** The three plain access levels a Grant suggestion may propose (clamped on apply). */
 export type SuggestedGrantAccess = 'read-only' | 'read-propose' | 'read-write';

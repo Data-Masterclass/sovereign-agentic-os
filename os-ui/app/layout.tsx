@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { rubik, oswald, marcellus, fraunces } from './fonts';
 import Sidebar from '@/components/Sidebar';
-import TutorialProvider from '@/components/tutorials/TutorialProvider';
 import { ToolWindowProvider } from '@/components/ToolWindowProvider';
 import { ToastProvider } from '@/components/core/Toast';
 import { PageContextProvider } from '@/components/core/PageContext';
@@ -39,26 +38,24 @@ export default function RootLayout({
               "(function(){try{if(localStorage.getItem('soa-theme')==='dark'){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();",
           }}
         />
-        <TutorialProvider>
-          <ToolWindowProvider>
-            {/* ToastProvider wraps the whole shell so any button on any tab can
-                fire the ONE OS-wide "that did something" confirmation. */}
-            <ToastProvider>
-              {/* PageContextProvider wraps BOTH the tab surfaces (which publish the
-                  open artifact + stage) AND the assistant (which reads it), so
-                  "Ask the OS" knows exactly where the user is. */}
-              <PageContextProvider>
-                <div className="shell">
-                  <Sidebar />
-                  <div className="main">{children}</div>
-                </div>
-                {/* The ONE overarching, tab-aware OS assistant — on every tab, acts
-                    through the OS's own governed MCP. */}
-                <OsAssistant />
-              </PageContextProvider>
-            </ToastProvider>
-          </ToolWindowProvider>
-        </TutorialProvider>
+        <ToolWindowProvider>
+          {/* ToastProvider wraps the whole shell so any button on any tab can
+              fire the ONE OS-wide "that did something" confirmation. */}
+          <ToastProvider>
+            {/* PageContextProvider wraps BOTH the tab surfaces (which publish the
+                open artifact + stage) AND the assistant (which reads it), so
+                "Ask the OS" knows exactly where the user is. */}
+            <PageContextProvider>
+              <div className="shell">
+                <Sidebar />
+                <div className="main">{children}</div>
+              </div>
+              {/* The ONE overarching, tab-aware OS assistant — on every tab, acts
+                  through the OS's own governed MCP. */}
+              <OsAssistant />
+            </PageContextProvider>
+          </ToastProvider>
+        </ToolWindowProvider>
         <AuthGate />
       </body>
     </html>

@@ -21,7 +21,7 @@ import { normaliseFolderPath } from '../core/folders.ts';
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '../folders/index.ts';
 
 /**
- * The agent-system store — the MOCK Forgejo repo behind the Agents tab (kind-only,
+ * The agent-system store — the durable file-backed record behind the Agents tab (kind-only,
  * in-process; no STACKIT). Each system persists exactly ONE canonical source file,
  * `system.yaml`. The per-agent `AGENT.md` / `MEMORY.md` are PROJECTIONS of that
  * file's `agents[].agent_md` / `memory_md`, so the canvas, the Monaco file panel
@@ -238,7 +238,7 @@ export const WHITELIST_HINT = 'only system.yaml, AGENT.md and MEMORY.md are edit
  * to `GET /api/agents/systems/[id]/files` (another route bundle), so AGENT.md /
  * MEMORY.md would 404 and never load. Pinning to globalThis makes the record
  * written by one route visible to every other route — and survives dev HMR. (Same
- * reason `lib/marketplace/store.ts` and `lib/approvals.ts` pin their state.)
+ * reason `lib/approvals.ts` pins its state.)
  */
 type AgentsState = {
   store: Map<string, SystemRecord>;
@@ -398,7 +398,7 @@ function id(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
 }
 
-/** Stable blob sha for optimistic concurrency (mock Forgejo). */
+/** Stable blob sha for optimistic concurrency. */
 function sha(content: string): string {
   let h = 0;
   for (let i = 0; i < content.length; i++) h = (Math.imul(31, h) + content.charCodeAt(i)) | 0;
@@ -1126,7 +1126,7 @@ export function setLastRun(systemId: string, user: Principal, run: LastRun): Sys
  * admin on a Shared/Marketplace system — the reused {@link canManageArtifact} gate).
  *
  * FROZEN IDENTITY: the record `id` is the system's permanent identity — every route,
- * grant, approval, Forgejo repo (`os-<id>`) and schedule CronJob keys off it, so a rename
+ * grant, approval and schedule CronJob keys off it, so a rename
  * NEVER touches `id`. The canonical `system.yaml` ALSO embeds `system.name`; the SAFE
  * choice (documented) is to change the DISPLAY `name` field ONLY and leave the yaml's
  * `system.name` frozen — the yaml name is cosmetic (scoping/identity read `rec.id` +
@@ -1220,9 +1220,9 @@ export function unarchiveSystem(systemId: string, user: Principal): SystemRecord
 /**
  * Permanently delete a system + its version history (edit-scoped, irreversible).
  * The API route confirms intent; this is the hard delete once confirmed. Returns the
- * deleted record so the route can PHYSICALLY purge its backing resources (its Forgejo
- * repo + any schedule CronJob) via physical-delete.ts — a "deleted" system whose repo
- * or CronJob still exists isn't deleted. Archive (above) never purges either.
+ * deleted record so the route can PHYSICALLY purge its backing resources (any schedule
+ * CronJob) via physical-delete.ts — a "deleted" system whose CronJob still exists isn't
+ * deleted. Archive (above) never purges either.
  */
 export function deleteSystem(systemId: string, user: Principal): SystemRecord {
   const rec = requireEdit(systemId, user);
@@ -1256,26 +1256,6 @@ export function restoreSystemVersion(systemId: string, user: Principal, version:
   rec.yaml = restored;
   rec.updatedAt = now();
   writeThrough(rec);
-  return rec;
-}
-
-/**
- * Apply a yaml restored from an EXTERNAL source of truth (a Forgejo commit, via
- * git-versioning) onto the live record. Edit-scoped + validated (never trust an
- * externally-supplied yaml) + snapshotted first (so the git restore is ALSO undoable
- * from the snapshot log). This is the store hook the git-backed versions route calls
- * after re-committing a prior build's files, so the in-process record + the durable
- * mirror reflect the restored source and the next Run/Build picks it up.
- */
-export function applyRestoredYaml(systemId: string, user: Principal, yaml: string, summary: string): SystemRecord {
-  const rec = requireEdit(systemId, user);
-  parseSystem(yaml); // reject corrupt restored source rather than go live with it
-  if (yaml !== rec.yaml) {
-    versions.record(systemId, user.id, snapshotState(rec), summary);
-    rec.yaml = yaml;
-    rec.updatedAt = now();
-    writeThrough(rec);
-  }
   return rec;
 }
 

@@ -63,7 +63,8 @@ const AUTO_SUGGEST: Record<AgentStageId, string | null> = {
 /** Map an assistant grant kind to the `system.grants` field its grant lands in. */
 function grantFieldFor(kind: AgentGrantKind): 'data' | 'knowledge' | 'files' | 'connections' | 'metrics' | 'plan' {
   if (kind === 'metric') return 'metrics';
-  if (kind === 'operating-manual' || kind === 'strategy' || kind === 'big-bets') return 'plan';
+  if (kind === 'operating-manual') return 'plan';
+
   return kind; // data | knowledge | files | connections
 }
 

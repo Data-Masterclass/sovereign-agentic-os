@@ -27,7 +27,7 @@ import { archiveApp, unarchiveApp, deleteApp } from './lifecycle.ts';
  * but the ArtifactAdapter contract is sync. `itemsUnderFolder` reads the already-hydrated
  * cache synchronously (listAppsInScopeSync); the move/archive/restore/delete ops are the
  * app's own async lifecycle fns, fired through `void` — each still runs its edit-scope
- * gate + write-through, and a NEEDED teardown (runner/Forgejo) is best-effort exactly as
+ * gate + write-through, and a NEEDED teardown (the runner) is best-effort exactly as
  * the app's own lifecycle route treats it.
  *
  * NOTE: an app DELETE is LINEAGE-AWARE (deleteApp blocks while another app depends on

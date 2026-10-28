@@ -28,17 +28,17 @@ import {
 } from '@/lib/experimental/data/store';
 import { runQualityChecks } from '@/lib/experimental/data/dq-run';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@/lib/experimental/data';
-import { cubeMeta, queryRun } from '@/lib/infra/governed';
+import { queryRun } from '@/lib/infra/governed';
 import { publishPromotionLive } from '@/lib/experimental/data/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@/lib/governance/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@/lib/experimental/data/panels';
-import { cubeViewName, registryDimensionMembers, scaffoldCubeYaml } from '@/lib/experimental/data/metrics';
+import { viewName, registryDimensionMembers } from '@/lib/experimental/data/metrics';
 import { ingestAndRegisterBronze } from '@/lib/experimental/data/ingest';
 import { buildStage, commitLayerVersion } from '@/lib/experimental/data/build/server';
 import {
   silverPlan,
   goldJoinPlan,
-  goldMeasureToCube,
+  goldMeasureToModel,
   CAST_TYPES,
   type TransformOp,
   type ResolvedJoin,
@@ -97,28 +97,9 @@ import type { Sensitivity } from '@/lib/experimental/files/asset-schema';
 
 import { saveDashboard } from '@/lib/experimental/dashboards/store';
 import { fromTiles, missingPanelMembers, type ChartSpec } from '@/lib/experimental/dashboards/model';
-import { narrowCubeMeta, type RegistryViewDims } from '@/lib/experimental/dashboards/cube-meta';
+import { panelViewsFor, type RegistryViewDims } from '@/lib/experimental/dashboards/panel-views';
 import { listMetrics } from '@/lib/experimental/metrics/store';
 import { claimsFromUser, delegate } from '@/lib/experimental/data/identity';
-
-import {
-  createBet,
-  getBet,
-  updateBet,
-  addComponent,
-  archiveBet,
-  unarchiveBet,
-  deleteBet,
-  restoreBetVersion,
-  setBetWorkflow,
-  wireComponents,
-  unwireComponents,
-  canEdit as canEditBet,
-  type CreateBetInput,
-} from '@/lib/experimental/bigbets/store';
-import { getPillar } from '@/lib/experimental/strategy/pillars';
-import { deriveBetName, INTERPLAY_RELATIONS, type BigBet, type InterplayRelation, type Tab as BetTab, type ValueBasis } from '@/lib/experimental/bigbets';
-import { resolveLinkedComponent } from '@/lib/experimental/bigbets/attach-server';
 
 import {
   createSystem,
@@ -139,13 +120,13 @@ export const dashboardWriteTools: McpTool[] = [
     tab: 'dashboards',
     minRole: 'creator',
     description:
-      'Create (or replace) a dashboard (also called: report, business intelligence (BI), data visualization) you own — tiles/charts that reference GOVERNED metric members. Runs in YOUR My scope with no approval; this call PERSISTS the spec. Panels render NATIVELY at View time (Apache ECharts on the governed Cube layer) — there is no Superset import step, and every panel re-queries AS THE VIEWER so per-viewer row-level security is enforced live (a best-effort offline-mock only if Cube is unreachable). Same governed path as the Dashboards tab. Sharing it wider is the separate governed promote ladder (owner files request_promotion → a domain admin approves).',
+      'Create (or replace) a dashboard (also called: report, business intelligence (BI), data visualization) you own — tiles/charts that reference GOVERNED metric members. Runs in YOUR My scope with no approval; this call PERSISTS the spec. Panels render NATIVELY at View time (Apache ECharts over governed Trino SQL) — there is no external BI import step, and every panel re-queries AS THE VIEWER so per-viewer row-level security is enforced live (a best-effort offline-mock only if the lakehouse is unreachable). Same governed path as the Dashboards tab. Sharing it wider is the separate governed promote ladder (owner files request_promotion → a domain admin approves).',
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'Stable id (to replace an existing one you own); auto-generated if omitted.' },
         name: { type: 'string', description: 'Dashboard name, e.g. "Sales Overview".' },
-        view: { type: 'string', description: 'The Cube view (one gold dataset’s view) the charts bind to.' },
+        view: { type: 'string', description: 'The governed view (one gold dataset’s view) the charts bind to.' },
         charts: {
           type: 'array',
           description: 'At least one chart on a governed metric member.',
@@ -170,13 +151,13 @@ export const dashboardWriteTools: McpTool[] = [
       const name = str(args.name).trim();
       if (!name) fail('create_dashboard needs a `name`', 400);
       const view = str(args.view).trim();
-      if (!view) fail('create_dashboard needs a `view` (the gold dataset’s Cube view)', 400);
+      if (!view) fail('create_dashboard needs a `view` (the gold dataset’s governed view)', 400);
       const charts = (Array.isArray(args.charts) ? args.charts : []) as ChartSpec[];
       if (!charts.length) fail('a dashboard needs at least one chart on a governed metric', 400);
       const id = str(args.id).trim() || `dash_${slug(name)}_${rand()}`;
       // Scope the dashboard's governed view to the caller's domain. Tier-1 native dashboards
-      // render at VIEW time (Apache ECharts on the governed Cube layer, per-viewer RLS) —
-      // there is no Superset import step, so create_dashboard is persist-only (mirrors
+      // render at VIEW time (Apache ECharts on the governed metric layer, per-viewer RLS) —
+      // there is no external import step, so create_dashboard is persist-only (mirrors
       // /api/dashboards/build).
       const spec = fromTiles(name, view, charts, user.domains[0]);
       const rec = saveDashboard(P(user), id, spec);
@@ -190,9 +171,9 @@ export const dashboardWriteTools: McpTool[] = [
         const groups = listMetrics(P(user));
         const members = [...groups.mine, ...groups.domain, ...groups.marketplace].map((m) => m.member);
         const registryDims: RegistryViewDims = new Map(
-          listGovernedDatasets().map((d) => [cubeViewName(d), registryDimensionMembers(d)]),
+          listGovernedDatasets().map((d) => [viewName(d), registryDimensionMembers(d)]),
         );
-        const views = narrowCubeMeta(members, await cubeMeta().catch(() => []), registryDims);
+        const views = panelViewsFor(members, registryDims);
         const v = views.find((x) => x.view === view);
         const served = v
           ? { measures: v.measures, dimensions: v.dimensions, timeDimensions: v.timeDimensions }
@@ -204,9 +185,6 @@ export const dashboardWriteTools: McpTool[] = [
               `Chart “${chart.name}”: member${missing.length === 1 ? '' : 's'} ${missing.map((m) => `“${m}”`).join(', ')} not available on view “${view}” — the dataset's domain table may be missing/stale and need re-promotion. The chart keeps its spec and will show an honest warning until the model serves it.`,
             );
           }
-        }
-        if (v && v.served === false) {
-          warnings.push(`View “${view}” is not currently served by Cube — the dataset's domain table may be missing or stale (re-promotion refreshes it). Panels render an honest warning until it is served.`);
         }
       } catch {
         /* the flagging is additive — never fail a successful create for it */

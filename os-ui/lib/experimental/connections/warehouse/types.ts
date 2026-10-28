@@ -13,7 +13,8 @@
  *   1. Connection        — this typed config + a vault ref (creds are cloud-native
  *                          identity where possible; NO static keys in Trino props).
  *   2. Trino catalog     — `trinoCatalogProps(source)` renders `<name>.properties`.
- *   3. OM ingest         — the external catalog's tables mirror into OpenMetadata.
+ *   3. Catalog snapshot  — the external catalog's tables are discovered into the OS
+ *                          catalog snapshot (`catalog-snapshot.ts`).
  *   4. Federated dataset — a read-only registry entry (kind='federated') pointing
  *                          at `catalog.schema.table`.
  *   5. Import as product — CTAS materializes it into the OS Iceberg lakehouse

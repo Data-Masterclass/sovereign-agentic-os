@@ -26,7 +26,7 @@ failure. So the same code path runs in `kind` and on a deploy.
 | Ingest by type | Docling / Whisper-ASR / OCR-caption (`ingest/live.ts`) | deterministic chunker (`ingest/mocks.ts`) |
 | Embeddings | LiteLLM `/v1/embeddings` (`embed.ts`) | unit-norm hash vector at the configured dim |
 | Hybrid index | OpenSearch `files` index (`index-store.ts`) | in-process index (authoritative in kind) |
-| Catalog + lineage | OpenMetadata REST (`catalog.ts`) | in-process ring (`lineage.ts`) |
+| Lineage | in-process ring (`lineage.ts`) — the OS registry is the record | in-process ring (`lineage.ts`) |
 | Connectors | Google Drive / MS Graph (`connectors-live.ts`) | fake drive (`connectors.ts`) |
 | Approvals | shared queue + OpenSearch write-through | in-process queue |
 
@@ -68,8 +68,8 @@ failure. So the same code path runs in `kind` and on a deploy.
   text/transcript/caption passages (original openable on demand — vision → STACKIT
   only when flagged, never called here), Langfuse-traced.
 - **`use-as.ts`** — "Use as" handoffs: → Knowledge (parsed text → tacit note) and
-  → Data (guided Bronze import via the re-used `lib/data` primitives), each with OM
-  lineage.
+  → Data (guided Bronze import via the re-used `lib/data` primitives), each with a
+  lineage edge.
 
 ## Routes
 

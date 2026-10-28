@@ -82,7 +82,7 @@ export type RollingWindow = { trailing?: string; leading?: string; offset?: 'sta
  *  the measure; `cube_dbt` scaffolds dimensions from the gold manifest. The four
  *  optional fields expose the richer Cube measure model (filters / rolling windows /
  *  display format / drill-down members); they are ABSENT on a plain measure so every
- *  existing consumer (parse, serialize, scaffoldCubeYaml, sameMeasure) is unchanged. */
+ *  existing consumer (parse, serialize, scaffoldMetricYaml, sameMeasure) is unchanged. */
 export type Measure = {
   name: string;
   type: string;
@@ -121,7 +121,7 @@ export type Measure = {
  *  description is required by the transparency gate before a dataset can promote. */
 export type ColumnDoc = { name: string; description: string };
 
-/** The OpenMetadata **Certification** trust badge on a Data Product. NOTE: its
+/** The **Certification** trust badge on a Data Product. NOTE: its
  *  Bronze/Silver/Gold levels are a *trust* axis — deliberately DIFFERENT from the
  *  medallion *refinement* layer (data-architecture-model.md §Naming caution). */
 export type TrustLevel = 'bronze' | 'silver' | 'gold';
@@ -294,7 +294,7 @@ export type Dataset = {
   measures: Measure[];
   /** Column-level documentation (transparency gate input). */
   columns: ColumnDoc[];
-  /** OM certification badge — set on certify (product), cleared on decertify. */
+  /** Certification badge — set on certify (product), cleared on decertify. */
   certification?: Certification;
   /** Domains that have imported/subscribed to this product (lineage-aware: a
    *  product with importers can't be decertified without orphaning them). */
@@ -322,20 +322,14 @@ export type Dataset = {
    *  them) keeps its exact old identity, so there is ZERO migration. Set once at create,
    *  immutable for the life of the dataset (so every derived name stays stable). Omitted
    *  from the yaml when false (byte-stable — old records don't churn). */
-  cubeNamespaced?: boolean;
-  /** Analytics-as-code gate (#146 Phase 6). When true, a promoted dataset also emits a
-   *  git-backed dbt model (`dbt/models/governed/<domain>/<layer>_<slug>.sql`) + column
-   *  docs (`schema.yml`) into the analytics repo. ABSENT/false ⇒ no dbt model is emitted —
-   *  pre-existing datasets stay un-emitted until they are re-promoted (zero migration,
-   *  byte-stable). Set at promote time. Omitted from yaml when false. */
-  gitBacked?: boolean;
+  viewNamespaced?: boolean;
   /** How the dataset was born (create paths). `'curated'` = built from EXISTING governed
    *  datasets via the Gold join (the reuse path); `'connected'` = ADOPTED from a warehouse
    *  connection's exposure (lakehouse-import-exposure.md — the dataset IS an external table,
    *  see `connected`); `'ingest'`/ABSENT = the classic bring-a-file/extract path. Only
    *  `'curated'`/`'connected'` are ever written to the yaml — absent means ingest, so every
    *  pre-existing record serializes exactly as before (byte-stable, zero migration; the
-   *  `cubeNamespaced` precedent). Purely descriptive: no gate reads it. */
+   *  `viewNamespaced` precedent). Purely descriptive: no gate reads it. */
   origin?: 'ingest' | 'curated' | 'connected';
   /** ADOPTED-FROM-A-CONNECTION block — present ONLY with `origin:'connected'`. Binds this
    *  dataset to the ExposureSet + external source it federates (live) or copies (sync).
@@ -348,7 +342,7 @@ export type Dataset = {
    *  CLEARED the moment a human saves the Documentation section (`setDocs` from the docs
    *  route), so a reviewed/edited doc drops the marker. ABSENT ⇒ human-authored or empty
    *  docs (every dataset before this field existed) — omitted from the yaml (byte-stable,
-   *  zero migration; the `origin`/`gitBacked` precedent). */
+   *  zero migration; the `origin` precedent). */
   docsProvenance?: 'ai-auto';
   /** STALE-DOMAIN-TABLE marker (Northpeak fix). Set true when a PROMOTED dataset's
    *  personal-lane Gold is REBUILT but the governed domain table (`iceberg.<domain>.gold_<slug>`
@@ -356,7 +350,7 @@ export type Dataset = {
    *  domain copy holds a PRIOR snapshot. While true, consumers must be warned and the table
    *  re-promoted (re-run the publish CTAS). CLEARED the moment the domain CTAS re-runs. ABSENT/
    *  false ⇒ the domain table is in sync (or the dataset was never promoted) — omitted from
-   *  the yaml (byte-stable, zero migration; the `gitBacked` precedent). */
+   *  the yaml (byte-stable, zero migration; the `viewNamespaced` precedent). */
   domainTableStale?: boolean;
   /** HOW this dataset's governed DOMAIN artifact is materialized (promote-as-view, 0.6.150).
    *  `'view'` = the promotion published a `CREATE OR REPLACE VIEW iceberg.<domain>.<layer>_<slug>
@@ -365,7 +359,7 @@ export type Dataset = {
    *  physical CTAS copy (demote drops the TABLE, a rebuild flags it stale + re-materializes). Set at
    *  promote time from the `promoteAsView` platform flag; NEW promotes under the flag are `'view'`,
    *  every existing promoted dataset stays a table. Omitted from the yaml when absent/`'table'`
-   *  (byte-stable, zero migration — the `gitBacked`/`domainTableStale` precedent). */
+   *  (byte-stable, zero migration — the `domainTableStale` precedent). */
   domainArtifact?: 'view' | 'table';
 };
 
@@ -755,10 +749,11 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   // name. Absent ⇒ still derivable from the name (`physicalSlug` falls back to
   // `slug(name)`), so every pre-rename record parses with no slug — byte-stable.
   const slugRaw = typeof doc.slug === 'string' && doc.slug.trim() ? doc.slug.trim() : undefined;
-  // #155: absent/false ⇒ legacy un-namespaced cube identity (every pre-#155 record).
-  const cubeNamespaced = doc.cubeNamespaced === true ? true : undefined;
-  // #146 Phase 6: absent/false ⇒ no dbt model emitted (pre-existing datasets stay un-emitted).
-  const gitBacked = doc.gitBacked === true ? true : undefined;
+  // #155: absent/false ⇒ legacy un-namespaced view identity (every pre-#155 record).
+  // BACK-COMPAT: records written before the semantic-layer removal carry the marker
+  // under its old `cubeNamespaced` key — read BOTH so a stored dataset never silently
+  // loses its namespaced identity (which would repoint its view at a different name).
+  const viewNamespaced = doc.viewNamespaced === true || doc.cubeNamespaced === true ? true : undefined;
   // Northpeak fix: absent/false ⇒ the domain table is in sync (or never promoted).
   const domainTableStale = doc.domainTableStale === true ? true : undefined;
   // Promote-as-view: only 'view' is stored; absent/'table' ⇒ the classic physical CTAS copy
@@ -802,8 +797,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     ...(checks ? { checks } : {}),
     ...(monitors ? { monitors } : {}),
     ...(sync ? { sync } : {}),
-    ...(cubeNamespaced ? { cubeNamespaced } : {}),
-    ...(gitBacked ? { gitBacked } : {}),
+    ...(viewNamespaced ? { viewNamespaced } : {}),
     ...(domainTableStale ? { domainTableStale } : {}),
     ...(domainArtifact ? { domainArtifact } : {}),
     ...(origin ? { origin } : {}),
@@ -884,10 +878,7 @@ export function serializeDataset(d: Dataset): string {
   }
   // Omit-when-false (byte-stable): a legacy (un-namespaced) dataset serializes exactly
   // as before #155, so no old record churns in the durable mirror.
-  if (d.cubeNamespaced) doc.cubeNamespaced = true;
-  // Omit-when-false (#146 Phase 6): pre-existing datasets serialize exactly as before,
-  // un-emitted until re-promoted with gitBacked=true.
-  if (d.gitBacked) doc.gitBacked = true;
+  if (d.viewNamespaced) doc.viewNamespaced = true;
   // Omit-when-false (byte-stable): only a promoted dataset whose domain table drifted
   // from a rebuild carries this; every in-sync/un-promoted dataset serializes as before.
   if (d.domainTableStale) doc.domainTableStale = true;

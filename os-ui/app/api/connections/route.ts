@@ -83,13 +83,7 @@ export const POST = withRoute(async ({ user, req }) => {
     if (isWarehouse && !config.externalConnectorsEnabled) {
       return NextResponse.json({ error: 'External-warehouse connectors are not enabled on this deployment' }, { status: 403 });
     }
-    // External OpenMetadata (Phase 1, read/discover) — allowed ONLY when the operator
-    // enabled OpenMetadata connections; otherwise inert like every other flag-gated one.
-    const isOmCatalog = template === 'om-catalog';
-    if (isOmCatalog && !config.openmetadataConnectEnabled) {
-      return NextResponse.json({ error: 'External OpenMetadata connections are not enabled on this deployment' }, { status: 403 });
-    }
-    if (!isWarehouse && !isOmCatalog && !isUserFacingTemplate(template)) {
+    if (!isWarehouse && !isUserFacingTemplate(template)) {
       return NextResponse.json({ error: 'This connector is not available' }, { status: 400 });
     }
     // Parse + validate the warehouse block shape at the edge (the lib re-validates fields).
@@ -161,8 +155,6 @@ export const POST = withRoute(async ({ user, req }) => {
       atlassian,
       odata,
       workday,
-      // Optional default OM Service name for an om-catalog connection (non-secret).
-      omService: isOmCatalog && body?.omService ? String(body.omService) : undefined,
     });
     return NextResponse.json({ connection: conn }, { status: 201 });
 }, { defaultStatus: 500 });

@@ -64,14 +64,14 @@ test('own-tab policy: root-absolute-asset SPAs + WS tools carry ownTab; verified
   // routes (verified live: Langfuse/Dagster chunk requests 404 on the OS
   // origin), or they need WebSockets (JupyterHub). Each must carry the Tier-2
   // own-tab metadata so the ToolWindow shows the card, never a blank iframe.
-  for (const key of ['langfuse', 'superset', 'dagster', 'featureform', 'jupyterhub']) {
+  for (const key of ['langfuse', 'dagster', 'featureform', 'jupyterhub']) {
     const t = TOOLS[key];
     assert.ok(t.ownTab, `${key} carries ownTab`);
     assert.ok(t.ownTab!.reason.length > 0, `${key} ownTab.reason is honest, not empty`);
     assert.equal(typeof t.ownTab!.consoleUrl, 'string', `${key} ownTab.consoleUrl is a string (may be '')`);
   }
   // The verified-working embeds (relative asset URLs) stay in the frame.
-  for (const key of ['mlflow', 'cube', 'forgejo', 'litellm']) {
+  for (const key of ['mlflow', 'litellm']) {
     assert.equal(TOOLS[key].ownTab, undefined, `${key} stays iframe-embedded`);
   }
 });
@@ -143,8 +143,8 @@ test('rewriteSetCookie moves Path into the tool prefix and drops Domain', () => 
     'session=abc; Path=/tools/forgejo/; HttpOnly; Secure',
   );
   assert.equal(
-    rewriteSetCookie('csrf=z; Path=/api; SameSite=Lax', '/tools/superset'),
-    'csrf=z; Path=/tools/superset/api; SameSite=Lax',
+    rewriteSetCookie('csrf=z; Path=/api; SameSite=Lax', '/tools/langfuse'),
+    'csrf=z; Path=/tools/langfuse/api; SameSite=Lax',
   );
   // Domain is stripped so the cookie stays host-only on the OS origin.
   assert.ok(!/Domain=/i.test(rewriteSetCookie('a=b; Path=/; Domain=mlflow', '/tools/mlflow')));
@@ -156,8 +156,8 @@ test('rewriteSetCookie moves Path into the tool prefix and drops Domain', () => 
 
 test('header SSO injects identity + mapped role, plus the forwarded chain', () => {
   const tool = fakeTool({
-    key: 'superset',
-    basePath: '/tools/superset',
+    key: 'langfuse',
+    basePath: '/tools/langfuse',
     sso: {
       mode: 'header',
       roleMap: { admin: 'Admin', builder: 'Alpha', 'creator': 'Gamma' },
@@ -166,7 +166,7 @@ test('header SSO injects identity + mapped role, plus the forwarded chain', () =
   const h = buildUpstreamHeaders({
     tool,
     user: USER,
-    incoming: new Headers({ cookie: 'soa_session=deadbeef; superset_session=keep' }),
+    incoming: new Headers({ cookie: 'soa_session=deadbeef; langfuse_session=keep' }),
     proto: 'https',
     host: 'os.agentic.datamasterclass.com',
   });
@@ -174,11 +174,11 @@ test('header SSO injects identity + mapped role, plus the forwarded chain', () =
   assert.equal(h.get('x-forwarded-preferred-username'), 'alice');
   assert.equal(h.get('x-forwarded-roles'), 'Alpha'); // builder → Alpha
   assert.equal(h.get('x-forwarded-proto'), 'https');
-  assert.equal(h.get('x-forwarded-prefix'), '/tools/superset');
+  assert.equal(h.get('x-forwarded-prefix'), '/tools/langfuse');
   assert.equal(h.get('x-forwarded-host'), 'os.agentic.datamasterclass.com');
   // the OS session cookie is NOT forwarded upstream; the tool's own cookie is.
   assert.ok(!/soa_session/.test(h.get('cookie') ?? ''));
-  assert.ok(/superset_session=keep/.test(h.get('cookie') ?? ''));
+  assert.ok(/langfuse_session=keep/.test(h.get('cookie') ?? ''));
   assert.equal(h.get('host'), null, 'inbound Host is dropped');
 });
 

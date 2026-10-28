@@ -63,7 +63,8 @@ test('starter templates are read-only (safetyPreset = read-only, no write tool g
     'create_dataset', 'add_dataset_version', 'document_dataset',
     'author_knowledge', 'publish_knowledge', 'index_knowledge',
     'upload_file', 'request_promotion', 'approve_promotion',
-    'define_metric', 'create_dashboard', 'create_big_bet',
+    'define_metric', 'create_dashboard',
+
     'create_agent_system', 'commit_agent_files', 'build_agent_system',
   ]);
   for (const { key } of TEMPLATES) {

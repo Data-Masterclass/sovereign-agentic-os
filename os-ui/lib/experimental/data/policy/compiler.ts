@@ -3,7 +3,6 @@
  */
 import type { Dataset, DataVisibility } from '../dataset-schema.ts';
 import { assetTarget, productTarget } from '../store-fqn.ts';
-import { cubeName } from '../metrics.ts';
 
 /**
  * The policy compiler (data-policy-compiler.md): ONE source — a governed dataset's
@@ -11,7 +10,6 @@ import { cubeName } from '../metrics.ts';
  *
  *   1. the **Trino OPA** `data.governance` bundle the EXISTING `package trino` rego
  *      already reads (tables + principals) — we DON'T re-author the rego, we feed it;
- *   2. the **Cube** access policies (row_level + member_level) on each cube/view.
  *
  * Pure + tested. The conformance test (`conformance.ts`) then proves the two agree.
  * Mask-vs-hide is the locked decision: a restricted column is MASKED in Trino and
@@ -28,7 +26,7 @@ export type TableGovernance = {
   shared_with: string[];
   /** Named individuals granted cross-domain (the additive rego clause). */
   shared_with_users: string[];
-  /** Columns restricted for non-owners → masked in Trino / excluded in Cube. */
+  /** Columns restricted for non-owners → masked in Trino. */
   sensitive_columns: Record<string, string>;
 };
 
@@ -95,54 +93,38 @@ export function compileOpa(datasets: Dataset[], roster: Roster): OpaBundle {
   return { tables, principals };
 }
 
-// ------------------------------------------------ compile target 2 — Cube -------
+/** A principal as the rego sees it (user + the domains their groups carry). */
+export type Identity = { user: string; domains: string[] };
 
-/** A Cube `access_policy` block (data-policy-compiler.md compile target 2). */
-export type CubeAccessPolicy = {
-  /** The cube/view this governs. */
-  cube: string;
-  /** Domains + named users whose securityContext is allowed rows. */
-  allowDomains: string[];
-  allowUsers: string[];
-  /** `true` ⇒ any domain (visibility=public). */
-  public: boolean;
-  /** member_level.excludes — restricted columns hidden in Cube. */
-  excludes: string[];
-};
-
-/** The cube name a dataset's view binds to (one cube per gold mart). Delegates to
- *  `cubeName` (the single identity source) so the compiled access-policy key is
- *  BYTE-FOR-BYTE the model name `buildCubeModels` joins on — #155 namespacing included.
- *  If these two ever diverged, `policies.get(cubeName(d))` would miss and the cube would
- *  ship with NO access policy. */
-export function cubeFor(d: Dataset): string {
-  return cubeName(d);
-}
-
-export function compileCube(datasets: Dataset[]): CubeAccessPolicy[] {
-  const out: CubeAccessPolicy[] = [];
-  for (const d of datasets) {
-    const g = governanceFor(d);
-    if (!g) continue;
-    // Mirror the OPA rego EXACTLY: the owning domain is always entitled; shared_with
-    // domains count ONLY when visibility is `shared` (else the two paths would drift).
-    const sharedDomains = g.visibility === 'shared' ? g.shared_with : [];
-    out.push({
-      cube: cubeFor(d),
-      allowDomains: [g.domain, ...sharedDomains].sort(),
-      allowUsers: g.shared_with_users,
-      public: g.visibility === 'public',
-      excludes: Object.keys(g.sensitive_columns).sort(),
-    });
+/** Replicates the `package trino` rego's row/column decision over the OPA bundle —
+ *  the pure check Build + tests use to prove the compiled bundle governs as intended. */
+export function evaluateOpa(
+  bundle: OpaBundle,
+  identity: Identity,
+  fqn: string,
+  column?: string,
+): { entitled: boolean; masked: boolean } {
+  const meta = bundle.tables[fqn];
+  if (!meta) return { entitled: false, masked: false };
+  const inDomain = (dom: string) => identity.domains.includes(dom);
+  const entitled =
+    meta.visibility === 'public' ||
+    inDomain(meta.domain) ||
+    (meta.visibility === 'shared' && meta.shared_with.some(inDomain)) ||
+    meta.shared_with_users.includes(identity.user);
+  let masked = false;
+  if (column && meta.sensitive_columns[column]) {
+    const clearances = bundle.principals[identity.user]?.clearances ?? [];
+    masked = !clearances.includes(meta.sensitive_columns[column]);
   }
-  return out;
+  return { entitled, masked };
 }
 
-export type CompiledPolicy = { opa: OpaBundle; cube: CubeAccessPolicy[] };
+export type CompiledPolicy = { opa: OpaBundle };
 
-/** Compile ONE source → both targets (run on Build + every grant/visibility change). */
+/** Compile ONE source → the OPA bundle (run on Build + every grant/visibility change). */
 export function compilePolicy(datasets: Dataset[], roster: Roster): CompiledPolicy {
-  return { opa: compileOpa(datasets, roster), cube: compileCube(datasets) };
+  return { opa: compileOpa(datasets, roster) };
 }
 
 // ------------------------------------------- compile target — EXPOSURE SETS ---

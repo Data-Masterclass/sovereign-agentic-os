@@ -11,13 +11,15 @@ import type { DataStage } from '@/lib/experimental/data/build/adapter';
 
 export const dynamic = 'force-dynamic';
 
-const STAGES: DataStage[] = ['bronze', 'silver', 'gold', 'metric', 'dashboard', 'promote', 'certify'];
+const STAGES: DataStage[] = ['bronze', 'silver', 'gold', 'promote', 'certify'];
 
 /**
- * Run a stage's Build (execute → verify) for a dataset. For `promote`/`certify` this
- * includes the **policy** adapter — compile one source → OPA + Cube, then the
- * conformance gate (OPA path == Cube path, else ✗). Live when the stack is reachable,
- * else the honest offline-mock.
+ * Run a stage's Build (execute → verify) for a dataset: dlt (Bronze) → dbt/Trino
+ * (Silver, Gold) → Polaris/Iceberg publish (`promote`/`certify`), whose **policy**
+ * adapter compiles one source into the OPA rules Trino enforces and then verifies the
+ * governed read path actually honours them (else ✗). There is no metric/dashboard/catalog
+ * stage: metrics and dashboards are defined in their own tabs on the built Gold mart.
+ * Live when the stack is reachable, else the honest offline-mock.
  */
 export const POST = withRoute<{ id: string }, { stage?: DataStage }>(async ({ user, params, body }) => {
   const { id } = params;

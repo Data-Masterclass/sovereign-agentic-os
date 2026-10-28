@@ -57,7 +57,7 @@ export type SwCtx = {
    * story implies a data need (Choose Context's ✓ condition + Build App's data-need gate).
    */
   contextResolved: boolean;
-  /** The repo is scaffolded with at least one commit (pipeline `forgejo` = ok). */
+  /** The app has a source tree with real generated code (beyond the template seed). */
   committed: boolean;
   /**
    * At least one user story is ACTUALLY BUILT — real code committed for it (a story marked
@@ -98,7 +98,7 @@ export type SwCtx = {
  * (the design-before-build + data-need gates), and is complete once code is committed. Test
  * & Publish is gated on at least one ACTUALLY-BUILT story (not merely a scaffolded repo), and
  * then reports the live status. Each gate reads ACTUAL app state (`app.purpose`, `app.epics`,
- * story specs, granted datasets, `app.pipeline`, story build status, release count) — never a
+ * story specs, granted datasets, `app.repo.seeded`, story build status, release count) — never a
  * timer, never faked.
  */
 export const SW_STAGES: StageDef<SwStageId, SwCtx>[] = [

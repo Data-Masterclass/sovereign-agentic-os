@@ -11,7 +11,7 @@ import {
   personalSchema,
   compileGoldJoin,
   goldJoinPlan,
-  goldMeasureToCube,
+  goldMeasureToModel,
   layerTarget,
   passThroughPlan,
   resolvePassThroughSource,
@@ -676,10 +676,10 @@ test('goldJoinPlan threads derived fields through to the compiled CTAS', () => {
   assert.match(plan.sql, /\(t0\."price" - t0\."cost"\) as "margin"/);
 });
 
-test('goldMeasureToCube maps aggregates to a re-aggregatable Cube measure over the gold column', () => {
-  assert.deepEqual(goldMeasureToCube({ name: 'net', agg: 'sum', col: { ref: 1, column: 'x' } }), { name: 'net', type: 'sum', sql: 'net' });
-  assert.deepEqual(goldMeasureToCube({ name: 'n', agg: 'count' }), { name: 'n', type: 'sum', sql: 'n' });
-  assert.deepEqual(goldMeasureToCube({ name: 'a', agg: 'avg', col: { ref: 0, column: 'y' } }), { name: 'a', type: 'avg', sql: 'a' });
+test('goldMeasureToModel maps aggregates to a re-aggregatable Cube measure over the gold column', () => {
+  assert.deepEqual(goldMeasureToModel({ name: 'net', agg: 'sum', col: { ref: 1, column: 'x' } }), { name: 'net', type: 'sum', sql: 'net' });
+  assert.deepEqual(goldMeasureToModel({ name: 'n', agg: 'count' }), { name: 'n', type: 'sum', sql: 'n' });
+  assert.deepEqual(goldMeasureToModel({ name: 'a', agg: 'avg', col: { ref: 0, column: 'y' } }), { name: 'a', type: 'avg', sql: 'a' });
 });
 
 // ------------------------------------------------------------- publishPlan (T8) --

@@ -64,7 +64,7 @@ async function assertBuildsAndVerifies(systemId: string): Promise<void> {
   });
   assert.equal(report.ok, true, `Build should verify; rows: ${JSON.stringify(report.rows)}`);
   const tools = report.rows.map((r) => r.tool).sort();
-  assert.deepEqual(tools, ['forgejo', 'langfuse', 'langgraph', 'litellm', 'opa']);
+  assert.deepEqual(tools, ['langfuse', 'langgraph', 'litellm', 'opa']);
   for (const r of report.rows) assert.equal(r.status, 'ok', `${r.tool}: ${r.error ?? ''}`);
   // A trace landed for the test invocation (Langfuse verify only passes if so).
   assert.ok(backends.langfuse.traces.length > 0, 'a Langfuse trace must land for the test invocation');
@@ -88,7 +88,7 @@ test('GATE A — build a 2-agent supervisor+sub by editor/canvas; it executes + 
   assert.deepEqual(sup.members, ['researcher']);
   assert.doesNotThrow(() => compile(view));
 
-  // The per-agent files project from the one source (Forgejo whitelist).
+  // The per-agent files project from the one source (the store's file whitelist).
   const files = listFiles(rec.id, user).files;
   assert.ok(files.includes('agents/researcher/AGENT.md'));
 

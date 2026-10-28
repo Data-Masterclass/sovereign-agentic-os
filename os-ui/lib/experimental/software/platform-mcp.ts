@@ -92,7 +92,7 @@ export const PLATFORM_MCP_PRINCIPAL = 'platform-mcp';
  */
 export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boolean }[] = [
   // ---- Define App ----
-  { name: 'create_software', description: "STAGE 1 · DEFINE APP. Create a new governed app. DEFAULT `kind: 'spec'` — a DECLARATIVE app: a validated AppSpec of cookbook-pattern tabs over governed data, served SAME-ORIGIN by the OS renderer (NO Forgejo repo / CI / registry / pod), authored with set_app_spec or scaffolded in one call with generate_app_spec. This is the golden path. Pass `name`, an optional `domain`, an optional `purpose` (the app's stated intent, ≤2000 chars), and optionally DECLARE its surface (surface: 'ui' | 'api' | 'both') — declaring wins over auto-detection. `kind: 'code'` is the ADVANCED coded path (raw code + Forgejo + image build) — it is DISABLED by default and only works when a platform admin has enabled coded apps (createApp fails closed with 403 otherwise). The `template` arg (`sovereign-app` default, `website`, `api-service`, `empty`) only shapes a coded app's scaffold. Next: design_software.", write: true },
+  { name: 'create_software', description: "STAGE 1 · DEFINE APP. Create a new governed app. DEFAULT `kind: 'spec'` — a DECLARATIVE app: a validated AppSpec of cookbook-pattern tabs over governed data, served SAME-ORIGIN by the OS renderer (NO source tree / registry / pod), authored with set_app_spec or scaffolded in one call with generate_app_spec. This is the golden path. Pass `name`, an optional `domain`, an optional `purpose` (the app's stated intent, ≤2000 chars), and optionally DECLARE its surface (surface: 'ui' | 'api' | 'both') — declaring wins over auto-detection. `kind: 'code'` is the ADVANCED coded path (raw generated code + image build; no git server, no CI) — it is DISABLED by default and only works when a platform admin has enabled coded apps (createApp fails closed with 403 otherwise). The `template` arg (`sovereign-app` default, `website`, `api-service`, `empty`) only shapes a coded app's scaffold. Next: design_software.", write: true },
   // ---- Design Epics (+ Choose Context via `grants`) ----
   { name: 'design_software', description: "STAGE 2 · DESIGN EPICS (and STAGE 3 · CHOOSE CONTEXT). Author or update the app's specification tree — `purpose`, `epics` (each with user stories and per-story `spec` of features / non-functional requirements / rules), and governed context `grants` (bind existing connections / data / knowledge / files / metrics — this is the Choose Context bind-existing surface). This is the SAME governed write the UI uses (patchAppDesign): owner / owning-domain admin / platform admin only. A story must have a spec AND, if it needs data, a bound/created dataset before build_software will build it (the design-before-build + data-need gates). Next: build_software.", write: true },
   // ---- Build App ----
@@ -148,15 +148,14 @@ function asSurface(v: unknown): SurfaceDeclaration | undefined {
 /**
  * Read the committed files a Build/Test directive grounds the agent in — the SAME
  * view-gated tree the UI + `read_app_files` MCP tool read. Bounded (`maxFiles`) and
- * per-file truncated so a large repo cannot blow the response; honestly labelled with
- * the tree's `mode` (live repo vs the committed snapshot). Best-effort: an unreachable
- * repo yields an empty list rather than failing the whole stage tool.
+ * per-file truncated so a large tree cannot blow the response. Best-effort: an
+ * unreadable tree yields an empty list rather than failing the whole stage tool.
  */
 async function committedFiles(
   appId: string,
   user: CurrentUser,
   maxFiles = 40,
-): Promise<{ mode: string; files: { path: string; content: string; truncated?: boolean }[] }> {
+): Promise<{ files: { path: string; content: string; truncated?: boolean }[] }> {
   try {
     const tree = await listAppFilesForViewer(appId, user);
     const out: { path: string; content: string; truncated?: boolean }[] = [];
@@ -169,9 +168,9 @@ async function committedFiles(
         /* binary / oversized blob — skip it */
       }
     }
-    return { mode: tree.mode, files: out };
+    return { files: out };
   } catch {
-    return { mode: 'offline-mock', files: [] };
+    return { files: [] };
   }
 }
 

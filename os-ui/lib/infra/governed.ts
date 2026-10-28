@@ -7,8 +7,8 @@ import { serviceBearerHeader } from '@/lib/infra/service-bearer';
 import type { Role } from '@/lib/core/session';
 
 /**
- * Governed data-tool spine. Every data access an agent makes — the Cube `metrics`
- * tool and the Trino `query` tool — funnels through here so the SAME policy +
+ * Governed data-tool spine. Every data access an agent makes — the `metrics` tool
+ * and the Trino `query` tool — funnels through here so the SAME policy +
  * audit applies whether the caller is the dashboard, an agent, or a UI panel.
  * Three concerns:
  *
@@ -17,12 +17,12 @@ import type { Role } from '@/lib/core/session';
  *      (deny) with an explicit `policy: 'opa-unreachable'` marker — consistent
  *      with the agent spine — so an OPA outage cannot silently open data authz.
  *      The offline-mock teaching flow can opt into fail-open with OPA_FAIL_OPEN=true.
- *   2. Execution against the SAME governed backends the BI layer uses — Cube for
- *      metrics, the query-tool for ad-hoc SQL over the Iceberg marts.
+ *   2. Execution against the SAME governed backend the BI layer uses — the
+ *      query-tool (Trino) for metrics and ad-hoc SQL over the Iceberg marts.
  *   3. Best-effort Langfuse trace so every tool call is auditable in Monitoring.
  *
  * This is the seam the data golden path leans on: because the agent reads the
- * same Cube metric + the same Iceberg mart as Superset, the numbers can't drift.
+ * same governed metric + the same Iceberg mart as the dashboards, the numbers can't drift.
  */
 
 export type ToolName = 'metrics' | 'query' | 'ask' | 'talk';
@@ -95,182 +95,6 @@ export async function trace(event: {
     body: JSON.stringify(body),
   });
   return Boolean(res && res.ok);
-}
-
-// ----------------------------------------------------------------- Cube -------
-
-export type CubeQuery = {
-  measures?: string[];
-  dimensions?: string[];
-  timeDimensions?: { dimension: string; granularity?: string; dateRange?: string[] }[];
-  filters?: { member: string; operator: string; values: string[] }[];
-  order?: Record<string, 'asc' | 'desc'>;
-  limit?: number;
-};
-
-export type CubeResult = { rows: Record<string, unknown>[]; annotation: Record<string, unknown> };
-
-/**
- * The securityContext structural keys — the delegated identity Cube's queryRewrite reads
- * to BUILD its RLS (never itself a filter member). Everything else in the context is a
- * low-cardinality ATTRIBUTE (region, tenant …) that Cube turns into a `filters` member
- * `<Cube>.<attr>` — which 400s the whole query if the queried cube has no such dimension.
- */
-const RLS_STRUCTURAL_KEYS = new Set(['sub', 'domains', 'role', 'scope', 'imported']);
-
-/**
- * Drop any securityContext ATTRIBUTE the queried cube(s) do NOT have as a dimension, so
- * Cube never pushes a filter on a non-existent path (the Northpeak cohort cubes have no
- * `region` — a domain-scoped, not region-scoped, dataset). Structural identity keys are
- * always kept (RLS is not collapsed); an attribute the cube DOES have is kept (RLS stays
- * sound). `cubeDimensions` is the set of full dimension members the target cube(s) expose
- * (`Sales.region`, …); an empty/unknown set means "don't scrub" (offline: no live 400).
- */
-export function scrubSecurityContext(
-  ctx: Record<string, unknown>,
-  cubeDimensions: Set<string>,
-): Record<string, unknown> {
-  if (cubeDimensions.size === 0) return ctx;
-  const cubes = new Set<string>();
-  for (const dim of cubeDimensions) cubes.add(dim.split('.')[0]);
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(ctx)) {
-    if (RLS_STRUCTURAL_KEYS.has(k)) {
-      out[k] = v;
-      continue;
-    }
-    // Keep the attribute only if SOME queried cube has `<Cube>.<attr>` as a dimension.
-    const has = [...cubes].some((c) => cubeDimensions.has(`${c}.${k}`));
-    if (has) out[k] = v;
-  }
-  return out;
-}
-
-// The cube→dimension-members map from Cube /meta, cached per process (the schema is
-// git-deployed, not hot-swapped, so a short-lived cache is safe). A test hook injects it.
-let cubeMetaCache: Record<string, true> | null = null;
-
-/** TEST ONLY: inject (or clear with `null`) the cached Cube dimension-member set. */
-export function __setCubeMetaForTest(members: Record<string, true> | null): void {
-  cubeMetaCache = members;
-}
-
-/** The set of dimension members the queried cubes expose (from Cube /meta, cached).
- *  Returns an empty set when meta is unknown/unreachable → callers then DON'T scrub. */
-async function cubeDimensionsFor(query: CubeQuery): Promise<Set<string>> {
-  if (!cubeMetaCache) {
-    const res = await withTimeout(
-      `${config.cubeUrl}/cubejs-api/v1/meta`,
-      { method: 'GET', headers: { accept: 'application/json' } },
-      2500,
-    );
-    if (!res || !res.ok) return new Set();
-    try {
-      const data = (await res.json()) as { cubes?: { name?: string; dimensions?: { name?: string }[] }[] };
-      const members: Record<string, true> = {};
-      for (const cube of data?.cubes ?? []) {
-        for (const d of cube.dimensions ?? []) {
-          if (typeof d?.name === 'string') members[d.name] = true;
-        }
-      }
-      cubeMetaCache = members;
-    } catch {
-      return new Set();
-    }
-  }
-  // Narrow to the cubes actually referenced by this query (measures/dimensions/timeDims).
-  const queriedCubes = new Set<string>();
-  for (const m of query.measures ?? []) queriedCubes.add(m.split('.')[0]);
-  for (const d of query.dimensions ?? []) queriedCubes.add(d.split('.')[0]);
-  for (const t of query.timeDimensions ?? []) queriedCubes.add(t.dimension.split('.')[0]);
-  const out = new Set<string>();
-  for (const member of Object.keys(cubeMetaCache)) {
-    if (queriedCubes.has(member.split('.')[0])) out.add(member);
-  }
-  return out;
-}
-
-/** One cube/view as Cube's /meta reports it — the fields the native dashboard panel
- *  builder needs to offer measures/dimensions/time dimensions for a governed view. */
-export type CubeMetaView = {
-  name: string;
-  measures: string[];
-  dimensions: string[];
-  timeDimensions: string[];
-};
-
-/**
- * Read Cube's /meta (measures + dimensions + time dimensions per cube/view), used by the
- * dashboards panel builder to offer the members of a governed view. Returns an empty list
- * when Cube is unreachable (offline teaching flow) so callers degrade gracefully — the
- * builder falls back to the members it already knows from the metric registry.
- */
-export async function cubeMeta(): Promise<CubeMetaView[]> {
-  const res = await withTimeout(
-    `${config.cubeUrl}/cubejs-api/v1/meta`,
-    { method: 'GET', headers: { accept: 'application/json' } },
-    2500,
-  );
-  if (!res || !res.ok) return [];
-  try {
-    const data = (await res.json()) as {
-      cubes?: { name?: string; measures?: { name?: string }[]; dimensions?: { name?: string; type?: string }[] }[];
-    };
-    return (data?.cubes ?? []).map((c) => {
-      const dims = (c.dimensions ?? []).filter((d) => typeof d?.name === 'string');
-      return {
-        name: String(c.name ?? ''),
-        measures: (c.measures ?? []).map((m) => m?.name).filter((n): n is string => typeof n === 'string'),
-        dimensions: dims.filter((d) => d.type !== 'time').map((d) => d.name as string),
-        timeDimensions: dims.filter((d) => d.type === 'time').map((d) => d.name as string),
-      };
-    });
-  } catch {
-    return [];
-  }
-}
-
-export async function cubeLoad(
-  query: CubeQuery,
-  opts: { securityContext?: Record<string, unknown> } = {},
-): Promise<CubeResult> {
-  // R3 (data-policy-compiler.md): when an agent/dashboard resolves a metric, the
-  // per-user securityContext propagates to Cube so its row-level security applies —
-  // never a shared service identity. Cube reads it from the request token; locally
-  // (no JWT signer) it is passed as a header a dev Cube can map, and is a no-op otherwise.
-  const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json' };
-  if (opts.securityContext) {
-    // Scrub attributes the queried cube lacks so Cube can't push a filter on a
-    // non-existent path (e.g. `region` on a domain-scoped cohort cube) → no 400.
-    const dims = await cubeDimensionsFor(query);
-    headers['x-cube-security-context'] = JSON.stringify(scrubSecurityContext(opts.securityContext, dims));
-  }
-  const res = await withTimeout(
-    `${config.cubeUrl}/cubejs-api/v1/load`,
-    { method: 'POST', headers, body: JSON.stringify({ query }) },
-    8000,
-  );
-  if (!res) throw new Error('Could not reach Cube');
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Cube ${res.status}: ${text.slice(0, 240)}`);
-  const data = JSON.parse(text);
-  return {
-    rows: Array.isArray(data?.data) ? data.data : [],
-    annotation: (data?.annotation ?? {}) as Record<string, unknown>,
-  };
-}
-
-/** Resolve a single scalar measure from Cube (the metrics tool's core move). */
-export async function cubeScalar(query: CubeQuery, measure: string): Promise<number | null> {
-  const { rows } = await cubeLoad(query);
-  if (rows.length === 0) return null;
-  // Sum across returned rows so a grouped query still yields the total.
-  let total = 0;
-  for (const r of rows) {
-    const v = Number(r[measure]);
-    if (!Number.isNaN(v)) total += v;
-  }
-  return total;
 }
 
 // -------------------------------------------------------------- query-tool ----
@@ -389,21 +213,3 @@ export async function executeRun(
   };
 }
 
-// ------------------------------------------------- Sales worked-example facts --
-
-/**
- * The canonical Sales data product (data-golden-path.md worked example). Both the
- * Cube metric and the Iceberg mart are seeded from the SAME 10 Q1-2026 orders, so
- * the metrics tool and the query tool MUST agree. Centralised here so the parity
- * proof, the Sales agent, and the UI all reference one source of truth.
- */
-export const SALES = {
-  mart: 'mart_sales',
-  cube: 'mart_sales',
-  revenueMeasure: 'mart_sales.revenue',
-  regionDim: 'mart_sales.region',
-  dateDim: 'mart_sales.order_date',
-  netAmountColumn: 'net_amount',
-  // "Last quarter" relative to mid-2026 = Q1 2026 (the data's range).
-  lastQuarter: { label: 'Q1 2026', start: '2026-01-01', end: '2026-03-31' },
-} as const;

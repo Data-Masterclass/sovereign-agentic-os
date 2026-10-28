@@ -26,7 +26,7 @@ lib/infra/    The governed spine + every external-service client. The ONLY
 lib/<tab>/    ONE module per OS tab (data, knowledge, files, metrics,
               dashboards, strategy, bigbets, agents, software, science,
               connections, governance, marketplace, monitoring, platform-admin,
-              home, tutorials). Uniform internal shape (below). A tab imports
+              home). Uniform internal shape (below). A tab imports
               DOWN into core + infra, and NEVER sideways into another tab's
               internals — only through that tab's index.ts.
 

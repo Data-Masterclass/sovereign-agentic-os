@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type Capability, type System, parseSystem, serializeSystem } from '../system-schema.ts';
+import { type Capability, type System } from '../system-schema.ts';
 import {
   type RoutingTable,
   defaultRoutingTable,
@@ -13,12 +13,11 @@ import { runGraph } from './run-graph.ts';
 import { type BuildAdapter, type StepResult } from './adapter.ts';
 
 /**
- * The 5 MOCK build adapters (langgraph / forgejo / litellm / opa / langfuse) for
- * kind-only validation. They hold their setup in an in-process {@link MockBackends}
+ * The 4 MOCK build adapters (langgraph / litellm / opa / langfuse) for kind-only
+ * validation. They hold their setup in an in-process {@link MockBackends}
  * — no STACKIT, no network — but each runs a REAL apply→verify against that state,
  * so the inline ✓/✗ and the gateway invariant are genuinely exercised:
  *
- *   • forgejo  — writes system.yaml + AGENT.md/MEMORY.md; verify reads back + parses.
  *   • opa      — registers grants; verify probes granted=allow, non-granted=deny.
  *   • litellm  — registers key + routing; verify probes light→Standard, reason→Reasoning.
  *   • langgraph— "reloads" the graph; verify runs a test invocation through the
@@ -27,7 +26,6 @@ import { type BuildAdapter, type StepResult } from './adapter.ts';
  */
 
 export type MockBackends = {
-  forgejo: { files: Map<string, { content: string; sha: string }> };
   litellm: { key: string | null; routing: RoutingTable };
   opa: { tools: Set<string>; connections: Map<string, Capability> };
   langfuse: { project: string | null; traces: GwTrace[] };
@@ -35,18 +33,10 @@ export type MockBackends = {
 
 export function newMockBackends(): MockBackends {
   return {
-    forgejo: { files: new Map() },
     litellm: { key: null, routing: defaultRoutingTable() },
     opa: { tools: new Set(), connections: new Map() },
     langfuse: { project: null, traces: [] },
   };
-}
-
-/** Tiny deterministic content sha (mock Forgejo blob id). */
-function sha(content: string): string {
-  let h = 0;
-  for (let i = 0; i < content.length; i++) h = (Math.imul(31, h) + content.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(16).padStart(8, '0');
 }
 
 const enabled = (c: Capability) => c === 'Read' || c === 'Write-approval' || c === 'Write-bounded';
@@ -97,38 +87,6 @@ export function gatewayFor(backends: MockBackends): Gateway {
 }
 
 export function makeMockAdapters(backends: MockBackends): BuildAdapter[] {
-  const forgejo: BuildAdapter = {
-    tool: 'forgejo',
-    async apply(ctx) {
-      const files = backends.forgejo.files;
-      // Re-serialize from the parsed system so the repo holds the canonical files.
-      const sys = ctx.system;
-      const sysYaml = serializeSystem(sys);
-      files.set('system.yaml', { content: sysYaml, sha: sha(sysYaml) });
-      for (const a of sys.agents) {
-        const ag = a.agent_md ?? '';
-        const mem = a.memory_md ?? '';
-        files.set(`agents/${a.id}/AGENT.md`, { content: ag, sha: sha(ag) });
-        files.set(`agents/${a.id}/MEMORY.md`, { content: mem, sha: sha(mem) });
-      }
-      return ok(`wrote system.yaml + ${sys.agents.length * 2} agent files`);
-    },
-    async verify(ctx) {
-      const f = backends.forgejo.files.get('system.yaml');
-      if (!f) return fail('system.yaml is not in the repo');
-      try {
-        const reparsed = parseSystem(f.content);
-        if (reparsed.agents.length !== ctx.system.agents.length) return fail('round-trip lost agents');
-        for (const a of ctx.system.agents) {
-          if (!backends.forgejo.files.has(`agents/${a.id}/AGENT.md`)) return fail(`AGENT.md missing for ${a.id}`);
-        }
-        return ok('files present + parse identical');
-      } catch (e) {
-        return fail((e as Error).message);
-      }
-    },
-  };
-
   const opa: BuildAdapter = {
     tool: 'opa',
     async apply(ctx) {
@@ -214,7 +172,7 @@ export function makeMockAdapters(backends: MockBackends): BuildAdapter[] {
 
   // Order matters: write files + grants + routing, THEN run the graph (needs the
   // grants to authorize, and produces the traces Langfuse then verifies).
-  return [forgejo, opa, litellm, langgraph, langfuse];
+  return [opa, litellm, langgraph, langfuse];
 }
 
 function ok(detail: string): StepResult {

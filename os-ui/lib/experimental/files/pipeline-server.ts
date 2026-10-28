@@ -28,7 +28,7 @@ export async function bootstrapFilesIndex(): Promise<void> {
 }
 
 /** Re-index a single file after an edit. Records a `file_indexed` lineage edge when
- *  it becomes searchable (the file → index edge, OM/mock-tolerant). */
+ *  it becomes searchable (the file → index edge). */
 export async function reindexFile(asset: FileAsset, text: string): Promise<void> {
   const report = await indexAsset(asset, text, { live: true }).catch(() => null);
   if (report && report.status === 'searchable') {

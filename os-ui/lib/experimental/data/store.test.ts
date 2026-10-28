@@ -35,7 +35,7 @@ import {
 } from './store.ts';
 import { versionTarget, personalSchema } from './store-fqn.ts';
 import { DatasetError } from './dataset-schema.ts';
-import { cubeName, cubeViewName, CUBE_ARTIFACT } from './metrics.ts';
+import { modelName, viewName, CUBE_ARTIFACT } from './metrics.ts';
 import { listFolders as folderList, __resetStore as resetFolders } from '../../folders/index.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' }; // Creator
@@ -335,19 +335,19 @@ test('define a metric requires only a built Gold (any tier) — metrics→Trino 
     /Gold/,
   );
   buildVersion(id, amir, 'gold', { quality: 'passing', artifact: 'gold/mart_orders.sql' });
-  // (2) Gold built on a PERSONAL dataset → now ALLOWED (served as governed Trino SQL over the
-  // owner's personal lane). The portable MetricFlow semantic declaration is emitted; the CUBE
-  // artifacts are NOT (a broken cube must never be registered on personal gold — #91 preserved).
+  // (2) Gold built on a PERSONAL dataset → ALLOWED (served as governed Trino SQL over the
+  // owner's personal lane). Both metric declarations are emitted — the portable MetricFlow
+  // semantic declaration and the metric model YAML.
   const personal = defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'net_amount' });
   assert.equal(personal.measures[0].name, 'revenue');
   const personalFiles = listFiles(id, amir).files;
   assert.ok(personalFiles.some((f) => f.startsWith('semantic/')), 'semantic declaration emitted on personal gold');
-  assert.ok(!personalFiles.some((f) => f.endsWith('.cube.yml')), 'no cube artifact on personal gold');
-  // (3) promote to a governed asset → the cube artifacts now regenerate too.
+  assert.ok(personalFiles.some((f) => f.endsWith('.cube.yml')), 'metric model YAML emitted on personal gold');
+  // (3) promote to a governed asset → the artifacts regenerate with the new measure.
   transition(id, sara, 'promote', { visibility: 'domain' });
   defineMeasure(id, sara, { name: 'order_count', type: 'count', sql: '' });
   const governedFiles = listFiles(id, sara).files;
-  assert.ok(governedFiles.some((f) => f.endsWith('.cube.yml')), 'cube artifact regenerates once governed');
+  assert.ok(governedFiles.some((f) => f.endsWith('.cube.yml')), 'metric model YAML regenerates once governed');
 });
 
 test('BUG A: re-defining an existing measure UPDATES it in place (no false "already defined" 409)', () => {
@@ -652,14 +652,14 @@ test('#155 the SAME name is now ALLOWED across domains, with DISTINCT cube ident
   const salesDs = createDataset(amir, { name: 'Sales' }); // sales
   const finDs = createDataset(kenji, { name: 'Sales' }); // finance — no longer collides
   // Both created (no throw), and each carries the namespaced cube identity marker.
-  assert.equal(salesDs.cubeNamespaced, true);
-  assert.equal(finDs.cubeNamespaced, true);
+  assert.equal(salesDs.viewNamespaced, true);
+  assert.equal(finDs.viewNamespaced, true);
   // Their cube name / view / model file are all distinct — no shared cube/view/file.
-  assert.notEqual(cubeName(salesDs), cubeName(finDs));
-  assert.notEqual(cubeViewName(salesDs), cubeViewName(finDs));
+  assert.notEqual(modelName(salesDs), modelName(finDs));
+  assert.notEqual(viewName(salesDs), viewName(finDs));
   assert.notEqual(CUBE_ARTIFACT(salesDs), CUBE_ARTIFACT(finDs));
-  assert.equal(cubeName(salesDs), 'sales__sales');
-  assert.equal(cubeName(finDs), 'finance__sales');
+  assert.equal(modelName(salesDs), 'sales__sales');
+  assert.equal(modelName(finDs), 'finance__sales');
 });
 
 // ------------------------------------------------- rename: display name + FROZEN slug --
@@ -674,7 +674,7 @@ test('renameDataset: FQN STABILITY — a rename never moves the physical table',
   const before = getDataset(d.id, amir);
   const ownerFqnBefore = versionTarget(before, 'gold', { id: amir.id });
   assert.equal(ownerFqnBefore, 'iceberg.personal_amir.gold_foo');
-  assert.equal(cubeName(before), 'sales__foo'); // new datasets are namespaced (#155)
+  assert.equal(modelName(before), 'sales__foo'); // new datasets are namespaced (#155)
 
   // Rename Foo → Bar.
   const renamed = renameDataset(d.id, amir, 'Bar');
@@ -685,7 +685,7 @@ test('renameDataset: FQN STABILITY — a rename never moves the physical table',
   // Every physical identity STILL uses slug("Foo") === "foo", NEVER slug("Bar") === "bar".
   assert.equal(versionTarget(after, 'gold', { id: amir.id }), 'iceberg.personal_amir.gold_foo');
   assert.equal(versionTarget(after, 'bronze', { id: amir.id }), 'iceberg.personal_amir.bronze_foo');
-  assert.equal(cubeName(after), 'sales__foo', 'cube identity is frozen across a rename');
+  assert.equal(modelName(after), 'sales__foo', 'cube identity is frozen across a rename');
   assert.doesNotMatch(versionTarget(after, 'gold', { id: amir.id }), /_bar/, 'no live table orphaned');
 });
 
@@ -693,7 +693,7 @@ test('renameDataset: an existing (never-renamed) dataset resolves to slug(name),
   const d = createDataset(amir, { name: 'Orders' });
   const before = getDataset(d.id, amir);
   assert.equal(before.slug, undefined, 'no slug field until a rename decouples it');
-  assert.equal(cubeName(before), 'sales__orders'); // derived from slug("Orders")
+  assert.equal(modelName(before), 'sales__orders'); // derived from slug("Orders")
 });
 
 test('renameDataset: owner allowed; a shared dataset admits domain_admin/admin; a non-owner non-admin denied', () => {

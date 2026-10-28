@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 /**
  * "Use as" handoff: distil a file into Knowledge (tacit/doc) or Data (Bronze
  * dataset). POST { target: 'knowledge' | 'data' }. Returns the derived artifact's
- * handle so the UI can open the matching tab (lineage recorded in OM).
+ * handle so the UI can open the matching tab (lineage recorded in the files ring).
  */
 export const POST = withRoute<{ id: string }, { target?: string }>(async ({ user, params, body }) => {
   const { id } = params;

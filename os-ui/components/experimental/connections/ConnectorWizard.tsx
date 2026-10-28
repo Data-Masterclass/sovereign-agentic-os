@@ -9,7 +9,7 @@
  * One component, one set of governed API calls (POST /api/connections). The steps
  * and fields are DRIVEN by the chosen template's metadata (auth kind + connector
  * kind + warehouse-provider fields) — never hardcoded per platform, so a new
- * template (om-catalog, airflow, …) that the API starts returning flows through
+ * template (airflow, …) that the API starts returning flows through
  * automatically.
  *
  *   • Supported-type start — a gallery card was clicked; the wizard opens pre-set to

@@ -5,7 +5,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@/lib/useUser';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials';
 import { previewText } from '@/lib/experimental/files/preview';
 import { reuploadVersion, saveTextVersion } from '@/lib/experimental/files/upload-client';
 import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
@@ -565,7 +564,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
               a domain admin approves; an Admin certifies to the marketplace. The propose
               button is owner-gated, never role-gated — the approval is the governed gate.
               Only the RENDER LOCATION moved out of the disclosure; the gate is unchanged. ---- */}
-      <div className="preview-row preview-manage preview-share-row" {...anchorAttr(ANCHORS.files.share)}>
+      <div className="preview-row preview-manage preview-share-row">
         <label className="rail-group-title">Sharing</label>
         {a.tier === 'dataset' ? (
           promote?.request ? (

@@ -19,9 +19,9 @@ import 'server-only';
  *
  * Covered here: data, files, knowledge, agents, software. Metrics derive from the
  * data store (a metric has no independent owner — it belongs to its dataset), so
- * reassigning datasets moves the owner's metrics too. Dashboards, big bets and
- * science carry their own owner fields but are DEFERRED for a follow-up pass and
- * listed under `deferred` so the caller can warn the admin.
+ * reassigning datasets moves the owner's metrics too. Dashboards carry their own
+ * owner field but are DEFERRED for a follow-up pass and listed under `deferred`
+ * so the caller can warn the admin.
  */
 
 import { reassignOwner as reassignData } from '@/lib/experimental/data/store';
@@ -50,7 +50,8 @@ const STORES: StoreReassign[] = [
   { store: 'software', run: reassignSoftware },
 ];
 
-const DEFERRED = ['dashboards', 'bigbets', 'science'];
+const DEFERRED = ['dashboards'];
+
 
 /**
  * Transfer every PERSONAL-lane artifact owned by `fromId` to `toId` across the

@@ -17,9 +17,6 @@ import { moveFilesDomain, ensureHydrated as ensureFilesHydrated } from '@/lib/ex
 import { moveWorkflowsDomain, ensureHydrated as ensureWorkflowsHydrated } from '@/lib/experimental/knowledge/store';
 import { movePersonalKnowledgeDomain, ensureHydrated as ensurePersonalKnowledgeHydrated } from '@/lib/experimental/knowledge/personal-store';
 import { moveSystemsDomain, ensureHydrated as ensureSystemsHydrated } from '@/lib/agents/store';
-import { moveModelsDomain, ensureModelsHydrated } from '@/lib/experimental/science/model-service';
-import { movePillarsDomain, ensureHydrated as ensurePillarsHydrated } from '@/lib/experimental/strategy/pillars';
-import { moveBetsDomain, ensureHydrated as ensureBetsHydrated } from '@/lib/experimental/bigbets/store';
 import { moveConnectionsDomain } from '@/lib/experimental/connections/store';
 import { moveAppsDomain, ensureHydrated as ensureAppsHydrated } from '@/lib/experimental/software/apps';
 
@@ -64,10 +61,8 @@ export const ADAPTERS: Adapter[] = [
   { kind: 'workflow', ensure: ensureWorkflowsHydrated, move: moveWorkflowsDomain },
   { kind: 'knowledge', ensure: ensurePersonalKnowledgeHydrated, move: movePersonalKnowledgeDomain },
   { kind: 'agent', ensure: ensureSystemsHydrated, move: moveSystemsDomain },
-  { kind: 'model', ensure: ensureModelsHydrated, move: moveModelsDomain },
-  { kind: 'pillar', ensure: ensurePillarsHydrated, move: movePillarsDomain },
-  { kind: 'bigbet', ensure: ensureBetsHydrated, move: moveBetsDomain },
   { kind: 'connection', ensure: NOOP, move: moveConnectionsDomain },
+
   { kind: 'app', ensure: ensureAppsHydrated, move: moveAppsDomain },
 ];
 

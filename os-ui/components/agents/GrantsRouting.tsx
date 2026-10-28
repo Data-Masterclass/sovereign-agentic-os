@@ -23,9 +23,7 @@ const TAB_LABELS: Record<string, string> = {
   files: 'Files',
   metrics: 'Metrics',
   dashboards: 'Dashboards',
-  bigbets: 'Big Bets',
   connections: 'Connections',
-  science: 'Science',
   software: 'Software',
   agents: 'Agents',
   meta: 'Meta',
@@ -33,7 +31,8 @@ const TAB_LABELS: Record<string, string> = {
 
 const TAB_ORDER = [
   'data', 'knowledge', 'files', 'metrics', 'dashboards',
-  'bigbets', 'connections', 'science', 'software', 'agents', 'meta',
+  'connections', 'software', 'agents', 'meta',
+
 ];
 
 /**

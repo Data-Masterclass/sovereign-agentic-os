@@ -33,7 +33,6 @@ const TARGETS: BackupTarget[] = [
   { id: 'app-postgres', name: 'App Postgres / Supabase', method: 'CNPG base + WAL', frequency: 'Daily + WAL', retention: '7–30 days', lastRun: '2026-06-30T02:15:00.000Z', lastStatus: 'success' },
   { id: 'clickhouse', name: 'ClickHouse (Langfuse)', method: 'BACKUP … TO S3', frequency: 'Daily', retention: '7–14 days', lastRun: '2026-06-30T02:20:00.000Z', lastStatus: 'success' },
   { id: 'opensearch', name: 'OpenSearch indices', method: 'Snapshot repo (fs · sovereign-fs)', frequency: 'Daily', retention: '7–14 days', lastRun: '2026-06-30T03:00:00.000Z', lastStatus: 'success' },
-  { id: 'forgejo', name: 'Forgejo (git + DB)', method: 'Dump + CNPG', frequency: 'Daily', retention: '14 days', lastRun: '2026-06-30T02:30:00.000Z', lastStatus: 'success' },
 ];
 
 export type RestoreJob = {

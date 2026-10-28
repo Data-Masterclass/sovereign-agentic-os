@@ -5,7 +5,6 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@/lib/core/route-server';
 import { getSystem, canRunCheck, archiveSystem, unarchiveSystem, deleteSystem, renameAgentSystem, ensureHydrated } from '@/lib/agents/store';
 import { purgeSystemResources } from '@/lib/agents/physical-delete';
-import { realForgejo } from '@/lib/agents/build/live-clients';
 import { reconcileScheduleCron } from '@/lib/agents/schedule-cron';
 import { compile } from '@/lib/agents/langgraph-compile';
 import { config } from '@/lib/core/config';
@@ -94,16 +93,15 @@ export const POST = withRoute<{ id: string }, { action?: string; name?: string }
 
 /**
  * DELETE → permanently remove a system + its version history (edit-scoped), then
- * PHYSICALLY purge its backing resources: its Forgejo repo (`os-<id>`) and any
- * schedule CronJob. The record delete runs first (403 → nothing is purged); an
- * unreachable Forgejo / k8s API surfaces in `physical[].ok:false` — the delete
- * stands, the leftover is never silent.
+ * PHYSICALLY purge its backing resources: any schedule CronJob (the system's source
+ * of truth is the store itself, so there is no repo to purge). The record delete runs
+ * first (403 → nothing is purged); an unreachable k8s API surfaces in
+ * `physical[].ok:false` — the delete stands, the leftover is never silent.
  */
 export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
   const rec = deleteSystem(id, user); // throws 403 → nothing is purged
   const physical = await purgeSystemResources(rec, {
-    deleteRepo: (repo) => realForgejo().deleteRepo(repo),
     // Reconcile the schedule to "none" — deletes the CronJob (idempotent 404 = ok).
     teardownCron: async (systemId) => {
       const r = await reconcileScheduleCron(systemId, { kind: 'manual' });

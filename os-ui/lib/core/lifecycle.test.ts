@@ -53,12 +53,12 @@ test('delete copy is danger, permanent, and names the backing resource per kind'
     file: /stored file/,
     app: /running app and its repo/,
     agent: /repo and schedule/,
-    dashboard: /Superset dashboard/,
+    dashboard: /native dashboard/,
     metric: /semantic layer/,
     connection: /stored credential/,
     knowledge: /search index/,
-    bigbet: /bet and its plan/,
   };
+
   for (const kind of Object.keys(backing) as ArtifactKind[]) {
     const c = deleteCopy(kind, 'Thing', 'personal');
     assert.equal(c.danger, true, `${kind} delete must be danger`);
