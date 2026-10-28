@@ -7,7 +7,7 @@ Every artifact starts in **My** (personal) scope. **In My scope you have FULL ri
 - **Domain** artifacts require **domain-admin** approval.
 - **Company** artifacts require **tenant-admin (`admin`)** approval.
 
-Both go through **Policies & Approvals**. **Ownership:** you can only change what you originally built — you cannot edit another person's artifact even in a shared scope (a domain/company admin can administer, but authorship stays with the builder).
+Both go through **Governance**. **Ownership:** you can only change what you originally built — you cannot edit another person's artifact even in a shared scope (a domain/company admin can administer, but authorship stays with the builder).
 
 ## Roles and their rights
 

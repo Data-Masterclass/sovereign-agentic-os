@@ -268,8 +268,8 @@ test('PLATFORM-GATE 4: consolidated tab gates — Policies & Approvals is builde
       `Tab "${label}" must declare minRole: 'builder' (page fail-closes for non-admins)`);
   }
   // Policies & Approvals (renamed from Governance): builders approve promotions.
-  assert.match(src, /label: 'Policies & Approvals'[^}]*minRole: 'builder'/s,
-    "Policies & Approvals must declare minRole: 'builder'");
+  assert.match(src, /label: 'Governance'[^}]*minRole: 'builder'/s,
+    "Governance must declare minRole: 'builder'");
   // About / Licenses: moved to Entry — visible to all roles, no minRole.
   const aboutBlock = src.match(/label: 'About \/ Licenses'[^}]*/s)?.[0] ?? '';
   assert.doesNotMatch(aboutBlock, /minRole/, "About / Licenses must not declare minRole (all-roles visible)");
@@ -280,7 +280,7 @@ test('PLATFORM-GATE 4: consolidated tab gates — Policies & Approvals is builde
   assert.doesNotMatch(src, /label: 'Terminal'/, "Terminal tab must be gone (merged into Console)");
   assert.doesNotMatch(src, /label: 'Query'/, "Query tab must be gone (merged into Console)");
   // Governance label renamed to Policies & Approvals.
-  assert.doesNotMatch(src, /label: 'Governance'/, "Governance label must be gone (renamed to Policies & Approvals)");
+  assert.doesNotMatch(src, /label: 'Policies & Approvals'/, "Governance label must be gone (renamed to Policies & Approvals)");
 });
 
 test('RUN PATH: the agent RUN route derives a real default task, never "Test invocation"', () => {

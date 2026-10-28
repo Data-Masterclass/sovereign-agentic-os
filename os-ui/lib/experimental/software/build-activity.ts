@@ -117,7 +117,7 @@ export function toolCallToLine(step: ActivityStep): ActivityLine {
     case 'start_preview':
       return line('Provisioning preview…');
     case 'request_deploy':
-      return line('Filed deploy review — approve in Policies & Approvals');
+      return line('Filed deploy review — approve in Governance');
     case 'whoami':
     case 'list_capabilities':
     case 'get_guide':

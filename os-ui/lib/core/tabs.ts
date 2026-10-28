@@ -7,19 +7,19 @@
  *
  * Six sections (5 tabs each):
  *   Ungrouped (entry): Home, Cockpit, Tutorials, MCP, About / Licenses
- *   Plan:    Strategy, Big Bets, Operating Model, Business Workflows, Marketplace
- *   Context: Knowledge, Files, Data, Connections, Metrics
+ *   Plan:    Strategy, Big Bets, Operating Model, Marketplace
+ *   Context: Data, Metrics, Files, Knowledge
  *   Build:   Agents, Software, Science, Dashboards, Console (admin)
- *   Govern:  Policies & Approvals (builder+), Monitoring (builder+), Components (admin), LLM Gateway (builder+), Admin (admin)
+ *   Manage:  Business Workflows, Connections, Governance (builder+), Monitoring (builder+), Components (admin), LLM Gateway (builder+), Admin
  *
  * The former Admin group (Admin, Terminal, Query, About / Licenses) was dissolved:
  *   - About / Licenses moved to the Entry group (transparency — every user can read it).
- *   - Admin moved to the Govern group.
+ *   - Admin moved to the Manage group.
  *   - Terminal + Query merged into Console (/console), hosted in the Build group.
  *   - The old /terminal and /admin-query routes were removed (404).
  *
- * The former Monitor group was renamed Govern. The Governance tab was relabelled
- * "Policies & Approvals" (route unchanged: /governance).
+ * The former Monitor group was renamed Govern, then Manage. The approvals tab is
+ * labelled Governance (route unchanged: /governance).
  *
  * The former Users / Gateway / Orchestration / Consoles / Workbench tabs were
  * consolidated: Users & Access lives in Admin (/platform), and the gateway /
@@ -76,7 +76,6 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Strategy', icon: '▲', href: '/strategy', feature: 'strategy' },
       { label: 'Big Bets', icon: '◆', href: '/big-bets', feature: 'big-bets' },
       { label: 'Operating Model', icon: '❧', href: '/operating-manual', feature: 'operating-model' },
-      { label: 'Business Workflows', icon: '⧉', href: '/workflows', feature: 'workflows' },
       { label: 'Marketplace', icon: '⊞', href: '/marketplace', role: 'Builder / Administrator', feature: 'marketplace' },
     ],
   },
@@ -87,7 +86,6 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Metrics', icon: '∑', href: '/metrics', feature: 'metrics' },
       { label: 'Files', icon: '❏', href: '/unstructured', feature: 'files' },
       { label: 'Knowledge', icon: '❦', href: '/knowledge', feature: 'knowledge' },
-      { label: 'Connections', icon: '⇄', href: '/connections', feature: 'connections' },
     ],
   },
   {
@@ -110,11 +108,15 @@ export const TAB_GROUPS: TabGroup[] = [
     ],
   },
   {
-    // Renamed Monitor → Govern. Tabs: relabelled Governance → Policies & Approvals
-    // (route /governance unchanged), plus Admin moved from the dissolved Admin group.
-    heading: 'Govern',
+    // Renamed Monitor → Govern → Manage. Business Workflows (from Plan) and
+    // Connections (from Context) lead the group; the approvals inbox is
+    // labelled Governance (route /governance), and Admin moved here from the
+    // dissolved Admin group.
+    heading: 'Manage',
     tabs: [
-      { label: 'Policies & Approvals', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder', feature: 'governance' },
+      { label: 'Business Workflows', icon: '⧉', href: '/workflows', feature: 'workflows' },
+      { label: 'Connections', icon: '⇄', href: '/connections', feature: 'connections' },
+      { label: 'Governance', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder', feature: 'governance' },
       { label: 'Monitoring', icon: '◷', href: '/monitoring', role: 'Builder / Administrator', minRole: 'builder', feature: 'monitoring' },
       { label: 'Components', icon: '▥', href: '/components', role: 'Administrator', minRole: 'admin', feature: 'components' },
       { label: 'LLM Gateway', icon: '⌁', href: '/llm-gateway', role: 'Builder / Administrator', minRole: 'builder', feature: 'llm-gateway' },
