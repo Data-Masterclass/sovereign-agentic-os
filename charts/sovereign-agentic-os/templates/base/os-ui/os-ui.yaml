@@ -399,6 +399,14 @@ metadata:
 spec:
   selector:
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+  {{- with .Values.osUI.service.nodePort }}
+  type: NodePort
+  {{- end }}
   ports:
-    - { name: http, port: 3000, targetPort: http }
+    - name: http
+      port: 3000
+      targetPort: http
+      {{- with .Values.osUI.service.nodePort }}
+      nodePort: {{ . }}
+      {{- end }}
 {{- end }}

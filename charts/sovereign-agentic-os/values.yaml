@@ -1095,6 +1095,9 @@ dataSync:
 # OS UI — the Next.js front door. App shell + live surfaces:
 osUI:
   enabled: true
+  # Local (kind): scripts/os sets nodePort=30080 so the UI is http://localhost:8080.
+  service:
+    nodePort: null
   # Gate os-ui startup on OpenSearch (the durable user-directory mirror).
   waitForOpenSearch: true
   # In-memory user seeding while the mirror is unreachable is a no-cluster DEV

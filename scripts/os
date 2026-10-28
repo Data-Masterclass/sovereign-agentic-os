@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# os — run the Sovereign Agentic OS on your own machine.
+#
+#   ./scripts/os up      create a kind cluster, build our images, install the chart, print the URL
+#   ./scripts/os test    unit tests + chart lint + regression gate (+ /api/health when the cluster is up)
+#   ./scripts/os down    delete the kind cluster
+#
+# Needs: docker (Colima/Desktop), kind, helm, kubectl, python3 (reads values.yaml).
+# Optional: STACKIT_API_KEY — routes LiteLLM to STACKIT Model Serving instead of mock-model.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+CLUSTER=${OS_CLUSTER:-sovereign-os}; NS=agentic-os; REL=agentic-os; CHART=charts/sovereign-agentic-os
+URL=http://localhost:8080
+
+need() { for t in "$@"; do command -v "$t" >/dev/null || { echo "missing tool: $t"; exit 1; }; done; }
+say() { printf '\n==> %s\n' "$*"; }
+
+# component key → Dockerfile ('-' = <context>/Dockerfile) → build context. Tags come from values.yaml.
+IMAGES='
+osUI         images/base/os-ui/Dockerfile        .
+agentRuntime -                                    images/base/agent-runtime
+egressProxy  -                                    images/base/egress-proxy
+webFetch     -                                    images/base/web-fetch
+mockModel    -                                    images/base/mock-model
+dagster      images/extensions/dagster/Dockerfile images/extensions
+dbt          -                                    images/extensions/dbt
+dataRunner   -                                    images/extensions/data-runner
+queryTool    -                                    images/extensions/query-tool
+'
+image_ref() { # key → repository:tag from values.yaml (dagster lives under dagster.dagsterWebserver.image)
+  python3 - "$1" <<'PY'
+import sys, yaml
+v = yaml.safe_load(open('charts/sovereign-agentic-os/values.yaml')); k = sys.argv[1]
+img = v['dagster']['dagsterWebserver']['image'] if k == 'dagster' else v[k]['image']
+print(f"{img['repository']}:{img['tag']}")
+PY
+}
+
+up() {
+  need docker kind helm kubectl python3
+  say "cluster '$CLUSTER'"
+  kind get clusters 2>/dev/null | grep -qx "$CLUSTER" || kind create cluster --name "$CLUSTER" --config kind-config.yaml
+  kubectl config use-context "kind-$CLUSTER" >/dev/null
+  say "building images for $(uname -m) and loading them into kind"
+  echo "$IMAGES" | while read -r key dockerfile ctx; do
+    [ -n "$key" ] || continue
+    ref=$(image_ref "$key")
+    if [ "$dockerfile" = "-" ]; then docker build -q -t "$ref" "$ctx"; else docker build -q -t "$ref" -f "$dockerfile" "$ctx"; fi
+    kind load docker-image "$ref" --name "$CLUSTER" >/dev/null
+    echo "   $ref"
+  done
+  say "installing chart"
+  helm dependency build "$CHART" >/dev/null
+  model=(); if [ -n "${STACKIT_API_KEY:-}" ]; then
+    model=(--set stackitPremium.enabled=true --set-string stackitPremium.local.apiKey="$STACKIT_API_KEY" --set mockModel.enabled=false)
+  fi
+  helm upgrade --install "$REL" "$CHART" -n "$NS" --create-namespace -f values.local.yaml \
+    --set osUI.service.nodePort=30080 "${model[@]}" --timeout 20m
+  say "waiting for os-ui"
+  kubectl -n "$NS" rollout status deploy/os-ui --timeout=15m
+  for _ in $(seq 1 60); do curl -fsS "$URL/api/health" >/dev/null 2>&1 && break; sleep 5; done
+  say "ready"
+  cat <<EOF
+   UI:     $URL            login: admin / admin  (you set a real email + password on first login)
+   Model:  $([ -n "${STACKIT_API_KEY:-}" ] && echo 'STACKIT Model Serving via LiteLLM' || echo 'mock-model (set STACKIT_API_KEY for real models)')
+   MCP:    $URL/api/mcp   — mint a token under Admin → MCP
+   Pods:   kubectl -n $NS get pods
+EOF
+}
+
+test_() {
+  need helm
+  say "os-ui unit tests"; (cd os-ui && { [ -d node_modules ] || npm ci --no-audit --no-fund; } && npm test)
+  say "regression gate";  bash os-ui/scripts/gate.sh
+  say "chart lint";       helm lint "$CHART" -f values.local.yaml
+  if curl -fsS "$URL/api/health" >/dev/null 2>&1; then say "cluster health"; curl -fsS "$URL/api/health"; echo; fi
+}
+
+down() { need kind; kind delete cluster --name "$CLUSTER"; }
+
+case "${1:-help}" in
+  up) up ;; test) test_ ;; down) down ;;
+  *) sed -n '2,10p' "$0" ;;
+esac
