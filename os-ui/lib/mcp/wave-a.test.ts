@@ -298,17 +298,19 @@ test('run_agent_system: runs the team AS THE CALLER (identity threaded to runOsT
     return {
       path: ['analyst'],
       finalText: 'Tickets triaged.',
+      reachedEnd: true,
       runs: [{ node: 'analyst', model: 'exec-model', result: { steps: [{ tool: 'search_knowledge', isError: false }] } }],
     };
   });
   try {
-    const r = payload<{ finalText: string; path: string[]; nodes: { node: string; steps: { tool: string }[] }[] }>(
+    const r = payload<{ finalText: string; reachedEnd: boolean; path: string[]; nodes: { node: string; steps: { tool: string }[] }[] }>(
       await call(builder, 'run_agent_system', { systemId: sys.id, message: 'Triage the queue' }),
     );
     assert.equal(seen.userId, 'ben', 'runOsTeam received the CALLER identity — never a service principal');
     assert.equal(seen.systemId, sys.id);
     assert.deepEqual(seen.messages, [{ role: 'user', content: 'Triage the queue' }]);
     assert.equal(r.finalText, 'Tickets triaged.');
+    assert.equal(r.reachedEnd, true);
     assert.equal(r.nodes[0].steps[0].tool, 'search_knowledge');
   } finally {
     __setRunOsTeamForTests(null);

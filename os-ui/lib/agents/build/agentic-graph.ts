@@ -150,6 +150,8 @@ export type AgenticGraphResult = {
   runs: NodeRun[];
   /** The last node's final text — the team's single user-facing reply. */
   finalText: string;
+  /** The walk reached END (as in runGraph) — false if no node ran, a node failed, or the run budget stopped it. */
+  reachedEnd: boolean;
 };
 
 export type AgenticGraphDeps = {
@@ -631,7 +633,10 @@ export async function runAgenticGraph(
   if (stoppedAtRunBudget) {
     finalText += `\n\n_(The team stopped at the run's tool-step budget — it may not have finished. An admin can raise AGENT_TEAM_RUN_MAX_STEPS.)_`;
   }
-  return { path: order, runs, finalText };
+  // A failed node is always the last run (the walk breaks there).
+  const last = runs[runs.length - 1];
+  const reachedEnd = !!last && last.status !== 'failed' && !stoppedAtRunBudget;
+  return { path: order, runs, finalText, reachedEnd };
 }
 
 /**

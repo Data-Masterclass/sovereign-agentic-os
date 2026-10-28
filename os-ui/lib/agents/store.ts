@@ -104,6 +104,9 @@ export type LastRun = {
   running: boolean;
   ok: boolean;
   path: string[];
+  /** Did the run reach the natural end of `path`, vs stop early (run-budget
+   *  exhaustion or a node failure)? Absent on a pre-existing persisted run. */
+  reachedEnd?: boolean;
   traces: number;
   held: number;
   steps: { node: string; tool: string; effect: string; ran?: boolean }[];

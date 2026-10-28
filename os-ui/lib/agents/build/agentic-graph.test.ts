@@ -195,6 +195,7 @@ test('per-node failure: the run returns partial results with the failing node ma
   assert.ok(!res.runs.some((r) => r.node === 'communication'), 'the run stopped at the failed node (no downstream nodes)');
   // Earlier nodes still ran and are marked ok.
   assert.equal(res.runs.find((r) => r.node === 'orchestrator')?.status, 'ok', 'earlier nodes ran ok');
+  assert.equal(res.reachedEnd, false, 'a node failure stops the walk short of END');
 });
 
 // --- FIX 2 (drill-down): each NodeRun captures the readable `input` it received ---
@@ -574,6 +575,7 @@ test('global run budget clamps each node and stops the walk once spent', async (
   const totalRounds = res.runs.reduce((s, r) => s + r.result.iterations, 0);
   assert.ok(totalRounds <= 4, `total rounds stayed within the global budget (got ${totalRounds})`);
   assert.match(res.finalText, /tool-step budget/i, 'the reply notes the run stopped at the budget');
+  assert.equal(res.reachedEnd, false, 'a run-budget stop does not reach END');
 });
 
 test('a generous global run budget runs the whole team with no early stop', async () => {
@@ -582,4 +584,11 @@ test('a generous global run budget runs the whole team with no early stop', asyn
   const res = await runAgenticGraph(IR, [{ role: 'user', content: 'go' }], baseDeps({ maxIterations: 3, maxRunSteps: 1000 }));
   assert.equal(res.runs.length, nodeOrder(IR).length, 'every node ran');
   assert.doesNotMatch(res.finalText, /tool-step budget/i, 'no run-budget note when the team finishes');
+  assert.equal(res.reachedEnd, true, 'a completed walk reaches END');
+});
+
+test('reachedEnd is false when no node ran (every agent disabled), as in runGraph', async () => {
+  const res = await runAgenticGraph(IR, [{ role: 'user', content: 'go' }], baseDeps({ disabled: nodeOrder(IR) }));
+  assert.equal(res.runs.length, 0);
+  assert.equal(res.reachedEnd, false);
 });
