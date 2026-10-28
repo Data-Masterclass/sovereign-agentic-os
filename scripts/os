@@ -49,6 +49,23 @@ up() {
     kind load docker-image "$ref" --name "$CLUSTER" >/dev/null
     echo "   $ref"
   done
+  # Object storage is upstream MinIO. Upstream withdrew its public tags, so the
+  # chart pins our ghcr mirror — which is not public yet. Pull it with the host's
+  # credentials and side-load it, so no in-cluster pull secret is needed.
+  say "loading object storage"
+  minio=$(python3 -c "import yaml;i=yaml.safe_load(open('charts/sovereign-agentic-os/values.yaml'))['objectStorage']['image'];print(i['repository']+('@'+i['digest'] if i.get('digest') else ':'+str(i.get('tag',''))))")
+  if docker image inspect "$minio" >/dev/null 2>&1 || docker pull -q "$minio" >/dev/null 2>&1; then
+    kind load docker-image "$minio" --name "$CLUSTER" >/dev/null; echo "   $minio"
+  else
+    cat >&2 <<MSG
+   cannot pull $minio
+   The MinIO mirror is private today. Either:
+     docker login ghcr.io          # if you have access, then re-run
+     --set objectStorage.mode=external --set objectStorage.external.endpoint=<your S3>
+MSG
+    exit 1
+  fi
+
   say "installing chart"
   helm dependency build "$CHART" >/dev/null
   model=(); if [ -n "${STACKIT_API_KEY:-}" ]; then
