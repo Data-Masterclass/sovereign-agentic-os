@@ -168,7 +168,6 @@ spec:
             - "/policies/data.json"
             - "/policies/trino.rego"
             - "/policies/governance.json"
-            - "/policies/marketplace.rego"
           ports:
             - { name: http, containerPort: 8181 }
           readinessProbe:
