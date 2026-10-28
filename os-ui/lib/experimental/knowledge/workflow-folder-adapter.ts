@@ -19,7 +19,7 @@ import {
 } from './store.ts';
 
 /**
- * The Business Workflows (Workflows) tab's binding to the shared folder lifecycle.
+ * The Workflows (Workflows) tab's binding to the shared folder lifecycle.
  * A workflow is foldered in its tier's tree: a Personal draft in the `personal` lane
  * (My), a Shared/Certified process in the `domain` lane (Domain / Company). Thin —
  * wraps the store's per-item ops, each already edit-scoped + throwing 403 when denied,

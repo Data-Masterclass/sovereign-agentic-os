@@ -437,7 +437,7 @@ export default function WorkflowView({
     <>
       <PageHeader title="Knowledge" crumb="workflow" />
       <div className="content">
-        <button className="btn ghost sm" onClick={onBack}>← Business Workflows</button>
+        <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
         <div className="stub-page" style={{ marginTop: 16 }}><span className="spin" /> Loading…</div>
       </div>
     </>
@@ -447,7 +447,7 @@ export default function WorkflowView({
     <>
       <PageHeader title="Knowledge" crumb="workflow" />
       <div className="content">
-        <button className="btn ghost sm" onClick={onBack}>← Business Workflows</button>
+        <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
         <div className="error" style={{ marginTop: 16 }}>{error || 'Workflow not found.'}</div>
       </div>
     </>
@@ -463,7 +463,7 @@ export default function WorkflowView({
       <div className="content">
         {/* Header */}
         <div className="k-detail-head">
-          <button className="btn ghost sm" onClick={onBack}>← Business Workflows</button>
+          <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
           {renaming ? (
             <span className="rename-inline">
               <input

@@ -14,10 +14,10 @@ const knowledge: TutorialDef = {
   hook: {
     illustration: 'knowledge',
     title: 'The context your agents read',
-    body: 'Two surfaces, one playbook. Knowledge holds free-form notes — how you work, key contacts, domain context. Business Workflows (its own tab) holds your business processes with steps and decision rules. Agents read both as context automatically — no copy-paste required.',
+    body: 'Two surfaces, one playbook. Knowledge holds free-form notes — how you work, key contacts, domain context. Workflows (its own tab) holds your business processes with steps and decision rules. Agents read both as context automatically — no copy-paste required.',
     byRole: {
       builder: {
-        body: 'Two surfaces, one playbook: Knowledge notes and Business Workflows. You approve what gets promoted to the Domain tier — so every agent in the domain is aligned on the same, reviewed context.',
+        body: 'Two surfaces, one playbook: Knowledge notes and Workflows. You approve what gets promoted to the Domain tier — so every agent in the domain is aligned on the same, reviewed context.',
       },
     },
   },
@@ -31,7 +31,7 @@ const knowledge: TutorialDef = {
     {
       illustration: 'build',
       title: 'Map a business process',
-      body: 'On the Business Workflows tab, "+ New business process" names a process — Bank Submission, Customer Onboarding — and lays out its steps and decision rules. The Domain Operating Manual (overview, glossary, goals) lives at the top of Business Workflows.',
+      body: 'On the Workflows tab, "+ New business process" names a process — Bank Submission, Customer Onboarding — and lays out its steps and decision rules. The Domain Operating Manual (overview, glossary, goals) lives at the top of Workflows.',
     },
     {
       illustration: 'publish',
@@ -69,7 +69,7 @@ const knowledge: TutorialDef = {
       anchor: ANCHORS.knowledge.organize,
       sandboxAnchor: ANCHORS.knowledge.sandbox,
       title: 'Map a business process',
-      body: 'Switch to the Business Workflows tab and "+ New business process": name the process, lay out its steps and decision rules. Business processes follow the same My / Domain / Company scopes as everything else.',
+      body: 'Switch to the Workflows tab and "+ New business process": name the process, lay out its steps and decision rules. Business processes follow the same My / Domain / Company scopes as everything else.',
       route: '/workflows',
     },
     {

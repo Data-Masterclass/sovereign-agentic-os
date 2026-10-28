@@ -210,7 +210,7 @@ export default function WorkflowsPage() {
 
   return (
     <ConfirmProvider>
-      <PageHeader title="Business Workflows" crumb="steps · business rules · expert knowledge" tutorial="knowledge" />
+      <PageHeader title="Workflows" crumb="steps · business rules · expert knowledge" tutorial="knowledge" />
       <div className="content">
 
         <div className="row" style={{ marginTop: 18, justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 10 }}>
@@ -271,7 +271,7 @@ export default function WorkflowsPage() {
             <div className="seg" style={{ marginTop: 18 }}>
               {SCOPE_GROUPS.map((g) => (
                 <button key={g.key} type="button" className={wfScope === g.key ? 'on' : ''} onClick={() => { setWfScope(g.key); setSel(null); }}>
-                  {g.label('Business Workflows')}{wfCounts ? ` (${wfCounts[g.key]})` : ''}
+                  {g.label('Workflows')}{wfCounts ? ` (${wfCounts[g.key]})` : ''}
                 </button>
               ))}
             </div>

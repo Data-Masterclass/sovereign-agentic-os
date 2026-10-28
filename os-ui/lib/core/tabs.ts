@@ -9,7 +9,7 @@
  *   Ungrouped (entry): Home, Cockpit, Tutorials, MCP, About / Licenses
  *   Plan:    Strategy, Big Bets, Operating Model, Marketplace
  *   Context: Data, Metrics, Files, Knowledge
- *   Build:   Business Workflows, Agents, Dashboards, Software, Science, Console (admin)
+ *   Build:   Workflows, Agents, Dashboards, Software, Science, Console (admin)
  *   Manage:  Connections, Governance (builder+), Monitoring (builder+), Components (admin), LLM Gateway (builder+), Admin
  *
  * The former Admin group (Admin, Terminal, Query, About / Licenses) was dissolved:
@@ -91,7 +91,7 @@ export const TAB_GROUPS: TabGroup[] = [
   {
     heading: 'Build',
     tabs: [
-      { label: 'Business Workflows', icon: '⧉', href: '/workflows', feature: 'workflows' },
+      { label: 'Workflows', icon: '⧉', href: '/workflows', feature: 'workflows' },
       { label: 'Agents', icon: '✦', href: '/agents', feature: 'agents' },
       { label: 'Dashboards', icon: '▦', href: '/dashboards', feature: 'dashboards' },
       { label: 'Software', icon: '⌘', href: '/software', feature: 'software' },

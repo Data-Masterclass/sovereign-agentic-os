@@ -12,13 +12,13 @@ import {
 
 /**
  * The two-section grouping of "What your team can use": Plan Items (Strategy · Big
- * Bets · Operating Model · Business Workflows) and Context (Knowledge · Files · Data ·
- * Connections · Metrics), with Business Workflows a SEPARATE member from Knowledge.
+ * Bets · Operating Model · Workflows) and Context (Knowledge · Files · Data ·
+ * Connections · Metrics), with Workflows a SEPARATE member from Knowledge.
  */
 
-test('Plan Items are Strategy · Big Bets · Operating Model · Business Workflows, in order', () => {
+test('Plan Items are Strategy · Big Bets · Operating Model · Workflows, in order', () => {
   const labels = membersOf('plan').map((m) => m.label);
-  assert.deepEqual(labels, ['Strategy', 'Big Bets', 'Operating Model', 'Business Workflows']);
+  assert.deepEqual(labels, ['Strategy', 'Big Bets', 'Operating Model', 'Workflows']);
 });
 
 test('Context is Knowledge · Files · Data · Connections · Metrics, in order', () => {
@@ -26,11 +26,11 @@ test('Context is Knowledge · Files · Data · Connections · Metrics, in order'
   assert.deepEqual(labels, ['Knowledge', 'Files', 'Data', 'Connections', 'Metrics']);
 });
 
-test('Business Workflows is its OWN member, separate from Knowledge', () => {
+test('Workflows is its OWN member, separate from Knowledge', () => {
   const workflows = RESOURCE_MEMBERS.find((m) => m.key === 'workflows')!;
   const knowledge = RESOURCE_MEMBERS.find((m) => m.key === 'knowledge')!;
   assert.notEqual(workflows.section, knowledge.section); // plan vs context
-  assert.equal(workflows.label, 'Business Workflows');
+  assert.equal(workflows.label, 'Workflows');
   assert.equal(knowledge.label, 'Knowledge');
   // Both draw from the shared `knowledge` feed but each filters to its own family.
   assert.equal(workflows.feedKind, 'knowledge');

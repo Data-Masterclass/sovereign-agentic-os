@@ -84,10 +84,10 @@ test('TAB-SET Context group is Data, Metrics, Files, Knowledge (usage order)', (
   );
 });
 
-test('TAB-SET Build group is Business Workflows, Agents, Dashboards, Software, Science, Console', () => {
+test('TAB-SET Build group is Workflows, Agents, Dashboards, Software, Science, Console', () => {
   assert.deepEqual(
     BUILD_GROUP.tabs.map((t) => t.label),
-    ['Business Workflows', 'Agents', 'Dashboards', 'Software', 'Science', 'Console'],
+    ['Workflows', 'Agents', 'Dashboards', 'Software', 'Science', 'Console'],
   );
 });
 

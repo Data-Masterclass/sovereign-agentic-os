@@ -106,7 +106,7 @@ export const AGENT_CONTEXT_META: Record<AgentContextType, AgentContextMeta> = {
     createNote: 'Connections are created in the Connections tab. Create one there, then return — the list refreshes so you can grant it.',
   },
   workflows: {
-    type: 'workflows', label: 'Business Workflows',
+    type: 'workflows', label: 'Workflows',
     blurb: 'Your business processes (workflows) the team can run, loaded on demand under your access.',
     member: memberByKey('workflows'),
   },
