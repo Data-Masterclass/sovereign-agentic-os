@@ -84,17 +84,17 @@ test('TAB-SET Context group is Data, Metrics, Files, Knowledge (usage order)', (
   );
 });
 
-test('TAB-SET Build group is Agents, Dashboards, Software, Science, Console', () => {
+test('TAB-SET Build group is Business Workflows, Agents, Dashboards, Software, Science, Console', () => {
   assert.deepEqual(
     BUILD_GROUP.tabs.map((t) => t.label),
-    ['Agents', 'Dashboards', 'Software', 'Science', 'Console'],
+    ['Business Workflows', 'Agents', 'Dashboards', 'Software', 'Science', 'Console'],
   );
 });
 
-test('TAB-SET Manage group is Business Workflows, Connections, Governance, Monitoring, Components, LLM Gateway, Admin', () => {
+test('TAB-SET Manage group is Connections, Governance, Monitoring, Components, LLM Gateway, Admin', () => {
   assert.deepEqual(
     GOVERN_GROUP.tabs.map((t) => t.label),
-    ['Business Workflows', 'Connections', 'Governance', 'Monitoring', 'Components', 'LLM Gateway', 'Admin'],
+    ['Connections', 'Governance', 'Monitoring', 'Components', 'LLM Gateway', 'Admin'],
   );
 });
 
@@ -182,11 +182,11 @@ test('TAB-VIS builder sees the builder-gated tabs (Monitoring, LLM Gateway, MCP,
   }
 });
 
-test('TAB-VIS creator: Manage group shows only the ungated tabs (Business Workflows, Connections)', () => {
+test('TAB-VIS creator: Manage group shows only the ungated tab (Connections)', () => {
   const groups = filterTabGroups(TAB_GROUPS, 'creator', undefined, ALL_FEATURES);
   const manage = groups.find((g) => g.heading === 'Manage');
-  assert.ok(manage, 'Manage group must be present for creator (Business Workflows + Connections are ungated)');
-  assert.deepEqual(manage!.tabs.map((t) => t.label), ['Business Workflows', 'Connections'],
+  assert.ok(manage, 'Manage group must be present for creator (Connections is ungated)');
+  assert.deepEqual(manage!.tabs.map((t) => t.label), ['Connections'],
     'creator sees only the ungated Manage tabs — Governance/Monitoring/LLM Gateway/Admin are builder+, Components admin');
 });
 
@@ -303,9 +303,9 @@ test('TAB-VIS entry/Context/Build/Plan tabs are open to creators except the MCP 
 
 // ---- 5-tab uniformity -------------------------------------------------------
 
-test('TAB-SET section sizes are fixed (Entry 5, Plan 4, Context 4, Build 5, Manage 7)', () => {
+test('TAB-SET section sizes are fixed (Entry 5, Plan 4, Context 4, Build 6, Manage 6)', () => {
   const sizes = Object.fromEntries(TAB_GROUPS.map((g) => [g.heading ?? 'Entry', g.tabs.length]));
-  assert.deepEqual(sizes, { Entry: 5, Plan: 4, Context: 4, Build: 5, Manage: 7 });
+  assert.deepEqual(sizes, { Entry: 5, Plan: 4, Context: 4, Build: 6, Manage: 6 });
 });
 
 // ---- Layer gating (Science ⇔ the domain's Science layer, layers.ml) ---------

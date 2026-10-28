@@ -9,8 +9,8 @@
  *   Ungrouped (entry): Home, Cockpit, Tutorials, MCP, About / Licenses
  *   Plan:    Strategy, Big Bets, Operating Model, Marketplace
  *   Context: Data, Metrics, Files, Knowledge
- *   Build:   Agents, Software, Science, Dashboards, Console (admin)
- *   Manage:  Business Workflows, Connections, Governance (builder+), Monitoring (builder+), Components (admin), LLM Gateway (builder+), Admin
+ *   Build:   Business Workflows, Agents, Dashboards, Software, Science, Console (admin)
+ *   Manage:  Connections, Governance (builder+), Monitoring (builder+), Components (admin), LLM Gateway (builder+), Admin
  *
  * The former Admin group (Admin, Terminal, Query, About / Licenses) was dissolved:
  *   - About / Licenses moved to the Entry group (transparency — every user can read it).
@@ -91,6 +91,7 @@ export const TAB_GROUPS: TabGroup[] = [
   {
     heading: 'Build',
     tabs: [
+      { label: 'Business Workflows', icon: '⧉', href: '/workflows', feature: 'workflows' },
       { label: 'Agents', icon: '✦', href: '/agents', feature: 'agents' },
       { label: 'Dashboards', icon: '▦', href: '/dashboards', feature: 'dashboards' },
       { label: 'Software', icon: '⌘', href: '/software', feature: 'software' },
@@ -108,13 +109,12 @@ export const TAB_GROUPS: TabGroup[] = [
     ],
   },
   {
-    // Renamed Monitor → Govern → Manage. Business Workflows (from Plan) and
-    // Connections (from Context) lead the group; the approvals inbox is
+    // Renamed Monitor → Govern → Manage. Connections (from Context) leads the
+    // group; the approvals inbox is
     // labelled Governance (route /governance), and Admin moved here from the
     // dissolved Admin group.
     heading: 'Manage',
     tabs: [
-      { label: 'Business Workflows', icon: '⧉', href: '/workflows', feature: 'workflows' },
       { label: 'Connections', icon: '⇄', href: '/connections', feature: 'connections' },
       { label: 'Governance', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder', feature: 'governance' },
       { label: 'Monitoring', icon: '◷', href: '/monitoring', role: 'Builder / Administrator', minRole: 'builder', feature: 'monitoring' },
