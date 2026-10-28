@@ -24,8 +24,6 @@ kind: Deployment
 metadata:
   name: clickhouse
   namespace: {{ .Release.Namespace }}
-  annotations:
-    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "infra") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "clickhouse") | nindent 4 }}
@@ -101,8 +99,6 @@ kind: PersistentVolumeClaim
 metadata:
   name: clickhouse-data
   namespace: {{ .Release.Namespace }}
-  annotations:
-    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "infra") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "clickhouse") | nindent 4 }}

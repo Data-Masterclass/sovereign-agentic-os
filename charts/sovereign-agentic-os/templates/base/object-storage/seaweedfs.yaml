@@ -29,8 +29,6 @@ kind: Deployment
 metadata:
   name: minio
   namespace: {{ .Release.Namespace }}
-  annotations:
-    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "infra") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 4 }}
@@ -96,8 +94,6 @@ kind: PersistentVolumeClaim
 metadata:
   name: minio-data
   namespace: {{ .Release.Namespace }}
-  annotations:
-    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "infra") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 4 }}

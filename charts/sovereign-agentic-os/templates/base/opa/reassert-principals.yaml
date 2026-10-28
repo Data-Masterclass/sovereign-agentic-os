@@ -36,9 +36,6 @@ metadata:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa-reassert-principals") | nindent 4 }}
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
     # A Job is immutable, so a plain re-apply on every `helm upgrade` fails —
     # before-hook-creation recreates it each release (the last run stays for debug).
     "helm.sh/hook": post-install,post-upgrade

@@ -9,9 +9,8 @@
   Both values sit FAR below the reserved system-cluster-critical /
   system-node-critical band (2000000000), so these never preempt kube-system.
   Cluster-scoped objects, but gated by `priorityClasses.enabled` and supported on
-  kind — local Mode A is unaffected. Created in an early sync-wave so they exist
-  before any pod that references them (Argo CD); Helm's native install order
-  already applies PriorityClass before workloads.
+  kind — local Mode A is unaffected. Helm's native install order applies
+  PriorityClass before workloads.
 */}}
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
@@ -19,8 +18,6 @@ metadata:
   name: {{ .Values.priorityClasses.infra.name }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
-  annotations:
-    argocd.argoproj.io/sync-wave: "-1"
 value: {{ .Values.priorityClasses.infra.value }}
 globalDefault: false
 preemptionPolicy: PreemptLowerPriority
@@ -34,8 +31,6 @@ metadata:
   name: {{ .Values.priorityClasses.app.name }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
-  annotations:
-    argocd.argoproj.io/sync-wave: "-1"
 value: {{ .Values.priorityClasses.app.value }}
 globalDefault: false
 preemptionPolicy: PreemptLowerPriority

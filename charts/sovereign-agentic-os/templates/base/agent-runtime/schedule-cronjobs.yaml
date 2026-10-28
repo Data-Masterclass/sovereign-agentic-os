@@ -14,8 +14,6 @@ kind: CronJob
 metadata:
   name: agent-runtime-schedule-{{ $s.name }}
   namespace: {{ $.Release.Namespace }}
-  annotations:
-    {{- include "soa.syncWaveAnno" (dict "ctx" $ "tier" "apps") | nindent 4 }}
   labels:
     {{- include "soa.labels" $ | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" $ "component" "agent-runtime") | nindent 4 }}

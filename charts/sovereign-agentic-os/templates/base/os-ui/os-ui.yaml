@@ -53,23 +53,6 @@ rules:
     resources: ["configmaps", "secrets"]
     verbs: ["get", "list", "create", "patch", "update"]
   {{- end }}
-  {{- if .Values.ml.enabled }}
-  # Science training runtime (Science tab): the train route submits a per-model
-  # batch/v1 Job (lib/science/training.ts) as the os-ui ServiceAccount and polls it
-  # by name for completion. Least-privilege: namespaced Jobs get/list/create only —
-  # no delete, no pod exec — and gated on the same flag as the Science surface, so a
-  # deployment with ml OFF grants no batch access at all.
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["get", "list", "create"]
-  # Science deploy runtime (Science tab): the deploy route creates/reconciles a
-  # per-model KServe InferenceService (lib/science/deploy.ts) serving the trained
-  # artifact, and polls its Ready condition. Least-privilege: namespaced ISVCs
-  # get/list/create/update only — no delete — gated on the same ml flag.
-  - apiGroups: ["serving.kserve.io"]
-    resources: ["inferenceservices"]
-    verbs: ["get", "list", "create", "update"]
-  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -92,8 +75,6 @@ kind: Deployment
 metadata:
   name: os-ui
   namespace: {{ .Release.Namespace }}
-  annotations:
-    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
@@ -252,14 +233,6 @@ spec:
                   optional: true
             - name: SMTP_FROM
               value: {{ .Values.osUI.smtp.from | default "support@datamasterclass.com" | quote }}
-            {{- if and .Values.mail.enabled .Values.mail.tls.osUITrust }}
-            # In-cluster maddy presents a self-signed submission cert (SAN=`mail`),
-            # which is not in the system trust store. Point Node at the mounted
-            # cert so the SMTP client's STARTTLS handshake to `mail` validates
-            # (rather than failing closed on an untrusted certificate).
-            - name: NODE_EXTRA_CA_CERTS
-              value: /etc/os-ui/mail-ca/tls.crt
-            {{- end }}
             {{- end }}
             {{- with (toString .Values.osUI.emailVerification) }}
             # Coerced via toString so a YAML/`--set` boolean false is honoured too.
@@ -275,8 +248,6 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             # In-cluster backend Service URLs (overridable per environment).
-            - name: SAMPLE_AGENT_URL
-              value: {{ $u.sampleAgentUrl | quote }}
             # Live agent-runtime backend (Agents tab) + the shared token the UI
             # uses to call it and to validate the runtime's governed-tool calls.
             - name: AGENT_RUNTIME_URL
@@ -308,21 +279,6 @@ spec:
               value: {{ .Values.softwareRunner.ingressClass | default .Values.ingress.className | quote }}
             - name: OS_APPS_TLS_ISSUER
               value: {{ .Values.softwareRunner.tlsIssuer | default .Values.ingress.tlsIssuer | quote }}
-            {{- end }}
-            {{- if (.Values.softwareBuild | default dict).enabled }}
-            # ---- Software DIRECT BUILD SERVICE (deploy redesign Phase B). os-ui submits
-            # an in-cluster Kaniko batch/v1 Job per app commit (RBAC in
-            # templates/os-ui/apps-build.yaml) that builds the app's Dockerfile from its
-            # Forgejo git tree at the commit SHA and pushes a DIGEST the runner then
-            # serves pinned (no :latest on the serving path). NIL-SAFE under
-            # --reuse-values: an absent softwareBuild block renders nothing, the flag
-            # stays off, and the pipeline says so honestly (Forgejo Actions still builds). ----
-            - name: SOFTWARE_BUILD_SERVICE
-              value: "true"
-            - name: SOFTWARE_BUILD_NAMESPACE
-              value: {{ (.Values.softwareBuild | default dict).namespace | default .Values.softwareRunner.namespace | quote }}
-            - name: KANIKO_IMAGE
-              value: {{ (.Values.softwareBuild | default dict).kanikoImage | default "gcr.io/kaniko-project/executor:v1.23.2" | quote }}
             {{- end }}
             # ---- Data-tab ingest (T3). os-ui streams an uploaded file to MinIO
             # (uploads/<uid>/) with a SigV4 PUT, then calls the data-runner /ingest —
@@ -367,7 +323,7 @@ spec:
             - name: FILES_INDEX
               value: {{ $u.filesIndex | default "files" | quote }}
             - name: FILES_EMBED_MODEL
-              value: {{ $u.filesEmbedModel | default .Values.sampleAgent.embedModel | quote }}
+              value: {{ $u.filesEmbedModel | default "sovereign-embed" | quote }}
             - name: FILES_EMBED_DIM
               value: {{ .Values.retrieval.knnDimension | quote }}
             {{- with $u.doclingUrl }}
@@ -382,205 +338,27 @@ spec:
             - name: OCR_URL
               value: {{ . | quote }}
             {{- end }}
-            - name: FORGEJO_URL
-              value: {{ $u.forgejoUrl | quote }}
-            - name: FORGEJO_USER
-              value: {{ $u.forgejoUser | quote }}
-            # forgejo.enabled=false → os-ui's agent Build skips its Forgejo step.
-            - name: FORGEJO_ENABLED
-              value: {{ .Values.forgejo.enabled | quote }}
             - name: LITELLM_URL
               value: {{ $u.litellmUrl | quote }}
             - name: OPA_URL
               value: {{ $u.opaUrl | quote }}
             - name: DAGSTER_URL
               value: {{ $u.dagsterUrl | quote }}
-            # Monitoring tab — READ-ONLY artifact/ML-health lens backends (lens 5).
-            # The artifact-health adapter probes these server-side and degrades to
-            # offline-mock when a service is absent (Science/KServe are opt-in), so
-            # these defaults are safe; override per environment. Monitoring is the
-            # observe plane — it never writes to any of these.
-            - name: MLFLOW_URL
-              value: {{ $u.mlflowUrl | default "http://mlflow:5000" | quote }}
-            - name: KSERVE_URL
-              # RawDeployment KServe creates a `<isvc-name>-predictor` Service —
-              # there is NO `kserve` Service. Point at the predictor directly so
-              # the Science-tab probe + `/v2/models/*/infer` calls resolve.
-              value: {{ $u.kserveUrl | default (printf "http://%s-predictor:80" .Values.kserve.sampleModel.name) | quote }}
-            # The KServe predictor ServiceAccount (carries the S3 read creds) — the
-            # Science deploy route stamps it into each per-model InferenceService.
-            - name: KSERVE_SERVICE_ACCOUNT
-              value: {{ .Values.kserve.serviceAccountName | default "kserve-sa" | quote }}
-            - name: OPENMETADATA_API_URL
-              value: {{ $u.openmetadataApiUrl | default "http://openmetadata:8585" | quote }}
-            # The OpenMetadata SERVICE the Trino/Iceberg lakehouse is ingested under.
-            # Used ONLY to build browser deep links from a governed mart to its OM
-            # entity page (OM FQN = <service>.<catalog>.<schema>.<table>). Must match
-            # the OM ingestion pipeline's service name; defaults to `trino`.
-            - name: OPENMETADATA_SERVICE
-              value: {{ $u.openmetadataService | default "trino" | quote }}
-            # OpenMetadata bot JWT. OM is the CORE catalog backbone: the Catalog
-            # shows it CONNECTED from a live (unauthenticated) health probe with or
-            # without this token, and governed marts are deep-linked into OM either
-            # way. The token ENRICHES the union by pulling OM's own table list — when
-            # it is absent OM stays connected and simply isn't pulled. Sourced from
-            # the os-ui-openmetadata Secret (optional — the pod starts fine without
-            # it), which the operator fills out-of-band with a minted ingestion-bot
-            # JWT (or via the gitignored osUI.openmetadataJwt value). Server-only.
-            - name: OPENMETADATA_JWT
-              valueFrom:
-                secretKeyRef:
-                  name: os-ui-openmetadata
-                  key: OPENMETADATA_JWT
-                  optional: true
-            # Same-origin tool proxy (/tools/<key> → in-cluster Service, served by
-            # the os-ui pod; see lib/tool-proxy.ts). These two upstreams have no
-            # sibling env var elsewhere, so set them explicitly + overridable. The
-            # rest (MLflow/Featureform/Cube/Forgejo/Dagster/OpenMetadata) reuse the
-            # backend URLs already wired above. Server-only; never sent to browsers.
-            - name: SUPERSET_INTERNAL_URL
-              value: {{ $u.supersetInternalUrl | default "http://agentic-os-superset:8088" | quote }}
-            # Trusted-header SSO service account for Superset writes (guest-token mint,
-            # dashboard import/delete). Superset's _sso_login maps X-Forwarded-Roles → the
-            # user's role, so the service user MUST be provisioned as Admin — only Admin has
-            # can_grant_guest_token (a Gamma default 403s the mint). Admin-overridable.
-            - name: SUPERSET_SERVICE_USER
-              value: {{ $u.supersetServiceUser | default "admin" | quote }}
-            - name: SUPERSET_SERVICE_ROLES
-              value: {{ $u.supersetServiceRoles | default "Admin" | quote }}
-            - name: OPENSEARCH_DASHBOARDS_INTERNAL_URL
-              value: {{ $u.opensearchDashboardsInternalUrl | default "http://opensearch-dashboards:5601" | quote }}
-            - name: CUBE_URL
-              value: {{ $u.cubeUrl | default "http://cube:4000" | quote }}
-            {{- if .Values.cube.sqlApi.enabled }}
-            # Power BI consumption via Cube's SQL API (Postgres-wire). The
-            # /api/powerbi/connection-info route advertises host/port so a user can
-            # point Power BI at their per-domain BI principal (bi_<domain>). Override
-            # `cube.sqlApi.host` with the published TCP ingress host for external Power BI.
-            - name: CUBE_SQL_API_ENABLED
-              value: "true"
-            - name: CUBE_SQL_HOST
-              value: {{ .Values.cube.sqlApi.host | default "cube-sql" | quote }}
-            - name: CUBE_SQL_PORT
-              value: {{ .Values.cube.sqlApi.port | default 15432 | quote }}
-            # The domain-scoped Cube SQL password the dashboard-import client injects into
-            # Superset's import `passwords` map so an embedded chart can query the Cube SQL
-            # API as bi_<domain>. From the existing cube-sql-secrets Secret (never inlined).
-            - name: CUBE_SQL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: cube-sql-secrets
-                  key: CUBEJS_SQL_PASSWORD
-            {{- end }}
-            - name: FEATUREFORM_URL
-              # Port 80 = Featureform's HTTP dashboard (what the tool-proxy iframes
-              # and the Science-tab probe GETs). 7878 is gRPC-only — plain HTTP
-              # against it resets, which made the tab report Featureform "absent".
-              value: {{ $u.featureformUrl | default "http://featureform:80" | quote }}
             # External-warehouse connectors (Glue/Snowflake/BigQuery/Databricks/Fabric).
             # OFF by default — surfaces the warehouse create-flow + MCP tools only when the
             # operator opts in (lib/core/config.ts reads EXTERNAL_CONNECTORS_ENABLED).
             - name: EXTERNAL_CONNECTORS_ENABLED
               value: {{ $u.externalConnectorsEnabled | default false | quote }}
-            # External OpenMetadata connections (Phase 1 — read/discover only). OFF
-            # by default — surfaces the om-catalog create-flow, catalog discovery fold
-            # + MCP read tools only when the operator opts in (lib/core/config.ts reads
-            # OPENMETADATA_CONNECT_ENABLED). No writes to OM in this phase.
-            - name: OPENMETADATA_CONNECT_ENABLED
-              value: {{ $u.openmetadataConnectEnabled | default false | quote }}
-            {{- if .Values.ml.enabled }}
-            # Layer 4 (Science). Gates the Science/ML surfaces in the UI
-            # (lib/config.ts reads ML_ENABLED). On when the Science plane
-            # (MLflow/KServe/Featureform/Trino/Cube) is deployed via ml.enabled.
-            - name: ML_ENABLED
-              value: "true"
-            {{- end }}
-            {{- if .Values.mlTrainer.image }}
-            # Science training runtime — the ml-trainer image the os-ui's training
-            # route injects into per-model batch Jobs (lib/science/training.ts).
-            # Nil-safe: absent ⇒ env unset ⇒ config.ts falls back to the hardcoded
-            # dev default `sovereign-os/ml-trainer:0.1.0`.
-            - name: ML_TRAINER_IMAGE
-              value: {{ printf "%s:%s" .Values.mlTrainer.image.repository .Values.mlTrainer.image.tag | quote }}
-            {{- end }}
-            {{- if .Values.terminal.enabled }}
-            # In-UI Terminal. The UI mints a short-lived token (signed with the
-            # SAME secret the broker verifies) for authorised roles, then the
-            # browser opens a WebSocket to the broker at TERMINAL_BROKER_WS.
-            - name: TERMINAL_ENABLED
-              value: "true"
-            - name: TERMINAL_ALLOWED_ROLES
-              value: {{ join "," .Values.terminal.allowedRoles | quote }}
-            # Browser opens `new WebSocket(TERMINAL_BROKER_WS?t=<token>)`, so this
-            # MUST be a ws/wss URL WITH the broker's WS path — soa.terminalWsUrl
-            # yields wss://<terminal-host><wsPath> on a deploy (needs the
-            # `terminal` ingress host + a DNS/cert + the terminal ingress route),
-            # "" when ingress is on but no host is set (UI errors clearly instead
-            # of dialing localhost), or the local port-forward fallback on kind.
-            - name: TERMINAL_BROKER_WS
-              value: {{ include "soa.terminalWsUrl" (dict "ctx" . "fallback" (.Values.terminal.brokerWsUrl | default "ws://localhost:8090/terminal")) | quote }}
-            - name: TERMINAL_BROKER_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: terminal-broker
-                  key: secret
-            {{- end }}
-            {{- if .Values.workbench.enabled }}
-            # Domain-Builder Workbench. The UI mints a short-lived single-use token
-            # (signed with the SAME secret the workbench-broker verifies) for an
-            # authorised builder scoped to ONE domain, then the browser opens their
-            # persistent code-server via the broker at WORKBENCH_BROKER_URL.
-            - name: WORKBENCH_ENABLED
-              value: "true"
-            - name: WORKBENCH_ALLOWED_ROLES
-              value: {{ join "," .Values.workbench.allowedRoles | quote }}
-            - name: WORKBENCH_BROKER_URL
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "workbench" "fallback" (.Values.workbench.brokerUrl | default "http://localhost:8091")) | quote }}
-            - name: WORKBENCH_BROKER_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: workbench-broker
-                  key: secret
-            {{- end }}
             # Browser-reachable consoles (linked/opened from the browser). When
             # ingress is enabled these resolve to the PUBLIC ingress host
             # (https://<tool>.<domain>) via soa.consoleUrl — never localhost — so
             # deployed links work; tools with no public host (e.g. dagster) get an
             # empty value and the UI hides their "Open" link. Local-kind keeps the
             # port-forward defaults from values.yaml.
-            - name: SUPERSET_URL
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "superset" "fallback" $u.supersetUrl) | quote }}
             - name: LANGFUSE_CONSOLE_URL
               value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "langfuse" "fallback" $u.langfuseConsoleUrl) | quote }}
-            - name: FORGEJO_CONSOLE_URL
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "forgejo" "fallback" $u.forgejoConsoleUrl) | quote }}
-            - name: ARGOCD_URL
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "argocd" "fallback" $u.argocdUrl) | quote }}
-            - name: OPENMETADATA_URL
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "openmetadata" "fallback" $u.openmetadataUrl) | quote }}
             - name: DAGSTER_CONSOLE_URL
               value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "dagster" "fallback" $u.dagsterConsoleUrl) | quote }}
-            {{- if .Values.ml.enabled }}
-            # Layer-4 (Science) browser-reachable consoles. The Science-tab "Open"
-            # buttons for JupyterHub + KServe are NATIVE links (not the same-origin
-            # tool proxy: Jupyter needs WebSocket kernels and KServe has no human UI,
-            # so both are rejected by the /tools proxy). Without these env vars they
-            # fall back to the localhost defaults in lib/core/config.ts — a dead link
-            # on a real deploy (the Jupyter 404 / KServe localhost bug). Resolve them
-            # through soa.consoleUrl exactly like every other console: the PUBLIC
-            # ingress host when `ingress.hosts.<key>` is set, else "" so the UI HIDES
-            # the "Open" link instead of dialing localhost. MLflow/Featureform ALSO
-            # get a console value here (they open via the proxy, but this keeps the
-            # env explicit and consistent). Local-kind keeps the port-forward defaults.
-            - name: JUPYTERHUB_CONSOLE_URL
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "jupyterhub" "fallback" $u.jupyterhubConsoleUrl) | quote }}
-            - name: MLFLOW_CONSOLE_URL
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "mlflow" "fallback" $u.mlflowConsoleUrl) | quote }}
-            - name: FEATUREFORM_CONSOLE_URL
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "featureform" "fallback" $u.featureformConsoleUrl) | quote }}
-            - name: KSERVE_CONSOLE_URL
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "kserve" "fallback" $u.kserveConsoleUrl) | quote }}
-            {{- end }}
             # Langfuse project keys — public key is non-secret; secret key via Secret.
             - name: LANGFUSE_PUBLIC_KEY
               value: {{ .Values.langfuseInit.publicKey | quote }}
@@ -589,16 +367,8 @@ spec:
                 secretKeyRef:
                   name: {{ $u.langfuseSecret.name | quote }}
                   key: {{ $u.langfuseSecret.key | quote }}
-            # Forgejo admin password + LiteLLM master key — from Secrets so they
-            # never sit in plaintext. Override the names/keys per environment.
-            - name: FORGEJO_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $u.forgejoSecret.name | quote }}
-                  key: {{ $u.forgejoSecret.key | quote }}
-                  # Optional so os-ui boots when Forgejo is disabled (secret absent);
-                  # the Software tab's git features degrade gracefully without it.
-                  optional: true
+            # LiteLLM master key — from a Secret so it never sits in plaintext.
+            # Override the name/key per environment.
             - name: LITELLM_MASTER_KEY
               valueFrom:
                 secretKeyRef:
@@ -617,21 +387,6 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml $u.resources | nindent 12 }}
-          {{- if and .Values.mail.enabled .Values.mail.tls.osUITrust }}
-          volumeMounts:
-            - name: mail-ca
-              mountPath: /etc/os-ui/mail-ca
-              readOnly: true
-          {{- end }}
-      {{- if and .Values.mail.enabled .Values.mail.tls.osUITrust }}
-      volumes:
-        # The in-cluster maddy submission cert, trusted via NODE_EXTRA_CA_CERTS.
-        - name: mail-ca
-          secret:
-            secretName: {{ .Values.mail.tls.secretName }}
-            items:
-              - { key: tls.crt, path: tls.crt }
-      {{- end }}
 ---
 apiVersion: v1
 kind: Service

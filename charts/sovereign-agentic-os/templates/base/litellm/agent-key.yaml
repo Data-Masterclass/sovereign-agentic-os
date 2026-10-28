@@ -38,15 +38,6 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "litellm-key-init") | nindent 4 }}
-  annotations:
-    # NOT a Helm hook (see header): normal resource so `--no-hooks` deploys and
-    # ArgoCD syncs always run it. App tier so it lands after LiteLLM (wave 1).
-    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
-    # A Job spec is immutable. When ArgoCD manages this chart, Replace lets a
-    # spec change (image/models/budget) recreate the Job instead of failing a
-    # patch; with ttlSecondsAfterFinished it re-runs idempotently. Inert under
-    # plain `helm install/upgrade` (helm ignores this annotation).
-    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 10
   ttlSecondsAfterFinished: 300

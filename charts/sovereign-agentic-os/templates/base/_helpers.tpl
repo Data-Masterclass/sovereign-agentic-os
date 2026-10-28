@@ -75,7 +75,7 @@ Browser-reachable console URL for a tool, derived so DEPLOYED links never point
 at localhost. When ingress is enabled (Mode A self-hosted / Mode B managed), the
 public URL is the tool's ingress host as `https://<host>` — the same host the
 ingress template routes — so the OS UI links resolve through the real LB/DNS. If
-ingress is enabled but the tool has NO public host (e.g. dagster/cube, kept
+ingress is enabled but the tool has NO public host (e.g. dagster, kept
 internal), this returns "" and the UI hides that tool's "Open" link rather than
 linking to an unreachable localhost. When ingress is disabled (local-kind), it
 falls back to the per-tool port-forward default.
@@ -86,78 +86,6 @@ Args: dict "ctx" $ "key" "<ingress host key>" "fallback" "<local url>"
 {{- if $ing.enabled -}}
 {{- $host := index ($ing.hosts | default dict) .key | default "" -}}
 {{- if $host -}}https://{{ $host }}{{- end -}}
-{{- else -}}
-{{- .fallback -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Comma-separated names of the release's image pull secrets — handed to the
-terminal/workbench brokers (IMAGE_PULL_SECRETS) so the pods they create at
-runtime can pull the private sandbox/code-server images.
-*/}}
-{{- define "soa.pullSecretNames" -}}
-{{- $names := list -}}
-{{- range (.Values.global.imagePullSecrets | default list) -}}
-{{- $names = append $names .name -}}
-{{- end -}}
-{{- join "," $names -}}
-{{- end -}}
-
-{{/*
-Replicate the release-namespace image pull secret(s) into a dynamic workload
-namespace (terminal sandbox / workbench). The brokers create pods in those
-namespaces at RUNTIME; the kubelet there needs the same registry credential or
-private images (ghcr.io) 401 into ImagePullBackOff. Uses `lookup`, so it emits
-the copies on a real install/upgrade against the cluster and is a harmless
-no-op in offline `helm template` / ArgoCD-style rendering — for those flows,
-copy the secret once by hand:
-  kubectl -n <release-ns> get secret <name> -o yaml | \
-    sed 's/namespace: <release-ns>/namespace: <target-ns>/' | kubectl apply -f -
-Args: dict "ctx" $ "namespace" "<target ns>"
-*/}}
-{{- define "soa.replicatedPullSecrets" -}}
-{{- $ctx := .ctx }}
-{{- $ns := .namespace }}
-{{- range ($ctx.Values.global.imagePullSecrets | default list) }}
-{{- $src := lookup "v1" "Secret" $ctx.Release.Namespace .name }}
-{{- if $src }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ .name }}
-  namespace: {{ $ns }}
-  labels:
-    {{- include "soa.labels" $ctx | nindent 4 }}
-  annotations:
-    soa.dev/replicated-from: {{ $ctx.Release.Namespace }}
-type: {{ $src.type }}
-data:
-{{- range $k, $v := $src.data }}
-  {{ $k }}: {{ $v }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end -}}
-
-{{/*
-Terminal-broker WebSocket URL for the browser. The terminal is opened with
-`new WebSocket(url)`, so the URL MUST carry a ws/wss scheme AND the broker's
-WS path (soa.consoleUrl is wrong here — it yields `https://<host>` with no
-path). When ingress is enabled and the `terminal` host is set, this returns
-`wss://<host><wsPath>` (public TLS host). When ingress is enabled but no
-`terminal` host is configured, it returns "" so the UI fails loudly rather than
-dialing a dead localhost address. When ingress is disabled (local-kind), it
-falls back to the per-env port-forward default (ws://localhost:8090/terminal).
-Args: dict "ctx" $ "fallback" "<local ws url>"
-*/}}
-{{- define "soa.terminalWsUrl" -}}
-{{- $ing := .ctx.Values.ingress | default dict -}}
-{{- $wsPath := .ctx.Values.terminal.wsPath | default "/terminal" -}}
-{{- if $ing.enabled -}}
-{{- $host := index ($ing.hosts | default dict) "terminal" | default "" -}}
-{{- if $host -}}wss://{{ $host }}{{ $wsPath }}{{- end -}}
 {{- else -}}
 {{- .fallback -}}
 {{- end -}}
@@ -210,22 +138,6 @@ header). Mounted identically in all three so the token compared is the token sen
 {{- end -}}
 
 {{/*
-Orchestrated, memory-safe startup (see values.yaml `startup` + `priorityClasses`).
------------------------------------------------------------------------------
-Argo CD sync-wave annotation for a startup tier. Waves stage the rollout so the
-node's memory ramps gradually instead of ~30 pods booting at once (which spiked
-> 32 GB and OOMKilled litellm / errored openmetadata). Tiers:
-  infra      -> wave 0 (Postgres/CNPG, OpenSearch, ClickHouse, Valkey, MinIO)
-  middleware -> wave 1 (LiteLLM, Langfuse, mock-model, egress)
-  apps       -> wave 2 (Superset, Dagster, OpenMetadata, Forgejo, Argo, OS UI, agents)
-Inert without Argo CD (e.g. local `helm install`), where the resource `requests`
-provide the memory backpressure instead. Args: dict "ctx" $ "tier" "<tier>".
-*/}}
-{{- define "soa.syncWaveAnno" -}}
-argocd.argoproj.io/sync-wave: {{ index .ctx.Values.startup.syncWaves .tier | quote }}
-{{- end -}}
-
-{{/*
 priorityClassName line for a tier ("infra" high / "app" low), gated by
 `priorityClasses.enabled`. Renders nothing when disabled so local-kind installs
 that don't create the PriorityClass objects still admit every pod. Place under a
@@ -235,37 +147,6 @@ pod `spec:`. Args: dict "ctx" $ "tier" "<infra|app>".
 {{- if .ctx.Values.priorityClasses.enabled -}}
 priorityClassName: {{ index .ctx.Values.priorityClasses .tier "name" }}
 {{- end -}}
-{{- end -}}
-
-{{/*
-OVERRIDE of the Forgejo/gitea subchart's `gitea.images.pullSecrets` helper.
-Templates share one namespace across parent + subcharts, and a parent-chart
-definition wins, so this normalises the subchart's pull-secret rendering.
-
-WHY: the upstream gitea helper assumes `global.imagePullSecrets` entries are
-plain STRINGS and wraps each as `(dict "name" .)`. This umbrella sets
-`global.imagePullSecrets: [{name: registry-pull-secret}]` (map form — the
-convention every other consumer here expects), so the upstream helper double-
-wraps it into `{name: {name: registry-pull-secret}}` → an invalid pod spec that
-kept the Forgejo pod from starting. This version accepts BOTH a string and a
-`{name: ...}` map, so the map form renders correctly as `- name: <secret>`.
-(Forgejo's image is public, so the secret is harmless-but-valid; the fix is just
-to stop emitting a malformed reference.) Keep in sync with the upstream helper's
-output shape on any `forgejo` subchart bump.
-*/}}
-{{- define "gitea.images.pullSecrets" -}}
-{{- $pullSecrets := .Values.imagePullSecrets -}}
-{{- range .Values.global.imagePullSecrets -}}
-  {{- if kindIs "string" . -}}
-    {{- $pullSecrets = append $pullSecrets (dict "name" .) -}}
-  {{- else -}}
-    {{- $pullSecrets = append $pullSecrets . -}}
-  {{- end -}}
-{{- end -}}
-{{- if (not (empty $pullSecrets)) }}
-imagePullSecrets:
-{{ toYaml $pullSecrets }}
-{{- end }}
 {{- end -}}
 
 {{/*
