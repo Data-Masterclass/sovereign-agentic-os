@@ -24,7 +24,7 @@ for i in $(seq 1 60); do
 done
 
 echo "==> building $IMG for linux/amd64"
-docker build --platform linux/amd64 --provenance=false -t "$IMG" -f images/os-ui/Dockerfile .
+docker build --platform linux/amd64 --provenance=false -t "$IMG" -f images/base/os-ui/Dockerfile .
 echo "==> pushing $IMG (up to 5 tries)"
 pushed=""
 for i in 1 2 3 4 5; do
