@@ -261,3 +261,29 @@ test('hydration round-trip: a doc written through comes back unchanged after a "
     os.restore();
   }
 });
+
+// --- Phase-0 regression gate: silent mirror write loss (review finding 2) ------
+
+test('MIRROR-DURABILITY: a 503 on PUT must surface — not leave healthy=true with the write lost', { todo: 'fixed in Phase 2' }, async () => {
+  const m = osMirror({ index: 'os-gate-test' });
+  m.__reset();
+  const orig = globalThis.fetch;
+  const log: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input); const method = init?.method ?? 'GET';
+    log.push(`${method} ${url.replace(/^https?:\/\/[^/]+/, '').split('?')[0]}`);
+    if (url.includes('/_count')) return new Response(JSON.stringify({ count: 0 }), { status: 200 });
+    if (method === 'PUT' && url.includes('/_doc/')) return new Response('{"error":"unavailable"}', { status: 503 });
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+  try {
+    assert.equal(await m.probe(), true, 'probe succeeds → mirror believed healthy');
+    m.writeThrough('doc-1', { hello: 'world' });
+    await new Promise((r) => setTimeout(r, 20));
+  } finally {
+    globalThis.fetch = orig;
+  }
+  assert.ok(log.some((l) => l.startsWith('PUT /os-gate-test/_doc/doc-1')), 'the PUT was attempted');
+  // The defect: after a failed PUT the mirror still reports healthy and nothing is queued/reported.
+  assert.equal(m.healthy(), false, 'a failed write must flip health (or be queued + reported) — never silently succeed');
+});

@@ -592,3 +592,22 @@ test('reachedEnd is false when no node ran (every agent disabled), as in runGrap
   assert.equal(res.runs.length, 0);
   assert.equal(res.reachedEnd, false);
 });
+
+// --- Phase-0 regression gate: ignored handoff guard (review finding 3) ------
+
+test('HANDOFF-GUARD: a handoff with when:"false" must not visit its target', { todo: 'fixed in Phase 3 (real LangGraph)' }, () => {
+  const ir = compile(parseSystem({
+    version: '1',
+    system: { name: 'T', domain: 'sales', visibility: 'Personal' },
+    runtime: 'langgraph',
+    entrypoint: 'a',
+    grants: { tools: [] },
+    agents: [
+      { id: 'a', role: 'agent', agent_md: '', memory_md: '' },
+      { id: 'b', role: 'agent', agent_md: '', memory_md: '' },
+    ],
+    edges: [{ from: 'a', to: 'b', type: 'handoff', when: 'false' }],
+  }));
+  assert.deepEqual(ir.commands, [{ from: 'a', to: 'b', when: 'false' }], 'compiler keeps the guard');
+  assert.deepEqual(nodeOrder(ir), ['a'], 'walker ignores the guard today and visits b');
+});

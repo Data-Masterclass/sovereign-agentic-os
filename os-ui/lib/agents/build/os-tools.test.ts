@@ -560,3 +560,53 @@ test('writeOutcomesLine: honest sentences for direct + held, empty when nothing 
   assert.match(line, /Wrote 1 record directly — 1 to My Metrics\./);
   assert.match(line, /1 write awaiting approval in Governance → Inbox\./);
 });
+
+// --- Phase-0 regression gate: agent resource narrowing (review finding 1) ------
+
+function sysWithDataGrant(datasetId: string, layer: 'bronze' | 'silver' | 'gold'): System {
+  return parseSystem({
+    version: '1',
+    system: { name: 'T', domain: 'sales', visibility: 'Personal' },
+    runtime: 'langgraph',
+    entrypoint: 'a',
+    grants: { tools: ['get_dataset'], data: [{ id: datasetId, capability: 'Read', layer }] },
+    agents: [{ id: 'a', role: 'agent', agent_md: '', memory_md: '' }],
+  });
+}
+
+test('RESOURCE-NARROWING: get_dataset on an UNGRANTED dataset is refused before dispatch', { todo: 'fixed in Phase 1' }, async () => {
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(CREATOR, sysWithDataGrant('ds-A', 'gold'), 'sys-1', deps);
+  const res = await exec('get_dataset', { datasetId: 'ds-B' });
+  assert.equal(deps.calls.handleRpc.length, 0, 'ds-B is not in grants.data — must never reach handleRpc');
+  assert.equal(res.isError, true);
+  assert.match(res.text, /not granted|forbidden/i);
+});
+
+test('RESOURCE-NARROWING: an explicit layer below the granted layer is clamped, not forwarded', { todo: 'fixed in Phase 1' }, async () => {
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(CREATOR, sysWithDataGrant('ds-A', 'gold'), 'sys-1', deps);
+  await exec('get_dataset', { datasetId: 'ds-A', layer: 'bronze' });
+  assert.equal(deps.calls.handleRpc.length, 1);
+  const call = deps.calls.handleRpc[0] as { req: { params: { arguments: { layer?: string } } } };
+  assert.equal(call.req.params.arguments.layer, 'gold', 'the grant says gold; bronze must not pass through');
+});
+
+// --- Phase-0 regression gate: held writes lose their arguments (review finding 5) ------
+
+test('HELD-ACTION: a held request_promotion must carry the exact arguments it needs to execute later', { todo: 'fixed in Phase 2' }, async () => {
+  const queued: Record<string, unknown>[] = [];
+  const deps: OsToolDeps = {
+    enqueue: ((item: Record<string, unknown>) => { queued.push(item); return { id: 'q1' }; }) as unknown as OsToolDeps['enqueue'],
+    trace: (async () => {}) as unknown as OsToolDeps['trace'],
+    handleRpc: (async () => { throw new Error('must not dispatch a held write'); }) as unknown as OsToolDeps['handleRpc'],
+  };
+  const sys = sysWithPreset(['request_promotion'], 'read-propose');
+  const args = { kind: 'dataset', id: 'ds-A', target: 'Domain', reason: 'gate test' };
+  const res = await grantedToolExecutor(CREATOR, sys, 'sys-1', deps)('request_promotion', args);
+  assert.equal(res.isError, true);
+  assert.match(res.text, /held/);
+  assert.equal(queued.length, 1, 'exactly one approval queued');
+  assert.deepEqual((queued[0] as { action?: { args?: unknown } }).action?.args, args,
+    'the queued approval has no arguments — approve → execute → resume is impossible');
+});

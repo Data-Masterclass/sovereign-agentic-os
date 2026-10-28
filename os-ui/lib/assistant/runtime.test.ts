@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 import { toolsForTab } from '@/lib/mcp/server';
-import { runTabAgent, parseLlmMessage, parseLlmUsage, parseHarmonyToolCall, renderAssistantText, bindToolArgs, boundExecutor } from './runtime.ts';
+import { config } from '@/lib/core/config';
+import { runTabAgent, parseLlmMessage, parseLlmUsage, parseHarmonyToolCall, renderAssistantText, bindToolArgs, boundExecutor, liteLlmCaller } from './runtime.ts';
 import type { LlmCall, ToolExecutor } from './agentic.ts';
 
 const participant: CurrentUser = { id: 'u-part', name: 'Pat', domains: ['sales'], role: 'creator' };
@@ -194,4 +195,24 @@ test('parseLlmUsage never fabricates usage from an absent/malformed block', () =
   assert.equal(parseLlmUsage({}), undefined);
   assert.equal(parseLlmUsage({ prompt_tokens: 'not-a-number' }), undefined);
   assert.equal(parseLlmUsage('usage'), undefined);
+});
+
+// --- Phase-0 regression gate: run-path model calls use the master key (review finding 4) ------
+
+test('MODEL-KEY: a run-path completion must NOT carry the LiteLLM master key', { todo: 'fixed in Phase 3' }, async () => {
+  const seen: { auth?: string } = {};
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    seen.auth = String((init?.headers as Record<string, string>)?.authorization ?? '');
+    return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'hi' } }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+  try {
+    await liteLlmCaller()({ model: 'sovereign-fast', messages: [{ role: 'user', content: 'ping' }] });
+  } finally {
+    globalThis.fetch = orig;
+  }
+  assert.ok(seen.auth, 'the caller must send an authorization header');
+  assert.notEqual(seen.auth, `Bearer ${config.litellmMasterKey}`, 'run path used the MASTER key — per-agent scoped key limits are bypassed');
 });

@@ -32,6 +32,9 @@ jobs:
         run: npm --prefix os-ui ci
       - name: Test (os-ui)
         run: npm --prefix os-ui test
+      - name: Builder-vertical regression gate
+        working-directory: os-ui
+        run: bash scripts/gate.sh
 
   build:
     name: build
