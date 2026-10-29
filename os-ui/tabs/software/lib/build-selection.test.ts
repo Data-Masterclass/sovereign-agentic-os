@@ -16,7 +16,7 @@ import {
   toggleGroup,
   pruneSelection,
   type SelEpic,
-} from '@tabs/software/lib/build-selection';
+} from './build-selection.ts';
 
 const story = (id: string, n: number): { id: string; spec: { features: string[] } } => ({
   id,

@@ -16,7 +16,7 @@ import { join } from 'node:path';
  *
  * Read once + cached; a missing file degrades to '' (the surface still works).
  */
-const FILE = join(process.cwd(), 'lib', 'tabs', 'build-spec', 'software.md');
+const FILE = join(process.cwd(), 'tabs', 'software', 'build-spec', 'software.md');
 let cached: string | null = null;
 
 export function loadBuildSpec(): string {

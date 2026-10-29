@@ -18,7 +18,7 @@ import {
   deleteApp,
   type RunnerApp,
   type RunnerK8s,
-} from '@tabs/software/lib/runner';
+} from './runner.ts';
 import { config } from '@core/kernel/config';
 
 const OPTS = { namespace: 'agentic-apps', ingressClass: 'nginx', tlsIssuer: 'letsencrypt-prod' };

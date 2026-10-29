@@ -8,8 +8,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveColumns, formatCell, applyView, type ResolvedColumn } from '@tabs/software/lib/appspec/render-logic';
-import type { TableColumn } from '@tabs/software/lib/appspec/schema';
+import { resolveColumns, formatCell, applyView, type ResolvedColumn } from './render-logic.ts';
+import type { TableColumn } from './schema.ts';
 
 // -------------------------------------------------------------- resolveColumns ----------
 

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { contextAccessCap, emptyContextGrants, accessOf, isGranted } from '@core/kernel/context-grants';
-import type { AppEpic } from '@tabs/software/lib/apps';
+import type { AppEpic } from './apps.ts';
 import {
   applyPurposeSuggestion,
   applyGrantsSuggestion,
@@ -12,7 +12,7 @@ import {
   applyStoriesSuggestion,
   applyEpicRequirementsSuggestion,
   normalizeAssistantReply,
-} from '@tabs/software/lib/assistant-suggestions';
+} from './assistant-suggestions.ts';
 
 const KINDS = ['connections', 'data', 'knowledge', 'files', 'metrics'] as const;
 

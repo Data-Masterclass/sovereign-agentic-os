@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_MODE_TOOLS, BUILD_PRINCIPLES, CODE_STRUCTURE_CONVENTION, DATA_PLANE_CONTRACT } from '@tabs/software/lib/chat-modes';
+import { asChatRunMode, isReadOnlyMode, modeDirective, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_MODE_TOOLS, BUILD_PRINCIPLES, CODE_STRUCTURE_CONVENTION, DATA_PLANE_CONTRACT } from './chat-modes.ts';
 
 test('tier policy: ALL software stages run on the reasoning model', () => {
   assert.equal(modelRoleForMode('plan'), 'reasoning');

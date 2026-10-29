@@ -9,7 +9,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveGrantedContext } from '@tabs/software/lib/grants-context';
+import { resolveGrantedContext } from './grants-context.ts';
 import { emptyContextGrants, type ContextGrants } from '@core/kernel/context-grants';
 import { createDataset, setDocs, __resetStore as resetData } from '@tabs/data/lib/store';
 import { createPersonalKnowledge, __resetStore as resetPk } from '@tabs/knowledge/lib/personal-store';

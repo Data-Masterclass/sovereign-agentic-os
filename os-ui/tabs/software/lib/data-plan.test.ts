@@ -12,7 +12,7 @@ import {
   unresolvedDataNeedWarning,
   DUMMY_ROWS_DEFAULT,
   DUMMY_ROWS_MAX,
-} from '@tabs/software/lib/data-plan';
+} from './data-plan.ts';
 
 // ---------------------------------------------------------- normalize/validate
 

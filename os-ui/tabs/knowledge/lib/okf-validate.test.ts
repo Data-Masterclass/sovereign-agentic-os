@@ -66,8 +66,8 @@ test('validateBundle: reserved index.md WITHOUT frontmatter is fine (plain listi
 
 test('relativeMdLinks / resolvePath: intra-bundle links only; traversal escapes rejected', () => {
   const md = 'See [a](../metrics/rev.md) and [ext](https://x.com/y) and [anchor](#top).';
-  assert.deepEqual(relativeMdLinks(md), ['@tabs/metrics/lib/rev.md']);
-  assert.equal(resolvePath('policies/p.md', '@tabs/metrics/lib/rev.md'), 'metrics/rev.md');
+  assert.deepEqual(relativeMdLinks(md), ['../metrics/rev.md']);
+  assert.equal(resolvePath('policies/p.md', '../metrics/rev.md'), 'metrics/rev.md');
   assert.equal(resolvePath('a.md', '../../etc/passwd'), null); // escapes bundle root
   assert.equal(resolvePath('dir/a.md', '/root.md'), 'root.md'); // bundle-absolute
 });

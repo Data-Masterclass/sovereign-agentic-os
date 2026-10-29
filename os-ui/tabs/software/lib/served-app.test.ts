@@ -9,9 +9,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveServeTarget } from '@tabs/software/lib/served-app';
-import type { App } from '@tabs/software/lib/apps';
-import type { AppSpec } from '@tabs/software/lib/appspec/schema';
+import { resolveServeTarget } from './served-app.ts';
+import type { App } from './apps.ts';
+import type { AppSpec } from './appspec/schema.ts';
 
 const oneTab: AppSpec = {
   version: 2,

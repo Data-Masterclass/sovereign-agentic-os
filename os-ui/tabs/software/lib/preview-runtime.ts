@@ -96,7 +96,7 @@ function facade(kind: 'react' | 'jsx-runtime' | 'react-dom-client'): string {
   // The core is served at the sibling URL `?asset=core`; facades import it so the
   // browser only ever loads ONE React instance regardless of how many specifiers
   // the app bundle imports.
-  const core = "import { React, JsxRuntime, ReactDOMClient } from '@tabs/software/lib/preview-runtime?asset=core';";
+  const core = "import { React, JsxRuntime, ReactDOMClient } from './preview-runtime?asset=core';";
   switch (kind) {
     case 'react':
       // `react` is used both as a namespace import and (rarely) a default import.

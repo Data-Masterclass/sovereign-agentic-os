@@ -5,9 +5,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { createApp } from '@tabs/software/lib/apps';
-import { startPreview, requestDeploy, decideDeploy, scopeBroadened } from '@tabs/software/lib/review';
-import { consumeResource } from '@tabs/software/lib/lifecycle';
-import { commitToApp } from '@tabs/software/lib/server';
+import { startPreview, requestDeploy, decideDeploy, scopeBroadened } from './review.ts';
+import { consumeResource } from './lifecycle.ts';
+import { commitToApp } from './server.ts';
 
 const creator: CurrentUser = { id: 'alice', name: 'Alice', domains: ['sales'], role: 'creator' };
 const builder: CurrentUser = { id: 'bob', name: 'Bob', domains: ['sales'], role: 'builder' };

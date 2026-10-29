@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readUiSource, vendorUiForRepo, applyUiFileDep } from '@tabs/software/lib/app-ui-vendor';
+import { readUiSource, vendorUiForRepo, applyUiFileDep } from './app-ui-vendor.ts';
 
 /** The file set the UI package MUST vendor — source files + generated package.json. */
 const EXPECTED_FILES = [
@@ -52,7 +52,7 @@ test('generated package.json names the package and exports the theme css', () =>
   assert.equal(pkg.main, 'index.ts');
   assert.deepEqual(pkg.exports, {
     '.': './index.ts',
-    '@tabs/software/lib/theme.css': '@tabs/software/lib/theme.css',
+    './theme.css': './theme.css',
   });
 });
 

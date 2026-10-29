@@ -3,9 +3,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RECORD_TOOLS, envelopeAllowsRecordTool, executeAppTool, recordActor } from '@tabs/software/lib/app-records';
-import { __resetAppRecordsCache } from '@tabs/software/lib/app-records-store';
-import type { App } from '@tabs/software/lib/apps';
+import { RECORD_TOOLS, envelopeAllowsRecordTool, executeAppTool, recordActor } from './app-records.ts';
+import { __resetAppRecordsCache } from './app-records-store.ts';
+import type { App } from './apps.ts';
 
 /** A minimal App stub carrying just the deploy envelope the gate reads. */
 function appWith(approved: { writeTools: string[] } | null): App {

@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ACTION_MODE, actionPrompt, targetKey, targetLabel, type TargetEpic } from '@tabs/software/lib/build-target';
+import { ACTION_MODE, actionPrompt, targetKey, targetLabel, type TargetEpic } from './build-target.ts';
 
 const EPICS: TargetEpic[] = [
   { id: 'e1', title: 'Invoices', stories: [{ id: 's1', title: 'List overdue' }, { id: 's2', title: 'Send reminder' }] },

@@ -15,7 +15,7 @@ import {
   storiesMissingSpec,
   designLadder,
   type StorySpec,
-} from '@tabs/software/lib/story-spec';
+} from './story-spec.ts';
 
 test('story-spec: emptySpec is three empty lists with no content', () => {
   const s = emptySpec();

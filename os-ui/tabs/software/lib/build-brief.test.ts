@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appContext, OS_SDK_BRIEF, type BuildBriefApp } from '@tabs/software/lib/build-brief';
+import { appContext, OS_SDK_BRIEF, type BuildBriefApp } from './build-brief.ts';
 
 function baseApp(overrides: Partial<BuildBriefApp> = {}): BuildBriefApp {
   return {

@@ -10,7 +10,7 @@ import {
   resolveTarget,
   stageDirective,
   targetProgress,
-} from '@tabs/software/lib/mcp-stages';
+} from './mcp-stages.ts';
 
 /** A minimal App fixture with two stories: one specified, one not, one done. */
 function appFixture(): App {

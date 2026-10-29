@@ -10,7 +10,7 @@ import {
   hydrateSnapshot,
   deleteSnapshot,
   __resetSnapshots,
-} from '@tabs/software/lib/file-mirror';
+} from './file-mirror.ts';
 
 /**
  * The durable app-source mirror (ARCHITECTURE #243): every committed tree is

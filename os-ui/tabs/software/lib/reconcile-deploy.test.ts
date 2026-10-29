@@ -12,8 +12,8 @@ import {
   previewNoteForRunner,
   PREVIEW_PENDING_NOTE,
   IMAGE_BUILDING_NOTE,
-} from '@tabs/software/lib/review';
-import type { RunnerK8s } from '@tabs/software/lib/runner';
+} from './review.ts';
+import type { RunnerK8s } from './runner.ts';
 import { decide, listApprovals, __resetApprovals } from '@core/policy/approvals';
 
 /**

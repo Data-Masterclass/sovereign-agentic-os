@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectPreviewShape, unsupportedShapeMessage } from '@tabs/software/lib/preview-shape';
+import { detectPreviewShape, unsupportedShapeMessage } from './preview-shape.ts';
 
 test('detectPreviewShape: a Vite entry wins, in boot order', () => {
   assert.deepEqual(detectPreviewShape(['src/main.tsx', 'src/App.tsx']), { kind: 'vite', entry: '/src/main.tsx' });

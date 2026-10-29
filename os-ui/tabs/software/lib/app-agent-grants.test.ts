@@ -9,7 +9,7 @@ import {
   isAgentGranted,
   agentAccessOf,
   setAgentGrant,
-} from '@tabs/software/lib/app-agent-grants';
+} from './app-agent-grants.ts';
 
 test('emptyAgentGrants is a fresh empty list', () => {
   assert.deepEqual(emptyAgentGrants(), []);

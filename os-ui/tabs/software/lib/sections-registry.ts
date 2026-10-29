@@ -91,7 +91,7 @@ export function generateSectionsContent(files: ScaffoldFile[]): string | null {
     return id;
   };
 
-  const imports: string[] = ["import Overview from '@tabs/software/lib/pages/Overview';"];
+  const imports: string[] = ["import Overview from './pages/Overview.tsx';"];
   const entries: string[] = ["  { id: 'overview', label: 'Overview', icon: '◇', page: Overview },"];
   pages.forEach((p, i) => {
     const alias = `S${i}`;

@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CurrentUser } from '@core/kernel/auth';
 import {
@@ -151,17 +151,17 @@ test('context.md and guide.md files reference only real MCP tool names (drift tr
     'exposure_action_enable',                             // approval kind (operational action enablement), not a tool
   ]);
 
-  const tabsDir = join(process.cwd(), 'lib', 'tabs');
-  const guidesDir = join(tabsDir, 'guides');
-
-  const markdownFiles: string[] = [
-    ...readdirSync(tabsDir)
-      .filter((f: string) => f.endsWith('.context.md'))
-      .map((f: string) => join(tabsDir, f)),
-    ...readdirSync(guidesDir)
-      .filter((f: string) => f.endsWith('.guide.md'))
-      .map((f: string) => join(guidesDir, f)),
+  // Guides and contexts moved to the tabs: tabs/<tab>/{guide,context}.md, with the
+  // cross-cutting guides in core/guides/.
+  const root = process.cwd();
+  const mdFiles = [
+    ...readdirSync(join(root, 'tabs')).flatMap((t) => ['guide.md', 'context.md']
+      .map((n) => join(root, 'tabs', t, n)).filter((f) => existsSync(f))),
+    ...(existsSync(join(root, 'core', 'guides'))
+      ? readdirSync(join(root, 'core', 'guides')).map((n) => join(root, 'core', 'guides', n))
+      : []),
   ];
+  const markdownFiles: string[] = mdFiles;
 
   // Pattern 1: function-call style `tool_name(  — unambiguously a tool reference.
   const CALL_RE = /`([a-z][a-z0-9_]+)\(/g;

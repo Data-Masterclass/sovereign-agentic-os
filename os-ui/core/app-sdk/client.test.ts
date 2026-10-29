@@ -3,8 +3,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createOsClient, joinUrl, withQuery } from '@core/app-sdk/client';
-import { Forbidden, NotAuthenticated, OsError, UnsupportedQuery } from '@core/app-sdk/errors';
+import { createOsClient, joinUrl, withQuery } from './client';
+import { Forbidden, NotAuthenticated, OsError, UnsupportedQuery } from './errors';
 
 /** A recording fetch stub: returns a queued JSON response and captures the call. */
 type Call = { url: string; init: RequestInit };

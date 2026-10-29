@@ -76,7 +76,7 @@ mock.module('@core/infra/governed', {
     trace: async () => ({ ok: true }),
   },
 });
-mock.module('@core/models/roles', {
+mock.module('@/lib/models/roles', {
   namedExports: {
     roleModel: () => 'test-model',
     standardFirstEscalationEnabled: () => false,

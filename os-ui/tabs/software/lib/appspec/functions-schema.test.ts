@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseFunctions, type AppFunction } from '@tabs/software/lib/appspec/functions-schema';
+import { parseFunctions, type AppFunction } from './functions-schema.ts';
 
 function ok(input: unknown): AppFunction[] {
   const r = parseFunctions(input);

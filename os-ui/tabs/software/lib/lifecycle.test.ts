@@ -7,7 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { createApp, rehydrateConnection } from '@tabs/software/lib/apps';
 import { authorizeConnectionCall } from '@core/infra/agent-governed';
 import { getConnectionByApp } from '@core/infra/app-registry';
-import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource, dependentsOf, demoteApp } from '@tabs/software/lib/lifecycle';
+import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource, dependentsOf, demoteApp } from './lifecycle.ts';
 import { getAppByIdInternal, promoteApp } from '@tabs/software/lib/apps';
 
 const owner: CurrentUser = { id: 'carol', name: 'Carol', domains: ['ops'], role: 'creator' };

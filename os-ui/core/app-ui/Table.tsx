@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import * as React from 'react';
-import { cx } from '@core/app-ui/cx';
+import { cx } from './cx';
 
 export type TableProps = React.TableHTMLAttributes<HTMLTableElement> & {
   /** Wrapper div props (the bordered, scrollable container). */

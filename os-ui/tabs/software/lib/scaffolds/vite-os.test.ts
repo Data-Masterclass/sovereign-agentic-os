@@ -14,7 +14,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { viteOsAllFiles, VITE_OS_EXPECTED_PATHS } from '@tabs/software/lib/scaffolds/vite-os';
+import { viteOsAllFiles, VITE_OS_EXPECTED_PATHS } from './vite-os.ts';
 
 const SLUG = 'my-app';
 const NAME = 'My App';

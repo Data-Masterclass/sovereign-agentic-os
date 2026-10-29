@@ -12,7 +12,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sovereignAppFiles } from '@tabs/software/lib/scaffolds/sovereign-app';
+import { sovereignAppFiles } from './scaffolds/sovereign-app.ts';
 import {
   bundleAppTree,
   treeHash,
@@ -20,8 +20,8 @@ import {
   __bundleMisses,
   __resetBundleCache,
   appEntryFor,
-} from '@tabs/software/lib/preview-runtime';
-import type { ScaffoldFile } from '@tabs/software/lib/model';
+} from './preview-runtime.ts';
+import type { ScaffoldFile } from './model.ts';
 
 /** A real sovereign-app scaffold tree, optionally overlaid with extra files. */
 function viteTree(extra: ScaffoldFile[] = []): ScaffoldFile[] {

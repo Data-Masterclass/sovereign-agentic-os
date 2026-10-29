@@ -3,12 +3,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AppEpic } from '@tabs/software/lib/apps';
+import type { AppEpic } from './apps.ts';
 import {
   planJiraIssues,
   pickConnectionForTemplate,
   validateFrontendImport,
-} from '@tabs/software/lib/design-push';
+} from './design-push.ts';
 
 function epic(over: Partial<AppEpic>): AppEpic {
   return {

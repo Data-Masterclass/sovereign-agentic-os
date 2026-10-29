@@ -16,7 +16,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sovereignAppFiles, sovereignAppGuide, SOVEREIGN_APP_EXPECTED_PATHS } from '@tabs/software/lib/scaffolds/sovereign-app';
+import { sovereignAppFiles, sovereignAppGuide, SOVEREIGN_APP_EXPECTED_PATHS } from './sovereign-app.ts';
 
 const SLUG = 'ops-hub';
 const NAME = 'Ops Hub';

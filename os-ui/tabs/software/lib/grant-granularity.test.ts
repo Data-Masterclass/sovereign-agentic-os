@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { contextAccessCap, emptyContextGrants, accessOf, isGranted } from '@core/kernel/context-grants';
-import { underFolder, expandSelectionToIds, reconcileGranted, isPersonalDataGrantRisk, PERSONAL_DATA_GRANT_WARNING, type GrantableItem } from '@tabs/software/lib/grant-granularity';
+import { underFolder, expandSelectionToIds, reconcileGranted, isPersonalDataGrantRisk, PERSONAL_DATA_GRANT_WARNING, type GrantableItem } from './grant-granularity.ts';
 
 const items: GrantableItem[] = [
   { id: 'a', folder: '/reports', scope: 'personal' },

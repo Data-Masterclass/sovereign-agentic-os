@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { securityScan } from '@tabs/software/lib/scan';
+import { securityScan } from './scan.ts';
 
 test('clean repo passes the security scan', () => {
   const r = securityScan([

@@ -8,7 +8,7 @@ import {
   CHOOSE_CONTEXT_META,
   isInFolderCreateType,
   grantedSummary,
-} from '@tabs/software/lib/appspec/choose-context-model';
+} from './choose-context-model.ts';
 
 test('exactly the SIX Choose-Context types, in order', () => {
   assert.deepEqual(CHOOSE_CONTEXT_TYPES, ['data', 'metrics', 'files', 'knowledge', 'agents', 'connections']);

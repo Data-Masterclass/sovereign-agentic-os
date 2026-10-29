@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toolCallToLine, committedSummaryLine, errorReason, buildStatusRail, buildOutcome } from '@tabs/software/lib/build-activity';
+import { toolCallToLine, committedSummaryLine, errorReason, buildStatusRail, buildOutcome } from './build-activity.ts';
 
 test('commit maps to a file-count line from its files[] arg', () => {
   const l = toolCallToLine({

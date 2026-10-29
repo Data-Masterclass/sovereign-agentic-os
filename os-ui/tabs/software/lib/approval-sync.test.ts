@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { createApp } from '@tabs/software/lib/apps';
-import { requestDeploy, getReviewCard } from '@tabs/software/lib/review';
+import { requestDeploy, getReviewCard } from './review.ts';
 import { applyEffect } from '@core/policy/effects';
 import { buildEffectDeps } from '@core/policy/ladder';
 import { decide, listApprovals, __resetApprovals } from '@core/policy/approvals';

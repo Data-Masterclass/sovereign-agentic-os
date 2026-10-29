@@ -9,8 +9,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { summarizeSpecChange, autoVersionName } from '@tabs/software/lib/appspec/change-summary';
-import type { AppSpec } from '@tabs/software/lib/appspec/schema';
+import { summarizeSpecChange, autoVersionName } from './change-summary.ts';
+import type { AppSpec } from './schema.ts';
 
 function tab(id: string, label: string, datasetId: string): AppSpec['tabs'][number] {
   return {

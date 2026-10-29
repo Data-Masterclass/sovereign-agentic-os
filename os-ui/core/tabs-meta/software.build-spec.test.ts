@@ -14,7 +14,7 @@ import { preamble } from '@tabs/agents/lib/build/agentic-graph-server';
 /**
  * THE BUILD-SPEC DRIFT GUARD. The canonical spec has ONE source of truth with
  * THREE projections that must never diverge:
- *   (a) the canonical doc the loader reads  `lib/tabs/build-spec/software.md`
+ *   (a) the canonical doc the loader reads  `tabs/software/build-spec/software.md`
  *       (it lives with the tab it specifies; the former repo-root duplicate at
  *       docs/build-spec/ was removed — one copy cannot drift from itself)
  *   (b) the MCP resource `sovereign-os://guide/build-spec/software`
@@ -24,7 +24,7 @@ import { preamble } from '@tabs/agents/lib/build/agentic-graph-server';
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OS_MIRROR = resolve(HERE, 'build-spec/software.md');
+const OS_MIRROR = resolve(HERE, '../../tabs/software/build-spec/software.md');
 
 const anyUser: CurrentUser = { id: 'u', name: 'U', domains: ['sales'], role: 'creator' };
 

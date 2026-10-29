@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { websiteFiles, websiteGuide, WEBSITE_EXPECTED_PATHS } from '@tabs/software/lib/scaffolds/website';
+import { websiteFiles, websiteGuide, WEBSITE_EXPECTED_PATHS } from './website.ts';
 
 const SLUG = 'acme-site';
 const NAME = 'Acme Site';

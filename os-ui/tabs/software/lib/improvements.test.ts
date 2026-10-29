@@ -25,7 +25,7 @@ import {
   buildAll,
   designThenBuild,
   type Improvement,
-} from '@tabs/software/lib/improvements';
+} from './improvements.ts';
 
 const validStory = (id: string) => (id === 's1' || id === 's2' ? { epicId: 'e1' } : null);
 

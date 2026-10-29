@@ -13,9 +13,9 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __resetStore, createDataset, buildVersion, setDocs, transition, defineMeasure, type Principal } from '@tabs/data/lib/store';
-import { parseAppSpec, type AppSpec, type SpecIssue } from '@tabs/software/lib/appspec/schema';
-import { validateAppSpec } from '@tabs/software/lib/appspec/validate';
-import type { App } from '@tabs/software/lib/apps';
+import { parseAppSpec, type AppSpec, type SpecIssue } from './schema.ts';
+import { validateAppSpec } from './validate.ts';
+import type { App } from '../apps.ts';
 import {
   initialState,
   addTab,
@@ -33,7 +33,7 @@ import {
   composeSpec,
   stateFromSpec,
   type ComposeState,
-} from '@tabs/software/lib/appspec/compose-model';
+} from './compose-model.ts';
 import {
   defaultConfigFor,
   slotsFor,
@@ -60,7 +60,7 @@ import {
   columnSourceDatasetId,
   extractColumnNames,
   COMPOSE_DEFERRED,
-} from '@tabs/software/lib/appspec/compose-fields';
+} from './compose-fields.ts';
 import {
   newMetricCard,
   newDatasetCard,
@@ -94,7 +94,7 @@ import {
   setAggOp,
   setAggField,
   setExpr,
-} from '@tabs/software/lib/appspec/compose-blocks';
+} from './compose-blocks.ts';
 import {
   targetForPath,
   locateIssues,
@@ -102,7 +102,7 @@ import {
   issuesForSlot,
   issuesForFunction,
   hasBlockingErrors,
-} from '@tabs/software/lib/appspec/compose-issues';
+} from './compose-issues.ts';
 import type {
   RecordsTableConfig,
   DetailConfig,
@@ -113,7 +113,7 @@ import type {
   IntakeWizardConfig,
   ApprovalQueueConfig,
   TaskChecklistConfig,
-} from '@tabs/software/lib/appspec/patterns';
+} from './patterns.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'builder' };
 

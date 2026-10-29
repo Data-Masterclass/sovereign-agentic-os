@@ -4,9 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
-import { callPlatformMcp, platformMcpToolNames, PLATFORM_MCP_TOOLS } from '@tabs/software/lib/platform-mcp';
+import { callPlatformMcp, platformMcpToolNames, PLATFORM_MCP_TOOLS } from './platform-mcp.ts';
 import type { App } from '@tabs/software/lib/apps';
-import type { DeployRequestResult } from '@tabs/software/lib/review';
+import type { DeployRequestResult } from './review.ts';
 
 const creator: CurrentUser = { id: 'dan', name: 'Dan', domains: ['sales'], role: 'creator' };
 const builder: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role: 'builder' };

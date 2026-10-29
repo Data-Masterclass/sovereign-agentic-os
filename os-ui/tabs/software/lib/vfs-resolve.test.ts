@@ -16,8 +16,8 @@ import {
   loaderFor,
   RESOLVE_TRIES,
   makeVfsPlugin,
-} from '@tabs/software/lib/vfs-resolve';
-import type { ScaffoldFile } from '@tabs/software/lib/model';
+} from './vfs-resolve.ts';
+import type { ScaffoldFile } from './model.ts';
 
 test('packageName extracts the bare package (scoped and unscoped)', () => {
   assert.equal(packageName('react'), 'react');
@@ -40,9 +40,9 @@ test('resolveRelative walks the tree with the extension probe order', () => {
     ['src/App.tsx', 'x'],
     ['src/lib/index.ts', 'y'],
   ]);
-  assert.equal(resolveRelative('@tabs/software/lib/App', 'src/main.tsx', files), 'src/App.tsx');
-  assert.equal(resolveRelative('@tabs/software/lib/lib', 'src/main.tsx', files), 'src/lib/index.ts');
-  assert.equal(resolveRelative('@tabs/software/lib/missing', 'src/main.tsx', files), null);
+  assert.equal(resolveRelative('./App', 'src/main.tsx', files), 'src/App.tsx');
+  assert.equal(resolveRelative('./lib', 'src/main.tsx', files), 'src/lib/index.ts');
+  assert.equal(resolveRelative('./missing', 'src/main.tsx', files), null);
   // RESOLVE_TRIES probes bare-first then .ts/.tsx/... then /index variants.
   assert.equal(RESOLVE_TRIES[0], '');
   assert.ok(RESOLVE_TRIES.includes('/index.tsx'));
@@ -97,8 +97,8 @@ test('makeVfsPlugin resolves each import class identically for any namespace', (
     assert.deepEqual(runResolve(ns, files, deps, MSG, { path: 'https://x/y.css', importer: 'a', kind: 'import-statement' }), { external: true });
     assert.deepEqual(runResolve(ns, files, deps, MSG, { path: 'data:x', importer: 'a', kind: 'import-statement' }), { external: true });
     // relative hit / miss
-    assert.deepEqual(runResolve(ns, files, deps, MSG, { path: '@tabs/software/lib/App', importer: 'src/main.tsx', kind: 'import-statement' }), { path: 'src/App.tsx', namespace: ns });
-    assert.deepEqual(runResolve(ns, files, deps, MSG, { path: '@tabs/software/lib/nope', importer: 'src/main.tsx', kind: 'import-statement' }), { errors: [{ text: 'rel:./nope:src/main.tsx' }] });
+    assert.deepEqual(runResolve(ns, files, deps, MSG, { path: './App', importer: 'src/main.tsx', kind: 'import-statement' }), { path: 'src/App.tsx', namespace: ns });
+    assert.deepEqual(runResolve(ns, files, deps, MSG, { path: './nope', importer: 'src/main.tsx', kind: 'import-statement' }), { errors: [{ text: 'rel:./nope:src/main.tsx' }] });
     // react family → external
     assert.deepEqual(runResolve(ns, files, deps, MSG, { path: 'react', importer: 'a', kind: 'import-statement' }), { external: true });
     assert.deepEqual(runResolve(ns, files, deps, MSG, { path: 'react-dom/client', importer: 'a', kind: 'import-statement' }), { external: true });

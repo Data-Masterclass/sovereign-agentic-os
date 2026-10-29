@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { latestDecisions, decisionFor, doneTaskIds, isTaskDone, recordsFromList, reduceByKey, recordKey } from '@tabs/software/lib/appspec/records-reduce';
+import { latestDecisions, decisionFor, doneTaskIds, isTaskDone, recordsFromList, reduceByKey, recordKey } from './records-reduce.ts';
 
 test('latestDecisions keeps the latest decision per itemId (by `at`)', () => {
   const log = [

@@ -13,7 +13,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGeneratePrompt, parseGeneratedSpec, type GenerateMaterial } from '@tabs/software/lib/appspec/generate';
+import { buildGeneratePrompt, parseGeneratedSpec, type GenerateMaterial } from './generate.ts';
 
 function material(): GenerateMaterial {
   return {

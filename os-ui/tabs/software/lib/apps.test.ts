@@ -39,7 +39,7 @@ const {
 const { __resetUsers, createUser } = await import('@tabs/admin/lib/users');
 const { snapshotFiles } = await import('./snapshot.ts');
 const { exposedConnectionTools } = await import('@core/infra/agent-governed');
-import type { App, AppEpic } from '@tabs/software/lib/apps';
+import type { App, AppEpic } from './apps.ts';
 const { config } = await import('@core/kernel/config');
 
 /** Minimal App stub — only the fields repoSharedByLiveApp reads matter. */

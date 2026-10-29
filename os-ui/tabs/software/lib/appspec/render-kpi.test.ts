@@ -9,8 +9,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { QueryResult } from '@core/app-sdk/index';
-import { aggregateDataset, formatKpi, metricScalar } from '@tabs/software/lib/appspec/render-kpi';
+import type { QueryResult } from '@core/app-sdk/index.ts';
+import { aggregateDataset, formatKpi, metricScalar } from './render-kpi.ts';
 
 function grid(columns: string[], rows: string[][]): QueryResult {
   return { columns, rows, rowCount: rows.length };

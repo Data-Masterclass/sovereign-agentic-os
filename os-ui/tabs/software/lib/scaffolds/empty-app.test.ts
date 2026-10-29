@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyAppFiles, emptyAppGuide, EMPTY_APP_EXPECTED_PATHS } from '@tabs/software/lib/scaffolds/empty-app';
+import { emptyAppFiles, emptyAppGuide, EMPTY_APP_EXPECTED_PATHS } from './empty-app.ts';
 
 const SLUG = 'scratch';
 const NAME = 'Scratch';

@@ -3,8 +3,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveToolOperation, fillPathParams, seedToolResult, DEMO_SEED_NOTE } from '@tabs/software/lib/tool-exec';
-import { defaultOpenApi } from '@tabs/software/lib/metadata';
+import { resolveToolOperation, fillPathParams, seedToolResult, DEMO_SEED_NOTE } from './tool-exec.ts';
+import { defaultOpenApi } from './metadata.ts';
 
 /**
  * App tool-call honesty: when the runner is not live the result must be

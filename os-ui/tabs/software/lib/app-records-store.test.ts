@@ -21,7 +21,7 @@ import {
   exportAppRecords,
   __resetAppRecordsCache,
   type RecordActor,
-} from '@tabs/software/lib/app-records-store';
+} from './app-records-store.ts';
 
 const owner: RecordActor = { id: 'sara', domain: 'sales' };
 const peer: RecordActor = { id: 'amir', domain: 'sales' };

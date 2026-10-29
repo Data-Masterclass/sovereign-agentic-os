@@ -7,7 +7,7 @@
  * Sovereign OS over the SAME OPA-checked, RLS/DLS-filtered routes the OS UI uses.
  *
  * Usage (inside the OS preview, same-origin, ambient session):
- *   import { createOsClient } from '@core/app-sdk/index';
+ *   import { createOsClient } from './index';
  *   const os = createOsClient();
  *   const me = await os.whoami();
  *   const ds = await os.datasets.list();
@@ -24,8 +24,8 @@ export {
   normalizeGridResult,
   normalizeMetricResult,
   type OsClient,
-} from '@core/app-sdk/client';
-export { OsError, NotAuthenticated, Forbidden, UnsupportedQuery } from '@core/app-sdk/errors';
+} from './client';
+export { OsError, NotAuthenticated, Forbidden, UnsupportedQuery } from './errors';
 export type {
   OsClientOptions,
   WhoAmI,
@@ -37,4 +37,4 @@ export type {
   QueryResult,
   AppRecord,
   RecordResult,
-} from '@core/app-sdk/types';
+} from './types';

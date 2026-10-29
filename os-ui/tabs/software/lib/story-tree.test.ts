@@ -12,7 +12,7 @@ import {
   currentEpicIndex,
   clampEpicIndex,
   type BuildRunSignals,
-} from '@tabs/software/lib/story-tree';
+} from './story-tree.ts';
 
 test('story-tree: clampEpicIndex keeps one-at-a-time nav in bounds', () => {
   assert.equal(clampEpicIndex(0, 3), 0);

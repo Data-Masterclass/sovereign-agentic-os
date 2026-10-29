@@ -10,9 +10,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { OsClient, QueryResult } from '@core/app-sdk/index';
-import { evaluateFunctions } from '@tabs/software/lib/appspec/functions-eval';
-import type { AppFunction } from '@tabs/software/lib/appspec/functions-schema';
+import type { OsClient, QueryResult } from '@core/app-sdk/index.ts';
+import { evaluateFunctions } from './functions-eval.ts';
+import type { AppFunction } from './functions-schema.ts';
 
 /** A stub os whose `datasets.query` returns pre-seeded grids and counts calls per dataset id. */
 function stubOs(grids: Record<string, QueryResult>, opts?: { fail?: Set<string> }): { os: OsClient; calls: Map<string, number> } {

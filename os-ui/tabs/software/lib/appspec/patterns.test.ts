@@ -18,8 +18,8 @@ import {
   summarizePattern,
   type PatternConfig,
   type PatternId,
-} from '@tabs/software/lib/appspec/patterns';
-import type { Ctx } from '@tabs/software/lib/appspec/schema';
+} from './patterns.ts';
+import type { Ctx } from './schema.ts';
 
 const EXPECTED_IDS = [
   'records-table',

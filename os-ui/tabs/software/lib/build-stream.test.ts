@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSseFrames } from '@tabs/software/lib/build-stream';
+import { parseSseFrames } from './build-stream.ts';
 
 test('parseSseFrames decodes complete data frames and keeps the partial remainder', () => {
   const buf = 'data: {"type":"plan","text":"do it"}\n\ndata: {"type":"activi';

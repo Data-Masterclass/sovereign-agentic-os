@@ -12,8 +12,8 @@ import {
   resolveSurface,
   parseSurfaceDeclaration,
   reconcileKnowledgeConsumes,
-} from '@tabs/software/lib/metadata';
-import type { ConsumedResource } from '@tabs/software/lib/model';
+} from './metadata.ts';
+import type { ConsumedResource } from './model.ts';
 
 test('app.yaml convention is parsed into the manifest (declared resources)', () => {
   const appYaml = renderAppYaml({

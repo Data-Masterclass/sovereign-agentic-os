@@ -29,7 +29,7 @@ const {
 } = await import('./apps.ts');
 const { serveAppRuntime } = await import('./app-runtime.ts');
 const { __resetBundleCache } = await import('./preview-runtime.ts');
-import type { App } from '@tabs/software/lib/apps';
+import type { App } from './apps.ts';
 
 const owner: CurrentUser = { id: 'ola', name: 'Ola', domains: ['eng'], allDomains: ['eng'], activeDomain: 'eng', role: 'builder' };
 const outsider: CurrentUser = { id: 'zed', name: 'Zed', domains: ['sales'], allDomains: ['sales'], activeDomain: 'sales', role: 'builder' };

@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toolsFromOpenApi, applyReadsOnWritesOff, generateAndCompile } from '@tabs/software/lib/auto-mcp';
+import { toolsFromOpenApi, applyReadsOnWritesOff, generateAndCompile } from './auto-mcp.ts';
 import { authorizeConnectionCall } from '@core/infra/agent-governed';
 
 const SPEC = {

@@ -8,8 +8,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { visibleTabs, pickTab } from '@tabs/software/lib/appspec/render-select';
-import type { AppSpec, Tab } from '@tabs/software/lib/appspec/schema';
+import { visibleTabs, pickTab } from './render-select.ts';
+import type { AppSpec, Tab } from './schema.ts';
 
 /** A simple custom-body tab (no store references needed for gating tests). */
 const tab = (id: string, roleGate?: Tab['roleGate']): Tab => ({

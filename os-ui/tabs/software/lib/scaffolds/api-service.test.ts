@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apiServiceFiles, apiServiceGuide, API_SERVICE_EXPECTED_PATHS } from '@tabs/software/lib/scaffolds/api-service';
+import { apiServiceFiles, apiServiceGuide, API_SERVICE_EXPECTED_PATHS } from './api-service.ts';
 
 const SLUG = 'billing-api';
 const NAME = 'Billing API';

@@ -7,8 +7,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { coerceField, classifyWriteResult, actorStamp, isRealSave } from '@tabs/software/lib/appspec/interactive-logic';
-import type { RecordResult } from '@core/app-sdk/index';
+import { coerceField, classifyWriteResult, actorStamp, isRealSave } from './interactive-logic.ts';
+import type { RecordResult } from '@core/app-sdk/index.ts';
 
 test('coerceField coerces per type; empty → undefined (omitted)', () => {
   assert.equal(coerceField('text', 'hi'), 'hi');

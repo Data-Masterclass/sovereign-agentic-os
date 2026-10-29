@@ -59,7 +59,7 @@ function uiDir(): string {
  * Read the UI source once and return it as `{path, content}` under a caller-chosen
  * `prefix` (where the package's files should live — e.g.
  * `vendor/@sovereign-os/ui`). A `package.json` is added naming the package with
- * `"main": "index.ts"` and a `"@tabs/software/lib/theme.css"` export so both a bare import and the
+ * `"main": "index.ts"` and a `"./theme.css"` export so both a bare import and the
  * theme-css side-effect import resolve.
  *
  * `dir` overrides the source directory (tests only); production always reads the
@@ -94,7 +94,7 @@ export function readUiSource(prefix: string, dir: string = uiDir()): UiFile[] {
           types: 'index.ts',
           exports: {
             '.': './index.ts',
-            '@tabs/software/lib/theme.css': '@tabs/software/lib/theme.css',
+            './theme.css': './theme.css',
           },
           peerDependencies: { react: '>=18', 'react-dom': '>=18' },
         },

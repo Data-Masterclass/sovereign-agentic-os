@@ -12,7 +12,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildStageAffordance, shouldAutoGenerate, type BuildAffordanceInput } from '@tabs/software/lib/appspec/build-affordance';
+import { buildStageAffordance, shouldAutoGenerate, type BuildAffordanceInput } from './build-affordance.ts';
 
 /** A fully-material, fresh-mount base — override per case. */
 function base(): BuildAffordanceInput {

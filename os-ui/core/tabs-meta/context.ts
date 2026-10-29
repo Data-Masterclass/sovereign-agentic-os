@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { McpTab } from '@core/mcp/server';
 
 /**
- * Per-tab CONTEXT.md loader. Each `lib/tabs/<tab>.context.md` is a TOKEN-MINIMAL
+ * Per-tab CONTEXT.md loader. Each `tabs/<tab>/context.md` is a TOKEN-MINIMAL
  * brief (purpose · tools · golden path · constraints) fed to agents building in
  * that tab: it is served as the per-tab MCP `initialize.instructions` and appended
  * to the in-app helper's system prompt. Read once from disk and cached; a missing

@@ -11,8 +11,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAssistPrompt, parseAssistedSpec, assistRepairInstruction, type GenerateMaterial } from '@tabs/software/lib/appspec/assist';
-import type { AppSpec } from '@tabs/software/lib/appspec/schema';
+import { buildAssistPrompt, parseAssistedSpec, assistRepairInstruction, type GenerateMaterial } from './assist.ts';
+import type { AppSpec } from './schema.ts';
 
 function material(): GenerateMaterial {
   return {

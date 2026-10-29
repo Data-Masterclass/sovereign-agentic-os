@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { createApp, saveAppFile } from '@tabs/software/lib/apps';
-import { requestDeploy, getReviewCard, __resetReviewCards } from '@tabs/software/lib/review';
+import { requestDeploy, getReviewCard, __resetReviewCards } from './review.ts';
 import { __resetApprovals } from '@core/policy/approvals';
 
 /**

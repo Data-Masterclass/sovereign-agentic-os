@@ -11,7 +11,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSandboxSrcdoc, serializeForScript, escapeHtml, SANDBOX_CSP } from '@tabs/software/lib/appspec/sandbox';
+import { buildSandboxSrcdoc, serializeForScript, escapeHtml, SANDBOX_CSP } from './sandbox.ts';
 
 test('the srcdoc carries a strict CSP meta and no-referrer, and embeds the html', () => {
   const doc = buildSandboxSrcdoc({ html: '<h1>Hello</h1>' });

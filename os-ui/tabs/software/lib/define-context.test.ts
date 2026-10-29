@@ -4,7 +4,7 @@
 /** Tests for the Define-context block threaded into Design/Build LLM prompts. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defineContextBlock, defineContextNote, specPromptLines, templateLabel } from '@tabs/software/lib/define-context';
+import { defineContextBlock, defineContextNote, specPromptLines, templateLabel } from './define-context.ts';
 
 test('define-context: the block always carries the template (the always-set choice)', () => {
   const block = defineContextBlock({ template: 'sovereign-app' });

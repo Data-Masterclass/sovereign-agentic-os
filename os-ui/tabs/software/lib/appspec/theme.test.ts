@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scopeThemeCss } from '@tabs/software/lib/appspec/theme';
+import { scopeThemeCss } from './theme.ts';
 
 const SCOPE = '.sb-appspec-root';
 

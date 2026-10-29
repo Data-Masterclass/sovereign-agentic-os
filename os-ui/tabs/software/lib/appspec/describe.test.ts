@@ -8,8 +8,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAppSpec, type AppSpec } from '@tabs/software/lib/appspec/schema';
-import { describeApp } from '@tabs/software/lib/appspec/describe';
+import { parseAppSpec, type AppSpec } from './schema.ts';
+import { describeApp } from './describe.ts';
 
 function spec(): AppSpec {
   const r = parseAppSpec({

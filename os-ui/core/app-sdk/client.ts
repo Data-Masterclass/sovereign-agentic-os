@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { Forbidden, NotAuthenticated, OsError, UnsupportedQuery } from '@core/app-sdk/errors';
+import { Forbidden, NotAuthenticated, OsError, UnsupportedQuery } from './errors';
 import type {
   AppRecord,
   ContextItem,
@@ -13,7 +13,7 @@ import type {
   QueryResult,
   RecordResult,
   WhoAmI,
-} from '@core/app-sdk/types';
+} from './types';
 
 /**
  * `createOsClient` — the primitive that lets a governed app call BACK into the

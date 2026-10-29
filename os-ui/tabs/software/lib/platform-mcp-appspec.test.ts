@@ -27,9 +27,9 @@ const { __resetAppsCache, createApp, getAppByIdInternal, serveModeOf } = await i
 const { callPlatformMcp, PLATFORM_MCP_TOOLS } = await import('./platform-mcp.ts');
 import type { Principal } from '@tabs/data/lib/store';
 import type { CurrentUser } from '@core/kernel/auth';
-import type { App } from '@tabs/software/lib/apps';
-import type { SpecIssue } from '@tabs/software/lib/appspec/schema';
-import type { AppDescription } from '@tabs/software/lib/appspec/describe';
+import type { App } from './apps.ts';
+import type { SpecIssue } from './appspec/schema.ts';
+import type { AppDescription } from './appspec/describe.ts';
 
 const amir: CurrentUser = {
   id: 'amir', name: 'Amir', domains: ['sales'], allDomains: ['sales'], activeDomain: 'sales', role: 'builder',

@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { runAgentic, type LlmCall } from '@core/runtime/agentic';
 import { createApp } from '@tabs/software/lib/apps';
-import { commitToApp, getSnapshot, refreshVendoredSdk } from '@tabs/software/lib/server';
-import { sovereignAppFiles } from '@tabs/software/lib/scaffolds/sovereign-app';
+import { commitToApp, getSnapshot, refreshVendoredSdk } from './server.ts';
+import { sovereignAppFiles } from './scaffolds/sovereign-app.ts';
 import {
   compileGate,
   formatGateError,
@@ -16,11 +16,11 @@ import {
   gateBundleAssetReady,
   MAX_DIAGNOSTICS,
   __vendorReads,
-} from '@tabs/software/lib/compile-gate';
-import { esbuildWasmReady } from '@tabs/software/lib/preview-runtime';
-import { gateLineFromStep } from '@tabs/software/lib/build-activity';
-import { ensureSectionsRegistered } from '@tabs/software/lib/sections-registry';
-import type { ScaffoldFile } from '@tabs/software/lib/model';
+} from './compile-gate.ts';
+import { esbuildWasmReady } from './preview-runtime.ts';
+import { gateLineFromStep } from './build-activity.ts';
+import { ensureSectionsRegistered } from './sections-registry.ts';
+import type { ScaffoldFile } from './model.ts';
 
 const dev: CurrentUser = { id: 'dan', name: 'Dan', domains: ['eng'], role: 'creator' };
 
@@ -149,7 +149,7 @@ test('BUNDLE pass: an import of a nonexistent css file is rejected (tsc alone ca
   const changeset: ScaffoldFile[] = [
     {
       path: 'src/epics/e/s/Page.tsx',
-      content: "import '@tabs/software/lib/missing.css';\nexport default function P(){ return <div/>; }\n",
+      content: "import './missing.css';\nexport default function P(){ return <div/>; }\n",
     },
   ];
   const toCommit = ensureSectionsRegistered(base, changeset, 'sovereign-app');

@@ -5,9 +5,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { createApp } from '@tabs/software/lib/apps';
-import { consumeResource } from '@tabs/software/lib/lifecycle';
-import { renderAppYaml } from '@tabs/software/lib/metadata';
-import { commitToApp, getSnapshot } from '@tabs/software/lib/server';
+import { consumeResource } from './lifecycle.ts';
+import { renderAppYaml } from './metadata.ts';
+import { commitToApp, getSnapshot } from './server.ts';
 
 const dev: CurrentUser = { id: 'dan', name: 'Dan', domains: ['eng'], role: 'creator' };
 

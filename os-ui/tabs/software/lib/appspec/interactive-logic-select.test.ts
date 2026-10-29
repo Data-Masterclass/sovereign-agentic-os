@@ -8,8 +8,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { keyColumnIndex, pickOptions, pickSourceRows, recordsToGrid } from '@tabs/software/lib/appspec/interactive-logic-select';
-import type { QueryResult } from '@core/app-sdk/index';
+import { keyColumnIndex, pickOptions, pickSourceRows, recordsToGrid } from './interactive-logic-select.ts';
+import type { QueryResult } from '@core/app-sdk/index.ts';
 
 function grid(columns: string[], rows: string[][]): QueryResult {
   return { columns, rows, rowCount: rows.length };

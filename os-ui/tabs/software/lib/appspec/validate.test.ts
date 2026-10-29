@@ -12,9 +12,9 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __resetStore, createDataset, buildVersion, setDocs, defineMeasure, transition, type Principal } from '@tabs/data/lib/store';
-import { validateAppSpec, type SpecWarning } from '@tabs/software/lib/appspec/validate';
-import { parseAppSpec, type AppSpec, type SpecIssue } from '@tabs/software/lib/appspec/schema';
-import type { App, AppEpic } from '@tabs/software/lib/apps';
+import { validateAppSpec, type SpecWarning } from './validate.ts';
+import { parseAppSpec, type AppSpec, type SpecIssue } from './schema.ts';
+import type { App, AppEpic } from '../apps.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'builder' };
 

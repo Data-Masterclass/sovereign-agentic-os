@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseExpr, evaluateExpr, MAX_DEPTH, MAX_TOKENS, type ExprValue } from '@tabs/software/lib/appspec/expr';
+import { parseExpr, evaluateExpr, MAX_DEPTH, MAX_TOKENS, type ExprValue } from './expr.ts';
 
 /** Parse then evaluate against a values map; returns null if parse fails. */
 function evl(src: string, values: Record<string, ExprValue> = {}): ExprValue {

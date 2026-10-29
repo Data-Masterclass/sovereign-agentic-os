@@ -7,7 +7,7 @@ import {
   referencedDatasetIds,
   ungrantedDatasetRefs,
   ungrantedDatasetWarning,
-} from '@tabs/software/lib/dataset-refs';
+} from './dataset-refs.ts';
 
 // referencedDatasetIds finds ids across the concrete reference shapes, once each.
 test('referencedDatasetIds: finds query/get/const-literal ids, de-duplicated', () => {

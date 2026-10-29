@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { discoverPages, generateSectionsContent, ensureSectionsRegistered, unregisteredPageHints } from '@tabs/software/lib/sections-registry';
+import { discoverPages, generateSectionsContent, ensureSectionsRegistered, unregisteredPageHints } from './sections-registry.ts';
 
 const shell = { path: 'src/template/shell.tsx', content: 'shell' };
 const sectionsPlaceholder = {

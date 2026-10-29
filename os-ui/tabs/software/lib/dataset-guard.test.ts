@@ -9,9 +9,9 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __resetStore, createDataset, type Principal } from '@tabs/data/lib/store';
-import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard';
-import type { App } from '@tabs/software/lib/apps';
-import type { ScaffoldFile } from '@tabs/software/lib/model';
+import { ungrantedDatasetWarningForApp } from './dataset-guard.ts';
+import type { App } from './apps.ts';
+import type { ScaffoldFile } from './model.ts';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };
 

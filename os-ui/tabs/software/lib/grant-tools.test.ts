@@ -4,7 +4,7 @@
 /** Tests for GRANTS → runtime data-plane tool mapping (Piece 2 of the grants wave). */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dataPlaneToolsFromGrants, agentToolsFromGrants } from '@tabs/software/lib/grant-tools';
+import { dataPlaneToolsFromGrants, agentToolsFromGrants } from './grant-tools.ts';
 import { emptyContextGrants, type ContextGrants } from '@core/kernel/context-grants';
 
 function grantsWith(patch: Partial<ContextGrants>): ContextGrants {

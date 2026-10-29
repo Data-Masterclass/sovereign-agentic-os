@@ -12,7 +12,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
-import { callPlatformMcp } from '@tabs/software/lib/platform-mcp';
+import { callPlatformMcp } from './platform-mcp.ts';
 import type { App } from '@tabs/software/lib/apps';
 import { updateSettings } from '@tabs/admin/lib/settings';
 

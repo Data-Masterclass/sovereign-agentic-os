@@ -10,7 +10,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAppSpec, CUSTOM_HTML_MAX, THEME_CSS_MAX, type ParseResult, type SpecIssue } from '@tabs/software/lib/appspec/schema';
+import { parseAppSpec, CUSTOM_HTML_MAX, THEME_CSS_MAX, type ParseResult, type SpecIssue } from './schema.ts';
 
 /** A structurally-complete, valid v2 spec covering a pattern tab + a custom tab + a theme. */
 function validSpec(): unknown {

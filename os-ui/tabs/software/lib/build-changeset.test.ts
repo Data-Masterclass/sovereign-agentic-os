@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffTrees, summarizeChanges } from '@tabs/software/lib/build-changeset';
+import { diffTrees, summarizeChanges } from './build-changeset.ts';
 
 test('diffTrees detects added, modified, removed and ignores unchanged', () => {
   const before = [

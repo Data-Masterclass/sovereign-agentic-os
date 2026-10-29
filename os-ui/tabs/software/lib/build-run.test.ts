@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRunError, buildMaxIterations, honestBuildFinalText, BUILD_NOT_LANDED_PREFIX } from '@tabs/software/lib/build-run';
+import { buildRunError, buildMaxIterations, honestBuildFinalText, BUILD_NOT_LANDED_PREFIX } from './build-run.ts';
 import { AssistantNotConfiguredError } from '@core/runtime/complete';
 
 /**
