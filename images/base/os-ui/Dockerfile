@@ -34,7 +34,7 @@ ENV NODE_ENV=production \
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
-# The COMPILE GATE (lib/software/compile-gate.ts) type-checks app commits against
+# The COMPILE GATE (tabs/software/lib/compile-gate.ts) type-checks app commits against
 # the default TS libs + real React types AT RUNTIME. Standalone tracing drops
 # .d.ts assets (never require()'d), which made every commit look like hundreds of
 # false errors in production. Ship them explicitly; the gate also self-checks and
