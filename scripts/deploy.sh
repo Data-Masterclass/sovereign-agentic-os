@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
 # deploy.sh <version> — build, push and roll out os-ui to a real cluster.
 #
 #   ./scripts/deploy.sh 0.7.0
@@ -69,8 +71,14 @@ say "pre-upgrade backup (standing rule — aborts the deploy if it fails)"
 kubectl config use-context "$CTX" >/dev/null
 KUBECONFIG=${KUBECONFIG:-$HOME/.kube/config} deploy/pre-upgrade-backup.sh
 
-say "building $IMG for linux/amd64 (cluster nodes are amd64)"
-docker build --platform linux/amd64 --provenance=false -t "$IMG" -f images/base/os-ui/Dockerfile .
+# SKIP_BUILD=1 reuses an already-built local image — useful when a run died after
+# the build (emulated amd64 builds take 10-15 min on an arm64 Mac).
+if [ "${SKIP_BUILD:-}" = "1" ] && docker image inspect "$IMG" >/dev/null 2>&1; then
+  say "reusing the local $IMG (SKIP_BUILD=1)"
+else
+  say "building $IMG for linux/amd64 (cluster nodes are amd64)"
+  docker build --platform linux/amd64 --provenance=false -t "$IMG" -f images/base/os-ui/Dockerfile .
+fi
 
 say "pushing $IMG"
 pushed=""
