@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
-  lib/agents/build/os-tools.test.ts \
-  lib/assistant/runtime.test.ts \
-  lib/infra/os-mirror.test.ts \
-  lib/agents/build/agentic-graph.test.ts
+  tabs/agents/lib/build/os-tools.test.ts \
+  core/runtime/runtime.test.ts \
+  core/infra/os-mirror.test.ts \
+  tabs/agents/lib/build/agentic-graph.test.ts
