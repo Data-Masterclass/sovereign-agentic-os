@@ -69,7 +69,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
 <p class="sub">Every folder, what it holds and why. Generated from the source by <code>scripts/build-docs.mjs</code>: the prose below is each file's own header, each tab's manifest and each component's UPSTREAM.md, so it cannot drift from the code.</p>
 <p class="stats">
   <span><b>1.283</b>source files</span>
-  <span><b>233.661</b>lines</span>
+  <span><b>233.672</b>lines</span>
   <span><b>15</b>with a full header</span>
   <span><b>2026-10-29</b>generated</span>
 </p>
@@ -5509,11 +5509,11 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="scripts">
     <h3>scripts</h3>
-    <p class="counts">3 files · 514 lines · 2 documented</p>
+    <p class="counts">3 files · 525 lines · 2 documented</p>
     
     <div class="files">
   <div class="file" id="scripts/build-docs.mjs">
-    <div class="file-h"><code>build-docs.mjs</code><span class="loc">250 lines</span></div>
+    <div class="file-h"><code>build-docs.mjs</code><span class="loc">261 lines</span></div>
     <p class="feat">The code-map page — one generated HTML page describing every folder</p>
     <p class="story">As an engineer new to the repo I want to see, in one page, what each folder holds, what each file is for and which feature it serves, without reading the source first; as a maintainer I want that page to be generated so it can never drift from the code.</p>
     <p class="arch">- Pure read of the working tree: no network, no dependencies, no build step. - Content comes from the code itself — each file's FEATURE / USER STORY / ARCHITECTURE header (see scripts/check-structure.mjs), each tab's manifest.ts, each component's UPSTREAM.md. - Writes docs/site/index.html (self-contained). `--check` exits 1 when that file is stale, so CI fails on a doc that no longer matches the tree.</p>

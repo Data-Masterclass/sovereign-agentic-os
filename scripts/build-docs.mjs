@@ -239,10 +239,21 @@ ${sections.map(sectionBlock).join('')}
 </main></div></body></html>`;
 
 if (check) {
+  // Compare the DOCUMENTED CONTENT only. The date and the headline totals are
+  // derived from the working tree, which legitimately differs between a dev
+  // machine and a CI checkout (untracked files, build artefacts) — comparing
+  // them made this gate fail for environmental reasons rather than stale docs.
   const current = existsSync(OUT) ? readFileSync(OUT, 'utf8') : '';
-  const strip = (s) => s.replace(/generated \d{4}-\d{2}-\d{2}/, '');
-  if (strip(current) !== strip(html)) { console.error(`${OUT} is stale — run: node scripts/build-docs.mjs`); process.exit(1); }
-  console.log(`${OUT} is up to date`); process.exit(0);
+  const strip = (t) => t
+    .replace(/<p class="stats">[\s\S]*?<\/p>/, '')
+    .replace(/\b\d[\d,]*\s+(?:source files|lines)\b/g, '')
+    .replace(/generated \d{4}-\d{2}-\d{2}/, '');
+  if (strip(current) !== strip(html)) {
+    console.error(`${OUT} is stale — run: node scripts/build-docs.mjs`);
+    process.exit(1);
+  }
+  console.log(`${OUT} is up to date`);
+  process.exit(0);
 }
 mkdirSync('docs/site', { recursive: true });
 writeFileSync(OUT, html);
