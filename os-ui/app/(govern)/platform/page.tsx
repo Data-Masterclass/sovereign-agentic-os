@@ -8,6 +8,7 @@ import PageHeader from '@core/ui/PageHeader';
 import { useApi } from '@core/ui/useApi';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast, type Role } from '@core/kernel/session';
+import { ADMIN_SECTIONS, ADMIN_GROUP_ORDER } from '@tabs/admin/lib/sections';
 
 /**
  * The Platform-Admin quick-link tiles, each with a machine-readable minimum role.
@@ -16,21 +17,7 @@ import { roleAtLeast, type Role } from '@core/kernel/session';
  * builder-visible tile is self-service Settings (theme + read-only deployment
  * config at /settings — NOT the tenant-admin /platform/settings page).
  */
-type Tile = { label: string; href: string; sub: string; minRole: Role };
 
-const TILES: Tile[] = [
-  { label: 'My Settings', href: '/settings', sub: 'Theme · deployment info', minRole: 'builder' },
-  { label: 'Domains', href: '/platform/domains', sub: 'Create & toggle optional layers', minRole: 'admin' },
-  { label: 'Users & Access', href: '/platform/access', sub: 'Invite via Ory · tenant Admin', minRole: 'admin' },
-  { label: 'Models & Providers', href: '/platform/models', sub: 'Defaults · caps · provider keys', minRole: 'admin' },
-  { label: 'Drive OAuth apps', href: '/platform/oauth-apps', sub: 'Google & Microsoft apps for connected drives', minRole: 'admin' },
-  { label: 'Security & Egress', href: '/platform/security', sub: 'Allowlist · OPA bundle · residency', minRole: 'admin' },
-  { label: 'Backups & Restore', href: '/platform/backups', sub: 'Status · guarded restore', minRole: 'admin' },
-  { label: 'Plugins', href: '/platform/plugins', sub: 'Curate & install MCPs / skills', minRole: 'admin' },
-  { label: 'MCPs & APIs', href: '/platform/mcp-apis', sub: 'Registered MCP servers & API keys', minRole: 'admin' },
-  { label: 'Cost & Billing', href: '/platform/billing', sub: 'Envelope · premium cap', minRole: 'admin' },
-  { label: 'Settings', href: '/platform/settings', sub: 'SSO · branding · tenant defaults', minRole: 'admin' },
-];
 
 type Overview = {
   tenant: { id: string; name: string; residency: string; plan: string };
@@ -52,22 +39,34 @@ export default function PlatformOverview() {
   // below and never reads this, so its 403 for a builder is inert (never shown).
   const { data, loading, error, reload } = useApi<Overview>('/api/platform-admin/overview');
 
-  // Fail-closed tile filter: hidden means not rendered. A tile shows only if the
-  // caller's role clears its minRole; an unknown role (null) sees nothing.
-  const tiles = TILES.filter((t) => role !== null && roleAtLeast(role, t.minRole));
+  // Fail-closed filter: hidden means not rendered. A section shows only if the
+  // caller's role clears its minRole; an unknown role (null) sees nothing. The
+  // list is shared with the section strip (tabs/admin/lib/sections.ts) so the two
+  // cannot drift — they used to, and two sections were strip-only.
+  const visible = ADMIN_SECTIONS.filter(
+    (s) => s.id !== 'overview' && role !== null && roleAtLeast(role, s.minRole),
+  );
 
   const tileGrid = (
     <>
-      <div className="section-title" style={{ marginTop: 22 }}>{isAdmin ? 'Quick links' : 'Available to you'}</div>
-      <div className="grid">
-        {tiles.map((t) => (
-          <Link key={t.href} href={t.href} className="golden">
-            <span className="ico">❖</span>
-            <span><strong>{t.label}</strong><div className="muted" style={{ fontSize: 11.5 }}>{t.sub}</div></span>
-            <span className="arr">→</span>
-          </Link>
-        ))}
-      </div>
+      {ADMIN_GROUP_ORDER.map((group) => {
+        const inGroup = visible.filter((s) => s.group === group);
+        if (inGroup.length === 0) return null;
+        return (
+          <div key={group}>
+            <div className="section-title" style={{ marginTop: 22 }}>{group}</div>
+            <div className="grid">
+              {inGroup.map((s) => (
+                <Link key={s.href} href={s.href} className="golden">
+                  <span className="ico">❖</span>
+                  <span><strong>{s.label}</strong><div className="muted" style={{ fontSize: 11.5 }}>{s.sub}</div></span>
+                  <span className="arr">→</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </>
   );
 

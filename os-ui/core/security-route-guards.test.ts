@@ -222,27 +222,32 @@ test('PLATFORM-GATE 3: /about is open to all roles (moved from Admin group to En
   assert.doesNotMatch(src, /role !== 'admin'/, "app/(entry)/about/page.tsx must NOT gate non-admins (all-roles accessible)");
 });
 
-test('PLATFORM-GATE 4: consolidated tab gates — Policies & Approvals is builder+, admin tabs unchanged', () => {
+test('PLATFORM-GATE 4: the 13-tab nav and the one admin menu declare the right gates', () => {
   const src = read('core/kernel/tabs.ts');
-  // Components stays strictly admin-only.
-  assert.match(src, /label: 'Components'[^}]*minRole: 'admin'/s, "Tab 'Components' must declare minRole: 'admin'");
-  // Admin (/platform) + Console are builder-visible: the pages themselves fail-closed
-  // (Admin tile-filters to self-service; Console gates the raw Shell to admins).
-  for (const label of ['Admin', 'Console']) {
+  const sections = read('tabs/admin/lib/sections.ts');
+
+  // Admin (/platform) is builder-visible: the page itself fail-closes, filtering the
+  // section list down to what the viewer's role may reach.
+  assert.match(src, /label: 'Admin'[^}]*minRole: 'builder'/s,
+    "Tab 'Admin' must declare minRole: 'builder' (page fail-closes for non-admins)");
+  // Governance + Monitoring are builder+ (builders approve promotions).
+  for (const label of ['Governance', 'Monitoring']) {
     assert.match(src, new RegExp(`label: '${label}'[^}]*minRole: 'builder'`, 's'),
-      `Tab "${label}" must declare minRole: 'builder' (page fail-closes for non-admins)`);
+      `Tab "${label}" must declare minRole: 'builder'`);
   }
-  // Policies & Approvals (renamed from Governance): builders approve promotions.
-  assert.match(src, /label: 'Governance'[^}]*minRole: 'builder'/s,
-    "Governance must declare minRole: 'builder'");
-  // About / Licenses: moved to Entry — visible to all roles, no minRole.
-  const aboutBlock = src.match(/label: 'About \/ Licenses'[^}]*/s)?.[0] ?? '';
-  assert.doesNotMatch(aboutBlock, /minRole/, "About / Licenses must not declare minRole (all-roles visible)");
-  // Terminal and Query must be gone from the nav (merged into Console).
-  assert.doesNotMatch(src, /label: 'Terminal'/, "Terminal tab must be gone (merged into Console)");
-  assert.doesNotMatch(src, /label: 'Query'/, "Query tab must be gone (merged into Console)");
-  // Governance label renamed to Policies & Approvals.
-  assert.doesNotMatch(src, /label: 'Policies & Approvals'/, "Governance label must be gone (renamed to Policies & Approvals)");
+
+  // ONE admin menu: these are sections, never sidebar tabs. A second nav is how the
+  // two menus drifted before (the strip had 13 entries, the tile grid 11).
+  for (const label of ['Components', 'LLM Gateway', 'MCP', 'About / Licenses', 'Console', 'Terminal', 'Query']) {
+    assert.doesNotMatch(src, new RegExp(`label: '${label.replace('/', '\\/')}'`),
+      `"${label}" must not be a sidebar tab — it belongs to tabs/admin/lib/sections.ts`);
+  }
+  // Components & System stays strictly admin-only wherever it is reached from.
+  assert.match(sections, /id: 'components'[^}]*minRole: 'admin'/s,
+    "the Components section must declare minRole: 'admin'");
+  // The renamed labels are the live ones.
+  assert.doesNotMatch(src, /label: 'Policies & Approvals'/, 'Policies & Approvals was renamed to Governance');
+  assert.doesNotMatch(src, /label: 'Metrics'/, 'Metrics was renamed to KPIs');
 });
 
 test('RUN PATH: the agent RUN route derives a real default task, never "Test invocation"', () => {

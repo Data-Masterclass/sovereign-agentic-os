@@ -60,6 +60,20 @@ export type Tool = {
   /** false → no framable UI (WebSocket-only or headless): render a status panel, not an iframe. */
   embeddable: boolean;
   sso: ToolSso;
+  /**
+   * Sub-paths (relative to basePath, no leading slash) that a `minRole` user may
+   * open WITHOUT a credential. Everything else then requires `adminSso` and the
+   * admin role. Needed because an upstream has ONE root path: LiteLLM serves its
+   * key-free public model hub and its full admin console from the same prefix, so
+   * the gate has to be per-path rather than per-tool. A prefix match: 'public' also
+   * admits 'public/model_hub/anything'.
+   */
+  publicPaths?: string[];
+  /**
+   * How to authenticate the ADMIN-only part of a tool that also has a public part.
+   * Its presence is what makes the non-public paths admin-gated at all.
+   */
+  adminSso?: ToolSso;
   note?: string;
   /**
    * Set when the tool CANNOT render inside the same-origin `/tools/<key>` frame
@@ -149,13 +163,18 @@ export const TOOLS: Record<string, Tool> = {
     protocol: 'http',
     frame: 'strip',
     basePath: '/tools/litellm',
-    // All users; the tab opens ONLY the public, key-free Model Hub. No auth is
-    // injected — the LiteLLM master key must NEVER reach the browser, so the
-    // admin UI (spend/keys) simply shows its own login if navigated to.
+    // TWO audiences behind one root path (SERVER_ROOT_PATH=/tools/litellm, set in the
+    // chart — which is also why this tool CAN be framed where Langfuse cannot):
+    //   • creator+ → the public, key-free Model Hub, no credential injected.
+    //   • admin    → the full admin console, with a UI-only session minted
+    //                server-side (tool-sso-litellm.ts). The proxy master key is
+    //                never used for this and never reaches the browser.
     minRole: 'creator',
     embeddable: true,
     sso: { mode: 'none' },
-    note: "Read-only public Model Hub only (/public/model_hub). No credential injected — the master key stays server-side; LiteLLM's admin UI stays behind its own login.",
+    publicPaths: ['public', 'get_favicon', 'favicon.ico', '_next'],
+    adminSso: { mode: 'session' },
+    note: "Public Model Hub for everyone; the full admin console (models, keys, budgets, guardrails) is admin-only with a server-minted UI session — no second login, no credential in the browser.",
   },
   opensearch: {
     key: 'opensearch',
@@ -225,6 +244,34 @@ export function resolveTool(key: string): Tool | undefined {
 /* ---------------------------------------------------------------- role gate */
 
 /** True when `role` ranks at or above `minRole` (creator<builder<domain_admin<admin). */
+/**
+ * Is this sub-path one of the tool's public ones? Prefix match on the first
+ * segments, so 'public' admits 'public/model_hub/…'. Asset prefixes must be listed
+ * too, otherwise the public page loads without its own CSS.
+ */
+export function isPublicPath(tool: Tool, pathSegments: string[]): boolean {
+  if (!tool.publicPaths || tool.publicPaths.length === 0) return false;
+  const joined = pathSegments.join('/');
+  return tool.publicPaths.some((p) => joined === p || joined.startsWith(`${p}/`));
+}
+
+/**
+ * The per-request decision for a tool that has both a public and an admin surface.
+ * Fail-closed: a tool WITH adminSso denies every non-public path to anyone below
+ * admin, so a builder gets our 403 instead of the upstream's login form.
+ */
+export function pathAccess(
+  tool: Tool,
+  pathSegments: string[],
+  role: Role,
+): { allowed: boolean; needsAdminSso: boolean } {
+  if (!tool.adminSso) return { allowed: roleAllowed(role, tool.minRole), needsAdminSso: false };
+  if (isPublicPath(tool, pathSegments)) {
+    return { allowed: roleAllowed(role, tool.minRole), needsAdminSso: false };
+  }
+  return { allowed: roleAllowed(role, 'admin'), needsAdminSso: true };
+}
+
 export function roleAllowed(role: Role, minRole: Role): boolean {
   return ROLES.indexOf(role) >= ROLES.indexOf(minRole);
 }

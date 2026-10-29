@@ -38,12 +38,14 @@ export const PERSONA_RANK: Record<HomePersona, number> = {
 /** Stable golden-path identifiers (also the tutorial-registry keys). */
 export type PathId =
   | 'data'
+  | 'files'
   | 'knowledge'
   | 'connections'
-  | 'agents'
-  | 'software'
   | 'metrics'
-  | 'dashboards';
+  | 'dashboards'
+  | 'agents'
+  | 'workflows'
+  | 'software';
 
 type PathDef = {
   id: PathId;
@@ -66,19 +68,26 @@ type PathDef = {
 };
 
 /**
- * The golden paths, in the design's gallery order. Copy mirrors
- * home-golden-path.md §"Centerpiece".
+ * The golden paths, in the order the product actually reads: bring context in,
+ * agree on the numbers, then put it to work. One card per tab a person CREATES
+ * something in — Governance, Monitoring and Admin are not creation paths and are
+ * reached from the sidebar instead.
  */
 export const PATHS: PathDef[] = [
+  // 1. Bring context in — nothing downstream works without this.
   { id: 'data', title: 'Data', blurb: 'Turn raw data into governed, documented products.', tab: '/data', createLabel: 'Load data', actRank: 0, art: 'data' },
+  { id: 'files', title: 'Files', blurb: 'Bring documents in and make them readable by agents.', tab: '/unstructured', createLabel: 'Upload a document', actRank: 0, art: 'files' },
   { id: 'knowledge', title: 'Knowledge', blurb: "Curate the domain's operating manual for agents.", tab: '/knowledge', createLabel: 'Add knowledge', actRank: 0, art: 'knowledge' },
   { id: 'connections', title: 'Connections', blurb: 'Securely connect APIs, DBs & SaaS as governed tools.', tab: '/connections', createLabel: 'Add a connection', actRank: 2, art: 'connections' },
+
+  // 2. Agree on the numbers — one definition, used everywhere.
+  { id: 'metrics', title: 'KPIs', blurb: 'Define the numbers everyone agrees on, once.', tab: '/metrics', createLabel: 'Define a KPI', actRank: 0, art: 'metrics' },
+  { id: 'dashboards', title: 'Dashboards', blurb: 'Put the KPIs in front of people; alert and report.', tab: '/dashboards', createLabel: 'Build a dashboard', actRank: 0, art: 'dashboards' },
+
+  // 3. Put it to work — the reason the rest exists.
   { id: 'agents', title: 'Agents', blurb: 'Build agents that use your data, knowledge & tools.', tab: '/agents', createLabel: 'Create an agent', actRank: 0, art: 'agents' },
+  { id: 'workflows', title: 'Workflows', blurb: 'Write down how the work actually runs, step by step.', tab: '/workflows', createLabel: 'Map a workflow', actRank: 0, art: 'workflows' },
   { id: 'software', title: 'Software', blurb: 'Build & deploy governed apps by chat.', tab: '/software', createLabel: 'Build an app', actRank: 0, art: 'software' },
-
-  { id: 'metrics', title: 'Metrics', blurb: 'Define the KPIs everyone agrees on.', tab: '/metrics', createLabel: 'Define a metric', actRank: 0, art: 'metrics' },
-  { id: 'dashboards', title: 'Dashboards', blurb: 'See the KPIs; alert & report on them.', tab: '/dashboards', createLabel: 'Build a dashboard', actRank: 0, art: 'dashboards' },
-
 ];
 
 /** Resolved launcher card for one viewer persona. */

@@ -4,17 +4,13 @@
 /**
  * Tab visibility gate tests for the consolidated nav. The five-section matrix
  * (5 tabs each):
- *   Ungrouped (entry): Home, MCP (builder+), About / Licenses
- *   Plan:    Operating Model
- *   Context: Knowledge, Files, Data, Connections, Metrics
- *   Build:   Agents, Software, Dashboards, Console (admin)
- *   Govern:  Governance (builder+), Monitoring (builder+),
- *            Components (admin), LLM Gateway (builder+), Admin (admin)
+ *   Entry:   Home
+ *   Context: Data, KPIs, Files, Knowledge
+ *   Build:   Workflows, Agents, Dashboards, Software
+ *   Manage:  Connections, Governance (builder+), Monitoring (builder+), Admin (builder+)
  *
- * The former Admin group was dissolved: Admin moved to Govern, Terminal+Query
- * merged into Console (Build group), About/Licenses moved to Entry.
- * Monitor was renamed Govern. Governance tab was relabelled Governance
- * (route /governance unchanged).
+ * ONE admin menu: Components, LLM Gateway, MCP access and About/Licenses are
+ * sections of tabs/admin/lib/sections.ts, not sidebar entries
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,13 +26,11 @@ function visibleLabels(role: Role): string[] {
 }
 
 const ENTRY_GROUP   = TAB_GROUPS.find((g) => !g.heading)!;
-const PLAN_GROUP    = TAB_GROUPS.find((g) => g.heading === 'Plan')!;
 const CONTEXT_GROUP = TAB_GROUPS.find((g) => g.heading === 'Context')!;
 const BUILD_GROUP   = TAB_GROUPS.find((g) => g.heading === 'Build')!;
 const GOVERN_GROUP  = TAB_GROUPS.find((g) => g.heading === 'Manage')!;
 
 assert.ok(ENTRY_GROUP,   'Entry group (no heading) must exist in TAB_GROUPS');
-assert.ok(PLAN_GROUP,    'Plan group must exist in TAB_GROUPS');
 assert.ok(CONTEXT_GROUP, 'Context group must exist in TAB_GROUPS');
 assert.ok(BUILD_GROUP,   'Build group must exist in TAB_GROUPS');
 assert.ok(GOVERN_GROUP,  'Manage group must exist in TAB_GROUPS');
@@ -63,17 +57,10 @@ const ADMIN_ONLY_LABELS = TAB_GROUPS
 
 // ---- Group membership -------------------------------------------------------
 
-test('TAB-SET entry group is exactly Home + MCP + About / Licenses', () => {
+test('TAB-SET entry group is exactly Home', () => {
   assert.deepEqual(
     ENTRY_GROUP.tabs.map((t) => t.label),
-    ['Home', 'MCP', 'About / Licenses'],
-  );
-});
-
-test('TAB-SET Plan group is Operating Model', () => {
-  assert.deepEqual(
-    PLAN_GROUP.tabs.map((t) => t.label),
-    ['Operating Model'],
+    ['Home'],
   );
 });
 
@@ -84,17 +71,17 @@ test('TAB-SET Context group is Data, KPIs, Files, Knowledge (usage order)', () =
   );
 });
 
-test('TAB-SET Build group is Workflows, Agents, Dashboards, Software, Console', () => {
+test('TAB-SET Build group is Workflows, Agents, Dashboards, Software', () => {
   assert.deepEqual(
     BUILD_GROUP.tabs.map((t) => t.label),
-    ['Workflows', 'Agents', 'Dashboards', 'Software', 'Console'],
+    ['Workflows', 'Agents', 'Dashboards', 'Software'],
   );
 });
 
-test('TAB-SET Manage group is Connections, Governance, Monitoring, Components, LLM Gateway, Admin', () => {
+test('TAB-SET Manage group is Connections, Governance, Monitoring, Admin', () => {
   assert.deepEqual(
     GOVERN_GROUP.tabs.map((t) => t.label),
-    ['Connections', 'Governance', 'Monitoring', 'Components', 'LLM Gateway', 'Admin'],
+    ['Connections', 'Governance', 'Monitoring', 'Admin'],
   );
 });
 
@@ -103,6 +90,7 @@ test('TAB-SET Manage group is Connections, Governance, Monitoring, Components, L
 test('TAB-SET dissolved tabs are gone from the nav entirely', () => {
   const all = TAB_GROUPS.flatMap((g) => g.tabs);
   for (const label of ['Users', 'Gateway', 'Orchestration', 'Consoles', 'Workbench',
+                        'Components', 'LLM Gateway', 'MCP', 'About / Licenses', 'Console',
                         'Terminal', 'Query', 'Policies & Approvals']) {
     assert.ok(!all.some((t) => t.label === label), `removed/renamed tab "${label}" must not be in the nav`);
   }
@@ -113,15 +101,6 @@ test('TAB-SET dissolved tabs are gone from the nav entirely', () => {
 });
 
 // ---- Key tab properties ----------------------------------------------------
-
-test('TAB-SET Console tab has minRole=builder and href=/console', () => {
-  const c = BUILD_GROUP.tabs.find((t) => t.label === 'Console');
-  assert.ok(c, 'Console tab must exist in Build group');
-  // Console is builder-visible for the governed Query surface; the raw Shell
-  // sub-panel inside it stays admin-only (gated in ConsoleClient + the broker).
-  assert.equal(c!.minRole, 'builder', 'Console tab must have minRole: builder');
-  assert.equal(c!.href, '/console', 'Console tab must link to /console');
-});
 
 test('TAB-SET Governance tab has minRole=builder and href=/governance', () => {
   const p = GOVERN_GROUP.tabs.find((t) => t.label === 'Governance');
@@ -139,17 +118,6 @@ test('TAB-SET Admin tab is in Manage group (moved from dissolved Admin group)', 
   assert.equal(a!.href, '/platform', 'Admin tab must link to /platform');
 });
 
-test('TAB-SET About / Licenses is in the Entry group with no minRole (all roles can see it)', () => {
-  const about = ENTRY_GROUP.tabs.find((t) => t.label === 'About / Licenses');
-  assert.ok(about, 'About / Licenses must be in the Entry group');
-  assert.equal(about!.minRole, undefined, 'About / Licenses must have no minRole (visible to all)');
-  assert.equal(about!.href, '/about', 'About / Licenses must link to /about');
-});
-
-test('TAB-SET MCP is in the entry group', () => {
-  assert.ok(ENTRY_GROUP.tabs.some((t) => t.label === 'MCP'), 'MCP in the entry group');
-});
-
 // ---- Visibility checks ------------------------------------------------------
 
 test('TAB-VIS creator: sees no admin-only tabs at all', () => {
@@ -157,17 +125,15 @@ test('TAB-VIS creator: sees no admin-only tabs at all', () => {
   for (const l of ADMIN_ONLY_LABELS) {
     assert.ok(!labels.includes(l), `creator must not see admin-only tab: ${l}`);
   }
-  assert.ok(labels.includes('About / Licenses'), 'creator must see About / Licenses (no minRole)');
   assert.ok(!labels.includes('Monitoring'), 'creator must not see Monitoring (builder+)');
-  assert.ok(!labels.includes('LLM Gateway'), 'creator must not see LLM Gateway (builder+)');
   assert.ok(!labels.includes('MCP'), 'creator must not see the MCP setup tab (builder+)');
   assert.ok(!labels.includes('Policies & Approvals'), 'Policies & Approvals label must be gone (renamed back to Governance)');
 });
 
-test('TAB-VIS builder sees the builder-gated tabs (Monitoring, LLM Gateway, MCP, Governance) that creators do not', () => {
+test('TAB-VIS builder sees the builder-gated tabs (Monitoring, Governance, Admin) that creators do not', () => {
   const b = visibleLabels('builder');
   const c = visibleLabels('creator');
-  for (const l of ['Monitoring', 'LLM Gateway', 'MCP', 'Governance']) {
+  for (const l of ['Monitoring', 'Governance', 'Admin']) {
     assert.ok(b.includes(l), `builder must see ${l}`);
     assert.ok(!c.includes(l), `creator must not see ${l}`);
   }
@@ -191,36 +157,20 @@ test('TAB-VIS builder: Manage group is visible and includes Governance', () => {
   assert.ok(!govern!.tabs.some((t) => t.label === 'Components'), 'builder must not see Components tab');
 });
 
-test('TAB-VIS builder: Console tab in Build group is visible (governed Query surface)', () => {
-  const groups = filterTabGroups(TAB_GROUPS, 'builder', ALL_FEATURES);
-  const build = groups.find((g) => g.heading === 'Build');
-  assert.ok(build, 'Build group must be present for builder');
-  assert.ok(build!.tabs.some((t) => t.label === 'Console'), 'builder must see Console (Query is builder+; the raw Shell inside stays admin-only)');
-});
-
-test('TAB-VIS creator: Console tab is still hidden (builder+)', () => {
-  const groups = filterTabGroups(TAB_GROUPS, 'creator', ALL_FEATURES);
-  const build = groups.find((g) => g.heading === 'Build');
-  assert.ok(!build!.tabs.some((t) => t.label === 'Console'), 'creator must not see Console (builder+)');
-});
-
 test('TAB-VIS domain_admin: sees no admin-only tabs', () => {
   const labels = visibleLabels('domain_admin');
   for (const l of ADMIN_ONLY_LABELS) {
     assert.ok(!labels.includes(l), `domain_admin must not see admin-only tab: ${l}`);
   }
-  assert.ok(labels.includes('About / Licenses'), 'domain_admin must see About / Licenses');
   assert.ok(labels.includes('Governance'), 'domain_admin must see Governance (builder+)');
 });
 
-test('TAB-VIS admin: sees all tabs including Console, Admin, Components', () => {
+test('TAB-VIS admin: sees every tab, including the admin-only ones', () => {
   const labels = visibleLabels('admin');
   for (const l of ADMIN_ONLY_LABELS) {
     assert.ok(labels.includes(l), `admin must see tab: ${l}`);
   }
   assert.ok(labels.includes('Governance'), 'admin must see Governance');
-  assert.ok(labels.includes('About / Licenses'), 'admin must see About / Licenses');
-  assert.ok(labels.includes('Console'), 'admin must see Console');
   assert.ok(!labels.includes('Settings'), 'standalone Settings tab must not appear in nav');
   assert.ok(!labels.includes('Terminal'), 'Terminal tab must be gone (merged into Console)');
   assert.ok(!labels.includes('Query'), 'Query tab must be gone (merged into Console)');
@@ -269,15 +219,12 @@ test('TAB-VIS tabVisible: null/undefined userRole passes (middleware handles aut
   assert.equal(tabVisible(adminTab, undefined), true);
 });
 
-test('TAB-VIS entry/Context/Build/Plan tabs are open to creators except the MCP setup tab and Console', () => {
-  // MCP + Console are builder+; every other tab in these groups is open to creators.
-  const openGroups = [ENTRY_GROUP, CONTEXT_GROUP, BUILD_GROUP, PLAN_GROUP];
+test('TAB-VIS Entry/Context/Build tabs are all open to creators', () => {
+  // Every tab in these groups is open to a creator; the gated surfaces all moved
+  // into the Manage group or the one admin menu.
+  const openGroups = [ENTRY_GROUP, CONTEXT_GROUP, BUILD_GROUP];
   for (const group of openGroups) {
     for (const tab of group.tabs) {
-      if (tab.label === 'MCP') {
-        assert.equal(tab.minRole, 'builder', 'MCP setup tab is builder-gated');
-        continue;
-      }
       if (tab.label === 'Console') {
         assert.equal(tab.minRole, 'builder', 'Console tab is builder-gated (Query is builder+; Shell inside stays admin-only)');
         continue;
@@ -292,9 +239,9 @@ test('TAB-VIS entry/Context/Build/Plan tabs are open to creators except the MCP 
 
 // ---- 5-tab uniformity -------------------------------------------------------
 
-test('TAB-SET section sizes are fixed (Entry 3, Plan 1, Context 4, Build 5, Manage 6)', () => {
+test('TAB-SET section sizes are fixed (Entry 1, Context 4, Build 4, Manage 4)', () => {
   const sizes = Object.fromEntries(TAB_GROUPS.map((g) => [g.heading ?? 'Entry', g.tabs.length]));
-  assert.deepEqual(sizes, { Entry: 3, Plan: 1, Context: 4, Build: 5, Manage: 6 });
+  assert.deepEqual(sizes, { Entry: 1, Context: 4, Build: 4, Manage: 4 });
 });
 
 // ---- Feature gating (OS_ENABLED_TABS) ---------------------------------------
@@ -309,7 +256,7 @@ test('TAB-FEATURE every tab has a feature key', () => {
 });
 
 test('TAB-FEATURE default (OS_ENABLED_TABS unset) is exactly the base tab set', () => {
-  const expected = ['home', 'about', 'agents', 'monitoring', 'llm-gateway', 'mcp', 'governance', 'admin', 'components'];
+  const expected = ['home', 'agents', 'monitoring', 'governance', 'admin'];
   assert.deepEqual([...parseEnabledTabs(undefined)].sort(), expected.sort());
   assert.deepEqual([...BASE_FEATURES].sort(), expected.sort());
 });
@@ -330,12 +277,6 @@ test('TAB-FEATURE tabVisible hides a tab whose feature is not enabled, for every
 test('TAB-FEATURE tabVisible shows a tab whose feature is enabled (no other gate)', () => {
   const home = ENTRY_GROUP.tabs.find((t) => t.label === 'Home')!;
   assert.equal(tabVisible(home, 'creator'), true);
-});
-
-test('TAB-FEATURE combines with role gating: MCP feature enabled but still hidden from creator', () => {
-  const mcp = ENTRY_GROUP.tabs.find((t) => t.label === 'MCP')!;
-  assert.equal(tabVisible(mcp, 'creator'), false, 'creator still gated by minRole even though feature is enabled');
-  assert.equal(tabVisible(mcp, 'builder'), true);
 });
 
 test('TAB-FEATURE filterTabGroups: with the default set, admin sees only base-feature tabs', () => {

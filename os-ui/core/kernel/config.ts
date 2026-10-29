@@ -308,6 +308,12 @@ export const config = {
   // {LITELLM_URL}/v1/mcp/tools  (Bearer master key).
   litellmUrl: base(env('LITELLM_URL', 'http://agentic-os-litellm:4000')),
   litellmMasterKey: env('LITELLM_MASTER_KEY', 'sk-litellm-local-dev-master'),
+  // UI-ONLY credential for the embedded LiteLLM admin console. Deliberately NOT the
+  // proxy master key: the tool-proxy mints a browser session from this, and a leaked
+  // UI session must not equal full API access. Empty => the gateway tile says
+  // "not configured" instead of framing LiteLLM's own login screen.
+  litellmUiUsername: env('LITELLM_UI_USERNAME', ''),
+  litellmUiPassword: env('LITELLM_UI_PASSWORD', ''),
   // Chat model fronted by LiteLLM that the task-scoped agent chat windows call
   // (POST {LITELLM_URL}/v1/chat/completions). Offline default = the mock model.
   litellmChatModel: env('LITELLM_CHAT_MODEL', 'sovereign-mock'),

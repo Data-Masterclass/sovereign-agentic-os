@@ -25,7 +25,7 @@ test('persona derives from role + authoring activity (User vs Creator)', () => {
 
 test('every card carries a working action deep-link', () => {
   const cards = launcherFor('creator');
-  assert.equal(cards.length, 7);
+  assert.equal(cards.length, 9);
   for (const c of cards) {
     assert.ok(c.href.startsWith('/'), `${c.id} deep-links into a tab`);
     assert.ok(c.actionLabel.length > 0);

@@ -3,8 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { proxy, resolveTool, roleAllowed, type SessionSso } from '@core/infra/tool-proxy';
+import { proxy, resolveTool, pathAccess, type SessionSso } from '@core/infra/tool-proxy';
 import { getLangfuseSessionCookies, hasLangfuseSession } from '@core/infra/tool-sso-langfuse';
+import { getLiteLlmSessionCookies, hasLiteLlmSession } from '@core/infra/tool-sso-litellm';
 
 /**
  * Same-origin reverse proxy for embedded tools:
@@ -31,9 +32,13 @@ async function handle(
   const tool = resolveTool(key);
   if (!tool) return NextResponse.json({ error: `Unknown tool '${key}'` }, { status: 404 });
 
-  if (!roleAllowed(user.role, tool.minRole)) {
+  // Per-PATH gate. A tool may expose a public surface at a low role and an admin
+  // console at the same root path (LiteLLM). Decided per request, so a sub-resource
+  // fetch is gated exactly like the document that asked for it.
+  const access = pathAccess(tool, path ?? [], user.role);
+  if (!access.allowed) {
     return NextResponse.json(
-      { error: `Your role (${user.role}) cannot open ${tool.title}` },
+      { error: `Your role (${user.role}) cannot open this part of ${tool.title}` },
       { status: 403 },
     );
   }
@@ -46,10 +51,13 @@ async function handle(
 
   // Session-SSO tools (Langfuse) get a server-minted session injected when the
   // browser has none yet. The provider fails soft (returns [] → tool's own login).
-  const sessionSso: SessionSso | undefined =
-    tool.key === 'langfuse'
-      ? { active: hasLangfuseSession, provide: () => getLangfuseSessionCookies() }
-      : undefined;
+  let sessionSso: SessionSso | undefined;
+  if (tool.key === 'langfuse') {
+    sessionSso = { active: hasLangfuseSession, provide: () => getLangfuseSessionCookies() };
+  } else if (tool.key === 'litellm' && access.needsAdminSso) {
+    // Only the admin console gets a session; the public hub stays credential-free.
+    sessionSso = { active: hasLiteLlmSession, provide: () => getLiteLlmSessionCookies() };
+  }
 
   return proxy(req, tool, path ?? [], user, fetch, sessionSso);
 }

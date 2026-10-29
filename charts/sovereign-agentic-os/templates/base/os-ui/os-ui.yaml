@@ -338,6 +338,24 @@ spec:
             - name: OCR_URL
               value: {{ . | quote }}
             {{- end }}
+            # UI-only credential for the EMBEDDED LiteLLM admin console. os-ui mints a
+            # browser session from this server-side (core/infra/tool-sso-litellm.ts) so an
+            # admin opening Admin -> LLM Gateway is already signed in. Same Secret LiteLLM
+            # itself reads, so there is one credential, not two. Deliberately NOT the proxy
+            # master key: a leaked UI session must not equal full API access. Absent =>
+            # the OS reports "not configured" instead of framing LiteLLM's own login.
+            - name: LITELLM_UI_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-credentials
+                  key: UI_USERNAME
+                  optional: true
+            - name: LITELLM_UI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-credentials
+                  key: UI_PASSWORD
+                  optional: true
             - name: LITELLM_URL
               value: {{ $u.litellmUrl | quote }}
             - name: OPA_URL
