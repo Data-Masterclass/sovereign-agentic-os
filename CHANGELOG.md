@@ -13,6 +13,39 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — the LiteLLM gateway, read back into the OS
+
+- **Admin surfaces now read LiteLLM instead of restating it.** One admin-gated
+  endpoint (`/api/platform-admin/gateway`) returns a single mirror of the
+  gateway: models and their health, teams with budget and spend, keys and who
+  owns them, guardrails, spend per dimension, and anything in LiteLLM with no OS
+  counterpart. The Admin overview, Domains, Billing and Components pages all
+  render it from that one read.
+- **It degrades with a date, never with a zero.** When the gateway cannot be
+  read the panel says so and shows the last good read with its original
+  timestamp. An unreachable gateway is never drawn as a gateway holding nothing.
+- **Drift is listed, never adopted.** A team or key created directly in LiteLLM
+  is reported as `unmanaged`; the OS changes nothing about it.
+- **Unattributed spend stays unattributed.** Per-domain, per-agent and per-tab
+  spend come from LiteLLM request tags. Nothing tags requests yet, so those read
+  as untagged rather than as `0`. Request tagging is a prerequisite for any
+  per-domain budget enforcement.
+- New `core/infra/litellm-admin.ts` is the single LiteLLM read client: Bearer
+  master key server-side only, hard timeout, a result type instead of
+  exceptions, and tolerant response-envelope handling.
+
+### Changed
+
+- The per-agent model picker now reads through the shared LiteLLM client. It
+  already listed models live, so behaviour is unchanged; the duplicated fetch,
+  timeout and Bearer logic is gone.
+
+### Removed
+
+- The read-only `/llm-gateway` page, now that the admin panels replace it, along
+  with `/api/gateway/usage` and `tabs/monitoring/lib/gateway-usage.ts`, whose
+  only caller it was. `/api/gateway` remains — the Components page uses it.
+
 ### Removed — dead artifacts (#6)
 
 - Deleted the deprecated `images/admin-console/` image and its README/build-script references.

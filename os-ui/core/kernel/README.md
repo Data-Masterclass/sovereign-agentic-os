@@ -44,7 +44,7 @@ directly. The files below are the stable surface:
   `middleware.ts` via `findDisabledTab`; its `/api/*` routes are NOT gated. Valid
   keys: `home cockpit tutorials mcp about strategy big-bets operating-model
   workflows marketplace data metrics files knowledge connections agents dashboards
-  software science console governance monitoring components llm-gateway admin`.
+  software science console governance monitoring components admin`.
 - **`stages.ts`** — the OS-wide staged-builder model (pure, no React): ordered
   `StageDef`s with `enabled`/`completed` gates plus the `StageState` transitions
   (`advance`, `goTo`, `markDone`, …). Rendered by
