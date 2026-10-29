@@ -2,7 +2,7 @@
 
 **What it is:** The infra database, managed by the **CloudNativePG** operator. One cluster
 (`pg`) hosts multiple databases: `langfuse`, `litellm`, `dagster`, `warehouse` (dbt),
-`polaris` (Iceberg catalog), `superset`. Continuous WAL backup + PITR in production.
+`polaris` (Iceberg catalog). Continuous WAL backup + PITR in production.
 
 ## Access (no UI — psql)
 ```bash

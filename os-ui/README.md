@@ -1,61 +1,55 @@
-# Sovereign Agentic OS UI
+# Sovereign Agentic OS — os-ui
 
-The Next.js (app router + TypeScript) **front door** for the Sovereign Agentic OS: the OS
-shell (left sidebar with the canonical tabs from `stackit/os-application.md`, plus a
-**Platform** group) with the surfaces wired to the **live in-cluster backends** via
-**server-side API routes** — so credentials and project keys stay on the server and never
-reach the browser.
+The Next.js (App Router + TypeScript) application: the OS shell, all 13 tabs, the API
+routes behind them, and the MCP server. Credentials stay server-side — the browser and
+the model never see a key.
+
+To run the whole OS locally, use the repo root: `./scripts/os up`. This file covers the
+app itself.
 
 ## Tabs
 
-| Tab | Status | Backend (server-side) |
-|---|---|---|
-| **Home** | live | overview + golden paths + a live **stack-status strip** (pings 8 backends) |
-| **Agents** (Chat) | live | `sample-agent` `GET /ask?q=` → answer + retrieved source titles |
-| **Knowledge** | live | OpenSearch `POST /{index}/_search` → ranked RAG hits (embedding excluded) |
-| **Structured Data** | live | query-tool `POST /query` → columns/rows, + a clickable Iceberg table browser |
-| **Software** | live | Forgejo `GET /api/v1/...` (basic auth) → repos + `demo-app` CI runs (push→CI→deploy) |
-| **Monitoring** | live | Langfuse `GET /api/public/traces` (basic auth) → recent traces |
-| **Governance** | live | OPA `grants` + `POST /v1/data/agentic/authz/allow` → live default-deny grants matrix |
-| **Dashboards** | link | Superset (`SUPERSET_URL`) |
-| **Gateway** (Platform) | live | LiteLLM `GET /v1/models` + `/v1/mcp/tools` (Bearer) → models + MCP tools |
-| **Orchestration** (Platform) | live | Dagster GraphQL → dbt assets + recent runs |
-| **Consoles** (Platform) | launchpad | Langfuse / Superset / Argo CD / OpenMetadata / Dagster / Forgejo access cards |
-| Strategy, Big Bets, Science, Metrics, Unstructured Data, Connections, Marketplace, Settings | stub | shell placeholders |
+| Group | Tabs |
+|---|---|
+| Entry | Home · MCP · About / Licenses |
+| Context | Data · Metrics · Files · Knowledge |
+| Build | **Workflows** · Agents · Dashboards · Software |
+| Manage | Connections · Governance · Monitoring · Admin |
 
-## Architecture
+Every tab is reachable from the UI and from MCP with the same permissions. Each declares
+its routes, APIs, MCP tools and required services in `tabs/<tab>/manifest.ts`;
+`OS_ENABLED_TABS` decides which appear.
+
+## Layout
 
 ```
-browser ──> /api/status        ──> health-pings 8 backends (up/down strip)
-        ──> /api/chat           ──> SAMPLE_AGENT_URL/ask?q=
-        ──> /api/knowledge?q=   ──> OPENSEARCH_URL/{index}/_search
-        ──> /api/query          ──> QUERY_TOOL_URL/query
-        ──> /api/tables         ──> QUERY_TOOL_URL/query (catalog list)
-        ──> /api/software       ──> FORGEJO_URL/api/v1/... (basic auth)
-        ──> /api/gateway        ──> LITELLM_URL/v1/models + /v1/mcp/tools (bearer)
-        ──> /api/policy         ──> OPA_URL/v1/data/grants + .../authz/allow
-        ──> /api/orchestration  ──> DAGSTER_URL/graphql
-        ──> /api/traces         ──> LANGFUSE_URL/api/public/traces (basic auth)
+core/   the kernel every tab depends on (never imports a tab)
+tabs/   one folder per tab: manifest.ts · lib/ · ui/ · mcp/ · guide.md · context.md
+app/    the Next.js route tree — pages import @core/* and @tabs/*
 ```
 
-All credentials/keys stay server-side. Backend base URLs are env-configurable
-(see `lib/config.ts`); defaults are the in-cluster Service names, so the same image runs
-in-cluster and locally (pointed at port-forwards).
+See **ARCHITECTURE.md** for the rules and how CI enforces them.
 
 ## Develop
 
 ```bash
 npm install
-npm run dev    # http://localhost:3000  (set the env vars below to reach real backends)
-npm run build  # production build (output: 'standalone')
+npm run dev     # http://localhost:3000
+npm run build   # production build (output: 'standalone')
+npm test        # 4,700+ tests across core/ and tabs/
+bash scripts/gate.sh   # the regression gate (the five reviewed defects)
 ```
+
+From the repo root: `node scripts/check-structure.mjs` (layout ratchet) and
+`node scripts/build-docs.mjs` (the code map).
 
 ## Deploy
 
-Built as `images/os-ui/Dockerfile` (multi-stage, non-root, standalone) and deployed by
-`charts/sovereign-agentic-os/templates/os-ui/os-ui.yaml`. See **`INTEGRATION.md`** for the
-exact `values.yaml` / build-images entries the chart owner must add (incl. the new
-`osUI.*` keys for OpenSearch, Forgejo, LiteLLM, OPA, Dagster, and the console URLs).
+Built by `images/base/os-ui/Dockerfile` (multi-stage, non-root, standalone) and deployed
+by `charts/sovereign-agentic-os/templates/base/os-ui/os-ui.yaml`. The chart's
+`values.yaml` is the laptop profile; `values.stackit-managed.yaml` overlays a cloud
+install. Backend URLs default to in-cluster Service names (`core/kernel/config.ts`), so
+the same image runs locally and in a cluster.
 
 ## Authentication & onboarding (self-hosted, no email required)
 
@@ -147,10 +141,10 @@ durable store — no new dependency). With OpenSearch unreachable the store is
 in-memory only and resets on restart — the documented boundary; the `OS_USERS`
 operator seed remains the way to pin accounts in that mode.
 
-## Env vars (all optional; defaults = in-cluster Service names)
+## Env vars
 
-See `INTEGRATION.md` for the full table and a ready-to-run `docker run` command. The new
-ones added in this build: `OPENSEARCH_URL`, `KNOWLEDGE_INDEX`, `FORGEJO_URL`,
-`FORGEJO_USER`, `FORGEJO_PASSWORD`, `LITELLM_URL`, `LITELLM_MASTER_KEY`, `OPA_URL`,
-`DAGSTER_URL`, plus browser-reachable console URLs (`LANGFUSE_CONSOLE_URL`,
-`FORGEJO_CONSOLE_URL`, `ARGOCD_URL`, `OPENMETADATA_URL`, `DAGSTER_CONSOLE_URL`).
+All optional; every default is the in-cluster Service name. `core/kernel/config.ts` is the
+single source of truth — read it rather than a table that drifts. The chart sets them in
+`templates/base/os-ui/os-ui.yaml`; the ones you are most likely to change are
+`OPENSEARCH_URL`, `LITELLM_URL`, `OPA_URL`, `AGENT_RUNTIME_URL`, `OS_ENABLED_TABS` and
+`OS_PUBLIC_URL`.

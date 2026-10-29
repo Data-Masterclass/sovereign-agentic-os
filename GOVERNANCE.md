@@ -105,7 +105,7 @@ Cutting a release (maintainers):
    regenerate docs/SBOM as applicable.
 3. **Publish to the public mirror** using the established archive → mirror → push
    flow: `git archive main | tar -x` into the public mirror working tree
-   (excluding internal-only `*INTEGRATION.md` notes), run **`gitleaks dir .`** to
+   (excluding internal-only `*os-ui/ARCHITECTURE.md` notes), run **`gitleaks dir .`** to
    confirm the tree is secret-free, then commit and push the public `main`.
 4. Tag and publish the GitHub release: `gh release create vX.Y.Z-pre.N --prerelease`
    (use `--prerelease` for `-alpha`/`-beta`), attaching notes from the changelog.

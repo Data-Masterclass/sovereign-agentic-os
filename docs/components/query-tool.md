@@ -20,7 +20,7 @@ both shared marts and personal schemas (`iceberg.personal_<uid>.*`).
 ## How to use it
 - Query the dbt-trino marts, e.g. `analytics.daily_revenue` (the Sales worked example). The
   `list_tables` tool / `show tables` lists the schema's tables.
-- Marts are built by **dbt-trino** (Iceberg on Polaris); Cube + Superset + this tool all read the
+- Marts are built by **dbt-trino** (Iceberg on Polaris); Metrics, Dashboards and this tool all read the
   SAME tables through Trino, so the numbers can't drift.
 
 ## Governance
