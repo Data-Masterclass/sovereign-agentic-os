@@ -19,7 +19,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-// Offline: fail every OpenSearch/Forgejo fetch so the stores run in-process.
+// Offline: fail every OpenSearch fetch so the stores run in-process.
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
 const { __resetStore, createDataset, buildVersion, setDocs, transition } = await import('../data/store.ts');

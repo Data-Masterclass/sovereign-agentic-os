@@ -15,7 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-// Offline: fail every OpenSearch/Forgejo fetch so the store runs in-process (mirrors apps.test).
+// Offline: fail every OpenSearch fetch so the store runs in-process (mirrors apps.test).
 const _realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 

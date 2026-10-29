@@ -139,8 +139,8 @@ test('rewriteLocation prefixes absolute-upstream and root-relative redirects', (
 
 test('rewriteSetCookie moves Path into the tool prefix and drops Domain', () => {
   assert.equal(
-    rewriteSetCookie('session=abc; Path=/; HttpOnly; Secure', '/tools/forgejo'),
-    'session=abc; Path=/tools/forgejo/; HttpOnly; Secure',
+    rewriteSetCookie('session=abc; Path=/; HttpOnly; Secure', '/tools/langfuse'),
+    'session=abc; Path=/tools/langfuse/; HttpOnly; Secure',
   );
   assert.equal(
     rewriteSetCookie('csrf=z; Path=/api; SameSite=Lax', '/tools/langfuse'),
@@ -182,8 +182,8 @@ test('header SSO injects identity + mapped role, plus the forwarded chain', () =
   assert.equal(h.get('host'), null, 'inbound Host is dropped');
 });
 
-test('header SSO honours a tool-specific user header alias (Forgejo)', () => {
-  const tool = fakeTool({ key: 'forgejo', sso: { mode: 'header', userHeader: 'X-WEBAUTH-USER' } });
+test('header SSO honours a tool-specific user header alias', () => {
+  const tool = fakeTool({ key: 'langfuse', sso: { mode: 'header', userHeader: 'X-WEBAUTH-USER' } });
   const h = buildUpstreamHeaders({
     tool,
     user: USER,

@@ -251,11 +251,6 @@ export const config = {
   // OS_PUBLIC_URL sets the absolute base used in emailed links. See lib/mailer.ts.
 
   // Forgejo (Software / Delivery): GET {FORGEJO_URL}/api/v1/...  (HTTP basic auth)
-  forgejoUrl: base(env('FORGEJO_URL', 'http://forgejo-http:3000')),
-  forgejoUser: env('FORGEJO_USER', 'gitea_admin'),
-  forgejoPassword: env('FORGEJO_PASSWORD', 'forgejo-admin-local-dev'),
-  forgejoRepoOwner: env('FORGEJO_REPO_OWNER', 'gitea_admin'),
-  forgejoDemoRepo: env('FORGEJO_DEMO_REPO', 'demo-app'),
 
   // Software golden path: per-app live subdomain suffix + image registry. Harbor
   // is a default-off heavy workload (chart `harbor.enabled`); locally CI uses
@@ -266,8 +261,6 @@ export const config = {
   // it from their host or run same-origin. Same var the emailed-links path reads.
   osPublicUrl: base(env('OS_PUBLIC_URL', '')),
   appsBaseDomain: env('OS_APPS_DOMAIN', 'apps.local'),
-  harborEnabled: env('HARBOR_ENABLED', '') === 'true',
-  harborRegistry: env('HARBOR_REGISTRY', 'forgejo-http:3000/gitea_admin'),
 
   // Software golden path — Phase 2 in-cluster app RUNNER (lib/software/runner.ts).
   // A go-live provisions a real Deployment+Service+Ingress for the built app into
@@ -503,8 +496,6 @@ export const config = {
   // public host) yields "" and the UI hides the "Open" link instead of linking
   // to a dead localhost address on a real deployment. -------------------------
   langfuseConsoleUrl: base(consoleEnv('LANGFUSE_CONSOLE_URL', 'http://localhost:3000')),
-  forgejoConsoleUrl: base(consoleEnv('FORGEJO_CONSOLE_URL', 'http://localhost:3001')),
-  argocdUrl: base(consoleEnv('ARGOCD_URL', 'http://localhost:8080')),
   dagsterConsoleUrl: base(consoleEnv('DAGSTER_CONSOLE_URL', 'http://localhost:3070')),
   opensearchDashboardsUrl: base(
     consoleEnv('OPENSEARCH_DASHBOARDS_URL', 'http://localhost:5601'),

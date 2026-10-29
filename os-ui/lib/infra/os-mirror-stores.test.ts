@@ -25,7 +25,7 @@ import { osMirror } from './os-mirror.ts';
 // ---------------------------------------------------------------- fake cluster --
 // Multi-index in-memory fake of the OpenSearch REST surface, FRESH by default
 // (no indices — the exact state after `helm install` with an empty PVC).
-// Non-OpenSearch URLs (Langfuse, Forgejo, …) get a generic 200 so best-effort
+// Non-OpenSearch URLs (Langfuse, …) get a generic 200 so best-effort
 // side-channels in the stores never fail the test.
 
 type FakeIndex = { docs: Map<string, unknown> };

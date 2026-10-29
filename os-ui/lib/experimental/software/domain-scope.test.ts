@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-// Stub fetch BEFORE importing apps.ts so every Forgejo/OpenSearch ping fails fast
+// Stub fetch BEFORE importing apps.ts so every OpenSearch ping fails fast
 // (offline mode) — mirrors lib/software/apps.test.ts.
 const _realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;

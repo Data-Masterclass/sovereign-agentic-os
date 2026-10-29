@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@/lib/core/auth';
 
-// Offline: every Forgejo/OpenSearch call fails fast → the store runs in-memory.
+// Offline: every OpenSearch call fails fast → the store runs in-memory.
 const _realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 

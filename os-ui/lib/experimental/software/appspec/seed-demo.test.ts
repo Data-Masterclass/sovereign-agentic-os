@@ -9,14 +9,14 @@
  *   • a SECOND call → no-op (idempotent — the slug guard short-circuits, count stays 1).
  *   • dataset ABSENT → silently skips: no throw, and no app is created.
  *
- * Mirrors set-app-spec.test's offline setup: fail every OpenSearch/Forgejo fetch so both the
+ * Mirrors set-app-spec.test's offline setup: fail every OpenSearch fetch so both the
  * data + apps stores run purely in-process. Seeds the dataset via the test-only fixed-id door
  * (real datasets mint their own id; the seed guards on the literal `ds_zpco1s6n7y`).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-// Offline: every network call rejects so the stores never touch OpenSearch/Forgejo.
+// Offline: every network call rejects so the stores never touch OpenSearch.
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
 const { __resetStore, __seedDatasetForTest } = await import('../../data/store.ts');

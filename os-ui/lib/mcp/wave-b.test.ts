@@ -199,7 +199,7 @@ test('read_app_files: the committed tree + one file’s content, honestly labell
   const app = payload<{ id: string }>(await call(builder, 'create_software', { name: 'Renewals', template: 'nextjs-supabase' }));
 
   const tree = payload<{ mode: string; files: string[]; note: string }>(await call(builder, 'read_app_files', { appId: app.id }));
-  assert.equal(tree.mode, 'offline-mock', 'no Forgejo in tests — the mode is honestly labelled');
+  assert.equal(tree.mode, 'offline-mock', 'no live tree in tests — the mode is honestly labelled');
   assert.ok(tree.files.includes('app.yaml') && tree.files.includes('Dockerfile'), 'the template seed tree is visible');
   assert.ok(tree.note.length > 0, 'the offline source is stated');
 

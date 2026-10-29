@@ -15,7 +15,7 @@ test('sets, overwrites and deletes across an existing query', () => {
 });
 
 test('null or empty values remove the param', () => {
-  assert.equal(computeSearch('tool=forgejo&toolPath=a/b', { tool: null, toolPath: '' }), '');
+  assert.equal(computeSearch('tool=langfuse&toolPath=a/b', { tool: null, toolPath: '' }), '');
 });
 
 test('values are URL-encoded', () => {
