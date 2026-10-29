@@ -68,9 +68,9 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
 <h1>Sovereign Agentic OS — Code Map</h1>
 <p class="sub">Every folder, what it holds and why. Generated from the source by <code>scripts/build-docs.mjs</code>: the prose below is each file's own header, each tab's manifest and each component's UPSTREAM.md, so it cannot drift from the code.</p>
 <p class="stats">
-  <span><b>1.285</b>source files</span>
-  <span><b>233.929</b>lines</span>
-  <span><b>17</b>with a full header</span>
+  <span><b>1.288</b>source files</span>
+  <span><b>234.666</b>lines</span>
+  <span><b>22</b>with a full header</span>
   <span><b>2026-10-29</b>generated</span>
 </p>
 
@@ -361,7 +361,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/core/infra">
     <h3>os-ui/core/infra</h3>
-    <p class="counts">30 files · 6.065 lines · 1 documented</p>
+    <p class="counts">32 files · 6.369 lines · 3 documented</p>
     
     <div class="files">
   <div class="file" id="os-ui/core/infra/agent-governed-failclosed.test.ts">
@@ -431,6 +431,18 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/core/infra/k8s.ts">
     <div class="file-h"><code>k8s.ts</code><span class="loc">153 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/core/infra/litellm-admin.test.ts">
+    <div class="file-h"><code>litellm-admin.test.ts</code><span class="loc">123 lines</span></div>
+    <p class="feat">Tests for the LiteLLM admin read client.</p>
+    <p class="story">As a maintainer I want proof that a read of the gateway can never throw into a page, never report a failure as empty data, and never put the master key anywhere but a server-side Authorization header.</p>
+    <p class="arch">`fetch` is stubbed per case via `withGateway`, which also pins a known URL and key and restores all three afterwards, so cases cannot leak into each other. Every failure mode LiteLLM can present is covered as its own case: unconfigured, non-2xx, transport error, and a hung request that must abort.</p>
+  </div>
+  <div class="file" id="os-ui/core/infra/litellm-admin.ts">
+    <div class="file-h"><code>litellm-admin.ts</code><span class="loc">181 lines</span></div>
+    <p class="feat">• One `adminGet` for every LiteLLM admin read: Bearer master key, hard timeout, no-store, and a result type instead of an exception. • Tolerant row unwrapping — LiteLLM returns bare arrays on some endpoints and `{data|keys|teams|guardrails: []}` on others, and the envelope moves between versions. One unwrapper absorbs that so callers never guess. • Typed row shapes for the eleven endpoints the OS mirrors.</p>
+    <p class="story">• As a platform admin, when the gateway is down I see &quot;gateway unreachable&quot;, never a page that invents zeros or a 500 that hides the cause. • As a security reviewer, I can confirm the master key is reachable only from server code: this module is `server-only` and no function returns it.</p>
+    <p class="arch">Lowest layer of the LiteLLM read path: litellm-admin (IO, this file) -&gt; tabs/admin/lib/gateway-mirror (pure mapping + cache + drift) -&gt; app/api/platform-admin/gateway (adminCtx gate) -&gt; admin panels Every function is failure-tolerant BY DESIGN and returns `Fetched&lt;T&gt;`: the mirror decides what a failure means, because only it knows whether a cached answer exists. Nothing here throws, retries or logs — a read of a dependency is not an error condition for the OS. READ-ONLY on purpose: no POST/PUT/DELETE lives here. Writes to LiteLLM are Phase 3 and must go through the admin API in their own reconciler module, so that &quot;the OS never silently mutates the gateway&quot; stays greppable.</p>
   </div>
   <div class="file" id="os-ui/core/infra/mailer.ts">
     <div class="file-h"><code>mailer.ts</code><span class="loc">455 lines</span></div>
@@ -1393,8 +1405,8 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     
   <section class="folder" id="os-ui/tabs/admin">
     <h3>os-ui/tabs/admin</h3>
-    <p class="counts">53 files · 8.854 lines · 2 documented</p>
-    <dl class="meta"><dt>feature key</dt><dd>admin</dd><dt>routes</dt><dd>/platform · /components · /llm-gateway · /mcp · /about · /settings</dd><dt>api</dt><dd>/api/platform · /api/platform-admin · /api/users · /api/mcp</dd><dt>mcp tools</dt><dd>platform · discovery-read</dd><dt>services</dt><dd>opensearch · postgres · litellm · opa</dd></dl>
+    <p class="counts">56 files · 9.512 lines · 5 documented</p>
+    <dl class="meta"><dt>feature key</dt><dd>admin</dd><dt>routes</dt><dd>/platform · /components · /mcp · /about · /settings</dd><dt>api</dt><dd>/api/platform · /api/platform-admin · /api/users · /api/mcp</dd><dt>mcp tools</dt><dd>platform · discovery-read</dd><dt>services</dt><dd>opensearch · postgres · litellm · opa</dd></dl>
     <div class="files">
   <div class="file" id="os-ui/tabs/admin/lib/access-lifecycle.test.ts">
     <div class="file-h"><code>lib/access-lifecycle.test.ts</code><span class="loc">221 lines</span></div>
@@ -1443,6 +1455,18 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/tabs/admin/lib/domains.ts">
     <div class="file-h"><code>lib/domains.ts</code><span class="loc">233 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/admin/lib/gateway-mirror.test.ts">
+    <div class="file-h"><code>lib/gateway-mirror.test.ts</code><span class="loc">161 lines</span></div>
+    <p class="feat">Tests for the gateway mirror's mapping and drift rules.</p>
+    <p class="story">As a platform admin I want certainty that the mirror never invents: an unreachable gateway reads as degraded rather than as a gateway with nothing in it, a key it cannot attribute is reported as drift rather than adopted, and a guardrail is only called fail-open when LiteLLM actually says so.</p>
+    <p class="arch">Drives the PURE `buildMirror` with a fixed clock and hand-built source envelopes, so every rule is tested with no network and no cache. The IO shell (`readMirror`) is deliberately not tested here — it only fetches, caches and resolves counterparts, and holds no rules of its own.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/admin/lib/gateway-mirror.ts">
+    <div class="file-h"><code>lib/gateway-mirror.ts</code><span class="loc">285 lines</span></div>
+    <p class="feat">• One `readMirror()` that collects eleven LiteLLM admin reads in parallel and returns a single flat shape the admin panels can render directly. • Drift detection: anything that exists in LiteLLM with no OS counterpart is reported as `unmanaged` — listed, never adopted and never invented. • A short cache with honest degradation: when the gateway is unreachable the last good mirror is served with `degraded: true` and its ORIGINAL `fetchedAt`, so a panel can say &quot;as of 14:02, gateway unreachable&quot;.</p>
+    <p class="story">• As a platform admin, a model I add in LiteLLM's own UI appears in the OS agent model picker with no redeploy and no second entry of the same facts. • As a platform admin, a domain budget I set in LiteLLM shows on Admin -&gt; Domains, because LiteLLM is the ledger and the OS reads it. • As a platform admin, a team or key somebody created directly in LiteLLM is flagged to me as unmanaged rather than silently treated as OS-governed. • As a finance owner, the billing envelope uses real gateway spend, and when spend cannot be read it shows unknown rather than a misleading zero.</p>
+    <p class="arch">Direction of truth, deliberately one-way in this phase: OS  -&gt; identity and policy (who may use what) LiteLLM -&gt; enforcement point and spend ledger (what actually happened) This module only READS the second half. Nothing here writes to LiteLLM; reconciliation lands in Phase 3 as its own module, so that the boundary between &quot;we observe the gateway&quot; and &quot;we change the gateway&quot; stays visible. Split in two on purpose: `buildMirror(sources, known)` is PURE — all mapping, classification and drift logic, fully unit-testable with no network and no clock. `readMirror()` is the thin IO shell — fetch, cache, resolve OS counterparts. Keeping the shell thin is what makes the rules testable. Spend attribution depends on LiteLLM request tags (`domain:`, `agent:`, `tab:`). Untagged traffic is NOT guessed at and simply does not appear in the per-dimension breakdown; the panels say so rather than implying zero.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/guard.ts">
     <div class="file-h"><code>lib/guard.ts</code><span class="loc">39 lines</span></div>
@@ -1599,6 +1623,12 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/tabs/admin/mcp/resources.ts">
     <div class="file-h"><code>mcp/resources.ts</code><span class="loc">291 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/admin/ui/GatewayPanel.tsx">
+    <div class="file-h"><code>ui/GatewayPanel.tsx</code><span class="loc">212 lines</span></div>
+    <p class="feat">• Four variants over ONE endpoint (`/api/platform-admin/gateway`), so the same mirror renders as gateway health on the Admin overview, budgets on Domains, spend on Billing and component health on Components. • Honest empty and failure states: a stale mirror is dated and labelled, an unreadable gateway says so, and spend that cannot be attributed is reported as not attributed rather than as zero. • Drift is always visible: anything in LiteLLM with no OS counterpart is named, with the reminder that the OS will not adopt it on its own.</p>
+    <p class="story">• As a platform admin, I see at a glance how many models the gateway brokers, which are failing their health probe, and which guardrails run. • As a platform admin on Domains, I see the real budget and real spend per domain from LiteLLM, not an OS guess. • As a platform admin, when something was created directly in LiteLLM I am told, so I can either adopt it in the OS or remove it there.</p>
+    <p class="arch">A thin client component. It owns no state beyond the fetch and performs no mapping — every rule (drift, health, provider, attribution) already ran in `gateway-mirror` on the server, which is what keeps those rules testable. Read-only in this phase: there is deliberately no control here that writes to LiteLLM. Admins who need to change the gateway use Admin -&gt; LLM Gateway, which frames LiteLLM's own UI.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/ui/McpConnect.tsx">
     <div class="file-h"><code>ui/McpConnect.tsx</code><span class="loc">307 lines</span></div>
@@ -4405,7 +4435,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/tabs/monitoring">
     <h3>os-ui/tabs/monitoring</h3>
-    <p class="counts">37 files · 4.653 lines · 1 documented</p>
+    <p class="counts">35 files · 4.428 lines · 1 documented</p>
     <dl class="meta"><dt>feature key</dt><dd>monitoring</dd><dt>routes</dt><dd>/monitoring</dd><dt>api</dt><dd>/api/monitoring · /api/traces · /api/status</dd><dt>services</dt><dd>langfuse · clickhouse · opensearch</dd></dl>
     <div class="files">
   <div class="file" id="os-ui/tabs/monitoring/lib/adapters/agent-telemetry.test.ts">
@@ -4486,14 +4516,6 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </div>
   <div class="file" id="os-ui/tabs/monitoring/lib/dq-overview.ts">
     <div class="file-h"><code>lib/dq-overview.ts</code><span class="loc">109 lines</span></div>
-    <p class="undoc">No header yet.</p>
-  </div>
-  <div class="file" id="os-ui/tabs/monitoring/lib/gateway-usage.test.ts">
-    <div class="file-h"><code>lib/gateway-usage.test.ts</code><span class="loc">119 lines</span></div>
-    <p class="undoc">No header yet.</p>
-  </div>
-  <div class="file" id="os-ui/tabs/monitoring/lib/gateway-usage.ts">
-    <div class="file-h"><code>lib/gateway-usage.ts</code><span class="loc">106 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/monitoring/lib/index.ts">

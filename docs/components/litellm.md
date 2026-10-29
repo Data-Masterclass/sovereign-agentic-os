@@ -70,3 +70,32 @@ agent virtual key (`litellmAgentKey.modelMaxBudget`) and surfaced in Monitoring 
 granted models, capped, and every call is attributable.
 **Q: Spend shows 0.** The mock model has no pricing; with a priced model spend tracks + the
 cap enforces.
+
+## What the OS reads back (the gateway mirror)
+
+The OS never re-enters what LiteLLM already knows. One admin-only endpoint,
+`GET /api/platform-admin/gateway`, returns a single mirror of the gateway —
+models and their health, teams with budget and spend, keys and who owns them,
+guardrails, spend per dimension, and anything in LiteLLM that has no OS
+counterpart. Four admin surfaces render it: the Admin overview, Domains,
+Billing and Components.
+
+Three rules make it trustworthy:
+
+* **It degrades, it does not lie.** When the gateway cannot be read the panel
+  says so and shows the last good read *with its original timestamp*. An
+  unreachable gateway is never drawn as a gateway with nothing in it.
+* **Drift is listed, never adopted.** A team or key created directly in
+  LiteLLM shows up as `unmanaged`. The OS changes nothing about it; an admin
+  decides whether to adopt it in the OS or remove it in LiteLLM.
+* **Unattributed spend stays unattributed.** Per-domain, per-agent and per-tab
+  spend come from LiteLLM request tags (`domain:`, `agent:`, `tab:`). Untagged
+  traffic is not guessed at, so those figures read as "not yet tagged" rather
+  than as zero. Amounts are LiteLLM's own USD ledger; Monitoring prices OS run
+  traces separately in EUR, and the two answer different questions.
+
+The direction of truth is one-way in this phase: the OS owns identity and
+policy, LiteLLM is the enforcement point and the ledger, and the OS only reads
+the second half. Reconciliation in the other direction is Phase 3 and will live
+in its own module, so "we observe the gateway" and "we change the gateway" stay
+separable by a reviewer.

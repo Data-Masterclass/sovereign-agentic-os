@@ -14,7 +14,7 @@ import type { TabManifest } from '@core/manifest';
 export const manifest: TabManifest = {
   key: 'admin',
   nav: { label: 'Admin', icon: '❖', href: '/platform', group: 'Manage', minRole: 'builder' },
-  routes: ["/platform", "/components", "/llm-gateway", "/mcp", "/about", "/settings"],
+  routes: ["/platform", "/components", "/mcp", "/about", "/settings"],
   api: ["/api/platform", "/api/platform-admin", "/api/users", "/api/mcp"],
   mcpTools: ["platform", "discovery-read"],
   policies: [],

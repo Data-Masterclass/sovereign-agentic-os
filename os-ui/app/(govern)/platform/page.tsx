@@ -9,6 +9,7 @@ import { useApi } from '@core/ui/useApi';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast, type Role } from '@core/kernel/session';
 import { ADMIN_SECTIONS, ADMIN_GROUP_ORDER } from '@tabs/admin/lib/sections';
+import GatewayPanel from '@tabs/admin/ui/GatewayPanel';
 
 /**
  * The Platform-Admin quick-link tiles, each with a machine-readable minimum role.
@@ -171,6 +172,8 @@ export default function PlatformOverview() {
             </div>
           </>
         ) : loading ? <div className="stub-page" style={{ marginTop: 20 }}>Loading cockpit…</div> : null}
+        <GatewayPanel variant="overview" />
+
       </div>
     </>
   );

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import PageHeader from '@core/ui/PageHeader';
 import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
+import GatewayPanel from '@tabs/admin/ui/GatewayPanel';
 
 type Domain = {
   id: string;
@@ -338,6 +339,8 @@ function DomainsInner() {
             </tbody>
           </table>
         </div>
+        <GatewayPanel variant="budgets" />
+
       </div>
     </>
   );

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import PageHeader from '@core/ui/PageHeader';
 import GuardedConfirm from '@core/ui/GuardedConfirm';
+import GatewayPanel from '@tabs/admin/ui/GatewayPanel';
 
 type SelfHeal = { restarts: number; argoSelfHealed: boolean; state: 'healthy' | 'healing' | 'degraded'; note: string };
 type Comp = { id: string; name: string; layer: string; status: string; version: string; toggle: boolean; summary: string; selfHeal: SelfHeal };
@@ -279,6 +280,8 @@ export default function ComponentsPage() {
         onConfirm={() => pending && toggle(pending, `disable ${pending.id}`)}
         onCancel={() => setPending(null)}
       />
+
+      <GatewayPanel variant="health" />
     </>
   );
 }
