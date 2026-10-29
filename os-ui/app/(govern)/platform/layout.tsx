@@ -5,7 +5,6 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { currentUser } from '@core/kernel/auth';
 import { roleAtLeast } from '@core/kernel/session';
-import PlatformNav from '@tabs/admin/ui/PlatformNav';
 
 /**
  * Platform Admin shell — tenant-scoped, ABOVE the per-domain workspace.
@@ -38,12 +37,8 @@ export default async function PlatformLayout({ children }: { children: React.Rea
       redirect('/platform');
     }
   }
-  return (
-    <>
-      {/* The section sub-nav is admin-only — a builder only ever sees the tidy,
-          tile-filtered overview, never the sub-page strip. */}
-      {isAdmin ? <PlatformNav /> : null}
-      {children}
-    </>
-  );
+  // No section strip: the grouped tiles on /platform are the one admin menu, and
+  // the sidebar's Admin entry is the way back up from a section. Two navigations
+  // for the same thing is what let them drift apart in the first place.
+  return <>{children}</>;
 }

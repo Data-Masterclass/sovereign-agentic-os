@@ -5,12 +5,39 @@ and **MCP tools**. It enforces per-key access + cost caps, logs every call (to L
 fronts the registered MCP tool servers (the governed Trino `query` tool, etc.). DB-backed (CNPG
 `litellm`) so the admin UI, virtual keys and spend tracking work.
 
-## Access
+## Access — from inside the OS, no second login
+
+**Admin → LLM Gateway** opens LiteLLM's own admin console *inside* the OS, with the
+admin already signed in. The OS proxies it same-origin at `/tools/litellm` and mints the
+session server-side (`os-ui/core/infra/tool-sso-litellm.ts`), so no gateway credential
+ever reaches the browser.
+
+Two audiences share that one prefix, because `SERVER_ROOT_PATH=/tools/litellm` gives
+LiteLLM a single root path:
+
+| Path | Who | Credential |
+|---|---|---|
+| `public/model_hub` (+ shared assets) | creator and above | none — the key-free model list |
+| everything else (models, keys, budgets, guardrails, spend) | **admin only** | UI session minted server-side |
+
+The gate is evaluated **per request**, so a sub-resource call like `/key/list` is refused
+for a non-admin with the OS's own 403 rather than falling through to LiteLLM's login form.
+
+The credential is `UI_USERNAME` / `UI_PASSWORD` from the `litellm-credentials` Secret —
+the same one LiteLLM itself reads, so there is one credential, not two. It is deliberately
+**not** the proxy master key: a leaked UI session must not equal full API access. If it is
+unset, the OS reports "not configured" instead of framing a login screen.
+
+## Direct access (port-forward)
 ```bash
 kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000
 # Admin UI: http://localhost:4000/ui    API docs: http://localhost:4000/docs
 ```
 **Login:** `admin` / `litellm-admin-local-dev`  ·  **Master key:** `sk-litellm-local-dev-master`
+
+> Both are **local development defaults**. Override `litellmUI.password` and
+> `litellmMasterKey` in `values.private.yaml` before any real deployment — the UI
+> credential is what the OS uses to sign admins into the embedded console.
 
 ## How to use it
 - **Call a model (OpenAI-compatible):**

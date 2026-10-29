@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import {
   TOOLS,
   resolveTool,
+  pathAccess,
+  isPublicPath,
   roleAllowed,
   rewriteCsp,
   rewriteLocation,
@@ -292,4 +294,53 @@ test('proxy() session SSO does NOT re-mint when the browser already has a sessio
   assert.equal(provided, 0, 'existing session → no server-side login');
   const setCookies = (res.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
   assert.equal(setCookies.length, 0, 'nothing injected');
+});
+
+// --- LiteLLM: one root path, two audiences -----------------------------------
+// The gate is per PATH, not per tool: creators keep the key-free public Model Hub,
+// everything else is admin-only with a server-minted session. Fail-closed.
+
+test('LITELLM-GATE: the public Model Hub stays open to creator+', () => {
+  const t = resolveTool('litellm')!;
+  for (const role of ['creator', 'builder', 'domain_admin', 'admin'] as const) {
+    const a = pathAccess(t, ['public', 'model_hub'], role);
+    assert.equal(a.allowed, true, `${role} may open the public hub`);
+    assert.equal(a.needsAdminSso, false, 'no credential is injected for the public hub');
+  }
+});
+
+test('LITELLM-GATE: the admin console is admin-only and session-backed', () => {
+  const t = resolveTool('litellm')!;
+  for (const role of ['creator', 'builder', 'domain_admin'] as const) {
+    assert.equal(pathAccess(t, ['models'], role).allowed, false, `${role} must NOT reach the console`);
+  }
+  const admin = pathAccess(t, ['models'], 'admin');
+  assert.equal(admin.allowed, true);
+  assert.equal(admin.needsAdminSso, true, 'the admin console needs the minted session');
+});
+
+test('LITELLM-GATE: the gate applies to sub-resources, not just the entry document', () => {
+  const t = resolveTool('litellm')!;
+  // A key-listing XHR fired by the console must be gated exactly like the page.
+  assert.equal(pathAccess(t, ['key', 'list'], 'builder').allowed, false);
+  assert.equal(pathAccess(t, ['spend', 'logs'], 'domain_admin').allowed, false);
+  assert.equal(pathAccess(t, ['key', 'list'], 'admin').allowed, true);
+});
+
+test('LITELLM-GATE: the bare root is treated as console, not public', () => {
+  const t = resolveTool('litellm')!;
+  assert.equal(pathAccess(t, [], 'builder').allowed, false, 'the root must not leak the console to a builder');
+  assert.equal(pathAccess(t, [], 'admin').allowed, true);
+});
+
+test('LITELLM-GATE: shared assets load for the public hub', () => {
+  const t = resolveTool('litellm')!;
+  assert.equal(isPublicPath(t, ['_next', 'static', 'chunks', 'x.js']), true, 'otherwise the public page renders unstyled');
+});
+
+test('TOOL-GATE: a tool without adminSso keeps the plain per-tool gate', () => {
+  const lf = resolveTool('langfuse')!;
+  assert.equal(lf.adminSso, undefined);
+  assert.equal(pathAccess(lf, ['anything'], lf.minRole).allowed, true);
+  assert.equal(pathAccess(lf, ['anything'], lf.minRole).needsAdminSso, false);
 });

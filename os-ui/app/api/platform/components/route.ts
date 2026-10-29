@@ -31,10 +31,6 @@ function consoleUrlFor(id: string): string {
   const urls: Record<string, string> = {
     langfuse: config.langfuseConsoleUrl,
     dagster: config.dagsterConsoleUrl,
-    'opensearch-dashboards': config.opensearchDashboardsUrl,
-    jupyterhub: config.jupyterhubConsoleUrl,
-    mlflow: config.mlflowConsoleUrl,
-    featureform: config.featureformConsoleUrl,
   };
   return urls[id] ?? '';
 }

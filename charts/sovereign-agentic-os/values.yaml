@@ -366,6 +366,11 @@ stackitPremium:
 litellmMasterKey: "sk-litellm-local-dev-master"
 
 # LiteLLM admin UI login (DB-backed UI at /ui). Local dev throwaway.
+# UI-only credential for the embedded LiteLLM admin console. os-ui mints a browser
+# session from it (core/infra/tool-sso-litellm.ts) so an admin never logs in twice.
+# Deliberately NOT the proxy master key: a leaked UI session must not equal full API
+# access. Empty username/password => the OS says 'not configured' instead of framing
+# LiteLLM's own login. Override in values.private.yaml; never commit a real password.
 litellmUI:
   username: "admin"
   password: "litellm-admin-local-dev"

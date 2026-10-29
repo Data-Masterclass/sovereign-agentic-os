@@ -89,6 +89,25 @@ through LiteLLM; runs are traced to Langfuse.
 - **Scaffolds hold generated app source inside template literals.** Import-looking
   strings in there belong to the generated app, not to os-ui — never rewrite them.
 
+## Embedded tools
+
+Some components ship a better admin UI than we would write. `core/infra/tool-proxy.ts`
+serves those **same-origin** at `/tools/<key>`, so they appear inside the OS chrome with
+the OS session as the only credential the browser holds. Three modes: `none` (the proxy
+plus the role gate *is* the access control), `header` (trusted-proxy identity), and
+`session` (the proxy signs a server-only account in — no second login).
+
+Two rules learned the hard way:
+
+- **A tool can only be framed if its assets are not root-absolute.** A SPA requesting
+  `/_next/*` collides with os-ui's own routes and every chunk 404s into a blank iframe.
+  LiteLLM is framable because the chart sets `SERVER_ROOT_PATH=/tools/litellm`; Langfuse
+  is not, so it opens in its own tab (`ownTab` in the registry).
+- **One upstream root path means one proxy prefix.** When a tool exposes both a public
+  and an admin surface there, the gate must be per-path: `publicPaths` + `adminSso` +
+  `pathAccess()`, evaluated on every request including sub-resources. Fail-closed — a
+  non-admin gets our 403, never the upstream's login form.
+
 ## Generated documentation
 
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,

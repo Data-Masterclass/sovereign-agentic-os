@@ -68,9 +68,9 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
 <h1>Sovereign Agentic OS — Code Map</h1>
 <p class="sub">Every folder, what it holds and why. Generated from the source by <code>scripts/build-docs.mjs</code>: the prose below is each file's own header, each tab's manifest and each component's UPSTREAM.md, so it cannot drift from the code.</p>
 <p class="stats">
-  <span><b>1.283</b>source files</span>
-  <span><b>233.676</b>lines</span>
-  <span><b>15</b>with a full header</span>
+  <span><b>1.285</b>source files</span>
+  <span><b>233.929</b>lines</span>
+  <span><b>17</b>with a full header</span>
   <span><b>2026-10-29</b>generated</span>
 </p>
 
@@ -361,7 +361,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/core/infra">
     <h3>os-ui/core/infra</h3>
-    <p class="counts">28 files · 5.783 lines · 0 documented</p>
+    <p class="counts">30 files · 6.065 lines · 1 documented</p>
     
     <div class="files">
   <div class="file" id="os-ui/core/infra/agent-governed-failclosed.test.ts">
@@ -461,11 +461,11 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/infra/tool-proxy.test.ts">
-    <div class="file-h"><code>tool-proxy.test.ts</code><span class="loc">296 lines</span></div>
+    <div class="file-h"><code>tool-proxy.test.ts</code><span class="loc">347 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/infra/tool-proxy.ts">
-    <div class="file-h"><code>tool-proxy.ts</code><span class="loc">457 lines</span></div>
+    <div class="file-h"><code>tool-proxy.ts</code><span class="loc">504 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/infra/tool-sso-langfuse.test.ts">
@@ -475,11 +475,21 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/core/infra/tool-sso-langfuse.ts">
     <div class="file-h"><code>tool-sso-langfuse.ts</code><span class="loc">142 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/core/infra/tool-sso-litellm.test.ts">
+    <div class="file-h"><code>tool-sso-litellm.test.ts</code><span class="loc">81 lines</span></div>
+    <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/core/infra/tool-sso-litellm.ts">
+    <div class="file-h"><code>tool-sso-litellm.ts</code><span class="loc">103 lines</span></div>
+    <p class="feat">Server-side sign-in to LiteLLM's admin UI, so an admin never logs in twice</p>
+    <p class="story">As a platform admin I want to open the LLM Gateway from the OS and already be signed in, without a second password and without any gateway credential ever reaching my browser.</p>
+    <p class="arch">- Mirrors core/infra/tool-sso-langfuse.ts: POST the credential ONCE server-side, cache the resulting session cookie, and hand only that cookie to the proxy (SessionSso.provide). - LiteLLM's UI login is `POST /login` with form-encoded username/password — it is NOT in LiteLLM's OpenAPI spec (an HTML route), confirmed empirically: GET /login answers 405. Treated as best-effort: any failure returns no cookie and the frame shows LiteLLM's own login rather than breaking. - The credential is a UI-ONLY account (LITELLM_UI_USERNAME/PASSWORD from a Secret), never the proxy master key: a leaked UI session must not equal full API access. - Cookie names are matched against a candidate list because LiteLLM has renamed its session cookie across versions; an unmatched Set-Cookie is dropped, never forwarded blindly.</p>
   </div></div>
   </section>
   <section class="folder" id="os-ui/core/kernel">
     <h3>os-ui/core/kernel</h3>
-    <p class="counts">58 files · 7.167 lines · 0 documented</p>
+    <p class="counts">58 files · 7.083 lines · 0 documented</p>
     
     <div class="files">
   <div class="file" id="os-ui/core/kernel/active-domain.test.ts">
@@ -539,7 +549,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/kernel/config.ts">
-    <div class="file-h"><code>config.ts</code><span class="loc">555 lines</span></div>
+    <div class="file-h"><code>config.ts</code><span class="loc">561 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/kernel/context-grants.test.ts">
@@ -679,11 +689,11 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/kernel/tabs.test.ts">
-    <div class="file-h"><code>tabs.test.ts</code><span class="loc">410 lines</span></div>
+    <div class="file-h"><code>tabs.test.ts</code><span class="loc">351 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/kernel/tabs.ts">
-    <div class="file-h"><code>tabs.ts</code><span class="loc">212 lines</span></div>
+    <div class="file-h"><code>tabs.ts</code><span class="loc">181 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/kernel/toast.test.ts">
@@ -1383,7 +1393,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     
   <section class="folder" id="os-ui/tabs/admin">
     <h3>os-ui/tabs/admin</h3>
-    <p class="counts">53 files · 8.831 lines · 1 documented</p>
+    <p class="counts">53 files · 8.854 lines · 2 documented</p>
     <dl class="meta"><dt>feature key</dt><dd>admin</dd><dt>routes</dt><dd>/platform · /components · /llm-gateway · /mcp · /about · /settings</dd><dt>api</dt><dd>/api/platform · /api/platform-admin · /api/users · /api/mcp</dd><dt>mcp tools</dt><dd>platform · discovery-read</dd><dt>services</dt><dd>opensearch · postgres · litellm · opa</dd></dl>
     <div class="files">
   <div class="file" id="os-ui/tabs/admin/lib/access-lifecycle.test.ts">
@@ -1510,6 +1520,12 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <div class="file-h"><code>lib/recovery.ts</code><span class="loc">71 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
+  <div class="file" id="os-ui/tabs/admin/lib/sections.ts">
+    <div class="file-h"><code>lib/sections.ts</code><span class="loc">64 lines</span></div>
+    <p class="feat">One admin menu — the single source of truth for every platform section</p>
+    <p class="story">As a platform admin I want one place that lists everything I can administer, so I never have to learn that some controls live in a sidebar entry, others in a sub-navigation strip, and two of them only appear in one of the two.</p>
+    <p class="arch">- Data only; no React, no I/O. Rendered by app/(govern)/platform/page.tsx as the one grouped tile grid. There is deliberately no second navigation. - There used to be a section strip AND a tile grid; they drifted (13 entries vs 11, with Roles &amp; Permissions and Components &amp; System reachable only from the strip). The strip is gone; the sidebar's Admin entry is the way back up. - `minRole` is advisory for rendering; every /api/platform-admin/* route re-checks it server-side via adminCtx(), so hiding a tile is never the security boundary.</p>
+  </div>
   <div class="file" id="os-ui/tabs/admin/lib/security.ts">
     <div class="file-h"><code>lib/security.ts</code><span class="loc">219 lines</span></div>
     <p class="undoc">No header yet.</p>
@@ -1594,10 +1610,6 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </div>
   <div class="file" id="os-ui/tabs/admin/ui/McpToolsClient.tsx">
     <div class="file-h"><code>ui/McpToolsClient.tsx</code><span class="loc">163 lines</span></div>
-    <p class="undoc">No header yet.</p>
-  </div>
-  <div class="file" id="os-ui/tabs/admin/ui/PlatformNav.tsx">
-    <div class="file-h"><code>ui/PlatformNav.tsx</code><span class="loc">41 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div></div>
   </section>
@@ -3781,7 +3793,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/tabs/home">
     <h3>os-ui/tabs/home</h3>
-    <p class="counts">12 files · 1.343 lines · 1 documented</p>
+    <p class="counts">12 files · 1.375 lines · 1 documented</p>
     <dl class="meta"><dt>feature key</dt><dd>home</dd><dt>routes</dt><dd>/</dd><dt>api</dt><dd>/api/home</dd><dt>services</dt><dd>opensearch</dd></dl>
     <div class="files">
   <div class="file" id="os-ui/tabs/home/lib/feed.ts">
@@ -3793,7 +3805,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/home/lib/launcher.ts">
-    <div class="file-h"><code>lib/launcher.ts</code><span class="loc">153 lines</span></div>
+    <div class="file-h"><code>lib/launcher.ts</code><span class="loc">162 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/home/lib/scope.test.ts">
@@ -3831,7 +3843,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/home/ui/illustrations.tsx">
-    <div class="file-h"><code>ui/illustrations.tsx</code><span class="loc">114 lines</span></div>
+    <div class="file-h"><code>ui/illustrations.tsx</code><span class="loc">137 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div></div>
   </section>
