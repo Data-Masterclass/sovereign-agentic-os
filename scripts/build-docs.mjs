@@ -244,9 +244,13 @@ if (check) {
   // machine and a CI checkout (untracked files, build artefacts) — comparing
   // them made this gate fail for environmental reasons rather than stale docs.
   const current = existsSync(OUT) ? readFileSync(OUT, 'utf8') : '';
+  // Every count is derived from the working tree — and this very file is one of the
+  // files counted, so editing the generator would otherwise invalidate the page it
+  // just wrote. Strip all of them; what remains is the documented content.
   const strip = (t) => t
     .replace(/<p class="stats">[\s\S]*?<\/p>/, '')
-    .replace(/\b\d[\d,]*\s+(?:source files|lines)\b/g, '')
+    .replace(/<p class="counts">[\s\S]*?<\/p>/g, '')
+    .replace(/<span class="loc">[^<]*<\/span>/g, '')
     .replace(/generated \d{4}-\d{2}-\d{2}/, '');
   if (strip(current) !== strip(html)) {
     console.error(`${OUT} is stale — run: node scripts/build-docs.mjs`);
