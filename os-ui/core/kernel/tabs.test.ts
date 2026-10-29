@@ -77,10 +77,10 @@ test('TAB-SET Plan group is Operating Model', () => {
   );
 });
 
-test('TAB-SET Context group is Data, Metrics, Files, Knowledge (usage order)', () => {
+test('TAB-SET Context group is Data, KPIs, Files, Knowledge (usage order)', () => {
   assert.deepEqual(
     CONTEXT_GROUP.tabs.map((t) => t.label),
-    ['Data', 'Metrics', 'Files', 'Knowledge'],
+    ['Data', 'KPIs', 'Files', 'Knowledge'],
   );
 });
 

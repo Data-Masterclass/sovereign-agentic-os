@@ -69,7 +69,7 @@ export const TAB_GROUPS: TabGroup[] = [
     heading: 'Context',
     tabs: [
       { label: 'Data', icon: '▤', href: '/data', feature: 'data' },
-      { label: 'Metrics', icon: '∑', href: '/metrics', feature: 'metrics' },
+      { label: 'KPIs', icon: '∑', href: '/metrics', feature: 'metrics' },
       { label: 'Files', icon: '❏', href: '/unstructured', feature: 'files' },
       { label: 'Knowledge', icon: '❦', href: '/knowledge', feature: 'knowledge' },
     ],

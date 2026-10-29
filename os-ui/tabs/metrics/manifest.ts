@@ -13,7 +13,7 @@ import type { TabManifest } from '@core/manifest';
 
 export const manifest: TabManifest = {
   key: 'metrics',
-  nav: { label: 'Metrics', icon: '∑', href: '/metrics', group: 'Context' },
+  nav: { label: 'KPIs', icon: '∑', href: '/metrics', group: 'Context' },
   routes: ["/metrics"],
   api: ["/api/metrics"],
   mcpTools: ["metric-write"],

@@ -32,7 +32,7 @@ const TAB_LABELS: Record<string, string> = {
   agents: 'Agents',
   software: 'Software',
   unstructured: 'Files',
-  metrics: 'Metrics',
+  metrics: 'KPIs',
   dashboards: 'Dashboards',
   connections: 'Connections',
   governance: 'Governance',

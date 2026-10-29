@@ -57,19 +57,20 @@ function SignInForm() {
         </div>
         <div className="signin-sub">Sign in to your domain workspace</div>
         <div className="signin-firstrun">
-          First run? Sign in with the bootstrap admin to begin setup.
+          First run? Sign in with <strong>admin</strong> / <strong>admin</strong> — you set your
+          real email and a strong password immediately after.
         </div>
 
         <form onSubmit={submit} className="signin-form">
           <label>
-            Email
+            Email or username
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoFocus
               autoComplete="email"
               inputMode="email"
-              placeholder="you@company.com"
+              placeholder="you@company.com — or admin on first run"
             />
           </label>
           <label>
