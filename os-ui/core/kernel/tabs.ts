@@ -2,29 +2,22 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 /**
- * The OS sidebar tab set. The first group is the canonical OS tab order
- * (os-application.md §4); every tab routes to a real surface in v1.0.
+ * The OS sidebar tab set — the 13 tabs, in the order the product reads.
  *
- * Six sections (5 tabs each):
- *   Ungrouped (entry): Home, MCP, About / Licenses
- *   Plan:    Operating Model
- *   Context: Data, Metrics, Files, Knowledge
- *   Build:   Workflows, Agents, Dashboards, Software, Console (admin)
- *   Manage:  Connections, Governance (builder+), Monitoring (builder+), Components (admin), LLM Gateway (builder+), Admin
+ *   Entry:   Home
+ *   Context: Data, KPIs, Files, Knowledge          (bring context in)
+ *   Build:   Workflows, Agents, Dashboards, Software   (put it to work)
+ *   Manage:  Connections, Governance (builder+), Monitoring (builder+), Admin (builder+)
  *
- * The former Admin group (Admin, Terminal, Query, About / Licenses) was dissolved:
- *   - About / Licenses moved to the Entry group (transparency — every user can read it).
- *   - Admin moved to the Manage group.
- *   - Terminal + Query merged into Console (/console), hosted in the Build group.
- *   - The old /terminal and /admin-query routes were removed (404).
+ * ONE admin menu: Components, the LLM Gateway, MCP access and About/Licenses are
+ * NOT separate sidebar entries — they are sections of the admin menu defined in
+ * tabs/admin/lib/sections.ts, which both the /platform tile grid and the section
+ * strip render. Their routes still work and are listed there.
  *
- * The former Monitor group was renamed Govern, then Manage. The approvals tab is
- * labelled Governance (route unchanged: /governance).
- *
- * The former Users / Gateway / Orchestration / Consoles / Workbench tabs were
- * consolidated: Users & Access lives in Admin (/platform), and the gateway /
- * orchestrator / console launchers merged into the one Components surface
- * (/components); the old routes redirect.
+ * `feature` keys drive OS_ENABLED_TABS gating; a tab whose key is not enabled is
+ * hidden from the nav AND 404s at the route (see findDisabledTab, used by the Edge
+ * middleware). `minRole` hides a tab from the nav; the page and its APIs re-check
+ * the gate server-side, so hiding is never the security boundary.
  */
 import type { Role } from '@core/kernel/session';
 
@@ -47,22 +40,11 @@ export type TabGroup = {
 
 export const TAB_GROUPS: TabGroup[] = [
   {
-    // Entry points — ungrouped, always at the top. About / Licenses lives here for
-    // transparency (every role can read it); the admin gate on the page itself was
-    // the only real constraint — moving it here keeps it accessible and honest.
+    // Entry — ungrouped, always at the top. Home is the only one: MCP access and
+    // About/Licenses became sections of the one admin menu (tabs/admin/lib/
+    // sections.ts), and their routes stay reachable for every role that may use them.
     tabs: [
       { label: 'Home', icon: '◇', href: '/', feature: 'home' },
-      // MCP setup UI is builder+/admin. Creators still CONNECT via MCP (the
-      // /api/mcp endpoint + their per-user token are unaffected) — only this
-      // configuration tab is hidden from the creator menu.
-      { label: 'MCP', icon: '⌗', href: '/mcp', role: 'Builder / Administrator', minRole: 'builder', feature: 'mcp' },
-      { label: 'About / Licenses', icon: '©', href: '/about', feature: 'about' },
-    ],
-  },
-  {
-    heading: 'Plan',
-    tabs: [
-      { label: 'Operating Model', icon: '❧', href: '/operating-manual', feature: 'operating-model' },
     ],
   },
   {
@@ -81,13 +63,6 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Agents', icon: '✦', href: '/agents', feature: 'agents' },
       { label: 'Dashboards', icon: '▦', href: '/dashboards', feature: 'dashboards' },
       { label: 'Software', icon: '⌘', href: '/software', feature: 'software' },
-      // Console merges the former Terminal (/terminal) and Query (/admin-query)
-      // operator tools into one page with a Shell | Query switch. The tab is
-      // builder-visible so course participants get the GOVERNED Query surface
-      // (SQL over Trino, OPA/RLS-checked per-caller, audited). The raw
-      // Shell sub-panel INSIDE it stays admin-only (ConsoleClient gates it) —
-      // exposing the tab does NOT expose arbitrary command execution.
-      { label: 'Console', icon: '▶', href: '/console', role: 'Builder / Administrator', minRole: 'builder', feature: 'console' },
     ],
   },
   {
@@ -100,8 +75,6 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Connections', icon: '⇄', href: '/connections', feature: 'connections' },
       { label: 'Governance', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder', feature: 'governance' },
       { label: 'Monitoring', icon: '◷', href: '/monitoring', role: 'Builder / Administrator', minRole: 'builder', feature: 'monitoring' },
-      { label: 'Components', icon: '▥', href: '/components', role: 'Administrator', minRole: 'admin', feature: 'components' },
-      { label: 'LLM Gateway', icon: '⌁', href: '/llm-gateway', role: 'Builder / Administrator', minRole: 'builder', feature: 'llm-gateway' },
       // Admin (Platform) is builder-visible, but the page renders ONLY the tiles
       // a builder is authorised for (fail-closed per-tile minRole). Every
       // platform-admin tile stays admin-only, and each /platform sub-page's API
@@ -115,14 +88,10 @@ export const TAB_GROUPS: TabGroup[] = [
 /** Tab `feature` keys enabled when OS_ENABLED_TABS is unset/empty: the base tier. */
 export const BASE_FEATURES: readonly string[] = [
   'home',
-  'about',
   'agents',
   'monitoring',
-  'llm-gateway',
-  'mcp',
   'governance',
   'admin',
-  'components',
 ];
 
 /** Every feature key declared by a tab in TAB_GROUPS. */

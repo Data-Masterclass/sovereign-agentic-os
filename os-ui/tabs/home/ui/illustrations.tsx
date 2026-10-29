@@ -46,6 +46,17 @@ const ILLUS: Record<PathId, React.ReactNode> = {
       <circle cx="30" cy="18" r="2.4" fill={MAGENTA} stroke="none" />
     </Frame>
   ),
+  // Files — a stack of documents, the top one being read (extracted) line by line.
+  files: (
+    <Frame wash="#f4e6c2">
+      <rect x="12" y="2" width="24" height="30" rx="3" fill="#fff" stroke={GOLD_LT} />
+      <rect x="7" y="5" width="24" height="30" rx="3" fill="#fff" stroke={GOLD} />
+      <path d="M12 13h14M12 19h14M12 25h9" stroke={TEAL} />
+      <path d="M33 30l5 5" stroke={NAVY} />
+      <circle cx="31" cy="28" r="4.5" fill="none" stroke={NAVY} />
+      <circle cx="26" cy="9" r="2" fill={MAGENTA} stroke="none" />
+    </Frame>
+  ),
   // Knowledge — an open book + bookmark.
   knowledge: (
     <Frame wash="#dff0ec">
@@ -78,6 +89,18 @@ const ILLUS: Record<PathId, React.ReactNode> = {
     </Frame>
   ),
   // Software — a build window with braces (chat-to-app).
+  // Workflows — ordered steps with a decision branch; the written-down path.
+  workflows: (
+    <Frame wash="#dff0ec">
+      <rect x="2" y="12" width="13" height="10" rx="3" fill="#fff" stroke={TEAL} />
+      <rect x="31" y="2" width="13" height="10" rx="3" fill="#fff" stroke={TEAL} />
+      <rect x="31" y="24" width="13" height="10" rx="3" fill="#fff" stroke={TEAL} />
+      <path d="M15 17h7" stroke={NAVY} />
+      <path d="M22 17V7h9M22 17v12h9" stroke={GOLD} />
+      <circle cx="22" cy="17" r="2.6" fill="#fff" stroke={NAVY} />
+      <circle cx="40" cy="7" r="2" fill={MAGENTA} stroke="none" />
+    </Frame>
+  ),
   software: (
     <Frame wash="#dff0ec">
       <rect x="4" y="4" width="38" height="28" rx="5" fill="#fff" stroke={NAVY} />
