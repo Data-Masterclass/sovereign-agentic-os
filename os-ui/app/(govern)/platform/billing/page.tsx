@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@core/ui/PageHeader';
+import GatewayPanel from '@tabs/admin/ui/GatewayPanel';
 
 type BillingView = {
   envelopeEUR: number;
@@ -136,6 +137,8 @@ export default function BillingPage() {
             </div>
           </>
         ) : <div className="stub-page" style={{ marginTop: 20 }}>Loading…</div>}
+        <GatewayPanel variant="spend" />
+
       </div>
     </>
   );

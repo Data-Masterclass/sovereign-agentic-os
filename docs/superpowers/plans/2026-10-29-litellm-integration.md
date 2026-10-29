@@ -130,7 +130,24 @@ git commit -m "gateway: embed the LiteLLM admin UI through the tool-proxy with s
 
 ---
 
-## Phase 2 — Read-mirror (own plan when started)
+## Phase 2 — Read-mirror ✅ DONE (2026-10-29)
+
+**Landed as specified**, with the locked `GatewayMirror` interface unchanged. Deviations worth recording:
+
+* `buildMirror(sources, known, now)` was split out as a **pure** function and `readMirror()` kept as a thin IO shell. The rules (drift, health, provider inference, attribution) are therefore unit-tested with no network and no clock — 28 new tests, all green.
+* `buildMirror` takes `now` as an argument rather than calling `Date.now()`, so `fetchedAt` is assertable.
+* Degradation keys off the **model** read specifically, not "all reads failed". A mirror with no models is not a gateway with no models; it is a gateway we could not reach. On a degraded read the last good mirror is returned with its ORIGINAL `fetchedAt` so the panel can date what it shows.
+* `/budget/list` and `/health/services` are wired in the client but not yet surfaced: team rows already carry the budget the panels need, so reading budgets separately would have shown the same number twice.
+* Spend attribution relies on LiteLLM request tags (`domain:`, `agent:`, `tab:`). Nothing tags requests yet, so those dimensions are honestly empty and the panel says "no tagged requests yet" instead of implying zero. **Tagging is a Phase 3 prerequisite** — without it the per-domain envelope cannot be real.
+* Four panels share ONE endpoint and one component (`GatewayPanel`, variants `overview | budgets | spend | health`), so four surfaces cost one round trip to LiteLLM.
+* The agent model picker was **refactored onto** the shared client rather than rebuilt: it already read `/model/info` live, so the acceptance criterion held; the duplicate fetch/timeout/Bearer logic is gone.
+* Removed with the old page: `/api/gateway/usage`, `tabs/monitoring/lib/gateway-usage.ts` and its test — the page was their only caller. `/api/gateway` stays; the Components page uses it.
+
+**Not done, deliberately:** no writes to LiteLLM. Phase 2 is read-only.
+
+### Original scope
+
+
 
 **Files:** `os-ui/core/infra/litellm-admin.ts` (typed read client), `os-ui/tabs/admin/lib/gateway-mirror.ts` (cache + drift), `os-ui/app/api/platform-admin/gateway/route.ts`, panels on `/platform`, `/platform/domains`, `/platform/billing`, `/platform/components`.
 
