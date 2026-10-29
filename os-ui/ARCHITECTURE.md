@@ -108,6 +108,47 @@ Two rules learned the hard way:
   `pathAccess()`, evaluated on every request including sub-resources. Fail-closed — a
   non-admin gets our 403, never the upstream's login form.
 
+## Reading a component back
+
+LiteLLM is the first component the OS treats as a **source of truth it reads**
+rather than a thing it configures. The pattern is worth copying, because the
+temptation with any component is to keep a second copy of its state in the OS
+and let the two drift.
+
+The read path is four layers, each with one job:
+
+```
+core/infra/litellm-admin.ts      IO only. Bearer key, timeout, envelope shapes.
+  tabs/admin/lib/gateway-mirror  Rules only. Pure mapping, drift, attribution.
+    app/api/platform-admin/gateway   Gate only. adminCtx(), one endpoint.
+      tabs/admin/ui/GatewayPanel     Render only. Four variants, one fetch.
+```
+
+Three rules make this honest, and all three are enforced by tests rather than
+by convention:
+
+1. **A read of a dependency is not an exception.** The client returns a result
+   type, never throws, and always carries a timeout. An unreachable component is
+   an expected state of the system, so it must be representable in the type.
+2. **Degrade with a date, never with a zero.** A failed read serves the last
+   good mirror with its *original* timestamp plus a `degraded` flag. An empty
+   answer and an unreachable component are different facts and must look
+   different in the UI.
+3. **Report drift, never adopt it.** Anything that exists in the component with
+   no OS counterpart is listed as unmanaged. The OS does not reconcile behind
+   the admin's back, because a surprise write to a shared component is worse
+   than a surprise gap in a list.
+
+The mapping layer is a **pure function** taking the raw reads, the OS-side
+counterparts and the clock. That is what lets every rule above be tested with
+no network and no timing, and it is the reason the IO shell stays small enough
+to read in one sitting.
+
+Direction of truth is deliberately one-way here: the OS owns identity and
+policy, the component is the enforcement point and the ledger, and the OS reads
+only the second half. When a write path arrives it goes in its own module, so a
+reviewer can tell from the file list alone which code can change the component.
+
 ## Generated documentation
 
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,
