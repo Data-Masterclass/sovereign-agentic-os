@@ -10,6 +10,14 @@ RUN pip install --no-cache-dir \
       "dagster-webserver==1.13.11" \
       "dagster-graphql==1.13.11" \
       "dagster-postgres==0.29.11" \
+      # slim base carries no driver at all, so the webserver and daemon crashed on
+      # connection handling closes the connection before the first query.
+      # The slim base ships NO Postgres driver, so the webserver and daemon both
+      # crashed on boot — which is why Dagster shows 0 runs in 90 days. Install
+      # both: dagster-postgres 0.29 builds a `postgresql+psycopg` URL (psycopg v3),
+      # while some code paths still ask for the legacy psycopg2 dialect.
+      "psycopg[binary]>=3.1" \
+      "psycopg2-binary>=2.9" \
       "dagster-k8s==0.29.11" \
       "dagster-dbt==0.29.11" \
       "dbt-core>=1.8,<1.10" \

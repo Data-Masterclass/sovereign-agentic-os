@@ -77,12 +77,12 @@ langfuse:
         limits:   { cpu: 1,    memory: 1Gi }
 
 litellm:
-  # The chart's init container (config render + DB migration wait) OOM-killed at
-  # 1Gi on kind — the Node toolchain it runs needs headroom even though the proxy
-  # itself is small. 2Gi is the floor that starts reliably here.
+  # The chart's db-migrate init container runs Prisma (Node) and OOM-killed at
+  # both 1Gi and 2Gi on kind; 3Gi is what actually completes. The proxy container
+  # itself stays small — this ceiling is only ever touched during migration.
   resources:
     requests: { cpu: 100m, memory: 384Mi }
-    limits:   { cpu: 1,    memory: 2Gi }
+    limits:   { cpu: 1,    memory: 3Gi }
 
 osUI:
   resources:
@@ -92,6 +92,9 @@ osUI:
   # forces a real email + password on first sign-in.
   allowOfflineUserSeed: true
   usersSeed: ""
+  # Show the whole OS locally. Unset would fall back to the 10-key base tier and
+  # hide Data/Files/Knowledge/Metrics/Dashboards/Software/Connections/Workflows.
+  enabledTabs: "home,agents,dashboards,software,data,metrics,files,knowledge,connections,monitoring,governance,admin,workflows"
 
 # --------------------------------------------------------------- data + files
 dagster:
