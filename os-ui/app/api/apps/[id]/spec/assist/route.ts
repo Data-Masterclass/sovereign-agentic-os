@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { roleAtLeast } from '@/lib/core/session';
-import { getAppByIdInternal, type App } from '@/lib/experimental/software/apps';
-import { assistantComplete } from '@/lib/assistant/complete';
-import { roleModel } from '@/lib/models/roles';
-import { peekDatasetColumns, peekDatasetMeta } from '@/lib/experimental/data/store';
-import { parseAppSpec, type AppSpec } from '@/lib/experimental/software/appspec/schema';
-import { describeApp } from '@/lib/experimental/software/appspec/describe';
+import { withRoute } from '@core/kernel/route-server';
+import { roleAtLeast } from '@core/kernel/session';
+import { getAppByIdInternal, type App } from '@tabs/software/lib/apps';
+import { assistantComplete } from '@core/runtime/complete';
+import { roleModel } from '@core/models/roles';
+import { peekDatasetColumns, peekDatasetMeta } from '@tabs/data/lib/store';
+import { parseAppSpec, type AppSpec } from '@tabs/software/lib/appspec/schema';
+import { describeApp } from '@tabs/software/lib/appspec/describe';
 import {
   buildAssistPrompt,
   parseAssistedSpec,
@@ -18,7 +18,7 @@ import {
   type GenerateDataset,
   type GenerateGrant,
   type GenerateEpic,
-} from '@/lib/experimental/software/appspec/assist';
+} from '@tabs/software/lib/appspec/assist';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,7 +84,7 @@ export const POST = withRoute<{ id: string }>(async ({ user, params, req }) => {
     { role: 'user', content: prompt.user },
   ];
 
-  const { validateAppSpec } = await import('@/lib/experimental/software/appspec/validate');
+  const { validateAppSpec } = await import('@tabs/software/lib/appspec/validate');
 
   let lastIssues: { path: string; reason: string; fix: string }[] = [];
   for (let attempt = 0; attempt < 2; attempt++) {

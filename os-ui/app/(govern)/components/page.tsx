@@ -4,10 +4,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import PageHeader from '@/components/PageHeader';
-import { useToolWindow } from '@/components/ToolWindowProvider';
-import { useApi } from '@/lib/useApi';
-import { renderMarkdown } from '@/lib/core/markdown';
+import PageHeader from '@core/ui/PageHeader';
+import { useToolWindow } from '@core/ui/ToolWindowProvider';
+import { useApi } from '@core/ui/useApi';
+import { renderMarkdown } from '@core/kernel/markdown';
 
 /**
  * Components — THE one operator surface for the stack (nav consolidation).
@@ -72,13 +72,9 @@ function isUp(status: string) {
 
 /** Same-origin console overlay keys (lib/tool-proxy.ts registry), by component id. */
 const TOOL_KEYS: Record<string, string> = {
-  superset: 'superset',
   langfuse: 'langfuse',
-  openmetadata: 'openmetadata',
   dagster: 'dagster',
-  forgejo: 'forgejo',
   mlflow: 'mlflow',
-  cube: 'cube',
   jupyterhub: 'jupyterhub',
   featureform: 'featureform',
   'opensearch-dashboards': 'opensearch',

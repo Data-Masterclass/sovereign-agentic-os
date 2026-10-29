@@ -2,23 +2,20 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { withRoute } from '@/lib/core/route-server';
-import { decide, getApproval, listApprovals } from '@/lib/governance/approvals';
-import { curateFact, proposeFact } from '@/lib/agents/agent-memory';
-import { trace } from '@/lib/infra/agent-governed';
+import { requireUser } from '@core/kernel/auth';
+import { withRoute } from '@core/kernel/route-server';
+import { decide, getApproval, listApprovals } from '@core/policy/approvals';
+import { curateFact, proposeFact } from '@tabs/agents/lib/agent-memory';
+import { trace } from '@core/infra/agent-governed';
 import {
   applyApprovedCertification,
   type PromotionRequest,
   type CertificationRequest,
-} from '@/lib/experimental/data/store';
-import { publishPromotionLive } from '@/lib/experimental/data/publish-server';
-import { applyApprovedFilePromotion, type FilePromotionRequest } from '@/lib/experimental/files/store';
-import { reindexById } from '@/lib/experimental/files/pipeline-server';
-import { listLineage } from '@/lib/experimental/files/lineage';
-import { pushLineage } from '@/lib/experimental/files/catalog';
-import { onApprovalDecided } from '@/lib/experimental/marketplace';
-import { roleAtLeast } from '@/lib/core/session';
+} from '@tabs/data/lib/store';
+import { publishPromotionLive } from '@tabs/data/lib/publish-server';
+import { applyApprovedFilePromotion, type FilePromotionRequest } from '@tabs/files/lib/store';
+import { reindexById } from '@tabs/files/lib/pipeline-server';
+import { roleAtLeast } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -89,9 +86,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 400 });
     }
   }
-  // A FILE promotion: move dataset→asset, re-govern the object-store prefix + DLS,
-  // and mirror the lineage to OpenMetadata (best-effort). Applied before recording
-  // the decision so a blocked gate leaves the request pending.
+  // A FILE promotion: move dataset→asset and re-govern the object-store prefix + DLS.
+  // Applied before recording the decision so a blocked gate leaves the request pending.
   if (decision === 'approve' && existing.kind === 'file_promote') {
     try {
       const asset = applyApprovedFilePromotion(existing.payload as unknown as FilePromotionRequest, {
@@ -99,8 +95,6 @@ export async function POST(req: Request) {
       });
       applied = `Shared “${asset.name}” with the ${asset.domain} domain (${asset.visibility} asset). It is now searchable for domain members only.`;
       await reindexById(asset.id); // re-index so the hybrid index's DLS metadata follows the new tier/grants
-      const latest = listLineage(asset.id)[0];
-      if (latest) void pushLineage(latest);
     } catch (e) {
       return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 400 });
     }
@@ -128,12 +122,6 @@ export async function POST(req: Request) {
     } else {
       applied = 'Promotion applied.';
     }
-  }
-
-  // Marketplace imports gated by approval: flip the pending grant active/revoked.
-  if (updated.kind === 'marketplace_import') {
-    const grant = await onApprovalDecided(updated.id, decision);
-    if (grant) applied = decision === 'approve' ? `Import grant activated for ${grant.granteeDomain}.` : 'Import request rejected.';
   }
 
   await trace({

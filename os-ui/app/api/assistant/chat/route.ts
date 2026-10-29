@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { roleModel } from '@/lib/models/roles';
-import { requireUser } from '@/lib/core/auth';
-import { mcpTabForPath, runOsAssistant } from '@/lib/assistant/agent-loop';
-import { sanitizePageContext } from '@/lib/assistant/page-context';
-import { AssistantNotConfiguredError } from '@/lib/assistant/complete';
+import { roleModel } from '@core/models/roles';
+import { requireUser } from '@core/kernel/auth';
+import { mcpTabForPath, runOsAssistant } from '@core/runtime/agent-loop';
+import { sanitizePageContext } from '@core/runtime/page-context';
+import { AssistantNotConfiguredError } from '@core/runtime/complete';
 
 export const dynamic = 'force-dynamic';
 

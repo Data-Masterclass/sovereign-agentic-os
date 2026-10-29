@@ -1,40 +1,127 @@
 # =============================================================================
-# kind overlay — local validation only (no STACKIT).
+# values.local.yaml — the laptop profile (kind). Used by `./scripts/os up`.
 # =============================================================================
-# Small resource sizes, single replicas, local object-storage stand-in
-# (SeaweedFS) for STACKIT Object Storage. Layered on top of
-# charts/sovereign-agentic-os/values.yaml.
+# Layered on charts/sovereign-agentic-os/values.yaml. Everything here exists to
+# fit the whole OS on one node with a few GB of RAM: single replicas, small
+# requests (limits stay generous so a burst is not throttled), no TLS, no
+# cert-manager, no ingress controller — the UI is reached through the kind port
+# mapping 8080 -> os-ui NodePort 30080.
 #
-#   helm install agentic-os charts/sovereign-agentic-os \
-#     -n agentic-os --create-namespace -f values.local.yaml
+# Production uses the SAME chart with values.stackit-managed.yaml instead.
 # =============================================================================
 
 global:
   profile: local
-  storageClass: "standard"   # kind's default StorageClass (rancher local-path)
+  storageClass: "standard"        # kind's default (rancher local-path)
 
-# Default-deny egress policies are applied (kindnet doesn't enforce them
-# locally; they're validated as applied + are enforced on STACKIT/Cilium).
+# Applied and validated here; kindnet does not enforce them (Cilium does on STACKIT).
 networkPolicies:
   defaultDeny: true
 
-# Component sizing/toggles for kind are added here as each is wired in.
+# ---------------------------------------------------------------- JVM services
+# The three JVM services are what actually decide whether the stack fits.
+opensearch:
+  singleNode: true
+  replicas: 1
+  opensearchJavaOpts: "-Xms512m -Xmx512m"
+  resources:
+    requests: { cpu: 100m, memory: 640Mi }
+    limits:   { cpu: 1,    memory: 1Gi }
 
-# Build-and-toggle (RAM): on a 14 GB VM the full L1+L2 set doesn't all fit
-# (the spec sizes it for a 96 GB STACKIT node). These two are already validated
-# and committed; turned off locally to make room for OpenMetadata. Flip back on
-# (or scale the VM) to run them together. Product defaults (values.yaml) keep
-# them enabled for STACKIT.
+trino:
+  jvm:
+    maxHeap: 1500M
+  query:
+    maxMemory: 1GB
+    maxMemoryPerNode: 512MB
+  resources:
+    requests: { cpu: 200m, memory: 768Mi }
+    limits:   { cpu: 2,    memory: 2Gi }
+
+polaris:
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits:   { cpu: 1,    memory: 768Mi }
+
+# ------------------------------------------------------------------- datastores
+postgres:
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits:   { cpu: 1,   memory: 1Gi }
+
+clickhouse:
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits:   { cpu: 1,    memory: 2Gi }
+
+valkey:
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+
+objectStorage:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 1,    memory: 1Gi }
+
+# ------------------------------------------------------------------- app tier
+langfuse:
+  langfuse:
+    web:
+      resources:
+        requests: { cpu: 100m, memory: 384Mi }
+        limits:   { cpu: 1,    memory: 1Gi }
+    worker:
+      resources:
+        requests: { cpu: 100m, memory: 384Mi }
+        limits:   { cpu: 1,    memory: 1Gi }
+
+litellm:
+  # The chart's db-migrate init container runs Prisma (Node) and OOM-killed at
+  # both 1Gi and 2Gi on kind; 3Gi is what actually completes. The proxy container
+  # itself stays small — this ceiling is only ever touched during migration.
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits:   { cpu: 1,    memory: 3Gi }
+
+osUI:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 2,    memory: 1536Mi }
+  # No external user directory on a laptop: first run bootstraps admin/admin and
+  # forces a real email + password on first sign-in.
+  allowOfflineUserSeed: true
+  usersSeed: ""
+  # Show the whole OS locally. Unset would fall back to the 10-key base tier and
+  # hide Data/Files/Knowledge/Metrics/Dashboards/Software/Connections/Workflows.
+  enabledTabs: "home,agents,dashboards,software,data,metrics,files,knowledge,connections,monitoring,governance,admin,workflows"
+
+# --------------------------------------------------------------- data + files
+dagster:
+  dagsterWebserver:
+    resources:
+      requests: { cpu: 50m, memory: 192Mi }
+      limits:   { cpu: 1,   memory: 512Mi }
+  dagsterDaemon:
+    resources:
+      requests: { cpu: 50m, memory: 192Mi }
+      limits:   { cpu: 1,   memory: 512Mi }
+
+dataRunner:
+  resources:
+    requests: { cpu: 50m, memory: 192Mi }
+    limits:   { cpu: 1,   memory: 1Gi }
+
+queryTool:
+  resources:
+    requests: { cpu: 50m, memory: 192Mi }
+    limits:   { cpu: 1,   memory: 768Mi }
+
 docling:
-  enabled: false
-osdashboards:
-  enabled: false
-# OpenMetadata (~2.5 GB) toggled off locally to make room for Layer 3 (Superset
-# etc.). Validated + committed earlier; product default keeps it on for STACKIT.
-openmetadata:
-  enabled: false
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits:   { cpu: 2,    memory: 2Gi }
 
-# In-cluster mail (maddy MTA) is a STACKIT-only surface (needs real DNS + a
-# static egress IP/PTR to deliver). Explicitly OFF for kind — renders 0 objects.
-mail:
+# No public DNS on a laptop: no ingress, no cert-manager, no TLS.
+ingress:
   enabled: false

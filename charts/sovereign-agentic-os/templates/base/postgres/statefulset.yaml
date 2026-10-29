@@ -110,10 +110,6 @@ kind: StatefulSet
 metadata:
   name: {{ $pg.clusterName }}
   namespace: {{ .Release.Namespace }}
-  annotations:
-    {{- /* Wave 0 — the database is the very first thing to come up (matches the
-           CNPG cluster.yaml so the plain default engine is orchestrated too). */}}
-    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "infra") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}

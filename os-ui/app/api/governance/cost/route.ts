@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { errorResponse } from '@/lib/core/route-server';
-import { listCaps, setCap, type CapScope } from '@/lib/governance/cost';
-import { record as audit } from '@/lib/governance/audit';
-import { roleAtLeast } from '@/lib/core/session';
+import { requireUser } from '@core/kernel/auth';
+import { errorResponse } from '@core/kernel/route-server';
+import { listCaps, setCap, type CapScope } from '@core/policy/cost';
+import { record as audit } from '@core/policy/audit';
+import { roleAtLeast } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 

@@ -6,22 +6,22 @@
 import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import PageHeader from '@/components/PageHeader';
-import BusyProgress from '@/components/core/BusyProgress';
-import { useApi } from '@/lib/useApi';
-import { useUser } from '@/lib/useUser';
-import { roleAtLeast } from '@/lib/core/session';
-import { SCOPE_GROUPS, groupsFromVisibility, tilesForScope, activeScopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@/lib/core/scopes';
-import { itemsUnderFolder, normaliseFolderPath, folderName, type FolderPathNode } from '@/lib/core/folders';
-import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
-import FolderLayout from '@/components/core/FolderLayout';
-import { ensureFolderId, renamedPath } from '@/lib/folders/client';
-import { useFolders } from '@/lib/folders/useFolders';
-import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
-import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
-import LifecycleActions from '@/components/lifecycle/LifecycleActions';
-import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
-import DomainTag from '@/components/DomainTag';
+import PageHeader from '@core/ui/PageHeader';
+import BusyProgress from '@core/ui/core/BusyProgress';
+import { useApi } from '@core/ui/useApi';
+import { useUser } from '@core/ui/useUser';
+import { roleAtLeast } from '@core/kernel/session';
+import { SCOPE_GROUPS, groupsFromVisibility, tilesForScope, activeScopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@core/kernel/scopes';
+import { itemsUnderFolder, normaliseFolderPath, folderName, type FolderPathNode } from '@core/kernel/folders';
+import FolderTree, { FolderPickerModal, type FolderRef } from '@core/ui/core/FolderTree';
+import FolderLayout from '@core/ui/core/FolderLayout';
+import { ensureFolderId, renamedPath } from '@core/folders/client';
+import { useFolders } from '@core/folders/useFolders';
+import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
+import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
+import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
+import type { Visibility as LcVisibility } from '@core/kernel/lifecycle';
+import DomainTag from '@core/ui/DomainTag';
 
 type Visibility = 'Personal' | 'Shared' | 'Certified';
 type AppItem = {
@@ -117,7 +117,7 @@ function versionLabel(releases: number): string {
  * Software — the simple, chat-centric start screen. One page: a big home-style
  * "Create new software app" launcher, then the viewer's own running apps as
  * clean tiles, organised into FOLDERS (parity with Data / Metrics). Create
- * scaffolds a sovereign in-cluster Forgejo repo and drops you straight into the
+ * scaffolds the app’s starting source tree and drops you straight into the
  * build chat + editor (`/software/{id}?mode=edit`).
  *
  * The inner component uses `useConfirm`, so it must render INSIDE the
@@ -139,7 +139,7 @@ function SoftwareInner() {
   const [template, setTemplate] = useState('sovereign-app');
   // AppSpec Phase 4a: choose the SERVING KIND. 'spec' = declarative no-code (the recommended
   // default — assemble it in Build by picking patterns + mapping governed data, served same-origin
-  // with no pod). 'code' = the advanced coded path (a Forgejo repo + CI + image the agent builds).
+  // with no pod). 'code' = the advanced coded path (a generated source tree + an image the agent builds).
   const [kind, setKind] = useState<'spec' | 'code'>('spec');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
@@ -172,7 +172,7 @@ function SoftwareInner() {
         setCreating(false);
         return;
       }
-      // A Forgejo repo is auto-provisioned in-cluster; go build it.
+      // The starting source tree is scaffolded; go build it.
       reload();
       router.push(`/software/${body.app.id}?mode=edit`);
     } catch (e) {
@@ -397,7 +397,7 @@ function SoftwareInner() {
 
   return (
     <>
-      <PageHeader title="Software" crumb="build, chat, deploy — sovereign" tutorial="software" />
+      <PageHeader title="Software" crumb="build, chat, deploy — sovereign" />
       <div className="content sw">
         {/* The big, home-style create launcher. */}
         <div className={`sw-create${open ? ' is-open' : ''}`}>
@@ -410,7 +410,7 @@ function SoftwareInner() {
                 <div className="sw-create-sub">
                   {kind === 'spec'
                     ? 'Assemble it in Build by picking patterns and mapping your governed data — no code. Served instantly, same-origin, with no repo or pipeline.'
-                    : 'Describe it in chat; the agent writes the code, commits to its own in-cluster Forgejo repo, and ships it. No accounts, no tokens — your code never leaves.'}
+                    : 'Describe it in chat; the agent writes the code into the app’s own governed file store and ships it. No accounts, no tokens — your code never leaves.'}
                 </div>
               </div>
             </div>
@@ -451,7 +451,7 @@ function SoftwareInner() {
               >
                 {([
                   { k: 'spec' as const, label: 'Declarative app (no-code · recommended)', blurb: 'Assemble it in Build by picking patterns and mapping your governed data. Served instantly — no repo, no pipeline, no code.' },
-                  { k: 'code' as const, label: 'Coded app (advanced)', blurb: 'The agent writes real code into an in-cluster Forgejo repo and ships an image. Full control; more moving parts.' },
+                  { k: 'code' as const, label: 'Coded app (advanced)', blurb: 'The agent writes real code into the app’s governed file store and ships an image. Full control; more moving parts.' },
                 ]).map((opt) => {
                   const active = kind === opt.k;
                   return (
@@ -524,7 +524,7 @@ function SoftwareInner() {
               </div>
               {/* While the create runs, mirror the OS-wide core progress surface (as on a
                   metric/dashboard save): one honest live step + elapsed. The route is a
-                  single request that provisions the app's Forgejo repo, sets the registry
+                  single request that provisions the app's source tree, sets the registry
                   secret and seeds the scaffold server-side — there are no streamed
                   sub-milestones to observe, so we name what the server is doing rather than
                   fake checkmarks. */}
@@ -533,14 +533,14 @@ function SoftwareInner() {
                   label={`Creating ${name.trim() || 'your app'}`}
                   detail={kind === 'spec'
                     ? 'Registering the app and its governed MCP — no repo or pipeline for a declarative app'
-                    : 'Provisioning its in-cluster Forgejo repository, wiring the build pipeline and seeding the scaffold'}
+                    : 'Provisioning its governed file store and seeding the scaffold'}
                   typicalSeconds={kind === 'spec' ? 6 : 20}
                 />
               ) : null}
               <p className="sw-create-note">
                 {kind === 'spec'
                   ? 'No repo, pipeline or code — you compose the app from patterns in Build and it’s served the moment you save. You can grant it governed data, metrics and agents in Choose Context.'
-                  : 'The template only sets the starting point — describe the rest in chat and the build agent takes it from there. A sovereign Forgejo repo is created in-cluster; if git isn’t ready yet you can still build in honest offline mode.'}
+                  : 'The template only sets the starting point — describe the rest in chat and the build agent takes it from there. The app’s source lives in the OS itself — no external git account, no tokens.'}
               </p>
               {error ? <div className="error" style={{ marginTop: 10 }}>{error}</div> : null}
             </div>

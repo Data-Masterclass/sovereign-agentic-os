@@ -2,16 +2,16 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { authorize, queryRun, trace } from '@/lib/infra/governed';
+import { requireUser } from '@core/kernel/auth';
+import { authorize, queryRun, trace } from '@core/infra/governed';
 import {
   privatePrefix,
   pullExtract,
   promotePlan,
   type PersonalDataset,
-} from '@/lib/experimental/data/personal-lane';
-import { listPersonalTables, landGridAsBronze } from '@/lib/experimental/data/ingest';
-import { stepperStages } from '@/lib/experimental/data/panels';
+} from '@tabs/data/lib/personal-lane';
+import { listPersonalTables, landGridAsBronze } from '@tabs/data/lib/ingest';
+import { stepperStages } from '@tabs/data/lib/panels';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +22,7 @@ export const dynamic = 'force-dynamic';
  * no separate personal query engine.
  *   - upload        : a file lands a real iceberg.personal_<uid> table (multipart route)
  *   - pull-extract  : runs THROUGH Trino (OPA-masked) -> a private extract
- *   - promote       : the ONLY path to shared — dbt-trino writes Iceberg + OM
+ *   - promote       : the ONLY path to shared — dbt-trino writes Iceberg
  */
 
 // Per-user in-process store (best-effort; mirrors the artifact-registry pattern).
@@ -140,7 +140,7 @@ export async function POST(req: Request) {
         owner: user.id,
         visibility: body.visibility || 'shared',
       });
-      // Scaffold: hand to the governed lane (dbt-trino + OpenMetadata). The actual
+      // Scaffold: hand to the governed lane (dbt-trino). The actual
       // build is the dbt-build path; here we return the plan to review/confirm.
       return NextResponse.json({ ok: true, scaffolded: true, plan });
     }

@@ -11,8 +11,6 @@ kind: Deployment
 metadata:
   name: query-tool
   namespace: {{ .Release.Namespace }}
-  annotations:
-    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "query-tool") | nindent 4 }}

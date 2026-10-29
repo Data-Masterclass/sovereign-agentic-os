@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { signMcpToken } from '@/lib/mcp/token';
-import { config } from '@/lib/core/config';
+import { withRoute } from '@core/kernel/route-server';
+import { signMcpToken } from '@core/mcp/token';
+import { config } from '@core/kernel/config';
 
 export const dynamic = 'force-dynamic';
 

@@ -2,17 +2,17 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { runPhaseTurn } from '@/lib/agents/build/agentic-graph-server';
-import { SOFTWARE_TEAM_YAML } from '@/lib/agents/software-team';
+import { requireUser } from '@core/kernel/auth';
+import { runPhaseTurn } from '@tabs/agents/lib/build/agentic-graph-server';
+import { SOFTWARE_TEAM_YAML } from '@tabs/agents/lib/software-team';
 import {
   classifyTeamError,
   getSession,
   resetSession,
   preRoute,
   lastUserText,
-} from '@/lib/agents/build/phase-router';
-import { cleanTurns } from '@/lib/assistant/turns';
+} from '@tabs/agents/lib/build/phase-router';
+import { cleanTurns } from '@core/runtime/turns';
 
 export const dynamic = 'force-dynamic';
 // The phase router runs ONE role-agent per turn; a 235B PLAN call can still take

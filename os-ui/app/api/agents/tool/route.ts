@@ -10,13 +10,13 @@ import {
   SALES,
   type DlsPrincipal,
   type ToolName,
-} from '@/lib/infra/agent-governed';
-import { grantsForDurable } from '@/lib/infra/app-registry';
-import { realOpa } from '@/lib/agents/build/live-clients';
-import { principalFor, type GovernedToolResponse } from '@/lib/agents/build/runtime-contract';
-import { runtimeTokenOk } from '@/lib/agents/build/runtime-auth';
-import { ensureHydrated, systemForScheduler } from '@/lib/agents/store';
-import { registerDurableAgentGrantResolver } from '@/lib/agents/build/grant-rehydrate';
+} from '@core/infra/agent-governed';
+import { grantsForDurable } from '@core/infra/app-registry';
+import { realOpa } from '@tabs/agents/lib/build/live-clients';
+import { principalFor, type GovernedToolResponse } from '@tabs/agents/lib/build/runtime-contract';
+import { runtimeTokenOk } from '@tabs/agents/lib/build/runtime-auth';
+import { ensureHydrated, systemForScheduler } from '@tabs/agents/lib/store';
+import { registerDurableAgentGrantResolver } from '@tabs/agents/lib/build/grant-rehydrate';
 
 export const dynamic = 'force-dynamic';
 

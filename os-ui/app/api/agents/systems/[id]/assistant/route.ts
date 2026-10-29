@@ -2,23 +2,23 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { withRoute } from '@/lib/core/route-server';
-import { getSystem, readFile, writeFile } from '@/lib/agents/store';
-import { serializeSystem, SystemError, type System } from '@/lib/agents/system-schema';
-import { applyInstruction, scaffoldSystem, type InstructionResult } from '@/lib/agents/assistant';
-import { buildCatalog } from '@/lib/agents/tool-catalog';
-import { assistantComplete } from '@/lib/assistant/complete';
-import { parseJsonReply } from '@/lib/assistant/json-reply';
-import { roleModel } from '@/lib/models/roles';
-import { failResponse } from '@/lib/assistant/stage-route';
-import { proposeTeam } from '@/lib/agents/propose-team';
-import { resolveSystemGrounding } from '@/lib/agents/grounding';
+import { requireUser } from '@core/kernel/auth';
+import { withRoute } from '@core/kernel/route-server';
+import { getSystem, readFile, writeFile } from '@tabs/agents/lib/store';
+import { serializeSystem, SystemError, type System } from '@tabs/agents/lib/system-schema';
+import { applyInstruction, scaffoldSystem, type InstructionResult } from '@tabs/agents/lib/assistant';
+import { buildCatalog } from '@tabs/agents/lib/tool-catalog';
+import { assistantComplete } from '@core/runtime/complete';
+import { parseJsonReply } from '@core/runtime/json-reply';
+import { roleModel } from '@core/models/roles';
+import { failResponse } from '@core/runtime/stage-route';
+import { proposeTeam } from '@tabs/agents/lib/propose-team';
+import { resolveSystemGrounding } from '@tabs/agents/lib/grounding';
 import {
   normalizeAgentAssistantReply,
   AGENT_GRANT_KINDS,
-} from '@/lib/agents/assistant-suggestions';
-import type { Role } from '@/lib/core/session';
+} from '@tabs/agents/lib/assistant-suggestions';
+import type { Role } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,8 +27,8 @@ export const dynamic = 'force-dynamic';
  *
  *  1. legacy `{ instruction }` — the original one-shot scaffold: it edits the SAME
  *     system.yaml the canvas/Monaco edit and commits it through the store's whitelisted,
- *     sha-checked write, so the result is identical to the manual path (tutorial + MCP
- *     callers depend on this — UNCHANGED).
+ *     sha-checked write, so the result is identical to the manual path (MCP callers
+ *     depend on this — UNCHANGED).
  *
  *  2. chat `{ stage, messages }` — the per-stage assistant (Define · Grant · Design ·
  *     Build · Run · Evaluate). Runs the ONE governed model (`assistantComplete`:
@@ -136,7 +136,7 @@ function systemFor(stage: Stage): string {
         'You NEVER mutate anything. You only suggest; the user clicks Apply to accept.',
         'Respond with STRICT JSON only (no prose outside it, no code fences), matching:',
         '{ "message": string (markdown),',
-        '  "suggestedGrants"?: [ { "kind": "data"|"knowledge"|"files"|"connections"|"metric"|"operating-manual"|"strategy"|"big-bets", "id": exact id from the grantable list, "access"?: "read-only"|"read-propose"|"read-write", "reason": short why } ] }',
+        '  "suggestedGrants"?: [ { "kind": "data"|"knowledge"|"files"|"connections"|"metric"|"operating-manual", "id": exact id from the grantable list, "access"?: "read-only"|"read-propose"|"read-write", "reason": short why } ] }',
         'Only propose grants whose id appears in the grantable list. Prefer read-only unless the goal clearly needs writes. If nothing fits, omit the field.',
       ].join('\n');
     case 'design':
@@ -192,7 +192,7 @@ function groundingDigest(ctx: Awaited<ReturnType<typeof resolveSystemGrounding>>
 
 /** The grantable-context digest for the Grant stage — the caller's DLS-scoped grantable set, by id. */
 async function grantableDigest(systemId: string, user: Parameters<typeof resolveSystemGrounding>[1]): Promise<string> {
-  const { listGrantableForKinds } = await import('@/lib/agents/grantable');
+  const { listGrantableForKinds } = await import('@tabs/agents/lib/grantable');
   const groups = await listGrantableForKinds(systemId, user, AGENT_GRANT_KINDS);
   const lines: string[] = [];
   for (const kind of AGENT_GRANT_KINDS) {

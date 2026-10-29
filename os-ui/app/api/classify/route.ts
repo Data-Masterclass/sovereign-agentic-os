@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/core/config';
-import { withRoute } from '@/lib/core/route-server';
+import { config } from '@core/kernel/config';
+import { withRoute } from '@core/kernel/route-server';
 
 export const dynamic = 'force-dynamic';
 

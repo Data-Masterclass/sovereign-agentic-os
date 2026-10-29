@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import PageHeader from '@/components/PageHeader';
+import PageHeader from '@core/ui/PageHeader';
 
 type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';
 type Status = 'active' | 'invited' | 'deactivated';

@@ -2,12 +2,12 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser, type CurrentUser } from '@/lib/core/auth';
-import { failResponse, runStageAssistant } from '@/lib/assistant/stage-route';
-import { listMetrics } from '@/lib/experimental/metrics/store';
-import { narrowCubeMeta, type RegistryViewDims } from '@/lib/experimental/dashboards/cube-meta';
-import { listDatasets, getDataset } from '@/lib/experimental/data/store';
-import { cubeViewName, registryDimensionMembers } from '@/lib/experimental/data/metrics';
+import { requireUser, type CurrentUser } from '@core/kernel/auth';
+import { failResponse, runStageAssistant } from '@core/runtime/stage-route';
+import { listMetrics } from '@tabs/metrics/lib/store';
+import { panelViewsFor, type RegistryViewDims } from '@tabs/dashboards/lib/panel-views';
+import { listDatasets, getDataset } from '@tabs/data/lib/store';
+import { viewName, registryDimensionMembers } from '@tabs/data/lib/metrics';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +27,7 @@ type Stage = 'define' | 'design' | 'build' | 'view' | 'govern';
 const STAGES = new Set<Stage>(['define', 'design', 'build', 'view', 'govern']);
 
 /** The governed dimension members of ONE view the caller may see (the same registry
- *  narrowing as /api/dashboards/cube-meta), so the Design assistant can propose
+ *  narrowing as /api/dashboards/views), so the Design assistant can propose
  *  GROUP-BY charts instead of only scalar tiles (Northpeak fix: a bar with no
  *  dimension collapses to a single bar). Enumerates EVERY dataset the caller can
  *  see — personal datasets carry metrics too (Phase 1). */
@@ -41,10 +41,10 @@ async function designDimensionsFor(user: CurrentUser, view: string): Promise<str
     for (const s of [...dsGroups.mine, ...dsGroups.domain, ...dsGroups.marketplace]) {
       try {
         const d = getDataset(s.id, user);
-        registryDims.set(cubeViewName(d), registryDimensionMembers(d));
+        registryDims.set(viewName(d), registryDimensionMembers(d));
       } catch { /* vanished between list and get → skip */ }
     }
-    const v = narrowCubeMeta(members, [], registryDims).find((x) => x.view === view);
+    const v = panelViewsFor(members, registryDims).find((x) => x.view === view);
     return v ? [...v.dimensions, ...v.timeDimensions] : [];
   } catch {
     return []; // dimension enrichment is additive — never fail the assistant for it
@@ -67,15 +67,15 @@ function promptFor(stage: Stage, body: Record<string, unknown>, designDims: stri
       return {
         json: false,
         system:
-          'You help a business user start a dashboard on governed BI metrics. Given their goal and the list of available Cube views, recommend ONE view to bind the dashboard to and 3-4 starter charts to draw from it. Be concise: one short paragraph, then a bullet list of the starter charts. Do not invent view or member names not in the provided list.',
-        user: `Goal: ${prompt || '(none given)'}\nAvailable Cube views: ${members.join(', ') || '(none)'}\nSuggest one view and starter charts.`,
+          'You help a business user start a dashboard on governed BI metrics. Given their goal and the list of available governed views, recommend ONE view to bind the dashboard to and 3-4 starter charts to draw from it. Be concise: one short paragraph, then a bullet list of the starter charts. Do not invent view or member names not in the provided list.',
+        user: `Goal: ${prompt || '(none given)'}\nAvailable governed views: ${members.join(', ') || '(none)'}\nSuggest one view and starter charts.`,
       };
     case 'design':
       return {
         json: true,
         system:
-          'You design dashboard chart tiles over a SINGLE governed Cube view. Return ONLY a JSON array (no prose, no code fences) of chart objects: {"name": string, "vizType": one of "big_number_total"|"line"|"bar"|"pie"|"table", "metric": one of the provided measure member ids, "dimensions": OPTIONAL array of ONE dimension member id from the provided dimensions list (the group-by for a bar/pie — a bar or pie without a dimension collapses to a single meaningless bar, so ALWAYS set one when dimensions are available)}. Prefer a big_number_total per key measure, a line trend for the primary measure, and a bar or pie grouped by a categorical dimension. Use only member ids from the provided lists — never invent one. 3-6 charts.',
-        user: `Cube view: ${view || '(unknown)'}\nAvailable measures: ${members.join(', ') || '(none)'}\nAvailable dimensions: ${designDims.join(', ') || '(none)'}\nGoal (optional): ${prompt}\nReturn the JSON chart array.`,
+          'You design dashboard chart tiles over a SINGLE governed metric view. Return ONLY a JSON array (no prose, no code fences) of chart objects: {"name": string, "vizType": one of "big_number_total"|"line"|"bar"|"pie"|"table", "metric": one of the provided measure member ids, "dimensions": OPTIONAL array of ONE dimension member id from the provided dimensions list (the group-by for a bar/pie — a bar or pie without a dimension collapses to a single meaningless bar, so ALWAYS set one when dimensions are available)}. Prefer a big_number_total per key measure, a line trend for the primary measure, and a bar or pie grouped by a categorical dimension. Use only member ids from the provided lists — never invent one. 3-6 charts.',
+        user: `Governed view: ${view || '(unknown)'}\nAvailable measures: ${members.join(', ') || '(none)'}\nAvailable dimensions: ${designDims.join(', ') || '(none)'}\nGoal (optional): ${prompt}\nReturn the JSON chart array.`,
       };
     case 'build':
       return {
@@ -96,7 +96,7 @@ function promptFor(stage: Stage, body: Record<string, unknown>, designDims: stri
         json: false,
         system:
           'You draft a short, honest promotion justification for a dashboard moving up a governance tier (Personal → Domain → Company). 2-3 sentences: what it shows, who it serves, why it is ready to share. No hype.',
-        user: `Dashboard: ${name || '(unnamed)'} on Cube view ${view || '(unknown)'}, currently ${tier || 'Personal'} tier. Draft a promotion justification.`,
+        user: `Dashboard: ${name || '(unnamed)'} on governed view ${view || '(unknown)'}, currently ${tier || 'Personal'} tier. Draft a promotion justification.`,
       };
   }
 }

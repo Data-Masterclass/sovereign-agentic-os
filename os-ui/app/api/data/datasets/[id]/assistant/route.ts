@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { failResponse, runStageAssistant } from '@/lib/assistant/stage-route';
+import { requireUser } from '@core/kernel/auth';
+import { failResponse, runStageAssistant } from '@core/runtime/stage-route';
 
 export const dynamic = 'force-dynamic';
 

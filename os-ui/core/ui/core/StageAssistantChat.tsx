@@ -1,0 +1,539 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import Markdown from '@core/ui/Markdown';
+import type {
+  StageSuggestions,
+  SuggestedGrant,
+  SuggestedEpic,
+  SuggestedStoriesForEpic,
+  SuggestedEpicRequirements,
+} from '@tabs/software/lib/assistant-suggestions';
+import type { StorySpec } from '@tabs/software/lib/story-spec';
+import type { SuggestedDataset } from '@tabs/software/lib/data-plan';
+
+/** A next-step the host can offer at the foot of the thread (never a dead end). */
+export type NextStep = { label: string; prompt?: string; onClick?: () => void };
+
+/**
+ * StageAssistantChat — the ONE reusable, governed assistant CHAT panel any guided stage
+ * can mount. It replaces the old one-shot StageAssistant stub with a real conversation:
+ *
+ *   • a visible thread of user + assistant turns, assistant replies rendered as MARKDOWN
+ *     (reuses the OS `<Markdown>` renderer — no new dep, no raw markdown leaking through);
+ *   • a message input + Send that POSTs the running thread to the stage assistant route;
+ *   • structured SUGGESTION CARDS returned by the route, each with an Apply button that
+ *     invokes a host callback — the host applies it locally + persists through its own
+ *     governed path. The assistant only suggests; this component never mutates anything.
+ *
+ * Honest states: a busy spinner while awaiting; a 503/402/4xx surfaced plainly as the
+ * route's own error; an empty thread invites the first question. Governance stays in the
+ * route — this is presentation + fetch only.
+ *
+ * Controlled by the host via `onApply*` callbacks; it holds only local chat state.
+ */
+
+type Turn = { role: 'user' | 'assistant'; content: string };
+
+export default function StageAssistantChat({
+  appId,
+  stage,
+  endpoint,
+  intro,
+  starters = [],
+  onApplyPurpose,
+  onApplyGrants,
+  onApplyEpics,
+  onApplyStories,
+  onApplyEpicRequirements,
+  onApplySpec,
+  specTargetLabel,
+  onApplyImprovements,
+  renderDataPlan,
+  renderSuggestions,
+  nextSteps = [],
+  autoFirePrompt,
+}: {
+  /** The app the assistant reads under the caller's governance (server-side). */
+  appId: string;
+  /** The guided stage — routed to the stage-scoped prompt server-side. */
+  stage: string;
+  /**
+   * The assistant POST endpoint. Defaults to the Software route so `SoftwareBuilder`'s
+   * existing mounts are UNCHANGED; a host tab (e.g. Agents) passes its own route so the
+   * SAME chat chrome drives a different governed assistant.
+   */
+  endpoint?: string;
+  /** A one-line "what this helper does here", shown above the thread. */
+  intro: string;
+  /** Optional quick-start prompts shown when the thread is empty. */
+  starters?: string[];
+  /** Define: adopt an improved purpose (host shows it as a confirmable draft). */
+  onApplyPurpose?: (purpose: string) => void;
+  /** Define: fold suggested grants into the ContextGrants value. */
+  onApplyGrants?: (grants: SuggestedGrant[]) => void;
+  /** Design: create whole suggested epics. */
+  onApplyEpics?: (epics: SuggestedEpic[]) => void;
+  /** Design: add suggested stories under existing epics. */
+  onApplyStories?: (groups: SuggestedStoriesForEpic[]) => void;
+  /** Design: fill in requirements (technical/ux/governance) on existing epics. */
+  onApplyEpicRequirements?: (groups: SuggestedEpicRequirements[]) => void;
+  /** Design (spec mode): fold a suggested spec into the selected story's spec. */
+  onApplySpec?: (spec: Partial<StorySpec>) => void;
+  /** Design (spec mode): the story the spec suggestion applies to (shown on the card). */
+  specTargetLabel?: string;
+  /** Test: turn the verifier's suggested improvements into pending Build-tree items. */
+  onApplyImprovements?: (improvements: NonNullable<StageSuggestions['suggestedImprovements']>) => void;
+  /**
+   * Design (data plan): render the CREATE-NEW dataset resolution surface for the proposed
+   * `suggestedDatasets`. A render-prop (not a coupled component) so this core chat stays
+   * decoupled from the Software data-plan panel — the host supplies the self-contained
+   * `DataPlanPanel`. `dismiss` drops the plan card locally.
+   */
+  renderDataPlan?: (datasets: SuggestedDataset[], dismiss: () => void) => React.ReactNode;
+  /**
+   * A host render-prop that REPLACES the built-in Software suggestion cards with the host's
+   * own (e.g. Agents' proposed-team / grant / instruction cards). It receives the raw
+   * `suggestions` object the route returned plus a `dismiss(key)` that clears one field
+   * locally. When supplied, the built-in Software cards are NOT rendered — so the software
+   * defaults stay only for callers that don't pass this. Return null to render nothing.
+   */
+  renderSuggestions?: (
+    suggestions: Record<string, unknown>,
+    helpers: { dismiss: (key: string) => void; SuggestionCard: typeof SuggestionCard },
+  ) => React.ReactNode;
+  /**
+   * Host-supplied NEXT STEPS shown at the foot of the thread so the assistant is never a
+   * dead end: each either seeds a follow-up prompt (asks the assistant to draft the next
+   * artifact) or runs a host action (e.g. jump to Build). Computed by the host from the
+   * live design state, so they always point at what to do next.
+   */
+  nextSteps?: NextStep[];
+  /**
+   * When set, the assistant PROACTIVELY sends this prompt ONCE on entry (ref-guarded, keyed
+   * by `stage`), so helpful suggestions appear the moment the user lands on a stage — no
+   * click needed. Non-blocking: it just seeds the first turn as if the user asked; any
+   * failure surfaces the route's own error and the thread is still fully usable. Change the
+   * key by changing `stage` and it will fire again for the new stage. Undefined = no auto-fire.
+   */
+  autoFirePrompt?: string;
+}) {
+  const [thread, setThread] = useState<Turn[]>([]);
+  const [suggestions, setSuggestions] = useState<StageSuggestions>({});
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const send = useCallback(
+    async (text: string) => {
+      const q = text.trim();
+      if (!q || busy) return;
+      const nextThread: Turn[] = [...thread, { role: 'user', content: q }];
+      setThread(nextThread);
+      setInput('');
+      setError('');
+      setSuggestions({});
+      setBusy(true);
+      try {
+        const res = await fetch(endpoint ?? `/api/apps/${appId}/assistant`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ stage, messages: nextThread }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          message?: string;
+          suggestions?: StageSuggestions;
+          error?: string;
+        };
+        if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+        setThread((t) => [...t, { role: 'assistant', content: data.message ?? '' }]);
+        setSuggestions(data.suggestions ?? {});
+        // Scroll the thread to the latest turn.
+        requestAnimationFrame(() => {
+          if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        });
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [appId, stage, endpoint, thread, busy],
+  );
+
+  // Proactive auto-suggest on stage ENTRY: fire the host's prompt ONCE per stage, guarded
+  // by a ref keyed on `stage`, and only into an EMPTY thread (never interrupt a live chat).
+  // Non-blocking + dismissible (the returned suggestions/thread behave like any other turn).
+  const firedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!autoFirePrompt) return;
+    if (firedForRef.current === stage) return;
+    if (thread.length > 0 || busy) return;
+    firedForRef.current = stage;
+    void send(autoFirePrompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, autoFirePrompt]);
+
+  // Host-supplied suggestion rendering takes over entirely when provided (Agents' own
+  // cards). `dismissKey` clears one field of the raw suggestions object locally.
+  const dismissKey = useCallback((key: string) => {
+    setSuggestions((s) => ({ ...(s as Record<string, unknown>), [key]: undefined }) as StageSuggestions);
+  }, []);
+  const hostSuggestions = renderSuggestions
+    ? renderSuggestions(suggestions as Record<string, unknown>, { dismiss: dismissKey, SuggestionCard })
+    : null;
+
+  const hasSuggestions =
+    !!suggestions.improvedPurpose ||
+    (suggestions.suggestedGrants?.length ?? 0) > 0 ||
+    (suggestions.suggestedEpics?.length ?? 0) > 0 ||
+    (suggestions.suggestedStories?.length ?? 0) > 0 ||
+    (suggestions.suggestedEpicRequirements?.length ?? 0) > 0 ||
+    ((suggestions.suggestedSpec?.features?.length ?? 0) +
+      (suggestions.suggestedSpec?.nfrs?.length ?? 0) +
+      (suggestions.suggestedSpec?.rules?.length ?? 0)) > 0 ||
+    ((suggestions.suggestedDatasets?.length ?? 0) > 0 && !!renderDataPlan) ||
+    (suggestions.suggestedImprovements?.length ?? 0) > 0;
+
+  return (
+    <div className="sac">
+      <div className="sac-head">
+        <span className="sac-title">Assistant</span>
+        <span className="sac-intro">{intro}</span>
+      </div>
+
+      <div className="sac-thread" ref={scrollRef}>
+        {thread.length === 0 && !busy ? (
+          <div className="sac-empty">
+            <p className="hint" style={{ margin: 0 }}>Ask the assistant, or start with a suggestion.</p>
+            {starters.length > 0 ? (
+              <div className="sac-starters">
+                {starters.map((s) => (
+                  <button key={s} type="button" className="btn ghost sm" onClick={() => void send(s)}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {thread.map((t, i) => (
+          <div key={i} className={`sac-turn sac-${t.role}`}>
+            {t.role === 'assistant' ? (
+              <Markdown>{t.content || '…'}</Markdown>
+            ) : (
+              <span>{t.content}</span>
+            )}
+          </div>
+        ))}
+
+        {busy ? (
+          <div className="sac-turn sac-assistant">
+            <span className="spin" /> <span className="muted" style={{ fontSize: 12 }}>Thinking…</span>
+          </div>
+        ) : null}
+      </div>
+
+      {renderSuggestions ? (
+        hostSuggestions ? <div className="sac-suggestions">{hostSuggestions}</div> : null
+      ) : hasSuggestions ? (
+        <div className="sac-suggestions">
+          {suggestions.improvedPurpose && onApplyPurpose ? (
+            <SuggestionCard
+              label="Suggested purpose"
+              onApply={() => onApplyPurpose(suggestions.improvedPurpose!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, improvedPurpose: undefined }))}
+              applyLabel="Use this purpose"
+            >
+              <p style={{ margin: 0 }}>{suggestions.improvedPurpose}</p>
+            </SuggestionCard>
+          ) : null}
+
+          {suggestions.suggestedGrants?.length && onApplyGrants ? (
+            <SuggestionCard
+              label={`Suggested context (${suggestions.suggestedGrants.length})`}
+              onApply={() => onApplyGrants(suggestions.suggestedGrants!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedGrants: undefined }))}
+              applyLabel="Grant all"
+            >
+              <ul className="sac-list">
+                {suggestions.suggestedGrants.map((g, i) => (
+                  <li key={`${g.kind}:${g.id}:${i}`}>
+                    <span className="badge muted">{g.kind}</span>{' '}
+                    <span className="mono" style={{ fontSize: 12 }}>{g.id}</span>
+                    {g.access ? <span className="badge" style={{ marginLeft: 6 }}>{g.access}</span> : null}
+                    {g.reason ? <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>— {g.reason}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </SuggestionCard>
+          ) : null}
+
+          {suggestions.suggestedEpics?.length && onApplyEpics ? (
+            <SuggestionCard
+              label={`Suggested EPICs (${suggestions.suggestedEpics.length})`}
+              onApply={() => onApplyEpics(suggestions.suggestedEpics!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedEpics: undefined }))}
+              applyLabel="Create EPICs"
+            >
+              <ul className="sac-list">
+                {suggestions.suggestedEpics.map((e, i) => (
+                  <li key={`${e.title}:${i}`}>
+                    <strong>{e.title}</strong>
+                    {e.stories?.length ? <span className="muted" style={{ fontSize: 12 }}> · {e.stories.length} stor{e.stories.length === 1 ? 'y' : 'ies'}</span> : null}
+                    {e.description ? <div className="muted" style={{ fontSize: 12 }}>{e.description}</div> : null}
+                  </li>
+                ))}
+              </ul>
+            </SuggestionCard>
+          ) : null}
+
+          {suggestions.suggestedStories?.length && onApplyStories ? (
+            <SuggestionCard
+              label={`Suggested stories (${suggestions.suggestedStories.reduce((n, g) => n + g.stories.length, 0)})`}
+              onApply={() => onApplyStories(suggestions.suggestedStories!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedStories: undefined }))}
+              applyLabel="Add stories"
+            >
+              <ul className="sac-list">
+                {suggestions.suggestedStories.map((g, i) => (
+                  <li key={`${g.epicTitle}:${i}`}>
+                    <span className="muted" style={{ fontSize: 12 }}>under</span> <strong>{g.epicTitle}</strong>
+                    <ul className="sac-sublist">
+                      {g.stories.map((s, j) => {
+                        const n = (s.spec?.features?.length ?? 0) + (s.spec?.nfrs?.length ?? 0) + (s.spec?.rules?.length ?? 0);
+                        return <li key={j}>{s.title}{n > 0 ? <span className="muted"> · {n} spec item{n === 1 ? '' : 's'}</span> : null}</li>;
+                      })}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </SuggestionCard>
+          ) : null}
+
+          {suggestions.suggestedEpicRequirements?.length && onApplyEpicRequirements ? (
+            <SuggestionCard
+              label={`Suggested requirements (${suggestions.suggestedEpicRequirements.length} epic${suggestions.suggestedEpicRequirements.length === 1 ? '' : 's'})`}
+              onApply={() => onApplyEpicRequirements(suggestions.suggestedEpicRequirements!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedEpicRequirements: undefined }))}
+              applyLabel="Fill in requirements"
+            >
+              <ul className="sac-list">
+                {suggestions.suggestedEpicRequirements.map((g, i) => (
+                  <li key={`${g.epicTitle}:${i}`}>
+                    <strong>{g.epicTitle}</strong>
+                    <ul className="sac-sublist">
+                      {(['technical', 'ux', 'governance'] as const).map((k) =>
+                        g.requirements[k] ? <li key={k}><span className="muted" style={{ textTransform: 'capitalize' }}>{k}:</span> {g.requirements[k]}</li> : null,
+                      )}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </SuggestionCard>
+          ) : null}
+
+          {suggestions.suggestedSpec && onApplySpec ? (
+            <SuggestionCard
+              label={`Suggested spec${specTargetLabel ? ` for “${specTargetLabel}”` : ''}`}
+              onApply={() => onApplySpec(suggestions.suggestedSpec!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedSpec: undefined }))}
+              applyLabel="Add to spec"
+            >
+              <div className="sac-spec">
+                {(['features', 'nfrs', 'rules'] as const).map((k) => {
+                  const items = suggestions.suggestedSpec?.[k] ?? [];
+                  if (items.length === 0) return null;
+                  const label = k === 'features' ? 'Features' : k === 'nfrs' ? 'NFRs' : 'Rules';
+                  return (
+                    <div key={k}>
+                      <span className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.03em' }}>{label}</span>
+                      <ul className="sac-list">{items.map((it, i) => <li key={i}>{it}</li>)}</ul>
+                    </div>
+                  );
+                })}
+              </div>
+            </SuggestionCard>
+          ) : null}
+
+          {suggestions.suggestedDatasets?.length && renderDataPlan
+            ? renderDataPlan(suggestions.suggestedDatasets, () =>
+                setSuggestions((s) => ({ ...s, suggestedDatasets: undefined })),
+              )
+            : null}
+
+          {suggestions.suggestedImprovements?.length && onApplyImprovements ? (
+            <SuggestionCard
+              label={`Improvements (${suggestions.suggestedImprovements.length})`}
+              onApply={() => onApplyImprovements(suggestions.suggestedImprovements!)}
+              onDismiss={() => setSuggestions((s) => ({ ...s, suggestedImprovements: undefined }))}
+              applyLabel="Add to Build to-do"
+            >
+              <ul className="sac-list">
+                {suggestions.suggestedImprovements.map((im, i) => (
+                  <li key={i}>
+                    <span className={`badge ${im.kind === 'design' ? 'warn' : 'muted'}`} style={{ fontSize: 10 }}>{im.kind === 'design' ? 'needs design' : 'rebuild'}</span>{' '}
+                    {im.note}
+                  </li>
+                ))}
+              </ul>
+            </SuggestionCard>
+          ) : null}
+        </div>
+      ) : null}
+
+      {nextSteps.length > 0 && !busy ? (
+        <div className="sac-next">
+          <span className="sac-next-label">Next step</span>
+          <div className="sac-next-btns">
+            {nextSteps.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                className="btn ghost sm"
+                onClick={() => { if (s.onClick) s.onClick(); else if (s.prompt) void send(s.prompt); }}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {error ? <div className="error" style={{ margin: '8px 0 0' }}>{error}</div> : null}
+
+      <form
+        className="sac-input"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void send(input);
+        }}
+      >
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Ask the assistant…"
+          disabled={busy}
+          aria-label="Message the assistant"
+        />
+        <button className="btn sm" type="submit" disabled={busy || !input.trim()}>
+          {busy ? <span className="spin" /> : 'Send'}
+        </button>
+      </form>
+
+      <style jsx>{`
+        .sac {
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          background: var(--panel);
+          padding: 12px 14px;
+          margin-top: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .sac-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+        .sac-title { font-weight: 600; }
+        .sac-intro { color: var(--text-muted); font-size: 12.5px; }
+        .sac-thread {
+          display: flex; flex-direction: column; gap: 10px;
+          max-height: 340px; overflow-y: auto;
+          padding-right: 2px;
+        }
+        .sac-empty { padding: 8px 2px; display: flex; flex-direction: column; gap: 10px; }
+        .sac-starters { display: flex; flex-wrap: wrap; gap: 6px; }
+        .sac-turn { font-size: 13.5px; line-height: 1.55; max-width: 100%; }
+        .sac-user {
+          align-self: flex-end;
+          background: var(--gold-soft);
+          border: 1px solid var(--gold-line);
+          color: var(--text);
+          border-radius: 12px 12px 4px 12px;
+          padding: 7px 11px;
+          max-width: 85%;
+        }
+        .sac-assistant {
+          align-self: flex-start;
+          background: var(--tile, var(--bg-elevated, var(--panel)));
+          border: 1px solid var(--border);
+          border-radius: 12px 12px 12px 4px;
+          padding: 8px 12px;
+          max-width: 92%;
+        }
+        .sac-suggestions { display: flex; flex-direction: column; gap: 8px; }
+        .sac-list { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+        .sac-sublist { margin: 2px 0 0; padding-left: 16px; color: var(--text-muted); font-size: 12px; }
+        .sac-next { border-top: 1px dashed var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+        .sac-next-label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--gold-text, var(--accent)); }
+        .sac-next-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+        .sac-input { display: flex; gap: 8px; align-items: center; }
+        .sac-input input { flex: 1; }
+      `}</style>
+    </div>
+  );
+}
+
+/**
+ * One suggestion card — a labelled, calm block with an Apply button. Presentation only;
+ * the Apply handler is host-provided (it applies locally + persists through governance).
+ */
+export function SuggestionCard({
+  label,
+  applyLabel,
+  onApply,
+  onDismiss,
+  children,
+}: {
+  label: string;
+  applyLabel: string;
+  onApply: () => void;
+  /** Optional: a quiet "Decline" that drops this card locally — applies nothing. */
+  onDismiss?: () => void;
+  children: React.ReactNode;
+}) {
+  const [applied, setApplied] = useState(false);
+  return (
+    <div className="sac-card">
+      <div className="sac-card-head">
+        <span className="sac-card-label">{label}</span>
+        <div className="sac-card-actions">
+          {onDismiss ? (
+            <button type="button" className="btn ghost sm" disabled={applied} onClick={onDismiss}>
+              Decline
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="btn sm"
+            disabled={applied}
+            onClick={() => {
+              onApply();
+              setApplied(true);
+            }}
+          >
+            {applied ? 'Applied ✓' : applyLabel}
+          </button>
+        </div>
+      </div>
+      <div className="sac-card-body">{children}</div>
+      <style jsx>{`
+        .sac-card {
+          border: 1px solid var(--gold-line);
+          background: var(--gold-soft);
+          border-radius: 8px;
+          padding: 10px 12px;
+        }
+        .sac-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .sac-card-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .sac-card-label { font-weight: 600; font-size: 12.5px; }
+        .sac-card-body { margin-top: 6px; font-size: 13px; }
+      `}</style>
+    </div>
+  );
+}

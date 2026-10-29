@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { setSchedule } from '@/lib/agents/store';
-import { reconcileScheduleCron, isValidCron } from '@/lib/agents/schedule-cron';
+import { withRoute } from '@core/kernel/route-server';
+import { setSchedule } from '@tabs/agents/lib/store';
+import { reconcileScheduleCron, isValidCron } from '@tabs/agents/lib/schedule-cron';
 
 export const dynamic = 'force-dynamic';
 

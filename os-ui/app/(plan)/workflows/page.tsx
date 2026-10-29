@@ -4,20 +4,20 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import PageHeader from '@/components/PageHeader';
-import WorkflowTile from '@/components/experimental/knowledge/WorkflowTile';
-import WorkflowView from '@/components/experimental/knowledge/WorkflowView';
-import type { WorkflowSummary } from '@/lib/experimental/knowledge/store';
-import { roleAtLeast, type Role } from '@/lib/core/session';
-import { useTabNavReset } from '@/lib/core/tab-nav';
-import { SCOPE_GROUPS, groupByScope, activeScopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@/lib/core/scopes';
-import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
-import LifecycleActions from '@/components/lifecycle/LifecycleActions';
-import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
-import FolderLayout from '@/components/core/FolderLayout';
-import FolderTree, { FolderPickerModal } from '@/components/core/FolderTree';
-import { useFolders } from '@/lib/folders/useFolders';
-import { itemsUnderFolder, normaliseFolderPath, type FolderPathNode } from '@/lib/core/folders';
+import PageHeader from '@core/ui/PageHeader';
+import WorkflowTile from '@tabs/knowledge/ui/WorkflowTile';
+import WorkflowView from '@tabs/knowledge/ui/WorkflowView';
+import type { WorkflowSummary } from '@tabs/knowledge/lib/store';
+import { roleAtLeast, type Role } from '@core/kernel/session';
+import { useTabNavReset } from '@core/kernel/tab-nav';
+import { SCOPE_GROUPS, groupByScope, activeScopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@core/kernel/scopes';
+import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
+import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
+import type { Visibility as LcVisibility } from '@core/kernel/lifecycle';
+import FolderLayout from '@core/ui/core/FolderLayout';
+import FolderTree, { FolderPickerModal } from '@core/ui/core/FolderTree';
+import { useFolders } from '@core/folders/useFolders';
+import { itemsUnderFolder, normaliseFolderPath, type FolderPathNode } from '@core/kernel/folders';
 
 /** Workflow visibility → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
@@ -210,7 +210,7 @@ export default function WorkflowsPage() {
 
   return (
     <ConfirmProvider>
-      <PageHeader title="Business Workflows" crumb="steps · business rules · expert knowledge" tutorial="knowledge" />
+      <PageHeader title="Workflows" crumb="steps · business rules · expert knowledge" />
       <div className="content">
 
         <div className="row" style={{ marginTop: 18, justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 10 }}>
@@ -271,7 +271,7 @@ export default function WorkflowsPage() {
             <div className="seg" style={{ marginTop: 18 }}>
               {SCOPE_GROUPS.map((g) => (
                 <button key={g.key} type="button" className={wfScope === g.key ? 'on' : ''} onClick={() => { setWfScope(g.key); setSel(null); }}>
-                  {g.label('Business Workflows')}{wfCounts ? ` (${wfCounts[g.key]})` : ''}
+                  {g.label('Workflows')}{wfCounts ? ` (${wfCounts[g.key]})` : ''}
                 </button>
               ))}
             </div>

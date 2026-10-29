@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/core/config';
-import { requireAdmin } from '@/lib/core/auth';
-import { errorResponse } from '@/lib/experimental/data/server';
+import { config } from '@core/kernel/config';
+import { requireAdmin } from '@core/kernel/auth';
+import { errorResponse } from '@tabs/data/lib/server';
 
 export const dynamic = 'force-dynamic';
 

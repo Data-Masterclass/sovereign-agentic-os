@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { roleModel } from '@/lib/models/roles';
-import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
-import { listAskable } from '@/lib/experimental/data/store';
-import { readPrincipalFor } from '@/lib/experimental/data/store-fqn';
-import { queryRun, trace } from '@/lib/infra/governed';
-import { liteLlmCaller } from '@/lib/assistant/runtime';
-import { runAsk, type AskMessage } from '@/lib/experimental/data/ask';
-import { appSlugFromRequest, grantedIdSet } from '@/lib/experimental/software/app-origin';
+import { roleModel } from '@core/models/roles';
+import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
+import { listAskable } from '@tabs/data/lib/store';
+import { readPrincipalFor } from '@tabs/data/lib/store-fqn';
+import { queryRun, trace } from '@core/infra/governed';
+import { liteLlmCaller } from '@core/runtime/runtime';
+import { runAsk, type AskMessage } from '@tabs/data/lib/ask';
+import { appSlugFromRequest, grantedIdSet } from '@tabs/software/lib/app-origin';
 
 export const dynamic = 'force-dynamic';
 

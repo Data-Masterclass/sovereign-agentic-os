@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/core/config';
-import { currentUser } from '@/lib/core/auth';
-import { completeFirstLogin, getPublicUser, setupAdmin } from '@/lib/platform-admin/users';
-import { assessPasswordStrength, hashPassword } from '@/lib/core/password';
-import { SESSION_COOKIE, SESSION_MAX_AGE, sessionCookieOptions, signSession } from '@/lib/core/session';
+import { config } from '@core/kernel/config';
+import { currentUser } from '@core/kernel/auth';
+import { completeFirstLogin, getPublicUser, setupAdmin } from '@tabs/admin/lib/users';
+import { assessPasswordStrength, hashPassword } from '@core/kernel/password';
+import { SESSION_COOKIE, SESSION_MAX_AGE, sessionCookieOptions, signSession } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 

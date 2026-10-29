@@ -3,18 +3,18 @@
  */
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/core/auth';
-import { authorize } from '@/lib/infra/governed';
-import { assertTenantAccess, currentTenantId, type Tenant } from '@/lib/platform-admin/tenant';
-import { ensureHydrated as ensureDomainsHydrated } from '@/lib/platform-admin/domains';
-import { ensureHydrated as ensureModelsHydrated } from '@/lib/platform-admin/models';
-import { ensureHydrated as ensureTenantUsersHydrated } from '@/lib/platform-admin/tenant-users';
-import { ensureHydrated as ensureTenantHydrated } from '@/lib/platform-admin/tenant';
-import { ensureHydrated as ensureSettingsHydrated } from '@/lib/platform-admin/settings';
-import { ensureHydrated as ensureSecurityHydrated } from '@/lib/platform-admin/security';
-import { ensureHydrated as ensurePluginsHydrated } from '@/lib/platform-admin/plugins';
-import { knownDomains } from '@/lib/platform-admin/users';
-import type { CurrentUser } from '@/lib/core/auth';
+import { requireAdmin } from '@core/kernel/auth';
+import { authorize } from '@core/infra/governed';
+import { assertTenantAccess, currentTenantId, type Tenant } from '@tabs/admin/lib/tenant';
+import { ensureHydrated as ensureDomainsHydrated } from '@tabs/admin/lib/domains';
+import { ensureHydrated as ensureModelsHydrated } from '@tabs/admin/lib/models';
+import { ensureHydrated as ensureTenantUsersHydrated } from '@tabs/admin/lib/tenant-users';
+import { ensureHydrated as ensureTenantHydrated } from '@tabs/admin/lib/tenant';
+import { ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
+import { ensureHydrated as ensureSecurityHydrated } from '@tabs/admin/lib/security';
+import { ensureHydrated as ensurePluginsHydrated } from '@tabs/admin/lib/plugins';
+import { knownDomains } from '@tabs/admin/lib/users';
+import type { CurrentUser } from '@core/kernel/auth';
 
 /**
  * The single gate every Platform-Admin API route passes through. Three guards,

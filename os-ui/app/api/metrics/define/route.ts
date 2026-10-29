@@ -2,15 +2,15 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { defineMeasure, getDataset } from '@/lib/experimental/data/store';
-import { scaffoldCubeYaml } from '@/lib/experimental/data/metrics';
-import { delegatedToken } from '@/lib/infra/identity-server';
-import { measureFromForm, measureFromYaml, type MetricForm } from '@/lib/experimental/metrics/model';
-import { convergence } from '@/lib/experimental/metrics/consistency';
-import { buildMetric } from '@/lib/experimental/metrics/build/server';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { defineMeasure, getDataset } from '@tabs/data/lib/store';
+import { scaffoldMetricYaml } from '@tabs/data/lib/metrics';
+import { delegatedToken } from '@core/infra/identity-server';
+import { measureFromForm, measureFromYaml, type MetricForm } from '@tabs/metrics/lib/model';
+import { convergence } from '@tabs/metrics/lib/consistency';
+import { buildMetric } from '@tabs/metrics/lib/build/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +22,7 @@ export const dynamic = 'force-dynamic';
  *      offer all three without ever forking the definition;
  *   3. persist it on the governed Gold dataset (the Data handoff — defineMeasure refuses
  *      a non-Gold/non-governed dataset, surfacing "promote it in Data first");
- *   4. run the metric Build (cube → resolve → explorer consistency), LIVE or offline-mock.
+ *   4. run the metric Build (compile → resolve → explorer consistency), LIVE or offline-mock.
  */
 export const POST = withRoute<Record<string, string>, { datasetId?: string; form?: MetricForm; agent?: MetricForm }>(async ({ user, body }) => {
   const datasetId = (body.datasetId ?? '').trim();
@@ -37,7 +37,7 @@ export const POST = withRoute<Record<string, string>, { datasetId?: string; form
   const dataset = defineMeasure(datasetId, user, measure);
 
   // Prove convergence: form vs the agent proposal vs the YAML now scaffolded with it.
-  const yaml = scaffoldCubeYaml(dataset);
+  const yaml = scaffoldMetricYaml(dataset);
   const conv = convergence(dataset, { form: body.form, agent: body.agent ?? body.form, yaml });
   // Sanity: the YAML round-trips to the same measure (defensive, never user-facing).
   measureFromYaml(yaml, body.form.name);
@@ -54,7 +54,7 @@ export const POST = withRoute<Record<string, string>, { datasetId?: string; form
     member: build.member,
     convergence: conv,
     build,
-    cube: yaml,
+    definitionYaml: yaml,
     ...(build.pending ? { pending: true } : {}),
   });
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, parse: true });

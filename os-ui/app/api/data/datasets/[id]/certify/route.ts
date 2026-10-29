@@ -2,18 +2,18 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { certify, requestCertification, getDataset } from '@/lib/experimental/data/store';
-import { enqueue, listApprovals } from '@/lib/governance/approvals';
-import type { DataVisibility, Grant, TrustLevel } from '@/lib/experimental/data';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { certify, requestCertification, getDataset } from '@tabs/data/lib/store';
+import { enqueue, listApprovals } from '@core/policy/approvals';
+import type { DataVisibility, Grant, TrustLevel } from '@tabs/data/lib/index';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * Certify → Data Product (data-architecture-model.md), Admin-gated:
- *   POST { action:'certify' } — a domain ADMIN certifies directly (OM certification
+ *   POST { action:'certify' } — a domain ADMIN certifies directly (the certification
  *           badge + dataProduct + marketplace listing + broadened visibility).
  *   POST { action:'request' } — a Builder/owner requests certification; an Admin
  *           approves it in Governance (a `dataset_certify` approval). Mirrors promotion.

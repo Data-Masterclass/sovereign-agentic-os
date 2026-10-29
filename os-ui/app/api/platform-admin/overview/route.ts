@@ -4,13 +4,13 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { recompile } from '../_compile';
-import { listDomains } from '@/lib/platform-admin/domains';
-import { listAccess } from '@/lib/platform-admin/tenant-users';
-import { billingView, offlineSpend } from '@/lib/platform-admin/billing';
-import { listRequests } from '@/lib/platform-admin/security';
-import { listTargets } from '@/lib/platform-admin/backups';
-import { listAudit } from '@/lib/platform-admin/audit';
-import { REGISTRY, listComponentsWithStatus } from '@/lib/platform-admin/platform';
+import { listDomains } from '@tabs/admin/lib/domains';
+import { listAccess } from '@tabs/admin/lib/tenant-users';
+import { billingView, offlineSpend } from '@tabs/admin/lib/billing';
+import { listRequests } from '@tabs/admin/lib/security';
+import { listTargets } from '@tabs/admin/lib/backups';
+import { listAudit } from '@tabs/admin/lib/audit';
+import { REGISTRY, listComponentsWithStatus } from '@tabs/admin/lib/platform';
 
 export const dynamic = 'force-dynamic';
 

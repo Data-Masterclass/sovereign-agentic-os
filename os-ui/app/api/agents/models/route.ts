@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/core/config';
-import { requireUser } from '@/lib/core/auth';
-import { MODEL_CATALOG, modelInfo, classifyProviderType, type ModelInfo } from '@/lib/agents/routing';
-import { roleModels } from '@/lib/models/roles';
+import { config } from '@core/kernel/config';
+import { requireUser } from '@core/kernel/auth';
+import { MODEL_CATALOG, modelInfo, classifyProviderType, type ModelInfo } from '@tabs/agents/lib/routing';
+import { roleModels } from '@core/models/roles';
 
 export const dynamic = 'force-dynamic';
 

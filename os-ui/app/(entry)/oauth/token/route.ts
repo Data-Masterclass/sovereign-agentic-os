@@ -8,7 +8,7 @@ import {
   issueAccessToken,
   issueRefreshToken,
   OAuthError,
-} from '@/lib/mcp/oauth';
+} from '@core/mcp/oauth';
 
 export const dynamic = 'force-dynamic';
 

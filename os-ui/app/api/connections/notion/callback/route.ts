@@ -2,13 +2,13 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { currentUser } from '@/lib/core/auth';
-import { config } from '@/lib/core/config';
-import { storeNotionConnection } from '@/lib/experimental/connections';
-import { exchangeNotionCode } from '@/lib/oauth/notion-mcp';
-import { verifyState, nonceMatches, OAUTH_STATE_COOKIE } from '@/lib/oauth/state';
-import { publicBaseUrl } from '@/lib/oauth/redirect';
-import { takePendingFlow } from '@/lib/oauth/notion-flow';
+import { currentUser } from '@core/kernel/auth';
+import { config } from '@core/kernel/config';
+import { storeNotionConnection } from '@tabs/connections/lib/index';
+import { exchangeNotionCode } from '@core/auth/notion-mcp';
+import { verifyState, nonceMatches, OAUTH_STATE_COOKIE } from '@core/auth/state';
+import { publicBaseUrl } from '@core/auth/redirect';
+import { takePendingFlow } from '@core/auth/notion-flow';
 
 export const dynamic = 'force-dynamic';
 

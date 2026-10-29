@@ -2,13 +2,13 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/files/server';
-import { addVersion, attachObject, objectKeyForAsset, getFile } from '@/lib/experimental/files/store';
-import { putBlob } from '@/lib/experimental/files/object-store';
-import '@/lib/experimental/files/object-store-server'; // registers the durable MinIO backend
-import { reindexById } from '@/lib/experimental/files/pipeline-server';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/files/lib/server';
+import { addVersion, attachObject, objectKeyForAsset, getFile } from '@tabs/files/lib/store';
+import { putBlob } from '@tabs/files/lib/object-store';
+import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
+import { reindexById } from '@tabs/files/lib/pipeline-server';
 
 export const dynamic = 'force-dynamic';
 

@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { artifactMonitoring } from '@/lib/monitoring/artifacts-view';
+import { withRoute } from '@core/kernel/route-server';
+import { artifactMonitoring } from '@tabs/monitoring/lib/artifacts-view';
 
 export const dynamic = 'force-dynamic';
 

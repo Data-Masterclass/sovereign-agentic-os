@@ -4,12 +4,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import PageHeader from '@/components/PageHeader';
-import { useApi } from '@/lib/useApi';
-import DetailView, { type DetailTarget } from '@/components/monitoring/DetailView';
-import { getUrlParam, patchUrl } from '@/lib/core/url-params';
-import { useTabNavReset } from '@/lib/core/tab-nav';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials/anchors';
+import PageHeader from '@core/ui/PageHeader';
+import { useApi } from '@core/ui/useApi';
+import DetailView, { type DetailTarget } from '@tabs/monitoring/ui/DetailView';
+import { getUrlParam, patchUrl } from '@core/kernel/url-params';
+import { useTabNavReset } from '@core/kernel/tab-nav';
 import './monitoring.css';
 
 /**
@@ -193,7 +192,7 @@ export default function MonitoringPage() {
   if (target) {
     return (
       <>
-        <PageHeader title="Monitoring" crumb="agents · data — the read plane" tutorial="monitoring" />
+        <PageHeader title="Monitoring" crumb="agents · data — the read plane" />
         <div className="content">
           <DetailView target={target} onBack={back} />
         </div>
@@ -203,8 +202,8 @@ export default function MonitoringPage() {
 
   return (
     <>
-      <PageHeader title="Monitoring" crumb="agents · data — the read plane" tutorial="monitoring" />
-      <div className="content" {...anchorAttr(ANCHORS.monitoring.sandbox)}>
+      <PageHeader title="Monitoring" crumb="agents · data — the read plane" />
+      <div className="content">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <p className="lead" style={{ marginBottom: 0 }}>
             Real 7-day health of the agent systems and datasets you can access. Open any
@@ -221,13 +220,13 @@ export default function MonitoringPage() {
 
         {data && (
           <>
-            <div className="section-title" style={{ marginTop: 18 }} {...anchorAttr(ANCHORS.monitoring.agents)}>Agent Monitoring</div>
+            <div className="section-title" style={{ marginTop: 18 }}>Agent Monitoring</div>
             {!data.telemetryLive && (
               <p className="hint" style={{ marginTop: 0, marginBottom: 8, opacity: 0.75 }}>
                 Langfuse unreachable — showing in-process run telemetry only (durable history returns when it&apos;s back).
               </p>
             )}
-            <div {...anchorAttr(ANCHORS.monitoring.scope)}>
+            <div>
               <ScopeTabs scope={agentScope} setScope={setAgentScope} counts={agentCounts} />
             </div>
             {agentRows.length === 0 ? (
@@ -242,7 +241,7 @@ export default function MonitoringPage() {
               </div>
             )}
 
-            <div className="section-title" style={{ marginTop: 26 }} {...anchorAttr(ANCHORS.monitoring.data)}>Data Monitoring</div>
+            <div className="section-title" style={{ marginTop: 26 }}>Data Monitoring</div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
               Freshness, pipeline health and data-quality per dataset — the real last DQ run.
             </p>

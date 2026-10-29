@@ -31,8 +31,6 @@ kind: Deployment
 metadata:
   name: polaris
   namespace: {{ .Release.Namespace }}
-  annotations:
-    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "apps") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris") | nindent 4 }}

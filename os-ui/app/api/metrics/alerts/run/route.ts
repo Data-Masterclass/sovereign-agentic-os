@@ -2,15 +2,15 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { roleAtLeast } from '@/lib/core/session';
-import { evaluateAlert } from '@/lib/experimental/metrics/alerts';
-import { listAlertRules, recordEvaluation, ensureHydrated } from '@/lib/experimental/metrics/alert-store';
-import { deliverAlert } from '@/lib/experimental/dashboards/delivery';
-import { getPublicUser } from '@/lib/platform-admin/users';
-import { resolveAlertValue } from '@/lib/experimental/metrics/build/alert-eval';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { roleAtLeast } from '@core/kernel/session';
+import { evaluateAlert } from '@tabs/metrics/lib/alerts';
+import { listAlertRules, recordEvaluation, ensureHydrated } from '@tabs/metrics/lib/alert-store';
+import { deliverAlert } from '@tabs/dashboards/lib/delivery';
+import { getPublicUser } from '@tabs/admin/lib/users';
+import { resolveAlertValue } from '@tabs/metrics/lib/build/alert-eval';
 
 export const dynamic = 'force-dynamic';
 

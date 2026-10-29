@@ -1,0 +1,306 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+import 'server-only';
+import type { CurrentUser } from '@core/kernel/auth';
+import { ROLES, type Role } from '@core/kernel/session';
+import type { ToolTab, McpTab } from '@core/mcp/server';
+import { loadGuide, type GuidePath } from '@core/tabs-meta/guides';
+
+/**
+ * MCP PROMPTS — user-controlled, parameterized workflow templates surfaced by
+ * clients as slash commands (e.g. /sovereign-agentic-os:build_data_product). A
+ * prompt TEACHES the golden path: it embeds the pathway guide, a LIVE role
+ * banner, and the exact tool sequence with inline ⛔ Builder/Admin checkpoints.
+ *
+ * Prompts render TEXT ONLY — `prompts/get` executes nothing, so a prompt can
+ * NEVER bypass governance. A creator who follows `build_data_product` to the
+ * promote step still hits the Builder floor inside `approve_promotion` and gets
+ * the typed forbidden + hint. The prompt is role-aware and SAYS SO up front.
+ */
+
+export type PromptMessage = {
+  role: 'user' | 'assistant';
+  content: { type: 'text'; text: string };
+};
+
+export type McpPrompt = {
+  name: string;
+  title: string;
+  description: string;
+  arguments: { name: string; description: string; required?: boolean }[];
+  tab: ToolTab;
+  minRole: Role;
+  /** The pathway guide this prompt embeds (its full how-to). */
+  guide: GuidePath;
+  /** Build the parameterized step script (the guide + banner + rules wrap it). */
+  script: (args: Record<string, string>) => string;
+};
+
+function rank(role: Role): number {
+  return ROLES.indexOf(role);
+}
+const isBuilder = (role: Role) => rank(role) >= rank('builder');
+const isDomainAdmin = (role: Role) => rank(role) >= rank('domain_admin');
+const isAdmin = (role: Role) => rank(role) >= rank('admin');
+
+/** A live, role-aware banner rendered from the CALLER's identity (4 roles). */
+function roleBanner(user: CurrentUser): string {
+  const gate = isBuilder(user.role)
+    ? isAdmin(user.role)
+      ? 'You CAN approve promotions, deploys, AND certify to Company / administer users tenant-wide.'
+
+      : isDomainAdmin(user.role)
+        ? 'You CAN approve promotions/deploys AND administer users in your own domain(s) (roles up to builder). You CANNOT certify to Company or appoint domain admins (Admin only).'
+        : 'You CAN approve My→Domain promotions (promote to Domain) and deploys in your domain(s). You CANNOT certify to Company (Admin only) or administer users (Domain admin+).'
+    : 'You are a CREATOR: you build/run your own work and FILE promotion requests, but you CANNOT promote/publish/approve. At a ⛔ step, hand off to a Builder.';
+  return `— YOUR ROLE: ${user.role} in domain(s) [${user.domains.join(', ') || 'none'}]. ${gate} —`;
+}
+
+const RULES = [
+  'Standing rules:',
+  '- DISCOVER before you create: reuse existing ids (read sovereign-os://my/* or call the list_* tool).',
+  '- Use ONLY these OS tools for OS artifacts. Never fabricate an id, never invent a bypass.',
+  '- Tool errors are typed {code, reason, hint} — follow the hint (forbidden → ask a Builder or keep it My-scope; conflict → already done, idempotent).',
+  '- Everything runs AS you: OPA-checked, DLS-filtered, audit-traced.',
+].join('\n');
+
+const arg = (name: string, description: string, required = false) => ({ name, description, required });
+
+// --- The 11 golden-path prompts -----------------------------------------------
+export const PROMPTS: McpPrompt[] = [
+  {
+    name: 'build_data_product',
+    title: 'Build a data product',
+    description: 'An ingested (or curated) dataset, documented, with its business layer materialized, ready to promote to a governed domain asset.',
+    arguments: [arg('name', 'Dataset name', true), arg('domain', 'Your domain'), arg('source_description', 'What the source data is')],
+    tab: 'data',
+    minRole: 'creator',
+    guide: 'data',
+    script: (a) => [
+      `GOAL: build the data product "${a.name || '<name>'}"${a.domain ? ` in domain ${a.domain}` : ''}.`,
+      a.source_description ? `Source: ${a.source_description}` : '',
+      'Steps:',
+      '1. whoami — confirm your role + domains.',
+      '2. list_datasets — reuse/extend an existing spine before creating a new one.',
+      `3. create_dataset(name: "${a.name || '<name>'}"${a.domain ? `, domain: "${a.domain}"` : ''}).`,
+      '4a. INGESTED (a single source, no joins): ingest_dataset → profile_dataset → transform_silver(columns, ops) is OPTIONAL cleanup. A clean ingested dataset PASSES THROUGH — the business (Gold) layer materializes automatically, no build_gold_join step. Authored alternative: add_dataset_version(layer: "bronze") → silver (authored dbt SQL + not_null/unique tests).',
+      '4b. CURATED (a NEW table composed from datasets you already trust): build_gold_join(base, joins, kept/renamed columns, derived fields, measures). Mismatched join keys? set the key’s adapt: {mode:"text"} (case/whitespace/format) or {mode:"cast",type} (coerce both sides to one Trino type). Ingested datasets never join — use the curated path for that.',
+      '5. document_dataset — description + column docs. (Docs are the PROMOTION GATE.)',
+      '6. request_promotion(kind: "dataset", id) — file the promotion request.',
+      '⛔ Builder+ only: approve_promotion(approvalId) applies it into Trino. A creator STOPS here and hands off.',
+      '7. Optional: define_metric on the materialized business layer.',
+    ].filter(Boolean).join('\n'),
+  },
+  {
+    name: 'author_and_publish_knowledge',
+    title: 'Author & publish knowledge',
+    description: 'Capture a business process (also called: workflow, process workflow, SOP (Standard Operating Procedure) — steps + rules + tacit), index it, and publish it to Domain.',
+    arguments: [arg('topic', 'What the business process is about', true), arg('domain', 'Your domain')],
+    tab: 'knowledge',
+    minRole: 'creator',
+    guide: 'knowledge',
+    script: (a) => [
+      `GOAL: capture and publish knowledge on "${a.topic || '<topic>'}"${a.domain ? ` in domain ${a.domain}` : ''}.`,
+      'Steps:',
+      `1. whoami.`,
+      `2. search_knowledge(query: "${a.topic || '<topic>'}") — dedupe before authoring.`,
+      '3. author_knowledge — steps (each with a Human/Software/Agent/Customer/Partner actor; Customer + Partner are external), an optional described actors registry, rules (mark hard rules), and tacit context.',
+      '4. index_knowledge — so search returns it.',
+      '5. search_knowledge again to verify it is retrievable (cite provenance).',
+      '⛔ Builder+ only: publish_knowledge(workflowId) — draft→live + reindex. A creator STOPS here.',
+    ].join('\n'),
+  },
+  {
+    name: 'connect_data_source',
+    title: 'Connect a data source',
+    description: 'Create + test a My-scope connection, then promote it to a Domain source.',
+    arguments: [arg('system', 'The system to connect (e.g. Notion, Salesforce)', true), arg('kind', 'Template key')],
+    tab: 'connections',
+    minRole: 'creator',
+    guide: 'connections',
+    script: (a) => [
+      `GOAL: connect "${a.system || '<system>'}"${a.kind ? ` (template ${a.kind})` : ''}.`,
+      'Steps:',
+      '1. whoami.',
+      '2. list_connections — reuse an existing connection first.',
+      `3. create_connection(name, template${a.kind ? `: "${a.kind}"` : ''}, endpoint, credential) — My-scope; credential is stored server-side, never returned.`,
+      '4. test_connection(connId) — expect live | offline.',
+      '⛔ Builder+ only: promote_connection(connId) → Domain source. A creator STOPS here.',
+      '5. Consume it from an app with use_connection(appId, ref) — BY REFERENCE, never raw creds.',
+      'WAREHOUSE tables (Glue/Databricks/Snowflake/BigQuery/OneLake): do NOT import raw. Register + refresh_connection_catalog, optionally classify_catalog, then ⛔ admin create_exposure_set(domains, mode, tier, tables) → ⛔ domain_admin adopt_exposed_table (list_exposed_tables) makes a governed live/synced dataset. An unexposed external table reads zero rows for everyone; revoke propagates honestly.',
+    ].join('\n'),
+  },
+  {
+    name: 'build_agent_system',
+    title: 'Build an agent system',
+    description: 'Assemble, ground, commit and verify a LangGraph agent system.',
+    arguments: [arg('goal', 'What the agent system should do', true), arg('domain', 'Your domain'), arg('template', 'blank|analyze|evaluate|recommend')],
+    tab: 'agents',
+    minRole: 'creator',
+    guide: 'agents',
+    script: (a) => [
+      `GOAL: build an agent system for "${a.goal || '<goal>'}"${a.domain ? ` in domain ${a.domain}` : ''}.`,
+      'Steps:',
+      '1. whoami.',
+      '2. list_agent_systems — reuse before creating.',
+      `3. search_knowledge — ground the agents in governed knowledge.`,
+      `4. create_agent_system(name${a.domain ? `, domain: "${a.domain}"` : ''}${a.template ? `, template: "${a.template}"` : ''}).`,
+      '5. commit_agent_files — ONLY system.yaml, agents/<id>/AGENT.md, MEMORY.md (a whitelist). In system.yaml `grants`, declare what the team can use: CONTEXT (data · knowledge · metrics · connections · files-folders) and PLAN ITEMS (Operating Model · Pillars · Big Bets, via `plan`). Per item, set `capability`: Read (read-only) · Write-approval (read + propose) · Write-bounded (read + write); or grant a whole folder with `folder: {path, scope}`. Sub-agent grants ⊆ system grants.',
+      '6. build_agent_system(systemId) — compile + verify (✓/✗ rows + Langfuse traces).',
+      '⛔ Sharing is the promote ladder: Builder→Domain, Admin→Company. A creator keeps it My.',
+    ].join('\n'),
+  },
+  {
+    name: 'build_and_ship_software',
+    title: 'Build & ship software',
+    description: 'Create a declarative app, design it over governed data, author its tabs, and go live same-origin.',
+    arguments: [arg('name', 'App name', true), arg('consumes', 'Governed datasets/metrics/knowledge to grant')],
+    tab: 'software',
+    minRole: 'creator',
+    guide: 'software',
+    script: (a) => [
+      `GOAL: build and ship the DECLARATIVE app "${a.name || '<name>'}".`,
+      a.consumes ? `Grant / consume: ${a.consumes}` : '',
+      'An app is a validated AppSpec of cookbook-pattern tabs over governed data, served same-origin — no repo/CI/image/pod. It is LIVE the moment its spec validates.',
+      'FIRST read the golden path: sovereign-os://guide/path/software.',
+      'Steps:',
+      '1. whoami + list_software (reuse first).',
+      `2. create_software(name: "${a.name || '<name>'}") — kind defaults to 'spec' (declarative). No template needed.`,
+      '3. design_software(appId, epics, grants) — author the epics/user-stories/spec AND grant the datasets/metrics/knowledge each tab needs (by reference, never credentials).',
+      '4. get_dataset(id) for each granted dataset — discover its REAL columns (a tab may only reference real columns).',
+      '5. generate_app_spec(appId) — ✨ scaffold a complete, validated AppSpec from the design + granted data; review the returned spec.',
+      '6. set_app_spec(appId, spec) — AUTHOR = versioned PUBLISH: the spec goes live at /apps/<slug> and a version is snapshotted. Blocking issues come back as { path, reason, fix } (persists nothing) — fix and retry.',
+      '7. Optional: use_as_data(appId) closes the loop app → Bronze; promote(appId) climbs the ladder (Builder+).',
+      'ADVANCED (only if a platform admin has enabled coded apps): create_software(kind:"code") → build_software → commit → verify_software → request_deploy. Otherwise the coded path fails closed.',
+    ].filter(Boolean).join('\n'),
+  },
+  {
+    name: 'define_metric',
+    title: 'Define a governed metric',
+    description: 'Turn a gold, governed dataset into the one definition of a number.',
+    arguments: [arg('metric_name', 'The metric to define', true), arg('dataset', 'Gold governed dataset id')],
+    tab: 'metrics',
+    minRole: 'creator',
+    guide: 'metrics',
+    script: (a) => [
+      `GOAL: define the metric "${a.metric_name || '<metric>'}"${a.dataset ? ` on dataset ${a.dataset}` : ''}.`,
+      'Steps:',
+      '1. whoami.',
+      '2. list_datasets — the dataset MUST be a GOVERNED gold asset. If not, run build_data_product first.',
+      '3. list_metrics — do not duplicate an existing member.',
+      `4. define_metric(datasetId, name: "${a.metric_name || '<metric>'}", aggregation, column?, dimensions?). aggregation ∈ count·count_distinct·count_distinct_approx·sum·avg·min·max·number. count needs no column; sum/avg/min/max/count_distinct* need a gold column; number is a ratio.`,
+      '   Optional richer measure model (all guided): filter {column,operator,value} (filtered measure) · runningTotal (cumulative) · rollingWindow {amount,unit} (trailing window) · ratio {numerator,denominator} (with aggregation "number") · format · drillMembers.',
+      '5. Verify the canonical Cube member came back.',
+    ].join('\n'),
+  },
+  {
+    name: 'build_dashboard',
+    title: 'Build a dashboard',
+    description: 'Compose charts over governed metric members with per-viewer RLS.',
+    arguments: [arg('name', 'Dashboard name', true), arg('focus', 'What it should show')],
+    tab: 'dashboards',
+    minRole: 'creator',
+    guide: 'dashboards',
+    script: (a) => [
+      `GOAL: build the dashboard "${a.name || '<name>'}"${a.focus ? ` focused on ${a.focus}` : ''}.`,
+      'Steps:',
+      '1. whoami + list_metrics.',
+      '2. define_metric for any missing member.',
+      `3. create_dashboard(name: "${a.name || '<name>'}", view, charts[]) — every chart binds a governed metric member.`,
+      '⛔ Widening the scope (My → Domain → Company) NEVER widens rows (per-viewer RLS). Sharing wider is a Builder/Admin step.',
+    ].join('\n'),
+  },
+  {
+    name: 'upload_and_share_file',
+    title: 'Upload & share a file',
+    description: 'Upload a governed file with docs + tags, then promote it to a domain asset.',
+    arguments: [arg('name', 'File name', true), arg('purpose', 'What the file is for')],
+    tab: 'files',
+    minRole: 'creator',
+    guide: 'files',
+    script: (a) => [
+      `GOAL: upload and share the file "${a.name || '<name>'}"${a.purpose ? ` (${a.purpose})` : ''}.`,
+      'Steps:',
+      '1. whoami.',
+      `2. search_files(query: "${a.name || '<name>'}") — dedupe.`,
+      '3. upload_file(name, text, tags, description) — a description + ≥1 tag make it promote-eligible; restricted = stored-not-indexed.',
+      '4. request_promotion(kind: "file", id) — file the promotion request.',
+      '⛔ Builder+ only: approve_promotion(approvalId) re-governs the prefix + DLS. A creator STOPS here.',
+    ].join('\n'),
+  },
+  {
+    name: 'work_the_queue',
+    title: 'Work the approval queue',
+    description: 'A decider’s daily loop — triage the governance queue and decide (the approval IS the action).',
+    arguments: [arg('kind', 'Optional approval kind to focus on')],
+    tab: 'governance',
+    minRole: 'creator',
+    guide: 'governance',
+    script: (a) => [
+      'GOAL: work your governance approval queue.',
+      'Steps:',
+      '1. whoami — your role decides what you may approve (Builder = domain promotions; Admin = certifications + cross-domain).',
+      `2. list_approvals(status: "pending"${a.kind ? `, kind: "${a.kind}"` : ''}) — your scoped queue (own requests always; +domain if Builder+; tenant-wide if Admin).`,
+      '3. get_request(requestId) — read one item: its kind, effect summary, and who can approve it.',
+      '⛔ decide_approval is Builder+ AND re-gated per item: a certification (scope tenant) needs a platform Admin; a creator can only file + poll, never decide.',
+      '4. decide_approval(requestId, "approve" | "deny") — on approve the governed effect (promote/certify/grant) runs NOW. An already-decided item returns conflict (idempotent).',
+    ].join('\n'),
+  },
+  {
+    name: 'check_my_runs',
+    title: 'Check my runs',
+    description: 'Read your scoped monitoring health, then drill into a run trace.',
+    arguments: [arg('focus', 'What you are investigating (optional)')],
+    tab: 'monitoring',
+    minRole: 'creator',
+    guide: 'monitoring',
+    script: (a) => [
+      `GOAL: check the health of your runs${a.focus ? ` (${a.focus})` : ''}.`,
+      'Steps:',
+      '1. whoami — your identity sets the scope (creator = your own runs; builder = your domain; admin = tenant + cluster).',
+      '2. get_monitoring_overview — the attention-first overview (worst-first), scoped to you. Each item carries a source ("live" | "mock").',
+      '3. list_runs(limit?) — your recent runs with health + cost. HARD-scoped: you see ONLY your own.',
+      '4. get_run_trace(runId) — drill into one trace (steps, tool calls, context pack, logs). Guessing another user’s runId returns forbidden/not_found — the scope is enforced server-side.',
+      'This is a READ-ONLY surface: there is no ack/silence — investigate, then fix the underlying artifact in its own tab.',
+    ].join('\n'),
+  },
+  {
+    name: 'orient_me',
+    title: 'Orient me',
+    description: 'Read your identity, capabilities, and everything that already exists.',
+    arguments: [],
+    tab: 'meta',
+    minRole: 'creator',
+    guide: 'overview',
+    script: () => [
+      'GOAL: get oriented in the Sovereign Agentic OS.',
+      'Steps:',
+      '1. whoami — your identity, role, domains, and what you can/cannot do.',
+      '2. list_capabilities — every tool split into available vs gated.',
+      '3. Read sovereign-os://guide/overview and sovereign-os://guide/governance (or get_guide).',
+      '4. Read your inventories: sovereign-os://my/datasets, my/knowledge, my/connections, my/files, my/metrics, my/dashboards, my/agents, my/software (or the list_* tools).',
+      '5. Summarize: "here is what exists, and here is what you may do" — then pick a golden-path prompt.',
+    ].join('\n'),
+  },
+];
+
+/** Render a prompt to MCP `prompts/get` messages: guide + live banner + script + rules. */
+export function renderPrompt(prompt: McpPrompt, user: CurrentUser, args: Record<string, string>): PromptMessage[] {
+  const guide = loadGuide(prompt.guide);
+  const text = [
+    roleBanner(user),
+    '',
+    prompt.script(args),
+    '',
+    RULES,
+    '',
+    guide ? `--- GUIDE: ${prompt.guide} ---\n${guide}` : '',
+  ].filter(Boolean).join('\n');
+  return [{ role: 'user', content: { type: 'text', text } }];
+}
+
+// --- Endpoint scoping (mirrors toolsForTab): a tab serves its own + meta -------
+export function promptsForTab(tab: McpTab, all: McpPrompt[] = PROMPTS): McpPrompt[] {
+  return all.filter((p) => p.tab === tab || p.tab === 'meta');
+}

@@ -15,31 +15,6 @@
 {{- $ctx := . }}
 {{- $ing := .Values.ingress }}
 {{- /* host key -> in-cluster Service + port (release name `agentic-os`). */}}
-{{- /* Long-lived WebSocket/proxy timeouts for the terminal + workbench brokers
-       (idle shells / code-server keep the connection open well past the 60s
-       ingress-nginx default). Merged per-route into the Ingress annotations. */}}
-{{- $wsAnno := dict
-  "nginx.ingress.kubernetes.io/proxy-read-timeout" "3600"
-  "nginx.ingress.kubernetes.io/proxy-send-timeout" "3600"
-}}
-{{- /* The Workbench tab establishes its session CROSS-ORIGIN: the browser (on the
-       OS UI origin) fetch-POSTs `workbench.<zone>/session?t=<token>` with
-       credentials BEFORE iframing the editor, so the workbench Ingress must
-       answer CORS for the OS UI origin(s) — the broker itself sets no CORS
-       headers. The terminal needs none of this (WebSockets are not CORS-gated). */}}
-{{- $uiOrigins := list }}
-{{- range $k := list "osUI" "osUIApex" }}
-{{- with index ($ing.hosts | default dict) $k }}{{- $uiOrigins = append $uiOrigins (printf "https://%s" .) }}{{- end }}
-{{- end }}
-{{- $wbAnno := merge (dict) $wsAnno }}
-{{- if $uiOrigins }}
-{{- $wbAnno = merge (dict
-      "nginx.ingress.kubernetes.io/enable-cors" "true"
-      "nginx.ingress.kubernetes.io/cors-allow-origin" (join ", " $uiOrigins)
-      "nginx.ingress.kubernetes.io/cors-allow-credentials" "true"
-      "nginx.ingress.kubernetes.io/cors-allow-methods" "GET, POST, OPTIONS"
-    ) $wbAnno }}
-{{- end }}
 {{- /* Dagster OSS ships NO auth of its own (every other exposed console has a
        login). Its Ingress therefore demands an htpasswd Secret via nginx
        basic-auth: set `ingress.dagsterBasicAuthSecret` to a Secret name in the
@@ -57,22 +32,8 @@
   "osUI"         (dict "service" "os-ui" "port" 3000)
   "litellm"      (dict "service" "agentic-os-litellm" "port" 4000)
   "langfuse"     (dict "service" "agentic-os-langfuse-web" "port" 3000)
-  "superset"     (dict "service" "agentic-os-superset" "port" 8088)
-  "forgejo"      (dict "service" "forgejo-http" "port" 3000)
-  "argocd"       (dict "service" "argocd-server" "port" 80)
-  "openmetadata" (dict "service" "openmetadata" "port" 8585)
   "dagster"      (dict "service" "agentic-os-dagster-webserver" "port" 80 "annotations" $dagsterAnno)
-  "terminal"     (dict "service" "terminal-broker" "port" 8080 "annotations" $wsAnno)
-  "workbench"    (dict "service" "workbench-broker" "port" 8080 "annotations" $wbAnno)
-  "jupyterhub"   (dict "service" "proxy-public" "port" 80 "annotations" $wsAnno)
 }}
-{{- /* JupyterHub (Science) rides the $routes map above. Notebooks need WebSockets
-       (kernels/terminals) so the tool CANNOT be served through the os-ui same-origin
-       proxy (that route rejects protocol:ws with 501) — it needs its OWN public host
-       fronting the Z2JH proxy (`proxy-public`), which the CHP serves at `/`. Emitted
-       only when `ingress.hosts.jupyterhub` is set. $wsAnno gives it the long-timeout +
-       Upgrade/Connection passthrough the kernel WebSockets require, same as the
-       terminal/workbench WS consoles. */}}
 {{- range $key, $route := $routes }}
 {{- $host := index ($ing.hosts | default dict) $key }}
 {{- if $host }}

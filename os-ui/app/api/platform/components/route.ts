@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/core/auth';
-import { listComponentsWithStatus } from '@/lib/platform-admin/platform';
-import { versionFor } from '@/lib/platform-admin/components-extra';
-import { config } from '@/lib/core/config';
+import { requireAdmin } from '@core/kernel/auth';
+import { listComponentsWithStatus } from '@tabs/admin/lib/platform';
+import { versionFor } from '@tabs/admin/lib/components-extra';
+import { config } from '@core/kernel/config';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -30,13 +30,8 @@ export const runtime = 'nodejs';
 function consoleUrlFor(id: string): string {
   const urls: Record<string, string> = {
     langfuse: config.langfuseConsoleUrl,
-    superset: config.supersetUrl,
-    argocd: config.argocdUrl,
-    openmetadata: config.openmetadataUrl,
     dagster: config.dagsterConsoleUrl,
-    forgejo: config.forgejoConsoleUrl,
     'opensearch-dashboards': config.opensearchDashboardsUrl,
-    cube: config.cubeConsoleUrl,
     jupyterhub: config.jupyterhubConsoleUrl,
     mlflow: config.mlflowConsoleUrl,
     featureform: config.featureformConsoleUrl,

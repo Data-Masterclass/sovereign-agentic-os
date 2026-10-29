@@ -2,15 +2,15 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { getDataset, builtLayerFqn, setMonitor } from '@/lib/experimental/data/store';
-import { queryRun } from '@/lib/infra/governed';
-import { ensureHydrated, healthTrend, latestRun } from '@/lib/experimental/data/dq-results';
-import { suggestChecks } from '@/lib/experimental/data/dq-suggest';
-import { MONITOR_KINDS, monitorEnabled, type MonitorConfig, type MonitorKind } from '@/lib/experimental/data/dq-monitors';
-import { isNotMaterialized } from '@/lib/experimental/data/materialized';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { getDataset, builtLayerFqn, setMonitor } from '@tabs/data/lib/store';
+import { queryRun } from '@core/infra/governed';
+import { ensureHydrated, healthTrend, latestRun } from '@tabs/data/lib/dq-results';
+import { suggestChecks } from '@tabs/data/lib/dq-suggest';
+import { MONITOR_KINDS, monitorEnabled, type MonitorConfig, type MonitorKind } from '@tabs/data/lib/dq-monitors';
+import { isNotMaterialized } from '@tabs/data/lib/materialized';
 import {
   assembleProfile,
   parseDescribe,
@@ -19,7 +19,7 @@ import {
   topValuesSql,
   type Profile,
   type ProfileColumn,
-} from '@/lib/experimental/data/profile';
+} from '@tabs/data/lib/profile';
 
 export const dynamic = 'force-dynamic';
 

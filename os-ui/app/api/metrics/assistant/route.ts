@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { failResponse, runStageAssistant } from '@/lib/assistant/stage-route';
-import { runSuggest } from '@/lib/experimental/metrics/suggest-server';
+import { requireUser } from '@core/kernel/auth';
+import { failResponse, runStageAssistant } from '@core/runtime/stage-route';
+import { runSuggest } from '@tabs/metrics/lib/suggest-server';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,7 +82,7 @@ function promptFor(
       return {
         json: false,
         system:
-          'You explain a Cube query error or pending state to a non-technical user in two or three plain sentences: what likely caused it and the single most useful next step. No SQL jargon; speak to what the user should do, not to Cube internals.',
+          'You explain a metric query error or pending state to a non-technical user in two or three plain sentences: what likely caused it and the single most useful next step. No SQL jargon; speak to what the user should do, not to engine internals.',
         user: `The metric preview returned: "${errorMsg || '(no error — metric is syncing or live)'}". Explain what is happening and what to try.`,
       };
     case 'publish':
@@ -104,7 +104,7 @@ function promptFor(
 
 /**
  * POST { stage, ... } → a stage-scoped suggestion.
- * `suggest` assembles the caller's strategy/OM/process/dataset context and returns
+ * `suggest` assembles the caller's OM/process/dataset context and returns
  * `{ candidates, grounding }`; `define` returns `{ form }`; every other stage `{ text }`.
  */
 export async function POST(req: Request) {
@@ -119,7 +119,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // The strategy-grounded "suggest metrics" stage: server assembles ALL context
+    // The context-grounded "suggest metrics" stage: server assembles ALL context
+
     // under the caller, runs the reasoning model, and validates candidates against the
     // real, visible datasets (drops any fabricated dataset/column).
     if (stage === 'suggest') {

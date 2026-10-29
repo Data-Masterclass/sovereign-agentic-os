@@ -2,24 +2,19 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { importProduct } from '@/lib/experimental/data/store';
-import { runConformance } from '@/lib/experimental/data/policy/conformance';
-import { buildRoster } from '@/lib/experimental/data/build/live-clients';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { importProduct } from '@tabs/data/lib/store';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * Import / subscribe to a marketplace data product from another domain. Records the
- * importing domain + adds the read grant the policy compiler turns into OPA/Cube
- * access. A grant change re-runs the CONFORMANCE check (OPA path == Cube path) so the
- * new import is enforced identically on both paths before the importer queries it.
+ * importing domain + adds the read grant the policy compiler turns into OPA access.
  */
 export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
   const product = importProduct(id, user);
-  const conformance = runConformance([product], await buildRoster());
-  return NextResponse.json({ dataset: product, conformance });
+  return NextResponse.json({ dataset: product });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

@@ -2,15 +2,15 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/files/server';
-import { getFile } from '@/lib/experimental/files/store';
-import { listLineage } from '@/lib/experimental/files/lineage';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/files/lib/server';
+import { getFile } from '@tabs/files/lib/store';
+import { listLineage } from '@tabs/files/lib/lineage';
 
 export const dynamic = 'force-dynamic';
 
-/** The file's OpenMetadata lineage edges (promoted / certified / derived). */
+/** The file's lineage edges (promoted / certified / derived). */
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
   getFile(id, user); // view-scope guard

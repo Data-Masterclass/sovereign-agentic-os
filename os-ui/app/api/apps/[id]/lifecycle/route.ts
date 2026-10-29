@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource } from '@/lib/experimental/software/lifecycle';
-import type { ConsumedResource } from '@/lib/experimental/software/model';
+import { withRoute } from '@core/kernel/route-server';
+import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource } from '@tabs/software/lib/lifecycle';
+import type { ConsumedResource } from '@tabs/software/lib/model';
 
 export const dynamic = 'force-dynamic';
 

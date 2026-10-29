@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import PageHeader from '@/components/PageHeader';
+import PageHeader from '@core/ui/PageHeader';
 
 type Plugin = {
   id: string;
@@ -79,7 +79,7 @@ export default function PluginsPage() {
         <p className="lead">
           Curate which plugins — MCP servers, skills, and tools — your domains may use. Install requires a
           plugin to be both <strong>signed</strong> and <strong>scanned</strong>. This is distinct from the
-          internal product Marketplace tab; here you govern the supply chain.
+          internal Company-scope product catalogue; here you govern the supply chain.
         </p>
 
         {error ? <div className="error">{error}</div> : null}

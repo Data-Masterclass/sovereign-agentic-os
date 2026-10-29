@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { ExposureInput } from '@/lib/experimental/connections/exposures';
-import { revokeExposureAndPropagate, updateExposureAndRecompile } from '@/lib/experimental/connections/exposure-propagation';
+import { withRoute } from '@core/kernel/route-server';
+import type { ExposureInput } from '@tabs/connections/lib/exposures';
+import { revokeExposureAndPropagate, updateExposureAndRecompile } from '@tabs/connections/lib/exposure-propagation';
 
 export const dynamic = 'force-dynamic';
 

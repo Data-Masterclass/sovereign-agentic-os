@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { countEntity } from '@/lib/experimental/connections/warehouse/catalog-snapshot';
+import { withRoute } from '@core/kernel/route-server';
+import { countEntity } from '@tabs/connections/lib/warehouse/catalog-snapshot';
 
 export const dynamic = 'force-dynamic';
 

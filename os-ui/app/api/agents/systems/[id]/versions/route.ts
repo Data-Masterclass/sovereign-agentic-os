@@ -2,98 +2,43 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
+import { withRoute } from '@core/kernel/route-server';
 import {
   ensureHydrated,
   listSystemVersions,
   restoreSystemVersion,
-  getSystemForEdit,
-  applyRestoredYaml,
-} from '@/lib/agents/store';
-import { realForgejo } from '@/lib/agents/build/live-clients';
-import { buildSystem } from '@/lib/agents/build/server';
-import {
-  listGitVersions,
-  restoreGitVersion,
-  shaForVersion,
-  systemRepo,
-} from '@/lib/core/git-versioning';
+} from '@tabs/agents/lib/store';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Version history for one agent system — GIT-backed (Forgejo commit log) when the
- * system has a repo Forgejo can reach, else the snapshot versionLog fallback.
+ * Version history for one agent system — served from the agent STORE's own version
+ * log (the snapshot history written on every save/build). There is no git backend:
+ * a version is a stored revision of the system record, not a commit.
  *
- *   GET          → the versions (newest first; view-scoped). `source` says which
- *                  backing answered ('git' or 'snapshot') — honest, never faked.
- *   POST {version} → restore a prior build. Git restore RE-COMMITS the prior
- *                    commit's files onto HEAD (a new, auditable "restore of <sha>"
- *                    commit — never a destructive reset), then reloads the runtime
- *                    like the Build path; else the snapshot restore.
+ *   GET            → the versions (newest first; view-scoped).
+ *   POST {version} → restore a prior revision through the store (lineage-safe; the
+ *                    restore itself is recorded as a new version, never a rewrite).
  *
  * The `{ version, at, author, summary }` shape + numeric `{ version }` restore
- * contract is IDENTICAL to the snapshot route, so the VersionHistory UI is unchanged.
+ * contract is unchanged, so the VersionHistory UI is unaffected.
  */
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
-    const { id } = params;
-
-    // Git primary: only for a caller who can edit (the repo + its history is the
-    // system's source of truth). A viewer still gets the snapshot list below.
-    let git: Awaited<ReturnType<typeof listGitVersions>> = null;
-    try {
-      const view = getSystemForEdit(id, user);
-      void view; // edit-scope check; a viewer throws 403 → snapshot fallback path
-      git = await listGitVersions(realForgejo(), systemRepo(id));
-    } catch (e) {
-      // A 403 (viewer) is a real permission answer — re-throw it. Any other error
-      // (Forgejo unreachable) falls through to the snapshot log honestly.
-      if ((e as { status?: number })?.status === 403) throw e;
-    }
-    if (git) {
-      return NextResponse.json({ versions: git, source: 'git' });
-    }
-
-    const list = listSystemVersions(id, user).map((v) => ({
-      version: v.version,
-      at: v.at,
-      author: v.author,
-      summary: v.summary,
-    }));
-    return NextResponse.json({ versions: list, source: 'snapshot' });
+  const { id } = params;
+  const versions = listSystemVersions(id, user).map((v) => ({
+    version: v.version,
+    at: v.at,
+    author: v.author,
+    summary: v.summary,
+  }));
+  return NextResponse.json({ versions });
 }, { hydrate: ensureHydrated, defaultStatus: 500 });
 
 export const POST = withRoute<{ id: string }, { version?: number }>(async ({ user, params, body }) => {
-    const { id } = params;
-    if (typeof body.version !== 'number') {
-      return NextResponse.json({ error: 'A version number is required.' }, { status: 400 });
-    }
-
-    // Git primary: resolve the version index → commit sha against the CURRENT
-    // history, re-commit that build's files onto HEAD, apply the restored yaml to
-    // the live record, then reload the runtime via the Build path.
-    const forgejo = realForgejo();
-    let sha: string | null = null;
-    try {
-      getSystemForEdit(id, user); // edit-scope before any side effect
-      sha = await shaForVersion(forgejo, systemRepo(id), body.version);
-    } catch (e) {
-      if ((e as { status?: number })?.status === 403) throw e;
-    }
-    if (sha) {
-      const { yaml } = await restoreGitVersion(forgejo, systemRepo(id), sha, user.id);
-      const rec = applyRestoredYaml(id, user, yaml, `restore of ${sha.slice(0, 8)}`);
-      // Reload the runtime from the restored source (best-effort — falls back to the
-      // offline mock when no cluster; never blocks the restore).
-      try {
-        await buildSystem(id, yaml);
-      } catch {
-        /* reload is best-effort; the restore itself already succeeded */
-      }
-      return NextResponse.json({ id: rec.id, updatedAt: rec.updatedAt, source: 'git', sha });
-    }
-
-    // Snapshot fallback: no git history / Forgejo unreachable.
-    const rec = restoreSystemVersion(id, user, body.version);
-    return NextResponse.json({ id: rec.id, updatedAt: rec.updatedAt, source: 'snapshot' });
+  const { id } = params;
+  if (typeof body.version !== 'number') {
+    return NextResponse.json({ error: 'A version number is required.' }, { status: 400 });
+  }
+  const rec = restoreSystemVersion(id, user, body.version);
+  return NextResponse.json({ id: rec.id, updatedAt: rec.updatedAt });
 }, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });

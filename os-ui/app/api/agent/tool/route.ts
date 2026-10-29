@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
+import { requireUser } from '@core/kernel/auth';
 import {
   authorize,
   metricsTool,
@@ -10,8 +10,8 @@ import {
   trace,
   SALES,
   type ToolName,
-} from '@/lib/infra/agent-governed';
-import { enqueue } from '@/lib/governance/approvals';
+} from '@core/infra/agent-governed';
+import { enqueue } from '@core/policy/approvals';
 
 export const dynamic = 'force-dynamic';
 

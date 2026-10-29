@@ -2,18 +2,16 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { requireUser } from '@/lib/core/auth';
-import { roleAtLeast } from '@/lib/core/session';
-import { listGovernedDatasets, builtLayerFqn } from '@/lib/experimental/data/store';
-import { queryRun } from '@/lib/infra/governed';
-import { ensureHydrated, latestRun } from '@/lib/experimental/data/dq-results';
-import { runAndRecord, isNewFailure } from '@/lib/experimental/data/dq-run-server';
-import { omDqAppenderFor } from '@/lib/experimental/connections/openmetadata';
-import { deliverDqAlert } from '@/lib/experimental/dashboards/delivery';
-import { getPublicUser } from '@/lib/platform-admin/users';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { roleAtLeast } from '@core/kernel/session';
+import { listGovernedDatasets, builtLayerFqn } from '@tabs/data/lib/store';
+import { queryRun } from '@core/infra/governed';
+import { ensureHydrated, latestRun } from '@tabs/data/lib/dq-results';
+import { runAndRecord, isNewFailure } from '@tabs/data/lib/dq-run-server';
+import { deliverDqAlert } from '@tabs/dashboards/lib/delivery';
+import { getPublicUser } from '@tabs/admin/lib/users';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,8 +38,6 @@ export const POST = withRoute(async ({ user }) => {
     return NextResponse.json({ error: 'not permitted to run the data-quality sweep' }, { status: 403 });
   }
 
-  // CurrentUser for the (best-effort) OM DQ appender lookup — same session as above.
-  const currentUser = await requireUser();
   const datasets = listGovernedDatasets();
   let ran = 0;
   let failing = 0;
@@ -56,14 +52,10 @@ export const POST = withRoute(async ({ user }) => {
       // governed ⇒ domain principal). The cron principal is builder+, so it reads the
       // governed domain copy — exactly what OPA permits for that identity.
       const resolved = builtLayerFqn(dataset, user);
-      // Best-effort OM DQ result-appender (null unless the flag is on AND an OM is
-      // connected). Non-blocking — never throws, never fakes success.
-      const omAppend = await omDqAppenderFor(currentUser, dataset).catch(() => null);
       const outcome = await runAndRecord(dataset, {
         fqn: resolved?.fqn ?? null,
         queryFn: (sql) => queryRun(sql, resolved?.principal),
         ownerId: user.id,
-        omAppend: omAppend ?? undefined,
       });
       ran++;
       if (outcome.badge === 'failing') failing++;

@@ -2,12 +2,12 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { serveMcp, serveMcpStream } from '@/lib/mcp/http';
-import { isMcpTab, toolsForTab, MCP_SERVER_INFO } from '@/lib/mcp/server';
-import { resourcesForTab, templatesForTab } from '@/lib/mcp/resources';
-import { promptsForTab } from '@/lib/mcp/prompts';
-import { buildInstructions } from '@/lib/mcp/instructions';
-import { tabTitle } from '@/lib/tabs/context';
+import { serveMcp, serveMcpStream } from '@core/mcp/http';
+import { isMcpTab, toolsForTab, MCP_SERVER_INFO } from '@core/mcp/server';
+import { resourcesForTab, templatesForTab } from '@core/mcp/resources';
+import { promptsForTab } from '@core/mcp/prompts';
+import { buildInstructions } from '@core/mcp/instructions';
+import { tabTitle } from '@core/tabs-meta/context';
 
 export const dynamic = 'force-dynamic';
 

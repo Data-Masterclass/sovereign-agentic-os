@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
  */
-import { currentUser } from '@/lib/core/auth';
+import { currentUser } from '@core/kernel/auth';
 
 /**
  * Server guard for the Components console. Admin-only: exposes cluster workload

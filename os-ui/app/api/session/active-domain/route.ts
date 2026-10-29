@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { currentUser } from '@/lib/core/auth';
-import { ACTIVE_DOMAIN_COOKIE, DOMAIN_CHOSEN_COOKIE } from '@/lib/core/active-domain';
+import { currentUser } from '@core/kernel/auth';
+import { ACTIVE_DOMAIN_COOKIE, DOMAIN_CHOSEN_COOKIE } from '@core/kernel/active-domain';
 
 export const dynamic = 'force-dynamic';
 

@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../../_ctx';
-import { modelReferences } from '@/lib/platform-admin/model-references';
-import { ensureHydrated as ensureAgentsHydrated } from '@/lib/agents/store';
+import { modelReferences } from '@tabs/admin/lib/model-references';
+import { ensureHydrated as ensureAgentsHydrated } from '@tabs/agents/lib/store';
 
 export const dynamic = 'force-dynamic';
 

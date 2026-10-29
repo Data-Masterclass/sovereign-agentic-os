@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
+import { withRoute } from '@core/kernel/route-server';
 import {
   getMergedClassification,
   runClassification,
@@ -10,7 +10,7 @@ import {
   setSeed,
   patchTaxonomy,
   type SeedSource,
-} from '@/lib/experimental/connections/warehouse/catalog-classification';
+} from '@tabs/connections/lib/warehouse/catalog-classification';
 
 export const dynamic = 'force-dynamic';
 

@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
  */
-import PageHeader from '@/components/PageHeader';
-import { byLicense, COMPONENTS, TRADEMARK_NOTE } from '@/lib/core/licenses';
-import { currentUser } from '@/lib/core/auth';
+import PageHeader from '@core/ui/PageHeader';
+import { byLicense, COMPONENTS, TRADEMARK_NOTE } from '@core/kernel/licenses';
+import { currentUser } from '@core/kernel/auth';
 
 // Server component: the About / Licenses page. Visible to all roles (moved from
 // the Admin group to the Entry group — license transparency is a public concern).

@@ -4,12 +4,12 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
 import { recompile } from '../../_compile';
-import { setEnabled, setCap, setAssistantModel, clearAssistantModel, listModels, removeModel } from '@/lib/platform-admin/models';
-import { removeGatewayModel } from '@/lib/platform-admin/model-remove';
-import { modelReferences } from '@/lib/platform-admin/model-references';
-import { ensureHydrated as ensureAgentsHydrated } from '@/lib/agents/store';
-import { config } from '@/lib/core/config';
-import { audit } from '@/lib/platform-admin/audit';
+import { setEnabled, setCap, setAssistantModel, clearAssistantModel, listModels, removeModel } from '@tabs/admin/lib/models';
+import { removeGatewayModel } from '@tabs/admin/lib/model-remove';
+import { modelReferences } from '@tabs/admin/lib/model-references';
+import { ensureHydrated as ensureAgentsHydrated } from '@tabs/agents/lib/store';
+import { config } from '@core/kernel/config';
+import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 

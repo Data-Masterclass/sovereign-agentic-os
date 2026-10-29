@@ -1,7 +1,7 @@
 # OpenSearch — retrieval backbone
 
 **What it is:** OpenSearch (Apache 2.0) is the **vector + lexical** retrieval store — the RAG
-backbone for the agents and (in production) the catalog search for OpenMetadata. No pgvector.
+backbone for the agents, and the durable mirror for every `os-*` artifact index. No pgvector.
 Single node locally, security plugin disabled (the default-deny network baseline guards it).
 
 ## Access (API, no UI here — see OpenSearch Dashboards for a UI)

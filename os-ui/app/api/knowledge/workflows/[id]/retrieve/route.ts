@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { getWorkflow, getDomainKnowledge } from '@/lib/experimental/knowledge/store';
-import { chunkWorkflow, chunkDomain } from '@/lib/experimental/knowledge/chunk';
-import { indexWorkflow, indexDomain } from '@/lib/experimental/knowledge/index-pipeline';
-import { hasWorkflowUnits } from '@/lib/experimental/knowledge/index-store';
-import { retrieveKnowledge } from '@/lib/experimental/knowledge/retrieve';
-import { buildContextPack } from '@/lib/experimental/knowledge/context-pack';
-import { traceContext } from '@/lib/experimental/knowledge/knowledge-trace';
+import { withRoute } from '@core/kernel/route-server';
+import { getWorkflow, getDomainKnowledge } from '@tabs/knowledge/lib/store';
+import { chunkWorkflow, chunkDomain } from '@tabs/knowledge/lib/chunk';
+import { indexWorkflow, indexDomain } from '@tabs/knowledge/lib/index-pipeline';
+import { hasWorkflowUnits } from '@tabs/knowledge/lib/index-store';
+import { retrieveKnowledge } from '@tabs/knowledge/lib/retrieve';
+import { buildContextPack } from '@tabs/knowledge/lib/context-pack';
+import { traceContext } from '@tabs/knowledge/lib/knowledge-trace';
 
 export const dynamic = 'force-dynamic';
 

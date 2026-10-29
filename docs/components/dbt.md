@@ -14,11 +14,11 @@ transform path. It builds raw → `stg_orders` (table) → `daily_revenue` (incr
   ```
 - **Re-run / orchestrate:** materialize the dbt assets in **Dagster** (Assets tab).
 - **Add models:** edit `images/dbt/project/models/…`, rebuild the image, re-run. The build emits
-  `manifest.json` / `catalog.json` / `run_results.json` for OpenMetadata + `cube_dbt`.
+  `manifest.json` / `catalog.json` / `run_results.json` for lineage.
 
 ## FAQ
 **Q: No service — where's the UI?** dbt is a CLI/transform tool; its "UI" is Dagster (assets +
-lineage) and the resulting Iceberg tables (Cube/Superset/the agent `query` tool read them through
+lineage) and the resulting Iceberg tables (Metrics, Dashboards and the agent `query` tool read them through
 Trino).
 **Q: Why dbt-trino?** Trino is the single governed engine: it writes/maintains Iceberg natively
 and applies OPA row/column governance. One engine for all marts and personal schemas.

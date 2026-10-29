@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { moveArtifactDomain, moveUnassignedToDomain, MOVABLE_KINDS } from '@/lib/platform-admin/domain-move';
+import { moveArtifactDomain, moveUnassignedToDomain, MOVABLE_KINDS } from '@tabs/admin/lib/domain-move';
 
 export const dynamic = 'force-dynamic';
 

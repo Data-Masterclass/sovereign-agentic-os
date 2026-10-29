@@ -2,35 +2,30 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { getSystem } from '@/lib/agents/store';
-import { listDatasets, ensureHydrated } from '@/lib/experimental/data/store';
-import { listWorkflows, ensureHydrated as ensureWorkflowsHydrated } from '@/lib/experimental/knowledge/store';
-import { listPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from '@/lib/experimental/knowledge/personal-store';
-import { listMetrics } from '@/lib/experimental/metrics/store';
-import { listConnectionsForUser } from '@/lib/experimental/connections';
-import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/experimental/files/store';
-import { listFolders, ensureHydrated as ensureFoldersHydrated, type FolderTab } from '@/lib/folders';
-import { grantFolderNodes } from '@/lib/agents/grant-folders';
-import { resolveManual } from '@/lib/experimental/knowledge/manual';
-import { listPillars } from '@/lib/experimental/strategy/pillars';
-import type { PillarScope } from '@/lib/experimental/strategy';
-import { listBets, ensureHydrated as ensureBetsHydrated } from '@/lib/experimental/bigbets/store';
+import { withRoute } from '@core/kernel/route-server';
+import { getSystem } from '@tabs/agents/lib/store';
+import { listDatasets, ensureHydrated } from '@tabs/data/lib/store';
+import { listWorkflows, ensureHydrated as ensureWorkflowsHydrated } from '@tabs/knowledge/lib/store';
+import { listPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from '@tabs/knowledge/lib/personal-store';
+import { listMetrics } from '@tabs/metrics/lib/store';
+import { listConnectionsForUser } from '@tabs/connections/lib/index';
+import { listFiles, ensureHydrated as ensureFilesHydrated } from '@tabs/files/lib/store';
+import { listFolders, ensureHydrated as ensureFoldersHydrated, type FolderTab } from '@core/folders/index';
+import { grantFolderNodes } from '@tabs/agents/lib/grant-folders';
+import { resolveManual } from '@tabs/knowledge/lib/manual';
 import {
   MANUAL_SCOPES,
   planGrantId,
   manualLabel,
   manualAvailableScope,
-  pillarPlanId,
-  bigBetPlanId,
-} from '@/lib/agents/plan-grants';
+} from '@tabs/agents/lib/plan-grants';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * GET → the artifacts of a given `kind` the caller can actually see, so the
  * Grants & Routing picker can BROWSE + choose per-artifact access rather than
- * paste a raw id. Mirrors `app/api/big-bets/[id]/components/available`: every
+ * paste a raw id. Every
  * item is produced by the SAME canView/role-scoped list the rest of the OS uses
  * (personal + own-domain shared + marketplace), so this never leaks another
  * user's private drafts or another domain's artifacts.
@@ -44,29 +39,21 @@ export const dynamic = 'force-dynamic';
  * ALREADY DLS-scoped, so a folder that holds ungrantable items simply shows fewer
  * items — the tree renders tri-state and the "grants N of M" honesty follows.
  *
- * The Plan-item kinds return grantable PLAN targets rather than raw artifacts:
- * `operating-manual` (the manual scopes the caller may view), `strategy` (the Strategic
- * Pillars via `listPillars`) and `big-bets` (the Big Bets via `listBets`). Each item's
- * `id` is the encoded `grants.plan` id (`manual:*` / `pillar:*` / `bigbet:*`) and its
- * `scope` groups it My/Domain/Company like the others. All three use the SAME RLS/DLS
- * listing the corresponding tab uses, so nothing the caller can't see is ever offered.
+ * The Plan-item kind returns grantable PLAN targets rather than raw artifacts:
+ * `operating-manual` (the manual scopes the caller may view). Each item's `id` is the
+ * encoded `grants.plan` id (`manual:*`) and its `scope` groups it My/Domain/Company like
+ * the others, using the SAME RLS/DLS gate the Operating-Manual tab uses, so nothing the
+ * caller can't see is ever offered.
  */
 // `connections` (plural) is the Simple-builder GrantKind spelling; `connection`
 // (singular) is the original Grants-panel spelling — both resolve to the same list.
 type Kind =
   | 'data' | 'knowledge' | 'files' | 'connection' | 'connections' | 'metric'
-  | 'operating-manual' | 'strategy' | 'big-bets';
+  | 'operating-manual';
 const KINDS: Kind[] = [
   'data', 'knowledge', 'files', 'connection', 'connections', 'metric',
-  'operating-manual', 'strategy', 'big-bets',
+  'operating-manual',
 ];
-
-/** Strategy pillar tier → the picker's My/Domain/Company (personal/domain/marketplace) bucket. */
-function pillarScopeBucket(scope: PillarScope): 'personal' | 'domain' | 'marketplace' {
-  if (scope === 'personal') return 'personal';
-  if (scope === 'tenant') return 'marketplace'; // Company tier ↔ marketplace bucket, matching scopeLabel
-  return 'domain';
-}
 
 /** The kinds that carry folders — the ones whose feed returns folder nodes. */
 const FOLDER_TABS: Record<string, FolderTab> = { data: 'data', knowledge: 'knowledge', files: 'files' };
@@ -153,30 +140,8 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
       items = MANUAL_SCOPES
         .filter((scope) => resolveManual(scope, principal).canView)
         .map((scope) => ({ id: planGrantId(scope), name: manualLabel(scope), scope: manualAvailableScope(scope) }));
-    } else if (kind === 'strategy') {
-      // The Strategic Pillars the caller may VIEW — the SAME RLS-scoped `listPillars`
-      // the Strategy tab (and the Big Bets create dropdown) uses; never leaks another
-      // user's personal pillar or another domain's. Each grant id encodes the pillar
-      // (`pillar:<id>`); granting provisions the governed `get_pillar` read tool.
-      const pillars = await listPillars(user);
-      items = pillars.map((p) => ({
-        id: pillarPlanId(p.id),
-        name: p.name,
-        scope: pillarScopeBucket(p.scope),
-      }));
-    } else if (kind === 'big-bets') {
-      // The Big Bets the caller may VIEW — the SAME canView-scoped `listBets` the Big
-      // Bets tab uses. Scope buckets by ownership/reach: the caller's own bets → My,
-      // Admin-owned cross-domain bets → Company, otherwise the owning Domain. Each grant
-      // id encodes the bet (`bigbet:<id>`); granting provisions `get_big_bet`.
-      await ensureBetsHydrated();
-      const bets = listBets(principal);
-      items = bets.map((b) => ({
-        id: bigBetPlanId(b.id),
-        name: b.name,
-        scope: b.owner === user.id ? ('personal' as const) : b.crossDomain ? ('marketplace' as const) : ('domain' as const),
-      }));
     } else {
+
       // connection / connections — the async, already canView-scoped list.
       const conns = await listConnectionsForUser(user);
       items = conns.map((c) => ({

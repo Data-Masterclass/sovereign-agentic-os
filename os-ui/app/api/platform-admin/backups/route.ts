@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { listTargets, listRestores, restore, restorePhrase } from '@/lib/platform-admin/backups';
+import { listTargets, listRestores, restore, restorePhrase } from '@tabs/admin/lib/backups';
 
 export const dynamic = 'force-dynamic';
 

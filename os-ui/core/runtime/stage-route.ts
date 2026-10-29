@@ -1,0 +1,130 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+import 'server-only';
+import { NextResponse } from 'next/server';
+import { assistantComplete } from '@core/runtime/complete';
+import { completeWithEscalation } from '@core/runtime/escalate';
+import { parseJsonReply, extractJsonArray } from '@core/runtime/json-reply';
+
+/**
+ * Shared scaffolding for the per-STAGE tab assistants (Data · Metrics · Dashboards ·
+ * Science · Software). Every one of those routes runs the SAME ONE governed model via
+ * {@link assistantComplete} (Langfuse-audited, cost-cap enforced), so they all inherit the
+ * honest 503 (no model configured) and 402 (cost cap) errors — there is NO fake-AI
+ * fallback. The model only SUGGESTS; the client applies suggestions through the normal
+ * governed paths.
+ *
+ * This module lifts the *mechanical* bits every route copied byte-for-byte — the error →
+ * status mapper, the stage validation, the `assistantComplete([system,user])` call, and the
+ * defensive JSON-fence strip/parse — WITHOUT owning any stage definitions or prompts, which
+ * stay local to each tab (they differ). A route reduces to its `promptFor` table plus one
+ * call to {@link runStageAssistant}.
+ */
+
+/** Map a thrown error to `{ error }` at its `.status` (default 500) — the shared route tail. */
+export function failResponse(e: unknown): NextResponse {
+  const status = (e as { status?: number })?.status ?? 500;
+  return NextResponse.json({ error: (e as Error).message }, { status });
+}
+
+/** The system + user prompt pair a stage produces, plus whether the model must return JSON. */
+export type StagePrompt = { system: string; user: string; json: boolean };
+
+/** Caller identity threaded to the audited, cost-capped model. */
+export type StageUser = { id: string; domains?: string[] };
+
+/**
+ * Options for {@link runStageAssistant}.
+ *
+ * When a stage's {@link StagePrompt.json} is true, the model's reply is fence-stripped and
+ * `JSON.parse`d defensively; the parsed value is returned under `jsonKey` (e.g. `draft`,
+ * `form`, `charts`, `definition`). `expectArray` guards the shape — array vs object — and a
+ * bad shape yields a 502 with `jsonError`. Prose stages always return `{ text }`.
+ */
+export type StageAssistantOptions = {
+  /** The prompt pair for this stage (already built from the request body by the route). */
+  prompt: StagePrompt;
+  /** Caller identity for audit attribution + cost-cap scoping. */
+  user: StageUser;
+  /** The response key for a JSON stage's parsed payload (required when `prompt.json`). */
+  jsonKey?: string;
+  /** True when the JSON stage must return an array (e.g. Dashboards charts); default object. */
+  expectArray?: boolean;
+  /** The 502 message when a JSON stage returns an unusable shape. */
+  jsonError?: string;
+};
+
+/**
+ * Parse a stage reply TOLERANTLY and guard the expected shape. Returns the parsed value when
+ * it matches (`expectArray` ⇒ array, else a plain object), else null. This is the ONE JSON
+ * shape guard for a stage — used BOTH as the cost-routing escalation validator and to build
+ * the final response, so the two never diverge.
+ *
+ * The tolerant path ({@link parseJsonReply} / {@link extractJsonArray}) recovers the payload
+ * even when a reasoning-tier model wraps it in preamble prose or a stray ```json fence — the
+ * naive `JSON.parse` this replaced returned null on any of that, so a wrapped-but-valid reply
+ * read as "no suggestions" (the Software Design "poorly formatted markdown, no epics" bug).
+ */
+export function parseStageJson(content: string, expectArray?: boolean): unknown {
+  if (expectArray) {
+    const cleaned = content.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    try {
+      const whole = JSON.parse(cleaned);
+      if (Array.isArray(whole)) return whole;
+    } catch {
+      /* recover an array embedded in prose below */
+    }
+    const span = extractJsonArray(cleaned);
+    if (span) {
+      try {
+        const arr = JSON.parse(span);
+        if (Array.isArray(arr)) return arr;
+      } catch {
+        /* extracted span still invalid — honest null */
+      }
+    }
+    return null;
+  }
+  const parsed = parseJsonReply(content);
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+}
+
+/**
+ * Run one stage-scoped completion and shape the response exactly as the tab routes did:
+ * prose → `{ text }`; JSON → `{ [jsonKey]: parsed }` (502 on unusable shape). Callers wrap
+ * this in try/catch and hand thrown errors to {@link failResponse}.
+ *
+ * Cost routing: a PROSE stage has no validator, so it runs on the ONE assistant model
+ * (standard) directly. A JSON stage's output IS strictly validated (the shape guard), so
+ * it runs STANDARD-FIRST and escalates to reasoning ONLY when the cheap reply fails the
+ * SAME guard — the guard is the quality gate. Admin toggle OFF pins JSON stages to
+ * reasoning directly (see `completeWithEscalation`).
+ */
+export async function runStageAssistant(opts: StageAssistantOptions): Promise<NextResponse> {
+  const { prompt, user } = opts;
+  const messages = [
+    { role: 'system' as const, content: prompt.system },
+    { role: 'user' as const, content: prompt.user },
+  ];
+
+  // Prose: no validator to gate on → the single standard assistant call, unchanged.
+  if (!prompt.json) {
+    const { content } = await assistantComplete(messages, { user: { id: user.id, domains: user.domains } });
+    return NextResponse.json({ text: content });
+  }
+
+  // JSON: standard-first, escalate once to reasoning on a shape-guard miss.
+  const { content } = await completeWithEscalation(messages, {
+    user: { id: user.id, domains: user.domains },
+    validate: (raw) => parseStageJson(raw, opts.expectArray) !== null,
+  });
+  const parsed = parseStageJson(content, opts.expectArray);
+  if (parsed === null) {
+    return NextResponse.json(
+      { error: opts.jsonError ?? 'The assistant did not return a usable result — try rephrasing.' },
+      { status: 502 },
+    );
+  }
+  return NextResponse.json({ [opts.jsonKey ?? 'result']: parsed });
+}

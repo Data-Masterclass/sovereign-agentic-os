@@ -2,18 +2,17 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { authorize, cubeLoad, queryRun, trace, type CubeQuery } from '@/lib/infra/governed';
+import { requireUser } from '@core/kernel/auth';
+import { authorize, queryRun, trace } from '@core/infra/governed';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * The two governed data tools an agent (or the UI) calls — exposed through one
+ * The governed data `query` tool an agent (or the UI) calls — exposed through one
  * OPA-authorized, Langfuse-traced endpoint so every data access is policy-checked
  * and audited, exactly like the LiteLLM MCP gateway does for the LangGraph agent.
  *
- *   POST { tool: 'metrics', query: <CubeQuery> }   -> Cube semantic layer
- *   POST { tool: 'query',   sql: '<read-only SQL>' } -> Trino over Iceberg marts
+ *   POST { tool: 'query', sql: '<read-only SQL>' } -> Trino over Iceberg marts
  *
  * The principal is the signed-in user's domain (the OPA grant unit); the response
  * always reports which policy decision applied + whether the call was traced.
@@ -26,7 +25,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
 
-  let body: { tool?: string; query?: CubeQuery; sql?: string };
+  let body: { tool?: string; sql?: string };
   try {
     body = await req.json();
   } catch {
@@ -34,8 +33,8 @@ export async function POST(req: Request) {
   }
 
   const tool = body?.tool;
-  if (tool !== 'metrics' && tool !== 'query') {
-    return NextResponse.json({ error: "tool must be 'metrics' or 'query'" }, { status: 400 });
+  if (tool !== 'query') {
+    return NextResponse.json({ error: "tool must be 'query'" }, { status: 400 });
   }
 
   // OPA: principal = the caller's primary domain (the grant unit).
@@ -49,19 +48,6 @@ export async function POST(req: Request) {
   }
 
   try {
-    if (tool === 'metrics') {
-      const query = (body.query ?? {}) as CubeQuery;
-      if (!query.measures?.length) {
-        return NextResponse.json({ error: 'metrics tool needs at least one measure' }, { status: 400 });
-      }
-      const { rows, annotation } = await cubeLoad(query);
-      const traced = await trace({ principal, tool, input: query, output: rows });
-      return NextResponse.json({
-        tool, principal, authorized: true, policy: authz.policy, traced,
-        engine: 'cube', rows, annotation,
-      });
-    }
-    // query tool
     const sql = (body.sql ?? '').toString().trim();
     if (!sql) return NextResponse.json({ error: 'query tool needs sql' }, { status: 400 });
     const result = await queryRun(sql, principal);

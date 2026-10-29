@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { createAndGrant, type ProvisionableType } from '@/lib/experimental/software/appspec/context-provision';
+import { withRoute } from '@core/kernel/route-server';
+import { createAndGrant, type ProvisionableType } from '@tabs/software/lib/appspec/context-provision';
 
 export const dynamic = 'force-dynamic';
 

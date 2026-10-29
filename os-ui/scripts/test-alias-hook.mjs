@@ -14,8 +14,11 @@ const STUB = pathToFileURL(rp(ROOT, 'scripts/test-empty.mjs')).href;
 export async function resolve(spec, ctx, next) {
   if (spec === 'server-only' || spec === 'client-only') return { url: STUB, shortCircuit: true };
   if (spec === 'next/server') return { url: pathToFileURL(rp(ROOT, 'scripts/test-next-server.mjs')).href, shortCircuit: true };
-  if (spec.startsWith('@/')) {
-    let p = rp(ROOT, spec.slice(2));
+  // '@/' → repo root, '@core/' → core/, '@tabs/' → tabs/ (mirrors tsconfig paths).
+  const ALIASES = [['@/', ''], ['@core/', 'core/'], ['@tabs/', 'tabs/']];
+  const alias = ALIASES.find(([a]) => spec.startsWith(a));
+  if (alias) {
+    let p = rp(ROOT, alias[1] + spec.slice(alias[0].length));
     if (existsSync(p + '.ts')) p += '.ts';
     else if (existsSync(p + '.tsx')) p += '.tsx';
     else if (existsSync(rp(p, 'index.ts'))) p = rp(p, 'index.ts');

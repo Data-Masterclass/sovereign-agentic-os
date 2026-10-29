@@ -2,21 +2,20 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { roleModel } from '@/lib/models/roles';
-import { requireUser } from '@/lib/core/auth';
-import { getAppForUser, saveChat } from '@/lib/experimental/software/apps';
-import { scheduleRepairCheck } from '@/lib/experimental/software/ci-repair';
-import { getSnapshot } from '@/lib/experimental/software/snapshot';
-import { diffTrees, type FileChange } from '@/lib/experimental/software/build-changeset';
-import { runTabAgent, renderAssistantText } from '@/lib/assistant/runtime';
-import { cleanTurns } from '@/lib/assistant/turns';
-import { buildRunError, buildMaxIterations, honestBuildFinalText } from '@/lib/experimental/software/build-run';
-import { toolCallToLine, gateLineFromStep, committedSummaryLine, type ActivityLine } from '@/lib/experimental/software/build-activity';
-import { asChatRunMode, isReadOnlyMode, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_MODE_TOOLS, type ChatRunMode } from '@/lib/experimental/software/chat-modes';
-import { appContext } from '@/lib/experimental/software/build-brief';
-import { unresolvedDataNeedWarning } from '@/lib/experimental/software/data-plan';
-import { resolveGrantedContext } from '@/lib/experimental/software/grants-context';
-import type { BuildTarget } from '@/lib/experimental/software/build-target';
+import { roleModel } from '@core/models/roles';
+import { requireUser } from '@core/kernel/auth';
+import { getAppForUser, saveChat } from '@tabs/software/lib/apps';
+import { getSnapshot } from '@tabs/software/lib/snapshot';
+import { diffTrees, type FileChange } from '@tabs/software/lib/build-changeset';
+import { runTabAgent, renderAssistantText } from '@core/runtime/runtime';
+import { cleanTurns } from '@core/runtime/turns';
+import { buildRunError, buildMaxIterations, honestBuildFinalText } from '@tabs/software/lib/build-run';
+import { toolCallToLine, gateLineFromStep, committedSummaryLine, type ActivityLine } from '@tabs/software/lib/build-activity';
+import { asChatRunMode, isReadOnlyMode, modelRoleForMode, tierNote, READ_ONLY_MODE_TOOLS, BUILD_MODE_TOOLS, type ChatRunMode } from '@tabs/software/lib/chat-modes';
+import { appContext } from '@tabs/software/lib/build-brief';
+import { unresolvedDataNeedWarning } from '@tabs/software/lib/data-plan';
+import { resolveGrantedContext } from '@tabs/software/lib/grants-context';
+import type { BuildTarget } from '@tabs/software/lib/build-target';
 
 export const dynamic = 'force-dynamic';
 
@@ -173,13 +172,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         // A closing activity line summarizing the real committed changeset.
         const summary = mode === 'build' ? committedSummaryLine(app.name, changes) : null;
         if (summary) send({ type: 'activity', line: { tool: 'commit', text: summary, isError: false } });
-        // PHASE C — if this build turn committed, schedule a ONE-SHOT best-effort CI check
-        // ~2.5 min out (no cron here). Its failing branch fires the bounded auto-repair.
-        // A pod restart loses the pending timer — acceptable (the next on-load refresh
-        // re-detects any failure). Skipped for a no-op turn or a non-live app.
-        if (mode === 'build' && changes.length > 0 && app.mode === 'live') {
-          scheduleRepairCheck(app.id);
-        }
       } catch (e) {
         // HONEST failure (0.6.110): route the thrown error through the typed classifier
         // instead of blanket-labelling every non-abort exception "LiteLLM unreachable".

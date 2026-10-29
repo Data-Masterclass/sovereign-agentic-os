@@ -3,9 +3,9 @@
  */
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { currentUser } from '@/lib/core/auth';
-import { roleAtLeast } from '@/lib/core/session';
-import PlatformNav from '@/components/PlatformNav';
+import { currentUser } from '@core/kernel/auth';
+import { roleAtLeast } from '@core/kernel/session';
+import PlatformNav from '@tabs/admin/ui/PlatformNav';
 
 /**
  * Platform Admin shell — tenant-scoped, ABOVE the per-domain workspace.

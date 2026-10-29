@@ -32,6 +32,15 @@ jobs:
         run: npm --prefix os-ui ci
       - name: Test (os-ui)
         run: npm --prefix os-ui test
+      - name: Builder-vertical regression gate
+        working-directory: os-ui
+        run: bash scripts/gate.sh
+
+      - name: Structure ratchet (core / tabs / components)
+        run: node scripts/check-structure.mjs
+
+      - name: Code map is current
+        run: node scripts/build-docs.mjs --check
 
   build:
     name: build

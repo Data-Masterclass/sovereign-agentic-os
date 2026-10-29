@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { getWorkflow } from '@/lib/experimental/knowledge/store';
-import { compileGuardrails } from '@/lib/experimental/knowledge/guardrails';
-import { applyGuardrails } from '@/lib/experimental/knowledge/guardrails-apply';
-import { roleAtLeast } from '@/lib/core/session';
+import { withRoute } from '@core/kernel/route-server';
+import { getWorkflow } from '@tabs/knowledge/lib/store';
+import { compileGuardrails } from '@tabs/knowledge/lib/guardrails';
+import { applyGuardrails } from '@tabs/knowledge/lib/guardrails-apply';
+import { roleAtLeast } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 

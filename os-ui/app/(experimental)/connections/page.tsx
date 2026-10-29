@@ -3,10 +3,8 @@
  */
 'use client';
 
-import PageHeader from '@/components/PageHeader';
-import GovernedConnections from '@/components/experimental/connections/GovernedConnections';
-import TalkTo from '@/components/talk/TalkTo';
-import { TALK_PRESENTATION } from '@/lib/talk/schema';
+import PageHeader from '@core/ui/PageHeader';
+import GovernedConnections from '@tabs/connections/ui/GovernedConnections';
 
 /**
  * The Connections page — the OS-wide View/Edit artifact model.
@@ -19,13 +17,11 @@ import { TALK_PRESENTATION } from '@/lib/talk/schema';
  *              An existing connection opens in VIEW (real status · what it connects to ·
  *              exposed capabilities · usage · Test), with Promote + lifecycle in the detail
  *              header and ✎ Edit (edit-scope gated) for the configure surface.
- *   • Talk to Connections — the metadata-grounded copilot for this tab, below.
  */
 export default function ConnectionsPage() {
-  const talk = TALK_PRESENTATION.connections;
   return (
     <>
-      <PageHeader title="Connections" crumb="external systems · governed connections" tutorial="connections" />
+      <PageHeader title="Connections" crumb="external systems · governed connections" />
       <div className="content">
         <p className="lead">
           The external systems this domain brings in — databases, APIs and SaaS — registered as governed
@@ -34,11 +30,6 @@ export default function ConnectionsPage() {
           secret, under policy.
         </p>
         <GovernedConnections />
-
-        {/* Talk to Connections — metadata-grounded Q&A over connection capabilities. */}
-        <div style={{ marginTop: 40 }}>
-          <TalkTo tab="connections" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
-        </div>
       </div>
     </>
   );

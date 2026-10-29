@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { billingView, offlineSpend } from '@/lib/platform-admin/billing';
-import { getTenant, updateTenant } from '@/lib/platform-admin/tenant';
-import { audit } from '@/lib/platform-admin/audit';
+import { billingView, offlineSpend } from '@tabs/admin/lib/billing';
+import { getTenant, updateTenant } from '@tabs/admin/lib/tenant';
+import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 

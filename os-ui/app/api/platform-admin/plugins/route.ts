@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { listPlugins, installPlugin, approvePlugin, getRegistration, registerMarketplace } from '@/lib/platform-admin/plugins';
-import { listDomains } from '@/lib/platform-admin/domains';
-import { audit } from '@/lib/platform-admin/audit';
+import { listPlugins, installPlugin, approvePlugin, getRegistration, registerMarketplace } from '@tabs/admin/lib/plugins';
+import { listDomains } from '@tabs/admin/lib/domains';
+import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 

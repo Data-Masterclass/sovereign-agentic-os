@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
 import { recompile } from '../../_compile';
-import { config } from '@/lib/core/config';
-import { registerAssistantModel, setAssistantModel, getAssistantModelId } from '@/lib/platform-admin/models';
-import { putSecret, secretFingerprint, getSecretServerSide } from '@/lib/infra/secrets';
-import { audit } from '@/lib/platform-admin/audit';
+import { config } from '@core/kernel/config';
+import { registerAssistantModel, setAssistantModel, getAssistantModelId } from '@tabs/admin/lib/models';
+import { putSecret, secretFingerprint, getSecretServerSide } from '@core/infra/secrets';
+import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 

@@ -1,0 +1,1278 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ */
+import {
+  type Schedule,
+  type System,
+  type Visibility,
+  SystemError,
+  parseSystem,
+  serializeSystem,
+  assertGrantsWithinRole,
+} from '@tabs/agents/lib/system-schema';
+import { canPromote, roleAtLeast } from '@core/kernel/session';
+import { type TemplateKey, templateYaml } from '@tabs/agents/lib/templates';
+import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
+import { osMirror } from '@core/infra/os-mirror';
+import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
+import { normaliseFolderPath } from '@core/kernel/folders';
+// The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
+// explicit row so it persists even when empty. Reused, never forked (mirrors Data).
+import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
+
+/**
+ * The agent-system store — the durable file-backed record behind the Agents tab (kind-only,
+ * in-process; no STACKIT). Each system persists exactly ONE canonical source file,
+ * `system.yaml`. The per-agent `AGENT.md` / `MEMORY.md` are PROJECTIONS of that
+ * file's `agents[].agent_md` / `memory_md`, so the canvas, the Monaco file panel
+ * and the agent-system chat all edit the same single source (Approach A).
+ *
+ * Whitelisted paths only: `system.yaml`, `agents/<id>/AGENT.md`,
+ * `agents/<id>/MEMORY.md`. Writes use optimistic concurrency (a blob sha), so a
+ * stale edit is rejected rather than silently clobbering a concurrent change.
+ *
+ * Kept free of `server-only`/Next imports so it is unit-testable directly; the API
+ * routes are the server boundary that authenticates + scopes callers.
+ */
+
+// Single source of truth for roles (now User/Creator/Builder/Admin). Re-exported
+// so existing `store.Role` consumers keep working after Governance widened it.
+export type Role = import('@core/kernel/session').Role;
+export type Principal = { id: string; domains: string[]; role: Role };
+
+/** One row in the per-tool build report (mirrors BuildRow from lib/agents/build/adapter.ts). */
+export type LastBuildRow = {
+  tool: string;
+  applied: boolean;
+  verified: boolean;
+  status: 'ok' | 'fail' | 'pending';
+  detail: string;
+  error?: string;
+};
+
+/** The last build outcome persisted server-side so it survives tab-switches + reloads. */
+export type LastBuild = { ok: boolean; at: number; rows: LastBuildRow[] };
+
+/**
+ * A per-PROCESS nonce, generated once when this module first loads. It stamps
+ * every in-progress activity marker with the instance that started it, so a
+ * later process can tell a run its OWN process is executing (same instance id)
+ * apart from one a NOW-DEAD process left dangling (a different/absent instance
+ * id). This is the "the process is gone" signal that {@link recoverInterrupted}
+ * keys off — a pod restart mints a fresh nonce, so every marker from the prior
+ * pod is provably stale. Kept module-local (never persisted as a global) so a
+ * restart cannot accidentally reuse it.
+ */
+const PROCESS_INSTANCE = `proc_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+
+/**
+ * Lightweight in-progress marker written at the START of a build or run and
+ * cleared in the route's `finally` block. A returning user sees "building since
+ * …" / "running since …" rather than a stale blank slate. `instanceId` records
+ * WHICH process started it, so a fresh process can recover a run the prior
+ * (crashed) process abandoned.
+ */
+export type ActivityMarker = { kind: 'building' | 'running'; startedAt: number; instanceId?: string };
+
+/**
+ * A durable, per-step checkpoint of an IN-FLIGHT run. Written at the run's start
+ * and updated as each node begins/finishes, so a process restart mid-run leaves a
+ * LEGIBLE record (which nodes completed, with their outputs) instead of a silently
+ * lost run. Recovery ({@link recoverInterrupted}) reads this to seed an
+ * `interrupted` {@link LastRun} with the last completed step preserved and a resume
+ * affordance. Additive + back-compatible: absent on records written before it
+ * shipped, and never touched by any non-run path.
+ */
+export type RunCheckpoint = {
+  /** The process that owns this in-flight run — matches its {@link ActivityMarker}. */
+  instanceId: string;
+  startedAt: number;
+  updatedAt: number;
+  /** The run task (prompt) so a resume can re-enter with the same intent. */
+  prompt?: string;
+  /** The full node walk order (path), so recovery knows what had NOT yet run. */
+  plannedNodes?: string[];
+  /** Each node that has FINISHED, in order, with its status + a bounded final text. */
+  completedNodes: { node: string; status: string; finalText?: string }[];
+  /** The node currently executing (started, not yet finished), if any. */
+  currentNode?: string;
+};
+
+/** The last interactive run report — persisted so navigating away and back does not wipe it. */
+export type LastRun = {
+  at: number;
+  running: boolean;
+  ok: boolean;
+  path: string[];
+  /** Did the run reach the natural end of `path`, vs stop early (run-budget
+   *  exhaustion or a node failure)? Absent on a pre-existing persisted run. */
+  reachedEnd?: boolean;
+  traces: number;
+  held: number;
+  steps: { node: string; tool: string; effect: string; ran?: boolean }[];
+  /**
+   * The per-agent drill-down for a team run (input given, output produced, status,
+   * per-step args→result). Persisted so the per-agent cards survive a tab-switch /
+   * reseed — without it a reload falls back to the flat step table. Absent for
+   * single-agent runs.
+   */
+  nodes?: {
+    node: string;
+    model?: string;
+    /** AUTO per-node routing: the resolved tier + why, so the drill-down explains the model. */
+    tier?: 'fast' | 'reasoning';
+    tierReason?: string;
+    status: string;
+    error?: string;
+    input?: string;
+    finalText?: string;
+    steps: { tool: string; isError?: boolean; summary?: string; args?: string; result?: string }[];
+  }[];
+  /**
+   * "Context actually used per run" (#177) — derived from `nodes[].steps[]`: which
+   * datasets/knowledge/files/metrics/connections the run read, retrieved or wrote.
+   * Additive + back-compatible: absent on runs recorded before it shipped (the UI
+   * re-derives client-side from `nodes` as a fallback). See `build/context-usage.ts`.
+   */
+  contextUsage?: import('./build/context-usage.ts').RunContextUsage;
+  /**
+   * The system's declared grant ids at run time, per kind — so the Evaluate view can
+   * show granted-but-unused ("dead") grants next to what was actually used. Best-effort:
+   * absent when the yaml could not be parsed. Purely for the used-vs-granted strip.
+   */
+  grantedIds?: { data: string[]; knowledge: string[]; files: string[]; metrics: string[]; connections: string[] };
+  output?: string;
+  /**
+   * The run's WRITE accounting, counted DIRECTLY from the executed steps (never
+   * inferred): how many records were written straight to the runner's own My scope
+   * (the My-direct rule) vs how many writes are HELD in Governance → Inbox. Drives the
+   * honest "wrote N to My <tab> · M awaiting approval" line in the Run panel + Evaluate.
+   * Additive + back-compatible: absent on runs recorded before it shipped.
+   */
+  writeSummary?: {
+    line: string;
+    wrote: { tab: string; count: number }[];
+    wroteTotal: number;
+    heldTotal: number;
+  };
+  mode?: 'live' | 'offline-mock';
+  traceStoreAvailable?: boolean;
+  traceUrl?: string;
+  /**
+   * Set when this record was RECOVERED after a process restart interrupted a run
+   * mid-flight (see {@link recoverInterrupted}). The run is legible, not lost: the
+   * nodes that completed before the crash are preserved as `steps`/`nodes`, and the
+   * UI shows an "interrupted — resume" affordance instead of a stale live spinner.
+   */
+  interrupted?: boolean;
+  /** For an interrupted run: the node index the walk reached, so a resume can
+   *  re-enter from the next node (when full-resume ships). Best-effort. */
+  resumeFromIndex?: number;
+};
+
+export type SystemRecord = {
+  id: string;
+  name: string;
+  domain: string;
+  owner: string;
+  visibility: Visibility;
+  origin: 'authored' | 'forked';
+  sourceId?: string;
+  running: boolean;
+  schedule: Schedule;
+  /** Sub-agent ids toggled off inside a running system. */
+  disabledAgents: string[];
+  /** The single source of truth. */
+  yaml: string;
+  /** The folder this system lives in (normalised path; `'/'` = root). Mirrors Data. */
+  folder: string;
+  updatedAt: string;
+  lastActivity: string | null;
+  /** Last build outcome. Absent on records created before this field was added. */
+  lastBuild?: LastBuild;
+  /** In-progress marker: set at start of build/run, cleared in finally. */
+  activity?: ActivityMarker;
+  /** Durable per-step checkpoint of the CURRENT in-flight run (set at run start,
+   *  updated per node, cleared on completion). Present only while a run is live;
+   *  a stale one from a dead process is what {@link recoverInterrupted} salvages. */
+  runCheckpoint?: RunCheckpoint;
+  /** Last interactive run report. Absent until the first run completes. */
+  lastRun?: LastRun;
+  /** Soft-archived: hidden from the working lists, reversible, retained. */
+  archived?: boolean;
+};
+
+export type SystemSummary = {
+  id: string;
+  name: string;
+  domain: string;
+  owner: string;
+  visibility: Visibility;
+  origin: SystemRecord['origin'];
+  running: boolean;
+  scheduled: boolean;
+  agentCount: number;
+  /** The folder this system lives in (normalised path; `'/'` = root). */
+  folder: string;
+  lastActivity: string | null;
+  /**
+   * True when a Personal system has a pending Personal→Shared promotion filed
+   * (owner filed `request_promotion`, a Builder/Admin has not yet approved). Left
+   * undefined by the store; the API route decorates it from the approvals queue so
+   * the list can honestly show "pending share approval" instead of looking inert.
+   */
+  pendingShare?: boolean;
+  /** Soft-archived (retained, reversible). Absent/false = live. */
+  archived?: boolean;
+};
+
+export type RepoFile = { path: string; content: string; sha: string };
+
+export const WHITELIST_HINT = 'only system.yaml, AGENT.md and MEMORY.md are editable';
+
+/**
+ * State container pinned to `globalThis` so it is a TRUE singleton. The Next.js
+ * App Router bundles each route handler separately, which otherwise gives every
+ * route its own copy of this module — and its own empty `store` Map. A system
+ * created via `POST /api/agents/systems` (one route bundle) would then be invisible
+ * to `GET /api/agents/systems/[id]/files` (another route bundle), so AGENT.md /
+ * MEMORY.md would 404 and never load. Pinning to globalThis makes the record
+ * written by one route visible to every other route — and survives dev HMR. (Same
+ * reason `lib/approvals.ts` pins its state.)
+ */
+type AgentsState = {
+  store: Map<string, SystemRecord>;
+  seeded: boolean;
+  hydration: Promise<void> | null;
+  /** Set when the last hydration found the mirror DOWN — gates the throttled retry. */
+  hydrateFailedAt?: number;
+};
+const STATE_KEY = Symbol.for('soa.agents.store');
+function state(): AgentsState {
+  const g = globalThis as unknown as Record<symbol, AgentsState | undefined>;
+  if (!g[STATE_KEY]) g[STATE_KEY] = { store: new Map(), seeded: false, hydration: null };
+  return g[STATE_KEY]!;
+}
+
+// ---------------------------------------------------- durable mirror (best-effort) --
+const mirror = osMirror({
+  index: 'os-agent-systems',
+  createBody: {
+    mappings: {
+      properties: {
+        id: { type: 'keyword' },
+        owner: { type: 'keyword' },
+        domain: { type: 'keyword' },
+        visibility: { type: 'keyword' },
+        origin: { type: 'keyword' },
+        sourceId: { type: 'keyword' },
+        updatedAt: { type: 'date' },
+        lastActivity: { type: 'date' },
+        name: { type: 'keyword' },
+        folder: { type: 'keyword' },
+        running: { type: 'boolean' },
+        yaml: { type: 'text', index: false },
+        schedule: { type: 'object', enabled: false },
+        disabledAgents: { type: 'keyword' },
+        lastBuild: { type: 'object', enabled: false },
+        activity: { type: 'object', enabled: false },
+        runCheckpoint: { type: 'object', enabled: false },
+        lastRun: { type: 'object', enabled: false },
+        archived: { type: 'boolean' },
+      },
+    },
+  },
+});
+
+// Durable, per-artifact version history (reused across the OS). A system's
+// canonical `yaml` is snapshotted here on every meaningful edit + on restore.
+const versions = versionLog('agent-system');
+
+function writeThrough(rec: SystemRecord): void {
+  mirror.writeThrough(rec.id, rec);
+}
+
+/** The versioned slice of a system record — the single source (system.yaml). */
+function snapshotState(rec: SystemRecord): { yaml: string } {
+  return { yaml: rec.yaml };
+}
+
+/** Retry a failed hydration at most this often (a down mirror must not add a
+ *  probe round-trip to EVERY request — mirrors lib/data/store.ts). */
+const HYDRATE_RETRY_MS = 60_000;
+
+export async function ensureHydrated(): Promise<void> {
+  const s = state();
+  if (!s.hydration) {
+    // After a mirror-down hydration, retry (throttled) instead of staying pinned
+    // to an empty registry for the pod's lifetime — a transient OpenSearch blip
+    // at boot must not "lose" every mirrored system until the next deploy.
+    if (s.hydrateFailedAt && Date.now() - s.hydrateFailedAt < HYDRATE_RETRY_MS) return;
+    s.hydration = hydrate();
+  }
+  return s.hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const s = state();
+  const docs = await mirror.hydrate(2000);
+  if (docs === null) {
+    // Mirror down → stay un-hydrated and retry on a later read (never cache a
+    // FAILED hydration as done — the data store's rule).
+    s.hydrateFailedAt = Date.now();
+    s.hydration = null;
+    return;
+  }
+  s.hydrateFailedAt = undefined;
+  for (const rec of docs as SystemRecord[]) {
+    if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
+  }
+  await versions.ensureHydrated();
+  // Crash recovery: any record whose in-flight run was owned by a NOW-DEAD process
+  // (a different/absent instanceId) is salvaged to `interrupted` — the run becomes
+  // legible (last completed step preserved, resume affordance) instead of a stale
+  // "running" spinner that never resolves. Runs owned by THIS process are untouched.
+  for (const rec of s.store.values()) recoverInterrupted(rec);
+  s.seeded = true;
+}
+
+/**
+ * Recover a single record whose in-flight run was abandoned by a dead process.
+ * A run is "abandoned" when its `activity` marker says `running` but the marker's
+ * `instanceId` is NOT this process's (a pod restart mints a fresh nonce, so every
+ * prior-process marker is provably stale). We turn the durable {@link RunCheckpoint}
+ * into an `interrupted` {@link LastRun}: the nodes that finished before the crash are
+ * preserved, `held`/`ok` reflect a run that did not complete, and `resumeFromIndex`
+ * points at where a resume would re-enter. Idempotent + fail-soft: a record with no
+ * running marker, or one this process owns, is left exactly as-is.
+ *
+ * Returns true iff it changed (and wrote through) the record — used by tests + the
+ * boot sweep. Never throws.
+ */
+export function recoverInterrupted(rec: SystemRecord): boolean {
+  const marker = rec.activity;
+  if (!marker || marker.kind !== 'running') return false;
+  // Owned by THIS live process → a genuinely in-flight run; do not disturb it.
+  if (marker.instanceId && marker.instanceId === PROCESS_INSTANCE) return false;
+  const cp = rec.runCheckpoint;
+  const completed = cp?.completedNodes ?? [];
+  const planned = cp?.plannedNodes ?? [];
+  const steps = completed.map((n) => ({ node: n.node, tool: '(node)', effect: n.status, ran: n.status === 'ok' }));
+  const nodes = completed.map((n) => ({ node: n.node, status: n.status, finalText: n.finalText, steps: [] }));
+  const reachedIdx = completed.length; // next node to run = count of finished ones
+  const outputLines = [
+    `Run interrupted by a restart after ${completed.length}${planned.length ? ` of ${planned.length}` : ''} step(s).`,
+    cp?.currentNode ? `Was executing '${cp.currentNode}' when the process stopped.` : '',
+    'The steps below completed before the interruption. Re-run to continue.',
+  ].filter(Boolean);
+  const lastRun: LastRun = {
+    at: cp?.updatedAt ?? marker.startedAt,
+    running: false,
+    ok: false,
+    path: completed.map((n) => n.node),
+    traces: 0,
+    held: 0,
+    steps,
+    nodes: nodes.length ? nodes : undefined,
+    output: outputLines.join(' '),
+    mode: 'live',
+    interrupted: true,
+    resumeFromIndex: reachedIdx,
+  };
+  rec.lastRun = lastRun;
+  delete rec.activity; // clear the stale live spinner
+  delete rec.runCheckpoint; // the checkpoint has been consumed into lastRun
+  rec.running = false;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return true;
+}
+
+// --------------------------------------------------------------------- utils --
+
+function now(): string {
+  return new Date().toISOString();
+}
+
+function id(prefix: string): string {
+  return `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+}
+
+/** Stable blob sha for optimistic concurrency. */
+function sha(content: string): string {
+  let h = 0;
+  for (let i = 0; i < content.length; i++) h = (Math.imul(31, h) + content.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+function fail(message: string, status: number): never {
+  throw new SystemError(message, status);
+}
+
+// ------------------------------------------------------------------- seeding --
+
+function starterYaml(name: string, domain: string, visibility: Visibility): string {
+  const sys: System = {
+    version: '1',
+    system: { name, domain, visibility },
+    runtime: 'langgraph',
+    safetyPreset: 'read-only',
+    entrypoint: 'assistant',
+    state: { channels: { messages: 'add_messages' } },
+    grants: { data: [], knowledge: [], metrics: [], tools: ['search_knowledge'], connections: [], files: [], plan: [] },
+    routing: { overrides: {} },
+    agents: [
+      {
+        id: 'assistant',
+        role: 'A helpful assistant',
+        agent_md: `# ${name}\n\nYou are a helpful assistant in the Sovereign Agentic OS.\nUse only your granted, governed tools.`,
+        memory_md: '# Memory\n\n(Durable facts the assistant should always know.)',
+        tools: ['search_knowledge'],
+      },
+    ],
+    edges: [],
+  };
+  return serializeSystem(sys);
+}
+
+function record(partial: Omit<SystemRecord, 'updatedAt' | 'lastActivity' | 'running' | 'schedule' | 'disabledAgents' | 'origin' | 'folder'> & Partial<SystemRecord>): SystemRecord {
+  return {
+    running: false,
+    schedule: { kind: 'manual' },
+    disabledAgents: [],
+    origin: 'authored',
+    folder: '/',
+    updatedAt: now(),
+    lastActivity: null,
+    ...partial,
+  };
+}
+
+function ensureSeeded(): void {
+  // A fresh tenant starts EMPTY. Agent systems are authored only through the
+  // platform's own governed flows (e.g. the Northpeak e-commerce seed).
+  const s = state();
+  if (s.seeded) return;
+  s.seeded = true;
+}
+
+/** Test hook: the LIVE stored record by id (not a copy), so a test can drive the
+ *  crash-recovery sweep over the exact object the boot path iterates. */
+export function __recordFor(systemId: string): SystemRecord | undefined {
+  return state().store.get(systemId);
+}
+
+/** Test hook: wipe the in-process store + reseed. */
+export function __resetStore(): void {
+  const s = state();
+  s.store.clear();
+  s.seeded = false;
+  s.hydration = null;
+  s.hydrateFailedAt = undefined;
+  mirror.__reset();
+  versions.__reset();
+}
+
+/**
+ * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
+ * Scoping reads the record's `domain` field (the yaml's domain is cosmetic), so
+ * we set the field and write through. `sel.id` moves one; `sel.onlyUnassigned`
+ * sweeps only empty-domain records. Returns the ids moved.
+ */
+export function moveSystemsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): string[] {
+  const moved: string[] = [];
+  for (const rec of state().store.values()) {
+    if (sel.id !== undefined && rec.id !== sel.id) continue;
+    if (sel.onlyUnassigned && rec.domain) continue;
+    if (rec.domain === target) continue;
+    rec.domain = target;
+    writeThrough(rec);
+    moved.push(rec.id);
+  }
+  return moved;
+}
+
+// ------------------------------------------------------------------- scoping --
+
+function get(systemId: string): SystemRecord {
+  ensureSeeded();
+  const rec = state().store.get(systemId);
+  if (!rec) fail('System not found', 404);
+  return rec;
+}
+
+function canView(rec: SystemRecord, user: Principal): boolean {
+  if (rec.owner === user.id) return true;
+  if (rec.visibility === 'Shared') return user.domains.includes(rec.domain);
+  if (rec.visibility === 'Marketplace') return true;
+  return false;
+}
+
+function canEdit(rec: SystemRecord, user: Principal): boolean {
+  // Fail-closed edit-scope: owner always; a Personal agent system is owner-only
+  // (no admin/domain_admin reaches another user's private agent). A Shared /
+  // Marketplace one admits an in-domain domain_admin or a platform admin.
+  const scope: ArtifactScope = rec.visibility === 'Personal' ? 'personal' : rec.visibility === 'Marketplace' ? 'certified' : 'shared';
+  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain, scope });
+}
+
+function requireView(systemId: string, user: Principal): SystemRecord {
+  const rec = get(systemId);
+  if (!canView(rec, user)) fail('Not permitted to view this system', 403);
+  return rec;
+}
+
+/** The PROMOTE/APPROVE governance authority (separate from private-artifact
+ *  management): owner, in-domain domain_admin, or admin — scope-agnostic, so a
+ *  Builder/Admin can still SHARE a filed Personal system. A non-owner Builder is
+ *  still blocked (not a domain_admin/admin). Preserves the promotion gate the
+ *  manage-rights change must not alter. */
+function canGovern(rec: SystemRecord, user: Principal): boolean {
+  return canManageArtifact(user, { owner: rec.owner, domain: rec.domain, scope: 'shared' });
+}
+
+function requireEdit(systemId: string, user: Principal): SystemRecord {
+  const rec = get(systemId);
+  if (!canEdit(rec, user)) fail('Not permitted to edit this system', 403);
+  return rec;
+}
+
+// --------------------------------------------------------------------- lists --
+
+function summarise(rec: SystemRecord): SystemSummary {
+  let agentCount = 0;
+  try {
+    agentCount = parseSystem(rec.yaml).agents.length;
+  } catch {
+    agentCount = 0;
+  }
+  return {
+    id: rec.id,
+    name: rec.name,
+    domain: rec.domain,
+    owner: rec.owner,
+    visibility: rec.visibility,
+    origin: rec.origin,
+    running: rec.running,
+    scheduled: rec.schedule.kind !== 'manual',
+    agentCount,
+    // Nil-safe: records mirrored before the folder field shipped hydrate without it.
+    folder: normaliseFolderPath(rec.folder ?? '/'),
+    lastActivity: rec.lastActivity,
+    archived: rec.archived ?? false,
+  };
+}
+
+export type SystemGroups = { mine: SystemSummary[]; domain: SystemSummary[]; marketplace: SystemSummary[] };
+
+/**
+ * The caller's systems, grouped. Archived systems are HIDDEN by default (soft
+ * archive) — the owner/Admin can list them explicitly via `includeArchived` to
+ * restore or delete. A shared/marketplace system, once archived by its owner,
+ * disappears from everyone's domain/marketplace list too.
+ *
+ * GROUP BY VISIBILITY, not ownership: a Shared system is DOMAIN knowledge and belongs
+ * under Domain even when the caller authored it; a Marketplace system under this tab's
+ * "Company" tier; only a Personal system is "Mine". (This fixes the leak where an owned
+ * Shared/Marketplace system showed under "My Agents" instead of "Domain Agents".)
+ *
+ * STRICT DOMAIN ISOLATION: EVERY tier — My, Domain AND Company — narrows to the ACTIVE
+ * domain. With an active domain chosen (sidebar switcher) auth.ts narrows user.domains to
+ * [active], so each tier filters to that domain; "All Domains" keeps every membership so
+ * all show. A domainless (unassigned) system always shows. Cross-domain discovery of a
+ * Marketplace system happens ONLY through the dedicated Marketplace catalog surface.
+ */
+export function listSystems(user: Principal, opts: { includeArchived?: boolean } = {}): SystemGroups {
+  ensureSeeded();
+  const mine: SystemSummary[] = [];
+  const domain: SystemSummary[] = [];
+  const marketplace: SystemSummary[] = [];
+  for (const rec of state().store.values()) {
+    if (rec.archived && !opts.includeArchived) continue;
+    if (!canView(rec, user)) continue;
+    const inScope = !rec.domain || user.domains.includes(rec.domain);
+    if (!inScope) continue; // strict active-domain isolation, every tier, incl the owner
+    if (rec.visibility === 'Marketplace') marketplace.push(summarise(rec));
+    else if (rec.visibility === 'Shared') domain.push(summarise(rec));
+    else mine.push(summarise(rec)); // Personal
+  }
+  const byName = (a: SystemSummary, b: SystemSummary) => a.name.localeCompare(b.name);
+  return { mine: mine.sort(byName), domain: domain.sort(byName), marketplace: marketplace.sort(byName) };
+}
+
+/** Agent systems visible to the user that hold a per-item (non-folder) DATA grant on
+ *  a given dataset — the reverse lookup the Data tab's Publish stage uses to list
+ *  "agent systems that use this dataset". Pure over {@link listSystems} + {@link getSystem}
+ *  (both RLS-scoped), so it never widens visibility. A system whose yaml can't be parsed
+ *  is skipped rather than throwing (fail-soft, matches the read-model discipline). */
+export function getSystemsUsingDataset(datasetId: string, user: Principal): SystemSummary[] {
+  const { mine, domain, marketplace } = listSystems(user);
+  const out: SystemSummary[] = [];
+  for (const s of [...mine, ...domain, ...marketplace]) {
+    try {
+      const view = getSystem(s.id, user);
+      if (view.system.grants.data.some((g) => g.id === datasetId && !g.folder)) out.push(s);
+    } catch {
+      // unreadable/unparseable system — skip, never fabricate a match
+    }
+  }
+  return out;
+}
+
+/**
+ * UNSCOPED enumeration of every agent system with its parsed grants — for the OS-wide
+ * `dependentsOf` dependency walk (lib/core/dependents.ts) which must see EVERY dependent
+ * regardless of the actor's visibility (a warn-before-break preflight). Server-side only;
+ * never expose through a user-facing route. A system whose yaml can't be parsed is skipped.
+ */
+export function listAllSystemsInternal(): { id: string; name: string; grants: System['grants'] }[] {
+  ensureSeeded();
+  const out: { id: string; name: string; grants: System['grants'] }[] = [];
+  for (const rec of state().store.values()) {
+    if (rec.archived) continue;
+    try {
+      out.push({ id: rec.id, name: rec.name, grants: parseSystem(rec.yaml).grants });
+    } catch {
+      // unparseable system — skip, never fabricate a dependent
+    }
+  }
+  return out;
+}
+
+/** One agent-system row for Agent Monitoring: identity + last-run health + activity. */
+export type AgentHealthRow = {
+  id: string;
+  name: string;
+  scope: 'mine' | 'domain' | 'marketplace';
+  agentCount: number;
+  running: boolean;
+  scheduled: boolean;
+  /** ms epoch of the last run, or null if it has never run. */
+  lastRunAt: number | null;
+  /** true = last run succeeded, false = failed, null = never run. */
+  lastRunOk: boolean | null;
+  /** tool steps the last run held/blocked (governance denials) — the error count. */
+  held: number;
+  /** Rolled-up dot: green ok · amber ok-with-holds · red failed · grey never-run. */
+  health: 'green' | 'amber' | 'red' | 'grey';
+};
+
+/**
+ * Agent Monitoring feed: EVERY agent system the caller can access — their own
+ * (`mine`), shared-to-their-domain (`domain`), and marketplace (`marketplace`) —
+ * each with its last-run health. This is the artifact-centric monitor: you start
+ * from the agent systems you built or use, not from a firehose of raw traces. A
+ * never-run system shows `grey`/"not run yet" rather than being hidden.
+ */
+export function agentHealthRows(user: Principal): AgentHealthRow[] {
+  ensureSeeded();
+  const rows: AgentHealthRow[] = [];
+  for (const rec of state().store.values()) {
+    if (rec.archived) continue;
+    if (!canView(rec, user)) continue;
+    // Mirror listSystems: GROUP BY VISIBILITY (Shared→domain, Marketplace→marketplace,
+    // else→mine), and narrow EVERY tier to the active domain (strict isolation). A
+    // domainless system always shows; cross-domain discovery is the Marketplace's job.
+    if (rec.domain && !user.domains.includes(rec.domain)) continue;
+    const scope: AgentHealthRow['scope'] =
+      rec.visibility === 'Marketplace' ? 'marketplace' : rec.visibility === 'Shared' ? 'domain' : 'mine';
+    let agentCount = 0;
+    try { agentCount = parseSystem(rec.yaml).agents.length; } catch { agentCount = 0; }
+    const lr = rec.lastRun;
+    const health: AgentHealthRow['health'] = !lr ? 'grey' : !lr.ok ? 'red' : lr.held > 0 ? 'amber' : 'green';
+    rows.push({
+      id: rec.id,
+      name: rec.name,
+      scope,
+      agentCount,
+      running: rec.running,
+      scheduled: rec.schedule.kind !== 'manual',
+      lastRunAt: lr?.at ?? null,
+      lastRunOk: lr?.ok ?? null,
+      held: lr?.held ?? 0,
+      health,
+    });
+  }
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Decorate the caller's groups with `pendingShare` for any Personal system that has
+ * a promotion request in flight (the ids come from the approvals queue, resolved in
+ * the API route — this stays pure/store-only). Pure + non-mutating so it is unit
+ * testable without the server-only approvals module.
+ */
+export function markPendingShares(groups: SystemGroups, pendingIds: ReadonlySet<string>): SystemGroups {
+  if (pendingIds.size === 0) return groups;
+  const mark = (s: SystemSummary): SystemSummary =>
+    s.visibility === 'Personal' && pendingIds.has(s.id) ? { ...s, pendingShare: true } : s;
+  return {
+    mine: groups.mine.map(mark),
+    domain: groups.domain.map(mark),
+    marketplace: groups.marketplace.map(mark),
+  };
+}
+
+export type SystemView = SystemRecord & { system: System };
+
+export function getSystem(systemId: string, user: Principal): SystemView {
+  const rec = requireView(systemId, user);
+  return { ...rec, system: parseSystem(rec.yaml) };
+}
+
+/**
+ * Edit-scoped read of the canonical yaml. The Run / Build / Probe routes use this
+ * (not {@link getSystem}) so a mere viewer is rejected (403) BEFORE any
+ * side effect — they execute the system (Langfuse traces, Governance approvals),
+ * which is an edit-level action, not a view.
+ */
+export function getSystemForEdit(systemId: string, user: Principal): SystemView {
+  const rec = requireEdit(systemId, user);
+  return { ...rec, system: parseSystem(rec.yaml) };
+}
+
+/**
+ * Run-scope authorization — DISTINCT from edit-scope. A domain-Shared system may be
+ * RUN (executed) by any Creator+ that belongs to its domain, WITHOUT the right to
+ * edit its files or rebuild it. This is the governed "consume a shared agent" path:
+ * a course participant (Creator) runs the domain's ready-made Campaign Evaluation
+ * Agent but can never mutate it. Owner and in-domain Admin keep full rights (they
+ * can also edit ⇒ they can run). Personal systems stay owner-only. Marketplace
+ * execution stays edit-scoped (the governed path there is install-to-own/fork), so
+ * this widens NOTHING for Marketplace. File WRITES and Build still use
+ * {@link getSystemForEdit}, keeping a crisp boundary: run ≠ edit.
+ */
+/** Exported so the systems GET route can stamp `canRun` onto the client payload.
+ *  Server is the source of truth — the client never re-computes authz. */
+export function canRunCheck(rec: SystemRecord, user: Principal): boolean {
+  if (canEdit(rec, user)) return true;
+  if (rec.visibility === 'Shared' && user.domains.includes(rec.domain)) {
+    // Any in-domain member (creator+) may RUN a Shared agent; the base
+    // role carries `run.attended`. WRITE/Build still route through edit-scope.
+    return true;
+  }
+  return false;
+}
+
+export function getSystemForRun(systemId: string, user: Principal): SystemView {
+  const rec = get(systemId);
+  if (!canRunCheck(rec, user)) fail('Not permitted to run this system', 403);
+  return { ...rec, system: parseSystem(rec.yaml) };
+}
+
+// ------------------------------------------------------------- create / fork --
+
+export function createSystem(
+  user: Principal,
+  input: { name: string; domain?: string; yaml?: string; template?: TemplateKey },
+): SystemRecord {
+  ensureSeeded();
+  const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0] ?? 'platform';
+  // Security: a newly created system is ALWAYS Personal (owner-only). Making it
+  // domain-Shared or Marketplace is a governed PROMOTION (`promoteSystem`) that
+  // enforces the role ladder — never a client-supplied field at create time.
+  const visibility: Visibility = 'Personal';
+  const name = input.name.trim() || 'Untitled system';
+  // Starter yaml: an explicit yaml (fork), else a server-authored TEMPLATE (never
+  // client yaml), else the default blank assistant.
+  const yaml = input.yaml ?? (input.template ? templateYaml(input.template, name, domain, visibility) : starterYaml(name, domain, visibility));
+  const rec = record({
+    id: id('sys'),
+    name,
+    domain,
+    owner: user.id,
+    visibility,
+    yaml,
+  });
+  state().store.set(rec.id, rec);
+  writeThrough(rec);
+  return rec;
+}
+
+/**
+ * Governed offboard support: transfer this owner's PERSONAL-lane records to a new
+ * owner (used by lib/platform-admin/offboard.ts when a user is offboarded with
+ * reassignment). Only personal, owner-only artifacts move; shared/domain/certified
+ * are untouched. Returns the count moved.
+ */
+export function reassignOwner(fromId: string, toId: string): number {
+  let moved = 0;
+  for (const rec of state().store.values()) {
+    if (rec.owner !== fromId) continue;
+    if (rec.visibility !== 'Personal') continue; // personal lane only
+    rec.owner = toId;
+    rec.updatedAt = now();
+    writeThrough(rec);
+    moved++;
+  }
+  return moved;
+}
+
+/**
+ * Promotion ladder for an agent system — the mirror of `promoteArtifact`:
+ *   Personal ──(Builder+)──▶ Shared ──(Admin)──▶ Marketplace
+ * The actor must belong to the system's domain (Admin spans the tenant via
+ * `canEdit`). Forked (installed) copies cannot be re-published. Same-visibility
+ * or already-Marketplace calls are rejected. Enforcement is server-side here, so
+ * the ladder holds regardless of any client input.
+ */
+export function promoteSystem(systemId: string, user: Principal): SystemRecord {
+  const rec = get(systemId);
+  // Promotion is the sanctioned SHARE action — gate on the governance authority
+  // (owner/domain_admin/admin), NOT the owner-only private-manage gate, so an
+  // admin can approve a filed Personal→Shared promotion.
+  if (!canGovern(rec, user)) fail('Not permitted to promote this system', 403);
+  if (rec.origin === 'forked') fail('An installed (forked) system cannot be re-published', 400);
+  if (rec.visibility === 'Personal') {
+    if (!canPromote(user.role, 'Personal')) fail('Promoting to Shared requires a Domain admin or Admin', 403);
+    rec.visibility = 'Shared';
+  } else if (rec.visibility === 'Shared') {
+    if (!canPromote(user.role, 'Shared')) fail('Publishing to the Marketplace requires an Admin', 403);
+    rec.visibility = 'Marketplace';
+  } else {
+    fail('This system is already published to the Marketplace', 400);
+  }
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/**
+ * Demotion (revoke sharing) — the reverse of `promoteSystem`, one step down:
+ *   Marketplace ──(Admin)──▶ Shared ──(owner | in-domain Builder+)──▶ Personal
+ * Marketplace→Shared is Admin-only (only an Admin published it); Shared→Personal is
+ * the owner or an in-domain Builder/Admin (mirrors who could have promoted it).
+ * Forked (installed) copies have no shared lineage to revoke. Never deletes the
+ * system; only lowers its visibility. Server-side enforcement, so the gate holds.
+ */
+export function demoteSystem(systemId: string, user: Principal): SystemRecord {
+  const rec = get(systemId);
+  if (rec.origin === 'forked') fail('An installed (forked) system has no sharing to revoke', 400);
+  if (!user.domains.includes(rec.domain)) fail('You can only revoke sharing on systems in a domain you belong to', 403);
+  if (rec.visibility === 'Marketplace') {
+    if (user.role !== 'admin') fail('Revoking from the Marketplace requires an Admin', 403);
+    rec.visibility = 'Shared';
+  } else if (rec.visibility === 'Shared') {
+    if (!canManageArtifact(user, { owner: rec.owner, domain: rec.domain, scope: 'shared' })) {
+      fail('Unsharing requires the owner, an in-domain Domain admin, or an Admin', 403);
+    }
+    rec.visibility = 'Personal';
+  } else {
+    fail('This system is already personal — nothing to revoke', 400);
+  }
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/**
+ * Marketplace install = fork into an independent copy the installer owns.
+ * Installing an agent template is a **Builder+** action, mirroring the promotion
+ * ladder: a User (participant) or Creator has no Marketplace surface, so they may
+ * not pull a public template into a domain either. The gate lives here (the store
+ * is the security boundary) so it holds regardless of the client.
+ */
+export function forkSystem(systemId: string, user: Principal): SystemRecord {
+  const src = get(systemId);
+  if (src.visibility !== 'Marketplace') fail('Only Marketplace systems can be installed', 400);
+  if (!roleAtLeast(user.role, 'builder')) {
+    fail('Installing a Marketplace agent template requires a Builder or Admin', 403);
+  }
+  const rec = record({
+    id: id('sys'),
+    name: src.name,
+    domain: user.domains[0] ?? src.domain,
+    owner: user.id,
+    visibility: 'Personal',
+    origin: 'forked',
+    sourceId: src.id,
+    yaml: src.yaml,
+  });
+  state().store.set(rec.id, rec);
+  writeThrough(rec);
+  return rec;
+}
+
+// --------------------------------------------------------------------- files --
+
+function whitelistedPaths(sys: System): string[] {
+  const paths = ['system.yaml'];
+  for (const a of sys.agents) {
+    paths.push(`agents/${a.id}/AGENT.md`, `agents/${a.id}/MEMORY.md`);
+  }
+  return paths;
+}
+
+export function listFiles(systemId: string, user: Principal): { files: string[]; system: System } {
+  const rec = requireView(systemId, user);
+  const sys = parseSystem(rec.yaml);
+  return { files: whitelistedPaths(sys), system: sys };
+}
+
+/** Resolve a whitelisted path's content from the single source. */
+function project(rec: SystemRecord, path: string): string {
+  if (path === 'system.yaml') return rec.yaml;
+  const m = /^agents\/([^/]+)\/(AGENT|MEMORY)\.md$/.exec(path);
+  if (!m) fail(`Path '${path}' is not editable — ${WHITELIST_HINT}`, 403);
+  const sys = parseSystem(rec.yaml);
+  const agent = sys.agents.find((a) => a.id === m[1]);
+  if (!agent) fail(`Agent '${m[1]}' not found`, 404);
+  return m[2] === 'AGENT' ? agent.agent_md : agent.memory_md;
+}
+
+export function readFile(systemId: string, user: Principal, path: string): RepoFile {
+  const rec = requireView(systemId, user);
+  const content = project(rec, path);
+  return { path, content, sha: sha(content) };
+}
+
+export function writeFile(
+  systemId: string,
+  user: Principal,
+  input: { path: string; content: string; sha: string },
+): RepoFile {
+  const rec = requireEdit(systemId, user);
+  const { path, content } = input;
+
+  // Optimistic concurrency against the CURRENT projected content.
+  const current = project(rec, path);
+  if (input.sha && input.sha !== sha(current)) {
+    fail('The file changed since you opened it (stale sha) — reload and re-apply', 409);
+  }
+  if (content === current) return { path, content, sha: sha(content) }; // no-op edit → no version churn
+
+  // Snapshot the PRIOR canonical source before overwriting it, so every
+  // meaningful edit is restorable from the version history.
+  versions.record(rec.id, user.id, snapshotState(rec), `edit ${path}`);
+
+  if (path === 'system.yaml') {
+    // Reject syntactically/structurally invalid YAML so the store never holds
+    // garbage; semantic graph errors are surfaced later by Build.
+    const parsed = parseSystem(content); // throws SystemError on bad shape
+    // Governance escalation guard: a direct-write (Write-bounded) grant on any
+    // artifact is builder-only. Enforced here at the ONE save chokepoint so a
+    // crafted client payload can't grant an agent direct write when its owner is
+    // only a creator. The editor is the owner (self-edit) or a same-domain admin
+    // (builder+) — either way the saver's role is the authority for the grant.
+    // Only the DELTA vs the currently-stored system is checked: a pre-existing
+    // direct-write grant never blocks an unrelated edit — it is instead
+    // neutralised at run time by downgradeGrantsForRole.
+    assertGrantsWithinRole(parsed, user.role, parseSystem(current));
+    rec.yaml = content;
+  } else {
+    const m = /^agents\/([^/]+)\/(AGENT|MEMORY)\.md$/.exec(path);
+    if (!m) fail(`Path '${path}' is not editable — ${WHITELIST_HINT}`, 403);
+    const sys = parseSystem(rec.yaml);
+    const agent = sys.agents.find((a) => a.id === m[1]);
+    if (!agent) fail(`Agent '${m[1]}' not found`, 404);
+    if (m[2] === 'AGENT') agent.agent_md = content;
+    else agent.memory_md = content;
+    rec.yaml = serializeSystem(sys); // write back into the ONE source
+  }
+
+  rec.updatedAt = now();
+  writeThrough(rec);
+  const newContent = project(rec, path);
+  return { path, content: newContent, sha: sha(newContent) };
+}
+
+// -------------------------------------------------------- run / schedule / toggle --
+
+export function setRunning(systemId: string, user: Principal, running: boolean): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.running = running;
+  rec.updatedAt = now();
+  if (running) rec.lastActivity = now();
+  writeThrough(rec);
+  return rec;
+}
+
+export function setSchedule(systemId: string, user: Principal, schedule: Schedule): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.schedule = schedule;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+export function toggleAgent(systemId: string, user: Principal, agentId: string, on: boolean): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  const sys = parseSystem(rec.yaml);
+  if (!sys.agents.some((a) => a.id === agentId)) fail(`Agent '${agentId}' not found`, 404);
+  const set = new Set(rec.disabledAgents);
+  if (on) set.delete(agentId);
+  else set.add(agentId);
+  rec.disabledAgents = [...set];
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+export function recordActivity(systemId: string): void {
+  const rec = state().store.get(systemId);
+  if (rec) rec.lastActivity = now();
+  if (rec) writeThrough(rec);
+}
+
+export function setLastBuild(systemId: string, user: Principal, build: LastBuild): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.lastBuild = build;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/**
+ * Mark a build or run as in-progress. Written at the START of the operation so a
+ * returning user sees the "building since…/running since…" state even before the
+ * operation finishes. The corresponding route clears it in `finally` via
+ * {@link clearActivity}.
+ */
+export function setActivity(systemId: string, marker: ActivityMarker): void {
+  const rec = state().store.get(systemId);
+  if (!rec) return;
+  // Stamp the marker with THIS process's nonce (unless the caller already set one),
+  // so a later process can recognise a run this process abandoned on a crash.
+  rec.activity = { ...marker, instanceId: marker.instanceId ?? PROCESS_INSTANCE };
+  writeThrough(rec);
+}
+
+/** Clear the in-progress marker once a build or run completes (or errors). Also
+ *  clears any run checkpoint — a completed run has no in-flight state to recover. */
+export function clearActivity(systemId: string): void {
+  const rec = state().store.get(systemId);
+  if (!rec) return;
+  delete rec.activity;
+  delete rec.runCheckpoint;
+  writeThrough(rec);
+}
+
+/**
+ * Open a durable run checkpoint at the START of a run. Stamps the current process's
+ * instance id (matching the activity marker) and records the run's intent + planned
+ * node walk. Called from the run route alongside {@link setActivity}. No-op for an
+ * unknown system. The checkpoint is updated per node via {@link checkpointNode} and
+ * cleared by {@link clearActivity} on completion.
+ */
+export function startRunCheckpoint(
+  systemId: string,
+  input: { prompt?: string; plannedNodes?: string[] },
+): void {
+  const rec = state().store.get(systemId);
+  if (!rec) return;
+  const at = Date.now();
+  rec.runCheckpoint = {
+    instanceId: PROCESS_INSTANCE,
+    startedAt: at,
+    updatedAt: at,
+    prompt: input.prompt,
+    plannedNodes: input.plannedNodes,
+    completedNodes: [],
+  };
+  writeThrough(rec);
+}
+
+/** Upper bound on a checkpointed node's finalText (chars) — the checkpoint stays lean. */
+const CHECKPOINT_TEXT_MAX = 2_000;
+
+/**
+ * Record run progress at a node boundary into the durable checkpoint. `phase:'start'`
+ * marks a node as the one now executing; `phase:'complete'` appends it to the finished
+ * list (with a bounded final text + status) and clears `currentNode`. Every call writes
+ * through to the mirror, so a crash after ANY node leaves that node's completion durable.
+ * Fail-soft: a no-checkpoint or unknown record is ignored (never throws).
+ */
+export function checkpointNode(
+  systemId: string,
+  ev: { phase: 'start' | 'complete'; node: string; status?: string; finalText?: string },
+): void {
+  const rec = state().store.get(systemId);
+  const cp = rec?.runCheckpoint;
+  if (!rec || !cp) return;
+  cp.updatedAt = Date.now();
+  if (ev.phase === 'start') {
+    cp.currentNode = ev.node;
+  } else {
+    const finalText = ev.finalText
+      ? ev.finalText.length > CHECKPOINT_TEXT_MAX
+        ? `${ev.finalText.slice(0, CHECKPOINT_TEXT_MAX)}…`
+        : ev.finalText
+      : undefined;
+    cp.completedNodes.push({ node: ev.node, status: ev.status ?? 'ok', finalText });
+    if (cp.currentNode === ev.node) delete cp.currentNode;
+  }
+  writeThrough(rec);
+}
+
+/**
+ * Persist the last interactive run report so it survives tab-switches and page
+ * reloads. Mirrored the same way as {@link setLastBuild}: edit-scoped so a mere
+ * viewer or run-only consumer cannot overwrite the record. The route calls this
+ * immediately after a successful run.
+ */
+export function setLastRun(systemId: string, user: Principal, run: LastRun): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.lastRun = run;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+// -------------------------------------------------------------- rename / folder --
+
+/**
+ * Rename an agent system — change its DISPLAY name ONLY. Edit-scoped exactly like every
+ * other mutation ({@link requireEdit}: owner always; an in-domain domain_admin / platform
+ * admin on a Shared/Marketplace system — the reused {@link canManageArtifact} gate).
+ *
+ * FROZEN IDENTITY: the record `id` is the system's permanent identity — every route,
+ * grant, approval and schedule CronJob keys off it, so a rename
+ * NEVER touches `id`. The canonical `system.yaml` ALSO embeds `system.name`; the SAFE
+ * choice (documented) is to change the DISPLAY `name` field ONLY and leave the yaml's
+ * `system.name` frozen — the yaml name is cosmetic (scoping/identity read `rec.id` +
+ * `rec.domain`, never the yaml name), so rewriting it would only churn the versioned
+ * source + risk a stale-sha edit conflict for no functional gain.
+ *
+ * Trimmed; empty rejected (400); a no-op (unchanged) returns without version churn. The
+ * prior canonical source is snapshotted to the version log so the rename is auditable.
+ */
+export function renameAgentSystem(systemId: string, user: Principal, newName: string): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  const name = newName.trim();
+  if (!name) fail('a system needs a name', 400);
+  if (name === rec.name) return rec; // no-op → no version churn
+  // Snapshot the canonical source before the (metadata) change, mirroring writeFile —
+  // a rename is a meaningful, restorable edit even though the yaml identity is frozen.
+  versions.record(rec.id, user.id, snapshotState(rec), 'rename');
+  rec.name = name; // DISPLAY name only — `id` (and the yaml's system.name) stay frozen
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/** The folder scope an agent system lives in: a Personal system's folders are the
+ *  owner's PERSONAL tree; a Shared/Marketplace system's folders are the owning DOMAIN's
+ *  tree. Mirrors how {@link listSystems} groups by visibility. */
+function folderScopeOf(rec: SystemRecord): FolderScope {
+  return rec.visibility === 'Personal' ? 'personal' : 'domain';
+}
+
+/** Best-effort: mirror a system's folder path into the governed folder registry so an
+ *  empty folder still shows in the rail. The root is implicit (never a row). createFolder
+ *  is idempotent and edit-scoped; any gate failure is swallowed so a successful move is
+ *  never rolled back by a folder-registry hiccup (mirrors Data's upsertFolderRow). */
+function upsertFolderRow(rec: SystemRecord, user: Principal): void {
+  const path = normaliseFolderPath(rec.folder);
+  if (path === '/') return;
+  const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+  try {
+    createFolder(principal, { tab: 'agents', scope: folderScopeOf(rec), path, domain: rec.domain });
+  } catch {
+    /* folder-registry mirror is best-effort; the system move already succeeded */
+  }
+}
+
+/**
+ * Move an agent system into a folder (edit-scoped, write-through like every other
+ * mutation). Mirrors `lib/data/store.moveDataset`: the folder is a normalised path on
+ * the record; the folder ROOT (personal vs domain tree) is decided by visibility. On
+ * move we also upsert an EXPLICIT folder row in the governed registry so the destination
+ * folder persists even when it holds no systems. A viewer who cannot edit is rejected 403
+ * and nothing is written.
+ */
+export function moveAgentSystem(systemId: string, user: Principal, folder: string): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.folder = normaliseFolderPath(folder);
+  rec.updatedAt = now();
+  writeThrough(rec);
+  // The move already passed the record's edit-scope gate above, so this same-owner
+  // folder create can only mirror an authorised move (best-effort; never rolls it back).
+  upsertFolderRow(rec, user);
+  return rec;
+}
+
+// ------------------------------------------------ archive / delete / versions --
+
+/**
+ * Archive a system: a reversible soft-hide that also STOPS it (an archived
+ * agent must not keep running). Edit-scoped — only the owner or an in-domain
+ * Admin may archive, exactly like editing it. The record + its history are
+ * retained; the system just leaves the working lists until unarchived.
+ */
+export function archiveSystem(systemId: string, user: Principal): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.archived = true;
+  rec.running = false;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/** Restore an archived system back into the working lists (edit-scoped). */
+export function unarchiveSystem(systemId: string, user: Principal): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  rec.archived = false;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/**
+ * Permanently delete a system + its version history (edit-scoped, irreversible).
+ * The API route confirms intent; this is the hard delete once confirmed. Returns the
+ * deleted record so the route can PHYSICALLY purge its backing resources (any schedule
+ * CronJob) via physical-delete.ts — a "deleted" system whose CronJob still exists isn't
+ * deleted. Archive (above) never purges either.
+ */
+export function deleteSystem(systemId: string, user: Principal): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  state().store.delete(rec.id);
+  mirror.deleteThrough(rec.id);
+  versions.purge(rec.id);
+  return rec;
+}
+
+/** Version history for a system, newest first (view-scoped). */
+export function listSystemVersions(systemId: string, user: Principal): ArtifactVersion[] {
+  requireView(systemId, user);
+  return versions.list(systemId);
+}
+
+/**
+ * Restore a prior version of a system's canonical source. Restore is itself
+ * auditable + reversible: the CURRENT state is snapshotted as a new version
+ * first, THEN the chosen version's yaml is applied. Edit-scoped. The restored
+ * yaml is re-validated (never trust stored garbage) before it goes live.
+ */
+export function restoreSystemVersion(systemId: string, user: Principal, version: number): SystemRecord {
+  const rec = requireEdit(systemId, user);
+  const snap = versions.get(systemId, version);
+  if (!snap) fail(`Version ${version} not found`, 404);
+  const restored = (snap.state as { yaml?: string }).yaml;
+  if (typeof restored !== 'string') fail(`Version ${version} has no restorable source`, 422);
+  parseSystem(restored); // reject a corrupt snapshot rather than go live with it
+  // Snapshot the live state first so the restore can itself be undone.
+  versions.record(systemId, user.id, snapshotState(rec), `restore of v${version}`);
+  rec.yaml = restored;
+  rec.updatedAt = now();
+  writeThrough(rec);
+  return rec;
+}
+
+/**
+ * UNSCOPED read for the in-cluster scheduler only (a schedule CronJob → the
+ * token-authenticated scheduled-run endpoint). There is no human user in a
+ * scheduled run, so this bypasses the per-user view scope; the endpoint is gated
+ * by the shared runtime bearer instead. Returns null for an unknown system.
+ */
+export function systemForScheduler(
+  systemId: string,
+): { yaml: string; domain: string; owner: string; disabledAgents: string[] } | null {
+  ensureSeeded();
+  const rec = state().store.get(systemId);
+  if (!rec) return null;
+  // `owner` is exposed so the scheduled-run endpoint can resolve it to the OWNER's
+  // live governed identity and run the agent's tools under exactly the owner's
+  // rights (delegated identity) — never a service principal.
+  return { yaml: rec.yaml, domain: rec.domain, owner: rec.owner, disabledAgents: rec.disabledAgents };
+}

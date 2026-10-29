@@ -2,13 +2,13 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { getDataset } from '@/lib/experimental/data/store';
-import { builtLayerFqn } from '@/lib/experimental/data/store';
-import { queryRun } from '@/lib/infra/governed';
-import type { Layer } from '@/lib/experimental/data';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { getDataset } from '@tabs/data/lib/store';
+import { builtLayerFqn } from '@tabs/data/lib/store';
+import { queryRun } from '@core/infra/governed';
+import type { Layer } from '@tabs/data/lib/index';
 import {
   assembleProfile,
   parseDescribe,
@@ -19,7 +19,7 @@ import {
   LIVE_PROFILE_SAMPLE_ROWS,
   type Profile,
   type ProfileColumn,
-} from '@/lib/experimental/data/profile';
+} from '@tabs/data/lib/profile';
 
 export const dynamic = 'force-dynamic';
 

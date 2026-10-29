@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { verifyEmailToken } from '@/lib/platform-admin/users';
+import { verifyEmailToken } from '@tabs/admin/lib/users';
 
 export const dynamic = 'force-dynamic';
 

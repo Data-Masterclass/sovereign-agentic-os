@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { errorResponse } from '@/lib/core/route-server';
-import { decide, ensureHydrated, getApproval, listApprovals, recordEffect } from '@/lib/governance/approvals';
-import { canApprove, canSee, roleLabel } from '@/lib/governance/roles';
-import { applyEffect } from '@/lib/governance/effects';
-import { buildEffectDeps } from '@/lib/governance/ladder';
-import { record as audit } from '@/lib/governance/audit';
-import { remember } from '@/lib/governance/standing';
+import { requireUser } from '@core/kernel/auth';
+import { errorResponse } from '@core/kernel/route-server';
+import { decide, ensureHydrated, getApproval, listApprovals, recordEffect } from '@core/policy/approvals';
+import { canApprove, canSee, roleLabel } from '@core/policy/roles';
+import { applyEffect } from '@core/policy/effects';
+import { buildEffectDeps } from '@core/policy/ladder';
+import { record as audit } from '@core/policy/audit';
+import { remember } from '@core/policy/standing';
 
 export const dynamic = 'force-dynamic';
 

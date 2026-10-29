@@ -6,7 +6,7 @@
  *
  * tokens-base.css  — design tokens, base reset, shell, sidebar, nav,
  *                    components, graph builder, agents, data, files,
- *                    bigbets, home, and tutorials (lines 1–4244).
+ *                    bigbets and home (lines 1–4244).
  *                    Kept as one module so webpack can deduplicate the
  *                    two .launch-card base declarations that span this
  *                    range, matching the pre-split cascade exactly.
@@ -17,7 +17,6 @@
 @import './styles/cockpit-home.css';
 @import './styles/strategy.css';
 @import './styles/software-tab.css';
-@import './styles/action-bar.css';
 @import './styles/runtime-selector.css';
 @import './styles/lifecycle.css';
 @import './styles/builder-simple.css';

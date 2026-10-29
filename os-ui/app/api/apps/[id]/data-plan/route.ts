@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { resolveDataPlanItem } from '@/lib/experimental/software/data-plan-server';
-import { normalizeSuggestedDatasets } from '@/lib/experimental/software/data-plan';
+import { withRoute } from '@core/kernel/route-server';
+import { resolveDataPlanItem } from '@tabs/software/lib/data-plan-server';
+import { normalizeSuggestedDatasets } from '@tabs/software/lib/data-plan';
 
 export const dynamic = 'force-dynamic';
 

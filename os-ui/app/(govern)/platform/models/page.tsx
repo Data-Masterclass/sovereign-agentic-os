@@ -5,9 +5,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import PageHeader from '@/components/PageHeader';
-import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
-import { splitCatalog } from '@/lib/platform-admin/catalog-groups';
+import PageHeader from '@core/ui/PageHeader';
+import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
+import { splitCatalog } from '@tabs/admin/lib/catalog-groups';
 
 type Task = 'chat' | 'reasoning' | 'embedding';
 // `endpoint` is present ONLY on administrator-registered models (a secrets-manager

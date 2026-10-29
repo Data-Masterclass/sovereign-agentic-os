@@ -2,27 +2,27 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { getDataset, buildGoldJoin } from '@/lib/experimental/data/store';
-import { rematerializeDomainTableLive } from '@/lib/experimental/data/publish-server';
-import { roleAtLeast } from '@/lib/core/session';
-import { reuseSourceFqn } from '@/lib/experimental/data/store-fqn';
-import { stepperStages, stageArtifact, canBuildStage } from '@/lib/experimental/data/panels';
-import { buildStage } from '@/lib/experimental/data/build/server';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { getDataset, buildGoldJoin } from '@tabs/data/lib/store';
+import { rematerializeDomainTableLive } from '@tabs/data/lib/publish-server';
+import { roleAtLeast } from '@core/kernel/session';
+import { reuseSourceFqn } from '@tabs/data/lib/store-fqn';
+import { stepperStages, stageArtifact, canBuildStage } from '@tabs/data/lib/panels';
+import { buildStage } from '@tabs/data/lib/build/server';
 import {
   goldJoinPlan,
-  goldMeasureToCube,
+  goldMeasureToModel,
   type ResolvedJoin,
   type GoldDimension,
   type GoldMeasure,
   type GoldDerived,
   type JoinType,
-} from '@/lib/experimental/data/transform';
-import type { DatasetUpstream } from '@/lib/experimental/data';
-import { parseGoldSpec, type GoldSpec } from '@/lib/experimental/data/dataset-schema';
-import type { ExecuteIdentity } from '@/lib/infra/governed';
+} from '@tabs/data/lib/transform';
+import type { DatasetUpstream } from '@tabs/data/lib/index';
+import { parseGoldSpec, type GoldSpec } from '@tabs/data/lib/dataset-schema';
+import type { ExecuteIdentity } from '@core/infra/governed';
 
 export const dynamic = 'force-dynamic';
 
@@ -151,7 +151,7 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
     ? (baseSource ? { ...parsedSpec, baseDatasetId: rawBaseId } : (() => { const { baseDatasetId: _drop, ...rest } = parsedSpec; return rest; })())
     : undefined;
   const updated = buildGoldJoin(id, user, {
-    measures: measures.map(goldMeasureToCube),
+    measures: measures.map(goldMeasureToModel),
     upstreams,
     artifact: stageArtifact(dataset.name, 'gold'),
     body: plan.sql,

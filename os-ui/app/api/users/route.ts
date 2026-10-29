@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { requireAdmin } from '@/lib/core/auth';
-import { createUser, knownDomains, listUsers } from '@/lib/platform-admin/users';
-import { assessPasswordStrength } from '@/lib/core/password';
-import { ROLES, type Role } from '@/lib/core/session';
+import { withRoute } from '@core/kernel/route-server';
+import { requireAdmin } from '@core/kernel/auth';
+import { createUser, knownDomains, listUsers } from '@tabs/admin/lib/users';
+import { assessPasswordStrength } from '@core/kernel/password';
+import { ROLES, type Role } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 

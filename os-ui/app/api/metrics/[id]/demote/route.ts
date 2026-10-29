@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { transition as transitionDataset } from '@/lib/experimental/data/store';
-import { getMetric } from '@/lib/experimental/metrics/store';
+import { withRoute } from '@core/kernel/route-server';
+import { transition as transitionDataset } from '@tabs/data/lib/store';
+import { getMetric } from '@tabs/metrics/lib/store';
 
 export const dynamic = 'force-dynamic';
 

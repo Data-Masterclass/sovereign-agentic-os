@@ -38,8 +38,6 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     app.kubernetes.io/component: opensearch-snapshots
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
 spec:
   accessModes:
     - {{ $snap.pvc.accessMode | default "ReadWriteOnce" }}
@@ -60,9 +58,6 @@ metadata:
     {{- include "soa.labels" . | nindent 4 }}
     app.kubernetes.io/component: opensearch-snapshot-register
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
     # Helm deploys run this AS A HOOK: a Job is immutable, so a plain re-apply on
     # every `helm upgrade` fails. post-install,post-upgrade + before-hook-creation
     # recreates it each release (the last run stays for debugging).

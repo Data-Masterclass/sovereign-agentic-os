@@ -5,9 +5,9 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import PageHeader from '@/components/PageHeader';
-import ReviewCard, { type ReviewCardData } from '@/components/ReviewCard';
-import { useApi } from '@/lib/useApi';
+import PageHeader from '@core/ui/PageHeader';
+import ReviewCard, { type ReviewCardData } from '@tabs/governance/ui/ReviewCard';
+import { useApi } from '@core/ui/useApi';
 
 type Data = { user: { id: string; role: string }; cards: ReviewCardData[]; canReview: boolean };
 

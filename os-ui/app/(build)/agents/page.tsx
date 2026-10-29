@@ -3,14 +3,13 @@
  */
 'use client';
 
-import PageHeader from '@/components/PageHeader';
-import AgentSystems from '@/components/agents/AgentSystems';
-import { anchorAttr, ANCHORS } from '@/lib/tutorials';
+import PageHeader from '@core/ui/PageHeader';
+import AgentSystems from '@tabs/agents/ui/AgentSystems';
 
 export default function AgentsPage() {
   return (
     <>
-      <PageHeader title="Agents" crumb="Governed agent systems — LangGraph & autonomous Hermes" tutorial="agents" />
+      <PageHeader title="Agents" crumb="Governed agent systems — LangGraph & autonomous Hermes" />
       <div className="content">
         <p className="lead">
           Author agent systems against their real artifacts — drag the canvas or edit
@@ -22,7 +21,7 @@ export default function AgentsPage() {
           skills) — both consume the same governed tool plane, so neither bypasses OPA.
         </p>
 
-        <div {...anchorAttr(ANCHORS.agents.sandbox)}>
+        <div>
           <AgentSystems />
         </div>
       </div>

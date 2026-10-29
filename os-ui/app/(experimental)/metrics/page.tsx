@@ -3,11 +3,8 @@
  */
 'use client';
 
-import { useState } from 'react';
-import PageHeader from '@/components/PageHeader';
-import MetricsTab from '@/components/experimental/metrics/MetricsTab';
-import TalkTo from '@/components/talk/TalkTo';
-import { TALK_PRESENTATION } from '@/lib/talk/schema';
+import PageHeader from '@core/ui/PageHeader';
+import MetricsTab from '@tabs/metrics/ui/MetricsTab';
 
 /**
  * The Metrics page — one scroll, no subtabs.
@@ -20,24 +17,12 @@ import { TALK_PRESENTATION } from '@/lib/talk/schema';
  * Conversational metric Q&A lives in the global Ask-the-OS assistant, not here.
  */
 export default function MetricsPage() {
-  const talk = TALK_PRESENTATION.metrics;
-  // Whether a metric detail (the builder) is open — its View leads with its own "Talk to
-  // Metrics", so the tab-level copilot shows only on the tiles home (no double Talk).
-  const [detailOpen, setDetailOpen] = useState(false);
   return (
     <>
-      <PageHeader title="Metrics" crumb="one definition of every number" tutorial="metrics" />
+      <PageHeader title="Metrics" crumb="one definition of every number" />
       <div className="content">
         {/* Registry — the metric list, detail, and define flow. */}
-        <MetricsTab onDetailChange={setDetailOpen} />
-
-        {/* Talk to Metrics — metadata-grounded Q&A over metric definitions. Hidden inside
-            the builder, where the detail View carries Talk at the top. */}
-        {!detailOpen ? (
-          <div style={{ marginTop: 40 }}>
-            <TalkTo tab="metrics" title={talk.title} blurb={talk.blurb} examples={talk.examples} />
-          </div>
-        ) : null}
+        <MetricsTab />
       </div>
     </>
   );

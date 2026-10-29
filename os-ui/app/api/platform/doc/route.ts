@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { requireAdmin } from '@/lib/core/auth';
-import { readComponentDoc } from '@/lib/core/componentDocs';
+import { withRoute } from '@core/kernel/route-server';
+import { requireAdmin } from '@core/kernel/auth';
+import { readComponentDoc } from '@core/kernel/componentDocs';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';

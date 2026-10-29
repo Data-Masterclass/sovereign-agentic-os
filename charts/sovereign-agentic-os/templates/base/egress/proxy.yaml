@@ -43,8 +43,6 @@ kind: Deployment
 metadata:
   name: egress-proxy
   namespace: {{ .Release.Namespace }}
-  annotations:
-    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "middleware") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "egress-proxy") | nindent 4 }}

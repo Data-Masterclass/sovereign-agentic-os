@@ -2,15 +2,15 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { getWorkflow, updateWorkflow, deleteWorkflow, archiveWorkflow, unarchiveWorkflow, renameKnowledge, setWorkflowLinks, ensureHydrated } from '@/lib/experimental/knowledge/store';
-import { normalizeWorkflowLinks, filterVisibleLinks } from '@/lib/experimental/knowledge/links';
-import { getDataset } from '@/lib/experimental/data/store';
-import { getMetric } from '@/lib/experimental/metrics/store';
-import { purgeKnowledgeUnits } from '@/lib/experimental/knowledge/index-pipeline';
-import { findGaps } from '@/lib/experimental/knowledge/gaps';
-import { resolveEntityIndex } from '@/lib/experimental/knowledge/mock-entities';
-import { roleAtLeast } from '@/lib/core/session';
+import { withRoute } from '@core/kernel/route-server';
+import { getWorkflow, updateWorkflow, deleteWorkflow, archiveWorkflow, unarchiveWorkflow, renameKnowledge, setWorkflowLinks, ensureHydrated } from '@tabs/knowledge/lib/store';
+import { normalizeWorkflowLinks, filterVisibleLinks } from '@tabs/knowledge/lib/links';
+import { getDataset } from '@tabs/data/lib/store';
+import { getMetric } from '@tabs/metrics/lib/store';
+import { purgeKnowledgeUnits } from '@tabs/knowledge/lib/index-pipeline';
+import { findGaps } from '@tabs/knowledge/lib/gaps';
+import { resolveEntityIndex } from '@tabs/knowledge/lib/mock-entities';
+import { roleAtLeast } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 

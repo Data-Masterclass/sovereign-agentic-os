@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { audit } from '@/lib/platform-admin/audit';
-import { registerOAuthApp, listOAuthApps, providerCatalog, ensureHydrated } from '@/lib/oauth/oauth-apps';
-import { asOAuthProvider } from '@/lib/oauth/providers';
+import { audit } from '@tabs/admin/lib/audit';
+import { registerOAuthApp, listOAuthApps, providerCatalog, ensureHydrated } from '@core/auth/oauth-apps';
+import { asOAuthProvider } from '@core/auth/providers';
 
 export const dynamic = 'force-dynamic';
 

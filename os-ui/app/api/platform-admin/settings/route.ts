@@ -3,8 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { getSettings, updateSettings } from '@/lib/platform-admin/settings';
-import { audit } from '@/lib/platform-admin/audit';
+import { getSettings, updateSettings } from '@tabs/admin/lib/settings';
+import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 

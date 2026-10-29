@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { getDataset, transition, listAllDatasets } from '@/lib/experimental/data/store';
-import { stepperStages } from '@/lib/experimental/data/panels';
-import { retireDomainTables, sharedFootprintFqns } from '@/lib/experimental/data/physical-delete';
-import { dependentsOf } from '@/lib/core/dependents';
-import { executeRun } from '@/lib/infra/governed';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { getDataset, transition, listAllDatasets } from '@tabs/data/lib/store';
+import { stepperStages } from '@tabs/data/lib/panels';
+import { retireDomainTables, sharedFootprintFqns } from '@tabs/data/lib/physical-delete';
+import { dependentsOf } from '@core/kernel/dependents';
+import { executeRun } from '@core/infra/governed';
 
 export const dynamic = 'force-dynamic';
 

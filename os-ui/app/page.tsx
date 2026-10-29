@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import Link from 'next/link';
-import { currentUser } from '@/lib/core/auth';
-import { homeFeed } from '@/lib/home/feed';
-import HomeLauncher from '@/components/home/HomeLauncher';
-import HomeTalkToOs from '@/components/home/HomeTalkToOs';
-import McpDrawer from '@/components/McpDrawer';
+import { currentUser } from '@core/kernel/auth';
+import { homeFeed } from '@tabs/home/lib/feed';
+import HomeLauncher from '@tabs/home/ui/HomeLauncher';
+import HomeTalkToOs from '@tabs/home/ui/HomeTalkToOs';
+import McpDrawer from '@tabs/admin/ui/McpDrawer';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,8 +14,7 @@ export const dynamic = 'force-dynamic';
  * Home — the welcoming golden-path launcher (home-golden-path.md). Server-rendered
  * from the OPA/RLS-scoped home-feed adapter: an illustrated launcher whose copy
  * + dimming shift by the viewer's persona. Home is the front door — it orients
- * and routes into the golden paths; the live "what's moving / what needs me" view
- * lives one click away in the Cockpit (`/cockpit`).
+ * and routes into the golden paths.
  */
 export default async function HomePage() {
   const user = await currentUser();
@@ -57,9 +56,7 @@ export default async function HomePage() {
             Welcome back, <span className="home-name">{firstName}</span>.
           </h1>
           <p className="home-sub">
-            Your governed space on the Sovereign Agentic OS. Pick a golden path to create something —
-            or open your <Link href="/cockpit" className="home-sub-link">Cockpit</Link> to see what's
-            moving and what needs you.
+            Your governed space on the Sovereign Agentic OS. Pick a golden path to create something.
           </p>
         </div>
         <div className="home-persona" title="Your role shapes what Home emphasizes.">
@@ -87,25 +84,12 @@ export default async function HomePage() {
         <div className="home-sec-head">
           <h2 className="home-sec-title">Golden paths</h2>
           <p className="home-sec-sub">
-            Ten ways to build. Each card explains itself, launches its flow, and links a hands-on
-            tutorial. Paths your role can't act on yet are dimmed — still yours to explore.
+            Ten ways to build. Each card explains itself and launches its flow. Paths your role
+            can't act on yet are dimmed — still yours to explore.
           </p>
         </div>
 
         <HomeLauncher cards={feed.launcher} />
-
-        <Link href="/cockpit" className="home-cockpit-cta">
-          <span className="home-cockpit-cta-text">
-            <span className="home-cockpit-cta-kicker">Your cockpit</span>
-            <span className="home-cockpit-cta-line">
-              What's moving and what needs you — scoped to you, ordered for a{' '}
-              {feed.personaLabel.toLowerCase()}.
-            </span>
-          </span>
-          <span className="home-cockpit-cta-go" aria-hidden="true">
-            Open ◉
-          </span>
-        </Link>
       </div>
     </div>
   );

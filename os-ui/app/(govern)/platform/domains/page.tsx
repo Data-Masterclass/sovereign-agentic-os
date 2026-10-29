@@ -4,8 +4,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import PageHeader from '@/components/PageHeader';
-import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
+import PageHeader from '@core/ui/PageHeader';
+import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
 
 type Domain = {
   id: string;

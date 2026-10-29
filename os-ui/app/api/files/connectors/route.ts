@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/files/server';
-import { requireUser } from '@/lib/core/auth';
-import { addSource, listSources, CONNECTOR_TEMPLATES, type Provider, type SyncMode, type SyncScope } from '@/lib/experimental/files/connectors';
-import type { Sensitivity } from '@/lib/experimental/files/asset-schema';
-import { getConnectionForUser } from '@/lib/experimental/connections';
-import { providerForTemplate, filesProviderFor } from '@/lib/oauth/providers';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/files/lib/server';
+import { requireUser } from '@core/kernel/auth';
+import { addSource, listSources, CONNECTOR_TEMPLATES, type Provider, type SyncMode, type SyncScope } from '@tabs/files/lib/connectors';
+import type { Sensitivity } from '@tabs/files/lib/asset-schema';
+import { getConnectionForUser } from '@tabs/connections/lib/index';
+import { providerForTemplate, filesProviderFor } from '@core/auth/providers';
 
 export const dynamic = 'force-dynamic';
 

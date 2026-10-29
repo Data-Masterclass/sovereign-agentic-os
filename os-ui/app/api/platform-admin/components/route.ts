@@ -3,15 +3,15 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { listComponentsWithStatus, statusOf, toggleComponent, BY_ID } from '@/lib/platform-admin/platform';
-import { selfHealFor, versionFor, nodes, pools, OPTIONAL_LAYERS } from '@/lib/platform-admin/components-extra';
-import { assertGuarded } from '@/lib/platform-admin/guard';
-import { audit } from '@/lib/platform-admin/audit';
-import { probeServices, type ServicesStatus } from '@/lib/platform-admin/services';
-import { collectAll, correlate } from '@/lib/monitoring';
-import { collectSystem } from '@/lib/monitoring/adapters/system-health';
-import { deriveScope } from '@/lib/monitoring/scope-core';
-import type { Correlation, HealthItem } from '@/lib/monitoring';
+import { listComponentsWithStatus, statusOf, toggleComponent, BY_ID } from '@tabs/admin/lib/platform';
+import { selfHealFor, versionFor, nodes, pools, OPTIONAL_LAYERS } from '@tabs/admin/lib/components-extra';
+import { assertGuarded } from '@tabs/admin/lib/guard';
+import { audit } from '@tabs/admin/lib/audit';
+import { probeServices, type ServicesStatus } from '@tabs/admin/lib/services';
+import { collectAll, correlate } from '@tabs/monitoring/lib/index';
+import { collectSystem } from '@tabs/monitoring/lib/adapters/system-health';
+import { deriveScope } from '@tabs/monitoring/lib/scope-core';
+import type { Correlation, HealthItem } from '@tabs/monitoring/lib/index';
 
 export const dynamic = 'force-dynamic';
 

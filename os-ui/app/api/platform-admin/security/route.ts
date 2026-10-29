@@ -4,9 +4,9 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { recompile } from '../_compile';
-import { listAllowlist, addAllowlist, removeAllowlist, listRequests, decideRequest, posture } from '@/lib/platform-admin/security';
-import { listProviderKeys } from '@/lib/platform-admin/models';
-import { audit } from '@/lib/platform-admin/audit';
+import { listAllowlist, addAllowlist, removeAllowlist, listRequests, decideRequest, posture } from '@tabs/admin/lib/security';
+import { listProviderKeys } from '@tabs/admin/lib/models';
+import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 

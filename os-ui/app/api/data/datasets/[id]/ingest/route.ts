@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/core/config';
-import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
-import { stepperStages } from '@/lib/experimental/data/panels';
-import { ingestAndRegisterBronze } from '@/lib/experimental/data/ingest';
+import { config } from '@core/kernel/config';
+import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
+import { stepperStages } from '@tabs/data/lib/panels';
+import { ingestAndRegisterBronze } from '@tabs/data/lib/ingest';
 
 export const dynamic = 'force-dynamic';
 

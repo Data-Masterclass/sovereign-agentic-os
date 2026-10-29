@@ -10,8 +10,6 @@ kind: Deployment
 metadata:
   name: web-fetch
   namespace: {{ .Release.Namespace }}
-  annotations:
-    {{- include "soa.syncWaveAnno" (dict "ctx" . "tier" "middleware") | nindent 4 }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "web-fetch") | nindent 4 }}

@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { createApp, listAppsForUser, APP_TEMPLATES, type AppTemplateKey } from '@/lib/experimental/software/apps';
-import type { SurfaceDeclaration } from '@/lib/experimental/software/model';
-import { codedAppsEnabled } from '@/lib/platform-admin/settings';
+import { withRoute } from '@core/kernel/route-server';
+import { createApp, listAppsForUser, APP_TEMPLATES, type AppTemplateKey } from '@tabs/software/lib/apps';
+import type { SurfaceDeclaration } from '@tabs/software/lib/model';
+import { codedAppsEnabled } from '@tabs/admin/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +19,7 @@ export const GET = withRoute(async ({ user }) => {
 }, { defaultStatus: 500 });
 
 /**
- * New software: scaffold a per-app Forgejo repo, auto-generate its MCP +
+ * New software: scaffold the app's source tree, auto-generate its MCP +
  * Connection, register the app's data/files as Personal artifacts, and create
  * the app's page (home of record). One act = a governed connection + agent tool.
  */

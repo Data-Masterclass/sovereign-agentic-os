@@ -3,14 +3,14 @@
  */
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
+import { withRoute } from '@core/kernel/route-server';
 import {
   ensureHydrated,
   listFolders,
   createFolder,
   type FolderTab,
   type FolderScope,
-} from '@/lib/folders';
+} from '@core/folders/index';
 
 /**
  * The folder registry API. Runs AS the signed-in user (`requireUser`); every
@@ -25,7 +25,8 @@ export const dynamic = 'force-dynamic';
 const TABS: FolderTab[] = [
   'files', 'knowledge', 'data', 'metrics',
   // Wave-2 parity: every artifact tab reads/writes its folder rows through this one route.
-  'dashboards', 'science', 'agents', 'software', 'connections', 'bigbets', 'pillars', 'workflows',
+  'dashboards', 'agents', 'software', 'connections', 'workflows',
+
 ];
 const SCOPES: FolderScope[] = ['personal', 'domain'];
 
