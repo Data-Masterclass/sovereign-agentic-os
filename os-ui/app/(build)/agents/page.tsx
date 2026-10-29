@@ -3,8 +3,8 @@
  */
 'use client';
 
-import PageHeader from '@/components/PageHeader';
-import AgentSystems from '@/components/agents/AgentSystems';
+import PageHeader from '@core/ui/PageHeader';
+import AgentSystems from '@tabs/agents/ui/AgentSystems';
 
 export default function AgentsPage() {
   return (

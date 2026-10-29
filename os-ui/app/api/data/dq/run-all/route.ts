@@ -2,16 +2,16 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { roleAtLeast } from '@/lib/core/session';
-import { listGovernedDatasets, builtLayerFqn } from '@/lib/experimental/data/store';
-import { queryRun } from '@/lib/infra/governed';
-import { ensureHydrated, latestRun } from '@/lib/experimental/data/dq-results';
-import { runAndRecord, isNewFailure } from '@/lib/experimental/data/dq-run-server';
-import { deliverDqAlert } from '@/lib/experimental/dashboards/delivery';
-import { getPublicUser } from '@/lib/platform-admin/users';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { roleAtLeast } from '@core/kernel/session';
+import { listGovernedDatasets, builtLayerFqn } from '@tabs/data/lib/store';
+import { queryRun } from '@core/infra/governed';
+import { ensureHydrated, latestRun } from '@tabs/data/lib/dq-results';
+import { runAndRecord, isNewFailure } from '@tabs/data/lib/dq-run-server';
+import { deliverDqAlert } from '@tabs/dashboards/lib/delivery';
+import { getPublicUser } from '@tabs/admin/lib/users';
 
 export const dynamic = 'force-dynamic';
 

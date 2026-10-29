@@ -2,13 +2,13 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import 'server-only';
-import { compileAndPublish, type CompiledPolicy, type PublishResult } from '@/lib/platform-admin/policy-compiler';
-import { compilerView as domainView, ensureHydrated as ensureDomainsHydrated } from '@/lib/platform-admin/domains';
-import { listAllowlist } from '@/lib/platform-admin/security';
-import { enabledMap } from '@/lib/platform-admin/models';
-import { compileUsers } from '@/lib/platform-admin/tenant-users';
-import { currentTenantId } from '@/lib/platform-admin/tenant';
-import { knownDomains } from '@/lib/platform-admin/users';
+import { compileAndPublish, type CompiledPolicy, type PublishResult } from '@tabs/admin/lib/policy-compiler';
+import { compilerView as domainView, ensureHydrated as ensureDomainsHydrated } from '@tabs/admin/lib/domains';
+import { listAllowlist } from '@tabs/admin/lib/security';
+import { enabledMap } from '@tabs/admin/lib/models';
+import { compileUsers } from '@tabs/admin/lib/tenant-users';
+import { currentTenantId } from '@tabs/admin/lib/tenant';
+import { knownDomains } from '@tabs/admin/lib/users';
 
 /**
  * Gather the one identity/structure source and compile it to OPA. Called after

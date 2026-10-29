@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { requireUser } from '@/lib/core/auth';
-import { ensureHydrated } from '@/lib/experimental/software/apps';
-import { serveAppRuntime } from '@/lib/experimental/software/app-runtime';
+import { requireUser } from '@core/kernel/auth';
+import { ensureHydrated } from '@tabs/software/lib/apps';
+import { serveAppRuntime } from '@tabs/software/lib/app-runtime';
 
 export const dynamic = 'force-dynamic';
 

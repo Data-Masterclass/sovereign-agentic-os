@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { homeFeed } from '@/lib/home/feed';
+import { withRoute } from '@core/kernel/route-server';
+import { homeFeed } from '@tabs/home/lib/feed';
 
 export const dynamic = 'force-dynamic';
 

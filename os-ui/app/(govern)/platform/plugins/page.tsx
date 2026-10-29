@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import PageHeader from '@/components/PageHeader';
+import PageHeader from '@core/ui/PageHeader';
 
 type Plugin = {
   id: string;

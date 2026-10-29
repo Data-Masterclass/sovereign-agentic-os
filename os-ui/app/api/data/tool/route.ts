@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { authorize, queryRun, trace } from '@/lib/infra/governed';
+import { requireUser } from '@core/kernel/auth';
+import { authorize, queryRun, trace } from '@core/infra/governed';
 
 export const dynamic = 'force-dynamic';
 

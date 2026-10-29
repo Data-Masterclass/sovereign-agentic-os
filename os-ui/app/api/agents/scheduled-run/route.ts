@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { systemForScheduler, recordActivity } from '@/lib/agents/store';
-import { runScheduledSystem } from '@/lib/agents/build/scheduled';
-import { runtimeTokenOk } from '@/lib/agents/build/runtime-auth';
+import { systemForScheduler, recordActivity } from '@tabs/agents/lib/store';
+import { runScheduledSystem } from '@tabs/agents/lib/build/scheduled';
+import { runtimeTokenOk } from '@tabs/agents/lib/build/runtime-auth';
 
 export const dynamic = 'force-dynamic';
 

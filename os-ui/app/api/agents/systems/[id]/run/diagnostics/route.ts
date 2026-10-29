@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/core/config';
-import { withRoute } from '@/lib/core/route-server';
-import { shapeTraceMetrics, type RawObservation, type TraceMetrics } from '@/lib/agents/build/run-diagnostics';
+import { config } from '@core/kernel/config';
+import { withRoute } from '@core/kernel/route-server';
+import { shapeTraceMetrics, type RawObservation, type TraceMetrics } from '@tabs/agents/lib/build/run-diagnostics';
 
 export const dynamic = 'force-dynamic';
 

@@ -2,20 +2,20 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { withRoute } from '@/lib/core/route-server';
-import { decide, getApproval, listApprovals } from '@/lib/governance/approvals';
-import { curateFact, proposeFact } from '@/lib/agents/agent-memory';
-import { trace } from '@/lib/infra/agent-governed';
+import { requireUser } from '@core/kernel/auth';
+import { withRoute } from '@core/kernel/route-server';
+import { decide, getApproval, listApprovals } from '@core/policy/approvals';
+import { curateFact, proposeFact } from '@tabs/agents/lib/agent-memory';
+import { trace } from '@core/infra/agent-governed';
 import {
   applyApprovedCertification,
   type PromotionRequest,
   type CertificationRequest,
-} from '@/lib/experimental/data/store';
-import { publishPromotionLive } from '@/lib/experimental/data/publish-server';
-import { applyApprovedFilePromotion, type FilePromotionRequest } from '@/lib/experimental/files/store';
-import { reindexById } from '@/lib/experimental/files/pipeline-server';
-import { roleAtLeast } from '@/lib/core/session';
+} from '@tabs/data/lib/store';
+import { publishPromotionLive } from '@tabs/data/lib/publish-server';
+import { applyApprovedFilePromotion, type FilePromotionRequest } from '@tabs/files/lib/store';
+import { reindexById } from '@tabs/files/lib/pipeline-server';
+import { roleAtLeast } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 

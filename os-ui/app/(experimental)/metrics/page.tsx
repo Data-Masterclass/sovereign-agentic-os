@@ -3,8 +3,8 @@
  */
 'use client';
 
-import PageHeader from '@/components/PageHeader';
-import MetricsTab from '@/components/experimental/metrics/MetricsTab';
+import PageHeader from '@core/ui/PageHeader';
+import MetricsTab from '@tabs/metrics/ui/MetricsTab';
 
 /**
  * The Metrics page — one scroll, no subtabs.

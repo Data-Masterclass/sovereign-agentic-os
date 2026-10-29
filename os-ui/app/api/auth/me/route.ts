@@ -3,10 +3,10 @@
  */
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { currentUser } from '@/lib/core/auth';
-import { getPublicUser } from '@/lib/platform-admin/users';
-import { DOMAIN_CHOSEN_COOKIE } from '@/lib/core/active-domain';
-import { config } from '@/lib/core/config';
+import { currentUser } from '@core/kernel/auth';
+import { getPublicUser } from '@tabs/admin/lib/users';
+import { DOMAIN_CHOSEN_COOKIE } from '@core/kernel/active-domain';
+import { config } from '@core/kernel/config';
 
 export const dynamic = 'force-dynamic';
 

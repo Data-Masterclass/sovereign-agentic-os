@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import Link from 'next/link';
-import PageHeader from '@/components/PageHeader';
-import StackStatus from '@/components/StackStatus';
-import ThemeToggle from '@/components/ThemeToggle';
-import { config } from '@/lib/core/config';
+import PageHeader from '@core/ui/PageHeader';
+import StackStatus from '@core/ui/StackStatus';
+import ThemeToggle from '@core/ui/ThemeToggle';
+import { config } from '@core/kernel/config';
 
 // Server component: a read-only view of this deployment's configuration. Only
 // non-secret values are read from config (no keys/passwords); live enabled

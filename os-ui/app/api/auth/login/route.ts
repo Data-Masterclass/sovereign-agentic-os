@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/core/config';
-import { authenticate } from '@/lib/core/auth';
-import { SESSION_COOKIE, SESSION_MAX_AGE, sessionCookieOptions, signSession } from '@/lib/core/session';
-import { rateLimit, rateLimitReset, clientIp } from '@/lib/core/ratelimit';
+import { config } from '@core/kernel/config';
+import { authenticate } from '@core/kernel/auth';
+import { SESSION_COOKIE, SESSION_MAX_AGE, sessionCookieOptions, signSession } from '@core/kernel/session';
+import { rateLimit, rateLimitReset, clientIp } from '@core/kernel/ratelimit';
 
 export const dynamic = 'force-dynamic';
 

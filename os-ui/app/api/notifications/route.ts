@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { withRoute } from '@/lib/core/route-server';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { ensureHydrated, listNotifications, markRead, unreadCount } from '@/lib/notifications/store';
+import type { CurrentUser } from '@core/kernel/auth';
+import { withRoute } from '@core/kernel/route-server';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { ensureHydrated, listNotifications, markRead, unreadCount } from '@core/notifications/store';
 
 export const dynamic = 'force-dynamic';
 

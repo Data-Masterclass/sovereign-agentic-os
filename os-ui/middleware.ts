@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse, type NextRequest } from 'next/server';
-import { config as appConfig } from '@/lib/core/config';
-import { SESSION_COOKIE, verifySession } from '@/lib/core/session';
-import { corsHeadersFor } from '@/lib/core/cors';
-import { findDisabledTab } from '@/lib/core/tabs';
+import { config as appConfig } from '@core/kernel/config';
+import { SESSION_COOKIE, verifySession } from '@core/kernel/session';
+import { corsHeadersFor } from '@core/kernel/cors';
+import { findDisabledTab } from '@core/kernel/tabs';
 
 /**
  * Edge gate. Page navigations require a valid signed session (else → /signin).

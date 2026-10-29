@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/core/config';
-import { requireUser } from '@/lib/core/auth';
-import { errorResponse } from '@/lib/experimental/data/server';
-import { dlsFilter } from '@/lib/experimental/knowledge/retrieve';
-import { appSlugFromRequest, grantedIdSet } from '@/lib/experimental/software/app-origin';
+import { config } from '@core/kernel/config';
+import { requireUser } from '@core/kernel/auth';
+import { errorResponse } from '@tabs/data/lib/server';
+import { dlsFilter } from '@tabs/knowledge/lib/retrieve';
+import { appSlugFromRequest, grantedIdSet } from '@tabs/software/lib/app-origin';
 
 export const dynamic = 'force-dynamic';
 

@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { getSystemForEdit, setLastBuild, setActivity, clearActivity } from '@/lib/agents/store';
-import { buildSystem } from '@/lib/agents/build/server';
-import { governYamlForOwner } from '@/lib/agents/build/owner-grants';
+import { requireUser } from '@core/kernel/auth';
+import { getSystemForEdit, setLastBuild, setActivity, clearActivity } from '@tabs/agents/lib/store';
+import { buildSystem } from '@tabs/agents/lib/build/server';
+import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
 
 export const dynamic = 'force-dynamic';
 

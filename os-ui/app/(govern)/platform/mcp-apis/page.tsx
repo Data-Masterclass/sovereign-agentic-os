@@ -4,11 +4,11 @@
 'use client';
 
 import { useState } from 'react';
-import PageHeader from '@/components/PageHeader';
-import McpConnect from '@/components/McpConnect';
-import { useApi } from '@/lib/useApi';
-import type { McpRegistry, RegistryEntry, RegistrySection } from '@/lib/platform-admin/mcp-registry';
-import { visibilityLabel } from '@/lib/core/scopes';
+import PageHeader from '@core/ui/PageHeader';
+import McpConnect from '@tabs/admin/ui/McpConnect';
+import { useApi } from '@core/ui/useApi';
+import type { McpRegistry, RegistryEntry, RegistrySection } from '@tabs/admin/lib/mcp-registry';
+import { visibilityLabel } from '@core/kernel/scopes';
 
 type Data = { registry: McpRegistry; opa: string; gatewayReachable: boolean };
 

@@ -5,8 +5,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import PageHeader from '@/components/PageHeader';
-import GuardedConfirm from '@/components/GuardedConfirm';
+import PageHeader from '@core/ui/PageHeader';
+import GuardedConfirm from '@core/ui/GuardedConfirm';
 
 type Target = {
   id: string; name: string; method: string; frequency: string; retention: string;

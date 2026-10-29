@@ -2,12 +2,12 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { getSystem, canRunCheck, archiveSystem, unarchiveSystem, deleteSystem, renameAgentSystem, ensureHydrated } from '@/lib/agents/store';
-import { purgeSystemResources } from '@/lib/agents/physical-delete';
-import { reconcileScheduleCron } from '@/lib/agents/schedule-cron';
-import { compile } from '@/lib/agents/langgraph-compile';
-import { config } from '@/lib/core/config';
+import { withRoute } from '@core/kernel/route-server';
+import { getSystem, canRunCheck, archiveSystem, unarchiveSystem, deleteSystem, renameAgentSystem, ensureHydrated } from '@tabs/agents/lib/store';
+import { purgeSystemResources } from '@tabs/agents/lib/physical-delete';
+import { reconcileScheduleCron } from '@tabs/agents/lib/schedule-cron';
+import { compile } from '@tabs/agents/lib/langgraph-compile';
+import { config } from '@core/kernel/config';
 
 export const dynamic = 'force-dynamic';
 

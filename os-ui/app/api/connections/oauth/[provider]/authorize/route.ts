@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { config } from '@/lib/core/config';
-import { getConnectionForUser } from '@/lib/experimental/connections';
-import { asOAuthProvider, providerForTemplate, providerConfig } from '@/lib/oauth/providers';
-import { getOAuthApp, isConfigured, ensureHydrated } from '@/lib/oauth/oauth-apps';
-import { buildAuthorizeUrl } from '@/lib/oauth/token-set';
-import { signState, newNonce, OAUTH_STATE_COOKIE } from '@/lib/oauth/state';
-import { publicBaseUrl, callbackUri } from '@/lib/oauth/redirect';
+import { requireUser } from '@core/kernel/auth';
+import { config } from '@core/kernel/config';
+import { getConnectionForUser } from '@tabs/connections/lib/index';
+import { asOAuthProvider, providerForTemplate, providerConfig } from '@core/auth/providers';
+import { getOAuthApp, isConfigured, ensureHydrated } from '@core/auth/oauth-apps';
+import { buildAuthorizeUrl } from '@core/auth/token-set';
+import { signState, newNonce, OAUTH_STATE_COOKIE } from '@core/auth/state';
+import { publicBaseUrl, callbackUri } from '@core/auth/redirect';
 
 export const dynamic = 'force-dynamic';
 

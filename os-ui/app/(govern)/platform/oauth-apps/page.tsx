@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import PageHeader from '@/components/PageHeader';
+import PageHeader from '@core/ui/PageHeader';
 
 /**
  * Platform Admin → Drive OAuth apps. Register the ONE Google Cloud OAuth client and

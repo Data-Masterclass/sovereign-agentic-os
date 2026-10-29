@@ -25,7 +25,7 @@ export async function register(): Promise<void> {
   // a runtime secret rotation). Fail-closed: exit the process so the pod crash-loops
   // and the bad deploy is loud, rather than silently signing forgeable sessions.
   try {
-    const { config, assertNoDevDefaultSecretsInProd } = await import('./lib/core/config.ts');
+    const { config, assertNoDevDefaultSecretsInProd } = await import('./core/kernel/config.ts');
     assertNoDevDefaultSecretsInProd(config);
   } catch (err) {
     console.error(`[os-ui] boot secret guard: ${err instanceof Error ? err.message : String(err)}`);
@@ -35,8 +35,8 @@ export async function register(): Promise<void> {
   // TAB GATING warnings (telemetry only): surface typo'd keys and omissions that would
   // 404 the landing page / admin UI. Never fails boot.
   try {
-    const { config } = await import('./lib/core/config.ts');
-    const { enabledTabsWarnings } = await import('./lib/core/tabs.ts');
+    const { config } = await import('./core/kernel/config.ts');
+    const { enabledTabsWarnings } = await import('./core/kernel/tabs.ts');
     for (const w of enabledTabsWarnings(config.enabledTabs)) console.warn(`[os-ui] OS_ENABLED_TABS: ${w}`);
   } catch {
     /* telemetry must never break boot */
@@ -49,8 +49,8 @@ export async function register(): Promise<void> {
   // → silent 401 → "builds but shows no data". Warn LOUDLY so it is diagnosable. This does
   // NOT change the cookie logic — it only surfaces the misconfiguration. Never fails boot.
   try {
-    const { config } = await import('./lib/core/config.ts');
-    const { sessionCookieDomain } = await import('./lib/core/session.ts');
+    const { config } = await import('./core/kernel/config.ts');
+    const { sessionCookieDomain } = await import('./core/kernel/session.ts');
     const osUrl = config.osPublicUrl;
     const apps = config.appsBaseDomain;
     let osHost = '';
@@ -84,7 +84,7 @@ export async function register(): Promise<void> {
   // seed-demo's heavy server graph (apps.ts → connections/crypto) from the EDGE instrumentation
   // bundle — it must never be traced there (middleware is edge; node-only modules break it).
   if (process.env.NEXT_RUNTIME === 'nodejs') {
-    void import('./lib/experimental/software/appspec/seed-demo.ts')
+    void import('./tabs/software/lib/appspec/seed-demo.ts')
       .then((m) => m.seedDeclarativeDemoApp())
       .catch(() => {
         /* fail-soft — the module already swallows its own errors; this guards the import */

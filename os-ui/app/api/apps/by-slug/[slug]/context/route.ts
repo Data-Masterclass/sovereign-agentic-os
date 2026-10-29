@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { getAppBySlugForUser } from '@/lib/experimental/software/apps';
-import { availableContext } from '@/lib/experimental/software/available-context';
-import { CONTEXT_KINDS, type ContextKind } from '@/lib/core/context-grants';
+import { withRoute } from '@core/kernel/route-server';
+import { getAppBySlugForUser } from '@tabs/software/lib/apps';
+import { availableContext } from '@tabs/software/lib/available-context';
+import { CONTEXT_KINDS, type ContextKind } from '@core/kernel/context-grants';
 
 export const dynamic = 'force-dynamic';
 

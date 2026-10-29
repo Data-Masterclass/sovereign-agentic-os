@@ -2,18 +2,18 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { roleAtLeast } from '@/lib/core/session';
-import { parseJsonReply } from '@/lib/assistant/json-reply';
-import { assistantComplete } from '@/lib/assistant/complete';
-import { getConnectionForUser } from '@/lib/experimental/connections/store';
-import { getCatalogSnapshot } from '@/lib/experimental/connections/warehouse/catalog-snapshot';
-import { getMergedClassification } from '@/lib/experimental/connections/warehouse/catalog-classification';
-import { listExposureSets, entityActionKey } from '@/lib/experimental/connections/exposures';
-import { listDomains } from '@/lib/platform-admin/domains';
-import { isOperationalTemplate } from '@/lib/experimental/connections/operational-platform';
-import { config } from '@/lib/core/config';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { roleAtLeast } from '@core/kernel/session';
+import { parseJsonReply } from '@core/runtime/json-reply';
+import { assistantComplete } from '@core/runtime/complete';
+import { getConnectionForUser } from '@tabs/connections/lib/store';
+import { getCatalogSnapshot } from '@tabs/connections/lib/warehouse/catalog-snapshot';
+import { getMergedClassification } from '@tabs/connections/lib/warehouse/catalog-classification';
+import { listExposureSets, entityActionKey } from '@tabs/connections/lib/exposures';
+import { listDomains } from '@tabs/admin/lib/domains';
+import { isOperationalTemplate } from '@tabs/connections/lib/operational-platform';
+import { config } from '@core/kernel/config';
 
 export const dynamic = 'force-dynamic';
 

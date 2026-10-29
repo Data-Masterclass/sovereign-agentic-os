@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { withRoute } from '@/lib/core/route-server';
-import { requestEgress, listEgressRequests, egressLog, ensureHydrated } from '@/lib/experimental/connections';
-import { egressHost } from '@/lib/infra/secrets';
-import { roleAtLeast } from '@/lib/core/session';
+import { requireUser } from '@core/kernel/auth';
+import { withRoute } from '@core/kernel/route-server';
+import { requestEgress, listEgressRequests, egressLog, ensureHydrated } from '@tabs/connections/lib/index';
+import { egressHost } from '@core/infra/secrets';
+import { roleAtLeast } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 

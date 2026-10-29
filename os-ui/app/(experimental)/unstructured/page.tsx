@@ -4,9 +4,9 @@
 'use client';
 
 import { useState } from 'react';
-import PageHeader from '@/components/PageHeader';
-import FilesBrowser from '@/components/experimental/files/FilesBrowser';
-import FilesSources from '@/components/experimental/files/FilesSources';
+import PageHeader from '@core/ui/PageHeader';
+import FilesBrowser from '@tabs/files/ui/FilesBrowser';
+import FilesSources from '@tabs/files/ui/FilesSources';
 
 /**
  * The Files tab — a calm governed drive. Any file (docs, images, video, audio,

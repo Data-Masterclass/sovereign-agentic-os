@@ -5,24 +5,24 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import PageHeader from '@/components/PageHeader';
-import Markdown from '@/components/Markdown';
-import { roleAtLeast, type Role } from '@/lib/core/session';
-import { canManageArtifact, type ArtifactScope } from '@/lib/governance/edit-scope';
-import { useTabNavReset } from '@/lib/core/tab-nav';
-import { SCOPE_GROUPS, type ScopeKey } from '@/lib/core/scopes';
-import type { PersonalKnowledgeSummary } from '@/lib/experimental/knowledge/personal-store';
-import { ConfirmProvider, useConfirm } from '@/components/lifecycle/ConfirmDialog';
-import LifecycleActions from '@/components/lifecycle/LifecycleActions';
-import { useApprovalNotifier } from '@/components/lifecycle/useApprovalNotifier';
-import type { FiledApproval } from '@/lib/governance/approval-notice';
-import DomainTag from '@/components/DomainTag';
-import type { Visibility as LcVisibility } from '@/lib/core/lifecycle';
-import { archiveFolderCopy, deleteFolderCopy } from '@/lib/core/lifecycle';
-import FolderTree, { FolderPickerModal, type FolderRef } from '@/components/core/FolderTree';
-import FolderLayout from '@/components/core/FolderLayout';
-import { ensureFolderId, renamedPath } from '@/lib/folders/client';
-import { isUnderFolder, itemsUnderFolder, folderName, type FolderPathNode } from '@/lib/core/folders';
+import PageHeader from '@core/ui/PageHeader';
+import Markdown from '@core/ui/Markdown';
+import { roleAtLeast, type Role } from '@core/kernel/session';
+import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
+import { useTabNavReset } from '@core/kernel/tab-nav';
+import { SCOPE_GROUPS, type ScopeKey } from '@core/kernel/scopes';
+import type { PersonalKnowledgeSummary } from '@tabs/knowledge/lib/personal-store';
+import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
+import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
+import { useApprovalNotifier } from '@core/ui/lifecycle/useApprovalNotifier';
+import type { FiledApproval } from '@core/policy/approval-notice';
+import DomainTag from '@core/ui/DomainTag';
+import type { Visibility as LcVisibility } from '@core/kernel/lifecycle';
+import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
+import FolderTree, { FolderPickerModal, type FolderRef } from '@core/ui/core/FolderTree';
+import FolderLayout from '@core/ui/core/FolderLayout';
+import { ensureFolderId, renamedPath } from '@core/folders/client';
+import { isUnderFolder, itemsUnderFolder, folderName, type FolderPathNode } from '@core/kernel/folders';
 
 /** Knowledge visibility (Personal/Shared/Marketplace) → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>

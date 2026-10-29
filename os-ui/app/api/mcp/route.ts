@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { serveMcp, serveMcpStream } from '@/lib/mcp/http';
+import { serveMcp, serveMcpStream } from '@core/mcp/http';
 
 export const dynamic = 'force-dynamic';
 

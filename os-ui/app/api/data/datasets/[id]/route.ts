@@ -2,16 +2,16 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
-import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset, renameDataset, listAllDatasets } from '@/lib/experimental/data/store';
-import { dropPhysicalTables, sharedFootprintFqns } from '@/lib/experimental/data/physical-delete';
-import { domainTableMissing } from '@/lib/experimental/data/reconcile-server';
-import { executeRun } from '@/lib/infra/governed';
-import { stepperStages } from '@/lib/experimental/data/panels';
-import { goldOutputColumns } from '@/lib/experimental/data/metrics';
-import { appSlugFromRequest, checkAppGrant } from '@/lib/experimental/software/app-origin';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
+import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset, renameDataset, listAllDatasets } from '@tabs/data/lib/store';
+import { dropPhysicalTables, sharedFootprintFqns } from '@tabs/data/lib/physical-delete';
+import { domainTableMissing } from '@tabs/data/lib/reconcile-server';
+import { executeRun } from '@core/infra/governed';
+import { stepperStages } from '@tabs/data/lib/panels';
+import { goldOutputColumns } from '@tabs/data/lib/metrics';
+import { appSlugFromRequest, checkAppGrant } from '@tabs/software/lib/app-origin';
 
 export const dynamic = 'force-dynamic';
 

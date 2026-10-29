@@ -2,17 +2,17 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal, errorResponse } from '@/lib/experimental/files/server';
-import { listFiles, createFile, attachObject, objectKeyForAsset, type UploadInput } from '@/lib/experimental/files/store';
-import { putBlob } from '@/lib/experimental/files/object-store';
-import '@/lib/experimental/files/object-store-server'; // registers the durable MinIO backend
-import { reindexFile } from '@/lib/experimental/files/pipeline-server';
-import { truncationError } from '@/lib/experimental/files/integrity';
-import { config } from '@/lib/core/config';
-import type { Sensitivity, Storage } from '@/lib/experimental/files/asset-schema';
-import { appSlugFromRequest, grantedIdSet } from '@/lib/experimental/software/app-origin';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal, errorResponse } from '@tabs/files/lib/server';
+import { listFiles, createFile, attachObject, objectKeyForAsset, type UploadInput } from '@tabs/files/lib/store';
+import { putBlob } from '@tabs/files/lib/object-store';
+import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
+import { reindexFile } from '@tabs/files/lib/pipeline-server';
+import { truncationError } from '@tabs/files/lib/integrity';
+import { config } from '@core/kernel/config';
+import type { Sensitivity, Storage } from '@tabs/files/lib/asset-schema';
+import { appSlugFromRequest, grantedIdSet } from '@tabs/software/lib/app-origin';
 
 export const dynamic = 'force-dynamic';
 

@@ -30,7 +30,7 @@ edges:
 `;
 
 let ACTING: { id: string; name: string; domains: string[]; role: string } | null = null;
-mock.module('@/lib/core/auth', {
+mock.module('@core/kernel/auth', {
   namedExports: {
     requireUser: async () => {
       if (!ACTING) { const e = new Error('Not authenticated') as Error & { status?: number }; e.status = 401; throw e; }
@@ -46,7 +46,7 @@ mock.module('@/lib/core/auth', {
 const store = await import('../../../../../../lib/agents/store.ts');
 
 // Grounding + grantable resolvers — hermetic, return a tiny granted set.
-mock.module('@/lib/agents/grounding', {
+mock.module('@tabs/agents/lib/grounding', {
   namedExports: {
     resolveSystemGrounding: async () => ({
       description: 'Handle overdue invoices',
@@ -55,7 +55,7 @@ mock.module('@/lib/agents/grounding', {
     }),
   },
 });
-mock.module('@/lib/agents/grantable', {
+mock.module('@tabs/agents/lib/grantable', {
   namedExports: {
     listGrantableForKinds: async () => ({ data: [{ id: 'ds_1', name: 'invoices', scope: 'personal' }] }),
   },
@@ -64,7 +64,7 @@ mock.module('@/lib/agents/grantable', {
 // The ONE model call — steered per test via MODEL_REPLY, or MODEL_THROW for 503/402 passthrough.
 let MODEL_REPLY = '';
 let MODEL_THROW: (Error & { status?: number }) | null = null;
-mock.module('@/lib/assistant/complete', {
+mock.module('@core/runtime/complete', {
   namedExports: {
     assistantComplete: async () => {
       if (MODEL_THROW) throw MODEL_THROW;

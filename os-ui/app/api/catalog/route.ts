@@ -2,15 +2,15 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { errorResponse } from '@/lib/experimental/data/server';
-import { ensureHydrated, listDatasets, type Principal } from '@/lib/experimental/data/store';
-import { queryRun } from '@/lib/infra/governed';
+import { requireUser } from '@core/kernel/auth';
+import { errorResponse } from '@tabs/data/lib/server';
+import { ensureHydrated, listDatasets, type Principal } from '@tabs/data/lib/store';
+import { queryRun } from '@core/infra/governed';
 import {
   assembleCatalog,
   registryAssets,
   type CatalogAsset,
-} from '@/lib/experimental/data/catalog';
+} from '@tabs/data/lib/catalog';
 
 export const dynamic = 'force-dynamic';
 

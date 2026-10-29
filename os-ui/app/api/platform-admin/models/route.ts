@@ -3,9 +3,9 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { listModels, getDefaults, getAssistantModelId, isAssistantExplicit, listProviderKeys, registerProviderKey } from '@/lib/platform-admin/models';
-import { putSecret, secretFingerprint } from '@/lib/infra/secrets';
-import { audit } from '@/lib/platform-admin/audit';
+import { listModels, getDefaults, getAssistantModelId, isAssistantExplicit, listProviderKeys, registerProviderKey } from '@tabs/admin/lib/models';
+import { putSecret, secretFingerprint } from '@core/infra/secrets';
+import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 

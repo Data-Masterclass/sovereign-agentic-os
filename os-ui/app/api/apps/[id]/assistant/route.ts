@@ -2,17 +2,17 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { getAppForUser } from '@/lib/experimental/software/apps';
-import { failResponse } from '@/lib/assistant/stage-route';
-import { parseJsonReply } from '@/lib/assistant/json-reply';
-import { assistantComplete } from '@/lib/assistant/complete';
-import { roleModel } from '@/lib/models/roles';
-import { availableContext, type AvailableContext } from '@/lib/experimental/software/available-context';
-import { normalizeAssistantReply } from '@/lib/experimental/software/assistant-suggestions';
-import { defineContextBlock } from '@/lib/experimental/software/define-context';
-import { resolveGrantedContext } from '@/lib/experimental/software/grants-context';
-import { CONTEXT_KINDS, type ContextGrants, type ContextKind } from '@/lib/core/context-grants';
+import { requireUser } from '@core/kernel/auth';
+import { getAppForUser } from '@tabs/software/lib/apps';
+import { failResponse } from '@core/runtime/stage-route';
+import { parseJsonReply } from '@core/runtime/json-reply';
+import { assistantComplete } from '@core/runtime/complete';
+import { roleModel } from '@core/models/roles';
+import { availableContext, type AvailableContext } from '@tabs/software/lib/available-context';
+import { normalizeAssistantReply } from '@tabs/software/lib/assistant-suggestions';
+import { defineContextBlock } from '@tabs/software/lib/define-context';
+import { resolveGrantedContext } from '@tabs/software/lib/grants-context';
+import { CONTEXT_KINDS, type ContextGrants, type ContextKind } from '@core/kernel/context-grants';
 
 export const dynamic = 'force-dynamic';
 

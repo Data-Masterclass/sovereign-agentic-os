@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { callPlatformMcp, PLATFORM_MCP_TOOLS } from '@/lib/experimental/software/platform-mcp';
+import { withRoute } from '@core/kernel/route-server';
+import { callPlatformMcp, PLATFORM_MCP_TOOLS } from '@tabs/software/lib/platform-mcp';
 
 export const dynamic = 'force-dynamic';
 

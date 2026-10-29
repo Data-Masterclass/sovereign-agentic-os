@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import PageHeader from '@/components/PageHeader';
-import McpToolsClient from '@/components/McpToolsClient';
-import { buildFullCatalog } from '@/lib/agents/tool-catalog';
+import PageHeader from '@core/ui/PageHeader';
+import McpToolsClient from '@tabs/admin/ui/McpToolsClient';
+import { buildFullCatalog } from '@tabs/agents/lib/tool-catalog';
 
 /**
  * MCP reference page — a teaching surface for the cohort.

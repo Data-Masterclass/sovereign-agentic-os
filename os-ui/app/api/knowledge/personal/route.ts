@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { listPersonalKnowledge, createPersonalKnowledge, ensureHydrated } from '@/lib/experimental/knowledge/personal-store';
+import { withRoute } from '@core/kernel/route-server';
+import { listPersonalKnowledge, createPersonalKnowledge, ensureHydrated } from '@tabs/knowledge/lib/personal-store';
 
 export const dynamic = 'force-dynamic';
 

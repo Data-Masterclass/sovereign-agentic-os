@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { getMetric } from '@/lib/experimental/metrics/store';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { getMetric } from '@tabs/metrics/lib/store';
 import {
   ensureHydrated,
   isMetricArchived,
@@ -13,7 +13,7 @@ import {
   unarchiveMetric,
   deleteMetric,
   renameMetric,
-} from '@/lib/experimental/metrics/lifecycle';
+} from '@tabs/metrics/lib/lifecycle';
 
 export const dynamic = 'force-dynamic';
 

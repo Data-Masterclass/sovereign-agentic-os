@@ -4,11 +4,11 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { recompile } from '../_compile';
-import { config } from '@/lib/core/config';
-import { registerModel } from '@/lib/platform-admin/models';
-import { classifyProviderType, litellmModelString, PROVIDER_TYPE_LABELS, type ProviderType } from '@/lib/agents/routing';
-import { putSecret, secretFingerprint, getSecretServerSide } from '@/lib/infra/secrets';
-import { audit } from '@/lib/platform-admin/audit';
+import { config } from '@core/kernel/config';
+import { registerModel } from '@tabs/admin/lib/models';
+import { classifyProviderType, litellmModelString, PROVIDER_TYPE_LABELS, type ProviderType } from '@tabs/agents/lib/routing';
+import { putSecret, secretFingerprint, getSecretServerSide } from '@core/infra/secrets';
+import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 

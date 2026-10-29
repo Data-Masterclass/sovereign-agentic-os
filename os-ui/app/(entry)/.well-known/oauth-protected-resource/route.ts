@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { protectedResourceMetadata } from '@/lib/mcp/oauth';
+import { protectedResourceMetadata } from '@core/mcp/oauth';
 
 export const dynamic = 'force-dynamic';
 

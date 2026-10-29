@@ -2,20 +2,20 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal } from '@/lib/experimental/files/server';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal } from '@tabs/files/lib/server';
 import {
   getFile, moveFile, setDocs, setSensitivity, setIndexingMode, deleteFile,
   archiveFile, unarchiveFile, renameFile,
-} from '@/lib/experimental/files/store';
-import { reindexById } from '@/lib/experimental/files/pipeline-server';
-import { removeFromIndex } from '@/lib/experimental/files/index-store';
-import { purgeFileObjects } from '@/lib/experimental/files/physical-delete';
-import { deleteBlob } from '@/lib/experimental/files/object-store';
-import '@/lib/experimental/files/object-store-server'; // registers the durable MinIO backend
-import type { IndexingMode, Sensitivity } from '@/lib/experimental/files/asset-schema';
-import { appSlugFromRequest, checkAppGrant } from '@/lib/experimental/software/app-origin';
+} from '@tabs/files/lib/store';
+import { reindexById } from '@tabs/files/lib/pipeline-server';
+import { removeFromIndex } from '@tabs/files/lib/index-store';
+import { purgeFileObjects } from '@tabs/files/lib/physical-delete';
+import { deleteBlob } from '@tabs/files/lib/object-store';
+import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
+import type { IndexingMode, Sensitivity } from '@tabs/files/lib/asset-schema';
+import { appSlugFromRequest, checkAppGrant } from '@tabs/software/lib/app-origin';
 
 export const dynamic = 'force-dynamic';
 

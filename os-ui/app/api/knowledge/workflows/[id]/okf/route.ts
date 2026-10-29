@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { makeRequirePrincipal, errorResponse } from '@/lib/core/route-server';
-import { getWorkflow, ensureHydrated } from '@/lib/experimental/knowledge/store';
-import { exportWorkflowBundle } from '@/lib/experimental/knowledge/okf-export';
-import { zipBundle } from '@/lib/experimental/knowledge/okf-zip';
+import { makeRequirePrincipal, errorResponse } from '@core/kernel/route-server';
+import { getWorkflow, ensureHydrated } from '@tabs/knowledge/lib/store';
+import { exportWorkflowBundle } from '@tabs/knowledge/lib/okf-export';
+import { zipBundle } from '@tabs/knowledge/lib/okf-zip';
 
 export const dynamic = 'force-dynamic';
 

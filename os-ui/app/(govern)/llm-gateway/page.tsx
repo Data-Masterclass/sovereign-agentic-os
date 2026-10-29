@@ -3,9 +3,9 @@
  */
 'use client';
 
-import PageHeader from '@/components/PageHeader';
-import { useApi } from '@/lib/useApi';
-import type { GatewayUsage } from '@/lib/monitoring/gateway-usage';
+import PageHeader from '@core/ui/PageHeader';
+import { useApi } from '@core/ui/useApi';
+import type { GatewayUsage } from '@tabs/monitoring/lib/gateway-usage';
 
 /**
  * LLM Gateway — read-only, for ALL users. Two safe surfaces over LiteLLM:

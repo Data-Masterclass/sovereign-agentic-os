@@ -3,11 +3,11 @@
  */
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { ensureHydrated, getFolder } from '@/lib/folders';
-import { moveFolder, archiveFolder, restoreFolder, deleteFolder } from '@/lib/folders/folder-lifecycle';
+import { withRoute } from '@core/kernel/route-server';
+import { ensureHydrated, getFolder } from '@core/folders/index';
+import { moveFolder, archiveFolder, restoreFolder, deleteFolder } from '@core/folders/folder-lifecycle';
 // Registering the adapters is a prerequisite for the member-item cascade.
-import '@/lib/folders/adapters';
+import '@core/folders/adapters';
 
 /**
  * One folder row's LIFECYCLE — move / archive / restore / (physical) delete, each a

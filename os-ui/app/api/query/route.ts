@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { errorResponse } from '@/lib/experimental/data/server';
-import { queryRun } from '@/lib/infra/governed';
-import { readPrincipalFor } from '@/lib/experimental/data/store-fqn';
+import { requireUser } from '@core/kernel/auth';
+import { errorResponse } from '@tabs/data/lib/server';
+import { queryRun } from '@core/infra/governed';
+import { readPrincipalFor } from '@tabs/data/lib/store-fqn';
 
 export const dynamic = 'force-dynamic';
 

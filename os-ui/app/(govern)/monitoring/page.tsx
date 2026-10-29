@@ -4,11 +4,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import PageHeader from '@/components/PageHeader';
-import { useApi } from '@/lib/useApi';
-import DetailView, { type DetailTarget } from '@/components/monitoring/DetailView';
-import { getUrlParam, patchUrl } from '@/lib/core/url-params';
-import { useTabNavReset } from '@/lib/core/tab-nav';
+import PageHeader from '@core/ui/PageHeader';
+import { useApi } from '@core/ui/useApi';
+import DetailView, { type DetailTarget } from '@tabs/monitoring/ui/DetailView';
+import { getUrlParam, patchUrl } from '@core/kernel/url-params';
+import { useTabNavReset } from '@core/kernel/tab-nav';
 import './monitoring.css';
 
 /**

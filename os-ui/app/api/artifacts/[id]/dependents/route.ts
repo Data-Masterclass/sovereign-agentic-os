@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { dependentsOf } from '@/lib/core/dependents';
+import { withRoute } from '@core/kernel/route-server';
+import { dependentsOf } from '@core/kernel/dependents';
 
 export const dynamic = 'force-dynamic';
 

@@ -4,11 +4,11 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { recompile } from '../_compile';
-import { listAccess, inviteUser } from '@/lib/platform-admin/tenant-users';
-import { listDomains } from '@/lib/platform-admin/domains';
-import { getSettings } from '@/lib/platform-admin/settings';
-import { audit } from '@/lib/platform-admin/audit';
-import { ROLES, type Role } from '@/lib/core/session';
+import { listAccess, inviteUser } from '@tabs/admin/lib/tenant-users';
+import { listDomains } from '@tabs/admin/lib/domains';
+import { getSettings } from '@tabs/admin/lib/settings';
+import { audit } from '@tabs/admin/lib/audit';
+import { ROLES, type Role } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 

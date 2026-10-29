@@ -59,11 +59,15 @@ up() {
 
   say "installing chart"
   helm dependency build "$CHART" >/dev/null
-  model=(); if [ -n "${STACKIT_API_KEY:-}" ]; then
-    model=(--set stackitPremium.enabled=true --set-string stackitPremium.local.apiKey="$STACKIT_API_KEY" --set mockModel.enabled=false)
+  # macOS ships bash 3.2, where "${arr[@]}" on an EMPTY array trips `set -u`.
+  # Keep the model flags in a plain string instead of an array.
+  model=""
+  if [ -n "${STACKIT_API_KEY:-}" ]; then
+    model="--set stackitPremium.enabled=true --set-string stackitPremium.local.apiKey=$STACKIT_API_KEY --set mockModel.enabled=false"
   fi
+  # shellcheck disable=SC2086  # $model is a deliberate flag list
   helm upgrade --install "$REL" "$CHART" -n "$NS" --create-namespace -f values.local.yaml \
-    --set osUI.service.nodePort=30080 "${model[@]}" --timeout 20m
+    --set osUI.service.nodePort=30080 $model --timeout 20m
   say "waiting for os-ui"
   kubectl -n "$NS" rollout status deploy/os-ui --timeout=15m
   for _ in $(seq 1 60); do curl -fsS "$URL/api/health" >/dev/null 2>&1 && break; sleep 5; done

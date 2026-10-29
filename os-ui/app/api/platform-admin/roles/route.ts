@@ -11,12 +11,12 @@ import {
   isApplicable,
   type Component,
   type Capability,
-} from '@/lib/governance/role-config';
-import { resolveRoleRights } from '@/lib/governance/role-config';
-import { rightsToTools, roleLabel, compileRoleToGrants } from '@/lib/governance/roles';
-import { audit } from '@/lib/platform-admin/audit';
-import { listUsers } from '@/lib/platform-admin/users';
-import { ROLES, type Role } from '@/lib/core/session';
+} from '@core/policy/role-config';
+import { resolveRoleRights } from '@core/policy/role-config';
+import { rightsToTools, roleLabel, compileRoleToGrants } from '@core/policy/roles';
+import { audit } from '@tabs/admin/lib/audit';
+import { listUsers } from '@tabs/admin/lib/users';
+import { ROLES, type Role } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 

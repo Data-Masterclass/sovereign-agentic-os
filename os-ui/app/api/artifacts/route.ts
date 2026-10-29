@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { createArtifact, listForUser } from '@/lib/core/artifacts';
-import { ARTIFACT_TYPES, type ArtifactType, type Visibility, VISIBILITIES } from '@/lib/core/artifact-model';
+import { withRoute } from '@core/kernel/route-server';
+import { createArtifact, listForUser } from '@core/kernel/artifacts';
+import { ARTIFACT_TYPES, type ArtifactType, type Visibility, VISIBILITIES } from '@core/kernel/artifact-model';
 
 export const dynamic = 'force-dynamic';
 

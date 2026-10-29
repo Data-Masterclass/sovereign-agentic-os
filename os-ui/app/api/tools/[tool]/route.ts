@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { resolveTool, roleAllowed } from '@/lib/infra/tool-proxy';
+import { withRoute } from '@core/kernel/route-server';
+import { resolveTool, roleAllowed } from '@core/infra/tool-proxy';
 
 /**
  * Embed metadata for one registry tool — how the ToolWindow should present it:

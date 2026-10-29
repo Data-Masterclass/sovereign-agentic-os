@@ -15,8 +15,10 @@
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],
-    "paths": { "@/*": ["./*"], "@/lib/experimental/*": ["./lib/experimental/*"] }
+    "paths": { "@/*": ["./*"],
+      "@core/*": ["./core/*"],
+      "@tabs/*": ["./tabs/*"], "@/lib/experimental/*": ["./lib/experimental/*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "**/*.test.ts", "lib/experimental/**"]
+  "exclude": ["node_modules", "**/*.test.ts"]
 }

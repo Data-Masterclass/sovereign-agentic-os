@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { createApp, type AppTemplateKey } from '@/lib/experimental/software/apps';
-import { authorThroughFrontDoor, commitToApp } from '@/lib/experimental/software/server';
+import { withRoute } from '@core/kernel/route-server';
+import { createApp, type AppTemplateKey } from '@tabs/software/lib/apps';
+import { authorThroughFrontDoor, commitToApp } from '@tabs/software/lib/server';
 
 export const dynamic = 'force-dynamic';
 

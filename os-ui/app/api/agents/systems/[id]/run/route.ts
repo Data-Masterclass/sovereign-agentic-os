@@ -2,17 +2,17 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { getSystemForRun, setRunning, recordActivity, setActivity, clearActivity, setLastRun, startRunCheckpoint, checkpointNode } from '@/lib/agents/store';
-import type { LastRun } from '@/lib/agents/store';
-import { runSystem } from '@/lib/agents/build/server';
-import { runOsTeam } from '@/lib/agents/build/agentic-graph-server';
-import { isAgenticOsTeam, resolveFolderGrantsForRun, summarizeWriteOutcomes, writeOutcomesLine } from '@/lib/agents/build/os-tools';
-import { classifyStepError, type AgenticGraphResult } from '@/lib/agents/build/agentic-graph';
-import { governYamlForOwner } from '@/lib/agents/build/owner-grants';
-import { deriveContextUsage } from '@/lib/agents/build/context-usage';
-import { parseSystem, serializeSystem } from '@/lib/agents/system-schema';
-import { cleanTurns } from '@/lib/assistant/turns';
+import { requireUser } from '@core/kernel/auth';
+import { getSystemForRun, setRunning, recordActivity, setActivity, clearActivity, setLastRun, startRunCheckpoint, checkpointNode } from '@tabs/agents/lib/store';
+import type { LastRun } from '@tabs/agents/lib/store';
+import { runSystem } from '@tabs/agents/lib/build/server';
+import { runOsTeam } from '@tabs/agents/lib/build/agentic-graph-server';
+import { isAgenticOsTeam, resolveFolderGrantsForRun, summarizeWriteOutcomes, writeOutcomesLine } from '@tabs/agents/lib/build/os-tools';
+import { classifyStepError, type AgenticGraphResult } from '@tabs/agents/lib/build/agentic-graph';
+import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
+import { deriveContextUsage } from '@tabs/agents/lib/build/context-usage';
+import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
+import { cleanTurns } from '@core/runtime/turns';
 
 export const dynamic = 'force-dynamic';
 // A multi-node team walk (each node a PLAN→ACT loop on a large model) can run long;

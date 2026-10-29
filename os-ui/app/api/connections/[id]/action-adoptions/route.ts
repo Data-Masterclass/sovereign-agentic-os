@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { adoptActions, revokeActionAdoption, listAdoptions } from '@/lib/experimental/connections/action-adoptions';
-import { getConnectionForUser } from '@/lib/experimental/connections/store';
-import { listExposureSets } from '@/lib/experimental/connections/exposures';
+import { withRoute } from '@core/kernel/route-server';
+import { adoptActions, revokeActionAdoption, listAdoptions } from '@tabs/connections/lib/action-adoptions';
+import { getConnectionForUser } from '@tabs/connections/lib/store';
+import { listExposureSets } from '@tabs/connections/lib/exposures';
 
 export const dynamic = 'force-dynamic';
 

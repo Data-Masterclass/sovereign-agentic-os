@@ -4,8 +4,8 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
 import { recompile } from '../../_compile';
-import { renameDomain, transferDomain, setArchived, setLayer, type DomainLayers } from '@/lib/platform-admin/domains';
-import { audit } from '@/lib/platform-admin/audit';
+import { renameDomain, transferDomain, setArchived, setLayer, type DomainLayers } from '@tabs/admin/lib/domains';
+import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 

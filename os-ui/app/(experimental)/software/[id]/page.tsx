@@ -6,12 +6,12 @@
 import { useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import PageHeader from '@/components/PageHeader';
-import { ConfirmProvider } from '@/components/lifecycle/ConfirmDialog';
-import { useApi } from '@/lib/useApi';
-import type { Role as SessionRole } from '@/lib/core/session';
-import type { ReviewCardData } from '@/components/ReviewCard';
-import SoftwareBuilder, { type SoftwareApp } from '@/components/experimental/software/SoftwareBuilder';
+import PageHeader from '@core/ui/PageHeader';
+import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
+import { useApi } from '@core/ui/useApi';
+import type { Role as SessionRole } from '@core/kernel/session';
+import type { ReviewCardData } from '@tabs/governance/ui/ReviewCard';
+import SoftwareBuilder, { type SoftwareApp } from '@tabs/software/ui/SoftwareBuilder';
 
 type Tool = { name: string; description: string; write: boolean };
 type Connection = { id: string; name: string; principal: string; visibility: SoftwareApp['visibility']; tools: Tool[] } | null;

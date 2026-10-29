@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/core/auth';
-import { listComponentsWithStatus } from '@/lib/platform-admin/platform';
-import { versionFor } from '@/lib/platform-admin/components-extra';
-import { config } from '@/lib/core/config';
+import { requireAdmin } from '@core/kernel/auth';
+import { listComponentsWithStatus } from '@tabs/admin/lib/platform';
+import { versionFor } from '@tabs/admin/lib/components-extra';
+import { config } from '@core/kernel/config';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';

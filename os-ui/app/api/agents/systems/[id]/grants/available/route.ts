@@ -2,23 +2,23 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { getSystem } from '@/lib/agents/store';
-import { listDatasets, ensureHydrated } from '@/lib/experimental/data/store';
-import { listWorkflows, ensureHydrated as ensureWorkflowsHydrated } from '@/lib/experimental/knowledge/store';
-import { listPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from '@/lib/experimental/knowledge/personal-store';
-import { listMetrics } from '@/lib/experimental/metrics/store';
-import { listConnectionsForUser } from '@/lib/experimental/connections';
-import { listFiles, ensureHydrated as ensureFilesHydrated } from '@/lib/experimental/files/store';
-import { listFolders, ensureHydrated as ensureFoldersHydrated, type FolderTab } from '@/lib/folders';
-import { grantFolderNodes } from '@/lib/agents/grant-folders';
-import { resolveManual } from '@/lib/experimental/knowledge/manual';
+import { withRoute } from '@core/kernel/route-server';
+import { getSystem } from '@tabs/agents/lib/store';
+import { listDatasets, ensureHydrated } from '@tabs/data/lib/store';
+import { listWorkflows, ensureHydrated as ensureWorkflowsHydrated } from '@tabs/knowledge/lib/store';
+import { listPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from '@tabs/knowledge/lib/personal-store';
+import { listMetrics } from '@tabs/metrics/lib/store';
+import { listConnectionsForUser } from '@tabs/connections/lib/index';
+import { listFiles, ensureHydrated as ensureFilesHydrated } from '@tabs/files/lib/store';
+import { listFolders, ensureHydrated as ensureFoldersHydrated, type FolderTab } from '@core/folders/index';
+import { grantFolderNodes } from '@tabs/agents/lib/grant-folders';
+import { resolveManual } from '@tabs/knowledge/lib/manual';
 import {
   MANUAL_SCOPES,
   planGrantId,
   manualLabel,
   manualAvailableScope,
-} from '@/lib/agents/plan-grants';
+} from '@tabs/agents/lib/plan-grants';
 
 export const dynamic = 'force-dynamic';
 

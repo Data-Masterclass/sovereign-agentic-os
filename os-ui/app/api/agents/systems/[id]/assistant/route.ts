@@ -2,23 +2,23 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { withRoute } from '@/lib/core/route-server';
-import { getSystem, readFile, writeFile } from '@/lib/agents/store';
-import { serializeSystem, SystemError, type System } from '@/lib/agents/system-schema';
-import { applyInstruction, scaffoldSystem, type InstructionResult } from '@/lib/agents/assistant';
-import { buildCatalog } from '@/lib/agents/tool-catalog';
-import { assistantComplete } from '@/lib/assistant/complete';
-import { parseJsonReply } from '@/lib/assistant/json-reply';
-import { roleModel } from '@/lib/models/roles';
-import { failResponse } from '@/lib/assistant/stage-route';
-import { proposeTeam } from '@/lib/agents/propose-team';
-import { resolveSystemGrounding } from '@/lib/agents/grounding';
+import { requireUser } from '@core/kernel/auth';
+import { withRoute } from '@core/kernel/route-server';
+import { getSystem, readFile, writeFile } from '@tabs/agents/lib/store';
+import { serializeSystem, SystemError, type System } from '@tabs/agents/lib/system-schema';
+import { applyInstruction, scaffoldSystem, type InstructionResult } from '@tabs/agents/lib/assistant';
+import { buildCatalog } from '@tabs/agents/lib/tool-catalog';
+import { assistantComplete } from '@core/runtime/complete';
+import { parseJsonReply } from '@core/runtime/json-reply';
+import { roleModel } from '@core/models/roles';
+import { failResponse } from '@core/runtime/stage-route';
+import { proposeTeam } from '@tabs/agents/lib/propose-team';
+import { resolveSystemGrounding } from '@tabs/agents/lib/grounding';
 import {
   normalizeAgentAssistantReply,
   AGENT_GRANT_KINDS,
-} from '@/lib/agents/assistant-suggestions';
-import type { Role } from '@/lib/core/session';
+} from '@tabs/agents/lib/assistant-suggestions';
+import type { Role } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -192,7 +192,7 @@ function groundingDigest(ctx: Awaited<ReturnType<typeof resolveSystemGrounding>>
 
 /** The grantable-context digest for the Grant stage — the caller's DLS-scoped grantable set, by id. */
 async function grantableDigest(systemId: string, user: Parameters<typeof resolveSystemGrounding>[1]): Promise<string> {
-  const { listGrantableForKinds } = await import('@/lib/agents/grantable');
+  const { listGrantableForKinds } = await import('@tabs/agents/lib/grantable');
   const groups = await listGrantableForKinds(systemId, user, AGENT_GRANT_KINDS);
   const lines: string[] = [];
   for (const kind of AGENT_GRANT_KINDS) {

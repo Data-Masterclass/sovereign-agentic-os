@@ -3,8 +3,8 @@
  */
 'use client';
 
-import PageHeader from '@/components/PageHeader';
-import GovernedConnections from '@/components/experimental/connections/GovernedConnections';
+import PageHeader from '@core/ui/PageHeader';
+import GovernedConnections from '@tabs/connections/ui/GovernedConnections';
 
 /**
  * The Connections page — the OS-wide View/Edit artifact model.

@@ -3,14 +3,14 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
-import { config } from '@/lib/core/config';
+import { config } from '@core/kernel/config';
 import {
   ensureHydrated,
   getStoredPrices,
   setModelPrices,
   type ModelPrice,
-} from '@/lib/platform-admin/model-prices';
-import { audit } from '@/lib/platform-admin/audit';
+} from '@tabs/admin/lib/model-prices';
+import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 

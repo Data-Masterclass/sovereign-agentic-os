@@ -4,10 +4,10 @@
 'use client';
 
 import Link from 'next/link';
-import PageHeader from '@/components/PageHeader';
-import { useApi } from '@/lib/useApi';
-import { useUser } from '@/lib/useUser';
-import { roleAtLeast, type Role } from '@/lib/core/session';
+import PageHeader from '@core/ui/PageHeader';
+import { useApi } from '@core/ui/useApi';
+import { useUser } from '@core/ui/useUser';
+import { roleAtLeast, type Role } from '@core/kernel/session';
 
 /**
  * The Platform-Admin quick-link tiles, each with a machine-readable minimum role.

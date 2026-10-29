@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { listArtifactVersions, restoreArtifactVersion } from '@/lib/core/artifacts';
+import { withRoute } from '@core/kernel/route-server';
+import { listArtifactVersions, restoreArtifactVersion } from '@core/kernel/artifacts';
 
 export const dynamic = 'force-dynamic';
 

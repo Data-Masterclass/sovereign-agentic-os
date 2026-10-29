@@ -2,9 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { seedGovernanceDemo } from '@/lib/governance/seed';
-import { roleAtLeast } from '@/lib/core/session';
+import { withRoute } from '@core/kernel/route-server';
+import { seedGovernanceDemo } from '@core/policy/seed';
+import { roleAtLeast } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 

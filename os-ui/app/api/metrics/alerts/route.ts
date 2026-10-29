@@ -2,16 +2,16 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { trace as gvTrace } from '@/lib/infra/agent-governed';
-import { requirePrincipal } from '@/lib/experimental/data/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { roleAtLeast } from '@/lib/core/session';
-import { getPublicUser } from '@/lib/platform-admin/users';
-import { type AlertRule, evaluateAlert } from '@/lib/experimental/metrics/alerts';
-import { deliverAlert } from '@/lib/experimental/dashboards/delivery';
-import { saveAlertRule } from '@/lib/experimental/metrics/alert-store';
-import { resolveAlertValue } from '@/lib/experimental/metrics/build/alert-eval';
+import { trace as gvTrace } from '@core/infra/agent-governed';
+import { requirePrincipal } from '@tabs/data/lib/server';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { roleAtLeast } from '@core/kernel/session';
+import { getPublicUser } from '@tabs/admin/lib/users';
+import { type AlertRule, evaluateAlert } from '@tabs/metrics/lib/alerts';
+import { deliverAlert } from '@tabs/dashboards/lib/delivery';
+import { saveAlertRule } from '@tabs/metrics/lib/alert-store';
+import { resolveAlertValue } from '@tabs/metrics/lib/build/alert-eval';
 
 export const dynamic = 'force-dynamic';
 

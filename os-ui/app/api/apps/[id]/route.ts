@@ -2,12 +2,12 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, reconcileBuiltStatus, setAppServeMode, normalizeServeMode, type AppEpic } from '@/lib/experimental/software/apps';
-import { normalizeContextGrants } from '@/lib/core/context-grants';
-import { normalizeAgentGrants } from '@/lib/experimental/software/app-agent-grants';
-import { reconcileDeployApproval } from '@/lib/experimental/software/review';
-import { getConnectionByApp } from '@/lib/infra/app-registry';
+import { withRoute } from '@core/kernel/route-server';
+import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, reconcileBuiltStatus, setAppServeMode, normalizeServeMode, type AppEpic } from '@tabs/software/lib/apps';
+import { normalizeContextGrants } from '@core/kernel/context-grants';
+import { normalizeAgentGrants } from '@tabs/software/lib/app-agent-grants';
+import { reconcileDeployApproval } from '@tabs/software/lib/review';
+import { getConnectionByApp } from '@core/infra/app-registry';
 
 export const dynamic = 'force-dynamic';
 

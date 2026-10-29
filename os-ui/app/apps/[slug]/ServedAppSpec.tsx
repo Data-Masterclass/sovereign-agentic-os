@@ -6,12 +6,12 @@
 import { useEffect, useMemo, useState } from 'react';
 // The vendored @sovereign-os/ui theme — the SAME stylesheet each app repo carries. Imported
 // here so the same-origin OS render inherits the OS look (.sb-* classes AppShell emits).
-import '@/lib/app-ui/theme.css';
-import { createOsClient } from '@/lib/app-sdk/index.ts';
-import type { Role } from '@/lib/core/session.ts';
-import { ROLES } from '@/lib/core/session.ts';
-import type { AppSpec } from '@/lib/experimental/software/appspec/schema.ts';
-import { AppSpecRenderer, type RendererIdentity } from '@/components/experimental/software/appspec/AppSpecRenderer.tsx';
+import '@core/app-ui/theme.css';
+import { createOsClient } from '@core/app-sdk/index';
+import type { Role } from '@core/kernel/session';
+import { ROLES } from '@core/kernel/session';
+import type { AppSpec } from '@tabs/software/lib/appspec/schema';
+import { AppSpecRenderer, type RendererIdentity } from '@tabs/software/ui/appspec/AppSpecRenderer';
 
 /** Coerce an unknown role string from the session route to a Role, else null. */
 function asRole(raw: unknown): Role | null {

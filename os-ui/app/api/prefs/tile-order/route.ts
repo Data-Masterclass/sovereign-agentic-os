@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
+import { withRoute } from '@core/kernel/route-server';
 import {
   getTileOrder,
   setTileOrder,
   ORDER_LIMIT,
   TILE_ORDER_SURFACES,
   type TileOrderSurface,
-} from '@/lib/prefs/tile-order';
+} from '@core/prefs/tile-order';
 
 export const dynamic = 'force-dynamic';
 

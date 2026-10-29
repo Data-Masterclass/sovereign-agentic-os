@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import { ACTIVITIES, TIER_MODELS, defaultRoutingTable } from '@/lib/agents/routing';
+import { withRoute } from '@core/kernel/route-server';
+import { ACTIVITIES, TIER_MODELS, defaultRoutingTable } from '@tabs/agents/lib/routing';
 
 export const dynamic = 'force-dynamic';
 

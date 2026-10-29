@@ -2,15 +2,15 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/core/config';
-import { withRoute } from '@/lib/core/route-server';
-import { tenantRuns } from '@/lib/monitoring/adapters/agent-telemetry';
+import { config } from '@core/kernel/config';
+import { withRoute } from '@core/kernel/route-server';
+import { tenantRuns } from '@tabs/monitoring/lib/adapters/agent-telemetry';
 import {
   shapeActivity,
   weeklyRunSpend,
   type GatewayUsage,
   type RawActivity,
-} from '@/lib/monitoring/gateway-usage';
+} from '@tabs/monitoring/lib/gateway-usage';
 
 export const dynamic = 'force-dynamic';
 

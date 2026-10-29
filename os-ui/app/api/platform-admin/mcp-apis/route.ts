@@ -3,12 +3,12 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { config } from '@/lib/core/config';
-import { ALL_MCP_TOOLS, MCP_TABS } from '@/lib/mcp/server';
-import { listAppsForUser } from '@/lib/experimental/software/apps';
-import { getConnectionByApp } from '@/lib/infra/app-registry';
-import { listConnectionsForUser } from '@/lib/experimental/connections';
-import { isExposed } from '@/lib/experimental/connections';
+import { config } from '@core/kernel/config';
+import { ALL_MCP_TOOLS, MCP_TABS } from '@core/mcp/server';
+import { listAppsForUser } from '@tabs/software/lib/apps';
+import { getConnectionByApp } from '@core/infra/app-registry';
+import { listConnectionsForUser } from '@tabs/connections/lib/index';
+import { isExposed } from '@tabs/connections/lib/index';
 import {
   buildMcpRegistry,
   STACK_MCP_SERVERS,
@@ -16,7 +16,7 @@ import {
   type OfficialToolInput,
   type OwnedMcpInput,
   type RegistryTool,
-} from '@/lib/platform-admin/mcp-registry';
+} from '@tabs/admin/lib/mcp-registry';
 
 export const dynamic = 'force-dynamic';
 

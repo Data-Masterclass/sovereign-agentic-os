@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { config } from '@/lib/core/config';
-import { requireUser } from '@/lib/core/auth';
+import { config } from '@core/kernel/config';
+import { requireUser } from '@core/kernel/auth';
 
 export const dynamic = 'force-dynamic';
 

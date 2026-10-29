@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { config } from '@/lib/core/config';
-import { getConnectionForUser } from '@/lib/experimental/connections';
-import { discoverMetadata, registerClient, buildNotionAuthorizeUrl } from '@/lib/oauth/notion-mcp';
-import { createPkcePair } from '@/lib/oauth/pkce';
-import { signState, newNonce, OAUTH_STATE_COOKIE } from '@/lib/oauth/state';
-import { publicBaseUrl } from '@/lib/oauth/redirect';
-import { putPendingFlow } from '@/lib/oauth/notion-flow';
+import { requireUser } from '@core/kernel/auth';
+import { config } from '@core/kernel/config';
+import { getConnectionForUser } from '@tabs/connections/lib/index';
+import { discoverMetadata, registerClient, buildNotionAuthorizeUrl } from '@core/auth/notion-mcp';
+import { createPkcePair } from '@core/auth/pkce';
+import { signState, newNonce, OAUTH_STATE_COOKIE } from '@core/auth/state';
+import { publicBaseUrl } from '@core/auth/redirect';
+import { putPendingFlow } from '@core/auth/notion-flow';
 
 export const dynamic = 'force-dynamic';
 

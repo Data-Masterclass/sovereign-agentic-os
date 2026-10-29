@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { ensureHydrated, listAudit } from '@/lib/platform-admin/audit';
+import { ensureHydrated, listAudit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 

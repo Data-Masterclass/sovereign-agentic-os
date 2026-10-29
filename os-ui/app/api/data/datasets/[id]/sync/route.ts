@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@/lib/core/route-server';
-import type { CurrentUser } from '@/lib/core/auth';
-import { requirePrincipal, errorResponse } from '@/lib/experimental/data/server';
-import { getDataset, requireDatasetEditable, setDatasetSync } from '@/lib/experimental/data/store';
-import { parseSyncBlock, type DatasetSync } from '@/lib/experimental/data/dataset-schema';
-import { runtimeTokenOk } from '@/lib/agents/build/runtime-auth';
-import { runDatasetSync, type SyncTrigger } from '@/lib/experimental/data/sync-run-server';
-import { reconcileSyncCron } from '@/lib/experimental/data/sync-cron';
+import { withRoute } from '@core/kernel/route-server';
+import type { CurrentUser } from '@core/kernel/auth';
+import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
+import { getDataset, requireDatasetEditable, setDatasetSync } from '@tabs/data/lib/store';
+import { parseSyncBlock, type DatasetSync } from '@tabs/data/lib/dataset-schema';
+import { runtimeTokenOk } from '@tabs/agents/lib/build/runtime-auth';
+import { runDatasetSync, type SyncTrigger } from '@tabs/data/lib/sync-run-server';
+import { reconcileSyncCron } from '@tabs/data/lib/sync-cron';
 import {
   consecutiveErrorCount,
   currentWatermark,
@@ -17,7 +17,7 @@ import {
   isQuarantined,
   lastMaintenanceAt,
   listSyncRuns,
-} from '@/lib/experimental/data/sync-runs';
+} from '@tabs/data/lib/sync-runs';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,8 +86,8 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   if (dataset.sync) {
     try {
       const [{ getConnectionForUser }, { requireUser }] = await Promise.all([
-        import('@/lib/experimental/connections/store'),
-        import('@/lib/core/auth'),
+        import('@tabs/connections/lib/store'),
+        import('@core/kernel/auth'),
       ]);
       const c = await getConnectionForUser(dataset.sync.connectionId, await requireUser());
       platform =

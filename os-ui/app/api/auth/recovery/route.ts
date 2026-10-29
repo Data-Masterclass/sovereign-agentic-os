@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/core/auth';
-import { config } from '@/lib/core/config';
-import { generateMasterKey, recoveryFileBody } from '@/lib/platform-admin/recovery';
-import { recoveryConfigured, setRecoveryKey } from '@/lib/platform-admin/users';
+import { requireAdmin } from '@core/kernel/auth';
+import { config } from '@core/kernel/config';
+import { generateMasterKey, recoveryFileBody } from '@tabs/admin/lib/recovery';
+import { recoveryConfigured, setRecoveryKey } from '@tabs/admin/lib/users';
 
 export const dynamic = 'force-dynamic';
 

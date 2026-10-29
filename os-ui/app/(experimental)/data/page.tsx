@@ -5,8 +5,8 @@
 
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import PageHeader from '@/components/PageHeader';
-import DataTab from '@/components/experimental/data/DataTab';
+import PageHeader from '@core/ui/PageHeader';
+import DataTab from '@tabs/data/ui/DataTab';
 
 // The Data tab is ONE screen: the datasets home (the unified, Files-style grid —
 // All · My · Shared · Marketplace, with catalog detail folded into each dataset).

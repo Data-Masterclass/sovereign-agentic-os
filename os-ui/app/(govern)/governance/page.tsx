@@ -5,11 +5,11 @@
 
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import PageHeader from '@/components/PageHeader';
-import ApprovalsInbox from '@/components/governance/ApprovalsInbox';
-import PoliciesView from '@/components/governance/PoliciesView';
-import AuditLog from '@/components/governance/AuditLog';
-import CostLimits from '@/components/governance/CostLimits';
+import PageHeader from '@core/ui/PageHeader';
+import ApprovalsInbox from '@tabs/governance/ui/ApprovalsInbox';
+import PoliciesView from '@tabs/governance/ui/PoliciesView';
+import AuditLog from '@tabs/governance/ui/AuditLog';
+import CostLimits from '@tabs/governance/ui/CostLimits';
 
 type Section = 'inbox' | 'policies' | 'audit' | 'cost';
 

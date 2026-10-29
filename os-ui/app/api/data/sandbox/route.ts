@@ -2,16 +2,16 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/core/auth';
-import { authorize, queryRun, trace } from '@/lib/infra/governed';
+import { requireUser } from '@core/kernel/auth';
+import { authorize, queryRun, trace } from '@core/infra/governed';
 import {
   privatePrefix,
   pullExtract,
   promotePlan,
   type PersonalDataset,
-} from '@/lib/experimental/data/personal-lane';
-import { listPersonalTables, landGridAsBronze } from '@/lib/experimental/data/ingest';
-import { stepperStages } from '@/lib/experimental/data/panels';
+} from '@tabs/data/lib/personal-lane';
+import { listPersonalTables, landGridAsBronze } from '@tabs/data/lib/ingest';
+import { stepperStages } from '@tabs/data/lib/panels';
 
 export const dynamic = 'force-dynamic';
 

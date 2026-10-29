@@ -2,11 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import Link from 'next/link';
-import { currentUser } from '@/lib/core/auth';
-import { homeFeed } from '@/lib/home/feed';
-import HomeLauncher from '@/components/home/HomeLauncher';
-import HomeTalkToOs from '@/components/home/HomeTalkToOs';
-import McpDrawer from '@/components/McpDrawer';
+import { currentUser } from '@core/kernel/auth';
+import { homeFeed } from '@tabs/home/lib/feed';
+import HomeLauncher from '@tabs/home/ui/HomeLauncher';
+import HomeTalkToOs from '@tabs/home/ui/HomeTalkToOs';
+import McpDrawer from '@tabs/admin/ui/McpDrawer';
 
 export const dynamic = 'force-dynamic';
 
