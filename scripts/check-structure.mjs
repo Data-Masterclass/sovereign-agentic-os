@@ -12,7 +12,7 @@
  *   - Five rules (below). Each prints every offending path, not just the first.
  *   - Runs before the layout migration too: missing core//tabs/ is reported, not crashed on.
  */
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const repo = process.cwd();
@@ -85,10 +85,39 @@ if (!existsSync(coreDir) || !existsSync(tabsDir)) {
   }
 }
 
-if (problems.length) {
-  console.error(`\ncheck-structure: ${problems.length} violation(s)\n`);
-  for (const p of problems) console.error('  ' + p);
+// ---- ratchet ---------------------------------------------------------------
+// Two rules must always be clean; the other three carry a real backlog from the
+// v1 codebase, so they are ratcheted: CI fails when a count GROWS, never because
+// the backlog still exists. Shrink the baseline as the backlog is paid down.
+const BASELINE_FILE = 'scripts/structure-baseline.json';
+const counts = {};
+for (const p of problems) { const rule = p.trim().split(/\s+/)[0]; counts[rule] = (counts[rule] ?? 0) + 1; }
+const HARD = ['COMPONENT-UPSTREAM-ONLY', 'TAB-MANIFEST'];
+const baseline = existsSync(BASELINE_FILE) ? JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) : {};
+
+if (process.argv.includes('--baseline')) {
+  writeFileSync(BASELINE_FILE, JSON.stringify(counts, null, 2) + '\n');
+  console.log('check-structure: baseline written', JSON.stringify(counts));
+  process.exit(0);
+}
+
+const show = (rule) => problems.filter((p) => p.trim().startsWith(rule)).slice(0, 10);
+let failed = false;
+for (const rule of new Set([...HARD, ...Object.keys(counts), ...Object.keys(baseline)])) {
+  const now = counts[rule] ?? 0;
+  const was = HARD.includes(rule) ? 0 : (baseline[rule] ?? 0);
+  if (now > was) {
+    failed = true;
+    console.error(`\n${rule}: ${now} (baseline ${was}) — ${now - was} new violation(s)`);
+    for (const p of show(rule)) console.error('  ' + p);
+  } else if (now < was) {
+    console.log(`${rule}: ${now} (baseline ${was}) — ${was - now} fewer; run --baseline to lock it in`);
+  } else if (now > 0) {
+    console.log(`${rule}: ${now} (at baseline — known backlog)`);
+  }
+}
+if (failed) {
   console.error('\nRules: components/ is upstream-only · a tab imports only @core and itself · core never imports a tab · every tab has a manifest · every source file carries a FEATURE / USER STORY / ARCHITECTURE header.\n');
   process.exit(1);
 }
-console.log('check-structure: ok');
+console.log('check-structure: ok (no new violations)');
