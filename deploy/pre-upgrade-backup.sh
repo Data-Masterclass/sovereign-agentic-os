@@ -66,11 +66,11 @@ spec:
 EOF
 phase=""
 for i in $(seq 1 120); do
-  phase=$(kubectl -n velero get backup "$NAME" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+  phase=$(kubectl -n velero get backups.velero.io "$NAME" -o jsonpath='{.status.phase}' 2>/dev/null || true)
   case "$phase" in
     Completed) break ;;
     Failed|PartiallyFailed|FailedValidation)
-      kubectl -n velero get backup "$NAME" -o jsonpath='{.status}' | jq . || true
+      kubectl -n velero get backups.velero.io "$NAME" -o jsonpath='{.status}' | jq . || true
       die "Velero backup ended $phase" ;;
     *) sleep 30 ;;
   esac
@@ -79,5 +79,5 @@ done
 
 log "PRE-UPGRADE GATE PASSED"
 echo "  pg dump:        job/$JOB (uploaded to s3 backups/pg/)"
-echo "  velero backup:  $NAME ($(kubectl -n velero get backup "$NAME" -o jsonpath='{.status.progress.itemsBackedUp}') items)"
+echo "  velero backup:  $NAME ($(kubectl -n velero get backups.velero.io "$NAME" -o jsonpath='{.status.progress.itemsBackedUp}') items)"
 echo "Safe to run the helm upgrade now."
