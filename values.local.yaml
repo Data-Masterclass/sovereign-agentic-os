@@ -77,9 +77,12 @@ langfuse:
         limits:   { cpu: 1,    memory: 1Gi }
 
 litellm:
+  # The chart's init container (config render + DB migration wait) OOM-killed at
+  # 1Gi on kind — the Node toolchain it runs needs headroom even though the proxy
+  # itself is small. 2Gi is the floor that starts reliably here.
   resources:
     requests: { cpu: 100m, memory: 384Mi }
-    limits:   { cpu: 1,    memory: 1Gi }
+    limits:   { cpu: 1,    memory: 2Gi }
 
 osUI:
   resources:
