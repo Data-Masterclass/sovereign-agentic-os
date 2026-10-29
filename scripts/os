@@ -49,21 +49,12 @@ up() {
     kind load docker-image "$ref" --name "$CLUSTER" >/dev/null
     echo "   $ref"
   done
-  # Object storage is upstream MinIO. Upstream withdrew its public tags, so the
-  # chart pins our ghcr mirror — which is not public yet. Pull it with the host's
-  # credentials and side-load it, so no in-cluster pull secret is needed.
-  say "loading object storage"
-  minio=$(python3 -c "import yaml;i=yaml.safe_load(open('charts/sovereign-agentic-os/values.yaml'))['objectStorage']['image'];print(i['repository']+('@'+i['digest'] if i.get('digest') else ':'+str(i.get('tag',''))))")
-  if docker image inspect "$minio" >/dev/null 2>&1 || docker pull -q "$minio" >/dev/null 2>&1; then
-    kind load docker-image "$minio" --name "$CLUSTER" >/dev/null; echo "   $minio"
-  else
-    cat >&2 <<MSG
-   cannot pull $minio
-   The MinIO mirror is private today. Either:
-     docker login ghcr.io          # if you have access, then re-run
-     --set objectStorage.mode=external --set objectStorage.external.endpoint=<your S3>
-MSG
-    exit 1
+  # Disk is the usual local failure: the host's Docker and the kind node share one
+  # Colima volume, and a full node shows up as pods dying with "No space left on
+  # device". Warn before the install rather than after.
+  free=$(docker exec "${CLUSTER}-control-plane" df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')
+  if [ -n "$free" ] && [ "$free" -lt 12 ]; then
+    echo "   only ${free}G free on the cluster node — run 'docker builder prune -af' (needs ~15G)" >&2
   fi
 
   say "installing chart"
