@@ -1095,6 +1095,10 @@ dataSync:
 # OS UI — the Next.js front door. App shell + live surfaces:
 osUI:
   enabled: true
+  # Operational + external connector adoption (Connections tab and its MCP tools).
+  # The template reads EXTERNAL_CONNECTORS_ENABLED; keep the key here so an
+  # operator's `true` is not silently lost when values are re-derived.
+  externalConnectorsEnabled: false
   # Local (kind): scripts/os sets nodePort=30080 so the UI is http://localhost:8080.
   service:
     nodePort: null
