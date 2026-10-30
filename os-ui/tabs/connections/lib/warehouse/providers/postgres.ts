@@ -12,7 +12,10 @@
  * `${ENV:VAR}` is a first-class Trino secrets mechanism (security/secrets docs).
  *
  * ENGINE SPECIFICS (verified against Trino 476 postgresql connector docs):
- *   - `connector.name=postgresql`; `connection-url=jdbc:postgresql://host:port/database`.
+ *   - `connector.name=postgresql`; `connection-url=jdbc:postgresql://host:port/database`,
+ *     plus `?sslmode=<mode>` when set. Managed PostgreSQL (Supabase, Neon, RDS with
+ *     enforced TLS) REJECTS plaintext, so without `sslmode=require` those sources
+ *     cannot be registered at all. The value is checked against a closed set.
  *   - A PostgreSQL SCHEMA maps 1:1 to a Trino schema (multi-schema database).
  *   - PostgreSQL LOWER-CASES unquoted identifiers and quotes with `"`. We enable
  *     `case-insensitive-name-matching` so a discovered lower-case schema still matches.
@@ -24,6 +27,7 @@
 
 import {
   type PostgresConfig,
+  POSTGRES_SSL_MODES,
   type WarehouseSource,
   type TrinoCatalogProps,
   WarehouseError,
@@ -86,9 +90,19 @@ function postgresProps(cfg: PostgresConfig): TrinoCatalogProps {
   const username = (cfg.username ?? '').trim();
   if (!username) throw new WarehouseError('postgresql: missing username');
 
+  // TLS. Validated against the closed set rather than interpolated raw: this
+  // string lands in the catalog's connection-url, so an arbitrary value could
+  // append further JDBC parameters. Omitted -> the driver default (`prefer`),
+  // which suits an in-cluster server; managed PostgreSQL needs `require`.
+  const ssl = cfg.sslmode;
+  if (ssl !== undefined && !POSTGRES_SSL_MODES.includes(ssl)) {
+    throw new WarehouseError(`postgresql: unsupported sslmode "${ssl}"`);
+  }
+  const query = ssl ? `?sslmode=${ssl}` : '';
+
   return {
     'connector.name': 'postgresql',
-    'connection-url': `jdbc:postgresql://${authority}/${database}`,
+    'connection-url': `jdbc:postgresql://${authority}/${database}${query}`,
     'connection-user': username,
     // Password supplied by the deploy layer as an env var, sourced from a vault secret.
     // The password is NEVER written into these props.
@@ -137,6 +151,16 @@ export const postgresProvider: WarehouseProvider = {
     { key: 'port', label: 'Port', kind: 'text', required: false, help: 'TCP port (default 5432). Optional if included in Host.' },
     { key: 'database', label: 'Database', kind: 'text', required: true, help: 'The single database to federate; its schemas become Trino schemas.' },
     { key: 'username', label: 'Username', kind: 'text', required: true, help: 'Login user (least-privilege, read-only recommended).' },
+    {
+      // No 'select' input kind exists, so this is free text validated against the
+      // closed set in postgresProps — a bad value fails Register with a named error
+      // rather than silently rendering a broken catalog.
+      key: 'sslmode',
+      label: 'TLS mode',
+      kind: 'text',
+      required: false,
+      help: 'Leave blank for an in-cluster server. Use require for managed PostgreSQL (Supabase, Neon, RDS), which rejects plaintext. One of: disable, allow, prefer, require, verify-ca, verify-full.',
+    },
     {
       // Collected as a password but NEVER lands in the catalog props; stored as a vault
       // secret and mounted via ${ENV:POSTGRESQL_PASSWORD}.

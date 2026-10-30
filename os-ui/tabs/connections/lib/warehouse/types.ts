@@ -166,6 +166,28 @@ export type FabricConfig = {
  * of ONE database; the login password is the only secret (vault-referenced via
  * `${ENV:...}`, NEVER inlined). Phase 1c (operational databases).
  */
+/**
+ * libpq SSL modes, as accepted by the PostgreSQL JDBC driver. A CLOSED set on
+ * purpose: this value is interpolated into the Trino `connection-url`, so an
+ * open string would be a smuggling route into catalog configuration.
+ *
+ * Managed PostgreSQL (Supabase, Neon, RDS with enforced TLS) REFUSES plaintext
+ * connections, so without this the catalog cannot be registered at all.
+ * `verify-full` also checks the server hostname against its certificate and
+ * needs the CA in Trino's trust store; `require` encrypts without verifying.
+ */
+export type PostgresSslMode =
+  | 'disable'
+  | 'allow'
+  | 'prefer'
+  | 'require'
+  | 'verify-ca'
+  | 'verify-full';
+
+export const POSTGRES_SSL_MODES: PostgresSslMode[] = [
+  'disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full',
+];
+
 export type PostgresConfig = {
   platform: 'postgresql';
   /** Host (or host:port) of the PostgreSQL server, e.g. `db.internal:5432`. */
@@ -178,6 +200,12 @@ export type PostgresConfig = {
   username: string;
   /** Vault ref name for the password (NEVER inlined; referenced via `${ENV:...}`). */
   passwordSecretRef?: string;
+  /**
+   * TLS mode. Omitted means the driver default (`prefer`), which is what an
+   * in-cluster PostgreSQL wants. Set `require` for managed PostgreSQL, which
+   * rejects plaintext.
+   */
+  sslmode?: PostgresSslMode;
 };
 
 /**
