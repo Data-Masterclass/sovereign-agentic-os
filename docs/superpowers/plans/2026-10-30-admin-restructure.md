@@ -8,6 +8,21 @@
 
 **Tech stack:** Next.js app router, `os-ui/core/kernel/tabs.ts` for the nav, `os-ui/tabs/<tab>/lib|ui` per tab, role gates via `roleAtLeast`.
 
+## Test-harness limitation (found in Task 2 — read before writing UI tests)
+
+**A `.tsx` file cannot be imported from a test.** Node's type-stripping does not
+handle JSX and `scripts/test-alias-hook.mjs` has no `load` hook to transform it,
+so `import { X } from './Thing.tsx'` fails with `ERR_UNKNOWN_FILE_EXTENSION`
+before it ever reaches your assertion. Two further blockers sit behind it:
+importing `.svg` fails the same way, and `next/navigation` fails with
+`ERR_MODULE_NOT_FOUND` under plain node.
+
+**So: put anything you want to unit-test in a data-only `.ts` sibling** and
+re-export it from the component, exactly as `core/ui/account-menu.ts` does for
+`Sidebar.tsx`, and as `tabs/admin/lib/sections.ts` does for the Platform page.
+Test the `.ts` file. Do not try to make the harness transform JSX as part of a
+feature task; that is its own piece of work.
+
 ## Global constraints
 
 - **13 top-level tabs stay 13.** This plan adds none. The four groups the user originally wanted as tabs become the Platform page's structure instead. Nav position tracks **frequency**, not importance.
@@ -27,7 +42,7 @@
 | Cost & Billing → Monitoring | The billing envelope is **display-only** (see the comment in `core/kernel/config.ts`); real enforcement lives in LiteLLM budgets. The whole surface is observation, so nothing stays behind. |
 | MCPs & APIs, Drive OAuth apps, Plugins → Connections | All three are registries of what the tenant admits. `tabs/admin/lib/plugins.ts` says it curates "MCP servers, skills, tool bundles", which **overlaps MCPs & APIs** — one surface split across two tiles. |
 | Role *definitions* → Governance, role *assignment* stays | Defining what a role may do is policy: rare, high-stakes, auditable, belongs beside approvals and OPA. Assigning a person a role is routine administration and belongs with Users & Access. Splitting both would make admins bounce between tabs for one task. |
-| Connections becomes admin-only | A connection then means one thing: the tenant's trust boundary. Possible **only** because personal linking moves to the account menu — see the constraint above. |
+| Connections stays creator-visible | **Settled 2026-10-30 by the user: "Creator can see their connections."** So the tab is NOT made admin-only. The three registries become an explicitly admin-gated SECTION inside it, visually separate from a person's own connection list. The tab then answers two questions — "what am I connected to" and "what may this tenant connect to" — so the admin block needs its own heading, or a creator sees tiles they cannot use. |
 | OS-published MCP endpoints leave the registry | `tabs/admin/lib/mcp-registry.ts` carries `kind: 'api'` rows pointing at the OS's own endpoints (`/api/gateway` among them). Those were never trust decisions; listing them buries the few third-party servers an admin actually vouched for. |
 | Security & Egress → Governance | Settled 2026-10-30: the egress allowlist reads as policy, and it sits naturally beside the OPA policy view. |
 | Roles & Permissions → Governance **whole**, not split | Settled 2026-10-30. The earlier plan split definition from assignment; the user chose to move the entire surface. Assignment of a role to a person stays reachable from Users & Access, which remains in Platform, via a cross-link. |
@@ -67,7 +82,7 @@ role may do lives in Governance.
 
 | File | Responsibility after this plan |
 |---|---|
-| `os-ui/tabs/admin/lib/sections.ts` | Nine Platform sections, three groups. Loses seven entries. |
+| `os-ui/tabs/admin/lib/sections.ts` | Six Platform sections, three groups. Loses ten of sixteen. |
 | `os-ui/tabs/admin/lib/sections.test.ts` | Extended: asserts what Platform must **not** contain, so a regression re-adding a moved tile fails CI. |
 | `os-ui/core/kernel/tabs.ts` | Tab label `Admin` → `Platform`. |
 | `os-ui/core/ui/Sidebar.tsx` | Gains the account menu holding the three personal items. |
@@ -108,7 +123,7 @@ test('PLATFORM: three groups, in order', () => {
 ```
 
 - [ ] **Step 2: Run it and watch it fail.** `cd os-ui && npm test 2>&1 | grep PLATFORM` — expect failures naming the eight surfaces still present.
-- [ ] **Step 3: Delete the nine moved entries** from `ADMIN_SECTIONS` (keep `access`; it stays). Set `ADMIN_GROUP_ORDER` to the three groups and move `access` to group `'Tenant'`.
+- [ ] **Step 3: Delete the ten moved entries** from `ADMIN_SECTIONS` (keep `access`; it stays). Set `ADMIN_GROUP_ORDER` to the three groups and move `access` to group `'Tenant'`.
 - [ ] **Step 4: Change the nav label.** In `core/kernel/tabs.ts`, `{ label: 'Admin', … }` → `{ label: 'Platform', … }`. Leave `href: '/platform'` and `feature: 'admin'` alone.
 - [ ] **Step 5: Run the suite.** `npm test` — green, and `node ../scripts/check-structure.mjs` at baseline.
 - [ ] **Step 6: Commit.** `git commit -m "refactor(platform): Admin becomes Platform, nine sections in three groups"`
@@ -117,7 +132,7 @@ test('PLATFORM: three groups, in order', () => {
 
 ## Task 2: Account menu for the three personal items
 
-Do this task **before** Task 4. Connections cannot become admin-only until personal linking has a home.
+No longer blocks Task 4 (the tab keeps creator access), but still worth doing: personal settings do not belong in an admin menu.
 
 **Files:** modify `os-ui/core/ui/Sidebar.tsx`; test `os-ui/core/ui/account-menu.test.ts` *(new)*
 
@@ -158,12 +173,12 @@ test('ACCOUNT-MENU: carries the personal surfaces, at their original roles', () 
 
 ---
 
-## Task 4: Three registries → Connections, and Connections becomes admin-only
+## Task 4: Three registries → Connections (as an admin-gated section)
 
 **Files:** create `os-ui/tabs/connections/lib/registries.ts` + test, `os-ui/tabs/connections/ui/AdminRegistries.tsx`; modify the Connections page, `os-ui/core/kernel/tabs.ts`; modify `os-ui/tabs/admin/lib/mcp-registry.ts`
 
 **Interfaces:**
-- Consumes: `ACCOUNT_ITEMS` must already exist (Task 2).
+- Consumes: nothing. The earlier dependency on Task 2 is GONE — it existed only because making the tab admin-only would have stranded per-user OAuth.
 - Produces: `REGISTRIES: { id: 'mcp-apis' | 'oauth-apps' | 'plugins'; label: string; href: string }[]`, all `minRole: 'admin'`.
 
 - [ ] **Step 1: Write the failing tests.**
@@ -183,8 +198,8 @@ test('MCP-REGISTRY: lists only what an admin added, not the OS own endpoints', (
 - [ ] **Step 2: Run them.** Expect both to fail.
 - [ ] **Step 3: Add `registries.ts` and `AdminRegistries.tsx`**, rendered as a clearly separated admin-only block on the Connections page, not mixed into a user's own connection list.
 - [ ] **Step 4: Drop the `kind: 'api'` rows** from `mcp-registry.ts`. Surface the OS's own MCP endpoint on the My MCP access page instead, and an app's own endpoint on its Software page.
-- [ ] **Step 5: Make the Connections tab admin-only.** In `core/kernel/tabs.ts` set the connections entry `minRole: 'admin'`.
-- [ ] **Step 6: Verify nothing broke per-user OAuth.** `cd os-ui && npm test -- --grep "drive-oauth"` must stay green, and manually confirm Files and Knowledge still offer a source-connect path through the account menu, not through the now-admin Connections tab. **If they do not, stop:** the admin-only flip is wrong until they do.
+- [ ] **Step 5: Do NOT change the Connections tab's `minRole`.** It stays creator-visible by the user's decision. Only the registries block is admin-gated, via `roleAtLeast(role, 'admin')` around it.
+- [ ] **Step 6: Verify per-user OAuth still works.** `cd os-ui && npm test -- --grep "drive-oauth"` must stay green. The earlier hard stop no longer applies, since the tab keeps creator access.
 - [ ] **Step 7:** Full suite + structure check.
 - [ ] **Step 8: Commit.**
 
@@ -204,7 +219,11 @@ test('MCP-REGISTRY: lists only what an admin added, not the OS own endpoints', (
 
 ---
 
-## Task 6: Documentation
+## Task 6: Documentation and loose ends
+
+- [ ] **Step 0: Fix the stale label in `os-ui/tabs/admin/manifest.ts`.** It still reads `nav: { label: 'Admin', … }`. Nothing consumes manifest `nav` (the sidebar reads `core/kernel/tabs.ts`), so it is dead metadata — but it now contradicts the live label. Found during Task 1 and deliberately left alone there.
+
+### Documentation
 
 - [ ] **Step 1:** Update `os-ui/ARCHITECTURE.md`'s tab table and add a short note on the rule used here: a surface belongs to the tab that answers the question the user is asking, and observation separates from configuration.
 - [ ] **Step 2:** `CHANGELOG.md` entry under Unreleased, including the breaking change that **Connections is now admin-only** and where personal account linking moved.
@@ -232,7 +251,7 @@ with `?focus=` deep-link support.
 - Consumes: `ADMIN_SECTIONS` and `ADMIN_GROUP_ORDER` from Task 1.
 - Produces: `/platform?section=<id>`, the deep-link shape every old route redirects to.
 
-**One tab per section, six tabs, not one tab per group.** Each Platform
+**One tab per section, six tabs, not one tab per group.** (Earlier drafts of this plan said eight; six is the settled number.) Each Platform
 section is a full working surface — a users table, a domains table, a backups
 runner. Stacking four of those under a "Tenant" tab produces a page nobody can
 scan. Governance's tabs are each one working surface, and being faithful to that
