@@ -68,9 +68,9 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
 <h1>Sovereign Agentic OS — Code Map</h1>
 <p class="sub">Every folder, what it holds and why. Generated from the source by <code>scripts/build-docs.mjs</code>: the prose below is each file's own header, each tab's manifest and each component's UPSTREAM.md, so it cannot drift from the code.</p>
 <p class="stats">
-  <span><b>1.294</b>source files</span>
-  <span><b>235.496</b>lines</span>
-  <span><b>28</b>with a full header</span>
+  <span><b>1.312</b>source files</span>
+  <span><b>239.531</b>lines</span>
+  <span><b>48</b>with a full header</span>
   <span><b>2026-10-30</b>generated</span>
 </p>
 
@@ -519,7 +519,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/core/kernel">
     <h3>os-ui/core/kernel</h3>
-    <p class="counts">58 files · 7.090 lines · 0 documented</p>
+    <p class="counts">58 files · 7.096 lines · 0 documented</p>
     
     <div class="files">
   <div class="file" id="os-ui/core/kernel/active-domain.test.ts">
@@ -719,11 +719,11 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/kernel/tabs.test.ts">
-    <div class="file-h"><code>tabs.test.ts</code><span class="loc">351 lines</span></div>
+    <div class="file-h"><code>tabs.test.ts</code><span class="loc">352 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/kernel/tabs.ts">
-    <div class="file-h"><code>tabs.ts</code><span class="loc">181 lines</span></div>
+    <div class="file-h"><code>tabs.ts</code><span class="loc">186 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/kernel/toast.test.ts">
@@ -1259,7 +1259,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/core/ui">
     <h3>os-ui/core/ui</h3>
-    <p class="counts">37 files · 5.187 lines · 0 documented</p>
+    <p class="counts">39 files · 5.287 lines · 2 documented</p>
     
     <div class="files">
   <div class="file" id="os-ui/core/ui/AuthGate.tsx">
@@ -1293,10 +1293,8 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="arch">Shared page header: topbar (title + crumb + Live pill + global MCP button). TOP-RIGHT topbar-actions: Live-cluster pill · &quot;Connect your AI Tool via MCP&quot; — global button, present on EVERY page, targets the overarching /api/mcp endpoint (all 33+ golden-path tools across every tab).</p>
   </div>
   <div class="file" id="os-ui/core/ui/Sidebar.tsx">
-    <div class="file-h"><code>Sidebar.tsx</code><span class="loc">138 lines</span></div>
-    
-    
-    <p class="arch">eslint-disable-next-line @next/next/no-img-element</p>
+    <div class="file-h"><code>Sidebar.tsx</code><span class="loc">169 lines</span></div>
+    <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/ui/StackStatus.tsx">
     <div class="file-h"><code>StackStatus.tsx</code><span class="loc">70 lines</span></div>
@@ -1313,6 +1311,18 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/core/ui/ToolWindowProvider.tsx">
     <div class="file-h"><code>ToolWindowProvider.tsx</code><span class="loc">54 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/core/ui/account-menu.test.ts">
+    <div class="file-h"><code>account-menu.test.ts</code><span class="loc">31 lines</span></div>
+    <p class="feat">The sidebar account menu — the home for the three personal surfaces</p>
+    <p class="story">As a signed-in user I want My Settings, My MCP access and About/Licenses reachable from the sidebar, so that personal settings are not buried in a tenant-administration menu where they never belonged.</p>
+    <p class="arch">- Pins the contract of `ACCOUNT_ITEMS` exported from Sidebar.tsx: the three entries that left the Platform menu on 2026-10-30, in order, at the EXACT hrefs and minRoles they had there. Moving a surface must never widen access, so the roles are asserted, not just the ids. - Data-only assertion: the test imports the const, never renders the component, so it stays runnable under `node --test` with no DOM. - It imports `./account-menu.ts`, the data module Sidebar.tsx re-exports `ACCOUNT_ITEMS` from. Importing `./Sidebar.tsx` directly is impossible here: the runner strips types but not JSX (ERR_UNKNOWN_FILE_EXTENSION on .tsx), and Sidebar also imports next/navigation and an .svg, neither of which loads under `node --test`.</p>
+  </div>
+  <div class="file" id="os-ui/core/ui/account-menu.ts">
+    <div class="file-h"><code>account-menu.ts</code><span class="loc">38 lines</span></div>
+    <p class="feat">The account menu — the three personal surfaces that left the Platform menu</p>
+    <p class="story">As a signed-in user I want My Settings, My MCP access and About / Licenses in one place under my own name in the sidebar, so I stop hunting for my own settings inside a menu of things only a tenant admin may touch.</p>
+    <p class="arch">- Data only; no React, no I/O — the same shape `tabs/admin/lib/sections.ts` uses, so the contract is testable without rendering. `Sidebar.tsx` imports it, filters it with `roleAtLeast` from `@core/kernel/session`, and re-exports `ACCOUNT_ITEMS` so the sidebar stays the single named owner of the account menu. - It lives beside Sidebar.tsx rather than inside it because the test runner strips types but not JSX: a `.tsx` module cannot be imported under `node --test` (and Sidebar also pulls in next/navigation and an .svg, neither loadable there). - Routes are unchanged from when these were Platform sections (/settings, /mcp, /about), and so are their `minRole`s — moving a surface must not widen access. `minRole` is advisory for rendering only; each page re-checks the role server-side.</p>
   </div>
   <div class="file" id="os-ui/core/ui/core/ActionButton.tsx">
     <div class="file-h"><code>core/ActionButton.tsx</code><span class="loc">111 lines</span></div>
@@ -1423,7 +1433,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     
   <section class="folder" id="os-ui/tabs/admin">
     <h3>os-ui/tabs/admin</h3>
-    <p class="counts">59 files · 9.829 lines · 8 documented</p>
+    <p class="counts">63 files · 12.474 lines · 14 documented</p>
     <dl class="meta"><dt>feature key</dt><dd>admin</dd><dt>routes</dt><dd>/platform · /components · /mcp · /about · /settings</dd><dt>api</dt><dd>/api/platform · /api/platform-admin · /api/users · /api/mcp</dd><dt>mcp tools</dt><dd>platform · discovery-read</dd><dt>services</dt><dd>opensearch · postgres · litellm · opa</dd></dl>
     <div class="files">
   <div class="file" id="os-ui/tabs/admin/lib/access-lifecycle.test.ts">
@@ -1436,10 +1446,6 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/backups.ts">
     <div class="file-h"><code>lib/backups.ts</code><span class="loc">108 lines</span></div>
-    <p class="undoc">No header yet.</p>
-  </div>
-  <div class="file" id="os-ui/tabs/admin/lib/billing.ts">
-    <div class="file-h"><code>lib/billing.ts</code><span class="loc">62 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/catalog-groups.test.ts">
@@ -1507,11 +1513,11 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="arch">Direction of truth: the OS owns identity (which domains and agents exist), LiteLLM owns enforcement and the ledger (budgets, spend, blocking). So this reconciler creates the SUBJECTS — a team per domain, a key per agent — and deliberately does NOT push budgets: a cap an admin set in LiteLLM is the real cap, and overwriting it from OS defaults would silently undo their work. Three lists, and only two of them are ever applied: creates  subjects the OS governs that the gateway does not have yet updates  subjects whose OS-owned metadata has drifted (ownership stamps) drift    subjects the gateway has that the OS does not govern — REPORTED ONLY. Never created, never updated, never deleted. Deleting someone's hand-made key because the OS has no record of it is the worst thing a reconciler can do. `planReconcile` is a read: it compares the gateway mirror against the OS. `applyReconcile` is the only write, and it writes through `core/infra/litellm-write.ts`, the single audited door. Every operation is attempted independently so one failure does not strand the rest, and failures come back as data.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/mcp-registry.test.ts">
-    <div class="file-h"><code>lib/mcp-registry.test.ts</code><span class="loc">157 lines</span></div>
+    <div class="file-h"><code>lib/mcp-registry.test.ts</code><span class="loc">174 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/mcp-registry.ts">
-    <div class="file-h"><code>lib/mcp-registry.ts</code><span class="loc">349 lines</span></div>
+    <div class="file-h"><code>lib/mcp-registry.ts</code><span class="loc">333 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/model-prices.test.ts">
@@ -1551,7 +1557,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/platform-admin.test.ts">
-    <div class="file-h"><code>lib/platform-admin.test.ts</code><span class="loc">319 lines</span></div>
+    <div class="file-h"><code>lib/platform-admin.test.ts</code><span class="loc">278 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/platform.test.ts">
@@ -1575,20 +1581,16 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/sections.test.ts">
-    <div class="file-h"><code>lib/sections.test.ts</code><span class="loc">44 lines</span></div>
+    <div class="file-h"><code>lib/sections.test.ts</code><span class="loc">146 lines</span></div>
     <p class="feat">Tests for the admin menu's single source of truth.</p>
     <p class="story">As a platform admin, every tile in Admin takes me somewhere that works. In particular LLM Gateway opens LiteLLM's ADMIN CONSOLE, not its API documentation page.</p>
     <p class="arch">`sections.ts` is data, so these are plain assertions over it. The gateway case exists because of a real regression: the tile pointed at the proxy ROOT (`/tools/litellm`), which upstream is LiteLLM's FastAPI Swagger page. Its assets are root-absolute, so behind the `/tools/litellm` prefix they 404 and the tab renders blank with the title &quot;API - Swagger UI&quot;. The admin console is at `/ui` under LiteLLM's SERVER_ROOT_PATH.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/sections.ts">
-    <div class="file-h"><code>lib/sections.ts</code><span class="loc">68 lines</span></div>
-    <p class="feat">One admin menu — the single source of truth for every platform section</p>
-    <p class="story">As a platform admin I want one place that lists everything I can administer, so I never have to learn that some controls live in a sidebar entry, others in a sub-navigation strip, and two of them only appear in one of the two.</p>
-    <p class="arch">- Data only; no React, no I/O. Rendered by app/(govern)/platform/page.tsx as the one grouped tile grid. There is deliberately no second navigation. - There used to be a section strip AND a tile grid; they drifted (13 entries vs 11, with Roles &amp; Permissions and Components &amp; System reachable only from the strip). The strip is gone; the sidebar's Admin entry is the way back up. - `minRole` is advisory for rendering; every /api/platform-admin/* route re-checks it server-side via adminCtx(), so hiding a tile is never the security boundary.</p>
-  </div>
-  <div class="file" id="os-ui/tabs/admin/lib/security.ts">
-    <div class="file-h"><code>lib/security.ts</code><span class="loc">219 lines</span></div>
-    <p class="undoc">No header yet.</p>
+    <div class="file-h"><code>lib/sections.ts</code><span class="loc">126 lines</span></div>
+    <p class="feat">One Platform route with a tab strip on top — the single source of truth for every tenant-administration section, and the only navigation the page has</p>
+    <p class="story">As a platform admin I want Platform to work like Governance: one route, tabs across the top, content switching in place — so I never bounce between a tile grid and six separate pages to do one job.</p>
+    <p class="arch">- Data only; no React, no I/O. Rendered by app/(govern)/platform/page.tsx as a `.tabstrip` plus the active section's component from tabs/admin/ui/. There is ONE navigation system: the tile grid was removed on 2026-10-30 (it was the second one). - Every href is `/platform?section=&lt;id&gt;`: one route, deep-linkable. The old `/platform/&lt;id&gt;` routes still exist as redirects here, so live links and bookmarks keep working. - `minRole` now gates a TAB, not a route. Collapsing the sections onto one route destroyed the old pathname gate in platform/layout.tsx (which allowed any non-admin at exactly `/platform`), so the gate moved INTO the strip: `visibleSections()` and `resolveSection()` below are the fail-closed filter the page uses, and each admin-only component fails closed again on its own. Hiding is still never the security boundary — every /api/platform-admin/* route re-checks server-side via adminCtx(). - Admin was renamed Platform on 2026-10-30 and cut from 16 entries to six. The menu now holds ONLY tenant administration; everything else moved to the tab that answers the question the user is actually asking. Where each removed section went: billing                        → Monitoring (the spend envelope is display-only: observation) roles + security               → Governance (role definitions and the egress allowlist are policy) plugins + mcp-apis + oauth-apps → Connections (all three are registries of what the tenant admits) my-mcp + my-settings + licenses → the sidebar account menu (personal, not administration) components                     → merged INTO overview (both reported what runs and whether it is healthy) None of these were deleted; they are owned elsewhere now.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/services.ts">
     <div class="file-h"><code>lib/services.ts</code><span class="loc">58 lines</span></div>
@@ -1639,10 +1641,10 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/manifest.ts">
-    <div class="file-h"><code>manifest.ts</code><span class="loc">23 lines</span></div>
-    <p class="feat">The Admin tab's contract — nav entry, routes, APIs, MCP tools, services</p>
-    <p class="story">As an operator I want to know exactly what the Admin tab owns and what it needs deployed, so I can switch it off without leaving a broken menu entry behind.</p>
-    <p class="arch">- Data only; no logic, no I/O. Read by scripts/check-structure.mjs and scripts/build-docs.mjs. - `services` lists the deployed components this tab needs (chart `enabled` flags decide).</p>
+    <div class="file-h"><code>manifest.ts</code><span class="loc">34 lines</span></div>
+    <p class="feat">The Platform tab's contract — nav entry, routes, APIs, MCP tools, services</p>
+    <p class="story">As an operator I want to know exactly what the Platform tab owns and what it needs deployed, so I can switch it off without leaving a broken menu entry behind.</p>
+    <p class="arch">- Data only; no logic, no I/O. Read by scripts/check-structure.mjs and scripts/build-docs.mjs. - `services` lists the deployed components this tab needs (chart `enabled` flags decide). - The folder key stays `admin` (it is the `feature` key in OS_ENABLED_TABS and the import path `@tabs/admin/*`); only the user-facing LABEL became Platform on 2026-10-30. - `nav` here is dead metadata — the sidebar reads core/kernel/tabs.ts — but it must not contradict the live label, so it is kept in step. - `routes` lists the route PREFIXES this tab owns, not every page. `/platform` therefore covers both the one tabbed route and everything still under it: the redirect stubs left by the 2026-10-30 restructure (`/platform/{access,backups,components,domains,models, settings}` → `/platform?section=&lt;id&gt;`) and the three tenant-registry pages that still live there (`/platform/{mcp-apis,oauth-apps,plugins}`, linked from Connections). `/mcp`, `/about` and `/settings` are reached from the sidebar account menu now, not from this tab's menu, but the routes are unchanged and `/mcp` still renders this tab's UI.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/mcp/discovery-read-tools.ts">
     <div class="file-h"><code>mcp/discovery-read-tools.ts</code><span class="loc">431 lines</span></div>
@@ -1659,6 +1661,18 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/tabs/admin/mcp/resources.ts">
     <div class="file-h"><code>mcp/resources.ts</code><span class="loc">291 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/admin/ui/BackupsRestore.tsx">
+    <div class="file-h"><code>ui/BackupsRestore.tsx</code><span class="loc">157 lines</span></div>
+    <p class="feat">Backups &amp; Restore — protected stores and the guarded restore, as a Platform tab</p>
+    <p class="story">As a platform admin I want to see that every store is backed up and, when I must, restore one behind a type-the-phrase guard that is audited.</p>
+    <p class="arch">- Markup carried over unchanged from app/(govern)/platform/backups/page.tsx (2026-10-30 move to one route with tabs on top, not a redesign). That route is now a redirect to /platform?section=backups — the overview alert that deep-links a failed backup still lands. - The page's `.content` wrapper moved up to platform/page.tsx; the leftover plain &lt;div&gt; is it. - FAIL-CLOSED gate: Platform is minRole 'builder' (only Overview &amp; Health is builder-readable), and every section now lives at /platform, so the old pathname gate in platform/layout.tsx no longer protects this surface. The gate is therefore HERE as well as in the strip: the inner component — which holds every hook and every fetch — is not mounted until useUser() resolves a role that clears sectionMinRole('backups'). A builder who hand-crafts ?section=backups gets nothing, and nothing is requested on their behalf. Hiding is not the boundary: /api/platform-admin/* is adminCtx()-gated server-side, which is the real enforcement.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/admin/ui/DomainsAdmin.tsx">
+    <div class="file-h"><code>ui/DomainsAdmin.tsx</code><span class="loc">372 lines</span></div>
+    <p class="feat">Domains — the tenant’s structural map, as a Platform tab</p>
+    <p class="story">As a platform admin I want to create domains, toggle their optional layers and reassign an artifact's domain without leaving the Platform page I came from.</p>
+    <p class="arch">- Markup carried over unchanged from app/(govern)/platform/domains/page.tsx (2026-10-30 move to one route with tabs on top, not a redesign). That route is now a redirect to /platform?section=domains, so old links and bookmarks still work. - The page's `.content` wrapper moved up to platform/page.tsx, which renders it once around the strip and the active tab; the leftover plain &lt;div&gt; is the former wrapper. - FAIL-CLOSED gate: Platform is minRole 'builder' (only Overview &amp; Health is builder-readable), and every section now lives at /platform, so the old pathname gate in platform/layout.tsx no longer protects this surface. The gate is therefore HERE as well as in the strip: the inner component — which holds every hook and every fetch — is not mounted until useUser() resolves a role that clears sectionMinRole('domains'). A builder who hand-crafts ?section=domains gets nothing, and nothing is requested on their behalf. Hiding is not the boundary: /api/platform-admin/* is adminCtx()-gated server-side, which is the real enforcement.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/ui/GatewayPanel.tsx">
     <div class="file-h"><code>ui/GatewayPanel.tsx</code><span class="loc">214 lines</span></div>
@@ -1677,6 +1691,30 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/tabs/admin/ui/McpToolsClient.tsx">
     <div class="file-h"><code>ui/McpToolsClient.tsx</code><span class="loc">163 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/admin/ui/ModelsProviders.tsx">
+    <div class="file-h"><code>ui/ModelsProviders.tsx</code><span class="loc">660 lines</span></div>
+    <p class="feat">Models &amp; Providers — the LiteLLM catalog, routing defaults, caps and provider keys, as a Platform tab</p>
+    <p class="story">As a platform admin I want to see every model this tenant may call, set the per-role defaults and caps, and register a provider key, without leaving Platform.</p>
+    <p class="arch">- Markup carried over unchanged from app/(govern)/platform/models/page.tsx (2026-10-30 move to one route with tabs on top, not a redesign). That route is now a redirect to /platform?section=models. - The page's `.content` wrapper moved up to platform/page.tsx; the leftover plain &lt;div&gt; is it. - FAIL-CLOSED gate: Platform is minRole 'builder' (only Overview &amp; Health is builder-readable), and every section now lives at /platform, so the old pathname gate in platform/layout.tsx no longer protects this surface. The gate is therefore HERE as well as in the strip: the inner component — which holds every hook and every fetch — is not mounted until useUser() resolves a role that clears sectionMinRole('models'). A builder who hand-crafts ?section=models gets nothing, and nothing is requested on their behalf. Hiding is not the boundary: /api/platform-admin/* is adminCtx()-gated server-side, which is the real enforcement.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/admin/ui/OverviewHealth.tsx">
+    <div class="file-h"><code>ui/OverviewHealth.tsx</code><span class="loc">448 lines</span></div>
+    <p class="feat">Overview &amp; Health — the tenant cockpit MERGED with Components &amp; System, one Platform tab</p>
+    <p class="story">As a platform admin I want one tab that answers &quot;is this tenant healthy and within budget, and what is actually running&quot; — because the old Overview and Components &amp; System both answered half of that, and I had to read both.</p>
+    <p class="arch">- A 2026-10-30 MERGE, not a redesign: the cockpit (KPIs, open alerts, recent audit) comes from app/(govern)/platform/page.tsx and everything below it — cluster, platform services, system health, the dependency chain and the component tables with their toggles — comes verbatim from app/(govern)/platform/components/page.tsx. That route is now a redirect to /platform?section=overview. - ROLE SPLIT, deliberately NOT the stricter of the two: Overview was minRole 'builder' and Components &amp; System was 'admin'. Merging at 'admin' would have left a builder a Platform tab with nothing in it, so this tab is builder-READABLE (it renders for a builder) while every ACTION — enable/disable a component, the guarded confirm — needs OVERVIEW_ACTION_MIN_ROLE ('admin'). A builder is shown the surface and where their own signals live; they are NOT shown component rows, because every status endpoint (/api/platform-admin/overview and /api/platform-admin/components) is adminCtx()-gated server-side and widening that would have widened access, which this restructure forbids. - Fail closed twice: nothing renders until useUser() resolves a role (never a flash), and the admin body — which holds every hook and every fetch — is not mounted for a non-admin, so a builder's browser never even asks for the admin aggregate. - One gateway panel, not two: both pages carried a GatewayPanel over the same /api/platform-admin/gateway mirror. The 'overview' variant is kept because it alone lists the UNMANAGED gateway rows.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/admin/ui/TenantSettings.tsx">
+    <div class="file-h"><code>ui/TenantSettings.tsx</code><span class="loc">376 lines</span></div>
+    <p class="feat">Tenant Settings — SSO, branding, localization and tenant defaults, as a Platform tab</p>
+    <p class="story">As a platform admin I want the tenant's identity, branding, currency, locale and default model roles in the same place as the rest of Platform.</p>
+    <p class="arch">- Markup carried over unchanged from app/(govern)/platform/settings/page.tsx (2026-10-30 move to one route with tabs on top, not a redesign). That route is now a redirect to /platform?section=settings. - The page's `.content` wrapper moved up to platform/page.tsx; the leftover plain &lt;div&gt; is it. - FAIL-CLOSED gate: Platform is minRole 'builder' (only Overview &amp; Health is builder-readable), and every section now lives at /platform, so the old pathname gate in platform/layout.tsx no longer protects this surface. The gate is therefore HERE as well as in the strip: the inner component — which holds every hook and every fetch — is not mounted until useUser() resolves a role that clears sectionMinRole('settings'). A builder who hand-crafts ?section=settings gets nothing, and nothing is requested on their behalf. Hiding is not the boundary: /api/platform-admin/* is adminCtx()-gated server-side, which is the real enforcement.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/admin/ui/UsersAccess.tsx">
+    <div class="file-h"><code>ui/UsersAccess.tsx</code><span class="loc">782 lines</span></div>
+    <p class="feat">Users &amp; Access — invite, assign domains, set a role, offboard, as a Platform tab</p>
+    <p class="story">As a platform admin I want to administer people — invite, assign domains, change a role, deactivate, offboard — in Platform, while what a role MAY DO stays policy in Governance (cross-linked both ways).</p>
+    <p class="arch">- Markup carried over unchanged from app/(govern)/platform/access/page.tsx (2026-10-30 move to one route with tabs on top, not a redesign). That route is now a redirect to /platform?section=access — the cross-link in Governance’s RolesView still resolves. - The page's `.content` wrapper moved up to platform/page.tsx; the leftover plain &lt;div&gt; is it. - FAIL-CLOSED gate: Platform is minRole 'builder' (only Overview &amp; Health is builder-readable), and every section now lives at /platform, so the old pathname gate in platform/layout.tsx no longer protects this surface. The gate is therefore HERE as well as in the strip: the inner component — which holds every hook and every fetch — is not mounted until useUser() resolves a role that clears sectionMinRole('access'). A builder who hand-crafts ?section=access gets nothing, and nothing is requested on their behalf. Hiding is not the boundary: /api/platform-admin/* is adminCtx()-gated server-side, which is the real enforcement.</p>
   </div></div>
   </section>
   <section class="folder" id="os-ui/tabs/agents">
@@ -2229,7 +2267,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/tabs/connections">
     <h3>os-ui/tabs/connections</h3>
-    <p class="counts">160 files · 34.800 lines · 1 documented</p>
+    <p class="counts">163 files · 34.962 lines · 4 documented</p>
     <dl class="meta"><dt>feature key</dt><dd>connections</dd><dt>routes</dt><dd>/connections</dd><dt>api</dt><dd>/api/connections · /api/egress · /api/gateway</dd><dt>mcp tools</dt><dd>connection-lifecycle · discovery-connection</dd><dt>services</dt><dd>opensearch · egress-proxy · web-fetch · dagster</dd></dl>
     <div class="files">
   <div class="file" id="os-ui/tabs/connections/lib/action-adoptions.test.ts">
@@ -2536,6 +2574,18 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <div class="file-h"><code>lib/purview.ts</code><span class="loc">165 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
+  <div class="file" id="os-ui/tabs/connections/lib/registries.test.ts">
+    <div class="file-h"><code>lib/registries.test.ts</code><span class="loc">63 lines</span></div>
+    <p class="feat">The tenant-connector registries are admin-only and every one of them is reachable</p>
+    <p class="story">As a platform admin I want the three registries of what this tenant admits to be listed on Connections and to actually open, and as a creator I want never to be shown a tile I cannot use.</p>
+    <p class="arch">- Guards REGISTRIES (tabs/connections/lib/registries.ts): three rows, all minRole 'admin', unique ids, and each href matched against the app-router routes that really exist, so a renamed or deleted route fails here instead of 404-ing an admin. - Route discovery walks app/ for directories holding a page.tsx and strips the invisible (group) segments, which is exactly how Next.js derives the URL.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/connections/lib/registries.ts">
+    <div class="file-h"><code>lib/registries.ts</code><span class="loc">42 lines</span></div>
+    <p class="feat">The three tenant-connector registries — what this tenant ADMITS, as one admin-only block</p>
+    <p class="story">As a platform admin I want the registries of what the tenant may connect to listed where connections live, instead of in an admin menu nobody reaches; as a creator I want my own connections untouched and no tiles I cannot use.</p>
+    <p class="arch">- Data only; no React, no I/O — so it is unit-testable (a .tsx file cannot be imported from a test in this harness). Rendered by tabs/connections/ui/AdminRegistries.tsx. - Moved off the Platform menu on 2026-10-30: all three are registries of what the tenant admits, not tenant administration. Connections then answers two questions — &quot;what am I connected to&quot; and &quot;what may this tenant connect to&quot; — so the admin half needs its own heading. The tab itself stays CREATOR-visible (settled by the user: &quot;Creator can see their connections&quot;); only this block is admin-gated. - The PAGES deliberately stay at their /platform/* routes. They inherit their admin gate from app/(govern)/platform/layout.tsx, which bounces any non-admin off every /platform sub-page. Re-implementing that gate elsewhere to make the file tree tidier is a security risk for no user-visible gain, so these are links, not a move. `minRole` here is advisory for rendering; the layout plus each route's adminCtx() is the real boundary. - `label`/`href`/`sub` are verbatim from tabs/admin/lib/sections.ts as of 769a1d0b, so the wording an admin already knows does not change under them.</p>
+  </div>
   <div class="file" id="os-ui/tabs/connections/lib/retry.test.ts">
     <div class="file-h"><code>lib/retry.test.ts</code><span class="loc">117 lines</span></div>
     <p class="undoc">No header yet.</p>
@@ -2809,6 +2859,12 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/tabs/connections/mcp/discovery-connection-tools.ts">
     <div class="file-h"><code>mcp/discovery-connection-tools.ts</code><span class="loc">417 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/connections/ui/AdminRegistries.tsx">
+    <div class="file-h"><code>ui/AdminRegistries.tsx</code><span class="loc">57 lines</span></div>
+    <p class="feat">&quot;Tenant connectors&quot; — the admin-only block on Connections listing what this tenant admits</p>
+    <p class="story">As a platform admin I want the tenant-wide connector registries where connections live, clearly separated from my own connections; as a creator I want to never see a tile I cannot open.</p>
+    <p class="arch">- Renders REGISTRIES (tabs/connections/lib/registries.ts) as its own titled block BELOW the user's own connection list, never mixed into it: the two answer different questions (&quot;what am I connected to&quot; vs &quot;what may this tenant connect to&quot;), and mixing them is what made these surfaces unfindable in the first place. - FAIL-CLOSED gate: nothing renders until useUser() resolves a role, so admin content can never flash to a creator mid-load, and a null/unknown role renders nothing at all. Hiding is not the security boundary — app/(govern)/platform/layout.tsx bounces non-admins off every one of these routes and each /api/platform-admin/* route re-checks via adminCtx(). - Same tile markup and classes as the Platform menu (.section-title/.grid/.golden): no new design system, no new CSS.</p>
   </div>
   <div class="file" id="os-ui/tabs/connections/ui/CatalogBrowser.tsx">
     <div class="file-h"><code>ui/CatalogBrowser.tsx</code><span class="loc">438 lines</span></div>
@@ -3827,9 +3883,33 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/tabs/governance">
     <h3>os-ui/tabs/governance</h3>
-    <p class="counts">6 files · 1.280 lines · 1 documented</p>
+    <p class="counts">12 files · 2.159 lines · 7 documented</p>
     <dl class="meta"><dt>feature key</dt><dd>governance</dd><dt>routes</dt><dd>/governance</dd><dt>api</dt><dd>/api/governance · /api/policy</dd><dt>mcp tools</dt><dd>governance</dd><dt>services</dt><dd>opa · opensearch · postgres</dd></dl>
     <div class="files">
+  <div class="file" id="os-ui/tabs/governance/lib/egress.test.ts">
+    <div class="file-h"><code>lib/egress.test.ts</code><span class="loc">57 lines</span></div>
+    <p class="feat">Tests for the egress allowlist — host normalization, request decisions, singleton pinning</p>
+    <p class="story">As a platform admin I want a bad host rejected and an approved request to actually reach the allowlist, so an egress decision is never silently lost.</p>
+    <p class="arch">- Moved from tabs/admin/lib/platform-admin.test.ts on 2026-10-30 with the lib itself; keeping them there would have made an admin test import @tabs/governance (TAB-ISOLATION). - Node's test runner + the @tabs alias hook; no network, no Next runtime.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/governance/lib/egress.ts">
+    <div class="file-h"><code>lib/egress.ts</code><span class="loc">230 lines</span></div>
+    <p class="feat">Security &amp; Egress adapter — the sovereign-posture board and the egress allowlist</p>
+    <p class="story">As a platform admin I want the egress allowlist beside approvals, policy and audit, because deciding which external hosts this tenant may reach is a policy decision — rare, high-stakes and auditable — not day-to-day tenant administration.</p>
+    <p class="arch">- Moved here from tabs/admin/lib/security.ts on 2026-10-30: the allowlist compiles into the OPA `egress_allow` resource, so it belongs with the OPA policy view it feeds. - Pure data + mirror I/O; the UI is tabs/governance/ui/EgressView.tsx and the write path stays /api/platform-admin/security, hard-gated by adminCtx(). Security &amp; Egress adapter — the sovereign-posture board. - Egress allowlist: Admin-curated list of hosts the tenant may reach. Builders raise REQUESTS (cross-linked from Governance); the Admin approves → the host joins the allowlist and compiles into the OPA `egress_allow` resource + (in a real deploy) the egress proxy / Cilium FQDN policy. - Read-only posture: secrets-manager status, data residency, OPA policy-bundle version, audit retention, certs/keys posture. These are surfaced, never editable as raw values, and NEVER include a secret.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/governance/lib/roles.test.ts">
+    <div class="file-h"><code>lib/roles.test.ts</code><span class="loc">76 lines</span></div>
+    <p class="feat">Tests for the role-definition surface now owned by Governance</p>
+    <p class="story">As a reviewer I want proof that every role still resolves to a non-empty permission list after the move, so &quot;Governance owns role definitions&quot; cannot silently mean &quot;nobody can do anything&quot;.</p>
+    <p class="arch">- Imports the data-only lib (a .tsx cannot be imported from a test in this harness). - Pure: no matrix write, no network, no OPA.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/governance/lib/roles.ts">
+    <div class="file-h"><code>lib/roles.ts</code><span class="loc">139 lines</span></div>
+    <p class="feat">Role DEFINITIONS — what each role type may do, as a governed, auditable policy surface</p>
+    <p class="story">As a platform admin I want to define what a role may do beside approvals, the OPA policy view and the audit log, because that is a rare, high-stakes, auditable policy decision; assigning a person a role stays routine administration in Platform → Users &amp; Access, one click away.</p>
+    <p class="arch">- Data + pure functions only, so it is unit-testable: a .tsx cannot be imported from a test in this harness, so everything testable lives here and tabs/governance/ui/RolesView.tsx renders it. - The MATRIX itself is kernel state (@core/policy/role-config): shared by the OPA compiler, the gates and /api/platform-admin/roles. This module owns only the governance-side vocabulary (role order, the one-line blurbs, the definition projection) and the pure diffing the editor needs. Nothing here writes; the write path is PATCH /api/platform-admin/roles, adminCtx()-gated. - Moved out of app/(govern)/platform/roles/page.tsx on 2026-10-30 (whole surface, not a split).</p>
+  </div>
   <div class="file" id="os-ui/tabs/governance/manifest.ts">
     <div class="file-h"><code>manifest.ts</code><span class="loc">23 lines</span></div>
     <p class="feat">The Governance tab's contract — nav entry, routes, APIs, MCP tools, services</p>
@@ -3848,6 +3928,12 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <div class="file-h"><code>ui/CostLimits.tsx</code><span class="loc">217 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
+  <div class="file" id="os-ui/tabs/governance/ui/EgressView.tsx">
+    <div class="file-h"><code>ui/EgressView.tsx</code><span class="loc">133 lines</span></div>
+    <p class="feat">Security &amp; Egress — the sovereign posture board and the egress allowlist, in Governance</p>
+    <p class="story">As a platform admin I want to decide which external hosts this tenant may reach where I already approve requests and read policy, because an allowlist entry IS a policy decision and it compiles into the same OPA bundle shown one tab over.</p>
+    <p class="arch">- Markup carried over unchanged from app/(govern)/platform/security/page.tsx (2026-10-30 move, not a redesign); the lib moved with it to tabs/governance/lib/egress.ts. - FAIL-CLOSED gate: Governance is minRole 'builder', so this renders NOTHING until useUser() resolves a role of at least 'admin' — a builder never sees, nor flashes, the allowlist or the approve/reject controls. The real enforcement is GET/POST /api/platform-admin/security, which stays adminCtx()-gated.</p>
+  </div>
   <div class="file" id="os-ui/tabs/governance/ui/PoliciesView.tsx">
     <div class="file-h"><code>ui/PoliciesView.tsx</code><span class="loc">282 lines</span></div>
     <p class="undoc">No header yet.</p>
@@ -3855,6 +3941,12 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/tabs/governance/ui/ReviewCard.tsx">
     <div class="file-h"><code>ui/ReviewCard.tsx</code><span class="loc">165 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/governance/ui/RolesView.tsx">
+    <div class="file-h"><code>ui/RolesView.tsx</code><span class="loc">244 lines</span></div>
+    <p class="feat">Roles &amp; Permissions — define what each role type may do, in Governance</p>
+    <p class="story">As a platform admin I want to define a role's permissions beside approvals, policy and audit, because that is policy; and I want one click back to Users &amp; Access when what I actually came to do was give a person a role.</p>
+    <p class="arch">- Markup carried over unchanged from app/(govern)/platform/roles/page.tsx (2026-10-30 move, not a redesign); the testable parts now live in tabs/governance/lib/roles.ts. - FAIL-CLOSED gate: Governance is minRole 'builder', so this renders NOTHING until useUser() resolves a role and that role is at least 'admin' — a builder never sees, nor flashes, role definitions. Hiding is not the boundary: GET/PATCH /api/platform-admin/roles stay adminCtx()-gated. - Role ASSIGNMENT is not here: it stays in Platform → Users &amp; Access, cross-linked both ways.</p>
   </div></div>
   </section>
   <section class="folder" id="os-ui/tabs/home">
@@ -4471,8 +4563,8 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/tabs/monitoring">
     <h3>os-ui/tabs/monitoring</h3>
-    <p class="counts">35 files · 4.428 lines · 1 documented</p>
-    <dl class="meta"><dt>feature key</dt><dd>monitoring</dd><dt>routes</dt><dd>/monitoring</dd><dt>api</dt><dd>/api/monitoring · /api/traces · /api/status</dd><dt>services</dt><dd>langfuse · clickhouse · opensearch</dd></dl>
+    <p class="counts">38 files · 4.671 lines · 4 documented</p>
+    <dl class="meta"><dt>feature key</dt><dd>monitoring</dd><dt>routes</dt><dd>/monitoring</dd><dt>api</dt><dd>/api/monitoring · /api/traces · /api/status · /api/platform-admin/billing</dd><dt>services</dt><dd>langfuse · clickhouse · opensearch</dd></dl>
     <div class="files">
   <div class="file" id="os-ui/tabs/monitoring/lib/adapters/agent-telemetry.test.ts">
     <div class="file-h"><code>lib/adapters/agent-telemetry.test.ts</code><span class="loc">106 lines</span></div>
@@ -4586,6 +4678,18 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <div class="file-h"><code>lib/scope.ts</code><span class="loc">54 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
+  <div class="file" id="os-ui/tabs/monitoring/lib/spend.test.ts">
+    <div class="file-h"><code>lib/spend.test.ts</code><span class="loc">28 lines</span></div>
+    <p class="feat">Covers the spend-vs-envelope math that moved here from Platform.</p>
+    <p class="story">As a maintainer I want the envelope percentages and hard-stop flags pinned, so a change to the spend surface cannot silently under-report how much of the tenant's budget is gone.</p>
+    <p class="arch">- Pure unit test over `spend.ts`; no I/O, no route, no JSX (a .tsx file cannot be imported by this harness, which is why the math lives in a .ts sibling). - Moved out of `tabs/admin/lib/platform-admin.test.ts`: a test importing `@tabs/monitoring/*` from inside the admin tab is a TAB-ISOLATION violation.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/monitoring/lib/spend.ts">
+    <div class="file-h"><code>lib/spend.ts</code><span class="loc">67 lines</span></div>
+    <p class="feat">Tenant spend vs the billing ENVELOPE — usage percentage, a six-point trend and the hard-stop indicator, plus the STACKIT premium ceiling.</p>
+    <p class="story">As an admin watching the tenant I want to see how much of the monthly envelope is spent and whether the premium ceiling is about to bite, in the same place I watch everything else that is running.</p>
+    <p class="arch">- Pure math, no I/O, so it is unit-testable (see spend.test.ts). The LiteLLM read lives in the route (`app/api/platform-admin/billing`), which stays admin-gated by `adminCtx()`; offline we fall back to a deterministic mock so the surface renders with no gateway. - Observation, not configuration: the envelope is DISPLAY-ONLY (see the comment on `litellmBudgetUsd` in `core/kernel/config.ts`) — real budget enforcement is LiteLLM's own key budget. That is why this lives in Monitoring and not Platform. - Governance allocates the per-key/domain/agent sub-caps WITHIN the envelope.</p>
+  </div>
   <div class="file" id="os-ui/tabs/monitoring/lib/t1-fixes.test.ts">
     <div class="file-h"><code>lib/t1-fixes.test.ts</code><span class="loc">132 lines</span></div>
     <p class="undoc">No header yet.</p>
@@ -4607,7 +4711,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/monitoring/manifest.ts">
-    <div class="file-h"><code>manifest.ts</code><span class="loc">23 lines</span></div>
+    <div class="file-h"><code>manifest.ts</code><span class="loc">27 lines</span></div>
     <p class="feat">The Monitoring tab's contract — nav entry, routes, APIs, MCP tools, services</p>
     <p class="story">As an operator I want to know exactly what the Monitoring tab owns and what it needs deployed, so I can switch it off without leaving a broken menu entry behind.</p>
     <p class="arch">- Data only; no logic, no I/O. Read by scripts/check-structure.mjs and scripts/build-docs.mjs. - `services` lists the deployed components this tab needs (chart `enabled` flags decide).</p>
@@ -4615,6 +4719,12 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/tabs/monitoring/ui/DetailView.tsx">
     <div class="file-h"><code>ui/DetailView.tsx</code><span class="loc">486 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/monitoring/ui/SpendSection.tsx">
+    <div class="file-h"><code>ui/SpendSection.tsx</code><span class="loc">144 lines</span></div>
+    <p class="feat">The tenant spend section — spend vs envelope, the STACKIT premium ceiling, the recent trend, and the envelope figures themselves.</p>
+    <p class="story">As an admin I want tenant spend where I already watch everything else that runs, instead of in a Platform tab of its own.</p>
+    <p class="arch">- Moved verbatim from `app/(govern)/platform/billing/page.tsx`; the markup is unchanged, only the page header and the sibling GatewayPanel stayed behind (the panel is rendered next to this section by the Monitoring page, because a tab may not import another tab — see check-structure rule 2). - Reads `/api/platform-admin/billing`, which stays admin-gated by `adminCtx()`. The caller ALSO role-gates this component: tenant-wide spend is admin-only and the Monitoring tab is builder-visible. - Display logic only; the percentages and hard-stop flags are computed in `@tabs/monitoring/lib/spend` so they can be unit-tested.</p>
   </div></div>
   </section>
   <section class="folder" id="os-ui/tabs/software">
