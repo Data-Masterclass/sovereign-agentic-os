@@ -40,7 +40,11 @@ export const ADMIN_SECTIONS: AdminSection[] = [
 
   // Models & cost — the LLM control room
   { id: 'models', label: 'Models & Providers', href: '/platform/models', sub: 'Routing defaults, caps, provider keys', group: 'Models & cost', minRole: 'admin' },
-  { id: 'gateway', label: 'LLM Gateway', href: '/tools/litellm', sub: 'Models, keys, budgets and guardrails — in LiteLLM', group: 'Models & cost', minRole: 'admin' },
+  // `/ui` NOT `/` — LiteLLM's root serves its FastAPI Swagger page, whose assets
+  // are root-absolute and blocked behind the proxy prefix, so the tab rendered
+  // blank with the title "API - Swagger UI". The admin console lives at `/ui`
+  // under SERVER_ROOT_PATH (set to /tools/litellm in the chart).
+  { id: 'gateway', label: 'LLM Gateway', href: '/tools/litellm/ui', sub: 'Models, keys, budgets and guardrails — in LiteLLM', group: 'Models & cost', minRole: 'admin' },
   { id: 'billing', label: 'Cost & Billing', href: '/platform/billing', sub: 'Spend envelope & premium cap', group: 'Models & cost', minRole: 'admin' },
 
   // Platform
