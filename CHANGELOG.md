@@ -13,6 +13,63 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Changed — Admin becomes Platform: one route, six tabs, ten surfaces rehomed
+
+- **The tab label `Admin` is now `Platform`**, and `/platform` is **one route
+  with a tab strip** on top, the pattern Governance already used. **The tile
+  grid is gone.** It had been a grouped grid of links into `/platform/<id>`
+  sub-pages; six of those sub-routes are now **redirect stubs** to
+  `/platform?section=<id>`, so existing links and bookmarks keep working.
+  The folder (`tabs/admin/`), the feature key (`admin`) and the route
+  (`/platform`) are unchanged — only the label and the navigation.
+- **`ADMIN_SECTIONS` went from sixteen entries to six**, in three groups
+  (Tenant · Models · Infrastructure): Overview & Health, Domains, Tenant
+  Settings, Users & Access, Models & Providers, Backups & Restore. Overview
+  **absorbed Components & System** (both reported what runs and whether it is
+  healthy); the merged tab is builder-**readable** with admin-only **actions**,
+  deliberately not merged at the stricter role. There is no LLM Gateway tab.
+- **Where the ten moved surfaces went** — none were deleted, all are owned
+  elsewhere now:
+
+  | Surface | New home |
+  |---|---|
+  | Cost & Billing | **Monitoring** → "Cost & Spend" (`/monitoring#spend`); lib is now `tabs/monitoring/lib/spend.ts`, API stays `/api/platform-admin/billing` |
+  | Roles & Permissions | **Governance** → "Roles & permissions" tab (`tabs/governance/lib/roles.ts`; the matrix itself stays kernel state in `core/policy/role-config`) |
+  | Security & Egress | **Governance** → "Security & egress" tab (`tabs/governance/lib/egress.ts`) |
+  | MCPs & APIs | **Connections** → "Tenant connectors" block (page stays at `/platform/mcp-apis`) |
+  | Drive OAuth apps | **Connections** → "Tenant connectors" block (page stays at `/platform/oauth-apps`) |
+  | Plugins | **Connections** → "Tenant connectors" block (page stays at `/platform/plugins`) |
+  | My Settings | **Sidebar account menu** (`/settings`, unchanged) |
+  | My MCP access | **Sidebar account menu** (`/mcp`, unchanged) |
+  | About / Licenses | **Sidebar account menu** (`/about`, unchanged) |
+  | Components & System | **Merged into Platform → Overview & Health** (`/platform/components` redirects to `?section=overview`) |
+
+- **Connections is NOT admin-only.** An earlier draft of this work intended to
+  make the whole tab admin-only; the user settled it the other way on
+  2026-10-30 — **creators still see their own connections**, and per-user OAuth
+  (Drive, Gmail, Calendar) keeps its self-service home, which Files and
+  Knowledge sync depend on. Only the new **"Tenant connectors"** block inside
+  the tab is admin-gated, with its own heading so a creator is never shown
+  registries they cannot use. The tab's `minRole` did not change.
+- **Platform's role gate moved from the route to the tab.** Collapsing six
+  sub-routes onto one route destroyed the old pathname check in
+  `platform/layout.tsx` (which let any non-admin sit at exactly `/platform`).
+  The gate now lives in `tabs/admin/lib/sections.ts` — `visibleSections()`,
+  `resolveSection()` and `sectionMinRole()` — and is **fail-closed**: an
+  unresolved role (still loading, or anonymous) gets no tabs at all, a deep
+  link to a real tab the role may not see renders **nothing** rather than
+  falling back to the overview, and an unknown section id is treated as
+  admin-only. Each section component re-checks its own floor, and every
+  `/api/platform-admin/*` route is still `adminCtx()`-gated server-side:
+  hiding remains defence in depth, never the security boundary.
+- **The MCP registry lists only what an admin vouched for.** The three
+  `kind: 'api'` rows pointed at the OS's own endpoints (`/api/gateway` among
+  them) and were never trust decisions; they buried the few third-party servers
+  that are.
+- Every moved surface kept its original `minRole`. Monitoring and Governance
+  are builder-visible, so the surfaces that landed there carry their own admin
+  gate — moving a surface must not widen access.
+
 ### Security — the LiteLLM master key leaves the run path
 
 - **Runs now use a scoped virtual key, not the proxy master key.** The chart

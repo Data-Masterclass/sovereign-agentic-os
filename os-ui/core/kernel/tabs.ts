@@ -7,13 +7,15 @@
  *   Entry:   Home
  *   Context: Data, KPIs, Files, Knowledge          (bring context in)
  *   Build:   Workflows, Agents, Dashboards, Software   (put it to work)
- *   Manage:  Connections, Governance (builder+), Monitoring (builder+), Admin (builder+)
+ *   Manage:  Connections, Governance (builder+), Monitoring (builder+), Platform (builder+)
  *
- * ONE admin menu: Components, the LLM Gateway, MCP access and About/Licenses are
- * NOT separate sidebar entries — they are sections of the admin menu defined in
- * tabs/admin/lib/sections.ts, which the ONE /platform tab strip renders (the tile
- * grid was removed 2026-10-30 — two navigations for one page is how they drifted).
- * Their routes still work and are listed there.
+ * ONE Platform menu: Components & System is NOT a separate sidebar entry — it was
+ * merged into Overview & Health, one of the six sections in tabs/admin/lib/sections.ts
+ * that the ONE /platform tab strip renders (the tile grid was removed 2026-10-30 —
+ * two navigations for one page is how they drifted). There is no LLM Gateway entry.
+ * The three PERSONAL surfaces (My Settings, My MCP access, About/Licenses) are not
+ * sections either: they live in the sidebar's account menu (core/ui/account-menu.ts).
+ * Every one of those routes still works.
  *
  * `feature` keys drive OS_ENABLED_TABS gating; a tab whose key is not enabled is
  * hidden from the nav AND 404s at the route (see findDisabledTab, used by the Edge
@@ -41,9 +43,9 @@ export type TabGroup = {
 
 export const TAB_GROUPS: TabGroup[] = [
   {
-    // Entry — ungrouped, always at the top. Home is the only one: MCP access and
-    // About/Licenses became sections of the one admin menu (tabs/admin/lib/
-    // sections.ts), and their routes stay reachable for every role that may use them.
+    // Entry — ungrouped, always at the top. Home is the only one: My MCP access and
+    // About/Licenses moved to the sidebar's account menu (core/ui/account-menu.ts)
+    // on 2026-10-30, and their routes stay reachable for every role that may use them.
     tabs: [
       { label: 'Home', icon: '◇', href: '/', feature: 'home' },
     ],
@@ -76,11 +78,13 @@ export const TAB_GROUPS: TabGroup[] = [
       { label: 'Connections', icon: '⇄', href: '/connections', feature: 'connections' },
       { label: 'Governance', icon: '⚖', href: '/governance', role: 'Builder / Administrator', minRole: 'builder', feature: 'governance' },
       { label: 'Monitoring', icon: '◷', href: '/monitoring', role: 'Builder / Administrator', minRole: 'builder', feature: 'monitoring' },
-      // Admin (Platform) is builder-visible, but the page renders ONLY the tiles
-      // a builder is authorised for (fail-closed per-tile minRole). Every
-      // platform-admin tile stays admin-only, and each /platform sub-page's API
-      // is hard-gated by adminCtx()/requireAdmin — a builder sees only the
-      // self-service Settings tile and never reaches an admin control.
+      // Platform is builder-visible, but the page renders ONLY the TABS a builder
+      // is authorised for (fail-closed per-tab minRole — visibleSections() and
+      // resolveSection() in tabs/admin/lib/sections.ts, since the tile grid and the
+      // old per-route pathname gate both went on 2026-10-30). Five of the six tabs
+      // stay admin-only; a builder sees Overview & Health, read-only, with its
+      // actions gated. Every /api/platform-admin/* route is hard-gated by
+      // adminCtx()/requireAdmin, so hiding is never the security boundary.
       { label: 'Platform', icon: '❖', href: '/platform', role: 'Builder / Administrator', minRole: 'builder', feature: 'admin' },
     ],
   },
