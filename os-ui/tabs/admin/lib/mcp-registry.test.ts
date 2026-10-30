@@ -70,8 +70,9 @@ test('official section: overarching + one entry per tab, marked primary', () => 
     assert.equal(e?.mcpTab, tab);
     assert.equal(e?.importable, true);
   }
-  // Curated platform APIs are appended as API entries.
-  assert.ok(s.entries.some((e) => e.kind === 'api' && e.endpoint === '/api/gateway'));
+  // The OS's OWN endpoints were pruned on 2026-10-30 (see OFFICIAL_PLATFORM_APIS):
+  // this registry lists what an admin VOUCHED for, so nothing self-published is here.
+  assert.equal(s.entries.some((e) => e.kind === 'api'), false);
 });
 
 test('official section: role scoping hides tools below the caller floor', () => {
@@ -153,4 +154,20 @@ test('buildMcpRegistry: empty owned lists yield graceful empty sections, never a
   // Official still renders the overarching + per-tab entries even with no tools.
   const official = reg.sections.find((s) => s.tier === 'official')!;
   assert.ok(official.entries.some((e) => e.id === 'os-mcp'));
+});
+
+// ------------------------------------------------- pruned OS-own API surface --
+test('MCP-REGISTRY: lists only what an admin added, not the OS own endpoints', () => {
+  // kind:'api' rows were OS surface area (/api/gateway, /api/mcp/token,
+  // /api/connections), never trust decisions. They buried the few third-party
+  // servers an admin actually vouched for, so they are gone. A genuinely
+  // EXTERNAL API may come back as kind:'api'; an OS endpoint may not.
+  assert.deepEqual(OFFICIAL_PLATFORM_APIS, []);
+  const reg = buildMcpRegistry({
+    role: 'admin', userId: 'alice', officialTools: OFFICIAL, tabs: TABS,
+    officialApis: OFFICIAL_PLATFORM_APIS, stackServers: STACK_MCP_SERVERS,
+    liveGatewayTools: [], ownedMcps: OWNED,
+  });
+  const entries = reg.sections.flatMap((s) => s.entries);
+  assert.equal(entries.some((e) => e.kind === 'api'), false);
 });

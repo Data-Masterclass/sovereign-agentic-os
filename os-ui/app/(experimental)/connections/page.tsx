@@ -5,6 +5,7 @@
 
 import PageHeader from '@core/ui/PageHeader';
 import GovernedConnections from '@tabs/connections/ui/GovernedConnections';
+import AdminRegistries from '@tabs/connections/ui/AdminRegistries';
 
 /**
  * The Connections page — the OS-wide View/Edit artifact model.
@@ -17,6 +18,12 @@ import GovernedConnections from '@tabs/connections/ui/GovernedConnections';
  *              An existing connection opens in VIEW (real status · what it connects to ·
  *              exposed capabilities · usage · Test), with Promote + lifecycle in the detail
  *              header and ✎ Edit (edit-scope gated) for the configure surface.
+ *
+ * Below the list, "Tenant connectors" is an ADMIN-ONLY block holding the three registries of
+ * what this tenant admits (MCPs & APIs, Drive OAuth apps, Plugins), moved off the Platform menu
+ * on 2026-10-30. The tab itself stays CREATOR-visible — settled by the user, "Creator can see
+ * their connections" — so only that block is gated, and it is visually separate so a creator is
+ * never shown a tile they cannot open.
  */
 export default function ConnectionsPage() {
   return (
@@ -30,6 +37,7 @@ export default function ConnectionsPage() {
           secret, under policy.
         </p>
         <GovernedConnections />
+        <AdminRegistries />
       </div>
     </>
   );
