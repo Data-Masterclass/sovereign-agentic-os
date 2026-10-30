@@ -243,9 +243,9 @@ test('PLATFORM-GATE 4: the 13-tab nav and the one admin menu declare the right g
       `"${label}" must not be a sidebar tab — it belongs to tabs/admin/lib/sections.ts`);
   }
   // Components & System is no longer its own Platform section: it merges into Overview.
-  // Its admin-only gate now lives on the route (PLATFORM-GATE 1's server-side layout), not
-  // on a tile. Overview must stay 'builder' — it is the only Platform surface a builder can
-  // see, so the merge must not adopt Components' stricter role.
+  // Its content merged into Overview & Health, whose gate is now per-TAB (see
+  // PLATFORM-GATE 5), not per-route. Overview must stay 'builder' — it is the only Platform
+  // surface a builder can see, so the merge must not adopt Components' stricter role.
   assert.doesNotMatch(sections, /id: 'components'/,
     'Components & System merged into Overview; it is not a separate Platform section');
   assert.match(sections, /id: 'overview'[^}]*minRole: 'builder'/s,
@@ -253,6 +253,37 @@ test('PLATFORM-GATE 4: the 13-tab nav and the one admin menu declare the right g
   // The renamed labels are the live ones.
   assert.doesNotMatch(src, /label: 'Policies & Approvals'/, 'Policies & Approvals was renamed to Governance');
   assert.doesNotMatch(src, /label: 'Metrics'/, 'Metrics was renamed to KPIs');
+});
+
+test('PLATFORM-GATE 5: one route with tabs gates per TAB, because the route no longer can', () => {
+  // Task 7 (2026-10-30) collapsed the six Platform sections onto /platform?section=<id>.
+  // The old layout gate allowed ANY non-admin at exactly `/platform` and bounced them out of
+  // deeper paths — which protected the sections only while each WAS a deeper path. This is
+  // the tripwire for the gate that replaced it. (The behavioural proofs are unit tests in
+  // tabs/admin/lib/sections.test.ts; the page is a .tsx the harness cannot import, so here we
+  // read the source — the same technique the rest of this file uses.)
+  const page = read('app/(govern)/platform/page.tsx');
+  assert.match(page, /visibleSections\(role\)/, 'the strip must come from the tested fail-closed filter');
+  assert.match(page, /resolveSection\(/, 'a deep link must go through the tested resolver');
+  assert.match(page, /loading \? null : user\?\.role \?\? null/,
+    'while /api/auth/me is in flight the role must count as null, so no tab can flash');
+  assert.doesNotMatch(page, /ADMIN_GROUP_ORDER/,
+    'the grouped tile grid must not come back — one navigation system, not two');
+
+  // Every admin-only tab re-checks its own floor and keeps its hooks (so its fetches) behind it.
+  for (const f of ['DomainsAdmin', 'TenantSettings', 'UsersAccess', 'ModelsProviders', 'BackupsRestore']) {
+    const src = read(`tabs/admin/ui/${f}.tsx`);
+    assert.match(src, /roleAtLeast\(role, sectionMinRole\('[a-z]+'\)\)/, `${f} must re-check its section floor`);
+    assert.match(src, /if \(loading \|\| role === null/, `${f} must fail closed while the role is unresolved`);
+  }
+
+  // The merged tab is builder-READABLE with admin-only ACTIONS: a builder gets the
+  // BuilderOverview branch, and the cockpit/component body (every fetch and every toggle)
+  // sits behind OVERVIEW_ACTION_MIN_ROLE.
+  const overview = read('tabs/admin/ui/OverviewHealth.tsx');
+  assert.match(overview, /OVERVIEW_ACTION_MIN_ROLE/, 'the action floor must be the tested constant');
+  assert.match(overview, /return <BuilderOverview \/>/, 'a non-admin must get the builder branch');
+  assert.match(overview, /return <AdminOverviewHealth \/>/, 'the admin body must be a separate component');
 });
 
 test('RUN PATH: the agent RUN route derives a real default task, never "Test invocation"', () => {
