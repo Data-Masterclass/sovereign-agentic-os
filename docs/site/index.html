@@ -68,9 +68,9 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
 <h1>Sovereign Agentic OS — Code Map</h1>
 <p class="sub">Every folder, what it holds and why. Generated from the source by <code>scripts/build-docs.mjs</code>: the prose below is each file's own header, each tab's manifest and each component's UPSTREAM.md, so it cannot drift from the code.</p>
 <p class="stats">
-  <span><b>1.312</b>source files</span>
-  <span><b>239.531</b>lines</span>
-  <span><b>48</b>with a full header</span>
+  <span><b>1.314</b>source files</span>
+  <span><b>239.631</b>lines</span>
+  <span><b>50</b>with a full header</span>
   <span><b>2026-10-30</b>generated</span>
 </p>
 
@@ -235,7 +235,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/core/auth">
     <h3>os-ui/core/auth</h3>
-    <p class="counts">19 files · 1.706 lines · 0 documented</p>
+    <p class="counts">21 files · 1.806 lines · 2 documented</p>
     
     <div class="files">
   <div class="file" id="os-ui/core/auth/client.ts">
@@ -249,6 +249,12 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/core/auth/connection-token.ts">
     <div class="file-h"><code>connection-token.ts</code><span class="loc">67 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/core/auth/drive-landing.ts">
+    <div class="file-h"><code>drive-landing.ts</code><span class="loc">49 lines</span></div>
+    <p class="feat">Where the Drive/OneDrive OAuth callback sends the user, and the provider error code it is allowed to forward.</p>
+    <p class="story">As someone connecting OneDrive, finishing consent lands me on the Files tab rather than a 404. As an operator debugging a failure, I get the provider's real code instead of a generic label.</p>
+    <p class="arch">A plain module, not part of the route, for two reasons. A Next.js `route.ts` may only export its HTTP handlers and a short list of config names, so exporting helpers from one breaks the build's type contract. And a test cannot import a route at all — it pulls `next/headers` transitively. Keeping the logic here is what makes the invariant testable, which is the whole point: the original bug was an untested constant drifting from the nav.</p>
   </div>
   <div class="file" id="os-ui/core/auth/drive-status.test.ts">
     <div class="file-h"><code>drive-status.test.ts</code><span class="loc">29 lines</span></div>
@@ -277,6 +283,12 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/core/auth/oauth-apps.ts">
     <div class="file-h"><code>oauth-apps.ts</code><span class="loc">139 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/core/auth/oauth-callback-landing.test.ts">
+    <div class="file-h"><code>oauth-callback-landing.test.ts</code><span class="loc">51 lines</span></div>
+    <p class="feat">Tests for where the Drive/OneDrive OAuth callback sends the user, and for the provider error code it forwards.</p>
+    <p class="story">As someone connecting OneDrive, finishing consent must land me on the Files tab — not on a 404. And when it fails I need the provider's actual code, because &quot;exchange_failed&quot; cannot tell a mistyped client secret from an unreachable token endpoint.</p>
+    <p class="arch">The landing path is pinned against the NAV definition rather than restated, because the original bug was exactly a drift between them: the callback sent everyone to `/files`, which exists only as an API path and has no page, so all eight exits of that route — success included — ended on a 404. `safeErrorCode` is tested for what it must NOT forward as much as for what it must: a free-text provider body never reaches the URL.</p>
   </div>
   <div class="file" id="os-ui/core/auth/pkce.test.ts">
     <div class="file-h"><code>pkce.test.ts</code><span class="loc">29 lines</span></div>
