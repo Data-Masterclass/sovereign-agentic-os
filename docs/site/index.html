@@ -69,7 +69,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
 <p class="sub">Every folder, what it holds and why. Generated from the source by <code>scripts/build-docs.mjs</code>: the prose below is each file's own header, each tab's manifest and each component's UPSTREAM.md, so it cannot drift from the code.</p>
 <p class="stats">
   <span><b>1.294</b>source files</span>
-  <span><b>235.387</b>lines</span>
+  <span><b>235.388</b>lines</span>
   <span><b>28</b>with a full header</span>
   <span><b>2026-10-30</b>generated</span>
 </p>
@@ -1423,7 +1423,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     
   <section class="folder" id="os-ui/tabs/admin">
     <h3>os-ui/tabs/admin</h3>
-    <p class="counts">59 files · 9.828 lines · 8 documented</p>
+    <p class="counts">59 files · 9.829 lines · 8 documented</p>
     <dl class="meta"><dt>feature key</dt><dd>admin</dd><dt>routes</dt><dd>/platform · /components · /mcp · /about · /settings</dd><dt>api</dt><dd>/api/platform · /api/platform-admin · /api/users · /api/mcp</dd><dt>mcp tools</dt><dd>platform · discovery-read</dd><dt>services</dt><dd>opensearch · postgres · litellm · opa</dd></dl>
     <div class="files">
   <div class="file" id="os-ui/tabs/admin/lib/access-lifecycle.test.ts">
@@ -1575,7 +1575,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/sections.test.ts">
-    <div class="file-h"><code>lib/sections.test.ts</code><span class="loc">45 lines</span></div>
+    <div class="file-h"><code>lib/sections.test.ts</code><span class="loc">44 lines</span></div>
     <p class="feat">Tests for the admin menu's single source of truth.</p>
     <p class="story">As a platform admin, every tile in Admin takes me somewhere that works. In particular LLM Gateway opens LiteLLM's ADMIN CONSOLE, not its API documentation page.</p>
     <p class="arch">`sections.ts` is data, so these are plain assertions over it. The gateway case exists because of a real regression: the tile pointed at the proxy ROOT (`/tools/litellm`), which upstream is LiteLLM's FastAPI Swagger page. Its assets are root-absolute, so behind the `/tools/litellm` prefix they 404 and the tab renders blank with the title &quot;API - Swagger UI&quot;. The admin console is at `/ui` under LiteLLM's SERVER_ROOT_PATH.</p>
@@ -1661,7 +1661,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/ui/GatewayPanel.tsx">
-    <div class="file-h"><code>ui/GatewayPanel.tsx</code><span class="loc">212 lines</span></div>
+    <div class="file-h"><code>ui/GatewayPanel.tsx</code><span class="loc">214 lines</span></div>
     <p class="feat">• Four variants over ONE endpoint (`/api/platform-admin/gateway`), so the same mirror renders as gateway health on the Admin overview, budgets on Domains, spend on Billing and component health on Components. • Honest empty and failure states: a stale mirror is dated and labelled, an unreadable gateway says so, and spend that cannot be attributed is reported as not attributed rather than as zero. • Drift is always visible: anything in LiteLLM with no OS counterpart is named, with the reminder that the OS will not adopt it on its own.</p>
     <p class="story">• As a platform admin, I see at a glance how many models the gateway brokers, which are failing their health probe, and which guardrails run. • As a platform admin on Domains, I see the real budget and real spend per domain from LiteLLM, not an OS guess. • As a platform admin, when something was created directly in LiteLLM I am told, so I can either adopt it in the OS or remove it there.</p>
     <p class="arch">A thin client component. It owns no state beyond the fetch and performs no mapping — every rule (drift, health, provider, attribution) already ran in `gateway-mirror` on the server, which is what keeps those rules testable. Read-only in this phase: there is deliberately no control here that writes to LiteLLM. Admins who need to change the gateway use Admin -&gt; LLM Gateway, which frames LiteLLM's own UI.</p>

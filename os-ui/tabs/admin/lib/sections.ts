@@ -39,12 +39,12 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: 'domains', label: 'Domains', href: '/platform/domains', sub: 'Create domains & toggle optional layers', group: 'Tenant', minRole: 'admin' },
 
   // Models & cost — the LLM control room
+  // NO 'gateway' tile. Removed 2026-10-30 at the user's request: the embedded
+  // console was unreachable in 0.7.3/0.7.4. Cause found and fixed (the proxy
+  // stripped a prefix LiteLLM needs — see Tool.upstreamRootPath), but the fix
+  // is unverified in production, so the tile stays out until it is. Restoring
+  // it is one entry pointing at /tools/litellm/ui.
   { id: 'models', label: 'Models & Providers', href: '/platform/models', sub: 'Routing defaults, caps, provider keys', group: 'Models & cost', minRole: 'admin' },
-  // `/ui` NOT `/` — LiteLLM's root serves its FastAPI Swagger page, whose assets
-  // are root-absolute and blocked behind the proxy prefix, so the tab rendered
-  // blank with the title "API - Swagger UI". The admin console lives at `/ui`
-  // under SERVER_ROOT_PATH (set to /tools/litellm in the chart).
-  { id: 'gateway', label: 'LLM Gateway', href: '/tools/litellm/ui', sub: 'Models, keys, budgets and guardrails — in LiteLLM', group: 'Models & cost', minRole: 'admin' },
   { id: 'billing', label: 'Cost & Billing', href: '/platform/billing', sub: 'Spend envelope & premium cap', group: 'Models & cost', minRole: 'admin' },
 
   // Platform

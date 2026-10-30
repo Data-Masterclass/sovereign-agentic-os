@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** Admin stops being the place things land when nobody knows where they go. Seventeen sections become eight, each remaining one genuinely tenant administration, with **no new top-level tabs**.
+**Goal:** Admin stops being the place things land when nobody knows where they go. Seventeen sections become six, each remaining one genuinely tenant administration, with **no new top-level tabs**.
 
 **Architecture:** `tabs/admin/lib/sections.ts` is already the single source of truth for the menu, and `/platform` renders it as a grouped tile grid. So most of this is moving entries between owners and giving three arrivals a home, not rebuilding navigation.
 
@@ -32,11 +32,31 @@
 | Security & Egress → Governance | Settled 2026-10-30: the egress allowlist reads as policy, and it sits naturally beside the OPA policy view. |
 | Roles & Permissions → Governance **whole**, not split | Settled 2026-10-30. The earlier plan split definition from assignment; the user chose to move the entire surface. Assignment of a role to a person stays reachable from Users & Access, which remains in Platform, via a cross-link. |
 
-**Target Platform, eight sections in three groups**
+**Target Platform, six tabs** (settled 2026-10-30)
 
-- **Tenant** — Overview, Domains, Tenant Settings, Users & Access
-- **Models** — LLM Gateway, Models & Providers
-- **Infrastructure** — Components & System, Backups & Restore
+1. **Overview & Health** — Overview merged with Components & System
+2. **Domains**
+3. **Tenant Settings**
+4. **Users & Access**
+5. **Models & Providers**
+6. **Backups & Restore**
+
+Two changes from the eight-tab version:
+
+* **Overview and Components & System are consolidated.** They overlapped: both
+  reported what is running and whether it is healthy.
+* **No LLM Gateway tile.** Removed while the embedded console is unverified in
+  production. Restoring it is one entry pointing at `/tools/litellm/ui`.
+
+**The merge has a role trap.** Overview is `minRole: 'builder'` and is the ONLY
+Platform surface a builder can see; Components & System is `admin`. Merging at
+`admin` would leave builders with a Platform tab containing nothing. So the
+merged tab must be **builder-readable with admin-only actions**: a builder sees
+status, only an admin can enable or disable a component. Do not merge by taking
+the stricter role.
+
+At six tabs the three group headings carry little, so the strip can be flat.
+Keep `ADMIN_GROUP_ORDER` only if the tabs visibly separate.
 
 Individual users are set up here, in Platform. Only the *definition* of what a
 role may do lives in Governance.
@@ -72,9 +92,8 @@ role may do lives in Governance.
 test('PLATFORM: holds only tenant administration', () => {
   const ids = ADMIN_SECTIONS.map((s) => s.id).sort();
   assert.deepEqual(ids, [
-    'access', 'backups', 'components', 'domains',
-    'gateway', 'models', 'overview', 'settings',
-  ]);
+    'access', 'backups', 'domains', 'models', 'overview', 'settings',
+  ]);  // 'overview' is the merged Overview & Health; no 'components', no 'gateway'
 });
 
 test('PLATFORM: the moved surfaces are gone', () => {
@@ -213,7 +232,7 @@ with `?focus=` deep-link support.
 - Consumes: `ADMIN_SECTIONS` and `ADMIN_GROUP_ORDER` from Task 1.
 - Produces: `/platform?section=<id>`, the deep-link shape every old route redirects to.
 
-**One tab per section, eight tabs, not one tab per group.** Each Platform
+**One tab per section, six tabs, not one tab per group.** Each Platform
 section is a full working surface — a users table, a domains table, a backups
 runner. Stacking four of those under a "Tenant" tab produces a page nobody can
 scan. Governance's tabs are each one working surface, and being faithful to that
@@ -234,7 +253,7 @@ test('PLATFORM: every section is reachable as a tab on one route', () => {
 - [ ] **Step 3: Move each page's body into a component** under `tabs/admin/ui/`, one per section, importing the lib it already uses. Pure move; no behaviour change.
 - [ ] **Step 4: Rewrite `platform/page.tsx`** as a `.tabstrip` plus the active component, mirroring the Governance page. Read the active tab from `?section=`, defaulting to `overview`. Filter tabs by `roleAtLeast` so a builder sees only Overview.
 - [ ] **Step 5: Keep the old links working.** Each `app/(govern)/platform/<id>/page.tsx` becomes a redirect to `/platform?section=<id>`. Code and docs reference these paths (for example "set prices in Platform → Models"), so removing them outright would 404 live links.
-- [ ] **Step 6: Phone width.** Eight tabs will not fit at ~400px: put the strip in an `overflow-x: auto` container so it scrolls rather than wrapping into a block that pushes the content down a screen.
+- [ ] **Step 6: Phone width.** Six tabs will not fit at ~400px: put the strip in an `overflow-x: auto` container so it scrolls rather than wrapping into a block that pushes the content down a screen.
 - [ ] **Step 7:** Full suite, structure check, and check `/platform` plus two redirects by hand.
 - [ ] **Step 8: Commit.**
 

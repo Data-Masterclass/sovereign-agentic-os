@@ -19,15 +19,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN_SECTIONS, ADMIN_GROUP_ORDER } from './sections.ts';
 
-test('ADMIN-SECTIONS: LLM Gateway opens the admin console, not the Swagger root', () => {
-  const gw = ADMIN_SECTIONS.find((s) => s.id === 'gateway');
-  assert.ok(gw, 'the gateway section must exist');
-  assert.equal(gw.href, '/tools/litellm/ui');
-  assert.notEqual(gw.href, '/tools/litellm', 'the proxy root is LiteLLM’s API docs page, which renders blank');
+test('ADMIN-SECTIONS: no LLM Gateway tile while the embedded console is unverified', () => {
+  assert.equal(ADMIN_SECTIONS.find((s) => s.id === 'gateway'), undefined);
 });
 
-test('ADMIN-SECTIONS: the gateway is admin-only', () => {
-  assert.equal(ADMIN_SECTIONS.find((s) => s.id === 'gateway')?.minRole, 'admin');
+test('ADMIN-SECTIONS: nothing links at the proxy ROOT, which is LiteLLM’s API docs', () => {
+  for (const s of ADMIN_SECTIONS) {
+    assert.notEqual(s.href, '/tools/litellm', `${s.id} points at the Swagger page`);
+  }
 });
 
 test('ADMIN-SECTIONS: every section has a usable href and a known group', () => {

@@ -187,7 +187,9 @@ export default function GatewayPanel({ variant = 'overview' }: { variant?: Gatew
     <section className="card" style={{ marginTop: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <h2 style={{ fontFamily: 'var(--font-head)', fontSize: 16, margin: 0 }}>{TITLES[variant]}</h2>
-        <a className="muted" href="/tools/litellm" style={{ fontSize: 12 }}>Open LiteLLM →</a>
+        {/* No "Open LiteLLM" link: it pointed at the proxy root, which upstream is
+            LiteLLM's Swagger page, not its console. Restore it as
+            /tools/litellm/ui once the proxy prefix fix is verified in production. */}
       </div>
 
       {loading ? <p className="muted" style={{ fontSize: 13, margin: 0 }}>Reading the gateway…</p> : null}
