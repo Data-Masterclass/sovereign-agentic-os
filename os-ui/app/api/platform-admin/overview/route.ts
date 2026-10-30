@@ -6,7 +6,7 @@ import { adminCtx, fail } from '../_ctx';
 import { recompile } from '../_compile';
 import { listDomains } from '@tabs/admin/lib/domains';
 import { listAccess } from '@tabs/admin/lib/tenant-users';
-import { billingView, offlineSpend } from '@tabs/admin/lib/billing';
+import { billingView, offlineSpend } from '@tabs/monitoring/lib/spend';
 import { listRequests } from '@tabs/admin/lib/security';
 import { listTargets } from '@tabs/admin/lib/backups';
 import { listAudit } from '@tabs/admin/lib/audit';
@@ -35,7 +35,7 @@ export async function GET() {
     const failedBackups = listTargets().filter((t) => t.lastStatus === 'failed').length;
 
     const alerts: { level: 'warn' | 'info'; text: string; href: string }[] = [];
-    if (billing.pctUsed >= 80) alerts.push({ level: 'warn', text: `Spend at ${billing.pctUsed}% of envelope`, href: '/platform/billing' });
+    if (billing.pctUsed >= 80) alerts.push({ level: 'warn', text: `Spend at ${billing.pctUsed}% of envelope`, href: '/monitoring#spend' });
     if (openEgress > 0) alerts.push({ level: 'info', text: `${openEgress} egress request(s) awaiting approval`, href: '/platform/security' });
     if (failedBackups > 0) alerts.push({ level: 'warn', text: `${failedBackups} backup target(s) failed last run`, href: '/platform/backups' });
     if (publish.status === 'opa-unreachable') alerts.push({ level: 'info', text: 'OPA offline — policy compiled locally', href: '/governance' });

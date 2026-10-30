@@ -10,7 +10,6 @@ import { compile, type CompileInput } from '@tabs/admin/lib/policy-compiler';
 import { _reset as resetDomains, createDomain, setLayer, setArchived, listDomains, compilerView, activeDomainIds, ensureHydrated as ensureDomainsHydrated, hydrateDomains } from '@tabs/admin/lib/domains';
 import { _reset as resetSec, addAllowlist, removeAllowlist, decideRequest, listRequests, listAllowlist } from '@tabs/admin/lib/security';
 import { _reset as resetModels, registerProviderKey, listProviderKeys, setEnabled, setCap, getDefaults } from '@tabs/admin/lib/models';
-import { billingView, offlineSpend } from '@tabs/admin/lib/billing';
 import { _reset as resetBackups, restore, restorePhrase } from '@tabs/admin/lib/backups';
 import { _resetAudit as resetAudit, listAudit } from '@tabs/admin/lib/audit';
 import { _reset as resetPlugins, __seedPlugins, installPlugin, approvePlugin, listPlugins } from '@tabs/admin/lib/plugins';
@@ -257,16 +256,7 @@ test('models: cannot disable a current role default; caps + defaults projection'
   assert.equal(getDefaults().embedding, 'sovereign-embed');
 });
 
-// ------------------------------------------------------------------ billing --
-test('billing: usage-vs-envelope, hard-stop at/over the cap', () => {
-  const { spendEUR, premiumSpendEUR, trend } = offlineSpend(2000);
-  const v = billingView({ envelopeEUR: 2000, premiumCapEUR: 400, spendEUR, premiumSpendEUR, trend, source: 'offline-mock' });
-  assert.equal(v.pctUsed, 62);
-  assert.equal(v.hardStop, false);
-  const over = billingView({ envelopeEUR: 1000, premiumCapEUR: 100, spendEUR: 1000, premiumSpendEUR: 120, trend: [], source: 'offline-mock' });
-  assert.equal(over.hardStop, true);
-  assert.equal(over.premiumHardStop, true);
-});
+// billing (spend vs envelope) moved to tabs/monitoring/lib/spend.test.ts
 
 // ------------------------------------------------------------------ backups --
 test('backups: restore is GUARDED (412 without confirm) and AUDITED on success', () => {

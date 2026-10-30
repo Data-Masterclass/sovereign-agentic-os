@@ -1,16 +1,21 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
- */
-/**
- * Cost & Billing adapter — the tenant ENVELOPE (not the operational sub-caps).
  *
- * Platform Admin sets the envelope/plan/budget + the STACKIT premium ceiling;
- * Governance allocates per-key/domain/agent sub-caps WITHIN it; Monitoring
- * watches live spend. This adapter computes usage-vs-envelope with a trend and a
- * hard-stop indicator. Live spend is read from LiteLLM (best-effort) at the
- * route; offline we fall back to a deterministic mock so the cockpit renders.
- *
- * Pure math here (unit-testable); the LiteLLM fetch lives in the route.
+ * TAB:        monitoring
+ * FEATURE:    Tenant spend vs the billing ENVELOPE — usage percentage, a six-point
+ *             trend and the hard-stop indicator, plus the STACKIT premium ceiling.
+ * USER STORY: As an admin watching the tenant I want to see how much of the monthly
+ *             envelope is spent and whether the premium ceiling is about to bite, in
+ *             the same place I watch everything else that is running.
+ * ARCHITECTURE:
+ *   - Pure math, no I/O, so it is unit-testable (see spend.test.ts). The LiteLLM
+ *     read lives in the route (`app/api/platform-admin/billing`), which stays
+ *     admin-gated by `adminCtx()`; offline we fall back to a deterministic mock so
+ *     the surface renders with no gateway.
+ *   - Observation, not configuration: the envelope is DISPLAY-ONLY (see the comment
+ *     on `litellmBudgetUsd` in `core/kernel/config.ts`) — real budget enforcement is
+ *     LiteLLM's own key budget. That is why this lives in Monitoring and not Platform.
+ *   - Governance allocates the per-key/domain/agent sub-caps WITHIN the envelope.
  */
 
 export type BillingView = {

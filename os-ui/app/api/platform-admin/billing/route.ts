@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { billingView, offlineSpend } from '@tabs/admin/lib/billing';
+import { billingView, offlineSpend } from '@tabs/monitoring/lib/spend';
 import { getTenant, updateTenant } from '@tabs/admin/lib/tenant';
 import { audit } from '@tabs/admin/lib/audit';
 

@@ -7,6 +7,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '@core/ui/PageHeader';
 import { useApi } from '@core/ui/useApi';
 import DetailView, { type DetailTarget } from '@tabs/monitoring/ui/DetailView';
+import SpendSection from '@tabs/monitoring/ui/SpendSection';
+import GatewayPanel from '@tabs/admin/ui/GatewayPanel';
+import { useUser } from '@core/ui/useUser';
+import { roleAtLeast } from '@core/kernel/session';
 import { getUrlParam, patchUrl } from '@core/kernel/url-params';
 import { useTabNavReset } from '@core/kernel/tab-nav';
 import './monitoring.css';
@@ -18,6 +22,10 @@ import './monitoring.css';
  *     Last run · ⚠warnings/✗errors (Langfuse + the in-process governed ring).
  *   • Data Monitoring  — each dataset with freshness, DQ rules passing/violated, and
  *     pipeline + quality health (the real persisted DQ run).
+ *   • Cost & Spend     — tenant spend vs the billing envelope (ADMIN ONLY; the tab
+ *     itself is builder-visible, so the section is gated with roleAtLeast(role,
+ *     'admin')). It moved here from Platform because the envelope is display-only:
+ *     the whole surface is observation, which is Monitoring's job.
  * Read-only, scoped to the caller's own governed lists.
  *
  * Tab-consistent detail (same pattern as Data's tiles→DataBuilder and Agents'
@@ -146,6 +154,10 @@ function DataTileCard({ d, onOpen }: { d: DataRow; onOpen: () => void }) {
 
 export default function MonitoringPage() {
   const { data, loading, error, reload } = useApi<Feed>('/api/monitoring/artifacts');
+  const { user } = useUser();
+  // Tenant-wide spend is admin-only: Monitoring's minRole is 'builder', so the
+  // section is hidden (not rendered) for anyone below admin. Fail-closed on null.
+  const canSeeSpend = user ? roleAtLeast(user.role, 'admin') : false;
   const [agentScope, setAgentScope] = useState<ScopeKey>('mine');
   const [dataScope, setDataScope] = useState<ScopeKey>('mine');
   const [target, setTarget] = useState<DetailTarget | null>(null);
@@ -258,9 +270,15 @@ export default function MonitoringPage() {
               </div>
             )}
 
+            {canSeeSpend && (
+              <>
+                <SpendSection />
+                <GatewayPanel variant="spend" />
+              </>
+            )}
+
             <p className="hint" style={{ marginTop: 20, opacity: 0.7 }}>
-              RAG monitoring (Knowledge &amp; Files) is coming next. Spend lives in the LLM Gateway tab;
-              policy and caps live in Governance.
+              RAG monitoring (Knowledge &amp; Files) is coming next. Policy and caps live in Governance.
             </p>
           </>
         )}

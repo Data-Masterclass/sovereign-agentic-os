@@ -627,7 +627,7 @@ function ModelsPageInner() {
           </div>
         )}
         <div className="hint" style={{ marginTop: 14 }}>
-          Per-model caps tune the envelope set in <Link href="/platform/billing">Cost & Billing</Link>; live spend is in <Link href="/monitoring">Monitoring</Link>.
+          Per-model caps tune the tenant envelope; the envelope and live spend are both in <Link href="/monitoring#spend">Monitoring</Link>.
         </div>
       </div>
     </>
