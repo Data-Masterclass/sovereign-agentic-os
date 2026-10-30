@@ -11,7 +11,7 @@ import { ensureHydrated as ensureModelsHydrated } from '@tabs/admin/lib/models';
 import { ensureHydrated as ensureTenantUsersHydrated } from '@tabs/admin/lib/tenant-users';
 import { ensureHydrated as ensureTenantHydrated } from '@tabs/admin/lib/tenant';
 import { ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
-import { ensureHydrated as ensureSecurityHydrated } from '@tabs/admin/lib/security';
+import { ensureHydrated as ensureSecurityHydrated } from '@tabs/governance/lib/egress';
 import { ensureHydrated as ensurePluginsHydrated } from '@tabs/admin/lib/plugins';
 import { knownDomains } from '@tabs/admin/lib/users';
 import type { CurrentUser } from '@core/kernel/auth';

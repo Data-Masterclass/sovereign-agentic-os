@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { canViewPolicyPlane, addAccessGrant, addEgressEndpoint, isEgressAllowed, listEgress, policySources, __resetPlane } from '@core/policy/policy-view';
-import { listAllowlist } from '@tabs/admin/lib/security';
+import { listAllowlist } from '@tabs/governance/lib/egress';
 
 test('cross-instance: access grants visible through globalThis symbol', () => {
   __resetPlane();

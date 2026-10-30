@@ -536,7 +536,7 @@ test('platform settings (os-settings): promoteAsView + autonomousAgentsEnabled s
 
 test('egress allowlist (os-egress-allow): an added host survives a pod roll, a removed default stays removed', async () => {
   const os = fakeCluster();
-  const security = await import('@tabs/admin/lib/security');
+  const security = await import('@tabs/governance/lib/egress');
   try {
     security._reset();
     await security.ensureHydrated(); // fresh boot → persists the seed defaults once

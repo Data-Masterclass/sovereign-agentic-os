@@ -4,7 +4,7 @@
 import { config } from '@core/kernel/config';
 import type { Role } from '@core/kernel/session';
 import { ROLE_RIGHTS, rightsToTools } from '@core/policy/roles';
-import { addAllowlist, listAllowlist, _reset as _resetSecurity } from '@tabs/admin/lib/security';
+import { addAllowlist, listAllowlist, _reset as _resetSecurity } from '@tabs/governance/lib/egress';
 
 /**
  * May this role SEE the consolidated policy plane? Gated on the `policy.view`

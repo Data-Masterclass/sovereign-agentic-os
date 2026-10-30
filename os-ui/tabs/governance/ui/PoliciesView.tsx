@@ -106,7 +106,7 @@ export default function PoliciesView() {
             )}
             {data.canOverride ? (
               <a
-                href="/platform/roles"
+                href="/governance?section=roles"
                 className="btn ghost"
                 style={{ marginLeft: 'auto', padding: '4px 12px', fontSize: 12, textDecoration: 'none' }}
               >
@@ -114,14 +114,14 @@ export default function PoliciesView() {
               </a>
             ) : (
               <span className="hint" style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-faint)' }}>
-                Editable by platform admins in Platform → Roles
+                Editable by platform admins in the Roles & permissions tab
               </span>
             )}
           </div>
           {data.sources.length === 0 ? (
             <div className="stub-page">
               {data.canOverride
-                ? 'No capability profiles compiled yet — define them in Platform → Roles.'
+                ? 'No capability profiles compiled yet — define them in the Roles & permissions tab.'
                 : 'No capability profiles configured.'}
             </div>
           ) : (
@@ -144,7 +144,7 @@ export default function PoliciesView() {
                         </div>
                         {data.canOverride && (
                           <a
-                            href={`/platform/roles`}
+                            href="/governance?section=roles"
                             style={{ display: 'block', marginTop: 4, fontSize: 11, color: 'var(--text-faint)', textDecoration: 'none' }}
                           >
                             Edit in Roles →

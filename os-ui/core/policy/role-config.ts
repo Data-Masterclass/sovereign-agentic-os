@@ -10,7 +10,7 @@ import { osMirror } from '@core/infra/os-mirror';
  * per component / golden path." Today the answer is HARDCODED (roles.ts
  * `ROLE_RIGHTS` + the per-surface `minRole` gates); this module lifts that same
  * answer into a governed, editable matrix so a tenant Admin can adjust it as
- * needed (app/platform/roles), and the gates resolve THROUGH it.
+ * needed (the Governance → Roles & permissions tab), and the gates resolve THROUGH it.
  *
  * Shape: for each role, a set of capabilities per component. The matrix is the
  * human surface; `resolveRoleRights` COMPILES it back to the exact abstract

@@ -8,7 +8,6 @@ import { assertTenantAccess, currentTenantId, getTenant, updateTenant } from '@t
 import { assertGuarded, confirmationPhrase, GuardError } from '@tabs/admin/lib/guard';
 import { compile, type CompileInput } from '@tabs/admin/lib/policy-compiler';
 import { _reset as resetDomains, createDomain, setLayer, setArchived, listDomains, compilerView, activeDomainIds, ensureHydrated as ensureDomainsHydrated, hydrateDomains } from '@tabs/admin/lib/domains';
-import { _reset as resetSec, addAllowlist, removeAllowlist, decideRequest, listRequests, listAllowlist } from '@tabs/admin/lib/security';
 import { _reset as resetModels, registerProviderKey, listProviderKeys, setEnabled, setCap, getDefaults } from '@tabs/admin/lib/models';
 import { _reset as resetBackups, restore, restorePhrase } from '@tabs/admin/lib/backups';
 import { _resetAudit as resetAudit, listAudit } from '@tabs/admin/lib/audit';
@@ -197,38 +196,8 @@ test('domains: hydrateDomains is pure and only fills MISSING domains', () => {
   assert.equal(listDomains().find((d) => d.id === 'sales')?.layers.ml, true); // untouched
 });
 
-// ----------------------------------------------------------------- security --
-test('security: allowlist add/remove + approve request joins allowlist', () => {
-  resetSec();
-  addAllowlist('https://api.acme.io/v1');
-  assert.ok(listRequests().length >= 1);
-  const reqId = listRequests()[0].id;
-  const { host } = decideRequest(reqId, 'approved');
-  assert.ok(host && host.includes('.'));
-  removeAllowlist('api.acme.io');
-});
-
-test('security: bad host is rejected', () => {
-  resetSec();
-  assert.throws(() => addAllowlist('not-a-host'), (e: { status?: number }) => e.status === 400);
-});
-
-test('globalThis pin: egress allowlist + requests are shared singletons (security.ts)', () => {
-  resetSec();
-  addAllowlist('api.acme.io');
-  // The allowlist is pinned to globalThis — a separately-bundled route resolving
-  // Symbol.for('soa.platform-admin.egress-allow') sees the SAME Set.
-  const allowPinned = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.platform-admin.egress-allow')] as Set<string>;
-  assert.ok(allowPinned instanceof Set, 'allow is pinned as a Set on globalThis');
-  assert.ok(allowPinned.has('api.acme.io'), 'added host is visible via the globalThis pin');
-  assert.ok(listAllowlist().includes('api.acme.io'), 'listAllowlist() reads the same pinned Set');
-
-  // The requests map is pinned to its own symbol key and seeded once.
-  const reqPinned = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.platform-admin.egress-requests')] as Map<string, unknown>;
-  assert.ok(reqPinned instanceof Map, 'requests is pinned as a Map on globalThis');
-  assert.ok(reqPinned.has('egr_demo'), 'the seed request is visible via the globalThis pin');
-  assert.equal(listRequests().length, reqPinned.size, 'listRequests() reads the same pinned Map');
-});
+// Egress / security: moved to tabs/governance/lib/egress.test.ts with the lib
+// itself (2026-10-30) — the egress allowlist is policy, not tenant admin.
 
 // ------------------------------------------------------------------- models --
 test('models: provider keys hold ONLY a ref + fingerprint — never a raw value', () => {
