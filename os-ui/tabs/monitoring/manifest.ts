@@ -15,7 +15,11 @@ export const manifest: TabManifest = {
   key: 'monitoring',
   nav: { label: 'Monitoring', icon: '◷', href: '/monitoring', group: 'Manage', minRole: 'builder' },
   routes: ["/monitoring"],
-  api: ["/api/monitoring", "/api/traces", "/api/status"],
+  // `/api/platform-admin/billing` serves the Cost & Spend section (it moved here
+  // from Platform with the surface). It stays under the platform-admin prefix and
+  // stays `adminCtx()`-gated — the gate is correct either way, and moving the file
+  // would have broken nothing and gained nothing.
+  api: ["/api/monitoring", "/api/traces", "/api/status", "/api/platform-admin/billing"],
   mcpTools: [],
   policies: [],
   services: ["langfuse", "clickhouse", "opensearch"],
