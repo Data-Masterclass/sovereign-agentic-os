@@ -78,10 +78,10 @@ test('TAB-SET Build group is Workflows, Agents, Dashboards, Software', () => {
   );
 });
 
-test('TAB-SET Manage group is Connections, Governance, Monitoring, Admin', () => {
+test('TAB-SET Manage group is Connections, Governance, Monitoring, Platform', () => {
   assert.deepEqual(
     GOVERN_GROUP.tabs.map((t) => t.label),
-    ['Connections', 'Governance', 'Monitoring', 'Admin'],
+    ['Connections', 'Governance', 'Monitoring', 'Platform'],
   );
 });
 
@@ -109,13 +109,14 @@ test('TAB-SET Governance tab has minRole=builder and href=/governance', () => {
   assert.equal(p!.href, '/governance', 'Governance route must remain /governance');
 });
 
-test('TAB-SET Admin tab is in Manage group (moved from dissolved Admin group)', () => {
-  const a = GOVERN_GROUP.tabs.find((t) => t.label === 'Admin');
-  assert.ok(a, 'Admin tab must be in the Manage group');
-  // Admin is builder-visible; the /platform overview renders only the tiles a
+test('TAB-SET Platform tab is in Manage group (moved from dissolved Admin group)', () => {
+  // Labelled 'Admin' until 2026-10-30; the route was always /platform.
+  const a = GOVERN_GROUP.tabs.find((t) => t.label === 'Platform');
+  assert.ok(a, 'Platform tab must be in the Manage group');
+  // Platform is builder-visible; the /platform overview renders only the tiles a
   // builder is authorised for (fail-closed) and every sub-page stays admin-only.
-  assert.equal(a!.minRole, 'builder', 'Admin tab must have minRole: builder');
-  assert.equal(a!.href, '/platform', 'Admin tab must link to /platform');
+  assert.equal(a!.minRole, 'builder', 'Platform tab must have minRole: builder');
+  assert.equal(a!.href, '/platform', 'Platform tab must link to /platform');
 });
 
 // ---- Visibility checks ------------------------------------------------------
@@ -130,10 +131,10 @@ test('TAB-VIS creator: sees no admin-only tabs at all', () => {
   assert.ok(!labels.includes('Policies & Approvals'), 'Policies & Approvals label must be gone (renamed back to Governance)');
 });
 
-test('TAB-VIS builder sees the builder-gated tabs (Monitoring, Governance, Admin) that creators do not', () => {
+test('TAB-VIS builder sees the builder-gated tabs (Monitoring, Governance, Platform) that creators do not', () => {
   const b = visibleLabels('builder');
   const c = visibleLabels('creator');
-  for (const l of ['Monitoring', 'Governance', 'Admin']) {
+  for (const l of ['Monitoring', 'Governance', 'Platform']) {
     assert.ok(b.includes(l), `builder must see ${l}`);
     assert.ok(!c.includes(l), `creator must not see ${l}`);
   }
@@ -144,7 +145,7 @@ test('TAB-VIS creator: Manage group shows only the ungated tab (Connections)', (
   const manage = groups.find((g) => g.heading === 'Manage');
   assert.ok(manage, 'Manage group must be present for creator (Connections is ungated)');
   assert.deepEqual(manage!.tabs.map((t) => t.label), ['Connections'],
-    'creator sees only the ungated Manage tabs — Governance/Monitoring/LLM Gateway/Admin are builder+, Components admin');
+    'creator sees only the ungated Manage tabs — Governance/Monitoring/LLM Gateway/Platform are builder+, Components admin');
 });
 
 test('TAB-VIS builder: Manage group is visible and includes Governance', () => {
@@ -152,8 +153,8 @@ test('TAB-VIS builder: Manage group is visible and includes Governance', () => {
   const govern = groups.find((g) => g.heading === 'Manage');
   assert.ok(govern, 'Manage group must be present for builder');
   assert.ok(govern!.tabs.some((t) => t.label === 'Governance'), 'builder must see Governance');
-  // Admin tab is now builder-visible (tile-filtered overview); Components stays admin-only.
-  assert.ok(govern!.tabs.some((t) => t.label === 'Admin'), 'builder must see the Admin tab (tile-filtered)');
+  // Platform tab is now builder-visible (tile-filtered overview); Components stays admin-only.
+  assert.ok(govern!.tabs.some((t) => t.label === 'Platform'), 'builder must see the Platform tab (tile-filtered)');
   assert.ok(!govern!.tabs.some((t) => t.label === 'Components'), 'builder must not see Components tab');
 });
 
