@@ -11,8 +11,9 @@
  *
  * ONE admin menu: Components, the LLM Gateway, MCP access and About/Licenses are
  * NOT separate sidebar entries — they are sections of the admin menu defined in
- * tabs/admin/lib/sections.ts, which both the /platform tile grid and the section
- * strip render. Their routes still work and are listed there.
+ * tabs/admin/lib/sections.ts, which the ONE /platform tab strip renders (the tile
+ * grid was removed 2026-10-30 — two navigations for one page is how they drifted).
+ * Their routes still work and are listed there.
  *
  * `feature` keys drive OS_ENABLED_TABS gating; a tab whose key is not enabled is
  * hidden from the nav AND 404s at the route (see findDisabledTab, used by the Edge

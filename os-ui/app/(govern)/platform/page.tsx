@@ -3,177 +3,101 @@
  */
 'use client';
 
-import Link from 'next/link';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import PageHeader from '@core/ui/PageHeader';
-import { useApi } from '@core/ui/useApi';
 import { useUser } from '@core/ui/useUser';
-import { roleAtLeast, type Role } from '@core/kernel/session';
-import { ADMIN_SECTIONS, ADMIN_GROUP_ORDER } from '@tabs/admin/lib/sections';
-import GatewayPanel from '@tabs/admin/ui/GatewayPanel';
+import { DEFAULT_SECTION, resolveSection, visibleSections } from '@tabs/admin/lib/sections';
+import OverviewHealth from '@tabs/admin/ui/OverviewHealth';
+import DomainsAdmin from '@tabs/admin/ui/DomainsAdmin';
+import TenantSettings from '@tabs/admin/ui/TenantSettings';
+import UsersAccess from '@tabs/admin/ui/UsersAccess';
+import ModelsProviders from '@tabs/admin/ui/ModelsProviders';
+import BackupsRestore from '@tabs/admin/ui/BackupsRestore';
 
 /**
- * The Platform-Admin quick-link tiles, each with a machine-readable minimum role.
- * The grid is filtered FAIL-CLOSED: a tile with no `minRole` a builder clears is
- * hidden (never rendered). Every real platform-admin control is `admin`; the one
- * builder-visible tile is self-service Settings (theme + read-only deployment
- * config at /settings — NOT the tenant-admin /platform/settings page).
+ * Platform — ONE route, tabs on top, exactly like Governance.
+ *
+ * The tile grid is GONE (2026-10-30). This page used to be a grouped grid of
+ * links into /platform/<id> sub-routes; before that it had a section strip AND
+ * the grid, which is why the strip was deleted. The answer was never "which of
+ * the two", it was "one": a `.tabstrip` that switches content in place, the
+ * pattern app/(govern)/governance/page.tsx already uses. The old sub-routes
+ * remain as redirects to ?section=<id>, so links and bookmarks still work.
+ *
+ * SECURITY — the gate moved from the route to the tab. The old layout allowed any
+ * non-admin at exactly `/platform` and bounced them out of every deeper
+ * `/platform/*` path; that worked only while each admin surface WAS a deeper
+ * path. Now they all live here, so:
+ *   - `visibleSections(role)` builds the strip FAIL-CLOSED — an unresolved role
+ *     (still loading, or anonymous) gets no tabs at all, so an admin tab can
+ *     never flash into a builder's strip;
+ *   - `resolveSection(?section=, role)` refuses a deep link to a tab the role may
+ *     not see, so `/platform?section=domains` typed by a builder renders NOTHING
+ *     rather than falling back to something;
+ *   - each section component checks `sectionMinRole(<id>)` again on its own and
+ *     keeps its hooks (and therefore its fetches) behind that check;
+ *   - and the real enforcement is unchanged: every /api/platform-admin/* route is
+ *     adminCtx()-gated server-side. The UI gate is defence in depth.
+ * The one builder-readable tab is Overview & Health, which is builder-readable
+ * with admin-only actions (see tabs/admin/ui/OverviewHealth.tsx).
  */
-
-
-type Overview = {
-  tenant: { id: string; name: string; residency: string; plan: string };
-  opa: string;
-  health: { total: number; running: number; source: string };
-  counts: { domains: number; domainsActive: number; users: number; usersActive: number; admins: number };
-  billing: { envelopeEUR: number; spendEUR: number; pctUsed: number; hardStop: boolean };
-  policy: { principals: number; tools: string[]; bundle: string; publish: { status: string; detail: string } };
-  alerts: { level: 'warn' | 'info'; text: string; href: string }[];
-  recentAudit: { id: string; ts: string; actor: string; action: string; detail: string }[];
-};
-
-export default function PlatformOverview() {
-  const { user } = useUser();
-  const role = user?.role ?? null;
-  const isAdmin = role === 'admin';
-
-  // The cockpit aggregate is adminCtx-gated. The builder view early-returns
-  // below and never reads this, so its 403 for a builder is inert (never shown).
-  const { data, loading, error, reload } = useApi<Overview>('/api/platform-admin/overview');
-
-  // Fail-closed filter: hidden means not rendered. A section shows only if the
-  // caller's role clears its minRole; an unknown role (null) sees nothing. The
-  // list is shared with the section strip (tabs/admin/lib/sections.ts) so the two
-  // cannot drift — they used to, and two sections were strip-only.
-  const visible = ADMIN_SECTIONS.filter(
-    (s) => s.id !== 'overview' && role !== null && roleAtLeast(role, s.minRole),
+export default function PlatformPage() {
+  return (
+    <Suspense fallback={null}>
+      <PlatformPageInner />
+    </Suspense>
   );
+}
 
-  const tileGrid = (
-    <>
-      {ADMIN_GROUP_ORDER.map((group) => {
-        const inGroup = visible.filter((s) => s.group === group);
-        if (inGroup.length === 0) return null;
-        return (
-          <div key={group}>
-            <div className="section-title" style={{ marginTop: 22 }}>{group}</div>
-            <div className="grid">
-              {inGroup.map((s) => (
-                <Link key={s.href} href={s.href} className="golden">
-                  <span className="ico">❖</span>
-                  <span><strong>{s.label}</strong><div className="muted" style={{ fontSize: 11.5 }}>{s.sub}</div></span>
-                  <span className="arr">→</span>
-                </Link>
-              ))}
-            </div>
-          </div>
-        );
-      })}
-    </>
-  );
+function PlatformPageInner() {
+  const searchParams = useSearchParams();
+  const { user, loading } = useUser();
+  // Fail closed: treat "still loading" exactly like "no role" — null — so the
+  // strip and the body are both empty until /api/auth/me answers.
+  const role = loading ? null : user?.role ?? null;
 
-  // Builder view: a tidy self-service surface — no admin KPIs, alerts or audit.
-  if (!isAdmin) {
-    return (
-      <>
-        <PageHeader title="Admin" crumb="your platform surface" />
-        <div className="content">
-          <p className="lead">
-            Tenant configuration — identity, users, models, security, billing — is managed by a{' '}
-            <strong>platform admin</strong>. Your own domain roles and approvals live in{' '}
-            <Link href="/governance">Policies &amp; Approvals</Link>. Below is what you can manage here.
-          </p>
-          {tileGrid}
-        </div>
-      </>
-    );
-  }
+  // ?section=<id> deep-links a tab (the sidebar entry, Governance's cross-link
+  // back to Users & Access, an overview alert pointing at Backups). Applied in an
+  // effect too, so an in-page <Link> to ?section=… switches without a remount.
+  const sectionParam = searchParams?.get('section') ?? null;
+  const [section, setSection] = useState<string | null>(sectionParam ?? DEFAULT_SECTION);
+  useEffect(() => { if (sectionParam) setSection(sectionParam); }, [sectionParam]);
+
+  const visible = visibleSections(role);
+  const current = resolveSection(section, role);
 
   return (
     <>
-      <PageHeader title="Platform Admin" crumb="tenant control room · is the platform healthy & within budget?" />
+      <PageHeader
+        title="Platform"
+        crumb="tenant administration · health · domains · settings · users · models · backups"
+      />
       <div className="content">
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <p className="lead" style={{ marginBottom: 0 }}>
-            The tenant cockpit. Platform Admin <strong>configures</strong> structure, identity, models and
-            posture; <Link href="/governance">Governance</Link> enforces & sees it, <Link href="/monitoring">Monitoring</Link>{' '}
-            watches live spend. Every action here is audited.
-          </p>
-          <button className="btn ghost" onClick={reload} disabled={loading}>{loading ? <span className="spin" /> : 'Refresh'}</button>
+        {/* Six tabs do not fit at ~400px, so the strip SCROLLS sideways rather
+            than wrapping into a block that pushes the content down a screen. */}
+        <div style={{ overflowX: 'auto', marginBottom: 24 }}>
+          <div className="tabstrip" style={{ flexWrap: 'nowrap', minWidth: 'max-content' }}>
+            {visible.map((s) => (
+              <button
+                key={s.id}
+                className={current === s.id ? 'active' : ''}
+                onClick={() => setSection(s.id)}
+                title={s.sub}
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {error ? <div className="error" style={{ marginTop: 18 }}>{error}</div> : null}
-
-        {data ? (
-          <>
-            <div className="pa-kpis" style={{ marginTop: 18 }}>
-              <div className="card pa-kpi">
-                <span className="k-label">Component health</span>
-                <span className="k-value">{data.health.running}/{data.health.total}</span>
-                <span className="k-sub">{data.health.source === 'live' ? 'running · live cluster' : 'registry · offline'}</span>
-              </div>
-              <div className="card pa-kpi">
-                <span className="k-label">Spend vs envelope</span>
-                <span className="k-value">{data.billing.pctUsed}%</span>
-                <div className={`pa-bar${data.billing.hardStop ? ' stop' : data.billing.pctUsed >= 80 ? ' warn' : ''}`}>
-                  <span style={{ width: `${Math.min(100, data.billing.pctUsed)}%` }} />
-                </div>
-                <span className="k-sub">€{data.billing.spendEUR} / €{data.billing.envelopeEUR} per mo</span>
-              </div>
-              <div className="card pa-kpi">
-                <span className="k-label">Users</span>
-                <span className="k-value">{data.counts.usersActive}</span>
-                <span className="k-sub">{data.counts.admins} admin · {data.counts.users} total</span>
-              </div>
-              <div className="card pa-kpi">
-                <span className="k-label">Domains</span>
-                <span className="k-value">{data.counts.domainsActive}</span>
-                <span className="k-sub">{data.counts.domains} incl. archived</span>
-              </div>
-              <div className="card pa-kpi">
-                <span className="k-label">Compiled to OPA</span>
-                <span className="k-value">{data.policy.principals}</span>
-                <span className="k-sub">principals · {data.policy.tools.length} tools · {data.policy.publish.status}</span>
-              </div>
-            </div>
-
-            <div className="section-title">Open admin alerts{data.alerts.length ? <span className="count-pill">{data.alerts.length}</span> : null}</div>
-            {data.alerts.length === 0 ? (
-              <div className="hint">Nothing needs you. Health green, spend within envelope.</div>
-            ) : (
-              data.alerts.map((a, i) => (
-                <Link key={i} href={a.href} className={`pa-alert ${a.level}`}>
-                  <span className="dot" />{a.text}<span className="golden" style={{ border: 'none', background: 'none', marginLeft: 'auto', padding: 0 }}>→</span>
-                </Link>
-              ))
-            )}
-
-            {tileGrid}
-
-            <div className="section-title" style={{ marginTop: 22 }}>
-              Recent audit
-              <Link href="/governance" className="hint" style={{ marginLeft: 10, textTransform: 'none', letterSpacing: 0 }}>full record in Governance →</Link>
-            </div>
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
-                <tbody>
-                  {data.recentAudit.length === 0 ? (
-                    <tr><td colSpan={4} className="muted">No actions yet this session.</td></tr>
-                  ) : data.recentAudit.map((e) => (
-                    <tr key={e.id}>
-                      <td className="muted" style={{ fontSize: 11.5 }}>{new Date(e.ts).toLocaleString()}</td>
-                      <td><strong>{e.actor}</strong></td>
-                      <td className="mono" style={{ fontSize: 12 }}>{e.action}</td>
-                      <td style={{ whiteSpace: 'normal' }}>{e.detail}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : loading ? <div className="stub-page" style={{ marginTop: 20 }}>Loading cockpit…</div> : null}
-        <GatewayPanel variant="overview" />
-
+        {current === 'overview' && <OverviewHealth />}
+        {current === 'domains' && <DomainsAdmin />}
+        {current === 'settings' && <TenantSettings />}
+        {current === 'access' && <UsersAccess />}
+        {current === 'models' && <ModelsProviders />}
+        {current === 'backups' && <BackupsRestore />}
       </div>
     </>
   );

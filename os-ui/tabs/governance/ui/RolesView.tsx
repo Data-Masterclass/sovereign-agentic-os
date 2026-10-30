@@ -108,7 +108,7 @@ export default function RolesView() {
   const assignLink = (
     <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
       Giving a <strong>person</strong> a role is administration, not policy —{' '}
-      <Link href="/platform/access">Platform → Users &amp; Access →</Link>
+      <Link href="/platform?section=access">Platform → Users &amp; Access →</Link>
     </p>
   );
 

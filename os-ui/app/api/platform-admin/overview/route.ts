@@ -37,7 +37,7 @@ export async function GET() {
     const alerts: { level: 'warn' | 'info'; text: string; href: string }[] = [];
     if (billing.pctUsed >= 80) alerts.push({ level: 'warn', text: `Spend at ${billing.pctUsed}% of envelope`, href: '/monitoring#spend' });
     if (openEgress > 0) alerts.push({ level: 'info', text: `${openEgress} egress request(s) awaiting approval`, href: '/governance?section=egress' });
-    if (failedBackups > 0) alerts.push({ level: 'warn', text: `${failedBackups} backup target(s) failed last run`, href: '/platform/backups' });
+    if (failedBackups > 0) alerts.push({ level: 'warn', text: `${failedBackups} backup target(s) failed last run`, href: '/platform?section=backups' });
     if (publish.status === 'opa-unreachable') alerts.push({ level: 'info', text: 'OPA offline — policy compiled locally', href: '/governance' });
 
     return NextResponse.json({
