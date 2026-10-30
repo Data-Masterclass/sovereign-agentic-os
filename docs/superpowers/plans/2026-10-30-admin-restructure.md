@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** Admin stops being the place things land when nobody knows where they go. Seventeen sections become nine, each remaining one genuinely tenant administration, with **no new top-level tabs**.
+**Goal:** Admin stops being the place things land when nobody knows where they go. Seventeen sections become eight, each remaining one genuinely tenant administration, with **no new top-level tabs**.
 
 **Architecture:** `tabs/admin/lib/sections.ts` is already the single source of truth for the menu, and `/platform` renders it as a grouped tile grid. So most of this is moving entries between owners and giving three arrivals a home, not rebuilding navigation.
 
@@ -29,13 +29,17 @@
 | Role *definitions* → Governance, role *assignment* stays | Defining what a role may do is policy: rare, high-stakes, auditable, belongs beside approvals and OPA. Assigning a person a role is routine administration and belongs with Users & Access. Splitting both would make admins bounce between tabs for one task. |
 | Connections becomes admin-only | A connection then means one thing: the tenant's trust boundary. Possible **only** because personal linking moves to the account menu — see the constraint above. |
 | OS-published MCP endpoints leave the registry | `tabs/admin/lib/mcp-registry.ts` carries `kind: 'api'` rows pointing at the OS's own endpoints (`/api/gateway` among them). Those were never trust decisions; listing them buries the few third-party servers an admin actually vouched for. |
-| Security & Egress stays in Platform **for now** | The egress allowlist is simultaneously policy (argues Governance) and connector config (argues Connections). Revisit once the rest has moved and it is clear which it reads as. |
+| Security & Egress → Governance | Settled 2026-10-30: the egress allowlist reads as policy, and it sits naturally beside the OPA policy view. |
+| Roles & Permissions → Governance **whole**, not split | Settled 2026-10-30. The earlier plan split definition from assignment; the user chose to move the entire surface. Assignment of a role to a person stays reachable from Users & Access, which remains in Platform, via a cross-link. |
 
-**Target Platform, nine sections in three groups**
+**Target Platform, eight sections in three groups**
 
 - **Tenant** — Overview, Domains, Tenant Settings, Users & Access
 - **Models** — LLM Gateway, Models & Providers
-- **Infrastructure** — Components & System, Backups & Restore, Security & Egress
+- **Infrastructure** — Components & System, Backups & Restore
+
+Individual users are set up here, in Platform. Only the *definition* of what a
+role may do lives in Governance.
 
 ---
 
@@ -68,13 +72,13 @@
 test('PLATFORM: holds only tenant administration', () => {
   const ids = ADMIN_SECTIONS.map((s) => s.id).sort();
   assert.deepEqual(ids, [
-    'access', 'backups', 'components', 'domains', 'gateway',
-    'models', 'overview', 'security', 'settings',
+    'access', 'backups', 'components', 'domains',
+    'gateway', 'models', 'overview', 'settings',
   ]);
 });
 
 test('PLATFORM: the moved surfaces are gone', () => {
-  for (const gone of ['billing', 'roles', 'plugins', 'mcp-apis', 'oauth-apps', 'my-mcp', 'my-settings', 'licenses']) {
+  for (const gone of ['billing', 'roles', 'security', 'plugins', 'mcp-apis', 'oauth-apps', 'my-mcp', 'my-settings', 'licenses']) {
     assert.equal(ADMIN_SECTIONS.find((s) => s.id === gone), undefined, `${gone} still in Platform`);
   }
 });
@@ -85,7 +89,7 @@ test('PLATFORM: three groups, in order', () => {
 ```
 
 - [ ] **Step 2: Run it and watch it fail.** `cd os-ui && npm test 2>&1 | grep PLATFORM` — expect failures naming the eight surfaces still present.
-- [ ] **Step 3: Delete the seven moved entries** from `ADMIN_SECTIONS` (keep `access`; it stays). Set `ADMIN_GROUP_ORDER` to the three groups and move `access` to group `'Tenant'`.
+- [ ] **Step 3: Delete the nine moved entries** from `ADMIN_SECTIONS` (keep `access`; it stays). Set `ADMIN_GROUP_ORDER` to the three groups and move `access` to group `'Tenant'`.
 - [ ] **Step 4: Change the nav label.** In `core/kernel/tabs.ts`, `{ label: 'Admin', … }` → `{ label: 'Platform', … }`. Leave `href: '/platform'` and `feature: 'admin'` alone.
 - [ ] **Step 5: Run the suite.** `npm test` — green, and `node ../scripts/check-structure.mjs` at baseline.
 - [ ] **Step 6: Commit.** `git commit -m "refactor(platform): Admin becomes Platform, nine sections in three groups"`
@@ -167,13 +171,13 @@ test('MCP-REGISTRY: lists only what an admin added, not the OS own endpoints', (
 
 ---
 
-## Task 5: Role definitions → Governance
+## Task 5: Roles & Permissions and Security & Egress → Governance
 
 **Files:** create `os-ui/tabs/governance/lib/roles.ts` + test; modify the Governance page, `os-ui/app/(govern)/platform/access/` to cross-link, and delete `os-ui/app/(govern)/platform/roles/`
 
 - [ ] **Step 1: Write the failing test** asserting role definitions are readable from `@tabs/governance/lib/roles` and that each role's permission list is non-empty.
 - [ ] **Step 2: Run it.** Fails on the missing module.
-- [ ] **Step 3: Move the definition logic** from the admin roles lib into `tabs/governance/lib/roles.ts`. Leave assignment in Users & Access.
+- [ ] **Step 3: Move the whole roles surface** into `tabs/governance/lib/roles.ts` and the egress/security surface into `tabs/governance/lib/egress.ts`. Both become Governance tabs. Assigning a person a role stays in Platform's Users & Access.
 - [ ] **Step 4: Add the cross-link** from Users & Access to the Governance role page, and back. This is the workflow cost of the split, so it must be one click each way.
 - [ ] **Step 5:** Delete the old route, one `git rm` per file.
 - [ ] **Step 6:** Suite + structure check.
@@ -190,6 +194,53 @@ test('MCP-REGISTRY: lists only what an admin added, not the OS own endpoints', (
 
 ---
 
+## Task 7: Platform adopts the Governance look — one route, tabs on top
+
+**This is not the strip we deleted.** On 2026-10-28 Platform had a navigation
+strip *and* a tile grid: two navigation systems for one page, which is why the
+strip went. Governance's pattern is **one** system — a `.tabstrip` that switches
+content in place on a single route. Adopting it means the **tile grid goes away**,
+not that the strip comes back.
+
+**Files:** modify `os-ui/app/(govern)/platform/page.tsx`; create
+`os-ui/tabs/admin/ui/<Section>.tsx` per section; add redirects for the old routes
+
+**Reference:** `os-ui/app/(govern)/governance/page.tsx` — a `.tabstrip` plus one
+component per tab (`ApprovalsInbox`, `PoliciesView`, `AuditLog`, `CostLimits`),
+with `?focus=` deep-link support.
+
+**Interfaces:**
+- Consumes: `ADMIN_SECTIONS` and `ADMIN_GROUP_ORDER` from Task 1.
+- Produces: `/platform?section=<id>`, the deep-link shape every old route redirects to.
+
+**One tab per section, eight tabs, not one tab per group.** Each Platform
+section is a full working surface — a users table, a domains table, a backups
+runner. Stacking four of those under a "Tenant" tab produces a page nobody can
+scan. Governance's tabs are each one working surface, and being faithful to that
+means eight tabs. Render the strip in `ADMIN_GROUP_ORDER` sequence so related
+tabs sit together.
+
+- [ ] **Step 1: Write the failing test** in `sections.test.ts`:
+
+```ts
+test('PLATFORM: every section is reachable as a tab on one route', () => {
+  for (const s of ADMIN_SECTIONS) {
+    assert.equal(s.href, `/platform?section=${s.id}`, `${s.id} still points at its own route`);
+  }
+});
+```
+
+- [ ] **Step 2: Run it.** Fails: hrefs are still `/platform/<id>`.
+- [ ] **Step 3: Move each page's body into a component** under `tabs/admin/ui/`, one per section, importing the lib it already uses. Pure move; no behaviour change.
+- [ ] **Step 4: Rewrite `platform/page.tsx`** as a `.tabstrip` plus the active component, mirroring the Governance page. Read the active tab from `?section=`, defaulting to `overview`. Filter tabs by `roleAtLeast` so a builder sees only Overview.
+- [ ] **Step 5: Keep the old links working.** Each `app/(govern)/platform/<id>/page.tsx` becomes a redirect to `/platform?section=<id>`. Code and docs reference these paths (for example "set prices in Platform → Models"), so removing them outright would 404 live links.
+- [ ] **Step 6: Phone width.** Eight tabs will not fit at ~400px: put the strip in an `overflow-x: auto` container so it scrolls rather than wrapping into a block that pushes the content down a screen.
+- [ ] **Step 7:** Full suite, structure check, and check `/platform` plus two redirects by hand.
+- [ ] **Step 8: Commit.**
+
+---
+
 ## Open question for the user
+
 
 **Does a creator still need to see their own connections at all?** This plan assumes yes, surfaced at the point of use in Files and Knowledge plus the account menu. If the answer is no, and only admins ever connect anything, Task 4 simplifies a lot: the per-user OAuth path can be reached from the account menu only, and Files/Knowledge source pickers list what the tenant already connected. Confirm before starting Task 4.
