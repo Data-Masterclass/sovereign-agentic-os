@@ -64,3 +64,34 @@ see `os-ui/core/kernel/config.ts` for the authoritative list and the chart's
 **Is MCP a second implementation?** No. The MCP endpoint dispatches through the same
 `core/mcp/handleRpc` and the same governed libraries as the UI, with the same role floors
 and the same OPA checks.
+
+## Connecting Google Drive or OneDrive (operational notes)
+
+Both are **per-user OAuth**: an admin registers the provider app once, then each
+person consents for themselves. An admin cannot connect Drive on someone's
+behalf — the token is owner-scoped and owner-only, enforced in code.
+
+**Register the app at Admin → Drive OAuth apps.** The redirect URI the OS sends
+is `<public-url>/api/connections/oauth/<google|microsoft>/callback`, and it must
+match byte for byte.
+
+**Microsoft: the Azure app must be MULTI-TENANT.** The OS authenticates through
+the `/common` endpoint. A single-tenant app there is rejected with
+`AADSTS50194`, surfaced as a generic `invalid_request`. Set supported account
+types to "any organizational directory", or `"signInAudience":
+"AzureADMultipleOrgs"` in the manifest. Multi-tenant governs which directories
+*could* authenticate; who actually gets in is still gated by consent.
+
+**Scopes are read-only and minimal:** `drive.readonly` for Google;
+`Files.Read` + `offline_access` for Microsoft. `offline_access` is what makes a
+refresh token available, so without it a connection dies after an hour.
+
+**If the exchange fails**, check the client **secret value**, not the secret ID —
+Azure shows the value once and the ID looks plausible. The OS now forwards the
+provider's code as `drive_detail`; `AADSTS7000215` means a bad secret.
+
+**Known limits.** The connector reads the signed-in user's own drive. A Google
+**Shared Drive** returns empty, because the Drive query does not send
+`supportsAllDrives`/`includeItemsFromAllDrives`. A **SharePoint or Teams**
+library is not reachable at all — the OneDrive connector calls `/me/drive`.
+Folder scope needs a Graph **item id**, not a path, despite the field label.
