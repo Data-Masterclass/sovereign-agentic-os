@@ -80,7 +80,7 @@ export const TAB_GROUPS: TabGroup[] = [
       // platform-admin tile stays admin-only, and each /platform sub-page's API
       // is hard-gated by adminCtx()/requireAdmin — a builder sees only the
       // self-service Settings tile and never reaches an admin control.
-      { label: 'Admin', icon: '❖', href: '/platform', role: 'Builder / Administrator', minRole: 'builder', feature: 'admin' },
+      { label: 'Platform', icon: '❖', href: '/platform', role: 'Builder / Administrator', minRole: 'builder', feature: 'admin' },
     ],
   },
 ];

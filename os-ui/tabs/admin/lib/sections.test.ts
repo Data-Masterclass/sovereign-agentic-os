@@ -41,3 +41,20 @@ test('ADMIN-SECTIONS: section ids are unique', () => {
   const ids = ADMIN_SECTIONS.map((s) => s.id);
   assert.equal(new Set(ids).size, ids.length);
 });
+
+test('PLATFORM: holds only tenant administration', () => {
+  const ids = ADMIN_SECTIONS.map((s) => s.id).sort();
+  assert.deepEqual(ids, [
+    'access', 'backups', 'domains', 'models', 'overview', 'settings',
+  ]);
+});
+
+test('PLATFORM: the moved surfaces are gone', () => {
+  for (const gone of ['billing', 'roles', 'security', 'plugins', 'mcp-apis', 'oauth-apps', 'my-mcp', 'my-settings', 'licenses', 'components', 'gateway']) {
+    assert.equal(ADMIN_SECTIONS.find((s) => s.id === gone), undefined, `${gone} still in Platform`);
+  }
+});
+
+test('PLATFORM: three groups, in order', () => {
+  assert.deepEqual([...ADMIN_GROUP_ORDER], ['Tenant', 'Models', 'Infrastructure']);
+});

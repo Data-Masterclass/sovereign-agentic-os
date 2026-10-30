@@ -226,10 +226,10 @@ test('PLATFORM-GATE 4: the 13-tab nav and the one admin menu declare the right g
   const src = read('core/kernel/tabs.ts');
   const sections = read('tabs/admin/lib/sections.ts');
 
-  // Admin (/platform) is builder-visible: the page itself fail-closes, filtering the
-  // section list down to what the viewer's role may reach.
-  assert.match(src, /label: 'Admin'[^}]*minRole: 'builder'/s,
-    "Tab 'Admin' must declare minRole: 'builder' (page fail-closes for non-admins)");
+  // Platform (/platform, labelled 'Admin' until 2026-10-30) is builder-visible: the page
+  // itself fail-closes, filtering the section list down to what the viewer's role may reach.
+  assert.match(src, /label: 'Platform'[^}]*minRole: 'builder'/s,
+    "Tab 'Platform' must declare minRole: 'builder' (page fail-closes for non-admins)");
   // Governance + Monitoring are builder+ (builders approve promotions).
   for (const label of ['Governance', 'Monitoring']) {
     assert.match(src, new RegExp(`label: '${label}'[^}]*minRole: 'builder'`, 's'),
@@ -242,9 +242,14 @@ test('PLATFORM-GATE 4: the 13-tab nav and the one admin menu declare the right g
     assert.doesNotMatch(src, new RegExp(`label: '${label.replace('/', '\\/')}'`),
       `"${label}" must not be a sidebar tab — it belongs to tabs/admin/lib/sections.ts`);
   }
-  // Components & System stays strictly admin-only wherever it is reached from.
-  assert.match(sections, /id: 'components'[^}]*minRole: 'admin'/s,
-    "the Components section must declare minRole: 'admin'");
+  // Components & System is no longer its own Platform section: it merges into Overview.
+  // Its admin-only gate now lives on the route (PLATFORM-GATE 1's server-side layout), not
+  // on a tile. Overview must stay 'builder' — it is the only Platform surface a builder can
+  // see, so the merge must not adopt Components' stricter role.
+  assert.doesNotMatch(sections, /id: 'components'/,
+    'Components & System merged into Overview; it is not a separate Platform section');
+  assert.match(sections, /id: 'overview'[^}]*minRole: 'builder'/s,
+    "the Overview section must stay minRole: 'builder' (the only builder-visible Platform surface)");
   // The renamed labels are the live ones.
   assert.doesNotMatch(src, /label: 'Policies & Approvals'/, 'Policies & Approvals was renamed to Governance');
   assert.doesNotMatch(src, /label: 'Metrics'/, 'Metrics was renamed to KPIs');
