@@ -9,6 +9,7 @@ import { asOAuthProvider } from '@core/auth/providers';
 import { exchangeCode } from '@core/auth/client';
 import { verifyState, nonceMatches, OAUTH_STATE_COOKIE } from '@core/auth/state';
 import { publicBaseUrl, callbackUri } from '@core/auth/redirect';
+import { FILES_LANDING_PATH, safeErrorCode } from '@core/auth/drive-landing';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +21,7 @@ export const dynamic = 'force-dynamic';
  * secret; always lands the user back on the Files tab with a status flag.
  */
 function landing(base: string, params: Record<string, string>): NextResponse {
-  const to = new URL(`${base}/files`);
+  const to = new URL(`${base}${FILES_LANDING_PATH}`);
   for (const [k, v] of Object.entries(params)) to.searchParams.set(k, v);
   const res = NextResponse.redirect(to.toString());
   res.cookies.delete(OAUTH_STATE_COOKIE); // one-time nonce
@@ -35,7 +36,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ provider: strin
 
   const url = new URL(req.url);
   const providerError = url.searchParams.get('error');
-  if (providerError) return landing(base, { drive_error: providerError });
+  if (providerError) {
+    // `error` alone is generic ('invalid_request'); the CODE in error_description
+    // is what names the cause. Forward only a matched code, never the free text.
+    const detail = safeErrorCode(url.searchParams.get('error_description') ?? '');
+    return landing(base, detail ? { drive_error: providerError, drive_detail: detail } : { drive_error: providerError });
+  }
 
   const code = url.searchParams.get('code') ?? '';
   const stateToken = url.searchParams.get('state') ?? '';
@@ -61,6 +67,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ provider: strin
   } catch (e) {
     // Never surface the code/tokens; a coarse reason is enough for the UI.
     const reason = (e as { status?: number })?.status === 409 ? 'not_configured' : 'exchange_failed';
-    return landing(base, { drive_error: reason });
+    // Keep the provider's code. `exchange_failed` on its own cannot distinguish a
+    // mistyped client secret from an unreachable token endpoint.
+    const detail = safeErrorCode(String((e as Error)?.message ?? ''));
+    return landing(base, detail ? { drive_error: reason, drive_detail: detail } : { drive_error: reason });
   }
 }
