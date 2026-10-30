@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { recompile } from '../_compile';
-import { listAllowlist, addAllowlist, removeAllowlist, listRequests, decideRequest, posture } from '@tabs/admin/lib/security';
+import { listAllowlist, addAllowlist, removeAllowlist, listRequests, decideRequest, posture } from '@tabs/governance/lib/egress';
 import { listProviderKeys } from '@tabs/admin/lib/models';
 import { audit } from '@tabs/admin/lib/audit';
 

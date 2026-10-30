@@ -2,6 +2,17 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 /**
+ * TAB:        governance
+ * FEATURE:    Security & Egress adapter — the sovereign-posture board and the egress allowlist
+ * USER STORY: As a platform admin I want the egress allowlist beside approvals, policy and audit,
+ *             because deciding which external hosts this tenant may reach is a policy decision —
+ *             rare, high-stakes and auditable — not day-to-day tenant administration.
+ * ARCHITECTURE:
+ *   - Moved here from tabs/admin/lib/security.ts on 2026-10-30: the allowlist compiles into the
+ *     OPA `egress_allow` resource, so it belongs with the OPA policy view it feeds.
+ *   - Pure data + mirror I/O; the UI is tabs/governance/ui/EgressView.tsx and the write path stays
+ *     /api/platform-admin/security, hard-gated by adminCtx().
+ *
  * Security & Egress adapter — the sovereign-posture board.
  *
  * - Egress allowlist: Admin-curated list of hosts the tenant may reach. Builders

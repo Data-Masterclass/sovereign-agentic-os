@@ -4,7 +4,7 @@
 import 'server-only';
 import { compileAndPublish, type CompiledPolicy, type PublishResult } from '@tabs/admin/lib/policy-compiler';
 import { compilerView as domainView, ensureHydrated as ensureDomainsHydrated } from '@tabs/admin/lib/domains';
-import { listAllowlist } from '@tabs/admin/lib/security';
+import { listAllowlist } from '@tabs/governance/lib/egress';
 import { enabledMap } from '@tabs/admin/lib/models';
 import { compileUsers } from '@tabs/admin/lib/tenant-users';
 import { currentTenantId } from '@tabs/admin/lib/tenant';

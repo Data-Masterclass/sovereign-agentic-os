@@ -649,6 +649,14 @@ export default function AccessPage() {
           changes are delegated to Builders in <a href="/governance">Governance</a>.
         </p>
 
+        {/* The one workflow cost of the split: assigning a person a role is here,
+            defining what that role MAY DO is policy and lives in Governance. One
+            click each way — the Roles & permissions tab links straight back. */}
+        <p className="hint" style={{ marginTop: -4, marginBottom: 14 }}>
+          Assigning a role happens here. <strong>What a role may do</strong> is policy —{' '}
+          <a href="/governance?section=roles">Governance → Roles &amp; permissions →</a>
+        </p>
+
         <div className="hint" style={{ marginBottom: 14 }}>
           SSO {sso?.enabled ? <span className="badge ok">enabled</span> : <span className="badge muted">off</span>}
           {' · '}SCIM {sso?.scim ? <span className="badge ok">on</span> : <span className="badge muted">off</span>}

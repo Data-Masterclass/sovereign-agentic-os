@@ -12,34 +12,24 @@ import {
   type Component,
   type Capability,
 } from '@core/policy/role-config';
-import { resolveRoleRights } from '@core/policy/role-config';
-import { rightsToTools, roleLabel, compileRoleToGrants } from '@core/policy/roles';
+import { compileRoleToGrants } from '@core/policy/roles';
+// The role DEFINITION vocabulary (order, blurbs, the definition projection) is
+// owned by Governance — defining what a role may do is policy. This route is
+// only the adminCtx()-gated write path.
+import { roleDefinitions } from '@tabs/governance/lib/roles';
 import { audit } from '@tabs/admin/lib/audit';
 import { listUsers } from '@tabs/admin/lib/users';
 import { ROLES, type Role } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 
-const ROLE_BLURB: Record<Role, string> = {
-  creator: 'Base role — create & run their own work and consume shared assets. Cannot promote, approve, or reach admin.',
-  builder: 'Domain approver — creator rights plus review/approve domain promotions, deploys, knowledge and connections. Not a people-admin.',
-  domain_admin: 'Builder rights plus administering users in their own domain(s) — invite, edit, deactivate, assign roles up to Builder. Never mints another domain admin.',
-  admin: 'Tenant control — everything, plus users, policy, certification, egress and cost caps. The only role that assigns Domain admin.',
-};
 
 /** The full matrix + everything the editor needs to render + a live rights/tools read. */
 async function view() {
   const matrix = await getMatrix();
   const applicable: Record<string, Capability[]> = {};
   for (const c of COMPONENTS) applicable[c.id] = CAPABILITIES.map((k) => k.id).filter((k) => isApplicable(c.id, k));
-  const roles = ROLES.map((r) => ({
-    id: r,
-    label: roleLabel(r),
-    blurb: ROLE_BLURB[r],
-    rights: resolveRoleRights(r),
-    tools: rightsToTools(r),
-  }));
-  return { components: COMPONENTS, capabilities: CAPABILITIES, applicable, matrix, roles };
+  return { components: COMPONENTS, capabilities: CAPABILITIES, applicable, matrix, roles: roleDefinitions() };
 }
 
 export async function GET() {
