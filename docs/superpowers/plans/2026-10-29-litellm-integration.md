@@ -170,7 +170,27 @@ Sources: `/model/info`, `/model_group/info`, `/team/list`, `/budget/list`, `/key
 
 ---
 
-## Phase 3 — Write-reconcile, and the master key leaves the runtime
+## Phase 3 — Write-reconcile, and the master key leaves the runtime ✅ DONE (2026-10-30)
+
+**Landed.** Deviations and decisions worth recording:
+
+* **Root cause of the master-key run path found:** the chart already provisioned a scoped virtual key (`litellmAgentKey` → secret `agent-litellm-key`, registered in LiteLLM by the idempotent `litellm-agent-key-init` Job with a model allowlist and a USD cap), but **os-ui never read it**. Added `LITELLM_AGENT_KEY` to os-ui's env and `config.litellmAgentKey`.
+* **Fail closed, no fallback chain.** `callerCredential` returns an empty key when none is configured and the run path throws `NoRunCredentialError`. A fallback to the master key would make a misconfiguration silently unlimited, which is the exact failure the cap exists to prevent.
+* **The guard is per CALL, not per factory.** Throwing inside `liteLlmCaller()` at construction took down 53 test files, because modules build callers at import scope. Moved into the returned function.
+* **`callerCredential` lives in `core/infra/litellm-credential.ts`**, not inlined into the two run paths, mirroring `service-bearer.ts`: one helper so every caller wires the same header the same way.
+* **Writes got their own module** (`core/infra/litellm-write.ts`) rather than being added to the read client, so "what can change the gateway?" stays a file-level fact — the promise `ARCHITECTURE.md` makes.
+* **Budgets are NOT pushed.** The reconciler creates subjects (a team per domain, a key per agent) and never writes `max_budget`. A cap an admin set in LiteLLM is the real cap; overwriting it from OS defaults would silently undo their work. This narrows the original scope deliberately.
+* **POST /reconcile ignores its request body** and applies a server-recomputed plan. Accepting ops over the wire would turn the route into a confused deputy for the master key.
+* **A degraded mirror refuses to apply** (503). A plan built from an unreadable gateway would "create" everything the gateway already has.
+* `TS parameter properties` are unusable in this repo — Node's strip-only type removal rejects them and the runner loads `.ts` directly.
+
+**Acceptance met:** `MODEL-KEY` flipped from `todo` to a hard assertion and passes (gate 85 pass / 0 fail). Attribution now ships `user: os-<id>` plus `domain:` / `agent:` / `tab:` tags, which is what unblocks the spend dimensions Phase 2 left honestly empty. Budget rejections are typed (`BudgetExceededError`) instead of a raw 400. An empty LiteLLM is repopulated by one reconcile run (tested).
+
+**NOT deployed.** See the deployment caveat in `docs/components/litellm.md`: the scoped key carries `maxBudget: 5` USD and a three-model allowlist, so its headroom and allowlist must be checked against real traffic before this reaches production.
+
+### Original scope
+
+
 
 **Files:** `os-ui/tabs/admin/lib/litellm-reconcile.ts`, `os-ui/core/runtime/runtime.ts` + `complete.ts` (key selection + attribution), `os-ui/app/api/platform-admin/gateway/reconcile/route.ts`.
 

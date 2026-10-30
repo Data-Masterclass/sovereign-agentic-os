@@ -344,6 +344,17 @@ spec:
             # itself reads, so there is one credential, not two. Deliberately NOT the proxy
             # master key: a leaked UI session must not equal full API access. Absent =>
             # the OS reports "not configured" instead of framing LiteLLM's own login.
+            # The SCOPED virtual key the run path uses instead of the master key.
+            # Provisioned + registered in LiteLLM by the litellm-agent-key-init Job
+            # (model allowlist + USD cap). `optional` so a cluster without the
+            # agent key still starts; the run path then refuses to run rather
+            # than silently falling back to the master key.
+            - name: LITELLM_AGENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-litellm-key
+                  key: apiKey
+                  optional: true
             - name: LITELLM_UI_USERNAME
               valueFrom:
                 secretKeyRef:

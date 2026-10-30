@@ -199,7 +199,7 @@ test('parseLlmUsage never fabricates usage from an absent/malformed block', () =
 
 // --- Phase-0 regression gate: run-path model calls use the master key (review finding 4) ------
 
-test('MODEL-KEY: a run-path completion must NOT carry the LiteLLM master key', { todo: 'fixed in Phase 3' }, async () => {
+test('MODEL-KEY: a run-path completion must NOT carry the LiteLLM master key', async () => {
   const seen: { auth?: string } = {};
   const orig = globalThis.fetch;
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {

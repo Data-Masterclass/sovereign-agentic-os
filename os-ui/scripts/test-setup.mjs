@@ -7,6 +7,10 @@
 // their own local tool list and don't depend on this.
 process.env.OS_ENABLED_TABS = 'home,mcp,about,strategy,big-bets,operating-model,workflows,marketplace,data,metrics,files,knowledge,connections,agents,dashboards,software,science,console,governance,monitoring,components,admin';
 
+// The run path REFUSES to use the master key (see litellm-credential.ts), so
+// tests need a scoped key present or every run would fail closed.
+process.env.LITELLM_AGENT_KEY = 'sk-test-scoped-agent-key';
+
 import { register } from 'node:module';
 register('./test-alias-hook.mjs', import.meta.url);
 

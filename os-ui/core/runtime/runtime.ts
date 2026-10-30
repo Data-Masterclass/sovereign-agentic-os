@@ -3,6 +3,10 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import {
+  callerCredential, runCredentialConfigured, NoRunCredentialError,
+  BudgetExceededError, isBudgetRejection, type CallerContext,
+} from '@core/infra/litellm-credential';
 import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc, toolsForTab, listToolsForRole, type McpTab } from '@core/mcp/server';
 import { loadTabContext, tabTitle } from '@core/tabs-meta/context';
@@ -153,8 +157,24 @@ const LLM_TIMEOUT_MS = Number(process.env.LLM_CHAT_TIMEOUT_MS ?? '') || 240_000;
  * function-calling (HTTP 400 mentioning tools/functions), throws
  * `ToolCallingUnsupportedError` so the loop falls back to the ReAct protocol.
  */
-export function liteLlmCaller(): LlmCall {
+/**
+ * The run path's model caller.
+ *
+ * Uses the SCOPED agent key, never the master key: the master key has no model
+ * allowlist and no spend cap, so a run made with it silently bypasses both.
+ * With no scoped key configured this refuses to run rather than falling back —
+ * see `core/infra/litellm-credential.ts`. The `MODEL-KEY` gate test pins this.
+ *
+ * `caller` also carries attribution. It becomes LiteLLM's `user` (its
+ * `end_user` ledger) plus `domain:` / `agent:` / `tab:` tags, which is what
+ * makes per-domain and per-agent spend readable in the gateway mirror.
+ */
+export function liteLlmCaller(caller?: CallerContext): LlmCall {
   return async (req) => {
+    // Checked per CALL, not when the caller is built: a factory that throws at
+    // module scope takes down every module that constructs one eagerly.
+    if (!runCredentialConfigured()) throw new NoRunCredentialError();
+    const cred = callerCredential(caller ?? { userId: 'system', domain: 'platform' });
     const body: Record<string, unknown> = {
       model: req.model,
       messages: req.messages,
@@ -175,11 +195,11 @@ export function liteLlmCaller(): LlmCall {
       res = await fetch(`${config.litellmUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: {
-          authorization: `Bearer ${config.litellmMasterKey}`,
+          authorization: `Bearer ${cred.apiKey}`,
           'content-type': 'application/json',
           accept: 'application/json',
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, user: cred.user, metadata: { tags: cred.tags } }),
         cache: 'no-store',
         signal: ctrl.signal,
       });
@@ -193,6 +213,8 @@ export function liteLlmCaller(): LlmCall {
       if (req.tools && res.status === 400 && /tool|function/i.test(text)) {
         throw new ToolCallingUnsupportedError(`LiteLLM 400 rejecting tools: ${text.slice(0, 200)}`);
       }
+      // A budget rejection is a typed, actionable state — not a raw 400.
+      if (isBudgetRejection(res.status, text)) throw new BudgetExceededError(text.slice(0, 300));
       throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 300)}`);
     }
 
@@ -401,7 +423,11 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
     userMessages: input.messages,
     tools: specs,
     callTool,
-    llm: injected ?? liteLlmCaller(),
+    llm: injected ?? liteLlmCaller({
+      userId: input.user.id,
+      domain: input.user.domains[0] ?? 'none',
+      tab: input.tab,
+    }),
     planModel: injected ? config.litellmReasoningModel : runModel,
     actModel: runModel,
     maxIterations: input.maxIterations,

@@ -13,6 +13,31 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Security — the LiteLLM master key leaves the run path
+
+- **Runs now use a scoped virtual key, not the proxy master key.** The chart
+  already provisioned and registered that key with a model allowlist and a USD
+  cap; os-ui simply never read it, so every run bypassed both. os-ui now reads
+  it as `LITELLM_AGENT_KEY`. The master key is reserved for administering the
+  gateway.
+- **Fails closed.** With no scoped key configured the run path refuses to run
+  rather than falling back to the master key, which would silently remove the
+  allowlist and the cap at the moment of misconfiguration.
+- The `MODEL-KEY` gate test is no longer a `todo`: it inspects a real run's
+  outgoing `Authorization` header and fails if it carries the master key.
+
+### Added — attribution and one-way reconcile
+
+- Every model call now carries `user: os-<id>` plus `domain:`, `agent:` and
+  `tab:` tags, so per-domain and per-agent spend is answerable in LiteLLM. This
+  fills in the spend dimensions that previously read as untagged.
+- `GET/POST /api/platform-admin/gateway/reconcile` — preview what the OS would
+  change in LiteLLM, then apply it. Creates a team per domain and a key per
+  agent. **Budgets are never pushed** and **drift is never deleted**: a cap set
+  in LiteLLM is the real cap, and a hand-made key is left alone.
+- Budget rejections are a typed `BudgetExceededError` with an actionable
+  message, instead of a raw LiteLLM 400 reaching the UI.
+
 ### Added — the LiteLLM gateway, read back into the OS
 
 - **Admin surfaces now read LiteLLM instead of restating it.** One admin-gated

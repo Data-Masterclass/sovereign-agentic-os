@@ -3,6 +3,10 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import {
+  callerCredential, runCredentialConfigured, NoRunCredentialError,
+  BudgetExceededError, isBudgetRejection,
+} from '@core/infra/litellm-credential';
 import { getAssistantModel } from '@tabs/admin/lib/models';
 import { checkCap } from '@core/policy/cost';
 
@@ -62,6 +66,8 @@ export type AssistantRequest = {
   temperature?: number;
   /** Caller identity, threaded to the gateway for audit attribution. */
   user?: string;
+  /** The caller's domain, when known — drives per-domain spend attribution. */
+  domain?: string;
   signal?: AbortSignal;
 };
 
@@ -76,6 +82,16 @@ const LLM_TIMEOUT_MS = Number(process.env.LLM_CHAT_TIMEOUT_MS ?? '') || 240_000;
 /** The live caller: POST the governed LiteLLM gateway /v1/chat/completions. */
 export function liteLlmAssistantCaller(): AssistantCaller {
   return async (req) => {
+    // Checked per CALL, not when the caller is built: a factory that throws at
+    // module scope takes down every module that constructs one eagerly.
+    if (!runCredentialConfigured()) throw new NoRunCredentialError();
+    // The scoped agent key, never the master key — the assistant is a run path
+    // too, so the same model allowlist and spend cap must bind to it.
+    const cred = callerCredential({
+      userId: req.user ?? 'system',
+      domain: req.domain ?? 'platform',
+      tab: 'assistant',
+    });
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
     // Chain an external abort signal (caller timeout) into ours.
@@ -86,7 +102,7 @@ export function liteLlmAssistantCaller(): AssistantCaller {
       res = await fetch(`${config.litellmUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: {
-          authorization: `Bearer ${config.litellmMasterKey}`,
+          authorization: `Bearer ${cred.apiKey}`,
           'content-type': 'application/json',
           accept: 'application/json',
         },
@@ -95,8 +111,8 @@ export function liteLlmAssistantCaller(): AssistantCaller {
           messages: req.messages,
           temperature: req.temperature ?? 0.2,
           // Caller identity + Langfuse audit tags (the gateway is the governance point).
-          ...(req.user ? { user: req.user } : {}),
-          metadata: { tags: ['assistant', ...(req.user ? [`user:${req.user}`] : [])] },
+          user: cred.user,
+          metadata: { tags: ['assistant', ...cred.tags] },
         }),
         cache: 'no-store',
         signal: ctrl.signal,
@@ -105,7 +121,11 @@ export function liteLlmAssistantCaller(): AssistantCaller {
     } finally {
       clearTimeout(timer);
     }
-    if (!res.ok) throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 300)}`);
+    if (!res.ok) {
+      // A budget rejection is a typed, actionable state — not a raw 400.
+      if (isBudgetRejection(res.status, text)) throw new BudgetExceededError(text.slice(0, 300));
+      throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 300)}`);
+    }
     let data: Record<string, unknown> = {};
     try {
       data = JSON.parse(text) as Record<string, unknown>;

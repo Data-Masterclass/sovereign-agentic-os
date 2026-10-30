@@ -149,6 +149,28 @@ policy, the component is the enforcement point and the ledger, and the OS reads
 only the second half. When a write path arrives it goes in its own module, so a
 reviewer can tell from the file list alone which code can change the component.
 
+### Writing to a component
+
+Reads and writes to a component live in **separate modules** — for LiteLLM,
+`core/infra/litellm-admin.ts` reads and `core/infra/litellm-write.ts` writes.
+The split exists so "what in the OS can change this component?" is answerable
+from the import graph instead of by reading bodies.
+
+Three rules for a write path:
+
+1. **Plan, then apply.** The admin sees every intended change, with a reason per
+   operation, before anything is written.
+2. **Never accept the plan from the client.** The apply route recomputes it
+   server-side. A route that applies ops from a request body is a confused
+   deputy for whatever credential it holds.
+3. **Report drift, never delete it.** Anything the component has that the OS
+   does not govern is listed and left alone. Deleting it because the OS has no
+   record of it is the worst available outcome.
+
+Credentials follow the same separation: the admin credential administers the
+component, and a **scoped** credential runs traffic. The run path fails closed
+when the scoped credential is absent rather than borrowing the admin one.
+
 ## Generated documentation
 
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,
