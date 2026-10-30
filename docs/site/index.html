@@ -68,10 +68,10 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
 <h1>Sovereign Agentic OS — Code Map</h1>
 <p class="sub">Every folder, what it holds and why. Generated from the source by <code>scripts/build-docs.mjs</code>: the prose below is each file's own header, each tab's manifest and each component's UPSTREAM.md, so it cannot drift from the code.</p>
 <p class="stats">
-  <span><b>1.288</b>source files</span>
-  <span><b>234.666</b>lines</span>
-  <span><b>22</b>with a full header</span>
-  <span><b>2026-10-29</b>generated</span>
+  <span><b>1.293</b>source files</span>
+  <span><b>235.261</b>lines</span>
+  <span><b>27</b>with a full header</span>
+  <span><b>2026-10-30</b>generated</span>
 </p>
 
   <section class="group" id="components/">
@@ -361,7 +361,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/core/infra">
     <h3>os-ui/core/infra</h3>
-    <p class="counts">32 files · 6.369 lines · 3 documented</p>
+    <p class="counts">35 files · 6.644 lines · 6 documented</p>
     
     <div class="files">
   <div class="file" id="os-ui/core/infra/agent-governed-failclosed.test.ts">
@@ -444,6 +444,24 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="story">• As a platform admin, when the gateway is down I see &quot;gateway unreachable&quot;, never a page that invents zeros or a 500 that hides the cause. • As a security reviewer, I can confirm the master key is reachable only from server code: this module is `server-only` and no function returns it.</p>
     <p class="arch">Lowest layer of the LiteLLM read path: litellm-admin (IO, this file) -&gt; tabs/admin/lib/gateway-mirror (pure mapping + cache + drift) -&gt; app/api/platform-admin/gateway (adminCtx gate) -&gt; admin panels Every function is failure-tolerant BY DESIGN and returns `Fetched&lt;T&gt;`: the mirror decides what a failure means, because only it knows whether a cached answer exists. Nothing here throws, retries or logs — a read of a dependency is not an error condition for the OS. READ-ONLY on purpose: no POST/PUT/DELETE lives here. Writes to LiteLLM are Phase 3 and must go through the admin API in their own reconciler module, so that &quot;the OS never silently mutates the gateway&quot; stays greppable.</p>
   </div>
+  <div class="file" id="os-ui/core/infra/litellm-credential.test.ts">
+    <div class="file-h"><code>litellm-credential.test.ts</code><span class="loc">79 lines</span></div>
+    <p class="feat">Tests for the run-path credential and its attribution.</p>
+    <p class="story">As a security reviewer I want a test that fails if anyone makes the run path fall back to the master key, because that fallback would silently remove the model allowlist and the spend cap.</p>
+    <p class="arch">Pure assertions over `callerCredential` plus the two typed errors. The companion guarantee — that the live caller actually sends this key — is the `MODEL-KEY` case in `core/runtime/runtime.test.ts`, which inspects the outgoing Authorization header.</p>
+  </div>
+  <div class="file" id="os-ui/core/infra/litellm-credential.ts">
+    <div class="file-h"><code>litellm-credential.ts</code><span class="loc">123 lines</span></div>
+    <p class="feat">The credential and attribution a model call carries. One helper, so every caller wires the same header the same way — and so the LiteLLM master key can never reach the run path.</p>
+    <p class="story">As a platform admin I set a USD cap and a model allowlist on the agents' key and they actually bind, because runs use that key and not an unlimited master credential. As a finance owner I can ask LiteLLM what one person, one domain or one agent spent, because every call is tagged and carries an end-user id. As a security reviewer I can see in one file which credential the run path uses, and that there is no code path from a run to the master key.</p>
+    <p class="arch">Mirrors `core/infra/service-bearer.ts`: one shared helper rather than a header assembled per call site. Two call sites use it — the agent runtime (`core/runtime/runtime.ts`) and the assistant path (`core/runtime/complete.ts`). The master key stays for ADMIN reads and writes (`litellm-admin.ts`, `litellm-write.ts`) because those operate on the gateway itself. It is never a run credential, and that separation is what the `MODEL-KEY` gate test pins down.</p>
+  </div>
+  <div class="file" id="os-ui/core/infra/litellm-write.ts">
+    <div class="file-h"><code>litellm-write.ts</code><span class="loc">73 lines</span></div>
+    <p class="feat">The ONLY module that can change LiteLLM. One `adminPost`, so every write to the gateway goes through one audited door.</p>
+    <p class="story">As a reviewer I can answer &quot;what in the OS can modify the model gateway?&quot; by looking at who imports this file — the answer is a file-level fact, not a code-reading exercise. As a platform admin, a write that fails tells me which operation failed and why, instead of leaving the gateway half-changed with no record.</p>
+    <p class="arch">Deliberately separate from `litellm-admin.ts`, which is read-only. The split is the point: `ARCHITECTURE.md` promises that &quot;we observe the gateway&quot; and &quot;we change the gateway&quot; are separable by a reviewer, and two files is how that promise is kept. Writes go to LiteLLM's ADMIN API, never to its config file or its Postgres. That is what makes them appear in LiteLLM's own UI: an admin who looks at the gateway directly sees exactly what the OS created, with the same aliases and budgets, rather than a divergent shadow configuration. Uses the MASTER key, which is correct here: these calls administer the gateway itself. The master key must never reach a RUN path — that is `litellm-credential.ts`, and the `MODEL-KEY` gate test enforces it.</p>
+  </div>
   <div class="file" id="os-ui/core/infra/mailer.ts">
     <div class="file-h"><code>mailer.ts</code><span class="loc">455 lines</span></div>
     <p class="undoc">No header yet.</p>
@@ -501,7 +519,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/core/kernel">
     <h3>os-ui/core/kernel</h3>
-    <p class="counts">58 files · 7.083 lines · 0 documented</p>
+    <p class="counts">58 files · 7.090 lines · 0 documented</p>
     
     <div class="files">
   <div class="file" id="os-ui/core/kernel/active-domain.test.ts">
@@ -561,7 +579,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/kernel/config.ts">
-    <div class="file-h"><code>config.ts</code><span class="loc">561 lines</span></div>
+    <div class="file-h"><code>config.ts</code><span class="loc">568 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/kernel/context-grants.test.ts">
@@ -1137,7 +1155,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   </section>
   <section class="folder" id="os-ui/core/runtime">
     <h3>os-ui/core/runtime</h3>
-    <p class="counts">19 files · 3.773 lines · 0 documented</p>
+    <p class="counts">19 files · 3.819 lines · 0 documented</p>
     
     <div class="files">
   <div class="file" id="os-ui/core/runtime/agent-loop.test.ts">
@@ -1165,7 +1183,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/runtime/complete.ts">
-    <div class="file-h"><code>complete.ts</code><span class="loc">172 lines</span></div>
+    <div class="file-h"><code>complete.ts</code><span class="loc">192 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/runtime/escalate.test.ts">
@@ -1197,7 +1215,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/runtime/runtime.ts">
-    <div class="file-h"><code>runtime.ts</code><span class="loc">439 lines</span></div>
+    <div class="file-h"><code>runtime.ts</code><span class="loc">465 lines</span></div>
     <p class="undoc">No header yet.</p>
   </div>
   <div class="file" id="os-ui/core/runtime/stage-route.test.ts">
@@ -1405,7 +1423,7 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
     
   <section class="folder" id="os-ui/tabs/admin">
     <h3>os-ui/tabs/admin</h3>
-    <p class="counts">56 files · 9.512 lines · 5 documented</p>
+    <p class="counts">58 files · 9.779 lines · 7 documented</p>
     <dl class="meta"><dt>feature key</dt><dd>admin</dd><dt>routes</dt><dd>/platform · /components · /mcp · /about · /settings</dd><dt>api</dt><dd>/api/platform · /api/platform-admin · /api/users · /api/mcp</dd><dt>mcp tools</dt><dd>platform · discovery-read</dd><dt>services</dt><dd>opensearch · postgres · litellm · opa</dd></dl>
     <div class="files">
   <div class="file" id="os-ui/tabs/admin/lib/access-lifecycle.test.ts">
@@ -1475,6 +1493,18 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-family:var(--
   <div class="file" id="os-ui/tabs/admin/lib/index.ts">
     <div class="file-h"><code>lib/index.ts</code><span class="loc">36 lines</span></div>
     <p class="undoc">No header yet.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/admin/lib/litellm-reconcile.test.ts">
+    <div class="file-h"><code>lib/litellm-reconcile.test.ts</code><span class="loc">103 lines</span></div>
+    <p class="feat">Tests for the one-way reconcile decision table.</p>
+    <p class="story">As a platform admin I need certainty that reconcile creates what is missing, leaves my hand-made gateway objects alone, and never overwrites a budget I set in LiteLLM.</p>
+    <p class="arch">Drives the PURE `buildPlan` with hand-built mirrors, so the whole decision table is covered without a network. The write shell (`applyReconcile`) is one loop over `adminPost` and holds no decisions.</p>
+  </div>
+  <div class="file" id="os-ui/tabs/admin/lib/litellm-reconcile.ts">
+    <div class="file-h"><code>lib/litellm-reconcile.ts</code><span class="loc">164 lines</span></div>
+    <p class="feat">One-way reconcile, OS -&gt; LiteLLM. Plan first, apply on request, and report drift without ever touching it.</p>
+    <p class="story">As a platform admin I see exactly what the OS would change in the gateway BEFORE anything is written, and I choose to apply it. As a platform admin, a LiteLLM rebuilt from empty is repopulated by one reconcile run, because the OS knows the domains and agents it governs. As a platform admin, what the OS creates shows up in LiteLLM's own UI with the same aliases, because the OS writes through LiteLLM's admin API rather than behind it. As a platform admin, something I made by hand in LiteLLM is listed as drift and left alone, so reconcile never deletes my work.</p>
+    <p class="arch">Direction of truth: the OS owns identity (which domains and agents exist), LiteLLM owns enforcement and the ledger (budgets, spend, blocking). So this reconciler creates the SUBJECTS — a team per domain, a key per agent — and deliberately does NOT push budgets: a cap an admin set in LiteLLM is the real cap, and overwriting it from OS defaults would silently undo their work. Three lists, and only two of them are ever applied: creates  subjects the OS governs that the gateway does not have yet updates  subjects whose OS-owned metadata has drifted (ownership stamps) drift    subjects the gateway has that the OS does not govern — REPORTED ONLY. Never created, never updated, never deleted. Deleting someone's hand-made key because the OS has no record of it is the worst thing a reconciler can do. `planReconcile` is a read: it compares the gateway mirror against the OS. `applyReconcile` is the only write, and it writes through `core/infra/litellm-write.ts`, the single audited door. Every operation is attempted independently so one failure does not strand the rest, and failures come back as data.</p>
   </div>
   <div class="file" id="os-ui/tabs/admin/lib/mcp-registry.test.ts">
     <div class="file-h"><code>lib/mcp-registry.test.ts</code><span class="loc">157 lines</span></div>

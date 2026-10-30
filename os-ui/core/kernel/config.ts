@@ -314,6 +314,13 @@ export const config = {
   // "not configured" instead of framing LiteLLM's own login screen.
   litellmUiUsername: env('LITELLM_UI_USERNAME', ''),
   litellmUiPassword: env('LITELLM_UI_PASSWORD', ''),
+  // The SCOPED virtual key the run path uses instead of the master key: the
+  // chart provisions it (litellmAgentKey -> secret agent-litellm-key) with a
+  // model allowlist and a USD cap, so a runaway agent cannot spend without
+  // limit or reach a model it was never granted. Empty => the run path has no
+  // scoped credential; see core/infra/litellm-credential.ts, which refuses to
+  // silently fall back to the master key.
+  litellmAgentKey: env('LITELLM_AGENT_KEY', ''),
   // Chat model fronted by LiteLLM that the task-scoped agent chat windows call
   // (POST {LITELLM_URL}/v1/chat/completions). Offline default = the mock model.
   litellmChatModel: env('LITELLM_CHAT_MODEL', 'sovereign-mock'),

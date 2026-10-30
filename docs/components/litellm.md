@@ -99,3 +99,53 @@ policy, LiteLLM is the enforcement point and the ledger, and the OS only reads
 the second half. Reconciliation in the other direction is Phase 3 and will live
 in its own module, so "we observe the gateway" and "we change the gateway" stay
 separable by a reviewer.
+
+## How the OS calls the gateway (and what it must never use)
+
+Run traffic uses a **scoped virtual key**, never the proxy master key. The chart
+provisions it and an idempotent Job registers it in LiteLLM with a model
+allowlist and a USD cap; os-ui reads it as `LITELLM_AGENT_KEY`. The master key
+is reserved for administering the gateway itself.
+
+This is enforced, not documented: the `MODEL-KEY` gate test inspects the
+outgoing `Authorization` header of a real run-path call and fails if it is the
+master key.
+
+If no scoped key is configured the run path **refuses to run**. It does not fall
+back to the master key, because a fallback would quietly remove both the model
+allowlist and the spend cap at exactly the moment someone misconfigured the
+thing meant to enforce them.
+
+Every call carries attribution: LiteLLM's `user` field as `os-<id>`, plus
+`domain:`, `agent:` and `tab:` tags. That is what makes per-domain and
+per-agent spend answerable, and it is the same vocabulary the gateway mirror
+reads back.
+
+## Reconcile: OS → LiteLLM, one way, plan first
+
+`GET /api/platform-admin/gateway/reconcile` returns a plan; `POST` applies it.
+The plan has three lists and only two are ever applied:
+
+| List | What it is | Applied? |
+|---|---|---|
+| `creates` | a team per domain, a key per agent, missing from the gateway | yes |
+| `updates` | an OS-owned object missing its ownership stamp | yes |
+| `drift` | exists in LiteLLM, not governed by the OS | **never** |
+
+Two deliberate limits. **Budgets are not pushed**: a cap set in LiteLLM is the
+real cap, and reconcile would otherwise undo an admin's work on every run.
+**Drift is never deleted**: removing a hand-made key because the OS has no
+record of it is the worst thing a reconciler can do.
+
+Writes go through LiteLLM's admin API, so what the OS creates appears in
+LiteLLM's own UI with the same aliases, rather than as a divergent shadow
+configuration. The POST route ignores its request body and applies a
+server-recomputed plan, so an admin session cannot post arbitrary payloads to
+the admin API under the master key.
+
+### Deployment caveat
+
+The scoped key ships with `litellmAgentKey.maxBudget: 5` USD and an allowlist of
+three models. Before enabling this in production, check that the key's remaining
+budget and its allowlist cover real traffic — otherwise runs will correctly but
+unhelpfully fail closed with `budget_exceeded` or an unauthorised-model error.
