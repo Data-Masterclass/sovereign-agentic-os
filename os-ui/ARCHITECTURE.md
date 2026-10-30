@@ -205,6 +205,49 @@ Credentials follow the same separation: the admin credential administers the
 component, and a **scoped** credential runs traffic. The run path fails closed
 when the scoped credential is absent rather than borrowing the admin one.
 
+## Things this codebase will punish you for
+
+Hard-won, each from a real failure. Read before writing a route, a test, or an
+OAuth flow.
+
+**A Next.js `route.ts` may export only its HTTP handlers and a short list of
+config names.** Export a helper from one and the build fails type-checking with
+`Property 'x' is incompatible with index signature`. And a **test cannot import
+a route at all** — it pulls `next/headers` transitively and dies with
+`ERR_MODULE_NOT_FOUND`. So logic worth testing never lives in a route; it lives
+in a plain module the route imports.
+
+**A test cannot import a `.tsx` either.** Node strips types but not JSX, so the
+import fails with `ERR_UNKNOWN_FILE_EXTENSION` before any assertion runs. `.svg`
+fails the same way. Put testable data in a `.ts` sibling and re-export it from
+the component — `core/ui/account-menu.ts` and `tabs/admin/lib/sections.ts` are
+the pattern.
+
+**TypeScript parameter properties do not work.** `constructor(readonly x: string)`
+is rejected by the same type-stripping. Declare the field explicitly.
+
+**Never restate a route path that already exists in the nav.** The Drive OAuth
+callback sent every user to `/files`, which exists only as an API path and has
+no page, while the Files tab is at `/unstructured`. All eight exits of that
+route — success included — landed on a 404, and no test caught it because the
+constant was never compared to anything. Derive the path from `TABS` and assert
+it (`core/auth/drive-landing.ts`).
+
+**Diagnostics are a feature, and discarding them costs hours.** Two separate
+places in the OAuth flow threw away the provider's real error: the callback kept
+`error` and dropped `error_description`, and the exchange `catch` collapsed every
+failure into `exchange_failed`. The actual causes live in codes like
+`AADSTS50194` (a single-tenant app on the multi-tenant `/common` endpoint) and
+`AADSTS7000215` (a mistyped client secret). Forward a **matched code only** —
+never a free-text provider body, which can echo request material and ends up in
+a URL.
+
+**Beware a fallback that reports success.** The Files connector falls back to a
+deterministic mock drive when no token resolves, which keeps a laptop install
+clickable but means a broken connection renders as a *successful* sync of
+invented files. Any fallback that substitutes fake data must label itself in the
+result, and the UI must surface that label.
+
 ## Generated documentation
 
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,
