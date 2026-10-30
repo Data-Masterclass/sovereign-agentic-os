@@ -151,12 +151,13 @@ const POSTGRESQL: InstallGuide = {
     'A reachable PostgreSQL **host** (or host:port) and the **database** to federate — its schemas become Trino schemas.',
     'A **least-privilege, read-only login** (a role with USAGE + SELECT on the target schemas is enough). The **password** goes to Secrets Manager and is **never** on the record.',
     'Network reachability from the Trino pod to the PostgreSQL port (default 5432).',
+    'For **managed** PostgreSQL (Supabase, Neon, RDS with enforced TLS): set **TLS mode** to `require`. Those servers reject plaintext, so registration fails without it.',
     'Builder/Admin rights (this is a service-credential connector, not personal OAuth).',
   ],
   steps: [
     'On the PostgreSQL card, click **Connect**.',
     'Name the connection; pick a Trino **catalog name** (e.g. `pg_orders`).',
-    'Enter the **host** (and port if not in the host), **database**, **username**, and **password**.',
+    'Enter the **host** (and port if not in the host), **database**, **username**, and **password**. Set **TLS mode** to `require` for a managed server; leave it blank in-cluster.',
     'Create the connection, then on its card **Register** → **Test** (`SHOW SCHEMAS`) → **Browse**. Import a table (CTAS) into the OS lakehouse from the Data tab when you want an owned copy.',
   ],
   whatTheOsDoes:

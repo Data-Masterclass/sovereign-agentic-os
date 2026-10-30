@@ -122,3 +122,58 @@ test('postgres test probe is a cheap reachability SHOW SCHEMAS', () => {
     assert.equal(postgresProvider.testProbe.query(src()), 'SHOW SCHEMAS FROM pg_orders');
   }
 });
+
+/* ----------------------------------------------------------------- TLS mode */
+
+/** Managed PostgreSQL rejects plaintext, so this is the difference between a
+ *  catalog that registers and one that cannot connect at all. */
+test('PG-TLS: sslmode lands on the connection URL', () => {
+  const props = postgresProvider.catalogProps({
+    catalog: 'pg_x', platform: 'postgresql',
+    host: 'db.abc.supabase.co', database: 'postgres', username: 'os_reader',
+    sslmode: 'require',
+  } as never);
+  assert.equal(props['connection-url'], 'jdbc:postgresql://db.abc.supabase.co:5432/postgres?sslmode=require');
+});
+
+test('PG-TLS: omitted leaves the URL exactly as before (in-cluster default)', () => {
+  const props = postgresProvider.catalogProps({
+    catalog: 'pg_x', platform: 'postgresql',
+    host: 'pg-rw', database: 'litellm', username: 'u',
+  } as never);
+  assert.equal(props['connection-url'], 'jdbc:postgresql://pg-rw:5432/litellm');
+});
+
+test('PG-TLS: every libpq mode is accepted', () => {
+  for (const mode of ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full']) {
+    const props = postgresProvider.catalogProps({
+      catalog: 'pg_x', platform: 'postgresql', host: 'h', database: 'd', username: 'u', sslmode: mode,
+    } as never);
+    assert.match(String(props['connection-url']), new RegExp(`\\?sslmode=${mode}$`));
+  }
+});
+
+test('PG-TLS: an unknown mode is REFUSED, not interpolated', () => {
+  assert.throws(
+    () => postgresProvider.catalogProps({
+      catalog: 'pg_x', platform: 'postgresql', host: 'h', database: 'd', username: 'u',
+      sslmode: 'require&ssl=false',
+    } as never),
+    /unsupported sslmode/,
+  );
+});
+
+test('PG-TLS: the TLS field is offered in the editor, and is optional', () => {
+  const f = postgresProvider.credentialFields.find((x) => x.key === 'sslmode');
+  assert.ok(f, 'the editor must be able to set sslmode');
+  assert.equal(f.required, false);
+  assert.equal(f.kind, 'text');
+});
+
+test('PG-TLS: the password is still never in the props', () => {
+  const props = postgresProvider.catalogProps({
+    catalog: 'pg_x', platform: 'postgresql', host: 'h', database: 'd', username: 'u', sslmode: 'require',
+  } as never);
+  assert.equal(JSON.stringify(props).includes('secret'), false);
+  assert.match(String(props['connection-password']), /^\$\{ENV:/);
+});
