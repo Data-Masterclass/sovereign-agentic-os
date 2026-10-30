@@ -42,14 +42,48 @@ Path aliases: `@core/*` → `core/*`, `@tabs/*` → `tabs/*` (tsconfig + the tes
 
 | Group | Tabs |
 |---|---|
-| Entry | Home · MCP · About / Licenses |
-| Context | Data · Metrics · Files · Knowledge |
+| Entry | Home |
+| Context | Data · KPIs · Files · Knowledge |
 | Build | **Workflows** · Agents · Dashboards · Software |
-| Manage | Connections · Governance · Monitoring · Admin |
+| Manage | Connections · Governance · Monitoring · Platform |
+
+The **Platform** tab's folder is `tabs/admin/` and its feature key is `admin`;
+only the label is Platform (renamed 2026-10-30). It is one route with a tab
+strip — six sections, no tile grid.
+
+Three personal surfaces are **not** tabs: My Settings (`/settings`), My MCP
+access (`/mcp`) and About / Licenses (`/about`) hang off the sidebar's account
+menu (`core/ui/account-menu.ts`).
 
 A tab declares the deployed services it needs in its manifest. If a service is
 disabled in the chart, the tab is absent from the navigation rather than broken;
 `OS_ENABLED_TABS` gates the same set at runtime (`core/kernel/tabs.ts`).
+
+## Which tab owns a surface
+
+Thirteen tabs only stay thirteen if there is a rule for where a new surface
+goes. The 2026-10-30 Platform restructure moved ten surfaces out of one tab
+using these four, in order:
+
+1. **A surface belongs to the tab that answers the question the user is
+   asking** — not to the tab whose team built it, and not to whichever tab is
+   the current catch-all. "What may this tenant connect to?" is the same
+   question as "what am I connected to", so the tenant registries went to
+   Connections.
+2. **Observation separates from configuration.** A display-only surface is
+   observation and belongs in Monitoring, however administrative its subject.
+   The billing envelope is a number the OS shows and LiteLLM budgets enforce,
+   so the whole surface moved — nothing stayed behind to configure.
+3. **Policy separates from administration.** Defining what a role *may do* is
+   policy: rare, high-stakes, auditable → Governance, beside approvals and OPA.
+   Assigning a person a role is routine administration → Platform's Users &
+   Access. Where one task crosses the line, cross-link both ways in one click.
+4. **A surface moving into a tab with a lower `minRole` must carry its own
+   gate.** Moving must never widen access. Monitoring and Governance are
+   `builder`-visible, so the spend section, Roles & permissions and Security &
+   egress each re-check `admin` themselves, fail-closed, and the API behind
+   them stays `adminCtx()`-gated. Hiding is never the security boundary; it is
+   the layer that stops an admin surface flashing into a builder's strip.
 
 ## The rules, and how they are enforced
 

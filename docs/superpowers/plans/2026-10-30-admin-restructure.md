@@ -1,6 +1,6 @@
 # Admin → Platform restructure: implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax.
 
 **Goal:** Admin stops being the place things land when nobody knows where they go. Seventeen sections become six, each remaining one genuinely tenant administration, with **no new top-level tabs**.
 
@@ -96,12 +96,16 @@ role may do lives in Governance.
 
 ## Task 1: Rename Admin → Platform, and pin the target shape
 
+**DONE — `7bcf8729`** (2026-10-30). All six steps as written, except Step 6's commit
+message, which says "six sections in three groups": nine was a leftover from an earlier
+draft and six is the settled number.
+
 **Files:** modify `os-ui/core/kernel/tabs.ts`, `os-ui/tabs/admin/lib/sections.ts`, `os-ui/tabs/admin/lib/sections.test.ts`
 
 **Interfaces:**
 - Produces: `ADMIN_GROUP_ORDER` becomes `['Tenant', 'Models', 'Infrastructure']`; later tasks rely on those exact strings.
 
-- [ ] **Step 1: Write the failing test.** In `sections.test.ts`:
+- [x] **Step 1: Write the failing test.** In `sections.test.ts`:
 
 ```ts
 test('PLATFORM: holds only tenant administration', () => {
@@ -122,15 +126,20 @@ test('PLATFORM: three groups, in order', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail.** `cd os-ui && npm test 2>&1 | grep PLATFORM` — expect failures naming the eight surfaces still present.
-- [ ] **Step 3: Delete the ten moved entries** from `ADMIN_SECTIONS` (keep `access`; it stays). Set `ADMIN_GROUP_ORDER` to the three groups and move `access` to group `'Tenant'`.
-- [ ] **Step 4: Change the nav label.** In `core/kernel/tabs.ts`, `{ label: 'Admin', … }` → `{ label: 'Platform', … }`. Leave `href: '/platform'` and `feature: 'admin'` alone.
-- [ ] **Step 5: Run the suite.** `npm test` — green, and `node ../scripts/check-structure.mjs` at baseline.
-- [ ] **Step 6: Commit.** `git commit -m "refactor(platform): Admin becomes Platform, nine sections in three groups"`
+- [x] **Step 2: Run it and watch it fail.** `cd os-ui && npm test 2>&1 | grep PLATFORM` — expect failures naming the eight surfaces still present.
+- [x] **Step 3: Delete the ten moved entries** from `ADMIN_SECTIONS` (keep `access`; it stays). Set `ADMIN_GROUP_ORDER` to the three groups and move `access` to group `'Tenant'`.
+- [x] **Step 4: Change the nav label.** In `core/kernel/tabs.ts`, `{ label: 'Admin', … }` → `{ label: 'Platform', … }`. Leave `href: '/platform'` and `feature: 'admin'` alone.
+- [x] **Step 5: Run the suite.** `npm test` — green, and `node ../scripts/check-structure.mjs` at baseline.
+- [x] **Step 6: Commit.** `git commit -m "refactor(platform): Admin becomes Platform, nine sections in three groups"`
 
 ---
 
 ## Task 2: Account menu for the three personal items
+
+**DONE — `59d94ae8`** (2026-10-30). Steps as written, with one forced change: `ACCOUNT_ITEMS`
+lives in the new data-only `core/ui/account-menu.ts` and is re-exported from `Sidebar.tsx`,
+because a `.tsx` cannot be imported from a test in this harness (see the limitation above).
+The test imports the `.ts` file, not `./Sidebar.tsx` as Step 1 wrote it.
 
 No longer blocks Task 4 (the tab keeps creator access), but still worth doing: personal settings do not belong in an admin menu.
 
@@ -140,7 +149,7 @@ No longer blocks Task 4 (the tab keeps creator access), but still worth doing: p
 - Consumes: nothing from Task 1.
 - Produces: `ACCOUNT_ITEMS: { id: string; label: string; href: string; minRole: Role }[]`, exported from `Sidebar.tsx`, consumed by its test only.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 ```ts
 import { ACCOUNT_ITEMS } from './Sidebar.tsx';
@@ -153,27 +162,41 @@ test('ACCOUNT-MENU: carries the personal surfaces, at their original roles', () 
 });
 ```
 
-- [ ] **Step 2: Run it.** Expect "does not provide an export named 'ACCOUNT_ITEMS'".
-- [ ] **Step 3: Add `ACCOUNT_ITEMS` and render it** in the sidebar's existing user area, role-filtered with `roleAtLeast`. Keep the routes unchanged so existing bookmarks work.
-- [ ] **Step 4: Run tests.** Green.
-- [ ] **Step 5: Commit.** `git commit -m "feat(ui): personal settings move to an account menu"`
+- [x] **Step 2: Run it.** Expect "does not provide an export named 'ACCOUNT_ITEMS'".
+- [x] **Step 3: Add `ACCOUNT_ITEMS` and render it** in the sidebar's existing user area, role-filtered with `roleAtLeast`. Keep the routes unchanged so existing bookmarks work.
+- [x] **Step 4: Run tests.** Green.
+- [x] **Step 5: Commit.** `git commit -m "feat(ui): personal settings move to an account menu"`
 
 ---
 
 ## Task 3: Cost & Billing → Monitoring
 
+**DONE — `6feee6ec`** (2026-10-30). All six steps. It is a "Cost & Spend" section on
+`/monitoring#spend`; the lib is `tabs/monitoring/lib/spend.ts` and the API stayed at
+`/api/platform-admin/billing`. Monitoring is builder-visible, so the section is
+admin-gated inside Monitoring — the move did not widen access.
+
 **Files:** `git mv os-ui/tabs/admin/lib/billing.ts os-ui/tabs/monitoring/lib/spend.ts` (plus its test); modify `os-ui/tabs/monitoring/manifest.ts`, the Monitoring page, and delete `os-ui/app/(govern)/platform/billing/`
 
-- [ ] **Step 1:** `git mv` the lib and its test, so history follows the file.
-- [ ] **Step 2:** Update imports. `grep -rln "admin/lib/billing" os-ui | xargs sed -i '' 's#@tabs/admin/lib/billing#@tabs/monitoring/lib/spend#g'`
-- [ ] **Step 3:** Render it as a Monitoring section; add `/api/platform-admin/billing` to Monitoring's manifest `api` list and drop it from admin's.
-- [ ] **Step 4:** Delete the old route directory, one file per `git rm` call (the repo's fact-forcing gate blocks `git rm -r`).
-- [ ] **Step 5:** `npm test && node ../scripts/check-structure.mjs` — green.
-- [ ] **Step 6: Commit.**
+- [x] **Step 1:** `git mv` the lib and its test, so history follows the file.
+- [x] **Step 2:** Update imports. `grep -rln "admin/lib/billing" os-ui | xargs sed -i '' 's#@tabs/admin/lib/billing#@tabs/monitoring/lib/spend#g'`
+- [x] **Step 3:** Render it as a Monitoring section; add `/api/platform-admin/billing` to Monitoring's manifest `api` list and drop it from admin's.
+- [x] **Step 4:** Delete the old route directory, one file per `git rm` call (the repo's fact-forcing gate blocks `git rm -r`).
+- [x] **Step 5:** `npm test && node ../scripts/check-structure.mjs` — green.
+- [x] **Step 6: Commit.**
 
 ---
 
 ## Task 4: Three registries → Connections (as an admin-gated section)
+
+**DONE — `27ece961`** (2026-10-30), with **Step 4 half-done on purpose**.
+
+* Steps 1–3 and 5–8 as written. Connections keeps its `minRole`: **the tab is NOT
+  admin-only**, only the new "Tenant connectors" block inside it is. The three pages stay
+  at their `/platform/*` routes and are linked from that block.
+* **Step 4 deviation:** the `kind: 'api'` rows were dropped, but the OS's own MCP endpoint
+  was **not** surfaced elsewhere — the My MCP access page already lists it, so there was
+  nothing to add. The per-app endpoint on the Software page was likewise already present.
 
 **Files:** create `os-ui/tabs/connections/lib/registries.ts` + test, `os-ui/tabs/connections/ui/AdminRegistries.tsx`; modify the Connections page, `os-ui/core/kernel/tabs.ts`; modify `os-ui/tabs/admin/lib/mcp-registry.ts`
 
@@ -181,7 +204,7 @@ test('ACCOUNT-MENU: carries the personal surfaces, at their original roles', () 
 - Consumes: nothing. The earlier dependency on Task 2 is GONE — it existed only because making the tab admin-only would have stranded per-user OAuth.
 - Produces: `REGISTRIES: { id: 'mcp-apis' | 'oauth-apps' | 'plugins'; label: string; href: string }[]`, all `minRole: 'admin'`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
 
 ```ts
 test('REGISTRIES: all three are admin-only', () => {
@@ -195,44 +218,78 @@ test('MCP-REGISTRY: lists only what an admin added, not the OS own endpoints', (
 });
 ```
 
-- [ ] **Step 2: Run them.** Expect both to fail.
-- [ ] **Step 3: Add `registries.ts` and `AdminRegistries.tsx`**, rendered as a clearly separated admin-only block on the Connections page, not mixed into a user's own connection list.
-- [ ] **Step 4: Drop the `kind: 'api'` rows** from `mcp-registry.ts`. Surface the OS's own MCP endpoint on the My MCP access page instead, and an app's own endpoint on its Software page.
-- [ ] **Step 5: Do NOT change the Connections tab's `minRole`.** It stays creator-visible by the user's decision. Only the registries block is admin-gated, via `roleAtLeast(role, 'admin')` around it.
-- [ ] **Step 6: Verify per-user OAuth still works.** `cd os-ui && npm test -- --grep "drive-oauth"` must stay green. The earlier hard stop no longer applies, since the tab keeps creator access.
-- [ ] **Step 7:** Full suite + structure check.
-- [ ] **Step 8: Commit.**
+- [x] **Step 2: Run them.** Expect both to fail.
+- [x] **Step 3: Add `registries.ts` and `AdminRegistries.tsx`**, rendered as a clearly separated admin-only block on the Connections page, not mixed into a user's own connection list.
+- [x] **Step 4: Drop the `kind: 'api'` rows** from `mcp-registry.ts`. Surface the OS's own MCP endpoint on the My MCP access page instead, and an app's own endpoint on its Software page.
+- [x] **Step 5: Do NOT change the Connections tab's `minRole`.** It stays creator-visible by the user's decision. Only the registries block is admin-gated, via `roleAtLeast(role, 'admin')` around it.
+- [x] **Step 6: Verify per-user OAuth still works.** `cd os-ui && npm test -- --grep "drive-oauth"` must stay green. The earlier hard stop no longer applies, since the tab keeps creator access.
+- [x] **Step 7:** Full suite + structure check.
+- [x] **Step 8: Commit.**
 
 ---
 
 ## Task 5: Roles & Permissions and Security & Egress → Governance
 
+**DONE — `979b7acc`** (2026-10-30). Both surfaces are now Governance tabs, admin-gated
+inside Governance because Governance is builder-visible.
+
+* **Step 3 deviation:** there was no roles lib to move. The role matrix already lived in
+  `core/policy/role-config`, so `tabs/governance/lib/roles.ts` is a NEW file holding the
+  governance-side vocabulary and projection over kernel state, not a `git mv`.
+  `tabs/governance/lib/egress.ts` was moved as written.
+* Step 4's cross-link exists both ways: Users & Access → Governance roles, and back.
+
 **Files:** create `os-ui/tabs/governance/lib/roles.ts` + test; modify the Governance page, `os-ui/app/(govern)/platform/access/` to cross-link, and delete `os-ui/app/(govern)/platform/roles/`
 
-- [ ] **Step 1: Write the failing test** asserting role definitions are readable from `@tabs/governance/lib/roles` and that each role's permission list is non-empty.
-- [ ] **Step 2: Run it.** Fails on the missing module.
-- [ ] **Step 3: Move the whole roles surface** into `tabs/governance/lib/roles.ts` and the egress/security surface into `tabs/governance/lib/egress.ts`. Both become Governance tabs. Assigning a person a role stays in Platform's Users & Access.
-- [ ] **Step 4: Add the cross-link** from Users & Access to the Governance role page, and back. This is the workflow cost of the split, so it must be one click each way.
-- [ ] **Step 5:** Delete the old route, one `git rm` per file.
-- [ ] **Step 6:** Suite + structure check.
-- [ ] **Step 7: Commit.**
+- [x] **Step 1: Write the failing test** asserting role definitions are readable from `@tabs/governance/lib/roles` and that each role's permission list is non-empty.
+- [x] **Step 2: Run it.** Fails on the missing module.
+- [x] **Step 3: Move the whole roles surface** into `tabs/governance/lib/roles.ts` and the egress/security surface into `tabs/governance/lib/egress.ts`. Both become Governance tabs. Assigning a person a role stays in Platform's Users & Access.
+- [x] **Step 4: Add the cross-link** from Users & Access to the Governance role page, and back. This is the workflow cost of the split, so it must be one click each way.
+- [x] **Step 5:** Delete the old route, one `git rm` per file.
+- [x] **Step 6:** Suite + structure check.
+- [x] **Step 7: Commit.**
 
 ---
 
 ## Task 6: Documentation and loose ends
 
-- [ ] **Step 0: Fix the stale label in `os-ui/tabs/admin/manifest.ts`.** It still reads `nav: { label: 'Admin', … }`. Nothing consumes manifest `nav` (the sidebar reads `core/kernel/tabs.ts`), so it is dead metadata — but it now contradicts the live label. Found during Task 1 and deliberately left alone there.
+**DONE** (2026-10-30). Step 2 is written the OTHER WAY ROUND from the plan: Connections is
+**not** admin-only — the user settled that on 2026-10-30 (see the decision table above), so
+the CHANGELOG records that creators still see their own connections and corrects the earlier
+intention, which the branch's commits could otherwise be read as having implemented.
+Step 4 stops at the commit: pushing and opening the PR is the user's call.
+
+Three stale comments were found and fixed while writing this up, beyond Step 0's label:
+`core/kernel/tabs.ts` still said the personal surfaces were sections of the admin menu, and
+still described Platform as rendering "ONLY the tiles a builder is authorised for" with a
+"self-service Settings tile" — both untrue since Tasks 2 and 7.
+
+- [x] **Step 0: Fix the stale label in `os-ui/tabs/admin/manifest.ts`.** It still reads `nav: { label: 'Admin', … }`. Nothing consumes manifest `nav` (the sidebar reads `core/kernel/tabs.ts`), so it is dead metadata — but it now contradicts the live label. Found during Task 1 and deliberately left alone there. **Done; `routes` needed no change** — it lists route PREFIXES, so `/platform` already covers the redirect stubs and the three registry pages. The reasoning is now written into the manifest header.
 
 ### Documentation
 
-- [ ] **Step 1:** Update `os-ui/ARCHITECTURE.md`'s tab table and add a short note on the rule used here: a surface belongs to the tab that answers the question the user is asking, and observation separates from configuration.
-- [ ] **Step 2:** `CHANGELOG.md` entry under Unreleased, including the breaking change that **Connections is now admin-only** and where personal account linking moved.
-- [ ] **Step 3:** `node scripts/build-docs.mjs` then `--check`.
-- [ ] **Step 4: Commit, push, open the PR. Merge with Rebase and merge, never squash** — squashing recreated a history divergence twice in this repo.
+- [x] **Step 1:** Update `os-ui/ARCHITECTURE.md`'s tab table and add a short note on the rule used here: a surface belongs to the tab that answers the question the user is asking, and observation separates from configuration. **Done** — a "Which tab owns a surface" section with four rules: the question asked, observation vs configuration, policy vs administration, and "a surface moving to a lower `minRole` carries its own gate".
+- [x] **Step 2:** `CHANGELOG.md` entry under Unreleased, ~~including the breaking change that **Connections is now admin-only**~~ — **inverted**: Connections is NOT admin-only, creators keep their own connections, and only the "Tenant connectors" block is admin-gated. The entry also lists where all ten surfaces went and records the route→tab gate move.
+- [x] **Step 3:** `node scripts/build-docs.mjs` then `--check`.
+- [x] **Step 4: Commit.** ~~push, open the PR. Merge with Rebase and merge, never squash~~ — **not done, deliberately**: the user decides when to publish. When it is published, rebase and merge, never squash — squashing recreated a history divergence twice in this repo.
 
 ---
 
 ## Task 7: Platform adopts the Governance look — one route, tabs on top
+
+**DONE — `ca898d4e`** (2026-10-30). One route, a `.tabstrip`, **the tile grid is gone**, and
+Overview absorbed Components & System as "Overview & Health" — builder-readable with
+admin-only actions. The role gate moved out of the route's pathname check into per-tab
+gating (`visibleSections`, `resolveSection`, `sectionMinRole` in `sections.ts`), all
+fail-closed.
+
+Two deviations:
+
+* **Step 5:** the layout's deep-path bounce was **kept**, not removed — three admin pages
+  (`/platform/{mcp-apis,oauth-apps,plugins}`) still live under `/platform` and still need it.
+* **Per-section page titles are gone** by nature of the pattern: one route carries one
+  `PageHeader` ("Platform"), exactly as Governance does. Not a regression, but the old
+  per-page titles do not come back.
 
 **This is not the strip we deleted.** On 2026-10-28 Platform had a navigation
 strip *and* a tile grid: two navigation systems for one page, which is why the
@@ -258,7 +315,7 @@ scan. Governance's tabs are each one working surface, and being faithful to that
 means eight tabs. Render the strip in `ADMIN_GROUP_ORDER` sequence so related
 tabs sit together.
 
-- [ ] **Step 1: Write the failing test** in `sections.test.ts`:
+- [x] **Step 1: Write the failing test** in `sections.test.ts`:
 
 ```ts
 test('PLATFORM: every section is reachable as a tab on one route', () => {
@@ -268,13 +325,13 @@ test('PLATFORM: every section is reachable as a tab on one route', () => {
 });
 ```
 
-- [ ] **Step 2: Run it.** Fails: hrefs are still `/platform/<id>`.
-- [ ] **Step 3: Move each page's body into a component** under `tabs/admin/ui/`, one per section, importing the lib it already uses. Pure move; no behaviour change.
-- [ ] **Step 4: Rewrite `platform/page.tsx`** as a `.tabstrip` plus the active component, mirroring the Governance page. Read the active tab from `?section=`, defaulting to `overview`. Filter tabs by `roleAtLeast` so a builder sees only Overview.
-- [ ] **Step 5: Keep the old links working.** Each `app/(govern)/platform/<id>/page.tsx` becomes a redirect to `/platform?section=<id>`. Code and docs reference these paths (for example "set prices in Platform → Models"), so removing them outright would 404 live links.
-- [ ] **Step 6: Phone width.** Six tabs will not fit at ~400px: put the strip in an `overflow-x: auto` container so it scrolls rather than wrapping into a block that pushes the content down a screen.
-- [ ] **Step 7:** Full suite, structure check, and check `/platform` plus two redirects by hand.
-- [ ] **Step 8: Commit.**
+- [x] **Step 2: Run it.** Fails: hrefs are still `/platform/<id>`.
+- [x] **Step 3: Move each page's body into a component** under `tabs/admin/ui/`, one per section, importing the lib it already uses. Pure move; no behaviour change.
+- [x] **Step 4: Rewrite `platform/page.tsx`** as a `.tabstrip` plus the active component, mirroring the Governance page. Read the active tab from `?section=`, defaulting to `overview`. Filter tabs by `roleAtLeast` so a builder sees only Overview.
+- [x] **Step 5: Keep the old links working.** Each `app/(govern)/platform/<id>/page.tsx` becomes a redirect to `/platform?section=<id>`. Code and docs reference these paths (for example "set prices in Platform → Models"), so removing them outright would 404 live links.
+- [x] **Step 6: Phone width.** Six tabs will not fit at ~400px: put the strip in an `overflow-x: auto` container so it scrolls rather than wrapping into a block that pushes the content down a screen.
+- [x] **Step 7:** Full suite, structure check, and check `/platform` plus two redirects by hand.
+- [x] **Step 8: Commit.**
 
 ---
 
