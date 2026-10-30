@@ -8,9 +8,17 @@ import { emitTabNav } from '@core/kernel/tab-nav';
 import { DomainSwitcher } from '@core/ui/core/DomainSwitcher';
 import { DomainStartPrompt } from '@core/ui/core/DomainStartPrompt';
 import NotificationBell from '@core/ui/core/NotificationBell';
+import { roleAtLeast } from '@core/kernel/session';
+import { ACCOUNT_ITEMS } from '@core/ui/account-menu';
 // Static import so the brand mark is emitted into .next/static (served in the
 // standalone container, where public/ is not copied).
 import lotus from '@/components/lotus.svg';
+
+// The account menu's contract lives in a data-only sibling module (so it is
+// testable without rendering), but the sidebar owns it — re-exported here so
+// callers and the plan's interface see one name.
+export { ACCOUNT_ITEMS };
+export type { AccountItem } from '@core/ui/account-menu';
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -122,6 +130,29 @@ export default function Sidebar() {
                 <strong>{user.domains.join(', ')}</strong>
               </div>
             )}
+            {/* Account menu: the three PERSONAL surfaces. They sit under the
+                signed-in user's own name, below the tab list and behind the
+                footer's border, so nobody reads them as a 14th tab. Role-gated
+                with the same roleAtLeast floor the tabs use. */}
+            <div
+              className="nav-group nav-entry account-menu"
+              // Pull the nav-items back to the sidebar's nav gutter (the foot
+              // pads 18px, the nav 8px), same inline-layout style the Sign out
+              // button below already uses.
+              style={{ marginTop: 8, marginInline: -10 }}
+            >
+              {ACCOUNT_ITEMS.filter((item) => roleAtLeast(user.role, item.minRole)).map((item) => (
+                <Link
+                  key={item.id}
+                  href={item.href}
+                  className={`nav-item${pathname.startsWith(item.href) ? ' active' : ''}`}
+                  onClick={() => emitTabNav(item.href)}
+                >
+                  <span className="ico">{item.icon}</span>
+                  {item.label}
+                </Link>
+              ))}
+            </div>
             <button className="btn ghost" style={{ marginTop: 10, width: '100%', padding: '5px 10px' }} onClick={signOut}>
               Sign out
             </button>
