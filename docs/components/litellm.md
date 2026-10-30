@@ -7,6 +7,12 @@ fronts the registered MCP tool servers (the governed Trino `query` tool, etc.). 
 
 ## Access — from inside the OS, no second login
 
+> **The link must point at `/tools/litellm/ui`, not `/tools/litellm`.** LiteLLM's
+> root serves its FastAPI Swagger page, whose assets are root-absolute and
+> therefore 404 behind the proxy prefix — the tab opens blank with the title
+> "API - Swagger UI". The admin console lives at `/ui` under `SERVER_ROOT_PATH`.
+> `tabs/admin/lib/sections.test.ts` pins this so it cannot regress.
+
 **Admin → LLM Gateway** opens LiteLLM's own admin console *inside* the OS, with the
 admin already signed in. The OS proxies it same-origin at `/tools/litellm` and mints the
 session server-side (`os-ui/core/infra/tool-sso-litellm.ts`), so no gateway credential
