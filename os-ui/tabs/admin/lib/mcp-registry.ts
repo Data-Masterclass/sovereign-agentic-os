@@ -313,36 +313,20 @@ export const STACK_MCP_SERVERS: StackServerInput[] = [
   },
 ];
 
-/** Curated official platform HTTP APIs surfaced alongside the OS MCP servers. */
-export const OFFICIAL_PLATFORM_APIS: RegistryEntry[] = [
-  {
-    id: 'api-gateway',
-    kind: 'api',
-    name: 'Gateway API',
-    description: 'The models + registered MCP tools the agents call — LiteLLM, per-key access + cost caps, Langfuse-logged.',
-    endpoint: '/api/gateway',
-    tools: [],
-    scope: 'platform API',
-    importable: false,
-  },
-  {
-    id: 'api-mcp-token',
-    kind: 'api',
-    name: 'MCP token',
-    description: 'Mints your personal, role-scoped bearer token for the OS remote MCP endpoint (cookie-authenticated).',
-    endpoint: '/api/mcp/token',
-    tools: [],
-    scope: 'platform API',
-    importable: false,
-  },
-  {
-    id: 'api-connections',
-    kind: 'api',
-    name: 'Connections API',
-    description: 'The governed connections visible to you (Personal + domain Shared + Marketplace) and their capability profiles.',
-    endpoint: '/api/connections',
-    tools: [],
-    scope: 'platform API',
-    importable: false,
-  },
-];
+/**
+ * Curated official platform HTTP APIs surfaced alongside the OS MCP servers.
+ *
+ * EMPTY since 2026-10-30, deliberately. It held three `kind: 'api'` rows pointing at the
+ * OS's OWN endpoints — /api/gateway, /api/mcp/token and /api/connections. None of those was
+ * ever a trust decision an admin made: they are this product's surface area, always present,
+ * never vouched for. Listing them buried the few THIRD-PARTY servers an admin actually did
+ * vouch for, which is the only reason this registry exists.
+ *
+ * The OS's own MCP endpoint is surfaced on the My MCP access page, and an app's own endpoint
+ * on its Software page — at the point of use, where a token is minted.
+ *
+ * The `officialApis` plumbing stays so a genuinely EXTERNAL API (a third party's, admitted by
+ * this tenant) can be listed here as `kind: 'api'`. An OS endpoint may not come back;
+ * mcp-registry.test.ts asserts the built registry carries no `kind: 'api'` row.
+ */
+export const OFFICIAL_PLATFORM_APIS: RegistryEntry[] = [];
