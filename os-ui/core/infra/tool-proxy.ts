@@ -70,6 +70,18 @@ export type Tool = {
    */
   publicPaths?: string[];
   /**
+   * Set when the UPSTREAM is itself mounted under the proxy prefix, so the
+   * prefix must be KEPT rather than stripped.
+   *
+   * The usual contract is the opposite: a reverse proxy strips its prefix and
+   * the app uses a root-path setting only to build outgoing URLs. LiteLLM does
+   * not work that way — with `SERVER_ROOT_PATH=/tools/litellm` it serves its UI
+   * at `/tools/litellm/ui/` and answers **404** on `/ui/`. Verified against the
+   * live pod. Without this, the proxy forwards the stripped path, LiteLLM 404s,
+   * and its `/ui` -> `/ui/` redirect bounces until it lands on that 404.
+   */
+  upstreamRootPath?: string;
+  /**
    * How to authenticate the ADMIN-only part of a tool that also has a public part.
    * Its presence is what makes the non-public paths admin-gated at all.
    */
@@ -173,6 +185,9 @@ export const TOOLS: Record<string, Tool> = {
     embeddable: true,
     sso: { mode: 'none' },
     publicPaths: ['public', 'get_favicon', 'favicon.ico', '_next'],
+    // LiteLLM is mounted UNDER this prefix (SERVER_ROOT_PATH in the chart), so
+    // the prefix is forwarded, not stripped. See `upstreamRootPath`.
+    upstreamRootPath: '/tools/litellm',
     adminSso: { mode: 'session' },
     note: "Public Model Hub for everyone; the full admin console (models, keys, budgets, guardrails) is admin-only with a server-minted UI session — no second login, no credential in the browser.",
   },
@@ -454,7 +469,10 @@ export async function proxy(
   const upstreamOrigin = new URL(tool.upstream).origin;
 
   const path = pathSegments.map(encodeURIComponent).join('/');
-  const target = `${tool.upstream}/${path}${reqUrl.search}`;
+  // Keep the trailing slash. LiteLLM answers `/ui` with a 307 to `/ui/`; dropping
+  // the slash on the way back makes that redirect bounce forever.
+  const trailing = path && reqUrl.pathname.endsWith('/') ? '/' : '';
+  const target = `${tool.upstream}${tool.upstreamRootPath ?? ''}/${path}${trailing}${reqUrl.search}`;
 
   const headers = buildUpstreamHeaders({ tool, user, incoming: req.headers, proto, host });
   const method = req.method.toUpperCase();

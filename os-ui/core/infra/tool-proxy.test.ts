@@ -344,3 +344,62 @@ test('TOOL-GATE: a tool without adminSso keeps the plain per-tool gate', () => {
   assert.equal(pathAccess(lf, ['anything'], lf.minRole).allowed, true);
   assert.equal(pathAccess(lf, ['anything'], lf.minRole).needsAdminSso, false);
 });
+
+/* ------------------------------------------- upstream root path (LiteLLM) */
+
+/** Capture the URL the proxy actually fetches upstream. */
+async function targetFor(tool: Parameters<typeof proxy>[1], url: string, segs: string[]): Promise<string> {
+  let sawUrl = '';
+  const fakeFetch = async (u: string | URL): Promise<Response> => {
+    sawUrl = String(u);
+    return new Response('ok', { status: 200 });
+  };
+  await proxy(new Request(url, { headers: { host: 'os.example.com' } }), tool, segs, USER, fakeFetch as typeof fetch);
+  return sawUrl;
+}
+
+test('ROOT-PATH: a tool mounted under the prefix KEEPS it (LiteLLM 404s without it)', async () => {
+  const tool = fakeTool({
+    key: 'litellm', basePath: '/tools/litellm',
+    upstream: 'http://litellm:4000', upstreamRootPath: '/tools/litellm',
+  });
+  assert.equal(
+    await targetFor(tool, 'https://os.example.com/tools/litellm/ui', ['ui']),
+    'http://litellm:4000/tools/litellm/ui',
+  );
+});
+
+test('ROOT-PATH: the trailing slash survives, or /ui -> /ui/ redirects forever', async () => {
+  const tool = fakeTool({
+    key: 'litellm', basePath: '/tools/litellm',
+    upstream: 'http://litellm:4000', upstreamRootPath: '/tools/litellm',
+  });
+  assert.equal(
+    await targetFor(tool, 'https://os.example.com/tools/litellm/ui/', ['ui']),
+    'http://litellm:4000/tools/litellm/ui/',
+  );
+});
+
+test('ROOT-PATH: assets keep the prefix too, so the UI can load them', async () => {
+  const tool = fakeTool({
+    key: 'litellm', basePath: '/tools/litellm',
+    upstream: 'http://litellm:4000', upstreamRootPath: '/tools/litellm',
+  });
+  assert.equal(
+    await targetFor(tool, 'https://os.example.com/tools/litellm/_next/static/x.js', ['_next', 'static', 'x.js']),
+    'http://litellm:4000/tools/litellm/_next/static/x.js',
+  );
+});
+
+test('ROOT-PATH: a tool WITHOUT one still has its prefix stripped', async () => {
+  const tool = fakeTool({ key: 'mlflow', basePath: '/tools/mlflow', upstream: 'http://mlflow:5000' });
+  assert.equal(
+    await targetFor(tool, 'https://os.example.com/tools/mlflow/ajax-api/x', ['ajax-api', 'x']),
+    'http://mlflow:5000/ajax-api/x',
+  );
+});
+
+test('ROOT-PATH: the real litellm tool entry declares it', () => {
+  const tool = resolveTool('litellm');
+  assert.equal(tool?.upstreamRootPath, '/tools/litellm');
+});
