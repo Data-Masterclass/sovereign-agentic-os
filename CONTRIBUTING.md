@@ -115,6 +115,11 @@ debugging time — a Next.js `route.ts` may export only its handlers, a test can
 - **Never run a tree-wide script while another executes from the same checkout.** Rewriting a
   running shell script makes it resume mid-line; this once deleted a Dockerfile and committed
   the deletion.
+- **Run `deploy.sh` directly, never through a pipe** (`| tail`): the pipeline's exit status
+  masks a failed upgrade as success.
+- **Stop Colima after building** (`colima stop`). The deploy's Docker build runs in a VM that
+  reserves 14 GB; left running on a ~24 GB machine it starves everything else — including the
+  next deploy's `kubectl` and Helm calls, which then time out.
 - **Merge with "Rebase and merge", never squash.** A squash creates a commit absent from the
   branch's ancestry, so the next branch reports conflicts in every touched file.
 

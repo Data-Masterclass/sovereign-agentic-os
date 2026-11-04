@@ -5,6 +5,10 @@
 #
 #   ./scripts/deploy.sh 0.7.0
 #
+# Run it DIRECTLY — never `deploy.sh … | tail`. A pipeline's exit status is the
+# last command's, so a failed upgrade reports 0 and looks like success. The
+# 2026-11-04 schema-fetch failure was missed for exactly that reason.
+#
 # Order is deliberate: back up FIRST (the script aborts if the backup gate fails),
 # then build for the cluster's architecture, then one helm upgrade.
 #
@@ -47,7 +51,7 @@ PY
 
 say "what the upgrade changes"
 helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$WORK/before.yaml"
-helm template "$REL" "$CHART" -n "$NS" -f "$VALUES" > "$WORK/after.yaml"
+helm template "$REL" "$CHART" -n "$NS" -f "$VALUES" --skip-schema-validation > "$WORK/after.yaml"
 python3 - "$WORK/before.yaml" "$WORK/after.yaml" <<'PY'
 import sys, yaml
 def objs(p):
@@ -92,8 +96,14 @@ DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMG" | sed -E 's/.
 say "digest $DIGEST"
 
 say "helm upgrade"
+# --skip-schema-validation: the dagster subchart's values.schema.json $ref's a
+# JSON schema on raw.githubusercontent.com. Helm fetches it at upgrade time, and
+# on 2026-11-04 that fetch timed out and FAILED a production deploy after the
+# image had already been built and pushed. A deploy must not depend on GitHub
+# answering within Helm's timeout. Our own values are still exercised by the
+# template/diff step above and by `helm lint` in CI.
 helm --kube-context "$CTX" upgrade "$REL" "$CHART" -n "$NS" -f "$VALUES" \
-  --set osUI.image.tag="$VERSION@$DIGEST" --force-conflicts --timeout 20m
+  --set osUI.image.tag="$VERSION@$DIGEST" --force-conflicts --skip-schema-validation --timeout 20m
 # No rollout restart: the image change already rolls os-ui exactly once.
 
 say "rollout"
