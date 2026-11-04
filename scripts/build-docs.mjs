@@ -12,6 +12,11 @@
  *   - Content comes from the code itself — each file's FEATURE / USER STORY / ARCHITECTURE header
  *     (see scripts/check-structure.mjs), each tab's manifest.ts, each component's UPSTREAM.md.
  *   - Writes docs/site/index.html (self-contained). `--check` exits 1 when that file is stale,
+ *   - docs/site/ is GITIGNORED: the output is a build artifact, generated on
+ *     demand. CI runs this script to prove it generates; it no longer compares a
+ *     committed copy. That comparison made a ~235k-line file collide between any
+ *     two concurrent branches — five rebases in a week, never a real conflict.
+ *     `--check` still works for local use against a file you generated yourself.
  *     so CI fails on a doc that no longer matches the tree.
  */
 import { readFileSync, readdirSync, statSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
