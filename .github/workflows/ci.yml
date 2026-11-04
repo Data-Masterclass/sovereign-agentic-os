@@ -39,8 +39,12 @@ jobs:
       - name: Structure ratchet (core / tabs / components)
         run: node scripts/check-structure.mjs
 
-      - name: Code map is current
-        run: node scripts/build-docs.mjs --check
+      # Generates the code map and fails if the generator cannot (a broken
+      # manifest, an unreadable tab). Deliberately NOT `--check`: comparing a
+      # COMMITTED copy made the artifact a merge-conflict magnet without
+      # catching anything a plain run does not.
+      - name: Code map generates cleanly
+        run: node scripts/build-docs.mjs
 
   build:
     name: build
