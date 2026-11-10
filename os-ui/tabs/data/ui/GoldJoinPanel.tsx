@@ -485,7 +485,7 @@ export default function GoldJoinPanel({
           <div className="section-title" style={{ marginTop: 8 }}>Base dataset</div>
           {joinable.length === 0 && !loadErr ? (
             <div className="hint" style={{ marginTop: 0 }}>
-              No governed datasets to compose from yet — promote a dataset to your domain (or ask a colleague to) first.
+              No composable datasets yet. A composition reads landed lakehouse tables, so a dataset must be ingested, or a connected table adopted in <strong>sync</strong> mode — a <em>live</em> connected table is federated in place and cannot be composed. Promote a dataset to your domain to make it composable for colleagues.
             </div>
           ) : (
             <div className="row" style={{ gap: 8, alignItems: 'center', marginBottom: 8 }}>
@@ -676,6 +676,14 @@ export default function GoldJoinPanel({
         {/* Clear IN-PROGRESS signal so a build never looks like "nothing happened". */}
         {busy === 'build' ? <span className="hint" style={{ margin: 0 }}>Building Gold…</span> : null}
         {report?.mode === 'offline-mock' ? <span className="hint" style={{ margin: 0 }}>offline preview — no live table written</span> : null}
+        {/* Why the button is disabled, ALWAYS visible. The compile error used to render only
+            inside the collapsed "Show the code" section, so with the toggle closed the user
+            saw a dead button and no reason. A disabled primary action must explain itself. */}
+        {busy === '' && compiled.error ? (
+          <span className="hint" style={{ margin: 0, color: 'var(--warn, #a86400)' }}>
+            {compiled.error}
+          </span>
+        ) : null}
         <button className="btn primary" onClick={build} disabled={busy !== '' || (curated ? !baseId : !silverBuilt) || !!compiled.error}>
           {busy === 'build' ? <span className="spin" /> : saveLabel ?? (builtOk ? 'Rebuild Gold version' : 'Build Gold version')}
         </button>
