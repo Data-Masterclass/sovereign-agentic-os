@@ -58,7 +58,8 @@ kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000
   Qwen3-VL-Embedding-8B, 4096-dim), `sovereign-vision` / `sovereign-premium`
   (Qwen3-VL — vision + last-resort). Admin can re-point each role in Platform Settings.
 - **Virtual keys + cost caps:** UI → *Virtual Keys*. The agents use a scoped key
-  (`sk-agents-local-dev`, alias `sovereign-agents`) limited to those two models with a budget.
+  (`sk-agents-local-dev`, alias `sovereign-agents`) limited to the `litellmAgentKey.models`
+  allowlist with a budget — see "The agent key reconciles on every upgrade" below.
 - **MCP tools:** registered tool servers appear at `/v1/mcp/tools`; agents call them through
   LiteLLM's `/mcp` endpoint (see the governed Trino query-tool doc).
 
@@ -109,9 +110,11 @@ separable by a reviewer.
 ## How the OS calls the gateway (and what it must never use)
 
 Run traffic uses a **scoped virtual key**, never the proxy master key. The chart
-provisions it and an idempotent Job registers it in LiteLLM with a model
-allowlist and a USD cap; os-ui reads it as `LITELLM_AGENT_KEY`. The master key
-is reserved for administering the gateway itself.
+provisions it and an idempotent Job (`litellm-agent-key-init`) registers it in
+LiteLLM with a model allowlist, a USD cap and rate limits, and **re-asserts
+those properties on every `helm upgrade`** (see below); os-ui reads it as
+`LITELLM_AGENT_KEY`. The master key is reserved for administering the gateway
+itself.
 
 This is enforced, not documented: the `MODEL-KEY` gate test inspects the
 outgoing `Authorization` header of a real run-path call and fails if it is the
@@ -151,7 +154,58 @@ the admin API under the master key.
 
 ### Deployment caveat
 
-The scoped key ships with `litellmAgentKey.maxBudget: 5` USD and an allowlist of
-three models. Before enabling this in production, check that the key's remaining
-budget and its allowlist cover real traffic — otherwise runs will correctly but
-unhelpfully fail closed with `budget_exceeded` or an unauthorised-model error.
+The scoped key ships with `litellmAgentKey.maxBudget: 5` USD and the
+`litellmAgentKey.models` allowlist (four aliases today). Before enabling this in
+production, check that the key's remaining budget and its allowlist cover real
+traffic — otherwise runs will correctly but unhelpfully fail closed with
+`budget_exceeded` or `key_model_access_denied` (an HTTP 403 saying
+"key not allowed to access model").
+
+### The agent key reconciles on every upgrade
+
+`litellm-agent-key-init` is a normal (non-hook) Job with
+`ttlSecondsAfterFinished: 300`, so every `helm upgrade` or ArgoCD sync recreates
+and re-runs it. The Job is idempotent in both directions: a missing key is
+created with `/key/generate`, an existing key is **updated** with `/key/update`
+to the current chart values — `models`, `max_budget`, `budget_duration`,
+`rpm_limit`, `tpm_limit`, `max_parallel_requests` (and `model_max_budget` when
+`litellmAgentKey.enterprise` is true). `key_alias` is set at creation only. The
+Job logs the allowlist before and after (`kubectl -n agentic-os logs
+job/litellm-agent-key-init`) and never prints a key value.
+
+**Until a cluster has been upgraded with this change, an existing key keeps the
+allowlist and budget it was first provisioned with.** The earlier Job exited as
+soon as `/key/info` found the key, so a chart edit to `models` or `maxBudget`
+never reached LiteLLM. This is how production ended up with a key limited to
+`['sovereign-mock', 'sovereign-embed']` (the alpha-release list) while the chart
+said four models, and why Phase 3 — which moved the run path off the master key
+— surfaced it as a 403 on every `sovereign-default` call. Deploying os-ui alone
+does not fix a live key; the Job has to run. One-off remedy, either:
+
+```bash
+kubectl -n agentic-os delete job litellm-agent-key-init   # if a finished one is still present
+helm upgrade ...                                          # recreates and runs the reconciling Job
+```
+
+or edit the key by hand in the LiteLLM console (Admin → LLM Gateway, i.e.
+`/tools/litellm/ui` → *Virtual Keys* → `sovereign-agents` → models). The Job
+will converge the key to chart values on the next upgrade either way.
+
+**`litellmAgentKey.models` must contain every alias the OS's run paths can
+send**, or the scoped key fails closed on exactly the model the OS picked. The
+aliases are not hard-coded in one place; they come from:
+
+| Role / use | Source | Default alias |
+|---|---|---|
+| standard (worker) | `config.litellmExecModel` ← `LITELLM_EXEC_MODEL` | `sovereign-default` |
+| chat / offline fallback | `config.litellmChatModel` ← `LITELLM_CHAT_MODEL` | `sovereign-mock` |
+| reasoning | `config.litellmReasoningModel` ← `LITELLM_REASONING_MODEL` | `sovereign-reasoning` |
+| tools | `config.litellmToolsModel` ← `LITELLM_TOOLS_MODEL` | `sovereign-default` |
+| knowledge embeddings | `config.embedModel` ← `KNOWLEDGE_EMBED_MODEL` | `sovereign-embed` |
+| files embeddings | `config.filesEmbedModel` ← `FILES_EMBED_MODEL` | `sovereign-embed` |
+| agent-runtime chat | `agentRuntime.chatModel` (chart) | `sovereign-mock` |
+
+plus any **admin override** per role in Platform Settings (`modelRoles`, read by
+`core/models/roles.ts`). Renaming an alias or re-pointing a role means updating
+`litellmAgentKey.models` in the same change; the Job will push the new list on
+the next upgrade.
