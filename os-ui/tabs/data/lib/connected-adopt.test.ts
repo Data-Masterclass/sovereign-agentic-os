@@ -13,6 +13,7 @@ import {
   adoptConnectedDataset,
   builtLayerFqn,
   getDataset,
+  listJoinable,
   markDatasetsSourceRevoked,
   markDatasetsDrifted,
   type Principal,
@@ -109,4 +110,14 @@ test('markDatasetsDrifted: flags a bound live dataset when its table was removed
   markDatasetsSourceRevoked('exp_1');
   markDatasetsDrifted('conn_1', [{ schema: 'public', table: 'orders' }]);
   assert.equal(getDataset(d.id, dadmin).connected?.status, 'source-revoked');
+});
+
+// The curated compose picker must never OFFER a live connected dataset: the gold-join
+// route compiles every pick into one Iceberg CTAS and a federated external table has no
+// governed Iceberg copy to read — offering it produced the 0.7.7 Save Composition failure
+// (`SCHEMA_NOT_FOUND: Schema '<domain>' does not exist`).
+test('listJoinable: a LIVE connected dataset is never offered as a compose source', () => {
+  adopt({ connected: { connectionId: 'c', exposureId: 'e', source: { catalog: 'g', schema: 's', table: 't' }, mode: 'live', tier: 'gold', status: 'ok' } });
+  assert.deepEqual(listJoinable(viewer).map((d) => d.name), []);
+  assert.deepEqual(listJoinable(dadmin).map((d) => d.name), []);
 });

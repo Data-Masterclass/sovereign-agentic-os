@@ -33,7 +33,7 @@ import {
 import { transparencyGate, gateReason } from '@tabs/data/lib/transparency';
 import { CUBE_ARTIFACT, scaffoldMetricYaml, metricSqlReady } from '@tabs/data/lib/metrics';
 import { SEMANTIC_ARTIFACT, scaffoldSemanticYaml } from '@tabs/data/lib/semantic';
-import { assetTarget, productTarget, reuseSourceFqn, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from '@tabs/data/lib/store-fqn';
+import { assetTarget, productTarget, reuseSourceFqn, composeSourceBlocker, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from '@tabs/data/lib/store-fqn';
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
@@ -686,6 +686,10 @@ export function listJoinable(user: Principal, excludeId?: string): JoinableDatas
     // dropdown while operating in agentic-leader.)
     if (d.domain && !user.domains.includes(d.domain)) continue;
     if (!d.versions.gold.built && !d.versions.silver.built) continue; // must be materialized
+    // A LIVE connected dataset has no governed Iceberg copy the compose CTAS may read —
+    // offering it only produced SCHEMA_NOT_FOUND on Save Composition (0.7.7). One rule,
+    // shared with the gold-join route (`composeSourceBlocker`).
+    if (composeSourceBlocker(d)) continue;
     out.push({ id: d.id, name: d.name, domain: d.domain, tier: d.tier, fqn: reuseSourceFqn(d), columns: d.columns.map((c) => c.name) });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));

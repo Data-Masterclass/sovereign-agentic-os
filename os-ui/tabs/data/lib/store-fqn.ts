@@ -105,11 +105,40 @@ export function assetTarget(d: Dataset): string {
  * curated dataset always is). Asset/product resolution is byte-identical to before.
  */
 export function reuseSourceFqn(d: Dataset): string {
+  // CONNECTED datasets first — the SAME branches as {@link versionTarget}, so a compose
+  // reads exactly the table every other consumer reads. A LIVE dataset IS the external
+  // `catalog.schema.table` (no personal lane, no domain copy); a SYNC dataset is its landed
+  // governed copy. Falling through to `assetTarget` here minted a PHANTOM
+  // `iceberg.<domain>.<layer>_<slug>` for a live dataset — a table (and, before any publish,
+  // a schema) that never existed, surfacing as Trino `SCHEMA_NOT_FOUND` on Save Composition.
+  if (d.connected && d.connected.mode === 'live') {
+    const s = d.connected.source;
+    return `${s.catalog}.${s.schema}.${s.table}`;
+  }
+  if (d.connected && d.connected.mode === 'sync') {
+    return `iceberg.${domainSchema(d.domain)}.${d.connected.tier}_${physicalSlug(d)}`;
+  }
   const layer: Layer = d.versions.gold.built ? 'gold' : 'silver';
   if (d.tier === 'dataset') {
     return `iceberg.${personalSchema(d.owner)}.${layer}_${physicalSlug(d)}`;
   }
   return assetTarget(d);
+}
+
+/**
+ * Why a dataset CANNOT be a curated compose / gold-join source today — or `null` when it
+ * can. The Gold compiler writes ONE Iceberg CTAS and (by design, tested) refuses a
+ * cross-catalog read, so a LIVE connected dataset — a federated external table with no
+ * governed Iceberg copy — has nothing it may read. The picker (`listJoinable`) and the
+ * gold-join route share this ONE rule so the UI never offers, and the server never
+ * compiles, a source that can only fail: the user gets the reason + the remedy (adopt the
+ * table in SYNC mode, which lands a governed copy) instead of a raw Trino error.
+ */
+export function composeSourceBlocker(d: Pick<Dataset, 'name' | 'connected'>): string | null {
+  if (d.connected && d.connected.mode === 'live') {
+    return `“${d.name}” is a live connected table (read straight from its source) and cannot be composed into a curated dataset yet — adopt it in sync mode to land a governed copy first.`;
+  }
+  return null;
 }
 
 /** The product FQN a certified asset is listed/queried under. */
