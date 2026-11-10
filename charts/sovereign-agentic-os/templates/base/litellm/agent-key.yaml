@@ -1,19 +1,35 @@
 {{- if and .Values.litellm.enabled .Values.litellmAgentKey.enabled }}
 {{- /*
   Provision a scoped LiteLLM virtual key for the agents (least privilege).
-  The key value lives in a Secret (the agents read it); a Job calls /key/generate
-  with the master key to register it in LiteLLM, limited to the allowed models
-  with a budget cap. Idempotent (re-checks /key/info and exits 0 if present).
+  The key value lives in a Secret (the agents read it); a Job calls the LiteLLM
+  key API with the master key to register it, limited to the allowed models
+  with a budget cap and rate limits.
 
-  ROOT-CAUSE FIX: this Job used to be a Helm post-install/post-upgrade *hook*.
-  The live deploy is forced to run `helm ... --no-hooks` (the argo-cd
+  RECONCILING, NOT CREATE-ONLY. The Job is idempotent in BOTH directions:
+    - key missing  -> POST /key/generate with the full chart-derived properties
+    - key present  -> POST /key/update  with the SAME properties
+  It used to `exit 0` as soon as /key/info said the key existed, which froze
+  `models`, `max_budget`, `budget_duration`, `model_max_budget`, `rpm_limit`,
+  `tpm_limit` and `max_parallel_requests` at whatever the chart said on the day
+  the key was FIRST provisioned. A later edit to `litellmAgentKey.models` never
+  reached LiteLLM, and once the run path moved off the master key (Phase 3) the
+  stale allowlist surfaced as `key_model_access_denied` 403s. Now every run of
+  this Job re-asserts the chart values. `key_alias` is set at create time only.
+
+  ROOT-CAUSE FIX (hooks): this Job used to be a Helm post-install/post-upgrade
+  *hook*. The live deploy is forced to run `helm ... --no-hooks` (the argo-cd
   `argocd-redis-secret-init` pre-upgrade hook fails on this cluster), which
   silently skips ALL hooks — so the agent key was never registered and the
   agents hit 401s. It is now a NORMAL (non-hook) resource so a plain
   `helm install` (hooks on OR off) and ArgoCD sync both always run it. It polls
   LiteLLM readiness (the proxy only serves after its migration initContainer has
-  created the schema), then registers the key. `ttlSecondsAfterFinished` lets it
-  self-clean and be recreated/re-run idempotently on a later upgrade/sync.
+  created the schema), then registers or reconciles the key.
+  `ttlSecondsAfterFinished` lets it self-clean so the next `helm upgrade` /
+  ArgoCD sync recreates and re-runs it — that re-run IS the reconcile.
+
+  LOGGING: the Job prints the allowlist before and after the update so an
+  operator can confirm the reconcile in `kubectl logs`. It never prints the key
+  value, the master key, or the raw /key/info body (which carries the key).
 */}}
 {{- $k := .Values.litellmAgentKey }}
 {{- if eq .Values.global.profile "local" }}
@@ -73,13 +89,8 @@ spec:
                 [ "$code" = "200" ] && { echo "litellm ready"; break; }
                 sleep 3
               done
-              info=$(curl -s -o /dev/null -w "%{http_code}" \
-                -H "Authorization: Bearer $MASTER_KEY" \
-                "$B/key/info?key=$VIRTUAL_KEY" || true)
-              if [ "$info" = "200" ]; then
-                echo "virtual key already provisioned"; exit 0
-              fi
-              echo "provisioning scoped virtual key (alias={{ $k.alias }}, budget={{ $k.maxBudget }}, rpm={{ $k.rpmLimit }}, tpm={{ $k.tpmLimit }})..."
+              # The desired key properties, rendered from chart values. Shared by the
+              # create and the update path so the two can never disagree.
               # Scoped virtual key (least privilege): allowed models + an overall
               # spend cap, PLUS a dedicated per-model spend cap for the pay-per-token
               # STACKIT premium/vision routes (model_max_budget — the hard cost
@@ -87,16 +98,43 @@ spec:
               # (rpm_limit/tpm_limit + max_parallel_requests; LiteLLM soft-limits and
               # the router's num_retries back-pressures rather than hard-failing).
               # `model_max_budget` is a LiteLLM ENTERPRISE feature (OSS /key/generate
-              # 500s if it is set). Include the per-model STACKIT cost cap ONLY when
-              # litellmAgentKey.enterprise is true; otherwise rely on the overall
-              # max_budget cap (OSS) — the self-hosted default routes are free anyway.
+              # and /key/update 500 if it is set). Include the per-model STACKIT cost
+              # cap ONLY when litellmAgentKey.enterprise is true; otherwise rely on the
+              # overall max_budget cap (OSS) — the self-hosted default routes are free.
               # budget_duration (e.g. "7d") makes max_budget an auto-resetting
               # window (weekly pool); omitted when empty so the cap is one-shot.
-              PAYLOAD='{"key":"'"$VIRTUAL_KEY"'","key_alias":"{{ $k.alias }}","models":{{ $k.models | toJson }},"max_budget":{{ $k.maxBudget }},{{ if $k.budgetDuration }}"budget_duration":"{{ $k.budgetDuration }}",{{ end }}{{ if $k.enterprise }}"model_max_budget":{{ $k.modelMaxBudget | toJson }},{{ end }}"rpm_limit":{{ $k.rpmLimit }},"tpm_limit":{{ $k.tpmLimit }},"max_parallel_requests":{{ $k.maxParallelRequests }}}'
+              MODELS='{{ $k.models | toJson }}'
+              PROPS='"models":'"$MODELS"',"max_budget":{{ $k.maxBudget }},{{ if $k.budgetDuration }}"budget_duration":"{{ $k.budgetDuration }}",{{ end }}{{ if $k.enterprise }}"model_max_budget":{{ $k.modelMaxBudget | toJson }},{{ end }}"rpm_limit":{{ $k.rpmLimit }},"tpm_limit":{{ $k.tpmLimit }},"max_parallel_requests":{{ $k.maxParallelRequests }}'
+              # The allowlist LiteLLM currently holds for this key — ONLY the models
+              # field. The /key/info body also carries the key itself and must never
+              # be echoed.
+              current_models() {
+                curl -sS -H "Authorization: Bearer $MASTER_KEY" "$B/key/info?key=$VIRTUAL_KEY" \
+                  | grep -o '"models": *\[[^]]*\]' | head -n 1 | sed 's/^"models": *//'
+              }
+              info=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: Bearer $MASTER_KEY" \
+                "$B/key/info?key=$VIRTUAL_KEY" || true)
+              if [ "$info" = "200" ]; then
+                before=$(current_models || true)
+                echo "virtual key already provisioned; reconciling it to chart values (alias={{ $k.alias }}, budget={{ $k.maxBudget }}, rpm={{ $k.rpmLimit }}, tpm={{ $k.tpmLimit }})..."
+                echo "  models before: ${before:-<unreadable>}"
+                curl -fsS -X POST "$B/key/update" \
+                  -H "Authorization: Bearer $MASTER_KEY" \
+                  -H "Content-Type: application/json" \
+                  -d '{"key":"'"$VIRTUAL_KEY"'",'"$PROPS"'}' >/dev/null
+                after=$(current_models || true)
+                echo "  models after:  ${after:-<unreadable>}"
+                echo "virtual key reconciled"
+                exit 0
+              fi
+              echo "provisioning scoped virtual key (alias={{ $k.alias }}, budget={{ $k.maxBudget }}, rpm={{ $k.rpmLimit }}, tpm={{ $k.tpmLimit }})..."
+              PAYLOAD='{"key":"'"$VIRTUAL_KEY"'","key_alias":"{{ $k.alias }}",'"$PROPS"'}'
               curl -fsS -X POST "$B/key/generate" \
                 -H "Authorization: Bearer $MASTER_KEY" \
                 -H "Content-Type: application/json" \
                 -d "$PAYLOAD" >/dev/null && echo "virtual key created"
+              echo "  models: $MODELS"
           resources:
             requests: { cpu: 25m, memory: 32Mi }
             limits: { cpu: 200m, memory: 64Mi }
