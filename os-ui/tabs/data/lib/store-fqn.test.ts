@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { domainSchema, assetTarget, versionTarget, personalSchema, readPrincipalFor, physicalSlug, bronzeTarget } from '@tabs/data/lib/store-fqn';
+import { domainSchema, assetTarget, versionTarget, personalSchema, readPrincipalFor, physicalSlug, bronzeTarget, reuseSourceFqn, composeSourceBlocker } from '@tabs/data/lib/store-fqn';
 import { goldJoinPlan } from '@tabs/data/lib/transform';
 import { emptyVersions, type Dataset } from '@tabs/data/lib/dataset-schema';
 
@@ -88,6 +88,38 @@ test('versionTarget: a LIVE connected dataset resolves to the verbatim external 
   assert.equal(versionTarget(d, 'silver', { id: 'aborek' }), 'glue_sales.public.orders');
   assert.equal(versionTarget(d, 'gold', { id: 'someone_else' }), 'glue_sales.public.orders');
   assert.doesNotMatch(versionTarget(d, 'silver', { id: 'aborek' }), /iceberg\.|personal_/);
+});
+
+// COMPOSE SOURCE (the curated "Save Composition" bug, os-ui 0.7.7): the gold-join route
+// resolves every base/join dataset through `reuseSourceFqn`. For a LIVE connected dataset
+// it used to fall through to `assetTarget` — `iceberg.<domain>.<layer>_<slug>`, a table that
+// NEVER existed (an adopted live dataset has no domain copy; no publish ever created the
+// domain schema) — so the CTAS died with Trino `SCHEMA_NOT_FOUND: Schema 'test' does not
+// exist`. The reuse FQN must be the SAME physical table `versionTarget` reads.
+test('reuseSourceFqn: a LIVE connected dataset resolves to the verbatim external FQN, never a phantom iceberg.<domain> table', () => {
+  const d = connectedDs({ domain: 'test' });
+  assert.equal(reuseSourceFqn(d), 'glue_sales.public.orders');
+  assert.doesNotMatch(reuseSourceFqn(d), /iceberg\.test\./);
+  assert.equal(reuseSourceFqn(d), versionTarget(d, 'silver', { id: 'someone_else' }));
+});
+
+test('reuseSourceFqn: a SYNC connected dataset resolves to its landed governed copy (same as versionTarget)', () => {
+  const d = connectedDs({ domain: 'test', connected: { connectionId: 'c', exposureId: 'e', source: { catalog: 'g', schema: 's', table: 't' }, mode: 'sync', tier: 'gold', status: 'ok' } });
+  assert.equal(reuseSourceFqn(d), 'iceberg.test.gold_campaign_data');
+  assert.equal(reuseSourceFqn(d), versionTarget(d, 'gold', { id: 'someone_else' }));
+});
+
+// A live federated table has NO governed Iceberg copy, and the Gold compiler forbids a
+// cross-catalog read by design — so it cannot be a compose source today. The route and the
+// picker must say so honestly (one reason string) instead of compiling a phantom table.
+test('composeSourceBlocker: a LIVE connected dataset is not composable; personal + promoted ones are', () => {
+  const live = connectedDs({ name: 'Orders (live)' });
+  const why = composeSourceBlocker(live);
+  assert.ok(why && /Orders \(live\)/.test(why) && /live/i.test(why), `expected an honest reason naming the dataset, got ${why}`);
+  assert.equal(composeSourceBlocker(ds()), null, 'a promoted asset composes');
+  assert.equal(composeSourceBlocker(ds({ tier: 'dataset', visibility: 'private' })), null, 'a personal dataset composes');
+  const sync = connectedDs({ connected: { connectionId: 'c', exposureId: 'e', source: { catalog: 'g', schema: 's', table: 't' }, mode: 'sync', tier: 'gold', status: 'ok' } });
+  assert.equal(composeSourceBlocker(sync), null, 'a landed sync copy is a governed Iceberg table — composes');
 });
 
 test('personalSchema stays owner-keyed + sanitized', () => {

@@ -8,7 +8,7 @@ import { requirePrincipal } from '@tabs/data/lib/server';
 import { getDataset, buildGoldJoin } from '@tabs/data/lib/store';
 import { rematerializeDomainTableLive } from '@tabs/data/lib/publish-server';
 import { roleAtLeast } from '@core/kernel/session';
-import { reuseSourceFqn } from '@tabs/data/lib/store-fqn';
+import { reuseSourceFqn, composeSourceBlocker } from '@tabs/data/lib/store-fqn';
 import { stepperStages, stageArtifact, canBuildStage } from '@tabs/data/lib/panels';
 import { buildStage } from '@tabs/data/lib/build/server';
 import {
@@ -81,6 +81,10 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
   let baseUpstream: DatasetUpstream | undefined;
   if (rawBaseId && rawBaseId !== id) {
     const base = getDataset(rawBaseId, user); // throws 403/404 — same guard as a join partner
+    // A live connected base has no governed Iceberg table to compose from — say so (the
+    // same rule the picker applies) instead of compiling a phantom `iceberg.<domain>` read.
+    const blocked = composeSourceBlocker(base);
+    if (blocked) return NextResponse.json({ error: blocked }, { status: 400 });
     baseSource = reuseSourceFqn(base); // owner-aware: a personal base resolves to its personal lane
     baseUpstream = { datasetId: base.id, name: base.name, fqn: baseSource, joinType: 'inner' };
   }
@@ -109,6 +113,8 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
   if (baseUpstream) upstreams.push(baseUpstream);
   for (const p of rawPicks) {
     const up = getDataset(String(p?.datasetId ?? ''), user); // throws 403/404
+    const blocked = composeSourceBlocker(up); // live connected partner → honest 400, never a phantom read
+    if (blocked) return NextResponse.json({ error: blocked }, { status: 400 });
     const fqn = reuseSourceFqn(up); // owner-aware: a personal join partner resolves to its personal lane
     const type: JoinType = p?.type === 'left' ? 'left' : 'inner';
     const on = Array.isArray(p?.on) ? (p!.on as ResolvedJoin['on']) : [];
