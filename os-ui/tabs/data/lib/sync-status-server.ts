@@ -7,7 +7,8 @@
  *             and the next tick — read from Dagster, not from a parallel OS ledger (checklist D9).
  * ARCHITECTURE:
  *   - ONE function both the route and the MCP tool call (`syncStatusFor`), so the two can never
- *     drift; `latestSyncSignals` is the batch form Monitoring's lists use (one Dagster round trip).
+ *     drift; `latestSyncSignals` is the batch form Monitoring's lists use (one TAG-FILTERED Dagster
+ *     read per dataset, bounded concurrency — review B2-review-M4 explains why not one big read).
  *   - Flag OFF: exactly the ledger-derived payload the surfaces shipped before B2 (`sync-runs.ts`).
  *   - Flag ON: `runsForDataset` (tag `os/dataset`) → the panel's run shape; `nextTick` of the
  *     schedule `<domain>__<datasetId>` → `nextRunAt` and `quarantined` (schedule STOPPED while the
@@ -56,7 +57,7 @@ export type SyncStatusView = {
 };
 
 export type SyncStatusDeps = {
-  dagster?: Pick<typeof dagster, 'runsForDataset' | 'nextTick' | 'recentOsRuns'>;
+  dagster?: Pick<typeof dagster, 'runsForDataset' | 'nextTick'>;
   location?: string;
   flag?: () => boolean;
   now?: () => Date;
@@ -139,12 +140,30 @@ export async function syncStatusFor(d: Dataset, deps: SyncStatusDeps = {}): Prom
   };
 }
 
-/** `lastSync` is when the newest run ENDED (its start while still running) — never a guess. */
-export type SyncSignal = { lastSync: string | null; syncStatus: SyncRunStatus | null };
+/**
+ * `lastSync` is when the newest run ENDED (its start while still running) — never a guess.
+ *
+ * `unknown` separates "this dataset has never synced" from "we could not find out": with the flag
+ * on it is `true` only when the Dagster read for that dataset failed. Consumers that do not care
+ * may ignore it; a surface that renders "never" MUST not render it for an unknown (review
+ * B2-review-M4).
+ */
+export type SyncSignal = { lastSync: string | null; syncStatus: SyncRunStatus | null; unknown?: boolean };
+
+/** How many `runsForDataset` reads are in flight at once (Monitoring pages are bounded). */
+const SIGNAL_CONCURRENCY = 6;
 
 /**
  * The "last sync" signal for many datasets at once (Monitoring lists). Flag off ⇒ the ledger;
- * flag on ⇒ ONE `runsOrError` read grouped by `os/dataset`. Unknown ⇒ nulls, never a fabricated run.
+ * flag on ⇒ ONE `runsForDataset` read PER dataset, six at a time. Unknown ⇒ nulls + `unknown`,
+ * never a fabricated run.
+ *
+ * Review B2-review-M4: this used to be a single `recentOsRuns(200)` with an EMPTY filter and then
+ * group by the `os/dataset` tag. That silently under-reports — the newest 200 runs across the whole
+ * instance are easily all maintenance and one busy dataset's syncs, and every other dataset then
+ * reads as "never synced" although it synced an hour ago. There is no OR-over-tags in Dagster's
+ * `RunsFilter`, so the honest read is per dataset: `runsForDataset(id, 1)` is a tag-filtered query
+ * the event log indexes, and an empty result now genuinely means "no run".
  */
 export async function latestSyncSignals(datasetIds: string[], deps: SyncStatusDeps = {}): Promise<Map<string, SyncSignal>> {
   const out = new Map<string, SyncSignal>();
@@ -153,20 +172,30 @@ export async function latestSyncSignals(datasetIds: string[], deps: SyncStatusDe
     await ensureSyncRunsHydrated().catch(() => {});
     for (const id of datasetIds) {
       const s = latestSyncRun(id);
-      out.set(id, { lastSync: s ? (s.finishedAt ?? s.startedAt) : null, syncStatus: s?.status ?? null });
+      // Flag OFF is the pre-B2 payload byte for byte: `startedAt`. The "when it ENDED" reading
+      // (B2-8) belongs to the Dagster path; changing it here would have moved a number no one
+      // asked to move on an install that is not using Dagster at all (review B2-review-M6b).
+      out.set(id, { lastSync: s ? s.startedAt : null, syncStatus: s?.status ?? null });
     }
     return out;
   }
   const dg = deps.dagster ?? dagster;
-  const runs = await dg.recentOsRuns(200);
-  for (const id of datasetIds) out.set(id, { lastSync: null, syncStatus: null });
-  if (!runs.ok) return out;
-  for (const r of runs.data) {
-    const id = r.tags['os/dataset'];
-    if (!id || !out.has(id)) continue;
-    const cur = out.get(id)!;
-    if (cur.syncStatus) continue; // newest first — keep the first seen
-    out.set(id, { lastSync: r.endedAt ?? r.startedAt, syncStatus: runStatusToSync(r.status) });
+  const ids = [...new Set(datasetIds)];
+  for (const id of ids) out.set(id, { lastSync: null, syncStatus: null });
+  for (let i = 0; i < ids.length; i += SIGNAL_CONCURRENCY) {
+    const slice = ids.slice(i, i + SIGNAL_CONCURRENCY);
+    await Promise.all(
+      slice.map(async (id) => {
+        const runs = await dg.runsForDataset(id, 1);
+        if (!runs.ok) {
+          out.set(id, { lastSync: null, syncStatus: null, unknown: true });
+          return;
+        }
+        const r = runs.data[0];
+        if (!r) return; // no run for this dataset — an honest "never", not an unknown
+        out.set(id, { lastSync: r.endedAt ?? r.startedAt, syncStatus: runStatusToSync(r.status) });
+      }),
+    );
   }
   return out;
 }

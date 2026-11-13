@@ -16,9 +16,13 @@ import {
   syncStatusFor, latestSyncSignals, runToView, runStatusToSync, consecutiveFailures,
 } from '@tabs/data/lib/sync-status-server';
 import { parseDataset, type Dataset } from '@tabs/data/lib/dataset-schema';
+import { recordSyncRun, __resetSyncRuns } from '@tabs/data/lib/sync-runs';
 import type { DagsterRun, ScheduleTick } from '@core/infra/dagster';
 
-afterEach(() => __setDataProjectGitForTests(null));
+afterEach(() => {
+  __setDataProjectGitForTests(null);
+  __resetSyncRuns();
+});
 
 function dataset(sync: boolean): Dataset {
   return parseDataset(
@@ -95,13 +99,38 @@ test('flag OFF: the ledger-derived payload, and no Dagster call at all', async (
   assert.equal(s.dagster, undefined);
 });
 
-test('latestSyncSignals: one Dagster read grouped by os/dataset, newest wins, unknown ⇒ nulls', async () => {
+test('latestSyncSignals: ONE tag-filtered read PER dataset — a quiet dataset is not under-reported', async () => {
   __setDataProjectGitForTests(true);
-  const out = await latestSyncSignals(['ds_1', 'ds_2'], {
-    dagster: dg([run({ runId: 'new' }), run({ runId: 'old', endedAt: '2026-11-01T00:00:00.000Z' })]),
+  // Review B2-review-M4: the old implementation took the newest 200 runs of the WHOLE instance
+  // with an empty filter and grouped by tag, so a dataset whose last sync fell outside that window
+  // read as "never synced". Here `ds_2`'s run is the 201st newest overall and must still be found.
+  const asked: string[] = [];
+  const out = await latestSyncSignals(['ds_1', 'ds_2', 'ds_3'], {
+    dagster: {
+      nextTick: async () => ({ ok: false as const, error: 'unused' }),
+      runsForDataset: async (id: string) => {
+        asked.push(id);
+        if (id === 'ds_1') return { ok: true as const, data: [run({ runId: 'new' })] };
+        if (id === 'ds_2') return { ok: true as const, data: [run({ runId: 'ancient', endedAt: '2026-11-01T00:00:00.000Z' })] };
+        return { ok: true as const, data: [] };
+      },
+    },
   });
+  assert.deepEqual(asked.sort(), ['ds_1', 'ds_2', 'ds_3'], 'every visible dataset is asked about by tag');
   assert.deepEqual(out.get('ds_1'), { lastSync: '2026-11-13T06:01:00.000Z', syncStatus: 'ok' });
-  assert.deepEqual(out.get('ds_2'), { lastSync: null, syncStatus: null });
+  assert.deepEqual(out.get('ds_2'), { lastSync: '2026-11-01T00:00:00.000Z', syncStatus: 'ok' });
+  assert.deepEqual(out.get('ds_3'), { lastSync: null, syncStatus: null }, 'no run ⇒ an honest NEVER, no `unknown`');
+});
+
+test('latestSyncSignals: a Dagster outage is `unknown`, never reported as "never synced"', async () => {
+  __setDataProjectGitForTests(true);
+  const out = await latestSyncSignals(['ds_1'], {
+    dagster: {
+      nextTick: async () => ({ ok: false as const, error: 'unused' }),
+      runsForDataset: async () => ({ ok: false as const, error: 'ECONNREFUSED' }),
+    },
+  });
+  assert.deepEqual(out.get('ds_1'), { lastSync: null, syncStatus: null, unknown: true });
 });
 
 test('status mapping and trailing-failure counting', () => {
@@ -111,4 +140,16 @@ test('status mapping and trailing-failure counting', () => {
   assert.equal(consecutiveFailures([run({ status: 'FAILURE' }), run({ status: 'STARTED' }), run({ status: 'FAILURE' }), run({ status: 'SUCCESS' }), run({ status: 'FAILURE' })]), 2);
   assert.equal(runToView(run({ tags: { 'os/full_refresh': 'true' } }), 'append').mode, 'full-refresh');
   assert.equal(runToView(run({ tags: { 'os/action': 'iceberg maintenance' } }), 'append').maintenance, true);
+});
+
+test('latestSyncSignals flag OFF: `lastSync` is startedAt, exactly as before B2', async () => {
+  // Review B2-review-M6b: B2-8 redefined `lastSync` as "when the run ENDED". That reading belongs
+  // to the Dagster path; on an install that is not using Dagster at all the number must not move.
+  __setDataProjectGitForTests(false);
+  recordSyncRun({
+    datasetId: 'ds_1', startedAt: '2026-11-13T06:00:00.000Z', finishedAt: '2026-11-13T06:09:00.000Z',
+    status: 'ok', mode: 'append',
+  });
+  const out = await latestSyncSignals(['ds_1'], {});
+  assert.deepEqual(out.get('ds_1'), { lastSync: '2026-11-13T06:00:00.000Z', syncStatus: 'ok' });
 });

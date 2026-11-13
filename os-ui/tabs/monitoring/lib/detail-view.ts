@@ -14,7 +14,7 @@ import { listMetrics } from '@tabs/metrics/lib/store';
 import { listConnectionsForUser } from '@tabs/connections/lib/index';
 import { recentTraces } from '@core/infra/agent-governed';
 import { lineageFor } from '@tabs/data/lib/lineage';
-import { latestDqRun, dqTrend } from '@tabs/data/lib/dq-status-server';
+import { latestDqRun, dqTrend, dqSourceLabel } from '@tabs/data/lib/dq-status-server';
 import { agentTelemetryFor, type AgentRunRecord } from '@tabs/monitoring/lib/adapters/agent-telemetry';
 import {
   buildProfile,
@@ -207,6 +207,11 @@ export type DatasetDetail = {
     /** DQ health trend (oldest→newest) for the sparkline. */
     trend: { ranAt: string; score: number | null; badge: string }[];
     checks: DatasetCheckRow[];
+    /** Who produced the verdict: `dagster` = a dbt test on the last build, `os` = the OS's own
+     *  ad-hoc probe, absent = not knowable (a pre-B2 record). Review B2-review-M5. */
+    source?: 'dagster' | 'os';
+    /** The same fact as display text, decided here so the `.tsx` stays logic-free. */
+    sourceLabel: { text: string; title: string } | null;
   };
   /** Scheduled-sync signal (additive, fail-soft): last run + outcome, or nulls when
    *  the dataset has never synced. */
@@ -294,6 +299,8 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
       score: last?.healthScore ?? null,
       trend: trend.map((t) => ({ ranAt: t.ranAt, score: t.score, badge: t.badge })),
       checks,
+      ...(last?.source ? { source: last.source } : {}),
+      sourceLabel: dqSourceLabel(last?.source),
     },
     sync: { lastSync, syncStatus },
     layers: LAYERS.map((l) => ({

@@ -259,3 +259,24 @@ export function healthScore(results: CheckResult[], rowCount?: number | null): H
   const score = failing > 0 ? Math.min(99, Math.floor(raw)) : Math.round(raw);
   return { score, status: aggregateBadge(results), passing, failing, notRun };
 }
+
+/** Where a quality verdict came from. `undefined` on a record written before B2. */
+export type DqSource = 'dagster' | 'os' | undefined;
+
+/**
+ * How a quality run should be ATTRIBUTED on screen (review B2-review-M5).
+ *
+ * `DqRunRecord.source` has existed since B2 but no surface read it, so a dbt test executed by
+ * Dagster and the OS's own ad-hoc probe looked identical — and they are not: only the former runs
+ * on every build, is visible in Dagster and fails the pipeline. Returns null when the distinction
+ * is not knowable (a pre-B2 record), so a surface shows nothing rather than guessing.
+ */
+export function dqSourceLabel(source: DqSource): { text: string; title: string } | null {
+  if (source === 'dagster') {
+    return { text: 'dbt test', title: 'Executed by Dagster as a dbt test (asset check) on the last build.' };
+  }
+  if (source === 'os') {
+    return { text: 'OS probe', title: "The OS's own ad-hoc check run — no dbt test has executed for this asset yet." };
+  }
+  return null;
+}

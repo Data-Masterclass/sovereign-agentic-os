@@ -14,6 +14,14 @@
  *     a hand-launched job) keep the job name — honest, not hidden.
  *   - Dagster unreachable ⇒ the offline-mock ONLY where demo fixtures are enabled; a real deploy
  *     returns nothing rather than an alert no one can act on.
+ *   - FLAG-IRRESPECTIVE, deliberately (review B2-review-M6a): the pre-B2 query asked for
+ *     `pipelineName`, deprecated in the Dagster version this chart pins, so the old document was
+ *     not a working fallback worth keeping behind the flag. The UNTAGGED title shape is preserved
+ *     byte for byte (`<job> — Dagster run`), which is every run an install without
+ *     `DATA_PROJECT_GIT` can produce — the `os/*` tags only exist once the `sovereign` code
+ *     location runs. `STARTING` / `CANCELING` were added to the amber set: they are run statuses
+ *     the old mapping fell through to `unknown`, which read as "no information" for a run that is
+ *     plainly in flight.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';

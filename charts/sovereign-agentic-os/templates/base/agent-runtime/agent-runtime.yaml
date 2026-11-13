@@ -8,24 +8,11 @@
   Graph semantics arrive via the OS UI /reload, not Forgejo.
 */}}
 {{- $r := .Values.agentRuntime }}
-{{- if eq .Values.global.profile "local" }}
-# Local-profile shared token. The runtime presents this on its calls back to the
-# OS UI governed-tool endpoint, and the OS UI presents the SAME token to the
-# runtime — both read `agent-runtime-token`. On non-local profiles this Secret is
-# delivered by External Secrets (ESO), so it is NOT rendered here.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: agent-runtime-token
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "soa.labels" . | nindent 4 }}
-    {{- include "soa.selectorLabels" (dict "ctx" . "component" "agent-runtime") | nindent 4 }}
-type: Opaque
-stringData:
-  token: {{ $r.token | quote }}
----
-{{- end }}
+{{- /*
+  The `agent-runtime-token` Secret is NOT here: Dagster's user-code Deployment needs the same
+  bearer, so it is rendered from `agent-runtime-token.yaml` whenever any consumer is enabled —
+  review B2-review-L6. One definition, one name.
+*/}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

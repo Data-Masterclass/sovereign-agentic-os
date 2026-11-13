@@ -114,8 +114,24 @@ With the flag on, the OS stops being its own run ledger (checklist D7–D11):
   no rows; it is never a fabricated run or a fake green.
 - **Launch provenance.** `buildVersion({compiled: true})` marks a body the OS's own compilers
   produced. Only those become dbt models; an authored body (`add_dataset_version`, the version
-  route) is recorded and rendered as a dbt **source** — dbt reads that table, never rewrites it, and
-  no user-authored text reaches Jinja.
+  route) is recorded and rendered as a dbt **source** — dbt reads that table and never rewrites it.
+- **Authored text is inert, not absent.** dbt renders every generated `.yml` **and** `.sql` through
+  Jinja before reading it — a `--` comment is no shelter — so a dataset name, a description or a
+  column name reading `{{ env_var('…') }}` would be evaluated by `dbt parse`, in a pod that holds
+  the OS's cluster-internal runtime bearer. Every authored string the generator emits therefore
+  passes through `lib/dbt/emit.ts` `stripJinja`, which removes the delimiters and keeps the words.
+  The MODEL bodies are a separate, stronger rule (provenance, above): authored SQL never becomes a
+  model at all.
+- **A quality rule's value set is checked at the gate.** dbt emits each `accepted_values` entry as
+  `'{{ value }}'` — a SQL literal with no escaping — into a test executed as the dataset's owner, so
+  `store.addCheck` refuses a value carrying a quote, backslash, backtick, control character or Jinja
+  delimiter (`isSafeCheckValue`, `dataset-schema.ts`), and `lib/dbt/schema.ts` records such a check
+  as a `meta.os_intentions` entry rather than a test. One bad value disqualifies the whole check:
+  emitting the surviving values would enforce a narrower rule than the author wrote.
+- **"dbt test" vs "OS probe".** `DqRunRecord.source` is rendered next to the last-run time in the
+  Validate stage and in Monitoring (`dqSourceLabel`, `lib/dq.ts`): a verdict Dagster produced on the
+  last build is not the same thing as the OS's own ad-hoc check run, and a record from before the
+  distinction says nothing rather than guessing.
 
 ## Rules that apply here
 

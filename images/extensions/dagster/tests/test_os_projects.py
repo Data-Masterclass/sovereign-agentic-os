@@ -9,6 +9,10 @@ USER STORY: As a maintainer I want the Dagster code location testable without Da
             so a regression in schedule generation fails here, not on the cluster.
 ARCHITECTURE:
   - Temp dirs stand in for /repos-checkout; `run=` fakes replace git and dbt.
+  - The B2 review classes: `ParseEnvironment` (no secret reaches `dbt parse`), `NameCollisions`
+    (two domains cannot collapse onto one Dagster name), `Timezones`, `PartitionedDefinitions`
+    (one bad domain is skipped, not the location) and `ChartContract` (the run pods really carry
+    the label the os-repos NetworkPolicy admits to the git daemon).
 """
 import json
 import os
@@ -122,7 +126,7 @@ class Discovery(unittest.TestCase):
     def test_pinned_commit_bootstraps_a_run_pod_checkout_once(self):
         calls = []
         with tempfile.TemporaryDirectory() as root:
-            def fake_run(cmd, cwd=None):
+            def fake_run(cmd, cwd=None, env=None):
                 calls.append((list(cmd), cwd))
                 if cmd[:2] == ["git", "clone"]:
                     os.makedirs(os.path.join(cmd[-1], ".git"))
@@ -146,7 +150,7 @@ class Discovery(unittest.TestCase):
 
     def test_pinned_parse_failure_is_skipped_not_fatal(self):
         with tempfile.TemporaryDirectory() as root:
-            def fake_run(cmd, cwd=None):
+            def fake_run(cmd, cwd=None, env=None):
                 if cmd[:2] == ["git", "clone"]:
                     os.makedirs(os.path.join(cmd[-1], ".git"))
                 return (1, "Compilation Error in model x") if cmd[0] == "dbt" else (0, "")
@@ -157,7 +161,7 @@ class Discovery(unittest.TestCase):
     def test_parse_pinned_rejects_garbage(self):
         self.assertEqual(osp.parse_pinned(f"sales={SHA_A}, ../x={SHA_A},fin=nope,"), {"sales": SHA_A})
         self.assertEqual(osp.parse_pinned(None), {})
-        dir_, err = osp.ensure_checkout("../evil", SHA_A, "/tmp/none", run=lambda c, w=None: (0, ""))
+        dir_, err = osp.ensure_checkout("../evil", SHA_A, "/tmp/none", run=lambda c, w=None, e=None: (0, ""))
         self.assertIsNone(dir_)
         self.assertIn("refusing", err)
 
@@ -286,6 +290,230 @@ class Maintenance(unittest.TestCase):
         self.assertEqual([e["name"] for e in env], ["OS_PINNED_COMMITS"])
         self.assertEqual(osp.all_job_name("sales"), "sales__all")
 
+
+
+class ParseEnvironment(unittest.TestCase):
+    """Review B2-review-H3: `dbt parse` renders repo Jinja, so it must see an ALLOWLIST only."""
+
+    def test_the_parse_environment_holds_nothing_outside_the_allowlist(self):
+        ambient = {
+            "PATH": "/usr/bin", "HOME": "/home/dagster", "LANG": "C.UTF-8",
+            "AGENT_RUNTIME_TOKEN": "s3cret-bearer",
+            "DAGSTER_PG_PASSWORD": "s3cret-pg",
+            "TRINO_SCHEMA": "sales",
+            "KUBERNETES_SERVICE_HOST": "10.0.0.1",
+        }
+        env = osp.parse_env(ambient)
+        allowed = set(osp.PARSE_ENV_PASSTHROUGH) | set(osp.PARSE_ENV_FIXED)
+        self.assertEqual(set(env) - allowed, set(), "a name outside the allowlist reached dbt")
+        for leaked in ("AGENT_RUNTIME_TOKEN", "DAGSTER_PG_PASSWORD", "KUBERNETES_SERVICE_HOST"):
+            self.assertNotIn(leaked, env)
+        self.assertNotIn("s3cret-bearer", "".join(env.values()))
+        # OS_PRINCIPAL is the one env_var() with no default in the generated profiles.yml.
+        self.assertEqual(env["OS_PRINCIPAL"], "repo-sync")
+
+    def test_an_empty_ambient_still_gives_dbt_a_path_and_home(self):
+        env = osp.parse_env({})
+        self.assertTrue(env["PATH"])
+        self.assertTrue(env["HOME"])
+
+    def test_dbt_parse_passes_that_environment_and_nothing_else(self):
+        seen = {}
+
+        def fake_run(cmd, cwd=None, env=None):
+            seen.update({"cmd": list(cmd), "cwd": cwd, "env": dict(env or {})})
+            return 0, ""
+
+        code, _ = osp.dbt_parse("/w", fake_run, {"AGENT_RUNTIME_TOKEN": "nope", "PATH": "/usr/bin"})
+        self.assertEqual(code, 0)
+        self.assertEqual(seen["cmd"][:2], ["dbt", "parse"])
+        self.assertEqual(seen["cwd"], "/w")
+        self.assertNotIn("AGENT_RUNTIME_TOKEN", seen["env"])
+
+    def test_the_run_pod_bootstrap_parses_through_the_same_allowlist(self):
+        envs = []
+
+        def fake_run(cmd, cwd=None, env=None):
+            if cmd[:2] == ["git", "clone"]:
+                os.makedirs(os.path.join(cmd[-1], ".git"))
+                return 0, ""
+            if cmd[0] == "dbt":
+                envs.append(dict(env or {}))
+                os.makedirs(os.path.join(cwd, "target"), exist_ok=True)
+                with open(os.path.join(cwd, "target", "manifest.json"), "w") as fh:
+                    fh.write(manifest({}))
+            return 0, ""
+
+        with tempfile.TemporaryDirectory() as root:
+            osp.ensure_checkout("sales", SHA_A, root, "git://os-repos", fake_run,
+                                {"AGENT_RUNTIME_TOKEN": "s3cret", "PATH": "/usr/bin"})
+        self.assertEqual(len(envs), 1)
+        self.assertNotIn("AGENT_RUNTIME_TOKEN", envs[0])
+
+    def test_repo_sync_shares_that_one_allowlist_instead_of_keeping_its_own(self):
+        """The shell half must SHELL OUT here — a second `env -i` list would drift."""
+        sh = os.path.join(os.path.dirname(__file__), "..", "repo-sync.sh")
+        with open(sh, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("os_projects.py\" --parse", text)
+        self.assertNotIn("env -i", text, "repo-sync.sh kept a second parse-env allowlist")
+        # And it must exit (never idle) inside a Dagster run pod — review B2-review-M1.
+        self.assertIn("dagster-run-*", text)
+
+
+class NameCollisions(unittest.TestCase):
+    """Review B2-review-M2: `sanitize` is lossy; a duplicate name breaks the WHOLE location."""
+
+    def test_two_domains_that_sanitize_alike_get_distinct_names(self):
+        got = osp.sanitize_all(["sales-eu", "sales.eu", "finance"])
+        self.assertEqual(got["finance"], "finance")
+        self.assertEqual(len({got["sales-eu"], got["sales.eu"]}), 2)
+        self.assertIn("sales_eu", (got["sales-eu"], got["sales.eu"]))
+        for name in got.values():
+            self.assertRegex(name, r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+    def test_the_mapping_is_deterministic_and_order_independent(self):
+        a = osp.sanitize_all(["sales-eu", "sales.eu"])
+        b = osp.sanitize_all(["sales.eu", "sales-eu"])
+        self.assertEqual(a, b)
+        # A name keeps its suffix when an unrelated domain appears.
+        c = osp.sanitize_all(["sales.eu", "sales-eu", "zzz"])
+        self.assertEqual(c["sales.eu"], a["sales.eu"])
+        self.assertEqual(c["sales-eu"], a["sales-eu"])
+
+    def test_the_schedule_name_and_its_tag_agree_for_a_collided_domain(self):
+        """The `os/schedule` tag is how the sensors pause a schedule — it must be the real name."""
+        names = osp.sanitize_all(["sales-eu", "sales.eu"])
+        s = osp.parse_schedules(SCHEDULES_YML)[1]
+        for domain, dom in names.items():
+            name = osp.schedule_name(dom, s.dataset)
+            tags = osp.schedule_tags(domain, s, SHA_A, f"{domain}={SHA_A}", name)
+            self.assertEqual(tags["os/schedule"], name)
+        self.assertNotEqual(
+            osp.schedule_name(names["sales-eu"], s.dataset),
+            osp.schedule_name(names["sales.eu"], s.dataset),
+        )
+
+
+class Timezones(unittest.TestCase):
+    """Review B2-review-L1: the repo's `timezone` is honoured, an unknown one degrades to UTC."""
+
+    def test_a_known_zone_is_kept_and_an_unknown_one_falls_back(self):
+        self.assertEqual(osp.safe_timezone("Europe/Berlin"), "Europe/Berlin")
+        self.assertEqual(osp.safe_timezone("UTC"), "UTC")
+        self.assertEqual(osp.safe_timezone("Mars/Olympus_Mons"), "UTC")
+        self.assertEqual(osp.safe_timezone(""), "UTC")
+        self.assertEqual(osp.safe_timezone(None), "UTC")
+        self.assertEqual(osp.safe_timezone("nope", "Europe/Berlin"), "Europe/Berlin")
+
+    def test_the_parsed_schedule_carries_the_authored_zone(self):
+        s = osp.parse_schedules("""
+schedules:
+  - dataset: ds_1
+    name: m
+    cron: "0 6 * * *"
+    principal: bea
+    timezone: Europe/Berlin
+""")
+        self.assertEqual(s[0].timezone, "Europe/Berlin")
+        self.assertEqual(osp.safe_timezone(s[0].timezone), "Europe/Berlin")
+
+
+class PartitionedDefinitions(unittest.TestCase):
+    """Review B2-review-M2: a domain `Definitions(...)` rejects is skipped, not the location."""
+
+    @staticmethod
+    def _empty():
+        return {"names": []}
+
+    @staticmethod
+    def _merge(a, b):
+        return {"names": [*a["names"], *b["names"]]}
+
+    @staticmethod
+    def _build(bundle):
+        names = bundle["names"]
+        if len(set(names)) != len(names):
+            raise ValueError(f"duplicate name in {names}")
+        return tuple(names)
+
+    def test_the_happy_path_builds_once(self):
+        calls = []
+
+        def build(b):
+            calls.append(list(b["names"]))
+            return self._build(b)
+
+        out, skipped = osp.partition_definitions(
+            [("a", {"names": ["a"]}), ("b", {"names": ["b"]})], build, self._merge, self._empty)
+        self.assertEqual(out, ("a", "b"))
+        self.assertEqual(skipped, [])
+        self.assertEqual(len(calls), 1, "a loadable workspace must cost ONE build")
+
+    def test_one_bad_domain_is_skipped_and_the_rest_still_load(self):
+        out, skipped = osp.partition_definitions(
+            [("a", {"names": ["x"]}), ("bad", {"names": ["x"]}), ("c", {"names": ["y"]})],
+            self._build, self._merge, self._empty)
+        self.assertEqual(out, ("x", "y"))
+        self.assertEqual([s.domain for s in skipped], ["bad"])
+        self.assertIn("duplicate name", skipped[0].reason)
+
+    def test_no_domains_still_yields_a_workspace(self):
+        out, skipped = osp.partition_definitions([], self._build, self._merge, self._empty)
+        self.assertEqual((out, skipped), ((), []))
+
+
+class Quarantine(unittest.TestCase):
+    """Review B2-review-L3: the window must be counted over TERMINAL runs only."""
+
+    def test_the_terminal_status_set_is_named_for_the_query_filter(self):
+        self.assertEqual(set(osp.TERMINAL_STATUSES), {"SUCCESS", "FAILURE", "CANCELED"})
+        # The bug the filter fixes: an in-flight run between failures truncated the count.
+        self.assertEqual(osp.consecutive_failures(["STARTED", "FAILURE", "FAILURE"]), 2)
+        terminal = [s for s in ["FAILURE"] * 10 if s in osp.TERMINAL_STATUSES]
+        self.assertTrue(osp.should_pause(terminal, 10))
+
+
+class ChartContract(unittest.TestCase):
+    """Review B2-review-H1: a run pod must carry the label the os-repos NetworkPolicy admits.
+
+    The launched run pods fetch `git://os-repos/<domain>.git`; the only ingress rule that opens
+    9418 selects `component: user-deployments`, which the subchart puts on the CODE-SERVER pod and
+    not on run pods. The chart therefore sets it through the run launcher's
+    `runK8sConfig.podTemplateSpecMetadata.labels` — asserted here because the Dagster subchart is
+    not vendored in every checkout, so `helm template` cannot be a CI gate.
+    """
+
+    def _repo_root(self):
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+
+    def test_run_pods_carry_the_label_the_git_daemon_netpol_admits(self):
+        import yaml  # PyYAML ships with dbt-core in the image
+
+        root = self._repo_root()
+        with open(os.path.join(root, "charts", "sovereign-agentic-os", "values.yaml"), encoding="utf-8") as fh:
+            values = yaml.safe_load(fh)
+        labels = (
+            values["dagster"]["runLauncher"]["config"]["k8sRunLauncher"]["runK8sConfig"]
+            ["podTemplateSpecMetadata"]["labels"]
+        )
+        netpol = os.path.join(root, "charts", "sovereign-agentic-os", "templates", "base", "os-ui", "os-repos.yaml")
+        with open(netpol, encoding="utf-8") as fh:
+            text = fh.read()
+        # The selector the policy uses, read out of the template (it is Helm, not plain YAML).
+        self.assertIn("component: user-deployments", text)
+        self.assertEqual(labels.get("component"), "user-deployments")
+
+    def test_the_repo_sync_sidecar_can_tell_it_is_in_a_run_pod(self):
+        import yaml
+
+        root = self._repo_root()
+        with open(os.path.join(root, "charts", "sovereign-agentic-os", "values.yaml"), encoding="utf-8") as fh:
+            values = yaml.safe_load(fh)
+        deployment = values["dagster"]["dagster-user-deployments"]["deployments"][0]
+        sidecar = next(c for c in deployment["sidecarContainers"] if c["name"] == "repo-sync")
+        pod_name = next(e for e in sidecar["env"] if e["name"] == "POD_NAME")
+        self.assertEqual(pod_name["valueFrom"]["fieldRef"]["fieldPath"], "metadata.name")
 
 
 if __name__ == "__main__":

@@ -45,6 +45,8 @@ type DataCheck = {
 };
 type CheckStatus = 'pass' | 'fail' | 'not_run';
 type CheckResult = { id: string; label: string; status: CheckStatus; violations: number | null; reason?: string };
+import { dqSourceLabel } from '@tabs/data/lib/dq';
+
 type QualityBadge = 'passing' | 'failing' | 'unknown';
 /** Health score payload — mirrors HealthScore from lib/data/dq. */
 type HealthScore = { score: number | null; status: QualityBadge; passing: number; failing: number; notRun: number };
@@ -516,6 +518,9 @@ export default function DataBuilder({
   const [fixOpen, setFixOpen] = useState<string | null>(null);
   // ---- health score + persisted trend + profile-driven suggestions (Validate) ----
   const [health, setHealth] = useState<HealthScore | null>(null);
+  // WHO produced the last verdict: a dbt test Dagster ran, or the OS's own ad-hoc probe
+  // (review B2-review-M5). Null when the record predates the distinction.
+  const [dqSource, setDqSource] = useState<'dagster' | 'os' | undefined>(undefined);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [suggestions, setSuggestions] = useState<SuggestedCheck[]>([]);
   // Why the profile produced no suggestions, when it produced none for a structural
@@ -749,7 +754,8 @@ export default function DataBuilder({
       setProfileReason(data.profiled === false ? (data.reason as string | undefined) ?? null : null);
       setTrend((data.trend ?? []) as TrendPoint[]);
       setMonitors((data.monitors ?? []) as MonitorToggle[]);
-      const latest = data.latest as { badge?: QualityBadge; healthScore?: number | null; ranAt?: string } | null;
+      const latest = data.latest as { badge?: QualityBadge; healthScore?: number | null; ranAt?: string; source?: 'dagster' | 'os' } | null;
+      setDqSource(latest?.source);
       // Seed the header from the last persisted run so re-opening shows the real state,
       // not a blank — without claiming a fresh run happened.
       if (latest && !ranAt) {
@@ -1550,6 +1556,9 @@ export default function DataBuilder({
                   </>
                 ) : <span>Not run yet</span>}
                 {ranAt ? <span title={`Last run ${formatDate(ranAt)}`}>⟳ {formatDate(ranAt)}</span> : null}
+                {dqSourceLabel(dqSource) ? (
+                  <span className="badge muted" title={dqSourceLabel(dqSource)!.title}>{dqSourceLabel(dqSource)!.text}</span>
+                ) : null}
               </div>
             </div>
 

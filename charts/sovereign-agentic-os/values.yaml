@@ -726,6 +726,22 @@ dagster:
     postgresqlHost: pg-rw
     postgresqlUsername: dagster
     postgresqlDatabase: dagster
+  # ── Launched RUN pods (engine rebuild B2, review B2-review-H1).
+  # The subchart derives each code location's container context from its deployment entry, but the
+  # ONLY label it puts on a run pod is none: `component: user-deployments` lives on the CODE-SERVER
+  # Deployment's pod template and nowhere else. Run pods must reach the read-only git daemon
+  # (`git://os-repos`, port 9418) to clone their pinned commit, and the one ingress rule that opens
+  # 9418 selects exactly that label (templates/base/os-ui/os-repos.yaml) — so the run launcher
+  # stamps it on every run pod. Keep the `component` value IN STEP with that NetworkPolicy;
+  # images/extensions/dagster/tests/test_os_projects.py (ChartContract) asserts they agree.
+  runLauncher:
+    config:
+      k8sRunLauncher:
+        runK8sConfig:
+          podTemplateSpecMetadata:
+            labels:
+              component: user-deployments
+              app.kubernetes.io/part-of: sovereign-os
   # Official dagster/* images are amd64-only; we use an arm64-native image we
   # build (sovereign-os/dagster)
   dagster-user-deployments:
@@ -783,9 +799,14 @@ dagster:
         # domains from the OS index, fetches git://os-repos/<domain>.git, runs `dbt parse` in a
         # worktree, repoints /repos-checkout/<domain>/current ONLY on success and then calls
         # reloadRepositoryLocation (images/extensions/dagster/repo-sync.sh).
-        # NOTE: includeConfigInLaunchedRuns propagates volumes/volumeMounts/env (not sidecars) into
-        # run pods; a run pod's emptyDir starts EMPTY and `os_projects.ensure_checkout` clones the
-        # commits named in the run's OS_PINNED_COMMITS env before building definitions.
+        # NOTE (corrected — review B2-review-M1): includeConfigInLaunchedRuns propagates
+        # volumes/volumeMounts/env AND `sidecarContainers` into run pods — the subchart renders the
+        # latter as `run_k8s_config.pod_spec_config.containers`. A K8s Job only completes once EVERY
+        # container exits, so the repo-sync copy in a run pod MUST exit: it reads POD_NAME (downward
+        # API, below) and returns 0 in a `dagster-run-*` pod. The sidecar cannot be dropped here —
+        # the code-server pod is the only place it can maintain the shared `current` checkout.
+        # A run pod's emptyDir starts EMPTY and `os_projects.ensure_checkout` clones the commits
+        # named in the run's OS_PINNED_COMMITS env before building definitions.
         volumes:
           - name: repos-checkout
             emptyDir: {}
@@ -798,6 +819,11 @@ dagster:
             imagePullPolicy: IfNotPresent
             command: ["/bin/sh", "/opt/dagster/app/repo-sync.sh"]
             env:
+              # Which pod am I in? A Dagster run pod is `dagster-run-<run id>-…`; repo-sync exits 0
+              # there so the run Job can complete (review B2-review-M1).
+              - name: POD_NAME
+                valueFrom:
+                  fieldRef: { fieldPath: metadata.name }
               - { name: REPO_SYNC_ENABLED, value: "false" }
               - { name: REPO_SYNC_DOMAINS, value: "" }
               - { name: REPO_SYNC_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }

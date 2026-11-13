@@ -20,21 +20,25 @@
 #   wrote. Commit first, validate second; the gate is deployment, as in any CI.
 #
 # SECURITY: `dbt parse` renders Jinja from the repo. The generator never writes user-authored text
-#   into a model (an authored body becomes a dbt SOURCE, never a model — engine rebuild B2), but
-#   defence in depth: parse runs under `env -i` with a fixed allowlist, so NOTHING this container
-#   holds reaches dbt's environment while repo files are rendered.
+#   into a MODEL (an authored body becomes a dbt SOURCE — engine rebuild B2), but it does write
+#   authored DESCRIPTIONS into schema.yml, and dbt renders Jinja there too — so parse runs with an
+#   ALLOWLISTED environment and NOTHING this container holds reaches dbt while repo files render.
+#   That allowlist lives in exactly ONE place, `os_projects.py` (`PARSE_ENV_*` / `dbt_parse`), which
+#   this script shells out to — a second allowlist here would drift (review B2-review-H3).
 #   This container DOES hold one secret — AGENT_RUNTIME_TOKEN, the cluster-internal bearer the OS
 #   repo-index route accepts — and that is the ONLY secret it may ever hold: no Trino password, no
-#   mirror token, nothing a `{{ env_var(...) }}` in a repo could exfiltrate. `env -i` keeps even
-#   that one out of `dbt parse`. A generated `profiles.yml` reads its credentials from the RUN
+#   mirror token, nothing a `{{ env_var(...) }}` in a repo could exfiltrate. The allowlist keeps
+#   even that one out of `dbt parse`. A generated `profiles.yml` reads its credentials from the RUN
 #   pod's env (set by `dagster-k8s/config`), never from this sidecar.
 #
 # ENV:
-#   REPO_SYNC_ENABLED      "true" to run; anything else idles (logs once, sleeps) so the sidecar
-#                          is inert on an install without osUI.dataProjectGit.enabled.
+#   REPO_SYNC_ENABLED      "true" to run; anything else makes the sidecar inert on an install
+#                          without osUI.dataProjectGit.enabled (idle on the code-server pod,
+#                          exit 0 anywhere it cannot prove it is not a Dagster run pod).
 #   REPO_SYNC_INDEX_URL    the OS repo index (default http://os-ui:3000/api/data/projects); empty = off.
 #   AGENT_RUNTIME_TOKEN    the shared runtime bearer the index route accepts (Secret-mounted). The
-#                          ONLY secret this container may hold; `env -i` keeps it out of dbt.
+#                          ONLY secret this container may hold; the parse allowlist keeps it out
+#                          of dbt (os_projects.PARSE_ENV_PASSTHROUGH).
 #   REPO_SYNC_DOMAINS      comma-separated extra domains (optional; union with the index).
 #   REPO_SYNC_GIT_BASE     default git://os-repos (Service `os-repos`, port 9418).
 #   REPO_SYNC_CHECKOUT     default /repos-checkout (emptyDir shared with the user-code container).
@@ -42,6 +46,11 @@
 #   REPO_SYNC_STATUS_PORT  port for the status.json server (default 8089).
 #   DAGSTER_RELOAD_LOCATION  code location to reload after a repoint (default "sovereign"; empty = skip).
 #   DAGSTER_GRAPHQL_URL    the webserver's /graphql.
+#   POD_NAME               downward-API `metadata.name` (chart-set). A Dagster RUN pod inherits
+#                          this whole sidecar through `run_k8s_config.pod_spec_config.containers`
+#                          (the subchart derives that from `sidecarContainers`), and a sidecar that
+#                          never exits keeps the run Job Running forever — so repo-sync exits 0 in
+#                          a run pod. Review B2-review-M1.
 #
 # Requires: git, dbt (dbt-trino), python3 (JSON + the status server) — all in the image.
 set -eu
@@ -61,10 +70,31 @@ log() { printf '%s repo-sync: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
 mkdir -p "$CHECKOUT/.mirrors" "$CHECKOUT/.status"
 
+# A Dagster RUN pod carries this sidecar too (the subchart copies `sidecarContainers` into
+# `run_k8s_config.pod_spec_config.containers`), and a K8s Job only completes when EVERY container
+# exits — so a run pod's copy must exit immediately. `os_projects.ensure_checkout` clones and
+# parses the pinned commit inside the run pod; nothing here is needed there. Review B2-review-M1.
+case "${POD_NAME:-}" in
+  dagster-run-*|dagster-step-*)
+    log "in a Dagster run pod (${POD_NAME}) — nothing to sync here, exiting 0 so the run Job can complete"
+    exit 0
+    ;;
+esac
+
 if [ "$ENABLED" != "true" ]; then
-  log "REPO_SYNC_ENABLED is not 'true' — idling (enable osUI.dataProjectGit + REPO_SYNC_ENABLED to sync domain repos)"
+  log "REPO_SYNC_ENABLED is not 'true' — not syncing (enable osUI.dataProjectGit + REPO_SYNC_ENABLED to sync domain repos)"
   printf '{"enabled": false, "domains": {}}\n' > "$CHECKOUT/status.json"
-  while true; do sleep 3600; done
+  if [ -n "${POD_NAME:-}" ]; then
+    # POD_NAME is set and did NOT match a run pod above, so this is the code-server Deployment:
+    # idle quietly (a container that exits under restartPolicy: Always is restarted forever and
+    # eventually backs off, which reads as a broken default install).
+    while true; do sleep 3600; done
+  fi
+  # POD_NAME unset (chart not carrying the downward-API env) ⇒ we cannot prove this is not a run
+  # pod, and an idle sleeper there would keep every run Job Running. Exit, which is the safe half
+  # of that trade. Review B2-review-M1.
+  log "POD_NAME unset — exiting 0 rather than idling, so a run pod's Job can complete"
+  exit 0
 fi
 
 # Serve status.json — and ONLY status.json — on a cluster-local port.
@@ -145,13 +175,11 @@ sys.exit(0 if res.get("__typename") == "WorkspaceLocationEntry" else 1)
 PY
 }
 
-# `dbt parse` with a scrubbed environment: only what dbt needs to RENDER (never connects).
+# `dbt parse` with a scrubbed environment: ONE allowlist, owned by os_projects.py, shared with the
+# run-pod bootstrap (`ensure_checkout`) so the two can never drift. Review B2-review-H3.
+APP_DIR="${APP_DIR:-$(dirname "$0")}"
 parse_project() { # worktree
-  (
-    cd "$1" && env -i PATH="$PATH" HOME="${HOME:-/tmp}" LANG=C.UTF-8 DBT_SEND_ANONYMOUS_USAGE_STATS=false \
-      OS_PRINCIPAL=repo-sync TRINO_HOST=trino TRINO_PORT=8080 TRINO_USER=dbt-runner TRINO_CATALOG=iceberg \
-      dbt parse --profiles-dir . --no-use-colors --quiet 2>&1
-  ) && [ -f "$1/target/manifest.json" ]
+  python3 "$APP_DIR/os_projects.py" --parse "$1" 2>&1 && [ -f "$1/target/manifest.json" ]
 }
 
 sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)

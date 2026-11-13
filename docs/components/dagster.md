@@ -135,4 +135,84 @@ materialisation metadata are the planned home.
 **Q: Needs the live cluster.** That a scheduled sync materialises in kind under the owner principal,
 that `dagster-k8s/config` propagates the env to run pods, that the `sidecarContainers`/`volumes`
 keys of the user-deployment schema render as expected, and that `reloadRepositoryLocation` succeeds
-against the webserver Service — all of it is verified at deploy, not here.
+against the webserver Service — all of it is verified at deploy, not here. The exact commands are
+below.
+
+## Verify it in a cluster
+
+Five things were written against Dagster 1.13's published schema and behaviour but **never probed**.
+Each is a one-command check against a live install; run them on the first deploy and fix the code,
+not the cluster, if one disagrees.
+
+```bash
+NS=agentic-os
+PF() { kubectl -n $NS port-forward svc/agentic-os-dagster-webserver 3070:80; }   # leave running
+GQL() { curl -s localhost:3070/graphql -H 'content-type: application/json' -d "{\"query\": $1}"; }
+```
+
+**1. The GraphQL field names `core/infra/dagster.ts` sends.** The documents use
+`assetChecksOrError` as a ROOT field, `Schedule.futureTicks` and
+`ExecutionParams.selector.assetSelection`. Introspect each before trusting a silent empty answer:
+
+```bash
+GQL '"{ __type(name: \"Query\") { fields { name } } }"'            # expect: assetChecksOrError
+GQL '"{ __type(name: \"Schedule\") { fields { name } } }"'          # expect: futureTicks
+GQL '"{ __type(name: \"ExecutionParams\") { inputFields { name } } }"'
+GQL '"{ __type(name: \"JobOrPipelineSelector\") { inputFields { name } } }"'  # expect: assetSelection
+```
+A missing field makes the client return `ok:false` with the server's message — the surfaces then say
+"unknown", never a fabricated value — so the failure mode is honest, but the feature is dead until
+the name is right.
+
+**2. Does a `dagster-k8s/config` run tag MERGE with the code location's container context, or
+REPLACE it?** `os_projects.k8s_env_tag` sends only `container_config.env` (`OS_PRINCIPAL`,
+`OS_PINNED_COMMITS`) and ASSUMES the location's `env` (TRINO_*, the repos volume) survives the merge.
+If it replaces, every scheduled run loses its Trino settings:
+
+```bash
+kubectl -n $NS get job -l dagster/job -o name | head -1 | xargs kubectl -n $NS get -o jsonpath='{.spec.template.spec.containers[0].env[*].name}'
+# expect BOTH OS_PRINCIPAL and TRINO_HOST
+```
+
+**3. Is the repository name of a `Definitions`-based location really `__repository__`?** The client
+addresses schedules through it (`scheduleNameFor` / `nextTick`):
+
+```bash
+GQL '"{ repositoriesOrError { ... on RepositoryConnection { nodes { name location { name } } } } }"'
+```
+
+**4. Do launched RUN pods carry `component: user-deployments`** — the label the `os-repos`
+NetworkPolicy admits to the git daemon on 9418? Without it a run pod cannot clone its pinned commit
+and every scheduled sync fails at `ensure_checkout` (review B2-review-H1):
+
+```bash
+kubectl -n $NS get pods -l component=user-deployments -o custom-columns=NAME:.metadata.name
+# expect the code-server pod AND any dagster-run-* pod currently alive
+kubectl -n $NS logs job/<a dagster-run job> | grep -i 'git clone'   # must not say "unreachable"
+```
+
+**5. Does the repo-sync container in a RUN pod exit?** It is copied into every run pod through
+`run_k8s_config.pod_spec_config.containers`, and a Job only completes once every container exits; it
+self-exits on `POD_NAME` (review B2-review-M1):
+
+```bash
+kubectl -n $NS get job -l dagster/job -o custom-columns=NAME:.metadata.name,DONE:.status.succeeded
+kubectl -n $NS logs job/<a dagster-run job> -c repo-sync   # expect "in a Dagster run pod … exiting 0"
+```
+If a run Job stays Running with its main container done, the guard did not fire — set
+`includeConfigInLaunchedRuns.enabled: false` on the deployment and move the run pods' `volumes`,
+`volumeMounts` and env to `dagster.runLauncher.config.k8sRunLauncher` instead.
+
+## Known limits
+
+- **A schedule that has never ticked cannot be paused** (review B2-review-L2). `os_quarantine` and
+  `os_principals` pause through the instance's stored instigator state, and Dagster exposes no
+  name-addressed `stop_schedule`; a brand-new schedule therefore pauses on its FIRST tick, not
+  before it. Visible as the log line `schedule … has no stored state yet`.
+- **Cold start costs one checkout per domain** (review B2-review-L4). A run pod clones and
+  `dbt parse`s EVERY pinned domain before building definitions, so start-up time grows linearly with
+  the number of domains. Follow-up: pin the single domain a run needs
+  (`OS_PINNED_COMMITS` already carries them all, per-schedule pinning would carry one).
+- **The repo-sync status server binds `0.0.0.0:8089`** (review B2-review-L5). It serves
+  `status.json` and nothing else, and the namespace is not public, but binding the pod IP would be
+  tighter. Follow-up.

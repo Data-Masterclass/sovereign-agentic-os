@@ -61,6 +61,9 @@ type DatasetDetail = {
     ranAt: string | null; score: number | null;
     trend: { ranAt: string; score: number | null; badge: string }[];
     checks: DqCheck[];
+    /** Who produced the verdict — rendered as a small attribution badge (review B2-review-M5).
+     *  The wording is decided in `detail-view.ts` (a tab's UI may not import another tab). */
+    sourceLabel?: { text: string; title: string } | null;
   };
   layers: { layer: string; built: boolean; passThrough: boolean; quality: string; updatedAt: string | null }[];
   versions: { version: number; at: string; author: string; summary: string }[];
@@ -397,7 +400,16 @@ function DatasetBody({ d }: { d: DatasetDetail }) {
       </div>
 
       {/* ── Data-Quality dashboard ── */}
-      <div className="mon-sub">Data quality {dq.ranAt ? <span className="mon-sub-note">last run {ago(dq.ranAt)}{dq.score != null ? ` · ${dq.score}/100` : ''}</span> : null}</div>
+      <div className="mon-sub">
+        Data quality {dq.ranAt ? <span className="mon-sub-note">last run {ago(dq.ranAt)}{dq.score != null ? ` · ${dq.score}/100` : ''}</span> : null}
+        {/* WHO ran it — a dbt test Dagster executed on the last build, or the OS's own ad-hoc
+            probe. The two are not interchangeable, so they are never shown as the same thing. */}
+        {dq.sourceLabel ? (
+          <span className="badge muted" title={dq.sourceLabel.title} style={{ marginLeft: 8 }}>
+            {dq.sourceLabel.text}
+          </span>
+        ) : null}
+      </div>
       {!dq.summary.hasRun ? (
         <p className="hint" style={{ marginTop: 0 }}>
           {dq.summary.rules === 0 && dq.checks.length === 0

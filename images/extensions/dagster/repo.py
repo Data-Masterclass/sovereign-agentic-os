@@ -30,10 +30,11 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from dagster import (
     AssetSelection,
+    DagsterRunStatus,
     DefaultScheduleStatus,
     DefaultSensorStatus,
     Definitions,
@@ -71,12 +72,12 @@ def hello_sovereign() -> str:
 
 
 class PrefixedTranslator(DagsterDbtTranslator):
-    """Asset keys `[<domain>, <node>]`, grouped per domain."""
+    """Asset keys `[<domain>, <node>]`, grouped per domain (`group` = the unique Dagster name)."""
 
-    def __init__(self, domain: str):
+    def __init__(self, domain: str, group: str | None = None):
         super().__init__()
         self._domain = domain
-        self._group = osp.sanitize(domain)
+        self._group = group or osp.sanitize(domain)
 
     def get_asset_key(self, dbt_resource_props):  # type: ignore[override]
         return super().get_asset_key(dbt_resource_props).with_prefix(self._domain)
@@ -97,8 +98,28 @@ def _pause_schedule(instance, schedule_name: str, logger) -> bool:
         instance.stop_schedule(state.instigator_origin_id, state.selector_id, None)
         logger.warning("paused schedule %s", schedule_name)
         return True
+    # Review B2-review-L2: a schedule that has NEVER ticked has no stored instigator state, and
+    # `DagsterInstance` exposes no way to stop one by name without it (`stop_schedule` needs the
+    # origin id + selector id that only the stored state carries, and `start_schedule`/
+    # `stop_schedule` both take state, not a name). So quarantine and the inactive-principal
+    # sensor cannot pause a brand-new schedule; it pauses on its FIRST tick instead. Documented in
+    # docs/components/dagster.md; revisit if Dagster adds a name-addressed API.
     logger.warning("schedule %s has no stored state yet — cannot pause it (it has never ticked)", schedule_name)
     return False
+
+
+def _empty_bundle() -> Dict[str, object]:
+    return {"assets": [], "jobs": [], "schedules": [], "resources": {}, "principals": {}}
+
+
+def _merge_bundles(a: Dict[str, object], b: Dict[str, object]) -> Dict[str, object]:
+    return {
+        "assets": [*a["assets"], *b["assets"]],          # type: ignore[misc]
+        "jobs": [*a["jobs"], *b["jobs"]],                # type: ignore[misc]
+        "schedules": [*a["schedules"], *b["schedules"]],  # type: ignore[misc]
+        "resources": {**a["resources"], **b["resources"]},        # type: ignore[dict-item]
+        "principals": {**a["principals"], **b["principals"]},     # type: ignore[dict-item]
+    }
 
 
 def build_definitions() -> Definitions:
@@ -108,10 +129,8 @@ def build_definitions() -> Definitions:
         log.warning("sovereign: domain %s skipped — %s", s.domain, s.reason)
     pinned_env = osp.pinned_env(projects)
 
-    assets = [hello_sovereign]
-    jobs = []
-    schedules: List[ScheduleDefinition] = []
-    resources: Dict[str, object] = {}
+    base_assets = [hello_sovereign]
+    base_resources: Dict[str, object] = {}
     schedule_principals: Dict[str, str] = {}
 
     if DEMO_MANIFEST.is_file():
@@ -119,12 +138,17 @@ def build_definitions() -> Definitions:
         def sovereign_dbt(context, dbt: DbtCliResource):
             yield from dbt.cli(["build"], context=context).stream()
 
-        assets.append(sovereign_dbt)
-        resources["dbt"] = DbtCliResource(project_dir=str(DEMO_DBT_DIR), profiles_dir=str(DEMO_DBT_DIR))
+        base_assets.append(sovereign_dbt)
+        base_resources["dbt"] = DbtCliResource(project_dir=str(DEMO_DBT_DIR), profiles_dir=str(DEMO_DBT_DIR))
 
+    # `sanitize` is lossy (`sales-eu` and `sales.eu` both give `sales_eu`), and a duplicate job or
+    # schedule name makes `Definitions(...)` raise for the WHOLE location — review B2-review-M2.
+    dagster_names = osp.sanitize_all([p.domain for p in projects])
+
+    bundles: List[Tuple[str, Dict[str, object]]] = []
     for p in projects:
         try:
-            _wire_project(p, pinned_env, assets, jobs, schedules, resources, schedule_principals)
+            bundles.append((p.domain, _wire_project(p, dagster_names[p.domain], pinned_env)))
         except Exception as e:  # noqa: BLE001 — per-domain gating
             log.error("sovereign: domain %s failed to load (%s: %s) — skipped", p.domain, type(e).__name__, e)
 
@@ -135,7 +159,16 @@ def build_definitions() -> Definitions:
         schedule = run.tags.get("os/schedule")
         if not schedule:
             return
-        recent = context.instance.get_runs(filters=RunsFilter(job_name=run.job_name), limit=QUARANTINE_THRESHOLD)
+        # TERMINAL runs only (review B2-review-L3): an unfiltered query returns in-flight runs
+        # too, and `consecutive_failures` stops counting at the first non-failure — so 10 real
+        # failures plus one QUEUED run read as 9 and the dead schedule kept firing.
+        recent = context.instance.get_runs(
+            filters=RunsFilter(
+                job_name=run.job_name,
+                statuses=[DagsterRunStatus[name] for name in osp.TERMINAL_STATUSES],
+            ),
+            limit=QUARANTINE_THRESHOLD,
+        )
         statuses = [r.status.value for r in recent]
         if osp.should_pause(statuses, QUARANTINE_THRESHOLD):
             context.log.warning("%s failed %d× in a row — quarantining", run.job_name, QUARANTINE_THRESHOLD)
@@ -153,24 +186,39 @@ def build_definitions() -> Definitions:
         paused = [n for n in to_pause if _pause_schedule(context.instance, n, context.log)]
         return SkipReason(f"paused {len(paused)} schedule(s) for inactive principals" if paused else "all principals active")
 
-    return Definitions(
-        assets=assets,
-        jobs=jobs,
-        schedules=schedules,
-        sensors=[os_quarantine, os_principals],
-        resources=resources,
-    )
+    def build(bundle: Dict[str, object]) -> Definitions:
+        # The sensor's schedule→principal map must describe what ACTUALLY loaded, so it is rebuilt
+        # from the bundle `partition_definitions` finally accepts.
+        schedule_principals.clear()
+        schedule_principals.update(bundle["principals"])  # type: ignore[arg-type]
+        return Definitions(
+            assets=[*base_assets, *bundle["assets"]],  # type: ignore[misc]
+            jobs=bundle["jobs"],                        # type: ignore[arg-type]
+            schedules=bundle["schedules"],              # type: ignore[arg-type]
+            sensors=[os_quarantine, os_principals],
+            resources={**base_resources, **bundle["resources"]},  # type: ignore[dict-item]
+        )
+
+    defs_, rejected = osp.partition_definitions(bundles, build, _merge_bundles, _empty_bundle)
+    for r in rejected:
+        log.error("sovereign: domain %s rejected by Definitions — %s (other domains still load)", r.domain, r.reason)
+    return defs_  # type: ignore[return-value]
 
 
-def _wire_project(p: osp.Project, pinned_env: str, assets, jobs, schedules, resources, schedule_principals) -> None:
-    dom = osp.sanitize(p.domain)
+def _wire_project(p: osp.Project, dom: str, pinned_env: str) -> Dict[str, object]:
+    """One domain's Dagster objects. `dom` is its COLLISION-FREE Dagster name (`sanitize_all`)."""
+    assets: List[object] = []
+    jobs: List[object] = []
+    schedules: List[ScheduleDefinition] = []
+    resources: Dict[str, object] = {}
+    schedule_principals: Dict[str, str] = {}
     resource_key = f"dbt_{dom}"
     resources[resource_key] = DbtCliResource(project_dir=p.path, profiles_dir=p.path)
 
     @dbt_assets(
         manifest=Path(p.manifest),
         name=f"{dom}_dbt",
-        dagster_dbt_translator=PrefixedTranslator(p.domain),
+        dagster_dbt_translator=PrefixedTranslator(p.domain, dom),
         required_resource_keys={resource_key},
     )
     def domain_assets(context):
@@ -193,7 +241,7 @@ def _wire_project(p: osp.Project, pinned_env: str, assets, jobs, schedules, reso
     # The job the OS launches with an explicit asset subset (Build, transform, gold join, sync now).
     jobs.append(
         define_asset_job(
-            name=osp.all_job_name(p.domain),
+            name=osp.all_job_name(dom),
             selection=AssetSelection.assets(domain_assets),
             tags=osp.all_job_tags(p.domain, p.sha, pinned_env),
             description=f"All dbt assets of domain {p.domain} at commit {p.sha[:7]} (OS launches a subset).",
@@ -202,28 +250,33 @@ def _wire_project(p: osp.Project, pinned_env: str, assets, jobs, schedules, reso
 
     # os/schedules.yml → one schedule per sync landing (`<model>+`), UTC, Dagster does not fire missed ticks.
     for s in p.schedules:
-        name = osp.schedule_name(p.domain, s.dataset)
+        name = osp.schedule_name(dom, s.dataset)
         selection = build_dbt_asset_selection([domain_assets], dbt_select=s.select)
-        sync_job = define_asset_job(name=name, selection=selection, tags=osp.schedule_tags(p.domain, s, p.sha, pinned_env))
+        sync_job = define_asset_job(name=name, selection=selection, tags=osp.schedule_tags(p.domain, s, p.sha, pinned_env, name))
         jobs.append(sync_job)
+        # The repo's own `timezone` is honoured when `zoneinfo` knows it, else UTC with a log
+        # (review B2-review-L1) — an unknown name must never take the code location down.
+        tz = osp.safe_timezone(s.timezone)
+        if tz != (s.timezone or "UTC"):
+            log.warning("sovereign: %s schedule %s: unknown timezone %r — scheduling in UTC", p.domain, name, s.timezone)
         schedules.append(
             ScheduleDefinition(
                 name=name,
                 job=sync_job,
                 cron_schedule=s.cron,
-                execution_timezone="UTC",
+                execution_timezone=tz,
                 default_status=DefaultScheduleStatus.RUNNING if s.enabled else DefaultScheduleStatus.STOPPED,
-                description=f"OS dataset {s.dataset} sync — dbt select '{s.select}' as {s.principal} (from os/schedules.yml).",
+                description=f"OS dataset {s.dataset} sync — dbt select '{s.select}' as {s.principal} in {tz} (from os/schedules.yml).",
             )
         )
         schedule_principals[name] = s.principal
 
     # Weekly Iceberg maintenance per schema, as the schema's owner (the dbt macro the generator ships).
     for schema, principal in p.schemas.items():
-        jobs.append(_maintenance_job(p, schema, principal, resource_key, pinned_env))
+        jobs.append(_maintenance_job(p, dom, schema, principal, resource_key, pinned_env))
         schedules.append(
             ScheduleDefinition(
-                name=f"{osp.maintenance_job_name(p.domain, schema)}_weekly",
+                name=f"{osp.maintenance_job_name(dom, schema)}_weekly",
                 job=jobs[-1],
                 cron_schedule=osp.MAINTENANCE_CRON,
                 execution_timezone="UTC",
@@ -232,9 +285,11 @@ def _wire_project(p: osp.Project, pinned_env: str, assets, jobs, schedules, reso
             )
         )
 
+    return {"assets": assets, "jobs": jobs, "schedules": schedules, "resources": resources, "principals": schedule_principals}
 
-def _maintenance_job(p: osp.Project, schema: str, principal: str, resource_key: str, pinned_env: str):
-    name = osp.maintenance_job_name(p.domain, schema)
+
+def _maintenance_job(p: osp.Project, dom: str, schema: str, principal: str, resource_key: str, pinned_env: str):
+    name = osp.maintenance_job_name(dom, schema)
 
     @op(name=f"{name}_op", required_resource_keys={resource_key})
     def maintenance_op(context):

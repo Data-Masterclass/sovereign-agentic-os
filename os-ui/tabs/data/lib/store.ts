@@ -24,6 +24,8 @@ import {
   DatasetError,
   canTransition,
   emptyVersions,
+  isSafeCheckValue,
+  MAX_CHECK_VALUE_LEN,
   parseDataset,
   serializeDataset,
   storageFor,
@@ -1218,6 +1220,21 @@ export function addCheck(
   // be a plain identifier. Review M1 (engine rebuild B2): refuse anything else at the gate.
   if (input.rule && input.column !== undefined && !SAFE_COLUMN_RE.test(input.column.trim())) {
     fail(`check column '${input.column.trim().slice(0, 60)}' is not a plain identifier (letters, digits, underscore)`, 400);
+  }
+  // An `accepted_values` entry reaches dbt as `'{{ value }}'` — a SQL literal with no escaping —
+  // inside a `schema.yml` that dbt renders as Jinja first. Review B2-review-H2: refuse a quote, a
+  // backslash, a control character or a Jinja delimiter HERE, at the only write path, so the
+  // generator never has to decide what to do with one (it also refuses, as defence in depth).
+  if (input.rule && input.values) {
+    const bad = input.values.find((v) => !isSafeCheckValue(v));
+    if (bad !== undefined) {
+      fail(
+        `check value '${String(bad).trim().slice(0, 60)}' is not allowed: a value must be 1–${MAX_CHECK_VALUE_LEN} ` +
+          'characters and carry no quote, backslash, control character or Jinja delimiter ' +
+          '(it is interpolated into generated dbt test SQL)',
+        400,
+      );
+    }
   }
   const check: DataCheck = {
     id: `chk_${Math.random().toString(36).slice(2, 8)}`,

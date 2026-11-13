@@ -73,6 +73,13 @@ export function parseModelPrices(raw: string): Record<string, ModelPrice> {
  */
 export const DEV_DEFAULT_SECRET = 'dev-only-insecure-session-secret-change-me-in-prod';
 
+/**
+ * The insecure placeholder for the shared in-cluster runtime bearer, shipped so a clone-and-run
+ * install works without secrets. `runtimeBearerAuthAllowed` (below) refuses to honour it under a
+ * production runtime — the bearer grants un-narrowed, cross-domain reads.
+ */
+export const DEV_DEFAULT_AGENT_RUNTIME_TOKEN = 'dev-only-insecure-agent-runtime-token';
+
 export const config = {
   // sample-agent (LangGraph RAG): GET {SAMPLE_AGENT_URL}/ask?q=...
   sampleAgentUrl: base(env('SAMPLE_AGENT_URL', 'http://sample-agent:8000')),
@@ -85,7 +92,7 @@ export const config = {
   agentRuntimeUrl: base(env('AGENT_RUNTIME_URL', 'http://agent-runtime:8000')),
   // Shared bearer the runtime presents to the os-ui governed-tool endpoint (the
   // ONLY way the runtime reaches OPA/Langfuse — it has neither itself). Server-only.
-  agentRuntimeToken: env('AGENT_RUNTIME_TOKEN', 'dev-only-insecure-agent-runtime-token'),
+  agentRuntimeToken: env('AGENT_RUNTIME_TOKEN', DEV_DEFAULT_AGENT_RUNTIME_TOKEN),
   // Agent SCHEDULE CronJobs (Agents tab). Saving a `cron` schedule provisions a
   // batch/v1 CronJob in the platform namespace that curls the scheduled-run
   // receiver below with the shared runtime bearer. The bearer is read at run time
@@ -561,6 +568,27 @@ export const config = {
 } as const;
 
 export type AppConfig = typeof config;
+
+/**
+ * May a request authenticate as the in-cluster RUNTIME (bearer token) at all? (review B2-review-M3)
+ *
+ * The bearer is a single shared secret that grants UN-NARROWED, cross-domain reads — e.g.
+ * `GET /api/data/projects` returns every domain's repository. If the deployment never set
+ * `AGENT_RUNTIME_TOKEN`, the configured value is the SHIPPED placeholder, which anyone can read in
+ * this repository. Under a real production runtime that must be a closed door, not a known key.
+ *
+ * Keyed on `NODE_ENV`, deliberately NOT on `deploymentProfile` — exactly as
+ * `assertNoDevDefaultSecretsInProd` is, and for the same reason: the live deploy runs
+ * `OS_PROFILE=local` with `NODE_ENV=production`, so a profile-keyed guard would be inert precisely
+ * where it matters. (This CORRECTS the review's suggestion to exempt `profile: local`.)
+ */
+export function runtimeBearerAuthAllowed(
+  token: string = config.agentRuntimeToken,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
+): boolean {
+  if (token && token !== DEV_DEFAULT_AGENT_RUNTIME_TOKEN) return true;
+  return nodeEnv !== 'production';
+}
 
 /**
  * Boot-time FAIL-CLOSED guard: under a real production runtime the platform must

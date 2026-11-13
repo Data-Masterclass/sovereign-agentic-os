@@ -64,6 +64,50 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   `repo-sync.sh` now discovers domains from the index, emits `target/manifest.json` via `dbt parse`
   and calls `reloadRepositoryLocation` for real.
 
+### Fixed — B2 review findings (engine rebuild)
+
+- **Run pods can reach the git daemon.** Launched Dagster run pods carried no
+  `component: user-deployments` label, the only one the `os-repos` NetworkPolicy admits to port
+  9418 — so a scheduled run could not clone its pinned commit. The run launcher now stamps it on
+  every run pod (`dagster.runLauncher.config.k8sRunLauncher.runK8sConfig.podTemplateSpecMetadata`),
+  and a test asserts the values file and the NetworkPolicy template still name the same label.
+- **`accepted_values` can no longer carry SQL or Jinja.** dbt renders each value as `'{{ value }}'`
+  with no escaping, into a test executed as the dataset's owner. `addCheck` now refuses a value
+  that is empty, over 200 characters, or carries a quote, backslash, backtick, control character or
+  Jinja delimiter, and the generator records such a check as an intention — as a whole, never as a
+  test with the offending values quietly dropped.
+- **`dbt parse` no longer inherits the pod's environment, and authored text is no longer a
+  template.** The parse allowlist lives in one place (`os_projects.PARSE_ENV_*` / `dbt_parse`),
+  which both the run-pod bootstrap and `repo-sync.sh` use, so `AGENT_RUNTIME_TOKEN` and the
+  Postgres password are provably out of reach of a `{{ env_var(...) }}` in a repository. Authored
+  dataset names, descriptions and column names now pass through `stripJinja` before they are
+  emitted — dbt renders model SQL as Jinja too, so even a `--` header comment was template input.
+- **A run Job can complete.** The Dagster subchart copies the `repo-sync` sidecar into every run
+  pod, and a Job only finishes once every container exits. repo-sync now reads `POD_NAME` and exits
+  0 in a `dagster-run-*` pod; the inert (flag-off) branch idles only where it can prove it is the
+  code-server pod.
+- **One bad domain no longer takes the whole code location down.** `sanitize` mapped `-` and `.` to
+  `_`, so `sales-eu` and `sales.eu` collapsed onto one Dagster name and `Definitions(...)` raised
+  for every domain. Names are now collision-free by a deterministic digest, and the workspace is
+  built with per-domain gating (one call on the happy path, per-domain probing only on failure).
+- **`GET /api/data/projects` is fail-closed.** It refuses the shared runtime bearer when
+  `AGENT_RUNTIME_TOKEN` is unset or still the shipped dev default under `NODE_ENV=production`,
+  instead of handing the un-narrowed cross-domain repository index to anyone holding a value from
+  this repository. A signed-in user is still served, narrowed to their domains.
+- **"Last sync" is no longer under-reported.** The Monitoring lists asked for the newest 200 runs of
+  the whole instance and grouped them by tag, so a dataset outside that window read as "never
+  synced"; the read is now one tag-filtered query per dataset, and a Dagster outage is reported as
+  `unknown` rather than "never".
+- **A quality verdict says who produced it.** `DqRunRecord.source` now reaches the monitoring
+  overview and dataset-detail payloads and is rendered as a small "dbt test" / "OS probe" badge in
+  the Data and Monitoring tabs; a record from before the distinction claims nothing.
+- **Flag-off parity restored** for the ledger "last sync" value (`startedAt`, as before B2).
+- **Quarantine counts terminal runs only** (an in-flight run used to truncate the window and leave
+  a dead schedule firing), a repository's `timezone` is honoured when `zoneinfo` knows it and falls
+  back to UTC with a log when it does not, and the `agent-runtime-token` Secret now renders from its
+  own template whenever Dagster, the data-project git flag or the agent runtime is enabled — so
+  disabling the agent runtime no longer stops the Dagster user-code pod from starting.
+
 ### Fixed — B1 review findings (engine rebuild)
 
 - **SQL injection into generated dbt tests.** A quality rule's column is interpolated **unquoted**

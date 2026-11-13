@@ -75,10 +75,17 @@ function makeStoreSink(source: ConnectorSource): SyncSink {
  * `res.ok` (HTTP 200 with a GraphQL error body). The in-process sync is the real executor either
  * way; it runs below regardless.
  *
+ * FLAG-IRRESPECTIVE, deliberately (review B2-review-M6c): this is a no-op with `DATA_PROJECT_GIT`
+ * off as well as on, because the job it used to "launch" never existed in EITHER state — the old
+ * call reported `live` from an HTTP 200 whose body was a GraphQL error. Restoring that would
+ * restore a lie, so the honest no-op stands for both.
+ *
  * TODO (B3/B4): define the external-source asset `files__<source>` in the `sovereign` location and
  * launch it here through `core/infra/dagster.ts` `launchRun`, as the connector's owner principal.
+ *
+ * @returns always false — "no Dagster run was launched" — in the `live` shape the caller records.
  */
-function triggerDagster(source: ConnectorSource, cadence: string): false {
+function triggerDagster(source: ConnectorSource, cadence: string): boolean {
   console.info(`[files] connector sync ${source.id} (${cadence}) ran in-process — the Dagster 'sovereign' location defines no job for Files connectors yet (engine rebuild B3/B4)`);
   return false;
 }

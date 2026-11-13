@@ -53,6 +53,8 @@ export const GET = withRoute(async ({ user, req }) => {
         healthScore: run.healthScore,
         openFailures,
         freshnessLate: freshness?.status === 'fail',
+        // WHO ran it: a Dagster dbt test, or the OS's own ad-hoc probe (review B2-review-M5).
+        source: run.source,
       },
     };
   });

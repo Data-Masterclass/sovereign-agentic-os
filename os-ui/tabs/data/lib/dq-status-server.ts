@@ -22,14 +22,19 @@
  *     a Dagster record always says `source: 'dagster'`.
  */
 import 'server-only';
-/** The minimum a quality read needs: the dataset id and the domain whose repo holds its models. */
-export type DqDataset = { id: string; domain: string };
-import { aggregateBadge, healthScore, type CheckResult } from '@tabs/data/lib/dq';
+import { aggregateBadge, dqSourceLabel, healthScore, type CheckResult } from '@tabs/data/lib/dq';
+
+/** Re-exported so a consumer of this read-back ALSO gets the wording for `DqRunRecord.source`
+ *  without a second cross-tab import (review B2-review-M5). */
+export { dqSourceLabel };
 import { ensureHydrated, latestRun, healthTrend, type DqRunRecord } from '@tabs/data/lib/dq-results';
 import { dataProjectGitEnabled } from '@tabs/data/lib/dbt/commit';
 import { projectSnapshot, type SnapshotDeps } from '@tabs/data/lib/dbt/snapshot';
 import { datasetAssetKeys } from '@tabs/data/lib/dbt/asset-keys';
 import * as dagster from '@core/infra/dagster';
+
+/** The minimum a quality read needs: the dataset id and the domain whose repo holds its models. */
+export type DqDataset = { id: string; domain: string };
 
 export type DqStatusDeps = SnapshotDeps & {
   dagster?: Pick<typeof dagster, 'assetChecks' | 'allAssetChecks'>;

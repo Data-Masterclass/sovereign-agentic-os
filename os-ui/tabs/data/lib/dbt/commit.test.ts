@@ -245,6 +245,53 @@ test('review M1: a rule column that is not a plain identifier is refused at the 
   store.addCheck(id, amir, { name: 'free text with "quotes"' }); // an intention has no column
 });
 
+test('review B2-review-H2: an accepted_values entry that could break out of its SQL literal is refused at the gate', () => {
+  const id = seedOrders();
+  // dbt renders each value as `'{{ value }}'` with NO escaping, into a test executed as the
+  // dataset's owner — so the store is the place to say no.
+  assert.throws(
+    () => store.addCheck(id, amir, { rule: 'accepted_values', column: 'status', values: ["x' or 1=1 or 'y"] }),
+    /is not allowed/,
+  );
+  assert.throws(
+    () => store.addCheck(id, amir, { rule: 'accepted_values', column: 'status', values: ['open', "{{ env_var('AGENT_RUNTIME_TOKEN') }}"] }),
+    /is not allowed/,
+  );
+  assert.throws(
+    () => store.addCheck(id, amir, { rule: 'accepted_values', column: 'status', values: ['x'.repeat(201)] }),
+    /is not allowed/,
+  );
+  // A clean set still passes, and the stored values are untouched.
+  const d = store.addCheck(id, amir, { rule: 'accepted_values', column: 'status', values: ['open', 'closed'] });
+  assert.deepEqual(d.checks!.at(-1)!.values, ['open', 'closed']);
+});
+
+test('review B2-review-H3: an authored description never reaches the committed tree as Jinja', async () => {
+  __setDataProjectGitForTests(true);
+  const trees: Map<string, string>[] = [];
+  uninstall = installDataProjectCommitHook({
+    committer: async (_domain, files) => { trees.push(files); return { sha: 'e'.repeat(40), changed: true }; },
+  });
+  const id = seedOrders();
+  await awaitDataProjectCommits();
+  trees.length = 0;
+  const payload = "{{ env_var('AGENT_RUNTIME_TOKEN') }}";
+  store.setDocs(id, amir, { description: `Orders ${payload}`, columns: [{ name: 'order_id', description: `Id ${payload}` }] });
+  await awaitDataProjectCommits();
+  const tree = trees.at(-1);
+  assert.ok(tree, 'the docs write produced a commit');
+  for (const [path, content] of tree!) {
+    assert.ok(!content.includes(payload), `the verbatim Jinja expression reached ${path}`);
+    // `profiles.yml` carries the generator's OWN `{{ env_var('TRINO_HOST', …) }}` by design, so the
+    // assertion is "no EVALUABLE reference to the runtime bearer", not "no Jinja syntax at all".
+    assert.ok(!/\{\{[^}]*AGENT_RUNTIME_TOKEN/.test(content), `an evaluable env_var reached ${path}`);
+  }
+  // The author's text survives — only the delimiters go, so nothing is silently swallowed.
+  const schema = [...tree!.entries()].find(([p]) => p.endsWith('schema.yml'));
+  assert.ok(schema, 'a schema.yml was generated');
+  assert.ok(schema![1].includes("env_var('AGENT_RUNTIME_TOKEN')"), 'the description text itself is kept');
+});
+
 test('review M3: two rapid writes produce two commits, each with its own actor, action and state', async () => {
   __setDataProjectGitForTests(true);
   const trees: { message: string; author: string; files: Map<string, string> }[] = [];

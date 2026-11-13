@@ -192,6 +192,31 @@ export type DataCheckRule =
 
 export const DATA_CHECK_RULES: DataCheckRule[] = ['not_null', 'not_blank', 'unique', 'accepted_values', 'range'];
 
+/** Longest `accepted_values` entry the generator will put in a dbt test. */
+export const MAX_CHECK_VALUE_LEN = 200;
+
+/**
+ * May this `accepted_values` entry be rendered into a dbt test? (review B2-review-H2)
+ *
+ * dbt's `accepted_values` emits each value as `'{{ value }}'` — a SQL literal with NO escaping —
+ * and `schema.yml` is itself a Jinja template dbt renders before reading. So a value carrying a
+ * quote, a backslash or a Jinja delimiter is either SQL injection into a test that runs AS the
+ * dataset's owner, or template injection at `dbt parse`. Both ends enforce this ONE predicate:
+ * `store.addCheck` refuses such a value at the gate (400), and `dbt/schema.ts` routes a check that
+ * somehow holds one to `meta.os_intentions` instead of emitting a test. Shared here because
+ * `dataset-schema.ts` is the import-light base both halves already depend on.
+ */
+export function isSafeCheckValue(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const v = value.trim();
+  if (!v || v.length > MAX_CHECK_VALUE_LEN) return false;
+  // Quotes / backslash / backtick: SQL-literal break-out. Control characters incl. newlines.
+  if (/['"\\`]/.test(v) || /[\u0000-\u001f\u007f]/.test(v)) return false;
+  // Jinja: `{{ }}` expressions, `{% %}` statements, `{# #}` comments — dbt renders schema.yml.
+  if (/\{\{|\}\}|\{%|%\}|\{#|#\}/.test(v)) return false;
+  return true;
+}
+
 /** A data-quality check on the dataset. A STRUCTURED rule (`rule` + `column` + args)
  *  is EXECUTABLE — compiled to a governed COUNT-of-violations SQL and run AS the owner
  *  to produce a real pass/fail. A check with no `rule` is a legacy free-text intention

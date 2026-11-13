@@ -23,10 +23,12 @@ ARCHITECTURE:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
+import sys
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -42,22 +44,104 @@ _DOMAIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _NAME_RE = re.compile(r"[^A-Za-z0-9_]")
 
-Runner = Callable[[Sequence[str], Optional[str]], Tuple[int, str]]
+#: A tool call: (argv, cwd, env) -> (returncode, combined output). `env=None` inherits; a dict
+#: REPLACES the environment entirely (how `dbt_parse` keeps this container's secrets out of Jinja).
+Runner = Callable[..., Tuple[int, str]]
 
 
-def _run(cmd: Sequence[str], cwd: Optional[str] = None) -> Tuple[int, str]:
+def _run(cmd: Sequence[str], cwd: Optional[str] = None, env: Optional[Mapping[str, str]] = None) -> Tuple[int, str]:
     """Default subprocess runner: (returncode, combined output). Never raises."""
     try:
-        p = subprocess.run(list(cmd), cwd=cwd, capture_output=True, text=True, timeout=600)
+        p = subprocess.run(
+            list(cmd), cwd=cwd, capture_output=True, text=True, timeout=600,
+            env=(dict(env) if env is not None else None),
+        )
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except Exception as e:  # noqa: BLE001 — a failed tool call is data here, not an exception
         return 1, str(e)
 
 
 def sanitize(name: str) -> str:
-    """A Dagster-safe name (`^[A-Za-z0-9_]+$`)."""
+    """A Dagster-safe name (`^[A-Za-z0-9_]+$`). LOSSY: `sales-eu` and `sales.eu` both give
+    `sales_eu` — use `sanitize_all` whenever several names share one namespace."""
     s = _NAME_RE.sub("_", name or "")
     return s if s and not s[0].isdigit() else f"_{s}"
+
+
+def sanitize_all(names: Iterable[str]) -> Dict[str, str]:
+    """`{original: unique Dagster-safe name}` — review B2-review-M2.
+
+    `sanitize` maps `-` and `.` to `_`, so two domains can collapse onto ONE Dagster name and
+    `Definitions(...)` then raises on the duplicate job/schedule — taking the WHOLE code location
+    down, not just the colliding domain. Resolution is deterministic and stable: sorted order
+    decides, the first claimant keeps the plain form and every later one gets a short digest of its
+    ORIGINAL name appended (so a name never changes because an unrelated domain appeared).
+    """
+    out: Dict[str, str] = {}
+    taken: set = set()
+    for name in sorted(set(str(n) for n in names)):
+        base = sanitize(name)
+        candidate = base
+        if candidate in taken:
+            digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:6]
+            candidate = f"{base}_{digest}"
+            n = 2
+            while candidate in taken:  # pragma: no cover — a sha256 prefix collision
+                candidate = f"{base}_{digest}_{n}"
+                n += 1
+        taken.add(candidate)
+        out[name] = candidate
+    return out
+
+
+# ------------------------------------------------------------- dbt parse env --
+
+#: Names carried over from the ambient environment when dbt RENDERS a repository (`dbt parse`).
+#: Nothing else is: `dbt parse` evaluates `{{ env_var(...) }}` from the repo's own files, so every
+#: variable this process holds would otherwise be readable by authored Jinja — including
+#: AGENT_RUNTIME_TOKEN, the cluster-internal bearer the sidecar and the code-server pod carry.
+#: Review B2-review-H3. The SINGLE source of truth: `repo-sync.sh` shells out to `--parse` here
+#: rather than keeping a second `env -i` list that could drift.
+PARSE_ENV_PASSTHROUGH: Tuple[str, ...] = ("PATH", "HOME", "LANG", "DBT_PROFILES_DIR")
+
+#: Fixed values dbt needs to render the generated `profiles.yml`. `OS_PRINCIPAL` is the only
+#: `env_var()` with NO default (tabs/data/lib/dbt/project.ts), so parse fails loudly without it;
+#: it is a RENDER-only placeholder — a real run gets its principal from `dagster-k8s/config`.
+PARSE_ENV_FIXED: Dict[str, str] = {
+    "DBT_SEND_ANONYMOUS_USAGE_STATS": "false",
+    "OS_PRINCIPAL": "repo-sync",
+    "TRINO_HOST": "trino",
+    "TRINO_PORT": "8080",
+    "TRINO_USER": "dbt-runner",
+    "TRINO_CATALOG": "iceberg",
+}
+
+
+def parse_env(ambient: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+    """The COMPLETE environment `dbt parse` runs with — an allowlist, never the inherited one."""
+    src = os.environ if ambient is None else ambient
+    out: Dict[str, str] = {}
+    for name in PARSE_ENV_PASSTHROUGH:
+        value = src.get(name)
+        if value:
+            out[name] = str(value)
+    out.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
+    out.setdefault("HOME", "/tmp")
+    out.update(PARSE_ENV_FIXED)
+    return out
+
+
+def dbt_parse(
+    project_dir: str,
+    run: Runner = _run,
+    ambient: Optional[Mapping[str, str]] = None,
+) -> Tuple[int, str]:
+    """`dbt parse` in `project_dir` under `parse_env()` — writes `target/manifest.json`."""
+    return run(
+        ["dbt", "parse", "--profiles-dir", ".", "--no-use-colors", "--quiet"],
+        project_dir,
+        parse_env(ambient),
+    )
 
 
 # ------------------------------------------------------------------ schedules --
@@ -120,6 +204,9 @@ def parse_schedules(text: str) -> List[Schedule]:
 
 
 def schedule_name(domain: str, dataset: str) -> str:
+    """`<domain>__<dataset>`. `sanitize` is idempotent, so pass either the raw domain or the
+    collision-free name `sanitize_all` assigned it — `repo.py` passes the latter, and the
+    `os/schedule` tag must carry the SAME string (that is how the sensors find the schedule)."""
     return f"{sanitize(domain)}__{sanitize(dataset)}"
 
 
@@ -241,6 +328,9 @@ def ensure_checkout(
     Used by a RUN POD, whose `/repos-checkout` emptyDir starts empty: clone the domain's repo from
     the read-only git daemon at the pinned commit and `dbt parse` it. In the user-code pod the
     sidecar has already done this and the directory exists, so this is a no-op there.
+
+    `env` is the AMBIENT environment `parse_env` filters (default `os.environ`) — the parse itself
+    never inherits it.
     """
     if not (_DOMAIN_RE.match(domain) and ".." not in domain and _SHA_RE.match(sha)):
         return None, f"refusing to check out '{domain}@{sha}': invalid name or sha"
@@ -260,7 +350,9 @@ def ensure_checkout(
             run(["rm", "-rf", tmp], None)
             return None, f"commit {sha} not in {domain}: {out.strip()[:400]}"
         os.replace(tmp, sha_dir)
-    code, out = run(["dbt", "parse", "--profiles-dir", ".", "--no-use-colors", "--quiet"], sha_dir)
+    # `dbt parse` renders the repository's Jinja — it runs with an ALLOWLISTED environment
+    # (`parse_env`), never this pod's, so no authored `{{ env_var(...) }}` can read a secret.
+    code, out = dbt_parse(sha_dir, run, env)
     if code != 0 or not os.path.isfile(os.path.join(sha_dir, "target", "manifest.json")):
         return None, f"dbt parse failed for {domain}@{sha[:7]}: {out.strip()[-600:]}"
     return sha_dir, None
@@ -316,14 +408,18 @@ def base_tags(domain: str, sha: str, pinned: str) -> Dict[str, str]:
     return {"os/domain": domain, "os/commit": sha, "os/pinned": pinned}
 
 
-def schedule_tags(domain: str, s: Schedule, sha: str, pinned: str) -> Dict[str, str]:
-    """Run tags for a scheduled sync: who (principal), what (dataset), from which commit."""
+def schedule_tags(domain: str, s: Schedule, sha: str, pinned: str, schedule: Optional[str] = None) -> Dict[str, str]:
+    """Run tags for a scheduled sync: who (principal), what (dataset), from which commit.
+
+    `schedule` is the schedule's REAL Dagster name (the quarantine sensor pauses by it); it
+    defaults to `schedule_name(domain, dataset)` and differs only for a sanitize collision.
+    """
     tags = base_tags(domain, sha, pinned)
     tags.update(
         {
             "os/dataset": s.dataset,
             "os/principal": s.principal,
-            "os/schedule": schedule_name(domain, s.dataset),
+            "os/schedule": schedule or schedule_name(domain, s.dataset),
             "os/action": "scheduled sync",
             "dagster-k8s/config": k8s_env_tag({"OS_PRINCIPAL": s.principal, "OS_PINNED_COMMITS": pinned}),
         }
@@ -355,10 +451,18 @@ def all_job_tags(domain: str, sha: str, pinned: str) -> Dict[str, str]:
 
 TERMINAL_FAILURE = {"FAILURE"}
 TERMINAL_SUCCESS = {"SUCCESS"}
+#: The statuses a FINISHED run can have. `consecutive_failures` counts over TERMINAL runs only —
+#: review B2-review-L3: a query that returns in-flight runs too silently shortens the window
+#: (10 failures plus one STARTED run reads as 9), so the caller must FILTER, not post-filter.
+TERMINAL_STATUSES = ("SUCCESS", "FAILURE", "CANCELED")
 
 
 def consecutive_failures(statuses_newest_first: Iterable[str]) -> int:
-    """Trailing consecutive FAILUREs; CANCELED / in-flight runs are not evidence and are skipped."""
+    """Trailing consecutive FAILUREs; CANCELED / in-flight runs are not evidence and are skipped.
+
+    Pass TERMINAL runs only (see `TERMINAL_STATUSES`): a list truncated by in-flight runs
+    under-counts, which would leave a dead schedule running forever.
+    """
     n = 0
     for s in statuses_newest_first:
         s = str(s).upper()
@@ -404,3 +508,89 @@ def schedules_to_pause(schedule_principals: Mapping[str, str], inactive: Iterabl
     """Schedules whose principal is inactive — pause-only; resuming is a human decision."""
     bad = set(inactive)
     return sorted(name for name, principal in schedule_principals.items() if principal in bad)
+
+
+# ----------------------------------------------------------------- timezones --
+
+
+def safe_timezone(name: Optional[str], default: str = "UTC") -> str:
+    """A tz name `ZoneInfo` actually knows, else `default` (review B2-review-L1).
+
+    `os/schedules.yml` carries an author-supplied `timezone`; Dagster raises on an unknown one at
+    definition time, which would take the whole code location down for one bad repo. An unknown
+    name degrades to UTC — the value the OS has always scheduled in — and the caller logs it.
+    """
+    want = (name or "").strip()
+    if not want:
+        return default
+    try:
+        from zoneinfo import ZoneInfo, available_timezones
+
+        if want in available_timezones():
+            return want
+        ZoneInfo(want)  # some platforms resolve names the set does not enumerate
+        return want
+    except Exception:  # noqa: BLE001 — an unknown or unavailable tz is data, not an exception
+        return default
+
+
+# --------------------------------------------------------------- definitions --
+
+
+def partition_definitions(
+    bundles: Sequence[Tuple[str, dict]],
+    build: Callable[[dict], object],
+    merge: Callable[[dict, dict], dict],
+    empty: Callable[[], dict],
+) -> Tuple[object, List[Skipped]]:
+    """Build ONE object out of per-domain bundles, dropping only the domains that break it.
+
+    Review B2-review-M2: `Definitions(...)` validates globally (duplicate job / schedule / asset
+    names, bad selections), so a single malformed domain raised there and the ENTIRE code location
+    failed to load — every other domain's schedules with it. The happy path is still one `build`
+    call; only when that raises do we probe domain by domain and report the offenders.
+    """
+    allowed = empty()
+    for _, bundle in bundles:
+        allowed = merge(allowed, bundle)
+    try:
+        return build(allowed), []
+    except Exception:  # noqa: BLE001 — fall back to per-domain probing below
+        pass
+    accepted = empty()
+    skipped: List[Skipped] = []
+    for domain, bundle in bundles:
+        trial = merge(accepted, bundle)
+        try:
+            build(trial)
+        except Exception as e:  # noqa: BLE001 — per-domain gating is the point
+            skipped.append(Skipped(domain, f"{type(e).__name__}: {e}"))
+            continue
+        accepted = trial
+    # Built LAST from exactly the accepted set, so anything the caller derives from the build
+    # (the sensor's schedule→principal map) describes what actually loaded.
+    return build(accepted), skipped
+
+
+# ---------------------------------------------------------------------- cli --
+
+
+def _main(argv: Sequence[str]) -> int:
+    """`os_projects.py --parse <project-dir>` — `dbt parse` under the allowlisted environment.
+
+    `repo-sync.sh` calls this instead of keeping its own `env -i` list, so the allowlist lives in
+    exactly ONE place (review B2-review-H3).
+    """
+    if len(argv) == 3 and argv[1] == "--parse":
+        code, out = dbt_parse(argv[2])
+        sys.stdout.write(out)
+        return code
+    if len(argv) == 2 and argv[1] == "--parse-env-names":
+        sys.stdout.write("\n".join(sorted(parse_env({}))) + "\n")
+        return 0
+    sys.stderr.write("usage: os_projects.py --parse <project-dir> | --parse-env-names\n")
+    return 2
+
+
+if __name__ == "__main__":  # pragma: no cover — exercised by repo-sync.sh
+    raise SystemExit(_main(sys.argv))

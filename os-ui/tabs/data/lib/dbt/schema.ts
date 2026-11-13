@@ -14,9 +14,17 @@
  *   - SAFETY (review M1/L7): a column name is interpolated UNQUOTED into test SQL by dbt, so a check
  *     whose column is not a plain identifier — or an `accepted_values` with no values — is recorded
  *     as an intention, never emitted as a test. The store refuses such columns at the gate too.
+ *   - SAFETY (review B2-review-H2): an `accepted_values` VALUE reaches dbt as `'{{ value }}'`, a SQL
+ *     literal with no escaping. A check holding a value `isSafeCheckValue` rejects becomes an
+ *     intention as a WHOLE — never a test with the offending values quietly dropped, which would
+ *     silently weaken the rule the author wrote. `store.addCheck` refuses them at the gate too.
+ *   - SAFETY (review B2-review-H3): dbt renders `schema.yml` AS JINJA before reading it, so an
+ *     authored description or name is template input. Every authored string this file emits goes
+ *     through `emit.stripJinja` (`{% raw %}` does not protect a YAML scalar, and nothing in a
+ *     description needs to survive as a template).
  */
-import type { DataCheck, Dataset } from '@tabs/data/lib/dataset-schema';
-import { yml } from '@tabs/data/lib/dbt/emit';
+import { isSafeCheckValue, type DataCheck, type Dataset } from '@tabs/data/lib/dataset-schema';
+import { stripJinja, yml } from '@tabs/data/lib/dbt/emit';
 import type { ModelPlan } from '@tabs/data/lib/dbt/models';
 
 export type TestSpec = string | Record<string, unknown>;
@@ -35,8 +43,11 @@ export function checkToTest(check: DataCheck): TestSpec | null {
     case 'not_blank':
       return 'not_blank';
     case 'accepted_values': {
-      const values = (check.values ?? []).map((v) => String(v).trim()).filter(Boolean);
-      return values.length ? { accepted_values: { values } } : null;
+      const raw = (check.values ?? []).map((v) => String(v).trim()).filter(Boolean);
+      // ONE unsafe value disqualifies the whole check — emitting the rest would look like the
+      // author's rule while enforcing a narrower one (review B2-review-H2).
+      if (!raw.length || !raw.every(isSafeCheckValue)) return null;
+      return { accepted_values: { values: raw } };
     }
     case 'range': {
       const args: Record<string, number> = {};
@@ -56,7 +67,7 @@ export function checksToColumnTests(checks: DataCheck[] | undefined): { tests: M
   for (const check of checks ?? []) {
     const spec = checkToTest(check);
     if (!spec) {
-      intentions.push(check.name);
+      intentions.push(stripJinja(check.name));
       continue;
     }
     const col = check.column!.trim();
@@ -69,9 +80,10 @@ export function checksToColumnTests(checks: DataCheck[] | undefined): { tests: M
 export function columnDocs(d: Dataset, withTests: boolean): { columns: Record<string, unknown>[]; intentions: string[] } {
   const columns = new Map<string, Record<string, unknown>>();
   for (const c of d.columns) {
-    const name = c.name.trim();
+    const name = stripJinja(c.name).trim();
     if (!name) continue;
-    columns.set(name, { name, ...(c.description ? { description: c.description } : {}) });
+    const description = stripJinja(c.description ?? '');
+    columns.set(name, { name, ...(description ? { description } : {}) });
   }
   let intentions: string[] = [];
   if (withTests) {
@@ -90,8 +102,8 @@ function modelDoc(m: ModelPlan): Record<string, unknown> {
   const d: Dataset = m.dataset;
   const { columns, intentions } = columnDocs(d, m.tested);
   const description = [
-    `${m.layer} layer of OS dataset ${d.id} ("${d.name}")${d.origin === 'curated' ? ' — a composition of existing datasets' : ''}.`,
-    d.description.trim(),
+    `${m.layer} layer of OS dataset ${d.id} ("${stripJinja(d.name)}")${d.origin === 'curated' ? ' — a composition of existing datasets' : ''}.`,
+    stripJinja(d.description).trim(),
   ]
     .filter(Boolean)
     .join(' ');
