@@ -22,8 +22,50 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   acceptance items in `docs/superpowers/plans/2026-11-14-engineering-checklist-night2.md` and the
   four read-only research reports beside them as the evidence base. No product code changes in this
   commit.
+- **The coin test (night run 2, X-R8).** `os-ui/core/mcp/coin-test.test.ts` asserts, per object
+  kind, that the same change made through the MCP and by a `git push` leaves byte-identical files,
+  an identical registry state and a history entry differing only in `OS-Surface`. The MCP side of
+  the agent system runs green against a real bare repository today; the push half is written
+  against stream E's `reconcileFromGit` contract and reports `todo` until it merges.
 
 ### Fixed
+
+- **A healthy agent run no longer reads back as a wall of errors (night-1 follow-up X-R3/X-R4).**
+  Monitoring's trace read-back and `get_run_trace` answered "did this step fail" by running
+  `/error|fail|aborted/i` over `JSON.stringify(output)`. The observer's own payloads defeat that
+  through their KEY NAMES: a successful tool span's output is `{"isError":false,…}` and
+  `run.result`'s is `{"failed":false,…}`. So on 0.8.0 **every** tool call in a healthy run was
+  labelled `status: 'error'`, the run header went red, and the derived log tail said ERROR for both.
+  Failure is now read structurally — Langfuse's own `level`, then the payload's `isError` / `failed`
+  boolean, each authoritative in both directions — and the text probe applies only to a genuinely
+  textual output. Same surface: the run header said `owner: unknown` for every agent run because it
+  read only `metadata.principal`, which governed-tool traces set and the agent-run observer does
+  not (it writes the acting user to the trace's `userId`); the owner now falls back through the
+  delegated principal, then `userId`, and says `unknown` only when the trace records nobody, and the
+  domain can no longer be the empty string.
+- **One empty agent-system draft no longer stops a whole domain being committed (X-R2).**
+  `agents: []` — a system created and not yet populated — parses but does not compile, and the
+  compile ran outside the guard that already protects an unparseable source. The exception left the
+  whole-subtree generator, so every other system in that domain stopped being committed and the
+  domain's boot reconcile failed with it. The uncompilable system now keeps its source and its
+  prompt files, loses only its `graph.json`, and its README says why in the compiler's own words.
+- **A system built before git was switched on reports the commit it is at (X-R1).** The boot
+  reconcile commits one commit for the whole `agents/` subtree, so no individual system's history
+  matched it and the tab header and `get_agent_system` said `git.head: null` — "never committed" —
+  about a system sitting in the repository. The reconcile commit now lists every system it carried
+  in an `OS-Objects` trailer, matched by whole token on read-back.
+- **The OS stopped telling agents that Cube secures the number (X-R7).** Metrics are served by one
+  governed Trino SELECT run as the viewer (`exploreMetric`); Trino/OPA secure the number and Cube is
+  on no read path. Seven agent-facing surfaces said otherwise, including `query_metric`'s own
+  description ("Cube applies per-viewer row-level security from YOUR delegated identity") and
+  `get_policy_view`'s claim to label grants "OPA / Cube / OpenSearch-DLS" when it only ever emits
+  two of those. A grep tripwire (`core/mcp/cube-honesty.test.ts`) keeps the claims out.
+- **`docs/components/trino.md`: `TRINO_AUTH_METHOD` is read by os-ui and os-ui only (X-R5).** The
+  page told operators to set it on `os-ui-worker` too; the worker mounts no `os-repos` volume and is
+  not given `DATA_PROJECT_GIT`, so it cannot regenerate `profiles.yml` and setting it there is the
+  same no-op the page already warned about for the Dagster run pod. It also presented the os-ui
+  rollout as a guaranteed regeneration — the boot reconcile refuses an unverified registry — so the
+  page now names the skip line and what a silent "nothing to change" means.
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a
   reference slot as a bare id (`"metric": "m_revenue"`) where the AppSpec grammar wants

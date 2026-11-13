@@ -1980,5 +1980,76 @@ stream's prefix — `M-1`, `D-1`, `C-1`, `S-1`, `G-1`, `T-1`, `E-1`, `V-1`, `X-1
 `<X>-review-<id>` for findings from the review round. A deviation is not a failure; an unrecorded
 deviation is.
 
-(empty)
+#### Stream X — night-1 live follow-ups
 
+- **X-1 The coin test's history clause cannot be a literal field equality, and is stated as four
+  invariants instead.** X-R8 asks for "an identical history entry except `OS-Surface`". On the MCP
+  side the OS authors the commit, so it writes its own subject, `OS-Action` and `OS-Object`. On the
+  push side the commit is the HUMAN's, and this plan's own hard rule is that **the OS never rewrites
+  a human's history** — so the receive gate cannot amend the OS's wording onto that subject, and a
+  test that demanded it would be asking for a rule violation. `core/mcp/coin-test.test.ts` therefore
+  asserts: the same `OS-Actor` (the acting human, never a service principal) from both doors ·
+  `mcp:<tool>` versus `git:push` as the ONE deliberate difference · the ingest adds **no commit of
+  its own**, so the pushed commit is still the head · and any `OS-Object` the receive gate *does*
+  record must agree with the MCP side's. Clauses (1) byte-identical files and (2) identical registry
+  state are asserted literally, as written. (Referred to as `X-D1` in that file's comment and commit
+  message; this is the same deviation.)
+- **X-2 Finding for stream D — `core/kernel/licenses.ts` is still missing both rows (X-R5/X6 NOT
+  done).** Verified at `night2/X`: the list carries 34 components and neither **ECharts** nor
+  **Superset**. Two facts make this a licence-obligation gap and not only a cosmetic one:
+  `echarts: ^5.6.0` is a **direct dependency** of `os-ui/package.json` and appears in NEITHER
+  `core/kernel/licenses.ts` NOR `licenses/components.tsv` NOR `THIRD-PARTY-LICENSES.md` — so a
+  shipped dependency is undeclared on every surface; **Superset** *is* in `licenses/components.tsv`
+  (line 33, Apache-2.0, NOTICE bundled) and in `THIRD-PARTY-LICENSES.md` (line 104) but missing from
+  the in-product Licenses surface, so the product under-reports what the deployment runs. Suggested
+  rows, to D's judgement on `layer`:
+  `{ name: 'Apache ECharts', license: 'Apache-2.0', layer: 'OS UI', note: 'Native chart rendering in the OS UI (dashboards, metric explorer, app chart renderer).' }`
+  and `{ name: 'Apache Superset', license: 'Apache-2.0', layer: 'Dashboards', note: 'Dashboards/BI (chart 0.17.2 / app 6.1.0); NOTICE bundled at licenses/notices/Apache-Superset-NOTICE.txt.' }`.
+  X verified and did not edit the file, per the brief (D owns it).
+- **X-3 Finding for stream D — the MCP `vizType` enum under-advertises the model (X-R6/X7 NOT
+  done).** `tabs/dashboards/mcp/dashboard-write-tools.ts:137` advertises
+  `enum: ['big_number_total', 'line', 'bar', 'table']`, while `VizType`
+  (`tabs/dashboards/lib/model.ts:29`, duplicated at `tabs/dashboards/ui/shared.ts:51`) is
+  `'big_number_total' | 'big_number' | 'line' | 'area' | 'bar' | 'pie' | 'table'`. Three types —
+  `big_number`, `area`, `pie` — are reachable in the UI and refused to an agent, so the MCP door is
+  narrower than the UI door for no stated reason. Worth an enum tripwire so the two cannot drift
+  again (X7's Test column asks for one). X verified and did not edit (D owns it).
+- **X-4 Finding for stream M — `tabs/metrics/**` still tells agents that Cube serves and secures the
+  number.** Eleven lines across `tabs/metrics/context.md` (3, 7, 8, 20), `tabs/metrics/guide.md`
+  (5, 14, 21, 23, 30, 31) and `tabs/metrics/ui/Alerts.tsx` (24, 88). The worst is `guide.md:31`:
+  *"Cube applies YOUR per-viewer row-level security (the securityContext is derived from your session
+  identity)"* — the Metrics golden path's own read step. Measured truth: `exploreMetric`
+  (`tabs/metrics/lib/build/explore-server.ts`) runs ONE governed Trino SELECT over the gold mart
+  under the viewer's delegated token; Trino/OPA secure the number; Cube is on no read path.
+  `core/mcp/cube-honesty.test.ts` carves `tabs/metrics/**` out BY OWNERSHIP and says so in the file —
+  widen the roots there when M lands and the tripwire covers them too.
+- **X-5 Finding for stream S — `tabs/software/ui/appspec/ChartExplorerRenderer.tsx` says "Cube RLS
+  applies server-side" (line 56) and "the leaf of a Cube member" (line 19).** Same correction as
+  X-4. Carved out of the tripwire by ownership (`tabs/software/**` is S tonight).
+- **X-6 Finding for streams D, M and E — a wider stale-Cube VOCABULARY backlog, deliberately not
+  fixed by X.** A catch-all `/\bCube\b/` over the same agent-facing roots reports ~17 further lines:
+  `tabs/dashboards/context.md` (2), `tabs/dashboards/guide.md` (6), `tabs/data/context.md` (3 remaining),
+  `tabs/data/guide.md` (4) and `core/mcp/experimental/data-write-tools.ts:749`. These are
+  vocabulary, not claims about who secures the number, so X9's tripwire is scoped to the claim
+  patterns and records this list rather than tripping on files three other streams are editing
+  tonight. The carve-out is stated in the test file, not only here.
+- **X-7 X-R1 is implemented as a second trailer, and it touched `history.ts` as well as
+  `reconcile.ts`.** The brief names `tabs/agents/lib/git/reconcile.ts`. A repeated `OS-Object`
+  trailer cannot work — `parseTrailers` returns `Record<string, string>`, so N lines keep only the
+  last and the commit would be attributed to exactly one system — so the whole-subtree commit now
+  carries an additional `OS-Objects` (space-separated ids) trailer, which required the matching half
+  in `tabs/agents/lib/git/history.ts` (`minesIn`, whole-token compare) and an opt-in `allObjects`
+  flag on `CommitMeta` in `tabs/agents/lib/git/commit.ts`. Both edits are additive and inert unless
+  `allObjects` is set, so every per-write commit is byte-unchanged. Neither file is claimed by
+  another stream's brief; stream G's complementary path-based fallback (G-R2.1,
+  `core/infra/git-objects.ts`) was NOT touched. Either half alone fixes the symptom.
+- **X-8 X-R2's root cause was in `generate.ts`, not `reconcile.ts`.** `compile()` ran outside the
+  guard that already protects an unparseable source, so one `agents: []` draft threw out of
+  `generateAgentFiles` — the WHOLE domain's subtree — and failed the domain's reconcile. Fixed where
+  the throw was; the reconcile itself needed no change for this item.
+- **X-9 X10, X11 and X12 are NOT ticked, and cannot be from this stream.** X10 (gates green on the
+  **merged** tree) and X11 (the programme-wide licence sweep, SBOM regeneration and
+  `scripts/license-check.sh`) are measurable only after the nine branches are merged, and X11
+  additionally depends on D's `licenses.ts` rows (X-2) and on whatever each stream vendors. X12 is
+  `stackit` and unreachable from a worktree. Scored `false` with the reason rather than ticked on a
+  single branch.

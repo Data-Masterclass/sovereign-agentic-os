@@ -323,7 +323,7 @@ for (const k of KINDS) {
     assert.deepEqual(comparableFiles(push.files), comparableFiles(mcp.files), 'the two doors leave byte-identical files');
     // (2) IDENTICAL REGISTRY STATE — the row is a cache of the file, so it cannot differ.
     assert.deepEqual(push.registry, mcp.registry, 'the two doors leave the registry in the same state');
-    // (3) THE HISTORY ENTRY — see DEVIATION X-D1 in the plan for why this clause is stated as
+    // (3) THE HISTORY ENTRY — see DEVIATION X-1 in the plan for why this clause is stated as
     // actor + surface + no-rewrite, and not as a literal field-by-field equality of the subject.
     // On the MCP side the OS authors the commit, so it writes its own subject and `OS-Object`. On
     // the push side the commit is the HUMAN's, and the plan's own hard rule is that "the OS never
