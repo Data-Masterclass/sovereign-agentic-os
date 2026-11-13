@@ -169,6 +169,24 @@ export function osToolSpecs(user: CurrentUser, tab: McpTab | null): ToolSpec[] {
  * function (OPA + Langfuse) is the real authority, so this never bypasses
  * governance. A denial comes back as an honest `isError` result, not a throw.
  */
+/**
+ * The ONE hop that carries a governed tool's typed payload from the MCP dispatcher onto the
+ * chat turn (C5/C9). Exported so the guard test can pin it directly: the model still sees
+ * the flattened text, but the truncation fields, the SQL and the citation travel
+ * STRUCTURALLY to the surface, so a clipped result can never reach the user as a confident
+ * total merely because the model omitted to mention the clipping.
+ *
+ * An `isError` result yields NOTHING: a denial carries `{ error }` as its structuredContent
+ * and must never be rendered as if it were data.
+ */
+export function artifactsFromToolResult(result: {
+  structuredContent?: unknown;
+  isError?: boolean;
+}): ChatArtifact[] {
+  if (result.isError) return [];
+  return parseArtifacts(result.structuredContent);
+}
+
 export function osToolExecutor(user: CurrentUser, sink?: ChatArtifact[]): ToolExecutor {
   return async (name, args) => {
     const res = await handleRpc(user, {
@@ -189,8 +207,8 @@ export function osToolExecutor(user: CurrentUser, sink?: ChatArtifact[]): ToolEx
     // never reach the user as a confident total just because the model omitted to mention
     // it. One serialiser: the drawer renders the identical payload an external MCP client
     // receives. A denial (`isError`) carries `{ error }`, which yields no artifacts.
-    if (sink && !result.isError) {
-      for (const artifact of parseArtifacts(result.structuredContent)) sink.push(artifact);
+    if (sink) {
+      for (const artifact of artifactsFromToolResult(result)) sink.push(artifact);
     }
     const text = result.content?.map((c) => c.text ?? '').join('\n') ?? '';
     return { text: text || '(no output)', isError: !!result.isError };

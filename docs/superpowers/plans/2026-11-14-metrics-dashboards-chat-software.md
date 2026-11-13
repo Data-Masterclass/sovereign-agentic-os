@@ -1980,5 +1980,67 @@ stream's prefix — `M-1`, `D-1`, `C-1`, `S-1`, `G-1`, `T-1`, `E-1`, `V-1`, `X-1
 `<X>-review-<id>` for findings from the review round. A deviation is not a failure; an unrecorded
 deviation is.
 
-(empty)
+### Stream C — chat to the data
+
+**C-1 — `runAgentic` gained an `observe` parameter; the brief said the plumbing already existed.**
+Phase C deliverable 1 reads *"one parameter; the plumbing already exists in `agentic.ts` and
+`runtime.ts`"*. It exists in `LlmRequest.observe` and in `liteLlmCaller`, but `runAgentic` itself
+never accepted or forwarded one, so there was nothing for `runOsAssistant` to pass. Added
+`opts.observe` to `runAgentic` and forwarded it to all three model calls (plan, each act
+iteration, the cap synthesis), spread conditionally so a caller that passes none is byte-identical
+to before. `core/runtime/agentic.ts` is not in the shared-file table and is in C's read-first list,
+but it is not named in C's **Owns** list — flagged here rather than assumed.
+
+**C-2 — `tab:assistant` became `tab:ask` (C-R3.2 taken literally), which changes a live tag.**
+The requirement is *"every model call on the path carries `tab:ask`"*. Today the Ask path passes
+`tab: input.tab ?? 'assistant'`, so an Ask turn taken while standing on the Data tab is tagged
+`tab:data` and is indistinguishable from the Data tab's own model calls — the cost of the flagship
+chat surface is unreadable. It now always passes `tab:'ask'`. A repo-wide grep found nothing
+bucketing on the literal `'assistant'` tab value, and the tab lens is still in the system prompt
+and in the turn's `tab` field, so nothing visible was lost. Noting it because it renames a
+dimension in the gateway's spend mirror.
+
+**C-3 — the "thread dimension" is the per-TURN id, because threads are not durable yet.**
+C-R3.2 asks for *"`tab:ask` plus the thread dimension"*, and C1 asks for one trace per **turn**.
+Durable threads are C14 and explicitly not tonight, so there is no thread id to carry. The turn id
+(`ask-<uuid>`, server-minted) is used as both `observe.traceId` and the `run:` tag. The client does
+NOT supply it: a client-chosen trace id would let one user write into another user's trace.
+`runOsAssistant` accepts an injected `traceId` so the durable-thread work can pass a real thread id
+without touching the plumbing.
+
+**C-4 — `core/mcp/server.ts` was edited (additively) to carry `outputSchema`/`structuredContent`.**
+C7 cannot be satisfied without it: `McpTool` had no `outputSchema` field, `listToolsForRole` could
+not advertise one, and `tools/call` returned a text block only. Added an optional `outputSchema`, an
+optional pure `artifacts` projection, the wire pass-through, and a guarded `projectArtifacts` in the
+dispatcher. Strictly additive — a tool declaring neither is byte-identical to before (asserted) —
+but `core/mcp/server.ts` is not in the shared-file table and is not in C's **Owns** list.
+
+**C-5 — `tabs/data/mcp/data-query-tools.ts` was edited (schema + projection only).** `query_data` is
+one of the six tools C7 names, but the brief's file list for C's schema additions omits it (it names
+`discovery-read-tools`, `discovery-waveb-tools`, `metric-write-tools`, `dashboard-write-tools`).
+Handler logic untouched; only `outputSchema` + `artifacts` added. Conversely
+`tabs/dashboards/mcp/dashboard-write-tools.ts` was **not** touched: `create_dashboard` is a write
+tool, is not among the six, and D owns its `vizType` enum tonight.
+
+**C-6 — `query_metric`'s artifact shows the metric MEMBER, not a compiled semantic query.**
+C-R1.1 asks for *"the SQL or the compiled semantic query (collapsed)"*. `query_data` and
+`preview_metric` both return their SQL and it is shown. `query_metric`'s handler returns
+`{ metricId, member, value, rows, mode, securityContext }` and **not** the Cube load query it built,
+and the brief forbids touching that handler's logic ("M owns the metric tool's descriptions"). Rather
+than paraphrase a query we did not see — the plan's own *"show the real thing, not a paraphrase"* —
+the artifact names the member, the resolver mode and a metric citation. Returning the compiled load
+query from `query_metric` is filed as a backlog item for whoever owns that handler.
+
+**C-7 — the drawer renders `table` and `citation`; the other three kinds are COUNTED, not dropped.**
+`chart`, `metric_draft` and `dashboard_draft` are declared in the protocol and emitted by the tools
+(`get_dashboard` emits the real normalized `Panel`s, `suggest_metrics`/`preview_metric` emit
+drafts), but their renderers are explicitly not tonight. The drawer shows an honest line — "2
+charts, 1 metric draft — this build does not render them yet" — rather than discarding them
+silently, because silence would read as "the answer had no chart".
+
+**C-8 — the view adds a SECOND, separately-labelled truncation (its own 50-row cap).** A chat drawer
+cannot show 1,000 rows. The view cap is reported on its own line, never merged with the backend's
+`message`, and the authoritative `rowCount` stays the tool's — a merged "showing 50 rows" line would
+let a 50-row view read as a 50-row result. Pinned by test.
+
 

@@ -808,3 +808,58 @@ result, and the UI must surface that label.
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,
 taking its prose from the file headers, the tab manifests and the component pins, so
 it cannot drift. CI fails if the committed page is stale.
+
+## Chat to the data — the artifact protocol (stream C, night 2)
+
+An "Ask the OS" turn returns `{ content, plan, tools[], artifacts[], traceId }`. The
+`artifacts[]` are the governed tools' OWN MCP `structuredContent`, carried to the browser
+unchanged, so the drawer and an external MCP client (Claude Desktop) render the identical
+bytes. There is one serialiser, in `core/runtime/chat-artifacts.ts`, and six kinds:
+`table` · `chart` · `metric_draft` · `dashboard_draft` · `citation` · `clarification`.
+
+Six read tools declare it: `query_data`, `query_metric`, `preview_metric`,
+`suggest_metrics`, `get_metric`, `get_dashboard`. Each sets `outputSchema` to
+`ARTIFACT_OUTPUT_SCHEMA` and an `artifacts` projection — a PURE function of the result its
+own governed `call` already produced. A projection may not read, may not compute and may
+not throw usefully: the dispatcher guards it, so a renderer bug degrades to "no artifacts"
+and never turns a successful governed read into an error.
+
+**Three rules this path exists to enforce.**
+
+1. **Truncation is never laundered.** `QUERY_MAX_ROWS` clips to the FIRST n rows, not a
+   sample (`core/infra/governed.ts`). The chat surface used to flatten the whole tool result
+   into a markdown string, so whether the user learned the result was clipped depended on
+   whether the model chose to mention it — and "total revenue was €4.2m" over the first
+   1,000 rows is the worst thing this feature could do. Now `truncated` / `rowLimit` /
+   `message` ride the artifact, the backend's own sentence is shown VERBATIM above the rows,
+   and `rowCount` is the tool's count and never `rows.length`. The drawer's own 50-row cap is
+   reported on a SEPARATE line: merging the two would let a 50-row view read as a 50-row
+   result. Guard tests at every hop — mapper, dispatcher, chat path, view.
+2. **An ad-hoc number says so.** A `query_data` answer is labelled *"Ad hoc SQL —
+   unverified"* with the SQL shown, because its aggregation and joins were chosen for that
+   question and reviewed by nobody. A `query_metric` answer is the governed number and
+   carries no caveat. The label is a field on the artifact (`source`), not a sentence we
+   hope the model wrote.
+3. **No model-authored markup, ever.** An artifact carries DATA. The protocol declares no
+   `html`, `markup`, `svg`, `href`, `src`, `style` or `url` field — asserted by a test — and
+   `core/ui/ask-artifacts-guard.test.ts` scans the whole chat path for
+   `dangerouslySetInnerHTML`, `eval`, `new Function`, `srcdoc` and `<iframe>`. A citation's
+   link comes from a fixed in-app route map, never from the payload. For data charts the
+   right answer is to not have the problem: typed rows plus a vetted component, values
+   rendered as text nodes.
+
+**One trace per turn.** `runOsAssistant` mints a per-turn id and passes
+`observe: { traceId }` into `runAgentic`, which forwards it to every model call — the plan,
+each act iteration and the cap synthesis — so LiteLLM's own Langfuse callback logs INTO that
+trace (`existing_trace_id`) instead of starting a fresh one per call. The turn is also tagged
+`tab:ask` + `run:<turnId>`: the tab lens no longer doubles as the cost dimension, because an
+Ask turn on the Data tab used to be tagged `tab:data` and was indistinguishable from the Data
+tab's own calls. The id is minted SERVER-SIDE — a client-chosen trace id would let one user
+write into another user's trace.
+
+**What is NOT true yet.** Threads are not durable: the drawer still holds messages in
+`useState` and the route still trusts the last 20 messages the client sent. The `chart`,
+`metric_draft` and `dashboard_draft` renderers are not built — the drawer counts what it
+cannot render and says so, rather than discarding it silently. There is no `os.analyst`
+LangGraph system and no write path from chat; the migration off `runAgentic` is staged behind
+a flag with a parity harness per decision D12 and has not been started.

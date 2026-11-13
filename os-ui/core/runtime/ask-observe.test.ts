@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
-import { runOsAssistant, ASK_COST_TAB } from '@core/runtime/agent-loop';
+import { runOsAssistant, ASK_COST_TAB, artifactsFromToolResult } from '@core/runtime/agent-loop';
 import { liteLlmCaller } from '@core/runtime/runtime';
 import { config } from '@core/kernel/config';
 import type { LlmCall, LlmRequest } from '@core/runtime/agentic';
@@ -115,4 +115,53 @@ test('C-R3.2: liteLlmCaller forwards observe as LiteLLM Langfuse metadata and ta
 
 test('C-R3.2: the Ask cost dimension is its own tab value, not the tab the user happens to be on', () => {
   assert.equal(ASK_COST_TAB, 'ask');
+});
+
+// ------------------------------------------------- the chat-path artifact hop ----
+
+/**
+ * C5 GUARD — the hop from the MCP dispatcher onto the chat turn. The artifact mappers and
+ * the dispatcher are pinned elsewhere (`core/runtime/chat-artifacts.test.ts`,
+ * `core/mcp/artifact-tools.test.ts`); this is the join between them, and it is the exact
+ * place the truncation used to be lost: `agent-loop.ts` flattened the whole tool result
+ * into a markdown string, so whether the user learned the result was clipped depended on
+ * whether the model chose to mention it.
+ */
+test('C5 GUARD: the chat path carries truncated/rowLimit/message off a tool result', () => {
+  const artifacts = artifactsFromToolResult({
+    structuredContent: {
+      artifacts: [
+        {
+          kind: 'table',
+          columns: ['region'],
+          rows: [['DE']],
+          rowCount: 1000,
+          source: 'ad-hoc-sql',
+          truncated: true,
+          rowLimit: 1000,
+          message: 'Result clipped at QUERY_MAX_ROWS=1000. These are the first 1000 rows, not a sample.',
+        },
+      ],
+    },
+  });
+  assert.equal(artifacts.length, 1);
+  const t = artifacts[0];
+  assert.ok(t.kind === 'table');
+  if (t.kind !== 'table') return;
+  assert.equal(t.truncated, true, 'the chat path dropped `truncated`');
+  assert.equal(t.rowLimit, 1000, 'the chat path dropped `rowLimit`');
+  assert.match(t.message ?? '', /not a sample/, 'the chat path dropped the tool’s own sentence');
+  assert.equal(t.rowCount, 1000, 'the chat path must keep the TOOL-reported row count');
+});
+
+test('C5 GUARD: a tool DENIAL yields no artifacts — an error is never rendered as data', () => {
+  assert.deepEqual(
+    artifactsFromToolResult({
+      isError: true,
+      structuredContent: { error: { code: 'forbidden', reason: 'needs builder', hint: 'ask a builder' } },
+    }),
+    [],
+  );
+  // And a tool that returned no structured payload at all contributes nothing.
+  assert.deepEqual(artifactsFromToolResult({}), []);
 });

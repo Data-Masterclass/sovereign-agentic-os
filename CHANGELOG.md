@@ -46,6 +46,21 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   neither is byte-identical to before, and a projection that throws degrades to "no artifacts"
   rather than failing a governed read.
 
+- **An Ask-the-OS answer now carries the thing it is about (stream C, C5 · C6 · C9 · C10).**
+  `/api/assistant/chat` returns `artifacts[]` beside `content` and `tools`, and the drawer renders
+  the `table` and `citation` kinds beside the existing tool chips: the rows, the SQL or semantic
+  query that produced them (collapsed), the resolver mode, and a chip naming the governed KPI, data
+  product or dashboard the answer is grounded in. **Truncation can no longer be laundered** — the
+  query-tool's own `truncated` / `rowLimit` / `message` ride the artifact and its sentence is shown
+  verbatim above the rows, `rowCount` is the tool's count and never `rows.length`, and the drawer's
+  own 50-row cap is reported on a separate line so a 50-row view can never read as a 50-row result.
+  An ad-hoc `query_data` answer is labelled "Ad hoc SQL — unverified" with its SQL always shown; a
+  `query_metric` answer is the governed number. A kind this build cannot render yet is counted and
+  named, never silently discarded. Security: a path-scoped guard test fails on
+  `dangerouslySetInnerHTML`, `eval`, `new Function`, `srcdoc` or `<iframe>` anywhere on the chat
+  path, on an `href`/`src`/`style` taken from a payload, and on the artifact protocol declaring any
+  markup- or URL-shaped field — no model-authored HTML, SVG or JS is ever rendered.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a

@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { roleModel } from '@core/models/roles';
 import { requireUser } from '@core/kernel/auth';
 import { mcpTabForPath, runOsAssistant } from '@core/runtime/agent-loop';
+import { askTurnResponse } from '@core/runtime/ask-response';
 import { sanitizePageContext } from '@core/runtime/page-context';
 import { AssistantNotConfiguredError } from '@core/runtime/complete';
 
@@ -20,7 +21,12 @@ export const dynamic = 'force-dynamic';
  * user's delegated identity — same guardrails as an external MCP client.
  *
  * Response: the final answer + a transparent trace of which governed tools it
- * invoked (and whether each was blocked), so the surface never hides what it did.
+ * invoked (and whether each was blocked) + the typed ARTIFACTS those tools
+ * produced (C9), so the surface never hides what it did and a number always
+ * arrives with the rows, the SQL or the metric member that produced it.
+ *
+ * A route may export only its handlers, so the payload shaping lives in
+ * `core/runtime/ask-response.ts` where a test can reach it.
  */
 
 const CHAT_TIMEOUT_MS = Number(process.env.LLM_CHAT_TIMEOUT_MS ?? '') || 90_000;
@@ -71,15 +77,17 @@ export async function POST(req: Request) {
   const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
   try {
     const result = await runOsAssistant({ user, tab, page, messages: clean });
-    return NextResponse.json({
-      role: 'assistant',
-      content: result.finalText,
-      plan: result.plan,
-      // Transparent, honest trace of the governed tools it invoked this turn.
-      tools: result.steps.map((s) => ({ name: s.tool, isError: s.isError })),
-      tab,
-      model: roleModel('standard'),
-    });
+    return NextResponse.json(
+      askTurnResponse({
+        finalText: result.finalText,
+        plan: result.plan,
+        steps: result.steps,
+        artifacts: result.artifacts,
+        tab,
+        traceId: result.traceId,
+        model: roleModel('standard'),
+      }),
+    );
   } catch (e) {
     if (e instanceof AssistantNotConfiguredError) {
       return NextResponse.json({ error: e.message }, { status: e.status });
