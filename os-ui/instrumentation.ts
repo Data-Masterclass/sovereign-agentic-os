@@ -191,6 +191,14 @@ export async function register(): Promise<void> {
           },
         });
         console.info(`[os-ui] agent projects: committing every agent-system change to ${config.reposDir}/<domain>.git (agents/)`);
+        // BOOT RECONCILE: whatever happened while the flag was off (or while a write failed) is
+        // committed now, as the platform principal with `OS-Reason: boot-reconcile`, so the repo
+        // is TRUE without anyone re-saving every system. Awaited inside this fire-and-forget
+        // block only (never on the boot path), and it needs the store hydrated first.
+        const { ensureHydrated } = await import('./tabs/agents/lib/store.ts');
+        await ensureHydrated();
+        const { reconcileAgentProjectsAtBoot } = await import('./tabs/agents/lib/git/reconcile.ts');
+        await reconcileAgentProjectsAtBoot();
       } catch (err) {
         console.error(`[os-ui] agent projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
       }

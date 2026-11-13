@@ -40,7 +40,7 @@ const READ_ONLY = new Set([
   'ensureHydrated', '__recordFor', '__resetStore',
   'listSystems', 'getSystemsUsingDataset', 'listAllSystemsInternal', 'agentHealthRows', 'markPendingShares',
   'getSystem', 'getSystemForEdit', 'canRunCheck', 'getSystemForRun', 'listFiles', 'readFile',
-  'listSystemVersions', 'systemForScheduler', 'systemsForProject',
+  'listSystemVersions', 'systemForScheduler', 'systemsForProject', 'projectDomains',
   // re-exported for callers that mint a run id beside a store read; not a writer.
   'newRunId',
 ]);

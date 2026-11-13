@@ -1302,6 +1302,16 @@ export function deleteSystem(systemId: string, user: Principal): SystemRecord {
  * generated file is byte-stable. An archived system is deliberately absent: archive leaves the
  * working lists, so it leaves the repo too (and the commit that archives it REMOVES its directory).
  */
+/** Every domain that currently holds a live system — the set the boot reconcile walks. */
+export function projectDomains(): string[] {
+  ensureSeeded();
+  const out = new Set<string>();
+  for (const rec of state().store.values()) {
+    if (!rec.archived && rec.domain) out.add(rec.domain);
+  }
+  return [...out].sort();
+}
+
 export function systemsForProject(domain: string): { rec: SystemRecord; version: number }[] {
   ensureSeeded();
   const out: { rec: SystemRecord; version: number }[] = [];

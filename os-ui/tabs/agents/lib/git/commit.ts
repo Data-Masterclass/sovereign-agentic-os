@@ -69,6 +69,11 @@ export type CommitMeta = {
   /** `ui:<route>` | `mcp:<tool>`; defaults to {@link DEFAULT_SURFACE}. */
   surface?: string;
   requestId?: string;
+  /**
+   * An extra `OS-Reason` trailer, for a commit whose CAUSE is not simply its action — today only
+   * `boot-reconcile` (B1 spelled the per-write reason `OS-Action`, and that stays the convention).
+   */
+  reason?: string;
 };
 
 export type SubtreeCommitter = (
@@ -113,7 +118,11 @@ export async function commitAgentSystem(domain: string, actor: ActorIdentity, me
     author,
     message,
     // `OS-Actor` carries the principal id even when the author name is a display name.
-    trailers: { 'OS-Actor': actor.id, ...(synthesized ? { 'OS-Author-Email': 'synthesized' } : {}) },
+    trailers: {
+      'OS-Actor': actor.id,
+      ...(meta.reason ? { 'OS-Reason': meta.reason } : {}),
+      ...(synthesized ? { 'OS-Author-Email': 'synthesized' } : {}),
+    },
     reposDir,
   });
   if (result.changed && deps.mirror !== false && !deps.committer) {

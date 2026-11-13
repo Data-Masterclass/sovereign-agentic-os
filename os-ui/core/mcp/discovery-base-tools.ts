@@ -106,7 +106,7 @@ export const discoveryBaseTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'Read one agent system (also called: AI team, assistant team) you can see — system.yaml, agents, grants, status. Path: DISCOVERY for the Agents golden path (guide: sovereign-os://guide/path/agents). Before: list_agent_systems. After: commit_agent_files / build_agent_system. Governance: read-only; unseeable id → not_found.',
+      'Read one agent system (also called: AI team, assistant team) you can see — system.yaml, agents, grants, status, and (when the OS commits to git) `git`: the commit this system is AT (sha, author, time) plus the last 10 commits that touched it, read from the domain repository itself rather than from an OS ledger. Path: DISCOVERY for the Agents golden path (guide: sovereign-os://guide/path/agents). Before: list_agent_systems. After: commit_agent_files / build_agent_system. Governance: read-only; unseeable id → not_found.',
     inputSchema: {
       type: 'object',
       properties: { systemId: { type: 'string', description: 'System id from list_agent_systems.' } },
@@ -116,7 +116,18 @@ export const discoveryBaseTools: McpTool[] = [
     call: async (user, args) => {
       const id = str(args.systemId).trim();
       if (!id) fail('get_agent_system needs a `systemId`', 400);
-      return getSystem(id, P(user));
+      // Scope gate FIRST (`getSystem` is the owner/visibility authority); only then the repo read.
+      const view = getSystem(id, P(user));
+      // Part D: the git read-back. Lazy import — the git store is node-only, and an unreadable
+      // repo must degrade to `git: null`, never fail the read.
+      let git = null;
+      try {
+        const { systemGitInfo } = await import('@tabs/agents/lib/git/history');
+        git = await systemGitInfo(view.domain, view.id);
+      } catch {
+        git = null;
+      }
+      return { ...view, git };
     },
   },
   {
