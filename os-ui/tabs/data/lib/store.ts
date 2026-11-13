@@ -73,6 +73,10 @@ export type DatasetRecord = {
   /** Tool-native artifact bodies (dbt SQL + tests), keyed by version artifact path.
    *  The dataset.yaml spine points at these; both are Forgejo-versioned (dual-mode). */
   artifacts?: Record<string, string>;
+  /** Artifact paths whose body the OS COMPILED (compileSilver / compileGoldJoin / pass-through
+   *  CTAS). Only these become dbt models in the domain repo; a user-authored body is recorded
+   *  but rendered as a dbt SOURCE (built out of band), never as a model — engine rebuild B2. */
+  compiledArtifacts?: string[];
   updatedAt: string;
   /** Soft-archived: hidden from the working lists, reversible, retained. */
   archived?: boolean;
@@ -158,6 +162,7 @@ const mirror = osMirror({
         // would otherwise explode the mapping.
         yaml: { type: 'text', index: false },
         artifacts: { type: 'object', enabled: false },
+        compiledArtifacts: { type: 'keyword' },
         archived: { type: 'boolean' },
       },
     },
@@ -679,12 +684,12 @@ export function datasetsWithSync(): Dataset[] {
  * excluded (archiving retires the dataset from the project); sorted by id for byte-stable output.
  * The acting user is the commit AUTHOR, not a filter: the project is the whole domain's.
  */
-export function datasetsForProject(domain: string): { dataset: Dataset; artifacts: Record<string, string> }[] {
+export function datasetsForProject(domain: string): { dataset: Dataset; artifacts: Record<string, string>; compiled: string[] }[] {
   ensureSeeded();
-  const out: { dataset: Dataset; artifacts: Record<string, string> }[] = [];
+  const out: { dataset: Dataset; artifacts: Record<string, string>; compiled: string[] }[] = [];
   for (const rec of ds().store.values()) {
     if (rec.archived || rec.domain !== domain) continue;
-    out.push({ dataset: parseDataset(rec.yaml), artifacts: { ...(rec.artifacts ?? {}) } });
+    out.push({ dataset: parseDataset(rec.yaml), artifacts: { ...(rec.artifacts ?? {}) }, compiled: [...(rec.compiledArtifacts ?? [])].sort() });
   }
   return out.sort((a, b) => a.dataset.id.localeCompare(b.dataset.id));
 }
@@ -1012,7 +1017,7 @@ export function buildVersion(
   id: string,
   user: Principal,
   layer: Layer,
-  patch: { quality?: Quality; artifact?: string | null; passThrough?: boolean; body?: string },
+  patch: { quality?: Quality; artifact?: string | null; passThrough?: boolean; body?: string; compiled?: boolean },
 ): Dataset {
   const rec = get(id);
   const d = editOf(rec, user);
@@ -1025,9 +1030,13 @@ export function buildVersion(
     artifact: patch.artifact !== undefined ? patch.artifact : prev.artifact,
   };
   d.versions[layer] = next;
-  // Store the authored native body (dbt SQL + tests) keyed by the artifact path.
+  // Store the native body keyed by the artifact path, with its PROVENANCE: `compiled: true` only
+  // from the OS's own compilers (transform / gold-join routes, transform_silver, build_gold_join).
+  // An authored body (add_dataset_version, the version route) is kept but never becomes a dbt
+  // model — the generator renders it as a source (built out of band). Engine rebuild B2 / review M2.
   if (patch.body !== undefined && next.artifact) {
     rec.artifacts = { ...(rec.artifacts ?? {}), [next.artifact]: patch.body };
+    setCompiled(rec, next.artifact, Boolean(patch.compiled));
   }
   // Northpeak fix (materialization drift): rebuilding the PUBLISHED layer (or building a
   // gold above a silver-published asset) of an ALREADY-PROMOTED dataset rewrites only the
@@ -1062,6 +1071,7 @@ export function buildGoldJoin(
   const d = editOf(rec, user);
   d.versions.gold = { built: true, passThrough: false, quality: 'unknown', updatedAt: now(), artifact: input.artifact };
   rec.artifacts = { ...(rec.artifacts ?? {}), [input.artifact]: input.body };
+  setCompiled(rec, input.artifact, true); // the body IS compileGoldJoin's output
   // Measures are declared in the PUBLISH stage now (the Gold panel builds a row-level
   // projection and always sends none) — a gold rebuild must never wipe them. Only a
   // build that explicitly brings measures (e.g. the MCP tool) replaces the list.
@@ -1203,6 +1213,12 @@ export function addCheck(
 ): Dataset {
   const rec = get(id);
   const d = editOf(rec, user);
+  // A rule's column is interpolated UNQUOTED into dbt test SQL (`schema.yml` → not_null / unique /
+  // accepted_values / range / not_blank) and executed as the impersonated principal — so it must
+  // be a plain identifier. Review M1 (engine rebuild B2): refuse anything else at the gate.
+  if (input.rule && input.column !== undefined && !SAFE_COLUMN_RE.test(input.column.trim())) {
+    fail(`check column '${input.column.trim().slice(0, 60)}' is not a plain identifier (letters, digits, underscore)`, 400);
+  }
   const check: DataCheck = {
     id: `chk_${Math.random().toString(36).slice(2, 8)}`,
     name: (input.name ?? '').trim() || 'Untitled check',
@@ -1305,6 +1321,41 @@ export function setDatasetSync(id: string, user: Principal, sync: DatasetSync | 
     delete d.sync;
   }
   persist(rec, d, { author: user.id, summary: sync ? 'configure sync' : 'remove sync' });
+  return d;
+}
+
+/** A quality-rule column must be a plain SQL identifier (it is interpolated unquoted into dbt tests). */
+export const SAFE_COLUMN_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Record (or clear) an artifact's compiled provenance on the record. */
+function setCompiled(rec: DatasetRecord, artifact: string, compiled: boolean): void {
+  const set = new Set(rec.compiledArtifacts ?? []);
+  if (compiled) set.add(artifact);
+  else set.delete(artifact);
+  rec.compiledArtifacts = [...set].sort();
+}
+
+/**
+ * Record which domain-repo commit a layer was launched from and the Dagster run that executes it
+ * (engine rebuild B2, DATA_PROJECT_GIT). `dagsterRunId: null` + `launchError` is the honest shape
+ * when no run could be launched. Not a user edit (no version-log entry); it emits a project change
+ * like every write, which regenerates an unchanged tree and therefore commits nothing.
+ */
+export function setVersionRun(
+  id: string,
+  layer: Layer,
+  run: { commit: string | null; dagsterRunId: string | null; launchError?: string | null },
+  actorId = 'system',
+): Dataset {
+  const rec = get(id);
+  const d = parseDataset(rec.yaml);
+  d.versions[layer] = {
+    ...d.versions[layer],
+    commit: run.commit,
+    dagsterRunId: run.dagsterRunId,
+    ...(run.launchError ? { launchError: run.launchError } : { launchError: null }),
+  };
+  persist(rec, d, undefined, { actor: actorId, action: 'record dagster run' });
   return d;
 }
 

@@ -67,7 +67,7 @@ afterEach(() => {
 function seedOrders(): string {
   const d = store.createDataset(amir, { name: 'Orders' });
   store.buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
-  store.buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql', body: 'create or replace table iceberg.personal_amir.silver_orders as select * from iceberg.personal_amir.bronze_orders' });
+  store.buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql', body: 'create or replace table iceberg.personal_amir.silver_orders as select * from iceberg.personal_amir.bronze_orders', compiled: true });
   return d.id;
 }
 function documented(id: string): string {
@@ -104,6 +104,7 @@ const MUTATORS: Record<string, () => void | Promise<void>> = {
   markDatasetsDrifted: () => { connected('exp_d', 'conn_d'); store.markDatasetsDrifted('conn_d', [{ schema: 'public', table: 'events' }]); },
   reassignOwner: () => { seedOrders(); store.reassignOwner('amir', 'kenji'); },
   buildVersion: () => void store.buildVersion(seedOrders(), amir, 'gold', { quality: 'unknown', artifact: 'gold/mart_orders.sql', passThrough: true }),
+  setVersionRun: () => { const id = seedOrders(); calls = []; store.setVersionRun(id, 'silver', { commit: 'c'.repeat(40), dagsterRunId: 'run_1' }, 'amir'); },
   buildGoldJoin: () => void store.buildGoldJoin(seedOrders(), amir, { measures: [], upstreams: [], artifact: 'gold/mart_orders.sql', body: 'create or replace table iceberg.personal_amir.gold_orders as select * from iceberg.personal_amir.silver_orders' }),
   setDocs: () => void documented(seedOrders()),
   renameDataset: () => void store.renameDataset(seedOrders(), amir, 'Orders 2'),
@@ -178,7 +179,7 @@ test('the ambient surface and request id land in the message; no surface ⇒ ui:
   assert.equal(t['OS-Request-Id'], 'req_abc');
   assert.match(t['OS-Object'], /^ds_\w+ \(Orders\)$/);
   assert.deepEqual(last.opts.author, { name: 'amir', email: 'amir@os.local' });
-  assert.deepEqual(last.opts.trailers, { 'OS-Author-Email': 'synthesized' });
+  assert.deepEqual(last.opts.trailers, { 'OS-Actor': 'amir', 'OS-Author-Email': 'synthesized' });
 
   calls = [];
   store.setMonitor(store.listDatasets(amir).mine[0].id, amir, 'volume', false);
@@ -198,7 +199,7 @@ test('a resolved actor is the git author; the deleted dataset is named by id in 
   store.deleteDataset(id, amir);
   await awaitDataProjectCommits();
   assert.deepEqual(calls[0].opts.author, { name: 'Amir Example', email: 'amir@example.com' });
-  assert.deepEqual(calls[0].opts.trailers, {});
+  assert.deepEqual(calls[0].opts.trailers, { 'OS-Actor': 'amir' });
   assert.match(calls[0].message, new RegExp(`^data\\(sales\\): retire ${id} — via ui:data`));
 });
 
@@ -214,4 +215,56 @@ test('commitDataProject is a no-op (null) with the flag off and generates a real
   assert.equal(r?.changed, true);
   assert.ok(tree!.has('models/personal/amir/silver_orders.sql'));
   assert.ok(tree!.has('dbt_project.yml') && tree!.has('profiles.yml'));
+  assert.ok(tree!.has('macros/os_maintenance.sql'));
+});
+
+test('review M2: an AUTHORED body never becomes a model — the layer is a dbt source, tested there', async () => {
+  __setDataProjectGitForTests(true);
+  const d = store.createDataset(amir, { name: 'Authored' });
+  store.buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/authored.dlt.yml' });
+  // No `compiled: true` — what add_dataset_version / the version route record.
+  store.buildVersion(d.id, amir, 'silver', { quality: 'unknown', artifact: 'silver/stg_authored.sql', body: "{{ exceptions.raise_compiler_error(env_var('X')) }}" });
+  store.addCheck(d.id, amir, { rule: 'not_null', column: 'order_id' });
+  let tree: Map<string, string> | null = null;
+  await commitDataProject('sales', { id: 'amir' }, { action: 'x' }, {
+    committer: async (_d, files) => { tree = files; return { sha: 'b'.repeat(40), changed: true }; },
+  });
+  assert.equal(tree!.has('models/personal/amir/silver_authored.sql'), false, 'authored body rendered as a model');
+  for (const content of tree!.values()) assert.ok(!content.includes("env_var('X')"), 'user text reached the tree');
+  const sources = tree!.get('models/sources.yml')!;
+  assert.match(sources, /silver_authored/);
+  assert.match(sources, /os_built: out-of-band/);
+  assert.match(sources, /not_null/); // the rule tests the source
+});
+
+test('review M1: a rule column that is not a plain identifier is refused at the store gate', () => {
+  const id = seedOrders();
+  assert.throws(() => store.addCheck(id, amir, { rule: 'not_null', column: 'x" is null) or (1=1 --' }), /not a plain identifier/);
+  assert.throws(() => store.addCheck(id, amir, { rule: 'unique', column: '1abc' }), /not a plain identifier/);
+  store.addCheck(id, amir, { rule: 'not_null', column: 'order_id' }); // fine
+  store.addCheck(id, amir, { name: 'free text with "quotes"' }); // an intention has no column
+});
+
+test('review M3: two rapid writes produce two commits, each with its own actor, action and state', async () => {
+  __setDataProjectGitForTests(true);
+  const trees: { message: string; author: string; files: Map<string, string> }[] = [];
+  uninstall = installDataProjectCommitHook({
+    committer: async (_domain, files, opts) => { trees.push({ message: opts.message, author: opts.author.name, files }); return { sha: 'd'.repeat(40), changed: true }; },
+    resolveActor: async (id) => { await new Promise((r) => setTimeout(r, 5)); return { id, name: `${id}-resolved`, email: `${id}@example.com` }; },
+  });
+  const id = seedOrders();
+  await awaitDataProjectCommits();
+  trees.length = 0;
+  store.setDocs(id, amir, { description: 'A wrote this', columns: [] });
+  store.addCheck(id, amir, { rule: 'not_null', column: 'order_id' });
+  await awaitDataProjectCommits();
+  assert.equal(trees.length, 2);
+  assert.equal(trees[0].author, 'amir-resolved');
+  assert.match(trees[0].message, /^data\(sales\): edit docs /);
+  assert.match(trees[1].message, /^data\(sales\): add check /);
+  const schemaA = trees[0].files.get('models/personal/amir/schema.yml')!;
+  const schemaB = trees[1].files.get('models/personal/amir/schema.yml')!;
+  assert.match(schemaA, /A wrote this/);
+  assert.ok(!schemaA.includes('not_null'), "the first commit carries the second write's state");
+  assert.match(schemaB, /not_null/);
 });

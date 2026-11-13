@@ -120,9 +120,9 @@ function shapeComposition(): ProjectSnapshot {
   return {
     domain: 'sales',
     datasets: [
-      { dataset: orders, artifacts: { 'silver/stg_orders.sql': silverOrdersSql } },
+      { dataset: orders, artifacts: { 'silver/stg_orders.sql': silverOrdersSql }, compiled: ['silver/stg_orders.sql'] },
       { dataset: customers, artifacts: {} },
-      { dataset: composition, artifacts: { 'gold/mart_order_customer.sql': goldSql } },
+      { dataset: composition, artifacts: { 'gold/mart_order_customer.sql': goldSql }, compiled: ['gold/mart_order_customer.sql'] },
     ],
     catalogs: {},
   };

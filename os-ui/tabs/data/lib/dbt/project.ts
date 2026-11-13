@@ -90,6 +90,29 @@ export function renderMacros(): Map<string, string> {
         '{%- endmacro %}',
       ]),
     ],
+    [
+      'macros/os_maintenance.sql',
+      textFile([
+        '{#- Sovereign OS Iceberg maintenance: `ALTER TABLE … EXECUTE optimize` + `expire_snapshots` for every',
+        '    table / incremental model in `schema` (all schemas when none). Run weekly by the Dagster code',
+        '    location as the schema\'s owning principal: `dbt run-operation os_maintenance --args \'{"schema": …}\'`.',
+        '    The retention is fixed (Trino\'s default minimum) — nothing user-controlled is interpolated. -#}',
+        '{% macro os_maintenance(schema=none) %}',
+        '{%- if execute -%}',
+        "{%- for node in graph.nodes.values() | selectattr('resource_type', 'equalto', 'model') -%}",
+        "{%- if node.config.materialized in ('table', 'incremental') and (schema is none or node.schema == schema) -%}",
+        '{%- set rel = adapter.get_relation(database=node.database, schema=node.schema, identifier=node.alias) -%}',
+        '{%- if rel is not none -%}',
+        '{%- do run_query("alter table " ~ rel ~ " execute optimize") -%}',
+        '{%- do run_query("alter table " ~ rel ~ " execute expire_snapshots(retention_threshold => \'7d\')") -%}',
+        '{%- do log("os_maintenance: " ~ rel, info=true) -%}',
+        '{%- endif -%}',
+        '{%- endif -%}',
+        '{%- endfor -%}',
+        '{%- endif -%}',
+        '{% endmacro %}',
+      ]),
+    ],
   ]);
 }
 
@@ -158,6 +181,7 @@ export function renderReadme(domain: string, plan: ModelPlanSet): string {
     '- `models/silver/`, `models/gold/` — promoted (domain) layers; `models/personal/<uid>/` — personal lane',
     '- `models/**/schema.yml` — descriptions and the quality rules as tests',
     '- `tests/generic/` — the `range` and `not_blank` tests the OS rules compile to',
+    '- `macros/os_maintenance.sql` — weekly Iceberg `optimize` + `expire_snapshots`, run by Dagster per schema',
     '- `os/schedules.yml` — sync schedules (cron, UTC, principal) for the Dagster code location',
     '- `os/external.yml` — sources dbt cannot model (Kafka offsets, API batch); Dagster assets',
     '',

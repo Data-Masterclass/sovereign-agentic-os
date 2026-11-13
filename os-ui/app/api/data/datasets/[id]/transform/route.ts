@@ -12,6 +12,8 @@ import { silverPlan, type TransformOp } from '@tabs/data/lib/transform';
 import { rematerializeDomainTableLive } from '@tabs/data/lib/publish-server';
 import { roleAtLeast } from '@core/kernel/session';
 import type { ExecuteIdentity } from '@core/infra/governed';
+import { launchDatasetBuild } from '@tabs/data/lib/dbt/launch';
+import { currentSurface } from '@core/infra/request-surface';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,7 +77,15 @@ export const POST = withRoute<{ id: string }, { ops?: TransformOp[]; columns?: s
     quality: 'unknown',
     artifact: stageArtifact(dataset.name, 'silver'),
     body: plan.sql,
+    compiled: true, // the body IS silverPlan/compileSilver's output ⇒ it becomes a dbt model
   });
+
+  // DATA_PROJECT_GIT: the store write already emitted the project change, so the commit is in
+  // flight. Launch the dbt assets for this layer in Dagster as the same principal the CTAS ran
+  // as, from that commit (fire-and-forget; the outcome lands on the version).
+  launchDatasetBuild(
+    { datasetId: id, layer: 'silver', actor: { id: user.id }, principal: identity.principal, action: 'transform silver', surface: currentSurface()?.surface },
+  );
 
   // The domain-copy contract (same as the Gold rebuild): buildVersion just flagged an
   // already-promoted dataset STALE — this rebuild rewrote only the owner's personal

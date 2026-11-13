@@ -105,6 +105,24 @@ export function repoExists(domain: string, opts: GitStoreOptions = {}): boolean 
   return fs.existsSync(path.join(repoPath(domain, opts), 'HEAD'));
 }
 
+/**
+ * Every repository under `reposDir` with its `main` head (null when it has no commit yet). The
+ * git protocol cannot enumerate repositories, so this is the index the Dagster `repo-sync` sidecar
+ * polls (engine rebuild B2, deviation B1-8). Sorted by name; a missing directory is an empty list.
+ */
+export async function listRepos(opts: GitStoreOptions = {}): Promise<{ name: string; head: string | null }[]> {
+  const dir = opts.reposDir ?? config.reposDir;
+  if (!fs.existsSync(dir)) return [];
+  const out: { name: string; head: string | null }[] = [];
+  for (const entry of fs.readdirSync(dir).sort()) {
+    if (!entry.endsWith('.git')) continue;
+    const name = entry.slice(0, -'.git'.length);
+    if (!DOMAIN_RE.test(name) || name.includes('..') || !fs.existsSync(path.join(dir, entry, 'HEAD'))) continue;
+    out.push({ name, head: await headSha(path.join(dir, entry)) });
+  }
+  return out;
+}
+
 /** Open the domain's bare repo, creating it (branch `main`) on first use. */
 export async function openOrInit(domain: string, opts: GitStoreOptions = {}): Promise<{ gitdir: string }> {
   const gitdir = repoPath(domain, opts);
@@ -134,6 +152,9 @@ async function resolveCommit(gitdir: string, ref: string | undefined): Promise<s
       /* fall through to a ref lookup */
     }
   }
+  // Only `main` / `HEAD` / a sha are addressable (review L1): the repos have one branch, and a
+  // caller-supplied ref must never reach the filesystem-backed ref resolver as a path.
+  if (r !== 'main' && r !== 'HEAD') throw new GitStoreError(`ref '${r.slice(0, 60)}' is not addressable (use main, HEAD or a commit sha)`, 400);
   try {
     return await git.resolveRef({ fs, gitdir, ref: r === 'main' ? MAIN : r });
   } catch {

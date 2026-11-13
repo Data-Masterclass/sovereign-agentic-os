@@ -44,6 +44,12 @@ export type VersionState = {
   quality: Quality;
   updatedAt: string | null;
   artifact: string | null;
+  /** Engine rebuild B2 (DATA_PROJECT_GIT): the domain-repo commit this build was launched from. */
+  commit?: string | null;
+  /** The Dagster run that materialised this layer from `commit` (null until launched / when refused). */
+  dagsterRunId?: string | null;
+  /** Why no Dagster run exists for `commit` (honest — never a fabricated run id). */
+  launchError?: string | null;
 };
 
 export type Versions = { bronze: VersionState; silver: VersionState; gold: VersionState };
@@ -463,6 +469,9 @@ function parseVersion(v: unknown): VersionState {
     quality: QUALITIES.includes(quality) ? quality : 'unknown',
     updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : null,
     artifact: typeof r.artifact === 'string' ? r.artifact : null,
+    ...(typeof r.commit === 'string' ? { commit: r.commit } : {}),
+    ...(typeof r.dagsterRunId === 'string' ? { dagsterRunId: r.dagsterRunId } : {}),
+    ...(typeof r.launchError === 'string' ? { launchError: r.launchError } : {}),
   };
 }
 

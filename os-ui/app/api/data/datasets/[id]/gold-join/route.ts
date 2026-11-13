@@ -23,6 +23,8 @@ import {
 import type { DatasetUpstream } from '@tabs/data/lib/index';
 import { parseGoldSpec, type GoldSpec } from '@tabs/data/lib/dataset-schema';
 import type { ExecuteIdentity } from '@core/infra/governed';
+import { launchDatasetBuild } from '@tabs/data/lib/dbt/launch';
+import { currentSurface } from '@core/infra/request-surface';
 
 export const dynamic = 'force-dynamic';
 
@@ -163,6 +165,12 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
     body: plan.sql,
     goldSpec,
   });
+
+  // DATA_PROJECT_GIT: the commit for this write is in flight — launch the Gold model (and its
+  // dependents) in Dagster from that commit, as the principal the CTAS ran as.
+  launchDatasetBuild(
+    { datasetId: id, layer: 'gold', actor: { id: user.id }, principal: identity.principal, action: 'build gold join', surface: currentSurface()?.surface },
+  );
 
   // Northpeak fix — MATERIALIZATION DRIFT. If the rebuilt dataset is ALREADY promoted, its
   // governed domain table (what Cube + every dashboard reads) now holds the PRIOR snapshot

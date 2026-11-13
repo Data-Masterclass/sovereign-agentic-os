@@ -24,9 +24,9 @@ import { config } from '@core/kernel/config';
 import { commitTree, commitMessage, authorFor, type CommitResult, type CommitTreeOptions } from '@core/infra/git-store';
 import { currentSurface, newRequestId } from '@core/infra/request-surface';
 import { onProjectChange, type ProjectChange } from '@tabs/data/lib/project-events';
-import { peekDatasetMeta } from '@tabs/data/lib/store';
+import { peekDatasetMeta, datasetsForProject } from '@tabs/data/lib/store';
 import { slug } from '@tabs/data/lib/store-fqn';
-import { projectSnapshot, type SnapshotDeps } from '@tabs/data/lib/dbt/snapshot';
+import { projectSnapshot, type SnapshotDeps, type SnapshotDataset } from '@tabs/data/lib/dbt/snapshot';
 import { generateProject } from '@tabs/data/lib/dbt/generate';
 import { pushMirrorAfterCommit } from '@tabs/data/lib/dbt/mirror';
 
@@ -66,6 +66,8 @@ export type CommitDeps = SnapshotDeps & {
   committer?: Committer;
   /** Push to the configured mirror after a changed commit (default true). */
   mirror?: boolean;
+  /** The store read captured synchronously in the writer's turn (the hook passes it — review M3). */
+  captured?: SnapshotDataset[];
 };
 
 /**
@@ -73,7 +75,7 @@ export type CommitDeps = SnapshotDeps & {
  */
 export async function commitDataProject(domain: string, actor: ActorIdentity, meta: CommitMeta, deps: CommitDeps = {}): Promise<CommitResult | null> {
   if (!dataProjectGitEnabled()) return null;
-  const snapshot = await projectSnapshot(domain, deps);
+  const snapshot = await projectSnapshot(domain, deps, deps.captured);
   const files = generateProject(domain, snapshot);
   const object = meta.object ?? domain;
   const message = commitMessage({
@@ -91,7 +93,8 @@ export async function commitDataProject(domain: string, actor: ActorIdentity, me
   const result = await commit(domain, files, {
     author,
     message,
-    trailers: synthesized ? { 'OS-Author-Email': 'synthesized' } : {},
+    // `OS-Actor` carries the principal id even when the author name is a display name (review L3).
+    trailers: { 'OS-Actor': actor.id, ...(synthesized ? { 'OS-Author-Email': 'synthesized' } : {}) },
     reposDir,
   });
   if (result.changed && deps.mirror !== false && !deps.committer) {
@@ -121,37 +124,52 @@ function objectLabels(change: ProjectChange): { object: string; objectId: string
     : { object: change.datasetId, objectId: change.datasetId };
 }
 
-async function handleChange(change: ProjectChange, surface: { surface: string; requestId: string } | null, deps: HookDeps): Promise<void> {
-  if (!change.domain) return; // an unassigned dataset has no repo
+async function handleChange(
+  change: ProjectChange,
+  surface: { surface: string; requestId: string } | null,
+  labels: { object: string; objectId: string },
+  captured: SnapshotDataset[],
+  deps: HookDeps,
+): Promise<CommitResult | null> {
   if (!surface && !warnedSurfaces.has(change.action)) {
     warnedSurfaces.add(change.action);
     console.warn(`[data-projects] '${change.action}' reached the store outside a request-surface scope — recorded as ${DEFAULT_SURFACE}`);
   }
   const actor = deps.resolveActor ? await deps.resolveActor(change.actorId) : { id: change.actorId };
-  const labels = objectLabels(change);
-  await commitDataProject(
+  return commitDataProject(
     change.domain,
     actor,
     { action: change.action, ...labels, surface: surface?.surface ?? DEFAULT_SURFACE, requestId: surface?.requestId },
-    deps,
+    { ...deps, captured },
   );
 }
 
+const chains = new Map<string, Promise<unknown>>();
+
 /**
  * Subscribe the commit path to the store's project-change events. Returns the unsubscribe
- * function. Each event commits asynchronously; failures are logged, never thrown into the write.
+ * function. The store read and the object labels are captured SYNCHRONOUSLY in the writer's turn
+ * and commits are serialised per domain, so two rapid writes produce two commits, each carrying its
+ * own author, action and state (review M3). Failures are logged, never thrown into the write.
  */
 export function installDataProjectCommitHook(deps: HookDeps = {}): () => void {
   return onProjectChange((change) => {
     if (!dataProjectGitEnabled()) return;
+    if (!change.domain) return; // an unassigned dataset has no repo
     const surface = currentSurface(); // read synchronously, in the writer's async context
-    const p = handleChange(change, surface, deps)
+    const labels = objectLabels(change);
+    const captured = datasetsForProject(change.domain); // the state THIS write produced
+    const prev = chains.get(change.domain) ?? Promise.resolve();
+    const p = prev
+      .then(async () => { await handleChange(change, surface, labels, captured, deps); })
       .catch((e) => {
         console.error(`[data-projects] commit failed for ${change.action} on ${change.datasetId} (${change.domain}): ${e instanceof Error ? e.message : String(e)}`);
       })
       .finally(() => {
         inFlight.delete(p);
+        if (chains.get(change.domain) === p) chains.delete(change.domain);
       });
+    chains.set(change.domain, p);
     inFlight.add(p);
   });
 }

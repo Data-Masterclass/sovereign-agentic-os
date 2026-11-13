@@ -13,9 +13,53 @@
  */
 import 'server-only';
 import { DatasetError } from '@tabs/data/lib/dataset-schema';
-import { log, listTree, readBlob, archive, repoExists, type LogEntry, type TreeEntry, type GitStoreOptions } from '@core/infra/git-store';
+import { log, listTree, readBlob, archive, repoExists, listRepos, type LogEntry, type TreeEntry, type GitStoreOptions } from '@core/infra/git-store';
 
 export type ProjectReader = { id: string; domains: string[] };
+
+export type ProjectIndexEntry = {
+  name: string;
+  head: string | null;
+  /** The principals the repo's `os/schedules.yml` names, with the OS's view of their activity. */
+  principals: { id: string; active: boolean }[];
+};
+
+/** The `principal:` values of a generated `os/schedules.yml` (a flat list the OS itself emits). */
+export function schedulePrincipals(schedulesYml: string): string[] {
+  const out = new Set<string>();
+  for (const m of schedulesYml.matchAll(/^\s+principal:\s*("?)([^"\n]+)\1\s*$/gm)) out.add(m[2].trim());
+  return [...out].sort();
+}
+
+/**
+ * The repo index the Dagster `repo-sync` sidecar and the `os_principals` sensor poll
+ * (engine rebuild B2, closes deviation B1-8): every domain repository, its `main` head and the
+ * schedule principals with their activity (resolved through `isActive`; unknown ⇒ inactive, so a
+ * deleted owner's schedule is paused rather than run). `domains` narrows the list for a signed-in
+ * caller; the cluster-internal caller sees all.
+ */
+export async function projectIndex(
+  isActive: (principalId: string) => Promise<boolean>,
+  opts: GitStoreOptions & { domains?: string[] } = {},
+): Promise<{ domains: ProjectIndexEntry[] }> {
+  const repos = await listRepos(opts);
+  const out: ProjectIndexEntry[] = [];
+  for (const r of repos) {
+    if (opts.domains && !opts.domains.includes(r.name)) continue;
+    let principals: { id: string; active: boolean }[] = [];
+    if (r.head) {
+      let yml = '';
+      try {
+        yml = await readBlob(r.name, r.head, 'os/schedules.yml', opts);
+      } catch {
+        yml = ''; // no schedules in this repo
+      }
+      principals = await Promise.all(schedulePrincipals(yml).map(async (id) => ({ id, active: await isActive(id).catch(() => false) })));
+    }
+    out.push({ name: r.name, head: r.head, principals });
+  }
+  return { domains: out };
+}
 
 export type ProjectView = {
   domain: string;

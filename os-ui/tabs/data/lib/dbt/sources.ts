@@ -34,6 +34,8 @@ export function renderSources(sources: SourceTable[]): string | null {
       description: s.description,
       ...(s.loadedAt ? { loaded_at_field: '_loaded_at', freshness: { warn_after: { count: 24, period: 'hour' } } } : {}),
       ...(s.meta ? { meta: s.meta } : {}),
+      // Quality rules of a layer built out of band become SOURCE tests (`dbt build` runs them).
+      ...(s.columns && s.columns.length ? { columns: s.columns } : {}),
     });
   }
   const docs = [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));

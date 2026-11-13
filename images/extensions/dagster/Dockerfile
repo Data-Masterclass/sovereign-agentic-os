@@ -36,7 +36,10 @@ COPY dbt/project /opt/dbt/project
 RUN cd /opt/dbt/project && dbt parse --profiles-dir /opt/dbt/project --target dev || \
     dbt parse --profiles-dir /opt/dbt/project
 
+# The `sovereign` code location (engine rebuild B2): repo.py wires Dagster; os_projects.py is the
+# pure loader (discovery, os/schedules.yml, tags, quarantine) unit-tested in dagster/tests/.
 COPY dagster/repo.py /opt/dagster/app/repo.py
+COPY dagster/os_projects.py /opt/dagster/app/os_projects.py
 COPY dagster/repo-sync.sh /opt/dagster/app/repo-sync.sh
 RUN chmod -R a+rX /opt/dagster /opt/dbt && chmod a+x /opt/dagster/app/repo-sync.sh && chmod a+rwX /repos-checkout
 

@@ -26,6 +26,7 @@ import type { Dataset, Layer, DatasetSync } from '@tabs/data/lib/dataset-schema'
 import { physicalSlug, personalSchema, domainSchema, sanitizeIdent } from '@tabs/data/lib/store-fqn';
 import { DEFAULT_LOOKBACK_MINUTES } from '@tabs/data/lib/sync-sql';
 import { qident, qlit } from '@tabs/data/lib/dbt/emit';
+import { columnDocs } from '@tabs/data/lib/dbt/schema';
 import type { ProjectSnapshot, SnapshotDataset } from '@tabs/data/lib/dbt/snapshot';
 
 export type ModelKind = 'compiled' | 'pass-through' | 'sync-full-refresh' | 'sync-append' | 'sync-merge';
@@ -59,6 +60,9 @@ export type SourceTable = {
   /** The table carries `_loaded_at` (only then does `freshness` make sense). */
   loadedAt: boolean;
   meta?: Record<string, string>;
+  /** Documented columns (+ `data_tests`) when the OS's quality rules attach to this source — the
+   *  dataset's furthest layer was built out of band, so dbt tests it but never rewrites it. */
+  columns?: Record<string, unknown>[];
 };
 
 export type ExternalAsset = {
@@ -94,6 +98,15 @@ type SyncShape =
   | { kind: 'none' };
 
 /** How a dataset's sync (if any) appears in the project. */
+/**
+ * The layer a sync physically LANDS in: a connected sync dataset lands its declared tier in the
+ * domain schema; a warehouse-synced ingest dataset lands Bronze in the owner's personal lane.
+ * Exported so the Dagster launcher records the run on the same layer the generator models.
+ */
+export function syncLandingLayer(d: Dataset): Layer {
+  return d.connected && d.connected.mode === 'sync' ? d.connected.tier : 'bronze';
+}
+
 function syncShape(d: Dataset, catalogs: ProjectSnapshot['catalogs']): SyncShape {
   if (!d.sync) return { kind: 'none' };
   if (d.sync.cursor?.kind === 'kafka-offsets') return { kind: 'external', what: 'kafka-offsets' };
@@ -101,8 +114,7 @@ function syncShape(d: Dataset, catalogs: ProjectSnapshot['catalogs']): SyncShape
   if (catalog === null) return { kind: 'external', what: 'api-batch' };
   // A connected sync dataset lands its declared tier in the domain schema (`syncTargetFor`);
   // a warehouse-synced ingest dataset lands Bronze in the owner's personal lane.
-  const layer: Layer = d.connected && d.connected.mode === 'sync' ? d.connected.tier : 'bronze';
-  return { kind: 'model', layer, catalog: catalog ?? undefined };
+  return { kind: 'model', layer: syncLandingLayer(d), catalog: catalog ?? undefined };
 }
 
 /** The schema the OS physically writes a layer of this dataset into. */
@@ -197,7 +209,9 @@ function syncModelSql(d: Dataset, sync: DatasetSync, sourceName: string, name: s
     kind: 'sync-append',
     sql: [
       ...head,
-      `-- Late-data lookback: ${lookback} minute(s) re-delivered each run; delete+insert on _batch_id makes a retry idempotent.`,
+      `-- Late-data lookback: ${lookback} minute(s) re-delivered each run. A RETRY that passes the same`,
+      '-- --vars os_batch_id deletes and re-inserts exactly that slice (idempotent); a plain re-run defaults',
+      '-- os_batch_id to invocation_id and DUPLICATES the lookback rows — the OS launcher passes the id on retry.',
       '',
       "{{ config(materialized='incremental', incremental_strategy='delete+insert', unique_key='_batch_id', on_schema_change='append_new_columns') }}",
       '',
@@ -221,6 +235,7 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
   const registered: Registered[] = [];
   const externals: ExternalAsset[] = [];
   const sources = new Map<string, SourceTable>();
+  const outOfBandByDataset = new Map<string, Layer[]>();
 
   const addSource = (s: SourceTable): string => {
     const key = `${s.source}::${s.table}`;
@@ -250,12 +265,23 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
             : 'API-batch source (no Trino catalog); a Dagster external-source asset calls the governed slice executor (B2).',
       });
     }
+    // Which built layers are MODELS: the sync landing, a pass-through the OS copied, or a body the
+    // OS compiled (provenance recorded by the store). A built layer with an authored / unknown body
+    // was materialised out of band: dbt reads it as a SOURCE and never rewrites it — a scheduled
+    // `<model>+` run must not replace a user's table with a copy of the layer below (review M2).
+    const compiled = new Set(entry.compiled ?? []);
     const layers: Layer[] = [];
+    const outOfBand: Layer[] = [];
     if (sync.kind === 'model') layers.push(sync.layer);
     for (const layer of ['silver', 'gold'] as Layer[]) {
       if (layers.includes(layer)) continue;
-      if (d.versions[layer].built) layers.push(layer);
+      const v = d.versions[layer];
+      if (!v.built) continue;
+      const body = v.artifact ? entry.artifacts[v.artifact] : undefined;
+      if (v.passThrough || (v.artifact && body && body.trim() && compiled.has(v.artifact))) layers.push(layer);
+      else outOfBand.push(layer);
     }
+    if (outOfBand.length) outOfBandByDataset.set(d.id, outOfBand);
     for (const layer of layers) {
       let name = `${layer}_${physicalSlug(d)}`;
       if (taken.has(name)) name = `${name}__${sanitizeIdent(d.id)}`; // two datasets, one slug (rename edge case)
@@ -344,9 +370,38 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
       kind,
       schema: r.schema,
       dataset: d,
-      tested: furthest.name === r.name,
+      // The furthest MODEL carries the tests — unless a higher layer was built out of band (then
+      // the tests attach to that source below, where the data the OS checks actually lives).
+      tested: furthest.name === r.name && !(outOfBandByDataset.get(d.id) ?? []).some((l) => LAYER_ORDER.indexOf(l) > LAYER_ORDER.indexOf(r.layer)),
       sql: sql.replace(/\n+$/, '') + '\n',
     });
+  }
+
+  // Out-of-band layers: declare the physical table as a source; the dataset's quality rules attach
+  // to the furthest such layer as SOURCE tests (dbt build runs them) — never a model that would
+  // rewrite a table the OS did not compile.
+  for (const entry of datasets) {
+    const d = entry.dataset;
+    const layers = outOfBandByDataset.get(d.id);
+    if (!layers?.length) continue;
+    const furthestBuilt = [...LAYER_ORDER].reverse().find((l) => d.versions[l].built);
+    for (const layer of layers) {
+      const sync = syncShape(d, snap.catalogs);
+      const schema = schemaFor(d, layer, sync);
+      const table = `${layer}_${physicalSlug(d)}`;
+      const tested = layer === furthestBuilt;
+      const { columns, intentions } = columnDocs(d, tested);
+      addSource({
+        source: schema,
+        database: 'iceberg',
+        schema,
+        table,
+        description: sourceDescription(d, `${layer} layer built OUT OF BAND (authored body — dbt reads it, never rewrites it)`),
+        loadedAt: false,
+        meta: { os_dataset: d.id, os_layer: layer, os_built: 'out-of-band', ...(intentions.length ? { os_intentions: intentions.join('; ') } : {}) },
+        ...(tested && columns.length ? { columns } : {}),
+      });
+    }
   }
 
   models.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

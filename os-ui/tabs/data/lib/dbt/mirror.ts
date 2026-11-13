@@ -61,6 +61,15 @@ export async function ensureMirrorsHydrated(): Promise<void> {
 export function setProjectMirror(domain: string, input: { url: string; tokenSecretRef: SecretRef }, actor: { id: string }): ProjectMirror {
   const url = String(input.url ?? '').trim();
   if (!/^https?:\/\/[^\s]+$/.test(url)) throw new DatasetError('mirror url must be an http(s) URL', 400);
+  // The token comes from a Secret reference, never from the URL (review L4): an embedded
+  // `user:password@` would be persisted in plaintext and echoed in every status line.
+  try {
+    const parsed = new URL(url);
+    if (parsed.username || parsed.password) throw new DatasetError('mirror url must not embed credentials — use tokenSecretRef', 400);
+  } catch (e) {
+    if (e instanceof DatasetError) throw e;
+    throw new DatasetError('mirror url is not a valid URL', 400);
+  }
   const egress = isEgressAllowed(url);
   if (!egress.allowed) throw new DatasetError(`mirror host '${egress.host}' is not on the egress allowlist`, 400);
   const ref = input.tokenSecretRef;

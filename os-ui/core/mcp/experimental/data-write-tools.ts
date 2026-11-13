@@ -30,8 +30,7 @@ import {
   type PromotionRequest,
 } from '@tabs/data/lib/store';
 import { DATASET_SYNC_MODES, type DatasetSync, type DatasetSyncMode } from '@tabs/data/lib/dataset-schema';
-import { runDatasetSync } from '@tabs/data/lib/sync-run-server';
-import { reconcileSyncCron } from '@tabs/data/lib/sync-cron';
+import { launchDatasetBuild, reconcileSyncSchedule, runSyncNow } from '@tabs/data/lib/dbt/launch';
 import { kajabiCursorField } from '@tabs/connections/lib/kajabi-resources';
 import { runQualityChecks } from '@tabs/data/lib/dq-run';
 import { proposeFixes, applyFixes, dqComplete, type FixApplyInput } from '@tabs/data/lib/dq-fix-server';
@@ -334,8 +333,12 @@ const tools: McpTool[] = [
         quality: 'unknown',
         artifact: stageArtifact(dataset.name, 'silver'),
         body: plan.sql,
+        compiled: true, // the body IS silverPlan's output ⇒ it becomes a dbt model
       });
-      return { ok: true, mode: build.mode, sql: plan.sql, target: plan.target, silverRegistered: true, dots: { bronze: updated.versions.bronze.built, silver: updated.versions.silver.built, gold: updated.versions.gold.built } };
+      // DATA_PROJECT_GIT: same hand-over as the transform route — commit (already in flight) then
+      // launch this layer's dbt assets in Dagster as the principal the CTAS ran as.
+      const launched = launchDatasetBuild({ datasetId, layer: 'silver', actor: { id: user.id }, principal: identity.principal, action: 'transform silver', surface: 'mcp:transform_silver' });
+      return { ok: true, mode: build.mode, sql: plan.sql, target: plan.target, silverRegistered: true, dagsterLaunch: launched ? 'launching' : 'off', dots: { bronze: updated.versions.bronze.built, silver: updated.versions.silver.built, gold: updated.versions.gold.built } };
     },
   },
   {
@@ -478,6 +481,8 @@ const tools: McpTool[] = [
         artifact: stageArtifact(dataset.name, 'gold'),
         body: plan.sql,
       });
+      // DATA_PROJECT_GIT: launch the Gold model (and its dependents) in Dagster from the commit.
+      const goldLaunched = launchDatasetBuild({ datasetId, layer: 'gold', actor: { id: user.id }, principal: identity.principal, action: 'build gold join', surface: 'mcp:build_gold_join' });
       // Northpeak fix — MATERIALIZATION DRIFT (MCP parity with the gold-join route): a
       // rebuild of an ALREADY-PROMOTED dataset leaves the governed domain table (what Cube
       // reads) on the prior snapshot. Auto-refresh it as a Builder+ (the write floor);
@@ -504,6 +509,7 @@ const tools: McpTool[] = [
         sql: plan.sql,
         target: plan.target,
         goldRegistered: true,
+        dagsterLaunch: goldLaunched ? 'launching' : 'off',
         measures: updated.measures,
         upstreams: updated.upstreams,
         domainTable,
@@ -833,7 +839,7 @@ const tools: McpTool[] = [
       // validation here). Then reconcile the per-dataset CronJob and report the
       // cluster outcome honestly (live:false is a saved-but-not-provisioned truth).
       const dataset = setDatasetSync(datasetId, p, sync);
-      const cronOut = await reconcileSyncCron(datasetId, dataset.sync ?? null);
+      const cronOut = await reconcileSyncSchedule(datasetId, dataset.sync ?? null);
       return { datasetId, platform, sync: dataset.sync ?? null, cron: cronOut };
     },
   },
@@ -858,7 +864,13 @@ const tools: McpTool[] = [
       const p = P(user);
       getDataset(datasetId, p); // view-scope guard first (typed 403/404 — no leak)
       requireDatasetEditable(datasetId, p); // the SAME edit gate as the route's manual POST
-      const outcome = await runDatasetSync(datasetId, bool(args.reset) ? 'reset' : 'manual');
+      const ran = await runSyncNow(datasetId, bool(args.reset) ? 'reset' : 'manual', user.id, { action: bool(args.reset) ? 'reset and full re-sync' : 'sync now' });
+      if (ran.mode === 'dagster') {
+        const l = ran.launch;
+        if (l.launchError) fail(l.launchError, 502);
+        return { skipped: false, source: 'dagster', run: { id: l.dagsterRunId, dagsterRunId: l.dagsterRunId, commit: l.commit, status: 'running', batchId: l.batchId ?? null }, selection: l.selection.map((k) => k.join('/')) };
+      }
+      const outcome = ran.outcome;
       if (!outcome.ok) fail(outcome.error, outcome.status);
       if (outcome.skipped) return { skipped: true, reason: outcome.reason, run: outcome.run ?? null };
       return { skipped: false, run: outcome.run };

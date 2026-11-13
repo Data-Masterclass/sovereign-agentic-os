@@ -20,6 +20,12 @@ export type SnapshotDataset = {
   dataset: Dataset;
   /** Native artifact bodies keyed by artifact path (e.g. `gold/mart_orders.sql` → the CTAS). */
   artifacts: Record<string, string>;
+  /**
+   * Artifact paths whose body the OS COMPILED (provenance recorded by the store). Only these become
+   * dbt models; a body without compiled provenance (authored by a user, or unknown) is rendered as a
+   * SOURCE — dbt reads it, never rewrites it, and no user text reaches Jinja (review M2).
+   */
+  compiled?: string[];
 };
 
 export type ProjectSnapshot = {
@@ -39,9 +45,13 @@ export type SnapshotDeps = {
   connectionCatalog?: (connectionId: string, ownerId: string) => Promise<string | null | undefined>;
 };
 
-/** Read the store (unscoped, server-side) into a pure snapshot. */
-export async function projectSnapshot(domain: string, deps: SnapshotDeps = {}): Promise<ProjectSnapshot> {
-  const datasets = datasetsForProject(domain);
+/**
+ * Read the store (unscoped, server-side) into a pure snapshot. `captured` is the store read taken
+ * SYNCHRONOUSLY in the writer's turn (the commit hook passes it) so two rapid writes cannot both
+ * snapshot the later state and mis-attribute the first commit (review M3).
+ */
+export async function projectSnapshot(domain: string, deps: SnapshotDeps = {}, captured?: SnapshotDataset[]): Promise<ProjectSnapshot> {
+  const datasets = captured ?? datasetsForProject(domain);
   const catalogs: Record<string, string | null> = {};
   if (deps.connectionCatalog) {
     const seen = new Map<string, string>(); // connectionId → ownerId (first owner wins)

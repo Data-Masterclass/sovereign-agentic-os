@@ -13,6 +13,85 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Data products in git, Phase B2: Dagster is the scheduler, the OS reads Dagster (flag `DATA_PROJECT_GIT`, default off)
+
+- **The `sovereign` Dagster code location** (`images/extensions/dagster/repo.py` + the pure
+  `os_projects.py`): one location for every domain. Per validated checkout
+  `/repos-checkout/<domain>/current/` it builds `@dbt_assets` keyed `[<domain>, <node>]`
+  (`DagsterDbtTranslator` prefix, group = domain), a `<domain>__all` job the OS launches with an
+  explicit asset subset, one job + UTC `ScheduleDefinition` per `os/schedules.yml` entry
+  (`cron_schedule`, `execution_timezone="UTC"`, selection `<model>+`, `default_status` from
+  `enabled`, tags `os/dataset` · `os/principal` · `os/domain` · `os/schedule` · `os/commit` and
+  `dagster-k8s/config` setting `OS_PRINCIPAL`), and a weekly (Sun 03:00 UTC) Iceberg maintenance job
+  per schema running the generated `os_maintenance` macro (`optimize` + `expire_snapshots`) as the
+  schema's owning principal. `hello_sovereign` stays as the smoke asset. A run-failure sensor
+  (`os_quarantine`) pauses a schedule after `OS_QUARANTINE_THRESHOLD` (10 — the OS's own threshold)
+  consecutive failures, replacing `isQuarantined`; a second sensor (`os_principals`) pauses the
+  schedules of a principal the OS reports inactive. A domain that fails to load is logged and
+  skipped — one broken repository can never take the location down. A K8s run pod, whose
+  `/repos-checkout` starts empty, clones and `dbt parse`s the commits named in `OS_PINNED_COMMITS`.
+- **Repo index** `GET /api/data/projects` → `{domains:[{name, head, principals:[{id, active}]}]}`
+  (`tabs/data/lib/dbt/read.ts` `projectIndex`, `core/infra/git-store.ts` `listRepos`). The git
+  protocol cannot enumerate repositories (deviation B1-8): `repo-sync` and the inactive-principal
+  sensor poll this with the cluster-internal runtime bearer; a signed-in user sees only their domains.
+- **Dagster client** `os-ui/core/infra/dagster.ts` — the ONE typed GraphQL client, `Fetched<T>` result
+  style like `litellm-admin.ts`, hard timeout, injectable `fetch`, nothing thrown and nothing logged:
+  `launchRun`, `run`, `runsForDataset`, `recentOsRuns`, `assetChecks`, `allAssetChecks`,
+  `latestMaterialization`, `assetGraph`, `reloadLocation`, `nextTick`. Config `DAGSTER_LOCATION`
+  (`sovereign`), `DAGSTER_REPOSITORY` (`__repository__`), `DAGSTER_LAUNCH_WAIT_MS`.
+- **Launch after commit** (`tabs/data/lib/dbt/launch.ts`, `asset-keys.ts`): Build, `transform_silver`,
+  `build_gold_join` and `sync_dataset_now` commit, wait (bounded) for the location to expose the
+  dataset's assets, then `launchRun` for exactly that subset with the runner's principal as
+  `OS_PRINCIPAL` and `OS_PINNED_COMMITS` pinning the commit. `{commit, dagsterRunId}` — or an honest
+  `launchError` — is recorded on the version (`setVersionRun`). A sync **retry** re-uses the failed
+  run's `os/batch_id`, which `repo.py` passes as `--vars os_batch_id` so `delete+insert` re-covers
+  exactly that slice.
+- **The OS stops being its own ledger** (checklist D9). `tabs/data/lib/sync-status-server.ts`
+  (`syncStatusFor`, `latestSyncSignals`) reads `runsForDataset` + `nextTick`;
+  `tabs/data/lib/dq-status-server.ts` (`latestDqRun`, `dqTrend`, `latestDqRuns`) reads `assetChecks`
+  — one dbt test is one asset check, with `dagster_dbt/failed_row_count` as the violation count;
+  Monitoring's pipeline lens reads Dagster runs by their `os/*` tags. The Data tab's sync panel and
+  `get_sync_status` now call one shared function, so route and MCP cannot drift. `quarantined` means
+  the schedule is STOPPED in Dagster while the OS config says enabled. With the flag on no
+  `os-sync-runs` or `os-dq-results` row is written for a Dagster-executed run, `set_dataset_sync`
+  provisions no CronJob (and removes a pre-B2 one), and `/api/data/sync-due` + `/api/data/dq/run-all`
+  stand down so nothing fires twice. **The flag-off path is unchanged** (deletion is B3/B4).
+- **Image and chart:** `sovereign-os/dagster:0.3.0` (Postgres drivers and `git` confirmed present;
+  `os_projects.py` added). The Dagster user-code deployment is renamed `example-user-code` →
+  **`sovereign`**, because the deployment name *is* the code location name;
+  `DAGSTER_RELOAD_LOCATION=sovereign`, `REPO_SYNC_INDEX_URL`/`OS_INDEX_URL` → os-ui,
+  `OS_QUARANTINE_THRESHOLD=10`, and the runtime bearer injected from the `agent-runtime-token` Secret.
+  `repo-sync.sh` now discovers domains from the index, emits `target/manifest.json` via `dbt parse`
+  and calls `reloadRepositoryLocation` for real.
+
+### Fixed — B1 review findings (engine rebuild)
+
+- **SQL injection into generated dbt tests.** A quality rule's column is interpolated **unquoted**
+  into the `schema.yml` test SQL that `dbt test` executes as the impersonated principal.
+  `store.addCheck` now refuses any column that is not `/^[A-Za-z_][A-Za-z0-9_]*$/`, and the
+  generator routes a non-matching column — plus an empty `accepted_values` and a bound-less `range` —
+  to `meta.os_intentions` instead of `data_tests`. Both ends are tested.
+- **Free-text model bodies are no longer Jinja.** `add_dataset_version`'s authored `body` used to
+  become a dbt model, so `{{ … }}` in it was rendered at `dbt parse`. The store now records
+  *provenance* (`compiled: true`, set only by the transform / gold-join routes and
+  `transform_silver` / `build_gold_join`); only compiled bodies become models, and a layer built out
+  of band is rendered as a dbt **source** (`meta.os_built: out-of-band`) that dbt reads, tests and
+  never rewrites.
+- **Commit attribution under concurrent writes.** The commit hook now captures
+  `datasetsForProject(domain)` and the object labels **synchronously** in the writer's turn and
+  serialises commits per domain with a promise chain, so two rapid writes produce two commits each
+  carrying its own author, action and state.
+- `core/infra/git-store.ts` accepts a `ref` only as `main`, `HEAD` or a hex sha; `mirror.ts` rejects
+  a URL with embedded credentials (the token must be a Secret reference); `repo-sync.sh` serves
+  `status.json` and nothing else; commits carry an `OS-Actor: <id>` trailer; the batch-idempotency
+  comment in the generated sync model now says what is true (a plain re-run duplicates the lookback
+  rows; only a retry passing the same `os_batch_id` is idempotent).
+- **Admin Console** reported Dagster `v1.9.1`; the image pins **1.13.11**.
+- **Files connector** fired `launchPipelineExecution` for a job no code location defines and reported
+  `live` from the HTTP status; it is now a logged no-op with a TODO for the B3/B4 external-source
+  asset. The in-process sync was and remains the real executor.
+
+
 ### Added — Data products in git, Phase B1: generated dbt project per domain + the one commit path (flag `DATA_PROJECT_GIT`, default off)
 
 - **Git store** (`os-ui/core/infra/git-store.ts`, isomorphic-git 1.44.13, MIT): one bare repository

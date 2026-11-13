@@ -269,7 +269,7 @@ the Run panel's "Resume" button does exactly that.
 
 ## A data product is a dbt project in a git repo the OS owns
 
-(Engine rebuild, Phase B1 — behind `DATA_PROJECT_GIT`, default off. Concept:
+(Engine rebuild, Phases B1–B2 — behind `DATA_PROJECT_GIT`, default off. Concept:
 `docs/superpowers/plans/2026-11-13-data-products-concept.md`.)
 
 A domain's data product is a **dbt project** an engineer could clone and run, and it lives in a
@@ -314,6 +314,48 @@ lookback predicate; `merge` on the keys); Kafka offsets and API-batch sources ar
 repo over the read-only `git daemon` on the os-ui pod (Service `os-repos:9418`, NetworkPolicy:
 Dagster user-code only), runs `dbt parse` in a worktree and repoints `current` only on success.
 A broken commit stays in history; the gate is deployment, as in any CI.
+
+**Provenance decides what is a model.** `buildVersion({compiled: true})` records that a body came
+from the OS's own compilers. Only those bodies become dbt models. An authored body — the free-text
+`body` of `add_dataset_version` or the version route — is stored and rendered as a dbt **source**:
+dbt reads that table and never rewrites it, so no user-authored text is ever handed to Jinja at
+`dbt parse` and a scheduled `<model>+` run cannot replace someone's table with a copy of the layer
+below. A quality rule's column must match `/^[A-Za-z_][A-Za-z0-9_]*$/` — it is interpolated
+**unquoted** into the generated test SQL — and anything else is refused at the store gate and
+recorded as `meta.os_intentions`, never emitted as a test.
+
+## Dagster schedules the repo
+
+(Phase B2, same flag.)
+
+The OS does not run data products and does not keep a run ledger for them. **One** Dagster code
+location, `sovereign` (`images/extensions/dagster/repo.py`, with the pure half in `os_projects.py`),
+loads every `/repos-checkout/<domain>/current/` that `repo-sync` validated and builds, per domain:
+`@dbt_assets` keyed `[<domain>, <node>]`, a `<domain>__all` job the OS launches with an explicit
+asset subset, one job + UTC `ScheduleDefinition` per `os/schedules.yml` entry, and a weekly Iceberg
+maintenance job per schema. A run-failure sensor pauses a schedule after the OS's own threshold of
+consecutive failures (this is what `isQuarantined` becomes); a second sensor pauses the schedules of
+a principal the OS reports inactive. A domain that fails to load is skipped, never fatal.
+
+**Identity still travels with the work.** The run pod's `OS_PRINCIPAL` — set through the
+`dagster-k8s/config` tag by the schedule, by the maintenance schema's owner, or by the OS on an
+explicit launch — is the Trino user `dbt-trino` impersonates, so Trino→OPA governs the same identity
+the UI does. `OS_PINNED_COMMITS` tells a run pod (whose `/repos-checkout` emptyDir starts empty)
+which commit to check out. Both are principals and shas; **no secret is ever a tag or a repo file**.
+
+**The OS reads Dagster, not itself.** `core/infra/dagster.ts` is the one typed GraphQL client —
+`Fetched<T>` like `litellm-admin.ts`, a hard timeout, an injectable `fetch`, nothing thrown and
+nothing logged: `launchRun`, `run`, `runsForDataset`, `recentOsRuns`, `assetChecks`,
+`allAssetChecks`, `latestMaterialization`, `assetGraph`, `reloadLocation`, `nextTick`. Run history
+and the next tick come from it (`tabs/data/lib/sync-status-server.ts`), quality results from asset
+checks — one dbt test is one check (`tabs/data/lib/dq-status-server.ts`) — and Monitoring's pipeline
+lens from runs filtered by the `os/*` tags. An outage is reported as an outage: empty rows and a
+reason, never a fabricated run and never a fake green.
+
+**The index exists because git cannot enumerate.** `GET /api/data/projects` lists every domain
+repository with its `main` head and the activity of each schedule principal; the `repo-sync` sidecar
+and the inactive-principal sensor poll it with the cluster-internal runtime bearer, a signed-in user
+sees only their own domains.
 
 ## Things this codebase will punish you for
 

@@ -2,46 +2,60 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG
 #
-# repo-sync — sidecar on the Dagster user-code Deployment (engine rebuild B1, concept §2.4).
+# repo-sync — sidecar on the Dagster user-code Deployment (engine rebuild B1/B2, concept §2.4).
 #
-# WHAT: every REPO_SYNC_INTERVAL seconds, for each domain in REPO_SYNC_DOMAINS, fetch
-#   git://os-repos/<domain>.git (the read-only git daemon on the os-ui pod), and when `main`
-#   moved: check the commit out as a worktree under /repos-checkout/<domain>/<sha>, run
-#   `dbt parse` there, and ONLY on success repoint /repos-checkout/<domain>/current → <sha>.
-#   A commit that fails to parse never replaces the last good checkout — Dagster keeps
-#   scheduling the previous commit (checklist D8). The outcome of every domain is written to
-#   /repos-checkout/status.json and served on REPO_SYNC_STATUS_PORT (cluster-local) so os-ui
-#   can show "commit abc123 failed dbt parse: … — schedules still run def456".
+# WHAT: every REPO_SYNC_INTERVAL seconds, discover the domains that have a data-project repo
+#   (GET REPO_SYNC_INDEX_URL — the OS's repo index, cluster-internal, runtime bearer — plus the
+#   explicit REPO_SYNC_DOMAINS list), fetch git://os-repos/<domain>.git (the read-only git daemon on
+#   the os-ui pod), and when `main` moved: check the commit out as a worktree under
+#   /repos-checkout/<domain>/<sha>, run `dbt parse` there (which writes target/manifest.json — what
+#   the `sovereign` code location loads), and ONLY on success repoint /repos-checkout/<domain>/current
+#   → <sha> and reload the Dagster code location once per pass. A commit that fails to parse never
+#   replaces the last good checkout — Dagster keeps scheduling the previous commit (checklist D8).
+#   The outcome of every domain is written to /repos-checkout/status.json and served (that file
+#   ONLY) on REPO_SYNC_STATUS_PORT so os-ui can show "commit abc123 failed dbt parse: … — schedules
+#   still run def456".
 #
-# WHY A SIDECAR: the code location must load from a VALIDATED commit, not from whatever the
-#   OS last wrote. Commit first, validate second; the gate is deployment, as in any CI.
+# WHY A SIDECAR: the code location must load from a VALIDATED commit, not from whatever the OS last
+#   wrote. Commit first, validate second; the gate is deployment, as in any CI.
+#
+# SECURITY: `dbt parse` renders Jinja from the repo. The generator never writes user-authored text
+#   into a model (an authored body becomes a dbt SOURCE, never a model — engine rebuild B2), but
+#   defence in depth: parse runs under `env -i` with a fixed allowlist, so NOTHING this container
+#   holds reaches dbt's environment while repo files are rendered.
+#   This container DOES hold one secret — AGENT_RUNTIME_TOKEN, the cluster-internal bearer the OS
+#   repo-index route accepts — and that is the ONLY secret it may ever hold: no Trino password, no
+#   mirror token, nothing a `{{ env_var(...) }}` in a repo could exfiltrate. `env -i` keeps even
+#   that one out of `dbt parse`. A generated `profiles.yml` reads its credentials from the RUN
+#   pod's env (set by `dagster-k8s/config`), never from this sidecar.
 #
 # ENV:
 #   REPO_SYNC_ENABLED      "true" to run; anything else idles (logs once, sleeps) so the sidecar
 #                          is inert on an install without osUI.dataProjectGit.enabled.
-#   REPO_SYNC_DOMAINS      comma-separated domain list (B2 adds discovery; today explicit).
+#   REPO_SYNC_INDEX_URL    the OS repo index (default http://os-ui:3000/api/data/projects); empty = off.
+#   AGENT_RUNTIME_TOKEN    the shared runtime bearer the index route accepts (Secret-mounted). The
+#                          ONLY secret this container may hold; `env -i` keeps it out of dbt.
+#   REPO_SYNC_DOMAINS      comma-separated extra domains (optional; union with the index).
 #   REPO_SYNC_GIT_BASE     default git://os-repos (Service `os-repos`, port 9418).
 #   REPO_SYNC_CHECKOUT     default /repos-checkout (emptyDir shared with the user-code container).
-#   REPO_SYNC_INTERVAL     seconds between fetches (default 15).
+#   REPO_SYNC_INTERVAL     seconds between passes (default 15).
 #   REPO_SYNC_STATUS_PORT  port for the status.json server (default 8089).
-#   DAGSTER_RELOAD_LOCATION  when set, POST reloadRepositoryLocation(<name>) to
-#                          DAGSTER_GRAPHQL_URL after a successful repoint. Empty = skip (TODO B2:
-#                          the `sovereign` multi-project code location does not exist yet).
-#   OS_PRINCIPAL           exported for `dbt parse` only (profiles.yml requires it); set to a
-#                          non-entitled name — parse never connects to Trino.
+#   DAGSTER_RELOAD_LOCATION  code location to reload after a repoint (default "sovereign"; empty = skip).
+#   DAGSTER_GRAPHQL_URL    the webserver's /graphql.
 #
-# Requires: git, dbt (dbt-trino), python3 (status.json + the status server) — all in the image.
+# Requires: git, dbt (dbt-trino), python3 (JSON + the status server) — all in the image.
 set -eu
 
 ENABLED="${REPO_SYNC_ENABLED:-false}"
+INDEX_URL="${REPO_SYNC_INDEX_URL:-http://os-ui:3000/api/data/projects}"
+TOKEN="${AGENT_RUNTIME_TOKEN:-}"
 DOMAINS="${REPO_SYNC_DOMAINS:-}"
 BASE="${REPO_SYNC_GIT_BASE:-git://os-repos}"
 CHECKOUT="${REPO_SYNC_CHECKOUT:-/repos-checkout}"
 INTERVAL="${REPO_SYNC_INTERVAL:-15}"
 PORT="${REPO_SYNC_STATUS_PORT:-8089}"
-RELOAD_LOCATION="${DAGSTER_RELOAD_LOCATION:-}"
+RELOAD_LOCATION="${DAGSTER_RELOAD_LOCATION-sovereign}"
 GRAPHQL="${DAGSTER_GRAPHQL_URL:-http://agentic-os-dagster-webserver:80/graphql}"
-export OS_PRINCIPAL="${OS_PRINCIPAL:-repo-sync}"
 
 log() { printf '%s repo-sync: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
@@ -53,9 +67,41 @@ if [ "$ENABLED" != "true" ]; then
   while true; do sleep 3600; done
 fi
 
-# Serve status.json (and the checkout tree) on a cluster-local port.
-( cd "$CHECKOUT" && exec python3 -m http.server "$PORT" --bind 0.0.0.0 ) >/dev/null 2>&1 &
-log "status on :$PORT, base $BASE, domains [$DOMAINS], every ${INTERVAL}s"
+# Serve status.json — and ONLY status.json — on a cluster-local port.
+python3 - "$CHECKOUT" "$PORT" <<'PY' >/dev/null 2>&1 &
+import http.server, os, sys
+root, port = sys.argv[1], int(sys.argv[2])
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.split("?")[0] not in ("/", "/status.json"):
+            self.send_response(404); self.end_headers(); return
+        try:
+            body = open(os.path.join(root, "status.json"), "rb").read()
+        except OSError:
+            body = b'{"enabled": true, "domains": {}}'
+        self.send_response(200); self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a): pass
+http.server.ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
+PY
+log "status on :$PORT, base $BASE, index ${INDEX_URL:-off}, extra domains [$DOMAINS], every ${INTERVAL}s"
+
+# Domains from the OS index (newline-separated). Unreachable ⇒ empty (the explicit list still runs).
+index_domains() {
+  [ -n "$INDEX_URL" ] || return 0
+  python3 - "$INDEX_URL" "$TOKEN" <<'PY' 2>/dev/null || true
+import json, sys, urllib.request
+url, token = sys.argv[1], sys.argv[2]
+req = urllib.request.Request(url, headers={"accept": "application/json", **({"authorization": "Bearer " + token} if token else {})})
+try:
+    doc = json.loads(urllib.request.urlopen(req, timeout=5).read().decode())
+    for d in doc.get("domains", []):
+        if isinstance(d, dict) and d.get("name"):
+            print(d["name"])
+except Exception:
+    pass
+PY
+}
 
 # Write one domain's status fragment (JSON, via python for correct escaping).
 write_status() { # domain head current lastGood error
@@ -86,17 +132,29 @@ PY
 }
 
 reload_location() {
-  [ -n "$RELOAD_LOCATION" ] || { log "reloadRepositoryLocation skipped (DAGSTER_RELOAD_LOCATION unset — TODO B2)"; return 0; }
-  python3 - "$GRAPHQL" "$RELOAD_LOCATION" <<'PY' || log "reloadRepositoryLocation failed (non-fatal)"
+  [ -n "$RELOAD_LOCATION" ] || { log "reloadRepositoryLocation skipped (DAGSTER_RELOAD_LOCATION empty)"; return 0; }
+  python3 - "$GRAPHQL" "$RELOAD_LOCATION" <<'PY' || log "reloadRepositoryLocation failed (non-fatal — the daemon reloads on its own schedule)"
 import json, sys, urllib.request
 url, name = sys.argv[1:3]
-q = {"query": "mutation($n: String!) { reloadRepositoryLocation(repositoryLocationName: $n) { __typename } }", "variables": {"n": name}}
+q = {"query": "mutation($n: String!) { reloadRepositoryLocation(repositoryLocationName: $n) { __typename ... on PythonError { message } ... on RepositoryLocationNotFound { message } } }", "variables": {"n": name}}
 req = urllib.request.Request(url, data=json.dumps(q).encode(), headers={"Content-Type": "application/json"})
-print(urllib.request.urlopen(req, timeout=20).read().decode()[:200])
+body = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+res = (body.get("data") or {}).get("reloadRepositoryLocation") or {}
+print("reload", name, "->", res.get("__typename"), (res.get("message") or "")[:200])
+sys.exit(0 if res.get("__typename") == "WorkspaceLocationEntry" else 1)
 PY
 }
 
-sync_domain() { # domain
+# `dbt parse` with a scrubbed environment: only what dbt needs to RENDER (never connects).
+parse_project() { # worktree
+  (
+    cd "$1" && env -i PATH="$PATH" HOME="${HOME:-/tmp}" LANG=C.UTF-8 DBT_SEND_ANONYMOUS_USAGE_STATS=false \
+      OS_PRINCIPAL=repo-sync TRINO_HOST=trino TRINO_PORT=8080 TRINO_USER=dbt-runner TRINO_CATALOG=iceberg \
+      dbt parse --profiles-dir . --no-use-colors --quiet 2>&1
+  ) && [ -f "$1/target/manifest.json" ]
+}
+
+sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
   d="$1"
   mirror="$CHECKOUT/.mirrors/$d.git"
   mkdir -p "$CHECKOUT/$d"
@@ -120,11 +178,11 @@ sync_domain() { # domain
     git -C "$mirror" worktree add --detach --quiet "$wt" "$head" 2>/dev/null || { write_status "$d" "$head" "$current" "$current" "worktree add failed"; return 0; }
   fi
   log "$d: parsing $head"
-  if out="$(cd "$wt" && dbt parse --profiles-dir . --no-use-colors --quiet 2>&1)"; then
+  if out="$(parse_project "$wt")"; then
     ln -sfn "$head" "$CHECKOUT/$d/current.tmp" && mv -T "$CHECKOUT/$d/current.tmp" "$CHECKOUT/$d/current"
     write_status "$d" "$head" "$head" "$head" ""
     log "$d: current → $head"
-    reload_location
+    REPOINTED=1
     # Drop older worktrees (keep current + the previous good one).
     for old in "$CHECKOUT/$d"/*/; do
       sha="$(basename "$old")"
@@ -138,13 +196,13 @@ sync_domain() { # domain
 }
 
 while true; do
-  IFS=','
-  for d in $DOMAINS; do
-    d="$(printf '%s' "$d" | tr -d ' ')"
-    [ -n "$d" ] || continue
+  REPOINTED=0
+  all="$(printf '%s\n%s\n' "$(index_domains)" "$(printf '%s' "$DOMAINS" | tr ',' '\n')" | tr -d ' ' | grep -v '^$' | sort -u || true)"
+  for d in $all; do
+    case "$d" in *..*|*/*) log "ignoring invalid domain name '$d'"; continue ;; esac
     sync_domain "$d" || log "$d: unexpected error (continuing)"
   done
-  unset IFS
   aggregate_status
+  [ "$REPOINTED" = "1" ] && reload_location
   sleep "$INTERVAL"
 done

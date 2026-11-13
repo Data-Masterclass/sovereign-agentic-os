@@ -460,6 +460,14 @@ export const config = {
 
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
   dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),
+  // The `sovereign` code location (engine rebuild B2): one location for every domain's dbt
+  // project; a `Definitions`-based location has the repository name `__repository__`. The OS
+  // launches runs there and reads run / check / materialization state back (core/infra/dagster.ts).
+  dagsterLocation: env('DAGSTER_LOCATION', 'sovereign'),
+  dagsterRepository: env('DAGSTER_REPOSITORY', '__repository__'),
+  // How long a launch-after-commit waits for repo-sync + the location reload to expose a NEW
+  // asset before giving up (ms). Existing assets launch immediately.
+  dagsterLaunchWaitMs: Number(env('DAGSTER_LAUNCH_WAIT_MS', '90000')) || 90000,
 
   // ---- Layer-4 (ML) backends. Off by default; the OS pings these server-side
   // and degrades gracefully when a service is absent.

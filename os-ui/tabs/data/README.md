@@ -45,7 +45,7 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 - `guide.md` — the golden path, shown in-product
 - `context.md` — the system prompt context this tab gives an agent
 
-## Data products in git (engine rebuild B1 — flag `DATA_PROJECT_GIT`, default off)
+## Data products in git (engine rebuild B1/B2 — flag `DATA_PROJECT_GIT`, default off)
 
 With `DATA_PROJECT_GIT=true` (chart: `osUI.dataProjectGit.enabled`), every mutation of a dataset,
 composition, quality rule, sync, publish or retire — through a route or an MCP tool — regenerates
@@ -80,6 +80,42 @@ models/personal/<uid>/                   # un-promoted layers (+schema: personal
 os/schedules.yml                         # {dataset, select "<model>+", cron, UTC, principal}
 os/external.yml                          # Kafka-offset / API-batch syncs (Dagster assets, not models)
 ```
+
+**Who can read what.** The repository is the **whole domain's** project, and
+`GET /api/data/projects/<domain>` is gated on domain membership — so **every member of a domain can
+read every member's dataset *definitions***: model SQL, column descriptions, quality rules, sync
+schedules and the commit history naming who changed what. That is deliberate (it is how an
+engineering team works, and the Data tab already lists domain datasets), but it is **wider than the
+dataset list**: a dataset whose rows are invisible to you still has a readable *definition* here,
+including an un-promoted personal-lane model under `models/personal/<uid>/`. The **data** stays
+governed — a model only reads what Trino→OPA lets the impersonated principal read — and no
+credential is ever in the tree (`profiles.yml` uses `env_var()` only). If a domain needs
+definition-level privacy, that is a per-path read gate on the project routes, not a property of the
+current design.
+
+### B2 — Dagster schedules the repo, and the OS reads Dagster
+
+With the flag on, the OS stops being its own run ledger (checklist D7–D11):
+
+- **Launch after commit.** Build, `transform_silver`, `build_gold_join` and `sync_dataset_now`
+  commit, then `lib/dbt/launch.ts` waits for the location to expose the dataset's assets and calls
+  `launchRun` (`core/infra/dagster.ts`) for exactly that subset — tags `os/dataset`, `os/domain`,
+  `os/principal`, `os/user`, `os/action`, `os/layer`, `os/commit`, `os/surface`, and run-pod env
+  `OS_PRINCIPAL` + `OS_PINNED_COMMITS`. The version record keeps `{commit, dagsterRunId}`, or
+  `launchError` saying honestly why no run exists.
+- **Schedules, not CronJobs.** `set_dataset_sync` provisions **no** `batch/v1` CronJob and removes a
+  pre-B2 one (`reconcileSyncSchedule`); the schedule is the `os/schedules.yml` entry this same write
+  committed. `/api/data/sync-due` and `/api/data/dq/run-all` stand down so nothing fires twice.
+- **Read-back.** `lib/sync-status-server.ts` (`syncStatusFor`, `latestSyncSignals`) reads
+  `runsForDataset` + `nextTick`; `lib/dq-status-server.ts` (`latestDqRun`, `dqTrend`,
+  `latestDqRuns`) reads `assetChecks` — one dbt test = one asset check, with
+  `dagster_dbt/failed_row_count` as the violation count. `quarantined` means the schedule is STOPPED
+  in Dagster while the OS config says enabled. A Dagster outage is reported in `dagster.error` with
+  no rows; it is never a fabricated run or a fake green.
+- **Launch provenance.** `buildVersion({compiled: true})` marks a body the OS's own compilers
+  produced. Only those become dbt models; an authored body (`add_dataset_version`, the version
+  route) is recorded and rendered as a dbt **source** — dbt reads that table, never rewrites it, and
+  no user-authored text reaches Jinja.
 
 ## Rules that apply here
 

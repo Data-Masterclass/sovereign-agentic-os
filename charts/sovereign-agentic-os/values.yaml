@@ -731,10 +731,12 @@ dagster:
   dagster-user-deployments:
     enabled: true
     deployments:
-      - name: example-user-code
+      # The code location NAME is this deployment's name: `sovereign` is what
+      # `reloadRepositoryLocation` and the OS's `DAGSTER_LOCATION` address (engine rebuild B2).
+      - name: sovereign
         image:
           repository: sovereign-os/dagster
-          tag: "0.2.0"
+          tag: "0.3.0"
           pullPolicy: IfNotPresent
         dagsterApiGrpcArgs:
           - "--python-file"
@@ -753,23 +755,37 @@ dagster:
           # repo-sync sidecar (engine rebuild B1 — data products in git). Inert until
           # REPO_SYNC_ENABLED=true (flip together with osUI.dataProjectGit.enabled).
           - { name: REPO_SYNC_ENABLED, value: "false" }
-          - { name: REPO_SYNC_DOMAINS, value: "" }          # comma-separated; B2 adds discovery
+          - { name: REPO_SYNC_DOMAINS, value: "" }          # extra domains; the index discovers the rest
+          - { name: REPO_SYNC_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
           - { name: REPO_SYNC_GIT_BASE, value: "git://os-repos" }
           - { name: REPO_SYNC_CHECKOUT, value: "/repos-checkout" }
           - { name: REPO_SYNC_INTERVAL, value: "15" }
           - { name: REPO_SYNC_STATUS_PORT, value: "8089" }
-          - { name: DAGSTER_RELOAD_LOCATION, value: "" }     # TODO B2: "sovereign" once the multi-project location exists
+          - { name: DAGSTER_RELOAD_LOCATION, value: "sovereign" }
           - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
-          - { name: OS_PRINCIPAL, value: "repo-sync" }      # dbt parse only; a non-entitled principal
+          # The `os_principals` sensor reads the OS repo index to pause a deactivated owner's
+          # schedules (concept §6); unset ⇒ the sensor skips with that reason, never guesses.
+          - { name: OS_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
+          # Consecutive failures after which the failure sensor pauses a schedule — the OS's
+          # own QUARANTINE_THRESHOLD (tabs/data/lib/sync-runs.ts).
+          - { name: OS_QUARANTINE_THRESHOLD, value: "10" }
+          # The shared runtime bearer the OS index route accepts (cluster-internal, the same
+          # contract as the sync trigger). A Secret reference — never a literal, and never
+          # written into a repository or a dbt profile.
+          - name: AGENT_RUNTIME_TOKEN
+            valueFrom:
+              secretKeyRef: { name: agent-runtime-token, key: token }
         resources:
           requests: { cpu: 50m, memory: 384Mi }
           limits: { cpu: "1", memory: 1Gi }   # headroom for dbt materializations
-        # ── Data products in git (engine rebuild B1): the validated-commit checkout the code
-        # location will load from (B2). `repo-sync` (same sovereign image, `git` added) fetches
-        # git://os-repos/<domain>.git, runs `dbt parse` in a worktree and repoints
-        # /repos-checkout/<domain>/current ONLY on success (images/extensions/dagster/repo-sync.sh).
+        # ── Data products in git (engine rebuild B1/B2): the validated-commit checkout the
+        # `sovereign` code location loads from. `repo-sync` (same image, `git` added) discovers
+        # domains from the OS index, fetches git://os-repos/<domain>.git, runs `dbt parse` in a
+        # worktree, repoints /repos-checkout/<domain>/current ONLY on success and then calls
+        # reloadRepositoryLocation (images/extensions/dagster/repo-sync.sh).
         # NOTE: includeConfigInLaunchedRuns propagates volumes/volumeMounts/env (not sidecars) into
-        # run pods — run pods see an empty /repos-checkout until B2 wires their project path.
+        # run pods; a run pod's emptyDir starts EMPTY and `os_projects.ensure_checkout` clones the
+        # commits named in the run's OS_PINNED_COMMITS env before building definitions.
         volumes:
           - name: repos-checkout
             emptyDir: {}
@@ -778,19 +794,22 @@ dagster:
             mountPath: /repos-checkout
         sidecarContainers:
           - name: repo-sync
-            image: sovereign-os/dagster:0.2.0
+            image: sovereign-os/dagster:0.3.0
             imagePullPolicy: IfNotPresent
             command: ["/bin/sh", "/opt/dagster/app/repo-sync.sh"]
             env:
               - { name: REPO_SYNC_ENABLED, value: "false" }
               - { name: REPO_SYNC_DOMAINS, value: "" }
+              - { name: REPO_SYNC_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
               - { name: REPO_SYNC_GIT_BASE, value: "git://os-repos" }
               - { name: REPO_SYNC_CHECKOUT, value: "/repos-checkout" }
               - { name: REPO_SYNC_INTERVAL, value: "15" }
               - { name: REPO_SYNC_STATUS_PORT, value: "8089" }
-              - { name: DAGSTER_RELOAD_LOCATION, value: "" }
+              - { name: DAGSTER_RELOAD_LOCATION, value: "sovereign" }
               - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
-              - { name: OS_PRINCIPAL, value: "repo-sync" }
+              - name: AGENT_RUNTIME_TOKEN
+                valueFrom:
+                  secretKeyRef: { name: agent-runtime-token, key: token }
             ports:
               - { name: repo-status, containerPort: 8089 }
             volumeMounts:
@@ -803,7 +822,7 @@ dagster:
   dagsterWebserver:
     image:
       repository: sovereign-os/dagster
-      tag: "0.2.0"
+      tag: "0.3.0"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }
@@ -811,7 +830,7 @@ dagster:
   dagsterDaemon:
     image:
       repository: sovereign-os/dagster
-      tag: "0.2.0"
+      tag: "0.3.0"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }

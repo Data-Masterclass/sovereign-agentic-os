@@ -2,7 +2,6 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@core/kernel/config';
 import {
   type ConnectorSource,
   type RemoteFile,
@@ -65,28 +64,23 @@ function makeStoreSink(source: ConnectorSource): SyncSink {
   };
 }
 
-/** Best-effort Dagster trigger for the (overnight) sync job — labels the run; the
- *  in-process sync still executes so kind works with no Dagster. */
-async function triggerDagster(source: ConnectorSource, cadence: string): Promise<boolean> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    const res = await fetch(`${config.dagsterUrl}/graphql`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      signal: ctrl.signal,
-      cache: 'no-store',
-      body: JSON.stringify({
-        query: 'mutation($job:String!,$tags:String!){launchPipelineExecution(executionParams:{selector:{pipelineName:$job},tags:$tags})}',
-        variables: { job: 'files_connector_sync', tags: `${source.id}:${cadence}` },
-      }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
+/**
+ * Dagster labelling for the (overnight) connector sync. The `sovereign` code location defines NO
+ * job for the Files connectors — they are not dbt models, and the concept lists an API-batch source
+ * as a Dagster external asset, which is B3/B4 work (`os/external.yml` already records them).
+ *
+ * So this is a LOGGED NO-OP, not a fake trigger: the old call fired
+ * `launchPipelineExecution(pipelineName: 'files_connector_sync')` against a job that has never
+ * existed — Dagster answered with an error union the code discarded and then reported `live` from
+ * `res.ok` (HTTP 200 with a GraphQL error body). The in-process sync is the real executor either
+ * way; it runs below regardless.
+ *
+ * TODO (B3/B4): define the external-source asset `files__<source>` in the `sovereign` location and
+ * launch it here through `core/infra/dagster.ts` `launchRun`, as the connector's owner principal.
+ */
+function triggerDagster(source: ConnectorSource, cadence: string): false {
+  console.info(`[files] connector sync ${source.id} (${cadence}) ran in-process — the Dagster 'sovereign' location defines no job for Files connectors yet (engine rebuild B3/B4)`);
+  return false;
 }
 
 /**
@@ -107,6 +101,6 @@ export async function runConnectorSync(sourceId: string, owner: string, token: s
     throw err;
   }
   const client = liveClientFor(source.provider, token);
-  void triggerDagster(source, source.initialDone ? 'incremental' : 'overnight');
+  triggerDagster(source, source.initialDone ? 'incremental' : 'overnight');
   return runSync(source, client, makeStoreSink(source));
 }
