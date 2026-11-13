@@ -229,8 +229,10 @@ system.yaml ─ parseSystem ─> System ─ compile ─> IR ─ buildGraph(ir, d
 **State** (`Annotation.Root`). `messages` is the shared conversation in the OpenAI wire
 shape (`LlmMessage[]`, append) — not LangChain `BaseMessage`, because every model call
 goes to LiteLLM as chat-completions. Every `state.channels` entry of the yaml becomes a
-state key with its declared reducer (`add_messages` → append, anything else → last
-value). The engine adds its own keys: `task`, `current` (the agent visit in flight),
+**typed** state key: `add_messages` appends; `boolean` / `number` / `string` / `json` is a
+last-write-wins channel starting at that type's default; any other declaration (the legacy
+`last_value`) is an untyped `json` channel, so a file written before the types runs
+unchanged. The engine adds its own keys: `task`, `current` (the agent visit in flight),
 `handoffs` (the team-progress blocks, append), `nodeRuns` (append), `routes` (append),
 `budget`, `held` (append), `final`, `failed`, `routeNext`. A channel that shadows one
 of those is a compile error.
@@ -262,8 +264,23 @@ text; otherwise the last agent's answer is.
 literals, `state.<channel>`, bare identifiers (= the channel of that name), `==`/`!=`,
 `&&`/`||`, parentheses — a hand-written parser, never `eval`. A true guard returns
 `new Command({ goto: 'plan_<to>' })`; absent `when` is unconditional. A guard over a
-channel nothing sets is a **compile warning** carried on the run report, not a silent
-false. Handoffs are tried in declared order before the supervisor return / END.
+channel nothing **can** set is a **compile warning** carried on the run report, not a
+silent false. Handoffs are tried in declared order before the supervisor return / END.
+
+**Who writes a channel** (A5-review-H-2). A guard is useless if nothing can make it true,
+so the agent whose turn the guard follows — the `from` of the guarded handoff, since the
+guard is evaluated in `route_<from>` immediately after that visit — is advertised one extra,
+built-in tool, `os_set_state` (`{ channel, value }`). It is closed to the **declared**
+channels and type-checked against the declaration. It is not an MCP tool and not a grant:
+it writes the team's own state, so it never reaches `grantedToolExecutor`, is never held for
+approval, and an undeclared channel or a mistyped value returns a typed `invalid_argument`
+result the model can correct. The write is part of that superstep's state update, so the
+following `route_<id>` sees it — as does the supervisor, whose routing prompt carries a
+`--- TEAM STATE ---` line of the current channel values. Each writer's system prompt gains a
+generated `--- STATE CHANNELS ---` block (one sentence per channel, derived from the
+declaration), so the instructions cannot drift from the yaml. This is what makes the shipped
+Software Delivery Team's five-phase chain reachable; before it, every `when` guard in the OS
+evaluated false by construction.
 
 **END and bounds.** The supervisor routes END; a leaf's handoffs all evaluate false; or
 `budget.stepsUsed` (tool rounds + supervisor decisions) reaches the team step budget —

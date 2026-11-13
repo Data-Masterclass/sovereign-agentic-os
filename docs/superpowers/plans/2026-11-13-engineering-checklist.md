@@ -33,8 +33,8 @@ exists to prevent.
 |---|---|---|---|
 | A6 | The production run path executes a compiled `StateGraph` from `@langchain/langgraph`. No hand-rolled walk remains on any reachable path. | `inspect`: grep for `nodeOrder`, `runAgenticGraph` BFS, `run-graph.ts`, `interpreter.py` → absent; `unit`: the run route dispatches to `buildGraph`. | true (test: `engine/build-graph.test.ts`, `engine/parity.test.ts`, `core/mcp/agent-run-surface.test.ts`; `inspect`: `nodeOrder`/`runAgenticGraph`/`run-graph.ts`/`interpreter.py` are all DELETED — the grep returns only history and the kept service-bearer name, see deviation A5-12) |
 | A7 | Supervisors **decide** which member runs next; members are not visited in declared order. | `unit`: a scripted supervisor choosing `writer` first visits `writer` first. | true (test: `engine/build-graph.test.ts` "A7: the supervisor DECIDES" + the non-member case) |
-| A8 | `when` guards route: a handoff with a false guard does not visit its target. | `unit`: the formerly-`todo` HANDOFF-GUARD test passes. | true (test: `engine/build-graph.test.ts` "A8", and `engine/parity.test.ts` HANDOFF-GUARD — formerly `todo`, now the place the engine deliberately diverges from the walker golden) |
-| A9 | State channels declared in `system.yaml` exist in the graph state with the declared reducer. | `unit`: `add_messages` appends, a last-value channel overwrites. | true (test: `engine/build-graph.test.ts` "A9") |
+| A8 | `when` guards route: a handoff with a false guard does not visit its target, and one with a TRUE guard does — including a guard an agent made true during the run. | `unit`: the formerly-`todo` HANDOFF-GUARD test passes, plus a POSITIVE test where an agent sets the channel. | true (test: `engine/parity.test.ts` CHANNEL-GUARD ×5 — one graph, shape (d) `channel-guarded-handoff`, driven with the write (`planner → builder`), without it (`planner` only), with an undeclared channel and with a wrong-typed value (both refused, neither routes), plus node-narrowing; `engine/build-graph.test.ts` "A8" + the five `H-2` tests; `engine/parity.test.ts` HANDOFF-GUARD for the negative walker-divergence case. **Scored `true` only from the review round on** — until then no node could write a channel, so the positive half had no test and could not have passed: see deviation A5-review-H2-*) |
+| A9 | State channels declared in `system.yaml` exist in the graph state with the declared reducer — and with the declared TYPE and default. | `unit`: `add_messages` appends, a last-value channel overwrites, a typed channel starts at its default. | true (test: `engine/build-graph.test.ts` "A9" + "H-2: a declared channel starts at its type's default") |
 | A10 | Loops are bounded: the team step budget maps to `recursionLimit`, and exhaustion is a graceful stop that returns what completed. | `unit`. | true (test: `engine/build-graph.test.ts` "A10" ×2 — graceful stop and the `recursionLimit` derivation) |
 | A11 | Tool calls use the model's native tool-calling, with the text fallback only when the model rejects the tools parameter. | `unit`: both branches exercised; `kind`: a run against the STACKIT model succeeds. | true for both branches (test: `engine/build-graph.test.ts` "A11"); the `kind` half (a run against the STACKIT model) is **untestable here** — needs a cluster with managed inference |
 | A12 | Planner and executor tiers are separate models and configurable per agent. | `inspect` + `unit`. | true (test: `build/resolve-node-model.test.ts` — 6 cases incl. an explicit per-agent pin beating Auto; `inspect`: `plan_<id>` takes `reasoningModel`, `act_<id>` the resolved tier) |
@@ -168,3 +168,15 @@ The agent side's remaining gaps are therefore **not engine gaps**. Three are Par
 X1), one is a missing exporter (A4), one is comparing artifacts that do not exist yet (A33). The
 two honest weaknesses inside A5's own scope are recorded as deviations: the index-site embedding
 attribution (A27, deviation A3-11) and `grant-rehydrate.ts` never being imported (A5-11).
+
+### 2026-11-13 — A5 review round (same branch, still no cluster)
+
+A8 was scored `true` on the negative half only (a false guard does not route) — which it was,
+because **no node could write a state channel**, so no guard could ever be true and the positive
+half was untestable rather than passing. The review round closed that gap (`os_set_state`,
+deviations A5-review-H2-1…6) and A8 now cites a positive test; A9 gains the declared type and
+default. No other item's status changed. Three security findings were fixed in the same round and
+are recorded as deviations, not checklist items: the schedule CronJob pods' borrowed egress
+(A5-review-H-3), `get_run_trace`'s domain-wide scope gate on an agent run (A5-review-M-1) and the
+`evaluate` route's ungated body `runId` (A5-review-M-3). A5-11 is rewritten: `grant-rehydrate.ts`
+was dead code on the agent path, not an open hole, and is deleted.

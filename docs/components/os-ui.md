@@ -223,13 +223,22 @@ checkpointer connection and the approvals-queue hydration.
 the per-system `runtime: walker` opt-out. That opt-out had become a way for a user to keep the
 LOOSER rules (no `when` guards, no node-level tool narrowing), which is the opposite of what an
 engine flag is for. Every run report carries `engine: 'langgraph'`, `runId`, `checkpointer` and
-any compile `warnings` — e.g. a handoff guard over a channel nothing sets, which is exactly what
-the shipped Software Delivery Team's `plan_ready`/`committed`/… guards are today, so its
-supervisor drives the order and each guard is reported.
+any compile `warnings` — e.g. a handoff guard over a channel that nothing **can** set (an
+undeclared one, or one declared with the `add_messages` reducer).
 
-**Known limits (honest).** No node writes a system channel yet, so every `when` guard over a
-channel is a warning and evaluates false until a later phase adds a channel-setting mechanism;
-the run report's `warnings` (rendered in the Run panel) say so. The Context Librarian handoff
+**State channels, and who writes them.** A `when` guard routes on a declared state channel, and
+the agent whose turn the guard follows is advertised the engine's built-in `os_set_state` tool —
+closed to the declared channels, type-checked against the declaration, never a governed MCP call
+and never held for approval. The write lands in the same superstep, so the next routing decision
+(and the supervisor's `--- TEAM STATE ---` line) sees it. The shipped Software Delivery Team
+declares five boolean channels (`plan_ready`, `committed`, `tests_failed`, `tests_passed`,
+`reported`) written by its planner, builder, tester and deployer, so the five-phase chain actually
+fires and a tester FAIL routes back to the builder. Until the A5 review round this was the
+engine's biggest gap: no node could write a channel, so EVERY `when` guard in the OS evaluated
+false and those five guards were five compile warnings. See `os-ui/tabs/agents/README.md` →
+"State channels".
+
+**Known limits (honest).** The Context Librarian handoff
 curation runs in the graph only when a live embedder is wired, and never over the offline-hash
 fallback's vectors (relevance over them is noise). A
 A resume after a decision is filed as a job (A4); with the worker off it

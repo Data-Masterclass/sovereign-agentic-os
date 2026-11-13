@@ -65,8 +65,8 @@ if an environment still sets it, is ignored with one deprecation line at boot.
    it does not visit in declared order. A member returns to the supervisor's ROUTE node, so one
    decision call per return. `when` guards are a ~40-line safe parser (`lib/engine/when.ts`) —
    literals, `state.<channel>` truthiness, bare channel names, `==`/`!=`, `&&`/`||` — never `eval`.
-   A guard over a channel no node sets is a compile WARNING carried on the run report, not a silent
-   false. The team step budget becomes `recursionLimit`; exhaustion is a graceful stop that returns
+   A guard over a channel nothing **can** set is a compile WARNING carried on the run report, not a
+   silent false (see *State channels* below). The team step budget becomes `recursionLimit`; exhaustion is a graceful stop that returns
    what completed. Disabled agents are pruned at build; an unmapped legacy grant, a disabled
    entrypoint or a channel shadowing an engine key is a compile ERROR.
    What `build-graph.ts` does NOT own is what one agent *is* — its model tier, its system prompt,
@@ -77,6 +77,48 @@ if an environment still sets it, is ignored with one deprecation line at boot.
 5. **Build compiles the same graph.** The `langgraph` row of Build is
    `lib/build/compile-verify.ts` → `buildGraph` (live and offline alike), so a ✓ there means the
    graph the engine will execute can actually be constructed from this `system.yaml`.
+
+### State channels — how a guard becomes true
+
+A `when` guard can only route if something sets the channel it reads, so the engine gives the
+agents a way to write one. `state.channels` in `system.yaml` is a map of **name → declaration**:
+
+```yaml
+state:
+  channels:
+    messages: add_messages    # the shared conversation (appends) — always present
+    plan_ready: boolean       # a typed, last-write-wins channel; starts at false
+    attempts: number          # starts at 0
+    verdict: string           # starts at ''
+    report: json              # any JSON value; starts at null
+```
+
+Every declaration becomes a real **typed state key** in the `Annotation.Root` of the compiled
+`StateGraph`, with the type's default and a last-write-wins reducer (`add_messages` appends, as
+before; an unrecognised declaration — the legacy `last_value` — is an untyped `json` channel, so
+files written before the types keep working).
+
+The agent whose turn a guard follows — the `from` of the guarded handoff, because the guard is
+evaluated in `route_<from>` immediately afterwards — is advertised ONE extra, built-in tool:
+
+| | |
+|---|---|
+| **`os_set_state`** | `{ channel, value }`. Closed to the system's **declared** channels and type-checked against the declaration. |
+
+It is not an MCP tool and it is not a grant: it writes the team's own state, so it never reaches
+the governed executor, is never held for approval, and an undeclared channel or a mistyped value
+comes back as a typed `invalid_argument` tool result the model can read and correct. The write
+lands in the same superstep's state update, so the next `route_<id>` evaluation — and the
+supervisor's `--- TEAM STATE ---` block, which lists the current channel values — see it.
+
+Each writer's system prompt carries a generated `--- STATE CHANNELS ---` block: one sentence per
+channel, derived from the declaration and the handoff it unlocks, so the instructions can never
+drift from the yaml. The shipped **Software Delivery Team** uses exactly this: five boolean
+channels (`plan_ready`, `committed`, `tests_failed`, `tests_passed`, `reported`) written by the
+planner, builder, tester and deployer, so the team advances on recorded evidence and a tester FAIL
+routes straight back to the builder. A channel that is declared but never set is simply a false
+guard; a guard over an **undeclared** channel, or over an `add_messages` one (the setter writes
+single values), is the compile warning.
 
 ### Durability: thread id = run id
 

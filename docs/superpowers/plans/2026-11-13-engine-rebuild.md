@@ -177,7 +177,7 @@ Not a compiled system, left as is: `core/kernel/artifacts.ts` seeded registry re
 
 | Piece | Where |
 |---|---|
-| Parity gate, recorded before any deletion | this file, "A5 — the parity gate, fixture by fixture" (28 tests, 0 failures; 11 fixtures identical, `software-team` identical + 5 honest warnings, `shape-guarded-handoff-held-write` deliberately divergent) |
+| Parity gate, recorded before any deletion | this file, "A5 — the parity gate, fixture by fixture" (A5-review-L-2: the real split is **parity 16 · fixtures 16 · MCP run surface 9**, not one file of 28; the review round takes parity to 21 with shape (d)) — 0 failures; 11 fixtures identical, `software-team` identical, `shape-guarded-handoff-held-write` deliberately divergent |
 | The walk, deleted | `build/agentic-graph.ts` loses `runAgenticGraph` + `nodeOrder` (−146 lines) and becomes the **agent NODE layer** the graph calls into (model tier, system prompt, handoff + Librarian, status classification, `runNode` for the phase-router chat). `build/run-graph.ts` + test `git rm`'d |
 | The Python runtime, deleted | `images/base/agent-runtime/**` (7 files), the Deployment/ConfigMap/Service in `charts/.../base/agent-runtime/agent-runtime.yaml`, its dedicated egress policy + the `NotIn` exclusion in `network/egress-policies.yaml`, `AGENT_RUNTIME_URL` in `_os-ui-env.tpl` and `config.ts`, `realRuntime`/`RuntimeClient`, `app/api/agents/tool/route.ts`, the CI pytest steps, the `scripts/os` image row, `agentRuntime.{enabled,image,resources,*Model}` |
 | The flag, deleted | `core/kernel/agents-engine.ts` + test, `engine/select.ts` + test, `config.agentsEngine`, `runtime: walker`; `Runtime` collapses to `'langgraph'` with retired names normalised on parse; `instrumentation.ts` logs one deprecation line if `AGENTS_ENGINE` is still set |
@@ -197,7 +197,11 @@ Service · `check-litellm-allowlist` PASS on both profiles.
 
 #### A5 — the parity gate, fixture by fixture (run 2026-11-13, before any deletion)
 
-`node --test tabs/agents/lib/engine/parity.test.ts` — 28 tests, 0 failures, 2 `todo`. The harness
+`node --test tabs/agents/lib/engine/parity.test.ts` — 16 tests, 0 failures, 2 `todo` (A5-review-L-2:
+the "28" first recorded here counted the parity + fixtures files together; the two files are 16 and
+16, and `core/mcp/agent-run-surface.test.ts` is 9. After the review round parity is **21** — shape
+(d) `channel-guarded-handoff` is driven four ways plus a node-narrowing test — and fixtures is
+still 16). The harness
 drives BOTH engines per fixture in one process (`replayWalker` vs `replayGraph`/`scriptGraph`), so
 there is no `AGENTS_ENGINE` to set: the table IS the two-engine comparison.
 
@@ -214,7 +218,7 @@ there is no `AGENTS_ENGINE` to set: the table IS the two-engine comparison.
 | `template-blank` | green | green (replayed transcript) | identical |
 | `template-evaluate` | green | green (replayed transcript) | identical |
 | `template-recommend` | green | green (replayed transcript) | identical |
-| `software-team` | `todo` (guarded; the walker ignores its five `when` guards) | green — same path, tools and final text as the walker golden, **plus** five compile warnings naming `plan_ready`, `committed`, `tests_failed`, `tests_passed`, `reported` | identical path, honest warnings |
+| `software-team` | `todo` (guarded; the walker ignores its five `when` guards) | green — same path, tools and final text as the walker golden, **plus** five compile warnings naming `plan_ready`, `committed`, `tests_failed`, `tests_passed`, `reported` (A5-review-H-2: those five channels are now DECLARED and settable, so the warnings are **zero** and the path is unchanged — the scripted model simply never sets them) | identical path, warnings now zero |
 | `shape-guarded-handoff-held-write` | `todo` (guarded) | green — path `['researcher']`, `held=0` | **deliberate divergence** |
 
 P2 (abort after node 1 → resume on the same thread) and "resume of an unknown thread is a typed
@@ -231,6 +235,108 @@ the defect on purpose (`assert.ok(golden.path.includes('publisher'), 'the walker
 records the defect')`) and the HANDOFF-GUARD test asserts the new, correct behaviour. The gate is
 therefore **passed**: every fixture either matches or diverges in the direction the plan requires,
 and the divergence is pinned by a test rather than by a comment.
+
+#### A5 review round (2026-11-13) — what the review found and what was done
+
+Decisions recorded as `A5-review-<id>`; the fixes are three commits on `feat/engine-rebuild`.
+
+- **A5-review-H2-1 A channel DECLARATION is a type, and the type is the default.** `state.channels`
+  was a map of name → *reducer*, with everything but `add_messages` meaning "last value, default
+  `undefined`". For `os_set_state` to type-check a write, the declaration has to say what the
+  channel holds, so the value is now read as `add_messages` | `boolean` | `number` | `string` |
+  `json`, each typed key starting at that type's default (`false` / `0` / `''` / `null`). No new
+  YAML shape was invented for an explicit default (`plan_ready: { type: boolean, default: false }`
+  would have needed schema, serializer and UI changes for one value that is already implied). Any
+  unrecognised declaration — notably the legacy `last_value`, which three fixtures use — stays an
+  untyped `json` channel, so **no existing `system.yaml` changes meaning**.
+- **A5-review-H2-2 The setter is advertised to the agent whose guard reads the channel, not to
+  every agent.** The brief said "every agent gets a built-in `set_channel` tool". Two reasons it is
+  narrower: (a) node-level tool narrowing is the engine's own rule — an agent is advertised what it
+  needs and nothing else — and the guard of a handoff FROM node `n` is evaluated in `route_<n>`,
+  immediately after `n`'s turn, so `n` is exactly the agent that can act on it; (b) a tool-less
+  agent (the orchestrator and the communication agent of the shipped team) would otherwise be
+  handed `os_set_state` as its FIRST advertised tool, which the frozen parity script calls — the
+  goldens would have changed for a reason that has nothing to do with the walker. The tool's
+  `channel` enum is still the system's full declared set, so a writer is closed to the
+  DECLARATION, not to its own edges.
+- **A5-review-H2-3 The write is not a governed tool call.** `os_set_state` never reaches
+  `deps.callTool` / `grantedToolExecutor`, is filtered out of the hold batch before
+  `holdDecisionFor` sees it, and cannot be held for approval: there is no OS object behind it. It
+  is recorded as a normal `tool-step` (so the Run panel, the event log and the Langfuse span tree
+  all show it, with `state.<channel> = <value>` as the span detail) and an illegal write comes back
+  as a typed `invalid_argument` result the model can read. Wrong-typed values are REFUSED, with the
+  one tolerance that a model's string forms of a boolean/number (`"true"`, `"3"`) are coerced —
+  rejecting those teaches nothing and burns a tool round.
+- **A5-review-H2-4 The supervisor sees the channels.** `route_<sup>`'s prompt gained a
+  `--- TEAM STATE ---` line listing the current channel values. It was already *routing* on them
+  (handoff guards are evaluated in the route node before the model is asked), but its own decision
+  was blind to the team's recorded state, which is the thing that makes a supervisor + guards
+  combination coherent.
+- **A5-review-H2-5 Shape (d) is an ENGINE shape, not a frozen fixture.** The new
+  `channel-guarded-handoff` lives in `parity-harness.ts` beside `P2_YAML` and is driven from
+  `parity.test.ts`, NOT added to `fixtureSpecs()`: a frozen fixture is a WALKER golden, the walker
+  is deleted, and `fixtures.test.ts` would (correctly) demand a `.json` that cannot exist. The
+  proof is the comparison of two runs of ONE graph — with the write and without it — plus the
+  undeclared-channel and wrong-type refusals and a node-narrowing test that reads the advertised
+  tools off the real model requests. Checklist **A8** is updated to cite it.
+- **A5-review-H2-6 The shipped team's yaml changed, so three files changed with it.**
+  `SOFTWARE_TEAM_YAML` declares the five channels (one-line purpose each) and four `agent_md`
+  blocks say which gate they record; `seed/software-team/system.yaml` is regenerated from the
+  constant (the byte-identical test) and the frozen fixture's `yaml` field is updated — which is
+  exactly the "a template edit must be a visible fixture change" that `fixtures.test.ts` asks for.
+  The fixture's GOLDEN is untouched: `software-team` is supervisor-driven, so its path comes from
+  the scripted route rule, and the scripted model never calls the setter.
+- **A5-review-H-3 The schedule CronJobs were wearing the deleted runtime's label.** A5 deleted the
+  runtime's dedicated egress policy and widened `allow-intra-namespace-egress` to `podSelector: {}`
+  with the note "there is nothing left to lock down here". There was: `schedule-cronjobs.yaml`
+  still labelled its pods `component: agent-runtime`, so a pod whose entire job is one `curl` to
+  os-ui inherited the whole in-namespace plane — and, through `allow-apiserver-egress` (which
+  carries no `to:`), 443/6443 to anywhere. Pods are now `component: agent-schedule`, excluded from
+  both blanket policies with the same `NotIn` the runtime used (an absent label still matches
+  `NotIn`, so nothing else loses its allow), and governed by `allow-agent-schedule-egress`:
+  `component: os-ui` port 3000, plus the namespace-wide DNS policy. Verified by rendering the chart
+  with one populated schedule.
+- **A5-review-H-1 / M-4 The token Secret moved to B2's file and stopped depending on its own
+  value.** A5 kept the Secret in `agent-runtime.yaml` to avoid conflicting with the data branch,
+  which had already moved it to `agent-runtime-token.yaml`; the merge would have had to resolve two
+  files defining one Secret. This branch now `git rm`s `agent-runtime.yaml` and carries B2's file
+  verbatim (A5-1's note moved into its header), so the merge sees one file with a comment-block
+  difference. B2's gate also happens to be the M-4 fix: it does not test `$r.token`, where A5's
+  `and $token (eq profile "local")` rendered nothing for `agentRuntime.token: ""` while
+  `_os-ui-env.tpl` mounts the key through a NON-optional `secretKeyRef` — os-ui would fail to
+  start. `helm template --set agentRuntime.token=` renders exactly one Secret and the reference.
+- **A5-review-M-1 An agent run id is owner-gated in Monitoring too.** `get_run_trace` used
+  `assertInScope`, which is builder-domain-wide AND answers 403 for an in-scope-but-foreign trace —
+  so a builder could read a colleague's agent run, and the 403/404 split confirmed a guessed id
+  exists. For `isRunId(id)` the tool now goes through `assertRunVisible` over the checkpoint's
+  owner stamp (`peekRunOwner`), the same gate as `get_agent_run`; an unreadable checkpointer falls
+  through to 404 rather than widening. Other trace ids keep the scope gate.
+- **A5-review-M-3 The judge route was a run-addressed door nobody had treated as one.** `POST
+  /api/agents/systems/<id>/evaluate` accepted a body `runId` and wrote a Langfuse SCORE on that
+  run's trace; `getSystem` is read-scope, so even the implicit `view.lastRun` can be a colleague's
+  run on a Shared system. The gate now runs before the judge's model call: an explicitly requested
+  foreign run is 404, the implicit fall-back scores nothing and still returns the verdict. Both
+  this route and `monitoring-tools.ts` joined the tripwire door list, which now also requires the
+  gate to precede `scoreTrace(` and `fetchTrace(`.
+- **A5-review-L-4 `list_runs` stays scope-wide — documented, not changed.** `filterScope` is the
+  Monitoring tab's own ladder, and the MCP must not be stricter than the UI it mirrors. What was
+  missing is that the two halves differ: the LISTING is scope-wide (a builder sees that a
+  colleague's run exists, its health and its cost), the CONTENTS are owner-only. Both tool
+  descriptions now say so, because `list_capabilities` is what an AI reads. Narrowing the listing
+  to the owner is a Monitoring-tab decision, with the UI, not an MCP-only change.
+- **A5-review-L-5 `holdAt: 'executor'` stays, as A5-9 already argued.** It has no production
+  caller — every graph node passes `'node'` — but gate 1b in the executor is the only hold a
+  non-graph caller would get, and its tests are the only proof the executor can hold at all.
+  Removing it would delete a defence and a test for no behaviour change. Recorded as a follow-up
+  for whoever retires the executor hold path entirely.
+- **What the review itself got slightly wrong.** (a) It said the declared channels "become real
+  typed state keys" as if none existed — they were already state keys with declared reducers
+  (`A9` tests that); what was missing was the TYPE and the WRITER. (b) It read `egress-policies.yaml`
+  policy 6 as deleted and the fix as "give them their own policy"; a narrow policy alone would not
+  have helped, because NetworkPolicy is additive — the `NotIn` exclusions in policies 3 AND 4 are
+  what makes it a lockdown. (c) `agentRuntime.enabled` no longer exists, so B2's `$needed` leans
+  on `osUI.enabled` / `dagster.enabled`; that is correct today but it is a gate on OTHER
+  components' flags, which is worth a second look when the data side lands.
 
 ---
 
@@ -561,13 +667,26 @@ After each full pass over Parts A, B and D: a read-only test agent scores `2026-
   any trace read. (e) The audit item "`langgraph-compile.ts` output is consumed" was already true
   on the RUN path (`compile` → `buildGraph`) but FALSE on the Build path, which only counted the
   IR's nodes; A5-5 fixes that and `agent-run-surface.test.ts` + `live.test.ts` are the tripwires.
-- **A5-11 Found, not fixed: `tabs/agents/lib/build/grant-rehydrate.ts` is never imported.** It
-  registers a durable grant resolver with `core/infra/app-registry` at module load, and nothing in
-  production imports the module — so after a pod restart an `os-<systemId>` principal's grants are
-  NOT rehydrated from the store and gate 1a falls through to the static chart grants. Its stale
-  reference to the now-deleted `/api/agents/tool` is what surfaced it. Pre-existing, unrelated to
-  the engine, and wiring an authorization resolver is not a change to make inside a deletion phase:
-  recorded here for the next iteration.
+- **A5-11 (REWRITTEN in the review round — the original was wrong) `grant-rehydrate.ts` was DEAD
+  CODE, and deleting it changes no gate.** The original note said that because the module is never
+  imported, "after a pod restart an `os-<systemId>` principal's grants are NOT rehydrated and gate
+  1a falls through to the static chart grants" — implying a live agent-path defect. It is not one.
+  The app-registry grant map is read by exactly one function, `authorizeAppTool`
+  (`core/infra/agent-governed.ts`), and that function is called from exactly one place:
+  `tabs/software/lib/app-tool-call.ts`, the **auto-generated app MCP** path of the Software tab.
+  The AGENT path never consults it: an agent's tools are narrowed by `grantedToolSpecs` and
+  executed by `grantedToolExecutor` (`tabs/agents/lib/build/os-tools.ts`), both of which read the
+  system YAML's own grants in-process (gate 1/1b) before dispatching as the acting user (gate 2) —
+  and the engine additionally narrows per node in `tools_<id>`. So on the agent path the module is
+  neither fail-open nor fail-closed; it is simply unreachable. On the APP path, `grantsForDurable`
+  with no registered resolver is **fail-closed** by construction (`core/infra/app-registry.ts`:
+  `if (!resolver) return existing;` → the in-memory set, then OPA's default-deny), which is what
+  happens today anyway because nothing imports the registrant. The review round therefore `git
+  rm`'d `grant-rehydrate.ts` and its test rather than wiring a resolver nobody asked for.
+  **Follow-up (app path, not agents):** `registerDurableGrantResolver` now has no caller at all,
+  and the comment above `authorizeAppTool` still describes grants that "self-heal" from a durable
+  record after a restart. Either the Software tab registers a resolver of its own or that comment
+  should go; both live in `core/infra` / `tabs/software` and were left to their owners.
 - **A5-12 The repo-wide grep does not come back empty, by design.** `walker` / `agent-runtime` /
   `AGENT_RUNTIME` still appear in: the KEPT shared bearer and its Secret name (A5-1); historical
   "A5 deleted X" notes in the files that lost the code; the frozen parity fixtures and their tests,

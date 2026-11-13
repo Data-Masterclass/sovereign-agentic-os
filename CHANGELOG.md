@@ -13,6 +13,42 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Fixed — Agent engine rebuild, A5 review round: `when` guards can finally be true
+
+- **An agent can write a state channel.** The A5 engine evaluated every handoff guard but
+  nothing could set the channel a guard reads, so EVERY `when` guard in the OS was false by
+  construction — including the five that drive the shipped Software Delivery Team, whose
+  planner → builder → tester → deployer → communication chain was therefore unreachable. A
+  `state.channels` declaration is now a **typed** state key (`boolean` / `number` / `string` /
+  `json`, last-write-wins, starting at that type's default; `add_messages` still appends; an
+  unrecognised declaration stays an untyped `json` channel so existing files run unchanged),
+  and the agent whose turn a guard follows is advertised one built-in tool, **`os_set_state`**
+  — closed to the declared channels, type-checked against the declaration, never a governed MCP
+  call and never held for approval. The write lands in the same superstep, so the next routing
+  decision sees it; the supervisor's routing prompt gained a `--- TEAM STATE ---` line, and each
+  writer's prompt a generated `--- STATE CHANNELS ---` block (one sentence per channel, derived
+  from the yaml). `software-team.ts` declares its five channels with a purpose each, and its five
+  compile warnings are now zero. A guard over an **undeclared** channel (or an `add_messages`
+  one) is still a compile warning. New tests drive one graph with and without the write.
+- **A run's contents are owner-only on every door.** `get_run_trace` gated on the
+  builder-domain-wide monitoring scope, so a builder could read a colleague's agent run and the
+  403/404 split confirmed a guessed run id existed; for a `run_<uuid>` it now uses the same
+  owner gate as every other run door (404 both ways). The `POST .../evaluate` route took a
+  `runId` from the request body and wrote a Langfuse score on that run's trace with no owner
+  gate at all; it is gated before the judge even runs. `list_runs` stays scope-wide by design,
+  and both tool descriptions now say which half is which.
+- **Schedule CronJob pods lose their borrowed egress.** They still carried the deleted runtime's
+  `component: agent-runtime` label, so widening the intra-namespace allow to every pod handed a
+  one-endpoint `curl` the whole in-namespace plane. They are relabelled `agent-schedule`,
+  excluded from the two blanket allows and given their own policy: os-ui:3000 and DNS.
+- **`agentRuntime.token: ""` no longer bricks os-ui.** The `agent-runtime-token` Secret was
+  gated on the token's VALUE while `_os-ui-env.tpl` mounts it through a non-optional
+  `secretKeyRef`. The Secret moved to its own template (`agent-runtime-token.yaml`) and renders
+  whenever any consumer is enabled.
+- **Removed** `tabs/agents/lib/build/grant-rehydrate.ts` and its test: dead code. Its only
+  consumer would have been `authorizeAppTool`, which serves the software app-MCP path; the agent
+  path's gates are in-process over the system YAML.
+
 ### Changed — Agent engine rebuild, Phase A5: the LangGraph engine is the only engine
 
 - **Deleted, after the parity gate passed.** The hand-rolled BFS that used to execute agent
