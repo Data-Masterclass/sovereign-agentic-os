@@ -24,6 +24,10 @@
  *     save on an opted-out install, so the rule is unconditional and this check pins it both ways.
  *   - SKIPS (exit 0, loudly) when `helm` is not on PATH OR a subchart `.tgz` is missing — the unit
  *     gate must run on a laptop with neither. docs/components/trino.md carries the commands.
+ *   - **In CI (`process.env.CI`) a skip is a hard FAILURE.** A check that silently skips on the
+ *     one machine that is supposed to enforce it is not a check, and the CI runner has helm but
+ *     NOT the gitignored subchart tarballs, so this skipped on every run until the workflow
+ *     learned to `helm dependency build` first (deviation F-7).
  *   - No dependencies, no YAML parser: it splits the manifest stream and matches lines.
  */
 import { execFileSync } from 'node:child_process';
@@ -46,13 +50,17 @@ function helmAvailable() {
 }
 
 function skip(why) {
+  if (process.env.CI) {
+    console.error(`check-trino-rules-chart: ${why} — FAILING because CI is set. Run \`helm dependency build charts/sovereign-agentic-os\` (or install helm) before the gate; a chart check may not silently skip in CI.`);
+    process.exit(1);
+  }
   console.log(`check-trino-rules-chart: ${why} — SKIPPED (see docs/components/trino.md for the manual check)`);
   process.exit(0);
 }
 
 if (!helmAvailable()) skip('helm not on PATH');
 if (!existsSync(SUBCHARTS) || readdirSync(SUBCHARTS).filter((f) => f.endsWith('.tgz')).length === 0) {
-  skip('no subchart .tgz in charts/sovereign-agentic-os/charts');
+  skip('no subchart .tgz in charts/sovereign-agentic-os/charts (run `helm dependency build charts/sovereign-agentic-os`)');
 }
 
 const problems = [];

@@ -1692,3 +1692,20 @@ reason is here.
 - **F-6 Commit trailer.** Part F's commits are trailed `Co-Authored-By: Claude Opus 5 (1M context)`
   rather than the branch's `Claude Fable 5.1`, because that is the model that wrote them. The
   trailer records authorship; recording a model that did not do the work would make it decorative.
+- **F-7 The three chart checks never ran in CI — and could not have told anyone.** Draft PR #41's
+  `test-ui` job failed in `gate.sh` with helm's raw `found in Chart.yaml, but missing in charts/
+  directory: langfuse, litellm-helm, opensearch, dagster`: the runner has helm but the subchart
+  tarballs are gitignored, so `helm template` cannot render the chart. `check-trino-rules-chart.mjs`
+  already skipped on a missing `.tgz` — which meant that once the crash was gone it would have
+  asserted NOTHING on the one machine meant to enforce it — and `check-worker-env.mjs` had no such
+  guard at all, so it was the one that died. Fixed on both sides: (1) `test-ui` now sets up helm
+  (the same pinned `azure/setup-helm` the `helm-lint` job uses) and runs
+  `helm dependency build charts/sovereign-agentic-os || helm dependency update …` before the gate,
+  resolving exactly the versions `Chart.lock`/`Chart.yaml` pin; (2) both scripts skip on "helm
+  missing OR `charts/sovereign-agentic-os/charts/*.tgz` absent OR `values.local.yaml` absent" with
+  a loud line naming the fix command — and that skip is a **hard failure when `process.env.CI` is
+  set**, so CI can never silently skip a chart check again. `check-litellm-allowlist.mjs` needed no
+  change: it reads `values.yaml` directly and never templates. Verified locally with the exact CI
+  command: `CI=true bash scripts/gate.sh` from `os-ui/` is exit 0 with all three checks reporting
+  `ok`/`PASS`; with the subcharts moved away, `CI=true` makes both scripts exit 1 with the
+  actionable message while a plain laptop run still skips at exit 0.

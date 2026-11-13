@@ -13,12 +13,19 @@
  *     (1) no admin credential name appears in `os-ui-worker`; (2) the run path's own credentials
  *     (the scoped agent key, the run store, Langfuse) DO; (3) `os-ui` still carries every admin
  *     name, so the split did not simply drop them.
- *   - SKIPS (exit 0, loudly) when `helm` is not on PATH — the unit gate must run on a laptop with
- *     no Kubernetes tooling. `docs/components/os-ui.md` carries the same check by hand.
+ *   - SKIPS (exit 0, loudly) when `helm` is not on PATH, when `values.local.yaml` is absent, or
+ *     when the chart's subchart `.tgz` files have not been fetched (`helm dependency build`) —
+ *     the unit gate must run on a laptop with no Kubernetes tooling. `docs/components/os-ui.md`
+ *     carries the same check by hand.
+ *   - **In CI (`process.env.CI`) a skip is a hard FAILURE.** A check that silently skips on the
+ *     one machine that is supposed to enforce it is not a check: this script rendered nothing in
+ *     CI for as long as the subcharts were missing, because `helm template` then exits 1 with
+ *     "found in Chart.yaml, but missing in charts/ directory" and the gate died on the raw error
+ *     rather than on anything this file asserts (deviation F-7).
  *   - No dependencies, no YAML parser: it splits the manifest stream and matches `- name: X`.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,6 +47,26 @@ function helmAvailable() {
   }
 }
 
+/** Have the subcharts been fetched? `helm template` cannot render the chart without them. */
+function subchartsPresent() {
+  const dir = join(CHART, 'charts');
+  return existsSync(dir) && readdirSync(dir).some((f) => f.endsWith('.tgz'));
+}
+
+/**
+ * A reason this check cannot run. On a laptop that is a loud skip; in CI it is a failure, because
+ * CI is where the check has to bite. The fix in CI is always the same: run
+ * `helm dependency build charts/sovereign-agentic-os` before the gate.
+ */
+function skip(why) {
+  if (process.env.CI) {
+    console.error(`check-worker-env: ${why} — FAILING because CI is set. Run \`helm dependency build charts/sovereign-agentic-os\` (or install helm) before the gate; a chart check may not silently skip in CI.`);
+    process.exit(1);
+  }
+  console.log(`check-worker-env: ${why} — SKIPPED (see docs/components/os-ui.md for the manual check)`);
+  process.exit(0);
+}
+
 function deployments(text) {
   const out = new Map();
   for (const doc of text.split(/^---$/m)) {
@@ -52,14 +79,9 @@ function deployments(text) {
 
 const names = (doc) => new Set([...doc.matchAll(/^\s+- name: ([A-Z0-9_]+)$/gm)].map((m) => m[1]));
 
-if (!helmAvailable()) {
-  console.log('check-worker-env: helm not on PATH — SKIPPED (see docs/components/os-ui.md for the manual check)');
-  process.exit(0);
-}
-if (!existsSync(VALUES)) {
-  console.log(`check-worker-env: ${VALUES} missing — SKIPPED`);
-  process.exit(0);
-}
+if (!helmAvailable()) skip('helm not on PATH');
+if (!existsSync(VALUES)) skip(`${VALUES} missing`);
+if (!subchartsPresent()) skip('no subchart .tgz in charts/sovereign-agentic-os/charts (run `helm dependency build charts/sovereign-agentic-os`)');
 
 const rendered = execFileSync('helm', ['template', CHART, '-f', VALUES, '--set', 'osUI.worker.enabled=true', '--set', 'osUI.graph.enabled=true'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 const found = deployments(rendered);

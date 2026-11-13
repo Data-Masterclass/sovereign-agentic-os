@@ -226,6 +226,17 @@ otherwise.
 | `images/extensions/dagster/tests` (python3 + pyyaml) | 45 tests OK | **46** tests OK |
 | `node scripts/check-litellm-allowlist.mjs` | PASS | PASS |
 
+**The three chart checks in `gate.sh` had never actually run in CI (deviation F-7).** The runner
+has helm but the subchart tarballs are gitignored, so `helm template` cannot render the chart:
+`check-worker-env.mjs` had no guard and killed the job with helm's raw error, and
+`check-trino-rules-chart.mjs` had a guard, which would have meant it asserted NOTHING on the one
+machine meant to enforce it. `test-ui` now sets up helm and runs `helm dependency build` before the
+gate, and both scripts' skip is a **hard failure when `process.env.CI` is set**. Verified with the
+exact CI command: `CI=true bash scripts/gate.sh` from `os-ui/` → exit 0, all three reporting
+`ok`/`PASS`; with the subcharts moved away, `CI=true` → exit 1 with the fix command, a plain
+laptop run → exit 0 with a loud SKIP. So the gate numbers above are the first that were ever
+enforceable in CI as well as locally.
+
 **Tests are not type-checked, and do not type-check.** `os-ui/tsconfig.json` excludes
 `**/*.test.ts`. A temporary config that INCLUDES them reports **599 errors**: 510 are one systemic
 cause (a test-local `CurrentUser` object literal omits `allDomains` / `activeDomain`, which the
