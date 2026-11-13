@@ -24,7 +24,7 @@ export type ModelTarget = {
   /** The metric member that stops resolving once de-registered (`Orders.revenue`). */
   member: string;
   /** The model the measure lives on (the dataset's frozen model identity). */
-  cube: string;
+  model: string;
   /** The view dashboards + the agent metrics tool resolve. */
   view: string;
   /** The measure's machine name (the leaf that is dropped from the model). */
@@ -40,7 +40,7 @@ export function deregisterPlan(d: Dataset, measure: Measure): ModelTarget[] {
   return [
     {
       member: measureMember(d, measure),
-      cube: modelName(d),
+      model: modelName(d),
       view: viewName(d),
       measure: measure.name,
     },
@@ -74,7 +74,7 @@ export function deregisterViewMembers(
         target: t.member,
         ok: res.removed,
         reason: res.removed
-          ? `de-registered from model '${t.cube}' — the member no longer resolves`
+          ? `de-registered from model '${t.model}' — the member no longer resolves`
           : 'measure was already absent from the model',
       });
     } catch (e) {

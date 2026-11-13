@@ -2,7 +2,7 @@
 
 ## What this is
 
-The Metrics tab is the OS's single source of truth for business numbers. A metric is a canonical Cube member — a named, governed definition of how a number is computed from a dataset's business layer. Metrics are the input to dashboards; no chart is permitted to query raw data directly. In the cross-tab spine, metrics sit between the business (Gold) data layer and dashboards: data (Gold) → metrics → dashboards → big bets.
+The Metrics tab is the OS's single source of truth for business numbers. A metric is a **dbt metric** — a `metrics:` entry on a `semantic_models:` measure, committed into the owning domain's dbt project at `models/semantic/<model>.yml` — addressed by a canonical, frozen member id. The OS serves it by compiling ONE governed Trino `SELECT` run as the viewer; MetricFlow is never on the request path. Metrics are the input to dashboards; no chart is permitted to query raw data directly. In the cross-tab spine, metrics sit between the business (Gold) data layer and dashboards: data (Gold) → metrics → dashboards → big bets.
 
 In the UI, ＋ New first asks **Simple or Complex** on a two-card chooser (the formula is no longer buried in the aggregation dropdown); the pick lands in Edit, a tile opens a full-page View, ✎ Edit re-opens it. Tiles group into **Simple Metrics** (a single aggregation over a dataset) and **Complex Metrics** (a formula over this dataset's existing metrics with `[metric]` references and null-safe division, e.g. `([revenue] - [cost]) / [orders]`). Complex metrics work on any dataset with built Gold, including personal ones — no promotion needed. A metric's View shows where it is already charted — an **On dashboards** section with an **＋ Add to a dashboard** shortcut. (Via this MCP the same one-definition discipline holds; `define_metric` covers the aggregation model below, and composite formulas are authored in the Metrics tab.)
 
@@ -11,24 +11,24 @@ In the UI, ＋ New first asks **Simple or Complex** on a two-card chooser (the f
 1. **Precondition: a governed Gold dataset.** Metrics require a Gold-tier dataset as their backing source. If no Gold dataset exists for your concept, complete the Data pathway first. Call `list_datasets` filtered to `tier: "gold"` to confirm.
 2. **Suggest first (optional, no dataset needed).** Call `suggest_metrics(goal?)` to have the reasoning model propose 3–6 candidate metrics grounded in your STRATEGY (pillars), OPERATING MODEL, business PROCESSES (workflows) and the datasets you can see. It defines nothing — each candidate returns name/description/why, an optional real `pillarId` + `processId`, a visible `datasetId`, a ready-to-define `form`, and a `crossEntity` flag when its inputs span datasets (build a curated dataset in Data first — the tool never invents a join). Candidates whose dataset isn't visible or whose columns aren't real are dropped; `grounding` reports how much context informed the ask. Feed a chosen candidate's `form` straight into `define_metric`.
 3. **Dedupe check.** Call `list_metrics` to see what is already defined in your domain. Defining a metric that already exists by another name produces two competing definitions of the same number — avoid this.
-4. **Preview first (optional).** Call `preview_metric(datasetId, name, aggregation, ...)` to see the number without persisting anything. An unsaved draft is computed via governed SQL (mode `live (sql)`, same row security); a saved+delivered measure resolves via governed Cube (mode `live`); offline degrades to `offline-mock`. Returns rows + SQL + mode; `pending: true` only for rolling-window/running-total shapes, which the query engine computes after `define_metric`. Use this to validate the definition before committing.
+4. **Preview first (optional).** Call `preview_metric(datasetId, name, aggregation, ...)` to see the number without persisting anything. Every number is ONE governed Trino `SELECT` run as you (mode `live (sql)` for an unsaved draft, `live` for a saved metric; offline degrades to the honestly-labelled `offline-mock`). Returns rows + SQL + mode; `pending: true` only for a shape the OS compiler cannot serve — a rolling window at a grain it cannot express — which is an honest refusal, never a number. Use this to validate the definition before committing.
 5. **Define.** Call `define_metric` with:
    - `datasetId` — the ID of the Gold dataset
    - `name` — canonical business name (e.g. `gross_revenue`, `order_count`)
    - `aggregation` — one of `count`, `count_distinct`, `count_distinct_approx` (fast approximate distinct for large cardinalities), `sum`, `avg`, `min`, `max`, or `number` (a derived/ratio measure)
    - `column` — required for `sum`/`avg`/`min`/`max`/`count_distinct*`; omit for `count`-of-rows and for `number`/ratio
    - `dimensions` — optional array of columns to group by; the picked dimensions are persisted on the metric and rehydrate when you re-open it to edit
-   The metric is registered as a Cube member immediately and is available to dashboards. **Edit is an upsert:** re-defining a metric of the same name on the same dataset updates it in place (no false "already defined") — this is exactly how the tab's ✎ Edit saves a change.
+   The metric is committed into the domain's dbt project as a dbt metric (`type: simple` · `ratio` · `derived` · `cumulative`) and is available to dashboards immediately. **Edit is an upsert:** re-defining a metric of the same name on the same dataset updates it in place (no false "already defined") — this is exactly how the tab's ✎ Edit saves a change.
 
-   The **full measure model** is available as optional arguments (all guided — you never write Cube SQL; a call with none of them yields exactly the plain measure it always did):
+   The **full measure model** is available as optional arguments (all guided — you never write SQL; a call with none of them yields exactly the plain measure it always did):
    - `filter` — a **filtered measure**: aggregate only rows where `{column, operator, value}` (operator: `equals`/`notEquals`/`gt`/`gte`/`lt`/`lte`/`set`/`notSet`). e.g. count only `status = completed`.
    - `runningTotal: true` — a **cumulative running total** from the beginning of time.
    - `rollingWindow: {amount, unit}` — a **trailing time window** (last N `day`/`week`/`month`/`quarter`/`year`). Mutually exclusive with `runningTotal`.
-   - `ratio: {numerator, denominator}` — with `aggregation: "number"`, a **derived measure** = numerator / denominator over two EXISTING measure members on the same cube.
+   - `ratio: {numerator, denominator}` — with `aggregation: "number"`, a **ratio** = numerator / denominator over two EXISTING metrics on the same dataset, emitted as a dbt `type: ratio` metric. A zero denominator yields `NULL`, never a division error.
    - `format` — display format (`currency`, `percent`, `number`, …).
    - `drillMembers` — drill-down members exposed for exploration.
-6. **Read the definition back.** Call `get_metric` with the metric `id` (`<datasetId>.<measure>`) to read back exactly what was registered — the aggregation + column, the backing dataset, the canonical Cube member and the generated Cube YAML — before iterating or charting it.
-7. **Read the number.** Call `query_metric` with the metric `id` from `list_metrics` (`<datasetId>.<measure>`), optionally sliced by `dimensions` / `timeDimension` + `granularity`. This is how "what is revenue this month" resolves — through the SEMANTIC LAYER, never raw SQL: the tool accepts no SQL by construction, and Cube applies YOUR per-viewer row-level security (the securityContext is derived from your session identity), so the number you read is identical to the charts.
+6. **Read the definition back.** Call `get_metric` with the metric `id` (`<datasetId>.<measure>`) to read back exactly what was registered — the aggregation + column, the backing dataset and the canonical member — before iterating or charting it. `list_metrics` also returns each metric's dbt `metricType` and its `grain` (the finest time bucket it can be sliced at), so you can pick a valid slice without a round trip.
+7. **Read the number.** Call `query_metric` with the metric `id` from `list_metrics` (`<datasetId>.<measure>`), optionally sliced by `dimensions` / `timeDimension` + `granularity`. This is how "what is revenue this month" resolves — through the SEMANTIC LAYER, never raw SQL: the tool accepts no SQL by construction, and the compiled `SELECT` runs as YOUR delegated Trino principal, so Trino + OPA apply your row/column security and the number you read is identical to the charts.
 8. **Promote (optional).** To move a metric up the governance ladder (Personal→Domain or Domain→Company), call `promote_metric(metricId)`. A creator owner files a request (`{ requested: true, approval }`) — a domain admin must approve. A builder+ runs the consistency-gated transition directly. The metric inherits its backing dataset's governance: promote the dataset in the Data tab first if it is still Personal.
 
 That is the complete flow.
@@ -37,8 +37,8 @@ That is the complete flow.
 
 - **Gold only.** Attempting to define a metric on a Bronze or Silver dataset returns `bad_request`. Complete the data tier ladder first.
 - **`count` needs no column.** Passing a `column` argument with `aggregation: "count"` is harmless but unnecessary. `sum`/`avg`/`min`/`max`/`count_distinct*` require a valid Gold column; a `number` metric requires a `ratio` (numerator + denominator), not a column.
-- **Running total vs rolling window.** Set one or the other, never both — `runningTotal` is unbounded-cumulative; `rollingWindow` is a trailing window. Both need a time dimension on the cube to be meaningful.
-- **Ratios reference OTHER measures.** A `number`/`ratio` metric’s numerator and denominator name existing measures on the same cube — define those first.
+- **Running total vs rolling window.** Set one or the other, never both — `runningTotal` is unbounded-cumulative; `rollingWindow` is a trailing window. Both are emitted as a dbt `type: cumulative` metric and both need a time dimension to be meaningful. The OS compiler serves a trailing window only when the window's unit equals the slice grain; otherwise it refuses honestly rather than returning a wrong number.
+- **Ratios reference OTHER metrics.** A `number`/`ratio` metric’s numerator and denominator name existing metrics on the same dataset — define those first. A ratio may not carry its own filter: filter its numerator and denominator instead (the OS compiler does not apply a ratio-level filter, so the emitter refuses it rather than writing YAML that would disagree with the number).
 - **One definition per number.** If two metrics compute the same thing under different names, dashboards will diverge. Check `list_metrics` carefully and reuse existing definitions. The OS does not enforce uniqueness by formula — that discipline is yours.
 - **Dimensions are optional but powerful.** Declaring `dimensions` on a metric allows dashboard charts to slice by those columns without re-defining the metric. Add dimensions that are genuinely needed; do not over-specify.
 - **Schema changes on Gold propagate.** If the backing Gold dataset schema changes in a breaking way, metrics that reference removed columns return `error` at query time. Version Gold datasets carefully.
@@ -64,11 +64,11 @@ list_metrics({ domain: "analytics" })
 
 define_metric({ datasetId: "ds_01J...", name: "order_count",
   aggregation: "count", dimensions: ["region", "channel"] })
-→ { id: "mt_66E...", cubeMember: "analytics.order_count", registered: true }
+→ { id: "ds_ab12cd.order_count", member: "Analytics.order_count", metricType: "simple", grain: "day" }
 
 define_metric({ datasetId: "ds_01J...", name: "gross_revenue",
   aggregation: "sum", column: "total_amount", dimensions: ["region"] })
-→ { id: "mt_67F...", cubeMember: "analytics.gross_revenue", registered: true }
+→ { id: "ds_ab12cd.gross_revenue", member: "Analytics.gross_revenue", metricType: "simple", grain: "day" }
 
 query_metric({ metricId: "ds_01J....gross_revenue", dimensions: ["region"] })
 → { member: "OrdersV1.gross_revenue", value: 128450,
@@ -76,4 +76,4 @@ query_metric({ metricId: "ds_01J....gross_revenue", dimensions: ["region"] })
     mode: "live", securityContext: { sub: "you", ... } }
 ```
 
-Both metrics are now available as governed Cube members for dashboard chart binding, and `query_metric` reads the identical number the charts show.
+Both metrics are now dbt metrics in the domain's dbt project, available as governed members for dashboard chart binding, and `query_metric` reads the identical number the charts show.

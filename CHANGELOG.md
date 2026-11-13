@@ -35,6 +35,18 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   predecessor (`tabs/data/lib/semantic.ts`, a 124-line string builder) never reached the project at
   all and emitted `ref('mart_<slug>')` — a model no generated project contains.
 
+- **Metrics: the honest text, the typed refusal and the licence floor (stream M).** No tool
+  description, `context.md`, `guide.md` or UI string under `tabs/metrics` or `core/mcp` claims Cube
+  serves or secures a number any more — a number is one governed Trino `SELECT` run as the viewer,
+  with Trino + OPA applying row/column security — and a tripwire test keeps it that way.
+  `list_metrics` now returns each metric's dbt `metricType` and its `grain`. A slice the OS compiler
+  cannot serve returns a **typed, named refusal** (`{ code, metricType, reason }`) instead of a bare
+  "pending", and a ratio's divisor is wrapped in `NULLIF(…, 0)` so a zero denominator shows "—"
+  rather than failing the whole panel with a Trino "Division by zero". `scripts/license-check.sh`
+  gained a version-floor pass asserting `metricflow >= 0.209.0` wherever it could enter a build:
+  `<= 0.208.1` is Business Source License 1.1, whose Additional Use Grant excludes this product's
+  use, and BSL does not relax retroactively.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a

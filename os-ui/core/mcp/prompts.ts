@@ -191,7 +191,7 @@ export const PROMPTS: McpPrompt[] = [
       '3. list_metrics — do not duplicate an existing member.',
       `4. define_metric(datasetId, name: "${a.metric_name || '<metric>'}", aggregation, column?, dimensions?). aggregation ∈ count·count_distinct·count_distinct_approx·sum·avg·min·max·number. count needs no column; sum/avg/min/max/count_distinct* need a gold column; number is a ratio.`,
       '   Optional richer measure model (all guided): filter {column,operator,value} (filtered measure) · runningTotal (cumulative) · rollingWindow {amount,unit} (trailing window) · ratio {numerator,denominator} (with aggregation "number") · format · drillMembers.',
-      '5. Verify the canonical Cube member came back.',
+      '5. Verify the canonical member and the dbt metricType came back.',
     ].join('\n'),
   },
   {

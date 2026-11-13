@@ -182,18 +182,24 @@ test('define_metric schema exposes the full measure model (approx distinct, filt
 test('define_metric: count_distinct_approx registers as an approximate distinct measure', async () => {
   resetAll();
   const dsId = await goldOrders();
-  const m = payload<{ measure: { type: string; sql: string }; cube: string }>(
+  const m = payload<{ measure: { type: string; sql: string }; metricType: string; dbt: string }>(
     await call(builder, 'define_metric', { datasetId: dsId, name: 'Unique Customers', aggregation: 'count_distinct_approx', column: 'customer_id' }),
   );
   assert.equal(m.measure.type, 'count_distinct_approx');
   assert.equal(m.measure.sql, 'customer_id');
-  assert.match(m.cube, /type: count_distinct_approx/);
+  // dbt has NO approximate-distinct agg, so the artefact is the exact form plus the OS's note (D6):
+  // dbt's own number stays exact, the OS compiler keeps `approx_distinct`, and the parity oracle
+  // excludes it for a stated reason.
+  assert.equal(m.metricType, 'simple');
+  assert.match(m.dbt, /agg: count_distinct$/m);
+  assert.doesNotMatch(m.dbt, /^\s+agg: count_distinct_approx/m);
+  assert.match(m.dbt, /os_agg: count_distinct_approx/);
 });
 
-test('define_metric: a filtered measure compiles a governed Cube filter predicate (no hand-written SQL)', async () => {
+test('define_metric: a filtered measure compiles a governed filter predicate (no hand-written SQL)', async () => {
   resetAll();
   const dsId = await goldOrders();
-  const m = payload<{ measure: { filters?: { sql: string }[] }; cube: string }>(
+  const m = payload<{ measure: { filters?: { sql: string }[] }; dbt: string }>(
     await call(builder, 'define_metric', {
       datasetId: dsId,
       name: 'Completed Orders',
@@ -203,13 +209,14 @@ test('define_metric: a filtered measure compiles a governed Cube filter predicat
   );
   assert.ok(m.measure.filters && m.measure.filters.length === 1, 'the filtered measure carries a filter');
   assert.match(m.measure.filters![0].sql, /\{CUBE\}\.status = 'completed'/);
-  assert.match(m.cube, /filters:/);
+  // …and the dbt artefact carries it in dbt's own filter syntax, inside the emitter's closed grammar.
+  assert.match(m.dbt, /filter: "\{\{ Dimension\('\w+__status'\) \}\} = 'completed'"/);
 });
 
 test('define_metric: rollingWindow + format compile a trailing window and a display format', async () => {
   resetAll();
   const dsId = await goldOrders();
-  const m = payload<{ measure: { rollingWindow?: { trailing?: string; offset?: string }; format?: string }; cube: string }>(
+  const m = payload<{ measure: { rollingWindow?: { trailing?: string; offset?: string }; format?: string }; metricType: string; dbt: string }>(
     await call(builder, 'define_metric', {
       datasetId: dsId,
       name: 'Trailing 7d Revenue',
@@ -222,8 +229,12 @@ test('define_metric: rollingWindow + format compile a trailing window and a disp
   assert.equal(m.measure.rollingWindow?.trailing, '7 day');
   assert.equal(m.measure.rollingWindow?.offset, 'end');
   assert.equal(m.measure.format, 'currency');
-  assert.match(m.cube, /rolling_window:/);
-  assert.match(m.cube, /format: currency/);
+  // A trailing window IS dbt's cumulative metric; the display format has no dbt field, so it rides
+  // in `config.meta` rather than being dropped or faked onto a dbt key.
+  assert.equal(m.metricType, 'cumulative');
+  assert.match(m.dbt, /type: cumulative/);
+  assert.match(m.dbt, /cumulative_type_params:\n\s+window: 7 day/);
+  assert.match(m.dbt, /os_format: currency/);
 });
 
 test('define_metric: runningTotal compiles an unbounded cumulative window', async () => {
@@ -255,7 +266,7 @@ test('define_metric: a ratio (aggregation "number") compiles a derived measure o
 test('define_metric: drillMembers are recorded for exploration', async () => {
   resetAll();
   const dsId = await goldOrders();
-  const m = payload<{ measure: { drillMembers?: string[] }; cube: string }>(
+  const m = payload<{ measure: { drillMembers?: string[] }; dbt: string }>(
     await call(builder, 'define_metric', {
       datasetId: dsId,
       name: 'Revenue',
@@ -265,7 +276,10 @@ test('define_metric: drillMembers are recorded for exploration', async () => {
     }),
   );
   assert.deepEqual(m.measure.drillMembers, ['order_id', 'customer_id']);
-  assert.match(m.cube, /drill_members: \[order_id, customer_id\]/);
+  // Drill members are an OS exploration affordance with NO dbt field, so the dbt artefact simply
+  // does not carry them — it is not faked onto a dbt key that means something else.
+  assert.match(m.dbt, /- name: revenue$/m);
+  assert.doesNotMatch(m.dbt, /drill/);
 });
 
 test('define_metric: a "number" ratio with no numerator/denominator is a typed bad_request', async () => {

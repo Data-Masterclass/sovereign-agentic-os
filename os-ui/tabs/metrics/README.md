@@ -4,6 +4,28 @@ Metric definitions and their values. Labelled **KPIs** in the UI — the folder 
 
 The authoritative contract is [`manifest.ts`](./manifest.ts) — this file explains it; the manifest is what the checks and the docs generator read. If the two disagree, the manifest is right.
 
+## What a metric IS
+
+A **dbt metric**. Defining one in the form, from chat or over the MCP writes a `metrics:` entry on a
+`semantic_models:` measure into the owning domain's dbt project — `models/semantic/<model>.yml`
+for a promoted dataset, `models/personal/<uid>/semantic/<model>.yml` while it is still personal —
+through the Data tab's one commit path, authored as the acting user with
+`OS-Object: metric:<datasetId>.<measure>`. The emitter, parser and spec validator live in
+`../data/lib/dbt/semantic/` and target **dbt-semantic-interfaces 0.8.5 (= dbt-core 1.10)**, every
+field also valid on the dbt 1.9 the images carry.
+
+**Execution stays here.** A metric read is `lib/explorer.ts` compiling ONE governed Trino `SELECT`
+run as the viewer (`lib/build/explore-server.ts` → `queryRun(sql, identities.trino.user)`), so
+Trino + OPA apply row/column security per viewer. MetricFlow is never on the request path — it
+would open one connection from its own profile and lose that impersonation. Where MetricFlow is
+installed at all it is pinned `>= 0.209.0` (`<= 0.208.1` is BSL 1.1).
+
+**Nothing unservable is emitted.** A leading window, a ratio carrying its own filter, a formula
+over a metric that is not emitted, a filter outside the generated grammar: each is a named refusal
+listed in the generated project's README under "Not emitted". A rolling window whose unit does not
+match the slice grain still returns an honest `pending`, never a wrong number — the time spine is
+generated (`models/os/os_time_spine_day.sql`) but the compiler does not yet join to it.
+
 ## What this module owns
 
 **Routes**

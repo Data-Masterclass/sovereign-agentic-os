@@ -3,7 +3,7 @@
  */
 import yaml from 'js-yaml';
 import type { Dataset, Measure, MeasureFilter, RollingWindow } from '@tabs/data/lib/index';
-import { MEASURE_TYPES, type MeasureType, viewName, slug } from '@tabs/data/lib/index';
+import { MEASURE_TYPES, type MeasureType, viewName, slug, inferDimType } from '@tabs/data/lib/index';
 import { assertFormulaRefs, compileFormula } from '@tabs/metrics/lib/formula';
 
 /**
@@ -320,7 +320,7 @@ export function measureFromYaml(text: string, name?: string): Measure {
   try {
     doc = yaml.load(text);
   } catch (e) {
-    throw new MetricError(`invalid Cube YAML: ${(e as Error).message}`);
+    throw new MetricError(`invalid metric YAML: ${(e as Error).message}`);
   }
   const measures = collectMeasures(doc);
   if (measures.length === 0) throw new MetricError('no measures found in the YAML');
@@ -392,4 +392,36 @@ function richKey(m: Measure): string {
     format: m.format ?? null,
     drillMembers: m.drillMembers ?? null,
   });
+}
+
+// --------------------------------------------------- the dbt metric type and grain ---
+
+/**
+ * The dbt semantic-layer type this metric is emitted as (`tabs/data/lib/dbt/semantic/`).
+ *
+ * `list_metrics` returns it so a client can pick a valid slice without a round trip (M-R9.5), and
+ * the engineering view shows the metric in dbt's own vocabulary rather than the OS's. Kept HERE,
+ * beside the `Measure` model, so the two cannot drift: a rolling window is dbt's `cumulative`, the
+ * canonical two-term ratio is `ratio`, any other `number` measure is `derived`, everything else is
+ * `simple`.
+ */
+export type DbtMetricType = 'simple' | 'ratio' | 'derived' | 'cumulative';
+
+/** The canonical two-term ratio `measureFromForm` compiles. */
+const RATIO_SQL = /^1\.0 \* \{[a-z0-9_]+\} \/ \{[a-z0-9_]+\}$/;
+
+export function dbtMetricType(m: Measure): DbtMetricType {
+  if (m.rollingWindow) return 'cumulative';
+  if (m.type !== 'number') return 'simple';
+  return RATIO_SQL.test(m.sql) ? 'ratio' : 'derived';
+}
+
+/**
+ * The FINEST time grain this dataset's metrics can be queried at — the floor a client must respect
+ * (M-R4.3). It is the grain the semantic emitter declares on every time dimension, so the two
+ * answers are the same answer; `null` means the dataset exposes no time dimension at all, and a
+ * time-bucketed slice of it is not available.
+ */
+export function metricTimeGrain(d: Dataset): 'day' | null {
+  return d.columns.some((c) => inferDimType(c.name) === 'time') ? 'day' : null;
 }

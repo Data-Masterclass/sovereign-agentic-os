@@ -1982,3 +1982,116 @@ deviation is.
 
 (empty)
 
+
+### Stream M — metrics
+
+- **M-1 M6 is enforced at DEFINE time, not by removing numbers the compiler already serves.** The
+  brief reads "the compiler must refuse `cumulative` and `derived` with a typed, named refusal
+  rather than return a number". Taken literally that is a regression: `tabs/metrics/lib/explorer.ts`
+  `baseAggExpr` already serves a `derived` formula by substituting its siblings one level deep, and
+  `windowFrame` already serves a trailing window when the window's unit equals the slice grain —
+  removing both would blank every dashboard panel built on one and break M-R8.1 ("the panel's number
+  is the explorer's number"). So the refusal is implemented in the two places that make it
+  meaningful without losing a working number: (a) `semantic/from-measures.ts` refuses at DEFINE time
+  and emits **nothing** for any shape the compiler cannot serve (the stream's own hard rule), and
+  (b) a new typed `serveRefusal(dataset, measure, spec)` in `explorer.ts` returns
+  `{ code, metricType, reason }` for every slice the compiler declines, which
+  `lib/build/explore-server.ts` now returns as `refusal` beside the existing `pending`. Previously
+  that case carried a prose `warning` and only for rolling windows. Tested in
+  `tabs/metrics/lib/dbt-metric.test.ts`.
+- **M-2 The images run dbt 1.9, not the pinned 1.10 — so the constant carries a target AND a
+  floor.** `images/extensions/dbt/Dockerfile` and `images/extensions/dagster/Dockerfile` both pin
+  `dbt-core>=1.8,<1.10`, which pip resolves to 1.9.x. D4 says to pin DSI 0.8.5 / dbt-core 1.10 and
+  that "the pin must match what ships". Both cannot be literally true, so `DBT_SEMANTIC_SPEC` carries
+  `dsiVersion 0.8.5` / `dbtCore 1.10` as the **target** and `minDbtCore 1.9` as the **floor**, every
+  emitted field is valid on both (they differ for nothing this emitter writes), and the test asserts
+  the floor and the image pin together so a drift in either is visible. `cumulative_type_params`
+  does not exist on dbt 1.8 at all, which is why the floor is 1.9 and not 1.8. **Not changed:** the
+  Dockerfiles. Bumping a cluster-wide dbt version unattended is not this stream's call; it is a
+  one-line backlog item (`dbt-core>=1.10,<1.11`) with a `dbt parse` verification behind it.
+- **M-3 Finding (M7): archiving a metric commits nothing.** `archiveMetric`, `unarchiveMetric` and
+  `moveMetric` (`tabs/metrics/lib/lifecycle.ts`) write only an in-memory lifecycle overlay keyed by
+  metric id, so a metric's archive state and folder exist in no file and survive no restart of the
+  registry. Every other metric write (define, edit, rename, delete, restore) commits. Per the
+  programme's own rule — "no artefact kind may ship a writer that does not commit", and
+  OS-governance metadata belongs in `os/*.yml` precisely so it is readable in a clone — the overlay
+  should become `os/metrics.yml` in the domain repo. Not done tonight: it is a new `os/*.yml`
+  section, which needs a `parse_*` in `images/extensions/dagster/os_projects.py` to stay honest, and
+  that image is explicitly out of this stream's scope.
+- **M-4 Finding (M9.4 / M-R9.4): a metric on an invisible dataset answers `forbidden`, not
+  `not_found`, so existence leaks.** `core/mcp/wave-a.test.ts:276` asserts the current behaviour
+  deliberately. The requirement is a byte-identical `not_found`. The fix is not local to metrics —
+  `getDataset` throws 403 for every tab — so changing it is a governance-wide change with its own
+  parity sweep, and it is recorded rather than attempted. Backlog.
+- **M-5 The emitter de-duplicates dbt names, because dbt's namespaces are project-global.** Not in
+  the brief, and load-bearing: two datasets in one domain each with a `revenue` measure would make
+  `dbt parse` fail for the **whole** domain, taking every other dataset's models down with it. So
+  one allocator per namespace (measures and metrics are separate namespaces — a measure and its
+  `type: simple` metric sharing a name is the canonical dbt shape) is shared across the domain, a
+  collision is qualified with the semantic model's name, and the OS identity never moves: every
+  metric carries `config.meta.os_metric` / `os_member` / `os_dataset`. Tested.
+- **M-6 `tabs/data/lib/semantic.ts` was not deleted, it was hollowed out.** The brief says "replace
+  it". Its two exports are consumed by `tabs/data/lib/store.ts` (`SEMANTIC_ARTIFACT`,
+  `scaffoldSemanticYaml`) at four call sites and by the dataset-files surface, and `store.ts` is not
+  this stream's file. So the signatures are unchanged and the body now delegates to the typed
+  emitter, which makes the preview byte-identical to the committed file. Two defects it carried are
+  now regression assertions: it emitted `ref('mart_<slug>')`, a model no generated project contains
+  (so the artefact would have failed `dbt parse` for the whole domain the moment it reached it), and
+  `expr: "{{ metric('x') }}"` for a derived metric, which is not a form dbt accepts there.
+- **M-7 Three contract files were added for other streams, as PURE adapters taking resolved facts.**
+  `tabs/metrics/lib/engineering.ts` (`engineeringView('metric', id, input)` for T) and
+  `tabs/data/lib/dbt/semantic/ingest.ts` (`ingestFromRepo('metric', files)` for E) deliberately take
+  their inputs rather than looking anything up. Two reasons: `core/engineering/` does not exist yet
+  (T lands it tonight), and `scripts/check-structure.mjs` ratchets TAB-ISOLATION — a new
+  `@tabs/<other>` import from either file would GROW the count and fail the gate. Both are
+  JSON-serialisable so the MCP twin and the UI share one structure. T wires the engineering input
+  from the registry it already reads; E owns the registry write and the receive-gate message.
+- **M-8 The ratio compiler now wraps its divisor in `NULLIF(…, 0)` (M-R2.4).** A denominator that
+  aggregated to zero made Trino fail the entire query ("Division by zero"), so one empty slice took
+  out the whole panel rather than one cell. Null-safe, not zero-safe: a substituted 0 would read as
+  a real answer. `tabs/metrics/lib/build/explore-presave.test.ts` pins the new SQL shape.
+- **M-9 Files touched outside this stream's stated ownership, each minimally and for a stated
+  reason.** `tabs/admin/mcp/discovery-read-tools.ts` (the `query_metric` + `list_metrics`
+  DESCRIPTIONS and the `list_metrics` payload fields — the brief assigns "the metric tool's
+  descriptions" to M while the file lives in the Admin tab; stream C's note in the plan says C adds
+  only `outputSchema` there, so the halves do not collide), `core/mcp/prompts.ts` and
+  `core/mcp/governance-tools.ts` (one Cube claim each, inside M13's stated scope),
+  `core/mcp/experimental/data-write-tools.ts` and `tabs/data/context.md` (stream X filed these to M
+  as X-4/X-6; `tabs/data/context.md` was pointing agents at `/api/cube/models`, a route that does
+  not exist), `tabs/metrics/lib/{store,model,explorer,agent,physical-delete,lifecycle-adjacent}.ts`
+  and `tabs/metrics/ui/Alerts.tsx` (inside `tabs/metrics/**`, which M owns),
+  `scripts/{license-check.sh,metricflow-floor.mjs}` (M14 names the licence gate as M's work).
+  **Not touched, on purpose:** `tabs/dashboards/**` (D), `tabs/data/guide.md` (C owns the semantic
+  sentence), `tabs/data/lib/store.ts`, `images/**`, `core/kernel/config.ts` (a module constant was
+  enough), `core/mcp/registry.ts` (no new tool was added).
+- **M-10 Stream X's Cube tripwire can drop its `tabs/metrics/**` carve-out.** X-4 allowlisted this
+  stream's files by ownership in `core/mcp/cube-honesty.test.ts` and asked for the carve-out to be
+  removed once M landed. All eleven lines X named are fixed (`context.md` 3/7/8/20, `guide.md`
+  5/14/21/23/30/31, `ui/Alerts.tsx` 24/88), plus X-6's `core/mcp/experimental/data-write-tools.ts:749`
+  and `tabs/data/context.md`. This stream added its own tripwire
+  (`tabs/metrics/lib/honest-text.test.ts`) rather than editing X's test on another branch; widening
+  X's roots to `tabs/metrics/**` and `tabs/data/context.md` is a coordinator action at merge.
+- **M-11 Stream G's three hand-off lines are PREPARED, not wired — `@core/ui/git/GitHeadBadge` and
+  `core/infra/git-objects.ts` exist only on `night2/G`.** Importing a module that is not in this
+  tree fails `npx tsc --noEmit`, and a gate that does not pass is not a hand-off, so the coordinator's
+  fallback was taken: the contract is implemented and the wiring is recorded for the merger.
+  Prepared here: `tabs/metrics/lib/git-object.ts` (pure, tested) gives the location G's resolver
+  needs — `paths: ['models/semantic/<model>.yml', 'models/personal/<uid>/semantic/<model>.yml']`
+  (BOTH lanes, so a promotion does not truncate the history) and, critically,
+  `trailerId: 'metric:<datasetId>.<measure>'` rather than the bare id, because
+  `tabs/data/lib/dbt/commit.ts` `metricObjectId` writes the kind-prefixed form and G's
+  `GitObjectLocation.trailerId` defaults to the plain id — leaving it to default would return an
+  empty history for every metric. The three lines the merger adds:
+  (1) `tabs/metrics/ui/` detail header: `import GitHeadBadge from '@core/ui/git/GitHeadBadge';`
+  plus `<GitHeadBadge kind="metric" id={metric.id} />`;
+  (2) `instrumentation.ts` boot step: `registerGitObject('metric', async (user, id) => { … })`,
+  resolving the metric through the tab's own governed read (`getMetric(id, user)` → `null` when it
+  throws, which is what makes "not found" and "not visible" byte-identical) and returning
+  `metricGitLocation(id, { domain, semanticModel: modelName(dataset), ownerUid: sanitizeIdent(dataset.owner), name })`;
+  (3) `GIT_OBJECT_LAYOUT.metric.writer` flips from
+  `{ state: 'landing', via: 'tabs/data/lib/dbt/commit.ts', stream: 'M …' }` to
+  `{ state: 'committed', via: 'tabs/data/lib/dbt/commit.ts', since: 'night 2 stream M' }` — the
+  writer is now real and tested (`commit.test.ts` "M7: every metric write commits with
+  OS-Object: metric:<datasetId>.<measure>"), **with the caveat in finding M-3** that archive /
+  unarchive / folder-move still write only an in-memory overlay. G's `paths` and `personalLane`
+  rows already match what the generator writes, byte for byte.

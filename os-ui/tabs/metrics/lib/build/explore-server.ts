@@ -13,6 +13,8 @@ import {
   dropToSql,
   exploreSpec,
   previewTrinoSql,
+  serveRefusal,
+  type ServeRefusal,
   sqlRowsToExploreRows,
 } from '@tabs/metrics/lib/explorer';
 import { liveMetricsReachable } from '@tabs/metrics/lib/build/live-clients';
@@ -90,6 +92,8 @@ export type ExploreServerResult = {
   /** True when the metric compiles but has no number for this slice yet (a window metric
    *  needs a time dimension) — a soft "pending", never a fabricated value. */
   pending?: boolean;
+  /** Set WITH `pending` — the TYPED, NAMED reason the OS compiler served no number (M6). */
+  refusal?: ServeRefusal;
   /** True on a real deployment when the semantic layer is unreachable — no number is
    *  returned (rows: []) rather than a fabricated one. The UI shows an honest outage. */
   unavailable?: boolean;
@@ -156,15 +160,16 @@ export async function exploreMetric(
       // as governed SQL but REQUIRES a time dimension + granularity — a window with
       // no series, or an inexpressible trailing frame, has no honest number, so we return an
       // explicit pending with a clear reason rather than a fabricated value.
-      const reason = measure.rollingWindow
-        ? 'This is a rolling-window / running-total metric — add a time dimension and a matching granularity (e.g. day) to the slice so the trailing series can be computed.'
-        : undefined;
+      // A TYPED, NAMED refusal (M6) — the code, the dbt metric type and the reason, so the UI and
+      // an MCP client can both say WHY there is no number instead of showing a blank tile.
+      const refusal = serveRefusal(dataset, measure, spec)!;
       return {
         ...base,
         rows: [],
         securityContext: identities.securityContext,
         pending: true,
-        ...(reason ? { warning: reason } : {}),
+        refusal,
+        warning: refusal.reason,
       };
     }
     // Run AS the delegated token's SUBJECT (R3 — the viewer's uid). For a personal dataset the

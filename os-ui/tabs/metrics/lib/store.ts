@@ -3,7 +3,7 @@
  */
 import { type Principal, getDataset, listDatasets, peekDatasetMeasureNames } from '@tabs/data/lib/store';
 import { type MetricRecord, metricRecord } from '@tabs/metrics/lib/governance';
-import { measureMember } from '@tabs/metrics/lib/model';
+import { measureMember, dbtMetricType, metricTimeGrain, type DbtMetricType } from '@tabs/metrics/lib/model';
 import { isMetricArchived, metricFolder } from '@tabs/metrics/lib/lifecycle';
 
 /**
@@ -25,6 +25,11 @@ export type MetricSummary = {
   tier: 'personal' | 'domain' | 'marketplace';
   owner: string;
   type: string;
+  /** The dbt semantic-layer metric type this metric is emitted as — so a client can pick a valid
+   *  slice without a round trip (M-R9.5). */
+  metricType: DbtMetricType;
+  /** The FINEST time grain this metric can be bucketed at; absent ⇒ no time dimension at all. */
+  grain?: 'day';
   /** Source domain — set on shared/marketplace metrics for provenance display. */
   domain?: string;
   /** The folder this metric lives in (normalised path; `'/'` = root). Rides the metric
@@ -57,6 +62,8 @@ function summariesFor(datasetId: string, user: Principal): MetricSummary[] {
       tier: TIER_OF[d.tier],
       owner: d.owner,
       type: m.type,
+      metricType: dbtMetricType(m),
+      ...(metricTimeGrain(d) ? { grain: 'day' as const } : {}),
       domain: d.domain || undefined,
       folder: metricFolder(id),
       archived: isMetricArchived(id),
@@ -86,6 +93,7 @@ export function safeSummariesFor(datasetId: string, user: Principal): MetricSumm
       tier: 'personal',
       owner: user.id,
       type: 'error',
+      metricType: 'simple',
       folder: '/',
       error: e instanceof Error ? e.message : 'this metric could not be loaded',
     }];

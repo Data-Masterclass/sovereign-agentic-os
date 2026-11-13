@@ -318,3 +318,82 @@ test('review M3: two rapid writes produce two commits, each with its own actor, 
   assert.ok(!schemaA.includes('not_null'), "the first commit carries the second write's state");
   assert.match(schemaB, /not_null/);
 });
+
+// ---------------------------------------------------------------- metrics (stream M) ---
+
+/** The smallest scenario that yields a dataset with a BUILT gold and one metric. */
+function withMetric(): string {
+  const id = seedOrders();
+  store.setDocs(id, amir, { description: 'Orders', columns: [{ name: 'order_id', description: 'key' }, { name: 'order_date', description: 'when' }, { name: 'amount', description: 'value' }] });
+  store.buildVersion(id, amir, 'gold', { quality: 'unknown', artifact: 'gold/mart_orders.sql', passThrough: true });
+  return id;
+}
+
+test('M7: every metric write commits with OS-Object: metric:<datasetId>.<measure>', async () => {
+  __setDataProjectGitForTests(true);
+  installSpy();
+  const id = withMetric();
+  calls = [];
+
+  store.defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'amount' });
+  await awaitDataProjectCommits();
+  assert.equal(parseTrailers(calls.at(-1)!.message)['OS-Object'], `metric:${id}.revenue`);
+  assert.match(parseTrailers(calls.at(-1)!.message)['OS-Action'], /^define metric revenue$/);
+
+  calls = [];
+  store.defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'amount' }); // UPSERT in place
+  await awaitDataProjectCommits();
+  assert.equal(parseTrailers(calls.at(-1)!.message)['OS-Object'], `metric:${id}.revenue`);
+  assert.match(parseTrailers(calls.at(-1)!.message)['OS-Action'], /^update metric revenue$/);
+
+  calls = [];
+  store.setMeasureLabel(id, amir, 'revenue', 'Revenue');
+  await awaitDataProjectCommits();
+  assert.equal(parseTrailers(calls.at(-1)!.message)['OS-Object'], `metric:${id}.revenue`);
+
+  calls = [];
+  store.removeMeasure(id, amir, 'revenue');
+  await awaitDataProjectCommits();
+  assert.equal(parseTrailers(calls.at(-1)!.message)['OS-Object'], `metric:${id}.revenue`);
+
+  // A dataset write on the SAME dataset keeps the dataset-shaped trailer — the kinds do not blur.
+  calls = [];
+  store.renameDataset(id, amir, 'Orders 2');
+  await awaitDataProjectCommits();
+  assert.match(parseTrailers(calls.at(-1)!.message)['OS-Object'], new RegExp(`^${id} \\(`));
+});
+
+test('M1/M7: the metric write really changes models/semantic/<model>.yml in the committed tree', async () => {
+  __setDataProjectGitForTests(true);
+  const seen: Map<string, string>[] = [];
+  uninstall = installDataProjectCommitHook({
+    committer: async (_domain, files, _opts) => {
+      seen.push(files);
+      return { sha: 'a'.repeat(40), changed: true };
+    },
+  });
+  const id = withMetric();
+  seen.length = 0;
+  store.defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'amount' });
+  await awaitDataProjectCommits();
+  const files = seen.at(-1)!;
+  const path = [...files.keys()].find((k) => k.includes('/semantic/'));
+  assert.ok(path, `no semantic file committed: ${[...files.keys()].join(', ')}`);
+  assert.match(files.get(path)!, /^semantic_models:/);
+  assert.match(files.get(path)!, /type: simple/);
+  assert.match(files.get(path)!, new RegExp(`os_metric: ${id}\\.revenue`));
+  // The spine comes with it: the dataset declares a time dimension (`order_date`).
+  assert.ok(files.has('models/os/os_time_spine_day.sql'));
+  assert.ok(files.has('models/os/schema.yml'));
+});
+
+test('M7: with the flag OFF a metric write touches no repo at all', async () => {
+  __setDataProjectGitForTests(false);
+  installSpy();
+  const id = withMetric();
+  calls = [];
+  store.defineMeasure(id, amir, { name: 'revenue', type: 'sum', sql: 'amount' });
+  store.removeMeasure(id, amir, 'revenue');
+  await awaitDataProjectCommits();
+  assert.equal(calls.length, 0);
+});

@@ -147,6 +147,19 @@ while IFS=$'\t' read -r name version spdx bundled lfile note; do
 done < "$COMPONENTS_FILE"
 
 echo
+# --- pass 3: version floors a licence deny-list cannot express ---------------
+# A pip specifier carries no SPDX id, so `denied-licenses.txt` cannot catch it. MetricFlow
+# <= 0.208.1 is Business Source License 1.1 whose Additional Use Grant excludes this product's
+# use, and BSL does not relax retroactively: the Apache-2.0 relicensing at v0.209.0 is not
+# backdated. Enforced wherever metricflow could enter a build (checklist M14).
+echo "Checking version floors (metricflow >= 0.209.0) ..."
+if command -v node >/dev/null 2>&1; then
+  if (cd "$ROOT" && node scripts/metricflow-floor.mjs); then :; else fail=1; fi
+else
+  ylw "node not found on PATH — skipping the metricflow version floor (CI always has node)."
+fi
+
+echo
 echo "checked $checked bundled components; warnings=$warn"
 if [[ "$fail" -ne 0 ]]; then
   red "LICENSE GATE: FAIL — a disallowed/denied license is present."
