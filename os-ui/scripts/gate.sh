@@ -24,7 +24,11 @@ node ../scripts/check-trino-rules-chart.mjs
 # mutating tool produces the SAME commit and the SAME Dagster launch as the UI route's service.
 # `sync-schedule-view.test.ts` (B4-review H-3) pins that the opt-out's "nothing schedules this"
 # always reaches the user. This comment sat above the chart checks, which it never described
-# (B4-review L-8).
+# (B4-review L-8). Part F adds `core/mcp/mcp-conformance.test.ts` — the SAME contract over the
+# WHOLE registry (all 113 tools, not just the data tab): advertised + schema, dispatches, an
+# absent object is `not_found` from every object-addressed tool, an existing invisible one is
+# refused per the OS convention, a role gate names its role, and no tool answers the `error`
+# catch-all (which is how `suggest_metrics`'s raw `fetch failed` was found).
 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/agents/lib/build/os-tools.test.ts \
   core/runtime/runtime.test.ts \
@@ -62,4 +66,5 @@ node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/agents/lib/engine/data-context.test.ts \
   tabs/data/lib/sync-schedule-view.test.ts \
   tabs/data/lib/mcp-parity.test.ts \
-  tabs/data/lib/mcp-conformance.test.ts
+  tabs/data/lib/mcp-conformance.test.ts \
+  core/mcp/mcp-conformance.test.ts

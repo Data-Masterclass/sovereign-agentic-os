@@ -514,6 +514,26 @@ function toolError(id: string | number | null | undefined, error: ToolError): Js
   });
 }
 
+/**
+ * A transport failure reaching a bundled component (model gateway, warehouse, catalog, tracer).
+ * Node's `fetch` throws a bare `TypeError: fetch failed` with the real cause nested, and an
+ * aborted request throws an `AbortError` — neither carries an HTTP `status`, so without this both
+ * fell into the `error` catch-all and reached the client as an unactionable `fetch failed`
+ * (checklist X7, found by `core/mcp/mcp-conformance.test.ts` on `suggest_metrics`). A client can
+ * act on `upstream_error`: it is not the caller's arguments and not a governance denial.
+ */
+function isUpstreamUnreachable(e: unknown): boolean {
+  const codes = /(ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|UND_ERR)/;
+  for (let cur: unknown = e, depth = 0; cur && depth < 5; cur = (cur as { cause?: unknown }).cause, depth++) {
+    const err = cur as { name?: string; code?: string; message?: string };
+    if (err.name === 'AbortError' || err.name === 'TimeoutError') return true;
+    if (typeof err.code === 'string' && codes.test(err.code)) return true;
+    const message = typeof err.message === 'string' ? err.message : '';
+    if (/^fetch failed$/i.test(message) || codes.test(message) || /socket hang up|network error/i.test(message)) return true;
+  }
+  return false;
+}
+
 /** Map a thrown error (its HTTP-ish `status`) to a typed code + an actionable hint. */
 export function structuredError(e: unknown): ToolError {
   const status = (e as { status?: number }).status;
@@ -523,7 +543,8 @@ export function structuredError(e: unknown): ToolError {
       : status === 404 ? 'not_found'
         : status === 409 ? 'conflict'
           : status === 400 ? 'bad_request'
-            : 'error';
+            : status === undefined && isUpstreamUnreachable(e) ? 'upstream_error'
+              : 'error';
   const hint =
     code === 'forbidden'
       ? 'This needs a higher role or a domain you belong to — ask a Builder/Admin, or keep it Personal.'
@@ -533,7 +554,9 @@ export function structuredError(e: unknown): ToolError {
           ? 'Already in that state — this call is idempotent, so no further action is needed.'
           : code === 'bad_request'
             ? 'Check your arguments against the tool’s inputSchema (each carries an example).'
-            : 'Unexpected failure — retry, or inspect `reason`.';
+            : code === 'upstream_error'
+              ? 'A component this tool depends on is unreachable (model gateway, warehouse, catalog). Check Platform → Components for its health row, then retry — your arguments are fine.'
+              : 'Unexpected failure — retry, or inspect `reason`.';
   return { code, reason, hint };
 }
 

@@ -122,12 +122,42 @@ export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boo
     write: false,
   },
   // ---- Publish helpers / lifecycle ----
-  { name: 'start_preview', description: 'Start the private sandbox preview (no review).', write: true },
-  { name: 'use_connection', description: 'Consume a granted Connection (no raw creds).', write: true },
-  { name: 'use_data', description: 'Consume a granted Data product (no raw creds).', write: true },
-  { name: 'use_knowledge', description: 'Consume granted Knowledge (no raw creds).', write: true },
-  { name: 'use_as_data', description: 'Snapshot app data into a Bronze dataset.', write: true },
-  { name: 'archive', description: 'Archive the app (disable + retain data).', write: true },
+  {
+    name: 'start_preview',
+    description:
+      'Start the app’s PRIVATE sandbox preview — a running instance only you can reach, with no review and no promotion. Use it to see a built app before `request_deploy`. Owner-only (a domain colleague cannot preview your app). Governance: an unseeable app id → not_found; an app you can see but do not own → forbidden. Next: `get_software_status` reports the preview URL and readiness.',
+    write: true,
+  },
+  {
+    name: 'use_connection',
+    description:
+      'GRANT the app a Connection it may consume, BY REFERENCE — the app receives the connection id, never raw credentials (the OS resolves the secret at call time, as the acting user). `ref` is the connection id from `list_connections`; the connection must be one you can see and the app one you own (or an owning-domain Builder+). Idempotent: re-granting the same ref changes nothing. Governance: an app id you cannot see → not_found; an app you may see but not grant for → forbidden. Next: `get_software` shows the app’s `grants.connections`.',
+    write: true,
+  },
+  {
+    name: 'use_data',
+    description:
+      'GRANT the app a Data product it may read, BY REFERENCE — the app receives the dataset id and reads through the governed path under the acting user’s row-level scope, never a warehouse credential. `ref` is the dataset id from `list_datasets` (a built, governed GOLD/asset version is what an app should consume). The dataset must be visible to you and the app yours (or an owning-domain Builder+). Idempotent. Governance: an unseeable app id → not_found; an app you may see but not grant for → forbidden. Next: `get_software` shows `grants.data`.',
+    write: true,
+  },
+  {
+    name: 'use_knowledge',
+    description:
+      'GRANT the app a Knowledge workflow it may consume, BY REFERENCE — the app receives the workflow id and retrieves through the governed index, never a raw store credential. `ref` is the workflow id from `list_knowledge`; published/Domain knowledge is what an app should consume. The workflow must be visible to you and the app yours (or an owning-domain Builder+). Idempotent. Governance: an unseeable app id → not_found; an app you may see but not grant for → forbidden. Next: `get_software` shows `grants.knowledge`.',
+    write: true,
+  },
+  {
+    name: 'use_as_data',
+    description:
+      'CLOSE THE LOOP app → Data: snapshot the app’s own records into a BRONZE dataset in the app’s domain, so what the app collected becomes a governed data product other tools (metrics, dashboards, dbt models, agents) can use. Read-only against the app, additive in Data: it creates or adds a version to the dataset, it never mutates the app. Owner-only (not a domain colleague — the app’s records are the owner’s to publish). Governance: an unseeable app id → not_found; an app you can see but do not own → forbidden. Next: `list_datasets` shows the Bronze dataset, then `transform_silver` / `build_gold_join` to refine it.',
+    write: true,
+  },
+  {
+    name: 'archive',
+    description:
+      'ARCHIVE the app: disable it (no preview, no deploy, no serving) while RETAINING its records, spec and lineage — the reversible counterpart to `delete`, which is lineage-blocked and permanent. Use it to retire an app without losing what it collected (`use_as_data` first if its records should become a dataset). Owner or an Admin. Governance: an unseeable app id → not_found; an app you can see but may not archive → forbidden.',
+    write: true,
+  },
   { name: 'delete', description: 'Delete the app (lineage-aware; blocked if depended on).', write: true },
   // ---- Developer mode (the escape hatch — NOT the default path) ----
   { name: 'commit', description: 'DEVELOPER MODE — writes files DIRECTLY to the app folders, BYPASSING the staged Design→Build→Test governance and the design-before-build gate. Role-gated to builder/admin; a Creator cannot use it. Use the governed stage tools (design_software → build_software → verify_software) for the normal flow; reach for commit only as a deliberate exception.', write: true },
