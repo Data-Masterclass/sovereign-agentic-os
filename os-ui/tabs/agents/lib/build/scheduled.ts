@@ -9,6 +9,9 @@ import { governSystemForOwner } from '@tabs/agents/lib/build/owner-grants';
 import { isAgenticOsTeam } from '@tabs/agents/lib/build/os-tools';
 import { runOsTeam } from '@tabs/agents/lib/build/agentic-graph-server';
 import { runSystem } from '@tabs/agents/lib/build/server';
+import { config } from '@core/kernel/config';
+import { selectEngine } from '@tabs/agents/lib/engine/select';
+import type { AgentsEngine } from '@core/kernel/agents-engine';
 
 /** The record the in-cluster scheduler reads (unscoped, no human session). */
 export type SchedulerSystem = { yaml: string; owner: string; disabledAgents: string[] };
@@ -21,6 +24,8 @@ export type ScheduledDeps = {
   runSystem?: typeof runSystem;
   /** The platform autonomous-execution gate (default: live setting). Injected for tests. */
   autonomousEnabled?: () => boolean;
+  /** The platform engine flag (default: `config.agentsEngine`). Injected for tests. */
+  agentsEngine?: AgentsEngine;
 };
 
 /** A discriminated outcome so the route stays a thin status/JSON translator. */
@@ -84,6 +89,9 @@ export async function runScheduledSystem(
   }
 
   const sys = parseSystem(rec.yaml);
+  // ENGINE FLAG (engine rebuild, Phase A0): same selector as the interactive route and the
+  // MCP tool. Only the walker exists today; Phase A1 branches on `langgraph` HERE.
+  const engine = selectEngine({ agentsEngine: deps.agentsEngine ?? config.agentsEngine }, sys);
 
   if (isAgenticOsTeam(sys)) {
     const owner = await (deps.resolveOwner ?? resolveOwner)(rec.owner);
@@ -113,6 +121,7 @@ export async function runScheduledSystem(
       ok: true,
       report: {
         mode: 'live',
+        engine,
         team: true,
         path: team.path,
         finalText: team.finalText,

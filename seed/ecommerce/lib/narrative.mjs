@@ -224,7 +224,8 @@ export const KNOWLEDGE_DOCS = [
 /**
  * Agents — three governed systems. `grants` reference ids the seed resolves at
  * run time (data: the Gold dataset; knowledge: the workflow; connections: the
- * MCP/db; tools: governed MCP tools incl. `predict`). The seed fills the
+ * MCP/db; tools: governed MCP registry names — there is no governed `predict` tool, so
+ * the fraud agent reads risk context from the granted Gold data instead). The seed fills the
  * placeholders, writes system.yaml via the governed file API, then Build + Run.
  */
 export const AGENTS = [
@@ -241,7 +242,7 @@ export const AGENTS = [
         '"Handle a return" workflow and the published returns policy. Defer fraud-flagged ' +
         'orders to manual review. Be concise and kind.',
     },
-    grantTools: ['knowledge_search'],
+    grantTools: ['search_knowledge'],
     grantKnowledge: ['{{handle_a_return}}'],
     grantConnections: [{ id: '{{support_mcp}}', capability: 'Read' }],
     runPrompt: 'A customer wants to return a Summit 2P tent with a bent pole within 14 days. What do we do?',
@@ -256,10 +257,10 @@ export const AGENTS = [
       role: 'Fraud screening for new orders',
       agent_md:
         '# Fraud Agent\nScreen orders using the "Fraud check" workflow. Hold orders where ' +
-        'billing region != shipping region and order_total > 300 EUR. Call the churn/predict ' +
-        'tool only for risk context, never to auto-refund.',
+        'billing region != shipping region and order_total > 300 EUR. Query the granted Gold ' +
+        'data only for risk context, never to auto-refund.',
     },
-    grantTools: ['knowledge_search', 'predict'],
+    grantTools: ['search_knowledge', 'query_data'],
     grantKnowledge: ['{{fraud_check}}'],
     grantData: ['{{gold_dataset}}'],
     runPrompt: 'A first-time customer in eu-west placed a 420 EUR order shipping to nordics. Screen it.',
@@ -277,7 +278,7 @@ export const AGENTS = [
         'eroding margin. Read the Revenue and AOV metrics from the governed mart before ' +
         'proposing a change.',
     },
-    grantTools: ['metrics_query'],
+    grantTools: ['list_metrics', 'query_metric'],
     grantData: ['{{gold_dataset}}'],
     runPrompt: 'Propose a Tent + Quilt bundle discount that lifts AOV in eu-central.',
   },

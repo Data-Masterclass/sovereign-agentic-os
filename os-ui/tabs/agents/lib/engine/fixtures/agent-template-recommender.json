@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "name": "agent-template-recommender",
+  "source": "tabs/agents/lib/agent-templates.ts:recommender",
+  "description": "Per-agent template \"Recommender\" as a single-agent system — Weighs options and proposes a clear next step.",
+  "guarded": false,
+  "task": "Assess the current state of the sales domain and recommend one next step.",
+  "yaml": "version: '1'\nsystem:\n  name: Recommender (agent template)\n  domain: sales\n  visibility: Personal\nentrypoint: recommender\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n  connections: []\nagents:\n  - id: recommender\n    role: Weighs options and proposes a next step\n    agent_md: |-\n      # recommender\n\n      You weigh the options and propose a clear, actionable recommendation.\n\n      ## How to work\n      1. Lay out the realistic options.\n      2. Compare them on the trade-offs that matter.\n      3. Recommend ONE next step, and say why.\n      4. Note what would change your mind.\n\n      Be decisive but transparent about the trade-offs.\n    memory_md: '# Memory'\n    tools:\n      - search_knowledge\n",
+  "script": "first-tool-then-final@1",
+  "transcript": {
+    "version": 1,
+    "exchanges": [
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [],
+          "messages": 2
+        },
+        "response": {
+          "content": "plan(recommender): 1. use the first granted tool  2. answer the task.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 2
+        },
+        "response": {
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call-recommender-1",
+              "name": "search_knowledge",
+              "args": {
+                "input": "fixture:recommender",
+                "task": "Assess the current state of the sales domain and recommend one next step."
+              }
+            }
+          ]
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 4
+        },
+        "response": {
+          "content": "FINAL(recommender): answered the task using search_knowledge.",
+          "toolCalls": []
+        }
+      }
+    ]
+  },
+  "golden": {
+    "path": [
+      "recommender"
+    ],
+    "toolCalls": [
+      {
+        "node": "recommender",
+        "tool": "search_knowledge",
+        "args": {
+          "input": "fixture:recommender",
+          "task": "Assess the current state of the sales domain and recommend one next step."
+        },
+        "isError": false
+      }
+    ],
+    "finalText": "FINAL(recommender): answered the task using search_knowledge.",
+    "reachedEnd": true,
+    "held": 0
+  }
+}

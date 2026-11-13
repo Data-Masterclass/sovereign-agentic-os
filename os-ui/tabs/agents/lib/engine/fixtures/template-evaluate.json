@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "name": "template-evaluate",
+  "source": "tabs/agents/lib/templates.ts:evaluate",
+  "description": "Starter template \"Evaluate\" — Scores something against clear criteria and flags risks.",
+  "guarded": false,
+  "task": "Assess the current state of the sales domain and recommend one next step.",
+  "yaml": "version: '1'\nsystem:\n  name: Evaluate starter\n  domain: sales\n  visibility: Personal\nentrypoint: evaluator\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n  connections: []\nagents:\n  - id: evaluator\n    role: Scores against criteria and flags risks\n    agent_md: |-\n      # Evaluate starter — Evaluator\n\n      You evaluate something against clear criteria and give a fair, evidence-based verdict.\n\n      ## How to work\n      1. State the criteria you are judging against.\n      2. For each one, cite the evidence and give a rating.\n      3. Flag risks and weak spots explicitly.\n      4. Finish with an overall verdict and confidence level.\n\n      Be balanced. Reward strengths, name weaknesses.\n    memory_md: |-\n      # Memory\n\n      (Criteria, rubrics and past judgments this evaluator should keep.)\n    tools:\n      - search_knowledge\n",
+  "script": "first-tool-then-final@1",
+  "transcript": {
+    "version": 1,
+    "exchanges": [
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [],
+          "messages": 2
+        },
+        "response": {
+          "content": "plan(evaluator): 1. use the first granted tool  2. answer the task.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 2
+        },
+        "response": {
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call-evaluator-1",
+              "name": "search_knowledge",
+              "args": {
+                "input": "fixture:evaluator",
+                "task": "Assess the current state of the sales domain and recommend one next step."
+              }
+            }
+          ]
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 4
+        },
+        "response": {
+          "content": "FINAL(evaluator): answered the task using search_knowledge.",
+          "toolCalls": []
+        }
+      }
+    ]
+  },
+  "golden": {
+    "path": [
+      "evaluator"
+    ],
+    "toolCalls": [
+      {
+        "node": "evaluator",
+        "tool": "search_knowledge",
+        "args": {
+          "input": "fixture:evaluator",
+          "task": "Assess the current state of the sales domain and recommend one next step."
+        },
+        "isError": false
+      }
+    ],
+    "finalText": "FINAL(evaluator): answered the task using search_knowledge.",
+    "reachedEnd": true,
+    "held": 0
+  }
+}

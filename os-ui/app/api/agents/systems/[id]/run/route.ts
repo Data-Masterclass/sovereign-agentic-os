@@ -13,6 +13,9 @@ import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
 import { deriveContextUsage } from '@tabs/agents/lib/build/context-usage';
 import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
 import { cleanTurns } from '@core/runtime/turns';
+import { config } from '@core/kernel/config';
+import { selectEngine } from '@tabs/agents/lib/engine/select';
+import type { AgentsEngine } from '@core/kernel/agents-engine';
 
 export const dynamic = 'force-dynamic';
 // A multi-node team walk (each node a PLAN→ACT loop on a large model) can run long;
@@ -117,7 +120,7 @@ function grantedIdsFromYaml(yaml: string) {
  * render + per-node persistence keep working. Kept as ONE function so the streaming
  * `done` frame and the non-streaming JSON response are byte-for-byte the same shape.
  */
-function finalizeTeamRun(team: AgenticGraphResult, running: boolean, yaml: string) {
+function finalizeTeamRun(team: AgenticGraphResult, running: boolean, yaml: string, engine: AgentsEngine) {
   // Normalise team run into LastRun shape and persist it.
   const teamSteps = team.runs.flatMap((r) =>
     r.result.steps.map((s) => ({
@@ -170,6 +173,8 @@ function finalizeTeamRun(team: AgenticGraphResult, running: boolean, yaml: strin
   const body = {
     running,
     mode: 'live' as const,
+    // Which executor produced this result (engine rebuild A0; `langgraph` arrives in A1).
+    engine,
     team: true,
     ok: teamOk && team.reachedEnd,
     reachedEnd: team.reachedEnd,
@@ -236,6 +241,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // a Creator+ consuming a domain-Shared system (the governed "run the ready-made
     // agent" path). A mere viewer / out-of-domain / participant is rejected here.
     const view = getSystemForRun(id, resolvedUser);
+    // ENGINE FLAG (engine rebuild, Phase A0): the platform default (AGENTS_ENGINE) and the
+    // system's own `runtime` key decide which executor runs this turn. Only the walker is
+    // implemented today; Phase A1 adds `if (engine === 'langgraph')` → buildGraph HERE, so
+    // every other line of this route stays untouched.
+    const engine = selectEngine(config, view.system);
     // RUN path: an empty prompt falls back to a real, purpose-derived task — never the
     // literal "Test invocation" that made recommenders answer "no action needed".
     const prompt =
@@ -277,7 +287,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       // non-streaming response, so the final render is identical either way).
       const complete = (team: AgenticGraphResult) => {
         const running = markRunFinished(id, user);
-        const { body: out, lastRun } = finalizeTeamRun(team, running, yaml);
+        const { body: out, lastRun } = finalizeTeamRun(team, running, yaml, engine);
         try { setLastRun(id, user, lastRun); } catch { /* run-only consumer: persist best-effort */ }
         return out;
       };
@@ -390,7 +400,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       traceUrl: report.traceUrl,
     };
     try { setLastRun(id, resolvedUser, lastRun); } catch { /* run-only consumer: persist best-effort */ }
-    return NextResponse.json({ running, ...report });
+    return NextResponse.json({ running, engine, ...report });
   } catch (e) {
     return fail(e);
   } finally {

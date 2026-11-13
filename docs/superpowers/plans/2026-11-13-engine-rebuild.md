@@ -25,12 +25,49 @@
 ## Part A — Agents: real LangGraph
 
 ### Phase A0 — Dependencies and parity harness
-- [ ] Add `@langchain/langgraph`, `@langchain/langgraph-checkpoint-postgres`, `pg`, `langfuse`, `langfuse-langchain` to `os-ui/package.json`; mark as `serverExternalPackages` in `next.config`. Confirm each package's LICENSE is MIT (the LangGraph *Platform* is not, and must not be bundled). Record versions and licences in `THIRD-PARTY-LICENSES.md` and `licenses/`.
-- [ ] Record/replay model caller: the harness already injects `llm` (`core/runtime/agentic.ts`); add a recorder that captures `(request → response)` to JSON fixtures and a replayer, so both engines see identical model outputs.
-- [ ] Golden fixtures: every `system.yaml` template in `tabs/agents/lib/templates.ts` / `agent-templates.ts`, plus three shapes: single agent; supervisor with two members; guarded handoff with a write grant held for approval.
-- [ ] Parity test **P1**: for fixtures without `when` guards, replaying "declared order" supervisor decisions, old `runAgenticGraph` and new `buildGraph` produce the same visited path, the same `(tool, args)` sequence, and the same final text.
-- [ ] Inventory systems with unmapped legacy tools (`os-tools.ts` `resolveGrantedTools`); they will fail compile in A1. List them in this file.
-- [ ] Engine flag plumbing: `config.agentsEngine`, read in the run route, scheduled runs, and the MCP `run_agent_system` tool.
+- [x] Add `@langchain/langgraph`, `@langchain/langgraph-checkpoint-postgres`, `pg`, `langfuse`, ~~`langfuse-langchain`~~ (not added — see deviation A0-1) to `os-ui/package.json`; mark as `serverExternalPackages` in `next.config`. Confirm each package's LICENSE is MIT (the LangGraph *Platform* is not, and must not be bundled). Record versions and licences in `THIRD-PARTY-LICENSES.md` and `licenses/`.
+- [x] Record/replay model caller: the harness already injects `llm` (`core/runtime/agentic.ts`); add a recorder that captures `(request → response)` to JSON fixtures and a replayer, so both engines see identical model outputs.
+- [x] Golden fixtures: every `system.yaml` template in `tabs/agents/lib/templates.ts` / `agent-templates.ts`, plus three shapes: single agent; supervisor with two members; guarded handoff with a write grant held for approval.
+- [x] Parity test **P1** (walker side green; one `todo` per fixture for `buildGraph`, flipped in A1): for fixtures without `when` guards, replaying "declared order" supervisor decisions, old `runAgenticGraph` and new `buildGraph` produce the same visited path, the same `(tool, args)` sequence, and the same final text.
+- [x] Inventory systems with unmapped legacy tools (`os-tools.ts` `resolveGrantedTools`); they will fail compile in A1. List them in this file.
+- [x] Engine flag plumbing: `config.agentsEngine`, read in the run route, scheduled runs, and the MCP `run_agent_system` tool.
+
+#### A0 — what landed (commit on `feat/engine-rebuild`)
+
+| Piece | Where |
+|---|---|
+| Dependencies (exact-pinned, all MIT, LICENSE files verified in `node_modules`) | `@langchain/langgraph` 1.7.4 · `@langchain/langgraph-checkpoint-postgres` 1.1.3 · `@langchain/core` 1.4.0 (explicit peer pin) · `pg` 8.23.1 · `langfuse` 3.39.2 · dev `@types/pg` 8.23.1; `serverExternalPackages` in `next.config.mjs`; rows in `THIRD-PARTY-LICENSES.md`, `licenses/components.tsv`, `core/kernel/licenses.ts`; notices in `licenses/notices/os-ui-agent-engine-npm-NOTICE.txt` |
+| Record/replay caller | `core/runtime/llm-replay.ts` (`recordingCaller`, `replayCaller`, typed `ReplayMismatchError` / `ReplayExhaustedError`) + tests |
+| Parity harness + 13 golden fixtures | `tabs/agents/lib/engine/parity-harness.ts`, `fixtures/*.json`; `fixtures.test.ts` (reproducibility; `REGEN_FIXTURES=1` rewrites), `parity.test.ts` (P1), `unmapped-inventory.test.ts` |
+| Engine flag | `core/kernel/agents-engine.ts` (`AgentsEngine`, `parseAgentsEngine`), `config.agentsEngine` ← `AGENTS_ENGINE`; `runtime: walker` opt-out in `system-schema.ts`; `tabs/agents/lib/engine/select.ts` `selectEngine`; read in `app/api/agents/systems/[id]/run/route.ts`, `build/scheduled.ts`, `core/mcp/agent-write-tools.ts` (`run_agent_system`); every run report carries `engine` |
+
+**Fixtures (13).** `template-{blank,analyze,evaluate,recommend}` (templates.ts), `agent-template-{blank,analyst,recommender,reviewer,researcher}` (agent-templates.ts, each composed as a single-agent system since those templates are per-agent fragments), `software-team` (guarded — excluded from P1), `shape-single-read` (a), `shape-supervisor-two-members` (b), `shape-guarded-handoff-held-write` (c: `when: state.findings_ready`, target holds `request_promotion`, which `read-propose` holds → `held=1` in the golden; walker visits `publisher` anyway — HANDOFF-GUARD `todo`). Scripted model rule set `first-tool-then-final@1`: PLAN → fixed plan; a node's first ACT → its first advertised tool; next ACT → `FINAL(<node>)`.
+
+#### A0 — inventory: unmapped legacy tools (the A1 compile rule)
+
+Run over every shipped `system.yaml` with `os-tools.ts` `resolveGrantedTools` against the live registry (111 tools), guarded from now on by `tabs/agents/lib/engine/unmapped-inventory.test.ts`:
+
+| System | Grants | Unmapped | Action |
+|---|---|---|---|
+| `templates.ts` blank · analyze · evaluate · recommend | `search_knowledge` | none | — |
+| `agent-templates.ts` blank · analyst · recommender · reviewer · researcher | `query_data`, `search_knowledge` | none | — |
+| `software-team.ts` (6 agents) | `create_software commit start_preview request_deploy use_connection use_data use_knowledge use_as_data` | none | — |
+| `seed/campaign` Campaign Evaluation Agent | `knowledge_search metrics_query retrieve` | `knowledge_search`, `metrics_query` (`retrieve` is an alias) | **fixed** → `search_knowledge list_metrics query_metric` |
+| `seed/ecommerce` Northpeak Support Agent | `knowledge_search` | `knowledge_search` | **fixed** → `search_knowledge` |
+| `seed/ecommerce` Northpeak Fraud Agent | `knowledge_search predict` | both — there is **no governed `predict` MCP tool** | **fixed** → `search_knowledge query_data` (reads risk context from the granted Gold data; prose adjusted) |
+| `seed/ecommerce` Northpeak Pricing Agent | `metrics_query` | `metrics_query` | **fixed** → `list_metrics query_metric` |
+
+Not a compiled system, left as is: `core/kernel/artifacts.ts` seeded registry record "Domain RAG Agent" (`spec.tools: ['knowledge_search']`, a demo artifact row). Still mapped by `OS_TOOL_ALIASES`: `retrieve`, `metrics`, `files_retrieve`, `write_file`. **Open for A1:** user-authored systems already in a live store may carry `web_fetch`, `knowledge_certify`, `connection_*`; the compile error must surface in Build/the run report, not as a 500 — consider a one-off store scan in A1.
+
+#### A0 — findings the later phases must act on
+
+1. **`software-team.ts` guards are bare identifiers, not `state.<channel>`.** Its handoffs say `when: plan_ready | committed | tests_failed | tests_passed | reported`, and `state.channels` declares only `messages`. The A1 `when` grammar ("`state.<channel>` truthiness") must either accept a bare identifier as a channel name or the compiler must reject the shipped team — and *no node sets those channels today*, so under a real evaluator every handoff is false and the team would stop after `orchestrator`/`planner`. Decide in A1 (likely: bare identifier = channel; supervisor-driven order makes the handoffs redundant for this team).
+2. **The walker's transcript has no supervisor routing exchanges.** The walker never asks the model where to go, so `route_<sup>` in A1 will make model calls the replayed transcript cannot serve; `replayCaller` fails loudly by design. For P1 on `shape-supervisor-two-members`, A1 should run `buildGraph` against the *scripted* model (fixtures carry `script: first-tool-then-final@1`; extend the script with a declared-order `route` rule) rather than the raw transcript, or extend the transcript with route exchanges.
+3. **Fixed in A0 — `grantedToolSpecs` conflated `tools: []` with "inherit all".** The orchestrator and communication agents of the shipped team (declared `tools: []`) were advertised `create_software`/`commit`/…; the first golden recorded `orchestrator → create_software`. Now `[]` = no tools, `undefined` = inherit. **Still open:** `grantedToolExecutor` gates only at SYSTEM grant level — per-node narrowing is prompt-side only. A1's `tools_<id>` must enforce node narrowing in the executor, and P1 goldens assume it.
+4. `isAgenticOsTeam` now accepts `runtime: walker` like `langgraph` (`hermes` still falls back).
+5. The `langfuse` 3.39.2 npm tarball ships **no LICENSE file**; `package.json` declares MIT and the upstream `langfuse-js` LICENSE (MIT, © ClickHouse, Inc. / PostHog) is reproduced in the NOTICE. A3 should re-verify when bumping.
+6. `liteLlmCaller` omits `tools` when the array is empty, so a tool-less node is a plain completion — safe for the fix in (3).
+
 
 ### Phase A1 — Real graph, in-request, checkpointed
 - [ ] `tabs/agents/lib/engine/build-graph.ts`: `buildGraph(ir, deps)` → compiled `StateGraph`. Typed state root: `messages` (append; keep the OpenAI wire shape, not LangChain `BaseMessage`), every `state.channels` entry (`add_messages` → append, else last-value), `task`, `current`, `handoffs`, `nodeRuns`, `budget`, `held`, `final`.
@@ -118,3 +155,14 @@
 
 ## Deviations log
 (Agents append here: phase, what differed, why.)
+
+- **A0-1 `langfuse-langchain` not added.** v3.39.2 peers on the legacy `langchain <0.4` (`@langchain/core` 0.x); installing it beside `@langchain/langgraph@1.7.4` (peer `@langchain/core ^1.3.4`) pulls a second core and its `CallbackHandler` cannot attach to v1 runnables. Our model calls go through LiteLLM via `LlmCall`, not LangChain chat models, so A3 traces explicitly with the `langfuse` SDK (`trace({ id: runId })` gives exact trace-id control). Alternative if a handler is ever wanted: `@langfuse/langchain@6` (+ `@langfuse/client`, OTel SDK).
+- **A0-2 `@langchain/core` 1.4.0 pinned explicitly** (a peer of the two LangGraph packages) so the version cannot drift under npm's auto-peer install.
+- **A0-3 Per-system override is opt-OUT only.** `runtime: walker` pins the walker; an explicit `runtime: langgraph` is indistinguishable from the default because the serializer omits it (byte-stable files). Opt-in per system therefore means flipping `AGENTS_ENGINE` and pinning the others to `walker`. If A1 needs a per-system opt-in, add a value then.
+- **A0-4 Behaviour change outside strict A0 scope:** `grantedToolSpecs(user, sys, [])` now returns no tools (finding 3). Justified because the goldens would otherwise enshrine a grant-gate bug the new engine would have to reproduce. Covered by a regression test in `os-tools.test.ts`.
+- **A0-5 Seeded demo systems edited** (`seed/campaign/narrative.mjs`, `seed/ecommerce/lib/narrative.mjs`, `seed/campaign/README.md`) to MCP names — see the inventory table. `predict` has no governed MCP tool; the fraud agent now reads the granted Gold data for risk context.
+- **A0-6 Shape (c) uses `request_promotion`, not `publish_knowledge`.** `publish_knowledge` is `domain_admin`-floor, so a builder's agent is never *advertised* it and the hold could never fire; `request_promotion` is creator-floor and in the same escalating set, so `read-propose` holds it (`holdDecision` → `domain_admin`), which the golden records (`held=1`).
+- **A0-7 `sbom.cdx.json` not regenerated locally.** `scripts/license-check.sh --update-sbom` runs `syft scan dir:.`, which on a dev checkout ingests `os-ui/node_modules`; CI's `license-gate` regenerates the SBOM from a clean checkout (package-lock) on every push. `scripts/license-check.sh --no-syft` and `npm run check:licenses` both pass locally.
+- **A0-8 Run reports gained an additive `engine` field** (route JSON + SSE `done` frame body, scheduled-run report, MCP `run_agent_system` result) so a run always says which executor produced it. `LastRun` (the persisted record) was not changed.
+- **A0-9 agent-templates fixtures are compositions.** `agent-templates.ts` ships per-agent fragments, not whole systems; each is wrapped as a single-agent system (role, instructions, suggested tools) to get a runnable fixture.
+

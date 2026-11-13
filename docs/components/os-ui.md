@@ -24,7 +24,7 @@ kubectl -n agentic-os port-forward svc/os-ui 8080:3000
 | Context | **Files** | objects in MinIO, text extracted by Docling, folder-level grants |
 | Context | **Knowledge** | a knowledge agent interviews you and authors a 3-category `.md` (workflow steps · rules & decisions · tacit context), indexed in OpenSearch with embeddings via LiteLLM |
 | Build | **Workflows** | business workflows as governed, versioned artifacts |
-| Build | **Agents** | build and run agent teams (LangGraph in agent-runtime); grants, safety presets, run traces |
+| Build | **Agents** | build and run agent teams; grants, safety presets, run traces — see "Agent engine" below for what actually executes a run |
 | Build | **Dashboards** | native ECharts panels bound to one governed view, resolved through the same path as the metric explorer |
 | Build | **Software** | app spec → design → generated files → preview → verify → deploy approval; versions are app-store revisions |
 | Manage | **Connections** | connector configs (OneDrive · Outlook · Teams · Google Drive · Gmail · Kajabi · Notion MCP · Entra · SQL · any MCP server) with server-side credentials and governed egress |
@@ -35,6 +35,31 @@ kubectl -n agentic-os port-forward svc/os-ui 8080:3000
 Each tab declares its routes, APIs, MCP tools and required services in
 `os-ui/tabs/<tab>/manifest.ts`. A tab whose services are disabled disappears from the
 navigation instead of failing when clicked; `OS_ENABLED_TABS` gates the same set.
+
+## Agent engine
+
+**Current state, stated plainly.** A `system.yaml` is compiled to a LangGraph-shaped IR
+(`tabs/agents/lib/langgraph-compile.ts`), but what *executes* a run today is a hand-rolled,
+in-process **walker** (`tabs/agents/lib/build/agentic-graph.ts`): it visits the IR nodes in a
+fixed, visited-once order (entrypoint → supervisor members in declared order → handoffs) and
+runs each node through the PLAN→ACT harness as the signed-in user. It does **not** evaluate
+handoff `when` guards and does not checkpoint; a supervisor's routing decision is the declared
+member order, not a model decision. No LangGraph library runs in os-ui yet.
+
+**A rebuild on real LangGraph is in progress** (plan of record:
+`docs/superpowers/plans/2026-11-13-engine-rebuild.md`). Phase A0 (landed) adds the dependencies
+(`@langchain/langgraph`, `@langchain/langgraph-checkpoint-postgres`, `pg`, `langfuse` — all MIT),
+a record/replay model caller, golden fixtures for every shipped template and a parity test, and
+the engine flag. Phase A1 adds `buildGraph` (one subgraph per agent, `when` guards evaluated,
+Postgres checkpoints, resume); A2 approvals as interrupts; A3 one Langfuse trace per run; A4 a
+worker; A5 deletes the walker.
+
+**The flag.** `AGENTS_ENGINE=walker|langgraph` (env, default `walker`; `core/kernel/config.ts`
+`agentsEngine`). A system may pin itself to the walker with `runtime: walker` in its
+`system.yaml` (an opt-out; the default `langgraph` runtime follows the flag). The decision is one
+pure function, `tabs/agents/lib/engine/select.ts` `selectEngine`, read by the run route, the
+scheduled-run path and the MCP tool `run_agent_system`; every run report carries the `engine`
+that produced it. Until A1 lands, `langgraph` is accepted but still executes the walker.
 
 ## Admin → Components — native stack operator
 

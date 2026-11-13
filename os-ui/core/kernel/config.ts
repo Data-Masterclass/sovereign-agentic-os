@@ -11,6 +11,7 @@
  * so credentials/keys never reach the browser.
  */
 import { parseEnabledTabs } from '@core/kernel/tabs';
+import { parseAgentsEngine } from '@core/kernel/agents-engine';
 
 function env(name: string, fallback: string): string {
   const v = process.env[name];
@@ -356,6 +357,13 @@ export const config = {
   // Each node is clamped to whatever is LEFT of this budget; the run stops early and
   // degrades gracefully once it is spent. Env-overridable.
   agentTeamRunMaxSteps: Number(env('AGENT_TEAM_RUN_MAX_STEPS', '')) || 400,
+  // Agent ENGINE (engine rebuild, plan 2026-11-13, Phases A0→A5). Which executor runs an
+  // agent system: `walker` = the hand-rolled deterministic IR walk (tabs/agents/lib/build/
+  // agentic-graph.ts, today's only implemented engine); `langgraph` = the real StateGraph
+  // engine (tabs/agents/lib/engine, lands in Phase A1). A system may pin `runtime: walker`
+  // in its system.yaml to opt out (tabs/agents/lib/engine/select.ts). Unknown values fall
+  // back to `walker`. The default flips to `langgraph` only in the deletion phase (A5).
+  agentsEngine: parseAgentsEngine(process.env.AGENTS_ENGINE),
   // LLM Gateway tab — the read-only, tenant-total usage/spend panel
   // (app/api/gateway/usage). The budget envelope is DISPLAY-ONLY: set it to
   // mirror the chart's litellmAgentKey.maxBudget / budgetDuration (the USD cap

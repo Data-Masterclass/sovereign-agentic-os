@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "name": "template-blank",
+  "source": "tabs/agents/lib/templates.ts:blank",
+  "description": "Starter template \"Start blank\" — A single helpful assistant. Build it up yourself.",
+  "guarded": false,
+  "task": "Assess the current state of the sales domain and recommend one next step.",
+  "yaml": "version: '1'\nsystem:\n  name: Start blank starter\n  domain: sales\n  visibility: Personal\nentrypoint: assistant\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n  connections: []\nagents:\n  - id: assistant\n    role: A helpful assistant\n    agent_md: |-\n      # Start blank starter\n\n      You are a helpful assistant in the Sovereign Agentic OS.\n      Use only your granted, governed tools.\n    memory_md: |-\n      # Memory\n\n      (Durable facts the assistant should always know.)\n    tools:\n      - search_knowledge\n",
+  "script": "first-tool-then-final@1",
+  "transcript": {
+    "version": 1,
+    "exchanges": [
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [],
+          "messages": 2
+        },
+        "response": {
+          "content": "plan(assistant): 1. use the first granted tool  2. answer the task.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 2
+        },
+        "response": {
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call-assistant-1",
+              "name": "search_knowledge",
+              "args": {
+                "input": "fixture:assistant",
+                "task": "Assess the current state of the sales domain and recommend one next step."
+              }
+            }
+          ]
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 4
+        },
+        "response": {
+          "content": "FINAL(assistant): answered the task using search_knowledge.",
+          "toolCalls": []
+        }
+      }
+    ]
+  },
+  "golden": {
+    "path": [
+      "assistant"
+    ],
+    "toolCalls": [
+      {
+        "node": "assistant",
+        "tool": "search_knowledge",
+        "args": {
+          "input": "fixture:assistant",
+          "task": "Assess the current state of the sales domain and recommend one next step."
+        },
+        "isError": false
+      }
+    ],
+    "finalText": "FINAL(assistant): answered the task using search_knowledge.",
+    "reachedEnd": true,
+    "held": 0
+  }
+}

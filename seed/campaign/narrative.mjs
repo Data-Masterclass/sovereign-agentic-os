@@ -514,7 +514,10 @@ export const EVAL_AGENT = {
   name: 'Campaign Evaluation Agent',
   domain: DOMAIN,
   entrypoint: 'evaluator',
-  grantTools: ['knowledge_search', 'metrics_query', 'retrieve'],
+  // MCP-registered names (engine rebuild A0): the legacy `knowledge_search` / `metrics_query` /
+  // `retrieve` vocabulary is unmapped under the A1 compile rule. list_metrics is granted explicitly
+  // so the evaluator can discover metric keys before query_metric.
+  grantTools: ['search_knowledge', 'list_metrics', 'query_metric'],
   // Resolved to real ids by the seed at run time.
   grantData: ['campaign_master', 'margin_sales_txn', 'cac_cos'],
   // Keys into KNOWLEDGE[] — the seed resolves these to runtime workflow ids.

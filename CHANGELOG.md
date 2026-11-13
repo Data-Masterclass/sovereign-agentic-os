@@ -13,6 +13,41 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Agent engine rebuild, Phase A0: dependencies, parity harness, engine flag
+
+- **Dependencies** (all MIT, exact-pinned, `serverExternalPackages`): `@langchain/langgraph`
+  1.7.4, `@langchain/langgraph-checkpoint-postgres` 1.1.3, `@langchain/core` 1.4.0, `pg` 8.23.1,
+  `langfuse` 3.39.2. Recorded in `THIRD-PARTY-LICENSES.md`, `licenses/components.tsv` and
+  `licenses/notices/os-ui-agent-engine-npm-NOTICE.txt`. `langfuse-langchain` was **not** added
+  (peer-incompatible with `@langchain/core@1`). Nothing uses the new packages yet.
+- **Record/replay model caller** `core/runtime/llm-replay.ts`: `recordingCaller` captures each
+  model exchange, `replayCaller` serves them in order and fails loudly on a model/tool-set
+  mismatch or an exhausted transcript — so two engines see identical model outputs.
+- **Golden fixtures** `tabs/agents/lib/engine/fixtures/*.json` (13): the four `templates.ts`
+  starters, the five `agent-templates.ts` roles, the Software Delivery Team and three canonical
+  shapes (single agent + read tool; supervisor with two members; guarded handoff with a held
+  write), each with its yaml, a deterministic scripted-model transcript and the current walker's
+  path / `(tool, args)` sequence / final text. `fixtures.test.ts` proves they are reproducible;
+  **parity test P1** (`parity.test.ts`) replays them through the walker and carries one `todo`
+  per fixture for the LangGraph engine (Phase A1), plus the HANDOFF-GUARD `todo` (the walker
+  visits a guarded target even when `when` is false).
+- **Engine flag** `AGENTS_ENGINE=walker|langgraph` (default `walker`) → `config.agentsEngine`;
+  per-system opt-out `runtime: walker` in `system.yaml`; `selectEngine` in
+  `tabs/agents/lib/engine/select.ts`, read by the run route, scheduled runs and the MCP tool
+  `run_agent_system`. Run reports now carry `engine`. `langgraph` is accepted but still runs
+  the walker until A1.
+
+### Fixed
+
+- **An agent with an explicit empty `tools: []` is now advertised NO tools.** `grantedToolSpecs`
+  treated an empty per-agent list like an absent one ("inherit every system grant"), so the
+  Software Delivery Team's `orchestrator` and `communication` agents — declared tool-less — were
+  handed `create_software`, `commit`, … The golden fixtures exposed it; `undefined` still inherits.
+- **Seeded demo systems grant MCP-registered tools.** `seed/campaign` and `seed/ecommerce` used the
+  legacy `knowledge_search` / `metrics_query` / `predict` vocabulary, which the A1 compile rule
+  rejects; they now grant `search_knowledge`, `list_metrics` + `query_metric`, `query_data`
+  (there is no governed `predict` tool). A test keeps them that way.
+
 ### Changed — Admin becomes Platform: one route, six tabs, ten surfaces rehomed
 
 - **The tab label `Admin` is now `Platform`**, and `/platform` is **one route

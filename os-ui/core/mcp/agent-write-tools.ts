@@ -26,6 +26,7 @@ import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { buildSystem } from '@tabs/agents/lib/build/server';
 
 import { normalizeContextGrants } from '@core/kernel/context-grants';
+import { config } from '@core/kernel/config';
 
 // ================================ AGENTS ======================================
 export const agentWriteTools: McpTool[] = [
@@ -147,11 +148,16 @@ export const agentWriteTools: McpTool[] = [
           400,
         );
       }
+      // ENGINE FLAG (engine rebuild, Phase A0): the same selector the run route and the
+      // scheduler use. Only the walker exists today; Phase A1 branches on `langgraph` HERE.
+      const { selectEngine } = await import('@tabs/agents/lib/engine/select');
+      const engine = selectEngine(config, view.system);
       const runTeam = runTeamOverride ?? (await import('@tabs/agents/lib/build/agentic-graph-server')).runOsTeam;
       const team = await runTeam({ user, yaml: view.yaml, systemId, messages: msgs, disabledAgents: view.disabledAgents });
       return {
         systemId,
         mode: 'live',
+        engine,
         reachedEnd: team.reachedEnd,
         path: team.path,
         finalText: team.finalText,

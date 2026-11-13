@@ -590,3 +590,19 @@ test('HELD-ACTION: a held request_promotion must carry the exact arguments it ne
   assert.deepEqual((queued[0] as { action?: { args?: unknown } }).action?.args, args,
     'the queued approval has no arguments — approve → execute → resume is impossible');
 });
+
+// --- engine rebuild A0: an explicit empty node tool list means NO tools -----------
+
+test("grantedToolSpecs: an explicit empty node `tools: []` advertises NO tools; an absent list inherits every grant", () => {
+  const sys = sysWith(['query_data', 'search_knowledge']);
+  // Absent → inherit the whole (role-scoped) granted set, as before.
+  assert.ok(grantedToolSpecs(CREATOR, sys).map((s) => s.name).includes('query_data'));
+  assert.ok(grantedToolSpecs(CREATOR, sys, undefined).map((s) => s.name).includes('search_knowledge'));
+  // Explicit [] → nothing. The Software Delivery Team's orchestrator (`tools: []`, "do no
+  // building yourself") must never be handed create_software/commit.
+  assert.deepEqual(grantedToolSpecs(CREATOR, sys, []), []);
+  // A non-empty list still narrows (plus discovery companions), unchanged.
+  const narrowed = grantedToolSpecs(CREATOR, sys, ['search_knowledge']).map((s) => s.name);
+  assert.ok(narrowed.includes('search_knowledge'));
+  assert.ok(!narrowed.includes('query_data'));
+});

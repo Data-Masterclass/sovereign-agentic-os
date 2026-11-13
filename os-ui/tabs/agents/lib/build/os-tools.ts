@@ -507,10 +507,11 @@ export function resolveGrantedTools(sys: System): { mcpNames: string[]; unmapped
  * `isAgenticSoftwareTeam` gate — software-only teams are a strict subset (their
  * tools are already MCP names), so their existing behaviour is preserved, while
  * mixed data/knowledge grants now qualify too. A `hermes` runtime or ANY unmapped
- * legacy tool (`web_fetch`, …) → false, keeping the honest legacy fallback.
+ * legacy tool (`web_fetch`, …) → false, keeping the honest legacy fallback. A
+ * `walker`-pinned system (the engine-flag opt-out) qualifies like `langgraph`.
  */
 export function isAgenticOsTeam(sys: System): boolean {
-  if (sys.runtime !== 'langgraph') return false;
+  if (sys.runtime === 'hermes') return false;
   if (sys.grants.tools.length === 0) return false;
   return resolveGrantedTools(sys).unmapped.length === 0;
 }
@@ -526,10 +527,19 @@ function grantedMcpTools(sys: System): McpTool[] {
  * MCP tools, role-scoped to the acting user (`listToolsForRole` — an agent can
  * never SEE a tool above its runner's role), optionally narrowed to a node's own
  * `tools` list (also alias-resolved). Same shaping as `runtime.ts` `tabToolSpecs`.
+ *
+ * `nodeTools` semantics (engine rebuild A0 fix): ABSENT (`undefined`) = inherit every
+ * system grant; an explicit EMPTY list = this node drives NO tools. The compiler IR
+ * already encodes the distinction (an agent without `tools:` gets the full grant copy,
+ * `tools: []` stays `[]`), and the YAML author of `tools: []` — e.g. the Software
+ * Delivery Team's orchestrator, "do no building yourself" — means none. Treating `[]`
+ * as "inherit" handed those nodes `create_software`/`commit`; the golden fixtures
+ * caught it. Matches `toolSpecsFactory` on the software path.
  */
 export function grantedToolSpecs(user: CurrentUser, sys: System, nodeTools?: string[]): ToolSpec[] {
   let pool = grantedMcpTools(sys);
-  if (nodeTools && nodeTools.length > 0) {
+  if (nodeTools !== undefined) {
+    if (nodeTools.length === 0) return [];
     // A node granted an action tool (e.g. query_data) also drives its discovery
     // companions (list_datasets/get_dataset/profile_dataset), so it can learn the
     // exact resource before acting — same rule as the system-level grant scope.

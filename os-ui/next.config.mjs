@@ -35,6 +35,11 @@ const nextConfig = {
     ],
   },
   reactStrictMode: true,
+  // Engine rebuild (Phase A0): the LangGraph engine, its Postgres checkpointer, the pg
+  // driver and the Langfuse SDK are server-only Node packages (native/pg protocol, no
+  // browser build). Keep them out of the webpack server bundle and require them at
+  // runtime from the traced node_modules. Nothing here is reachable from the client.
+  serverExternalPackages: ['@langchain/core', '@langchain/langgraph', '@langchain/langgraph-checkpoint-postgres', 'pg', 'langfuse'],
   // Disable Next's server-side image optimizer. It optionally pulls `sharp`
   // (→ libvips, LGPL-3.0) — the ONLY non-permissive dependency in the tree.
   // The OS is a sovereign, strictly-permissive (MIT/Apache-2.0/BSD/ISC) codebase,

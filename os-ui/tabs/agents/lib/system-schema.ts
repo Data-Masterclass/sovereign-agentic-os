@@ -24,8 +24,15 @@ export type EdgeType = 'supervise' | 'handoff';
  * runtime (long-running, persistent memory + self-improving skills). BOTH consume
  * the same governed Platform-MCP plane (OPA/LiteLLM/egress) — Hermes gets no side
  * door (hermes-agent-integration-plan.md). Gated OFF by default in the chart.
+ *
+ * `walker` (engine rebuild, Phase A0) is the explicit per-system OPT-OUT of the
+ * platform engine flag (`AGENTS_ENGINE`, core/kernel/config.ts): it pins this system
+ * to the hand-rolled IR walker while the LangGraph engine is rolled out. Everything
+ * else (grants, gates, canvas, build) treats it exactly like `langgraph`. The default
+ * `langgraph` follows the platform flag — see tabs/agents/lib/engine/select.ts. The
+ * value is retired with the flag in Phase A5.
  */
-export type Runtime = 'langgraph' | 'hermes';
+export type Runtime = 'langgraph' | 'hermes' | 'walker';
 /**
  * Safety preset (shared by both runtimes' UI). For `hermes` it maps to the
  * profile provisioner's approvals.mode + tools.include; for `langgraph` it drives
@@ -138,7 +145,7 @@ export type System = {
      * Define description). Optional; drives the Evaluate judge's task rubric. */
     description?: string;
   };
-  /** Execution engine (default `langgraph`). `hermes` = autonomous runtime. */
+  /** Execution engine (default `langgraph`). `hermes` = autonomous runtime; `walker` = pin the legacy IR walker. */
   runtime: Runtime;
   /** Write-back safety preset (default `read-only`, the safest). */
   safetyPreset: SafetyPreset;
@@ -179,7 +186,7 @@ export class SystemError extends Error {
 }
 
 const VISIBILITIES: Visibility[] = ['Personal', 'Shared', 'Marketplace'];
-const RUNTIMES: Runtime[] = ['langgraph', 'hermes'];
+const RUNTIMES: Runtime[] = ['langgraph', 'hermes', 'walker'];
 const SAFETY_PRESETS: SafetyPreset[] = ['read-only', 'read-propose', 'read-bounded', 'full-in-scope'];
 const EDGE_TYPES: EdgeType[] = ['supervise', 'handoff'];
 const CAPABILITIES: Capability[] = ['Off', 'Read', 'Write-approval', 'Write-bounded', 'Blocked'];

@@ -57,6 +57,25 @@ Licenses in use and their bundled full text:
 | LiteLLM | chart 1.90.0 | MIT | `licenses/MIT.txt` | Model / MCP gateway |
 | Langfuse (core) | chart 1.5.36 / app 3.194.1 | MIT | `licenses/MIT.txt` | Observability core; the `/ee` modules are license-gated and **not** shipped |
 
+#### os-ui agent engine — npm libraries (engine rebuild, Phase A0)
+
+Node.js dependencies of our own `os-ui` code (`os-ui/package.json`, exact-pinned), traced into
+the os-ui image. Per-package copyright notices: `licenses/notices/os-ui-agent-engine-npm-NOTICE.txt`.
+
+| Component | Version | License (SPDX) | Full text | Notes |
+|---|---|---|---|---|
+| @langchain/langgraph (JS) | 1.7.4 | MIT | `licenses/MIT.txt` | The in-process graph engine for agent systems (MIT **library**; the Elastic-licensed LangGraph Platform is **not** bundled) |
+| @langchain/langgraph-checkpoint-postgres | 1.1.3 | MIT | `licenses/MIT.txt` | Run checkpoints in the existing CNPG Postgres (`agent_runs` database) |
+| @langchain/core (JS) | 1.4.0 | MIT | `licenses/MIT.txt` | Peer dependency of the two above, pinned explicitly |
+| pg (node-postgres) | 8.23.1 | MIT | `licenses/MIT.txt` | Postgres driver used by the checkpointer |
+| langfuse (JS SDK v3) | 3.39.2 | MIT | `licenses/MIT.txt` | One Langfuse trace per run (trace id = run id). The npm tarball ships no LICENSE file; `package.json` declares MIT and the upstream text is reproduced in the NOTICE file |
+
+Deliberately **not** added: `langfuse-langchain@3` — its peer range is the legacy `langchain <0.4`
+(`@langchain/core` 0.x), incompatible with `@langchain/core@1` that LangGraph 1.x requires; its
+successor `@langfuse/langchain@6` (OTel-based) is the alternative if a LangChain callback
+handler is ever needed. Model calls go through LiteLLM via our own `LlmCall`, not LangChain chat
+models, so run tracing is done explicitly with the `langfuse` SDK.
+
 ### Retrieval, data & catalog
 
 | Component | Version | License (SPDX) | Full text | Notes |
