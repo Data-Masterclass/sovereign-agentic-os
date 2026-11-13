@@ -24,6 +24,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY os-ui/ .
 RUN npm run build
+# The standalone output keeps only what the SERVER bundle touches; the run worker executes the
+# unbundled TypeScript source and needs its packages as real directories (js-yaml, langsmith, …
+# were absent — deploy 0.8.0). Trace the worker's import graph and copy exactly those packages,
+# with their declared transitive dependencies, into the standalone node_modules.
+RUN node scripts/worker-deps.mjs --out .next/standalone
 
 # ---- runner: minimal runtime, non-root ----
 FROM node:22.13.1-alpine3.21 AS runner

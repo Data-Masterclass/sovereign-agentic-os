@@ -88,13 +88,14 @@ fi
 # SOURCE under Node's type stripping, which no unit test can verify — it is a property of the
 # BASE IMAGE's Node (>= 22.6) and of the resolve hook's aliases. A base-image bump that goes
 # backwards breaks the worker with ERR_UNKNOWN_FILE_EXTENSION at boot, AFTER the deploy. So
-# import the whole run-path module graph in the built image before pushing it. Nothing connects
+# import the whole run-path module graph in the built image before pushing it — registering
+# worker/resolve-hook.mjs first, exactly as worker/start.mjs does (without it @core/* cannot resolve). Nothing connects
 # to a database until main() runs, so this needs no cluster and fails loudly on its own.
 say "smoke: the image can import the worker under --experimental-strip-types"
 docker run --rm --entrypoint node --workdir /app/src "$IMG" \
-  --experimental-strip-types --no-warnings \
-  -e "import('./worker/agent-runs.ts').then(m => { if (typeof m.main !== 'function') { console.error('worker/agent-runs.ts exports no main()'); process.exit(1); } }).catch(e => { console.error(e); process.exit(1); })" \
-  || { echo "WORKER_STRIP_TYPES_SMOKE_FAILED — the image's Node cannot run the worker source (needs >= 22.6)"; exit 1; }
+  --experimental-strip-types --no-warnings --input-type=module \
+  -e "import { register } from 'node:module'; register('./worker/resolve-hook.mjs', 'file:///app/src/'); const m = await import('./worker/agent-runs.ts'); if (typeof m.main !== 'function') { console.error('worker/agent-runs.ts exports no main()'); process.exit(1); } console.log('worker smoke: graph loaded, main() present');" \
+  || { echo "WORKER_STRIP_TYPES_SMOKE_FAILED — the image cannot load the worker graph (Node < 22.6, or a package missing from the standalone tree: see scripts/worker-deps.mjs)"; exit 1; }
 
 say "pushing $IMG"
 pushed=""
