@@ -13,6 +13,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Fixed — first production rollout of 0.8.0 (chart 0.3.0)
+
+- **os-ui pod crash-looped on the `git-daemon` sidecar.** `alpine/git` does not ship `git daemon`
+  (Alpine packages it separately; bitnami/git and chainguard/git omit it too), so the pod never
+  became Ready and the Service lost its only endpoint. The sidecar now runs our own image
+  `images/base/git-daemon` (alpine + `git-daemon`, non-root, read-only root fs), whose build FAILS
+  if the daemon binary is absent. Operators upgrading from 0.7.x: nothing to do — the chart default
+  changed.
+- **`deploy.sh` kept the live release's Dagster pins.** The derived values file carried the old
+  code location (`example-user-code`) and image tag (`0.2.0`), so the chart's `sovereign` location
+  and `dagster:0.3.0` never applied. The derivation now resets exactly the chart-owned keys
+  (`dagsterWebserver.image.tag`, `dagsterDaemon.image.tag`, the user-deployments list incl. the
+  repo-sync sidecar image) while keeping the operator's image repository and everything else.
+- Documented: the Dagster extension image (`images/extensions/dagster`) is NOT built by
+  `deploy.sh`; it is built and pushed separately as `ghcr.io/aborek/sovereign-os/dagster:<tag>`
+  (context `images/extensions`) before a deploy that bumps its tag.
+
 ## [os-ui 0.8.0] — 2026-11-13 — Engine rebuild: real LangGraph/Langfuse/LiteLLM, dbt/Dagster/Trino data products, git-based working, MCP parity
 
 ### Fixed — Data engine rebuild, B4 review round

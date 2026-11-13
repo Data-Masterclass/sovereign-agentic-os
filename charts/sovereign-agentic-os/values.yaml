@@ -1384,8 +1384,11 @@ osUI:
     reposSize: 2Gi
     gitDaemon:
       image:
-        repository: alpine/git     # stock image; git (GPL-2.0) runs as a separate process, never linked
-        tag: "v2.47.2"
+        # Our own image (images/base/git-daemon): no stock git image ships `git daemon` — Alpine
+        # packages it separately and alpine/git omits it, which crash-looped the first 0.8.0 rollout.
+        # git (GPL-2.0) still runs as a separate process from a distro package, never linked.
+        repository: ghcr.io/aborek/sovereign-os/git-daemon
+        tag: "1.0.0"
   # Secret-backed credentials — reuse the stack's existing Secrets so nothing
   # sensitive sits in plaintext (names/keys verified against the running cluster).
   langfuseSecret:

@@ -43,10 +43,42 @@ new = yaml.safe_load(open(sys.argv[2]))
 kept = {k: v for k, v in live.items() if k in new}
 if 'osUI' in kept and isinstance(kept['osUI'], dict):
     kept['osUI'] = {k: v for k, v in kept['osUI'].items() if k in new['osUI']}
+# The chart OWNS its bundled components' images and Dagster's code locations. A live values
+# file written for an older release pins them (image 0.2.0, code location `example-user-code`),
+# and keeping those would silently deploy the old Dagster next to the new os-ui — which is what
+# happened on 0.8.0's first rollout. Drop exactly those keys so the chart's defaults apply;
+# everything the operator set (enabled, pull secrets, resources, ingress) is kept.
+# Only the TAG and the code-location list are chart-owned; the image REPOSITORY is the
+# operator's (the chart default is the laptop profile's unprefixed `sovereign-os/dagster`,
+# the cluster pulls `ghcr.io/aborek/sovereign-os/dagster`), so it is carried over.
+import copy
+migrated = []
+d = kept.get('dagster')
+if isinstance(d, dict):
+    for comp in ('dagsterWebserver', 'dagsterDaemon'):
+        img = (d.get(comp) or {}).get('image')
+        if isinstance(img, dict) and img.pop('tag', None) is not None:
+            migrated.append(f'dagster.{comp}.image.tag')
+    ud = d.get('dagster-user-deployments')
+    if isinstance(ud, dict) and isinstance(ud.get('deployments'), list):
+        live_repo = next((e['image']['repository'] for e in ud['deployments']
+                          if isinstance(e, dict) and isinstance(e.get('image'), dict) and e['image'].get('repository')), None)
+        fresh = copy.deepcopy(new['dagster']['dagster-user-deployments']['deployments'])
+        if live_repo:
+            default_repo = new['dagster']['dagster-user-deployments']['deployments'][0]['image']['repository']
+            for e in fresh:
+                e.setdefault('image', {})['repository'] = live_repo
+                # sidecars (repo-sync) name the image as one string: swap the laptop repository
+                for sc in e.get('sidecarContainers') or []:
+                    if isinstance(sc.get('image'), str) and sc['image'].startswith(default_repo + ':'):
+                        sc['image'] = live_repo + sc['image'][len(default_repo):]
+        ud['deployments'] = fresh
+        migrated.append('dagster.dagster-user-deployments.deployments (chart list, operator repository)')
 yaml.safe_dump(kept, open(sys.argv[3], 'w'), sort_keys=False)
 dropped = sorted(set(live) - set(kept))
 print(f"   kept {len(kept)} top-level keys; dropped {len(dropped)} for removed components")
 if dropped: print("   dropped:", ', '.join(dropped))
+if migrated: print("   chart-owned keys reset to the chart defaults:", ', '.join(migrated))
 PY
 
 say "what the upgrade changes"
