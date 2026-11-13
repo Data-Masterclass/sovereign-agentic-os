@@ -46,7 +46,7 @@ import { TEMPLATES, templateYaml } from '@tabs/agents/lib/templates';
 import { AGENT_TEMPLATES, agentTemplate } from '@tabs/agents/lib/agent-templates';
 import { SOFTWARE_TEAM_YAML } from '@tabs/agents/lib/software-team';
 import { grantedToolExecutor, grantedToolSpecs, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
-import type { GraphDeps } from '@tabs/agents/lib/engine/build-graph';
+import { SET_STATE_TOOL_NAME, type GraphDeps } from '@tabs/agents/lib/engine/build-graph';
 import { memoryCheckpointer, type SelectedCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { runGraphEngine, type EngineHooks } from '@tabs/agents/lib/engine/run';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
@@ -270,6 +270,58 @@ edges:
     when: state.findings_ready
 `;
 
+/**
+ * Shape (d): the CHANNEL-WRITING shape (A5-review-H-2). A guarded handoff `when: plan_ready`
+ * whose channel is DECLARED (`boolean`), so the `planner` — the agent the guard follows — is
+ * advertised the engine's built-in `os_set_state` tool and can make the guard true. It is
+ * deliberately NOT a frozen fixture: there is no walker golden for it (the walker ignored guards
+ * and its generator is deleted), so it belongs beside `P2_YAML` as an ENGINE shape driven twice
+ * from `parity.test.ts` — once with the write, once without — which is the proof that the guard
+ * fires if and only if the channel is set.
+ */
+export const SHAPE_CHANNEL_GUARDED_YAML = `version: '1'
+system:
+  name: Shape D — a guarded handoff whose channel an agent can set
+  domain: sales
+  visibility: Personal
+entrypoint: planner
+state:
+  channels:
+    messages: add_messages
+    plan_ready: boolean
+grants:
+  data: []
+  knowledge: []
+  metrics: []
+  tools:
+    - search_knowledge
+    - query_data
+  connections: []
+agents:
+  - id: planner
+    role: Plans the task and records plan_ready when the plan is complete
+    agent_md: |
+      # planner
+      Plan the task from the granted knowledge. Record plan_ready when, and only when,
+      the plan is complete.
+    memory_md: '# Memory'
+    tools:
+      - search_knowledge
+  - id: builder
+    role: Builds what the plan asked for
+    agent_md: |
+      # builder
+      Query the granted data and build what the plan asked for.
+    memory_md: '# Memory'
+    tools:
+      - query_data
+edges:
+  - from: planner
+    to: builder
+    type: handoff
+    when: plan_ready
+`;
+
 /** Every fixture spec: shipped templates, shipped per-agent templates, the software team, three shapes. */
 export function fixtureSpecs(): FixtureSpec[] {
   const specs: FixtureSpec[] = [];
@@ -380,6 +432,28 @@ export function scriptedLlm(task: string): LlmCall {
       content: first ? `FINAL(${node}): answered the task using ${first}.` : `FINAL(${node}): no tools granted; answered from the team context.`,
       toolCalls: [],
     };
+  };
+}
+
+/**
+ * A scripted model for the CHANNEL shape: an agent advertised `os_set_state` writes `write` on
+ * its first turn (or, when `write` is null, calls its first governed tool instead) and answers
+ * `FINAL(<node>)` after that. Pass an undeclared channel to drive the rejection path.
+ */
+export function stateWritingLlm(task: string, write: { channel: string; value: unknown } | null): LlmCall {
+  const acts = new Map<string, number>();
+  return async (req) => {
+    const node = nodeOfRequest(req);
+    if (!req.tools) return { content: `plan(${node}): record the team state, then answer.`, toolCalls: [] };
+    const n = (acts.get(node) ?? 0) + 1;
+    acts.set(node, n);
+    const canSet = req.tools.some((t) => t.function.name === SET_STATE_TOOL_NAME);
+    if (n === 1 && canSet && write) {
+      return { content: '', toolCalls: [{ id: `set-${node}-1`, name: SET_STATE_TOOL_NAME, args: { channel: write.channel, value: write.value } }] };
+    }
+    const first = req.tools.find((t) => t.function.name !== SET_STATE_TOOL_NAME)?.function.name;
+    if (n === 1 && first) return { content: '', toolCalls: [{ id: `call-${node}-1`, name: first, args: { input: `fixture:${node}`, task } }] };
+    return { content: `FINAL(${node}): answered the task.`, toolCalls: [] };
   };
 }
 
