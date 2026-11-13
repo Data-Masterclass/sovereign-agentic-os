@@ -15,6 +15,15 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ### Fixed — first production rollout of 0.8.0 (chart 0.3.0)
 
+- **Dagster webserver crash-looped on image 0.3.0.** The image let SQLAlchemy float to 2.1 and
+  carried psycopg (v3); SQLAlchemy 2.1 picks the psycopg3 dialect and dagster-webserver 1.13's
+  startup telemetry query dies with "the connection is closed" (the daemon never makes that call,
+  so it ran fine). `images/extensions/dagster` now pins `SQLAlchemy>=2.0,<2.1` and ships psycopg2
+  only — the driver set 0.2.0 ran in production for weeks. Image `dagster:0.3.1`; chart bumped.
+- **The os-ui pod could not write the `os-repos` volume** (root-owned PVC, uid 1000, no fsGroup):
+  every git commit failed with EACCES until a live `fsGroup` patch. The chart now sets
+  `fsGroup: 1000` (`OnRootMismatch`) on the os-ui pod when data projects in git are enabled.
+
 - **os-ui pod crash-looped on the `git-daemon` sidecar.** `alpine/git` does not ship `git daemon`
   (Alpine packages it separately; bitnami/git and chainguard/git omit it too), so the pod never
   became Ready and the Service lost its only endpoint. The sidecar now runs our own image
