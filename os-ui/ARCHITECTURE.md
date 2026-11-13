@@ -837,6 +837,11 @@ Three things to know before you add a kind or a tool:
   `core/engineering/repo.ts`; the LangGraph graph is derived from the SAME IR
   (`langgraph-compile.ts`) and the SAME node naming (`safeNodeName`) the engine compiles with, and
   `tabs/agents/lib/engineering.test.ts` pins the derivation against a real `buildGraph`.
+- **The panel may never show what the caller could not have fetched.** An adapter re-applies the
+  repository's own membership rule (`requireMember`) before it shows a byte or offers an export,
+  and a tool link is gated by that tool's `minRole` — a Company-tier data product is visible
+  outside its domain, its domain repository is not. And every adapter hands its tracked-path set to
+  `gitSection` and `sealView`, so a path the repository does not track cannot reach the screen.
 - **Where the OS still does it its own way, say so on the panel.** The app's git section states
   that app source is in the OS file mirror and not yet an `apps/<slug>/` subtree; a KPI with no
   `models/semantic/<model>.yml` states that `mf query` would not resolve yet. That is the

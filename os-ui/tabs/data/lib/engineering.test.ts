@@ -53,8 +53,11 @@ mock.module('@core/infra/dagster', {
   },
 });
 
-const { datasetEngineeringView, modelPathsFor, nodeOf } = await import('@tabs/data/lib/engineering');
+const { datasetEngineeringView, dagsterConsoleFor, modelPathsFor, nodeOf } = await import('@tabs/data/lib/engineering');
 const USER = { id: 'amir', name: 'Amir', domains: ['ops'], allDomains: ['ops'], activeDomain: 'ops', role: 'admin' } as unknown as EngineeringPrincipal;
+/** A Company-tier (`product`) data product is visible outside its domain; the REPOSITORY is not. */
+const OUTSIDER = { id: 'fiona', name: 'Fiona', domains: ['finance'], allDomains: ['finance'], activeDomain: 'finance', role: 'admin' } as unknown as EngineeringPrincipal;
+const CREATOR = { id: 'cara', name: 'Cara', domains: ['ops'], allDomains: ['ops'], activeDomain: 'ops', role: 'creator' } as unknown as EngineeringPrincipal;
 
 test('the committed model paths of a data product are found by the physical slug the generator uses', () => {
   assert.deepEqual(modelPathsFor(PATHS, 'orders'), ['models/gold/gold_orders.sql']);
@@ -96,4 +99,50 @@ test('T9: the view offers the dbt project tarball with the commands to parse it 
 
 test('T7: a data product that does not exist is the tab\'s own 404', async () => {
   await assert.rejects(() => datasetEngineeringView(USER, 'ds_missing'), (e: Error & { status?: number }) => e.status === 404);
+});
+
+// ---- identity: a visible data product in a domain you are not in (review H-1) ---
+
+test('H-1: a non-member sees only this data product\'s own dbt model — no domain-wide bytes, no export', async () => {
+  const view = await datasetEngineeringView(OUTSIDER, 'ds_1');
+  assert.deepEqual(vocabularyViolations(view), []);
+
+  const dbt = view.sections.find((s) => s.tool === 'dbt');
+  const paths = (dbt?.artefacts ?? []).map((a) => a.repoPath);
+  assert.deepEqual(paths, ['models/gold/gold_orders.sql'], 'only the product\'s own model file');
+  assert.ok(!paths.includes('models/sources.yml'), 'a domain-wide file would be bytes the blob route 403s');
+  assert.ok((dbt?.caveats ?? []).some((c) => /not a member of 'ops'/.test(c)), 'and the panel says why it is narrower');
+
+  const git = view.sections.find((s) => s.tool === 'git');
+  assert.deepEqual((git?.artefacts ?? []).filter((a) => a.repoPath).map((a) => a.repoPath), ['models/gold/gold_orders.sql']);
+
+  // M-1: the export would 403 for this caller, so it is offered as unavailable WITH the reason.
+  assert.equal(view.export?.href, null);
+  assert.match(view.export?.unresolvedReason ?? '', /members-only/);
+
+  // A member still gets the domain files and the download.
+  const inside = await datasetEngineeringView(USER, 'ds_1');
+  assert.ok((inside.sections.find((s) => s.tool === 'dbt')?.artefacts ?? []).some((a) => a.repoPath === 'models/sources.yml'));
+  assert.equal(inside.export?.href, '/api/data/projects/ops/export');
+});
+
+// ---- the Dagster link: both branches are live (review H-3) ----------------------
+
+test('H-3: the Dagster console link resolves for a builder+ and explains itself for a creator', () => {
+  const allowed = dagsterConsoleFor(USER);
+  assert.ok(allowed.url, 'an admin gets Dagster\'s own console address');
+  assert.ok(!allowed.url?.startsWith('/tools/'), 'NOT the /tools proxy: Dagster\'s console is declared ownTab because it renders blank behind the prefix');
+  assert.equal(allowed.reason, undefined);
+
+  const refused = dagsterConsoleFor(CREATOR);
+  assert.equal(refused.url, null);
+  assert.match(refused.reason ?? '', /needs builder; you are creator/);
+});
+
+test('H-3: the link a creator sees on the panel says why, and the command is still theirs', async () => {
+  const view = await datasetEngineeringView(CREATOR, 'ds_1');
+  const dag = view.sections.find((s) => s.tool === 'dagster');
+  assert.equal(dag?.links[0].url, null);
+  assert.match(dag?.links[0].unresolvedReason ?? '', /needs builder/);
+  assert.deepEqual(dag?.commands.map((c) => c.command), ['dagster asset materialize --select ops/gold_orders']);
 });

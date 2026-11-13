@@ -37,10 +37,14 @@ export async function metricEngineeringView(principal: EngineeringPrincipal, id:
   const rec = getMetric(id, principal);
   const domain = rec.dataset.domain;
   const measure = rec.measure.name;
+  // The KPI can be visible to a non-member (a Company-tier data product underneath it), but the
+  // domain repository and its export are members-only — the same rule `tabs/data/lib/dbt/read.ts`
+  // applies. A non-member therefore gets the facts and the commands, not the bytes.
+  const member = principal.domains.includes(domain);
 
   const listed = await repoPaths(domain);
   const semanticPaths = listed.paths.filter((p) => p.startsWith(SEMANTIC_DIR) && (p.endsWith('.yml') || p.endsWith('.yaml')));
-  const read = semanticPaths.length ? await readRepoFiles(domain, (p) => semanticPaths.includes(p)) : null;
+  const read = member && semanticPaths.length ? await readRepoFiles(domain, (p) => semanticPaths.includes(p)) : null;
   const mine = (read?.files ?? []).filter((f) => namesMeasure(f.content, measure));
 
   const dbt = dbtSection({
@@ -49,6 +53,9 @@ export async function metricEngineeringView(principal: EngineeringPrincipal, id:
     files: mine,
     metrics: [measure],
     unavailable:
+      (!member
+        ? `the dbt project of '${domain}' is members-only, so this panel cannot show you the \`metrics:\` YAML — you can see the KPI and run the commands below as someone with domain membership`
+        : undefined) ??
       listed.reason ??
       (semanticPaths.length === 0
         ? `no \`${SEMANTIC_DIR}<model>.yml\` is committed in '${domain}' yet, so this KPI has no dbt \`metrics:\` entry to show — the semantic emitter writes that file when the data product is next committed`
@@ -70,7 +77,11 @@ export async function metricEngineeringView(principal: EngineeringPrincipal, id:
     cloneUrl: null,
     head: listed.head,
     files: mine.map((f) => ({ path: f.path })),
-    unavailable: listed.reason ?? `no file in '${domain}' carries this KPI's dbt metric definition yet`,
+    tracked: new Set(listed.paths),
+    unavailable:
+      (!member ? `the git repository of '${domain}' is members-only, and you are not a member of it` : undefined) ??
+      listed.reason ??
+      `no file in '${domain}' carries this KPI's dbt metric definition yet`,
   });
 
   const dagster = dagsterSection({
@@ -94,13 +105,17 @@ export async function metricEngineeringView(principal: EngineeringPrincipal, id:
     domain,
     sections: [dbt, dagster, git, langfuse],
     export: {
+      tool: 'dbt',
       label: 'dbt project tarball',
-      href: `/api/data/projects/${encodeURIComponent(domain)}/export`,
+      href: member ? `/api/data/projects/${encodeURIComponent(domain)}/export` : null,
+      ...(member
+        ? {}
+        : { unresolvedReason: `the dbt project of '${domain}' is members-only, and you are not a member of it` }),
       commands: [
         `tar -xf ${domain}-<sha>.tar -C ${domain}`,
         `cd ${domain} && dbt parse --profiles-dir .`,
         `mf query --metrics ${measure} --group-by metric_time__month`,
       ],
     },
-  });
+  }, new Set(listed.paths));
 }

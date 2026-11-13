@@ -25,9 +25,12 @@ mock.module('@tabs/software/lib/apps', {
     listAppFilesForViewer: async () => ({ files: ['app.yaml', 'src/epics/orders/list/page.tsx'] }),
   },
 });
+/** Flipped by the second test: the state after the app writer commits `apps/<slug>/`. */
+let paths: string[] = ['models/gold/gold_orders.sql'];
+
 mock.module('@core/engineering/repo', {
   namedExports: {
-    repoPaths: async () => ({ repo: 'ops', head: 'face', paths: ['models/gold/gold_orders.sql'], reason: null }),
+    repoPaths: async () => ({ repo: 'ops', head: 'face', paths, reason: null }),
     readRepoFiles: async () => ({ repo: 'ops', head: 'face', files: [], unreadable: [], reason: 'no matching file' }),
   },
 });
@@ -35,12 +38,12 @@ mock.module('@core/engineering/repo', {
 const { appEngineeringView, APPS_PREFIX } = await import('@tabs/software/lib/engineering');
 const USER = { id: 'amir', name: 'Amir', domains: ['ops'], allDomains: ['ops'], activeDomain: 'ops', role: 'admin' } as unknown as EngineeringPrincipal;
 
-test('T6/T7: the git section says the app tree is NOT committed, names the mirror and the subtree', async () => {
+test('T6/T7: with nothing committed the git section says so, and names the mirror and the subtree', async () => {
   const view = await appEngineeringView(USER, 'app_1');
   assert.deepEqual(vocabularyViolations(view), []);
   const git = view.sections.find((s) => s.tool === 'git');
   assert.equal(git?.artefacts.length, 0, 'no artefact may claim to be a git file when nothing is committed');
-  assert.match(git?.unavailable ?? '', /NOT committed to the domain repository/);
+  assert.match(git?.unavailable ?? '', /is not committed in 'ops'/);
   assert.match(git?.unavailable ?? '', /os-app-files/);
   assert.match(git?.unavailable ?? '', new RegExp(`${APPS_PREFIX}orders-cockpit`));
   assert.ok((git?.caveats ?? []).some((c) => /app\.yaml/.test(c)), 'the files it does hold are listed as a caveat, not as git files');
@@ -50,4 +53,23 @@ test('T6/T7: the git section says the app tree is NOT committed, names the mirro
 
 test('T7: an app the caller cannot see is `not found` — the software tab\'s uniform refusal', async () => {
   await assert.rejects(() => appEngineeringView(USER, 'app_other'), (e: Error & { status?: number }) => e.status === 404);
+});
+
+test('the same adapter tells the truth AFTER the app writer commits apps/<slug>/ — no code change needed', async () => {
+  paths = ['apps/orders-cockpit/app.yaml', 'apps/orders-cockpit/src/epics/orders/list/page.tsx'];
+  try {
+    const view = await appEngineeringView(USER, 'app_1');
+    assert.deepEqual(vocabularyViolations(view), []);
+    const git = view.sections.find((s) => s.tool === 'git');
+    assert.equal(git?.unavailable, undefined, 'nothing to explain once the subtree is committed');
+    assert.deepEqual(
+      (git?.artefacts ?? []).filter((a) => a.repoPath).map((a) => a.repoPath),
+      ['apps/orders-cockpit/app.yaml', 'apps/orders-cockpit/src/epics/orders/list/page.tsx'],
+    );
+    assert.ok(!(git?.caveats ?? []).some((c) => /in the mirror rather than in git/.test(c)));
+    assert.match(view.export?.unresolvedReason ?? '', /one-click archive/);
+    assert.equal(view.export?.tool, 'git');
+  } finally {
+    paths = ['models/gold/gold_orders.sql'];
+  }
 });

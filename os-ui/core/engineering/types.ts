@@ -99,6 +99,8 @@ export type EngineeringSection = {
 
 /** The native export of the whole artefact, in the tool's own format (plan D26). */
 export type EngineeringExport = {
+  /** Whose format this is — the vocabulary rule checks `label` against this tool's nouns. */
+  tool: EngineeringTool;
   /** The tool's noun for what is exported: "dbt project tarball". */
   label: string;
   /** Where the UI fetches it, or null with a reason. */
@@ -140,8 +142,13 @@ export function unresolvedLink(label: string, reason: string): EngineeringLink {
 /**
  * The view, with every honesty invariant checked. Adapters end with this so a section that
  * forgot its reason fails loudly in a test rather than rendering as an empty tab.
+ *
+ * `tracked` is the set of paths the repository really tracks at `main`. When it is given — every
+ * adapter that reads a repository passes it — an artefact whose `repoPath` is NOT in it is a
+ * defect, because the panel would be presenting a path as committed when it is not. It throws
+ * rather than filtering: a silent filter hides the bug that produced the path.
  */
-export function sealView(view: EngineeringView): EngineeringView {
+export function sealView(view: EngineeringView, tracked?: ReadonlySet<string>): EngineeringView {
   for (const s of view.sections) {
     if (s.artefacts.length === 0 && !s.unavailable) {
       throw new Error(`engineering view ${view.kind}:${view.id}: section '${s.tool}' is empty and gives no reason`);
@@ -154,6 +161,15 @@ export function sealView(view: EngineeringView): EngineeringView {
     for (const l of s.links) {
       if (l.url === null && !l.unresolvedReason) {
         throw new Error(`engineering view ${view.kind}:${view.id}: link '${l.label}' does not resolve and does not say why`);
+      }
+    }
+    if (tracked) {
+      for (const a of s.artefacts) {
+        if (a.repoPath !== undefined && !tracked.has(a.repoPath)) {
+          throw new Error(
+            `engineering view ${view.kind}:${view.id}: section '${s.tool}' shows '${a.repoPath}' as a repository path, but the repository does not track it`,
+          );
+        }
       }
     }
   }

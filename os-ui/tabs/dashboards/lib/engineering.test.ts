@@ -41,6 +41,7 @@ mock.module('@core/engineering/repo', {
 
 const { dashboardEngineeringView, dashboardPaths, DASHBOARD_DIR } = await import('@tabs/dashboards/lib/engineering');
 const USER = { id: 'amir', name: 'Amir', domains: ['ops'], allDomains: ['ops'], activeDomain: 'ops', role: 'admin' } as unknown as EngineeringPrincipal;
+const OUTSIDER = { id: 'fiona', name: 'Fiona', domains: ['finance'], allDomains: ['finance'], activeDomain: 'finance', role: 'admin' } as unknown as EngineeringPrincipal;
 
 test('the dashboard-as-code path of one dashboard is selected from the reserved subtree', () => {
   assert.deepEqual(dashboardPaths(['dashboards/dash_1.yml', 'dashboards/dash_2.yml'], 'dash_1'), ['dashboards/dash_1.yml']);
@@ -54,6 +55,9 @@ test('T6: the git section shows the committed dashboard-as-code file and its pat
   assert.equal(git?.artefacts[0].repoPath, 'dashboards/dash_1.yml');
   assert.equal(git?.artefacts[0].body, CODE);
   assert.equal(view.export?.href, '/api/data/projects/ops/blob?path=dashboards%2Fdash_1.yml');
+  // M-4: the export label leads with the tool's noun.
+  assert.equal(view.export?.tool, 'git');
+  assert.match(view.export?.label ?? '', /^git file/);
 });
 
 test('T3/T7: the dbt section names the metrics the panels query and gives the MetricFlow command', async () => {
@@ -75,4 +79,14 @@ test('T7: with nothing committed, the export says which file is missing instead 
 
 test('T7: a dashboard that does not exist is the tab\'s own 404', async () => {
   await assert.rejects(() => dashboardEngineeringView(USER, 'dash_missing'), (e: Error & { status?: number }) => e.status === 404);
+});
+
+test('H-1/M-1: a dashboard shared beyond its domain shows no committed file and no export to a non-member', async () => {
+  const view = await dashboardEngineeringView(OUTSIDER, 'dash_1');
+  assert.deepEqual(vocabularyViolations(view), []);
+  const git = view.sections.find((s) => s.tool === 'git');
+  assert.equal(git?.artefacts.length, 0);
+  assert.match(git?.unavailable ?? '', /members-only/);
+  assert.equal(view.export?.href, null);
+  assert.match(view.export?.unresolvedReason ?? '', /members-only/);
 });

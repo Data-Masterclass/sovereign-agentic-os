@@ -22,7 +22,9 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   One adapter per tab (`tabs/{data,metrics,dashboards,agents,software}/lib/engineering.ts`) calls
   that tab's own visibility gate and shows the REAL artefact: the dbt model SQL and `schema.yml` as
   committed with `dbt build --select <node>`, the Dagster asset key / job / schedule / last run with
-  `dagster asset materialize --select …` and an "Open in Dagster" link through the tool proxy, the
+  `dagster asset materialize --select …` and an "Open in Dagster" link to Dagster's own console
+  (role-gated by the tool's `minRole`; the `/tools` proxy renders Dagster blank, which is why it
+  declares `ownTab`), the
   compiled LangGraph graph (plan/act/tools/route nodes, conditional edges, `when` guards, channels,
   `interrupt()` points, checkpointer, `thread_id` = run id) as JSON **and** as an `@xyflow/react`
   diagram, the git file list with the head commit, and the Langfuse trace with what is redacted and

@@ -17,6 +17,7 @@
  */
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useMemo, useState, type ReactNode } from 'react';
 import type { EngineeringKind, EngineeringSection, EngineeringView } from '@core/engineering/types';
 import {
@@ -25,6 +26,7 @@ import {
   EXPORT_HEADING,
   PANEL_ERROR_PREFIX,
   PANEL_LOADING,
+  GRAPH_LOADING,
   PANEL_SUBTITLE,
   PANEL_TITLE,
   emptyText,
@@ -32,8 +34,15 @@ import {
   tabCaption,
   unresolvedText,
 } from '@core/ui/engineering/panel';
-import { GraphDiagram } from '@core/ui/engineering/GraphDiagram';
 import { useApi } from '@core/ui/useApi';
+
+// `@xyflow/react` and its stylesheet are heavy and client-only, and this panel is mounted on FIVE
+// detail surfaces — a static import would put the whole flow library in all five bundles for a
+// section only the Agents kind ever has. Same `ssr: false` pattern as `SystemView`'s canvas.
+const GraphDiagram = dynamic(() => import('@core/ui/engineering/GraphDiagram').then((m) => m.GraphDiagram), {
+  ssr: false,
+  loading: () => <p style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{GRAPH_LOADING}</p>,
+});
 
 const mono = 'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)';
 

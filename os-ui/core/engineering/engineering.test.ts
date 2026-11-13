@@ -69,6 +69,9 @@ const GRAPH: EngineeringGraph = {
   resumeSemantics: 'resume re-enters at the last checkpoint',
 };
 
+/** The paths the fixture repository tracks — `gitSection` and `sealView` both police against it. */
+const TRACKED: ReadonlySet<string> = new Set(['models/gold/gold_orders.sql', 'models/gold/schema.yml', 'models/sources.yml']);
+
 const view = (sections: EngineeringView['sections']): EngineeringView => ({
   kind: 'dataset',
   id: 'ds_1',
@@ -87,7 +90,7 @@ test('T2: every section a builder produces names the tool\'s own noun, and the O
       facts: { assetKeys: [['ops', 'gold_orders']], jobName: 'ops__all', scheduleName: 'ops__ds_1', lastRun: { runId: 'r1', status: 'SUCCESS', startedAt: null }, uiBaseUrl: '/tools/dagster' },
     }),
     langgraphSection({ osNoun: 'agent system', graph: GRAPH }),
-    gitSection({ osNoun: 'data product', repo: 'ops', cloneUrl: 'https://os/git/ops.git', head: 'abc123', files: [{ path: 'models/gold/gold_orders.sql' }] }),
+    gitSection({ osNoun: 'data product', repo: 'ops', cloneUrl: 'https://os/git/ops.git', head: 'abc123', files: [{ path: 'models/gold/gold_orders.sql' }], tracked: TRACKED }),
     langfuseSection({ osNoun: 'agent system', enabled: true, traces: [{ runId: 'run_1', url: 'https://lf/trace/run_1' }], redactions: LANGFUSE_REDACTIONS }),
   ]);
   assert.deepEqual(vocabularyViolations(v), []);
@@ -146,11 +149,19 @@ test('T7: a section with no artefact carries a reason, and `sealView` refuses on
 test('T7: a deep link that cannot resolve says why — and `sealView` refuses one that does not', () => {
   const s = dagsterSection({
     osNoun: 'data product',
-    facts: { assetKeys: [['ops', 'gold_orders']], jobName: null, scheduleName: null, lastRun: null, lastRunNote: 'never materialised', uiBaseUrl: null },
+    facts: {
+      assetKeys: [['ops', 'gold_orders']],
+      jobName: null,
+      scheduleName: null,
+      lastRun: null,
+      lastRunNote: 'never materialised',
+      uiBaseUrl: null,
+      noLinkReason: 'opening the Dagster console needs builder; you are creator',
+    },
   });
   const link = s.links[0];
   assert.equal(link.url, null);
-  assert.match(link.unresolvedReason ?? '', /does not expose the Dagster UI/);
+  assert.match(link.unresolvedReason ?? '', /needs builder/);
   assert.match(unresolvedText(link.unresolvedReason ?? ''), /^This link does not resolve here: /);
   assert.throws(
     () => sealView(view([{ tool: 'dagster', label: 'Dagster', title: 'Dagster asset', artefacts: [{ noun: 'Dagster asset', name: 'x', body: 'x' }], links: [{ label: 'Open in Dagster', url: null }], commands: [] }])),
@@ -256,13 +267,14 @@ test('T6: the git section lists the files with paths and the head commit, and gi
     cloneUrl: 'https://os/git/ops.git',
     head: 'abc1234',
     files: [{ path: 'models/gold/gold_orders.sql', bytes: 42 }],
+    tracked: TRACKED,
   });
   assert.equal(s.artefacts[0].noun, 'git commit');
   assert.equal(s.artefacts[0].body, 'abc1234');
   assert.equal(s.artefacts[1].repoPath, 'models/gold/gold_orders.sql');
   assert.equal(s.commands[0].command, 'git clone https://os/git/ops.git');
   // No clone endpoint: the link says why rather than disappearing.
-  const noClone = gitSection({ osNoun: 'data product', repo: 'ops', cloneUrl: null, head: 'abc', files: [{ path: 'a.sql' }] });
+  const noClone = gitSection({ osNoun: 'data product', repo: 'ops', cloneUrl: null, head: 'abc', files: [{ path: 'a.sql' }], tracked: new Set(['a.sql']) });
   assert.equal(noClone.links[0].url, null);
   assert.match(noClone.links[0].unresolvedReason ?? '', /authenticated git endpoint/);
 });
@@ -302,4 +314,43 @@ test('the panel orders its tabs by the tools\' fixed order, whatever order the a
     dbtSection({ osNoun: 'data product', node: null, files: [], unavailable: 'none' }),
   ]);
   assert.deepEqual(orderedSections(v).map((s) => s.tool), ['dbt', 'langfuse']);
+});
+
+// ---- the structural "nothing uncommitted" rule (review M-2) ---------------------
+
+test('M-2: a path the repository does not track can never be shown — the builder drops it and sealView refuses it', () => {
+  // `gitSection` INTERSECTS with the tracked set, so an optimistic path never reaches the panel.
+  const s = gitSection({
+    osNoun: 'data product',
+    repo: 'ops',
+    cloneUrl: null,
+    head: 'abc',
+    files: [{ path: 'models/gold/gold_orders.sql' }, { path: 'models/gold/schema.yml' }, { path: 'models/gold/not-written-yet.yml' }],
+    tracked: new Set(['models/gold/gold_orders.sql']),
+    unavailable: 'nothing else is committed',
+  });
+  assert.deepEqual(s.artefacts.filter((a) => a.repoPath).map((a) => a.repoPath), ['models/gold/gold_orders.sql']);
+
+  // And `sealView` is the second line: any section that slipped one through fails loudly.
+  const smuggled = view([
+    dbtSection({ osNoun: 'data product', node: 'gold_orders', files: [{ path: 'models/gold/ghost.sql', content: 'select 1' }] }),
+  ]);
+  assert.throws(() => sealView(smuggled, TRACKED), /the repository does not track it/);
+  assert.doesNotThrow(() => sealView(view([dbtSection({ osNoun: 'data product', node: 'gold_orders', files: [{ path: 'models/gold/gold_orders.sql', content: 'select 1' }] })]), TRACKED));
+});
+
+// ---- the export's own label (review M-4) ----------------------------------------
+
+test('M-4: the export label obeys the vocabulary rule too, and its tool decides which nouns apply', () => {
+  const ok = { ...view([]), export: { tool: 'dbt' as const, label: 'dbt project tarball', href: '/x', commands: [] } };
+  assert.deepEqual(vocabularyViolations(ok), []);
+  // The label this review caught: "dashboard-as-code file" names no git noun AND leads with the
+  // OS's own word, so it fails twice over.
+  const bad = { ...view([]), export: { tool: 'git' as const, label: 'dashboard-as-code file', href: '/x', commands: [] } };
+  const found = vocabularyViolations(bad);
+  assert.equal(found.length, 2, found.join(' | '));
+  assert.match(found[0], /names no git noun/);
+  assert.match(found[1], /uses an OS noun with no git noun beside it/);
+  // The replacement passes: the tool's noun first, the OS word after it.
+  assert.deepEqual(vocabularyViolations({ ...view([]), export: { tool: 'git' as const, label: 'git file — the dashboard-as-code YAML', href: '/x', commands: [] } }), []);
 });

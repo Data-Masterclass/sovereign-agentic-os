@@ -117,6 +117,13 @@ of the domain repository at `main` — not re-rendered from the generator:
   semantic emitter has written it**. Until then the KPI's dbt tab says so in its own words and
   states that `mf query --metrics <name>` would not resolve yet; it does not pretend otherwise.
 
+**Membership decides how much of the project you see.** A Company-tier data product is visible to
+a caller outside its domain, but the domain *repository* is members-only (`requireMember` in
+`tabs/data/lib/dbt/read.ts`, which every project route goes through). So a non-member's panel shows
+that product's own model file and says why it shows nothing else, and the tarball is offered as
+unavailable with the reason — rather than printing bytes, or a download, that the project API would
+answer 403 to.
+
 The commands the panel prints are the ones you would type in a checkout:
 
 ```sh

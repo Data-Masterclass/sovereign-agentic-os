@@ -20,6 +20,9 @@ export const PANEL_TITLE = 'Under the hood';
 export const PANEL_SUBTITLE =
   'The real artefacts, in each tool\'s own words: the files in the repository, the asset the scheduler runs, the graph that was compiled, the trace of a run — with the command you would type yourself.';
 
+/** What the diagram's lazy chunk says while it loads (the JSON is already on screen beside it). */
+export const GRAPH_LOADING = 'Loading the graph diagram…';
+
 /** What the panel says while it is loading, and when the view could not be fetched. */
 export const PANEL_LOADING = 'Reading the artefacts…';
 export const PANEL_ERROR_PREFIX = 'Could not read the artefacts: ';

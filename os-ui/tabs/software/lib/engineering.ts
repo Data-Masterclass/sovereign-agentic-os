@@ -4,15 +4,18 @@
  * TAB:        software
  * FEATURE:    The Software tab's engineering view — the app's source tree, and what is NOT in git yet
  * USER STORY: As an engineer I open "Under the hood" on an app and see its source files and where
- *             they live, honestly: today the OS holds them in its own file mirror, NOT as an
- *             `apps/<slug>/` subtree of the domain repository, and the panel says so instead of
- *             implying a git story that does not exist yet (checklist T6, T7).
+ *             they REALLY live: the `apps/<slug>/` subtree of the domain repository once the app
+ *             writer commits there, and otherwise the OS's own file mirror — said plainly, rather
+ *             than implying a git story that does not hold yet (checklist T6, T7).
  * ARCHITECTURE:
  *   - `getAppForUser` first — it answers 404 for an app the caller cannot see, which is the
  *     software tab's uniform refusal (no existence leak), and the MCP maps it to `not_found`.
- *   - The git section carries NO artefact it cannot source from git: the file list is reported as
- *     a fact with its real home named, and the caveat names the subtree the writer will use. This
- *     is the "what is NOT true yet" pattern the plan asks for, applied to our own tab.
+ *   - Everything is DERIVED from the tracked paths of the domain repository, never asserted: when
+ *     `apps/<slug>/` is committed the git section shows those files and says nothing about a
+ *     mirror; when it is not, it says so and names the mirror the bytes are in. Both states are
+ *     tested, so the stream that lands the commit path changes no code here.
+ *   - The git section carries NO artefact it cannot source from git (`tracked` is passed to
+ *     `gitSection` and to `sealView`, which both refuse a path the repository does not track).
  */
 import 'server-only';
 import { getAppForUser, listAppFilesForViewer } from '@tabs/software/lib/apps';
@@ -46,14 +49,18 @@ export async function appEngineeringView(principal: EngineeringPrincipal, id: st
     cloneUrl: null,
     head: listed.head,
     files: committed.map((p) => ({ path: p })),
+    tracked: new Set(listed.paths),
     unavailable:
       committed.length === 0
-        ? `this app's source tree is NOT committed to the domain repository yet: the OS holds ${mirrored.length} file(s) in its own durable file mirror (the \`os-app-files\` index), and \`${dir}/\` does not exist in '${domain}'. The commit path through \`commitSubtree('${dir}')\` is the next change on this tab, and until it lands there is no head commit, no history and no diff for app source.`
+        ? `\`${dir}/\` is not committed in '${domain}', so there is no head commit, no history and no diff for this app's source yet: the OS holds ${mirrored.length} file(s) of it in its own durable file mirror (the \`os-app-files\` index) instead. The app writer's \`commitSubtree('${dir}')\` path is what replaces that.`
         : undefined,
     caveats: [
-      ...(mirrorError ? [`The file mirror could not be read: ${mirrorError}`] : []),
+      ...(mirrorError ? [`The OS file mirror could not be read: ${mirrorError}`] : []),
       ...(committed.length === 0 && mirrored.length
         ? [`The files the OS holds today, in the mirror rather than in git: ${mirrored.slice(0, 20).join(', ')}${mirrored.length > 20 ? `, … (${mirrored.length} in total)` : ''}.`]
+        : []),
+      ...(committed.length > 0 && mirrored.length && mirrored.length !== committed.length
+        ? [`The OS file mirror holds ${mirrored.length} file(s) for this app and the repository tracks ${committed.length} under \`${dir}/\`; the repository is the record, and a difference means the mirror is behind.`]
         : []),
     ],
   });
@@ -89,13 +96,14 @@ export async function appEngineeringView(principal: EngineeringPrincipal, id: st
     domain,
     sections: [dbt, dagster, git, langfuse],
     export: {
-      label: 'the app source tree',
+      tool: 'git',
+      label: 'the git tree of the app source',
       href: null,
       unresolvedReason:
         committed.length === 0
-          ? `the tree is not in git yet, so there is nothing to archive; read it file by file with \`read_app_files\` over the MCP until \`${dir}/\` is committed`
+          ? `\`${dir}/\` is not in git yet, so there is nothing to archive; read the source file by file with \`read_app_files\` over the MCP until the commit path lands`
           : 'a one-click archive of the subtree is not built yet; a `git clone` of the domain repository contains it',
       commands: [`git clone <os>/git/${domain}.git`, `ls ${dir}`],
     },
-  });
+  }, new Set(listed.paths));
 }

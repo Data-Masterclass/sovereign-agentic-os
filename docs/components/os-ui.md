@@ -367,6 +367,18 @@ Three rules make the panel trustworthy, and each is a test:
    rather than quietly changing the picture.
 3. **Say why, never nothing.** `sealView` refuses a section with no artefact and no reason, an
    artefact with no body and no note, and a link that does not resolve and does not say why.
+4. **Never present an uncommitted path as committed.** Every adapter passes the repository's
+   tracked-path set to `gitSection` (which intersects its file list with it) and to `sealView`
+   (which throws on any artefact `repoPath` outside it), so the rule is structural rather than one
+   adapter remembering to filter.
+5. **The panel never shows what the caller could not fetch.** Each adapter re-applies the
+   repository's own membership rule: a data product visible outside its domain still shows only its
+   own model file to a non-member, and the export is offered as unavailable with the reason. The
+   Dagster link is gated by the tool's own `minRole` for the same reason.
+
+`UnderTheHood` loads `GraphDiagram` through `next/dynamic` with `ssr: false` — the panel is mounted
+on five surfaces and only one kind has a graph, so `@xyflow/react` and its stylesheet must not ride
+along in the other four bundles.
 
 ## FAQ
 

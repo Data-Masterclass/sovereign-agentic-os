@@ -112,8 +112,14 @@ export type DagsterFacts = {
   lastRun: { runId: string; status: string; startedAt: string | null } | null;
   /** Why there is no last run (never materialised, Dagster unreachable) — when `lastRun` is null. */
   lastRunNote?: string;
-  /** The Dagster UI base URL the OS proxies, or null when the deployment does not expose one. */
+  /**
+   * Dagster's OWN console URL for this deployment, or null when there is nothing to open — either
+   * the deployment exposes no console or the caller's role may not open the tool. When it is null
+   * the link says which of the two it is (`noLinkReason`).
+   */
   uiBaseUrl: string | null;
+  /** Why there is no link — required when `uiBaseUrl` is null. */
+  noLinkReason?: string;
 };
 
 const assetKeyPath = (key: string[]) => key.join('/');
@@ -167,7 +173,7 @@ export function dagsterSection(input: { osNoun: string; facts: DagsterFacts; una
       : {
         label: 'Open in Dagster',
         url: null,
-        unresolvedReason: 'this deployment does not expose the Dagster UI through the tool proxy (no dagsterConsoleUrl configured), so there is no address to send you to',
+        unresolvedReason: facts.noLinkReason ?? 'there is no Dagster console address to send you to in this deployment',
       },
   ];
   const commands: EngineeringCommand[] = facts.assetKeys.map((key) => ({
@@ -236,10 +242,15 @@ export function gitSection(input: {
   cloneUrl: string | null;
   head: string | null;
   files: { path: string; bytes?: number }[];
+  /** Every path the repository tracks at `main`. `files` is INTERSECTED with it, so a path the
+   *  generator has not written yet can never be presented as committed — the rule is structural
+   *  here and enforced again by `sealView`. */
+  tracked: ReadonlySet<string>;
   unavailable?: string;
   caveats?: string[];
 }): EngineeringSection {
   const title = `git repository \`${input.repo}\` (${input.osNoun})`;
+  input = { ...input, files: input.files.filter((f) => input.tracked.has(f.path)) };
   if (input.files.length === 0) {
     const s = unavailableSection('git', TOOL_LABELS.git, title, input.unavailable ?? 'nothing is committed for this object yet');
     if (input.caveats?.length) s.caveats = input.caveats;

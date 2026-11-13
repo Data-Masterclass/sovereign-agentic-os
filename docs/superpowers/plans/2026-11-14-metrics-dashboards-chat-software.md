@@ -1994,9 +1994,13 @@ deviation is.
 - **T-3 — the graph is derived from the IR, not captured from a compiled `StateGraph`.** Compiling
   a runnable graph needs the engine's deps (model gateway, tool executor, checkpointer), which an
   adapter must not construct on a read. The derivation uses the SAME IR (`compile`) and the SAME
-  node naming (`safeNodeName`) and is pinned against a real `buildGraph` in
-  `tabs/agents/lib/engineering.test.ts`, so a rename in the engine fails a test instead of
-  silently changing the panel.
+  node naming (`safeNodeName`). **What the test actually pins** (review L-1, wording narrowed):
+  the NODE NAMES and the active-agent set are compared to what a real `buildGraph` exposes
+  (`built.names(agent)`, `built.agents`), so a rename or a pruning change in the engine fails the
+  test. The EDGES, the `when` guards and the channels are compared to the IR, not to the compiled
+  graph — `BuiltGraph` exposes no edge list to compare against. Making that comparison real needs
+  either `graph.getGraph()`/`getGraphAsync()` from LangGraph or an edge list on `BuiltGraph`; it is
+  written into the backlog rather than claimed here.
 - **T-4 — metric and dashboard sections are written against the plan's file contracts** (M's
   `models/semantic/<model>.yml`, D's `dashboards/<id>.yml`), because neither had landed when this
   stream ran. Both adapters select by what is actually committed and, when nothing is, name the
@@ -2013,5 +2017,31 @@ deviation is.
 - **T-7 — one new MCP bundle registration** in `core/mcp/register-experimental.ts` (`engineering`,
   always on). The tool itself refuses a kind whose tab is disabled, naming the reason, so there was
   nothing to gate at the bundle level.
+- **T-8 — "Open in Dagster" links Dagster's OWN console, not `/tools/dagster`** (review H-3).
+  `core/infra/tool-proxy.ts` declares `ownTab` for Dagster because its Next.js chunks load from the
+  site root and render blank behind the proxy prefix, so the plan's "through the tool proxy"
+  (T-R1.3) would have shipped a link to a blank page. The panel uses `TOOLS.dagster.ownTab.consoleUrl`
+  and gates it on the tool's own `minRole` (builder); a creator sees the reason instead of a link
+  the ingress would refuse, and keeps the asset key and the command. Both branches are tested.
+- **T-9 — the repository's membership rule is re-applied by every adapter** (review H-1/M-1).
+  `getDataset` lets a Company-tier (`product`) data product be read from outside its domain, but
+  `tabs/data/lib/dbt/read.ts` `requireMember` gates the repository the panel reads from. A
+  non-member therefore gets that product's own model file, a caveat naming non-membership, and an
+  export offered as `href: null` with its reason — instead of bytes and a download the project API
+  would 403. Same in the metric and dashboard adapters.
+- **T-10 — "no uncommitted path" is structural, not per-adapter** (review M-2). `gitSection` takes
+  the tracked-path set and intersects its file list with it; `sealView(view, tracked)` throws on
+  any artefact `repoPath` the repository does not track. The one-off intersection in the data
+  adapter is gone.
+- **T-11 — `EngineeringExport` carries its `tool`** (review M-4), so `vocabularyViolations` checks
+  the export label too. `'dashboard-as-code file'` was failing that rule twice over and is now
+  `'git file — the dashboard-as-code YAML'`; the agent-system and app labels lead with their tool's
+  noun as well.
+- **T-12 — the diagram is a lazy chunk** (review M-3): `UnderTheHood` loads `GraphDiagram` through
+  `next/dynamic` with `ssr: false`, the pattern `SystemView` already uses for its canvas, so
+  `@xyflow/react` and its stylesheet do not ride along in the four bundles that have no graph.
+- **T-13 — review L-3 found nothing to fix on this branch.** No `outputSchema` claim exists in
+  stream T's diff (`McpTool` has no such field here); the only `structuredContent` reference is a
+  test reading the dispatcher's real typed-error envelope. Recorded rather than silently skipped.
 
 

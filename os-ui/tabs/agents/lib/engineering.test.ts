@@ -139,6 +139,9 @@ test('T1/T6: the agent-system view carries the compiled graph, the committed sys
   assert.equal(git?.artefacts[0].body, YAML, 'the bytes shown are the bytes in the repository');
   assert.ok(git?.commands.some((c) => c.command.startsWith('git log')));
 
+  assert.equal(view.export?.tool, 'langgraph');
+  assert.match(view.export?.label ?? '', /LangGraph graph JSON/);
+
   const lf = view.sections.find((s) => s.tool === 'langfuse');
   assert.ok(lf?.unavailable || lf?.links[0], 'the Langfuse section either links the trace or says why it cannot');
 

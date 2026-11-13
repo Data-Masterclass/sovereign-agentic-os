@@ -156,6 +156,7 @@ export async function agentSystemEngineeringView(principal: EngineeringPrincipal
     cloneUrl: null,
     head: listed.head,
     files: wanted.sort().map((p) => ({ path: p })),
+    tracked: new Set(listed.paths),
     unavailable:
       listed.reason ??
       `no \`system.yaml\` for this system is committed in '${domain}' yet — the generator writes it to ${dirs[0]}/system.yaml on the next commit`,
@@ -216,12 +217,13 @@ export async function agentSystemEngineeringView(principal: EngineeringPrincipal
     sections: [dbt, dagster, langgraph, git, langfuse],
     export: dir
       ? {
-        label: 'system.yaml plus the compiled graph JSON',
+        tool: 'langgraph',
+        label: 'the LangGraph graph JSON plus the committed system.yaml',
         href: null,
         unresolvedReason:
           'a one-click export is not built yet; the two files are the `system.yaml` above and the compiled graph JSON in this panel, and a `git clone` of the domain repository gives you both',
         commands: [`git clone <os>/git/${domain}.git`, `cat ${dir}/system.yaml`, `cat ${dir}/graph.json`],
       }
       : undefined,
-  });
+  }, new Set(listed.paths));
 }

@@ -55,6 +55,7 @@ mock.module('@core/engineering/repo', {
 
 const { metricEngineeringView, namesMeasure, SEMANTIC_DIR } = await import('@tabs/metrics/lib/engineering');
 const USER = { id: 'amir', name: 'Amir', domains: ['ops'], allDomains: ['ops'], activeDomain: 'ops', role: 'admin' } as unknown as EngineeringPrincipal;
+const OUTSIDER = { id: 'fiona', name: 'Fiona', domains: ['finance'], allDomains: ['finance'], activeDomain: 'finance', role: 'admin' } as unknown as EngineeringPrincipal;
 
 test('a semantic file is claimed only when it really names the measure', () => {
   assert.ok(namesMeasure(SEMANTIC, 'revenue'));
@@ -92,4 +93,18 @@ test('T7: with no semantic file committed, the section names the missing file an
 
 test('T7: a KPI that does not exist is the tab\'s own 404', async () => {
   await assert.rejects(() => metricEngineeringView(USER, 'ds_1.missing'), (e: Error & { status?: number }) => e.status === 404);
+});
+
+test('H-1/M-1: a KPI on a data product in a domain the caller is not in shows no repository bytes and no export', async () => {
+  const view = await metricEngineeringView(OUTSIDER, RECORD.id);
+  assert.deepEqual(vocabularyViolations(view), []);
+  const dbt = view.sections.find((s) => s.tool === 'dbt');
+  assert.equal(dbt?.artefacts.length, 0);
+  assert.match(dbt?.unavailable ?? '', /members-only/);
+  assert.equal(view.export?.href, null);
+  assert.match(view.export?.unresolvedReason ?? '', /members-only/);
+  // The member keeps everything.
+  const inside = await metricEngineeringView(USER, RECORD.id);
+  assert.equal(inside.export?.href, '/api/data/projects/ops/export');
+  assert.equal(inside.export?.tool, 'dbt');
 });

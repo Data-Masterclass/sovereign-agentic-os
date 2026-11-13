@@ -33,10 +33,13 @@ export function dashboardPaths(paths: string[], id: string): string[] {
 export async function dashboardEngineeringView(principal: EngineeringPrincipal, id: string): Promise<EngineeringView> {
   const d = getDashboard(id, principal);
   const domain = d.domain;
+  // Members-only repository, as everywhere: a dashboard shared to the marketplace is visible to a
+  // non-member, its domain's committed file is not.
+  const member = principal.domains.includes(domain);
   const metrics = [...new Set(d.spec.charts.flatMap((c) => panelMetrics(c)))].sort();
 
   const listed = await repoPaths(domain);
-  const mine = dashboardPaths(listed.paths, d.id);
+  const mine = member ? dashboardPaths(listed.paths, d.id) : [];
   const read = mine.length ? await readRepoFiles(domain, (p) => mine.includes(p)) : null;
   const files = read?.files ?? [];
 
@@ -46,7 +49,9 @@ export async function dashboardEngineeringView(principal: EngineeringPrincipal, 
     cloneUrl: null,
     head: listed.head,
     files: mine.map((p) => ({ path: p })),
+    tracked: new Set(listed.paths),
     unavailable:
+      (!member ? `the git repository of '${domain}' is members-only, and you are not a member of it` : undefined) ??
       listed.reason ??
       `no dashboard-as-code file for this dashboard is committed in '${domain}' yet — the writer lands it at \`${DASHBOARD_DIR}${d.id}.yml\``,
   });
@@ -90,15 +95,19 @@ export async function dashboardEngineeringView(principal: EngineeringPrincipal, 
     sections: [dbt, dagster, git, langfuse],
     export: mine.length
       ? {
-        label: 'dashboard-as-code file',
+        tool: 'git',
+        label: 'git file — the dashboard-as-code YAML',
         href: `/api/data/projects/${encodeURIComponent(domain)}/blob?path=${encodeURIComponent(mine[0])}`,
         commands: [`git clone <os>/git/${domain}.git`, `cat ${mine[0]}`],
       }
       : {
-        label: 'dashboard-as-code file',
+        tool: 'git',
+        label: 'git file — the dashboard-as-code YAML',
         href: null,
-        unresolvedReason: `nothing is committed at \`${DASHBOARD_DIR}${d.id}.yml\` yet, so there is no file to export`,
+        unresolvedReason: member
+          ? `nothing is committed at \`${DASHBOARD_DIR}${d.id}.yml\` yet, so there is no file to export`
+          : `the git repository of '${domain}' is members-only, and you are not a member of it`,
         commands: [`git clone <os>/git/${domain}.git`],
       },
-  });
+  }, new Set(listed.paths));
 }

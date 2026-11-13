@@ -108,6 +108,15 @@ export function vocabularyViolations(view: EngineeringView): string[] {
     }
     for (const l of s.links) out.push(...labelViolations(s.tool, `${view.kind}:${view.id} ${s.tool} link`, l.label));
   }
+  // The export is an artefact like any other: it is handed over in a tool's own format, so its
+  // label owes the same noun ("dbt project tarball", not "the download").
+  if (view.export) {
+    const e = view.export;
+    if (!hasToolNoun(e.tool, e.label)) {
+      out.push(`${view.kind}:${view.id} export: the label "${e.label}" names no ${TOOL_LABELS[e.tool]} noun (allowed: ${TOOL_NOUNS[e.tool].join(', ')})`);
+    }
+    out.push(...labelViolations(e.tool, `${view.kind}:${view.id} export`, e.label));
+  }
   return out;
 }
 
