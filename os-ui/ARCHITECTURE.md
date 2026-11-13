@@ -808,3 +808,48 @@ result, and the UI must surface that label.
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,
 taking its prose from the file headers, the tab manifests and the component pins, so
 it cannot drift. CI fails if the committed page is stale.
+
+## Versioning every object kind: one generic read over the domain repos
+
+(Night 2, stream G — `core/infra/git-objects.ts`, `core/ui/git/`, `core/mcp/git-tools.ts`.
+`docs/components/git.md` carries the authoritative repo-layout table and the commands.)
+
+Every builder artefact lives in its domain's repository (see "Git-based working" above), so
+"which version is this, what did it look like, what changed, put that back" is the same question
+for a dbt model, a dbt metric, a dashboard, an agent system and an app. It is answered once:
+
+```
+objectGitInfo(user, kind, id)         -> { head, history[], truncated, via, paths }
+getVersion(user, kind, id, sha)       -> the object's files AT that commit
+diffVersions(user, kind, id, a, b)    -> a unified diff (no diff dependency; 40 lines of LCS)
+restoreVersion(user, kind, id, sha)   -> ONE NEW COMMIT through the object's normal writer
+```
+
+**The kernel may not import a tab, so the tabs register themselves.** `GIT_OBJECT_LAYOUT` is the
+static layout table in @core; each tab calls `registerGitObject(kind, resolver)` at boot
+(`instrumentation.ts`), and the resolver runs **the tab's own governed read as the caller**. A
+resolver answers `null` — or throws, as a tab's read does for a forbidden object — and both
+become ONE byte-identical `not_found`, so an id cannot be probed for existence.
+
+**Why the path fallback exists, and why it is not optional.** The per-object read-back used to
+filter the domain log by the `OS-Object` trailer alone. A boot reconcile commits as the PLATFORM
+with `OS-Object: <domain>`, so every object whose only commits were reconciles answered
+`head: null` — the UI then said "never committed" about a system sitting in the tree. The
+generic reader merges a path-scoped `git log -- agents/<lane>/<slug>/` in whenever the trailer
+did not fill the page, and reports `via: 'trailer' | 'path' | 'trailer+path' | 'none'` so the
+answer never hides which source produced it. `tabs/agents/lib/git/history.ts` is now a thin
+adapter over this module rather than a second implementation.
+
+**Restore is a new commit or it is a refusal.** `restoreVersion` reads the old files and hands
+them to the kind's registered writer; nothing in @core knows how to write a dataset or a system,
+by design. A kind with no registered writer gets a typed `restore_unsupported` (501) — after the
+`not_found` gate, so a refusal never confirms that an object exists. A version too large for one
+read, or with no files at that commit, is refused too: a partially applied restore is worse than
+none.
+
+**The enumeration test is the gate that makes "everything lives in git" non-optional.**
+`core/infra/git-objects-kinds.test.ts` fails when a kind is added without a layout row, when a
+kind claims a `committed` writer whose module does not reach `commitTree`/`commitSubtree`, and —
+the direction that catches drift — when a module imports those primitives and **no object kind
+claims it**. A new writer therefore cannot land without classifying its artefact kind as
+committed, landing (naming the stream) or backlog (with a reason).

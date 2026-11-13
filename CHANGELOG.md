@@ -23,6 +23,20 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   four read-only research reports beside them as the evidence base. No product code changes in this
   commit.
 
+- **Git everywhere — generic versioning over the domain repos (night 2, stream G).**
+  `os-ui/core/infra/git-objects.ts` adds `objectGitInfo(kind, id)`, `getVersion`, `diffVersions`
+  and `restoreVersion` for every object kind, keyed on the `OS-Object` trailer **with a
+  path-scoped `git log -- <paths>` fallback**, so an object whose only commits are platform boot
+  reconciles no longer reports a null head. `core/infra/git-store.ts` grows the read half it
+  needs (read-at-commit, path-scoped log, unified diff, repo summaries); `core/ui/git/` provides
+  the shared `GitHeadBadge` + `HistoryDrawer` (and `ReleaseList`, hidden until the tag API
+  lands); `core/mcp/git-tools.ts` exposes `get_history`, `get_version`, `diff_versions` and
+  `restore_version`; Governance gains a **Repositories** section; and
+  `core/infra/git-objects-kinds.test.ts` is the all-kinds enumeration that fails when a writer
+  commits to a domain repo without a classified object kind. The repo layout table is documented
+  in `docs/components/git.md`. Restore is gated and refuses with a typed `restore_unsupported`
+  until a tab registers its writer — the OS never rewrites a human's history.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a

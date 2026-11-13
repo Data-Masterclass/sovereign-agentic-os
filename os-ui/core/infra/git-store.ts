@@ -648,3 +648,348 @@ export async function push(domain: string, mirror: MirrorConfig, deps: PushDeps 
     return { ok: false, error: scrub(e instanceof Error ? e.message : String(e), token) };
   }
 }
+
+// =============================================================================
+// === G READ BLOCK (night 2) — read-at-commit · path-scoped log · unified diff
+// =============================================================================
+// Appended as ONE delimited section (plan: stream G owns the read/diff half of this
+// file, stream S owns the tag half). Everything above is untouched and no existing
+// export's signature changed. These are the primitives `core/infra/git-objects.ts`
+// needs to answer "what is this object's history, what did it look like at that
+// commit, and what changed between two of them" — generic over paths, knowing
+// nothing about datasets, metrics, dashboards, systems or apps.
+//
+// WHY A PATH-SCOPED LOG AT ALL: the per-object history was keyed on the `OS-Object`
+// trailer only, and boot-reconcile commits carry PLATFORM attribution
+// (`OS-Object: <domain>`), so a trailer-only lookup answers `null` for an object
+// whose files are plainly in the tree (night-1 follow-up F3-1). `logPaths` is the
+// fallback that makes `git.head` non-null for anything with files.
+
+/** How deep a path-scoped log walks by default (bounded like {@link MAX_LOG_DEPTH}). */
+export const DEFAULT_PATH_SCAN = 200;
+/** Most files one object-version read returns before it reports itself truncated. */
+export const MAX_VERSION_FILES = 500;
+
+/** A repo path selector: `a/b/` (a directory prefix) or `a/b.yml` (one exact file). */
+export type PathSelector = string;
+
+/** Does `filepath` fall under this selector? A trailing `/` means "everything under". */
+export function pathMatches(filepath: string, selector: PathSelector): boolean {
+  const s = String(selector ?? '').replace(/^\/+/, '');
+  if (!s) return false;
+  if (s.endsWith('/')) return filepath.startsWith(s);
+  return filepath === s || filepath.startsWith(`${s}/`);
+}
+
+/** Does `filepath` fall under ANY of the selectors? */
+export function pathMatchesAny(filepath: string, selectors: PathSelector[]): boolean {
+  return selectors.some((s) => pathMatches(filepath, s));
+}
+
+/** The oid a path resolves to inside one commit's tree — a blob or a subtree. Null when absent. */
+async function oidAtPath(gitdir: string, commitOid: string, selector: PathSelector, cache: Map<string, string | null>): Promise<string | null> {
+  const key = `${commitOid} ${selector}`;
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+  const segments = String(selector ?? '')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .split('/')
+    .filter((s) => s.length > 0);
+  let result: string | null = null;
+  try {
+    const { commit } = await git.readCommit({ fs, gitdir, oid: commitOid });
+    let oid: string = commit.tree;
+    for (const segment of segments) {
+      const { tree } = await git.readTree({ fs, gitdir, oid });
+      const entry = tree.find((e) => e.path === segment);
+      if (!entry) {
+        oid = '';
+        break;
+      }
+      oid = entry.oid;
+    }
+    result = oid === '' ? null : oid;
+  } catch {
+    result = null;
+  }
+  cache.set(key, result);
+  return result;
+}
+
+/** The content signature of a set of selectors inside one commit (`-` per absent selector). */
+async function signatureAt(gitdir: string, commitOid: string, selectors: PathSelector[], cache: Map<string, string | null>): Promise<string> {
+  const parts: string[] = [];
+  for (const s of selectors) parts.push(`${s}=${(await oidAtPath(gitdir, commitOid, s, cache)) ?? '-'}`);
+  return parts.join('|');
+}
+
+export type PathLogOptions = GitStoreOptions & {
+  /** Most entries returned (default 10, capped 100). */
+  limit?: number;
+  /** How far back the repo log is walked while looking for them (default 200, capped MAX_LOG_DEPTH). */
+  scan?: number;
+};
+
+export type PathLogResult = {
+  entries: LogEntry[];
+  /** True when the scan window ran out before `limit` matching commits were found. */
+  truncated: boolean;
+  /** How many commits were actually examined. */
+  scanned: number;
+};
+
+/**
+ * `git log -- <paths>`: the commits in which the content under ANY of `selectors` differs from
+ * the first parent's (a root commit counts when the path exists in it). Newest first, bounded.
+ *
+ * HONEST ABOUT ITS WINDOW: one domain repo mixes the dbt project, the agent systems, the
+ * dashboards and every app, so a per-object log has to scan far more than it returns. `truncated`
+ * says when the window ended before `limit` matches appeared — it never implies completeness.
+ */
+export async function logPaths(domain: string, selectors: PathSelector[], opts: PathLogOptions = {}): Promise<PathLogResult> {
+  const clean = selectors.map((s) => String(s ?? '').replace(/^\/+/, '')).filter((s) => s.length > 0);
+  if (clean.length === 0) return { entries: [], truncated: false, scanned: 0 };
+  if (!repoExists(domain, opts)) return { entries: [], truncated: false, scanned: 0 };
+  const gitdir = repoPath(domain, opts);
+  if (!(await headSha(gitdir))) return { entries: [], truncated: false, scanned: 0 };
+  const limit = Math.max(1, Math.min(opts.limit ?? 10, 100));
+  const scan = Math.max(limit, Math.min(opts.scan ?? DEFAULT_PATH_SCAN, MAX_LOG_DEPTH));
+  const all = await log(domain, { ...opts, limit: scan });
+  const cache = new Map<string, string | null>();
+  const out: LogEntry[] = [];
+  for (const entry of all) {
+    const mine = await signatureAt(gitdir, entry.sha, clean, cache);
+    const parent = entry.parents[0];
+    const theirs = parent ? await signatureAt(gitdir, parent, clean, cache) : null;
+    const present = mine.split('|').some((p) => !p.endsWith('=-'));
+    if (parent ? mine !== theirs : present) out.push(entry);
+    if (out.length >= limit) break;
+  }
+  return { entries: out, truncated: out.length < limit && all.length >= scan, scanned: all.length };
+}
+
+export type FileAtCommit = { path: string; content: string };
+export type FilesAtResult = {
+  sha: string;
+  files: FileAtCommit[];
+  /** True when more than {@link MAX_VERSION_FILES} files matched and the list was cut. */
+  truncated: boolean;
+};
+
+/**
+ * Read every file under `selectors` AT one commit (read-at-commit). `[]` is the honest answer for
+ * a commit in which the object had no files — never an error and never substituted content.
+ */
+export async function readFilesAt(domain: string, ref: string | undefined, selectors: PathSelector[], opts: GitStoreOptions = {}): Promise<FilesAtResult> {
+  if (!repoExists(domain, opts)) throw new GitStoreError(`no repository for '${domain}'`, 404);
+  const gitdir = repoPath(domain, opts);
+  const sha = await resolveCommit(gitdir, ref);
+  const clean = selectors.map((s) => String(s ?? '').replace(/^\/+/, '')).filter((s) => s.length > 0);
+  const entries = (await listTree(domain, sha, opts)).filter((e) => pathMatchesAny(e.path, clean));
+  const truncated = entries.length > MAX_VERSION_FILES;
+  const files: FileAtCommit[] = [];
+  for (const e of entries.slice(0, MAX_VERSION_FILES)) {
+    const { blob } = await git.readBlob({ fs, gitdir, oid: e.oid });
+    files.push({ path: e.path, content: Buffer.from(blob).toString('utf8') });
+  }
+  return { sha, files, truncated };
+}
+
+// ------------------------------------------------------------ unified diff ---
+
+/** Beyond this many line-pairs the LCS is skipped and the file is reported as one replacement. */
+export const MAX_DIFF_CELLS = 400_000;
+
+function splitLines(text: string): { lines: string[]; noEol: boolean } {
+  const s = String(text ?? '');
+  if (s === '') return { lines: [], noEol: false };
+  const noEol = !s.endsWith('\n');
+  const lines = s.split('\n');
+  if (!noEol) lines.pop();
+  return { lines, noEol };
+}
+
+type DiffOp = { t: ' ' | '-' | '+'; line: string };
+
+/** The edit script between two line arrays (LCS backtrack), or null when it is too large. */
+function editScript(a: string[], b: string[]): DiffOp[] | null {
+  if (a.length * b.length > MAX_DIFF_CELLS) return null;
+  const n = a.length;
+  const m = b.length;
+  const width = m + 1;
+  const dp = new Int32Array((n + 1) * width);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i * width + j] = a[i] === b[j] ? dp[(i + 1) * width + j + 1] + 1 : Math.max(dp[(i + 1) * width + j], dp[i * width + j + 1]);
+    }
+  }
+  const ops: DiffOp[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      ops.push({ t: ' ', line: a[i] });
+      i++;
+      j++;
+    } else if (dp[(i + 1) * width + j] >= dp[i * width + j + 1]) {
+      ops.push({ t: '-', line: a[i] });
+      i++;
+    } else {
+      ops.push({ t: '+', line: b[j] });
+      j++;
+    }
+  }
+  for (; i < n; i++) ops.push({ t: '-', line: a[i] });
+  for (; j < m; j++) ops.push({ t: '+', line: b[j] });
+  return ops;
+}
+
+export type UnifiedDiffOptions = {
+  /** `--- a/<aLabel>` (default `a`). */
+  aLabel?: string;
+  /** `+++ b/<bLabel>` (default `b`). */
+  bLabel?: string;
+  /** Context lines around each hunk (default 3). */
+  context?: number;
+};
+
+/**
+ * A unified diff of two texts. `''` when they are identical, so a caller can test for "no change"
+ * without parsing. No new dependency: the OS vendors no diff library for forty lines of LCS.
+ */
+export function unifiedDiff(aText: string, bText: string, opts: UnifiedDiffOptions = {}): string {
+  if (aText === bText) return '';
+  const a = splitLines(aText);
+  const b = splitLines(bText);
+  const context = Math.max(0, Math.min(opts.context ?? 3, 20));
+  const header = `--- a/${opts.aLabel ?? 'a'}\n+++ b/${opts.bLabel ?? 'b'}\n`;
+  const ops = editScript(a.lines, b.lines);
+  if (!ops) {
+    // Too large to diff line-by-line. Say so rather than returning a wrong or empty patch.
+    return header + `@@ -1,${a.lines.length} +1,${b.lines.length} @@ file too large to diff line-by-line (${a.lines.length} x ${b.lines.length} lines)\n`;
+  }
+  const changed = ops.map((o) => o.t !== ' ');
+  const hunks: string[] = [];
+  let k = 0;
+  let aLine = 1;
+  let bLine = 1;
+  const advance = (op: DiffOp): void => {
+    if (op.t !== '+') aLine++;
+    if (op.t !== '-') bLine++;
+  };
+  // Lines already inside a hunk: a later hunk's leading context may never repeat them, or the
+  // patch would carry the same line twice and `git apply` would reject it.
+  let emitted = 0;
+  while (k < ops.length) {
+    if (!changed[k]) {
+      advance(ops[k]);
+      k++;
+      continue;
+    }
+    // Walk back over the leading context, then forward until more than `context` quiet lines.
+    let start = k;
+    let backA = aLine;
+    let backB = bLine;
+    for (let c = 0; c < context && start > emitted && !changed[start - 1]; c++) {
+      start--;
+      backA--;
+      backB--;
+    }
+    let end = k;
+    let quiet = 0;
+    while (end < ops.length && quiet <= context) {
+      quiet = changed[end] ? 0 : quiet + 1;
+      end++;
+    }
+    // Keep EXACTLY `context` lines after the last change in this hunk (git's own shape).
+    let lastChange = k;
+    for (let x = k; x < end; x++) if (changed[x]) lastChange = x;
+    end = Math.min(ops.length, lastChange + 1 + context);
+    emitted = end;
+    const body = ops.slice(start, end);
+    const aCount = body.filter((o) => o.t !== '+').length;
+    const bCount = body.filter((o) => o.t !== '-').length;
+    hunks.push(
+      `@@ -${aCount === 0 ? 0 : backA},${aCount} +${bCount === 0 ? 0 : backB},${bCount} @@\n` + body.map((o) => `${o.t}${o.line}`).join('\n'),
+    );
+    for (let x = k; x < end; x++) advance(ops[x]);
+    k = end;
+  }
+  return header + hunks.join('\n') + '\n';
+}
+
+export type FileDiff = {
+  path: string;
+  status: 'added' | 'modified' | 'removed';
+  /** The unified patch for this file (never empty — an unchanged file is not listed). */
+  patch: string;
+};
+
+export type DiffResult = {
+  a: string;
+  b: string;
+  files: FileDiff[];
+  /** Every file patch concatenated — what an engineer would pipe into `git apply`. */
+  patch: string;
+};
+
+/**
+ * The unified diff of everything under `selectors` between two commits. Unchanged files are
+ * omitted; `files: []` means the object is byte-identical at both commits, which is a real answer.
+ */
+export async function diffPaths(
+  domain: string,
+  refA: string,
+  refB: string,
+  selectors: PathSelector[],
+  opts: GitStoreOptions & { context?: number } = {},
+): Promise<DiffResult> {
+  const a = await readFilesAt(domain, refA, selectors, opts);
+  const b = await readFilesAt(domain, refB, selectors, opts);
+  const left = new Map(a.files.map((f) => [f.path, f.content]));
+  const right = new Map(b.files.map((f) => [f.path, f.content]));
+  const paths = [...new Set([...left.keys(), ...right.keys()])].sort();
+  const files: FileDiff[] = [];
+  for (const p of paths) {
+    const before = left.get(p);
+    const after = right.get(p);
+    if (before === after) continue;
+    const patch = unifiedDiff(before ?? '', after ?? '', { aLabel: p, bLabel: p, context: opts.context });
+    if (!patch) continue;
+    files.push({ path: p, status: before === undefined ? 'added' : after === undefined ? 'removed' : 'modified', patch });
+  }
+  return { a: a.sha, b: b.sha, files, patch: files.map((f) => f.patch).join('') };
+}
+
+/** One repository's summary for an operator view: head commit, commit count, last author. */
+export type RepoSummary = {
+  domain: string;
+  head: string | null;
+  /** Commits on `main`, counted up to {@link MAX_LOG_DEPTH} (`countTruncated` says when capped). */
+  commits: number;
+  countTruncated: boolean;
+  lastAuthor: string | null;
+  lastSubject: string | null;
+  /** ISO-8601 of the head commit's author time. */
+  lastAt: string | null;
+};
+
+/** Summarise every repository on the PVC (operator read; no file contents, no credentials). */
+export async function repoSummaries(opts: GitStoreOptions = {}): Promise<RepoSummary[]> {
+  const out: RepoSummary[] = [];
+  for (const repo of await listRepos(opts)) {
+    const entries = await log(repo.name, { ...opts, limit: MAX_LOG_DEPTH });
+    const head = entries[0] ?? null;
+    out.push({
+      domain: repo.name,
+      head: repo.head,
+      commits: entries.length,
+      countTruncated: entries.length >= MAX_LOG_DEPTH,
+      lastAuthor: head ? head.author.name : null,
+      lastSubject: head ? head.subject : null,
+      lastAt: head ? new Date(head.timestamp * 1000).toISOString() : null,
+    });
+  }
+  return out;
+}
