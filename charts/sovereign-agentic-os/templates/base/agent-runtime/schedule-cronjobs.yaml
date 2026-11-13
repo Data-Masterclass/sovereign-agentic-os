@@ -7,6 +7,12 @@
     { name, systemId, cron, prompt }
   A5: no longer gated on `agentRuntime.enabled` — the workload that flag switched is gone,
   and these CronJobs never talked to it.
+
+  A5-review-H-3: the POD label is `component: agent-schedule`, NOT `agent-runtime`. These pods
+  are a `curl` with one destination (os-ui) and must stay that way: `network/egress-policies.yaml`
+  EXCLUDES `agent-schedule` from the blanket intra-namespace allow and gives it a dedicated
+  allowlist (os-ui + DNS only). Renaming this label re-opens the whole in-namespace plane to a
+  pod that only ever POSTs one endpoint — keep the two files in step.
 */}}
 {{- range $s := ((.Values.agentRuntime).schedules | default list) }}
 ---
@@ -17,7 +23,7 @@ metadata:
   namespace: {{ $.Release.Namespace }}
   labels:
     {{- include "soa.labels" $ | nindent 4 }}
-    {{- include "soa.selectorLabels" (dict "ctx" $ "component" "agent-runtime") | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" $ "component" "agent-schedule") | nindent 4 }}
 spec:
   schedule: {{ $s.cron | quote }}
   concurrencyPolicy: Forbid
@@ -29,7 +35,7 @@ spec:
       template:
         metadata:
           labels:
-            {{- include "soa.selectorLabels" (dict "ctx" $ "component" "agent-runtime") | nindent 12 }}
+            {{- include "soa.selectorLabels" (dict "ctx" $ "component" "agent-schedule") | nindent 12 }}
         spec:
           restartPolicy: Never
           {{- with $.Values.global.imagePullSecrets }}
