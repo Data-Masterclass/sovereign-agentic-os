@@ -5,7 +5,8 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { listDatasets, createDataset } from '@tabs/data/lib/store';
+import { listDatasets } from '@tabs/data/lib/store';
+import { createDatasetService } from '@tabs/data/lib/mutations-server';
 import { appSlugFromRequest, grantedIdSet } from '@tabs/software/lib/app-origin';
 
 export const dynamic = 'force-dynamic';
@@ -28,11 +29,10 @@ export const GET = withRoute(async ({ user, req }) => {
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
 export const POST = withRoute<Record<string, string>, { name?: string; domain?: string; origin?: string }>(async ({ user, body }) => {
-  if (!body.name || !body.name.trim()) {
-    return NextResponse.json({ error: 'a dataset needs a name' }, { status: 400 });
-  }
   // TWO-PATH create: 'curated' marks a dataset born from EXISTING governed datasets
   // (the Gold join path). Anything else — absent, 'ingest', garbage — is classic ingest.
-  const d = createDataset(user, { name: body.name, domain: body.domain, origin: body.origin === 'curated' ? 'curated' : undefined });
+  // `createDatasetService` is the SAME function MCP `create_dataset` calls (checklist X8),
+  // so both doors validate alike and produce the same commit.
+  const d = createDatasetService(user, { name: body.name, domain: body.domain, origin: body.origin });
   return NextResponse.json({ dataset: d }, { status: 201 });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

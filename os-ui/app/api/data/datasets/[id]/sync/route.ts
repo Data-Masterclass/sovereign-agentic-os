@@ -5,11 +5,11 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
-import { getDataset, requireDatasetEditable, setDatasetSync } from '@tabs/data/lib/store';
+import { getDataset } from '@tabs/data/lib/store';
 import { parseSyncBlock, type DatasetSync } from '@tabs/data/lib/dataset-schema';
 import { runtimeTokenOk } from '@tabs/agents/lib/build/runtime-auth';
-import { type SyncTrigger } from '@tabs/data/lib/sync-run-server';
-import { reconcileSyncSchedule, runSyncNow } from '@tabs/data/lib/dbt/launch';
+import { runSyncNow } from '@tabs/data/lib/dbt/launch';
+import { saveDatasetSyncService, syncDatasetNowService } from '@tabs/data/lib/mutations-server';
 import { syncStatusFor } from '@tabs/data/lib/sync-status-server';
 
 export const dynamic = 'force-dynamic';
@@ -43,24 +43,22 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
   const body = (await req.json().catch(() => ({}))) as { action?: string };
 
-  let trigger: SyncTrigger;
-  let actorId = 'system';
+  // DATA_PROJECT_GIT on ⇒ the run is a DAGSTER run launched from the committed head as the owner;
+  // the OS writes no ledger row (checklist D9). Off ⇒ the OS executor, unchanged. A user-triggered
+  // run goes through `syncDatasetNowService` — the SAME function MCP `sync_dataset_now` calls
+  // (checklist X8), which carries the edit gate; the CronJob/Dagster bearer path keeps the
+  // service-principal trigger, which has no user to gate.
+  let ran: Awaited<ReturnType<typeof runSyncNow>>;
   if (runtimeTokenOk(req.headers.get('authorization'))) {
-    trigger = 'schedule';
+    ran = await runSyncNow(id, 'schedule', 'system');
   } else {
     try {
       const user = await requirePrincipal();
-      requireDatasetEditable(id, user); // owner/domain_admin/admin — same gate as any structural edit
-      actorId = user.id;
+      ran = await syncDatasetNowService(user, id, { reset: body.action === 'reset' });
     } catch (e) {
       return errorResponse(e);
     }
-    trigger = body.action === 'reset' ? 'reset' : 'manual';
   }
-
-  // DATA_PROJECT_GIT on ⇒ the run is a DAGSTER run launched from the committed head as the owner;
-  // the OS writes no ledger row (checklist D9). Off ⇒ the OS executor, unchanged.
-  const ran = await runSyncNow(id, trigger, actorId);
   if (ran.mode === 'dagster') {
     const l = ran.launch;
     if (l.launchError) return NextResponse.json({ error: l.launchError, commit: l.commit, source: 'dagster' }, { status: 502 });
@@ -74,15 +72,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
 export const PUT = withRoute<{ id: string }, { sync?: unknown }>(async ({ user, params, body }) => {
   const { id } = params;
-  // Normalise the browser payload through the tolerant schema parser, then let the
-  // store's STRICT gate validate (cron, cursor-for-incremental, merge keys, edit
-  // scope). An unparseable-but-present payload falls through to the strict gate so
-  // the caller gets the precise 400 instead of a generic one.
+  // Normalise the browser payload through the tolerant schema parser, then hand it to
+  // `saveDatasetSyncService` — the SAME function MCP `set_dataset_sync` calls (checklist X8):
+  // it applies the per-source mode/cursor locks at CONFIG time, delegates to the store's
+  // STRICT gate (cron, cursor-for-incremental, merge keys, edit scope) and reconciles the
+  // schedule. An unparseable-but-present payload falls through to that gate so the caller
+  // gets the precise 400 instead of a generic one.
   const cleared = body.sync === null || body.sync === undefined;
   const normalised = cleared ? null : (parseSyncBlock(body.sync) ?? (body.sync as DatasetSync));
-  const dataset = setDatasetSync(id, user, normalised);
-  const cron = await reconcileSyncSchedule(id, dataset.sync ?? null);
-  return NextResponse.json({ sync: dataset.sync ?? null, cron });
+  const out = await saveDatasetSyncService(user, id, normalised);
+  return NextResponse.json({ sync: out.sync, cron: out.cron });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
 
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {

@@ -6,10 +6,8 @@ import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
 import { runWithSurface, uiSurfaceFor } from '@core/infra/request-surface';
-import { getDataset, addCheck, removeCheck, updateCheckDescriptions, builtLayerFqn } from '@tabs/data/lib/store';
-import { queryRun } from '@core/infra/governed';
-import { runAndRecord } from '@tabs/data/lib/dq-run-server';
-import { DATA_CHECK_RULES, type DataCheckRule } from '@tabs/data/lib/index';
+import { getDataset, removeCheck, updateCheckDescriptions } from '@tabs/data/lib/store';
+import { defineQualityRulesService, runQualityChecksService } from '@tabs/data/lib/mutations-server';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,10 +28,6 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   const dataset = getDataset(id, user);
   return NextResponse.json({ checks: dataset.checks ?? [] });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
-
-function numOrUndef(v: unknown): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-}
 
 /**
  * SKIP: POST dispatches on body.action with per-branch gates — left hand-rolled.
@@ -57,17 +51,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
     // ── Run the checks + monitors: compile → governed SELECT AS the owner → pass/fail ──
     if (body.action === 'run') {
-      const dataset = getDataset(id, user); // canView gate (403/404)
-      const resolved = builtLayerFqn(dataset, user); // { fqn, principal } | null
-      // Runs the dataset's rules AND its heuristic monitors, then persists ONE run to the
-      // durable time-series. Run AS the owner for a personal dataset (personal_<uid>), else
-      // the caller's domain principal — NEVER trusted from the body; the same resolver
-      // preview/profile use, so OPA governs exactly what the owner may read.
-      const outcome = await runAndRecord(dataset, {
-        fqn: resolved?.fqn ?? null,
-        queryFn: (sql) => queryRun(sql, resolved?.principal),
-        ownerId: user.id,
-      });
+      // `runQualityChecksService` is the SAME function MCP `run_quality_checks` calls
+      // (checklist X8): the dataset's rules AND its heuristic monitors, run AS the owner for
+      // a personal dataset (personal_<uid>) else the caller's domain principal — never
+      // trusted from the body — and persisted as ONE run of the durable series.
+      const outcome = await runQualityChecksService(user, id);
       return NextResponse.json({
         fqn: outcome.fqn,
         ranAt: outcome.ranAt,
@@ -90,31 +78,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     }
 
     // ── Add a check (structured rule or legacy free-text) ──
-    const rule = typeof body.rule === 'string' && (DATA_CHECK_RULES as string[]).includes(body.rule)
-      ? (body.rule as DataCheckRule)
-      : undefined;
-    if (rule) {
-      const column = (body.column ?? '').trim();
-      if (!column) return NextResponse.json({ error: `${rule} needs a column` }, { status: 400 });
-      const values = Array.isArray(body.values) ? body.values.map((x) => String(x)) : undefined;
-      const dataset = addCheck(id, user, {
-        name: body.name || `${rule}(${column})`,
-        description: body.description ?? '',
-        rule,
-        column,
-        values,
-        min: numOrUndef(body.min),
-        max: numOrUndef(body.max),
-      });
-      const check = (dataset.checks ?? []).at(-1)!;
-      return NextResponse.json({ check, checksCount: (dataset.checks ?? []).length });
-    }
-
-    // Legacy free-text intention.
-    if (!body.name?.trim()) {
-      return NextResponse.json({ error: 'name is required' }, { status: 400 });
-    }
-    const dataset = addCheck(id, user, { name: body.name, description: body.description ?? '' });
+    // ONE rule through `defineQualityRulesService` — the SAME function MCP
+    // `define_quality_rules` calls with a list (checklist X8), so the validation
+    // (`<rule> needs a column`, an unknown rule, `name is required`) is identical.
+    const dataset = defineQualityRulesService(user, id, [
+      { rule: body.rule, column: body.column, name: body.name, description: body.description, values: body.values, min: body.min, max: body.max },
+    ]);
     const check = (dataset.checks ?? []).at(-1)!;
     return NextResponse.json({ check, checksCount: (dataset.checks ?? []).length });
     });

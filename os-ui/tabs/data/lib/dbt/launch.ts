@@ -31,6 +31,8 @@ import { syncLandingLayer } from '@tabs/data/lib/dbt/models';
 import { reconcileSyncCron, type SyncCronOutcome } from '@tabs/data/lib/sync-cron';
 import { runDatasetSync } from '@tabs/data/lib/sync-run-server';
 
+export type { SyncCronOutcome };
+
 export type LaunchKind = 'build' | 'sync';
 
 export type LaunchInput = {
@@ -179,6 +181,29 @@ export async function launchAfterCommit(input: LaunchInput, deps: LaunchDeps = {
   return finish(launched.data.runId, null, batchId);
 }
 
+/* ------------------------------------------------- the ambient test seam (B4) -- */
+
+/**
+ * Default deps every launch merges UNDER its own (tests only). The fire-and-forget launch of a
+ * route / MCP tool injects nothing, so the MCP↔UI parity harness (checklist X8) needs one seam to
+ * observe BOTH doors with the same fake Dagster client. Production never sets it.
+ */
+let ambient: LaunchDeps | null = null;
+const launches = new Set<Promise<unknown>>();
+
+export function __setLaunchDepsForTests(deps: LaunchDeps | null): void {
+  ambient = deps;
+}
+
+/** Await every fire-and-forget launch started so far (tests; shutdown). */
+export async function awaitDataProjectLaunches(): Promise<void> {
+  while (launches.size) await Promise.allSettled([...launches]);
+}
+
+function withAmbient(deps: LaunchDeps): LaunchDeps {
+  return ambient ? { ...ambient, ...deps } : deps;
+}
+
 /**
  * Fire-and-forget for the Build / transform / gold-join routes and MCP tools: when the flag is on,
  * launch after the commit and record the outcome on the version; a failure is logged, never
@@ -186,9 +211,14 @@ export async function launchAfterCommit(input: LaunchInput, deps: LaunchDeps = {
  */
 export function launchDatasetBuild(input: Omit<LaunchInput, 'kind'>, deps: LaunchDeps = {}): boolean {
   if (!dataProjectGitEnabled()) return false;
-  void launchAfterCommit({ ...input, kind: 'build' }, deps).catch((e) => {
-    console.error(`[data-projects] launch failed for ${input.datasetId}/${input.layer}: ${e instanceof Error ? e.message : String(e)}`);
-  });
+  const p = launchAfterCommit({ ...input, kind: 'build' }, withAmbient(deps))
+    .catch((e) => {
+      console.error(`[data-projects] launch failed for ${input.datasetId}/${input.layer}: ${e instanceof Error ? e.message : String(e)}`);
+    })
+    .finally(() => {
+      launches.delete(p);
+    });
+  launches.add(p);
   return true;
 }
 
@@ -248,7 +278,7 @@ export async function runSyncNow(
       action: deps.action ?? (trigger === 'schedule' ? 'scheduled sync' : trigger === 'reset' ? 'reset and full re-sync' : 'sync now'),
       fullRefresh: trigger === 'reset',
     },
-    deps,
+    withAmbient(deps),
   );
   return { mode: 'dagster', launch };
 }

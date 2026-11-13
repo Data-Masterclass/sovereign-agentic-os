@@ -10,6 +10,9 @@ node ../scripts/check-litellm-allowlist.mjs
 # carry the LiteLLM master key, the session-signing secret or the mail secret. Skips when helm is
 # not installed — docs/components/os-ui.md carries the same check by hand.
 node ../scripts/check-worker-env.mjs
+# B4 (checklist X7/X8): the data half of the MCP contract — every data tool dispatches with a
+# schema and refuses a foreign object in the documented shape, and each of the eight mutating tools
+# produces the SAME commit and the SAME Dagster launch as the UI route's service.
 # B3 review H-1/H-5/H-6: the reconciler must run on a DEFAULT install, the Dagster run pod must
 # connect as the user rules.json allows, and the os-ui Role must not grant namespace-wide Secrets.
 # These live in rendered YAML, so a unit test cannot see them. Skips when helm or the subchart
@@ -37,4 +40,6 @@ node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   core/kernel/events.test.ts \
   tabs/admin/lib/directory-events.test.ts \
   tabs/admin/lib/components-extra.test.ts \
-  tabs/data/lib/dbt/parity.test.ts
+  tabs/data/lib/dbt/parity.test.ts \
+  tabs/data/lib/mcp-parity.test.ts \
+  tabs/data/lib/mcp-conformance.test.ts
