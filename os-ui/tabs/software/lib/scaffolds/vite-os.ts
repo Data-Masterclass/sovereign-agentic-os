@@ -5,8 +5,9 @@
  * Vite + React + TypeScript + Tailwind + shadcn/ui OS-app scaffold.
  *
  * This module is PURE DATA — a `{path, content}[]` array (ScaffoldFile[]) that the
- * repo seeder (apps.ts scaffoldRepo) writes into the per-app Forgejo repo.  It has
- * NO server-only imports and is never compiled as live os-ui source.
+ * repo seeder (apps.ts scaffoldRepo) writes into the app's source tree under
+ * `apps/<slug>/` in the domain's git repository. It has NO server-only imports and is
+ * never compiled as live os-ui source.
  *
  * Every dependency uses a permissive (MIT / Apache-2.0 / BSD) license. No GPL / AGPL
  * / proprietary packages are included.
@@ -34,7 +35,6 @@ export function viteOsFiles(name: string, slug: string): ScaffoldFile[] {
     srcOsTs(),
     dockerfile(),
     nginxConf(),
-    dotforgejoWorkflow(slug),
     appYaml(name, slug),
     openApiYaml(slug),
     decisionsMd(name),
@@ -440,7 +440,9 @@ function dockerfile(): ScaffoldFile {
   return {
     path: 'Dockerfile',
     content: [
-      '# Vite OS app — built by Sovereign Agentic OS CI -> Harbor -> Argo CD.',
+      '# Vite OS app. The OS does NOT build this image: Tier-1 (spec) and Tier-2',
+      '# (runtime) apps are served by the OS itself. Build and publish it yourself if you',
+      '# want the per-app container path, then set the app\u2019s image reference.',
       '# Stage 1: build the SPA.',
       'FROM node:22-alpine AS builder',
       'WORKDIR /app',
@@ -512,74 +514,6 @@ function nginxConf(): ScaffoldFile {
   };
 }
 
-// ----------------------------------------------- .forgejo/workflows/ci.yml --
-//
-// Exactly the same sovereign CI workflow used by the nextjs-supabase template —
-// checkout → build image → push to the in-cluster registry → the runner pulls it.
-
-function dotforgejoWorkflow(slug: string): ScaffoldFile {
-  return {
-    path: '.forgejo/workflows/ci.yml',
-    content: [
-      'on:',
-      '  push:',
-      '    branches: [main]',
-      'jobs:',
-      '  build-and-push:',
-      '    runs-on: docker',
-      '    env:',
-      '      DOCKER_HOST: tcp://localhost:2375',
-      '      REGISTRY: forgejo-http:3000',
-      '      OWNER: gitea_admin',
-      `      REPO: ${slug}`,
-      '    steps:',
-      '      - name: Checkout (manual — sovereign, no github.com)',
-      '        env: { REG_PASS: "${{ secrets.REGISTRY_PASS }}" }',
-      '        run: |',
-      '          set -eu',
-      '          git clone --depth 1 "http://${OWNER}:${REG_PASS}@${REGISTRY}/${OWNER}/${REPO}.git" src',
-      '      - name: Build & push image',
-      '        env: { REG_PASS: "${{ secrets.REGISTRY_PASS }}" }',
-      '        run: |',
-      '          set -eu',
-      '          TAG="$(echo "${GITHUB_SHA}" | cut -c1-12)"',
-      '          IMAGE="${REGISTRY}/${OWNER}/${REPO}"',
-      '          echo "${REG_PASS}" | docker login "${REGISTRY}" -u "${OWNER}" --password-stdin',
-      '          docker build -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" ./src',
-      '          docker push "${IMAGE}:${TAG}"',
-      '          docker push "${IMAGE}:latest"',
-      // Final FAIL-OPEN step: keep only the newest 2 SHA tags (+ the protected
-      // `latest`) so the in-cluster Forgejo registry volume (/data/packages)
-      // never fills. Same policy as apps.ts containerVersionsToPrune; kept inline
-      // here (no import) so this scaffold module stays free of app-server deps.
-      '      - name: Prune old registry versions (keep newest 2 + latest)',
-      '        env: { REG_PASS: "${{ secrets.REGISTRY_PASS }}" }',
-      '        run: |',
-      '          set +e',
-      '          KEEP=2',
-      '          API="http://${OWNER}:${REG_PASS}@${REGISTRY}/api/v1"',
-      // JSON parsed with node — the ci-builder job image is node:20 (jq is NOT installed).
-      "          PRUNABLE=\"$(curl -fsS \"${API}/packages/${OWNER}?type=container&q=${REPO}&limit=1000\" \\",
-      "            | REPO=\"${REPO}\" node -e 'let d=\"\";process.stdin.on(\"data\",(c)=>d+=c).on(\"end\",()=>{try{" +
-        'const n=process.env.REPO;const vs=JSON.parse(d).filter((p)=>p.name===n&&p.version!==\"latest\")' +
-        '.sort((a,b)=>((Date.parse(b.created_at||\"\")||0)-(Date.parse(a.created_at||\"\")||0))||' +
-        '(a.version<b.version?1:a.version>b.version?-1:0));' +
-        "console.log(vs.map((v)=>v.version).join(\"\\n\"))}catch(e){}})' 2>/dev/null)\"",
-      '          if [ -z "${PRUNABLE}" ]; then echo "prune: nothing to prune"; exit 0; fi',
-      '          OLD="$(echo "${PRUNABLE}" | tail -n +$((KEEP+1)))"',
-      '          [ -z "${OLD}" ] && { echo "prune: <= ${KEEP} versions — nothing to prune"; exit 0; }',
-      '          echo "${OLD}" | while IFS= read -r V; do',
-      '            [ -z "${V}" ] && continue',
-      '            echo "prune: deleting ${REPO}:${V}"',
-      '            curl -fsS -X DELETE "${API}/packages/${OWNER}/container/${REPO}/${V}" \\',
-      '              || echo "prune: delete of ${V} failed (ignored)"',
-      '          done',
-      '          echo "prune: done (fail-open)"',
-      '          exit 0',
-    ].join('\n') + '\n',
-  };
-}
-
 // -------------------------------------------------------------------- app.yaml --
 
 function appYaml(name: string, slug: string): ScaffoldFile {
@@ -589,7 +523,7 @@ function appYaml(name: string, slug: string): ScaffoldFile {
       'apiVersion: software.sovereign-os/v1',
       'kind: App',
       `name: '${name}'`,
-      `owner: gitea_admin`,
+      '# owner: filled in by the OS from the app record (the app’s real owner).',
       `description: '${name} — built in the Software tab.'`,
       '# Declare the surface so the monitor shows the UI link from day one.',
       'surface: ui',
@@ -641,7 +575,7 @@ function decisionsMd(name: string): ScaffoldFile {
       '- **Design system:** `@sovereign-os/ui` — the OS theme + `AppShell` + primitives (vendored, Apache-2.0)',
       '- **OS integration:** `@sovereign-os/app-sdk` — `os.whoami()`, `os.context()`, `os.metrics.query()`',
       '- **Served by:** nginx on port 8080 (multi-stage Docker build)',
-      '- **Deployed by:** Sovereign Agentic OS CI → Harbor → Argo CD',
+      '- **Served by the OS:** the committed tree is bundled and served same-origin (no image build in the OS)',
       '',
       '## Data access',
       '',
@@ -681,13 +615,11 @@ function readmeMd(name: string, slug: string): ScaffoldFile {
       '',
       '## Production',
       '',
-      'The CI workflow (`.forgejo/workflows/ci.yml`) builds a multi-stage Docker image:',
-      '',
-      '1. **Stage 1 (node:22-alpine):** `npm run build` compiles the SPA to `dist/`.',
-      '2. **Stage 2 (nginx-unprivileged:1.27-alpine):** serves `dist/` as static files on **port 8080**, non-root (uid 101).',
-      '',
-      `The image is published to the in-cluster registry as \`gitea_admin/${slug}:latest\``,
-      'and Argo CD syncs it to `https://' + slug + '.<domain>`.',
+      'The OS serves this app itself — there is **no OS build service, no image registry and no',
+      'GitOps controller** in the Sovereign Agentic OS. Your source tree lives in the domain git',
+      'repository under `apps/' + slug + '/`, and the OS bundles and serves it same-origin under the',
+      "viewer's session. The `Dockerfile` is provided for the optional per-app container path: you",
+      'build and publish that image yourself and point the app at it (it serves on port 8080).',
       '',
       '## OS context',
       '',
@@ -740,7 +672,6 @@ export function viteBaseFiles(name: string, slug: string): ScaffoldFile[] {
     viteOsIndexCss(),
     dockerfile(),
     nginxConf(),
-    dotforgejoWorkflow(slug),
     openApiYaml(slug),
   ];
 }
@@ -748,12 +679,6 @@ export function viteBaseFiles(name: string, slug: string): ScaffoldFile[] {
 /** The OS-client factory (src/os.ts) — shared by every governed SPA template. */
 export function viteOsClientFile(): ScaffoldFile {
   return srcOsTs();
-}
-
-/** The sovereign CI build→push workflow — shared by NON-Vite scaffolds too
- *  (e.g. the api-service template), so every app ships through the same CI. */
-export function ciWorkflowFile(slug: string): ScaffoldFile {
-  return dotforgejoWorkflow(slug);
 }
 
 /**
@@ -779,7 +704,6 @@ export const VITE_OS_EXPECTED_PATHS = [
   'src/os.ts',
   'Dockerfile',
   'nginx.conf',
-  '.forgejo/workflows/ci.yml',
   'app.yaml',
   'openapi.yaml',
   '.app/decisions.md',

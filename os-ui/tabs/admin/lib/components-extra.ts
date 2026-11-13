@@ -6,7 +6,7 @@
  * native component registry (`lib/platform.ts`). The route reads live component
  * status from `lib/platform.ts` (k8s) and merges these signals:
  *  - self-heal: restart counts / CrashLoop / last-healed (from
- *    `monitoring-and-healing.md`'s L1 Kubernetes + L2 Argo self-heal);
+ *    `monitoring-and-healing.md`'s L1 Kubernetes self-heal — there is no L2 GitOps layer);
  *  - node/pool view: the single-node demo's node + pool min/max.
  *
  * Pure (live signals are injected by the route from k8s/Prometheus where
@@ -17,8 +17,13 @@
 export type SelfHeal = {
   /** Pod restarts in the last window (Kubernetes liveness/readiness heals). */
   restarts: number;
-  /** Whether Argo CD reverted drift recently (L2 self-heal). */
-  argoSelfHealed: boolean;
+  /**
+   * Whether a GitOps controller reverted drift recently. ALWAYS false: there is no
+   * GitOps controller (no Argo CD, no Flux) in this stack, so nothing reverts drift
+   * automatically — Kubernetes restarting a crashed pod is the only self-heal there is
+   * (night-2 S1: the Admin UI claimed otherwise over deterministic offline data).
+   */
+  driftReverted: false;
   state: 'healthy' | 'healing' | 'degraded';
   note: string;
 };
@@ -38,15 +43,15 @@ export type Pool = { name: string; min: number; max: number; current: number; au
  * components show a recent heal so "a pod self-healing" is visible in the gate. */
 export function selfHealFor(componentId: string, status: string): SelfHeal {
   if (status === 'starting') {
-    return { restarts: 2, argoSelfHealed: false, state: 'healing', note: 'Liveness probe restarted the pod; rescheduling.' };
+    return { restarts: 2, driftReverted: false, state: 'healing', note: 'Liveness probe restarted the pod; rescheduling.' };
   }
   if (componentId === 'opensearch') {
-    return { restarts: 1, argoSelfHealed: true, state: 'healthy', note: 'Argo CD reverted a manual edit; pod healthy.' };
+    return { restarts: 1, driftReverted: false, state: 'healthy', note: 'Liveness probe restarted the pod once; pod healthy.' };
   }
   if (status === 'off' || status === 'disabled') {
-    return { restarts: 0, argoSelfHealed: false, state: 'degraded', note: 'Optional layer disabled by an Admin.' };
+    return { restarts: 0, driftReverted: false, state: 'degraded', note: 'Optional layer disabled by an Admin.' };
   }
-  return { restarts: 0, argoSelfHealed: false, state: 'healthy', note: 'Steady; Kubernetes maintaining desired replicas.' };
+  return { restarts: 0, driftReverted: false, state: 'healthy', note: 'Steady; Kubernetes maintaining desired replicas.' };
 }
 
 export function nodes(): NodeView[] {

@@ -39,8 +39,10 @@ test('an image app → image-elsewhere', () => {
   assert.deepEqual(resolveServeTarget(app('image')), { kind: 'image-elsewhere' });
 });
 
-test('a legacy record with NO serveMode → image-elsewhere (nil-safe default)', () => {
-  assert.deepEqual(resolveServeTarget(app(undefined)), { kind: 'image-elsewhere' });
+// NIGHT-2 S2: a legacy record normalises to 'spec'. With no spec it renders the honest
+// "nothing to render yet" page — NOT someone else's placeholder container.
+test('a legacy record with NO serveMode → none (fails closed, never a placeholder container)', () => {
+  assert.deepEqual(resolveServeTarget(app(undefined)), { kind: 'none' });
 });
 
 test('a runtime app → image-elsewhere (not served by this route)', () => {

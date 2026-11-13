@@ -139,20 +139,30 @@ export type AppEpic = {
 };
 
 /**
- * How an app is served (Phase D + AppSpec Phase 3). The DEFAULT + every legacy record
- * is 'image' (the per-app container path); 'runtime' opts into the OS no-image runtime
- * serving; 'spec' opts into declarative AppSpec same-origin serving (the OS renders
- * `app.spec` under the viewer's session — no pod, see appspec/DESIGN.md).
+ * How an app is served (Phase D + AppSpec Phase 3). The DEFAULT is 'spec' — declarative
+ * AppSpec same-origin serving, where the OS renders `app.spec` under the viewer's session
+ * with no pod and no registry (see appspec/DESIGN.md). 'runtime' opts into the OS no-image
+ * runtime serving of a committed Vite tree. 'image' is the OPT-IN per-app container path,
+ * and it needs an image the operator built and published — the OS has no image builder.
  */
 export type ServeMode = 'image' | 'runtime' | 'spec';
 
 /**
- * The ONE coercion for a persisted/incoming `serveMode`: only the explicit strings
- * 'runtime' / 'spec' opt in; anything else (undefined on a legacy record, garbage, or
- * the explicit 'image') resolves to 'image'. Keeps the field byte-stable + nil-safe.
+ * The ONE coercion for a persisted/incoming `serveMode`. Only the EXPLICIT strings
+ * 'runtime' and 'image' opt in; anything else — undefined on a legacy record, or garbage —
+ * resolves to 'spec'.
+ *
+ * NIGHT-2 S2 TRAP FIX. This used to default to 'image', so every legacy or nil record
+ * normalised to the per-app container path, where `appImageRef` fell back to
+ * `config.softwareRunnerImage` (chart default `traefik/whoami:latest`) — meaning an app that
+ * flipped live served A STRANGER'S PLACEHOLDER CONTAINER on the customer's own domain. The
+ * default is now the mode that needs no image and no pod, and a missing image on an EXPLICIT
+ * 'image' app fails closed and loudly (`MissingAppImageError`). A nil record therefore renders
+ * the honest "nothing to render yet" page (`resolveServeTarget` → 'none') instead of a
+ * stranger's container.
  */
 export function normalizeServeMode(raw: unknown): ServeMode {
-  return raw === 'runtime' ? 'runtime' : raw === 'spec' ? 'spec' : 'image';
+  return raw === 'runtime' ? 'runtime' : raw === 'image' ? 'image' : 'spec';
 }
 
 /** The app's effective serve mode (nil-safe read for a possibly-legacy record). */
@@ -224,7 +234,8 @@ export type App = {
    *     the SPA from one platform surface in a sandboxed iframe. No per-app CI /
    *     image / registry / pod is needed; the repo/image become export products.
    * Optional-on-load so pre-flag records stay byte-stable — hydrateAppDoc defaults it
-   * to 'image', and normalizeServeMode is the ONE coercion (only 'runtime' opts in).
+   * to 'spec' (night-2 S2), and normalizeServeMode is the ONE coercion (only the explicit
+   * 'runtime' / 'image' opt in).
    */
   serveMode?: ServeMode;
   /**
@@ -894,9 +905,9 @@ function hydrateAppDoc(app: App): App {
   app.members = normalizeAppMembers(app.members, app.owner);
   // Back-compat: apps persisted before folders default to the root.
   if (typeof app.folder !== 'string') app.folder = '/';
-  // Back-compat: apps persisted before the Phase D serve-mode flag default to 'image'
-  // (the historic per-app-image path). Only an explicit 'runtime' opts into the OS
-  // no-image runtime; normalizeServeMode collapses anything else to 'image'.
+  // Back-compat: apps persisted before the Phase D serve-mode flag default to 'spec'
+  // (night-2 S2 — the historic 'image' default served a placeholder container on the
+  // customer's domain). Only an explicit 'runtime' / 'image' opts out.
   app.serveMode = normalizeServeMode(app.serveMode);
   // The source-tree record keeps ONLY the seeded paths (legacy docs carried the git
   // repo coordinates of a backend that no longer exists — dropped on load).
@@ -1138,14 +1149,28 @@ export async function saveAppFile(
   if (existing && input.sha && blobSha(existing.content) !== input.sha) {
     throw withStatus(new Error('File changed since you loaded it — reload and retry.'), 409);
   }
-  snapshotFiles(app.id, [...prior.filter((f) => f.path !== clean), { path: clean, content: input.content }]);
+  const tree = [...prior.filter((f) => f.path !== clean), { path: clean, content: input.content }];
+  snapshotFiles(app.id, tree);
   app.updatedAt = now();
   writeThrough(app);
+  // NIGHT-2 S5: an editor save is a WRITER, so it COMMITS — `apps/<slug>/` in the domain
+  // repository, authored as the editing user. Before this, the editor wrote only the mirror, so
+  // a save made in the UI existed nowhere in git and no history recorded it (the "a writer that
+  // does not commit" hole). The compile gate is deliberately NOT applied here: an editor save of
+  // a half-written file must still save, exactly as it did before. A git failure is logged by
+  // `commitAppTree` and never thrown into the save.
+  const { commitAppTree } = await import('@tabs/software/lib/git-commit');
+  const git = await commitAppTree(
+    { id: app.id, slug: app.slug, name: app.name, domain: app.domain },
+    user,
+    tree,
+    { action: 'edit', surface: 'ui:software/editor', note: message },
+  );
   void trace({
     principal: app.mcpPrincipal,
     tool: 'generate',
     input: { action: 'edit_file', path: clean, by: user.id, role: user.role, message },
-    output: { slug: app.slug },
+    output: { slug: app.slug, commit: git.ok && git.recorded ? git.sha : null, git: git.recorded ? 'recorded' : git.reason },
     decision: 'allow',
   });
   return { path: clean, sha: blobSha(input.content) };

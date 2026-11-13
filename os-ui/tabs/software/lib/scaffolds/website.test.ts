@@ -42,10 +42,9 @@ test('website scaffold: coherent with the OS theme tokens, sections drive the pa
   assert.match(byPath('src/App.tsx'), new RegExp(NAME), 'the site names itself');
 });
 
-test('website scaffold: same infra base — nginx 8080, sovereign CI, surface ui', () => {
+test('website scaffold: same infra base — nginx 8080, surface ui', () => {
   assert.match(byPath('Dockerfile'), /EXPOSE 8080/);
   assert.match(byPath('nginx.conf'), /listen 8080/);
-  assert.match(byPath('.forgejo/workflows/ci.yml'), /docker push/);
   assert.match(byPath('app.yaml'), /surface: ui/);
 });
 

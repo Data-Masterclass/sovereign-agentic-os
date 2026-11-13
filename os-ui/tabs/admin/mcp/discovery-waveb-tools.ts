@@ -190,7 +190,7 @@ export const waveBReadTools: McpTool[] = [
     tab: 'software',
     minRole: 'creator',
     description:
-      'Read an app’s FILE TREE — or, when `path` is given, one FILE’s content (kind "file") OR a DIRECTORY’s immediate entries (kind "dir"). The read-back counterpart of `commit`: what you committed is what you read. Purpose: iterate on the real code instead of re-guessing it. Before: list_software / get_software (you must be able to SEE the app — the same gate). After: commit changed files, start_preview, get_software_status. Governance: read-only under YOUR identity; an unseeable app is a typed not_found (no existence leak). Honesty: reads the live Forgejo repo when reachable (mode "live"); otherwise the last tree committed through the governed commit door — or the template seed for a fresh app — honestly labelled mode "offline-mock". Large files are truncated at ~24k characters with an explicit note.',
+      'Read an app’s FILE TREE — or, when `path` is given, one FILE’s content (kind "file") OR a DIRECTORY’s immediate entries (kind "dir"). The read-back counterpart of `commit`: what you committed is what you read. Purpose: iterate on the real code instead of re-guessing it. Before: list_software / get_software (you must be able to SEE the app — the same gate). After: commit changed files, start_preview, get_software_status. Governance: read-only under YOUR identity; an unseeable app is a typed not_found (no existence leak). Honesty: returns the tree as it was COMMITTED through the governed commit door (the app’s source lives in the domain git repository under `apps/<slug>/`, mirrored to a read cache), or the template seed for a fresh app — labelled `source` so you always know which. There is no external git forge, no CI runner and no image registry in the OS. Large files are truncated at ~24k characters with an explicit note.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -211,20 +211,27 @@ export const waveBReadTools: McpTool[] = [
       // survives a pod restart (the tree is not lost when the committing process is gone).
       await hydrateSnapshot(app.id);
       const tree = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
-      const note = 'Forgejo is unreachable — this is the app’s last governed-commit tree (or the template seed for a fresh app), labelled offline-mock.';
+      // HONEST LABEL (night-2 S1): there is no git forge to be “unreachable”. This is the tree
+      // the governed commit door last wrote — committed into `apps/<slug>/` of the domain repo and
+      // mirrored to the read cache this reads — or the template seed for an app with no commit yet.
+      const committed = getSnapshot(app.id) !== null;
+      const source = committed ? ('governed-commit' as const) : ('template-seed' as const);
+      const note = committed
+        ? 'The app’s tree as last committed through the governed commit door (`apps/' + app.slug + '/` in the domain repository).'
+        : 'This app has no commit yet — these are the template seed files, not committed source.';
       if (!path) {
-        return { appId, mode: 'offline-mock', branch: 'main', files: tree.map((f) => f.path).sort((a, b) => a.localeCompare(b)), note };
+        return { appId, source, branch: 'main', files: tree.map((f) => f.path).sort((a, b) => a.localeCompare(b)), note };
       }
       const f = tree.find((x) => x.path === path);
       if (!f) {
         // Not a file — is it a directory? Return its listing instead of a bare 404 so
         // the agent can drill down. Only a path matching NOTHING is a true not_found.
         const dir = dirListing(tree.map((x) => x.path), path);
-        if (dir.length > 0) return { appId, mode: 'offline-mock', branch: 'main', kind: 'dir', path, entries: dir, note };
+        if (dir.length > 0) return { appId, source, branch: 'main', kind: 'dir', path, entries: dir, note };
         fail(`Path not found in the app tree: ${path}`, 404);
       }
       const body = truncated(f.content, APP_FILE_CAP);
-      return { appId, mode: 'offline-mock', kind: 'file', path: f.path, content: body.text, contentNote: body.note, note };
+      return { appId, source, kind: 'file', path: f.path, content: body.text, contentNote: body.note, note };
     },
   },
   {

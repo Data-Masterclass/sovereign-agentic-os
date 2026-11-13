@@ -26,6 +26,15 @@ export {
   type OsClient,
 } from './client';
 export { OsError, NotAuthenticated, Forbidden, UnsupportedQuery } from './errors';
+export {
+  agentRunPath,
+  agentRunStreamPath,
+  AGENT_DECIDE_PATH,
+  parseRunEvents,
+  reduceRunEvents,
+  normalizeAgentRun,
+  normalizeDecision,
+} from './agents';
 export type {
   OsClientOptions,
   WhoAmI,
@@ -37,4 +46,8 @@ export type {
   QueryResult,
   AppRecord,
   RecordResult,
+  AgentRun,
+  AgentRunEvent,
+  AgentRunState,
+  AgentDecisionResult,
 } from './types';

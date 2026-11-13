@@ -177,14 +177,11 @@ test('vite-os scaffold: vite.config.ts uses @vitejs/plugin-react', () => {
   assert.match(f!.content, /@vitejs\/plugin-react/, 'uses @vitejs/plugin-react');
 });
 
-// -------------------------------------------------------------- CI workflow ------
+// ---------------------------------------------- no forge CI workflow (S1) --------
 
-test('vite-os scaffold: .forgejo/workflows/ci.yml builds and pushes to in-cluster registry', () => {
-  const f = byPath('.forgejo/workflows/ci.yml');
-  assert.ok(f, '.forgejo/workflows/ci.yml is present');
-  assert.match(f!.content, /docker build/, 'contains docker build');
-  assert.match(f!.content, /docker push/, 'contains docker push');
-  assert.match(f!.content, /branches: \[main\]/, 'triggers on main branch push');
+test('vite-os scaffold: emits NO forge CI workflow — the OS has no build service', () => {
+  assert.equal(files().find((f) => f.path.startsWith('.forgejo/')), undefined, 'no .forgejo/ workflow');
+  assert.ok(!VITE_OS_EXPECTED_PATHS.includes('.forgejo/workflows/ci.yml'), 'not an expected path either');
 });
 
 // -------------------------------------------------------------- README ----------

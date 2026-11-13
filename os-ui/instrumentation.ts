@@ -302,4 +302,20 @@ export async function register(): Promise<void> {
       }
     })();
   }
+
+  // ---- SOFTWARE: reserve `apps/` before any whole-tree writer runs (night-2 S5) -------------
+  // An app's source tree lives in the domain repo under `apps/<slug>/` and is written with
+  // `commitSubtree`. The dbt generator writes the WHOLE tree, so WITHOUT this reservation its
+  // next commit would delete every app's source. Registered at boot, exactly like `agents/`.
+  // Appended at the END of this file per the night-2 shared-file rule.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { installAppTreeReservation } = await import('./tabs/software/lib/git-commit.ts');
+        installAppTreeReservation();
+      } catch (err) {
+        console.warn(`[os-ui] software: apps/ subtree reservation skipped — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
 }

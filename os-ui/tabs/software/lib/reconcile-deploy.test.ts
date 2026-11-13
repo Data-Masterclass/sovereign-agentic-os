@@ -132,6 +132,19 @@ test('SELF-HEAL: a live app whose runner is ABSENT is re-provisioned on status p
   assert.equal(app.deploy.state, 'live', 'app is approved-live');
 
   const depPath = `/apis/apps/v1/namespaces/${HEAL_OPTS.namespace}/deployments/app-${app.slug}`;
+
+  // NIGHT-2 S2 — FAIL CLOSED FIRST: with no published image the heal provisions NOTHING and
+  // says why, instead of serving the chart's `traefik/whoami:latest` on the customer's host.
+  {
+    const { client: noImage, calls: noImageCalls } = healMockK8s(depPath);
+    const out = await reconcileDeployStatus(appId, creator, { ...HEAL_OPTS, k8s: noImage });
+    assert.ok(!noImageCalls.some((c) => c.method === 'POST' && c.path.endsWith('/deployments')), 'no Deployment is created without an image');
+    assert.match(String(out.status.detail ?? ''), /no image reference is set/, 'the reason is said out loud');
+  }
+
+  // With the image the OPERATOR published, the heal does its job.
+  app.runImage = 'registry.example.com/apps/self-heal:latest';
+  await persistApp(app);
   const { client, calls } = healMockK8s(depPath);
 
   const { status } = await reconcileDeployStatus(appId, creator, { ...HEAL_OPTS, k8s: client });

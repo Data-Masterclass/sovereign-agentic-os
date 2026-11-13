@@ -31,7 +31,6 @@ resources **by reference** (`use_*`), never a raw credential.
 | `package.json` | `next dev` / `next build` / `next start`; deps: next, react, `@supabase/supabase-js`. |
 | `supabase/migrations/0001_init.sql` | Schema + **Row-Level Security** (every row scoped to `auth.uid()`). Migrations must be **idempotent** (`create table if not exists`, `create policy` guarded). |
 | `Dockerfile` | Container build (node:22-alpine, serves on `:8080`). |
-| `.forgejo/workflows/ci.yml` | CI on push to `main` (build → image). |
 | `manifests/app.yaml` | The Kubernetes Deployment manifest (image, port `8080`). |
 | `app.yaml` | **The metadata convention** — `name`, `owner`, `connections`, `data`, `knowledge`. Re-parsed on **every commit** to drive the app page + OPA profile. Keep it truthful. |
 | `openapi.yaml` | Drives the app's **auto-generated MCP tools**. Keep it in sync with your routes. |

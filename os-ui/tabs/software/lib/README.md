@@ -13,10 +13,22 @@ Two design rules hold throughout:
   git push, git import) and whatever its template (web / service / script /
   dashboard), it ends up on the *same* commit → metadata-parse → auto-MCP → OPA →
   review plumbing, governed identically.
-- **Honest live/offline-mock.** Every effectful step reports
-  `mode: 'live' | 'offline-mock'`, mirroring `lib/agents/build/server.ts`. On a
-  cluster the real Forgejo/Argo plumbing runs (`live`); on a laptop the in-process
-  teaching mock runs (`offline-mock`). The *governed* logic is identical either way.
+- **Honest live/offline labels.** Every effectful step reports its own mode and never
+  reports success with substituted data: an app-tool result is `source: 'live-app'` only
+  when the app's runner pod answered, otherwise `source: 'demo-seed'` with a visible note
+  (and a `demo-seed` result is structurally refused by any gate, review card or
+  `verify_software` verdict — see `seeded-evidence.ts`).
+
+> **What is NOT true.** There is **no Forgejo, no Harbor, no Argo CD, no image builder and
+> no CI runner** in the Sovereign Agentic OS, and no `build-service.ts` / `ci-repair.ts`
+> module (they were deleted with the v2-lean cut; this README described them for months
+> after they were gone). An app's source tree lives in the **domain git repository** under
+> `apps/<slug>/`, written through the one commit path (`core/infra/git-store.ts`
+> `commitSubtree` + `reserveSubtree('apps/')`), and the OS serves Tier-1 (`spec`) and
+> Tier-2 (`runtime`) apps **itself**, same-origin, with no pod and no registry. The
+> `Dockerfile` in a scaffold is for the optional per-app container path the operator
+> builds and publishes themselves (`serveMode: 'image'`, which fails closed and loudly
+> when no image reference is set).
 
 ## Module map
 
@@ -29,10 +41,13 @@ Two design rules hold throughout:
 | `adapters.ts` | The two adapter interfaces + the DI `PipelineBackend`. NOTE: `templateAdapter` / `TEMPLATE_KEYS` / `FRONT_DOORS` are currently exercised only by `adapters.test.ts` — they are NOT the live convergence surface (the real single convergent commit + front-door authors live in `server.ts`: `commitToApp` / `authorThroughFrontDoor`). Kept for the test-documented adapter shape. | `templateAdapter`, `TEMPLATE_KEYS`, `FRONT_DOORS`, `TemplateAdapter`, `FrontDoorAdapter`, `PipelineBackend` |
 | `review.ts` | The deploy review gate — preview-free, Builder-reviewed go-live, scope envelope, scan-blocks-approval. | `startPreview`, `requestDeploy`, `decideDeploy`, `requestedEnvelope`, `scopeBroadened`, `getReviewCard`, `listReviewCards` |
 | `lifecycle.ts` | Archive, lineage-aware delete, Use-as-Data, consume a granted resource (no raw creds). | `archiveApp`, `unarchiveApp`, `deleteApp`, `dependentsOf`, `useAsData`, `consumeResource` |
-| `server.ts` | The live/offline-mock dual + the single convergent commit + the four front-door authors. | `pickBackend`, `forgejoReachable`, `commitToApp`, `authorThroughFrontDoor`, `snapshotFiles`/`getSnapshot` |
+| `server.ts` | The single convergent commit (compile gate → **git commit** → metadata parse → auto-MCP → OPA → dataset guard) + the three front-door authors. | `commitToApp`, `authorThroughFrontDoor`, `snapshotFiles`/`getSnapshot`, `refreshVendoredSdk` |
+| `git-commit.ts` | The app tree's ONE git commit path — `commitSubtree('apps/<slug>')` + `reserveSubtree('apps/')`, author = the acting user, the four `OS-*` trailers. The OpenSearch `os-app-files` mirror is a **cache of the committed tree**, not the home of record. | `commitAppTree`, `appSubtreePrefix`, `APPS_PREFIX`, `appProjectGitEnabled` |
+| `push-app-files.ts` | `push_app_files` — the one documented verb for "code in Claude, push to the OS". Compile gate **before** any write; `{ commit, changed, gate, previewUrl }`; an unchanged push makes no commit. The UI twin calls the same function. | `pushAppFiles` |
+| `app-agents.ts` | **App → agent**: the doors the app SDK's `os.agents.*` calls, as the signed-in user over the ambient session — the same routes the UI uses. | `AGENT_RUN_ROUTE`, `AGENT_STREAM_ROUTE`, `APPROVAL_DECIDE_ROUTE`, `runStateFromEvents` |
+| `app-actions.ts` | **Agent → app**: an app's **declared** actions (`actions.yml`) and the four-layer fail-closed intersection capability ∩ declaration ∩ **adoption** ∩ grant. | `parseAppActions`, `authorizeDeclaredAction`, `declaredActionTools` |
+| `seeded-evidence.ts` | A `demo-seed` result is **structurally unusable** as evidence: `assertNotSeeded` throws a typed 409 in any gate, review card or verify verdict. | `isSeededEvidence`, `assertNotSeeded`, `SeededEvidenceError` |
 | `platform-mcp.ts` | Front door #2 — full UI parity, delegated identity, never a back door. | `callPlatformMcp`, `PLATFORM_MCP_TOOLS`, `platformMcpToolNames`, `mcpGetApp` |
-| `ci-repair.ts` | Redesign Phase C — the bounded CI→repair feedback loop. On a recorded FAILED run it fetches the log tail + failing changeset and opens ONE reasoning-tier repair turn (fix only what the log names, `repair(ci):` commit, compile gate still applies). At most once per run; a re-fail of the repaired commit surfaces honestly, never loops. | `cleanCiLog`, `repairSeed`, `maybeAutoRepair`, `scheduleRepairCheck` |
-| `build-service.ts` | Redesign Phase B — the DIRECT BUILD SERVICE. After a gated live commit, os-ui submits an in-cluster Kaniko `batch/v1` Job (git context = the app's Forgejo tree at the commit SHA, no daemon, no DIND) that pushes an immutable `:sha12` tag and surfaces the pushed DIGEST via the pod termination message; the runner then serves DIGEST-PINNED (deletes the `:latest` roll hack). Feature-flagged (`SOFTWARE_BUILD_SERVICE`, chart `softwareBuild.enabled`); OFF ⇒ an honest note and Forgejo Actions keeps building. Wiring: `apps.ts` `submitOsBuild`/`refreshBuildStage` (the `harbor` stage), `runner.ts` `isDigestRef`/`pullPolicyFor`. | `buildKanikoJob`, `submitBuildJob`, `readBuildJob`, `parseDigest`, `digestRef`, `buildServiceEnabled` |
 
 The home-of-record `App` (`lib/apps.ts`) carries the fields this module reads and
 writes: `status`, `deploy` (`{ state, previewUrl, approved, reviewCardId }`),
@@ -46,8 +61,8 @@ gates before touching them.
 ## The two adapter interfaces (`adapters.ts`)
 
 Both interfaces exist to *guarantee convergence*: no matter the template/runtime
-or the front door, everything lands on the same Forgejo / Harbor / Argo CD /
-Secrets / LiteLLM+OPA / Langfuse plumbing.
+or the front door, everything lands on the same git commit / Secrets / LiteLLM+OPA /
+Langfuse plumbing.
 
 **(a) `TemplateAdapter`** — per-template / per-runtime, over `web` · `service` ·
 `script` · `dashboard`. Exposes the 7 capabilities
@@ -192,7 +207,7 @@ The seven test files prove the gate evidence directly:
 | `POST` | `/api/apps/[id]/deploy` | `?action=preview` → free preview; default → `requestDeploy` (review or auto-deploy). |
 | `POST` | `/api/apps/[id]/lifecycle` | `archive` / `unarchive` / `delete` / `use-as-data` / `consume`. |
 | `POST` | `/api/apps/import` | Front door #4 — git import; wrap an external repo as a governed app. |
-| `GET` | `/api/software` | The Software-tab summary (Forgejo repos + CI). |
+| `GET` | `/api/software` | The Software-tab summary (the apps you can see + their deploy state). |
 | `POST` | `/api/software` | (tab actions) |
 | `GET` / `PUT` | `/api/software/[id]/files` | Monaco code editor — list/read repo files / save = commit (Builder/Admin-gated). |
 | `GET` | `/api/software/reviews` | The Builder deploy-review inbox (pending cards for the caller's domains). |
