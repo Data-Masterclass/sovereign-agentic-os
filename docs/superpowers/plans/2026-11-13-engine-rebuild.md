@@ -1770,3 +1770,31 @@ reason is here.
   CI's per-file loop is replaced by that single command, with the comment inverted: running them
   per file would now HIDE an ordering bug rather than reveal one. The X9 row's and the CHANGELOG's
   cited paths were repointed into `tests/`.
+
+- **F2-3 `get_dagster_run` is addressed by the RUN and governed by the dataset — and it hides
+  existence, which the rest of the data tab does not.** D17's gap was that a client which launched
+  a build got a `dagsterRunId` back and had nowhere to take it. The tool resolves that id through
+  the version record `setVersionRun` wrote (`{commit, dagsterRunId}` on `bronze|silver|gold`), which
+  is what makes the dataset guard apply to a run at all. Two deliberate choices:
+  (1) **`not_found`, not `forbidden`, for a run you cannot reach.** Every other data tool answers
+  `forbidden` for an object that exists and is invisible (B4-11). A run id is HANDED OUT by a
+  build, so `forbidden` would let a client sweep ids and learn which builds other domains are
+  running — the same reasoning that makes agent runs `not_found`. The lookup therefore scans only
+  the caller's VIEWABLE datasets and never calls `getDataset`, whose 403 would itself be the leak;
+  a foreign run and a ghost run produce byte-identical refusals, asserted as such.
+  (2) **The failure line is honest rather than complete.** `core/infra/dagster.ts`'s `run()` returns
+  `RUN_FIELDS` — no step error; the message lives in Dagster's event log behind a query whose exact
+  shape cannot be verified without a cluster. Rather than ship an unverifiable GraphQL field that
+  would silently return `null` against a different Dagster version, `failure` is the recorded
+  `launchError` when the OS itself refused to launch (the more specific truth), else a line naming
+  the failed run and SAYING the step error is in the event log. When Dagster cannot be read at all,
+  `status` is `null` and `dagsterError` carries the reason — never a fabricated status.
+  Only `os/*` tags are returned: `dagster-k8s/config` carries the run pod's ENV, and a test asserts
+  a fake secret in that blob does not reach the caller.
+  Home: `tabs/data/lib/sync-status-server.ts` (the module that already owns the Dagster read-back),
+  registered in `tabs/admin/mcp/discovery-read-tools.ts` beside `get_sync_status` and pulled in on
+  that file's EXISTING `@tabs/data/lib/sync-status-server` import, so the TAB-ISOLATION ratchet
+  stays at 419 rather than paying a new violation for a new specifier. `list_capabilities` needs no
+  change — it is derived from `ALL_MCP_TOOLS` (now 114; data tools 23 → 24). Docs: `tabs/data/guide.md`
+  step 6 + the end-to-end sequence, `tabs/data/README.md`'s tool table and its B4-1 paragraph,
+  which recorded this as a gap and now records it as closed. **D17 → `true`.**

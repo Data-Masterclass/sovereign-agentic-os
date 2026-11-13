@@ -230,7 +230,7 @@ With the flag on (checklist D7, D14, D15, D16):
   (checklist X7's data half: every data tool `list_capabilities` advertises dispatches, has a usable
   schema, refuses a foreign dataset as `not_found`/`forbidden` with a hint and no stack, names the
   role a gate needs, and writes nothing when it refuses).
-- **The data MCP tools** — 23 under `tab: 'data'` plus `get_lineage`, which is registered under
+- **The data MCP tools** — 24 under `tab: 'data'` plus `get_lineage`, which is registered under
   `governance` with `extraTabs: ['data', …]`. Where they live:
 
   | File | Tools |
@@ -238,7 +238,7 @@ With the flag on (checklist D7, D14, D15, D16):
   | `core/mcp/experimental/data-write-tools.ts` | `create_dataset` · `add_dataset_version` · `document_dataset` · `ingest_dataset` · `transform_silver` · `build_gold_join` · `define_quality_rules` · `run_quality_checks` · `propose_quality_fixes` · `apply_quality_fixes` · `set_dataset_sync` · `sync_dataset_now` · `retire_dataset` · `reconcile_domain_tables` |
   | `core/mcp/experimental/promotion-write-tools.ts` | `request_promotion` · `approve_promotion` |
   | `core/mcp/experimental/exposure-write-tools.ts` | `list_exposed_tables` · `adopt_exposed_table` |
-  | `tabs/admin/mcp/discovery-read-tools.ts` | `list_datasets` · `get_dataset` · `profile_dataset` · `get_sync_status` |
+  | `tabs/admin/mcp/discovery-read-tools.ts` | `list_datasets` · `get_dataset` · `profile_dataset` · `get_sync_status` · `get_dagster_run` |
   | `tabs/data/mcp/data-query-tools.ts` | `query_data` |
   | `core/mcp/governance-tools.ts` | `get_lineage` |
 
@@ -246,7 +246,12 @@ With the flag on (checklist D7, D14, D15, D16):
   `dbt_run`, `dbt_test`, `dagster_materialize` — they address asset keys rather than objects, so
   they would bypass the dataset guard; the same work is reachable through `transform_silver`,
   `build_gold_join` and `sync_dataset_now`, which commit and then launch `dbt build --select` for
-  that dataset's assets. A `get_dagster_run {runId}` read is a recorded gap (plan deviation B4-1).
+  that dataset's assets. `get_dagster_run {runId}` closes the read half of that decision
+  (checklist D17): a build hands back a `dagsterRunId`, and this reads THAT run — status, start/end,
+  the `os/*` tags, the launch commit and an honest failure line — resolved through the dataset
+  version record that carries the id, so it is governed by the same dataset guard. It addresses the
+  RUN, so an unreachable run is `not_found` exactly like an agent run: a run on a dataset you cannot
+  see and a run id that was never minted give byte-identical refusals.
 - **Boot reconcile** (`lib/dbt/boot-reconcile.ts`): the commit hook only sees writes from the moment
   it is installed, so at boot the OS commits, for every domain it knows (datasets in the registry ∪
   repositories on disk), the difference between the generated project and the repository HEAD — as

@@ -13,7 +13,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __setDataProjectGitForTests } from '@tabs/data/lib/dbt/commit';
 import {
-  syncStatusFor, latestSyncSignals, runToView, runStatusToSync, consecutiveFailures,
+  syncStatusFor, latestSyncSignals, runToView, runStatusToSync, consecutiveFailures, dagsterRunFor,
 } from '@tabs/data/lib/sync-status-server';
 import { parseDataset, type Dataset } from '@tabs/data/lib/dataset-schema';
 import { recordSyncRun, __resetSyncRuns } from '@tabs/data/lib/sync-runs';
@@ -155,4 +155,142 @@ test('latestSyncSignals flag OFF: `lastSync` is startedAt, exactly as before B2'
   });
   const out = await latestSyncSignals(['ds_1'], {});
   assert.deepEqual(out.get('ds_1'), { lastSync: '2026-11-13T06:00:00.000Z', syncStatus: 'ok' });
+});
+
+/* ----------------------------------------- get_dagster_run (checklist D17) -- */
+
+/** A dataset whose SILVER version records `{commit, dagsterRunId}` — the authorization anchor. */
+function launched(over: Partial<{ id: string; domain: string; owner: string; runId: string }> = {}): Dataset {
+  const { id = 'ds_1', domain = 'sales', owner = 'bea', runId = 'r1' } = over;
+  return parseDataset(
+    JSON.stringify({
+      id, name: 'Events', domain, owner, tier: 'dataset', origin: 'ingested', description: '', columns: [],
+      versions: {
+        bronze: { built: true },
+        silver: { built: true, commit: 'c'.repeat(40), dagsterRunId: runId },
+        gold: { built: false },
+      },
+    }),
+  );
+}
+
+const bea = { id: 'bea', domains: ['sales'], role: 'creator' as const };
+const zoe = { id: 'zoe', domains: ['ops'], role: 'creator' as const };
+
+/** Inject the dataset world + the viewer's visible set, so the test asserts the GATE, not the store. */
+function world(datasets: Dataset[], viewable: string[]) {
+  return { datasets: () => datasets, viewable: () => new Set(viewable) };
+}
+
+async function rejectsWith(p: Promise<unknown>, status: number, re: RegExp) {
+  await assert.rejects(p, (e: Error & { status?: number }) => {
+    assert.equal(e.status, status);
+    assert.match(e.message, re);
+    return true;
+  });
+}
+
+test('get_dagster_run: the owner reads the run through the dataset version that launched it', async () => {
+  const out = await dagsterRunFor('r1', bea, {
+    ...world([launched()], ['ds_1']),
+    dagster: { run: async () => ({ ok: true as const, data: run({ runId: 'r1' }) }) },
+  });
+  assert.equal(out.runId, 'r1');
+  assert.deepEqual(out.dataset, { id: 'ds_1', name: 'Events', domain: 'sales', layer: 'silver' });
+  assert.equal(out.commit, 'c'.repeat(40), 'the commit the layer was launched from');
+  assert.equal(out.status, 'SUCCESS');
+  assert.equal(out.syncStatus, 'ok', 'the panel vocabulary, so one client reads both surfaces');
+  assert.equal(out.startedAt, '2026-11-13T06:00:00.000Z');
+  assert.equal(out.endedAt, '2026-11-13T06:01:00.000Z');
+  assert.deepEqual(out.assetSelection, ['sales/silver_events']);
+  assert.equal(out.failure, null, 'a run that did not fail has no failure line');
+  assert.equal(out.dagsterError, null);
+});
+
+test('get_dagster_run: ONLY the `os/*` tags are returned — Dagster internals are not the caller’s business', async () => {
+  const out = await dagsterRunFor('r1', bea, {
+    ...world([launched()], ['ds_1']),
+    dagster: {
+      run: async () => ({
+        ok: true as const,
+        data: run({
+          tags: {
+            'os/dataset': 'ds_1', 'os/principal': 'bea', 'os/commit': 'c'.repeat(40), 'os/batch_id': 'b_1',
+            // Dagster's own tags — the k8s one carries the run pod's ENV, which must never leak.
+            'dagster-k8s/config': '{"container_config":{"env":[{"name":"TRINO_PASSWORD","value":"x"}]}}',
+            'dagster/image': 'registry.internal/os-dagster:0.6.1',
+          },
+        }),
+      }),
+    },
+  });
+  assert.deepEqual(Object.keys(out.tags).sort(), ['os/batch_id', 'os/commit', 'os/dataset', 'os/principal']);
+  assert.ok(!JSON.stringify(out).includes('TRINO_PASSWORD'), 'the run-pod env blob must not reach the caller');
+});
+
+test('get_dagster_run: a FAILED run names what failed and where the step error lives — never an invented cause', async () => {
+  const out = await dagsterRunFor('r1', bea, {
+    ...world([launched()], ['ds_1']),
+    dagster: { run: async () => ({ ok: true as const, data: run({ status: 'FAILURE', endedAt: null }) }) },
+  });
+  assert.equal(out.status, 'FAILURE');
+  assert.equal(out.syncStatus, 'error');
+  assert.match(out.failure!, /^Dagster run failure \(sales__ds_1\)/);
+  assert.match(out.failure!, /event log/, 'it points at where the step error actually is');
+});
+
+test('get_dagster_run: a recorded launchError wins — it is the more specific truth than a run status', async () => {
+  const d = parseDataset(
+    JSON.stringify({
+      id: 'ds_1', name: 'Events', domain: 'sales', owner: 'bea', tier: 'dataset', origin: 'ingested',
+      description: '', columns: [],
+      versions: {
+        bronze: { built: true },
+        silver: { built: true, commit: 'c'.repeat(40), dagsterRunId: 'r1', launchError: 'dbt parse failed on the new commit' },
+        gold: { built: false },
+      },
+    }),
+  );
+  const out = await dagsterRunFor('r1', bea, {
+    ...world([d], ['ds_1']),
+    dagster: { run: async () => ({ ok: true as const, data: run({ status: 'FAILURE' }) }) },
+  });
+  assert.equal(out.failure, 'dbt parse failed on the new commit');
+});
+
+test('get_dagster_run: Dagster unreachable REPORTS the read failure — status stays null, never guessed', async () => {
+  const out = await dagsterRunFor('r1', bea, {
+    ...world([launched()], ['ds_1']),
+    dagster: { run: async () => ({ ok: false as const, error: 'timeout after 4000ms' }) },
+  });
+  assert.equal(out.status, null, 'an unread run has no status — a fabricated one would be the bug');
+  assert.equal(out.syncStatus, null);
+  assert.equal(out.dagsterError, 'timeout after 4000ms');
+  assert.equal(out.commit, 'c'.repeat(40), 'what the OS itself recorded is still returned');
+});
+
+test('get_dagster_run: a run on a dataset you cannot see is not_found — the SAME answer as a run that never existed', async () => {
+  // Both calls must be indistinguishable, or polling a run id enumerates other people's builds.
+  const foreign = launched({ id: 'ds_9', domain: 'ops', owner: 'amir', runId: 'r9' });
+  const never = async () => {
+    throw new Error('Dagster must not be consulted for a run the caller cannot reach');
+  };
+  await rejectsWith(dagsterRunFor('r9', zoe, { ...world([foreign], []), dagster: { run: never } }), 404, /not found/i);
+  await rejectsWith(dagsterRunFor('ghost', zoe, { ...world([foreign], []), dagster: { run: never } }), 404, /not found/i);
+  // And the refusal says nothing about the dataset it belongs to.
+  await assert.rejects(
+    dagsterRunFor('r9', zoe, { ...world([foreign], []), dagster: { run: never } }),
+    (e: Error) => {
+      assert.ok(!/ds_9|ops|amir|Events/.test(e.message), 'the refusal leaked the anchor dataset');
+      return true;
+    },
+  );
+});
+
+test('get_dagster_run: an empty runId is not_found, not a store scan', async () => {
+  await rejectsWith(
+    dagsterRunFor('   ', bea, { ...world([launched()], ['ds_1']), dagster: { run: async () => { throw new Error('unreachable'); } } }),
+    404,
+    /not found/i,
+  );
 });
