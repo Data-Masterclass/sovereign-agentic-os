@@ -3,6 +3,19 @@
 # that fixes one flips its test to a hard assertion. Fails CI only on real failures.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# CONFLICT COPIES (F2-5). macOS/iCloud makes " 2" duplicates (`approvals.test 2.ts`,
+# `_os-ui-env 2.tpl`) that git never tracks — but `docker build` copies the WORKING TREE and
+# `next build` type-checks `*.test 2.ts`, because tsconfig excludes only `**/*.test.ts`. That
+# combination failed a production image build with type errors in files nobody had edited.
+# `.dockerignore` keeps them out of the image context; this keeps them out of the tree.
+strays="$(find .. -path '*/node_modules' -prune -o -path '*/.next' -prune -o -type f -name '* 2.*' -print)"
+if [ -n "$strays" ]; then
+  echo "gate: FAIL — iCloud/Finder conflict copies in the tree. They are never tracked; delete them:" >&2
+  printf '%s\n' "$strays" >&2
+  echo "  find . -path '*/node_modules' -prune -o -type f -name '* 2.*' -print -delete" >&2
+  exit 1
+fi
+echo "check-conflict-copies: ok — no '* 2.*' files in the tree"
 # A3 (checklist A28): the scoped key's allowlist covers every alias the OS can request —
 # config defaults, agentRuntime models, router fallback targets — on both chart profiles.
 node ../scripts/check-litellm-allowlist.mjs
@@ -25,7 +38,7 @@ node ../scripts/check-trino-rules-chart.mjs
 # `sync-schedule-view.test.ts` (B4-review H-3) pins that the opt-out's "nothing schedules this"
 # always reaches the user. This comment sat above the chart checks, which it never described
 # (B4-review L-8). Part F adds `core/mcp/mcp-conformance.test.ts` — the SAME contract over the
-# WHOLE registry (all 113 tools, not just the data tab): advertised + schema, dispatches, an
+# WHOLE registry (all 114 tools, not just the data tab): advertised + schema, dispatches, an
 # absent object is `not_found` from every object-addressed tool, an existing invisible one is
 # refused per the OS convention, a role gate names its role, and no tool answers the `error`
 # catch-all (which is how `suggest_metrics`'s raw `fetch failed` was found).

@@ -5,7 +5,7 @@ import 'server-only';
 import { config } from '@core/kernel/config';
 import { type Workflow, type DomainKnowledge } from '@tabs/knowledge/lib/schema';
 import { chunkWorkflow, chunkDomain, type KnowledgeUnit } from '@tabs/knowledge/lib/chunk';
-import { embed } from '@tabs/knowledge/lib/embed';
+import { embed, type EmbedCaller } from '@tabs/knowledge/lib/embed';
 import { upsertUnits, removeUnits, type IndexedUnit } from '@tabs/knowledge/lib/index-store';
 
 /**
@@ -160,13 +160,21 @@ async function writeOpenSearch(scope: string, indexed: IndexedUnit[]): Promise<b
   }
 }
 
-/** Index a workflow (steps + rules + tacit). Returns an honest store report. */
+/**
+ * Index a workflow (steps + rules + tacit). Returns an honest store report.
+ *
+ * ATTRIBUTION (checklist A27, closed in iteration 2): pass `opts.caller` — the user whose action
+ * caused the re-index, and the workflow's domain — so the embedding call bills THAT principal with
+ * `domain:` / `tab:` tags instead of the platform's `user os-system` + `domain:platform`. Omitting
+ * it still works (a boot/system re-index legitimately has no acting user) and is still honestly
+ * attributed to the platform; it is a fallback, not a default anyone should rely on.
+ */
 export async function indexWorkflow(
   workflow: Workflow,
-  opts: { owner: string; tacit?: string; updatedAt?: string },
+  opts: { owner: string; tacit?: string; updatedAt?: string; caller?: EmbedCaller },
 ): Promise<IndexReport> {
   const units = chunkWorkflow({ workflow, owner: opts.owner, tacit: opts.tacit, updatedAt: opts.updatedAt });
-  const { vectors, source } = await embed(units.map((u) => u.text));
+  const { vectors, source } = await embed(units.map((u) => u.text), opts.caller);
   const indexed = toIndexed(units, vectors);
 
   // Always populate the in-process mirror (offline retrieval), best-effort live.
@@ -176,10 +184,11 @@ export async function indexWorkflow(
   return { units: units.length, store: live ? 'opensearch' : 'memory', embedSource: source, scope: workflow.id };
 }
 
-/** Index the general domain knowledge (the pinned domain card source). */
-export async function indexDomain(dk: DomainKnowledge): Promise<IndexReport> {
+/** Index the general domain knowledge (the pinned domain card source). `caller` attributes the
+ *  embedding call to the acting user — see {@link indexWorkflow}. */
+export async function indexDomain(dk: DomainKnowledge, caller?: EmbedCaller): Promise<IndexReport> {
   const units = chunkDomain(dk);
-  const { vectors, source } = await embed(units.map((u) => u.text));
+  const { vectors, source } = await embed(units.map((u) => u.text), caller);
   const indexed = toIndexed(units, vectors);
   const scope = `domain:${dk.domain}`;
   upsertUnits(scope, indexed);

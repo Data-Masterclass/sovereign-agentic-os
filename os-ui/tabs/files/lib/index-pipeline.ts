@@ -49,10 +49,16 @@ function metaOf(asset: FileAsset): ChunkMeta {
   };
 }
 
+/**
+ * ATTRIBUTION (checklist A27, closed in iteration 2): `opts.caller` is the user whose upload or
+ * edit caused this index, so the embedding call bills THAT principal with `domain:` / `tab:` tags
+ * rather than the platform's `user os-system` + `domain:platform`. The bootstrap sweep has no
+ * acting user and deliberately passes none — it IS a platform action, and saying so is honest.
+ */
 export async function indexAsset(
   asset: FileAsset,
   text: string,
-  opts: { adapter?: IngestAdapter; embed?: typeof embedTexts; live?: boolean } = {},
+  opts: { adapter?: IngestAdapter; embed?: typeof embedTexts; live?: boolean; caller?: EmbedCaller } = {},
 ): Promise<IndexReport> {
   // Stored-only opt-out (sensitive/huge / restricted): held but never indexed.
   if (asset.indexing.mode === 'stored-only') {

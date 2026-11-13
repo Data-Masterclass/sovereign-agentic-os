@@ -1826,3 +1826,22 @@ reason is here.
   **Still open from A13, named rather than quietly folded in:** the HELD APPROVAL ARGUMENTS. They
   live in the approvals queue, not in `agent_runs`, so this window does not reach them; recorded in
   `docs/components/langfuse.md`.
+
+- **F2-5 iCloud conflict copies broke a production image build, and nothing could have caught it.**
+  A deploy from the main checkout failed type-checking files nobody had edited: macOS/iCloud had
+  left ~30 " 2" duplicates (`approvals.test 2.ts`, `build-graph 2.ts`, `_os-ui-env 2.tpl`) of files
+  written that day. Three facts have to line up for that to happen, and all three did:
+  git never tracks them (so every `git status`, review and CI-on-push looked clean);
+  `docker build` copies the WORKING TREE, not the index; and `next build` type-checks
+  `*.test 2.ts` because `tsconfig.json` excludes only `**/*.test.ts` — the literal glob, which
+  `foo.test 2.ts` does not match. So an untracked file nobody could see failed the one build that
+  matters. Closed on both sides:
+  (1) `.dockerignore` **at the repo root** — verified as the right file: `scripts/deploy.sh` runs
+  `docker build … -f images/base/os-ui/Dockerfile .`, so the context is the repo root and
+  `os-ui/.dockerignore` is inert for this build — now excludes `**/* 2.*` and `**/__pycache__`.
+  (2) `os-ui/scripts/gate.sh` fails, first, before any other check, if any `* 2.*` file exists
+  anywhere in the tree (node_modules and .next pruned), printing each path and the delete command.
+  Verified by planting one: exit 1 naming the file; removed, exit 0 with `check-conflict-copies: ok`.
+  The gate is the better half of the two — `.dockerignore` keeps a stray out of the IMAGE, the gate
+  keeps it out of the TREE, which is also where `npm test`, `tsc` and the structure ratchet would
+  otherwise eventually trip over it.
