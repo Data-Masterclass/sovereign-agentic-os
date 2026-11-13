@@ -18,7 +18,8 @@
 - **Engine flag.** `AGENTS_ENGINE=walker|langgraph` (env) with per-system override via the existing `runtime` key. Default `walker` until the deletion phase flips it.
 - **Repo rules** (`CONTRIBUTING.md`): a tab imports only `@core/*` and itself; the kernel never imports a tab; every source file carries the `FEATURE:` / `USER STORY:` / `ARCHITECTURE:` header; `scripts/check-structure.mjs` is a ratchet. A test cannot import a `.tsx` or a Next `route.ts`; testable logic lives in `.ts` modules. No TS parameter properties.
 - **Gates for every phase:** `npx tsc --noEmit -p os-ui/tsconfig.json` clean; `npm --prefix os-ui test` 0 failures; `node scripts/check-structure.mjs` no new violations; `bash os-ui/scripts/gate.sh` exit 0; `helm lint charts/sovereign-agentic-os -f values.local.yaml` where the chart changed. Docs updated in the same commit (`docs/components/*.md`, `os-ui/ARCHITECTURE.md`, the owning tab's `README.md`, `CHANGELOG.md`).
-- **Operational:** one implementation agent at a time on the branch; `colima stop` when not building; run `scripts/deploy.sh` directly, never piped; rebase-and-merge.
+- **Operational:** implementation agents may run **in parallel only on disjoint areas** (agent side vs data side), each in its own worktree, merged by the coordinator; reviewer and test agents are read-only and freely parallel. `colima stop` when not building; run `scripts/deploy.sh` directly, never piped; rebase-and-merge.
+- **Companion documents:** `2026-11-13-engineering-checklist.md` (the definition of done and the iteration protocol) and `2026-11-13-data-products-concept.md` (Part B detail; where it differs from the outline below, the concept wins).
 
 ---
 
@@ -73,7 +74,9 @@ Not a compiled system, left as is: `core/kernel/artifacts.ts` seeded registry re
 - [ ] `tabs/agents/lib/engine/build-graph.ts`: `buildGraph(ir, deps)` → compiled `StateGraph`. Typed state root: `messages` (append; keep the OpenAI wire shape, not LangChain `BaseMessage`), every `state.channels` entry (`add_messages` → append, else last-value), `task`, `current`, `handoffs`, `nodeRuns`, `budget`, `held`, `final`.
 - [ ] One subgraph per agent: `plan_<id>` (reasoning tier, no tools), `act_<id>` (execution tier, tools, ReAct fallback on tools-unsupported — preserve `agentic.ts` helpers), `tools_<id>` (hold decision first, then `grantedToolExecutor` unchanged), `route_<id>`. Conditional edge act → tools when the reply has tool calls, else → route.
 - [ ] Supervisor = `route_<sup>` with a mandatory `route` tool returning `{ next, brief }` and a text fallback (`NEXT: <member>`); `addConditionalEdges` to members ∪ END from IR `conditionalEdges`; `supervise` edges return to the supervisor's act.
-- [ ] Handoffs: evaluate `when` and return `Command({ goto })`. `when` grammar v1: literals, `state.<channel>` truthiness, `==`/`!=` on strings, `&&`/`||`; a ~40-line parser, never `eval`. Absent `when` = unconditional. **Decision taken for the owner:** safe expressions, not model-judged predicates; revisit only if a template needs it.
+- [ ] Handoffs: evaluate `when` and return `Command({ goto })`. `when` grammar v1: literals, `state.<channel>` truthiness, **bare identifiers resolving to a channel of the same name** (A0 finding 2: the shipped software team uses `plan_ready`, `committed`, …), `==`/`!=` on strings, `&&`/`||`; a ~40-line parser, never `eval`. Absent `when` = unconditional. A guard naming a channel no node ever sets is a **compile warning** surfaced in Build, not a silent false. **Decision taken for the owner:** safe expressions, not model-judged predicates.
+- [ ] Node-level tool narrowing becomes a real gate (A0 finding 1): `tools_<id>` executes only the tools the node is advertised, not every system grant; test it.
+- [ ] Supervisor parity (A0 finding 3): walker transcripts carry no routing exchanges, so P1 for supervisor fixtures drives `buildGraph` with the scripted model `first-tool-then-final@1` (plus a scripted `route` decision in declared order) rather than the replayed transcript; document the rule set.
 - [ ] END: supervisor routes END; a leaf whose handoffs all evaluate false → END; `recursionLimit` = team step budget; graceful stop. Disabled agents pruned at build. Unmapped legacy tools → compile error.
 - [ ] Checkpointer: `PostgresSaver` on the existing CNPG cluster, new database `agent_runs` via the chart's `additionalDatabases`; run its migrations in an init job. **Thread id = run id**, minted in the run route.
 - [ ] Execute in the route as today but checkpointed every superstep; `POST …/run {resume:true}` continues an interrupted thread. Replace "re-run to continue" in `BuildRunPanel.tsx` with "Resume".
@@ -111,7 +114,9 @@ Not a compiled system, left as is: `core/kernel/artifacts.ts` seeded registry re
 
 ## Part B — Data products: dbt + Dagster + Trino
 
-**Principle:** a data product in the OS is a dbt project the user could check out and run. The OS generates and owns the files; Dagster schedules and materialises them; Trino executes them. The OS reads back Dagster run state and dbt artifacts rather than keeping a parallel ledger.
+**Principle:** a data product in the OS is a dbt project the user could check out and run. The OS generates and owns the files **in a git repository per domain**; Dagster schedules and materialises them **from a validated commit**; Trino executes them **as the acting principal via impersonation**. The OS reads back Dagster run state and dbt artifacts rather than keeping a parallel ledger.
+
+**Detail:** `2026-11-13-data-products-concept.md` (Phase B0 output). Decisions recorded there and adopted here: isomorphic-git in os-ui with bare repos on a PVC and a read-only git-daemon sidecar; **one Dagster code location for all domains** with per-domain parse gating; `dbt-runner` is an impersonation-only Trino user and OPA's write floor becomes authoritative; commit first, validate second; no OS run ledger.
 
 ### Phase B0 — Audit and concept (read-only; may run in parallel with A0)
 - [ ] Audit how datasets, transforms, compositions, syncs and quality rules execute today (`tabs/data/lib/{ingest,transform,sync-sql,sync-cron,sync-run-server,auto-gold,auto-pipeline,dq-*}.ts`, the Dagster image and chart block, the dbt image, the data-runner and query-tool services). Separate docs claims / code present / wired at runtime, as the agent audit did. Known facts to verify: scheduled syncs are Kubernetes CronJobs curling an os-ui route, not Dagster; transforms are Trino CTAS composed in TypeScript, not dbt models; Dagster had no Postgres driver in its image and 0 runs in 90 days.
@@ -146,12 +151,36 @@ Not a compiled system, left as is: `core/kernel/artifacts.ts` seeded registry re
 
 ---
 
+## Part D — Git-based working, automatically, behind every step (cross-cutting)
+
+**Requirement (2026-11-13, product owner):** everything built in the OS, from the UI or the MCP, follows a git-based way of working exactly as engineers work, automatically. No separate "export to git" step.
+
+- [ ] One commit path. `core/infra/git-store.ts` (isomorphic-git, MIT): `openOrInit(repo)`, `commitTree(repo, files, {author, message, trailers})` committing **iff the tree hash changed**, `log`, `readBlob`, `archive`, `push(mirror)`. Author = acting `CurrentUser` (name + email); committer = `Sovereign OS`. Message `<area>(<domain>): <action> <object> — via <mcp:tool | ui:<route>>`, trailers `OS-Action`, `OS-Object`, `OS-Surface`, `OS-Request-Id`.
+- [ ] Repos: one bare repo per domain on PVC `os-repos` (RWO; os-ui is single-replica). Layout: `agents/<system>/{system.yaml,graph.ts,README.md}`, `dbt_project.yml`, `models/…`, `os/schedules.yml`. Served read-only in-cluster by a `git daemon` sidecar; NetworkPolicy limits consumers to the Dagster user-code pod.
+- [ ] **Every writer commits.** Agent store saves (`tabs/agents/lib/store.ts`), data store mutations (dataset, composition, check, sync, publish), and their MCP tools all route through the one commit path. A unit test enumerates the store's mutating exports and asserts each calls the commit builder (checklist X1).
+- [ ] Read access: `GET /api/<tab>/projects/<domain>` tree/log/blob at a ref; export as an archive at a commit; admin-only mirror config (URL + token Secret) with push-after-commit that reports but never blocks.
+- [ ] Gates: checklist A2, A3, D2, D3, X1, X2.
+
+## Part E — The final document
+
+**Requirement (2026-11-13, product owner):** a PDF explaining, step by step, how each tool is really used after the refactor and where that manifests in the OS source; which tool functions are implemented at which step; and how it follows the same approach a data or AI engineer would follow — the OS as an abstraction layer, not a reinvention of "how".
+
+- [ ] Written **last, from the shipped code**, by a read-only agent, one chapter per tool (LangGraph, Langfuse, LiteLLM, git, dbt, Dagster, Trino): the engineer's workflow step by step → the OS source performing that step (`file:line`) → the tool functions used and deliberately not used → what the OS adds on top (identity, policy, approvals). A closing chapter lists every reinvention that remains, with the reason.
+- [ ] Rendered with headless Chrome like the audit PDF; stored next to it in `~/Documents/Claude/Projects/Data Masterclass Apps/stackit/`. Checklist X6.
+
+## Part F — Iterate against the checklist
+
+After each full pass over Parts A, B and D: a read-only test agent scores `2026-11-13-engineering-checklist.md`, writes a gap report there, and a new "Iteration N" is appended below with phases closing the gaps. Repeat until two consecutive iterations close nothing further. Deploy after each green iteration; the engine flag flips only when A5–A17 pass.
+
 ## Decisions taken without the owner (autonomous mode) — review these
 1. `when` grammar: safe expression language, not model-judged predicates.
 2. Approver authorises, runner executes; no approval TTL in v1.
 3. Worker is a second Deployment of the same image, not a separate image.
 4. The Python `agent-runtime` and the `hermes` runtime option are retired.
 5. Data products: one dbt project per domain, generated by the OS and owned by it; users read it, the OS writes it.
+6. Git mechanism: isomorphic-git in-process, bare repos on a PVC, read-only git-daemon sidecar, optional push mirror — not the git CLI in the image, not direct commits to a remote.
+7. One Dagster code location for all domains, parse-gated per domain, rather than one per domain.
+8. `when` grammar accepts bare identifiers as channel names, because the shipped software team already uses them.
 
 ## Deviations log
 (Agents append here: phase, what differed, why.)
