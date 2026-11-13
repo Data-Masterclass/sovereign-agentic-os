@@ -34,6 +34,18 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   gains `query_metric` and `create_dashboard` entries — widening discovery, never authority. One
   source of truth (`core/runtime/ask-rules.ts`) with content tripwires in five places.
 
+- **Chat artifacts ride the MCP standard (stream C, C7–C8).** `query_data`, `query_metric`,
+  `preview_metric`, `suggest_metrics`, `get_metric` and `get_dashboard` now declare an MCP
+  `outputSchema` and return the typed artifact payload as `structuredContent` — the same bytes the
+  Ask-the-OS drawer renders, so the UI and an external client (Claude Desktop) cannot grow two
+  serialisers. Six kinds in one module (`core/runtime/chat-artifacts.ts`): `table` · `chart` ·
+  `metric_draft` · `dashboard_draft` · `citation` · `clarification`. A `table` carries the
+  query-tool's own `truncated` / `rowLimit` / `message` verbatim and the tool-reported `rowCount`,
+  and is labelled `ad-hoc-sql` or `semantic-layer` so an unverified number cannot pass as a governed
+  one. `McpTool` gained optional `outputSchema` + a pure `artifacts` projection; a tool declaring
+  neither is byte-identical to before, and a projection that throws degrades to "no artifacts"
+  rather than failing a governed read.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a

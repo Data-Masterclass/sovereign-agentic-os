@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
+import type { ChatArtifact } from '@core/runtime/chat-artifacts';
 import { ROLES, type Role } from '@core/kernel/session';
 import { config } from '@core/kernel/config';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
@@ -93,6 +94,25 @@ export type McpTool = {
   /** Extra tabs this tool ALSO surfaces on (e.g. promotion tools span data+files). */
   extraTabs?: ToolTab[];
   inputSchema: JsonSchema;
+  /**
+   * C7 / D14 — the MCP `outputSchema` this tool's `structuredContent` conforms to. The
+   * spec is emphatic that a server MUST provide structured results matching the schema it
+   * declared and a client SHOULD validate, so this is a contract and not documentation.
+   * Declared together with {@link McpTool.artifacts}; a tool with neither behaves exactly
+   * as before (a text content block only).
+   */
+  outputSchema?: JsonSchema;
+  /**
+   * C7 / D14 — project this tool's own return value into the typed chat artifacts the
+   * Ask-the-OS drawer renders and an external MCP client receives as `structuredContent`.
+   * ONE serialiser for both doors, so the UI and Claude Desktop cannot drift.
+   *
+   * Must be PURE and must not throw (the dispatcher guards it anyway): a projection of a
+   * result the governed `call` already produced, never a second read, never arithmetic. It
+   * receives the call's arguments too, so a payload can name the SQL or the metric id the
+   * caller asked for.
+   */
+  artifacts?: (result: unknown, args: Record<string, unknown>) => ChatArtifact[];
   call: (user: CurrentUser, args: Record<string, unknown>) => Promise<unknown>;
 };
 
@@ -242,16 +262,25 @@ export function toolsForTab(tab: McpTab, tools: McpTool[] = ALL_MCP_TOOLS): McpT
   return tools.filter((t) => t.tab === tab || t.tab === 'meta' || t.extraTabs?.includes(tab));
 }
 
-/** The role-scoped, wire-shaped tool list for `tools/list` (no internals leak). */
+/**
+ * The role-scoped, wire-shaped tool list for `tools/list` (no internals leak).
+ *
+ * `outputSchema` rides along when the tool declares one (C7) — the MCP spec's own field, so
+ * a client can validate the `structuredContent` it will be handed. A tool that declares
+ * none is serialised exactly as before (the key is absent, not null).
+ */
 export function listToolsForRole(
   role: Role,
   tools: McpTool[] = ALL_MCP_TOOLS,
-): { name: string; description: string; inputSchema: JsonSchema }[] {
-  return tools.filter((t) => roleCanUse(role, t.minRole)).map(({ name, description, inputSchema }) => ({
-    name,
-    description,
-    inputSchema,
-  }));
+): { name: string; description: string; inputSchema: JsonSchema; outputSchema?: JsonSchema }[] {
+  return tools
+    .filter((t) => roleCanUse(role, t.minRole))
+    .map(({ name, description, inputSchema, outputSchema }) => ({
+      name,
+      description,
+      inputSchema,
+      ...(outputSchema ? { outputSchema } : {}),
+    }));
 }
 
 // --- JSON-RPC 2.0 dispatch -----------------------------------------------------
@@ -490,7 +519,17 @@ export async function handleRpc(
         // (`runWithRunId`) rides along the same way, which is what produces `OS-Run-Id`.
         const ambient = currentSurface();
         const result = await runWithSurface(`mcp:${tool.name}`, () => tool.call(user, args), ambient?.requestId);
-        return ok(id, { content: [{ type: 'text', text: safeText(result) }] });
+        // C7 / D14 — a tool that declares an artifact projection also returns it as
+        // `structuredContent`, conforming to the `outputSchema` it advertised. The text
+        // block is unchanged, so every existing client and the model's own view of the
+        // result are byte-identical. The projection is PURE but belt-and-braces guarded:
+        // a bug in a renderer payload must never turn a successful governed read into an
+        // error, so a throwing projection degrades to "no artifacts" and the answer stands.
+        const artifacts = projectArtifacts(tool, result, args);
+        return ok(id, {
+          content: [{ type: 'text', text: safeText(result) }],
+          ...(artifacts ? { structuredContent: { artifacts } } : {}),
+        });
       } catch (e) {
         // Governance denials + execution failures surface as a TYPED MCP tool error
         // (isError + structuredContent) — model-readable, actionable, NEVER a crash.
@@ -558,6 +597,25 @@ export function structuredError(e: unknown): ToolError {
               ? 'A component this tool depends on is unreachable (model gateway, warehouse, catalog). Check Platform → Components for its health row, then retry — your arguments are fine.'
               : 'Unexpected failure — retry, or inspect `reason`.';
   return { code, reason, hint };
+}
+
+/**
+ * Run a tool's artifact projection defensively. Returns undefined when the tool declares
+ * none or when the projection produced nothing, so `structuredContent` is absent rather
+ * than an empty envelope.
+ */
+function projectArtifacts(
+  tool: McpTool,
+  result: unknown,
+  args: Record<string, unknown>,
+): ChatArtifact[] | undefined {
+  if (!tool.artifacts) return undefined;
+  try {
+    const list = tool.artifacts(result, args);
+    return Array.isArray(list) && list.length > 0 ? list : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function safeText(result: unknown): string {

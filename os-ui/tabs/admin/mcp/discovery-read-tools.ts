@@ -39,6 +39,12 @@ import { getMetric } from '@tabs/metrics/lib/store';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
 import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { claimsFromUser, delegate } from '@tabs/data/lib/identity';
+import {
+  ARTIFACT_OUTPUT_SCHEMA,
+  citationArtifact,
+  tableArtifactFromObjectRows,
+  type ChatArtifact,
+} from '@core/runtime/chat-artifacts';
 import { syncStatusFor, latestSyncSignals, dagsterRunFor } from '@tabs/data/lib/sync-status-server';
 
 /**
@@ -321,6 +327,29 @@ export const readTools: McpTool[] = [
         { metricId: 'ds_ab12cd.revenue' },
         { metricId: 'ds_ab12cd.revenue', dimensions: ['region'], timeDimension: 'order_date', granularity: 'month' },
       ],
+    },
+    // C7 — the governed number travels as a typed artifact, so the drawer shows the rows,
+    // the member that produced them and the resolver mode rather than prose the model wrote
+    // around them. `source: 'semantic-layer'` is what makes this answer NOT labelled ad-hoc:
+    // the aggregation and the joins are the human-authored metric definition's, not the
+    // model's. No SQL is shown because none exists — this tool accepts and generates none by
+    // construction; the member and the citation are the real artefact to point at.
+    outputSchema: ARTIFACT_OUTPUT_SCHEMA,
+    artifacts: (result) => {
+      const r = (result ?? {}) as { metricId?: unknown; member?: unknown; rows?: unknown; mode?: unknown };
+      const member = typeof r.member === 'string' ? r.member : '';
+      const out: ChatArtifact[] = [
+        tableArtifactFromObjectRows(r.rows, {
+          source: 'semantic-layer',
+          title: member || 'query_metric',
+          mode: typeof r.mode === 'string' ? r.mode : undefined,
+          semanticQuery: member ? `semantic member: ${member}` : undefined,
+        }),
+      ];
+      if (typeof r.metricId === 'string' && r.metricId) {
+        out.push(citationArtifact('metric', r.metricId, { name: member || undefined }));
+      }
+      return out;
     },
     call: async (user, args) => {
       const metricId = str(args.metricId).trim();

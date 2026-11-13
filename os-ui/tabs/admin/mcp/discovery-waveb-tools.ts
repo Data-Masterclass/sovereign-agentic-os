@@ -17,6 +17,7 @@ import { listMetrics } from '@tabs/metrics/lib/store';
 import { listDashboards, getDashboard } from '@tabs/dashboards/lib/store';
 import { normalizePanel, panelMetrics } from '@tabs/dashboards/lib/model';
 import { getSystem } from '@tabs/agents/lib/store';
+import { ARTIFACT_OUTPUT_SCHEMA, citationArtifact, type ChatArtifact } from '@core/runtime/chat-artifacts';
 import {
   listAppsForUser,
   getAppForUser,
@@ -84,6 +85,22 @@ export const waveBReadTools: McpTool[] = [
       required: ['metricId'],
       examples: [{ metricId: 'ds_ab12cd.revenue' }],
     },
+    // C7 — a definition read cites the governed record it resolved: the metric, its tier
+    // and owner, plus the gold dataset underneath it. The chip row under a chat answer is
+    // what lets a reader open the real artefact instead of trusting the summary.
+    outputSchema: ARTIFACT_OUTPUT_SCHEMA,
+    artifacts: (result) => {
+      const r = (result ?? {}) as Record<string, unknown>;
+      const s = (v: unknown) => (typeof v === 'string' ? v : undefined);
+      const out: ChatArtifact[] = [];
+      if (s(r.id)) {
+        out.push(citationArtifact('metric', s(r.id) as string, { name: s(r.name), tier: s(r.tier), owner: s(r.owner) }));
+      }
+      if (s(r.datasetId)) {
+        out.push(citationArtifact('dataset', s(r.datasetId) as string, { name: s(r.datasetName) }));
+      }
+      return out;
+    },
     call: async (user, args) => {
       const metricId = str(args.metricId).trim();
       if (!metricId) fail('get_metric needs a `metricId` (from list_metrics, shaped `<datasetId>.<measure>`)', 400);
@@ -119,6 +136,30 @@ export const waveBReadTools: McpTool[] = [
       },
       required: ['dashboardId'],
       examples: [{ dashboardId: 'dash_sales_overview_ab12cd' }],
+    },
+    // C7 — the dashboard cites itself, and each normalized panel travels as a `chart`
+    // artifact: the SAME `Panel` the dashboard renders, so when the chart renderer lands
+    // the chart in chat is byte-identical to the chart on the dashboard and carries the
+    // viewer's own row-level security (it is re-queried through
+    // `/api/dashboards/panel-query` as the viewer, never rendered from a cached image).
+    // Until then a client that does not know the kind simply ignores it.
+    outputSchema: ARTIFACT_OUTPUT_SCHEMA,
+    artifacts: (result) => {
+      const r = (result ?? {}) as Record<string, unknown>;
+      const s = (v: unknown) => (typeof v === 'string' ? v : undefined);
+      const out: ChatArtifact[] = [];
+      if (s(r.id)) {
+        out.push(citationArtifact('dashboard', s(r.id) as string, { name: s(r.name), tier: s(r.tier), owner: s(r.owner) }));
+      }
+      const view = s(r.view);
+      if (view && Array.isArray(r.charts)) {
+        for (const chart of r.charts) {
+          if (!chart || typeof chart !== 'object') continue;
+          const panel = chart as Record<string, unknown>;
+          out.push({ kind: 'chart', view, panel, ...(s(panel.name) ? { title: s(panel.name) as string } : {}) });
+        }
+      }
+      return out;
     },
     call: async (user, args) => {
       const id = str(args.dashboardId).trim();

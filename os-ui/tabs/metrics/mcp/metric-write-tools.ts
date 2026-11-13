@@ -52,6 +52,12 @@ import { measureFromForm, measureMember, sameMeasure, type MetricForm, type Guid
 import type { MeasureType } from '@tabs/data/lib/metrics';
 import { buildMetric } from '@tabs/metrics/lib/build/server';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
+import {
+  ARTIFACT_OUTPUT_SCHEMA,
+  citationArtifact,
+  tableArtifactFromObjectRows,
+  type ChatArtifact,
+} from '@core/runtime/chat-artifacts';
 import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { getMetric } from '@tabs/metrics/lib/store';
 import { governMetric, canPromote as canPromoteMetric } from '@tabs/metrics/lib/governance';
@@ -127,6 +133,28 @@ export const metricWriteTools: McpTool[] = [
       },
       required: [],
       examples: [{}, { goal: 'metrics that show whether our onboarding is working' }],
+    },
+    // C7 — each candidate travels as a `metric_draft`: the ready-to-define form, the real
+    // dataset it grounds on, and the rationale. A draft is NOT a metric — nothing is
+    // persisted here, and the write only happens when a human presses Save (C15, backlog),
+    // never as a side effect of this read.
+    outputSchema: ARTIFACT_OUTPUT_SCHEMA,
+    artifacts: (result) => {
+      const candidates = (result as { candidates?: unknown })?.candidates;
+      if (!Array.isArray(candidates)) return [];
+      const out: ChatArtifact[] = [];
+      for (const c of candidates) {
+        if (!c || typeof c !== 'object') continue;
+        const cand = c as Record<string, unknown>;
+        if (typeof cand.datasetId !== 'string' || !cand.form || typeof cand.form !== 'object') continue;
+        out.push({
+          kind: 'metric_draft',
+          datasetId: cand.datasetId,
+          form: cand.form as Record<string, unknown>,
+        });
+        out.push(citationArtifact('dataset', cand.datasetId));
+      }
+      return out;
     },
     call: async (user, args) => {
       const goal = str(args.goal).trim() || undefined;
@@ -249,6 +277,43 @@ export const metricWriteTools: McpTool[] = [
       },
       required: ['datasetId', 'name', 'aggregation'],
       examples: [{ datasetId: 'ds_ab12cd', name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: ['region'] }],
+    },
+    // C7 — the preview returns the number AND the SQL that produced it, under the caller's
+    // own row security, with nothing persisted. `source: 'semantic-layer'` because the shape
+    // being previewed IS a metric definition; the SQL is shown because for an unsaved draft
+    // the governed SQL path is what actually ran (mode `live (sql)`), and a reader must be
+    // able to see it before pressing Save.
+    outputSchema: ARTIFACT_OUTPUT_SCHEMA,
+    artifacts: (result, args) => {
+      const r = (result ?? {}) as Record<string, unknown>;
+      const s = (v: unknown) => (typeof v === 'string' ? v : undefined);
+      const measure = (r.measure ?? {}) as Record<string, unknown>;
+      const table = tableArtifactFromObjectRows(r.rows, {
+        source: 'semantic-layer',
+        title: s(measure.name) ?? s(args.name) ?? 'preview_metric',
+        mode: s(r.mode),
+        sql: s(r.sql),
+      });
+      const out: ChatArtifact[] = [table];
+      const datasetId = s(r.datasetId);
+      if (datasetId) {
+        out.push({
+          kind: 'metric_draft',
+          datasetId,
+          form: {
+            name: s(args.name) ?? s(measure.name) ?? '',
+            aggregation: s(args.aggregation) ?? '',
+            column: s(args.column) ?? '',
+            dimensions: Array.isArray(args.dimensions) ? args.dimensions.filter((d) => typeof d === 'string') : [],
+          },
+          previewColumns: table.columns,
+          previewRows: table.rows,
+          ...(s(r.mode) ? { previewMode: s(r.mode) as string } : {}),
+          ...(s(r.sql) ? { previewSql: s(r.sql) as string } : {}),
+        });
+        out.push(citationArtifact('dataset', datasetId));
+      }
+      return out;
     },
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();

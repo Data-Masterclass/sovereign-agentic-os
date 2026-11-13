@@ -162,8 +162,13 @@ export type ArtifactEnvelope = { artifacts: ChatArtifact[] };
  * `additionalProperties: true` on each artifact so a later kind's new field is not a
  * breaking change for a client validating today's payload.
  */
-export const ARTIFACT_OUTPUT_SCHEMA = {
-  type: 'object' as const,
+export const ARTIFACT_OUTPUT_SCHEMA: {
+  type: 'object';
+  description: string;
+  properties: Record<string, unknown>;
+  required: string[];
+} = {
+  type: 'object',
   description:
     'A typed artifact payload the client RENDERS: tables carry their own truncation banner and the ' +
     'SQL or semantic query that produced them; citations name the governed record the answer is ' +
@@ -216,7 +221,7 @@ export const ARTIFACT_OUTPUT_SCHEMA = {
     },
   },
   required: ['artifacts'],
-} as const;
+};
 
 // ------------------------------------------------------------------- the mappers ----
 
