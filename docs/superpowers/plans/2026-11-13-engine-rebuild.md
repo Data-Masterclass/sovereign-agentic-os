@@ -1890,3 +1890,28 @@ reason is here.
   (labels, which fields a rule shows, the add payload, the submit guard, the stored-rule label) so
   it has a `.test.ts` — including one that fails if a rule is added to `DATA_CHECK_RULES` without a
   form field. **D5 → `true`** for the generation half.
+
+- **F2-8 `docs/components/trino.md`: the password was documented as a Jinja guard that does not
+  exist, and step 4 named the wrong pod.** Two corrections, both checked against
+  `tabs/data/lib/dbt/project.ts`:
+  (1) The page described `password: "{{ env_var('TRINO_PASSWORD', '') }}"` inside a
+  `{% if env_var('TRINO_AUTH_METHOD', 'none') != 'none' %}` block. No such block is emitted, and
+  one could not be: `method:` must AGREE with whether `password:` exists at all, and dbt-trino's
+  `none` rejects a `password` key — so the decision cannot be deferred to the parsing pod. The
+  GENERATOR makes it: `method:` is a literal from `config.trinoAuthMethod` (B4-review E-3), `none`
+  returns the document untouched with no `password:` line anywhere, and any other method splices
+  exactly one line after `user:` — with **no `''` default**, so a missing secret fails loudly.
+  (2) Step 4 said to set `TRINO_AUTH_METHOD` "at the same time, in the same place" as
+  `TRINO_PASSWORD` — i.e. on the Dagster run pod and the query-tool. Both are wrong: it is read by
+  **os-ui** (and the worker), because os-ui is what generates `profiles.yml`; setting it on the run
+  pod changes nothing, since that pod reads a file already written. The chart has no value for it
+  today, which the step now says rather than implying one exists.
+  Step 4 also now carries what the page never said at all: **the change only lands on the next
+  REGENERATION, which is a commit.** `profiles.yml` is a committed file; the env var does not
+  rewrite it. Two triggers are named in order of preference — restarting os-ui (the boot reconcile
+  regenerates and commits EVERY domain, and the env change is a rollout anyway, so confirm the
+  `[data-projects] boot reconcile` line rather than assume it), or any dataset write (ONE domain
+  only, which is the trap) — plus the verification command
+  (`git -C <repo> show HEAD:profiles.yml | grep -E 'method:|password:'`) and what happens if you
+  skip it: the repositories still say `method: none` and every dbt run fails authentication the
+  moment step 1 goes live.
