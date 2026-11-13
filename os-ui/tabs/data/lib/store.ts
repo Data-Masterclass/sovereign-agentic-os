@@ -36,6 +36,7 @@ import { transparencyGate, gateReason } from '@tabs/data/lib/transparency';
 import { CUBE_ARTIFACT, scaffoldMetricYaml, metricSqlReady } from '@tabs/data/lib/metrics';
 import { SEMANTIC_ARTIFACT, scaffoldSemanticYaml } from '@tabs/data/lib/semantic';
 import { assetTarget, productTarget, reuseSourceFqn, composeSourceBlocker, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from '@tabs/data/lib/store-fqn';
+import { randomUUID } from 'node:crypto';
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
@@ -249,8 +250,23 @@ async function hydrate(): Promise<void> {
   s.seeded = true;
 }
 
+/**
+ * Dataset and check ids, from the CSPRNG (B4 review M-4). They were
+ * `Math.random().toString(36)` + a timestamp suffix: ~30 bits of a non-cryptographic PRNG whose
+ * internal state is recoverable from a few outputs, plus a value an attacker already knows. Ids
+ * are not a permission — `getDataset` answers 403 for an existing dataset the caller may not view
+ * and 404 only for one that does not exist (deviation B4-11), so guessing an id buys an attacker
+ * nothing but the knowledge that it exists. That last word is the reason to fix it anyway: an id
+ * that can be enumerated turns "403 vs 404" into an inventory of the tenant. These are
+ * unguessable. `randomUUID` is available in Node and in every browser-grade runtime this store
+ * runs in; it throws rather than silently weakening if it ever is not.
+ */
+function randomToken(): string {
+  return randomUUID().replace(/-/g, '');
+}
+
 function newId(): string {
-  return `ds_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+  return `ds_${randomToken()}`;
 }
 
 function sha(content: string): string {
@@ -1245,7 +1261,7 @@ export function addCheck(
     }
   }
   const check: DataCheck = {
-    id: `chk_${Math.random().toString(36).slice(2, 8)}`,
+    id: `chk_${randomToken().slice(0, 16)}`,
     name: (input.name ?? '').trim() || 'Untitled check',
     description: input.description ?? '',
     createdBy: user.id,

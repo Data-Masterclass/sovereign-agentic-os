@@ -6,7 +6,8 @@
  *             produce the SAME repo commit (same files, same author, same OS-Actor trailer) and the
  *             SAME Dagster launch for the same input — so neither door can drift from the other.
  * ARCHITECTURE:
- *   - ONE table-driven test over the eight mutating data tools. For each, the MCP handler is driven
+ *   - ONE table-driven test over the eight mutating data tools (nine cases: `set_dataset_sync`
+ *     appears twice, once configuring and once CLEARING — review M-1). For each, the MCP handler is driven
  *     through `handleRpc` exactly as a client would, then the store is reset and the SAME input is
  *     passed to the service function the UI route calls (a test may not import a route, so the
  *     service IS the route's half — the routes are thin shells over these functions).
@@ -226,7 +227,7 @@ function seedSynced(): void {
   store.setDatasetSync(BASE, amir, SYNC);
 }
 
-/* -------------------------------------------------------------- the 8 tools -- */
+/* ------------------------------------------------------------- the 9 cases -- */
 
 type Case = {
   tool: string;
@@ -310,10 +311,19 @@ const CASES: Case[] = [
     mcpArgs: { datasetId: BASE },
     ui: async () => runQualityChecksService(amir, BASE),
   },
+  {
+    // The 9th case (review M-1): CLEARING a sync. The UI route passes `null`; the MCP tool had no
+    // way to express it at all, so a client could create and change a sync but never remove one.
+    tool: 'set_dataset_sync',
+    seed: seedSynced,
+    mcpArgs: { datasetId: BASE, clear: true },
+    ui: async () => saveDatasetSyncService(amir, BASE, null),
+  },
 ];
 
 for (const c of CASES) {
-  test(`X8 parity: ${c.tool} — the MCP tool and the UI service produce the same commit and the same Dagster launch`, async () => {
+  const label = c.mcpArgs.clear === true ? `${c.tool} (clear)` : c.tool;
+  test(`X8 parity: ${label} — the MCP tool and the UI service produce the same commit and the same Dagster launch`, async () => {
     const throughMcp = await observe(c.seed, () => mcp(c.tool, c.mcpArgs));
     const throughUi = await observe(c.seed, () => runWithSurface(`ui:data/${c.tool}`, c.ui));
     assert.deepEqual(throughMcp.commits, throughUi.commits, `${c.tool}: the committed tree/author/trailers differ`);
@@ -394,4 +404,125 @@ test('X8 parity: validation is 400 naming the field on BOTH doors', async () => 
   const unknownUi = await uiError(() => Promise.resolve(defineQualityRulesService(amir, BASE, [{ rule: 'bogus', column: 'x' }])));
   assert.equal(unknown.code, 'bad_request');
   assert.equal(unknown.reason, unknownUi.message);
+});
+
+/* ------------------------- the three divergences B4-3 fixed, now PINNED (M-2) -- */
+
+/**
+ * The payload a door returned, whichever door it was. A successful MCP tool result carries its
+ * JSON as `content[0].text` (there is no `structuredContent` on a success — that is the error
+ * shape); a service returns the object itself.
+ */
+function payload(raw: unknown): Record<string, unknown> {
+  const result = (raw as { result?: unknown }).result ?? raw;
+  const content = (result as { content?: { type: string; text?: string }[] }).content;
+  if (Array.isArray(content) && typeof content[0]?.text === 'string') {
+    return JSON.parse(content[0].text as string) as Record<string, unknown>;
+  }
+  return result as Record<string, unknown>;
+}
+
+const bea: CurrentUser = { id: 'bea', name: 'Bea', domains: ['sales'], role: 'builder' };
+
+test('X8 pinned (B4-3a): a gold join reads a PERSONAL partner from `iceberg.personal_<owner>` on both doors', async () => {
+  // The bug: MCP `build_gold_join` resolved the partner with `assetTarget(up)` while the route
+  // used the owner-aware `reuseSourceFqn(up)`, so joining a personal-lane partner through the MCP
+  // compiled a read of the DOMAIN schema — a table that does not exist for a My-tier dataset.
+  // Deep-equality would catch a re-divergence only while both doors are wrong in different ways;
+  // this pins the VALUE, so a regression that breaks both identically still fails.
+  const args = {
+    datasetId: BASE,
+    picks: [{ datasetId: PARTNER, type: 'left', on: [{ left: { ref: 0, column: 'customer_id' }, right: 'customer_id' }] }],
+    dimensions: [{ col: { ref: 1, column: 'region' } }],
+    measures: [{ name: 'revenue', agg: 'sum', col: { ref: 0, column: 'net_amount' } }],
+  };
+  const viaMcp = await mcpPlan(seedSilverWithPartner, () => mcp('build_gold_join', args));
+  const viaUi = await mcpPlan(seedSilverWithPartner, () =>
+    runWithSurface('ui:data/datasets/[id]/gold-join', () => buildGoldJoinService(amir, BASE, args as never) as Promise<unknown>),
+  );
+  for (const [door, sql] of [['mcp', viaMcp], ['ui', viaUi]] as const) {
+    assert.match(sql, /iceberg\.personal_amir\.silver_customers/, `${door}: the personal partner must be read from the owner's own schema`);
+    assert.doesNotMatch(sql, /iceberg\.sales\.silver_customers/, `${door}: the governed domain copy does not exist for a My-tier partner`);
+  }
+});
+
+/** The compiled SQL of the plan a door produced — read off the result, not the commit. */
+async function mcpPlan(seed: () => void, run: () => Promise<unknown>): Promise<string> {
+  store.__resetStore();
+  commits = [];
+  launches = [];
+  seed();
+  await awaitDataProjectCommits();
+  const out = payload(await run()) as { sql?: string };
+  await awaitDataProjectCommits();
+  await awaitDataProjectLaunches();
+  assert.ok(typeof out.sql === 'string' && out.sql.length > 0, 'the door returned no compiled SQL');
+  return out.sql as string;
+}
+
+test('X8 pinned (B4-3b): a transform of a PROMOTED dataset refreshes the governed domain copy on both doors', async () => {
+  // The bug: MCP `transform_silver` never refreshed the promoted domain copy, so a rebuild through
+  // the MCP left dashboards on the prior snapshot with no "stale" report. `refreshed` is the
+  // assertion, not just "both doors agree".
+  const seedPromoted = () => {
+    store.__seedDatasetForTest({ id: BASE, name: 'Orders', owner: bea.id, domain: 'sales', tier: 'asset' });
+    store.buildVersion(BASE, bea, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
+  };
+  const args = { datasetId: BASE, columns: ['order_id', 'customer_id'] };
+  for (const [door, run] of [
+    ['mcp', () => handleRpc(bea, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'transform_silver', arguments: args } })],
+    ['ui', () => runWithSurface('ui:data/datasets/[id]/transform', () => transformSilverService(bea, BASE, { columns: ['order_id', 'customer_id'] }))],
+  ] as const) {
+    store.__resetStore();
+    commits = [];
+    seedPromoted();
+    await awaitDataProjectCommits();
+    const raw = await run();
+    const dt = payload(raw).domainTable as { state?: string } | undefined;
+    assert.equal(dt?.state, 'refreshed', `${door}: the promoted domain table must be re-materialised, not silently left stale`);
+    await awaitDataProjectCommits();
+    await awaitDataProjectLaunches();
+  }
+});
+
+/* ------------------------------------ more refusals, identical on both doors (M-3) -- */
+
+const kenji: CurrentUser = { id: 'kenji', name: 'Kenji', domains: ['sales'], role: 'creator' };
+const faraway: CurrentUser = { id: 'fatima', name: 'Fatima', domains: ['finance'], role: 'creator' };
+
+test('X8 parity (M-3): a DOMAIN MEMBER who is not the owner is refused identically on both doors', async () => {
+  seedSilver();
+  const before = JSON.stringify(store.getDataset(BASE, amir));
+  // Kenji can SEE the dataset (same domain) but may not edit it: `canView` passes and the edit
+  // scope refuses. A different gate from the invisible-dataset case above, and the one a
+  // colleague actually hits.
+  const viaMcp = await mcpError('transform_silver', { datasetId: BASE, columns: ['order_id'] }, kenji);
+  const viaUi = await uiError(() => transformSilverService(kenji, BASE, { columns: ['order_id'] }));
+  assert.equal(viaMcp.code, 'forbidden');
+  assert.equal(viaUi.status, 403);
+  assert.equal(viaMcp.reason, viaUi.message, 'the same sentence, so a client and the panel teach the same lesson');
+  // And nothing was written: the record is byte-identical to what it was before the refusal.
+  assert.equal(JSON.stringify(store.getDataset(BASE, amir)), before, 'a refusal writes nothing');
+});
+
+test('X8 parity (M-3): a CROSS-LANE join partner is refused identically on both doors', async () => {
+  seedSilver();
+  // A partner in another domain, owned by someone else: amir cannot see it, so the pick cannot
+  // resolve. Both doors must say the same thing — the MCP resolves picks itself, which is exactly
+  // where B4-3a's divergence lived.
+  store.__seedDatasetForTest({ id: 'ds_crosslane', name: 'Ledger', owner: faraway.id, domain: 'finance' });
+  store.buildVersion('ds_crosslane', faraway, 'silver', {
+    quality: 'passing',
+    artifact: 'silver/stg_ledger.sql',
+    body: 'create or replace table iceberg.personal_fatima.silver_ledger as select customer_id from iceberg.personal_fatima.bronze_ledger',
+    compiled: true,
+  });
+  const picks = [{ datasetId: 'ds_crosslane', type: 'left', on: [{ left: { ref: 0, column: 'customer_id' }, right: 'customer_id' }] }];
+  const viaMcp = await mcpError('build_gold_join', { datasetId: BASE, picks, measures: [{ name: 'n', agg: 'count', col: { ref: 0, column: 'order_id' } }] });
+  const viaUi = await uiError(() =>
+    buildGoldJoinService(amir, BASE, { picks, measures: [{ name: 'n', agg: 'count', col: { ref: 0, column: 'order_id' } }] } as never),
+  );
+  assert.equal(viaMcp.reason, viaUi.message, 'the refusal text is identical');
+  assert.ok(['forbidden', 'not_found', 'bad_request'].includes(viaMcp.code), `unexpected code ${viaMcp.code}`);
+  assert.equal(viaUi.status, viaMcp.code === 'forbidden' ? 403 : viaMcp.code === 'not_found' ? 404 : 400);
 });

@@ -641,19 +641,19 @@ const tools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Configure (or enable/disable) SCHEDULED INCREMENTAL SYNC (also called: refresh, data pipeline, ETL) on a connector-backed dataset you can edit — the Data tab’s "Keep this in sync" panel, the SAME governed path as PUT /api/data/datasets/:id/sync (one service, `saveDatasetSyncService`): the per-source locks below are applied, the strict store gate validates, and the SCHEDULE is then owned by Dagster — it is committed into your domain’s repository as an `os/schedules.yml` entry and run by the `sovereign` code location, so NO Kubernetes CronJob is provisioned and a pre-B2 one is removed. The `cron` field reports that honestly (`live:false` when the cluster could not be reached — never a claim). Modes: full-refresh (re-copy each run) · append (rows newer than the cursor; late rows may re-deliver) · merge (upsert by mergeKeys — warehouse sources only, daily-ish cadence). PER-SOURCE LOCKS (the panel’s rules, enforced server-side): kafka → append ONLY, cursor auto-locked to partition offsets; salesforce → no merge, incremental cursor auto-locked to SystemModstamp; kajabi → no merge, cursor auto-locked to the resource’s DOCUMENTED field — `purchases` is true incremental (updated_at: new AND changed), contacts/customers/orders/form_submissions are created_at-only (NEW records append; EDITS are not detected — full-refresh to capture them), cursorless resources (offers, products, transactions, …) are full-refresh ONLY (a typed bad_request otherwise, never fake incremental). Warehouse sources pass their own `cursor` {column, kind}. Schedule: a preset (every-15-minutes|every-30-minutes|hourly|daily|weekly) or a 5-field cron. Before: create_dataset + a first import/ingest from the connection. After: sync_dataset_now to run immediately, get_sync_status to watch. Governance: edit scope (owner / domain admin) re-checked in-lib; the sync executes AS the dataset OWNER, never a service principal.',
+      'Configure (or enable/disable) SCHEDULED INCREMENTAL SYNC (also called: refresh, data pipeline, ETL) on a connector-backed dataset you can edit — the Data tab’s "Keep this in sync" panel, the SAME governed path as PUT /api/data/datasets/:id/sync (one service, `saveDatasetSyncService`): the per-source locks below are applied, the strict store gate validates, and the SCHEDULE is then owned by Dagster — it is committed into your domain’s repository as an `os/schedules.yml` entry and run by the `sovereign` code location, so NO Kubernetes CronJob is provisioned and a pre-B2 one is removed. The `cron` field reports that honestly (`live:false` when the cluster could not be reached — never a claim). Modes: full-refresh (re-copy each run) · append (rows newer than the cursor; late rows may re-deliver) · merge (upsert by mergeKeys — warehouse sources only, daily-ish cadence). PER-SOURCE LOCKS (the panel’s rules, enforced server-side): kafka → append ONLY, cursor auto-locked to partition offsets; salesforce → no merge, incremental cursor auto-locked to SystemModstamp; kajabi → no merge, cursor auto-locked to the resource’s DOCUMENTED field — `purchases` is true incremental (updated_at: new AND changed), contacts/customers/orders/form_submissions are created_at-only (NEW records append; EDITS are not detected — full-refresh to capture them), cursorless resources (offers, products, transactions, …) are full-refresh ONLY (a typed bad_request otherwise, never fake incremental). Warehouse sources pass their own `cursor` {column, kind}. Schedule: a preset (every-15-minutes|every-30-minutes|hourly|daily|weekly) or a 5-field cron. Before: create_dataset + a first import/ingest from the connection. After: sync_dataset_now to run immediately, get_sync_status to watch. Pass `clear: true` (and nothing else) to REMOVE the sync entirely, exactly as the panel’s "Remove sync" does. Governance: edit scope (owner / domain admin) re-checked in-lib; the sync executes AS the dataset OWNER, never a service principal.',
     inputSchema: {
       type: 'object',
       properties: {
         datasetId: { type: 'string', description: 'Target dataset id (from list_datasets).' },
-        connectionId: { type: 'string', description: 'The source connection id (from list_connections) — warehouse/Kafka, Salesforce or Kajabi.' },
+        connectionId: { type: 'string', description: 'The source connection id (from list_connections) — warehouse/Kafka, Salesforce or Kajabi. Required unless `clear: true`.' },
         source: {
           type: 'object',
-          description: 'What to pull: {schema, table}. For API sources, table is the object/resource (e.g. Salesforce "Account", Kajabi "purchases") and schema is a label (e.g. "salesforce").',
+          description: 'What to pull: {schema, table}. For API sources, table is the object/resource (e.g. Salesforce "Account", Kajabi "purchases") and schema is a label (e.g. "salesforce"). Required unless `clear: true`.',
           properties: { schema: { type: 'string' }, table: { type: 'string' } },
           required: ['schema', 'table'],
         },
-        mode: { type: 'string', enum: [...DATASET_SYNC_MODES], description: 'full-refresh | append | merge (see the per-source locks in the tool description).' },
+        mode: { type: 'string', enum: [...DATASET_SYNC_MODES], description: 'full-refresh | append | merge (see the per-source locks in the tool description). Required unless `clear: true`.' },
         cursor: {
           type: 'object',
           description: 'Warehouse sources only — the new-rows column: {column, kind: timestamp|number}. Kafka/Salesforce/Kajabi lock the cursor automatically; anything passed here is ignored for them.',
@@ -661,18 +661,32 @@ const tools: McpTool[] = [
           required: ['column'],
         },
         mergeKeys: { type: 'array', items: { type: 'string' }, description: 'merge mode only: the upsert key column(s).' },
-        schedule: { type: 'string', description: 'A preset — every-15-minutes (*/15 * * * *) | every-30-minutes (*/30 * * * *) | hourly (0 * * * *) | daily (0 6 * * *) | weekly (0 6 * * 1) — or a raw 5-field cron (UTC).' },
+        schedule: { type: 'string', description: 'A preset — every-15-minutes (*/15 * * * *) | every-30-minutes (*/30 * * * *) | hourly (0 * * * *) | daily (0 6 * * *) | weekly (0 6 * * 1) — or a raw 5-field cron (UTC). Required unless `clear: true`.' },
         enabled: { type: 'boolean', description: 'false keeps the config but deletes the schedule trigger (default true).' },
+        clear: { type: 'boolean', description: 'true REMOVES the sync configuration entirely (the UI panel’s "Remove sync"): the schedule is dropped from os/schedules.yml, any pre-B2 CronJob is deleted, and no other field is read. Use `enabled: false` to keep the config and only stop the schedule.' },
       },
-      required: ['datasetId', 'connectionId', 'source', 'mode', 'schedule'],
+      required: ['datasetId'],
       examples: [
         { datasetId: 'ds_ab12cd', connectionId: 'conn_x1', source: { schema: 'sales', table: 'orders' }, mode: 'append', cursor: { column: 'updated_at', kind: 'timestamp' }, schedule: 'hourly' },
         { datasetId: 'ds_ab12cd', connectionId: 'conn_kj1', source: { schema: 'kajabi', table: 'purchases' }, mode: 'append', schedule: 'daily' },
+        { datasetId: 'ds_ab12cd', clear: true },
       ],
     },
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();
       if (!datasetId) fail('set_dataset_sync needs a `datasetId`', 400);
+      // CLEARING (review M-1). The UI route passes `null` when the panel removes a sync
+      // (`body.sync === null` → `saveDatasetSyncService(user, id, null)`); the MCP tool had no way
+      // to say it, so an MCP client could create and change a sync but never remove one. `clear`
+      // takes the same door: no other field is read, so a client need not echo a config back.
+      if (bool(args.clear)) {
+        const cleared = await saveDatasetSyncService(P(user), datasetId, null);
+        return { datasetId, cleared: true, platform: cleared.platform, sync: cleared.sync, cron: cleared.cron };
+      }
+      // NOT a required-field pre-check: the EDIT GATE has to answer first, or a caller who may
+      // not see the dataset learns "you forgot connectionId" instead of `forbidden` (X7's
+      // documented shape). An incomplete config reaches the store's strict gate and gets its
+      // precise 400 there, after the gate — exactly as the UI route's does.
       const src = (args.source ?? {}) as Record<string, unknown>;
       const cur = (args.cursor ?? {}) as Record<string, unknown>;
       // The SAME service the panel's PUT route calls (checklist X8): it enforces the
@@ -689,7 +703,7 @@ const tools: McpTool[] = [
         schedule: { cron: str(args.schedule).trim() },
         enabled: args.enabled === undefined ? true : bool(args.enabled),
       });
-      return { datasetId, platform: out.platform, sync: out.sync, cron: out.cron };
+      return { datasetId, cleared: false, platform: out.platform, sync: out.sync, cron: out.cron };
     },
   },
   {

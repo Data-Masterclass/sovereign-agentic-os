@@ -40,6 +40,11 @@ type ToolError = import('./server.ts').ToolError;
 const { __resetStore: resetData } = await import('@tabs/data/lib/store');
 const { __resetConnections } = await import('@tabs/connections/lib/store');
 const { __resetSyncRuns, recordSyncRun } = await import('@tabs/data/lib/sync-runs');
+// This file tests the LEDGER world on purpose: the mocked seam is `runDatasetSync` and the history
+// comes from `recordSyncRun`. `DATA_PROJECT_GIT` defaults to ON since B4 (B4-review-L-11), so the
+// opt-out is pinned here explicitly rather than inherited from a default that has moved.
+const { __setDataProjectGitForTests } = await import('@tabs/data/lib/dbt/commit');
+__setDataProjectGitForTests(false);
 
 // The OWNER (builder: may create the shared-credential Kajabi connection AND owns
 // the dataset — the sync edit gate is owner/domain_admin/admin, re-checked in-lib).
@@ -222,7 +227,10 @@ test('get_sync_status: config + platform + next run + newest-first history + wat
   const s = payload<Status>(await call(ben, 'get_sync_status', { datasetId }));
   assert.equal(s.sync?.mode, 'append');
   assert.equal(s.platform, 'kajabi');
-  assert.ok(s.nextRunAt, 'a daily preset yields an estimated next run');
+  // With the flag off NOTHING fires the saved cron — B4 deleted the CronJob provisioning and the
+  // sweeps — so there is no next run to report (B4-review H-3b). It used to be an estimate from
+  // `nextCronRun`, which read as a schedule that existed.
+  assert.equal(s.nextRunAt, null, 'the opt-out schedules nothing, so it promises no next run');
   assert.equal(s.runs[0].status, 'error', 'history is newest first');
   assert.equal(s.runs[0].error, 'Kajabi API 500', 'the honest failure message rides along');
   assert.equal(s.runs[1].batchId, `${datasetId}.hw1`, 'batch ids are readable');

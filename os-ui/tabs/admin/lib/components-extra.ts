@@ -202,3 +202,48 @@ export function gitMirrorRow(input: { enabled: boolean; signals: MirrorSignalRow
     (never.length > 0 ? `; awaiting a first push: ${never.map((s) => s.domain).join(', ')}` : '');
   return { ...base, health: never.length > 0 ? 'amber' : 'green', ...(at ? { at } : {}), detail };
 }
+
+/**
+ * Data products / git — the Platform → Components & Health row (B4 review M-8).
+ *
+ * `gitMirrorRow` disappears when the feature is off, which is right for a MIRROR (a deployment
+ * that configured none should grow no row). It is wrong for the FEATURE: with
+ * `DATA_PROJECT_GIT` off, B4 left the OS with no scheduler at all — a saved sync cadence is
+ * never triggered by anything — and an ABSENT row reads as "nothing to see here". So this row
+ * exists in both states and says which one the install is in:
+ *   • on  -> green, naming who schedules and where the schedules live;
+ *   • off -> AMBER, "scheduling disabled", with what still works (manual "Sync now", the OS's own
+ *     CTAS execution) and what does not.
+ * Amber, not red: the opt-out is a legitimate configuration, not a fault.
+ * PURE — the route injects the flag.
+ */
+export type DataProductsGitRow = {
+  id: 'data-products-git';
+  name: string;
+  health: 'green' | 'amber';
+  state: 'on' | 'off';
+  detail: string;
+};
+
+export function dataProductsGitRow(input: { enabled: boolean }): DataProductsGitRow {
+  const base = { id: 'data-products-git' as const, name: 'Data products (git + Dagster)' };
+  if (!input.enabled) {
+    return {
+      ...base,
+      health: 'amber',
+      state: 'off',
+      detail:
+        'DATA_PROJECT_GIT is OFF — scheduling disabled. No dbt project is committed, and no saved sync cadence is ' +
+        'triggered by anything: engine rebuild B4 removed the per-dataset CronJobs and the sweep routes, so the ' +
+        'only way to refresh a dataset is "Sync now". The OS still executes transforms and quality checks itself.',
+    };
+  }
+  return {
+    ...base,
+    health: 'green',
+    state: 'on',
+    detail:
+      'On — every data mutation commits to its domain repository, and Dagster runs the schedules declared in ' +
+      'os/schedules.yml (UTC) against the validated commit.',
+  };
+}

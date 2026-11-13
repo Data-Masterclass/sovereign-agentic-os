@@ -13,6 +13,12 @@
  *   - The "foreign object" case uses a dataset owned by ANOTHER user in another domain; every
  *     object-taking tool must refuse it at its guard — before any SQL, commit or launch. Required
  *     arguments are filled from the schema so the refusal is the GUARD's, not the validator's.
+ *   - The code is asserted PER TOOL, not as "one of two" (review M-5): an EXISTING dataset the
+ *     caller may not view is `forbidden` and a dataset that does not exist is `not_found`. That is
+ *     what `store.getDataset` does and what deviation B4-11 recorded; an either-or assertion would
+ *     pass while a tool leaked existence by answering `not_found` for a private object.
+ *   - Both refusal tests run with `DATA_PROJECT_GIT` OFF **and ON**, with a commit hook installed
+ *     and recording: a refusal must commit nothing in either world.
  *   - The agents half of X7 is Part F's; this file deliberately covers the data tools only.
  */
 import { test, beforeEach } from 'node:test';
@@ -21,7 +27,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc, ALL_MCP_TOOLS, roleCanUse, type JsonRpcResponse, type ToolError, type McpTool, type JsonSchema } from '@core/mcp/server';
 import * as store from '@tabs/data/lib/store';
 import { __resetProjectListeners } from '@tabs/data/lib/project-events';
-import { __setDataProjectGitForTests } from '@tabs/data/lib/dbt/commit';
+import { __setDataProjectGitForTests, installDataProjectCommitHook, awaitDataProjectCommits } from '@tabs/data/lib/dbt/commit';
 
 /**
  * The data pathway's tools: every tool registered under the `data` tab, plus `get_lineage`, which
@@ -114,18 +120,79 @@ test('X7 (data): every data tool DISPATCHES — the dispatcher never answers "To
   }
 });
 
-test('X7 (data): a foreign object is refused in the DOCUMENTED shape — typed, no stack, no 500', async () => {
-  const objectTools = dataTools.filter((t) => (t.inputSchema.required ?? []).includes('datasetId'));
-  assert.ok(objectTools.length >= 10, `expected the dataset-addressed tools, found ${objectTools.length}`);
-  for (const tool of objectTools) {
-    const res = await call(caller, tool.name, argsFor(tool, FOREIGN));
-    const result = (res as JsonRpcResponse).result as Record<string, unknown>;
-    assert.equal(result.isError, true, `${tool.name}: a foreign dataset must be a typed tool error`);
-    const err = (result.structuredContent as { error: ToolError }).error;
-    assert.ok(DOCUMENTED.has(err.code), `${tool.name}: error code '${err.code}' is outside the documented set (${[...DOCUMENTED].join('|')})`);
-    assert.ok(err.code === 'not_found' || err.code === 'forbidden', `${tool.name}: a foreign object must be not_found/forbidden, got ${err.code}`);
-    assert.ok(err.reason.length > 0 && !err.reason.includes('\n    at '), `${tool.name}: the reason leaks a stack trace`);
-    assert.ok(err.hint.length > 0, `${tool.name}: no actionable hint`);
+/** The typed error of a call that must be refused. */
+async function refusal(user: CurrentUser, name: string, args: Record<string, unknown>): Promise<ToolError> {
+  const res = await call(user, name, args);
+  const result = (res as JsonRpcResponse).result as Record<string, unknown>;
+  assert.equal(result.isError, true, `${name}: this call must be a typed tool error`);
+  const err = (result.structuredContent as { error: ToolError }).error;
+  assert.ok(DOCUMENTED.has(err.code), `${name}: error code '${err.code}' is outside the documented set (${[...DOCUMENTED].join('|')})`);
+  assert.ok(err.reason.length > 0 && !err.reason.includes('\n    at '), `${name}: the reason leaks a stack trace`);
+  assert.ok(err.hint.length > 0, `${name}: no actionable hint`);
+  return err;
+}
+
+for (const flagOn of [false, true]) {
+  test(`X7 (data): an EXISTING invisible dataset is \`forbidden\` and a MISSING one is \`not_found\`, per tool (flag ${flagOn ? 'on' : 'off'}) (review M-5)`, async () => {
+    __setDataProjectGitForTests(flagOn);
+    const commits: string[] = [];
+    const uninstall = installDataProjectCommitHook({
+      committer: async (domain, _files, opts) => {
+        commits.push(`${domain}: ${opts.message.split('\n')[0]}`);
+        return { sha: 'f'.repeat(40), changed: true };
+      },
+    });
+    try {
+      const objectTools = dataTools.filter((t) => (t.inputSchema.required ?? []).includes('datasetId'));
+      assert.ok(objectTools.length >= 10, `expected the dataset-addressed tools, found ${objectTools.length}`);
+      for (const tool of objectTools) {
+        // (a) It EXISTS and the caller may not view it ⇒ forbidden. Exactly 403-semantics, which
+        // is what the store does on every surface in the OS (deviation B4-11).
+        const invisible = await refusal(caller, tool.name, argsFor(tool, FOREIGN));
+        assert.equal(invisible.code, 'forbidden', `${tool.name}: an EXISTING invisible dataset must be forbidden, got ${invisible.code}`);
+        // (b) It does not exist at all ⇒ not_found.
+        const missing = await refusal(caller, tool.name, argsFor(tool, 'ds_does_not_exist'));
+        assert.equal(missing.code, 'not_found', `${tool.name}: a dataset that does not exist must be not_found, got ${missing.code}`);
+      }
+      await awaitDataProjectCommits();
+      assert.deepEqual(commits, [], `a refusal committed: ${commits.join(' | ')}`);
+    } finally {
+      uninstall();
+      __setDataProjectGitForTests(false);
+    }
+  });
+}
+
+test('X7 (data): a FOREIGN connection is refused on the tool that actually takes one, and commits nothing (review M-5)', async () => {
+  // The review asked for `create_dataset` with a foreign `connectionId`. `create_dataset` takes
+  // NO connection (`{name, domain, columns}` — an extra argument is ignored), so there is no such
+  // door; the tool that names a connection is `set_dataset_sync`, and B4-4 made it refuse one the
+  // caller cannot read instead of swallowing the resolver's 403. That is what is asserted here.
+  store.__seedDatasetForTest({ id: 'ds_own', name: 'Mine', owner: caller.id, domain: 'ops' });
+  const before = JSON.stringify(store.listAllDatasets());
+  const commits: string[] = [];
+  __setDataProjectGitForTests(true);
+  const uninstall = installDataProjectCommitHook({
+    committer: async (domain, _files, opts) => {
+      commits.push(`${domain}: ${opts.message.split('\n')[0]}`);
+      return { sha: 'f'.repeat(40), changed: true };
+    },
+  });
+  try {
+    const err = await refusal(caller, 'set_dataset_sync', {
+      datasetId: 'ds_own',
+      connectionId: 'conn_someone_elses',
+      source: { schema: 'public', table: 'events' },
+      mode: 'full-refresh',
+      schedule: 'daily',
+    });
+    assert.ok(['forbidden', 'not_found', 'bad_request'].includes(err.code), `unexpected code ${err.code}`);
+    await awaitDataProjectCommits();
+    assert.deepEqual(commits, [], `a refused sync save committed: ${commits.join(' | ')}`);
+    assert.equal(JSON.stringify(store.listAllDatasets()), before, 'a refused sync save mutated the store');
+  } finally {
+    uninstall();
+    __setDataProjectGitForTests(false);
   }
 });
 

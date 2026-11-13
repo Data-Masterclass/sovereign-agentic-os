@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { listComponentsWithStatus, statusOf, toggleComponent, BY_ID } from '@tabs/admin/lib/platform';
-import { selfHealFor, versionFor, nodes, pools, OPTIONAL_LAYERS, trinoAccessRulesRow, gitMirrorRow } from '@tabs/admin/lib/components-extra';
+import { selfHealFor, versionFor, nodes, pools, OPTIONAL_LAYERS, trinoAccessRulesRow, gitMirrorRow, dataProductsGitRow } from '@tabs/admin/lib/components-extra';
 import { config } from '@core/kernel/config';
 import { lastReconcileOutcome, DEFAULT_RECONCILE_PERIOD_MS } from '@core/infra/trino-rules-server';
 import { assertGuarded } from '@tabs/admin/lib/guard';
@@ -85,6 +85,31 @@ export async function GET() {
               ? 'Healthy — reconciled at boot, on every directory write, and on the periodic repair pass.'
               : 'Needs a human: check the os-ui Role grants get+patch on the trino-access-rules ConfigMap.',
           links: { systemId: `sys-${rulesRow.id}` },
+          source: 'live',
+        },
+      ];
+    }
+
+    // Data products / git (B4 review M-8). This row exists in BOTH states: with the flag off the
+    // OS schedules nothing at all, and an absent row would read as "nothing to see here".
+    {
+      const dpg = dataProductsGitRow({ enabled: config.dataProjectGit });
+      systemHealth = [
+        ...systemHealth,
+        {
+          id: `sys-${dpg.id}`,
+          lens: 'system',
+          title: dpg.name,
+          health: dpg.health,
+          detail: dpg.detail,
+          owner: 'platform',
+          domain: 'platform',
+          cluster: true,
+          selfHeal:
+            dpg.state === 'on'
+              ? 'Healthy — commits happen on every write and the boot reconcile catches up what a crash missed.'
+              : 'Deliberate opt-out: set osUI.dataProjectGit.enabled=true to let Dagster run the saved schedules.',
+          links: { systemId: `sys-${dpg.id}` },
           source: 'live',
         },
       ];

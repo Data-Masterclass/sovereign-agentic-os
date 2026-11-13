@@ -217,7 +217,7 @@ the engine equals itself, and `shape-guarded-handoff-held-write` exists precisel
 defect the engine must NOT reproduce (the walker ignored `when` and visited the guarded target).
 A new shape means a new fixture beside them.
 
-## Every change is a commit (Part D — flag `DATA_PROJECT_GIT`, default off)
+## Every change is a commit (Part D — flag `DATA_PROJECT_GIT`, ON by default since B4)
 
 With the flag on (chart: `osUI.dataProjectGit.enabled`), every mutation of an agent system —
 created, edited, built, promoted, demoted, forked, renamed, moved, archived, unarchived, deleted,

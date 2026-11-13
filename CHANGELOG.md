@@ -23,6 +23,41 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   every dataset with a sync BEFORE its first commit: idempotent (404 is the normal answer),
   fail-soft (a 403 or an unreachable API server is logged, never thrown — a cleanup may not stop a
   boot) and logged per dataset, with the outcome returned as `cronsStoodDown`.
+- **The opt-out stops misreporting itself (H-3, M-7, M-8).** `reconcileSyncSchedule` answers
+  `ok: true` in BOTH worlds and puts the difference in `detail` ("Dagster schedules this from the
+  repository" vs "nothing schedules it"), while the sync panel rendered `detail` only when
+  `ok` was false — so the one sentence the opt-out exists to convey was the one it hid. The
+  wording now lives in a tested pure module (`tabs/data/lib/sync-schedule-view.ts`) and the detail
+  is shown whenever it is non-empty. `syncStatusFor` no longer fabricates `nextRunAt` from
+  `nextCronRun` with the flag off: nothing fires that cron, so it answers `null`. The schedule
+  pickers in the sync panel and the adopt dialog say "scheduling is off (DATA_PROJECT_GIT
+  disabled)" in words, and Platform → Components & Health grew a `data-products-git` row that is
+  present in BOTH states — amber "scheduling disabled" when off, instead of no row at all.
+- **One flag, and the docs stop calling it "default off" (H-4, L-11).** `core/kernel/config.ts`
+  now defaults `DATA_PROJECT_GIT` to `true`, matching the chart, so `npm run dev` runs the shipped
+  engine; `.env.example` documents it. Every "default off" claim in the CHANGELOG, `ARCHITECTURE.md`,
+  `tabs/agents/README.md`, `tabs/data/lib/dbt/commit.ts` and the chart comments is corrected, and
+  the breaking-change note above now states that the flip enables BOTH halves and what the agents
+  half does on its first boot.
+- **`set_dataset_sync` can remove a sync (M-1).** The UI route passes `null` when the panel removes
+  one; the MCP tool had no way to express it, so a client could create and change a sync but never
+  delete it. `clear: true` takes the same service, and the X8 parity harness gained it as a ninth
+  case.
+- **Dataset and check ids come from the CSPRNG (M-4).** They were `Math.random().toString(36)` plus
+  a timestamp — enumerable, which turns the OS's "403 for an invisible object, 404 for a missing
+  one" (deviation B4-11) into a way to inventory a tenant. `crypto.randomUUID()` now; the 403/404
+  semantics are unchanged.
+- **The ungated sync trigger is gone (M-6).** `POST /api/data/datasets/[id]/sync` accepted the
+  shared runtime bearer and started a materialisation with no user and no edit gate. B4 deleted
+  the CronJobs that used it, leaving zero callers; the branch is removed (the GET is untouched).
+  B2-6's planned Kafka/API-batch Dagster asset is recorded as the thing that re-adds it, with its
+  own test.
+- **Tests for the three divergences B4-3 fixed, and two more refusals (M-2, M-3, M-5).** The gold
+  join's personal-partner FQN and the promoted dataset's `domainTable: refreshed` are now pinned by
+  VALUE, not only by both doors agreeing; a domain member who is not the owner and a cross-lane
+  join partner are refused identically on both doors; and the X7 conformance test asserts the
+  documented code PER TOOL — `forbidden` for an existing invisible dataset, `not_found` for one
+  that does not exist — with the flag OFF and ON, proving a refusal commits nothing either way.
 - **The os-ui Role may actually touch CronJobs (H-2).** Nothing in the chart granted
   `batch`/`cronjobs`, so BOTH CronJob paths 403'd in a real cluster: agent schedule provisioning
   (`tabs/agents/lib/schedule-cron.ts` — a saved cron schedule silently never fired) and the
@@ -100,7 +135,7 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   already uses. Author = the acting user, committer = `Sovereign OS`, subject
   `agents(<domain>): <action> <slug> — via ui:<route> | mcp:<tool>`, trailers `OS-Action`,
   `OS-Object`, `OS-Surface`, `OS-Request-Id`, `OS-Actor`. Behind the same single switch as the data
-  half (`DATA_PROJECT_GIT`, default off) because they share the repository and the PVC.
+  half (`DATA_PROJECT_GIT`, ON by default since B4) because they share the repository and the PVC.
 - **One commit path, and the compiler enforces it.** The store's `writeThrough(rec, change)` takes
   a required second parameter: a change descriptor (⇒ a commit) or an explicit `null` ("run
   bookkeeping, deliberately not a commit"). 17 writers commit; 7 — the activity marker, the run
@@ -300,7 +335,17 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 ### Changed — **BREAKING** — Data engine rebuild, Phase B4: data products in git are ON by default
 
 - **`osUI.dataProjectGit.enabled` now defaults to `true`** (and the Dagster `repo-sync` sidecar's
-  `REPO_SYNC_ENABLED` with it; `values.local.yaml` states it explicitly). A fresh install — and any
+  `REPO_SYNC_ENABLED` with it; `values.local.yaml` states it explicitly). `core/kernel/config.ts`
+  defaults `DATA_PROJECT_GIT` to `true` as well, so `npm run dev` behaves like production instead
+  of silently running the pre-B4 engine (B4-review-L-11); `.env.example` documents it.
+  **ONE flag, TWO halves — the flip enables both** (B4-review-H-4): the DATA half below, and the
+  AGENTS half of Part D, which commits every agent-system definition write as an `agents/<slug>/…`
+  subtree in the SAME per-domain repository. On the first boot with the flag on, the agents side
+  runs its own reconcile: one commit per domain that already has an `agents/` tree, authored as the
+  platform principal with `OS-Reason: boot-reconcile`, bringing `agents/index.yml`, each
+  `system.yaml`, the per-agent instruction files and `graph.json` up to date with the registry —
+  and, like the data half, it refuses to run at all unless the store reports `hydrated`.
+  A fresh install — and any
   `helm upgrade` that does not pin the old value — switches to the shipped architecture: every
   change to a dataset, composition, quality rule or schedule is a **git commit** in the domain's
   repository (`/repos/<domain>.git` on the `os-repos` PVC, authored as the acting user), the
@@ -318,9 +363,12 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   "initial commit" is the domain's project, not a file of its own.
 - **What an operator must check before upgrading.** (1) The `os-repos` PVC is provisioned
   (2 Gi default, RWO — os-ui is single-replica by design). (2) A pre-B2 install that had per-dataset
-  sync CronJobs: the first save of each sync removes its CronJob, and the schedule moves to the
-  domain repository's `os/schedules.yml`; until then nothing fires twice, because the OS-side sweeps
-  are gone (see Removed). (3) The Dagster image must be `0.3.0` or newer (it carries `git`, the
+  sync CronJobs: the **boot reconcile deletes every one of them before its first commit**
+  (B4-review H-1), so the schedule moves to the domain repository's `os/schedules.yml` with no
+  window in which both schedulers run the same slice. That cleanup needs the `batch`/`cronjobs`
+  grant the os-ui Role now carries (B4-review H-2); without it the deletion is refused and LOGGED,
+  and the CronJob has to be removed by hand (`kubectl -n <ns> delete cronjob -l app=data-sync` or
+  by name, `data-sync-<dataset>`). (3) The Dagster image must be `0.3.0` or newer (it carries `git`, the
   Postgres driver, `repo.py` and `os_projects.py`).
 - **The flag remains an emergency opt-out for ONE release, then it goes.** `--set
   osUI.dataProjectGit.enabled=false` (plus the sidecar's `REPO_SYNC_ENABLED=false`) restores the
@@ -674,7 +722,7 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   `node-started.total` never reads below `index`. **L3/L4**: single-replica assumption and
   checkpoint retention documented.
 
-### Added — Data products in git, Phase B2: Dagster is the scheduler, the OS reads Dagster (flag `DATA_PROJECT_GIT`, default off)
+### Added — Data products in git, Phase B2: Dagster is the scheduler, the OS reads Dagster (flag `DATA_PROJECT_GIT`, default off **at the time of B2** — B4 flipped it on)
 
 - **The `sovereign` Dagster code location** (`images/extensions/dagster/repo.py` + the pure
   `os_projects.py`): one location for every domain. Per validated checkout
@@ -797,7 +845,7 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   asset. The in-process sync was and remains the real executor.
 
 
-### Added — Data products in git, Phase B1: generated dbt project per domain + the one commit path (flag `DATA_PROJECT_GIT`, default off)
+### Added — Data products in git, Phase B1: generated dbt project per domain + the one commit path (flag `DATA_PROJECT_GIT`, default off **at the time of B1** — B4 flipped it on)
 
 - **Git store** (`os-ui/core/infra/git-store.ts`, isomorphic-git 1.44.13, MIT): one bare repository
   per domain under `OS_REPOS_DIR` (`/repos`, PVC `os-repos`). `commitTree` writes the whole desired

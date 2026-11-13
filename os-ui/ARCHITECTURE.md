@@ -504,7 +504,7 @@ In particular a decision no longer drives the graph inside the decider's request
 
 ## Git-based working: one repo per domain, two generators, one commit path
 
-(Engine rebuild, Part D — behind `DATA_PROJECT_GIT`, default off. The flag's name is historical:
+(Engine rebuild, Part D — behind `DATA_PROJECT_GIT`, **ON by default since B4**. The flag's name is historical:
 it is the ONE switch for both halves, because they share the repository, the PVC and the
 read-only `git daemon` sidecar it provisions.)
 

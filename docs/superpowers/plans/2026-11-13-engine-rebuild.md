@@ -1373,3 +1373,39 @@ reason is here.
   the guard's second condition: a hydrated registry with zero datasets over a legacy repo of
   hand-written models IS allowed to empty it, because the skeleton it writes adds paths the repo
   did not have. Nothing in the guard itself was changed.
+- **B4-review-H-3 The wording moved into a `.ts` module, and the pickers learn the truth from the
+  read-back.** `tabs/data/lib/sync-schedule-view.ts` (pure, client-safe) holds
+  `saveScheduleMessage`, `schedulingDisabled` and `SCHEDULING_OFF_NOTE`; `SyncPanel` renders them.
+  The panel learns the state from `source: 'ledger' | 'dagster'`, which `syncStatusFor` already
+  returned — no new endpoint. `AdoptConnectionPanel` offers a cadence BEFORE the dataset exists and
+  so has no status to read, so `GET /api/data/exposed-tables` answers `scheduling: 'dagster'|'off'`
+  (one boolean of server state, not a capability endpoint of its own).
+- **B4-review-H-4 / L-11 The code default moved to `true`, not the chart to `false`.** As the review
+  preferred: `config.dataProjectGit` is `env('DATA_PROJECT_GIT', 'true') !== 'false'`, so `npm run
+  dev` and the chart agree. Two test files that were silently relying on the old default now pin
+  the opt-out explicitly (`core/mcp/sync-tools.test.ts` — it tests the ledger world on purpose).
+  The flag was NOT split: splitting it would mean a half-committed repository, which is worse than
+  one switch.
+- **B4-review-M-2 `domainTable: 'refreshed'` is reachable offline, so it is asserted literally.**
+  The rebuild of a promoted dataset runs through `rematerializeDomainTableLive`, which in the test
+  environment takes the `offline-mock` apply path and reports `refreshed` — so the pinned assertion
+  is the brief's, not a weakened "both doors agree". The gold-join half asserts the compiled SQL
+  contains `iceberg.personal_amir.silver_customers` and does NOT contain the domain-schema form, so
+  a regression that breaks both doors identically still fails.
+- **B4-review-M-5 `create_dataset` takes no `connectionId`, so the foreign-connection case moved to
+  the tool that does.** The review asked for `create_dataset` with a foreign `connectionId`;
+  `create_dataset`'s schema is `{name, domain, columns}` and an extra argument is ignored, so there
+  is no such door to test. The tool that names a connection is `set_dataset_sync` (B4-4 made it
+  refuse one the caller cannot read instead of swallowing the resolver's 403), and that is what the
+  new case drives — refused, nothing committed, nothing in the store. The per-tool code assertions
+  and the flag-ON run landed as asked.
+- **B4-review-M-8 A NEW row, not a changed `gitMirrorRow`.** The review pointed at
+  `components-extra.ts:175`, which is `gitMirrorRow` — the MIRROR's row, whose absence when no
+  mirror is configured is correct. The missing signal is the FEATURE's, so
+  `dataProductsGitRow({enabled})` was added beside it and wired into
+  `app/api/platform-admin/components/route.ts`: `data-products-git`, green when on, amber with
+  "scheduling disabled" when off, never absent.
+- **B4-review-L-9 `config.dataSyncUrlBase` really was unread and is deleted.** `DATA_SYNC_URL_BASE`
+  appears nowhere else in the repository (chart, scripts, images included) — B4 deleted the CronJob
+  that built the URL from it. Removed, with the surviving bearer's comment corrected to name only
+  the two service paths that still exist.

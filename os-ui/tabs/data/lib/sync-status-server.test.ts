@@ -90,12 +90,15 @@ test('flag OFF: the ledger-derived payload, and no Dagster call at all', async (
   __setDataProjectGitForTests(false);
   let called = false;
   const spy = { runsForDataset: async () => { called = true; return { ok: true as const, data: [] }; }, nextTick: async () => { called = true; return { ok: false as const, error: 'x' }; }, recentOsRuns: async () => { called = true; return { ok: true as const, data: [] }; } };
-  const s = await syncStatusFor(dataset(true), { dagster: spy, now: () => new Date('2026-11-13T06:02:00Z') });
+  const s = await syncStatusFor(dataset(true), { dagster: spy });
   assert.equal(called, false);
   assert.equal(s.source, 'ledger');
   assert.deepEqual(s.runs, []);
   assert.equal(s.quarantined, false);
-  assert.equal(s.nextRunAt, '2026-11-13T06:15:00.000Z', 'nextCronRun, exactly as before B2');
+  // Review H-3b: this used to be `nextCronRun(...)` — a confident timestamp for a slice NOTHING
+  // fires, because B4 deleted both the CronJob provisioning and the sweeps. `null` is the truth,
+  // and `source: 'ledger'` is how a surface knows why.
+  assert.equal(s.nextRunAt, null, 'with the flag off nothing schedules the saved cron, so there is no next run');
   assert.equal(s.dagster, undefined);
 });
 

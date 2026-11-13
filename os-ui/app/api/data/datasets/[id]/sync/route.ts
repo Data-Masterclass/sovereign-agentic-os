@@ -7,8 +7,6 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
 import { getDataset } from '@tabs/data/lib/store';
 import { parseSyncBlock, type DatasetSync } from '@tabs/data/lib/dataset-schema';
-import { runtimeTokenOk } from '@tabs/agents/lib/build/runtime-auth';
-import { runSyncNow } from '@tabs/data/lib/dbt/launch';
 import { saveDatasetSyncService, syncDatasetNowService } from '@tabs/data/lib/mutations-server';
 import { syncStatusFor } from '@tabs/data/lib/sync-status-server';
 
@@ -17,15 +15,17 @@ export const dynamic = 'force-dynamic';
 /**
  * SCHEDULED INCREMENTAL SYNC — the per-dataset trigger + history endpoint.
  *
- * POST — run one sync. Two callers, two auths (both governed, no bypass):
- *   • a signed-in user pressing "Sync now" / "Reset & full re-sync" → `syncDatasetNowService`,
- *     the SAME function MCP `sync_dataset_now` calls (checklist X8), which carries the edit gate
- *     (`requireDatasetEditable`) and then the owner-identity execution;
- *   • a SERVICE presenting the shared runtime bearer → trigger 'schedule'; the executor resolves
- *     the OWNER's live identity (409 when unresolvable) and runs AS them, never a service
- *     principal. Since B4 no CronJob calls this: Dagster runs the dbt assets instead. The door
- *     stays because it is the contract the planned Kafka/API-batch Dagster asset will use to reach
- *     the OS's governed slice executor (deviation B2-6).
+ * POST — run one sync. ONE caller, one auth: a signed-in user pressing "Sync now" / "Reset &
+ *        full re-sync" → `syncDatasetNowService`, the SAME function MCP `sync_dataset_now` calls
+ *        (checklist X8), which carries the edit gate (`requireDatasetEditable`) and then the
+ *        owner-identity execution.
+ *
+ *        The second door — a SERVICE presenting the shared runtime bearer, trigger 'schedule' —
+ *        is GONE (B4 review M-6). B4 deleted the CronJobs that used it, so it had zero callers,
+ *        while remaining the one data route where the shared runtime token could start a
+ *        materialisation with no user and no edit gate. B2-6's planned Kafka/API-batch Dagster
+ *        asset is the thing that will need it; it re-adds the branch WITH its own test, rather
+ *        than inheriting an unused bypass.
  * PUT  — save the sync config through `saveDatasetSyncService` (per-source mode/cursor locks, then
  *        the store's strict gate: edit scope, cron, cursor-for-incremental, merge keys), then
  *        reconcile the SCHEDULE: the schedule is declared in the domain repo's `os/schedules.yml`
@@ -38,27 +38,23 @@ export const dynamic = 'force-dynamic';
  * With the flag on (the default), POST launches a DAGSTER run for the dataset's asset selection
  * from the committed head as the dataset owner and writes no `os-sync-runs` row (checklist D9).
  *
- * SKIP (POST): non-standard bearer-OR-user auth at top, not a single gate.
+ * SKIP (POST): the body is read before the gate (the `action` discriminator), so the handler is
+ * hand-rolled rather than `withRoute`-wrapped; the gate itself is `requirePrincipal`.
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const body = (await req.json().catch(() => ({}))) as { action?: string };
 
   // DATA_PROJECT_GIT on ⇒ the run is a DAGSTER run launched from the committed head as the owner;
-  // the OS writes no ledger row (checklist D9). Off ⇒ the OS executor, unchanged. A user-triggered
-  // run goes through `syncDatasetNowService` — the SAME function MCP `sync_dataset_now` calls
-  // (checklist X8), which carries the edit gate; the CronJob/Dagster bearer path keeps the
-  // service-principal trigger, which has no user to gate.
-  let ran: Awaited<ReturnType<typeof runSyncNow>>;
-  if (runtimeTokenOk(req.headers.get('authorization'))) {
-    ran = await runSyncNow(id, 'schedule', 'system');
-  } else {
-    try {
-      const user = await requirePrincipal();
-      ran = await syncDatasetNowService(user, id, { reset: body.action === 'reset' });
-    } catch (e) {
-      return errorResponse(e);
-    }
+  // the OS writes no ledger row (checklist D9). Off ⇒ the OS executor, unchanged. Either way the
+  // trigger is a USER: `syncDatasetNowService` is the SAME function MCP `sync_dataset_now` calls
+  // (checklist X8) and carries the edit gate.
+  let ran: Awaited<ReturnType<typeof syncDatasetNowService>>;
+  try {
+    const user = await requirePrincipal();
+    ran = await syncDatasetNowService(user, id, { reset: body.action === 'reset' });
+  } catch (e) {
+    return errorResponse(e);
   }
   if (ran.mode === 'dagster') {
     const l = ran.launch;

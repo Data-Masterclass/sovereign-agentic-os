@@ -13,7 +13,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gitMirrorRow } from '@tabs/admin/lib/components-extra';
+import { dataProductsGitRow, gitMirrorRow } from '@tabs/admin/lib/components-extra';
 
 test('the health row: absent when off or unconfigured, amber before the first push, red on failure', () => {
   assert.equal(gitMirrorRow({ enabled: false, signals: [{ domain: 'sales', url: 'https://git.example.com/a.git' }], now: 0 }), null);
@@ -46,3 +46,27 @@ test('the health row: absent when off or unconfigured, amber before the first pu
   assert.equal(red.at, Date.parse('2026-11-13T11:00:00.000Z'));
 });
 
+test('the data-products row exists with the flag OFF and says scheduling is disabled (review M-8)', () => {
+  const off = dataProductsGitRow({ enabled: false });
+  assert.equal(off.id, 'data-products-git');
+  assert.equal(off.state, 'off');
+  assert.equal(off.health, 'amber', 'a deliberate opt-out is not a fault');
+  assert.match(off.detail, /scheduling disabled/i);
+  assert.match(off.detail, /Sync now/, 'it says what still works');
+});
+
+test('the data-products row is green with the flag on and names the scheduler', () => {
+  const on = dataProductsGitRow({ enabled: true });
+  assert.equal(on.state, 'on');
+  assert.equal(on.health, 'green');
+  assert.match(on.detail, /Dagster/);
+  assert.match(on.detail, /os\/schedules\.yml/);
+});
+
+test('the row is never absent — that is the whole point of M-8', () => {
+  for (const enabled of [true, false]) {
+    const row = dataProductsGitRow({ enabled });
+    assert.ok(row && row.id === 'data-products-git');
+    assert.equal(row.state, enabled ? 'on' : 'off');
+  }
+});

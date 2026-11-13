@@ -9,7 +9,9 @@
  *   - ONE function both the route and the MCP tool call (`syncStatusFor`), so the two can never
  *     drift; `latestSyncSignals` is the batch form Monitoring's lists use (one TAG-FILTERED Dagster
  *     read per dataset, bounded concurrency — review B2-review-M4 explains why not one big read).
- *   - Flag OFF: exactly the ledger-derived payload the surfaces shipped before B2 (`sync-runs.ts`).
+ *   - Flag OFF: the ledger-derived payload the surfaces shipped before B2 (`sync-runs.ts`), with
+ *     `nextRunAt: null` — B4 deleted the CronJob provisioning and the sweeps, so nothing fires the
+ *     saved cron and an estimated "next run" would be a fabrication (review H-3b).
  *   - Flag ON: `runsForDataset` (tag `os/dataset`) → the panel's run shape; `nextTick` of the
  *     schedule `<domain>__<datasetId>` → `nextRunAt` and `quarantined` (schedule STOPPED while the
  *     OS config says enabled); `consecutiveErrors` from the run list. `watermark` is `null` (B3:
@@ -26,7 +28,6 @@ import {
   consecutiveErrorCount, currentWatermark, ensureSyncRunsHydrated, isQuarantined, lastMaintenanceAt, latestSyncRun, listSyncRuns,
   type SyncRunRecord, type SyncRunStatus,
 } from '@tabs/data/lib/sync-runs';
-import { nextCronRun } from '@tabs/data/lib/sync-next-run';
 
 /** The run row the SyncPanel renders (a subset of the ledger record, plus the Dagster id). */
 export type SyncRunView = {
@@ -61,7 +62,6 @@ export type SyncStatusDeps = {
   dagster?: Pick<typeof dagster, 'runsForDataset' | 'nextTick'>;
   location?: string;
   flag?: () => boolean;
-  now?: () => Date;
   /** Every domain with a repo. Needed to name a schedule whose domain's sanitized name collides
    *  with another's — the code location appends a digest then (review B2-review-M2, closed in B3).
    *  Default: the repos on disk. */
@@ -114,10 +114,8 @@ function ledgerView(record: SyncRunRecord): SyncRunView {
 /** The sync status of one dataset — route and MCP tool share this. */
 export async function syncStatusFor(d: Dataset, deps: SyncStatusDeps = {}): Promise<SyncStatusView> {
   const on = (deps.flag ?? dataProjectGitEnabled)();
-  const now = deps.now ?? (() => new Date());
   if (!on) {
     await ensureSyncRunsHydrated().catch(() => {});
-    const next = d.sync?.enabled ? nextCronRun(d.sync.schedule.cron, now()) : null;
     return {
       sync: d.sync ?? null,
       runs: listSyncRuns(d.id).slice(-20).reverse().map(ledgerView),
@@ -125,7 +123,11 @@ export async function syncStatusFor(d: Dataset, deps: SyncStatusDeps = {}): Prom
       quarantined: isQuarantined(d.id),
       consecutiveErrors: consecutiveErrorCount(d.id),
       lastMaintenanceAt: lastMaintenanceAt(d.id),
-      nextRunAt: next ? next.toISOString() : null,
+      // NOT `nextCronRun(...)` (review H-3b). B4 deleted the CronJob provisioning and both
+      // sweeps, so with the flag off NOTHING fires this cron — a timestamp here would be the
+      // panel's most confident lie. `null` means "no next run is scheduled", which is the truth;
+      // `source: 'ledger'` is how a surface knows WHY (the schedule pickers say it in words).
+      nextRunAt: null,
       source: 'ledger',
     };
   }

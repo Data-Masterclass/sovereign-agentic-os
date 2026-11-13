@@ -6,7 +6,7 @@
  *             sync or publish — in the UI or through the OS MCP — to be a git commit in my domain's
  *             repository, authored as me and naming the action and its origin (checklist D2, X1).
  * ARCHITECTURE:
- *   - The single commit path for the Data tab, behind `DATA_PROJECT_GIT` (default off: no repo is
+ *   - The single commit path for the Data tab, behind `DATA_PROJECT_GIT` (ON by default since B4; off: no repo is
  *     touched). `installDataProjectCommitHook` subscribes to the store's project-change events at
  *     boot (`instrumentation.ts`); each event → snapshot → `generateProject` → `commitTree`, which
  *     commits only when the tree changed. Mirror push afterwards is fire-and-forget and never

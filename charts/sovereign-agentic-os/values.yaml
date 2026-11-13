@@ -1340,10 +1340,16 @@ osUI:
   # `os-repos` (:9418) + a NetworkPolicy admitting only the Dagster user-code pod, which runs the
   # repo-sync sidecar (see dagster.dagster-user-deployments above — REPO_SYNC_ENABLED is on too).
   #
-  # With it ON: a dataset/composition/quality-rule/schedule change is a git commit in the domain's
-  # repository, the generated dbt project is what Dagster materialises from a validated commit, and
-  # the OS reads run state back from Dagster instead of keeping its own ledger. The FIRST boot
-  # commits every existing dataset (`OS-Reason: boot-reconcile`).
+  # ONE flag, TWO halves — flipping it enables BOTH (B4-review-H-2/H-4):
+  #   DATA:   a dataset/composition/quality-rule/schedule change is a git commit in the domain's
+  #           repository, the generated dbt project is what Dagster materialises from a validated
+  #           commit, and the OS reads run state back from Dagster instead of its own ledger.
+  #   AGENTS: every agent-system definition write commits an `agents/<slug>/…` subtree into the
+  #           SAME repository (Part D).
+  # The FIRST boot commits every existing dataset and every existing agent system
+  # (`OS-Reason: boot-reconcile`), and DELETES every pre-B2 per-dataset sync CronJob before that
+  # first commit, so one slice cannot fire twice during the upgrade — which is why the os-ui Role
+  # carries a `batch`/`cronjobs` grant (base/os-ui/os-ui.yaml).
   #
   # `enabled: false` remains the EMERGENCY OPT-OUT for one release (then the flag goes): the OS
   # falls back to its own CTAS/ledger execution and the repositories stop being written. Read the

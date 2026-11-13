@@ -86,10 +86,11 @@ export const config = {
 
   // The shared SERVICE BEARER. A5 (engine rebuild) deleted the Python `agent-runtime` this
   // was named after — and with it `AGENT_RUNTIME_URL`, `/reload`, `/run` and the
-  // governed-tool callback. The token stayed because os-ui VALIDATES it on the service
-  // paths its own CronJobs call: the agent scheduled-run receiver, the metrics data-sync
-  // sweep and the connections catalog-refresh sweep (`build/runtime-auth.ts`
-  // `runtimeTokenOk`). Renamed when the data side owns the Secret. Server-only.
+  // governed-tool callback. The token stayed because os-ui VALIDATES it on the two service
+  // paths its own CronJobs still call: the agent scheduled-run receiver and the connections
+  // catalog-refresh sweep (`build/runtime-auth.ts` `runtimeTokenOk`). The data-sync sweep is
+  // GONE (engine rebuild B4), and so is the per-dataset sync trigger that used this bearer
+  // (B4-review-M-6). Renamed when the data side owns the Secret. Server-only.
   agentRuntimeToken: env('AGENT_RUNTIME_TOKEN', DEV_DEFAULT_AGENT_RUNTIME_TOKEN),
   // Agent SCHEDULE CronJobs (Agents tab). Saving a `cron` schedule provisions a
   // batch/v1 CronJob in the platform namespace that curls the scheduled-run
@@ -100,11 +101,6 @@ export const config = {
   scheduleCronImage: env('SCHEDULE_CRON_IMAGE', 'curlimages/curl:8.11.1'),
   agentRuntimeTokenSecret: env('AGENT_RUNTIME_TOKEN_SECRET', 'os-ui'),
   agentRuntimeTokenSecretKey: env('AGENT_RUNTIME_TOKEN_SECRET_KEY', 'agent-runtime-token'),
-  // The per-dataset sync trigger URL — `<dataSyncUrlBase>/<datasetId>/sync`, called with the
-  // shared runtime bearer. B4 deleted the CronJob that used to call it (Dagster schedules the
-  // domain repository instead); the base stays for the planned Kafka/API-batch Dagster asset,
-  // which reaches the OS's governed slice executor through that same door.
-  dataSyncUrlBase: base(env('DATA_SYNC_URL_BASE', 'http://os-ui:3000/api/data/datasets')),
 
   // Shared service bearer for the in-cluster data-plane services (query-tool +
   // data-runner). Defense-in-depth BEHIND the NetworkPolicies: those services trust
@@ -478,13 +474,23 @@ export const config = {
   // "" when ingress.hosts.workbench is unset — honour it, don't dial localhost).
   workbenchBrokerUrl: base(consoleEnv('WORKBENCH_BROKER_URL', 'http://localhost:8091')),
 
-  // ---- Data products in git (engine rebuild B1). GATED OFF by default: when
-  // DATA_PROJECT_GIT=true every dataset / composition / check / sync / publish /
-  // retire mutation regenerates the owning domain's dbt project and commits it to a
-  // bare repo `<OS_REPOS_DIR>/<domain>.git` (core/infra/git-store.ts, author = the
-  // acting user). OFF ⇒ no repo is touched and nothing else changes. `reposDir` is
-  // the PVC mount (`os-repos`) in the chart; tests point it at a temp dir.
-  dataProjectGit: env('DATA_PROJECT_GIT', '').toLowerCase() === 'true',
+  // ---- Data products AND agent systems in git (engine rebuild B1/B4 + Part D).
+  // ON by default since B4 — the chart sets `osUI.dataProjectGit.enabled: true` and this default
+  // now AGREES with it, so `npm run dev` behaves like production (B4-review-L-11). Set
+  // DATA_PROJECT_GIT=false to opt out.
+  //
+  // ONE flag, TWO halves (B4-review-H-4) — flipping it enables both:
+  //   • DATA: every dataset / composition / check / sync / publish / retire mutation regenerates
+  //     the owning domain's dbt project and commits it to the bare repo
+  //     `<OS_REPOS_DIR>/<domain>.git` (core/infra/git-store.ts, author = the acting user); the
+  //     schedules move from per-dataset Kubernetes CronJobs to `os/schedules.yml`, run by Dagster.
+  //   • AGENTS: every agent-system definition write commits an `agents/<slug>/…` subtree into the
+  //     SAME repo, and the first boot with the flag on reconciles one commit per domain that has
+  //     an `agents/` tree.
+  // OFF ⇒ no repo is touched; on the data side nothing SCHEDULES a saved sync either (B4 deleted
+  // the CronJob provisioning), which the panels and the health row say in words.
+  // `reposDir` is the PVC mount (`os-repos`) in the chart; tests point it at a temp dir.
+  dataProjectGit: env('DATA_PROJECT_GIT', 'true').toLowerCase() !== 'false',
   reposDir: env('OS_REPOS_DIR', '/repos'),
   // Durable mirror index for the per-domain push-mirror config (URL + token Secret
   // REFERENCE — never the token). See tabs/data/lib/dbt/mirror.ts.
