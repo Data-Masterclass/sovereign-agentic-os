@@ -80,7 +80,7 @@ module:
 | `objectGitInfo(kind, id)` | `get_history` | `{head, history[], truncated, via, paths}` |
 | `getVersion(kind, id, sha)` | `get_version` | the object's files exactly as they were at that commit |
 | `diffVersions(kind, id, a, b)` | `diff_versions` | a unified diff an engineer could `git apply` |
-| `restoreVersion(kind, id, sha)` | `restore_version` | **one new commit** through the object's normal writer |
+| `restoreVersion(kind, id, sha)` | *(not on the MCP surface yet)* | **one new commit** through the object's normal writer |
 
 Four properties worth stating plainly, because each is a decision:
 
@@ -121,9 +121,13 @@ and no kind claims it, so a new writer cannot be added without classifying it.
 
 ### What is NOT true yet
 
+- **`restore_version` is not an MCP tool yet.** A write tool must be declared in the governed
+  write catalogue (`core/mcp/write-tools.ts` + `core/mcp/write-tool-meta.ts`), and today its only
+  possible answer is `restore_unsupported`; it is one row in two files once a kind registers its
+  writer. The function, the gate and the refusals exist and are tested.
 - **Restore is wired for no kind yet.** The gate, the refusals and the "new commit, through the
   writer" contract are implemented and tested; no tab has registered a restorer, so
-  `restore_version` answers `restore_unsupported` for every kind today. The UI's
+  `restoreVersion` answers `restore_unsupported` for every kind today. The UI's
   "Restore this version" button surfaces exactly that refusal rather than hiding it.
 - **Knowledge workflows and connection configurations are not in git at all** — see the table.
 - **Releases** (`app/<slug>/v<x.y.z>` tags) are read by `ReleaseList` only once the tag API in

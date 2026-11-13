@@ -27,6 +27,7 @@ import {
   GIT_OBJECT_LAYOUT,
   GitObjectError,
   objectGitInfo,
+  objectReleases,
   getVersion,
   diffVersions,
   restoreVersion,
@@ -339,4 +340,25 @@ test('restoreVersion re-applies a version THROUGH the writer and produces ONE NE
   const version = await getVersion(amir, 'agent-system', 'sys_1', result.sha, { reposDir });
   assert.equal(version.files[0].content, 'name: Support\nversion: 1\n');
   assert.deepEqual(restorableGitObjectKinds(), ['agent-system']);
+});
+
+test('objectReleases is HIDDEN-with-a-reason rather than empty when there are no tags to read', async () => {
+  // A kind that does not publish release tags (every kind but software today).
+  const none = await objectReleases(amir, 'agent-system', 'sys_1', { reposDir });
+  assert.equal(none.available, false);
+  assert.match(none.reason, /does not publish release tags/);
+  assert.deepEqual(none.releases, []);
+  // An object with no repository at all.
+  const noRepo = await objectReleases(amir, 'agent-system', 'sys_3', { reposDir });
+  assert.equal(noRepo.available, false);
+  assert.match(noRepo.reason, /no domain repository/);
+  // A kind that DOES declare a tag prefix, while the annotated-tag API is not in the build yet:
+  // unavailable WITH the reason — never an empty list that reads as "never released".
+  registerGitObject('software', () => ({ domain: 'sales', paths: ['apps/orders/'], tagPrefix: 'app/orders/' }));
+  const pending = await objectReleases(amir, 'software', 'app_1', { reposDir });
+  assert.equal(pending.available, false);
+  assert.match(pending.reason, /annotated-tag API is not in this build yet/);
+  // And it is gated like every other read.
+  const hidden = await objectReleases(amir, 'dataset', 'ds_nope', { reposDir }).catch((e) => e);
+  assert.equal((hidden as Error).message, notFoundMessage('dataset', 'ds_nope'));
 });
