@@ -7,6 +7,8 @@ import { getSystem } from '@tabs/agents/lib/store';
 import { assistantComplete } from '@core/runtime/complete';
 import { judgeRun, type JudgeComplete } from '@tabs/agents/lib/evaluate-judge';
 import { getWorkflow } from '@tabs/knowledge/lib/store';
+import { scoreTrace } from '@core/infra/langfuse';
+import { isRunId } from '@core/kernel/run-id';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { System } from '@tabs/agents/lib/system-schema';
 
@@ -57,6 +59,8 @@ export const POST = withRoute<{ id: string }, {
   output?: string;
   description?: string;
   tacitKnowledge?: string;
+  /** The run being judged (defaults to the persisted last run) — its trace receives the score. */
+  runId?: string;
 }>(async ({ user, params, body }) => {
   const { id } = params;
 
@@ -84,10 +88,23 @@ export const POST = withRoute<{ id: string }, {
     ? body.tacitKnowledge
     : gatherGrantedCriteria(view.system, user);
 
-  // Route the judge through the ONE governed assistant model (Langfuse-audited).
+  // Route the judge through the ONE governed assistant model (Langfuse-audited), attributed to
+  // the caller AND their domain (A3: per-domain spend).
   const complete: JudgeComplete = (messages) =>
-    assistantComplete(messages, { user: user.id }).then((r) => r.content);
+    assistantComplete(messages, { user: { id: user.id, domains: user.domains } }).then((r) => r.content);
 
   const result = await judgeRun({ output, description, tacitKnowledge }, complete);
-  return NextResponse.json(result);
+  // A3 (checklist A22): the verdict is a Langfuse SCORE on the run's trace (id = run id). Only a
+  // langgraph run has one; a walker run keeps the verdict in the response alone.
+  const runId = typeof body.runId === 'string' && body.runId.trim() ? body.runId.trim() : view.lastRun?.runId;
+  const scored = isRunId(runId) && runId === view.lastRun?.runId
+    ? scoreTrace({
+        traceId: runId,
+        name: 'judge',
+        value: result.overall,
+        comment: result.scores.map((s) => `${s.dimension}: ${s.score} — ${s.why}`.trim()).join('\n').slice(0, 1000),
+        metadata: { systemId: id, judgedBy: user.id, dimensions: result.scores },
+      })
+    : false;
+  return NextResponse.json({ ...result, scored, runId: scored ? runId : undefined });
 }, { parse: true, defaultStatus: 500 });

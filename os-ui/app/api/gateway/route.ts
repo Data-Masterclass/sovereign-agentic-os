@@ -1,6 +1,15 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Models & Tools (Gateway) catalogue — what LiteLLM serves, read through the admin client.
+ * USER STORY: As a signed-in user I see which models and MCP tools the governed gateway offers.
+ * ARCHITECTURE: session-gated; both reads go through `core/infra/litellm-admin.ts` (the ONE admin read
+ *             client holding the master key), so no route references the key (A3 MODEL-KEY, repo-wide).
+ *             Each read degrades on its own; both failing is a 502 naming the cause.
+ */
 import { NextResponse } from 'next/server';
-import { config } from '@core/kernel/config';
 import { requireUser } from '@core/kernel/auth';
+import { adminGet } from '@core/infra/litellm-admin';
 import { errorResponse } from '@tabs/data/lib/server';
 
 export const dynamic = 'force-dynamic';
@@ -8,16 +17,6 @@ export const dynamic = 'force-dynamic';
 type Model = { id: string; ownedBy: string };
 type Tool = { name: string; description: string; params: string[] };
 
-function bearer(): string {
-  return `Bearer ${config.litellmMasterKey}`;
-}
-
-/**
- * Models & Tools (Gateway) -> LiteLLM. Server-side (Bearer master key stays on
- * the server) we list the available models and the registered MCP tools the
- * agents can call through the one governed endpoint. Requires a session (401 for
- * anon) — the model/tool catalog is config recon, not a public surface.
- */
 export async function GET() {
   try {
     await requireUser();
@@ -29,43 +28,29 @@ export async function GET() {
   let modelsError = '';
   let toolsError = '';
 
-  try {
-    const res = await fetch(`${config.litellmUrl}/v1/models`, {
-      headers: { authorization: bearer(), accept: 'application/json' },
-      cache: 'no-store',
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    models = (Array.isArray(data?.data) ? data.data : []).map(
-      (m: Record<string, unknown>) => ({
-        id: String(m.id ?? ''),
-        ownedBy: String(m.owned_by ?? ''),
-      }),
-    );
-  } catch (e) {
-    modelsError = (e as Error).message;
+  const modelsRead = await adminGet<{ data?: Record<string, unknown>[] }>('/v1/models');
+  if (modelsRead.ok) {
+    models = (Array.isArray(modelsRead.data?.data) ? modelsRead.data.data : []).map((m) => ({
+      id: String(m.id ?? ''),
+      ownedBy: String(m.owned_by ?? ''),
+    }));
+  } else {
+    modelsError = modelsRead.error;
   }
 
-  try {
-    const res = await fetch(`${config.litellmUrl}/v1/mcp/tools`, {
-      headers: { authorization: bearer(), accept: 'application/json' },
-      cache: 'no-store',
+  const toolsRead = await adminGet<{ tools?: Record<string, unknown>[] }>('/v1/mcp/tools');
+  if (toolsRead.ok) {
+    tools = (Array.isArray(toolsRead.data?.tools) ? toolsRead.data.tools : []).map((t) => {
+      const schema = (t.inputSchema ?? {}) as Record<string, unknown>;
+      const props = (schema.properties ?? {}) as Record<string, unknown>;
+      return {
+        name: String(t.name ?? ''),
+        description: String(t.description ?? '').replace(/\s+/g, ' ').trim(),
+        params: Object.keys(props),
+      };
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    tools = (Array.isArray(data?.tools) ? data.tools : []).map(
-      (t: Record<string, unknown>) => {
-        const schema = (t.inputSchema ?? {}) as Record<string, unknown>;
-        const props = (schema.properties ?? {}) as Record<string, unknown>;
-        return {
-          name: String(t.name ?? ''),
-          description: String(t.description ?? '').replace(/\s+/g, ' ').trim(),
-          params: Object.keys(props),
-        };
-      },
-    );
-  } catch (e) {
-    toolsError = (e as Error).message;
+  } else {
+    toolsError = toolsRead.error;
   }
 
   if (modelsError && toolsError) {

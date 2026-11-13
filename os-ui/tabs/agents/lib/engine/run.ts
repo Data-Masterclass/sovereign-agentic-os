@@ -87,6 +87,9 @@ export type EngineRunResult = AgenticGraphResult & {
   routes: RouteDecision[];
   /** The team step budget and how much of it the run used. */
   budget: { stepsUsed: number; limit: number; exhausted: boolean };
+  /** A3: the Langfuse trace id (= run id) and whether an observer actually recorded this run. */
+  traceId: string;
+  observed: boolean;
 };
 
 export class ResumeNotFoundError extends Error {
@@ -207,10 +210,25 @@ export async function runGraphEngine(input: EngineRunInput): Promise<EngineRunRe
   }
 
   const snap = await built.graph.getState(config);
-  return summarize(snap, built, input, recursionHit);
+  const result = summarize(snap, built, input, recursionHit);
+  // A3: close the trace segment and flush in the background — never awaited by the run.
+  const observer = input.deps.observe;
+  if (observer) {
+    observer.finish({
+      reachedEnd: result.reachedEnd,
+      parked: result.parked,
+      interrupted: result.interrupted,
+      failed: !!(snap.values as Partial<EngineState> | undefined)?.failed,
+      path: result.path,
+      finalChars: result.finalText.length,
+      stepsUsed: result.budget.stepsUsed,
+    });
+    void observer.flush();
+  }
+  return result;
 }
 
-function summarize(snap: Snapshot, built: ReturnType<typeof buildGraph>, input: Pick<EngineRunInput, 'runId' | 'checkpointer' | 'signal'>, recursionHit: boolean): EngineRunResult {
+function summarize(snap: Snapshot, built: ReturnType<typeof buildGraph>, input: Pick<EngineRunInput, 'runId' | 'checkpointer' | 'signal'> & { deps?: Pick<GraphDeps, 'observe'> }, recursionHit: boolean): EngineRunResult {
   const state = (snap.values ?? {}) as Partial<EngineState>;
   const runs: NodeRun[] = state.nodeRuns ?? [];
   const budget = state.budget ?? { stepsUsed: 0, exhausted: false };
@@ -241,6 +259,8 @@ function summarize(snap: Snapshot, built: ReturnType<typeof buildGraph>, input: 
     held: state.held ?? [],
     routes: state.routes ?? [],
     budget: { stepsUsed: budget.stepsUsed, limit: built.stepBudget, exhausted: budget.exhausted },
+    traceId: input.runId,
+    observed: !!input.deps?.observe?.enabled,
   };
 }
 

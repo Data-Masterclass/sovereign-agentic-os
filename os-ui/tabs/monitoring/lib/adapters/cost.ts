@@ -4,7 +4,7 @@
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { listCaps } from '@core/policy/index';
-import { readFetch } from '@tabs/monitoring/lib/util';
+import { adminGet } from '@core/infra/litellm-admin';
 import { MOCK_COST } from '@tabs/monitoring/lib/mock';
 import type { Health, HealthItem } from '@tabs/monitoring/lib/types';
 
@@ -112,13 +112,12 @@ export async function collectCost(): Promise<HealthItem[]> {
  * `domain:` prefix is still honoured if present.
  */
 export async function litellmSpendByTag(): Promise<Record<string, number> | null> {
-  const res = await readFetch(`${config.litellmUrl}/spend/tags`, {
-    headers: { authorization: `Bearer ${config.litellmMasterKey}`, accept: 'application/json' },
-  });
-  if (!res || !res.ok) return null;
+  // The ONE admin read client (`litellm-admin.ts`): master key stays inside it, timeout, no throw.
+  const read = await adminGet<unknown>('/spend/tags');
+  if (!read.ok) return null;
   try {
-    const data = JSON.parse(await res.text());
-    const rows = Array.isArray(data) ? data : Array.isArray(data?.spend) ? data.spend : [];
+    const data = read.data as { spend?: unknown } | unknown[] | null;
+    const rows = Array.isArray(data) ? data : Array.isArray((data as { spend?: unknown } | null)?.spend) ? ((data as { spend: unknown[] }).spend) : [];
     const out: Record<string, number> = {};
     for (const r of rows as Record<string, unknown>[]) {
       const raw = String(r.tag ?? r.individual_request_tag ?? '').trim();

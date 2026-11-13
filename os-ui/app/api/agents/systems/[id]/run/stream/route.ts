@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Re-attach to a run's live event stream (A2) — watch a parked run finish after a decision.
+ * USER STORY: As the runner I keep the Run panel open while a domain admin decides; when the decision
+ *             resumes my run in another request, my panel sees `resumed` → `node-started` … `done`.
+ * ARCHITECTURE: GET ?runId= over the in-process run topic (`engine/run-events.ts`); owner-checked
+ *             (system + runner) — anything else is 404, never confirming the run exists. Single
+ *             replica until A4 moves the topic to `run_events`.
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';

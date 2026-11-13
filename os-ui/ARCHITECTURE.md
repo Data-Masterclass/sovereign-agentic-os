@@ -331,6 +331,56 @@ resume happens in the decider's request, so the panel re-attaches to the run's e
 `get_agent_run { runId }` (state, path, held approvals), `resume_agent_run { runId }` (restart
 recovery), and `decide_approval` resumes through the same hook.
 
+## One trace per run
+
+A run is **one Langfuse trace whose id is the run id** (= the LangGraph thread id). The engine
+does not use a LangChain callback handler — our model calls are OpenAI-shaped requests to
+LiteLLM, not LangChain runnables — so the tree is built explicitly with the `langfuse` SDK,
+which gives exact control over ids:
+
+```
+core/infra/langfuse.ts            the ONE SDK client (buffered, never awaited by a run), traceUrlFor,
+                                  scoreTrace, readObservations (+ observationsQuery, which refuses
+                                  an unfiltered read with a typed error)
+tabs/agents/lib/engine/observe.ts the RunObserver port + the Langfuse implementation (client injected)
+build-graph.ts  observed(name, body)   every plan_/act_/tools_/route_ node runs inside a span; the node
+                                  gets an LlmCall that records each completion as a GENERATION
+                                  (model, usage, redacted input/output) and a tool() wrapper that
+                                  records each governed call as a span with the DECISION
+run.ts                            finish() → the terminal `run.result` span; flush() in the background
+agentic-graph-server.ts           builds the observer per run (resume: no new trace), wires the
+                                  caller context and the executor's traceContext
+```
+
+Three rules keep it one tree:
+
+1. **One `trace-create` per run start; a resume creates none.** The trace carries
+   `userId` (the runner), `sessionId` (the system), tags `domain:` `agent:` `run:` `engine:`.
+   The outcome is a terminal `run.result` span rather than a trace update (a trace update is
+   a second trace event in the SDK; the recorded-ingestion test asserts exactly one).
+2. **Everything nests.** Governance `trace()` events (`core/infra/agent-governed.ts`) become
+   spans of the run trace when the executor passes `traceContext` — through the deps, never a
+   global. The LiteLLM caller forwards `existing_trace_id` + `parent_observation_id`, so the
+   gateway's own Langfuse callback lands under the OS generation instead of as a stray trace.
+3. **Every read is filtered.** The diagnostics route reads observations by `traceId=<runId>`;
+   without a run id, by the caller's user id and a time window. `observationsQuery` throws on
+   anything looser, and that rule has a test.
+
+The LiteLLM side carries the same identity: `callerCredential` tags every call `domain:`,
+`agent:`, `tab:`, `run:` with `user = os-<id>`, resolves the system's own key by **reference**
+when Build minted one and the shared agent key otherwise — and never the master key, which the
+repo-wide `MODEL-KEY` test confines to `litellm-admin.ts`, `litellm-write.ts`, the key
+provisioner and `config.ts`.
+
+**Redaction default.** Message content is recorded as roles and character counts; the tool-call
+structure (names, ids, args) and bounded result previews are kept. PII in args is a checklist
+concern, not yet a policy.
+
+**In-flight lock.** `executeTeamRun` takes a per-thread lock (`engine/run-lock.ts`) before any
+marker or event and releases it in `finally`; a second entrant on the same run — the owner's
+Resume racing a decision-driven resume — gets a typed 409 instead of executing an approved
+write twice. Single replica, like the checkpointer; A4's worker moves it to `run_jobs`.
+
 ## Things this codebase will punish you for
 
 Hard-won, each from a real failure. Read before writing a route, a test, or an

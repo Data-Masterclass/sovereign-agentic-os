@@ -15,6 +15,7 @@ import type { ArtifactGrant, System, SafetyPreset } from '@tabs/agents/lib/syste
 import { type Effect } from '@tabs/agents/lib/gateway';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { trace as realTrace } from '@core/infra/agent-governed';
+import type { RunTraceContext } from '@core/infra/langfuse';
 import { enqueue as realEnqueue } from '@core/policy/approvals';
 import { holdDecision, writeTargetScope } from '@tabs/agents/lib/build/hold';
 import { resolveFolderGrant } from '@core/kernel/folders';
@@ -577,6 +578,11 @@ export type ExecutorOptions = {
    * either way — the identity of every side effect stays the acting user.
    */
   holdAt?: 'executor' | 'node';
+  /**
+   * A3 — the run this executor serves: its governance traces become SPANS of the run's Langfuse
+   * trace (id = run id) instead of standalone traces. Threaded here through the deps, never a global.
+   */
+  traceContext?: RunTraceContext;
 };
 
 export function grantedToolExecutor(
@@ -647,7 +653,7 @@ export function grantedToolExecutor(
           tool: mcpName,
           approverRole: decision.approverRole,
         });
-        await safeTrace(deps, sysPrincipal, mcpName, args, 'requires_approval');
+        await safeTrace(deps, sysPrincipal, mcpName, args, 'requires_approval', undefined, opts.traceContext);
         return errorResult('held', `${mcpName} requires ${decision.approverRole} approval — enqueued to Governance (Domain/Company writes are held)`);
       }
     }
@@ -665,7 +671,7 @@ export function grantedToolExecutor(
     // trace tells the truth about WHY no approval was needed.
     const wroteDirectly = WRITE_APPROVAL_NAMES.has(mcpName) && writeTargetScope(mcpName) === 'personal';
 
-    await safeTrace(deps, sysPrincipal, mcpName, args, 'allow', wroteDirectly ? 'allow (own My scope)' : undefined);
+    await safeTrace(deps, sysPrincipal, mcpName, args, 'allow', wroteDirectly ? 'allow (own My scope)' : undefined, opts.traceContext);
 
     if (res?.error) return { text: `Error: ${res.error.message}`, isError: true };
     const result = (res?.result ?? {}) as { content?: { text?: string }[]; isError?: boolean };
@@ -684,9 +690,10 @@ async function safeTrace(
   input: unknown,
   decision: Effect,
   note?: string,
+  run?: RunTraceContext,
 ): Promise<void> {
   try {
-    await deps.trace({ principal, tool, input, output: { decision: note ?? decision }, decision });
+    await deps.trace({ principal, tool, input, output: { decision: note ?? decision }, decision, run });
   } catch {
     /* attribution is best-effort — the governed lib already traced under the user */
   }

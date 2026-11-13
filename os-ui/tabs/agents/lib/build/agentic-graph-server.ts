@@ -9,7 +9,11 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { ALL_MCP_TOOLS, isMcpTab, listToolsForRole, toolsForTab, type McpTab } from '@core/mcp/server';
 import { loadTabContext } from '@core/tabs-meta/context';
 import { trace as gvTrace } from '@core/infra/agent-governed';
+import { langfuseClient, traceUrlFor } from '@core/infra/langfuse';
+import type { SecretRef } from '@core/infra/secrets';
+import { langfuseRunObserver } from '@tabs/agents/lib/engine/observe';
 import { tabToolExecutor, liteLlmCaller } from '@core/runtime/runtime';
+import type { CallerContext } from '@core/infra/litellm-credential';
 import { trackUsage, type ToolSpec, type AgenticStep, type LlmCall, type UsageTracker } from '@core/runtime/agentic';
 import { loadBuildSpec } from '@core/tabs-meta/build-spec';
 import { parseSystem, type System } from '@tabs/agents/lib/system-schema';
@@ -259,6 +263,8 @@ export type RunOsTeamInput = {
   onInterrupt?: (ev: { approvalId: string; tool: string; node: string }) => void;
   /** Injected in tests; defaults to the Governance queue (`approvals-bridge.ts`). */
   approvalPort?: ApprovalPort;
+  /** A3: the system's own LiteLLM key by secret REFERENCE (minted by Build); absent → the shared agent key. */
+  keyRef?: SecretRef;
 };
 
 /** The walker's result plus what the LangGraph engine adds (all optional on a walker run). */
@@ -274,6 +280,10 @@ export type RunOsTeamResult = AgenticGraphResult & {
   heldApprovals?: PendingApproval[];
   held?: HeldCall[];
   routes?: RouteDecision[];
+  /** A3: the Langfuse deep link to THIS run's trace (`<console>/trace/<runId>`), when a console is configured. */
+  traceUrl?: string;
+  /** A3: true when an observer recorded the run (Langfuse configured) — the panel offers the link only then. */
+  traceStoreAvailable?: boolean;
 };
 
 /**
@@ -299,15 +309,27 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   const embedder = liveEmbedder();
   // Aggregate token usage across EVERY model call this run makes (plan + act on
   // every node) — the source for the Monitoring run-summary trace below.
-  const tracked = trackUsage(input.llm ?? liteLlmCaller());
-  // The ONE deps object both engines run on: the same gates, the same models, the same budgets.
   const langgraph = input.engine === 'langgraph';
+  // A3 — ATTRIBUTION: every model call carries the runner, the domain, the system, the run and
+  // (when Build minted one) the system's own key by reference. Never the master key.
+  const caller: CallerContext = {
+    userId: input.user.id,
+    domain: sys.system.domain,
+    systemId: input.systemId,
+    tab: 'agents',
+    runId: langgraph ? input.runId : undefined,
+    keyRef: input.keyRef,
+  };
+  const tracked = trackUsage(input.llm ?? liteLlmCaller(caller));
+  // A3 — the run's governance traces nest under the run trace (id = run id) instead of standing alone.
+  const traceContext = langgraph && input.runId ? { traceId: input.runId } : undefined;
+  // The ONE deps object both engines run on: the same gates, the same models, the same budgets.
   const deps: AgenticGraphDeps = {
     llm: tracked.llm,
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
     // A2: under `langgraph` the tools NODE decides the hold (and parks the run); the executor then
     // only sees non-held and approved calls, so its gate 1b steps aside. The walker keeps gate 1b.
-    callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps, { holdAt: langgraph ? 'node' : 'executor' }),
+    callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps, { holdAt: langgraph ? 'node' : 'executor', traceContext }),
     embed: embedder.embed,
     embedSource: embedder.lastSource,
     preamble: osPreamble(input.user, sys),
@@ -339,10 +361,23 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     const checkpointer = await selectCheckpointer(config.agentRunsDatabaseUrl);
     const { onNodeStart, onStep, onNodeComplete, tieBreaker: _tb, ...graphDeps } = deps;
     void _tb;
+    // A3 — ONE trace per run: id = run id; a resume continues it (no second trace-create).
+    const observe = langfuseRunObserver({
+      runId: input.runId,
+      systemId: input.systemId,
+      systemName: sys.system.name,
+      userId: input.user.id,
+      domain: sys.system.domain,
+      engine: 'langgraph',
+      task: input.resume ? undefined : lastUserText(input.messages),
+      resume: input.resume,
+      client: langfuseClient(),
+    });
     const result = await runGraphEngine({
       ir,
       deps: {
         ...graphDeps,
+        observe,
         unmappedTools: resolveGrantedTools(sys).unmapped,
         // A2 — the hold, lifted into the node: the same rule the executor applied (`holdDecisionFor`
         // over the system's preset), the Governance queue as the port, the runner's snapshot.
@@ -365,8 +400,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
       checkpointer,
       hooks: { onNodeStart, onStep, onNodeComplete, onInterrupt: input.onInterrupt },
     });
-    emitRunSummaryTrace(input, result, tracked, prices);
-    return result;
+    emitRunSummaryTrace(input, result, tracked, prices, traceContext);
+    return { ...result, traceUrl: observe.enabled ? traceUrlFor(input.runId) : undefined, traceStoreAvailable: observe.enabled };
   }
 
   const result = await runAgenticGraph(ir, input.messages, deps);
@@ -432,6 +467,7 @@ function emitRunSummaryTrace(
   result: AgenticGraphResult,
   tracked: UsageTracker,
   prices: Readonly<Record<string, ModelPrice>>,
+  run?: { traceId: string },
 ): void {
   const usage = tracked.usage();
   const prompt = lastUserText(input.messages);
@@ -445,6 +481,8 @@ function emitRunSummaryTrace(
     decision: 'allow',
     tokens: usage?.total,
     costUsd: runCostUsd(usage, tracked.models(), prices),
+    // A3: under the langgraph engine this summary is a span of the run trace, not a trace of its own.
+    run,
   });
 }
 
@@ -482,14 +520,16 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
   const session = getSession(key);
   const { phase, role } = preRoute(session, lastUserText(input.messages));
 
-  const ir = compile(parseSystem(input.yaml));
+  const sys = parseSystem(input.yaml);
+  const ir = compile(sys);
   const specsFor = toolSpecsFactory(input.user);
   const run = await runNode(
     ir,
     role,
     input.messages,
     {
-      llm: liteLlmCaller(),
+      // A3: attributed — the runner, the system's domain and the Software tab (no run id: not a checkpointed run).
+      llm: liteLlmCaller({ userId: input.user.id, domain: sys.system.domain, tab: 'software' }),
       toolSpecsFor: (node) => specsFor(node.tools),
       callTool: tabToolExecutor(input.user, 'software'),
       preamble: preamble(),

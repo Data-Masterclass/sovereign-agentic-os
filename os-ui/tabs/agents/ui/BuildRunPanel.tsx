@@ -805,7 +805,10 @@ export default function BuildRunPanel({
     if (!runComplete || !run) { setMetrics(null); return; }
     let cancelled = false;
     const nodes = (run.nodes ?? []).map((n) => n.node).join(',');
-    fetch(`/api/agents/systems/${systemId}/run/diagnostics?nodes=${encodeURIComponent(nodes)}`, { cache: 'no-store' })
+    // A3: read BY THE RUN'S TRACE ID (= run id); a walker run (no run id) is bounded server-side to
+    // this user's own recent traces. Never an unfiltered read.
+    const scope = run.runId ? `&runId=${encodeURIComponent(run.runId)}` : '';
+    fetch(`/api/agents/systems/${systemId}/run/diagnostics?nodes=${encodeURIComponent(nodes)}${scope}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((b: { metrics?: TraceMetrics } | null) => { if (!cancelled) setMetrics(b?.metrics ?? null); })
       .catch(() => { if (!cancelled) setMetrics(null); });

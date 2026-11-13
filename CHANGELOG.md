@@ -13,6 +13,47 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Agent engine rebuild, Phase A3: one Langfuse trace per run; LiteLLM attribution and keys
+
+- **One trace per run, id = run id.** `tabs/agents/lib/engine/observe.ts` over the official
+  `langfuse` SDK (`core/infra/langfuse.ts`): nodes are spans, model calls generations with usage,
+  tool calls spans carrying the governance decision (`ok|held|denied|error|dedup|not_advertised`),
+  governance `trace()` events spans of the run trace; a resume continues the same trace. LiteLLM's
+  own Langfuse callback is nested into the run trace (`existing_trace_id` / `parent_observation_id`).
+  Message content is redacted to roles + character counts; the tool-call structure is kept.
+- **Deep link.** `LastRun.traceUrl` / the run report / MCP `run_agent_system`, `get_agent_run`,
+  `resume_agent_run` carry `<console>/trace/<runId>` — one trace, never the list.
+- **Leak closed.** `…/run/diagnostics` reads Langfuse **by trace id** (`?runId=`), else by the
+  caller's user id and a time window; `observationsQuery` refuses an unfiltered read (typed, tested).
+- **Judge as score.** `…/evaluate` writes the LLM-judge verdict as a Langfuse score `judge` on the
+  run trace (and now attributes the judge call to the caller's domain).
+- **Attribution.** `TAG_RUN = 'run:'`; every model call carries `user`, `domain:`, `agent:`, `tab:`,
+  `run:` — the engine (`agentic-graph-server.ts`, both callers), the assistant
+  (`core/runtime/complete.ts` reads the user's domain), the OS assistant (`core/runtime/agent-loop.ts`),
+  classify and both embedders. The gateway mirror buckets `run:` spend (`spend.byRun`).
+- **No master key on any inference path** (repo-wide `MODEL-KEY` test): classify, knowledge and files
+  embeddings go through `callerCredential`; seven admin surfaces moved onto `litellm-admin.ts` /
+  `litellm-write.ts` (`/api/gateway`, platform-admin `mcp-apis`, `providers`, `models/assistant`,
+  `models/[id]` + `tabs/admin/lib/model-remove.ts` with injected IO, Monitoring `cost.ts`).
+- **Per-agent key by reference.** A live Build persists `LastBuild.litellmKeyRef` (secret
+  reference, never the value); runs resolve it through `callerCredential`, else the shared agent key.
+- **Embeds: the fallback is explicit.** Timeout / transport / 5xx / dim mismatch → labelled
+  `offline-hash` / `mock`; any 4xx → typed `GatewayRejectedError` is thrown, nothing indexed.
+- **Chart (`litellm:` block).** `failure_callback: ["langfuse"]`; Valkey response cache
+  (`cache_params.host: valkey`, `mode: default_off` — only classify and the embedders opt in);
+  `scripts/check-litellm-allowlist.mjs` asserts `litellmAgentKey.models` ⊇ every config default,
+  `agentRuntime.*Model` and router fallback alias on both profiles (wired into `gate.sh`); the
+  STACKIT overlay gains the `litellmAgentKey.models` its fallbacks needed.
+- **A2 review absorbed.** Approval queue hydrated on the engine/MCP path before any read (M-A);
+  per-thread in-flight lock in `executeTeamRun` (`engine/run-lock.ts`, typed 409) (M-B); the
+  requester can never approve their own item (`canApprove`) (L-G); `ApprovalResume.status`
+  gains `parked` (L-F); a decision with no resume handler stamps `resume_hook_unregistered` (L-C);
+  file headers on the run/stream routes (L-A).
+- **Tests:** `engine/observe.test.ts` (one trace-create, tree shape, redaction, resume),
+  `engine/attribution.test.ts` (real engine run through `liteLlmCaller`), `core/infra/langfuse.test.ts`,
+  `engine/run-lock.test.ts`, MODEL-KEY repo-wide, embed 4xx/timeout, hydrate-after-restart,
+  self-approval, `byRun`.
+
 ### Added — Agent engine rebuild, Phase A2: approvals as interrupts
 
 - **A held write pauses the run; the decision resumes it.** `tools_<id>` now computes the hold

@@ -52,6 +52,12 @@
  *     and per supervisor decision), so an unguarded handoff cycle between tool-less agents ends at
  *     the step budget, not at the recursion limit after ~1000 model calls; such a cycle is also a
  *     compile warning.
+ *   - OBSERVED (A3): every node body runs inside `observed(name, body)`, which opens a Langfuse span
+ *     under the run trace (`deps.observe`, see `observe.ts`), hands the body an `LlmCall` that
+ *     records each completion as a generation (with the `observe` context the LiteLLM caller
+ *     forwards to the gateway) and a `tool()` wrapper that records each governed call with its
+ *     decision. A parked node ends its span as `parked`, a thrown one as an error. No observer →
+ *     the no-op port; the graph shape is identical either way.
  */
 import {
   Annotation,
@@ -104,6 +110,8 @@ import {
 import { evaluateWhen, parseWhen, whenChannels, WhenSyntaxError, type WhenAst } from '@tabs/agents/lib/engine/when';
 import type { HoldDecision } from '@tabs/agents/lib/build/hold';
 import type { ApprovalDecision, ApprovalPort, ApprovalState, RunOwner, RunnerSnapshot } from '@tabs/agents/lib/engine/approval-port';
+import { noopObserver, type RunObserver, type SpanHandle } from '@tabs/agents/lib/engine/observe';
+import type { LlmCall } from '@core/runtime/agentic';
 
 // ------------------------------------------------------------------- types --
 
@@ -118,6 +126,11 @@ export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNod
    * Absent → nothing is held by the node (the executor may still hold with `holdAt: 'executor'`).
    */
   hold?: HoldDeps;
+  /**
+   * A3 — the run's Langfuse observer (trace id = run id): every node becomes a span, every model
+   * call a generation, every tool call a span carrying the decision. Absent → the no-op observer.
+   */
+  observe?: RunObserver;
 };
 
 /** What the tools node needs to hold a call: the rule, the queue port and the attribution. */
@@ -363,6 +376,25 @@ function emit(config: LangGraphRunnableConfig, ev: EngineEvent): void {
 // --------------------------------------------------------------- the build --
 
 type NodeFn = (state: EngineState, config: LangGraphRunnableConfig) => Promise<Partial<EngineUpdate> | Command>;
+/** A node body as written below: it receives the span it runs under (A3) and reports through it. */
+type NodeBody = (state: EngineState, config: LangGraphRunnableConfig, obs: SpanHandle) => Promise<Partial<EngineUpdate> | Command>;
+
+/** What a node's span records as its output — structure only, never model text. */
+function summarizeUpdate(out: Partial<EngineUpdate> | Command): Record<string, unknown> {
+  const u = ((out instanceof Command ? out.update : out) ?? {}) as Record<string, unknown>;
+  const cur = u.current as AgentCursor | null | undefined;
+  const o: Record<string, unknown> = {};
+  if (out instanceof Command && typeof out.goto === 'string') o.goto = out.goto;
+  if (cur && Array.isArray(cur.pending)) o.pending = cur.pending.length;
+  if (cur && typeof cur.finalText === 'string' && cur.finalText) o.finalChars = cur.finalText.length;
+  if (u.routeNext) o.routeNext = u.routeNext;
+  if (u.routes) o.routes = u.routes;
+  if (u.budget) o.budget = u.budget;
+  if (u.failed) o.failed = u.failed;
+  const runs = Array.isArray(u.nodeRuns) ? (u.nodeRuns as NodeRun[]) : u.nodeRuns ? [u.nodeRuns as NodeRun] : [];
+  if (runs.length > 0) o.recorded = runs.map((r) => ({ node: r.node, status: r.status, steps: r.result.steps.length }));
+  return o;
+}
 
 /**
  * Build the compiled StateGraph for one IR. Throws {@link GraphCompileError} for an unmapped
@@ -372,6 +404,21 @@ type NodeFn = (state: EngineState, config: LangGraphRunnableConfig) => Promise<P
  */
 export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
   const warnings: string[] = [];
+  const observer: RunObserver = deps.observe ?? noopObserver('unobserved');
+  /** A3: run a node body under its own span; the span ends with the node (parked / failed / ok). */
+  const observed = (name: string, agentId: string, kind: 'plan' | 'act' | 'tools' | 'route', body: NodeBody): NodeFn =>
+    async (state, config) => {
+      const span = observer.span(name, { agent: agentId, kind, visit: state.nodeRuns.length + 1, stepsUsed: state.budget.stepsUsed });
+      try {
+        const out = await body(state, config, span);
+        span.end({ output: summarizeUpdate(out) });
+        return out;
+      } catch (e) {
+        if (isGraphBubbleUp(e)) span.end({ parked: true });
+        else span.end({ error: (e as Error)?.message ?? String(e) });
+        throw e;
+      }
+    };
   if (deps.unmappedTools && deps.unmappedTools.length > 0) {
     throw new GraphCompileError(`unmapped legacy tool grant(s) with no governed MCP tool: ${deps.unmappedTools.join(', ')}`);
   }
@@ -507,7 +554,8 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
     const members = membersOf.get(id) ?? [];
 
     // ---------------------------------------------------------------- plan --
-    const plan: NodeFn = async (state, config) => {
+    const plan: NodeBody = async (state, config, obs) => {
+      const llm = obs.llm(deps.llm, `llm.plan_${id}`);
       const stepsUsed = state.budget.stepsUsed;
       if (stepsUsed >= stepBudget) {
         return new Command({ goto: END, update: { budget: { stepsUsed, exhausted: true }, current: null } });
@@ -522,7 +570,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
       emit(config, { event: 'node-started', data: { node: id, index: visit, total: Math.max(total, visit) } });
       try {
         const routed = resolveNodeModel(node, deps);
-        const completion = await deps.llm({
+        const completion = await llm({
           model: deps.reasoningModel,
           messages: budgetMessages([{ role: 'system', content: planPrompt(system) }, ...turns], deps.budget ?? 24_000),
           temperature: 0.2,
@@ -560,7 +608,8 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
     };
 
     // ----------------------------------------------------------------- act --
-    const act: NodeFn = async (state, config) => {
+    const act: NodeBody = async (state, config, obs) => {
+      const llm = obs.llm(deps.llm, `llm.act_${id}`);
       const cur = state.current;
       if (!cur || cur.node !== id) throw new Error(`act_${id}: no agent visit in flight`);
       const tools = deps.toolSpecsFor(node);
@@ -570,7 +619,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         if (cur.iterations >= cur.maxIterations || cur.forcedStop) {
           let finalText = '';
           try {
-            const synth = await deps.llm({
+            const synth = await llm({
               model: cur.model,
               messages: budgetMessages([...cur.messages, { role: 'user', content: CAP_SYNTHESIS_PROMPT }], budget),
               temperature: 0.2,
@@ -591,7 +640,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         const wire = toOpenAiTools(tools);
         let completion;
         try {
-          completion = await deps.llm({
+          completion = await llm({
             model: cur.model,
             messages: budgetMessages(messages, budget),
             tools: react ? undefined : wire,
@@ -603,7 +652,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           // Native tool-calling unsupported → ReAct protocol: rebuild the system prompt, retry without `tools`.
           react = true;
           messages = [{ role: 'system', content: actSystem(cur.system, cur.plan, tools, true) }, ...conversation(state.messages)];
-          completion = await deps.llm({ model: cur.model, messages: budgetMessages(messages, budget), temperature: 0.2, maxTokens: deps.maxOutputTokens });
+          completion = await llm({ model: cur.model, messages: budgetMessages(messages, budget), temperature: 0.2, maxTokens: deps.maxOutputTokens });
         }
         const calls: ToolCall[] = !react && completion.toolCalls.length > 0 ? completion.toolCalls : reactCall(completion.content);
         if (calls.length === 0) {
@@ -635,7 +684,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
      *   2. EXECUTE one call per superstep (checkpointed before the next): the node-level gate, the
      *      dedup ledger, a rejected call's typed result, else the governed executor AS THE RUNNER.
      */
-    const toolsNode: NodeFn = async (state, config) => {
+    const toolsNode: NodeBody = async (state, config, obs) => {
       const cur = state.current;
       if (!cur || cur.node !== id) throw new Error(`tools_${id}: no agent visit in flight`);
       // THE NODE-LEVEL GATE: only the tools THIS node is advertised may reach the executor.
@@ -685,6 +734,8 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
                 if (status !== 'pending') continue;
               }
               const payload: InterruptPayload = { approvalId: h.approvalId, tool: h.call.name, node: id, args: h.call.args };
+              // A3: the hold itself is an observation — the run parks here, and the trace says why.
+              obs.toolEvent(h.call, { decision: 'held', approvalId: h.approvalId, detail: `held for ${heldCalls.find((x) => x.call.id === h.call.id)?.rule.approverRole ?? 'admin'} approval` });
               const resumed = interrupt<InterruptPayload, unknown>(payload);
               status = decisionFromResume(resumed, h.approvalId) ?? (await hold.approvals.status(h.approvalId));
             }
@@ -723,15 +774,23 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         repeatedCalls += 1;
         executed[priorIdx] = { ...prior, count: prior.count + 1 };
         const note = dedupNote(prior.count);
+        obs.toolEvent(call, { decision: 'dedup', detail: note });
         record(note, false);
         feed(note);
       } else {
         const gate = cur.gate.decisions[call.id];
         let out: { text: string; isError: boolean };
-        if (!advertised.has(call.name)) out = notAdvertisedResult(id, call.name);
-        else if (gate && gate.decision === 'reject') out = rejectedResult(call.name, gate.approvalId);
-        // Approved or never held: the UNCHANGED governed executor, as the runner (gate 2 = handleRpc(user)).
-        else out = await deps.callTool(call.name, call.args);
+        if (!advertised.has(call.name)) {
+          out = notAdvertisedResult(id, call.name);
+          obs.toolEvent(call, { decision: 'not_advertised' });
+        } else if (gate && gate.decision === 'reject') {
+          out = rejectedResult(call.name, gate.approvalId);
+          obs.toolEvent(call, { decision: 'denied', approvalId: gate.approvalId, detail: 'rejected in Governance' });
+        } else {
+          // Approved or never held: the UNCHANGED governed executor, as the runner (gate 2 = handleRpc(user)).
+          // A3: recorded as a span carrying the decision (`ok`, or `denied`/`error` from the result).
+          out = await obs.tool(call, { decision: 'ok', approvalId: gate?.approvalId }, () => deps.callTool(call.name, call.args));
+        }
         if (gate) held.push({ node: id, tool: call.name, callId: call.id, approvalId: gate.approvalId, decision: gate.decision });
         const entry: ExecutedSig = { sig, count: (prior?.count ?? 0) + 1, ok: !out.isError };
         if (priorIdx >= 0) executed[priorIdx] = entry;
@@ -756,7 +815,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
     };
 
     // --------------------------------------------------------------- route --
-    const route: NodeFn = async (state, config) => {
+    const route: NodeBody = async (state, config, obs) => {
       const cur = state.current;
       // A member returning to its supervisor arrives with the MEMBER's (already recorded) visit cleared.
       const ownVisit = !!cur && cur.node === id;
@@ -803,7 +862,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           return update;
         }
         try {
-          const decision = await decideRoute(state, node, members);
+          const decision = await decideRoute(state, node, members, obs.llm(deps.llm, `llm.route_${id}`));
           update.routes = [decision];
           update.budget = { stepsUsed: stepsUsed + 1, exhausted: false };
           if (decision.next === 'END') {
@@ -831,14 +890,14 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
     const routeEnds = node.supervisor
       ? undefined
       : [...new Set([...handoffs.map((h) => nameOf(h.to).plan), ...(parent ? [nameOf(parent).route] : []), END])];
-    entries.push([nn.plan, plan, { ends: planEnds }]);
-    entries.push([nn.act, act]);
-    entries.push([nn.tools, toolsNode]);
-    entries.push([nn.route, route, routeEnds ? { ends: routeEnds } : undefined]);
+    entries.push([nn.plan, observed(nn.plan, id, 'plan', plan), { ends: planEnds }]);
+    entries.push([nn.act, observed(nn.act, id, 'act', act)]);
+    entries.push([nn.tools, observed(nn.tools, id, 'tools', toolsNode)]);
+    entries.push([nn.route, observed(nn.route, id, 'route', route), routeEnds ? { ends: routeEnds } : undefined]);
   }
 
   /** Ask the supervisor's model where to go next: the mandatory `route` tool, else the `NEXT:` text fallback. */
-  async function decideRoute(state: EngineState, node: IRNode, members: string[]): Promise<RouteDecision> {
+  async function decideRoute(state: EngineState, node: IRNode, members: string[], llm: LlmCall): Promise<RouteDecision> {
     const turns = conversation(state.messages);
     const routed = resolveNodeModel(node, deps);
     const base = nodeSystem(deps.preamble, node, state.handoffs, deps.budget);
@@ -850,7 +909,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
     };
     let completion;
     try {
-      completion = await deps.llm({
+      completion = await llm({
         model: routed.model,
         messages: budgetMessages([{ role: 'system', content: base + routeInstructions(members, false) }, ...turns], budget),
         tools: toOpenAiTools([routeTool(members)]),
@@ -859,7 +918,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
       });
     } catch (e) {
       if (!(e instanceof ToolCallingUnsupportedError)) throw e;
-      completion = await deps.llm({
+      completion = await llm({
         model: routed.model,
         messages: budgetMessages([{ role: 'system', content: base + routeInstructions(members, true) }, ...turns], budget),
         temperature: 0.2,

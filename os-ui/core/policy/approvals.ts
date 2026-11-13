@@ -90,7 +90,8 @@ export type ApprovalRunner = { id: string; role: Role; domains: string[] };
 
 /** What the resume after a decision did (A2). */
 export type ApprovalResume = {
-  status: 'started' | 'done' | 'refused' | 'failed';
+  /** `parked`: the run resumed and parked again on ANOTHER held call (A2 review L-F). */
+  status: 'started' | 'done' | 'parked' | 'refused' | 'failed';
   at: string;
   /** Typed refusal/failure (`runner_unavailable`, `runner_role_insufficient`, `run_not_found`, …). */
   error?: { code: string; reason: string };
@@ -295,7 +296,13 @@ export function decisionSettled(approvalId: string): Promise<void> {
 
 function fireDecided(a: Approval, decision: 'approve' | 'reject'): void {
   const st = hookState();
-  if (!a.runId || st.handlers.size === 0) return;
+  if (!a.runId) return;
+  if (st.handlers.size === 0) {
+    // A2 review L-C: a process that never registered the resume (a worker without the boot
+    // registration) must leave a trace on the card instead of a decided-but-never-resumed run.
+    recordResume(a.id, { status: 'failed', at: now(), error: { code: 'resume_hook_unregistered', reason: 'no resume handler is registered in this process — the run was not resumed' } });
+    return;
+  }
   const runs = [...st.handlers].map(async (h) => {
     try {
       await h(a, decision);
@@ -364,6 +371,17 @@ export function __resetApprovals(): void {
   s.hydration = null;
   hookState().settled.clear();
   mirror.__reset();
+}
+
+/**
+ * Test-only: simulate a POD RESTART — the in-process queue and its hydration promise are gone, the
+ * durable mirror is untouched. The next `ensureHydrated()` must rebuild the queue from the mirror.
+ */
+export function __simulateRestart(): void {
+  const s = approvalsState();
+  s.queue.clear();
+  s.hydration = null;
+  hookState().settled.clear();
 }
 
 /** Test-only: drop every registered post-decision handler. */

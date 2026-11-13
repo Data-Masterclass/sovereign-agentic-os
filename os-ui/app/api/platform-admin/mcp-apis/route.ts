@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { config } from '@core/kernel/config';
+import { adminGet } from '@core/infra/litellm-admin';
 import { ALL_MCP_TOOLS, MCP_TABS } from '@core/mcp/server';
 import { listAppsForUser } from '@tabs/software/lib/apps';
 import { getConnectionByApp } from '@core/infra/app-registry';
@@ -31,12 +31,10 @@ export const dynamic = 'force-dynamic';
 /** Best-effort live tool list from the LiteLLM gateway (same read as /api/gateway). */
 async function liveGatewayTools(): Promise<RegistryTool[]> {
   try {
-    const res = await fetch(`${config.litellmUrl}/v1/mcp/tools`, {
-      headers: { authorization: `Bearer ${config.litellmMasterKey}`, accept: 'application/json' },
-      cache: 'no-store',
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
+    // The ONE admin read client — the master key never appears in a route.
+    const read = await adminGet<{ tools?: Record<string, unknown>[] }>('/v1/mcp/tools');
+    if (!read.ok) return [];
+    const data = read.data;
     return (Array.isArray(data?.tools) ? data.tools : []).map((t: Record<string, unknown>) => ({
       name: String(t.name ?? ''),
       description: String(t.description ?? '').replace(/\s+/g, ' ').trim() || undefined,

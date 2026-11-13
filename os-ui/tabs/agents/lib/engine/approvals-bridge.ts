@@ -11,9 +11,13 @@
  *     (`enqueueOnce`, `getApproval`). Kind `connection_write` (the agent write-back kind); `source`
  *     'Agents'; a bounded `args` copy; the runner snapshot; `runId`/`threadId`/`interruptKey`/
  *     `systemId`/`node`. `server-only` — never imported by the builder.
+ *   - HYDRATION FIRST (A2 review M-A): both methods `await ensureHydrated()` before touching the queue.
+ *     After a pod restart the in-process Map is empty until something hydrates it from the durable
+ *     mirror; without this, a resume before anyone opened the Inbox would read `status → 'unknown'`
+ *     and file a SECOND approval under the same interruptKey, orphaning the decided one.
  */
 import 'server-only';
-import { enqueueOnce, getApproval, type ApprovalStatus } from '@core/policy/approvals';
+import { ensureHydrated, enqueueOnce, getApproval, type ApprovalStatus } from '@core/policy/approvals';
 import type { ApprovalPort, ApprovalState, HeldApprovalInput } from '@tabs/agents/lib/engine/approval-port';
 import { writeTargetScope } from '@tabs/agents/lib/build/hold';
 
@@ -34,6 +38,7 @@ function toState(status: ApprovalStatus): ApprovalState {
 export function serverApprovalPort(): ApprovalPort {
   return {
     async enqueueOnce(input: HeldApprovalInput) {
+      await ensureHydrated();
       const { approval } = enqueueOnce({
         kind: 'connection_write',
         title: `Approval needed: ${input.tool}`,
@@ -61,6 +66,7 @@ export function serverApprovalPort(): ApprovalPort {
       return { approvalId: approval.id, status: toState(approval.status) };
     },
     async status(approvalId: string) {
+      await ensureHydrated();
       const a = getApproval(approvalId);
       return a ? toState(a.status) : 'unknown';
     },

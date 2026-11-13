@@ -15,8 +15,13 @@
  *     checkpoints + `emit` (the request's SSE) + `publishRunEvent` (the re-attachable topic), then
  *     completes (`setRunning` false, `setLastRun`). `resumeOsRunAfterDecision` is what the decide()
  *     hook calls: it rebuilds the context AS THE LIVE RUNNER and resumes with the decision.
+ *   - IN-FLIGHT LOCK (A2 review M-B): one thread runs in one process at a time. `executeTeamRun`
+ *     acquires a `globalThis`-pinned lock on the run id and releases it in `finally`; a second
+ *     entrant (the owner's `POST {resume}` racing a decision-driven resume, or two deciders) gets a
+ *     typed `RunInFlightError` (409) instead of re-running `tools_<id>` and executing an approved
+ *     write twice. Single replica, like the checkpointer; A4's worker moves this to `run_jobs`.
  *   - `server-only`: it touches the store, config and the server wiring. The pure logic it drives
- *     (`engine/run.ts`, `engine/resume.ts`) is what the tests exercise.
+ *     (`engine/run.ts`, `engine/resume.ts`, `run-lock.ts`) is what the tests exercise.
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -42,6 +47,7 @@ import {
   type SystemView,
 } from '@tabs/agents/lib/store';
 import { openRunTopic, publishRunEvent } from '@tabs/agents/lib/engine/run-events';
+import { acquireRunLock } from '@tabs/agents/lib/engine/run-lock';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 import type { LivePrincipal } from '@tabs/agents/lib/engine/resume';
 
@@ -165,6 +171,9 @@ export function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: s
     interrupted: team.interrupted || undefined,
     heldApprovals: parked ? heldApprovals : undefined,
     warnings: team.warnings && team.warnings.length > 0 ? team.warnings : undefined,
+    // A3: the deep link to THIS run's Langfuse trace (id = run id), offered only when it was recorded.
+    traceStoreAvailable: team.traceStoreAvailable,
+    traceUrl: team.traceUrl,
   };
   const body = {
     running,
@@ -172,6 +181,8 @@ export function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: s
     engine,
     runId: team.runId,
     checkpointer: team.checkpointer,
+    traceUrl: team.traceUrl,
+    traceStoreAvailable: team.traceStoreAvailable,
     warnings: team.warnings,
     interrupted: team.interrupted,
     // A2: a parked run and what it waits on — the decision in Governance resumes it.
@@ -229,6 +240,9 @@ export type ExecuteTeamRunInput = {
 export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunReportBody> {
   const { user, systemId: id, view, yaml, engine, runId } = input;
   const owner = { systemId: id, userId: user.id, domain: view.system.system.domain };
+  // A2 review M-B: one entrant per thread. Thrown BEFORE any marker or event — a refused entrant
+  // never looks like a run. Released in `finally` below.
+  const release = engine === 'langgraph' ? acquireRunLock(runId) : () => undefined;
   const emit = (event: string, data: unknown) => {
     input.emit?.(event, data);
     if (engine === 'langgraph') publishRunEvent(runId, event, data);
@@ -255,6 +269,8 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
       resume: input.resume,
       resumeWith: input.resumeWith,
       signal: input.signal,
+      // A3: the system's own LiteLLM key by reference, when Build minted one; else the shared agent key.
+      keyRef: view.lastBuild?.litellmKeyRef,
       onNodeStart: (ev) => {
         try { checkpointNode(id, { phase: 'start', node: ev.node }); } catch { /* best-effort */ }
         emit('node-started', ev);
@@ -285,6 +301,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
     throw e;
   } finally {
     clearActivity(id);
+    release();
   }
 }
 

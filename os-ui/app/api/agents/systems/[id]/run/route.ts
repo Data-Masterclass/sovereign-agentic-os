@@ -1,3 +1,12 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Run one agent system (start or resume) through the governed engine, streaming progress.
+ * USER STORY: As a builder I press Run and watch each agent work, every tool call governed as me; a
+ *             run interrupted by a restart resumes from its checkpoint instead of starting over.
+ * ARCHITECTURE: thin route over `tabs/agents/lib/build/run-service.ts` (`prepareRunYaml`,
+ *             `executeTeamRun`); engine chosen by `selectEngine`; SSE or JSON; thread id = run id.
+ */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { getSystemForRun, setRunning, recordActivity, clearActivity, setActivity, setLastRun, startRunCheckpoint } from '@tabs/agents/lib/store';

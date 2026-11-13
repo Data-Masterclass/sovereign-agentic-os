@@ -8,7 +8,6 @@ import { setEnabled, setCap, setAssistantModel, clearAssistantModel, listModels,
 import { removeGatewayModel } from '@tabs/admin/lib/model-remove';
 import { modelReferences } from '@tabs/admin/lib/model-references';
 import { ensureHydrated as ensureAgentsHydrated } from '@tabs/agents/lib/store';
-import { config } from '@core/kernel/config';
 import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
@@ -80,7 +79,8 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
       );
     }
 
-    const gateway = await removeGatewayModel(id, { url: config.litellmUrl, masterKey: config.litellmMasterKey });
+    // A3: the helper binds the one admin read/write clients itself — no key in a route.
+    const gateway = await removeGatewayModel(id);
     if (gateway.status === 'managed') {
       return NextResponse.json(
         { error: `${id} is managed by the deployment (seeded in the gateway config) — it cannot be removed here` },

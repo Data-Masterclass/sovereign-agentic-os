@@ -5,7 +5,7 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { McpTool } from '@core/mcp/server';
 import { pendingHandle, whoCanApprove } from '@core/mcp/pending';
-import { decide, decisionSettled, getApproval, listApprovals, recordEffect, type Approval, type ApprovalStatus } from '@core/policy/approvals';
+import { decide, decisionSettled, ensureHydrated, getApproval, listApprovals, recordEffect, type Approval, type ApprovalStatus } from '@core/policy/approvals';
 import { canApprove, canSee, roleLabel } from '@core/policy/roles';
 import { applyEffect } from '@core/policy/effects';
 import { buildEffectDeps, fileArtifactCertification, isLadderKind, type LadderKind } from '@core/policy/ladder';
@@ -134,6 +134,9 @@ export const governanceTools: McpTool[] = [
       const decision = str(args.decision) === 'deny' ? 'reject' : str(args.decision) === 'approve' ? 'approve' : '';
       if (!decision) fail('decide_approval needs `decision` = approve | deny', 400);
 
+      // A2 review M-A: the queue is hydrated from the durable mirror before it is read — an MCP
+      // decision right after a pod restart must find the approval the Inbox would show.
+      await ensureHydrated();
       const a = getApproval(id);
       if (!a || !canSee(actor(user), a)) fail('Request not found', 404); // no existence leak
       if (a.status !== 'pending') fail(`Already ${a.status}`, 409);
@@ -142,6 +145,8 @@ export const governanceTools: McpTool[] = [
       // here (floor), and a domain_admin cannot decide cross-domain or certify.
       if (!canApprove(actor(user), a)) {
         const need = a.scope === 'tenant' ? 'a platform Admin' : `a ${roleLabel(a.approverRole)} of ${a.domain}`;
+        // A2 review L-G: the requester never decides their own item — four-eyes, whatever the rank.
+        if (a.requestedBy === user.id) fail(`You cannot approve your own request — it needs ${need} other than you`, 403);
         fail(`This request needs ${need}`, 403);
       }
 

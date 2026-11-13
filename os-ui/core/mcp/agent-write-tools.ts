@@ -164,6 +164,8 @@ export const agentWriteTools: McpTool[] = [
         engine,
         runId: team.runId ?? (engine === 'langgraph' ? runId : undefined),
         checkpointer: team.checkpointer,
+        // A3: the deep link to THIS run's Langfuse trace (id = run id), when the trace store recorded it.
+        traceUrl: team.traceUrl,
         reachedEnd: team.reachedEnd,
         // A2: a run PARKED on a held write — decide its approvals (decide_approval) to resume it.
         parked: team.parked ?? false,
@@ -205,6 +207,7 @@ export const agentWriteTools: McpTool[] = [
         runId,
         systemId: owner.systemId,
         engine: 'langgraph',
+        traceUrl: body.traceUrl,
         reachedEnd: body.reachedEnd,
         parked: body.parked,
         heldApprovals: body.heldApprovals,
@@ -244,6 +247,7 @@ type RunTeamFn = (input: {
   runs: { node: string; model: string; result: { steps: { tool: string; isError: boolean }[] } }[];
   runId?: string;
   checkpointer?: 'postgres' | 'memory';
+  traceUrl?: string;
   parked?: boolean;
   heldApprovals?: { approvalId: string; tool: string; node: string }[];
 }>;

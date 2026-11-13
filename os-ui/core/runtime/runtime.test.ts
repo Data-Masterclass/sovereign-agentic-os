@@ -3,6 +3,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { CurrentUser } from '@core/kernel/auth';
 import { toolsForTab } from '@core/mcp/server';
 import { config } from '@core/kernel/config';
@@ -198,6 +201,42 @@ test('parseLlmUsage never fabricates usage from an absent/malformed block', () =
 });
 
 // --- Phase-0 regression gate: run-path model calls use the master key (review finding 4) ------
+
+/** Every non-test source file under os-ui that mentions the master key config field. */
+function filesReferencingMasterKey(): string[] {
+  const root = fileURLToPath(new URL('../../', import.meta.url));
+  const hits: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === '.next' || entry.name.startsWith('.')) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(ts|tsx|mjs)$/.test(entry.name) && !/\.test\.(ts|tsx)$/.test(entry.name) && readFileSync(full, 'utf8').includes('litellmMasterKey')) {
+        hits.push(relative(root, full));
+      }
+    }
+  };
+  for (const top of ['core', 'tabs', 'app', 'scripts', 'worker']) {
+    try { walk(join(root, top)); } catch { /* absent directory */ }
+  }
+  return hits.sort();
+}
+
+/** The ONLY places the master key may be read: gateway administration and key provisioning. */
+const MASTER_KEY_ALLOWLIST = [
+  'core/infra/litellm-admin.ts',
+  'core/infra/litellm-write.ts',
+  'core/infra/tool-sso-litellm.ts',
+  'core/kernel/config.ts',
+  'tabs/agents/lib/build/live-clients.ts',
+];
+
+test('MODEL-KEY (repo-wide, A25): only gateway administration and key provisioning reference the master key', () => {
+  const hits = filesReferencingMasterKey();
+  assert.ok(hits.includes('core/kernel/config.ts'), 'the scan must at least see the config definition');
+  const offenders = hits.filter((f) => !MASTER_KEY_ALLOWLIST.includes(f));
+  assert.deepEqual(offenders, [], `an inference or route path references the LiteLLM master key: ${offenders.join(', ')} — use callerCredential (inference) or litellm-admin/litellm-write (administration)`);
+});
 
 test('MODEL-KEY: a run-path completion must NOT carry the LiteLLM master key', async () => {
   const seen: { auth?: string } = {};

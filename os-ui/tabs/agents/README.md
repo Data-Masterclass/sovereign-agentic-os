@@ -84,9 +84,20 @@ MCP tools: `run_agent_system` and `resume_agent_run { runId }` (restart recovery
 `core/mcp/agent-write-tools.ts` (bundle `agent-write`; both are in the static write catalog),
 `get_agent_run { runId }` (state summary, path, held approvals with who can decide; runner-only; a
 read) beside `get_agent_system` in `core/mcp/discovery-base-tools.ts`. `run_agent_system` returns
-`runId`, `parked`, `heldApprovals`.
+`runId`, `traceUrl`, `parked`, `heldApprovals`.
 The Governance tool `decide_approval` resumes a parked run's thread through the same hook and
 returns the `resume` outcome.
+
+One trace per run (A3): `lib/engine/observe.ts` builds the Langfuse trace (id = run id; nodes as
+spans, model calls as generations with usage, tool calls as spans carrying the decision) over the
+SDK client in `core/infra/langfuse.ts`; `build-graph.ts` `observed()` wraps every node. The run
+report and `LastRun` carry `traceUrl` (`<console>/trace/<runId>`) and `traceStoreAvailable`;
+`run_agent_system`, `get_agent_run` and `resume_agent_run` return `traceUrl`. Every model call of a
+run is attributed to the runner (`user = os-<id>`), `domain:`, `agent:`, `run:` and uses the
+system's own LiteLLM key by reference (`LastBuild.litellmKeyRef`, minted by a live Build) or the
+shared agent key — never the master key. The diagnostics route reads Langfuse **by the run's trace
+id**; the Evaluate judge writes a `judge` score on the trace. `lib/engine/run-lock.ts` is the
+per-thread in-flight lock `executeTeamRun` holds (a concurrent resume is a typed 409).
 
 Parity: `lib/engine/parity-harness.ts` + `lib/engine/fixtures/*.json` are the golden recordings
 both engines must reproduce (`parity.test.ts`: P1 for both engines, HANDOFF-GUARD, P2 abort +

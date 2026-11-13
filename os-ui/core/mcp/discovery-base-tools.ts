@@ -42,10 +42,13 @@ export const discoveryBaseTools: McpTool[] = [
         const a = getApproval(h.approvalId);
         return { ...h, status: a?.status ?? 'unknown', whoCanApprove: a ? whoCanApprove(a) : undefined, approverRole: a?.approverRole };
       });
+      const { traceUrlFor, langfuseEnabled } = await import('@core/infra/langfuse');
       return {
         runId,
         systemId: owner.systemId,
         engine: 'langgraph',
+        // A3: the run's Langfuse trace (id = run id) — a deep link, never a list.
+        traceUrl: langfuseEnabled() ? traceUrlFor(runId) : undefined,
         finished: run.finished,
         parked: run.parked,
         heldApprovals,

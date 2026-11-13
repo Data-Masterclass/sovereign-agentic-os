@@ -51,7 +51,16 @@ export type LastBuildRow = {
 };
 
 /** The last build outcome persisted server-side so it survives tab-switches + reloads. */
-export type LastBuild = { ok: boolean; at: number; rows: LastBuildRow[] };
+export type LastBuild = {
+  ok: boolean;
+  at: number;
+  rows: LastBuildRow[];
+  /**
+   * A3: the system's own LiteLLM virtual key, by secret REFERENCE (never the value), when the live
+   * Build minted it. Runs resolve it through `callerCredential`; absent → the shared agent key.
+   */
+  litellmKeyRef?: { name: string; key: string };
+};
 
 /**
  * A per-PROCESS nonce, generated once when this module first loads. It stamps

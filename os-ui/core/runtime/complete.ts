@@ -17,9 +17,9 @@ import { checkCap } from '@core/policy/cost';
  * Agents build chat, Software build chat, the Big Bets planner, the Knowledge
  * assistant and the Metric agent. It resolves the model an admin chose in
  * Platform Admin → Models & Providers (typically the STACKIT managed LLM) and
- * runs the completion through the GOVERNED LiteLLM gateway (Bearer master key,
- * Langfuse-audited), tagging the caller identity so every assistant turn is
- * attributable.
+ * runs the completion through the GOVERNED LiteLLM gateway (the SCOPED agent key —
+ * never the master key — Langfuse-audited), tagging the caller identity AND
+ * domain so every assistant turn is attributable (A3).
  *
  * When no assistant model is configured it throws {@link AssistantNotConfiguredError}
  * — an HONEST, admin-actionable error. There is NO silent fake-AI fallback.
@@ -186,6 +186,7 @@ export async function assistantComplete(
   const domains = typeof opts.user === 'string' ? undefined : opts.user?.domains;
   // Live cost-cap enforcement: an over-cap caller is blocked before spend.
   enforceCostCaps(domains);
-  const content = await caller({ model, messages, temperature: opts.temperature, user, signal: opts.signal });
+  // A3: the caller's (first) domain rides to the gateway as the `domain:` tag — per-domain spend.
+  const content = await caller({ model, messages, temperature: opts.temperature, user, domain: domains?.[0], signal: opts.signal });
   return { content, model };
 }

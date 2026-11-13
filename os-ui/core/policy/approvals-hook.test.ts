@@ -8,7 +8,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __resetApprovals, __resetDecidedHandlers, decide, decisionSettled, enqueue, enqueueOnce, getApproval, onDecided } from '@core/policy/approvals';
+import { __resetApprovals, __resetDecidedHandlers, __simulateRestart, decide, decisionSettled, ensureHydrated, enqueue, enqueueOnce, getApproval, onDecided } from '@core/policy/approvals';
 
 beforeEach(() => { __resetApprovals(); __resetDecidedHandlers(); });
 
@@ -70,4 +70,50 @@ test('a handler that throws stamps the approval failed and never rejects the dec
   assert.ok(decide(plain.id, 'approve', 'dana'));
   await decisionSettled(plain.id);
   assert.equal(fired, 1, 'no run → no handler');
+});
+
+// --------------------------------------------- A2 review M-A: hydrate-after-restart, no duplicate --
+
+test('M-A: after a restart, hydrating from the mirror makes enqueueOnce find the SAME approval (no orphaned duplicate)', async () => {
+  // The durable mirror (a stubbed OpenSearch) answers the hydrate search with whatever the old
+  // process wrote through. Stub BEFORE the first write so the mirror's probe sees a live cluster.
+  const realFetch = globalThis.fetch;
+  let stored: Record<string, unknown> | null = null;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (/_search\?size=\d+$/.test(url)) {
+      return new Response(JSON.stringify({ hits: { hits: stored ? [{ _source: stored }] : [] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (/\/_doc\//.test(url) && (init?.method === 'PUT' || init?.method === 'POST')) {
+      stored = JSON.parse(String(init.body)) as Record<string, unknown>; // the write-through
+      return new Response('{"result":"created"}', { status: 201, headers: { 'content-type': 'application/json' } });
+    }
+    // probes / index existence / settings: answer OK
+    return new Response(init?.method === 'HEAD' ? null : '{"count":0}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  try {
+    __resetApprovals(); // forget any dead-mirror verdict from earlier tests
+    const first = enqueueOnce({ ...base, interruptKey: 'run_9:c-1' }).approval;
+    decide(first.id, 'approve', 'dana');
+    await new Promise((r) => setTimeout(r, 20)); // the write-through is fire-and-forget
+    assert.ok(stored, 'the decided approval was written through to the mirror');
+    __simulateRestart();
+    assert.equal(getApproval(first.id), null, 'the in-process queue is empty after the restart');
+    await ensureHydrated();
+    const again = enqueueOnce({ ...base, interruptKey: 'run_9:c-1' });
+    assert.equal(again.created, false, 'a resume after the restart filed a SECOND approval under the same interruptKey');
+    assert.equal(again.approval.id, first.id);
+    assert.equal(again.approval.status, 'approved', 'the decided approval must be the one the resume reads');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('L-C: deciding a run approval with NO resume handler registered stamps `resume_hook_unregistered` on the record', async () => {
+  const a = enqueueOnce({ ...base, interruptKey: 'run_7:c-1' }).approval;
+  decide(a.id, 'approve', 'dana');
+  await decisionSettled(a.id);
+  const after = getApproval(a.id)!;
+  assert.equal(after.resume?.status, 'failed');
+  assert.equal(after.resume?.error?.code, 'resume_hook_unregistered');
 });

@@ -67,7 +67,8 @@ export async function resumeAfterDecision(a: Approval, decision: ApprovalDecisio
   deps.markResume(a.id, { status: 'started', at: now() });
   try {
     const out = await deps.resumeRun({ runner: live, approval: a, decision });
-    deps.markResume(a.id, { status: 'done', at: now() });
+    // L-F: a run that parked again on another held call is not "done" — say so on the card.
+    deps.markResume(a.id, { status: out.parked ? 'parked' : 'done', at: now() });
     return { status: 'done', approvalId: a.id, runId: a.runId, parked: out.parked, reachedEnd: out.reachedEnd };
   } catch (e) {
     const err = e as Error & { name?: string };

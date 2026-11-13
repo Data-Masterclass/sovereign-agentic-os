@@ -133,16 +133,19 @@ test('GATEWAY-MIRROR: tagged spend lands in its own dimension', () => {
       { tag: 'domain:finance', metrics: { spend: 5 } },
       { tag: 'agent:triage', metrics: { spend: 2 } },
       { tag: 'tab:knowledge', metrics: { spend: 1 } },
+      { tag: 'run:run_1b4e28ba-2fa1-11d2-883f-0016d3cca427', metrics: { spend: 0.5 } },
     ],
   }));
   assert.deepEqual(s.byDomain, { finance: 15 });
   assert.deepEqual(s.byAgent, { triage: 2 });
   assert.deepEqual(s.byTab, { knowledge: 1 });
+  // A3: one run's spend is its own bucket (the `run:` tag every engine call carries).
+  assert.deepEqual(s.byRun, { 'run_1b4e28ba-2fa1-11d2-883f-0016d3cca427': 0.5 });
 });
 
 test('GATEWAY-MIRROR: a tag we do not own is ignored, not bucketed', () => {
   const s = spendByTag(good({ results: [{ tag: 'experiment:x', metrics: { spend: 9 } }, { tag: 'bare', metrics: { spend: 9 } }] }));
-  assert.deepEqual(s, { byDomain: {}, byAgent: {}, byTab: {} });
+  assert.deepEqual(s, { byDomain: {}, byAgent: {}, byTab: {}, byRun: {} });
 });
 
 test('GATEWAY-MIRROR: per-user spend sums across report rows', () => {
