@@ -77,7 +77,7 @@ export async function POST(req: Request) {
         await putBlob(key, bytes, fileType);
         attachObject(asset.id, user, { contentType: fileType, bytes: bytes.length });
       }
-      await reindexFile(asset, text);
+      await reindexFile(asset, text, user.id); // A27: the uploader pays for the embed
       return NextResponse.json({ asset }, { status: 201 });
     }
 
@@ -119,7 +119,7 @@ export async function POST(req: Request) {
         await putBlob(key, bytes, fileType);
         attachObject(asset.id, user, { contentType: fileType, bytes: bytes.length });
       }
-      await reindexFile(asset, text);
+      await reindexFile(asset, text, user.id); // A27: the uploader pays for the embed
       return NextResponse.json({ asset }, { status: 201 });
     }
 
@@ -144,7 +144,7 @@ export async function POST(req: Request) {
     });
     // Auto-index: ingest-by-type → chunk+hash → embed → hybrid index (Processing →
     // Searchable ✓). Best-effort; the adapters self-fall-back to their mocks offline.
-    await reindexFile(asset, body.text ?? '');
+    await reindexFile(asset, body.text ?? '', user.id); // A27
     return NextResponse.json({ asset }, { status: 201 });
   } catch (e) {
     return errorResponse(e);

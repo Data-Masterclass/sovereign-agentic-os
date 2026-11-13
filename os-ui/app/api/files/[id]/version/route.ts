@@ -39,6 +39,6 @@ export const POST = withRoute<{ id: string }, { text?: string; bytes?: number; r
       attachObject(id, user, { contentType, bytes: bytes.length });
     }
   }
-  await reindexById(id); // re-index only the changed chunks (content-hash cache)
+  await reindexById(id, user.id); // A27 + re-index only the changed chunks (content-hash cache)
   return NextResponse.json({ asset });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

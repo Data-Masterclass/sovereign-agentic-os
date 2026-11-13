@@ -1845,3 +1845,22 @@ reason is here.
   The gate is the better half of the two — `.dockerignore` keeps a stray out of the IMAGE, the gate
   keeps it out of the TREE, which is also where `npm test`, `tsc` and the structure ratchet would
   otherwise eventually trip over it.
+
+- **F2-6 A27's index sites are attributed, and the no-caller case is kept deliberately.**
+  `indexWorkflow`, `indexDomain` and `indexAsset` took no caller at all, so the embed calls they
+  made billed `user os-system` + `domain:platform`. All three now accept an `EmbedCaller`, built by
+  a new `actingCaller(userId, domain)` exported from each tab's `embed.ts`, and every door that has
+  an acting user passes it: `publish_knowledge` and `index_knowledge` (MCP), the three
+  `/api/knowledge/workflows/[id]/{index,publish,retrieve}` routes, `file_write`'s re-index, and the
+  six `/api/files/*` routes — `reindexFile(asset, text, actingUserId?)` and
+  `reindexById(id, actingUserId?)` thread it to `indexAsset`.
+  Two choices worth naming. **The tag carries the OBJECT's domain, not the actor's active one**:
+  an admin in `ops` re-indexing a `sales` workflow produces `domain:sales`, because the spend
+  belongs to the knowledge, not to whoever pressed the button — pinned by a test. And **a door with
+  no acting user still says `platform`**: `bootstrapFilesIndex` and a scheduled connector sync pass
+  nothing. That is not an unfixed remnant — attributing a boot sweep to some user would be a worse
+  lie than the per-surface attribution A27 complained about, and the test asserts the sweep passes
+  `undefined` rather than guessing. Tests assert the OUTGOING LiteLLM body (`user`,
+  `metadata.tags`), which is what A27's Test column asks for, not that a helper returned the right
+  shape: `tabs/knowledge/lib/index-attribution.test.ts` (4) + 2 cases in
+  `tabs/files/lib/index-pipeline.test.ts`. **A27 → `true`.**

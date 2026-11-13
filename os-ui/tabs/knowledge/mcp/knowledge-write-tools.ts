@@ -82,6 +82,7 @@ import {
   type Actor,
 } from '@tabs/knowledge/lib/schema';
 import { indexWorkflow, indexDomain, purgeKnowledgeUnits } from '@tabs/knowledge/lib/index-pipeline';
+import { actingCaller } from '@tabs/knowledge/lib/embed';
 
 import {
   createFile,
@@ -252,8 +253,10 @@ export const knowledgeWriteTools: McpTool[] = [
       await promoteThroughSeam('knowledge', id, user, { rung: 'promote' });
       const rec = getWorkflow(id, p);
       try {
-        await indexWorkflow(rec.workflow, { owner: rec.owner, tacit: rec.tacit, updatedAt: rec.updatedAt });
-        await indexDomain(getDomainKnowledge(rec.domain));
+        // A27: the embed calls bill the PUBLISHER, not `user os-system`.
+        const caller = actingCaller(user.id, rec.domain);
+        await indexWorkflow(rec.workflow, { owner: rec.owner, tacit: rec.tacit, updatedAt: rec.updatedAt, caller });
+        await indexDomain(getDomainKnowledge(rec.domain), caller);
       } catch {
         /* indexing is best-effort; publish already succeeded */
       }
@@ -277,8 +280,10 @@ export const knowledgeWriteTools: McpTool[] = [
       if (!id) fail('index_knowledge needs a `workflowId`', 400);
       const p = P(user);
       const view = getWorkflow(id, p);
-      const workflow = await indexWorkflow(view.workflow, { owner: view.owner, tacit: view.tacit, updatedAt: view.updatedAt });
-      const domain = await indexDomain(getDomainKnowledge(view.domain));
+      // A27: the embed calls bill the caller who asked for the re-index.
+      const caller = actingCaller(user.id, view.domain);
+      const workflow = await indexWorkflow(view.workflow, { owner: view.owner, tacit: view.tacit, updatedAt: view.updatedAt, caller });
+      const domain = await indexDomain(getDomainKnowledge(view.domain), caller);
       return { workflow, domain };
     },
   },

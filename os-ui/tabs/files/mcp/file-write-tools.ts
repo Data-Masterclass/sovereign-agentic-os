@@ -226,7 +226,7 @@ export const fileWriteTools: McpTool[] = [
       const description = str(args.description);
       const documented = description ? setFileDocs(asset.id, p, { description, tags }) : asset;
       try {
-        await reindexFile(documented, textArg ?? '');
+        await reindexFile(documented, textArg ?? '', user.id); // A27
       } catch {
         /* indexing is best-effort; the upload already succeeded */
       }

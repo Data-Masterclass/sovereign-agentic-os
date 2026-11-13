@@ -5,7 +5,7 @@ import type { FileAsset } from '@tabs/files/lib/asset-schema';
 import { docMetaOf } from '@tabs/files/lib/dls';
 import { type IngestAdapter, type Chunk } from '@tabs/files/lib/ingest/types';
 import { liveAdapterFor } from '@tabs/files/lib/ingest/live';
-import { embedTexts } from '@tabs/files/lib/embed';
+import { embedTexts, type EmbedCaller } from '@tabs/files/lib/embed';
 import {
   type ChunkDoc,
   type ChunkMeta,
@@ -95,7 +95,7 @@ export async function indexAsset(
 
   let embedMode: IndexReport['embedMode'] = 'n/a';
   if (toEmbed.length > 0) {
-    const embedded = await embed(toEmbed.map((t) => t.text));
+    const embedded = await embed(toEmbed.map((t) => t.text), opts.caller);
     embedMode = embedded.mode;
     toEmbed.forEach((t, i) => { vectors[t.idx] = embedded.vectors[i]; });
   }
