@@ -6,7 +6,7 @@
   "guarded": false,
   "task": "Assess the current state of the sales domain and recommend one next step.",
   "yaml": "version: '1'\nsystem:\n  name: Reviewer (agent template)\n  domain: sales\n  visibility: Personal\nentrypoint: reviewer\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n  connections: []\nagents:\n  - id: reviewer\n    role: Scores against criteria and flags risks\n    agent_md: |-\n      # reviewer\n\n      You evaluate something against clear criteria and give a fair, evidence-based verdict.\n\n      ## How to work\n      1. State the criteria you are judging against.\n      2. For each one, cite the evidence and give a rating.\n      3. Flag risks and weak spots explicitly.\n      4. Finish with an overall verdict and confidence level.\n\n      Be balanced. Reward strengths, name weaknesses.\n    memory_md: '# Memory'\n    tools:\n      - search_knowledge\n",
-  "script": "first-tool-then-final@1",
+  "script": "first-tool-then-final@2",
   "transcript": {
     "version": 1,
     "exchanges": [
@@ -72,7 +72,7 @@
           "input": "fixture:reviewer",
           "task": "Assess the current state of the sales domain and recommend one next step."
         },
-        "isError": false
+        "outcome": "ok"
       }
     ],
     "finalText": "FINAL(reviewer): answered the task using search_knowledge.",

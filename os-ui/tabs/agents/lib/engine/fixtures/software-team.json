@@ -6,7 +6,7 @@
   "guarded": true,
   "task": "Assess the current state of the sales domain and recommend one next step.",
   "yaml": "version: '1'\nsystem:\n  name: Software Delivery Team\n  domain: platform\n  visibility: Shared\nruntime: langgraph\nsafety_preset: read-propose\nentrypoint: orchestrator\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  tools:\n    - create_software\n    - commit\n    - start_preview\n    - request_deploy\n    - use_connection\n    - use_data\n    - use_knowledge\n    - use_as_data\n  connections: []\nrouting:\n  overrides: {}\nagents:\n  - id: orchestrator\n    role: Delivery lead — routes the brief through plan, build, test, deploy, then reports\n    model: sovereign-reasoning\n    tools: []\n    members: [planner, builder, tester, deployer, communication]\n    agent_md: |\n      # Orchestrator — Software Delivery Team\n      You lead a governed software team inside the Sovereign Agentic OS. Given a\n      user's brief, drive the phases IN ORDER: planner, builder, tester, deployer,\n      communication. Do no building yourself. If the brief is too vague to plan,\n      say so plainly so the communication agent can ask the user. Deploy is NEVER\n      yours to approve: the team only REQUESTS it; a human Builder approves it.\n    memory_md: '# Memory'\n  - id: planner\n    role: Turns the brief into a small, concrete build plan\n    model: sovereign-reasoning\n    tools: [use_knowledge, use_data]\n    agent_md: |\n      # Planner\n      Produce a SHORT numbered plan: the pages/routes, the data model, the files\n      the builder should commit, and which granted resources (data/knowledge) the\n      app should consume by reference. Prefer the smallest app that satisfies the\n      brief. Output the plan only — do not write code.\n    memory_md: '# Memory'\n  - id: builder\n    role: Writes the code and commits it through the governed platform\n    model: sovereign-default\n    tools: [create_software, commit, use_connection, use_data, use_knowledge]\n    agent_md: |\n      # Builder\n      Execute the plan. First call create_software (template nextjs-supabase)\n      unless an appId is already in the conversation, then commit complete,\n      runnable files (never placeholders) with a clear message. Consume granted\n      resources ONLY via the use_* tools — references, never raw credentials.\n      State every design decision you make.\n    memory_md: '# Memory'\n  - id: tester\n    role: Verifies the preview before anything ships\n    model: sovereign-reasoning\n    tools: [start_preview]\n    agent_md: |\n      # Tester\n      Call start_preview for the app and review what the platform reports (scan\n      findings, generated MCP tools, preview URL) against the plan. Give a verdict:\n      PASS with evidence, or FAIL with a numbered fix list for the builder. You\n      cannot deploy; you gate quality only.\n    memory_md: '# Memory'\n  - id: deployer\n    role: Requests the governed go-live (never approves it)\n    model: sovereign-reasoning\n    tools: [request_deploy]\n    agent_md: |\n      # Deployer\n      Only after a tester PASS: call request_deploy. This opens a Builder review\n      card — it does NOT go live. Report the review card id and stop. If deploy is\n      denied or you lack the role, report that plainly.\n    memory_md: '# Memory'\n  - id: communication\n    role: Narrates progress to the user and asks the clarifying questions\n    model: sovereign-reasoning\n    tools: []\n    agent_md: |\n      # Communication\n      You are the team's single voice to the user. Every turn ends with you. Write\n      a calm, plain-language status: what each phase did (app name/id, commit\n      summary, preview URL, review card), what is pending human review, and what\n      happens next. If ANY agent flagged ambiguity, end with a section\n      \"Questions for you\" — max 3, numbered, answerable in one line. The user's\n      reply becomes the next turn's input.\n    memory_md: '# Memory'\nedges:\n  - { from: orchestrator, to: planner, type: supervise }\n  - { from: orchestrator, to: builder, type: supervise }\n  - { from: orchestrator, to: tester, type: supervise }\n  - { from: orchestrator, to: deployer, type: supervise }\n  - { from: orchestrator, to: communication, type: supervise }\n  - { from: planner, to: builder, type: handoff, when: plan_ready }\n  - { from: builder, to: tester, type: handoff, when: committed }\n  - { from: tester, to: builder, type: handoff, when: tests_failed }\n  - { from: tester, to: deployer, type: handoff, when: tests_passed }\n  - { from: deployer, to: communication, type: handoff, when: reported }\nschedule:\n  kind: manual\n",
-  "script": "first-tool-then-final@1",
+  "script": "first-tool-then-final@2",
   "transcript": {
     "version": 1,
     "exchanges": [
@@ -267,7 +267,7 @@
           "input": "fixture:planner",
           "task": "Assess the current state of the sales domain and recommend one next step."
         },
-        "isError": false
+        "outcome": "ok"
       },
       {
         "node": "builder",
@@ -276,7 +276,7 @@
           "input": "fixture:builder",
           "task": "Assess the current state of the sales domain and recommend one next step."
         },
-        "isError": false
+        "outcome": "ok"
       },
       {
         "node": "tester",
@@ -285,7 +285,7 @@
           "input": "fixture:tester",
           "task": "Assess the current state of the sales domain and recommend one next step."
         },
-        "isError": false
+        "outcome": "ok"
       },
       {
         "node": "deployer",
@@ -294,7 +294,7 @@
           "input": "fixture:deployer",
           "task": "Assess the current state of the sales domain and recommend one next step."
         },
-        "isError": false
+        "outcome": "ok"
       }
     ],
     "finalText": "FINAL(communication): no tools granted; answered from the team context.",

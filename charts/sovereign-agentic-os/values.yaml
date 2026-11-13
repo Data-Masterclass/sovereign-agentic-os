@@ -146,6 +146,11 @@ postgres:
       secretName: postgres-polaris-credentials
       createdb: false
       localPassword: polaris-local-dev
+    - name: agent_runs        # LangGraph checkpoints of agent runs (os-ui engine; thread id = run id)
+      username: agent_runs
+      secretName: postgres-agent-runs-credentials
+      createdb: false
+      localPassword: agent-runs-local-dev
   # CLOUD-DURABLE CNPG extras (engine:cnpg ONLY).
   cnpg:
     # Durable zonal CSI storage class for the Postgres data volume (a zonal disk

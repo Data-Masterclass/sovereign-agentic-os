@@ -42,13 +42,34 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 
 ## Agent engine (rebuild in progress)
 
-Runs execute in-process, as the signed-in user, through the hand-rolled IR walker
-(`lib/build/agentic-graph.ts`). A real LangGraph engine is being built under `lib/engine/`
-(plan: `docs/superpowers/plans/2026-11-13-engine-rebuild.md`). The platform flag
-`AGENTS_ENGINE=walker|langgraph` (default `walker`) picks the executor; a system can pin the
-walker with `runtime: walker` in its `system.yaml`. `lib/engine/select.ts` is the one place
-that decision is made; `lib/engine/parity-harness.ts` + `lib/engine/fixtures/*.json` are the
-golden recordings both engines must reproduce (`REGEN_FIXTURES=1 npm test` rewrites them).
+Runs execute in-process, as the signed-in user. Two executors exist behind one flag
+(plan: `docs/superpowers/plans/2026-11-13-engine-rebuild.md`):
+
+- `walker` (default) — the hand-rolled IR walker (`lib/build/agentic-graph.ts`).
+- `langgraph` — the real `@langchain/langgraph` StateGraph under `lib/engine/`:
+  `build-graph.ts` (IR → graph: four nodes per agent, supervisor `route` tool, `when` guards via
+  `when.ts`, node-level tool narrowing, step budget → `recursionLimit`), `run.ts`
+  (`runGraphEngine`: stream, resume, result), `checkpointer.ts` (Postgres or memory).
+
+Environment:
+
+- `AGENTS_ENGINE=walker|langgraph` — the platform default; a system pins the walker with
+  `runtime: walker` in its `system.yaml`. `lib/engine/select.ts` is the one place that decision
+  is made (route, scheduler and the MCP tool `run_agent_system` all use it, then `runOsTeam`
+  branches).
+- `AGENT_RUNS_DATABASE_URL` — the `agent_runs` Postgres database for LangGraph checkpoints
+  (chart: `postgres.extraDatabases`; os-ui runs `PostgresSaver.setup()` at boot). Unset → an
+  in-memory checkpointer, reported as `checkpointer: 'memory'` on every run.
+
+Resume: a `langgraph` run has a `runId` (= its LangGraph thread id, on the run report and
+`LastRun`). `POST /api/agents/systems/<id>/run { resume: true, runId }` continues it from its last
+checkpoint; the Run panel offers **Resume** on an interrupted run. `run_agent_system` returns the
+`runId` (resume over MCP arrives in A5).
+
+Parity: `lib/engine/parity-harness.ts` + `lib/engine/fixtures/*.json` are the golden recordings
+both engines must reproduce (`parity.test.ts`: P1 for both engines, HANDOFF-GUARD, P2 abort +
+resume). Regenerate fixtures with ONE file, never the whole suite:
+`REGEN_FIXTURES=1 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test tabs/agents/lib/engine/fixtures.test.ts`.
 
 ## Rules that apply here
 

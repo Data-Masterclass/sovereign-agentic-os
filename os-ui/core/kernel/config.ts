@@ -364,6 +364,13 @@ export const config = {
   // in its system.yaml to opt out (tabs/agents/lib/engine/select.ts). Unknown values fall
   // back to `walker`. The default flips to `langgraph` only in the deletion phase (A5).
   agentsEngine: parseAgentsEngine(process.env.AGENTS_ENGINE),
+  // LangGraph checkpoint store for the `langgraph` engine (engine rebuild, Phase A1): the
+  // `agent_runs` database on the CNPG cluster (chart: postgres.extraDatabases → the os-ui
+  // Deployment composes this URL from `postgres-agent-runs-credentials`). Thread id = run id;
+  // every superstep is checkpointed here so a pod restart / request cap is resumable. Unset
+  // (tests, a laptop without the DB) → an in-memory checkpointer, and every run report says so
+  // (`checkpointer: 'memory'`) — a fallback must never pass for durability.
+  agentRunsDatabaseUrl: env('AGENT_RUNS_DATABASE_URL', ''),
   // LLM Gateway tab — the read-only, tenant-total usage/spend panel
   // (app/api/gateway/usage). The budget envelope is DISPLAY-ONLY: set it to
   // mirror the chart's litellmAgentKey.maxBudget / budgetDuration (the USD cap

@@ -6,7 +6,7 @@
   "guarded": false,
   "task": "Assess the current state of the sales domain and recommend one next step.",
   "yaml": "version: '1'\nsystem:\n  name: Recommend starter\n  domain: sales\n  visibility: Personal\nentrypoint: advisor\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n  connections: []\nagents:\n  - id: advisor\n    role: Weighs options and proposes a next step\n    agent_md: |-\n      # Recommend starter — Advisor\n\n      You weigh the options and propose a clear, actionable recommendation.\n\n      ## How to work\n      1. Lay out the realistic options.\n      2. Compare them on the trade-offs that matter.\n      3. Recommend ONE next step, and say why.\n      4. Note what would change your mind.\n\n      Be decisive but transparent about the trade-offs.\n    memory_md: |-\n      # Memory\n\n      (Preferences, constraints and prior decisions to respect.)\n    tools:\n      - search_knowledge\n",
-  "script": "first-tool-then-final@1",
+  "script": "first-tool-then-final@2",
   "transcript": {
     "version": 1,
     "exchanges": [
@@ -72,7 +72,7 @@
           "input": "fixture:advisor",
           "task": "Assess the current state of the sales domain and recommend one next step."
         },
-        "isError": false
+        "outcome": "ok"
       }
     ],
     "finalText": "FINAL(advisor): answered the task using search_knowledge.",

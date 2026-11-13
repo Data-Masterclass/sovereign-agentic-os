@@ -3,12 +3,12 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { getSystemForRun, setRunning, recordActivity, setActivity, clearActivity, setLastRun, startRunCheckpoint, checkpointNode } from '@tabs/agents/lib/store';
+import { getSystemForRun, setRunning, recordActivity, setActivity, clearActivity, setLastRun, startRunCheckpoint, checkpointNode, newRunId } from '@tabs/agents/lib/store';
 import type { LastRun } from '@tabs/agents/lib/store';
 import { runSystem } from '@tabs/agents/lib/build/server';
-import { runOsTeam } from '@tabs/agents/lib/build/agentic-graph-server';
+import { runOsTeam, type RunOsTeamResult } from '@tabs/agents/lib/build/agentic-graph-server';
 import { isAgenticOsTeam, resolveFolderGrantsForRun, summarizeWriteOutcomes, writeOutcomesLine } from '@tabs/agents/lib/build/os-tools';
-import { classifyStepError, type AgenticGraphResult } from '@tabs/agents/lib/build/agentic-graph';
+import { classifyStepError } from '@tabs/agents/lib/build/agentic-graph';
 import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
 import { deriveContextUsage } from '@tabs/agents/lib/build/context-usage';
 import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
@@ -120,7 +120,7 @@ function grantedIdsFromYaml(yaml: string) {
  * render + per-node persistence keep working. Kept as ONE function so the streaming
  * `done` frame and the non-streaming JSON response are byte-for-byte the same shape.
  */
-function finalizeTeamRun(team: AgenticGraphResult, running: boolean, yaml: string, engine: AgentsEngine) {
+function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: string, engine: AgentsEngine) {
   // Normalise team run into LastRun shape and persist it.
   const teamSteps = team.runs.flatMap((r) =>
     r.result.steps.map((s) => ({
@@ -169,12 +169,23 @@ function finalizeTeamRun(team: AgenticGraphResult, running: boolean, yaml: strin
     output: team.finalText,
     writeSummary,
     mode: 'live',
+    // Engine rebuild A1: the run id (= LangGraph thread id) a Resume continues, the engine and
+    // where its checkpoints live. Absent on walker runs.
+    runId: team.runId,
+    engine,
+    checkpointer: team.checkpointer,
+    // An aborted/limit-hit LangGraph run is legible AND resumable (the same banner a restart shows).
+    interrupted: team.interrupted || undefined,
   };
   const body = {
     running,
     mode: 'live' as const,
-    // Which executor produced this result (engine rebuild A0; `langgraph` arrives in A1).
+    // Which executor produced this result (engine rebuild A0/A1).
     engine,
+    runId: team.runId,
+    checkpointer: team.checkpointer,
+    warnings: team.warnings,
+    interrupted: team.interrupted,
     team: true,
     ok: teamOk && team.reachedEnd,
     reachedEnd: team.reachedEnd,
@@ -251,12 +262,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const prompt =
       typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : defaultRunTask(view.system);
 
+    // RESUME (engine rebuild A1): `{ resume: true, runId }` continues an interrupted LangGraph
+    // thread from its last checkpoint. Only the langgraph engine has threads to resume.
+    const resume = body.resume === true;
+    const requestedRunId = typeof body.runId === 'string' ? body.runId.trim() : '';
+    if (resume && !requestedRunId) return NextResponse.json({ error: 'resume needs the runId of the interrupted run' }, { status: 400 });
+    if (resume && engine !== 'langgraph') {
+      return NextResponse.json({ error: 'resume is only available on the langgraph engine (AGENTS_ENGINE=langgraph); re-run instead' }, { status: 400 });
+    }
+    // Thread id = run id: minted here, carried on the run report and LastRun, continued by Resume.
+    const runId = resume ? requestedRunId : newRunId();
+
     // Mark in-progress so a returning user sees "running since…" not a blank slate.
     setActivity(id, { kind: 'running', startedAt: Date.now() });
     // Open a durable, per-step run checkpoint (stamped with this process's instance
     // id) so a pod restart mid-run leaves a legible, recoverable record — see
     // recoverInterrupted() in the store. Cleared by clearActivity() on completion.
-    startRunCheckpoint(id, { prompt, plannedNodes: view.system.agents.map((a) => a.id) });
+    startRunCheckpoint(id, { prompt, plannedNodes: view.system.agents.map((a) => a.id), runId: engine === 'langgraph' ? runId : undefined });
 
     // Re-assert the builder-gate against the OWNER's CURRENT role (S1): a stale
     // direct-write grant (set while the owner was a builder, or by an admin) is
@@ -285,7 +307,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       // Complete a finished team result: flip the running flag, persist LastRun, and
       // return the exact JSON body (shared by the stream's `done` frame and the
       // non-streaming response, so the final render is identical either way).
-      const complete = (team: AgenticGraphResult) => {
+      const complete = (team: RunOsTeamResult) => {
         const running = markRunFinished(id, user);
         const { body: out, lastRun } = finalizeTeamRun(team, running, yaml, engine);
         try { setLastRun(id, user, lastRun); } catch { /* run-only consumer: persist best-effort */ }
@@ -320,6 +342,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
                 systemId: id,
                 messages,
                 disabledAgents: view.disabledAgents,
+                engine,
+                runId,
+                resume,
                 onNodeStart: (ev) => { checkpointHooks.onNodeStart(ev); send('node-started', ev); },
                 onStep: (ev) =>
                   send('tool-step', {
@@ -365,12 +390,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         systemId: id,
         messages,
         disabledAgents: view.disabledAgents,
+        engine,
+        runId,
+        resume,
         onNodeStart: checkpointHooks.onNodeStart,
         onNodeComplete: checkpointHooks.onNodeComplete,
       });
       return NextResponse.json(complete(team));
     }
 
+    if (resume) {
+      return NextResponse.json({ error: 'This system does not run on the in-process engine (hermes runtime or unmapped legacy grants) — nothing to resume' }, { status: 400 });
+    }
     const report = await runSystem(id, yaml, {
       prompt,
       requestedBy: resolvedUser.id,

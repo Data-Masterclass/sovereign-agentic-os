@@ -6,7 +6,7 @@
   "guarded": true,
   "task": "Assess the current state of the sales domain and recommend one next step.",
   "yaml": "version: '1'\nsystem:\n  name: Shape C — guarded handoff with a held write\n  domain: sales\n  visibility: Personal\nsafety_preset: read-propose\nentrypoint: researcher\nstate:\n  channels:\n    messages: add_messages\n    findings_ready: last_value\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n    - request_promotion\n  connections: []\nagents:\n  - id: researcher\n    role: Gathers findings and sets findings_ready when done\n    agent_md: |\n      # researcher\n      Search the granted knowledge. When the findings are complete, mark findings_ready.\n    memory_md: '# Memory'\n    tools:\n      - search_knowledge\n  - id: publisher\n    role: Files the promotion of the findings to the domain (held for approval)\n    agent_md: |\n      # publisher\n      File a promotion request for the researcher's findings to the Domain scope. The request\n      is held for a domain admin's approval — never assume it was applied.\n    memory_md: '# Memory'\n    tools:\n      - request_promotion\nedges:\n  - from: researcher\n    to: publisher\n    type: handoff\n    when: state.findings_ready\n",
-  "script": "first-tool-then-final@1",
+  "script": "first-tool-then-final@2",
   "transcript": {
     "version": 1,
     "exchanges": [
@@ -119,7 +119,7 @@
           "input": "fixture:researcher",
           "task": "Assess the current state of the sales domain and recommend one next step."
         },
-        "isError": false
+        "outcome": "ok"
       },
       {
         "node": "publisher",
@@ -128,7 +128,7 @@
           "input": "fixture:publisher",
           "task": "Assess the current state of the sales domain and recommend one next step."
         },
-        "isError": true
+        "outcome": "held"
       }
     ],
     "finalText": "FINAL(publisher): answered the task using request_promotion.",

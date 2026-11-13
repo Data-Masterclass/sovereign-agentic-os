@@ -90,4 +90,23 @@ export async function register(): Promise<void> {
         /* fail-soft — the module already swallows its own errors; this guards the import */
       });
   }
+
+  // AGENT-RUN CHECKPOINTER init (engine rebuild A1): when AGENT_RUNS_DATABASE_URL is set, run
+  // `PostgresSaver.setup()` once at boot (idempotent CREATE TABLE IF NOT EXISTS + migrations) so
+  // the first run never races the schema. Not awaited (boot must not wait on Postgres); a
+  // failure is logged LOUDLY and the first run retries it — it never falls back to memory
+  // silently. Unset → the memory checkpointer, logged once so an operator can see it.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { config } = await import('./core/kernel/config.ts');
+        const { ensureCheckpointerReady } = await import('./tabs/agents/lib/engine/checkpointer.ts');
+        const kind = await ensureCheckpointerReady(config.agentRunsDatabaseUrl);
+        if (kind === 'memory') console.warn('[os-ui] agent runs: AGENT_RUNS_DATABASE_URL unset — LangGraph checkpoints are IN MEMORY (not durable across restarts)');
+        else console.info('[os-ui] agent runs: Postgres checkpointer ready (agent_runs)');
+      } catch (err) {
+        console.error(`[os-ui] agent runs: checkpointer setup FAILED — langgraph runs will fail until it is reachable: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
 }

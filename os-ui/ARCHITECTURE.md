@@ -205,6 +205,68 @@ Credentials follow the same separation: the admin credential administers the
 component, and a **scoped** credential runs traffic. The run path fails closed
 when the scoped credential is absent rather than borrowing the admin one.
 
+## How a system.yaml becomes a StateGraph
+
+The Agents tab's `langgraph` engine (`AGENTS_ENGINE=langgraph`; default still `walker`
+until the deletion phase) executes a real `@langchain/langgraph` graph. The path is:
+
+```
+system.yaml ─ parseSystem ─> System ─ compile ─> IR ─ buildGraph(ir, deps) ─> CompiledStateGraph
+  (tabs/agents/lib/system-schema.ts)  (langgraph-compile.ts)   (tabs/agents/lib/engine/build-graph.ts)
+```
+
+**State** (`Annotation.Root`). `messages` is the shared conversation in the OpenAI wire
+shape (`LlmMessage[]`, append) — not LangChain `BaseMessage`, because every model call
+goes to LiteLLM as chat-completions. Every `state.channels` entry of the yaml becomes a
+state key with its declared reducer (`add_messages` → append, anything else → last
+value). The engine adds its own keys: `task`, `current` (the agent visit in flight),
+`handoffs` (the team-progress blocks, append), `nodeRuns` (append), `routes` (append),
+`budget`, `held` (append), `final`, `failed`, `routeNext`. A channel that shadows one
+of those is a compile error.
+
+**Four nodes per agent.** `plan_<id>` runs the reasoning tier with no tools, checks
+the team step budget and emits `node-started`. `act_<id>` runs the execution tier with
+the node's advertised tools (`toOpenAiTools`); if the gateway rejects `tools` it flips
+a `react` flag and retries with the ReAct text protocol; a cap or loop-guard triggers
+the same one-shot synthesis the walker did. `tools_<id>` is the **node-level gate**:
+only tools this node is advertised reach `grantedToolExecutor` (an un-advertised call
+gets a typed `not_found` and never executes); the hold decision stays inside the
+executor, whose typed `held` result is recorded in `state.held`. `route_<id>` records
+the visit (`nodeRuns`, `handoffs`, `node-completed`), then routes. act → tools is a
+conditional edge on "the reply carried tool calls"; tools → act is a plain edge.
+
+**Supervisor.** `route_<sup>` asks the model through a mandatory `route` tool
+(`{ next: <member>|'END', brief }`, text fallback `NEXT: <member>`) and
+`addConditionalEdges` fans out to members ∪ handoff targets ∪ END. A member's route
+returns to the supervisor's **route** node — one decision call per return, the standard
+LangGraph supervisor shape. When it routes END, a non-empty brief is the team's final
+text; otherwise the last agent's answer is.
+
+**Handoffs.** `when` is evaluated by `tabs/agents/lib/engine/when.ts`: literals, string
+literals, `state.<channel>`, bare identifiers (= the channel of that name), `==`/`!=`,
+`&&`/`||`, parentheses — a hand-written parser, never `eval`. A true guard returns
+`new Command({ goto: 'plan_<to>' })`; absent `when` is unconditional. A guard over a
+channel nothing sets is a **compile warning** carried on the run report, not a silent
+false. Handoffs are tried in declared order before the supervisor return / END.
+
+**END and bounds.** The supervisor routes END; a leaf's handoffs all evaluate false; or
+`budget.stepsUsed` (tool rounds + supervisor decisions) reaches the team step budget —
+graceful, `final` = what completed plus the budget note. `recursionLimit` is derived
+from that budget (`recursionLimitFor`: ×4 + 8) as the hard backstop; hitting it is
+reported, never a 500. Disabled agents are pruned at build; an unmapped legacy tool is
+a compile error naming it.
+
+**Checkpointer and resume.** `tabs/agents/lib/engine/checkpointer.ts` picks
+`PostgresSaver` on `AGENT_RUNS_DATABASE_URL` (the chart's `agent_runs` database, set
+up idempotently at boot from `instrumentation.ts`) or `MemorySaver` when unset — and
+the run report says which (`checkpointer: 'postgres' | 'memory'`). **Thread id = run
+id**, minted in the run route (`newRunId`). `runGraphEngine` (`engine/run.ts`) streams
+with `streamMode: ['custom','updates']`; nodes emit through `config.writer`, and the
+route forwards the same SSE events as before (`node-started`, `tool-step`,
+`node-completed`, `done`, `error`). `POST …/run { resume: true, runId }` calls
+`stream(null, { configurable: { thread_id } })` and continues from the last checkpoint;
+the Run panel's "Resume" button does exactly that.
+
 ## Things this codebase will punish you for
 
 Hard-won, each from a real failure. Read before writing a route, a test, or an

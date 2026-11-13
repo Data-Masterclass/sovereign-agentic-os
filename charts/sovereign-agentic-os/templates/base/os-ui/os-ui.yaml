@@ -355,6 +355,21 @@ spec:
                   name: agent-litellm-key
                   key: apiKey
                   optional: true
+            # LangGraph checkpoint store for agent runs (engine rebuild A1): the `agent_runs`
+            # database declared in postgres.extraDatabases, wired exactly like LiteLLM's DB —
+            # username/password from the role's credential Secret, host = the CNPG rw Service,
+            # composed with k8s dependent-env expansion. os-ui runs PostgresSaver.setup() at boot
+            # (idempotent). Unset → in-memory checkpoints, and every run report says so.
+            {{- if .Values.postgres.enabled }}
+            - name: AGENT_RUNS_DB_USERNAME
+              valueFrom:
+                secretKeyRef: { name: postgres-agent-runs-credentials, key: username }
+            - name: AGENT_RUNS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-agent-runs-credentials, key: password }
+            - name: AGENT_RUNS_DATABASE_URL
+              value: postgresql://$(AGENT_RUNS_DB_USERNAME):$(AGENT_RUNS_DB_PASSWORD)@pg-rw/agent_runs
+            {{- end }}
             - name: LITELLM_UI_USERNAME
               valueFrom:
                 secretKeyRef:

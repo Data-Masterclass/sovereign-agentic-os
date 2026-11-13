@@ -6,7 +6,7 @@
   "guarded": false,
   "task": "Assess the current state of the sales domain and recommend one next step.",
   "yaml": "version: '1'\nsystem:\n  name: Blank (agent template)\n  domain: sales\n  visibility: Personal\nentrypoint: blank\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools: []\n  connections: []\nagents:\n  - id: blank\n    role: A helpful assistant\n    agent_md: |-\n      # blank\n\n      You are a helpful assistant in the Sovereign Agentic OS.\n      Use only your granted, governed tools.\n    memory_md: '# Memory'\n    tools: []\n",
-  "script": "first-tool-then-final@1",
+  "script": "first-tool-then-final@2",
   "transcript": {
     "version": 1,
     "exchanges": [

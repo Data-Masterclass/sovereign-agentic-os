@@ -68,7 +68,7 @@ export const OS_TOOL_ALIASES: Record<string, string> = {
 };
 
 /** #28: which feature flag gates an alias's target (only the ones that
- *  actually depend on one — retrieve/predict's targets are always on). */
+ *  actually depend on one — retrieve's target is always on). */
 const ALIAS_REQUIRES_FEATURE: Record<string, string> = {
   metrics: 'metrics',
   files_retrieve: 'files',

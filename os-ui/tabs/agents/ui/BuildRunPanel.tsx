@@ -67,6 +67,8 @@ type LastRun = {
   interrupted?: boolean;
   /** Node index the interrupted walk reached (for a future full-resume). */
   resumeFromIndex?: number;
+  /** The run id (= LangGraph thread id) under the langgraph engine — what Resume continues. */
+  runId?: string;
 };
 
 /** Grant ids per kind, mirroring ContextKind — for the Evaluate granted-vs-used strip. */
@@ -984,7 +986,7 @@ export default function BuildRunPanel({
     }
   };
 
-  const doRun = async (stop = false) => {
+  const doRun = async (stop = false, resumeRunId?: string) => {
     setRunningNow(true);
     setRunErr('');
     // Immediately clear the prior result so the in-progress state is unambiguous —
@@ -999,7 +1001,10 @@ export default function BuildRunPanel({
         headers: { 'content-type': 'application/json', ...(stop ? {} : { accept: 'text/event-stream' }) },
         // Send the typed task; an empty prompt lets the server fill a real, purpose-derived
         // default task (NOT "Test invocation"), so the run does the team's actual job.
-        body: JSON.stringify(stop ? { stop: true } : prompt.trim() ? { prompt: prompt.trim() } : {}),
+        // Resume continues an interrupted langgraph thread from its last checkpoint (engine rebuild A1).
+        body: JSON.stringify(
+          stop ? { stop: true } : resumeRunId ? { resume: true, runId: resumeRunId } : prompt.trim() ? { prompt: prompt.trim() } : {},
+        ),
       });
 
       const isStream = (res.headers.get('content-type') ?? '').includes('text/event-stream');
@@ -1165,7 +1170,17 @@ export default function BuildRunPanel({
           the completed steps are preserved above; a re-run continues the work. */}
       {lastRun?.interrupted && !runningNow ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
-          Interrupted by a restart {timeAgo(lastRun.at)} — completed steps preserved below; press ▶ Run to continue.
+          {lastRun.runId ? (
+            <>
+              Interrupted {timeAgo(lastRun.at)} — completed steps preserved below;{' '}
+              <button type="button" className="btn-ghost" onClick={() => void doRun(false, lastRun.runId)} disabled={runningNow}>
+                Resume
+              </button>{' '}
+              continues from the last checkpoint.
+            </>
+          ) : (
+            <>Interrupted by a restart {timeAgo(lastRun.at)} — completed steps preserved below; press ▶ Run to continue.</>
+          )}
         </div>
       ) : null}
       {/* Seed timestamp for the persisted run result. */}

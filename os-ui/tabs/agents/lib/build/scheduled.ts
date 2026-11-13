@@ -10,6 +10,7 @@ import { isAgenticOsTeam } from '@tabs/agents/lib/build/os-tools';
 import { runOsTeam } from '@tabs/agents/lib/build/agentic-graph-server';
 import { runSystem } from '@tabs/agents/lib/build/server';
 import { config } from '@core/kernel/config';
+import { newRunId } from '@tabs/agents/lib/store';
 import { selectEngine } from '@tabs/agents/lib/engine/select';
 import type { AgentsEngine } from '@core/kernel/agents-engine';
 
@@ -110,18 +111,25 @@ export async function runScheduledSystem(
     // must be neutralised to held-for-approval when the owner is no longer builder+.
     const governedYaml = serializeSystem(downgradeGrantsForRole(sys, owner.role));
     const run = deps.runOsTeam ?? runOsTeam;
+    // ENGINE (A1): the scheduler takes the same branch as the route — thread id = a fresh run id.
+    const runId = newRunId();
     const team = await run({
       user: owner,
       yaml: governedYaml,
       systemId,
       messages: [{ role: 'user', content: prompt }],
       disabledAgents: rec.disabledAgents,
+      engine,
+      runId,
     });
     return {
       ok: true,
       report: {
         mode: 'live',
         engine,
+        runId: team.runId ?? (engine === 'langgraph' ? runId : undefined),
+        checkpointer: team.checkpointer,
+        reachedEnd: team.reachedEnd,
         team: true,
         path: team.path,
         finalText: team.finalText,

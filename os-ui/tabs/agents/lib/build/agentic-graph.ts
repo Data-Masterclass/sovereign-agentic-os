@@ -113,14 +113,14 @@ export type NodeRun = {
 const MAX_NODE_INPUT_CHARS = 8_000;
 
 /** Bound a captured input string to its head, marking the elision honestly. */
-function boundInput(text: string): string {
+export function boundInput(text: string): string {
   return text.length <= MAX_NODE_INPUT_CHARS
     ? text
     : `${text.slice(0, MAX_NODE_INPUT_CHARS)}\n… [truncated ${text.length - MAX_NODE_INPUT_CHARS} more chars]`;
 }
 
 /** Render the user turn(s) this node received, appended after its system context. */
-function renderUserTurn(messages: { role: 'user' | 'assistant'; content: string }[]): string {
+export function renderUserTurn(messages: { role: 'user' | 'assistant'; content: string }[]): string {
   const last = messages.filter((m) => m.role === 'user').at(-1);
   return last ? `\n\n--- USER TURN ---\n${last.content}` : '';
 }
@@ -135,7 +135,7 @@ function lastUserContent(messages: { role: 'user' | 'assistant'; content: string
  * tool → 'denied'; else any EXECUTION-errored tool → 'error'; else 'ok'. A bad-SQL
  * error is 'error', never 'denied' — only a real governance block earns 'denied'.
  */
-function nodeStatus(result: AgenticResult, threw?: string): NodeStatus {
+export function nodeStatus(result: AgenticResult, threw?: string): NodeStatus {
   if (threw) return 'failed';
   const errored = result.steps.filter((s) => s.isError);
   if (errored.length === 0) return 'ok';
@@ -302,7 +302,7 @@ export function nodeOrder(ir: IR, disabled: Set<string> = new Set()): string[] {
  * relevance-curated material selection (the Librarian handoff) instead of the flat
  * keepRows compaction. `finalText`/`steps` are omitted on summarized/synthetic entries.
  */
-type HandoffEntry = { node: string; block: string; finalText?: string; steps?: AgenticStep[] };
+export type HandoffEntry = { node: string; block: string; finalText?: string; steps?: AgenticStep[] };
 
 /**
  * Instruction to the DOWNSTREAM node: the handoff below carries the prior agents'
@@ -344,7 +344,7 @@ const HANDOFF_KEEP_ROWS = 60;
  * header+first-N up to HANDOFF_KEEP_ROWS; long text → head+tail) so the handoff
  * stays budget-friendly while preserving full scorecards for downstream reasoning.
  */
-function handoffBlock(node: string, finalText: string, steps: AgenticStep[]): string {
+export function handoffBlock(node: string, finalText: string, steps: AgenticStep[]): string {
   const parts = [`## ${node}`, finalText.trim() || '(no narration)'];
   const material = steps.filter((s) => !s.isError && s.result.trim());
   const failed = steps.filter((s) => s.isError);
@@ -448,7 +448,7 @@ function handoffCeiling(budget?: number): number {
  * no embedder, the source is the offline hash, or the predecessor carries no raw
  * steps to re-render — so the deterministic keepRows path is the graceful fallback.
  */
-async function curatePredecessor(
+export async function curatePredecessor(
   transcript: HandoffEntry[],
   node: IRNode,
   userTask: string,
@@ -513,7 +513,7 @@ function budgetTranscript(transcript: HandoffEntry[], ceiling: number): HandoffE
  * outputs (via {@link handoffBlock}); the MOST RECENT entry is listed last (the
  * budgeter pins recent messages, so the thing this node most needs survives).
  */
-function nodeSystem(preamble: string, node: IRNode, transcript: HandoffEntry[], budget?: number): string {
+export function nodeSystem(preamble: string, node: IRNode, transcript: HandoffEntry[], budget?: number): string {
   transcript = budgetTranscript(transcript, handoffCeiling(budget));
   const parts = [preamble, '', `--- YOUR ROLE IN THE TEAM: ${node.id} ---`, node.prompt];
   const memory = node.memory?.trim();

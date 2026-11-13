@@ -6,7 +6,7 @@
   "guarded": false,
   "task": "Assess the current state of the sales domain and recommend one next step.",
   "yaml": "version: '1'\nsystem:\n  name: Start blank starter\n  domain: sales\n  visibility: Personal\nentrypoint: assistant\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n  connections: []\nagents:\n  - id: assistant\n    role: A helpful assistant\n    agent_md: |-\n      # Start blank starter\n\n      You are a helpful assistant in the Sovereign Agentic OS.\n      Use only your granted, governed tools.\n    memory_md: |-\n      # Memory\n\n      (Durable facts the assistant should always know.)\n    tools:\n      - search_knowledge\n",
-  "script": "first-tool-then-final@1",
+  "script": "first-tool-then-final@2",
   "transcript": {
     "version": 1,
     "exchanges": [
@@ -72,7 +72,7 @@
           "input": "fixture:assistant",
           "task": "Assess the current state of the sales domain and recommend one next step."
         },
-        "isError": false
+        "outcome": "ok"
       }
     ],
     "finalText": "FINAL(assistant): answered the task using search_knowledge.",

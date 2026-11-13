@@ -14,17 +14,25 @@
  *     `core/runtime/llm-replay.ts`. Only the model and the MCP dispatch are faked.
  *   - The model is a DETERMINISTIC SCRIPT (`scriptedLlm`, rule set `SCRIPT_ID`): PLAN returns a
  *     fixed plan; a node's first ACT calls its first advertised tool; its next ACT answers
- *     `FINAL(<node>)`. The node id is read from the walker's own `--- YOUR ROLE IN THE TEAM ---`
- *     marker. Changing the rules bumps `SCRIPT_ID` and regenerates every fixture.
+ *     `FINAL(<node>)`; a SUPERVISOR ROUTE request (the single `route` tool) picks the members in
+ *     DECLARED order, then END. The node id is read from the `--- YOUR ROLE IN THE TEAM ---`
+ *     marker both engines put in the system prompt. Changing the rules bumps `SCRIPT_ID` and
+ *     regenerates every fixture (single file, see `fixtures.test.ts`).
  *   - The MCP dispatch (`handleRpc`) is replaced by an echo of the call; `enqueue` records held
  *     writes; `trace` is a no-op. The acting user is a fixed BUILDER so role-floor narrowing is
  *     exercised the same way on every machine.
  *   - Fixture JSON lives in `./fixtures/<name>.json`; `fixtures.test.ts` proves each file equals
  *     a fresh generation (or rewrites it under REGEN_FIXTURES=1); `parity.test.ts` replays the
- *     transcript through the walker (P1) and carries the `todo`s the LangGraph engine flips.
+ *     transcript through the walker AND drives `buildGraph` (P1), plus P2 (abort + resume).
+ *   - ENGINE PARITY RULE SET (A0 finding 3): the walker never asks a model where to go, so its
+ *     transcript has no routing exchanges. A fixture WITHOUT a supervisor is replayed from the
+ *     transcript through `buildGraph` (`replayGraph` — every exchange must be consumed); a
+ *     fixture WITH a supervisor is driven by the scripted model (`scriptGraph`), whose route rule
+ *     reproduces the walker's declared-order visit. Both assert the same golden fields.
  */
 import type { CurrentUser } from '@core/kernel/auth';
-import type { LlmCall, LlmRequest } from '@core/runtime/agentic';
+import type { JsonRpcRequest, JsonRpcResponse } from '@core/mcp/server';
+import type { AgenticStep, LlmCall, LlmRequest } from '@core/runtime/agentic';
 import { recordingCaller, replayCaller, type LlmTranscript, type RecordedExchange } from '@core/runtime/llm-replay';
 import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
@@ -33,9 +41,14 @@ import { AGENT_TEMPLATES, agentTemplate } from '@tabs/agents/lib/agent-templates
 import { SOFTWARE_TEAM_YAML } from '@tabs/agents/lib/software-team';
 import { grantedToolExecutor, grantedToolSpecs, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
 import { runAgenticGraph, type AgenticGraphDeps } from '@tabs/agents/lib/build/agentic-graph';
+import type { GraphDeps } from '@tabs/agents/lib/engine/build-graph';
+import { memoryCheckpointer, type SelectedCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
+import { runGraphEngine, type EngineHooks } from '@tabs/agents/lib/engine/run';
 
-/** Bump when the scripted model's rules change — every fixture must then be regenerated. */
-export const SCRIPT_ID = 'first-tool-then-final@1';
+/** Bump when the scripted model's rules change — every fixture must then be regenerated.
+ *  @2: adds the declared-order `route` rule for supervisors (the walker never triggers it, so
+ *  walker goldens are unchanged; the id records that the LangGraph side is driven by it too). */
+export const SCRIPT_ID = 'first-tool-then-final@2';
 
 /** The one task every fixture runs — purpose-neutral so it fits every template. */
 export const FIXTURE_TASK = 'Assess the current state of the sales domain and recommend one next step.';
@@ -62,7 +75,21 @@ export type FixtureSpec = {
   yaml: string;
 };
 
-export type GoldenToolCall = { node: string; tool: string; args: Record<string, unknown>; isError: boolean };
+/** How a governed step ended: ran ('ok'), was HELD for approval ('held'), or errored ('error'). */
+export type StepOutcome = 'ok' | 'held' | 'error';
+
+export type GoldenToolCall = { node: string; tool: string; args: Record<string, unknown>; outcome: StepOutcome };
+
+/** Classify a step by its typed result envelope — `held` is not an error, it is a parked write. */
+export function stepOutcome(step: Pick<AgenticStep, 'result' | 'isError'>): StepOutcome {
+  if (!step.isError) return 'ok';
+  try {
+    if ((JSON.parse(step.result) as { error?: { code?: string } })?.error?.code === 'held') return 'held';
+  } catch {
+    /* not a typed envelope */
+  }
+  return 'error';
+}
 
 export type EngineFixture = {
   version: 1;
@@ -302,19 +329,40 @@ export function nodeOfRequest(req: LlmRequest): string {
   return 'unknown';
 }
 
+/** True for a supervisor ROUTE request: the only advertised tool is the engine's `route`. */
+function isRouteRequest(req: LlmRequest): boolean {
+  return !!req.tools && req.tools.length === 1 && req.tools[0].function.name === 'route';
+}
+
+/** The members a `route` tool offers, in DECLARED order (its `next` enum minus END). */
+function routeMembers(req: LlmRequest): string[] {
+  const props = (req.tools?.[0]?.function.parameters?.properties ?? {}) as Record<string, { enum?: string[] }>;
+  return (props.next?.enum ?? []).filter((m) => m !== 'END');
+}
+
 /**
  * The deterministic fake model (rule set {@link SCRIPT_ID}):
  *   • PLAN (no `tools` on the request) → a fixed one-line plan;
  *   • a node's FIRST ACT → call its first advertised tool with fixed args;
  *   • every later ACT → `FINAL(<node>)` prose (no tool calls);
- *   • a node advertised no tools → FINAL at once.
+ *   • a node advertised no tools → FINAL at once;
+ *   • a supervisor ROUTE request → its members in declared order, one per decision, then END
+ *     (empty brief, so the team's final text is the last member's — the walker's behaviour).
  * Keyed on the node id so the same rules hold for a 1-agent and a 6-agent system.
  */
 export function scriptedLlm(task: string): LlmCall {
   const acts = new Map<string, number>();
+  const routed = new Map<string, number>();
   return async (req) => {
     const node = nodeOfRequest(req);
     if (!req.tools) return { content: `plan(${node}): 1. use the first granted tool  2. answer the task.`, toolCalls: [] };
+    if (isRouteRequest(req)) {
+      const members = routeMembers(req);
+      const n = routed.get(node) ?? 0;
+      routed.set(node, n + 1);
+      const next = members[n] ?? 'END';
+      return { content: '', toolCalls: [{ id: `route-${node}-${n + 1}`, name: 'route', args: { next, brief: '' } }] };
+    }
     const n = (acts.get(node) ?? 0) + 1;
     acts.set(node, n);
     const first = req.tools[0]?.function.name;
@@ -342,7 +390,7 @@ export function fixtureToolDeps(sink: HoldSink): OsToolDeps {
     sink.enqueued.push(req.tool ?? '?');
     return { id: `fixture-approval-${sink.enqueued.length}` };
   }) as unknown as OsToolDeps['enqueue'];
-  const handleRpc = (async (_user: CurrentUser, req: { id?: unknown; params?: { name?: string; arguments?: unknown } }) => ({
+  const handleRpc = (async (_user: CurrentUser, req: JsonRpcRequest): Promise<JsonRpcResponse> => ({
     jsonrpc: '2.0',
     id: req.id ?? 1,
     result: { content: [{ type: 'text', text: JSON.stringify({ mock: true, tool: req.params?.name, args: req.params?.arguments ?? {} }) }] },
@@ -372,6 +420,25 @@ export function walkerDeps(
   };
 }
 
+/** The LangGraph engine's deps — the SAME gates and wiring as {@link walkerDeps}, minus the hooks (events stream). */
+export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: HoldSink): Omit<GraphDeps, 'checkpointer'> {
+  return {
+    llm,
+    toolSpecsFor: (node) => grantedToolSpecs(FIXTURE_USER, sys, node.tools),
+    callTool: grantedToolExecutor(FIXTURE_USER, sys, systemId, fixtureToolDeps(sink)),
+    preamble: FIXTURE_PREAMBLE,
+    reasoningModel: 'sovereign-reasoning',
+    execModel: 'sovereign-default',
+    maxIterations: 4,
+    maxRunSteps: 40,
+  };
+}
+
+/** True when any agent supervises members — such a fixture needs the scripted `route` rule. */
+export function hasSupervisor(sys: System): boolean {
+  return sys.agents.some((a) => (a.members ?? []).length > 0);
+}
+
 // --------------------------------------------------------- generate/replay --
 
 export type WalkerRun = Pick<EngineFixture['golden'], 'path' | 'toolCalls' | 'finalText' | 'reachedEnd' | 'held'>;
@@ -385,10 +452,71 @@ async function runWalker(spec: Pick<EngineFixture, 'name' | 'yaml' | 'task'>, ll
     ir,
     [{ role: 'user', content: spec.task }],
     walkerDeps(sys, `fixture-${spec.name}`, llm, sink, (ev) => {
-      toolCalls.push({ node: ev.node, tool: ev.step.tool, args: ev.step.args, isError: ev.step.isError });
+      toolCalls.push({ node: ev.node, tool: ev.step.tool, args: ev.step.args, outcome: stepOutcome(ev.step) });
     }),
   );
   return { path: result.path, toolCalls, finalText: result.finalText, reachedEnd: result.reachedEnd, held: sink.enqueued.length };
+}
+
+export type GraphRun = WalkerRun & { warnings: string[]; interrupted: boolean; runId: string };
+
+export type GraphRunOptions = {
+  runId?: string;
+  resume?: boolean;
+  checkpointer?: SelectedCheckpointer;
+  signal?: AbortSignal;
+  hooks?: EngineHooks;
+  /** Tool calls recorded so far (a resume appends to the aborted run's list). */
+  toolCalls?: GoldenToolCall[];
+  sink?: HoldSink;
+};
+
+/** Run (or resume) a fixture through the LangGraph engine with the real gates and a memory checkpointer. */
+export async function runGraph(spec: Pick<EngineFixture, 'name' | 'yaml' | 'task'>, llm: LlmCall, opts: GraphRunOptions = {}): Promise<GraphRun> {
+  const sys = parseSystem(spec.yaml);
+  const ir = compile(sys);
+  const toolCalls = opts.toolCalls ?? [];
+  const sink = opts.sink ?? { enqueued: [] };
+  const runId = opts.runId ?? `fixture-run-${spec.name}`;
+  const result = await runGraphEngine({
+    ir,
+    deps: graphDeps(sys, `fixture-${spec.name}`, llm, sink),
+    messages: [{ role: 'user', content: spec.task }],
+    runId,
+    resume: opts.resume,
+    signal: opts.signal,
+    checkpointer: opts.checkpointer ?? memoryCheckpointer(),
+    hooks: {
+      onNodeStart: opts.hooks?.onNodeStart,
+      onNodeComplete: opts.hooks?.onNodeComplete,
+      onStep: (ev) => {
+        toolCalls.push({ node: ev.node, tool: ev.step.tool, args: ev.step.args, outcome: stepOutcome(ev.step) });
+        opts.hooks?.onStep?.(ev);
+      },
+    },
+  });
+  return {
+    path: result.path,
+    toolCalls,
+    finalText: result.finalText,
+    reachedEnd: result.reachedEnd,
+    held: sink.enqueued.length,
+    warnings: result.warnings,
+    interrupted: result.interrupted,
+    runId,
+  };
+}
+
+/** Replay a fixture's transcript through `buildGraph`; `remaining` must be 0 for a faithful replay. */
+export async function replayGraph(fx: EngineFixture): Promise<GraphRun & { remaining: number }> {
+  const llm = replayCaller(fx.transcript);
+  const run = await runGraph(fx, llm);
+  return { ...run, remaining: llm.remaining() };
+}
+
+/** Drive a fixture through `buildGraph` with the scripted model (supervisor fixtures — see the rule set above). */
+export async function scriptGraph(fx: EngineFixture, opts: GraphRunOptions = {}): Promise<GraphRun> {
+  return runGraph(fx, scriptedLlm(fx.task), opts);
 }
 
 /** Run the CURRENT walker on the scripted model and record the golden + the transcript. */

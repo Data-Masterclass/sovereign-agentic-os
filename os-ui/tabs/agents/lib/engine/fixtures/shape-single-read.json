@@ -6,7 +6,7 @@
   "guarded": false,
   "task": "Assess the current state of the sales domain and recommend one next step.",
   "yaml": "version: '1'\nsystem:\n  name: Shape A — single agent, one read tool\n  domain: sales\n  visibility: Personal\nentrypoint: reader\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n  connections: []\nagents:\n  - id: reader\n    role: Reads the granted knowledge and answers\n    agent_md: |\n      # reader\n      Answer the question from the granted knowledge only. Cite what you used.\n    memory_md: '# Memory'\n    tools:\n      - search_knowledge\n",
-  "script": "first-tool-then-final@1",
+  "script": "first-tool-then-final@2",
   "transcript": {
     "version": 1,
     "exchanges": [
@@ -72,7 +72,7 @@
           "input": "fixture:reader",
           "task": "Assess the current state of the sales domain and recommend one next step."
         },
-        "isError": false
+        "outcome": "ok"
       }
     ],
     "finalText": "FINAL(reader): answered the task using search_knowledge.",

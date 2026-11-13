@@ -21,6 +21,7 @@ import {
   writeFile as writeAgentFile,
   getSystemForEdit,
   getSystemForRun,
+  newRunId,
 } from '@tabs/agents/lib/store';
 import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { buildSystem } from '@tabs/agents/lib/build/server';
@@ -153,11 +154,16 @@ export const agentWriteTools: McpTool[] = [
       const { selectEngine } = await import('@tabs/agents/lib/engine/select');
       const engine = selectEngine(config, view.system);
       const runTeam = runTeamOverride ?? (await import('@tabs/agents/lib/build/agentic-graph-server')).runOsTeam;
-      const team = await runTeam({ user, yaml: view.yaml, systemId, messages: msgs, disabledAgents: view.disabledAgents });
+      // ENGINE (A1): the same branch as the route and the scheduler; thread id = a fresh run id,
+      // returned so an MCP client can correlate (and, from A5, resume) the run.
+      const runId = newRunId();
+      const team = await runTeam({ user, yaml: view.yaml, systemId, messages: msgs, disabledAgents: view.disabledAgents, engine, runId });
       return {
         systemId,
         mode: 'live',
         engine,
+        runId: team.runId ?? (engine === 'langgraph' ? runId : undefined),
+        checkpointer: team.checkpointer,
         reachedEnd: team.reachedEnd,
         path: team.path,
         finalText: team.finalText,
@@ -192,11 +198,15 @@ type RunTeamFn = (input: {
   systemId: string;
   messages: { role: 'user' | 'assistant'; content: string }[];
   disabledAgents?: string[];
+  engine?: 'walker' | 'langgraph';
+  runId?: string;
 }) => Promise<{
   path: string[];
   finalText: string;
   reachedEnd: boolean;
   runs: { node: string; model: string; result: { steps: { tool: string; isError: boolean }[] } }[];
+  runId?: string;
+  checkpointer?: 'postgres' | 'memory';
 }>;
 
 // runOsTeam drives a LIVE LiteLLM call; tests inject a spy so the wrapper's

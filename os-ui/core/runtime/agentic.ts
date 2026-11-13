@@ -124,7 +124,7 @@ export class ToolCallingUnsupportedError extends Error {
   }
 }
 
-const DEFAULT_MAX_ITERATIONS = 6;
+export const DEFAULT_MAX_ITERATIONS = 6;
 
 /**
  * Total number of DUPLICATE (already-executed) tool calls a single run tolerates
@@ -132,7 +132,7 @@ const DEFAULT_MAX_ITERATIONS = 6;
  * the identical call every turn (the GATE-4 self-query loop) trips this and hands
  * off with a real answer instead of burning its whole step budget on repeats.
  */
-const DEFAULT_MAX_REPEATED_CALLS = 4;
+export const DEFAULT_MAX_REPEATED_CALLS = 4;
 
 /**
  * How many CONSECUTIVE tool calls to the SAME tool may ERROR before we stop the ACT
@@ -142,7 +142,7 @@ const DEFAULT_MAX_REPEATED_CALLS = 4;
  * but every call is a fresh `isError`. A firm note is injected before the break so the
  * model stops retrying and answers from what it has.
  */
-const DEFAULT_MAX_CONSECUTIVE_TOOL_ERRORS = 4;
+export const DEFAULT_MAX_CONSECUTIVE_TOOL_ERRORS = 4;
 
 /**
  * How many times a single tool may return a TOOL-SHAPE error (a machine-actionable
@@ -219,7 +219,7 @@ const REACT_INSTRUCTIONS = [
   'tool. When you are done, reply with your final answer as plain prose (no JSON).',
 ].join('\n');
 
-function planPrompt(system: string): string {
+export function planPrompt(system: string): string {
   return [
     system,
     '',
@@ -260,7 +260,7 @@ function discoveryDirective(tools: ToolSpec[]): string {
   return ['', 'DISCOVER BEFORE YOU ACT — never guess identifiers:', ...lines].join('\n');
 }
 
-function actSystem(system: string, plan: string, tools: ToolSpec[], react: boolean): string {
+export function actSystem(system: string, plan: string, tools: ToolSpec[], react: boolean): string {
   const toolList = tools.map((t) => `- ${t.name}: ${t.description}`).join('\n');
   return [
     system,
@@ -280,7 +280,17 @@ function actSystem(system: string, plan: string, tools: ToolSpec[], react: boole
   ].join('\n');
 }
 
-const DEFAULT_MESSAGE_BUDGET = 24_000;
+export const DEFAULT_MESSAGE_BUDGET = 24_000;
+
+/** The one-shot, no-tools synthesis request issued when an ACT loop hits its step cap. */
+export const CAP_SYNTHESIS_PROMPT =
+  'You have reached your tool-step budget for this turn. Do NOT call any more tools. ' +
+  'Using ONLY the information already gathered above, write your best, complete final answer now.';
+
+/** The soft note appended to a cap-synthesised answer so the reader knows checks were skipped. */
+export const CAP_NOTE =
+  '\n\n_(Note: this answer was synthesized after reaching the tool-step budget — ' +
+  'some further checks were skipped. Ask a follow-up to go deeper.)_';
 
 /**
  * Estimate the tokens ONE message costs on the wire. Counts `content` PLUS the
@@ -711,9 +721,7 @@ export async function runAgentic(opts: {
             ...messages,
             {
               role: 'user',
-              content:
-                'You have reached your tool-step budget for this turn. Do NOT call any more tools. ' +
-                'Using ONLY the information already gathered above, write your best, complete final answer now.',
+              content: CAP_SYNTHESIS_PROMPT,
             },
           ],
           budget,
@@ -725,10 +733,7 @@ export async function runAgentic(opts: {
     } catch {
       // Synthesis call failed — fall through to the plain note below.
     }
-    const capNote =
-      '\n\n_(Note: this answer was synthesized after reaching the tool-step budget — ' +
-      'some further checks were skipped. Ask a follow-up to go deeper.)_';
-    finalText = finalText ? `${finalText}${capNote}` : `Reached the tool step limit (cap) before finishing — review the steps above and continue if needed.${capNote}`;
+    finalText = finalText ? `${finalText}${CAP_NOTE}` : `Reached the tool step limit (cap) before finishing — review the steps above and continue if needed.${CAP_NOTE}`;
   }
 
   if (!finalText) finalText = '(no final answer produced)';
@@ -742,7 +747,7 @@ export async function runAgentic(opts: {
  * repeat). It stays tiny (no re-appended payload) so context stays bounded, and it
  * escalates in firmness the more the model loops.
  */
-function dedupNote(priorCount: number): string {
+export function dedupNote(priorCount: number): string {
   if (priorCount >= 2) {
     return (
       'You are repeating a tool call in a loop. STOP calling tools now and give your ' +
@@ -761,7 +766,7 @@ function dedupNote(priorCount: number): string {
  * in a row (the varied-args error loop). It tells the model to stop retrying and
  * answer from what it has — the loop then breaks to the graceful final-synthesis path.
  */
-function errorStreakNote(streak: number, tool: string): string {
+export function errorStreakNote(streak: number, tool: string): string {
   return (
     `Your last ${streak} ${tool} calls all errored. Stop retrying — the same approach ` +
     `keeps failing. Fix your approach or answer from what you already have. Do NOT call ` +
@@ -785,7 +790,7 @@ function identicalWriteNote(tool: string, priorError: string): string {
 }
 
 /** ReAct-mode call resolution: one action per turn, or none (final answer). */
-function reactCall(content: string): ToolCall[] {
+export function reactCall(content: string): ToolCall[] {
   const action = parseReactAction(content);
   return action ? [{ id: `react-${action.tool}`, name: action.tool, args: action.args }] : [];
 }

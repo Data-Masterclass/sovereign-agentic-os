@@ -13,6 +13,42 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Agent engine rebuild, Phase A1: real graph, in-request, checkpointed
+
+- **`buildGraph`** (`os-ui/tabs/agents/lib/engine/build-graph.ts`): the unchanged system.yaml IR
+  becomes a real `@langchain/langgraph` `StateGraph`. Typed state via `Annotation.Root` —
+  `messages` in the OpenAI wire shape (append), every `state.channels` entry with its declared
+  reducer, plus `task`/`current`/`handoffs`/`nodeRuns`/`routes`/`budget`/`held`/`final`. Four nodes
+  per agent (`plan_`, `act_`, `tools_`, `route_`); act → tools is a conditional edge. The supervisor
+  **decides** through a mandatory `route` tool (text fallback `NEXT: <member>`) and
+  `addConditionalEdges` to members ∪ END. Handoffs return `Command({ goto })` when their `when`
+  guard is true. END on supervisor END / all guards false / team step budget (graceful);
+  `recursionLimit` derived from the budget. Disabled agents pruned; unmapped legacy tools are a
+  compile error.
+- **Node-level tool narrowing is now enforced at execution** (A0 finding 1): `tools_<id>` lets
+  only the tools the node is advertised reach `grantedToolExecutor`; anything else is a typed
+  `not_found` that never executes.
+- **`when` guard language** (`engine/when.ts`): `true|false`, string literals, `state.<channel>`,
+  bare identifiers (= channel), `==`/`!=`, `&&`/`||`, parentheses; hand-written parser, no `eval`.
+  A guard over a channel nothing sets is a compile **warning** on the run report.
+- **Checkpointing + resume**: `engine/checkpointer.ts` — `PostgresSaver` on
+  `AGENT_RUNS_DATABASE_URL` (new `agent_runs` database in the chart's `postgres.extraDatabases`,
+  wired into the os-ui Deployment like LiteLLM's; `setup()` runs idempotently at boot) or
+  `MemorySaver` when unset, reported as `checkpointer: 'memory'`. **Thread id = run id**
+  (`newRunId`, minted in the run route). `POST …/run { resume: true, runId }` continues an
+  interrupted thread; the Run panel replaces "re-run to continue" with **Resume**. `LastRun`
+  gains `runId`, `engine`, `checkpointer`.
+- `runOsTeam` takes the engine branch for the route, scheduled runs and the MCP
+  `run_agent_system` (which now returns `runId`). SSE events are unchanged (`node-started`,
+  `tool-step`, `node-completed`, `done`, `error`), emitted from graph nodes through the stream
+  writer.
+- **Parity**: every A0 `todo` flipped — P1 green under `langgraph` for all 13 fixtures (supervisor
+  fixtures driven by the scripted model's declared-order `route` rule, `SCRIPT_ID`
+  `first-tool-then-final@2`), HANDOFF-GUARD green (`when: state.findings_ready` no longer visits
+  `publisher`), **P2** (abort after node 1, resume on the same thread, identical path / tools /
+  final text). Fixtures record `outcome: ok|held|error` instead of `isError`.
+- Docs: `os-ui/ARCHITECTURE.md` → "How a system.yaml becomes a StateGraph".
+
 ### Added — Agent engine rebuild, Phase A0: dependencies, parity harness, engine flag
 
 - **Dependencies** (all MIT, exact-pinned, `serverExternalPackages`): `@langchain/langgraph`

@@ -96,6 +96,8 @@ export type RunCheckpoint = {
   completedNodes: { node: string; status: string; finalText?: string }[];
   /** The node currently executing (started, not yet finished), if any. */
   currentNode?: string;
+  /** The LangGraph thread id (= run id) when the `langgraph` engine ran it — what a Resume continues. */
+  runId?: string;
 };
 
 /** The last interactive run report — persisted so navigating away and back does not wipe it. */
@@ -168,6 +170,12 @@ export type LastRun = {
   /** For an interrupted run: the node index the walk reached, so a resume can
    *  re-enter from the next node (when full-resume ships). Best-effort. */
   resumeFromIndex?: number;
+  /** The run id (= LangGraph thread id) under the `langgraph` engine; absent on walker runs.
+   *  `POST …/run { resume: true, runId }` continues it from its last checkpoint. */
+  runId?: string;
+  /** Which executor produced this run and where its checkpoints live (langgraph only). */
+  engine?: 'walker' | 'langgraph';
+  checkpointer?: 'postgres' | 'memory';
 };
 
 export type SystemRecord = {
@@ -363,7 +371,9 @@ export function recoverInterrupted(rec: SystemRecord): boolean {
   const outputLines = [
     `Run interrupted by a restart after ${completed.length}${planned.length ? ` of ${planned.length}` : ''} step(s).`,
     cp?.currentNode ? `Was executing '${cp.currentNode}' when the process stopped.` : '',
-    'The steps below completed before the interruption. Re-run to continue.',
+    cp?.runId
+      ? 'The steps below completed before the interruption. Resume to continue from the last checkpoint.'
+      : 'The steps below completed before the interruption. Re-run to continue.',
   ].filter(Boolean);
   const lastRun: LastRun = {
     at: cp?.updatedAt ?? marker.startedAt,
@@ -378,6 +388,8 @@ export function recoverInterrupted(rec: SystemRecord): boolean {
     mode: 'live',
     interrupted: true,
     resumeFromIndex: reachedIdx,
+    runId: cp?.runId,
+    engine: cp?.runId ? 'langgraph' : undefined,
   };
   rec.lastRun = lastRun;
   delete rec.activity; // clear the stale live spinner
@@ -396,6 +408,11 @@ function now(): string {
 
 function id(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+}
+
+/** Mint a run id — the LangGraph thread id of one run (engine rebuild A1). Same shape as every store id. */
+export function newRunId(): string {
+  return id('run');
 }
 
 /** Stable blob sha for optimistic concurrency. */
@@ -1056,7 +1073,7 @@ export function clearActivity(systemId: string): void {
  */
 export function startRunCheckpoint(
   systemId: string,
-  input: { prompt?: string; plannedNodes?: string[] },
+  input: { prompt?: string; plannedNodes?: string[]; runId?: string },
 ): void {
   const rec = state().store.get(systemId);
   if (!rec) return;
@@ -1068,6 +1085,7 @@ export function startRunCheckpoint(
     prompt: input.prompt,
     plannedNodes: input.plannedNodes,
     completedNodes: [],
+    runId: input.runId,
   };
   writeThrough(rec);
 }

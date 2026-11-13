@@ -9,7 +9,12 @@
  *             (REGEN_FIXTURES=1) that rewrites them when the walker or the script changes.
  * ARCHITECTURE:
  *   - Reads ./fixtures/<name>.json; generates in memory via `generateFixture`; deep-equals.
- *   - REGEN_FIXTURES=1 writes instead of comparing (the only sanctioned way to change a fixture).
+ *   - REGEN_FIXTURES=1 writes instead of comparing (the only sanctioned way to change a fixture),
+ *     then re-reads what it wrote and asserts it round-trips under the current SCRIPT_ID. Regen
+ *     is SINGLE-FILE by design — `parity.test.ts` reads the fixtures at module load, so running
+ *     the whole suite under REGEN_FIXTURES=1 would race the writes:
+ *       REGEN_FIXTURES=1 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs \
+ *         --test tabs/agents/lib/engine/fixtures.test.ts        (from os-ui/)
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,10 +41,13 @@ for (const spec of specs) {
     const generated = await generateFixture(spec);
     const file = join(DIR, `${spec.name}.json`);
     if (REGEN) {
+      assert.equal(generated.script, SCRIPT_ID, 'regenerated fixture carries the current script rules');
       writeFileSync(file, `${JSON.stringify(generated, null, 2)}\n`);
+      const written = JSON.parse(readFileSync(file, 'utf8')) as EngineFixture;
+      assert.deepEqual(written, generated, 'what was written round-trips');
       return;
     }
-    assert.ok(existsSync(file), `missing ${file} — run: REGEN_FIXTURES=1 npm --prefix os-ui test`);
+    assert.ok(existsSync(file), `missing ${file} — regenerate (single file): REGEN_FIXTURES=1 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test tabs/agents/lib/engine/fixtures.test.ts`);
     const committed = JSON.parse(readFileSync(file, 'utf8')) as EngineFixture;
     assert.equal(committed.script, SCRIPT_ID, 'fixture was recorded with the current script rules');
     assert.deepEqual(generated, committed);

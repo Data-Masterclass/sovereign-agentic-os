@@ -47,19 +47,37 @@ handoff `when` guards and does not checkpoint; a supervisor's routing decision i
 member order, not a model decision. No LangGraph library runs in os-ui yet.
 
 **A rebuild on real LangGraph is in progress** (plan of record:
-`docs/superpowers/plans/2026-11-13-engine-rebuild.md`). Phase A0 (landed) adds the dependencies
+`docs/superpowers/plans/2026-11-13-engine-rebuild.md`). Phase A0 (landed) added the dependencies
 (`@langchain/langgraph`, `@langchain/langgraph-checkpoint-postgres`, `pg`, `langfuse` — all MIT),
 a record/replay model caller, golden fixtures for every shipped template and a parity test, and
-the engine flag. Phase A1 adds `buildGraph` (one subgraph per agent, `when` guards evaluated,
-Postgres checkpoints, resume); A2 approvals as interrupts; A3 one Langfuse trace per run; A4 a
-worker; A5 deletes the walker.
+the engine flag. **Phase A1 (landed)** adds the real engine behind the flag: `tabs/agents/lib/
+engine/build-graph.ts` compiles the IR to a `StateGraph` (four nodes per agent — plan / act /
+tools / route — a supervisor that decides through a `route` tool, `when` guards evaluated by a
+safe expression language, node-level tool narrowing enforced at execution, bounded by the team
+step budget), `engine/run.ts` streams it with thread id = run id, and `engine/checkpointer.ts`
+checkpoints every superstep to the `agent_runs` Postgres database (`AGENT_RUNS_DATABASE_URL`) or,
+when unset, in memory — the run report says which. `POST …/run { resume: true, runId }` continues
+an interrupted run; the Run panel shows **Resume**. Still ahead: A2 approvals as `interrupt()`
+(today a held write returns the executor's typed `held` result to the model, as before); A3 one
+Langfuse trace per run; A4 a worker; A5 deletes the walker. How the graph is shaped is written up
+in `os-ui/ARCHITECTURE.md` → "How a system.yaml becomes a StateGraph".
 
 **The flag.** `AGENTS_ENGINE=walker|langgraph` (env, default `walker`; `core/kernel/config.ts`
 `agentsEngine`). A system may pin itself to the walker with `runtime: walker` in its
 `system.yaml` (an opt-out; the default `langgraph` runtime follows the flag). The decision is one
 pure function, `tabs/agents/lib/engine/select.ts` `selectEngine`, read by the run route, the
-scheduled-run path and the MCP tool `run_agent_system`; every run report carries the `engine`
-that produced it. Until A1 lands, `langgraph` is accepted but still executes the walker.
+scheduled-run path and the MCP tool `run_agent_system` — all three hand the decision to
+`runOsTeam`, which takes the `langgraph` branch, so they cannot disagree. Every run report carries
+the `engine` that produced it, and a `langgraph` report also carries `runId`, `checkpointer`
+and any compile `warnings` (e.g. a handoff guard over a channel nothing sets — the shipped
+Software Delivery Team's `plan_ready`/`committed`/… guards are exactly that today, so under
+`langgraph` its supervisor drives the order and each guard is reported).
+
+**Known limits of A1 (honest).** No node writes a system channel yet, so every `when` guard
+over a channel is a warning and evaluates false until a later phase adds a channel-setting
+mechanism. The Context Librarian handoff curation runs in the graph only when a live embedder is
+wired (same rule as the walker). A held write is not yet an `interrupt()`; the run continues with
+the typed `held` result (A2).
 
 ## Admin → Components — native stack operator
 

@@ -18,6 +18,10 @@ import { principalFor, runCostUsd, type ModelPrice } from '@tabs/agents/lib/buil
 import { effectiveModelPrices } from '@tabs/admin/lib/model-prices';
 import { runAgenticGraph, runNode, type AgenticGraphResult, type AgenticGraphDeps } from '@tabs/agents/lib/build/agentic-graph';
 import { liveEmbedder } from '@core/infra/context/librarian-live';
+import type { AgentsEngine } from '@core/kernel/agents-engine';
+import { runGraphEngine } from '@tabs/agents/lib/engine/run';
+import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engine/checkpointer';
+import type { HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
 import {
   grantedToolSpecs,
   grantedToolBrief,
@@ -232,6 +236,30 @@ export type RunOsTeamInput = {
   onNodeStart?: AgenticGraphDeps['onNodeStart'];
   onStep?: AgenticGraphDeps['onStep'];
   onNodeComplete?: AgenticGraphDeps['onNodeComplete'];
+  /**
+   * ENGINE (engine rebuild A1): `langgraph` runs the compiled StateGraph (`tabs/agents/lib/
+   * engine`) with thread id = `runId`; anything else (or unset) runs the walker exactly as
+   * before. Decided by the caller through `selectEngine` so route, scheduler and MCP agree.
+   */
+  engine?: AgentsEngine;
+  /** The run id (= LangGraph thread id). Required for `langgraph`; minted by the caller. */
+  runId?: string;
+  /** `langgraph` only: continue the thread `runId` from its last checkpoint instead of starting. */
+  resume?: boolean;
+  /** `langgraph` only: abort the stream (a client disconnect); the thread stays resumable. */
+  signal?: AbortSignal;
+};
+
+/** The walker's result plus what the LangGraph engine adds (all optional on a walker run). */
+export type RunOsTeamResult = AgenticGraphResult & {
+  runId?: string;
+  checkpointer?: CheckpointerKind;
+  /** `buildGraph` compile warnings (e.g. a `when` guard over a channel nothing sets). */
+  warnings?: string[];
+  /** The stream was aborted or the recursion limit hit before END — resumable. */
+  interrupted?: boolean;
+  held?: HeldCall[];
+  routes?: RouteDecision[];
 };
 
 /**
@@ -244,7 +272,7 @@ export type RunOsTeamInput = {
  * principal. Software-only teams are a strict subset, so their behaviour is
  * preserved. The last node's narration is the single user-facing reply.
  */
-export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResult> {
+export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult> {
   const sys = parseSystem(input.yaml);
   const ir = compile(sys);
   // Resolve the price book ONCE per run start (admin-saved prices over the env
@@ -258,7 +286,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResu
   // Aggregate token usage across EVERY model call this run makes (plan + act on
   // every node) — the source for the Monitoring run-summary trace below.
   const tracked = trackUsage(input.llm ?? liteLlmCaller());
-  const result = await runAgenticGraph(ir, input.messages, {
+  // The ONE deps object both engines run on: the same gates, the same models, the same budgets.
+  const deps: AgenticGraphDeps = {
     llm: tracked.llm,
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
     callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps),
@@ -284,7 +313,30 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<AgenticGraphResu
     onNodeStart: input.onNodeStart,
     onStep: input.onStep,
     onNodeComplete: input.onNodeComplete,
-  });
+  };
+
+  if (input.engine === 'langgraph') {
+    // ENGINE REBUILD A1: the real StateGraph. Thread id = run id; checkpointed to the
+    // `agent_runs` database when AGENT_RUNS_DATABASE_URL is set, else in memory (reported).
+    if (!input.runId) throw new Error('runOsTeam: the langgraph engine needs a runId (thread id)');
+    const checkpointer = await selectCheckpointer(config.agentRunsDatabaseUrl);
+    const { onNodeStart, onStep, onNodeComplete, tieBreaker: _tb, ...graphDeps } = deps;
+    void _tb;
+    const result = await runGraphEngine({
+      ir,
+      deps: { ...graphDeps, unmappedTools: resolveGrantedTools(sys).unmapped },
+      messages: input.messages,
+      runId: input.runId,
+      resume: input.resume,
+      signal: input.signal,
+      checkpointer,
+      hooks: { onNodeStart, onStep, onNodeComplete },
+    });
+    emitRunSummaryTrace(input, result, tracked, prices);
+    return result;
+  }
+
+  const result = await runAgenticGraph(ir, input.messages, deps);
   emitRunSummaryTrace(input, result, tracked, prices);
   return result;
 }
