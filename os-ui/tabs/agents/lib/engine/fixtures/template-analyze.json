@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "name": "template-analyze",
+  "source": "tabs/agents/lib/templates.ts:analyze",
+  "description": "Starter template \"Analyze\" — Reads sources and explains what the data is saying.",
+  "guarded": false,
+  "task": "Assess the current state of the sales domain and recommend one next step.",
+  "yaml": "version: '1'\nsystem:\n  name: Analyze starter\n  domain: sales\n  visibility: Personal\nentrypoint: analyst\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n  connections: []\nagents:\n  - id: analyst\n    role: Analyzes sources and explains the findings\n    agent_md: |-\n      # Analyze starter — Analyst\n\n      You analyze the material you are given and explain, in plain language, what it means.\n\n      ## How to work\n      1. Retrieve the relevant sources with your governed tools.\n      2. Pull out the facts that matter — figures, trends, changes.\n      3. Explain what they mean and why, without jargon.\n      4. Note anything uncertain or missing.\n\n      Be accurate and honest. Never invent numbers.\n    memory_md: |-\n      # Memory\n\n      (What this analyst has learned about the domain and its sources.)\n    tools:\n      - search_knowledge\n",
+  "script": "first-tool-then-final@2",
+  "transcript": {
+    "version": 1,
+    "exchanges": [
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [],
+          "messages": 2
+        },
+        "response": {
+          "content": "plan(analyst): 1. use the first granted tool  2. answer the task.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 2
+        },
+        "response": {
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call-analyst-1",
+              "name": "search_knowledge",
+              "args": {
+                "input": "fixture:analyst",
+                "task": "Assess the current state of the sales domain and recommend one next step."
+              }
+            }
+          ]
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 4
+        },
+        "response": {
+          "content": "FINAL(analyst): answered the task using search_knowledge.",
+          "toolCalls": []
+        }
+      }
+    ]
+  },
+  "golden": {
+    "path": [
+      "analyst"
+    ],
+    "toolCalls": [
+      {
+        "node": "analyst",
+        "tool": "search_knowledge",
+        "args": {
+          "input": "fixture:analyst",
+          "task": "Assess the current state of the sales domain and recommend one next step."
+        },
+        "outcome": "ok"
+      }
+    ],
+    "finalText": "FINAL(analyst): answered the task using search_knowledge.",
+    "reachedEnd": true,
+    "held": 0
+  }
+}

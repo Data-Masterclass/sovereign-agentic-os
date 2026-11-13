@@ -12,11 +12,19 @@
  * are MANAGED BY THE DEPLOYMENT: `/model/delete` cannot remove them (they come
  * back from config on every boot), so we refuse honestly instead of pretending.
  *
- * SECRETS RULE: the master key is used server-side only, passed in by the route
- * from `config` — it is never logged, returned, or included in any result.
+ * SECRETS RULE: the master key lives ONLY in `core/infra/litellm-admin.ts` /
+ * `litellm-write.ts`; this module and its route never see it (A3 MODEL-KEY, repo-wide).
  *
- * Injectable fetch → unit-testable without a live gateway.
+ * Injectable IO → unit-testable without a live gateway.
+ *
+ * FEATURE:    Verified removal of an admin-added model from the LiteLLM gateway.
+ * USER STORY: As a platform admin I remove a model I added, and a chart-seeded alias is refused
+ *             honestly instead of silently coming back on the next boot.
+ * ARCHITECTURE: pure decision over two injected gateway operations (read rows, delete by id);
+ *             production binds them to the one admin read/write clients.
  */
+import { adminGet, type Fetched } from '@core/infra/litellm-admin';
+import { adminPost } from '@core/infra/litellm-write';
 
 export type GatewayModelRow = {
   model_name?: string;
@@ -35,43 +43,29 @@ export type GatewayRemoveResult =
   /** A `/model/delete` call was rejected by the gateway. */
   | { status: 'failed' };
 
-export type GatewayOpts = {
-  url: string;
-  masterKey: string;
-  fetchImpl?: typeof fetch;
-  timeoutMs?: number;
+/**
+ * The two gateway operations this module needs, as INJECTABLE IO. Production uses the ONE admin
+ * read/write clients (`core/infra/litellm-admin.ts` / `litellm-write.ts`), which hold the master key;
+ * no key ever appears here or in a route (A3: the `MODEL-KEY` gate is repo-wide). Tests inject fakes.
+ */
+export type GatewayIo = {
+  get: <T>(path: string) => Promise<Fetched<T>>;
+  post: <T>(path: string, body: unknown) => Promise<Fetched<T>>;
 };
 
-async function call(opts: GatewayOpts, path: string, init?: RequestInit): Promise<Response> {
-  const f = opts.fetchImpl ?? fetch;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 4000);
-  try {
-    return await f(`${opts.url}${path}`, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${opts.masterKey}`,
-        accept: 'application/json',
-        ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      },
-      cache: 'no-store',
-      signal: ctrl.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
+export type GatewayOpts = { io?: GatewayIo };
+
+const liveIo: GatewayIo = {
+  get: (path) => adminGet(path, 4000),
+  post: (path, body) => adminPost(path, body, 4000),
+};
 
 /** The live rows for one alias, or null when the gateway is unreachable. */
-export async function gatewayRowsFor(alias: string, opts: GatewayOpts): Promise<GatewayModelRow[] | null> {
-  try {
-    const res = await call(opts, '/model/info');
-    if (!res.ok) return null;
-    const data = (await res.json()) as { data?: GatewayModelRow[] };
-    return (data?.data ?? []).filter((r) => r.model_name === alias);
-  } catch {
-    return null;
-  }
+export async function gatewayRowsFor(alias: string, opts: GatewayOpts = {}): Promise<GatewayModelRow[] | null> {
+  const io = opts.io ?? liveIo;
+  const res = await io.get<{ data?: GatewayModelRow[] }>('/model/info');
+  if (!res.ok) return null;
+  return (res.data?.data ?? []).filter((r) => r.model_name === alias);
 }
 
 /**
@@ -80,7 +74,8 @@ export async function gatewayRowsFor(alias: string, opts: GatewayOpts): Promise<
  * before calling `/model/delete` per row id — a config-seeded alias is refused as
  * `managed`, server-side, regardless of what any UI shows.
  */
-export async function removeGatewayModel(alias: string, opts: GatewayOpts): Promise<GatewayRemoveResult> {
+export async function removeGatewayModel(alias: string, opts: GatewayOpts = {}): Promise<GatewayRemoveResult> {
+  const io = opts.io ?? liveIo;
   const rows = await gatewayRowsFor(alias, opts);
   if (rows === null) return { status: 'unreachable' };
   if (rows.length === 0) return { status: 'not-found' };
@@ -89,12 +84,8 @@ export async function removeGatewayModel(alias: string, opts: GatewayOpts): Prom
   const ids = [...new Set(rows.map((r) => r.model_info?.id).filter((id): id is string => typeof id === 'string' && id.length > 0))];
   if (ids.length === 0) return { status: 'failed' }; // db rows without ids — cannot address the delete
   for (const id of ids) {
-    try {
-      const res = await call(opts, '/model/delete', { method: 'POST', body: JSON.stringify({ id }) });
-      if (!res.ok) return { status: 'failed' };
-    } catch {
-      return { status: 'failed' };
-    }
+    const res = await io.post('/model/delete', { id });
+    if (!res.ok) return { status: 'failed' };
   }
   return { status: 'removed', ids };
 }

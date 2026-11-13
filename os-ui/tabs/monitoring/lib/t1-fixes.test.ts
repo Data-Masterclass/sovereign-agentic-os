@@ -18,10 +18,10 @@ import { collectSystem } from '@tabs/monitoring/lib/adapters/system-health';
 
 const realFetch = globalThis.fetch;
 
-/** Stub globalThis.fetch to return the given LiteLLM /spend/tags rows once. */
+/** Stub globalThis.fetch to return the given LiteLLM /spend/tags rows (the admin read client parses JSON). */
 function stubLitellmTags(rows: unknown[]): void {
   globalThis.fetch = (async () =>
-    ({ ok: true, text: async () => JSON.stringify(rows) }) as unknown as Response) as unknown as typeof fetch;
+    ({ ok: true, status: 200, text: async () => JSON.stringify(rows), json: async () => rows }) as unknown as Response) as unknown as typeof fetch;
 }
 
 beforeEach(() => {

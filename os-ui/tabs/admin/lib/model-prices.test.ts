@@ -107,7 +107,9 @@ test('the prices route is admin-gated (adminCtx on GET+PATCH) and audited', () =
 });
 
 test('cost consumers price runs from effectiveModelPrices(), not the raw env map', () => {
-  for (const p of ['tabs/agents/lib/build/server.ts', 'tabs/agents/lib/build/agentic-graph-server.ts']) {
+  // A5 deleted `build/server.ts`'s run path (and its own run-summary trace) — the one agent run
+  // path left is the engine's, so there is one consumer to pin.
+  for (const p of ['tabs/agents/lib/build/agentic-graph-server.ts']) {
     const src = read(p);
     assert.match(src, /effectiveModelPrices\(\)/, `${p} resolves the effective price book`);
     assert.doesNotMatch(src, /config\.modelPrices/, `${p} must not read the env seed directly`);

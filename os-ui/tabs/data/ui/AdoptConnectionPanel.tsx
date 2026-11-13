@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import CatalogBrowser, { keyOf, type TableRef, type CatalogClassification } from '@tabs/connections/ui/CatalogBrowser';
+import { SCHEDULING_OFF_NOTE } from '@tabs/data/lib/sync-schedule-view';
 
 type EntityCursor = { incremental: boolean; column: string | null; chip: string; note: string };
 type ExposedTable = { schema: string; table: string; cursor?: EntityCursor };
@@ -92,6 +93,8 @@ export default function AdoptConnectionPanel({
   const [cursorKind, setCursorKind] = useState<'timestamp' | 'number'>('timestamp');
   const [mergeKeys, setMergeKeys] = useState('');
   const [cron, setCron] = useState('0 6 * * *');
+  /** `DATA_PROJECT_GIT` off ⇒ a saved cadence is never triggered (B4-8); the picker says it. */
+  const [schedulingOff, setSchedulingOff] = useState(false);
   // Action-adoption (Phase 3): the per-pick message after adopting an exposure's actions.
   const [actionMsg, setActionMsg] = useState('');
 
@@ -124,6 +127,8 @@ export default function AdoptConnectionPanel({
         if (!res.ok) { setErr(data.error ?? 'Could not load exposed tables'); return; }
         const conns = (data.connections as ExposedConnection[]) ?? [];
         setConnections(conns);
+        // Review M-7: the cadence picker below must say so when nothing will run the cadence.
+        setSchedulingOff(data.scheduling === 'off');
         // Pull the classification per connection (best-effort; a missing one just falls back
         // to schema grouping — never blocks adoption). The GET is domain-visible read-only.
         for (const c of conns) {
@@ -352,6 +357,9 @@ export default function AdoptConnectionPanel({
                 {SYNC_PRESETS.map((p) => <option key={p.cron} value={p.cron}>{p.label}</option>)}
                 {SYNC_PRESETS.every((p) => p.cron !== cron) ? <option value={cron}>Custom ({cron})</option> : null}
               </select>
+              {schedulingOff ? (
+                <p className="hint" style={{ margin: '0 0 6px' }}>{SCHEDULING_OFF_NOTE}</p>
+              ) : null}
 
               {syncMode === 'full-refresh' ? (
                 <p className="hint" style={{ margin: '6px 0 0', color: 'var(--warn, #a86)' }}>

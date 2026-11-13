@@ -10,7 +10,7 @@ import {
   OS_TOOL_ALIASES,
   resolveAlias,
   resolveGrantedTools,
-  isAgenticOsTeam,
+  unmappedGrantNames,
   grantedToolSpecs,
   grantedToolBrief,
   grantedToolExecutor,
@@ -26,7 +26,7 @@ import {
 
 // --- fixtures ----------------------------------------------------------------
 
-function sysWith(tools: string[], runtime: 'langgraph' | 'hermes' = 'langgraph'): System {
+function sysWith(tools: string[], runtime = 'langgraph'): System {
   return parseSystem({
     version: '1',
     system: { name: 'T', domain: 'sales', visibility: 'Personal' },
@@ -167,15 +167,21 @@ test('discovery companions are grant-scoped: an agent with no action tool gets n
   assert.deepEqual(resolveGrantedTools(sysWith(['list_datasets'])).mcpNames, ['list_datasets']);
 });
 
-// --- isAgenticOsTeam ---------------------------------------------------------
+// --- unmappedGrantNames (A5: what replaced the isAgenticOsTeam boolean) ------
 
-test('isAgenticOsTeam: mapped langgraph grants true; hermes/unmapped/empty false', () => {
-  assert.equal(isAgenticOsTeam(sysWith(['create_software', 'commit'])), true); // software-only subset
-  assert.equal(isAgenticOsTeam(sysWith(['query_data', 'search_knowledge', 'create_dataset'])), true); // mixed
-  assert.equal(isAgenticOsTeam(sysWith(['retrieve', 'metrics'])), true); // legacy but fully mappable
-  assert.equal(isAgenticOsTeam(sysWith(['query_data', 'web_fetch'])), false); // an unmapped tool
-  assert.equal(isAgenticOsTeam(sysWith([])), false); // no grants
-  assert.equal(isAgenticOsTeam(sysWith(['query_data'], 'hermes')), false); // hermes runtime
+test('unmappedGrantNames: names the grants with no governed tool behind them, and nothing else', () => {
+  assert.deepEqual(unmappedGrantNames(sysWith(['create_software', 'commit'])), []); // software-only subset
+  assert.deepEqual(unmappedGrantNames(sysWith(['query_data', 'search_knowledge', 'create_dataset'])), []); // mixed
+  assert.deepEqual(unmappedGrantNames(sysWith(['retrieve', 'metrics'])), []); // legacy but fully mappable
+  assert.deepEqual(unmappedGrantNames(sysWith(['query_data', 'web_fetch'])), ['web_fetch']); // named, so the error can say it
+  // A5 behaviour change, deliberate: a system with NO tool grants is RUNNABLE (its agents are
+  // plain completions). The old boolean refused it only because the Python-runtime fallback
+  // existed to catch it.
+  assert.deepEqual(unmappedGrantNames(sysWith([])), []);
+  // A5: `runtime: hermes` in a stored file is normalised to `langgraph` on parse — a retired
+  // engine name must not make a saved system un-runnable.
+  assert.equal(sysWith(['query_data'], 'hermes').runtime, 'langgraph');
+  assert.deepEqual(unmappedGrantNames(sysWith(['query_data'], 'hermes')), []);
 });
 
 // --- grantedToolSpecs (role scope + node narrowing) --------------------------
@@ -589,4 +595,20 @@ test('HELD-ACTION: a held request_promotion must carry the exact arguments it ne
   assert.equal(queued.length, 1, 'exactly one approval queued');
   assert.deepEqual((queued[0] as { action?: { args?: unknown } }).action?.args, args,
     'the queued approval has no arguments — approve → execute → resume is impossible');
+});
+
+// --- engine rebuild A0: an explicit empty node tool list means NO tools -----------
+
+test("grantedToolSpecs: an explicit empty node `tools: []` advertises NO tools; an absent list inherits every grant", () => {
+  const sys = sysWith(['query_data', 'search_knowledge']);
+  // Absent → inherit the whole (role-scoped) granted set, as before.
+  assert.ok(grantedToolSpecs(CREATOR, sys).map((s) => s.name).includes('query_data'));
+  assert.ok(grantedToolSpecs(CREATOR, sys, undefined).map((s) => s.name).includes('search_knowledge'));
+  // Explicit [] → nothing. The Software Delivery Team's orchestrator (`tools: []`, "do no
+  // building yourself") must never be handed create_software/commit.
+  assert.deepEqual(grantedToolSpecs(CREATOR, sys, []), []);
+  // A non-empty list still narrows (plus discovery companions), unchanged.
+  const narrowed = grantedToolSpecs(CREATOR, sys, ['search_knowledge']).map((s) => s.name);
+  assert.ok(narrowed.includes('search_knowledge'));
+  assert.ok(!narrowed.includes('query_data'));
 });

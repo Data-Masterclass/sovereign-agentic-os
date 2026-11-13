@@ -5,8 +5,8 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { agentHealthRows, ensureHydrated as ensureAgentsHydrated, type AgentHealthRow } from '@tabs/agents/lib/store';
 import { listDatasets, ensureHydrated } from '@tabs/data/lib/store';
-import { latestRun, ensureHydrated as ensureDqHydrated } from '@tabs/data/lib/dq-results';
-import { latestSyncRun, ensureSyncRunsHydrated } from '@tabs/data/lib/sync-runs';
+import { latestDqRuns } from '@tabs/data/lib/dq-status-server';
+import { latestSyncSignals } from '@tabs/data/lib/sync-status-server';
 import { type Health, combine, pipelineHealth, dqHealth, ageInDays } from '@tabs/monitoring/lib/artifact-health-core';
 import { agentTelemetryBatch } from '@tabs/monitoring/lib/adapters/agent-telemetry';
 import { rollupAgentTelemetry, summarizeDq, type AgentTelemetry } from '@tabs/monitoring/lib/telemetry-core';
@@ -83,23 +83,26 @@ export async function artifactMonitoring(user: CurrentUser, nowMs: number): Prom
   // Data — enumerate the caller's datasets, roll pipeline + DQ into one health, and
   // attach the REAL DQ violation count from the last persisted DQ run per dataset.
   await ensureHydrated();
-  await ensureDqHydrated().catch(() => {});
-  await ensureSyncRunsHydrated().catch(() => {}); // fail-soft: no sync signal ⇒ nulls
   const groups = listDatasets(principal);
+  // Quality + sync signals: DAGSTER asset checks and runs when `DATA_PROJECT_GIT` is on, the OS
+  // ledgers when it is off — two batch reads for every row. Fail-soft: unknown ⇒ nulls.
+  const allDatasets = [...groups.mine, ...groups.domain, ...groups.marketplace];
+  const dqByDataset = await latestDqRuns(allDatasets.map((d) => ({ id: d.id, domain: d.domain }))).catch(() => new Map());
+  const syncByDataset = await latestSyncSignals(allDatasets.map((d) => d.id)).catch(() => new Map());
   const toRow = (scope: DataHealthRow['scope']) => (d: (typeof groups.mine)[number]): DataHealthRow => {
     const anyBuilt = d.dots.bronze || d.dots.silver || d.dots.gold;
     const ageDays = ageInDays(d.freshness, nowMs);
     const pipeline = pipelineHealth(anyBuilt, ageDays);
-    const last = latestRun(d.id);
+    const last = dqByDataset.get(d.id) ?? null;
     const dqSummary = summarizeDq(last?.results ?? null);
     const dq = dqHealth(d.quality);
-    const lastSyncRun = latestSyncRun(d.id);
+    const sig = syncByDataset.get(d.id) ?? null;
     return {
       id: d.id, name: d.name, scope,
       pipeline, dq, health: combine(pipeline, dq),
       quality: d.quality, freshness: d.freshness, ageDays, gold: d.dots.gold,
       dqRules: dqSummary.rules, dqViolations: dqSummary.violated, dqHasRun: dqSummary.hasRun,
-      lastSync: lastSyncRun?.startedAt ?? null, syncStatus: lastSyncRun?.status ?? null,
+      lastSync: sig?.lastSync ?? null, syncStatus: sig?.syncStatus ?? null,
     };
   };
   const data: DataScopeGroups = {

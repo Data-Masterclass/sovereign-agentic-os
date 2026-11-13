@@ -2,7 +2,6 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import type { CurrentUser } from '@core/kernel/auth';
 import type { McpTool, JsonSchema } from '@core/mcp/server';
 import { roleAtLeast } from '@core/kernel/session';
 import {
@@ -13,49 +12,39 @@ import {
 
 // --- Governed lib functions (the EXACT same the UI + /api routes call) ---------
 import {
-  createDataset,
-  buildVersion,
   setDocs as setDatasetDocs,
   requestPromotion as requestDatasetPromotion,
   getDataset,
   archiveDataset,
   deleteDataset,
   defineMeasure,
-  buildGoldJoin as commitGoldJoin,
-  addCheck,
   builtLayerFqn,
-  setDatasetSync,
   requireDatasetEditable,
   type PromotionRequest,
 } from '@tabs/data/lib/store';
-import { DATASET_SYNC_MODES, type DatasetSync, type DatasetSyncMode } from '@tabs/data/lib/dataset-schema';
-import { runDatasetSync } from '@tabs/data/lib/sync-run-server';
-import { reconcileSyncCron } from '@tabs/data/lib/sync-cron';
-import { kajabiCursorField } from '@tabs/connections/lib/kajabi-resources';
-import { runQualityChecks } from '@tabs/data/lib/dq-run';
+import { DATASET_SYNC_MODES, type DatasetSyncMode } from '@tabs/data/lib/dataset-schema';
+// The governed data MUTATIONS — one service function per operation, shared BYTE FOR BYTE with the
+// Data tab's routes (engine rebuild B4, checklist X8: same commit, same Dagster launch, same error).
+import {
+  createDatasetService,
+  commitVersionService,
+  transformSilverService,
+  buildGoldJoinService,
+  rematerializeDomainTableService,
+  defineQualityRulesService,
+  runQualityChecksService,
+  saveDatasetSyncService,
+  syncDatasetNowService,
+  type QualityRuleInput,
+} from '@tabs/data/lib/mutations-server';
 import { proposeFixes, applyFixes, dqComplete, type FixApplyInput } from '@tabs/data/lib/dq-fix-server';
-import { DATA_CHECK_RULES, type DataCheckRule } from '@tabs/data/lib/index';
+import { DATA_CHECK_RULES } from '@tabs/data/lib/index';
 import { queryRun, executeRun } from '@core/infra/governed';
-import { publishPromotionLive, rematerializeDomainTableLive } from '@tabs/data/lib/publish-server';
+import { publishPromotionLive } from '@tabs/data/lib/publish-server';
 import { reconcileDomainTablesLive } from '@tabs/data/lib/reconcile-server';
 import { enqueue, getApproval, decide, listApprovals } from '@core/policy/approvals';
-import { canBuildStage, canPassThrough, stageArtifact } from '@tabs/data/lib/panels';
 import { ingestAndRegisterBronze } from '@tabs/data/lib/ingest';
-import { buildStage, commitLayerVersion } from '@tabs/data/lib/build/server';
-import {
-  silverPlan,
-  goldJoinPlan,
-  goldMeasureToModel,
-  CAST_TYPES,
-  type TransformOp,
-  type ResolvedJoin,
-  type GoldDimension,
-  type GoldMeasure,
-  type JoinType,
-} from '@tabs/data/lib/transform';
-import { assetTarget } from '@tabs/data/lib/store-fqn';
-import type { ExecuteIdentity } from '@core/infra/governed';
-import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@tabs/data/lib/index';
+import { CAST_TYPES } from '@tabs/data/lib/transform';
 import { measureFromForm, measureMember, type MetricForm, type GuidedFilter, type GuidedWindow } from '@tabs/metrics/lib/model';
 import type { MeasureType } from '@tabs/data/lib/metrics';
 import { buildMetric } from '@tabs/metrics/lib/build/server';
@@ -119,7 +108,7 @@ import { patchAppDesign, getAppForUser, type AppEpic } from '@tabs/software/lib/
 import { normalizeContextGrants } from '@core/kernel/context-grants';
 
 // ================================ DATA ========================================
-export const dataWriteTools: McpTool[] = [
+const tools: McpTool[] = [
   {
     name: 'create_dataset',
     tab: 'data',
@@ -146,14 +135,9 @@ export const dataWriteTools: McpTool[] = [
         { name: 'Orders', domain: 'sales', columns: [{ name: 'order_id', description: 'Primary key' }, { name: 'net_amount', description: 'Order value in EUR' }] },
       ],
     },
-    call: async (user, args) => {
-      const name = str(args.name).trim();
-      if (!name) fail('create_dataset needs a `name` string', 400);
-      const p = P(user);
-      const d = createDataset(p, { name, domain: str(args.domain) || undefined });
-      const cols = colDocs(args.columns);
-      return cols.length ? setDatasetDocs(d.id, p, { columns: cols }) : d;
-    },
+    call: async (user, args) =>
+      // The SAME service the Data tab's "New dataset" route calls (checklist X8).
+      createDatasetService(P(user), { name: args.name, domain: args.domain, columns: colDocs(args.columns) }),
   },
   {
     name: 'add_dataset_version',
@@ -179,22 +163,16 @@ export const dataWriteTools: McpTool[] = [
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();
       if (!datasetId) fail('add_dataset_version needs a `datasetId`', 400);
-      const layer = str(args.layer) as Layer;
-      if (!['bronze', 'silver', 'gold'].includes(layer)) fail('layer must be bronze|silver|gold', 400);
-      const p = P(user);
-      const current = getDataset(datasetId, p);
-      if (!canBuildStage(current.versions, layer)) fail(`bring in the prior layer before building ${layer}`, 400);
-      const passThrough = bool(args.passThrough);
-      if (passThrough && !canPassThrough(layer)) fail('Bronze is the entry point — nothing to pass through', 400);
-      // The ONE honest commit path (shared with the version route): silver/gold are
-      // registered ONLY after the materialize-or-probe build report is ✓.
-      const outcome = await commitLayerVersion(current, layer, p, {
-        passThrough,
-        quality: (str(args.quality) as Quality) || undefined,
-        body: typeof args.body === 'string' ? args.body : undefined,
+      // The ONE honest commit path, shared with the version route (checklist X8): silver/gold
+      // are registered ONLY after the materialize-or-probe build report is ✓.
+      const outcome = await commitVersionService(P(user), datasetId, {
+        layer: args.layer,
+        quality: args.quality,
+        passThrough: args.passThrough,
+        body: args.body,
       });
       if (!outcome.ok || !outcome.dataset) {
-        fail(`${layer} commit did not pass${outcome.build ? ` (${outcome.build.mode})` : ''}: ${outcome.error ?? 'apply/verify failed'} — nothing was registered`, 502);
+        fail(`${str(args.layer)} commit did not pass${outcome.build ? ` (${outcome.build.mode})` : ''}: ${outcome.error ?? 'apply/verify failed'} — nothing was registered`, 502);
       }
       return outcome.dataset;
     },
@@ -311,30 +289,23 @@ export const dataWriteTools: McpTool[] = [
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();
       if (!datasetId) fail('transform_silver needs a `datasetId`', 400);
-      const columns = strArr(args.columns);
-      const ops = (Array.isArray(args.ops) ? args.ops : []) as TransformOp[];
-      const dataset = getDataset(datasetId, P(user)); // view-scope guard (403/404)
-      if (!canBuildStage(dataset.versions, 'silver')) {
-        fail('Bring in the Bronze version before cleaning it (run ingest_dataset first)', 400);
+      // The SAME service the Transform panel's route calls (checklist X8): server-side compile,
+      // governed CTAS as the caller, registration only on a ✓, then the Dagster launch.
+      const out = await transformSilverService(P(user), datasetId, { columns: strArr(args.columns), ops: args.ops });
+      if (!out.ok || !out.dataset) {
+        fail(`Silver build did not pass (${out.build.mode}): ${out.error ?? 'apply/verify failed'} — nothing was registered`, 502);
       }
-      const identity = executeIdentity(user);
-      // Compile server-side (TransformError → typed bad_request with the real reason).
-      const plan = silverPlan(dataset, identity, columns, ops);
-      // Personal-lane builds run under the UID so Trino→OPA recognises the caller as
-      // the personal_<uid> owner (same rule as the transform route).
-      if (plan.schema.startsWith('personal_')) identity.principal = user.id;
-      const build = await buildStage(dataset, 'silver', identity.principal, { transformSql: plan.sql, identity, targetFqn: plan.target });
-      if (!build.ok) {
-        const failed = build.rows.find((r) => r.status === 'fail');
-        fail(`Silver build did not pass (${build.mode}): ${failed?.error ?? 'apply/verify failed'} — nothing was registered`, 502);
-      }
-      // ✓ only: register the Silver version + persist the compiled SQL as its artifact.
-      const updated = buildVersion(datasetId, P(user), 'silver', {
-        quality: 'unknown',
-        artifact: stageArtifact(dataset.name, 'silver'),
-        body: plan.sql,
-      });
-      return { ok: true, mode: build.mode, sql: plan.sql, target: plan.target, silverRegistered: true, dots: { bronze: updated.versions.bronze.built, silver: updated.versions.silver.built, gold: updated.versions.gold.built } };
+      const d = out.dataset;
+      return {
+        ok: true,
+        mode: out.build.mode,
+        sql: out.sql,
+        target: out.target,
+        silverRegistered: true,
+        dagsterLaunch: out.launched ? 'launching' : 'off',
+        domainTable: out.domainTable,
+        dots: { bronze: d.versions.bronze.built, silver: d.versions.silver.built, gold: d.versions.gold.built },
+      };
     },
   },
   {
@@ -422,90 +393,39 @@ export const dataWriteTools: McpTool[] = [
       const datasetId = str(args.datasetId).trim();
       if (!datasetId) fail('build_gold_join needs a `datasetId`', 400);
       const p = P(user);
-      const dataset = getDataset(datasetId, p); // view-scope guard on the base
 
       // REPAIR MODE (parity with the gold-join route): re-run ONLY the publish CTAS for a
       // promoted dataset whose domain table is missing/stale — no build, no spec needed.
       if (args.rematerializeOnly === true) {
-        if (dataset.tier === 'dataset') fail('Not promoted — nothing to re-materialize', 400);
-        if (!roleAtLeast(user.role, 'builder')) {
-          fail('Re-materializing the shared domain table needs Builder or above', 403);
-        }
-        const out = await rematerializeDomainTableLive(datasetId, p);
-        return {
-          ok: out.ok,
-          domainTable: out.ok
-            ? { state: 'refreshed', fqn: out.fqn }
-            : { state: 'stale', fqn: out.fqn, reason: out.error },
-        };
+        const out = await rematerializeDomainTableService(p, datasetId);
+        return { ok: out.ok, domainTable: out.domainTable };
       }
 
-      if (!canBuildStage(dataset.versions, 'gold')) {
-        fail('Bring in the Silver version before joining it (run transform_silver first)', 400);
-      }
-      const rawPicks = Array.isArray(args.picks) ? (args.picks as Record<string, unknown>[]) : [];
-      if (rawPicks.length === 0) fail('Pick at least one dataset to join (`picks`)', 400);
-
-      const identity = executeIdentity(user);
-      // Resolve each pick through the canView guard — a non-visible id → typed 403/404.
-      const joins: ResolvedJoin[] = [];
-      const upstreams: DatasetUpstream[] = [];
-      for (const pick of rawPicks) {
-        const up = getDataset(str(pick?.datasetId).trim(), p); // throws 403/404
-        const fqn = assetTarget(up);
-        const type: JoinType = pick?.type === 'left' ? 'left' : 'inner';
-        const on = Array.isArray(pick?.on) ? (pick.on as ResolvedJoin['on']) : [];
-        joins.push({ table: fqn, type, on });
-        upstreams.push({ datasetId: up.id, name: up.name, fqn, joinType: type });
-      }
-      const dimensions = (Array.isArray(args.dimensions) ? args.dimensions : []) as GoldDimension[];
-      const measures = (Array.isArray(args.measures) ? args.measures : []) as GoldMeasure[];
-
-      // Compile server-side (TransformError → typed bad_request with the real reason).
-      const plan = goldJoinPlan(dataset, identity, joins, dimensions, measures);
-      if (plan.schema.startsWith('personal_')) identity.principal = user.id;
-      const build = await buildStage(dataset, 'gold', identity.principal, { transformSql: plan.sql, identity, targetFqn: plan.target });
-      if (!build.ok) {
-        const failed = build.rows.find((r) => r.status === 'fail');
-        fail(`Gold join did not pass (${build.mode}): ${failed?.error ?? 'apply/verify failed'} — nothing was recorded`, 502);
-      }
-      // ✓ only: record the Gold version, the measures (feed the Cube scaffold at
-      // promotion) and the multi-upstream lineage edges (the reuse).
-      const updated = commitGoldJoin(datasetId, p, {
-        measures: measures.map(goldMeasureToModel),
-        upstreams,
-        artifact: stageArtifact(dataset.name, 'gold'),
-        body: plan.sql,
+      // The SAME service the Composition panel's route calls (checklist X8): every pick
+      // re-resolved through the canView guard to its owner-aware table, ONE compiled CTAS as
+      // the caller, version + measures + lineage only on a ✓, then the Dagster launch and the
+      // governed domain copy's refresh.
+      const out = await buildGoldJoinService(p, datasetId, {
+        baseDatasetId: args.baseDatasetId,
+        picks: args.picks,
+        dimensions: args.dimensions,
+        measures: args.measures,
+        derived: args.derived,
+        goldSpec: args.goldSpec,
       });
-      // Northpeak fix — MATERIALIZATION DRIFT (MCP parity with the gold-join route): a
-      // rebuild of an ALREADY-PROMOTED dataset leaves the governed domain table (what Cube
-      // reads) on the prior snapshot. Auto-refresh it as a Builder+ (the write floor);
-      // otherwise report an honest STALE state. Best-effort — never fails the ✓ rebuild.
-      let domainTable: { state: 'refreshed' | 'stale' | 'not-promoted'; fqn?: string; reason?: string } =
-        { state: 'not-promoted' };
-      if (updated.tier !== 'dataset') {
-        if (roleAtLeast(user.role, 'builder')) {
-          try {
-            const out = await rematerializeDomainTableLive(datasetId, p);
-            domainTable = out.ok
-              ? { state: 'refreshed', fqn: out.fqn }
-              : { state: 'stale', fqn: out.fqn, reason: out.error };
-          } catch (e) {
-            domainTable = { state: 'stale', reason: e instanceof Error ? e.message : String(e) };
-          }
-        } else {
-          domainTable = { state: 'stale', reason: 'Rebuilt by a creator — a Builder must re-promote to refresh the shared domain table.' };
-        }
+      if (!out.ok || !out.dataset) {
+        fail(`Gold join did not pass (${out.build.mode}): ${out.error ?? 'apply/verify failed'} — nothing was recorded`, 502);
       }
       return {
         ok: true,
-        mode: build.mode,
-        sql: plan.sql,
-        target: plan.target,
+        mode: out.build.mode,
+        sql: out.sql,
+        target: out.target,
         goldRegistered: true,
-        measures: updated.measures,
-        upstreams: updated.upstreams,
-        domainTable,
+        dagsterLaunch: out.launched ? 'launching' : 'off',
+        measures: out.dataset.measures,
+        upstreams: out.dataset.upstreams,
+        domainTable: out.domainTable,
       };
     },
   },
@@ -543,25 +463,10 @@ export const dataWriteTools: McpTool[] = [
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();
       if (!datasetId) fail('define_quality_rules needs a `datasetId`', 400);
-      const rulesIn = Array.isArray(args.rules) ? args.rules : [];
+      const rulesIn = Array.isArray(args.rules) ? (args.rules as QualityRuleInput[]) : [];
       if (rulesIn.length === 0) fail('define_quality_rules needs at least one rule', 400);
-      const p = P(user);
-      let dataset = getDataset(datasetId, p); // canView/canEdit re-gated in addCheck
-      for (const raw of rulesIn) {
-        const r = (raw ?? {}) as Record<string, unknown>;
-        const rule = str(r.rule) as DataCheckRule;
-        if (!(DATA_CHECK_RULES as string[]).includes(rule)) fail(`unknown rule '${str(r.rule)}' (${DATA_CHECK_RULES.join('|')})`, 400);
-        const column = str(r.column).trim();
-        if (!column) fail(`${rule} needs a column`, 400);
-        dataset = addCheck(datasetId, p, {
-          name: `${rule}(${column})`,
-          rule,
-          column,
-          values: Array.isArray(r.values) ? r.values.map((x) => str(x)) : undefined,
-          min: typeof r.min === 'number' ? r.min : undefined,
-          max: typeof r.max === 'number' ? r.max : undefined,
-        });
-      }
+      // The SAME service the DQ editor's route calls with one rule (checklist X8).
+      const dataset = defineQualityRulesService(P(user), datasetId, rulesIn);
       return { datasetId, checks: dataset.checks ?? [] };
     },
   },
@@ -579,14 +484,9 @@ export const dataWriteTools: McpTool[] = [
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();
       if (!datasetId) fail('run_quality_checks needs a `datasetId`', 400);
-      const p = P(user);
-      const dataset = getDataset(datasetId, p); // canView gate
-      const resolved = builtLayerFqn(dataset, p); // { fqn, principal } | null
-      const report = await runQualityChecks(dataset.checks ?? [], {
-        fqn: resolved?.fqn ?? null,
-        queryFn: (sql) => queryRun(sql, resolved?.principal),
-      });
-      return { datasetId, name: dataset.name, ...report };
+      // The SAME service the "Run checks" route calls (checklist X8): the dataset's rules AND
+      // its heuristic monitors, run AS the owner and persisted as one run of the durable series.
+      return runQualityChecksService(P(user), datasetId);
     },
   },
   {
@@ -741,19 +641,19 @@ export const dataWriteTools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Configure (or enable/disable) SCHEDULED INCREMENTAL SYNC (also called: refresh, data pipeline, ETL) on a connector-backed dataset you can edit — the Data tab’s "Keep this in sync" panel, the SAME governed path as PUT /api/data/datasets/:id/sync: the strict store gate validates, then the per-dataset CronJob is reconciled and the cluster outcome is reported HONESTLY (`cron.live:false` when no CronJob could be provisioned — never a claim). Modes: full-refresh (re-copy each run) · append (rows newer than the cursor; late rows may re-deliver) · merge (upsert by mergeKeys — warehouse sources only, daily-ish cadence). PER-SOURCE LOCKS (the panel’s rules, enforced server-side): kafka → append ONLY, cursor auto-locked to partition offsets; salesforce → no merge, incremental cursor auto-locked to SystemModstamp; kajabi → no merge, cursor auto-locked to the resource’s DOCUMENTED field — `purchases` is true incremental (updated_at: new AND changed), contacts/customers/orders/form_submissions are created_at-only (NEW records append; EDITS are not detected — full-refresh to capture them), cursorless resources (offers, products, transactions, …) are full-refresh ONLY (a typed bad_request otherwise, never fake incremental). Warehouse sources pass their own `cursor` {column, kind}. Schedule: a preset (every-15-minutes|every-30-minutes|hourly|daily|weekly) or a 5-field cron. Before: create_dataset + a first import/ingest from the connection. After: sync_dataset_now to run immediately, get_sync_status to watch. Governance: edit scope (owner / domain admin) re-checked in-lib; the sync executes AS the dataset OWNER, never a service principal.',
+      'Configure (or enable/disable) SCHEDULED INCREMENTAL SYNC (also called: refresh, data pipeline, ETL) on a connector-backed dataset you can edit — the Data tab’s "Keep this in sync" panel, the SAME governed path as PUT /api/data/datasets/:id/sync (one service, `saveDatasetSyncService`): the per-source locks below are applied, the strict store gate validates, and the SCHEDULE is then owned by Dagster — it is committed into your domain’s repository as an `os/schedules.yml` entry and run by the `sovereign` code location, so NO Kubernetes CronJob is provisioned and a pre-B2 one is removed. The `cron` field reports that honestly (`live:false` when the cluster could not be reached — never a claim). Modes: full-refresh (re-copy each run) · append (rows newer than the cursor; late rows may re-deliver) · merge (upsert by mergeKeys — warehouse sources only, daily-ish cadence). PER-SOURCE LOCKS (the panel’s rules, enforced server-side): kafka → append ONLY, cursor auto-locked to partition offsets; salesforce → no merge, incremental cursor auto-locked to SystemModstamp; kajabi → no merge, cursor auto-locked to the resource’s DOCUMENTED field — `purchases` is true incremental (updated_at: new AND changed), contacts/customers/orders/form_submissions are created_at-only (NEW records append; EDITS are not detected — full-refresh to capture them), cursorless resources (offers, products, transactions, …) are full-refresh ONLY (a typed bad_request otherwise, never fake incremental). Warehouse sources pass their own `cursor` {column, kind}. Schedule: a preset (every-15-minutes|every-30-minutes|hourly|daily|weekly) or a 5-field cron. Before: create_dataset + a first import/ingest from the connection. After: sync_dataset_now to run immediately, get_sync_status to watch. Pass `clear: true` (and nothing else) to REMOVE the sync entirely, exactly as the panel’s "Remove sync" does. Governance: edit scope (owner / domain admin) re-checked in-lib; the sync executes AS the dataset OWNER, never a service principal.',
     inputSchema: {
       type: 'object',
       properties: {
         datasetId: { type: 'string', description: 'Target dataset id (from list_datasets).' },
-        connectionId: { type: 'string', description: 'The source connection id (from list_connections) — warehouse/Kafka, Salesforce or Kajabi.' },
+        connectionId: { type: 'string', description: 'The source connection id (from list_connections) — warehouse/Kafka, Salesforce or Kajabi. Required unless `clear: true`.' },
         source: {
           type: 'object',
-          description: 'What to pull: {schema, table}. For API sources, table is the object/resource (e.g. Salesforce "Account", Kajabi "purchases") and schema is a label (e.g. "salesforce").',
+          description: 'What to pull: {schema, table}. For API sources, table is the object/resource (e.g. Salesforce "Account", Kajabi "purchases") and schema is a label (e.g. "salesforce"). Required unless `clear: true`.',
           properties: { schema: { type: 'string' }, table: { type: 'string' } },
           required: ['schema', 'table'],
         },
-        mode: { type: 'string', enum: [...DATASET_SYNC_MODES], description: 'full-refresh | append | merge (see the per-source locks in the tool description).' },
+        mode: { type: 'string', enum: [...DATASET_SYNC_MODES], description: 'full-refresh | append | merge (see the per-source locks in the tool description). Required unless `clear: true`.' },
         cursor: {
           type: 'object',
           description: 'Warehouse sources only — the new-rows column: {column, kind: timestamp|number}. Kafka/Salesforce/Kajabi lock the cursor automatically; anything passed here is ignored for them.',
@@ -761,79 +661,49 @@ export const dataWriteTools: McpTool[] = [
           required: ['column'],
         },
         mergeKeys: { type: 'array', items: { type: 'string' }, description: 'merge mode only: the upsert key column(s).' },
-        schedule: { type: 'string', description: 'A preset — every-15-minutes (*/15 * * * *) | every-30-minutes (*/30 * * * *) | hourly (0 * * * *) | daily (0 6 * * *) | weekly (0 6 * * 1) — or a raw 5-field cron (UTC).' },
+        schedule: { type: 'string', description: 'A preset — every-15-minutes (*/15 * * * *) | every-30-minutes (*/30 * * * *) | hourly (0 * * * *) | daily (0 6 * * *) | weekly (0 6 * * 1) — or a raw 5-field cron (UTC). Required unless `clear: true`.' },
         enabled: { type: 'boolean', description: 'false keeps the config but deletes the schedule trigger (default true).' },
+        clear: { type: 'boolean', description: 'true REMOVES the sync configuration entirely (the UI panel’s "Remove sync"): the schedule is dropped from os/schedules.yml, any pre-B2 CronJob is deleted, and no other field is read. Use `enabled: false` to keep the config and only stop the schedule.' },
       },
-      required: ['datasetId', 'connectionId', 'source', 'mode', 'schedule'],
+      required: ['datasetId'],
       examples: [
         { datasetId: 'ds_ab12cd', connectionId: 'conn_x1', source: { schema: 'sales', table: 'orders' }, mode: 'append', cursor: { column: 'updated_at', kind: 'timestamp' }, schedule: 'hourly' },
         { datasetId: 'ds_ab12cd', connectionId: 'conn_kj1', source: { schema: 'kajabi', table: 'purchases' }, mode: 'append', schedule: 'daily' },
+        { datasetId: 'ds_ab12cd', clear: true },
       ],
     },
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();
       if (!datasetId) fail('set_dataset_sync needs a `datasetId`', 400);
-      const connectionId = str(args.connectionId).trim();
-      if (!connectionId) fail('set_dataset_sync needs a `connectionId` (from list_connections)', 400);
-      const src = (args.source ?? {}) as Record<string, unknown>;
-      const schema = str(src.schema).trim();
-      const table = str(src.table).trim();
-      if (!schema || !table) fail('set_dataset_sync needs `source` {schema, table}', 400);
-      const mode = str(args.mode) as DatasetSyncMode;
-      if (!DATASET_SYNC_MODES.includes(mode)) fail(`sync \`mode\` must be ${DATASET_SYNC_MODES.join('|')}`, 400);
-      const scheduleIn = str(args.schedule).trim();
-      if (!scheduleIn) fail('set_dataset_sync needs a `schedule` (preset or 5-field cron)', 400);
-      const cron = SYNC_SCHEDULE_PRESETS[scheduleIn.toLowerCase()] ?? scheduleIn;
-
-      const p = P(user);
-      getDataset(datasetId, p); // view-scope + existence guard first (typed 403/404 — no leak)
-
-      // PER-SOURCE MODE/CURSOR LOCKS — the SAME truth the SyncPanel renders and the
-      // executor re-enforces (kafka: store gate; salesforce/kajabi: slice runners;
-      // kajabi cursor honesty: kajabi-resources.ts). Enforced here at CONFIG time so
-      // an agent can never save a schedule that would only fail at run time.
-      const platform = await syncSourcePlatform(connectionId, user);
-      let cursor: DatasetSync['cursor'];
-      if (platform === 'kafka') {
-        if (mode !== 'append') {
-          fail('Kafka topics sync append-only (streams have no stable key to merge on; replacing the copy is the reset action, not a mode) — use mode "append"', 400);
-        }
-        cursor = { kind: 'kafka-offsets', column: '_partition_offset' }; // tracked automatically
-      } else if (platform === 'salesforce') {
-        if (mode === 'merge') fail('Salesforce sync supports append or full-refresh only (merge needs a federated SQL source)', 400);
-        if (mode === 'append') cursor = { kind: 'timestamp', column: 'SystemModstamp' }; // locked — set automatically
-      } else if (platform === 'kajabi') {
-        if (mode === 'merge') fail('Kajabi sync supports append or full-refresh only (merge needs a federated SQL source)', 400);
-        if (mode === 'append') {
-          const field = kajabiCursorField(table);
-          if (!field) {
-            fail(`Kajabi resource '${table}' documents no timestamp cursor — full-refresh is the only honest sync mode for it (use mode "full-refresh")`, 400);
-          }
-          cursor = { kind: 'timestamp', column: field }; // locked to the documented field
-        }
-      } else if (mode !== 'full-refresh') {
-        const cur = (args.cursor ?? {}) as Record<string, unknown>;
-        const column = str(cur.column).trim();
-        if (!column) fail(`sync mode '${mode}' needs a \`cursor\` {column, kind: timestamp|number} for this source`, 400);
-        cursor = { kind: str(cur.kind) === 'number' ? 'number' : 'timestamp', column };
+      // CLEARING (review M-1). The UI route passes `null` when the panel removes a sync
+      // (`body.sync === null` → `saveDatasetSyncService(user, id, null)`); the MCP tool had no way
+      // to say it, so an MCP client could create and change a sync but never remove one. `clear`
+      // takes the same door: no other field is read, so a client need not echo a config back.
+      if (bool(args.clear)) {
+        const cleared = await saveDatasetSyncService(P(user), datasetId, null);
+        return { datasetId, cleared: true, platform: cleared.platform, sync: cleared.sync, cron: cleared.cron };
       }
-
-      const sync: DatasetSync = {
-        connectionId,
-        source: { schema, table },
-        mode,
-        ...(cursor ? { cursor } : {}),
-        ...(mode === 'merge' ? { mergeKeys: strArr(args.mergeKeys) } : {}),
-        schedule: { cron },
+      // NOT a required-field pre-check: the EDIT GATE has to answer first, or a caller who may
+      // not see the dataset learns "you forgot connectionId" instead of `forbidden` (X7's
+      // documented shape). An incomplete config reaches the store's strict gate and gets its
+      // precise 400 there, after the gate — exactly as the UI route's does.
+      const src = (args.source ?? {}) as Record<string, unknown>;
+      const cur = (args.cursor ?? {}) as Record<string, unknown>;
+      // The SAME service the panel's PUT route calls (checklist X8): it enforces the
+      // per-source mode/cursor locks at CONFIG time, delegates to the store's strict gate and
+      // reconciles the schedule (Dagster owns it from the domain repo's os/schedules.yml).
+      const out = await saveDatasetSyncService(P(user), datasetId, {
+        connectionId: str(args.connectionId).trim(),
+        source: { schema: str(src.schema).trim(), table: str(src.table).trim() },
+        mode: str(args.mode) as DatasetSyncMode,
+        ...(str(cur.column).trim()
+          ? { cursor: { kind: str(cur.kind) === 'number' ? ('number' as const) : ('timestamp' as const), column: str(cur.column).trim() } }
+          : {}),
+        mergeKeys: strArr(args.mergeKeys),
+        schedule: { cron: str(args.schedule).trim() },
         enabled: args.enabled === undefined ? true : bool(args.enabled),
-      };
-      // The store's STRICT gate — edit scope, valid cron, cursor-for-incremental,
-      // merge keys — the SAME authority the PUT route delegates to (no re-derived
-      // validation here). Then reconcile the per-dataset CronJob and report the
-      // cluster outcome honestly (live:false is a saved-but-not-provisioned truth).
-      const dataset = setDatasetSync(datasetId, p, sync);
-      const cronOut = await reconcileSyncCron(datasetId, dataset.sync ?? null);
-      return { datasetId, platform, sync: dataset.sync ?? null, cron: cronOut };
+      });
+      return { datasetId, cleared: false, platform: out.platform, sync: out.sync, cron: out.cron };
     },
   },
   {
@@ -854,10 +724,16 @@ export const dataWriteTools: McpTool[] = [
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();
       if (!datasetId) fail('sync_dataset_now needs a `datasetId`', 400);
-      const p = P(user);
-      getDataset(datasetId, p); // view-scope guard first (typed 403/404 — no leak)
-      requireDatasetEditable(datasetId, p); // the SAME edit gate as the route's manual POST
-      const outcome = await runDatasetSync(datasetId, bool(args.reset) ? 'reset' : 'manual');
+      // The SAME service the panel's "Sync now" POST calls (checklist X8): the edit gate, then
+      // one Dagster run from the committed head as the dataset OWNER (flag on) or the OS
+      // executor and its ledger row (flag off).
+      const ran = await syncDatasetNowService(P(user), datasetId, { reset: bool(args.reset) });
+      if (ran.mode === 'dagster') {
+        const l = ran.launch;
+        if (l.launchError) fail(l.launchError, 502);
+        return { skipped: false, source: 'dagster', run: { id: l.dagsterRunId, dagsterRunId: l.dagsterRunId, commit: l.commit, status: 'running', batchId: l.batchId ?? null }, selection: l.selection.map((k) => k.join('/')) };
+      }
+      const outcome = ran.outcome;
       if (!outcome.ok) fail(outcome.error, outcome.status);
       if (outcome.skipped) return { skipped: true, reason: outcome.reason, run: outcome.run ?? null };
       return { skipped: false, run: outcome.run };
@@ -886,35 +762,12 @@ export const dataWriteTools: McpTool[] = [
   },
 ];
 
-/** The panel's schedule presets, verbatim (SyncPanel.tsx PRESETS) — plus raw cron. */
-const SYNC_SCHEDULE_PRESETS: Record<string, string> = {
-  'every-15-minutes': '*/15 * * * *',
-  'every-30-minutes': '*/30 * * * *',
-  hourly: '0 * * * *',
-  daily: '0 6 * * *',
-  weekly: '0 6 * * 1',
-};
-
-/** The source connection's sync platform — the SAME mapping the sync status route
- *  uses (warehouse ⇒ its platform e.g. kafka/snowflake; salesforce-api ⇒ salesforce;
- *  kajabi-api ⇒ kajabi; anything else ⇒ null). Resolved through the governed
- *  connection store AS the caller — an unseeable connection is a typed 403/404.
- *  Lazy import (the route's pattern): the heavy connections store stays out of the
- *  static graph. */
-async function syncSourcePlatform(connectionId: string, user: CurrentUser): Promise<string | null> {
-  const { getConnectionForUser } = await import('@tabs/connections/lib/store');
-  const c = await getConnectionForUser(connectionId, user);
-  return c.template === 'warehouse' && c.warehouse
-    ? c.warehouse.platform
-    : c.template === 'salesforce-api'
-      ? 'salesforce'
-      : c.template === 'kajabi-api'
-        ? 'kajabi'
-        : null;
-}
-
-/** The governed WRITE identity, derived from the SESSION user (never the args). */
-function executeIdentity(u: CurrentUser): ExecuteIdentity {
-  return { principal: u.domains[0] ?? u.id, uid: u.id, domains: u.domains, role: u.role };
-}
-
+/**
+ * The data write tools, as written.
+ *
+ * The per-tool `runWithSurface('mcp:<tool>')` wrapper that used to live here is GONE (Part D
+ * review L-3): `core/mcp/server.ts` now opens that scope around EVERY `tools/call`, with the same
+ * `mcp:<name>` value, so this layer was a second identical scope — harmless but redundant, and
+ * redundant scoping is where a minted-second-request-id bug hides. One door, one scope.
+ */
+export const dataWriteTools: McpTool[] = tools;

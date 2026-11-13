@@ -6,7 +6,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import { getSystem, type Principal } from '@tabs/agents/lib/store';
 import { getDataset, listDatasetVersions, listDatasets, ensureHydrated as ensureDataHydrated } from '@tabs/data/lib/store';
-import { latestSyncRun, ensureSyncRunsHydrated } from '@tabs/data/lib/sync-runs';
+import { latestSyncSignals } from '@tabs/data/lib/sync-status-server';
 import { listWorkflows, ensureHydrated as ensureKnowledgeHydrated } from '@tabs/knowledge/lib/store';
 import { listPersonalKnowledge } from '@tabs/knowledge/lib/personal-store';
 import { listFiles, ensureHydrated as ensureFilesHydrated } from '@tabs/files/lib/store';
@@ -14,7 +14,7 @@ import { listMetrics } from '@tabs/metrics/lib/store';
 import { listConnectionsForUser } from '@tabs/connections/lib/index';
 import { recentTraces } from '@core/infra/agent-governed';
 import { lineageFor } from '@tabs/data/lib/lineage';
-import { latestRun, healthTrend, ensureHydrated as ensureDqHydrated } from '@tabs/data/lib/dq-results';
+import { latestDqRun, dqTrend, dqSourceLabel } from '@tabs/data/lib/dq-status-server';
 import { agentTelemetryFor, type AgentRunRecord } from '@tabs/monitoring/lib/adapters/agent-telemetry';
 import {
   buildProfile,
@@ -207,6 +207,11 @@ export type DatasetDetail = {
     /** DQ health trend (oldest→newest) for the sparkline. */
     trend: { ranAt: string; score: number | null; badge: string }[];
     checks: DatasetCheckRow[];
+    /** Who produced the verdict: `dagster` = a dbt test on the last build, `os` = the OS's own
+     *  ad-hoc probe, absent = not knowable (a pre-B2 record). Review B2-review-M5. */
+    source?: 'dagster' | 'os';
+    /** The same fact as display text, decided here so the `.tsx` stays logic-free. */
+    sourceLabel: { text: string; title: string } | null;
   };
   /** Scheduled-sync signal (additive, fail-soft): last run + outcome, or nulls when
    *  the dataset has never synced. */
@@ -239,11 +244,11 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
   const freshness = built.length ? d.versions[built[built.length - 1]].updatedAt : null;
   const ageDays = ageInDays(freshness, nowMs);
 
-  // REAL data-quality: the last persisted DQ run for this dataset (per-rule results
-  // with violation counts). No run recorded ⇒ honest neutral (summary.hasRun=false),
-  // never a fabricated green. This is the SAME store the Data tab's DQ stage writes.
-  await ensureDqHydrated().catch(() => {});
-  const last = latestRun(datasetId);
+  // REAL data-quality: the last run for this dataset (per-rule results with violation counts) —
+  // DAGSTER asset checks (each dbt test is one) when `DATA_PROJECT_GIT` is on, the persisted
+  // `os-dq-results` series when it is off. No execution ⇒ honest neutral (summary.hasRun=false),
+  // never a fabricated green. The SAME function the Data tab's Validate stage reads.
+  const last = await latestDqRun(d).catch(() => null);
   const dqResults = last?.results ?? null;
   const summary = summarizeDq(
     dqResults && dqResults.map((r) => ({ id: r.id, label: r.label, status: r.status, violations: r.violations, reason: r.reason })),
@@ -255,16 +260,15 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
     violations: r.violations,
     reason: r.reason,
   }));
-  const trend = healthTrend(datasetId);
+  const trend = await dqTrend(d).catch(() => []);
 
-  // Scheduled-sync signal — additive + fail-soft (an unreachable mirror ⇒ nulls).
+  // Scheduled-sync signal — Dagster runs (flag on) or the OS ledger (flag off); fail-soft ⇒ nulls.
   let lastSync: string | null = null;
   let syncStatus: 'ok' | 'error' | 'skipped' | 'running' | null = null;
   try {
-    await ensureSyncRunsHydrated();
-    const s = latestSyncRun(datasetId);
-    lastSync = s?.startedAt ?? null;
-    syncStatus = s?.status ?? null;
+    const sig = (await latestSyncSignals([datasetId])).get(datasetId);
+    lastSync = sig?.lastSync ?? null;
+    syncStatus = sig?.syncStatus ?? null;
   } catch { /* fail-soft */ }
 
   const checkVerdicts = checks.map((c): CheckVerdict => c.verdict);
@@ -295,6 +299,8 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
       score: last?.healthScore ?? null,
       trend: trend.map((t) => ({ ranAt: t.ranAt, score: t.score, badge: t.badge })),
       checks,
+      ...(last?.source ? { source: last.source } : {}),
+      sourceLabel: dqSourceLabel(last?.source),
     },
     sync: { lastSync, syncStatus },
     layers: LAYERS.map((l) => ({

@@ -47,11 +47,19 @@ spec:
         - { protocol: UDP, port: 8053 }
         - { protocol: TCP, port: 8053 }
 ---
-# 3) Allow intra-namespace egress (components talk to each other) — EXCEPT the
-# agent-runtime. K8s NetworkPolicy is additive, so a blanket podSelector {} here
-# would re-open every in-namespace path for the runtime and defeat its lockdown.
-# The runtime is therefore EXCLUDED from this allow and governed SOLELY by its
-# dedicated tight policy (`allow-agent-runtime-egress`) below.
+# 3) Allow intra-namespace egress (components talk to each other) — EXCEPT the agent
+# SCHEDULE pods. A5: the agent-runtime exception is gone with the runtime. It was excluded
+# from this blanket allow and governed by its own tight policy, because a second process
+# that executed agent graphs had to be denied every in-namespace path but LiteLLM and os-ui.
+# Agent graphs now run INSIDE os-ui, which already needs the whole in-namespace plane
+# (OPA, OpenSearch, Trino, Postgres, …), so there is nothing left to lock down for it —
+# the chokepoint is the governed dispatcher in-process, not a NetworkPolicy.
+# A5-review-H-3: what the deletion DID leave behind is the schedule CronJob pods
+# (`agent-runtime/schedule-cronjobs.yaml`). Each is a `curl` with exactly one destination,
+# and K8s NetworkPolicy is additive, so a blanket `podSelector: {}` here would hand them
+# the whole in-namespace plane. They are therefore EXCLUDED here and governed solely by
+# policy 6 below (os-ui + DNS). A pod WITHOUT the component label still matches `NotIn`
+# (an absent key satisfies it), so every other component keeps this allow.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -62,14 +70,17 @@ metadata:
 spec:
   podSelector:
     matchExpressions:
-      - { key: app.kubernetes.io/component, operator: NotIn, values: [agent-runtime] }
+      - { key: app.kubernetes.io/component, operator: NotIn, values: [agent-schedule] }
   policyTypes:
     - Egress
   egress:
     - to:
         - podSelector: {}
 ---
-# 4) Allow egress to the Kubernetes API server (operators, run launchers, etc.).
+# 4) Allow egress to the Kubernetes API server (operators, run launchers, etc.) — again
+# EXCEPT the agent schedule pods: this rule carries no `to:`, so it allows 443/6443 to ANY
+# destination, and a pod whose whole job is one in-cluster POST has no business there
+# (A5-review-H-3; policy 6 is its complete allowlist).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -78,7 +89,9 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
 spec:
-  podSelector: {}
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: NotIn, values: [agent-schedule] }
   policyTypes:
     - Egress
   egress:
@@ -123,38 +136,31 @@ spec:
         - { protocol: UDP, port: 8053 }
         - { protocol: TCP, port: 8053 }
 ---
-# 6) Default-deny egress for the agent-runtime (REAL lockdown). The runtime is
-# excluded from the blanket intra-namespace allow (policy 3), so this is its ONLY
-# egress allowlist: the LiteLLM model gateway + the OS UI governed-tool endpoint.
-# DNS is already covered by `allow-dns-egress` (policy 2). NOTHING else — no
-# Forgejo, no other in-namespace pod (least privilege; graph semantics come via
-# the OS UI /reload, not Forgejo). Plain networking.k8s.io/v1 to match this file;
-# Cilium enforces it on STACKIT (see header).
+# 6) The agent SCHEDULE pods (REAL lockdown, A5-review-H-3). Each schedule CronJob pod is a
+# `curl` that POSTs ONE endpoint — `http://os-ui:3000/api/agents/scheduled-run` — with the
+# shared bearer; os-ui then files the run on its own queue and the engine executes it
+# in-process under the system owner's identity. The pod is excluded from the blanket
+# intra-namespace allow (policy 3), so this is its ONLY egress allowlist: os-ui. DNS is
+# already covered by policy 2. Nothing else — no LiteLLM (it makes no model call), no
+# Postgres, no OpenSearch, no internet.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-agent-runtime-egress
+  name: allow-agent-schedule-egress
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/component: agent-runtime
+      app.kubernetes.io/component: agent-schedule
   policyTypes:
     - Egress
   egress:
-    # The LiteLLM model gateway (the runtime's only model path). LiteLLM is an
-    # upstream SUBCHART, so its pods carry `app.kubernetes.io/name: litellm` (the
-    # subchart's label), NOT this chart's `component` label — select by that or the
-    # rule matches nothing and Cilium blocks the runtime's only model path.
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: litellm
-    # The OS UI governed-tool endpoint (component label `os-ui`).
     - to:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: os-ui
+      ports:
+        - { protocol: TCP, port: 3000 }
 {{- end }}

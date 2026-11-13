@@ -105,6 +105,13 @@ export type QueryResult = {
   columns: string[];
   rows: string[][];
   rowCount: number;
+  /** True when the query-tool clipped the result at its `QUERY_MAX_ROWS` ceiling. The rows are
+   *  the FIRST n, not a sample — a consumer that aggregates them must say so (B4-review E-1). */
+  truncated?: boolean;
+  /** The ceiling that clipped it, when truncated. */
+  rowLimit?: number;
+  /** The query-tool's own sentence about the truncation, for a surface to show verbatim. */
+  message?: string;
 };
 
 export async function queryRun(sql: string, principal?: string, schema?: string): Promise<QueryResult> {
@@ -115,6 +122,10 @@ export async function queryRun(sql: string, principal?: string, schema?: string)
   const body: Record<string, string> = { sql };
   if (principal) body.principal = principal;
   if (schema) body.schema = schema;
+  // 8 s bounds OUR WAIT, and nothing else (B4-review E-1): an abort here ends this fetch, it does
+  // not end the query. What ends the query is the query-tool's `QUERY_MAX_RUN_TIME` session
+  // property (60 s by default, chart-wired), and what bounds the payload is its `QUERY_MAX_ROWS`.
+  // Before those existed, a slow read was orphaned on the cluster with nobody waiting for it.
   const res = await withTimeout(
     `${config.queryToolUrl}/query`,
     {
@@ -139,6 +150,11 @@ export async function queryRun(sql: string, principal?: string, schema?: string)
     columns: Array.isArray(data.columns) ? (data.columns as string[]) : [],
     rows: Array.isArray(data.rows) ? (data.rows as string[][]) : [],
     rowCount: typeof data.row_count === 'number' ? data.row_count : 0,
+    // Truncation is never dropped on the floor here: a caller that renders rows must be able to
+    // say "the first n", and `query_data`'s MCP payload carries it through.
+    ...(data.truncated === true ? { truncated: true } : {}),
+    ...(typeof data.row_limit === 'number' ? { rowLimit: data.row_limit } : {}),
+    ...(typeof data.message === 'string' && data.truncated === true ? { message: data.message } : {}),
   };
 }
 

@@ -91,7 +91,7 @@ Sign in by email as a participant (e.g. `participant01@cohort.datamasterclass.co
 2. **Files** → open the 4 CSV data files + the 3 sample-campaign files (the readable rows).
 3. **Knowledge** → open the 3 MDs (context / rules / workflow) under "My domain".
 4. **Agents** → **New system** (your own): write `system.yaml` granting the shared
-   datasets + knowledge + `knowledge_search`/`metrics_query`; author the analysis +
+   datasets + knowledge + `search_knowledge`/`query_metric`; author the analysis +
    recommendation agents; **Build**, then **Run** → get an INCREASE/CUT/HOLD + reasoning.
 5. **Evaluation** → open the Shared **Campaign Evaluation Agent** and **Run** your
    recommendation through it; read the rubric feedback; rework and re-run. (You can
@@ -111,7 +111,7 @@ Shared and **a participant Creator RUNs it (HTTP 200)** while a WRITE/PROMOTE is
 denied (403); the Campaign App promotes Shared.
 
 Needs the live cluster to be *live* rather than honest-mock:
-- **Agents** report `mode: offline-mock` locally; with `agent-runtime` + LiteLLM
+- **Agents** report `mode: offline-mock` locally; with LiteLLM
   reachable, Build/Run execute the real LangGraph and every tool call is
   OPA-checked + Langfuse-traced.
 - **Knowledge docs** RAG ingest (`POST /api/knowledge/docs`) needs OpenSearch

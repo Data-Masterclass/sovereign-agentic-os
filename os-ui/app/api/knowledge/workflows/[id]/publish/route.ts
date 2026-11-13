@@ -39,12 +39,18 @@ export const POST = withRoute<{ id: string }, { action?: 'publish' | 'certify' }
     await promoteThroughSeam('knowledge', id, user, { rung });
     const rec = getWorkflow(id, user);
 
-    // On publish, the indexing pipeline runs (best-effort — must not fail the flip).
+    // On publish, the indexing pipeline runs (best-effort — must not fail the flip). A3 review:
+    // the OUTCOME is reported instead of swallowed. A gateway rejection (no scoped key, the alias
+    // off the allowlist, a budget cap) means the published unit is NOT retrievable yet, and the
+    // caller has to be able to see that — `indexing: { ok: false, code }` rather than a silent
+    // success that leaves the knowledge invisible to every agent.
+    let indexing: { ok: true } | { ok: false; code: string; error: string } = { ok: true };
     try {
       await indexWorkflow(rec.workflow, { owner: rec.owner, tacit: rec.tacit, updatedAt: rec.updatedAt });
       await indexDomain(getDomainKnowledge(rec.domain));
-    } catch {
-      /* indexing is best-effort; the publish already succeeded */
+    } catch (e) {
+      const err = e as Error & { name?: string; code?: string };
+      indexing = { ok: false, code: err?.code ?? err?.name ?? 'index_failed', error: err?.message ?? String(e) };
     }
 
     return NextResponse.json({
@@ -53,5 +59,6 @@ export const POST = withRoute<{ id: string }, { action?: 'publish' | 'certify' }
       visibility: rec.visibility,
       publishedAt: rec.publishedAt,
       publishedBy: rec.publishedBy,
+      indexing,
     });
 }, { parse: true, defaultStatus: 500 });

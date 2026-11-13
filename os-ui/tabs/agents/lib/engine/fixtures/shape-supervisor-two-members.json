@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "name": "shape-supervisor-two-members",
+  "source": "hand-written shape (b)",
+  "description": "A supervisor with two members (declared order).",
+  "guarded": false,
+  "task": "Assess the current state of the sales domain and recommend one next step.",
+  "yaml": "version: '1'\nsystem:\n  name: Shape B — supervisor with two members\n  domain: sales\n  visibility: Personal\nentrypoint: lead\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n    - query_data\n  connections: []\nagents:\n  - id: lead\n    role: Routes the task to the researcher, then the analyst, then reports\n    agent_md: |\n      # lead\n      Decide who works next: researcher first, analyst second, then END with a summary.\n    memory_md: '# Memory'\n    tools: []\n    members:\n      - researcher\n      - analyst\n  - id: researcher\n    role: Gathers the relevant knowledge\n    agent_md: |\n      # researcher\n      Search the granted knowledge for the facts the task needs.\n    memory_md: '# Memory'\n    tools:\n      - search_knowledge\n  - id: analyst\n    role: Queries the granted data and explains it\n    agent_md: |\n      # analyst\n      Query the granted data and explain what it says.\n    memory_md: '# Memory'\n    tools:\n      - query_data\nedges:\n  - from: lead\n    to: researcher\n    type: supervise\n  - from: lead\n    to: analyst\n    type: supervise\n",
+  "script": "first-tool-then-final@2",
+  "transcript": {
+    "version": 1,
+    "exchanges": [
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [],
+          "messages": 2
+        },
+        "response": {
+          "content": "plan(lead): 1. use the first granted tool  2. answer the task.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [],
+          "messages": 2
+        },
+        "response": {
+          "content": "FINAL(lead): no tools granted; answered from the team context.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [],
+          "messages": 2
+        },
+        "response": {
+          "content": "plan(researcher): 1. use the first granted tool  2. answer the task.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 2
+        },
+        "response": {
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call-researcher-1",
+              "name": "search_knowledge",
+              "args": {
+                "input": "fixture:researcher",
+                "task": "Assess the current state of the sales domain and recommend one next step."
+              }
+            }
+          ]
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 4
+        },
+        "response": {
+          "content": "FINAL(researcher): answered the task using search_knowledge.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [],
+          "messages": 2
+        },
+        "response": {
+          "content": "plan(analyst): 1. use the first granted tool  2. answer the task.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "get_dataset",
+            "list_datasets",
+            "profile_dataset",
+            "query_data"
+          ],
+          "messages": 2
+        },
+        "response": {
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call-analyst-1",
+              "name": "query_data",
+              "args": {
+                "input": "fixture:analyst",
+                "task": "Assess the current state of the sales domain and recommend one next step."
+              }
+            }
+          ]
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "get_dataset",
+            "list_datasets",
+            "profile_dataset",
+            "query_data"
+          ],
+          "messages": 4
+        },
+        "response": {
+          "content": "FINAL(analyst): answered the task using query_data.",
+          "toolCalls": []
+        }
+      }
+    ]
+  },
+  "golden": {
+    "path": [
+      "lead",
+      "researcher",
+      "analyst"
+    ],
+    "toolCalls": [
+      {
+        "node": "researcher",
+        "tool": "search_knowledge",
+        "args": {
+          "input": "fixture:researcher",
+          "task": "Assess the current state of the sales domain and recommend one next step."
+        },
+        "outcome": "ok"
+      },
+      {
+        "node": "analyst",
+        "tool": "query_data",
+        "args": {
+          "input": "fixture:analyst",
+          "task": "Assess the current state of the sales domain and recommend one next step."
+        },
+        "outcome": "ok"
+      }
+    ],
+    "finalText": "FINAL(analyst): answered the task using query_data.",
+    "reachedEnd": true,
+    "held": 0
+  }
+}

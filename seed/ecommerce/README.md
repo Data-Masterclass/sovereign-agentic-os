@@ -57,7 +57,7 @@ should be up:
 | --- | --- |
 | Metrics resolve / explore | Cube (`cube`) reading the Trino Gold mart |
 | Dashboards render | Superset |
-| Agents execute tool calls live | LiteLLM → STACKIT managed models + `agent-runtime` |
+| Agents execute tool calls live | LiteLLM → STACKIT managed models (the engine runs in os-ui) |
 | Science train / predict | `science.ml.enabled=true` (per domain) + ml-agent / MLflow / KServe |
 | Knowledge / Files indexing | OpenSearch (+ Docling/transcribe for Files) |
 | Connections to external hosts | egress proxy + Admin-approved egress allowlist |
@@ -129,7 +129,7 @@ history populated.
 Needs the live cluster to be *live* rather than honest-mock:
 - **Metrics/Dashboards** resolve against the in-process mock locally; Cube +
   Superset make them render real Trino rows on the cluster.
-- **Agents** report `mode: offline-mock` locally; with `agent-runtime` + LiteLLM
+- **Agents** report `mode: offline-mock` locally; with LiteLLM
   reachable, Build/Run execute the real LangGraph and every tool call is
   OPA-checked + Langfuse-traced.
 - **Knowledge docs** ingest needs OpenSearch (locally returns 502; the workflow

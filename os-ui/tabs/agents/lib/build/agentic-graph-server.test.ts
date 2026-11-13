@@ -7,7 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import type { LlmCall } from '@core/runtime/agentic';
 import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/system-schema';
 import { SOFTWARE_TEAM_YAML } from '@tabs/agents/lib/software-team';
-import { isAgenticOsTeam, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
+import { unmappedGrantNames, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
 import { runOsTeam, osPreamble } from '@tabs/agents/lib/build/agentic-graph-server';
 import { setModelPrices, _reset as resetModelPrices } from '@tabs/admin/lib/model-prices';
 
@@ -15,8 +15,8 @@ import { setModelPrices, _reset as resetModelPrices } from '@tabs/admin/lib/mode
  * T4 — the run graph is generalised to the whole OS toolset. These tests prove a
  * MIXED (data+knowledge) agentic-os team runs LIVE in-process as the ACTING USER
  * (governed dispatch threads `user:<id>`, never the service principal), that the
- * software team is a preserved subset, and that a hermes system stays on the
- * fallback path.
+ * software team is a preserved subset, and that a grant with no governed tool behind it
+ * is NAMED rather than silently routed somewhere else (A5 — there is nowhere else).
  */
 
 const CREATOR: CurrentUser = { id: 'u1', name: 'Cara Creator', domains: ['sales'], role: 'creator' };
@@ -76,6 +76,7 @@ function spyDeps(): OsToolDeps & { calls: { handleRpc: { user: CurrentUser; name
 test('runOsTeam: a MIXED data+knowledge team dispatches as the acting user (never a service principal)', async () => {
   const deps = spyDeps();
   const res = await runOsTeam({
+    runId: `run-test-0`,
     user: CREATOR,
     yaml: mixedYaml(),
     systemId: 'sys-mix',
@@ -108,6 +109,7 @@ test('runOsTeam: a MIXED data+knowledge team dispatches as the acting user (neve
 test('runOsTeam: each node run carries a derived STATUS and its finalText (the run-route response shape)', async () => {
   const deps = spyDeps();
   const res = await runOsTeam({
+    runId: `run-test-1`,
     user: CREATOR,
     yaml: mixedYaml(),
     systemId: 'sys-mix',
@@ -131,14 +133,14 @@ test('runOsTeam: each node run carries a derived STATUS and its finalText (the r
   assert.match(analyst!.result.finalText, /analysed 1 row/, 'the node output is available per-node, not dropped');
 });
 
-// --- gate: os-team vs hermes fallback ----------------------------------------
+// --- A5: the pre-flight the run doors apply (there is no fallback path left) --
 
-test('isAgenticOsTeam gates the live path: mixed + software true, hermes false', () => {
-  // The route runs runOsTeam iff this is true; otherwise it falls to runSystem.
-  assert.equal(isAgenticOsTeam(parseSystem(mixedYaml())), true, 'mixed data+knowledge → live path');
-  assert.equal(isAgenticOsTeam(parseSystem(SOFTWARE_TEAM_YAML)), true, 'software team is a preserved subset');
+test('the run doors refuse ONLY a grant with no governed tool behind it, and name it', () => {
+  assert.deepEqual(unmappedGrantNames(parseSystem(mixedYaml())), [], 'mixed data+knowledge runs');
+  assert.deepEqual(unmappedGrantNames(parseSystem(SOFTWARE_TEAM_YAML)), [], 'software team is a preserved subset');
 
-  const hermes = parseSystem({
+  // A system saved under the retired `hermes` runtime opens, normalises and runs.
+  const legacy = parseSystem({
     version: '1',
     system: { name: 'Legacy', domain: 'sales', visibility: 'Personal' },
     runtime: 'hermes',
@@ -146,7 +148,17 @@ test('isAgenticOsTeam gates the live path: mixed + software true, hermes false',
     grants: { tools: ['query_data'] },
     agents: [{ id: 'a', role: 'agent', agent_md: '', memory_md: '' }],
   });
-  assert.equal(isAgenticOsTeam(hermes), false, 'hermes → runSystem fallback');
+  assert.equal(legacy.runtime, 'langgraph', 'the retired engine name is normalised, not rejected');
+  assert.deepEqual(unmappedGrantNames(legacy), []);
+
+  const unmapped = parseSystem({
+    version: '1',
+    system: { name: 'Legacy grants', domain: 'sales', visibility: 'Personal' },
+    entrypoint: 'a',
+    grants: { tools: ['query_data', 'web_fetch'] },
+    agents: [{ id: 'a', role: 'agent', agent_md: '', memory_md: '' }],
+  });
+  assert.deepEqual(unmappedGrantNames(unmapped), ['web_fetch'], 'the door can name the offending grant');
 });
 
 // --- preamble grounds in every granted tab -----------------------------------
@@ -205,6 +217,7 @@ test('runOsTeam: forwards ordered node-started / tool-step / node-completed even
   const deps = spyDeps();
   const events: { kind: string; node: string; extra?: unknown }[] = [];
   const res = await runOsTeam({
+    runId: `run-test-2`,
     user: CREATOR,
     yaml: mixedYaml(),
     systemId: 'sys-mix',
@@ -258,6 +271,7 @@ function usageReportingLlm(toolName: string): LlmCall {
 test('runOsTeam emits ONE run-summary trace with the summed token usage (Monitoring attribution)', async () => {
   const deps = spyDeps();
   const res = await runOsTeam({
+    runId: `run-test-3`,
     user: CREATOR,
     yaml: mixedYaml(),
     systemId: 'sys-mix',
@@ -294,6 +308,7 @@ test('runOsTeam prices the run from the ADMIN-SAVED price book (effectiveModelPr
   try {
     const deps = spyDeps();
     await runOsTeam({
+      runId: `run-test-4`,
       user: CREATOR,
       yaml: mixedYaml(),
       systemId: 'sys-priced',
@@ -314,6 +329,7 @@ test('runOsTeam prices the run from the ADMIN-SAVED price book (effectiveModelPr
 test('runOsTeam run-summary trace carries tokens: undefined when NO call reported usage (never fabricated)', async () => {
   const deps = spyDeps();
   await runOsTeam({
+    runId: `run-test-5`,
     user: CREATOR,
     yaml: mixedYaml(),
     systemId: 'sys-mix',

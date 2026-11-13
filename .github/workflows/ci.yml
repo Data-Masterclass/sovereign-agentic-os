@@ -32,8 +32,24 @@ jobs:
         run: npm --prefix os-ui ci
       - name: Test (os-ui)
         run: npm --prefix os-ui test
+      # gate.sh's three chart checks (`check-worker-env.mjs`, `check-trino-rules-chart.mjs`)
+      # run `helm template`, which needs BOTH helm and the subchart tarballs — and the tarballs
+      # are gitignored, so a fresh runner has neither. Without this the gate either died on helm's
+      # raw "found in Chart.yaml, but missing in charts/ directory" or (once the scripts learned to
+      # skip) silently asserted nothing on the one machine that is meant to enforce them. Same two
+      # steps as the `helm-lint` job below; the repositories come from Chart.yaml's pinned
+      # `repository` + `version` fields, so `update` resolves exactly the pinned versions.
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Resolve chart dependencies (gate.sh renders the chart)
+        run: |
+          helm dependency build charts/sovereign-agentic-os \
+            || helm dependency update charts/sovereign-agentic-os
       - name: Builder-vertical regression gate
         working-directory: os-ui
+        # CI=true makes a skipped chart check a hard failure (see the scripts' headers).
         run: bash scripts/gate.sh
 
       - name: Structure ratchet (core / tabs / components)
@@ -84,11 +100,24 @@ jobs:
       # web-fetch: new tests (zero tests previously)
       - name: pytest (web-fetch)
         run: python3 -m pytest -q images/base/web-fetch/test_app.py
-      # agent-runtime: existing interpreter tests (no new tests added here)
-      - name: Install agent-runtime deps
-        run: pip install -r images/base/agent-runtime/requirements.txt
-      - name: pytest (agent-runtime)
-        run: python3 -m pytest -q images/base/agent-runtime/tests/
+      # query-tool: the governed Trino door. `test_query_budget.py` is what closes checklist X9's
+      # handler half (the `query_max_run_time` + `request_timeout` + `max+1` ceilings), and
+      # `test_execute_guard.py` / `test_bearer.py` guard the write path and the bearer check.
+      # Part F found these ran in NO gate. Run PER FILE: the four modules patch the same `app`
+      # module at import time, so one discovery pass over all of them cross-contaminates (7 of 12
+      # budget tests fail under `unittest discover` and pass per file) — a real isolation defect,
+      # recorded as a Part F gap, not papered over by running them together.
+      - name: pytest (query-tool)
+        run: |
+          for t in images/extensions/query-tool/test_*.py; do python3 -m pytest -q "$t"; done
+      # dagster: the code location the OS generates — `parse_schedules`, `ensure_checkout`,
+      # `partition_definitions`, the source assets and the chart contract (checklist D7/D8/D11).
+      - name: Install dagster-test deps
+        run: pip install "pyyaml>=6,<7"
+      - name: pytest (dagster extension)
+        run: python3 -m pytest -q images/extensions/dagster/tests/test_os_projects.py
+      # agent-runtime: deleted in the engine rebuild (A5) — agent systems execute as a real
+      # LangGraph StateGraph inside os-ui, covered by `npm --prefix os-ui test`.
 
   # OPA policy tests — skipped in CI if the opa binary is unavailable; a comment
   # explains how to run locally. Adding the full setup-opa action adds ~30s and

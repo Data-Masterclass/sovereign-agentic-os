@@ -9,7 +9,12 @@
  */
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { assertNoDevDefaultSecretsInProd, DEV_DEFAULT_SECRET } from '@core/kernel/config';
+import {
+  assertNoDevDefaultSecretsInProd,
+  runtimeBearerAuthAllowed,
+  DEV_DEFAULT_SECRET,
+  DEV_DEFAULT_AGENT_RUNTIME_TOKEN,
+} from '@core/kernel/config';
 
 const realNodeEnv = process.env.NODE_ENV;
 const realPhase = process.env.NEXT_PHASE;
@@ -66,4 +71,19 @@ test('build phase (NEXT_PHASE=phase-production-build) => no throw even with dev-
     assertNoDevDefaultSecretsInProd({ sessionSecret: DEV_DEFAULT_SECRET, mcpTokenSecret: DEV_DEFAULT_SECRET }),
     'a secret-less CI build must still succeed; the guard fires at real boot',
   );
+});
+
+/**
+ * Review B2-review-M3: the shared RUNTIME bearer grants un-narrowed, cross-domain reads
+ * (`GET /api/data/projects` returns every domain's repository). The shipped placeholder is in this
+ * repository, so under a production runtime it must be a closed door rather than a known key.
+ */
+test('runtimeBearerAuthAllowed: the shipped dev default is refused under a production runtime', () => {
+  assert.equal(runtimeBearerAuthAllowed(DEV_DEFAULT_AGENT_RUNTIME_TOKEN, 'production'), false);
+  assert.equal(runtimeBearerAuthAllowed('', 'production'), false);
+  // A real configured token is honoured, production or not.
+  assert.equal(runtimeBearerAuthAllowed('a-real-configured-value', 'production'), true);
+  // Local dev (NODE_ENV!=='production') keeps the convenient default so clone-and-run works.
+  assert.equal(runtimeBearerAuthAllowed(DEV_DEFAULT_AGENT_RUNTIME_TOKEN, 'development'), true);
+  assert.equal(runtimeBearerAuthAllowed('', undefined), true);
 });

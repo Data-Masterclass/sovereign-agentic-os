@@ -42,6 +42,43 @@ TRINO_SCHEMA = os.environ.get("TRINO_SCHEMA", "sales")
 # tool access per agent key; the query runs as this governed domain principal.
 TRINO_USER = os.environ.get("TRINO_USER", "query-agent")
 
+# ---- READ BUDGET (B4-review E-1). `query_data` used to be unbounded end to end: no
+# `request_timeout`, no `query_max_run_time`, and a `fetchall()` that materialised the whole
+# result set into this process before anything measured it. os-ui's 8 s `AbortSignal`
+# (core/infra/governed.ts) only ends os-ui's WAIT — the query kept running on the cluster and
+# this process kept buffering. Two ceilings now apply to every read:
+#   * QUERY_MAX_RUN_TIME — a Trino session property, so TRINO abandons the statement;
+#   * QUERY_MAX_ROWS     — this process fetches at most max+1 rows and reports `truncated`.
+# `request_timeout` is derived from the run-time ceiling so the client gives up no earlier than
+# Trino does (a shorter client timeout would orphan the query, which is the bug).
+QUERY_MAX_RUN_TIME = os.environ.get("QUERY_MAX_RUN_TIME", "60s")
+QUERY_MAX_ROWS = int(os.environ.get("QUERY_MAX_ROWS", "10000") or 10000)
+# WRITES are deliberately NOT bounded by default: a full-refresh sync or a promote CTAS can
+# legitimately run for many minutes, and a ceiling guessed here would abort real work. Set
+# EXECUTE_MAX_RUN_TIME (e.g. "900s") to impose one; empty means Trino's own cluster limits are
+# the only bound, which is what the code does today and what the comment on /execute now says.
+EXECUTE_MAX_RUN_TIME = os.environ.get("EXECUTE_MAX_RUN_TIME", "")
+
+
+def _seconds(duration: str, fallback: int = 60) -> int:
+    """`"60s"` / `"5m"` / `"90"` -> seconds. Unparseable -> `fallback`, never an exception:
+    a malformed env var must not take the service down, and the ceiling still applies."""
+    text = (duration or "").strip().lower()
+    if not text:
+        return fallback
+    try:
+        if text.endswith("ms"):
+            return max(1, int(float(text[:-2]) / 1000))
+        if text.endswith("s"):
+            return max(1, int(float(text[:-1])))
+        if text.endswith("m"):
+            return max(1, int(float(text[:-1]) * 60))
+        if text.endswith("h"):
+            return max(1, int(float(text[:-1]) * 3600))
+        return max(1, int(float(text)))
+    except ValueError:
+        return fallback
+
 # Service-to-service bearer (defense-in-depth). This process trusts the
 # principal/role/domains in the request body and is only meant to be called by os-ui;
 # the NetworkPolicies are the primary boundary, but network reach alone must not equal
@@ -61,7 +98,14 @@ def _bearer_ok(req: Request) -> bool:
     return bool(got) and hmac.compare_digest(got, SERVICE_BEARER_TOKEN)
 
 
-def _connect(principal: str | None = None, schema: str | None = None):
+def _connect(
+    principal: str | None = None,
+    schema: str | None = None,
+    *,
+    max_run_time: str | None = QUERY_MAX_RUN_TIME,
+):
+    """Connect as `principal`, bounded by `max_run_time` (a Trino session property) and a
+    matching HTTP `request_timeout`. Pass `max_run_time=""`/`None` for an unbounded statement."""
     return trino.dbapi.connect(
         **connect_kwargs(
             principal,
@@ -71,6 +115,10 @@ def _connect(principal: str | None = None, schema: str | None = None):
             catalog=TRINO_CATALOG,
             http_scheme=os.environ.get("TRINO_HTTP_SCHEME", "http"),
             default_user=TRINO_USER,
+            # +5 s of slack: the client must not give up BEFORE Trino kills the query, or the
+            # query is orphaned on the cluster — the defect this fixes.
+            request_timeout=(_seconds(max_run_time) + 5) if max_run_time else None,
+            max_run_time=max_run_time or None,
         )
     )
 
@@ -85,7 +133,12 @@ def run_query(sql: str, principal: str | None = None, schema: str | None = None)
         conn = _connect(principal, eff_schema)
         cur = conn.cursor()
         cur.execute(sql)
-        rows = cur.fetchall()
+        # At most max+1 rows leave Trino's stream: the extra row is how `truncated` is MEASURED
+        # rather than guessed, and `fetchall()` on an unbounded `select *` is what used to put
+        # the whole table in this process's heap.
+        fetched = cur.fetchmany(QUERY_MAX_ROWS + 1)
+        truncated = len(fetched) > QUERY_MAX_ROWS
+        rows = fetched[:QUERY_MAX_ROWS]
         cols = [d[0] for d in cur.description] if cur.description else []
     except trino.exceptions.TrinoConnectionError:
         # Trino unreachable (DNS/connection refused) - the base deployment has no
@@ -94,7 +147,7 @@ def run_query(sql: str, principal: str | None = None, schema: str | None = None)
                 "message": "No lakehouse is configured in this deployment "
                             "(Trino is unreachable) - the data/lakehouse extension "
                             "is not enabled."}
-    return {
+    result = {
         "engine": "trino",
         "catalog": TRINO_CATALOG,
         "schema": eff_schema,
@@ -102,13 +155,26 @@ def run_query(sql: str, principal: str | None = None, schema: str | None = None)
         "rows": [[str(v) for v in r] for r in rows],
         "row_count": len(rows),
     }
+    if truncated:
+        # Say it, every time, in the payload a caller already parses. A silently clipped result
+        # set is the one answer worse than an error.
+        result["truncated"] = True
+        result["row_limit"] = QUERY_MAX_ROWS
+        result["message"] = (
+            f"Result truncated at {QUERY_MAX_ROWS} rows (QUERY_MAX_ROWS). "
+            "Add a LIMIT, aggregate, or narrow the filter — the rows above are the first "
+            f"{QUERY_MAX_ROWS}, not a sample."
+        )
+    return result
 
 
 def run_execute(sql: str, principal: str, schema: str) -> dict:
     """Execute an already-guarded write DDL as `principal` (so Trino's OPA plugin
     governs the reads inside a CTAS AS THE CALLER). The session schema is set to the
-    write target so unqualified refs resolve in the caller's own domain."""
-    conn = _connect(principal, schema)
+    write target so unqualified refs resolve in the caller's own domain.
+
+    Bounded only when EXECUTE_MAX_RUN_TIME is set — see its comment above."""
+    conn = _connect(principal, schema, max_run_time=EXECUTE_MAX_RUN_TIME or None)
     cur = conn.cursor()
     cur.execute(sql)
     cur.fetchall()  # drain the result stream (CTAS returns a rowcount row)
@@ -193,8 +259,14 @@ async def http_execute(req: Request):
     try:
         # CONCURRENCY: same worker-thread offload as /query — sync writes can run
         # for minutes (SYNC_STATEMENT_TIMEOUT_MS in os-ui); executed inline they
-        # would block every other statement on the event loop. No server-side
-        # timeout is enforced here — the CLIENT owns the statement budget.
+        # would block every other statement on the event loop.
+        #
+        # STATEMENT BUDGET, truthfully (B4-review E-1): unless EXECUTE_MAX_RUN_TIME is set,
+        # NOTHING bounds a write statement here. The client's abort (os-ui's `AbortSignal`)
+        # ends os-ui's WAIT, not the query — Trino keeps running it until the cluster's own
+        # limits end it. That is a deliberate default for writes, which legitimately run for
+        # minutes; it is not "the client owns the budget", which this comment used to claim.
+        # Reads are bounded by QUERY_MAX_RUN_TIME + QUERY_MAX_ROWS.
         result = await asyncio.to_thread(run_execute, sql, principal, parsed.schema)
         return JSONResponse(result)
     except trino.exceptions.TrinoUserError as e:

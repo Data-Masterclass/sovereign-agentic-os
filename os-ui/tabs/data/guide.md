@@ -6,6 +6,50 @@ The Data tab is the foundation of the OS. It stores versioned, governed datasets
 
 The MCP tools below are the same governed path the UI drives; they still name the physical layers (`ingest`/`transform_silver`/`build_gold_join`) so a tools-only client can drive each step explicitly. In the UI these are Ingestion, Transformation, Composition — and for a plain ingested dataset the business layer is auto-materialized, so you never file a manual "publish to Gold" step.
 
+## What actually happens when you call these tools
+
+A data product in the OS **is a dbt project in a git repository**, and the tools are how you write it:
+
+1. **Your domain has a git repository** (`/repos/<domain>.git`, one per domain). Every mutating call —
+   `create_dataset`, `add_dataset_version`, `transform_silver`, `build_gold_join`,
+   `define_quality_rules`, `set_dataset_sync`, promote, retire — regenerates that domain's dbt
+   project and **commits it as you**: author = your name + e-mail, committer = Sovereign OS. A call
+   that changes nothing commits nothing (the tree hash decides). Read the result with
+   `GET /api/data/projects/<domain>` (tree, log, blob at a ref) or export the commit as an archive.
+
+   ```
+   data(sales): add check orders — via mcp:define_quality_rules
+
+   OS-Action: add check
+   OS-Object: ds_01J7Q4 (Orders)
+   OS-Surface: mcp:define_quality_rules      # a UI action reads ui:<route>
+   OS-Request-Id: req_7f3a9c2b1d4e5f60
+   OS-Actor: amir
+   ```
+2. **The project is real dbt.** Your dataset's compiled layers become models under
+   `models/<layer>/`, referencing each other through dbt's own ref and source functions; your
+   quality rules become `schema.yml` **tests** (`not_null`, `unique`, `accepted_values`, …); your
+   sync schedule becomes a row in `os/schedules.yml`; an external sync source becomes a dbt source
+   in `os/sources.yml`. A layer the OS did NOT compile (an authored body, an adopted table) is
+   registered as a dbt *source* — dbt reads and tests it, and never rewrites it.
+3. **Dagster runs it.** One code location (`sovereign`) loads every domain's project from a
+   validated commit; `set_dataset_sync` therefore provisions no Kubernetes CronJob — the schedule is
+   a Dagster schedule over the domain's dbt assets, UTC, missed ticks skipped. A build / a
+   composition / `sync_dataset_now` launches that commit's asset selection, tagged `os/dataset`,
+   `os/domain`, `os/principal`, `os/user`, `os/action`, `os/commit`, `os/surface`.
+4. **Trino executes it as you.** dbt connects as the `dbt-runner` service user and impersonates the
+   run's `OS_PRINCIPAL`, so every read passes OPA with your identity and your masks.
+5. **Read-back comes from Dagster, not an OS ledger.** `get_sync_status` returns Dagster runs,
+   materialisations and the next tick; the DQ surfaces return Dagster **asset checks** (one per dbt
+   test, labelled `dbt test`), while the ad-hoc "Run checks" / `run_quality_checks` probe is labelled
+   `OS probe`; `get_lineage` returns the dbt graph's edges.
+
+**The real sequence, end to end:** connect (`create_connection` → `test_connection`) → ingest
+(`ingest_dataset`, or `set_dataset_sync` for a connector-backed table) → silver (`transform_silver`)
+→ gold (`build_gold_join`) → quality (`define_quality_rules` → `run_quality_checks`) → schedule
+(`set_dataset_sync` → `sync_dataset_now` → `get_sync_status`) → lineage (`get_lineage`). Each step is
+one commit in your domain's repository and, where it materialises something, one Dagster run.
+
 ## How to build it (ingested dataset)
 
 1. **Reuse check.** Call `list_datasets` (no arguments — it returns everything you can see, grouped by origin) and scan for your domain and concept. If the dataset already exists, call `get_dataset` and add a version rather than creating a duplicate. Call `query_data` to inspect existing rows before any write.
@@ -16,16 +60,37 @@ The MCP tools below are the same governed path the UI drives; they still name th
 4. **Explore.** Call `profile_dataset` — rowCount, per-column null %, distinct counts, min/max, top values and a row preview, computed through the governed query path as you (OPA row filters and column masks apply). Use the real column names it returns in the next step.
 5. **Transform (optional).** Call `transform_silver` with `columns` + guided `ops` (rename / cast / trim / normalize / drop / filter / dedupe). The OS compiles ONE governed CTAS into your own schema, runs it as you, and registers the cleaned layer only on a ✓ apply+verify. In the UI this is the **Transformation** section (Save Transformations). Skip it and a clean ingested dataset passes straight through — the business layer materializes automatically, no join required, and it auto-registers as a queryable Cube model (measures are additive via `define_metric`, not required to make it queryable).
 6. **Curated datasets — compose instead.** To build a NEW table by joining datasets you already trust, create it as a curated dataset and call `build_gold_join` with the explicit base dataset plus dataset IDs to join (each re-resolved against what you may read — never a table name), join keys, kept/renamed columns, derived fields and measures. Join partners can be governed asset/product datasets OR your OWN personal (My-tier) datasets built to Silver/Gold — so you can compose a curated dataset entirely from your own private data (its personal lane is read AS you). **Key mapping / reconcile:** same-name keys auto-match; when the two sides differ, set the join key’s optional `adapt` — `{mode:"text"}` normalizes both sides (lower+trim+cast-to-varchar) so keys differing only by case/whitespace/format line up, or `{mode:"cast", type}` coerces both sides to one Trino type (e.g. an id stored as varchar on one side, integer on the other). The composition wraps BOTH sides so the equality stays symmetric. The composed table + lineage + measures are recorded only on ✓, and it auto-registers as a queryable Cube model. In the UI this is the curated dataset's **Composition** section (Save Composition). (Ingested datasets never join — that is the curated path.)
-7. **Add data-quality rules (optional, recommended).** Call `define_quality_rules` with dropdown-style rules — `not_null`, `not_blank`, `unique`, `accepted_values` (with a values list), `range` (with min/max) on a column — then `run_quality_checks` to compile each to a governed COUNT-of-violations SQL and run it AS the owner for a REAL pass/fail per rule + an aggregate scorecard. A rule that can't run (no built table) is reported not-run, never a fake pass. In the UI this is the **Checks** section (Save Data Quality Checks); its curated rule suggestions need a built, queryable Gold to profile against — until then the section says so rather than returning an empty list silently.
+7. **Add data-quality rules (optional, recommended).** The rules you add BECOME `schema.yml` dbt tests in your domain's project, so every scheduled `dbt build` runs them and the result comes back as a Dagster asset check. Call `define_quality_rules` with dropdown-style rules — `not_null`, `not_blank`, `unique`, `accepted_values` (with a values list), `range` (with min/max) on a column — then `run_quality_checks` to compile each to a governed COUNT-of-violations SQL and run it AS the owner for a REAL pass/fail per rule + an aggregate scorecard. A rule that can't run (no built table) is reported not-run, never a fake pass. In the UI this is the **Checks** section (Save Data Quality Checks); its curated rule suggestions need a built, queryable Gold to profile against — until then the section says so rather than returning an empty list silently.
    - **Fix failures (optional).** For a FAILING rule, call `propose_quality_fixes` (read-only): the rule re-runs, failing rows are sampled honestly ("showing N of M"), and the assistant proposes either ONE batch column-transform (guard-validated, previewed before→after with a residual count MEASURED by SQL) or per-row fixes (only when the dataset declares a `unique` key column and ≤200 rows fail — row identity is never guessed), or an honest "needs a structural fix" diagnosis (e.g. `unique` duplicates). Then `apply_quality_fixes` (edit-gated) executes exactly the accepted changes as ONE whitelisted MERGE as you, re-runs the rule (a fix that didn't fix stays red), and records a remediation run with the pre-apply Iceberg snapshot id — revert is via Console (no governed rollback shape). Nothing is ever applied without the explicit apply call.
 8. **Document.** Call `document_dataset` with `datasetId`, a `description` and (recommended) per-column `columns` docs. Documentation is the gate to promotion; this step is required before filing.
 9. **File a promotion request.** Owner calls `request_promotion` with `kind: "dataset"` and the dataset `id` to promote it from My to Domain. The dataset stays My-scope until a domain admin acts.
 10. ⛔ **Domain admin approves.** A domain admin (or tenant admin) calls `approve_promotion`. The dataset becomes visible to domain members — and its materialized business layer is **auto-registered as a queryable Cube model** (view + dimensions from the columns + a `count` measure) with no `define_metric` step. Confirm via `get_dataset` → `cube.ready`. Until promoted, the dataset carries a "not certified" chip in the UI.
 11. **Add measures (optional).** Call `define_metric` only to ADD named measures to the already-queryable Cube model.
 
+12. **Read the lineage.** Call `get_lineage` with `dataset:<id>` for the `{nodes, edges}` graph. With data products in git it is dbt's own graph (the ref/source edges of the generated project, read through the Dagster asset graph); a node you cannot see renders as `{redacted:true, kind}`. The payload says where it came from (`source: 'dbt'` vs the OS registry fallback) — it never guesses.
+
 **Note:** `query_data` is read-only at any point in the flow. Re-promoting an already-Domain dataset returns `conflict` — treat it as idempotent.
 
-**Keep it in sync (connector-backed datasets).** When the Bronze came from a connection (warehouse table, Kafka topic, Salesforce object, Kajabi resource) rather than a one-off upload, call `set_dataset_sync(...)` after create + first ingest to keep it fresh on a schedule (preset or cron), `sync_dataset_now(...)` to run once immediately (`reset: true` replaces the copy and restarts the cursor), and `get_sync_status(...)` for config, next run, run history and watermark. Cursor semantics are honest per source — Kafka is append-only on partition offsets, Salesforce locks to `SystemModstamp`, Kajabi locks to each resource's documented field (only `purchases` detects edits; created_at-only resources sync new records; cursorless resources are full-refresh only — asking for more is a typed `bad_request`). After ~10 consecutive failures the schedule auto-quarantines; fix the source and run `sync_dataset_now(...)` to resume.
+**Keep it in sync (connector-backed datasets) — Dagster owns the schedule.** When the Bronze came from a connection (warehouse table, Kafka topic, Salesforce object, Kajabi resource) rather than a one-off upload, call `set_dataset_sync(...)` after create + first ingest to keep it fresh on a schedule (preset or cron), `sync_dataset_now(...)` to run once immediately (`reset: true` replaces the copy and restarts the cursor), and `get_sync_status(...)` for config, next run, run history and watermark. Cursor semantics are honest per source — Kafka is append-only on partition offsets, Salesforce locks to `SystemModstamp`, Kajabi locks to each resource's documented field (only `purchases` detects edits; created_at-only resources sync new records; cursorless resources are full-refresh only — asking for more is a typed `bad_request`). After ~10 consecutive failures the schedule auto-quarantines; fix the source and run `sync_dataset_now(...)` to resume. The schedule itself lives in your domain's repository (`os/schedules.yml`, committed by the same call) and is executed by the Dagster `sovereign` code location — the OS provisions no CronJob, and `get_sync_status` reads the run history, the watermark and the next tick back from Dagster.
+
+## The four tools the steps above do not reach
+
+The numbered path covers creating, building, documenting and promoting a dataset. Four more data
+tools exist and are the same governed path (B4-review L-5):
+
+- **`list_exposed_tables`** (domain admin) — browse every connection → exposure set → table your
+  domain(s) may adopt. The read behind the UI's "From a connection" browser; it returns only
+  warehouse and operational exposures that were actually exposed to you.
+- **`adopt_exposed_table`** (domain admin) — adopt one of those tables as a Domain-tier dataset
+  with `origin: 'connected'`. LIVE exposures federate straight through the source FQN; SYNC
+  exposures land a governed copy, prefilled from the exposure's `syncDefaults`, which you then keep
+  fresh with `set_dataset_sync`.
+- **`retire_dataset`** (owner / domain admin) — retire or archive a dataset. It is a commit like any
+  other change: the dataset's models leave the domain's dbt project, so Dagster stops materialising
+  and testing them. Dependents are reported before the write, never silently broken.
+- **`reconcile_domain_tables`** (builder+) — probe each promoted dataset's governed domain table and
+  re-materialise any that is missing or stale, by re-running the stored publish CTAS. The repair
+  path for materialisation drift; it never invents a grain, it replays the recorded one.
 
 ## What to consider
 

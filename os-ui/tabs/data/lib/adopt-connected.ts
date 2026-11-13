@@ -10,7 +10,8 @@ import { adoptConnectedDataset } from '@tabs/data/lib/store';
 import { resolveAdoptableExposure } from '@tabs/connections/lib/exposed-tables';
 import { cursorSupportForPlatform } from '@tabs/connections/lib/operational-cursor';
 import { parseSyncBlock, DATASET_SYNC_MODES, type DatasetSync } from '@tabs/data/lib/dataset-schema';
-import { reconcileSyncCron } from '@tabs/data/lib/sync-cron';
+import { reconcileSyncSchedule } from '@tabs/data/lib/dbt/launch';
+import type { SyncCronOutcome } from '@tabs/data/lib/sync-cron-removal';
 import type { Dataset } from '@tabs/data/lib/dataset-schema';
 
 /**
@@ -53,7 +54,7 @@ export type AdoptExposedInput = {
 
 export type AdoptExposedResult = {
   dataset: Dataset;
-  cron?: Awaited<ReturnType<typeof reconcileSyncCron>>;
+  cron?: SyncCronOutcome;
 };
 
 /**
@@ -147,10 +148,11 @@ export async function adoptExposedTable(user: CurrentUser, input: AdoptExposedIn
     ...(sync ? { sync } : {}),
   });
 
-  // Provision the per-dataset CronJob for an enabled sync (honest best-effort — the dataset
-  // is already created either way).
+  // Reconcile the SCHEDULE for an enabled sync — Dagster owns it from the domain repo's
+  // os/schedules.yml; any pre-B2 CronJob is removed (honest best-effort — the dataset is
+  // already created either way).
   let cron: AdoptExposedResult['cron'];
-  if (sync) cron = await reconcileSyncCron(dataset.id, sync);
+  if (sync) cron = await reconcileSyncSchedule(dataset.id, sync);
 
   void trace({
     principal: user.domains[0] ?? user.id,

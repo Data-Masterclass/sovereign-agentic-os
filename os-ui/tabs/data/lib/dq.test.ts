@@ -11,7 +11,7 @@ import {
   healthScore,
   DqError,
   type CheckResult,
-} from '@tabs/data/lib/dq';
+ dqSourceLabel } from '@tabs/data/lib/dq';
 import type { DataCheck } from '@tabs/data/lib/dataset-schema';
 
 const FQN = 'iceberg.sales.gold_orders';
@@ -132,4 +132,13 @@ test('healthScore weights a fail by clean-row fraction when the row count is kno
   const h = healthScore([fail('a', 100)], 1000);
   assert.equal(h.score, 90);
   assert.equal(h.status, 'failing');
+});
+
+/** Review B2-review-M5: a dbt test and the OS's own probe must not read as the same thing. */
+test('dqSourceLabel attributes a verdict, and says nothing when it cannot', () => {
+  assert.equal(dqSourceLabel('dagster')!.text, 'dbt test');
+  assert.match(dqSourceLabel('dagster')!.title, /Dagster/);
+  assert.equal(dqSourceLabel('os')!.text, 'OS probe');
+  assert.match(dqSourceLabel('os')!.title, /no dbt test has executed/);
+  assert.equal(dqSourceLabel(undefined), null, 'a pre-B2 record claims nothing');
 });

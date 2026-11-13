@@ -84,6 +84,18 @@ else
   docker build --platform linux/amd64 --provenance=false -t "$IMG" -f images/base/os-ui/Dockerfile .
 fi
 
+# POST-BUILD SMOKE (engine rebuild A4 review): the os-ui-worker container runs the TypeScript
+# SOURCE under Node's type stripping, which no unit test can verify — it is a property of the
+# BASE IMAGE's Node (>= 22.6) and of the resolve hook's aliases. A base-image bump that goes
+# backwards breaks the worker with ERR_UNKNOWN_FILE_EXTENSION at boot, AFTER the deploy. So
+# import the whole run-path module graph in the built image before pushing it. Nothing connects
+# to a database until main() runs, so this needs no cluster and fails loudly on its own.
+say "smoke: the image can import the worker under --experimental-strip-types"
+docker run --rm --entrypoint node --workdir /app/src "$IMG" \
+  --experimental-strip-types --no-warnings \
+  -e "import('./worker/agent-runs.ts').then(m => { if (typeof m.main !== 'function') { console.error('worker/agent-runs.ts exports no main()'); process.exit(1); } }).catch(e => { console.error(e); process.exit(1); })" \
+  || { echo "WORKER_STRIP_TYPES_SMOKE_FAILED — the image's Node cannot run the worker source (needs >= 22.6)"; exit 1; }
+
 say "pushing $IMG"
 pushed=""
 for i in 1 2 3 4 5; do

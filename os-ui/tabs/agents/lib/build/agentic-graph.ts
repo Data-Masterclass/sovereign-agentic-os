@@ -23,11 +23,20 @@ function estimateTokens(text: string): number {
 }
 
 /**
- * THE AGENTIC GRAPH EXECUTOR — the core of the Software Delivery Team.
+ * THE AGENT NODE LAYER — what ONE agent of a team is, independent of who schedules it.
  *
- * It walks a compiled LangGraph {@link IR} and, per node, runs the EXISTING
- * per-user agentic harness ({@link runAgentic}, the same PLAN→ACT loop the live
- * software build chat uses) with:
+ * A5 deleted the walk that used to live here (`runAgenticGraph`'s BFS and its `nodeOrder`).
+ * The scheduler is now a real LangGraph `StateGraph` (`tabs/agents/lib/engine/build-graph.ts`),
+ * which calls into THIS module for everything a node needs: its model tier
+ * ({@link resolveNodeModel}), its system prompt and the running team transcript
+ * ({@link nodeSystem}, {@link handoffBlock}, {@link curatePredecessor} — the Context
+ * Librarian), the readable `input` the drill-down shows ({@link boundInput},
+ * {@link renderUserTurn}) and how an outcome is classified ({@link nodeStatus},
+ * {@link classifyStepError}). {@link runNode} runs exactly one agent for one turn — the
+ * phase-router (agent chat) path, which has never been a graph.
+ *
+ * Per node, it runs the EXISTING per-user agentic harness ({@link runAgentic}, the same
+ * PLAN→ACT loop the live software build chat uses) with:
  *   • that node's AUTO-resolved model as the ACT model ({@link resolveNodeModel}:
  *     a real pin wins, else read-only gatherers → fast, judgment/writers → reasoning),
  *     reasoning tier for the PLAN — so per-agent model routing is genuinely live;
@@ -41,12 +50,6 @@ function estimateTokens(text: string): number {
  * per-node tool specs are all INJECTED, so it is trivially unit-testable and
  * carries no `server-only` coupling. The server wiring lives in
  * `agentic-graph-server.ts`.
- *
- * v1 routing is DETERMINISTIC and honest: the compiled `when` guards are not
- * evaluated by any runtime, so we walk the graph in a fixed, visited-once order
- * (entrypoint → supervisor members in declared order, following handoffs) — the
- * same walk `run-graph.ts` uses. The team's single voice (the last node, e.g.
- * `communication`) speaks last, and its final text is the user-facing reply.
  */
 
 /**
@@ -70,7 +73,8 @@ export type ErrorKind = 'policy' | 'exec';
  * a Trino syntax/type error, a bad_request, a timeout, a raw thrown message — is an
  * EXECUTION error, which is not a policy denial.
  */
-const POLICY_ERROR_CODES = new Set(['forbidden', 'held', 'not_found']);
+// `rejected` (A2): a human denied the held call in Governance — a policy outcome, not an execution failure.
+const POLICY_ERROR_CODES = new Set(['forbidden', 'held', 'not_found', 'rejected']);
 
 /**
  * Classify an errored step as a POLICY denial vs an EXECUTION error by parsing the
@@ -113,14 +117,14 @@ export type NodeRun = {
 const MAX_NODE_INPUT_CHARS = 8_000;
 
 /** Bound a captured input string to its head, marking the elision honestly. */
-function boundInput(text: string): string {
+export function boundInput(text: string): string {
   return text.length <= MAX_NODE_INPUT_CHARS
     ? text
     : `${text.slice(0, MAX_NODE_INPUT_CHARS)}\n… [truncated ${text.length - MAX_NODE_INPUT_CHARS} more chars]`;
 }
 
 /** Render the user turn(s) this node received, appended after its system context. */
-function renderUserTurn(messages: { role: 'user' | 'assistant'; content: string }[]): string {
+export function renderUserTurn(messages: { role: 'user' | 'assistant'; content: string }[]): string {
   const last = messages.filter((m) => m.role === 'user').at(-1);
   return last ? `\n\n--- USER TURN ---\n${last.content}` : '';
 }
@@ -135,7 +139,7 @@ function lastUserContent(messages: { role: 'user' | 'assistant'; content: string
  * tool → 'denied'; else any EXECUTION-errored tool → 'error'; else 'ok'. A bad-SQL
  * error is 'error', never 'denied' — only a real governance block earns 'denied'.
  */
-function nodeStatus(result: AgenticResult, threw?: string): NodeStatus {
+export function nodeStatus(result: AgenticResult, threw?: string): NodeStatus {
   if (threw) return 'failed';
   const errored = result.steps.filter((s) => s.isError);
   if (errored.length === 0) return 'ok';
@@ -150,7 +154,7 @@ export type AgenticGraphResult = {
   runs: NodeRun[];
   /** The last node's final text — the team's single user-facing reply. */
   finalText: string;
-  /** The walk reached END (as in runGraph) — false if no node ran, a node failed, or the run budget stopped it. */
+  /** The run reached END — false if no node ran, a node failed, or the step budget stopped it. */
   reachedEnd: boolean;
 };
 
@@ -263,46 +267,12 @@ export function resolveNodeModel(node: IRNode, deps: AgenticGraphDeps): Resolved
 }
 
 /**
- * The deterministic visit order over the IR: BFS from the entrypoint, a
- * supervisor enqueues its members in declared order, handoffs are followed, and
- * every node runs at most once. Mirrors the walk in `run-graph.ts` so the
- * ordering is identical to the mock test-invocation. Disabled agents are skipped.
- */
-export function nodeOrder(ir: IR, disabled: Set<string> = new Set()): string[] {
-  const nodeById = new Map(ir.nodes.map((n) => [n.id, n]));
-  const commandsByFrom = new Map<string, string[]>();
-  for (const c of ir.commands) {
-    const list = commandsByFrom.get(c.from) ?? [];
-    list.push(c.to);
-    commandsByFrom.set(c.from, list);
-  }
-
-  const order: string[] = [];
-  const visited = new Set<string>();
-  const queue: string[] = [ir.entrypoint];
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    if (visited.has(id)) continue;
-    visited.add(id);
-    if (disabled.has(id)) continue; // skipped: never runs, never routes onward
-    const node = nodeById.get(id);
-    if (!node) continue;
-    order.push(id);
-    if (node.supervisor) {
-      for (const m of node.members) if (!visited.has(m)) queue.push(m);
-    }
-    for (const to of commandsByFrom.get(id) ?? []) if (!visited.has(to)) queue.push(to);
-  }
-  return order;
-}
-
-/**
  * One prior node's handoff: the rendered narration+material `block`, plus the RAW
  * inputs (`finalText`, `steps`) so a downstream node can RE-RENDER this entry with a
  * relevance-curated material selection (the Librarian handoff) instead of the flat
  * keepRows compaction. `finalText`/`steps` are omitted on summarized/synthetic entries.
  */
-type HandoffEntry = { node: string; block: string; finalText?: string; steps?: AgenticStep[] };
+export type HandoffEntry = { node: string; block: string; finalText?: string; steps?: AgenticStep[] };
 
 /**
  * Instruction to the DOWNSTREAM node: the handoff below carries the prior agents'
@@ -344,7 +314,7 @@ const HANDOFF_KEEP_ROWS = 60;
  * header+first-N up to HANDOFF_KEEP_ROWS; long text → head+tail) so the handoff
  * stays budget-friendly while preserving full scorecards for downstream reasoning.
  */
-function handoffBlock(node: string, finalText: string, steps: AgenticStep[]): string {
+export function handoffBlock(node: string, finalText: string, steps: AgenticStep[]): string {
   const parts = [`## ${node}`, finalText.trim() || '(no narration)'];
   const material = steps.filter((s) => !s.isError && s.result.trim());
   const failed = steps.filter((s) => s.isError);
@@ -448,7 +418,7 @@ function handoffCeiling(budget?: number): number {
  * no embedder, the source is the offline hash, or the predecessor carries no raw
  * steps to re-render — so the deterministic keepRows path is the graceful fallback.
  */
-async function curatePredecessor(
+export async function curatePredecessor(
   transcript: HandoffEntry[],
   node: IRNode,
   userTask: string,
@@ -513,7 +483,7 @@ function budgetTranscript(transcript: HandoffEntry[], ceiling: number): HandoffE
  * outputs (via {@link handoffBlock}); the MOST RECENT entry is listed last (the
  * budgeter pins recent messages, so the thing this node most needs survives).
  */
-function nodeSystem(preamble: string, node: IRNode, transcript: HandoffEntry[], budget?: number): string {
+export function nodeSystem(preamble: string, node: IRNode, transcript: HandoffEntry[], budget?: number): string {
   transcript = budgetTranscript(transcript, handoffCeiling(budget));
   const parts = [preamble, '', `--- YOUR ROLE IN THE TEAM: ${node.id} ---`, node.prompt];
   const memory = node.memory?.trim();
@@ -525,125 +495,10 @@ function nodeSystem(preamble: string, node: IRNode, transcript: HandoffEntry[], 
 }
 
 /**
- * Run the whole team over one turn. For each node in {@link nodeOrder}, run the
- * agentic harness with the node's model + narrowed tools + the shared, growing
- * transcript (the `messages` channel, made real). Returns every node's trace and
- * the single user-facing reply (the last node's final text).
- */
-export async function runAgenticGraph(
-  ir: IR,
-  messages: { role: 'user' | 'assistant'; content: string }[],
-  deps: AgenticGraphDeps,
-): Promise<AgenticGraphResult> {
-  const nodeById = new Map(ir.nodes.map((n) => [n.id, n]));
-  const order = nodeOrder(ir, new Set(deps.disabled ?? []));
-
-  const runs: NodeRun[] = [];
-  let transcript: HandoffEntry[] = [];
-  const userTask = lastUserContent(messages);
-  // GLOBAL run budget: rounds spent so far across all nodes. Each node is clamped to
-  // what is LEFT, and the walk stops once the team-wide budget is spent — so a long
-  // team can't multiply per-node caps into a runaway (cost + run-timeout) blowup.
-  let runStepsUsed = 0;
-  let stoppedAtRunBudget = false;
-  for (let orderIdx = 0; orderIdx < order.length; orderIdx += 1) {
-    const id = order[orderIdx];
-    const node = nodeById.get(id)!;
-    // Clamp this node's round cap to the remaining global budget. Once nothing is
-    // left, stop before running the node (graceful: the run returns what completed).
-    let nodeMaxIterations = deps.maxIterations;
-    if (deps.maxRunSteps != null) {
-      const remaining = deps.maxRunSteps - runStepsUsed;
-      if (remaining <= 0) { stoppedAtRunBudget = true; break; }
-      nodeMaxIterations = Math.min(deps.maxIterations ?? remaining, remaining);
-    }
-    // AUTO per-node routing: honor a real pin, else classify (read-only gatherers →
-    // fast, judgment/writers → reasoning). Zero LLM cost; surfaced in the drill-down.
-    const routed = resolveNodeModel(node, deps);
-    const actModel = routed.model;
-    // LIVE: announce this node is starting (1-based index over the total path).
-    deps.onNodeStart?.({ node: id, index: orderIdx + 1, total: order.length });
-    // Per-node step counter for the live stream (1-based).
-    let stepIdx = 0;
-    // Wrap each node so ONE node's failure is reported as a node-level failure with
-    // partial results — never a blank 500 that aborts the whole run. The run stops
-    // at the failed node (downstream nodes depend on its output) but every node that
-    // ran up to and including it is returned.
-    // CONTEXT LIBRARIAN: before composing this node's context, curate the immediate
-    // predecessor's material handoff by RELEVANCE to THIS node's need (role + task),
-    // so the downstream node keeps the whole material it actually needs within budget
-    // rather than a flat keepRows head-truncation. No-op without a live embedder.
-    transcript = await curatePredecessor(transcript, node, userTask, deps);
-    // Compose the node's system context ONCE so we can both run on it AND capture it
-    // as the node's readable `input` for the drill-down (what this agent was given).
-    const system = nodeSystem(deps.preamble, node, transcript, deps.budget);
-    const input = boundInput(system + renderUserTurn(messages));
-    try {
-      const result = await runAgentic({
-        system,
-        userMessages: messages,
-        tools: deps.toolSpecsFor(node),
-        callTool: deps.callTool,
-        llm: deps.llm,
-        planModel: deps.reasoningModel,
-        actModel,
-        maxIterations: nodeMaxIterations,
-        budget: deps.budget,
-        maxOutputTokens: deps.maxOutputTokens,
-        // LIVE: forward each governed tool step out to the caller as it happens.
-        onStep: deps.onStep ? (step) => { stepIdx += 1; deps.onStep!({ node: id, step, index: stepIdx }); } : undefined,
-      });
-      // Charge this node's rounds against the global run budget.
-      runStepsUsed += result.iterations;
-      const status = nodeStatus(result);
-      runs.push({ node: id, model: actModel, tier: routed.tier, tierReason: routed.reason, status, result, input });
-      deps.onNodeComplete?.({ node: id, status, finalText: result.finalText });
-      // Thread this node's finalText AND its material tool outputs forward, so a
-      // downstream node has the actual data (scorecard/rows/metrics) to work from.
-      // Keep the RAW finalText/steps too, so the next node can re-render this entry
-      // with a relevance-curated material selection (see {@link curatePredecessor}).
-      transcript.push({
-        node: id,
-        block: handoffBlock(node.id, result.finalText, result.steps),
-        finalText: result.finalText,
-        steps: result.steps,
-      });
-    } catch (e) {
-      const error = (e as Error)?.message ?? String(e);
-      const finalText = `(${id} failed: ${error})`;
-      runs.push({
-        node: id,
-        model: actModel,
-        tier: routed.tier,
-        tierReason: routed.reason,
-        status: 'failed',
-        error,
-        input,
-        result: { plan: '', steps: [], finalText, iterations: 0, toolCallingSupported: true },
-      });
-      deps.onNodeComplete?.({ node: id, status: 'failed', finalText });
-      break;
-    }
-  }
-
-  let finalText = runs.length > 0 ? runs[runs.length - 1].result.finalText : '(no agents ran)';
-  // If the walk stopped because the team-wide tool-step budget ran out (not because
-  // the graph finished), say so — the same phrasing the Evaluate run-check detects,
-  // so the run is flagged as possibly-unfinished rather than silently truncated.
-  if (stoppedAtRunBudget) {
-    finalText += `\n\n_(The team stopped at the run's tool-step budget — it may not have finished. An admin can raise AGENT_TEAM_RUN_MAX_STEPS.)_`;
-  }
-  // A failed node is always the last run (the walk breaks there).
-  const last = runs[runs.length - 1];
-  const reachedEnd = !!last && last.status !== 'failed' && !stoppedAtRunBudget;
-  return { path: order, runs, finalText, reachedEnd };
-}
-
-/**
- * Run EXACTLY ONE node of the team for one turn (the phase-router path). Same
- * injected, governed surface as {@link runAgenticGraph}, but a single `runAgentic`
- * call instead of the six-node walk — ~6× fewer LLM calls per turn, and the one
- * node that runs is chosen by the phase router. `extraGuidance` (the phase's
+ * Run EXACTLY ONE node of the team for one turn (the phase-router path). The same
+ * injected, governed surface the graph's `act_<id>` node uses, but a single `runAgentic`
+ * call with no graph at all — ~6× fewer LLM calls per turn, and the one node that runs
+ * is chosen by the phase router. `extraGuidance` (the phase's
  * instructions) is appended to the node's system prompt; `onStep` streams each
  * governed tool step so the UI shows live progress, never a silent spinner.
  */

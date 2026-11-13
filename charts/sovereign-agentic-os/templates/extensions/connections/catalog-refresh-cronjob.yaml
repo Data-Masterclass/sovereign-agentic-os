@@ -11,10 +11,14 @@
   button); this sweep is the optional scheduled leg.
 
   AUTH — the shared agent-runtime bearer (the SAME Secret-mounted token the agent-schedule
-  + data-sync sweeps present; `runtimeTokenOk` on the route). No credentials are baked in.
+  CronJobs present; `runtimeTokenOk` on the route). No credentials are baked in. The data-sync
+  sweep this comment used to name is GONE (engine rebuild B4 — Dagster schedules the domain
+  repository instead), and so is the per-dataset sync trigger that shared this bearer
+  (B4-review-M-6), so this and the agent schedules are now its only users.
   GATED OFF by default (connections.catalogRefresh.enabled=false) and NIL-SAFE: every value
   lookup is default-guarded, so `helm template` without this block (e.g. --reuse-values from
-  an older release) emits nothing and errors nowhere. Cloned from data-sync-cronjob.yaml.
+  an older release) emits nothing and errors nowhere. (It was cloned from the former
+  data-sync-cronjob.yaml, which B4 deleted; this is now the only sweep CronJob in the chart.)
 */}}
 {{- $r := .Values.connections.catalogRefresh }}
 apiVersion: batch/v1

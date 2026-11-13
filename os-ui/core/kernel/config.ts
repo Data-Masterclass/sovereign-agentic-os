@@ -11,6 +11,7 @@
  * so credentials/keys never reach the browser.
  */
 import { parseEnabledTabs } from '@core/kernel/tabs';
+import { parseAgentsWorkerMode } from '@core/kernel/agents-worker';
 
 function env(name: string, fallback: string): string {
   const v = process.env[name];
@@ -72,19 +73,25 @@ export function parseModelPrices(raw: string): Record<string, ModelPrice> {
  */
 export const DEV_DEFAULT_SECRET = 'dev-only-insecure-session-secret-change-me-in-prod';
 
+/**
+ * The insecure placeholder for the shared in-cluster runtime bearer, shipped so a clone-and-run
+ * install works without secrets. `runtimeBearerAuthAllowed` (below) refuses to honour it under a
+ * production runtime — the bearer grants un-narrowed, cross-domain reads.
+ */
+export const DEV_DEFAULT_AGENT_RUNTIME_TOKEN = 'dev-only-insecure-agent-runtime-token';
+
 export const config = {
   // sample-agent (LangGraph RAG): GET {SAMPLE_AGENT_URL}/ask?q=...
   sampleAgentUrl: base(env('SAMPLE_AGENT_URL', 'http://sample-agent:8000')),
 
-  // agent-runtime (shared LangGraph IR interpreter, Agents tab live execution):
-  // POST {AGENT_RUNTIME_URL}/reload  {systemId, ir}  — register a compiled graph;
-  // POST {AGENT_RUNTIME_URL}/run     {systemId, prompt, ...guards} — one invocation.
-  // The runtime holds ONLY its scoped LiteLLM key + can reach ONLY LiteLLM, this
-  // governed-tool endpoint and Forgejo-read (Cilium default-deny egress).
-  agentRuntimeUrl: base(env('AGENT_RUNTIME_URL', 'http://agent-runtime:8000')),
-  // Shared bearer the runtime presents to the os-ui governed-tool endpoint (the
-  // ONLY way the runtime reaches OPA/Langfuse — it has neither itself). Server-only.
-  agentRuntimeToken: env('AGENT_RUNTIME_TOKEN', 'dev-only-insecure-agent-runtime-token'),
+  // The shared SERVICE BEARER. A5 (engine rebuild) deleted the Python `agent-runtime` this
+  // was named after — and with it `AGENT_RUNTIME_URL`, `/reload`, `/run` and the
+  // governed-tool callback. The token stayed because os-ui VALIDATES it on the two service
+  // paths its own CronJobs still call: the agent scheduled-run receiver and the connections
+  // catalog-refresh sweep (`build/runtime-auth.ts` `runtimeTokenOk`). The data-sync sweep is
+  // GONE (engine rebuild B4), and so is the per-dataset sync trigger that used this bearer
+  // (B4-review-M-6). Renamed when the data side owns the Secret. Server-only.
+  agentRuntimeToken: env('AGENT_RUNTIME_TOKEN', DEV_DEFAULT_AGENT_RUNTIME_TOKEN),
   // Agent SCHEDULE CronJobs (Agents tab). Saving a `cron` schedule provisions a
   // batch/v1 CronJob in the platform namespace that curls the scheduled-run
   // receiver below with the shared runtime bearer. The bearer is read at run time
@@ -94,10 +101,6 @@ export const config = {
   scheduleCronImage: env('SCHEDULE_CRON_IMAGE', 'curlimages/curl:8.11.1'),
   agentRuntimeTokenSecret: env('AGENT_RUNTIME_TOKEN_SECRET', 'os-ui'),
   agentRuntimeTokenSecretKey: env('AGENT_RUNTIME_TOKEN_SECRET_KEY', 'agent-runtime-token'),
-  // Data-sync CronJobs (Data tab scheduled incremental sync). Saving an enabled sync
-  // schedule provisions a CronJob that curls `<dataSyncUrlBase>/<datasetId>/sync` with
-  // the SAME shared runtime bearer (Secret-mounted) the agent schedules use.
-  dataSyncUrlBase: base(env('DATA_SYNC_URL_BASE', 'http://os-ui:3000/api/data/datasets')),
 
   // Shared service bearer for the in-cluster data-plane services (query-tool +
   // data-runner). Defense-in-depth BEHIND the NetworkPolicies: those services trust
@@ -356,6 +359,46 @@ export const config = {
   // Each node is clamped to whatever is LEFT of this budget; the run stops early and
   // degrades gracefully once it is spent. Env-overridable.
   agentTeamRunMaxSteps: Number(env('AGENT_TEAM_RUN_MAX_STEPS', '')) || 400,
+  // AGENTS_ENGINE is GONE (engine rebuild A5). There is one engine — the real StateGraph in
+  // `tabs/agents/lib/engine/` — and no flag to select another, because there is no other. An
+  // environment that still SETS the variable gets a deprecation line at boot
+  // (`instrumentation.ts`) saying it is ignored, rather than silently behaving as if it mattered.
+  // LangGraph checkpoint store for the `langgraph` engine (engine rebuild, Phase A1): the
+  // `agent_runs` database on the CNPG cluster (chart: postgres.extraDatabases → the os-ui
+  // Deployment composes this URL from `postgres-agent-runs-credentials`). Thread id = run id;
+  // every superstep is checkpointed here so a pod restart / request cap is resumable. Unset
+  // (tests, a laptop without the DB) → an in-memory checkpointer, and every run report says so
+  // (`checkpointer: 'memory'`) — a fallback must never pass for durability.
+  agentRunsDatabaseUrl: env('AGENT_RUNS_DATABASE_URL', ''),
+  // WHO executes a queued agent run (engine rebuild, Phase A4). `inline` (default): the process
+  // that enqueues the job in `run_jobs` also executes it at once — a laptop / kind install with
+  // one os-ui pod behaves exactly as before and tests need no worker. `worker`: os-ui only
+  // enqueues and tails `run_events`; the `os-ui-worker` Deployment (same image, entrypoint
+  // worker/agent-runs.ts) claims the job with FOR UPDATE SKIP LOCKED and runs it off-request —
+  // runs longer than the request cap complete and a rolling restart loses none. Set by the
+  // chart only when `osUI.worker.enabled`.
+  agentsWorker: parseAgentsWorkerMode(process.env.AGENTS_WORKER),
+  // Lease a worker holds on a claimed job (ms). A `running` job whose heartbeat is older than
+  // this is re-queued once (the thread resumes from its checkpoint), then failed. Must exceed
+  // the longest superstep (one model call + one tool call); default 10 minutes.
+  agentsWorkerLeaseMs: Math.max(60_000, Number(env('AGENTS_WORKER_LEASE_MS', '600000')) || 600_000),
+  // X9 — the engine's guardrails on EVERY agent tool call (engine rebuild Part D).
+  // `AGENT_TOOL_RESULT_MAX_CHARS`: a tool result longer than this is TRUNCATED before it enters
+  // the prompt, with a visible marker naming the kept and total rows (or characters) — a silently
+  // shortened answer is how an agent reaches a confident wrong conclusion. ~20k chars ≈ 5k tokens.
+  // `AGENT_TOOL_CALL_TIMEOUT_MS`: one tool call's deadline. Exceeded ⇒ a typed `timeout` tool
+  // result the graph routes on, so a slow Trino query ends the step instead of hanging the run.
+  // Both are read where the graph deps are wired (`build/agentic-graph-server.ts`) and apply to
+  // every tool, not just the data ones — see tabs/agents/lib/engine/tool-result.ts.
+  agentToolResultMaxChars: Math.max(500, Number(env('AGENT_TOOL_RESULT_MAX_CHARS', '20000')) || 20_000),
+  agentToolCallTimeoutMs: Math.max(1_000, Number(env('AGENT_TOOL_CALL_TIMEOUT_MS', '60000')) || 60_000),
+  // How much of a model call the run observer records in Langfuse (A3 review M-2). `structure`
+  // (default): roles + character counts for message content, the tool-call structure (names,
+  // ids, arguments) and a 160-char result preview. `strict`: argument KEY NAMES + character
+  // counts only, no preview — for tenants whose tool arguments may carry personal data. Either
+  // way LiteLLM's own nested generation ships the full prompt unless its callback is told not
+  // to (`turn_off_message_logging`) — see docs/components/langfuse.md.
+  langfuseRedaction: (env('LANGFUSE_REDACTION', 'structure').trim().toLowerCase() === 'strict' ? 'strict' : 'structure') as 'structure' | 'strict',
   // LLM Gateway tab — the read-only, tenant-total usage/spend panel
   // (app/api/gateway/usage). The budget envelope is DISPLAY-ONLY: set it to
   // mirror the chart's litellmAgentKey.maxBudget / budgetDuration (the USD cap
@@ -431,8 +474,65 @@ export const config = {
   // "" when ingress.hosts.workbench is unset — honour it, don't dial localhost).
   workbenchBrokerUrl: base(consoleEnv('WORKBENCH_BROKER_URL', 'http://localhost:8091')),
 
+  // ---- Data products AND agent systems in git (engine rebuild B1/B4 + Part D).
+  // ON by default since B4 — the chart sets `osUI.dataProjectGit.enabled: true` and this default
+  // now AGREES with it, so `npm run dev` behaves like production (B4-review-L-11). Set
+  // DATA_PROJECT_GIT=false to opt out.
+  //
+  // ONE flag, TWO halves (B4-review-H-4) — flipping it enables both:
+  //   • DATA: every dataset / composition / check / sync / publish / retire mutation regenerates
+  //     the owning domain's dbt project and commits it to the bare repo
+  //     `<OS_REPOS_DIR>/<domain>.git` (core/infra/git-store.ts, author = the acting user); the
+  //     schedules move from per-dataset Kubernetes CronJobs to `os/schedules.yml`, run by Dagster.
+  //   • AGENTS: every agent-system definition write commits an `agents/<slug>/…` subtree into the
+  //     SAME repo, and the first boot with the flag on reconciles one commit per domain that has
+  //     an `agents/` tree.
+  // OFF ⇒ no repo is touched; on the data side nothing SCHEDULES a saved sync either (B4 deleted
+  // the CronJob provisioning), which the panels and the health row say in words.
+  // `reposDir` is the PVC mount (`os-repos`) in the chart; tests point it at a temp dir.
+  dataProjectGit: env('DATA_PROJECT_GIT', 'true').toLowerCase() !== 'false',
+  reposDir: env('OS_REPOS_DIR', '/repos'),
+  // Durable mirror index for the per-domain push-mirror config (URL + token Secret
+  // REFERENCE — never the token). See tabs/data/lib/dbt/mirror.ts.
+  dataProjectMirrorsIndex: env('DATA_PROJECT_MIRRORS_INDEX', 'os-data-project-mirrors'),
+  // Durable index for "the owner has already been told about THIS quality failure" (one small doc
+  // per dataset). The DQ alert fires from a READ now that Dagster runs the tests, so the
+  // suppression key has to outlive the process and be shared across pods — B4-review L-2.
+  dqAlertsIndex: env('DQ_ALERTS_INDEX', 'os-dq-alerts'),
+
+  // The Trino client auth method dbt's generated `profiles.yml` is written FOR (B4-review E-3).
+  // It is a GENERATOR INPUT, not a Jinja-time condition: dbt loads `profiles.yml` as YAML first
+  // and only then renders each scalar through Jinja, so a `# {% if %}` guard around the
+  // `password:` key is dropped by the YAML parse and the key is present either way — which
+  // `TrinoNoneCredentials` rejects. The generator therefore emits `password:` iff this is not
+  // 'none'. Changing it takes effect on the next regeneration (any write, or the boot reconcile).
+  trinoAuthMethod: env('TRINO_AUTH_METHOD', 'none'),
+
+  // ---- Trino file-based access control (engine rebuild B3). When TRINO_ACCESS_RULES=true the OS
+  // reconciles the `trino-access-rules` ConfigMap from real domain membership on THREE triggers
+  // (core/infra/trino-rules-server.ts `startTrinoRulesReconciler`): at boot, on every user/domain
+  // write (kernel `directory-changed` event, debounced), and every
+  // `trinoAccessRulesIntervalMinutes` as a repair pass — the periodic one exists because a
+  // `helm upgrade` rewrites Helm's bootstrap value over the OS's enumerated file and fires no OS
+  // event (B3-review-H-2/H-3). Trino re-reads the file on its own refresh-period.
+  // The chart's bootstrap file bounds IMPERSONATION only, so with this off the engine behaves
+  // exactly as before. `trinoServiceUser` must equal the chart's
+  // `trino.accessControl.serviceUser`, the Dagster code location's `TRINO_USER` and the generated
+  // `profiles.yml` user (asserted by scripts/check-trino-rules-chart.mjs).
+  trinoAccessRules: env('TRINO_ACCESS_RULES', '').toLowerCase() === 'true',
+  trinoServiceUser: env('TRINO_DBT_USER', 'dbt-runner'),
+  trinoAccessRulesIntervalMinutes: Number(env('TRINO_ACCESS_RULES_INTERVAL_MINUTES', '10')) || 10,
+
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
   dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),
+  // The `sovereign` code location (engine rebuild B2): one location for every domain's dbt
+  // project; a `Definitions`-based location has the repository name `__repository__`. The OS
+  // launches runs there and reads run / check / materialization state back (core/infra/dagster.ts).
+  dagsterLocation: env('DAGSTER_LOCATION', 'sovereign'),
+  dagsterRepository: env('DAGSTER_REPOSITORY', '__repository__'),
+  // How long a launch-after-commit waits for repo-sync + the location reload to expose a NEW
+  // asset before giving up (ms). Existing assets launch immediately.
+  dagsterLaunchWaitMs: Number(env('DAGSTER_LAUNCH_WAIT_MS', '90000')) || 90000,
 
   // ---- Layer-4 (ML) backends. Off by default; the OS pings these server-side
   // and degrades gracefully when a service is absent.
@@ -526,6 +626,27 @@ export const config = {
 } as const;
 
 export type AppConfig = typeof config;
+
+/**
+ * May a request authenticate as the in-cluster RUNTIME (bearer token) at all? (review B2-review-M3)
+ *
+ * The bearer is a single shared secret that grants UN-NARROWED, cross-domain reads — e.g.
+ * `GET /api/data/projects` returns every domain's repository. If the deployment never set
+ * `AGENT_RUNTIME_TOKEN`, the configured value is the SHIPPED placeholder, which anyone can read in
+ * this repository. Under a real production runtime that must be a closed door, not a known key.
+ *
+ * Keyed on `NODE_ENV`, deliberately NOT on `deploymentProfile` — exactly as
+ * `assertNoDevDefaultSecretsInProd` is, and for the same reason: the live deploy runs
+ * `OS_PROFILE=local` with `NODE_ENV=production`, so a profile-keyed guard would be inert precisely
+ * where it matters. (This CORRECTS the review's suggestion to exempt `profile: local`.)
+ */
+export function runtimeBearerAuthAllowed(
+  token: string = config.agentRuntimeToken,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
+): boolean {
+  if (token && token !== DEV_DEFAULT_AGENT_RUNTIME_TOKEN) return true;
+  return nodeEnv !== 'production';
+}
 
 /**
  * Boot-time FAIL-CLOSED guard: under a real production runtime the platform must

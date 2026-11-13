@@ -17,7 +17,7 @@
 import type { Role } from '@core/kernel/session';
 
 export type ServiceName =
-  | 'postgres' | 'opensearch' | 'valkey' | 'minio' | 'litellm' | 'opa' | 'agent-runtime'
+  | 'postgres' | 'opensearch' | 'valkey' | 'minio' | 'litellm' | 'opa'
   | 'langfuse' | 'clickhouse' | 'trino' | 'polaris' | 'dbt' | 'dagster' | 'docling'
   | 'data-runner' | 'query-tool' | 'egress-proxy' | 'web-fetch';
 

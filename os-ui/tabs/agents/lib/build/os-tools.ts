@@ -15,7 +15,10 @@ import type { ArtifactGrant, System, SafetyPreset } from '@tabs/agents/lib/syste
 import { type Effect } from '@tabs/agents/lib/gateway';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { trace as realTrace } from '@core/infra/agent-governed';
+import type { RunTraceContext } from '@core/infra/langfuse';
+import { runWithRunId } from '@core/infra/request-surface';
 import { enqueue as realEnqueue } from '@core/policy/approvals';
+import { holdDecision, writeTargetScope } from '@tabs/agents/lib/build/hold';
 import { resolveFolderGrant } from '@core/kernel/folders';
 import { config } from '@core/kernel/config';
 import { TAB_FEATURES } from '@core/kernel/tabs';
@@ -68,7 +71,7 @@ export const OS_TOOL_ALIASES: Record<string, string> = {
 };
 
 /** #28: which feature flag gates an alias's target (only the ones that
- *  actually depend on one — retrieve/predict's targets are always on). */
+ *  actually depend on one — retrieve's target is always on). */
 const ALIAS_REQUIRES_FEATURE: Record<string, string> = {
   metrics: 'metrics',
   files_retrieve: 'files',
@@ -409,74 +412,12 @@ export function writeOutcomesLine(o: WriteOutcomes): string {
 }
 
 /**
- * The TARGET SCOPE of a write — the lane the artifact lands in. This is what makes
- * the hold SCOPE-AWARE: a `personal` (My) write is exactly what the runner could do
- * by hand with NO approval, so it is never held; a `domain` / `company` write is a
- * governance ESCALATION (My→Domain / Domain→Company) and IS held to the right admin.
+ * The hold rule lives in the pure `hold.ts` (no `server-only`) so the LangGraph engine's
+ * `tools_<id>` node can compute it BEFORE executing a batch and park the run on an
+ * `interrupt()`. Re-exported here unchanged for every existing caller.
  */
-export type WriteScope = 'personal' | 'domain' | 'company';
+export { holdDecision, holdDecisionFor, writeTargetScope, type HoldDecision, type WriteScope } from '@tabs/agents/lib/build/hold';
 
-/**
- * The ESCALATING write tools — the promotion / publish / certify / approve family
- * whose EFFECT crosses a governance boundary (My→Domain or Domain→Company). These
- * are the ONLY writes an agent (or its builder by hand) may not perform directly:
- * they are HELD to the correct admin. Everything else in {@link WRITE_APPROVAL_NAMES}
- * is a create/author/upload/build/document/update on a PERSONAL (My) artifact — the
- * runner's own work — and is NOT held.
- *
- *   - `publish_knowledge`  — flips a workflow My→Domain (domain_admin gate).
- *   - `request_promotion`  — files a My→Domain promotion request (domain_admin).
- *   - `approve_promotion`  — APPLIES a Domain promotion (domain_admin).
- */
-const ESCALATING_DOMAIN_TOOLS = new Set(['publish_knowledge', 'request_promotion', 'approve_promotion']);
-
-/**
- * The TARGET SCOPE of a granted write tool call. Conservative + fail-closed:
- *   - the escalation family (promote/publish/approve) -> Domain (the My->Domain gate);
- *   - everything else (create_/ingest_/author_/upload_/build_/transform_/document_/
- *     define_/attach_/wire_/update_/archive_ ... on a My artifact) -> Personal.
- * A write only crosses a governance boundary when THIS says Domain/Company, so a
- * personal create is never held.
- */
-export function writeTargetScope(mcpName: string): WriteScope {
-  if (ESCALATING_DOMAIN_TOOLS.has(mcpName)) return 'domain';
-
-  return 'personal';
-}
-
-/**
- * SCOPE-AWARE hold: does a granted WRITE tool call cross a governance boundary that
- * must be HELD for admin approval? The scope-aware replacement for the old blanket
- * preset hold — the personal-create path is NEVER held.
- *
- *   - `read-only`                -> ALL writes blocked + queued (held to admin).
- *   - any other preset, PERSONAL -> NOT held. Falls through to the run-as-user
- *                                   governed dispatch (gate 2 = the acting user's
- *                                   OPA/DLS/role/ownership is the real authority; a
- *                                   builder has FULL rights to their own My artifact,
- *                                   so their agent does too — never more).
- *   - any other preset, DOMAIN   -> held -> routed to `domain_admin` approval.
- *   - any other preset, COMPANY  -> held -> routed to `admin` (tenant) approval.
- *
- * The security invariant: an agent NEVER exceeds what its runner could do by hand.
- * A personal write needs no approval by hand, so it is not held; a Domain/Company
- * write is an escalation the runner could NOT do by hand (it needs an admin), so it
- * is held to that admin. Fail-closed: an unknown scope resolves to `personal` only
- * for non-escalating create tools (the runner's own work); the escalation family and
- * any Domain/Company target are always held.
- */
-export function holdDecision(
-  preset: SafetyPreset,
-  mcpName: string,
-): { held: false } | { held: true; approverRole: 'domain_admin' | 'admin' } {
-  // read-only blocks every write, regardless of target.
-  if (preset === 'read-only') return { held: true, approverRole: 'admin' };
-  const scope = writeTargetScope(mcpName);
-  if (scope === 'company') return { held: true, approverRole: 'admin' };
-  if (scope === 'domain') return { held: true, approverRole: 'domain_admin' };
-  // personal -> never held (the create default): gate 2 is the authority.
-  return { held: false };
-}
 
 /**
  * Resolve a system's `grants.tools` through the alias map, split into the MCP
@@ -502,17 +443,20 @@ export function resolveGrantedTools(sys: System): { mcpNames: string[]; unmapped
 }
 
 /**
- * Is this a system whose grants resolve entirely to the OS MCP registry? Such a
- * system runs the in-process, run-as-user governed path (T4). It REPLACES the old
- * `isAgenticSoftwareTeam` gate — software-only teams are a strict subset (their
- * tools are already MCP names), so their existing behaviour is preserved, while
- * mixed data/knowledge grants now qualify too. A `hermes` runtime or ANY unmapped
- * legacy tool (`web_fetch`, …) → false, keeping the honest legacy fallback.
+ * The granted tool names that resolve to NOTHING in the OS MCP registry (`web_fetch`,
+ * `knowledge_certify`, a typo, …). Empty = the system is runnable.
+ *
+ * A5 replaced the old `isAgenticOsTeam` boolean with this list. The boolean existed to
+ * choose between the in-process path and the legacy Python-runtime fallback; there is no
+ * fallback any more, so the only honest question left is "which grants have no governed
+ * tool behind them" — and the answer belongs in the error message the run doors return,
+ * naming the offending tools, rather than in a yes/no that sent the user to another path.
+ * `buildGraph` enforces the same rule as a compile error; this is the earlier, friendlier
+ * door. A system with NO tool grants is runnable (its agents are plain completions) —
+ * under the old boolean it was not, which was an accident of the fallback, not a rule.
  */
-export function isAgenticOsTeam(sys: System): boolean {
-  if (sys.runtime !== 'langgraph') return false;
-  if (sys.grants.tools.length === 0) return false;
-  return resolveGrantedTools(sys).unmapped.length === 0;
+export function unmappedGrantNames(sys: System): string[] {
+  return resolveGrantedTools(sys).unmapped;
 }
 
 /** The `McpTool` objects a system is granted (registry ∩ resolved grants). */
@@ -526,10 +470,19 @@ function grantedMcpTools(sys: System): McpTool[] {
  * MCP tools, role-scoped to the acting user (`listToolsForRole` — an agent can
  * never SEE a tool above its runner's role), optionally narrowed to a node's own
  * `tools` list (also alias-resolved). Same shaping as `runtime.ts` `tabToolSpecs`.
+ *
+ * `nodeTools` semantics (engine rebuild A0 fix): ABSENT (`undefined`) = inherit every
+ * system grant; an explicit EMPTY list = this node drives NO tools. The compiler IR
+ * already encodes the distinction (an agent without `tools:` gets the full grant copy,
+ * `tools: []` stays `[]`), and the YAML author of `tools: []` — e.g. the Software
+ * Delivery Team's orchestrator, "do no building yourself" — means none. Treating `[]`
+ * as "inherit" handed those nodes `create_software`/`commit`; the golden fixtures
+ * caught it. Matches `toolSpecsFactory` on the software path.
  */
 export function grantedToolSpecs(user: CurrentUser, sys: System, nodeTools?: string[]): ToolSpec[] {
   let pool = grantedMcpTools(sys);
-  if (nodeTools && nodeTools.length > 0) {
+  if (nodeTools !== undefined) {
+    if (nodeTools.length === 0) return [];
     // A node granted an action tool (e.g. query_data) also drives its discovery
     // companions (list_datasets/get_dataset/profile_dataset), so it can learn the
     // exact resource before acting — same rule as the system-level grant scope.
@@ -618,12 +571,33 @@ function errorResult(code: string, reason: string): { text: string; isError: boo
  *
  * `systemId` is required for the enqueue attribution + trace attribution.
  */
+export type ExecutorOptions = {
+  /**
+   * WHERE the write-approval hold (gate 1b) is decided. `executor` (the default, and what any
+   * caller that is not a graph node gets): this executor holds + enqueues and returns the typed
+   * `held` result — defence in depth, kept after A5 even though the only production caller now
+   * passes `node`. `node` (the LangGraph
+   * engine, A2): the `tools_<id>` node has ALREADY computed the hold for the whole batch with the
+   * same `holdDecisionFor` rule and parked the run on `interrupt()`; only non-held and APPROVED
+   * calls reach this executor, so gate 1b must not re-hold them. Gates 1 and 2 are identical
+   * either way — the identity of every side effect stays the acting user.
+   */
+  holdAt?: 'executor' | 'node';
+  /**
+   * A3 — the run this executor serves: its governance traces become SPANS of the run's Langfuse
+   * trace (id = run id) instead of standalone traces. Threaded here through the deps, never a global.
+   */
+  traceContext?: RunTraceContext;
+};
+
 export function grantedToolExecutor(
   user: CurrentUser,
   sys: System,
   systemId: string,
   deps: OsToolDeps = defaultDeps,
+  opts: ExecutorOptions = {},
 ): ToolExecutor {
+  const holdHere = (opts.holdAt ?? 'executor') === 'executor';
   const granted = grantedMcpTools(sys);
   const grantedNames = new Set(granted.map((t) => t.name));
   const sysPrincipal = principalFor(systemId);
@@ -669,7 +643,7 @@ export function grantedToolExecutor(
     //   • `read-only`   → every write blocked (held), regardless of target.
     // Ownership stays intact: a personal write dispatched at gate 2 runs under
     // `canManageArtifact` (personal → owner-only), so a non-owner is still refused.
-    if (WRITE_APPROVAL_NAMES.has(mcpName)) {
+    if (holdHere && WRITE_APPROVAL_NAMES.has(mcpName)) {
       const decision = holdDecision(sys.safetyPreset, mcpName);
       if (decision.held) {
         // A held write is NEVER executed — record the human-in-the-loop request,
@@ -684,7 +658,7 @@ export function grantedToolExecutor(
           tool: mcpName,
           approverRole: decision.approverRole,
         });
-        await safeTrace(deps, sysPrincipal, mcpName, args, 'requires_approval');
+        await safeTrace(deps, sysPrincipal, mcpName, args, 'requires_approval', undefined, opts.traceContext);
         return errorResult('held', `${mcpName} requires ${decision.approverRole} approval — enqueued to Governance (Domain/Company writes are held)`);
       }
     }
@@ -692,19 +666,30 @@ export function grantedToolExecutor(
     // Gate 2 — dispatch as the ACTING USER through the ONE governed MCP door. The
     // role floor is re-checked inside handleRpc and the governed lib (OPA/DLS/RLS)
     // is the real authority — never the service principal.
-    const res = await deps.handleRpc(
-      user,
-      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: mcpName, arguments: args } },
-      { tools: granted },
-    );
+    // The dispatch runs inside the RUN's scope (Part D review L-3): a granted write that commits
+    // to a domain repo — an agent system, a dbt project — then carries an `OS-Run-Id` trailer, so
+    // the git log distinguishes "a run did this" from "a person did this at the same moment".
+    // Nothing else changes: the identity, the grants and the policy are still the acting user's.
+    const dispatch = () =>
+      deps.handleRpc(
+        user,
+        { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: mcpName, arguments: args } },
+        { tools: granted },
+      );
+    const runId = opts.traceContext?.traceId;
+    const res = runId ? await runWithRunId(runId, dispatch) : await dispatch();
     // Honest decision note: a granted WRITE that reached gate 2 is a My-scope write that
     // ran DIRECTLY (the My-direct rule) — record it as such, not a bare 'allow', so the
     // trace tells the truth about WHY no approval was needed.
     const wroteDirectly = WRITE_APPROVAL_NAMES.has(mcpName) && writeTargetScope(mcpName) === 'personal';
 
-    await safeTrace(deps, sysPrincipal, mcpName, args, 'allow', wroteDirectly ? 'allow (own My scope)' : undefined);
+    await safeTrace(deps, sysPrincipal, mcpName, args, 'allow', wroteDirectly ? 'allow (own My scope)' : undefined, opts.traceContext);
 
-    if (res?.error) return { text: `Error: ${res.error.message}`, isError: true };
+    // X9: an upstream failure reaches the model as a TYPED envelope (`upstream_error`) like every
+    // other refusal, so the graph can route on a code instead of parsing prose. `handleRpc` turns
+    // a tool's own exception into a typed MCP tool error, which the `isError` branch below carries
+    // through unchanged; this branch is the transport/dispatch error.
+    if (res?.error) return errorResult('upstream_error', res.error.message);
     const result = (res?.result ?? {}) as { content?: { text?: string }[]; isError?: boolean };
     const text = result.content?.map((c) => c.text ?? '').join('\n') ?? '';
     return { text: text || '(no output)', isError: !!result.isError };
@@ -721,9 +706,10 @@ async function safeTrace(
   input: unknown,
   decision: Effect,
   note?: string,
+  run?: RunTraceContext,
 ): Promise<void> {
   try {
-    await deps.trace({ principal, tool, input, output: { decision: note ?? decision }, decision });
+    await deps.trace({ principal, tool, input, output: { decision: note ?? decision }, decision, run });
   } catch {
     /* attribution is best-effort — the governed lib already traced under the user */
   }

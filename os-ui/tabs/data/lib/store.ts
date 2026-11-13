@@ -24,6 +24,8 @@ import {
   DatasetError,
   canTransition,
   emptyVersions,
+  isSafeCheckValue,
+  MAX_CHECK_VALUE_LEN,
   parseDataset,
   serializeDataset,
   storageFor,
@@ -42,6 +44,10 @@ import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { isValidCron } from '@tabs/agents/lib/cron-util';
+// Every write announces itself here (pure, sync); the server-only git commit hook subscribes
+// at boot (tabs/data/lib/dbt/commit.ts). The store itself must stay free of node:fs / git —
+// it is reachable from the client bundle through lib/index.ts.
+import { emitProjectChange } from '@tabs/data/lib/project-events';
 
 // Re-export the FQN helpers so existing consumers keep importing them from the store.
 export { assetTarget, productTarget } from '@tabs/data/lib/store-fqn';
@@ -69,6 +75,10 @@ export type DatasetRecord = {
   /** Tool-native artifact bodies (dbt SQL + tests), keyed by version artifact path.
    *  The dataset.yaml spine points at these; both are Forgejo-versioned (dual-mode). */
   artifacts?: Record<string, string>;
+  /** Artifact paths whose body the OS COMPILED (compileSilver / compileGoldJoin / pass-through
+   *  CTAS). Only these become dbt models in the domain repo; a user-authored body is recorded
+   *  but rendered as a dbt SOURCE (built out of band), never as a model — engine rebuild B2. */
+  compiledArtifacts?: string[];
   updatedAt: string;
   /** Soft-archived: hidden from the working lists, reversible, retained. */
   archived?: boolean;
@@ -113,6 +123,8 @@ type DataStoreState = {
   hydration: Promise<void> | null;
   /** Set when the last hydration found the mirror DOWN — gates the throttled retry. */
   hydrateFailedAt?: number;
+  /** Set when a hydration READ THE MIRROR SUCCESSFULLY — what `hydrationState` reports. */
+  hydratedAt?: number;
 };
 const DS_KEY = Symbol.for('soa.data.store');
 function ds(): DataStoreState {
@@ -154,6 +166,7 @@ const mirror = osMirror({
         // would otherwise explode the mapping.
         yaml: { type: 'text', index: false },
         artifacts: { type: 'object', enabled: false },
+        compiledArtifacts: { type: 'keyword' },
         archived: { type: 'boolean' },
       },
     },
@@ -199,6 +212,22 @@ export async function ensureHydrated(): Promise<void> {
   return s.hydration;
 }
 
+/**
+ * Did the registry in memory actually come from the durable mirror? (Part D review H-1 — the
+ * same probe, with the same contract, as `@tabs/agents/lib/store`'s.)
+ *
+ * {@link ensureHydrated} RESOLVES even when `mirror.hydrate()` returned null: a mirror-down
+ * hydration is recorded for the throttled retry, never thrown. A read path is right to degrade
+ * that way. A boot-time WRITER is not — an EMPTY registry and a registry that failed to load are
+ * indistinguishable by content, and the Sept-2026 login outage proved the race is real. Anything
+ * that would COMMIT or DELETE because the store looks empty must check this first.
+ */
+export function hydrationState(): 'hydrated' | 'failed' | 'pending' {
+  const s = ds();
+  if (s.hydratedAt !== undefined) return 'hydrated';
+  return s.hydrateFailedAt !== undefined ? 'failed' : 'pending';
+}
+
 async function hydrate(): Promise<void> {
   const s = ds();
   const docs = await mirror.hydrate(1000);
@@ -210,6 +239,7 @@ async function hydrate(): Promise<void> {
     return;
   }
   s.hydrateFailedAt = undefined;
+  s.hydratedAt = Date.now();
   for (const rec of docs as DatasetRecord[]) {
     // Don't clobber records created in-process before hydration completed.
     if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
@@ -219,8 +249,25 @@ async function hydrate(): Promise<void> {
   s.seeded = true;
 }
 
+/**
+ * Dataset and check ids, from the CSPRNG (B4 review M-4). They were
+ * `Math.random().toString(36)` + a timestamp suffix: ~30 bits of a non-cryptographic PRNG whose
+ * internal state is recoverable from a few outputs, plus a value an attacker already knows. Ids
+ * are not a permission — `getDataset` answers 403 for an existing dataset the caller may not view
+ * and 404 only for one that does not exist (deviation B4-11), so guessing an id buys an attacker
+ * nothing but the knowledge that it exists. That last word is the reason to fix it anyway: an id
+ * that can be enumerated turns "403 vs 404" into an inventory of the tenant. These are
+ * unguessable. `randomUUID` is available in Node and in every browser-grade runtime this store
+ * runs in; it throws rather than silently weakening if it ever is not.
+ */
+function randomToken(): string {
+  // Web Crypto, not `node:crypto`: this module is reachable from client components (metrics
+  // builder → data index → store), and webpack cannot bundle a `node:` scheme for the browser.
+  return globalThis.crypto.randomUUID().replace(/-/g, '');
+}
+
 function newId(): string {
-  return `ds_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+  return `ds_${randomToken()}`;
 }
 
 function sha(content: string): string {
@@ -250,6 +297,7 @@ export function __resetStore(): void {
   s.seeded = false;
   s.hydration = null;
   s.hydrateFailedAt = undefined;
+  s.hydratedAt = undefined;
   mirror.__reset();
   versions.__reset();
 }
@@ -365,7 +413,18 @@ function metricScopeOf(rec: DatasetRecord, user: Principal): Dataset {
   return d;
 }
 
-function persist(rec: DatasetRecord, d: Dataset, snap?: { author: string; summary: string }): DatasetRecord {
+/**
+ * The ONE write path for an existing record. `change` names the acting principal + action for
+ * the project-change event every persist emits (the git commit hook's input); when absent it is
+ * derived from `snap` (author + summary). Every mutation that bypasses persist (create, adopt,
+ * archive, delete, restore, propagation sweeps) emits the same event itself.
+ */
+function persist(
+  rec: DatasetRecord,
+  d: Dataset,
+  snap?: { author: string; summary: string },
+  change?: { actor: string; action: string },
+): DatasetRecord {
   // Capture the PRIOR dataset.yaml as a version BEFORE overwriting it, so the
   // history holds every superseded definition (mirrors lib/files/store.ts). Only
   // user-facing edits pass `snap`; lifecycle/promotion flips (own governance trail)
@@ -376,6 +435,7 @@ function persist(rec: DatasetRecord, d: Dataset, snap?: { author: string; summar
   rec.domain = d.domain;
   rec.updatedAt = now();
   writeThrough(rec); // best-effort durable mirror
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: change?.action ?? snap?.summary ?? 'update', actorId: change?.actor ?? snap?.author ?? 'system' });
   return rec;
 }
 
@@ -394,8 +454,11 @@ export function moveDatasetsDomain(sel: { id?: string; onlyUnassigned?: boolean 
     if (sel.onlyUnassigned && rec.domain) continue;
     if (rec.domain === target) continue;
     const d = parseDataset(rec.yaml);
+    const from = d.domain;
     d.domain = target;
-    persist(rec, d);
+    persist(rec, d, undefined, { actor: 'system', action: 'move domain' });
+    // The dataset LEFT `from` as well — that repo's project shrinks by one dataset.
+    if (from) emitProjectChange({ domain: from, datasetId: d.id, action: 'move domain', actorId: 'system' });
     moved.push(rec.id);
   }
   return moved;
@@ -641,17 +704,20 @@ export function datasetForScheduler(id: string): Dataset | null {
   return parseDataset(rec.yaml);
 }
 
-/** UNSCOPED list of live datasets with a sync configured — the fallback sweep's
- *  worklist (`/api/data/sync-due`). Server-side callers only. */
-export function datasetsWithSync(): Dataset[] {
+/**
+ * UNSCOPED, server-side: a domain's live datasets WITH their recorded native artifact bodies —
+ * the input of the dbt project generator (tabs/data/lib/dbt/snapshot.ts). Archived records are
+ * excluded (archiving retires the dataset from the project); sorted by id for byte-stable output.
+ * The acting user is the commit AUTHOR, not a filter: the project is the whole domain's.
+ */
+export function datasetsForProject(domain: string): { dataset: Dataset; artifacts: Record<string, string>; compiled: string[] }[] {
   ensureSeeded();
-  const out: Dataset[] = [];
+  const out: { dataset: Dataset; artifacts: Record<string, string>; compiled: string[] }[] = [];
   for (const rec of ds().store.values()) {
-    if (rec.archived) continue;
-    const d = parseDataset(rec.yaml);
-    if (d.sync) out.push(d);
+    if (rec.archived || rec.domain !== domain) continue;
+    out.push({ dataset: parseDataset(rec.yaml), artifacts: { ...(rec.artifacts ?? {}) }, compiled: [...(rec.compiledArtifacts ?? [])].sort() });
   }
-  return out;
+  return out.sort((a, b) => a.dataset.id.localeCompare(b.dataset.id));
 }
 
 /** A dataset the caller may JOIN into a Gold build (stage-4 reuse). */
@@ -785,6 +851,7 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
   const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
   ds().store.set(rec.id, rec);
   writeThrough(rec); // best-effort durable mirror
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'create dataset', actorId: user.id });
   return d;
 }
 
@@ -860,12 +927,14 @@ export function adoptConnectedDataset(
     viewNamespaced: true,
     origin: 'connected',
     connected: input.connected,
-    // A sync-mode adoption carries its sync config from birth (the scheduler lands the copy).
+    // A sync-mode adoption carries its sync config from birth; the copy is landed by the Dagster
+    // schedule compiled from `os/schedules.yml` (B4 — no CronJob, no in-process sweep).
     ...(isSync && input.sync ? { sync: input.sync } : {}),
   };
   const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
   ds().store.set(rec.id, rec);
   writeThrough(rec);
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'adopt connected table', actorId: user.id });
   return d;
 }
 
@@ -877,7 +946,8 @@ export function adoptConnectedDataset(
  *     banner.
  *   • SYNC datasets — the SOVEREIGN DATA is kept: the last-landed governed copy stays in
  *     the domain schema (`versions[tier].built` is left true), but the sync is DISABLED and
- *     the per-dataset CronJob removed (`reconcileSyncCron(id, null)`), so no further landing
+ *     any pre-B2 CronJob removed (`removeSyncCronJob(id)`) and the Dagster schedule dropped
+ *     from the next commit's `os/schedules.yml`, so no further landing
  *     runs. Status still flips to `'source-revoked'` — the Source stage banners "copy frozen
  *     as of <last successful run>" while preview/Talk/metrics keep reading the frozen table.
  * Returns the affected datasets (id + name + owner) so the route can notify each owner +
@@ -908,6 +978,7 @@ export function markDatasetsSourceRevoked(exposureId: string): { id: string; nam
     rec.yaml = serializeDataset(d);
     rec.updatedAt = now();
     writeThrough(rec);
+    emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'source revoked', actorId: 'system' });
     affected.push({ id: d.id, name: d.name, owner: d.owner, domain: d.domain, syncFrozen: wasSyncEnabled });
   }
   return affected;
@@ -937,6 +1008,7 @@ export function markDatasetsDrifted(
     rec.yaml = serializeDataset(d);
     rec.updatedAt = now();
     writeThrough(rec);
+    emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'source drifted', actorId: 'system' });
     affected.push({ id: d.id, name: d.name, owner: d.owner });
   }
   return affected;
@@ -961,6 +1033,7 @@ export function reassignOwner(fromId: string, toId: string): number {
     rec.yaml = serializeDataset(d);
     rec.updatedAt = now();
     writeThrough(rec);
+    emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'reassign owner', actorId: 'system' });
     moved++;
   }
   return moved;
@@ -972,7 +1045,7 @@ export function buildVersion(
   id: string,
   user: Principal,
   layer: Layer,
-  patch: { quality?: Quality; artifact?: string | null; passThrough?: boolean; body?: string },
+  patch: { quality?: Quality; artifact?: string | null; passThrough?: boolean; body?: string; compiled?: boolean },
 ): Dataset {
   const rec = get(id);
   const d = editOf(rec, user);
@@ -985,9 +1058,13 @@ export function buildVersion(
     artifact: patch.artifact !== undefined ? patch.artifact : prev.artifact,
   };
   d.versions[layer] = next;
-  // Store the authored native body (dbt SQL + tests) keyed by the artifact path.
+  // Store the native body keyed by the artifact path, with its PROVENANCE: `compiled: true` only
+  // from the OS's own compilers (transform / gold-join routes, transform_silver, build_gold_join).
+  // An authored body (add_dataset_version, the version route) is kept but never becomes a dbt
+  // model — the generator renders it as a source (built out of band). Engine rebuild B2 / review M2.
   if (patch.body !== undefined && next.artifact) {
     rec.artifacts = { ...(rec.artifacts ?? {}), [next.artifact]: patch.body };
+    setCompiled(rec, next.artifact, Boolean(patch.compiled));
   }
   // Northpeak fix (materialization drift): rebuilding the PUBLISHED layer (or building a
   // gold above a silver-published asset) of an ALREADY-PROMOTED dataset rewrites only the
@@ -1022,6 +1099,7 @@ export function buildGoldJoin(
   const d = editOf(rec, user);
   d.versions.gold = { built: true, passThrough: false, quality: 'unknown', updatedAt: now(), artifact: input.artifact };
   rec.artifacts = { ...(rec.artifacts ?? {}), [input.artifact]: input.body };
+  setCompiled(rec, input.artifact, true); // the body IS compileGoldJoin's output
   // Measures are declared in the PUBLISH stage now (the Gold panel builds a row-level
   // projection and always sends none) — a gold rebuild must never wipe them. Only a
   // build that explicitly brings measures (e.g. the MCP tool) replaces the list.
@@ -1060,7 +1138,7 @@ export function setDocs(
   // marker, so a reviewed/edited doc drops it. Attribute the auto write in the audit log
   // ('ai-auto-docs') so the version history reads honestly.
   d.docsProvenance = opts.provenance === 'ai-auto' ? 'ai-auto' : undefined;
-  persist(rec, d, { author: opts.provenance === 'ai-auto' ? 'ai-auto-docs' : user.id, summary: 'edit docs' });
+  persist(rec, d, { author: opts.provenance === 'ai-auto' ? 'ai-auto-docs' : user.id, summary: 'edit docs' }, { actor: user.id, action: 'edit docs' });
   return d;
 }
 
@@ -1163,8 +1241,29 @@ export function addCheck(
 ): Dataset {
   const rec = get(id);
   const d = editOf(rec, user);
+  // A rule's column is interpolated UNQUOTED into dbt test SQL (`schema.yml` → not_null / unique /
+  // accepted_values / range / not_blank) and executed as the impersonated principal — so it must
+  // be a plain identifier. Review M1 (engine rebuild B2): refuse anything else at the gate.
+  if (input.rule && input.column !== undefined && !SAFE_COLUMN_RE.test(input.column.trim())) {
+    fail(`check column '${input.column.trim().slice(0, 60)}' is not a plain identifier (letters, digits, underscore)`, 400);
+  }
+  // An `accepted_values` entry reaches dbt as `'{{ value }}'` — a SQL literal with no escaping —
+  // inside a `schema.yml` that dbt renders as Jinja first. Review B2-review-H2: refuse a quote, a
+  // backslash, a control character or a Jinja delimiter HERE, at the only write path, so the
+  // generator never has to decide what to do with one (it also refuses, as defence in depth).
+  if (input.rule && input.values) {
+    const bad = input.values.find((v) => !isSafeCheckValue(v));
+    if (bad !== undefined) {
+      fail(
+        `check value '${String(bad).trim().slice(0, 60)}' is not allowed: a value must be 1–${MAX_CHECK_VALUE_LEN} ` +
+          'characters and carry no quote, backslash, control character or Jinja delimiter ' +
+          '(it is interpolated into generated dbt test SQL)',
+        400,
+      );
+    }
+  }
   const check: DataCheck = {
-    id: `chk_${Math.random().toString(36).slice(2, 8)}`,
+    id: `chk_${randomToken().slice(0, 16)}`,
     name: (input.name ?? '').trim() || 'Untitled check',
     description: input.description ?? '',
     createdBy: user.id,
@@ -1233,8 +1332,9 @@ export function setMonitor(
  * validation gate: the tolerant schema parse never rejects, so every invariant an
  * executable sync needs is enforced HERE — valid cron, a cursor for incremental modes,
  * merge keys for merge mode. Edit scope is the same owner/domain_admin/admin gate every
- * structural edit uses ({@link editOf}). CronJob reconciliation is the caller's job
- * (`sync-cron.ts`) — this only persists the definition.
+ * structural edit uses ({@link editOf}). Reconciling the SCHEDULE is the caller's job
+ * (`dbt/launch.ts` `reconcileSyncSchedule`: it commits `os/schedules.yml` for Dagster and deletes
+ * any pre-B2 CronJob) — this only persists the definition.
  */
 export function setDatasetSync(id: string, user: Principal, sync: DatasetSync | null): Dataset {
   const rec = get(id);
@@ -1265,6 +1365,41 @@ export function setDatasetSync(id: string, user: Principal, sync: DatasetSync | 
     delete d.sync;
   }
   persist(rec, d, { author: user.id, summary: sync ? 'configure sync' : 'remove sync' });
+  return d;
+}
+
+/** A quality-rule column must be a plain SQL identifier (it is interpolated unquoted into dbt tests). */
+export const SAFE_COLUMN_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Record (or clear) an artifact's compiled provenance on the record. */
+function setCompiled(rec: DatasetRecord, artifact: string, compiled: boolean): void {
+  const set = new Set(rec.compiledArtifacts ?? []);
+  if (compiled) set.add(artifact);
+  else set.delete(artifact);
+  rec.compiledArtifacts = [...set].sort();
+}
+
+/**
+ * Record which domain-repo commit a layer was launched from and the Dagster run that executes it
+ * (engine rebuild B2, DATA_PROJECT_GIT). `dagsterRunId: null` + `launchError` is the honest shape
+ * when no run could be launched. Not a user edit (no version-log entry); it emits a project change
+ * like every write, which regenerates an unchanged tree and therefore commits nothing.
+ */
+export function setVersionRun(
+  id: string,
+  layer: Layer,
+  run: { commit: string | null; dagsterRunId: string | null; launchError?: string | null },
+  actorId = 'system',
+): Dataset {
+  const rec = get(id);
+  const d = parseDataset(rec.yaml);
+  d.versions[layer] = {
+    ...d.versions[layer],
+    commit: run.commit,
+    dagsterRunId: run.dagsterRunId,
+    ...(run.launchError ? { launchError: run.launchError } : { launchError: null }),
+  };
+  persist(rec, d, undefined, { actor: actorId, action: 'record dagster run' });
   return d;
 }
 
@@ -1403,7 +1538,7 @@ export function transition(
   // Decertify drops the trust badge + marketplace import list (back to an asset).
   if (t === 'decertify') { delete d.certification; delete d.imports; }
 
-  persist(rec, d);
+  persist(rec, d, undefined, { actor: user.id, action: t });
   return d;
 }
 
@@ -1607,7 +1742,7 @@ export function applyApprovedPromotion(
   // clears any stray marker so a demote→re-promote round-trip that flips models stays honest).
   if (artifact === 'view') d.domainArtifact = 'view';
   else delete d.domainArtifact;
-  persist(rec, d);
+  persist(rec, d, undefined, { actor: approver.id, action: 'promote' });
   return d;
 }
 
@@ -1717,7 +1852,7 @@ export function certify(
   d.visibility = visibilityFor('product', opts.visibility ?? 'shared');
   if (opts.grants) d.grants = opts.grants;
   d.certification = { level: opts.level ?? 'gold', by: approver.id, at: now() };
-  persist(rec, d);
+  persist(rec, d, undefined, { actor: approver.id, action: 'certify' });
   return d;
 }
 
@@ -1776,7 +1911,7 @@ export function importProduct(id: string, importer: Principal): Dataset {
   if (!d.grants.some((g) => g.grantee.kind === 'domain' && g.grantee.id === dom)) {
     d.grants = [...d.grants, { grantee: { kind: 'domain', id: dom }, scope: { rows: [], columns: { mask: [], hide: [] } }, cardinality: 'low', action: 'read' }];
   }
-  persist(rec, d);
+  persist(rec, d, undefined, { actor: importer.id, action: 'import product' });
   return d;
 }
 
@@ -1805,6 +1940,7 @@ export function archiveDataset(id: string, user: Principal): DatasetSummary {
   rec.archived = true;
   rec.updatedAt = now();
   writeThrough(rec);
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'archive', actorId: user.id });
   return summarise(d, true);
 }
 
@@ -1815,6 +1951,7 @@ export function unarchiveDataset(id: string, user: Principal): DatasetSummary {
   rec.archived = false;
   rec.updatedAt = now();
   writeThrough(rec);
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'unarchive', actorId: user.id });
   return summarise(d, false);
 }
 
@@ -1834,6 +1971,7 @@ export function deleteDataset(id: string, user: Principal): Dataset {
   ds().store.delete(id);
   mirror.deleteThrough(id);
   versions.purge(id); // forget + delete-through the snapshot history
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'retire', actorId: user.id });
   return d;
 }
 
@@ -1868,6 +2006,7 @@ export function restoreDatasetVersion(id: string, user: Principal, version: numb
   rec.domain = restored.domain;
   rec.updatedAt = now();
   writeThrough(rec);
+  emitProjectChange({ domain: restored.domain, datasetId: restored.id, action: `restore version ${version}`, actorId: user.id });
   return restored;
 }
 
@@ -1912,6 +2051,6 @@ export function writeFile(id: string, user: Principal, input: { path: string; co
   const current = serializeDataset(d);
   if (input.sha && input.sha !== sha(current)) fail('The file changed since you opened it (stale sha) — reload', 409);
   const next = parseDataset(input.content); // throws on bad shape
-  persist(rec, next);
+  persist(rec, next, undefined, { actor: user.id, action: 'edit dataset.yaml' });
   return { path: 'dataset.yaml', content: rec.yaml, sha: sha(rec.yaml) };
 }

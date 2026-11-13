@@ -6,7 +6,6 @@ import assert from 'node:assert/strict';
 import { invokeTool, type Gateway, type GwTrace } from '@tabs/agents/lib/gateway';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
-import { runGraph } from '@tabs/agents/lib/build/run-graph';
 
 function spyGateway(allow: (tool: string) => boolean) {
   const traces: GwTrace[] = [];
@@ -65,28 +64,34 @@ edges:
   - { from: supervisor, to: worker, type: supervise }
 `;
 
-test('GATEWAY INVARIANT: a graph run forces EVERY tool call through the gateway', async () => {
+test('GATEWAY INVARIANT: every tool a compiled graph advertises goes through the gateway chokepoint', async () => {
+  // A5: this used to be asserted by walking the IR with the mock graph walker, which is deleted.
+  // The invariant itself did not change — a tool call authorizes and traces, or it does not
+  // happen — so it is asserted directly over the compiled graph's own tool vocabulary. The RUN
+  // path's version of this gate (`grantedToolExecutor` → `handleRpc` as the user, and the
+  // node-level narrowing) is pinned in `build/os-tools.test.ts` and `engine/build-graph.test.ts`.
   const ir = compile(parseSystem(SYS));
   // worker's write is denied; supervisor's retrieve is allowed.
   const { gw, traces } = spyGateway((t) => t === 'retrieve');
   const sideEffects: string[] = [];
-  const res = await runGraph(ir, {
-    gateway: gw,
-    toolRunner: (_p, tool) => {
-      sideEffects.push(tool);
-      return `${tool}-result`;
-    },
-  });
+  const attempts: { tool: string; effect: string; ran: boolean }[] = [];
+  for (const node of ir.nodes) {
+    for (const tool of node.tools) {
+      const call = await invokeTool(gw, node.id, tool, { node: node.id }, () => {
+        sideEffects.push(tool);
+        return `${tool}-result`;
+      });
+      attempts.push({ tool, effect: call.decision.effect, ran: call.ok });
+    }
+  }
 
-  // The run reaches END across supervisor → worker.
-  assert.equal(res.reachedEnd, true);
-  // Two tool-call ATTEMPTS were made (retrieve, connection_crm_write)...
-  assert.equal(res.steps.length, 2);
+  // Both tools the graph advertises were attempted (retrieve, connection_crm_write)...
+  assert.deepEqual(attempts.map((a) => a.tool).sort(), ['connection_crm_write', 'retrieve']);
   // ...and EACH produced exactly one trace — no tool can bypass the chokepoint.
-  assert.equal(traces.length, res.steps.length);
+  assert.equal(traces.length, attempts.length);
   // The denied write never executed its side effect; only the allowed tool did.
   assert.deepEqual(sideEffects, ['retrieve']);
-  const denied = res.steps.find((s) => s.tool === 'connection_crm_write')!;
+  const denied = attempts.find((a) => a.tool === 'connection_crm_write')!;
   assert.equal(denied.effect, 'deny');
   assert.equal(denied.ran, false);
 });

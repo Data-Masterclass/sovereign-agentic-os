@@ -7,6 +7,10 @@ import { getSystem } from '@tabs/agents/lib/store';
 import { assistantComplete } from '@core/runtime/complete';
 import { judgeRun, type JudgeComplete } from '@tabs/agents/lib/evaluate-judge';
 import { getWorkflow } from '@tabs/knowledge/lib/store';
+import { scoreTrace } from '@core/infra/langfuse';
+import { isRunId } from '@core/kernel/run-id';
+import { assertRunVisible } from '@tabs/agents/lib/engine/run-visibility';
+import { peekRunOwner } from '@tabs/agents/lib/build/agentic-graph-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { System } from '@tabs/agents/lib/system-schema';
 
@@ -57,11 +61,34 @@ export const POST = withRoute<{ id: string }, {
   output?: string;
   description?: string;
   tacitKnowledge?: string;
+  /** The run being judged (defaults to the persisted last run) — its trace receives the score. */
+  runId?: string;
 }>(async ({ user, params, body }) => {
   const { id } = params;
 
   // Edit-scope: getSystem enforces read access (owner / in-domain); reuse its view.
   const view = getSystem(id, user);
+
+  // A5-review-M-3: THE OWNER GATE, before the judge runs and long before `scoreTrace`.
+  // `getSystem` is read-scope (owner OR in-domain), so on a Shared system `view.lastRun`
+  // can be a COLLEAGUE's run — and a `runId` in the body is the caller's own choice. A score
+  // is a write on that run's Langfuse trace, so only the user who started the run may land
+  // one. An explicitly requested foreign/unknown run id is a 404 (the same answer a run that
+  // does not exist gives, so the id leaks nothing); the implicit fall-back to `lastRun` simply
+  // scores nothing, because the caller never asked for that run and still wants the verdict.
+  const requestedRunId = typeof body.runId === 'string' && body.runId.trim() ? body.runId.trim() : '';
+  const targetRunId = requestedRunId || view.lastRun?.runId || '';
+  let scorable = false;
+  if (isRunId(targetRunId) && targetRunId === view.lastRun?.runId) {
+    const owner = await peekRunOwner(targetRunId).catch(() => null);
+    const record = owner ? { requestedBy: owner.userId, systemId: owner.systemId } : null;
+    if (requestedRunId) {
+      assertRunVisible(record, targetRunId, user.id, id);
+      scorable = true;
+    } else {
+      scorable = !!record && record.requestedBy === user.id && record.systemId === id;
+    }
+  }
 
   // Prefer the output the client just saw; fall back to the persisted last run.
   const output = (typeof body.output === 'string' && body.output.trim())
@@ -84,10 +111,25 @@ export const POST = withRoute<{ id: string }, {
     ? body.tacitKnowledge
     : gatherGrantedCriteria(view.system, user);
 
-  // Route the judge through the ONE governed assistant model (Langfuse-audited).
+  // Route the judge through the ONE governed assistant model (Langfuse-audited), attributed to
+  // the caller AND their domain (A3: per-domain spend).
   const complete: JudgeComplete = (messages) =>
-    assistantComplete(messages, { user: user.id }).then((r) => r.content);
+    assistantComplete(messages, { user: { id: user.id, domains: user.domains } }).then((r) => r.content);
 
   const result = await judgeRun({ output, description, tacitKnowledge }, complete);
-  return NextResponse.json(result);
+  // A3 (checklist A22): the verdict is a Langfuse SCORE on the run's trace (id = run id). Every
+  // run has such a trace since A5; a run recorded before the rebuild has none, and one whose
+  // owner is not the caller is never scored (the gate above) — both keep the verdict in the
+  // response alone.
+  const runId = targetRunId;
+  const scored = scorable
+    ? scoreTrace({
+        traceId: runId,
+        name: 'judge',
+        value: result.overall,
+        comment: result.scores.map((s) => `${s.dimension}: ${s.score} — ${s.why}`.trim()).join('\n').slice(0, 1000),
+        metadata: { systemId: id, judgedBy: user.id, dimensions: result.scores },
+      })
+    : false;
+  return NextResponse.json({ ...result, scored, runId: scored ? runId : undefined });
 }, { parse: true, defaultStatus: 500 });

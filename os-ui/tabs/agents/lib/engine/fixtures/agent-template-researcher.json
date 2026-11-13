@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "name": "agent-template-researcher",
+  "source": "tabs/agents/lib/agent-templates.ts:researcher",
+  "description": "Per-agent template \"Researcher\" as a single-agent system — Digs across knowledge and gathers the facts that matter.",
+  "guarded": false,
+  "task": "Assess the current state of the sales domain and recommend one next step.",
+  "yaml": "version: '1'\nsystem:\n  name: Researcher (agent template)\n  domain: sales\n  visibility: Personal\nentrypoint: researcher\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n    - query_data\n  connections: []\nagents:\n  - id: researcher\n    role: Researches across knowledge and gathers the facts\n    agent_md: >-\n      # researcher\n\n\n      You research a question across the knowledge and data the team can reach, and gather the facts\n      that matter.\n\n\n      ## How to work\n\n      1. Break the question into the specific things you need to know.\n\n      2. Search the granted knowledge and query the granted data for each.\n\n      3. Collect the concrete findings — with where each came from.\n\n      4. Summarize what is known, what is missing, and what is still uncertain.\n\n\n      Ground every claim in a source. Never fill a gap by guessing.\n    memory_md: '# Memory'\n    tools:\n      - search_knowledge\n      - query_data\n",
+  "script": "first-tool-then-final@2",
+  "transcript": {
+    "version": 1,
+    "exchanges": [
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [],
+          "messages": 2
+        },
+        "response": {
+          "content": "plan(researcher): 1. use the first granted tool  2. answer the task.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "get_dataset",
+            "list_datasets",
+            "list_knowledge",
+            "profile_dataset",
+            "query_data",
+            "search_knowledge"
+          ],
+          "messages": 2
+        },
+        "response": {
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call-researcher-1",
+              "name": "query_data",
+              "args": {
+                "input": "fixture:researcher",
+                "task": "Assess the current state of the sales domain and recommend one next step."
+              }
+            }
+          ]
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "get_dataset",
+            "list_datasets",
+            "list_knowledge",
+            "profile_dataset",
+            "query_data",
+            "search_knowledge"
+          ],
+          "messages": 4
+        },
+        "response": {
+          "content": "FINAL(researcher): answered the task using query_data.",
+          "toolCalls": []
+        }
+      }
+    ]
+  },
+  "golden": {
+    "path": [
+      "researcher"
+    ],
+    "toolCalls": [
+      {
+        "node": "researcher",
+        "tool": "query_data",
+        "args": {
+          "input": "fixture:researcher",
+          "task": "Assess the current state of the sales domain and recommend one next step."
+        },
+        "outcome": "ok"
+      }
+    ],
+    "finalText": "FINAL(researcher): answered the task using query_data.",
+    "reachedEnd": true,
+    "held": 0
+  }
+}

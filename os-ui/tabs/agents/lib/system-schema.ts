@@ -19,13 +19,19 @@ import { roleAtLeast, type Role } from '@core/kernel/session';
 export type Visibility = 'Personal' | 'Shared' | 'Marketplace';
 export type EdgeType = 'supervise' | 'handoff';
 /**
- * The execution engine for a system. `langgraph` = structured, governed,
- * human-in-the-loop graphs (the default). `hermes` = the autonomous Hermes
- * runtime (long-running, persistent memory + self-improving skills). BOTH consume
- * the same governed Platform-MCP plane (OPA/LiteLLM/egress) — Hermes gets no side
- * door (hermes-agent-integration-plan.md). Gated OFF by default in the chart.
+ * The execution engine for a system. There is exactly ONE: `langgraph` — a real
+ * `StateGraph` from `@langchain/langgraph`, compiled per system and executed in-process
+ * as the signed-in user (`tabs/agents/lib/engine/`).
+ *
+ * A5 retired the two other values. `hermes` named an autonomous runtime that never ran
+ * in-process (and whose chart extension is gone); `walker` was Phase A0's per-system
+ * opt-out from the LangGraph rollout, i.e. a user-controlled way to keep the looser rules
+ * (no `when` guards, no node-level tool narrowing) — so it had to go with the walker
+ * itself. {@link parseSystem} still ACCEPTS both names in an existing file and normalises
+ * them to `langgraph` rather than refusing to open the system; the serializer omits the
+ * key, so the next save rewrites the file without it.
  */
-export type Runtime = 'langgraph' | 'hermes';
+export type Runtime = 'langgraph';
 /**
  * Safety preset (shared by both runtimes' UI). For `hermes` it maps to the
  * profile provisioner's approvals.mode + tools.include; for `langgraph` it drives
@@ -138,7 +144,7 @@ export type System = {
      * Define description). Optional; drives the Evaluate judge's task rubric. */
     description?: string;
   };
-  /** Execution engine (default `langgraph`). `hermes` = autonomous runtime. */
+  /** Execution engine. Always `langgraph` — see {@link Runtime}. */
   runtime: Runtime;
   /** Write-back safety preset (default `read-only`, the safest). */
   safetyPreset: SafetyPreset;
@@ -179,7 +185,9 @@ export class SystemError extends Error {
 }
 
 const VISIBILITIES: Visibility[] = ['Personal', 'Shared', 'Marketplace'];
-const RUNTIMES: Runtime[] = ['langgraph', 'hermes'];
+const RUNTIMES: Runtime[] = ['langgraph'];
+/** A5-retired engine names: accepted in an existing file, normalised to `langgraph`. */
+const RETIRED_RUNTIMES = new Set(['hermes', 'walker']);
 const SAFETY_PRESETS: SafetyPreset[] = ['read-only', 'read-propose', 'read-bounded', 'full-in-scope'];
 const EDGE_TYPES: EdgeType[] = ['supervise', 'handoff'];
 const CAPABILITIES: Capability[] = ['Off', 'Read', 'Write-approval', 'Write-bounded', 'Blocked'];
@@ -472,7 +480,10 @@ export function parseSystem(input: string | Record<string, unknown>): System {
 
   const routingRaw = isRecord(doc.routing) ? doc.routing : {};
 
-  const runtime = (doc.runtime ?? 'langgraph') as Runtime;
+  // A5: `hermes` / `walker` are retired, but a stored file carrying one must still OPEN — it is
+  // normalised to the one engine instead of 400-ing the system out of existence.
+  const declaredRuntime = doc.runtime === undefined || RETIRED_RUNTIMES.has(String(doc.runtime)) ? 'langgraph' : doc.runtime;
+  const runtime = declaredRuntime as Runtime;
   if (!RUNTIMES.includes(runtime)) {
     throw new SystemError(`system.yaml: runtime '${String(doc.runtime)}' is invalid (expected ${RUNTIMES.join('|')})`);
   }

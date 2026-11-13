@@ -16,7 +16,10 @@ export const manifest: TabManifest = {
   nav: { label: 'Connections', icon: '⇄', href: '/connections', group: 'Manage' },
   routes: ["/connections"],
   api: ["/api/connections", "/api/egress", "/api/gateway"],
-  mcpTools: ["connection-lifecycle", "discovery-connection"],
+  // `connection-lifecycle` named no module: the lifecycle twins (`retire_connection`,
+  // `configure_connection`, `revoke_action_adoption`) live in `discovery-connection-tools.ts`,
+  // which this list already names. Removed rather than renamed (X3, Part F).
+  mcpTools: ["discovery-connection"],
   policies: [],
   services: ["opensearch", "egress-proxy", "web-fetch", "dagster"],
 };

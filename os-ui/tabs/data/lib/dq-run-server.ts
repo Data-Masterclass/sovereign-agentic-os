@@ -12,8 +12,10 @@ import { ensureHydrated, recordRun, monitorHistory, type DqRunRecord } from '@ta
 /**
  * The GOVERNED, server-side DQ run for ONE dataset — the single place that runs a
  * dataset's checks AND its heuristic monitors, then persists the result to the durable
- * time-series. Shared by the per-dataset checks route (`action:'run'`) and the scheduled
- * `POST /api/data/dq/run-all` so the two can never drift.
+ * time-series. Reached through `mutations-server.runQualityChecksService`, which the "Run checks"
+ * button and MCP `run_quality_checks` both call, so the two can never drift (checklist X8). It is
+ * the OS's own AD-HOC probe, labelled `source: 'os'`; the SCHEDULED verdict is the dbt tests inside
+ * every Dagster run, read back as asset checks.
  *
  * The caller injects a `queryFn` already bound to the OWNER principal (from
  * `builtLayerFqn`) — this module NEVER decides identity; it just runs governed SQL. The
@@ -34,9 +36,17 @@ export type DqRunOutcome = {
 
 /**
  * A NEW failure — the alert trigger. Fires only on a fresh transition INTO failing
- * (prior badge was not `failing`, or there was no prior run) so the scheduled cron
- * notifies once per incident, not on every run while a dataset stays broken. Honest:
- * a run that measured nothing (`unknown`) is never treated as a recovery or a failure.
+ * (prior badge was not `failing`, or there was no prior run) so an alerter notifies once per
+ * incident, not on every run while a dataset stays broken. Honest: a run that measured nothing
+ * (`unknown`) is never treated as a recovery or a failure.
+ *
+ * NOTE (engine rebuild B4 + its review): its original caller — the `/api/data/dq/run-all` sweep —
+ * is DELETED, because quality rules are dbt tests that Dagster runs. The alert is NOT lost any
+ * more (B4-review L-2): `dq-status-server.ts` `alertOnNewFailure` calls this predicate from the
+ * DAGSTER asset-check read-back and delivers through `@core/notifications/dq-alert`, suppressed by
+ * a durable per-dataset record keyed on the check execution's `ranAt`
+ * (`tabs/data/lib/dq-alert-state.ts`), so the owner is told once per incident however many times
+ * the read happens.
  */
 export function isNewFailure(current: QualityBadge, prior: QualityBadge | null): boolean {
   return current === 'failing' && prior !== 'failing';

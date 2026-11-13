@@ -90,7 +90,13 @@ export async function filesRetrieve(input: {
   await bootstrapFilesIndex();
 
   // 4) Embed the query + compile the DLS from the delegated identity.
-  const { vector, mode: embedMode } = await embedQuery(query);
+  // A3 review: the embedding is BILLED to the acting principal, not the platform. The
+  // delegated `Reader` carries only the effective domain list, so its first entry is the scope.
+  const { vector, mode: embedMode } = await embedQuery(query, {
+    userId: input.principal.id,
+    domain: input.principal.domains[0],
+    tab: 'files',
+  });
   const filter = compileDls(input.principal);
 
   // 5) Hybrid retrieve — live OpenSearch (DLS as a filter) or the in-process index.

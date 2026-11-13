@@ -39,16 +39,7 @@ import { getMetric } from '@tabs/metrics/lib/store';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
 import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { claimsFromUser, delegate } from '@tabs/data/lib/identity';
-import {
-  consecutiveErrorCount,
-  currentWatermark,
-  ensureSyncRunsHydrated,
-  isQuarantined,
-  lastMaintenanceAt,
-  latestSyncRun,
-  listSyncRuns,
-} from '@tabs/data/lib/sync-runs';
-import { nextCronRun } from '@tabs/data/lib/sync-next-run';
+import { syncStatusFor, latestSyncSignals } from '@tabs/data/lib/sync-status-server';
 
 /**
  * The `connected` summary a get_dataset returns for a dataset adopted from a warehouse
@@ -68,9 +59,9 @@ async function connectedBlock(d: Dataset): Promise<{
   const c = d.connected;
   let freshness: string | null = null;
   if (c.mode === 'sync') {
-    await ensureSyncRunsHydrated();
-    const run = latestSyncRun(d.id);
-    freshness = run && run.status === 'ok' ? run.finishedAt : null;
+    // Dagster (flag on) or the OS ledger (flag off) — one batch read, never a fabricated time.
+    const sig = (await latestSyncSignals([d.id])).get(d.id);
+    freshness = sig && sig.syncStatus === 'ok' ? sig.lastSync : null;
   }
   return { mode: c.mode, tier: c.tier, status: c.status, source: c.source, freshness };
 }
@@ -209,7 +200,6 @@ export const readTools: McpTool[] = [
       const id = str(args.datasetId).trim();
       if (!id) fail('get_sync_status needs a `datasetId`', 400);
       const d = getDataset(id, P(user)); // canView gate (403/404 — no leak)
-      await ensureSyncRunsHydrated().catch(() => {});
       // The source connection's PLATFORM (same mapping as the sync status route).
       // Best-effort: an unresolvable connection is an honest null, never a failed read.
       let platform: string | null = null;
@@ -228,19 +218,11 @@ export const readTools: McpTool[] = [
           platform = null;
         }
       }
-      const next = d.sync?.enabled ? nextCronRun(d.sync.schedule.cron, new Date()) : null;
-      return {
-        datasetId: id,
-        name: d.name,
-        sync: d.sync ?? null,
-        platform,
-        nextRunAt: next ? next.toISOString() : null,
-        runs: listSyncRuns(id).slice(-20).reverse(), // newest first, same window as the UI
-        watermark: currentWatermark(id),
-        quarantined: isQuarantined(id),
-        consecutiveErrors: consecutiveErrorCount(id),
-        lastMaintenanceAt: lastMaintenanceAt(id),
-      };
+      // Run history, quarantine and the next tick come from DAGSTER when `DATA_PROJECT_GIT` is on
+      // and from the OS ledger when it is off — the SAME function the sync route calls, so the two
+      // surfaces cannot drift (engine rebuild B2, checklist D9).
+      const status = await syncStatusFor(d);
+      return { datasetId: id, name: d.name, platform, ...status };
     },
   },
   {

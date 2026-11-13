@@ -14,6 +14,7 @@ import {
 import { type Principal as DlsPrincipal, canSee } from '@tabs/knowledge/lib/retrieve-core';
 import { roleAtLeast } from '@core/kernel/session';
 import type { Provenance } from '@tabs/knowledge/lib/chunk';
+import { langfuseClient, type RunTraceContext } from '@core/infra/langfuse';
 
 /**
  * Governed agent-tool spine (Agent golden path §1, §7). Every tool an agent
@@ -289,9 +290,22 @@ export type TraceEvent = {
   /** Which runtime produced this step — so Monitoring can surface a Hermes run
    *  distinctly from a LangGraph run (both trace through the SAME governed door). */
   runtime?: 'langgraph' | 'hermes';
+  /**
+   * A3 — the run this governance event belongs to. When present the event is a SPAN under the
+   * run's Langfuse trace (id = run id) instead of a trace of its own, so a run reads as ONE
+   * tree. Threaded through the executor's deps (`os-tools.ts` `traceContext`), never a global.
+   */
+  run?: RunTraceContext;
 };
 
-export type TraceRecord = TraceEvent & { id: string; timestamp: string; landed: boolean };
+export type TraceRecord = TraceEvent & {
+  id: string;
+  timestamp: string;
+  /** Standalone trace: the ingestion POST was accepted. Under a run: queued to the SDK buffer. */
+  landed: boolean;
+  /** The run trace this event was nested under, when it was. */
+  traceId?: string;
+};
 
 // In-process ring buffer so Monitoring shows agent traces even with no Langfuse.
 const RING: TraceRecord[] = [];
@@ -301,9 +315,43 @@ export function recentTraces(limit = 50): TraceRecord[] {
   return RING.slice(-limit).reverse();
 }
 
+function remember(rec: TraceRecord): TraceRecord {
+  RING.push(rec);
+  if (RING.length > RING_MAX) RING.splice(0, RING.length - RING_MAX);
+  return rec;
+}
+
+/**
+ * Record one governed event. Under a run (`event.run`) it becomes a span of the run trace via the
+ * buffered SDK — never blocking the run; otherwise it is its own trace through direct ingestion,
+ * exactly as before, so the Build probes and the agent-chat path keep their standalone records.
+ */
 export async function trace(event: TraceEvent): Promise<TraceRecord> {
   const id = `os-agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const timestamp = new Date().toISOString();
+  const runtime = event.runtime ?? 'langgraph';
+  if (event.run) {
+    const client = langfuseClient();
+    if (client) {
+      try {
+        client.span({
+          id,
+          traceId: event.run.traceId,
+          parentObservationId: event.run.parentObservationId,
+          name: `agent.${event.tool}`,
+          startTime: new Date(timestamp),
+          endTime: new Date(timestamp),
+          input: event.input,
+          output: event.output,
+          level: event.decision === 'deny' ? 'WARNING' : 'DEFAULT',
+          metadata: { principal: event.principal, tool: event.tool, decision: event.decision, costUsd: event.costUsd, tokens: event.tokens, runtime, tags: [`tool:${event.tool}`, ...(event.decision ? [`decision:${event.decision}`] : [])] },
+        });
+      } catch {
+        /* observability is best-effort */
+      }
+    }
+    return remember({ ...event, id, timestamp, landed: client !== null, traceId: event.run.traceId });
+  }
   const auth =
     'Basic ' +
     Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
@@ -329,10 +377,7 @@ export async function trace(event: TraceEvent): Promise<TraceRecord> {
     headers: { 'content-type': 'application/json', authorization: auth },
     body: JSON.stringify(body),
   });
-  const rec: TraceRecord = { ...event, id, timestamp, landed: Boolean(res && res.ok) };
-  RING.push(rec);
-  if (RING.length > RING_MAX) RING.splice(0, RING.length - RING_MAX);
-  return rec;
+  return remember({ ...event, id, timestamp, landed: Boolean(res && res.ok) });
 }
 
 // ------------------------------------------- Governed metrics/retrieve facts --

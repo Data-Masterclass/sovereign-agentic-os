@@ -13,6 +13,1014 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Fixed — Data engine rebuild, B4 review round
+
+- **A pre-B2 upgrade no longer fires every sync twice (H-1).** The boot reconcile commits
+  `os/schedules.yml` for every synced dataset, which hands those schedules to Dagster — but the
+  per-dataset `batch/v1` CronJob a pre-B2 save left behind was only removed when that dataset's
+  sync was saved again or its source revoked. Between the upgrade and the next save, both
+  schedulers ran the same slice. `reconcileDataProjectsAtBoot` now calls `removeSyncCronJob` for
+  every dataset with a sync BEFORE its first commit: idempotent (404 is the normal answer),
+  fail-soft (a 403 or an unreachable API server is logged, never thrown — a cleanup may not stop a
+  boot) and logged per dataset, with the outcome returned as `cronsStoodDown`.
+- **The opt-out stops misreporting itself (H-3, M-7, M-8).** `reconcileSyncSchedule` answers
+  `ok: true` in BOTH worlds and puts the difference in `detail` ("Dagster schedules this from the
+  repository" vs "nothing schedules it"), while the sync panel rendered `detail` only when
+  `ok` was false — so the one sentence the opt-out exists to convey was the one it hid. The
+  wording now lives in a tested pure module (`tabs/data/lib/sync-schedule-view.ts`) and the detail
+  is shown whenever it is non-empty. `syncStatusFor` no longer fabricates `nextRunAt` from
+  `nextCronRun` with the flag off: nothing fires that cron, so it answers `null`. The schedule
+  pickers in the sync panel and the adopt dialog say "scheduling is off (DATA_PROJECT_GIT
+  disabled)" in words, and Platform → Components & Health grew a `data-products-git` row that is
+  present in BOTH states — amber "scheduling disabled" when off, instead of no row at all.
+- **One flag, and the docs stop calling it "default off" (H-4, L-11).** `core/kernel/config.ts`
+  now defaults `DATA_PROJECT_GIT` to `true`, matching the chart, so `npm run dev` runs the shipped
+  engine; `.env.example` documents it. Every "default off" claim in the CHANGELOG, `ARCHITECTURE.md`,
+  `tabs/agents/README.md`, `tabs/data/lib/dbt/commit.ts` and the chart comments is corrected, and
+  the breaking-change note above now states that the flip enables BOTH halves and what the agents
+  half does on its first boot.
+- **`set_dataset_sync` can remove a sync (M-1).** The UI route passes `null` when the panel removes
+  one; the MCP tool had no way to express it, so a client could create and change a sync but never
+  delete it. `clear: true` takes the same service, and the X8 parity harness gained it as a ninth
+  case.
+- **Dataset and check ids come from the CSPRNG (M-4).** They were `Math.random().toString(36)` plus
+  a timestamp — enumerable, which turns the OS's "403 for an invisible object, 404 for a missing
+  one" (deviation B4-11) into a way to inventory a tenant. `crypto.randomUUID()` now; the 403/404
+  semantics are unchanged.
+- **The ungated sync trigger is gone (M-6).** `POST /api/data/datasets/[id]/sync` accepted the
+  shared runtime bearer and started a materialisation with no user and no edit gate. B4 deleted
+  the CronJobs that used it, leaving zero callers; the branch is removed (the GET is untouched).
+  B2-6's planned Kafka/API-batch Dagster asset is recorded as the thing that re-adds it, with its
+  own test.
+- **A new quality failure notifies its owner again (L-2).** `/api/data/dq/run-all` was the only
+  caller of `deliverDqAlert`, and B4 deleted it — so since the flip, a dataset going red told
+  nobody (that regression was recorded as B4-9). The alert now fires from the Dagster
+  asset-check read-back: `alertOnNewFailure` applies the existing `isNewFailure` transition rule and
+  delivers one in-app notification to the dataset owner, suppressed by a durable per-dataset record
+  keyed on the check execution (`tabs/data/lib/dq-alert-state.ts`, index `os-dq-alerts`), so a read
+  that happens fifty times a minute still notifies once per incident. A recovery re-arms it; the
+  OS's own ad-hoc probe never alerts; a dataset with no resolvable owner is logged, not retried
+  forever. `deliverDqAlert` moved from `tabs/dashboards/lib/delivery.ts` to
+  `@core/notifications/dq-alert` (a tab may not import another tab) and is re-exported there.
+- **`query_data` is bounded end to end (E-1).** The read path had no statement ceiling of any kind:
+  no `request_timeout`, no `query_max_run_time`, and a `fetchall()` that buffered the whole result
+  set. os-ui's 8 s abort only ended os-ui's WAIT — the query kept running on the cluster and the
+  query-tool kept buffering. Reads now carry both halves (`QUERY_MAX_RUN_TIME`, default **`60s`**,
+  as Trino's own session property, plus a `request_timeout` of that **+5 s** so the client never
+  gives up first and orphans the query) and fetch at most `QUERY_MAX_ROWS + 1` rows (default
+  **10000**), reporting `truncated: true` with the limit — measured from the extra row, never a
+  silently clipped answer. Both are chart-wired (`queryTool.budget`), and `truncated` /
+  `row_limit` / the message reach `query_data`'s payload. Writes stay unbounded unless
+  `EXECUTE_MAX_RUN_TIME` is set, because a full-refresh sync legitimately runs for minutes — and
+  the comment that claimed "the client owns the statement budget" now says that instead.
+  12 new Python tests (`images/extensions/query-tool/test_query_budget.py`).
+- **A Trino rules reconciler that never succeeds is RED, and retried (E-2).** `no-cluster` and
+  `no-configmap` ended a pass on its first attempt, read as permanent facts. At boot they are
+  usually RBAC propagation and Helm's object ordering, so the chart's PERMISSIVE bootstrap stayed
+  the live access-control file — ownership open — until the 10-minute repair pass. Every failure
+  code now gets the pass's backoff. And the "Trino access rules" health row is RED (not amber)
+  until the first success, naming what is open and what to check: a never-reconciled install is
+  governed by **OPA alone**, which `docs/components/trino.md` now states.
+- **`profiles.yml` emits `password:` only when auth is on (E-3).** The key sat inside a
+  `# {% if … %}` Jinja guard written as a YAML comment, on the belief that dbt renders the whole
+  file through Jinja before parsing the YAML. It does not — dbt loads the YAML first and renders
+  each scalar afterwards, so the comment carrying the guard was discarded and `password:` was
+  present under `method: none`, which dbt rejects. The method is now a GENERATOR INPUT
+  (`config.trinoAuthMethod`, default `none`): `method:` is emitted as a literal and `password:
+  "{{ env_var('TRINO_PASSWORD') }}"` only when the method is not `none` — with no `''` default, so
+  a missing password fails loudly instead of connecting as nobody. The three generator goldens were
+  regenerated.
+- **Documentation corrected where it was wrong, not just stale (L-1, L-3…L-8, L-10).** The
+  breaking-change note now says which path dbt owns (the SCHEDULED one — an interactive build still
+  runs the OS's TypeScript CTAS first, by decision B4-6/B4-7) and tells an operator to delete the
+  now-unused `dq-run-principal` Secret by hand. `ARCHITECTURE.md`, `tabs/agents/README.md` and
+  `run-jobs-server.ts` stop calling `startQueuedRun` "the one start door" — the door is
+  `enqueueRun`, and the SSE run route always called it directly. `tabs/data/README.md`'s MCP tool
+  id is `data-write`, not `dataset-write`. `tabs/data/guide.md` documents the four data tools the
+  numbered path never reaches (`list_exposed_tables`, `adopt_exposed_table`, `retire_dataset`,
+  `reconcile_domain_tables`). `docs/components/trino.md` lists the sync slice executor as the sixth
+  live `/execute` path. Six comments that still described the deleted `sync-cron.ts` world are
+  rewritten, and `gate.sh`'s B4 comment now sits above the tests it describes.
+- **Tests for the three divergences B4-3 fixed, and two more refusals (M-2, M-3, M-5).** The gold
+  join's personal-partner FQN and the promoted dataset's `domainTable: refreshed` are now pinned by
+  VALUE, not only by both doors agreeing; a domain member who is not the owner and a cross-lane
+  join partner are refused identically on both doors; and the X7 conformance test asserts the
+  documented code PER TOOL — `forbidden` for an existing invisible dataset, `not_found` for one
+  that does not exist — with the flag OFF and ON, proving a refusal commits nothing either way.
+- **The os-ui Role may actually touch CronJobs (H-2).** Nothing in the chart granted
+  `batch`/`cronjobs`, so BOTH CronJob paths 403'd in a real cluster: agent schedule provisioning
+  (`tabs/agents/lib/schedule-cron.ts` — a saved cron schedule silently never fired) and the
+  pre-B2 data-sync cleanup. The Role now carries `batch`/`cronjobs` with
+  `get, list, create, update, delete`, and `scripts/check-trino-rules-chart.mjs` fails if the rule
+  or any of those verbs goes missing from any render.
+
+### Fixed — Part D review round 3: a boot reconcile can no longer empty a repository
+
+- **An unverified registry no longer deletes anything (H-1).** `ensureHydrated()` RESOLVES when the
+  durable mirror was unreachable — the failure is recorded for a throttled retry and deliberately
+  not raised, so no read path 500s. That is the shape of the September-2026 login outage: an
+  os-ui/OpenSearch startup race hydrates a store to EMPTY, and an empty store is indistinguishable
+  from a tenant that owns nothing. Both boot reconciles believed it: the agents one generated
+  `systems: []` and `commitSubtree`'d an empty map, which DELETES every system directory in every
+  domain carrying an `agents/` subtree and pushes that to the mirror; the data one did the same to
+  every dbt model. Both now require `hydrationState() === 'hydrated'` (a new probe on each store)
+  and otherwise skip with a loud error. Independently, `core/infra/git-store.ts` REFUSES any
+  `OS-Reason: boot-reconcile` commit that would delete more than half the files it tracks in its
+  own scope while adding none (`DestructiveReconcileError`, logged with the counts). A person's
+  commit is never subject to it — deleting your last system is still recorded, as you.
+- **The `agents/` reservation no longer depends on boot ORDER (H-2).** `reserveSubtree('agents/')`
+  is taken at the very top of `instrumentation.ts`'s `register()` whenever `DATA_PROJECT_GIT` is
+  on, independently of whether the agents commit hook installs. The ordered boot block remains as
+  defence in depth rather than as the only thing between the data side's whole-tree commit and the
+  agents subtree.
+- **The run worker fails closed instead of dropping commits (H-3).** `os-ui-worker` mounts no
+  `os-repos` volume — the PVC is `ReadWriteOnce`, os-ui and the worker are separate Deployments
+  that may land on different nodes, and two writers to one bare repo is exactly what the git
+  store's in-process lock cannot protect — so a definition change made there could never be
+  committed or mirrored. It now throws a typed `SystemWriteUnavailableError` ("agent-system
+  mutations are not available from the run worker") at the store's `writeThrough(rec, change)`
+  chokepoint. Run and build bookkeeping (`change === null`) is unaffected.
+- **No principal ids in the repository (M-1).** An OS principal id is frequently an e-mail
+  address, and `agents/**` is pushed to the configured mirror, cloned by Dagster and exported by
+  any domain member. The owner is now a stable opaque token (`sha256(id)`, 12 hex chars) in
+  `index.yml`, in every generated README and as the personal lane's path segment
+  (`agents/personal/<owner-token>/`). The principal id stays in the commit (`OS-Actor`, git
+  author), which is the one place a person is meant to be named.
+- **The README says who can actually read a system prompt (M-2).** A Personal system's committed
+  directory is readable by every member of its domain through the project routes and the mirror —
+  wider than the Agents tab's own listing. `tabs/agents/README.md` now says so in two lines under
+  "Who can read what", with the consequence: nothing in an instruction file should be a secret.
+- **A timed-out WRITE is not executed twice (M-3).** The dedup memory only short-circuited repeats
+  of SUCCESSFUL calls, so a `timeout` — which means the engine stopped waiting, not that the tool
+  failed — let the model re-issue the same write and turn one requested change into two. A
+  timed-out signature is now recorded as `unresolved`, and a repeat of an unresolved WRITE returns
+  a typed `{"error":{"code":"unresolved_previous_call"}}` telling the model to verify by READING.
+  Reads with the same signature still re-dispatch.
+- **A bounded history that admits it is bounded (L-1).** `systemGitInfo` returns
+  `{ head, history, truncated }`: the 200-commit scan window is shared with the dbt project's
+  commits, so `truncated` says when `history` is only what fitted, and the HEAD is resolved with
+  one deeper bounded walk (`MAX_LOG_DEPTH` 2000) rather than reported as `null`.
+- **A synthesized git author is well-formed (L-2).** An e-mail-shaped principal id produced
+  `amir@acme.com@os.local`; only the mailbox token is kept now (`amir@os.local`).
+- **One MCP surface scope, and a run-aware commit (L-3).** The redundant per-tool
+  `runWithSurface` wrapper in `core/mcp/experimental/data-write-tools.ts` is gone — `server.ts`
+  wraps every `tools/call` with the same value — and the ambient request id is carried into the
+  nested scope instead of a second one being minted. A granted tool that writes during an agent
+  run dispatches inside the run's scope, so its commit carries `OS-Run-Id: <runId>`.
+- **The egress allowlist is re-checked at push time (L-4).** It was checked when a mirror was
+  configured; a host removed from the allowlist afterwards kept receiving the whole domain
+  repository. A refusal is recorded on the mirror record like any other failure, and an unreadable
+  allowlist fails closed.
+
+### Added — Git-based working for agent systems, automatically (engine rebuild Part D)
+
+- **Every change to an agent system is a git commit**, in the UI and through the MCP alike, with
+  no "export to git" step. It lands in the SAME per-domain bare repository the dbt project lives
+  in (`$OS_REPOS_DIR/<domain>.git`, PVC `os-repos`), under `agents/`: `system.yaml` (the canonical
+  definition), `agents/<agent-id>.md` (each agent's instruction file), `graph.json` (the compiled
+  LangGraph IR the engine actually runs) and a generated `README.md` (purpose, members, grants,
+  channels, edges, last build), plus `agents/index.yml` mapping slug → id, owner, scope and source
+  version. A Personal system sits in `agents/personal/<uid>/`, the lane split the data side
+  already uses. Author = the acting user, committer = `Sovereign OS`, subject
+  `agents(<domain>): <action> <slug> — via ui:<route> | mcp:<tool>`, trailers `OS-Action`,
+  `OS-Object`, `OS-Surface`, `OS-Request-Id`, `OS-Actor`. Behind the same single switch as the data
+  half (`DATA_PROJECT_GIT`, ON by default since B4) because they share the repository and the PVC.
+- **One commit path, and the compiler enforces it.** The store's `writeThrough(rec, change)` takes
+  a required second parameter: a change descriptor (⇒ a commit) or an explicit `null` ("run
+  bookkeeping, deliberately not a commit"). 17 writers commit; 7 — the activity marker, the run
+  checkpoint, the last-run report and restart recovery — do not, because a run's artefacts are the
+  LangGraph checkpoint, the `run_events` rows and the Langfuse trace. Archive and delete are
+  commits that REMOVE the directory; a cross-domain move commits both repositories.
+- **Two generators in one tree, neither clobbering the other.** `commitSubtree` replaces exactly
+  one prefix and keeps the rest of the tree (an empty file map is how a deletion is recorded);
+  `reserveSubtree` lets a subtree owner protect its prefix from the whole-tree writer. Both are
+  generic path-prefix primitives in `core/infra/git-store.ts`.
+- **Boot reconcile**: at startup each domain's subtree is regenerated and any delta committed as
+  the platform principal with `OS-Reason: boot-reconcile`, so a window with the flag off is caught
+  up without anyone re-saving. A data-only repository never grows an `agents/` directory.
+- **Read-back from the repository, not a ledger**: `get_agent_system` and
+  `GET /api/agents/systems/<id>` return `git: { head: { sha, author, at, action, surface },
+  history[] }`, and the Agents tab header shows `git <sha7> by <author> <time>`. With git off the
+  answer is `null`, never a fabricated sha.
+- **The MCP records its surface everywhere**: every `tools/call` now runs inside an `mcp:<tool>`
+  request-surface scope, so a change made through the MCP is distinguishable from the same change
+  made in the UI — for the data half too.
+- **Mirror push** (`core/infra/git-mirror.ts`): after every changed commit, either generator, the
+  OS pushes `main` to the domain's admin-configured remote, resolving the token from its Secret
+  reference at call time and scrubbing it from every error. Fire-and-forget — it reports, never
+  blocks a save, and is retried by the next commit — with the last outcome as the new
+  **`git-mirror`** row on Platform → Components & Health (red when a push failed, amber before the
+  first). One config for both halves; no second credential path.
+
+### Added — Agents use the granted data as context, robustly (checklist X9)
+
+- Every agent tool result is **bounded before it enters the prompt**
+  (`AGENT_TOOL_RESULT_MAX_CHARS`, default 20 000 characters). A tabular answer is truncated BY
+  ROWS and keeps well-formed JSON plus a visible `[truncated: showing 243 of 50000 rows]`; anything
+  else is cut by characters with the counts named. A truncated result always carries the marker.
+- Every agent tool call has a **deadline** (`AGENT_TOOL_CALL_TIMEOUT_MS`, default 60 s) and
+  surfaces as a typed `{"error":{"code":"timeout"}}` tool step the graph can route on, so a hung
+  upstream ends the step rather than the run. An upstream dispatch failure is now a typed
+  `upstream_error` envelope instead of a prose `Error: <message>`. A thrown dispatch still fails
+  the superstep, so the checkpoint keeps the exactly-once property of the calls that already ran.
+- Both guardrails live in the engine's tool path, so they protect every tool — not only the data
+  ones — and the governed executor is unchanged: a data read still dispatches **as the runner**,
+  never a service principal, and appears as a span of the run's one Langfuse trace with the
+  dataset in the span input.
+
+
+### Fixed — Agent engine rebuild, A5 review round: `when` guards can finally be true
+
+- **An agent can write a state channel.** The A5 engine evaluated every handoff guard but
+  nothing could set the channel a guard reads, so EVERY `when` guard in the OS was false by
+  construction — including the five that drive the shipped Software Delivery Team, whose
+  planner → builder → tester → deployer → communication chain was therefore unreachable. A
+  `state.channels` declaration is now a **typed** state key (`boolean` / `number` / `string` /
+  `json`, last-write-wins, starting at that type's default; `add_messages` still appends; an
+  unrecognised declaration stays an untyped `json` channel so existing files run unchanged),
+  and the agent whose turn a guard follows is advertised one built-in tool, **`os_set_state`**
+  — closed to the declared channels, type-checked against the declaration, never a governed MCP
+  call and never held for approval. The write lands in the same superstep, so the next routing
+  decision sees it; the supervisor's routing prompt gained a `--- TEAM STATE ---` line, and each
+  writer's prompt a generated `--- STATE CHANNELS ---` block (one sentence per channel, derived
+  from the yaml). `software-team.ts` declares its five channels with a purpose each, and its five
+  compile warnings are now zero. A guard over an **undeclared** channel (or an `add_messages`
+  one) is still a compile warning. New tests drive one graph with and without the write.
+- **A run's contents are owner-only on every door.** `get_run_trace` gated on the
+  builder-domain-wide monitoring scope, so a builder could read a colleague's agent run and the
+  403/404 split confirmed a guessed run id existed; for a `run_<uuid>` it now uses the same
+  owner gate as every other run door (404 both ways). The `POST .../evaluate` route took a
+  `runId` from the request body and wrote a Langfuse score on that run's trace with no owner
+  gate at all; it is gated before the judge even runs. `list_runs` stays scope-wide by design,
+  and both tool descriptions now say which half is which.
+- **Schedule CronJob pods lose their borrowed egress.** They still carried the deleted runtime's
+  `component: agent-runtime` label, so widening the intra-namespace allow to every pod handed a
+  one-endpoint `curl` the whole in-namespace plane. They are relabelled `agent-schedule`,
+  excluded from the two blanket allows and given their own policy: os-ui:3000 and DNS.
+- **`agentRuntime.token: ""` no longer bricks os-ui.** The `agent-runtime-token` Secret was
+  gated on the token's VALUE while `_os-ui-env.tpl` mounts it through a non-optional
+  `secretKeyRef`. The Secret moved to its own template (`agent-runtime-token.yaml`) and renders
+  whenever any consumer is enabled.
+- **Removed** `tabs/agents/lib/build/grant-rehydrate.ts` and its test: dead code. Its only
+  consumer would have been `authorizeAppTool`, which serves the software app-MCP path; the agent
+  path's gates are in-process over the system YAML.
+
+### Changed — Agent engine rebuild, Phase A5: the LangGraph engine is the only engine
+
+- **Deleted, after the parity gate passed.** The hand-rolled BFS that used to execute agent
+  systems (`tabs/agents/lib/build/agentic-graph.ts` `runAgenticGraph` + `nodeOrder`), the mock
+  graph walk the Build adapters called a "test invocation" (`build/run-graph.ts`), the Python
+  `agent-runtime` image (`images/base/agent-runtime/`, incl. `interpreter.py`) with its
+  Deployment, ConfigMap, Service and dedicated egress NetworkPolicy, the governed-tool callback
+  door it called back through (`/api/agents/tool`), the IR-as-wire-format (`runtime-contract.ts`'s
+  `/reload` + `/run` types and the `realRuntime` client), and `build/server.ts`'s `runSystem`
+  fallback path. 15 files removed, ~1.4k lines.
+- **The engine flag is REMOVED, not defaulted.** `AGENTS_ENGINE`, `core/kernel/config.ts`
+  `agentsEngine`, `core/kernel/agents-engine.ts`, `engine/select.ts` and the per-system
+  `runtime: walker` opt-out are gone. An environment that still sets the variable gets one
+  deprecation line at boot saying it is ignored — silence would let an operator believe they had
+  pinned the old executor. `runtime: hermes | walker` in a stored `system.yaml` is NORMALISED to
+  `langgraph` on parse rather than refused: a retired engine name must not make a saved system
+  un-openable. The Runtime card that offered "Autonomous (Hermes)" is replaced by one honest line
+  about the engine, because Hermes never executed a system in this OS.
+- **`isAgenticOsTeam` → `unmappedGrantNames`.** The boolean existed to choose between the
+  in-process path and the Python fallback. With no fallback, the only honest question left is
+  which grants have no governed tool behind them — and the answer belongs in the error the run
+  doors return, naming them (400 at the route, the scheduler and MCP). Consequence, deliberate: a
+  system with NO tool grants is now runnable (its agents are plain completions); the old refusal
+  was an accident of the fallback, not a rule.
+- **Build compiles the real graph.** `tabs/agents/lib/build/compile-verify.ts` calls the same
+  `buildGraph` the run path calls (with inert deps — compiling makes no model and no tool call),
+  for the live adapters and the offline mock alike. A ✓ on the `langgraph` row now means the
+  StateGraph the engine will execute can be constructed from this `system.yaml`: an unmapped
+  grant, a malformed `when` guard, a disabled entrypoint or a channel shadowing an engine key
+  fails at Build. The Langfuse row is consequently `pending` after a build — honestly, because its
+  probe reads the traces a RUN leaves behind and a build no longer stages a fake run.
+- **The MCP run surface is the UI's path.** `get_agent_run` gains the `run_events` tail
+  (`afterSeq` / `limit` → `nextSeq`), so following a long run is a cheap poll; it and every other
+  run-addressed door (the run route's resume, the re-attach stream, the DIAGNOSTICS read, MCP
+  `resume_agent_run`) call `assertRunVisible` **before** any side effect or read. The diagnostics
+  route was reading Langfuse observations by trace id with no owner gate at all — and the trace id
+  IS the run id, so a guessed id returned somebody else's generations. Fixed: unknown and foreign
+  both answer 404. Tool descriptions and `tabs/agents/guide.md` now teach the real sequence
+  (build → run → get_agent_run → decide_approval, which resumes the run itself and executes as the
+  runner → resume_agent_run for restart recovery only → get_run_trace).
+- **Chart.** `agentRuntime` keeps only `token` and `schedules`: the shared service bearer (os-ui
+  mounts it as `AGENT_RUNTIME_TOKEN` and VALIDATES it on the paths the OS's own CronJobs call —
+  scheduled runs, data-sync, catalog-refresh — and the Dagster sidecar reads the same Secret) and
+  the declarative agent-schedule CronJobs, which never talked to the runtime and are no longer
+  gated on `agentRuntime.enabled`. `AGENT_RUNTIME_URL` is gone from the os-ui env. The chart
+  renders with `agentRuntime` removed entirely. The `agent-runtime` row is out of the Admin →
+  Components registry, `core/manifest.ts` and the Agents manifest's `services`; the interpreter's
+  pytest steps are out of CI.
+- **Fixtures are FROZEN.** The 13 golden recordings in `tabs/agents/lib/engine/fixtures/` are the
+  pre-rebuild walker's behaviour and stay exactly as recorded; `REGEN_FIXTURES` is gone with the
+  generator. `parity.test.ts` holds the engine to them; `fixtures.test.ts` keeps them frozen and
+  well-formed, including the one fixture that deliberately records the DEFECT the engine must not
+  reproduce (`shape-guarded-handoff-held-write`: the walker ignored `when: state.findings_ready`
+  and visited the guarded target, holding its write; the StateGraph routes to END).
+- **Tests.** `core/mcp/agent-run-surface.test.ts` (9, new) pins the surface, the sequence in the
+  descriptions and the guide, `not_found` from every run-addressed door, and tripwires for the
+  owner gate, "no Langfuse trace without a run id / no link to a trace LIST", and the labelled
+  embedding fallback. `build/agentic-graph.test.ts` was rewritten to test the node layer the graph
+  still uses — handoff material, the Context Librarian (including the offline-hash guard), node
+  status — directly instead of through a deleted walk. Suite: 4956 tests, 0 failures. Structure
+  ratchet lowered (TAB-ISOLATION 422 → 421, FILE-HEADER 1245 → 1240).
+
+### Added — Data engine rebuild, Phase B4: the MCP is the UI, for every data mutation
+
+- **One service per data mutation** (`os-ui/tabs/data/lib/mutations-server.ts`): `create_dataset`,
+  `add_dataset_version`, `transform_silver`, `build_gold_join`, `define_quality_rules`,
+  `run_quality_checks`, `set_dataset_sync` and `sync_dataset_now` each exist ONCE. The Data tab's
+  route shapes HTTP, the MCP tool coerces arguments, and neither holds logic. Errors are thrown
+  status-tagged once, so a route renders `{error}` + status and the MCP dispatcher the typed
+  `{code, reason, hint}` — from the same throw.
+- **Proved, not asserted** (checklist X8): `tabs/data/lib/mcp-parity.test.ts` drives each tool
+  through `handleRpc` exactly as a client would, then the same input through the service the route
+  calls, against the real commit path with an injected committer and a fake Dagster client, and
+  compares the committed file map, the author, the `OS-Actor` trailer and the launch args
+  deep-equal. `via mcp:<tool>` vs `via ui:<route>` in the commit subject is the one deliberate
+  difference, asserted as such. It runs in `os-ui/scripts/gate.sh`.
+- **Checklist X7, data half**: `tabs/data/lib/mcp-conformance.test.ts` walks every tool
+  `list_capabilities` advertises for the data pathway and asserts it dispatches (no
+  "Tool not available"), carries a usable input schema whose required fields are described, refuses
+  a foreign dataset as `not_found`/`forbidden` with an actionable hint and no stack trace, names the
+  role a gate needs, and writes nothing when it refuses.
+- **Bugs this found and fixed, which had been live:** MCP `build_gold_join` resolved a join partner
+  with `assetTarget` while the UI used the owner-aware `reuseSourceFqn`, so a personal-lane partner
+  was read from the wrong schema; MCP `transform_silver` never refreshed the promoted domain copy;
+  the UI sync save did not enforce the per-source mode/cursor locks the MCP did, nor refuse a
+  connection the caller cannot read; MCP `run_quality_checks` ran the rules without the monitors and
+  persisted nothing.
+- `tabs/data/guide.md` and `sovereign-os://guide/path/data` now describe what actually happens — the
+  commit per call with its real trailers, the generated dbt project, the Dagster schedule, Trino as
+  the principal, read-back from Dagster — and the real sequence connect → ingest → silver → gold →
+  quality → schedule → lineage.
+
+### Removed — Data engine rebuild, Phase B4: the OS-side scheduler and the sweeps Dagster replaced
+
+- `os-ui/tabs/data/lib/sync-cron.ts` — the per-dataset `batch/v1` CronJob provisioning, its manifest
+  builder and the in-process cron matcher. **Nothing in the OS can create a CronJob for a sync any
+  more** (checklist D7). `sync-cron-removal.ts` keeps the DELETE half, because an upgrade from a
+  pre-B2 install must still remove the CronJob a save left behind; a test asserts it cannot create
+  one.
+- `POST /api/data/sync-due` (the fallback sync sweep) and `POST /api/data/dq/run-all` (the scheduled
+  DQ sweep), with their chart CronJobs (`templates/extensions/metrics/{data-sync,dq}-cronjob.yaml`)
+  and values (`dataSync.sweep`, `data.quality.cron`). Schedules live in each domain's
+  `os/schedules.yml` and quality rules ARE dbt tests, so both sweeps would double-run work and write
+  rows Dagster does not know about. Also `store.datasetsWithSync`, the sweep's worklist.
+- **A loss worth naming:** the DQ sweep was also what e-mailed a dataset owner on a NEW quality
+  failure. The Dagster failure sensor quarantines a repeatedly failing schedule, but nobody is
+  notified yet. `isNewFailure` and `deliverDqAlert` are kept and tested because the recorded
+  follow-up — alert from the asset-check read-back plus a persisted last-alerted badge — needs
+  exactly them.
+- **Deliberately NOT removed**, against the phase outline, with the reason recorded in the plan: the
+  query-tool's `/execute` (it also carries `apply_quality_fixes`'s MERGE, physical deletes, the
+  warehouse import and the promote/publish CTAS) and the TypeScript CTAS build path for silver/gold
+  (the honesty gate registers a version only after a real apply+verify; replacing it with a wait on
+  a Dagster asset check is a redesign that cannot be shown correct offline — the kind row-set parity
+  run, checklist D15, is its gate).
+
+### Changed — **BREAKING** — Data engine rebuild, Phase B4: data products in git are ON by default
+
+- **`osUI.dataProjectGit.enabled` now defaults to `true`** (and the Dagster `repo-sync` sidecar's
+  `REPO_SYNC_ENABLED` with it; `values.local.yaml` states it explicitly). `core/kernel/config.ts`
+  defaults `DATA_PROJECT_GIT` to `true` as well, so `npm run dev` behaves like production instead
+  of silently running the pre-B4 engine (B4-review-L-11); `.env.example` documents it.
+  **ONE flag, TWO halves — the flip enables both** (B4-review-H-4): the DATA half below, and the
+  AGENTS half of Part D, which commits every agent-system definition write as an `agents/<slug>/…`
+  subtree in the SAME per-domain repository. On the first boot with the flag on, the agents side
+  runs its own reconcile: one commit per domain that already has an `agents/` tree, authored as the
+  platform principal with `OS-Reason: boot-reconcile`, bringing `agents/index.yml`, each
+  `system.yaml`, the per-agent instruction files and `graph.json` up to date with the registry —
+  and, like the data half, it refuses to run at all unless the store reports `hydrated`.
+  A fresh install — and any
+  `helm upgrade` that does not pin the old value — switches to the shipped architecture: every
+  change to a dataset, composition, quality rule or schedule is a **git commit** in the domain's
+  repository (`/repos/<domain>.git` on the `os-repos` PVC, authored as the acting user); the
+  generated **dbt project** is what **Dagster** schedules and materialises, from a commit that
+  passed `dbt parse`, with **Trino** executing it as the acting principal, and run state, asset
+  checks and freshness are read back **from Dagster** instead of an OS-side ledger.
+  **Precisely which path dbt owns (B4-review L-1):** the SCHEDULED one — syncs, and every
+  re-materialisation Dagster triggers from a commit. An INTERACTIVE build still runs the OS's own
+  TypeScript-compiled CTAS first, unconditionally (`tabs/data/lib/mutations-server.ts` —
+  `silverPlan` / the gold-join plan through `buildStage`), and only then commits and launches the
+  equivalent dbt assets. That is deliberate (deviations B4-6/B4-7): the honesty gate registers a
+  version only after a real apply+verify of the physical target, and waiting on a Dagster run plus
+  its asset check before registering anything is a redesign whose correctness cannot be shown
+  offline. So a "git-first" install still has two materialisers for a button press, one of which
+  is authoritative for the version record. The row-set parity run in `kind` (checklist D15) is the
+  gate for deleting the CTAS.
+- **Migration — what happens on the first boot with the flag on.** os-ui runs a **boot reconcile**
+  (`tabs/data/lib/dbt/boot-reconcile.ts`): for every domain the OS knows (datasets in the registry
+  ∪ repositories already on disk) it regenerates the project and commits the delta as the platform
+  principal, with the trailer `OS-Reason: boot-reconcile` — so every pre-existing dataset gets its
+  initial commit, and any crash between a store write and its commit (the gap the B2 review
+  recorded) is repaired at the next start. A boot that changes nothing commits nothing; one
+  unreadable domain is logged and never stops the others or the boot. Note the shape of the
+  guarantee: a dataset whose only layer is a raw Bronze landing contributes no dbt object, so its
+  "initial commit" is the domain's project, not a file of its own.
+- **What an operator must check before upgrading.** (1) The `os-repos` PVC is provisioned
+  (2 Gi default, RWO — os-ui is single-replica by design). (2) A pre-B2 install that had per-dataset
+  sync CronJobs: the **boot reconcile deletes every one of them before its first commit**
+  (B4-review H-1), so the schedule moves to the domain repository's `os/schedules.yml` with no
+  window in which both schedulers run the same slice. That cleanup needs the `batch`/`cronjobs`
+  grant the os-ui Role now carries (B4-review H-2); without it the deletion is refused and LOGGED,
+  and the CronJob has to be removed by hand (`kubectl -n <ns> delete cronjob -l app=data-sync` or
+  by name, `data-sync-<dataset>`). (3) The Dagster image must be `0.3.0` or newer (it carries `git`, the
+  Postgres driver, `repo.py` and `os_projects.py`). (4) The OS's own DQ probe no longer runs, so
+  the `dq-run-principal` Secret it used is dead weight and should be removed by hand —
+  `kubectl -n <ns> delete secret dq-run-principal` (the chart no longer renders it; an upgrade
+  does not delete a Secret it stops templating).
+- **The flag remains an emergency opt-out for ONE release, then it goes.** `--set
+  osUI.dataProjectGit.enabled=false` (plus the sidecar's `REPO_SYNC_ENABLED=false`) restores the
+  OS's own CTAS execution, the `os-sync-runs` / `os-dq-results` ledger reads and the OS DQ probe —
+  but it no longer **schedules** anything, because B4 deleted the CronJob provisioning and the
+  fallback sweeps. Follow-up recorded in the plan: remove the flag and the opt-out branches.
+
+### Added — Data engine rebuild, Phase B3: Trino executes as the principal, lineage comes from dbt
+
+- **Trino's access control is now TWO chained system access controls.** `config.properties` gains
+  `access-control.config-files=<opa>,<file>` (values `trino.accessControl`, default on): the OPA
+  plugin keeps row filters, column masks and the foreign-`personal_*` deny, and a generated
+  `rules.json` adds the two things OPA cannot express — **impersonation** (the dbt service user may
+  act as an OS principal and as nothing else; nobody else may become another identity) and **schema
+  ownership** (a domain's Iceberg schema is writable only by that domain's principals, a
+  `personal_<uid>` lane only by its owner). Trino requires every access control to allow, so the
+  file can only narrow the policy. No secret goes in it — identifiers and regexes only.
+- **One shape, two renderers, one test that keeps them equal.** `core/infra/trino-rules.ts` is a
+  pure generator (golden `fixtures/trino-rules.golden.json`, plus a first-match-wins evaluator the
+  tests assert through); the chart renders a **bootstrap** ConfigMap (`trino-access-rules`) that
+  bounds impersonation by the shape of an OS id and leaves ownership untouched, so a fresh install
+  still works before the OS has spoken; `core/infra/trino-rules-server.ts` reconciles the same key
+  from real domain membership at boot (`TRINO_ACCESS_RULES=true`) and Trino re-reads it within
+  `security.refresh-period` — no roll. A directory mount, not a `subPath`, because only a
+  whole-ConfigMap volume is refreshed by the kubelet.
+- **Honest limit, documented not implied:** the chart does not set
+  `http-server.authentication.type`, so Trino does not authenticate clients and the impersonation
+  rules have no authenticated `original_user` to match. The schema-ownership rules bite immediately;
+  making impersonation load-bearing needs authentication plus a credential —
+  `docs/components/trino.md` says exactly what that takes.
+- **External sources are Dagster assets** (closes the open half of checklist D7).
+  `tabs/data/lib/dbt/source-assets.ts` writes `os/sources.yml`, one entry per **federated** sync
+  source, and the `sovereign` code location builds an `@observable_source_asset` per entry keyed
+  `[<domain>, <source>, <table>]` — the key dagster-dbt gives the dbt source — so the silver model
+  that reads it depends on that node and the graph has no dangling upstream. The probe is one
+  statement as the dataset's **owner** (`max("<cursor>")` + `count(*)` with a timestamp cursor, else
+  `count(*)`), and freshness is two schedule intervals derived from the sync's own cron; an
+  unfamiliar cron shape makes **no claim** rather than a wrong one. An entry whose identifiers are
+  not plain identifiers is **dropped**, never quoted-and-hoped.
+- **Lineage comes from the dbt manifest.** `get_lineage` (MCP) and the Data tab's lineage view read
+  Dagster's `assetNodes` — which dagster-dbt derives from `manifest.json`'s `parent_map` — folded
+  into the existing `LineageGraph` shape (`tabs/data/lib/dbt/lineage.ts`, pure;
+  `tabs/data/lib/lineage-server.ts`, one GraphQL call). The fallback to the OS registry is explicit
+  and **labelled** (`source: 'dbt' | 'registry'`, additive). Column-level lineage is not derived —
+  dbt Core's manifest does not carry it — and is recorded as a follow-up rather than implied.
+- **A parity harness the flag flip can be gated on.** `tabs/data/lib/dbt/parity.ts` compares, per
+  fixture (including the concept's worked example `gold_order_customer`), the SQL the OS runs today
+  with the SQL dbt will run: same projection and aliases in order, same FROM/JOIN sequence and ON
+  predicates, same WHERE conjuncts (as a set), same GROUP BY. A model with no recorded CTAS is
+  reported **skipped with its reason**, never as a pass; an unreadable shape is a mismatch, never a
+  pass. It is explicit about its reach: a model body IS the recorded CTAS after rewriting, so this
+  proves the translation is faithful and invertible, not that two materialisations agree row for
+  row.
+
+### Fixed — B3 review findings (engine rebuild)
+
+- **The reconciler never ran on a default install** (H-1). `TRINO_ACCESS_RULES` was rendered inside
+  the `osUI.dataProjectGit` block, which defaults `false`, while `trino.accessControl.enabled`
+  defaults `true` — so the stock install shipped the permissive bootstrap `rules.json` permanently
+  and os-ui never reconciled it. The env var now renders under exactly the gate the ConfigMap
+  renders under (`trino.enabled AND trino.accessControl.enabled AND trino.opa.enabled`), which
+  also stops os-ui logging "ConfigMap does not exist" every boot when the feature is off (L-5).
+  `scripts/check-trino-rules-chart.mjs` renders four value sets and fails the gate if the two gates
+  ever disagree again.
+- **Reconcile was boot-only** (H-2, H-3). It now has three triggers: boot; the kernel
+  `directory-changed` event (new `core/kernel/events.ts`) that the user and domain stores emit from
+  their single write-through, debounced 2 s and serialised so a bulk membership import is ONE
+  reconcile; and a jittered periodic repair pass (`trino.accessControl.reconcileIntervalMinutes`,
+  default 10) — because `helm upgrade` rewrites Helm's bootstrap value over the OS's enumerated
+  file and fires no OS event. A write path never imports the reconciler and `core/` never imports a
+  tab: the stores emit, `instrumentation.ts` subscribes. Two comments that claimed "and on a
+  directory change" before the path existed are now true.
+- **A failed reconcile was a silent warn** (H-4). Each pass retries 3× with exponential backoff
+  (capped 30 s), records a typed outcome (`ok`/`code`/`detail`/`at`), and publishes the last one on
+  **Platform → Components & Health** as a `Trino access rules` row — RED when the last attempt
+  failed, and RED when the last SUCCESS is older than twice the repair interval, because a stale
+  file means the permissive bootstrap is what Trino is enforcing.
+- **The Dagster run pod connected as a user the rules deny** (H-5). `TRINO_USER: dbt-sales` in the
+  code location's env against `trino.accessControl.serviceUser: dbt-runner` — invisible today
+  (nothing authenticates) and a hard denial the moment authentication is switched on. The literal
+  is now `dbt-runner` and the equality is asserted from `values.yaml` by the new chart check.
+- **A namespace-wide Secrets grant** (H-6). The os-ui Role granted `configmaps, secrets:
+  get,list,create,patch,update` under `externalConnectorsEnabled OR dataProjectGit.enabled`. The
+  Secrets half is back on `externalConnectorsEnabled` alone; the rules reconciler gets its own rule
+  — `resources: ["configmaps"], resourceNames: ["trino-access-rules"], verbs: ["get","patch"]`.
+  Asserted from the rendered Role.
+- **A domain named like a personal lane could re-open it** (M-8). `rules.json` now emits the
+  personal-lane rules BEFORE the domain rules and closes each lane explicitly
+  (`{schema: ^personal_x$, owner: false}`), so a domain whose sanitized schema collides with a lane
+  name can never answer for that lane under first-match-wins. The rules evaluator also anchors every
+  pattern (`^(?:…)$`) to match Trino's full-match semantics (L-1).
+- **Lineage was truncated, not labelled** (M-1). `graphLineage` requires ALL of a dataset's models
+  to be in the asset graph, else it falls back to the registry graph — a half-parsed project used to
+  yield a graph missing a layer while still labelled `source: 'dbt'`. And the `source` label
+  (`dbt` / `registry`) is now carried through `core/lineage/unified.ts`, so MCP `get_lineage` says
+  which graph it returned (M-2).
+- **Observable source assets were never observed** (M-3, M-4). They were in no job and no schedule,
+  so every freshness check measured a data version that never arrived. The code location now builds
+  one observation job + schedule per domain per distinct cron, at the source's own cron, named from
+  a digest of the cron so it is stable; `enabled: false` keeps the asset (lineage needs the node)
+  and drops it from the schedule. The probe is bounded by `request_timeout` **and** a
+  `query_max_run_time` session property (`OS_OBSERVE_TIMEOUT_SECONDS`, default 60 s) — only the
+  latter makes Trino itself abandon a query (M-5).
+- **The parity harness checked the plan against itself** (M-6). `substitutionsFor` derived its
+  `ref()` map from the same plan the rewriter used, so a wrong lane mapping was consistently wrong
+  on both sides and passed. `ref()` now resolves to the FQN the OS actually wrote (the target of
+  that model's own recorded CTAS), and a model reached through `source()` instead of `ref()` — the
+  exact symptom of a lane mapping that disagrees with the CTAS — is reported as a mismatch. A
+  deliberately wrong mapping now fails; the correct one still passes.
+- **`profiles.yml` had no password field.** It now emits
+  `password: "{{ env_var('TRINO_PASSWORD', '') }}"` inside a
+  `{% if env_var('TRINO_AUTH_METHOD', 'none') != 'none' %}` guard — absent under `method: none`
+  (which `TrinoNoneCredentials` requires), present the moment an operator switches. `env_var()`
+  only; never a literal. `docs/components/trino.md` gains **"Enable real impersonation"**, a
+  numbered deploy procedure (authenticator, TLS or `allow-insecure-over-http`, the two credentials,
+  where `TRINO_PASSWORD` is mounted, the user alignment above), and states plainly that
+  `readPrincipalFor` maps a governed read to the caller's **first domain**, not to the person —
+  pre-existing, recorded as a follow-up.
+- Smaller: the `principal` in `os/sources.yml` and `os/schedules.yml` is validated against the OS
+  principal shape and a malformed one DROPS the entry rather than becoming a different identity
+  (L-2); `_wire_project`'s dead `pinned_env` parameter removed (L-3); `repo-sync.sh` neutralises the
+  shipped placeholder token BEFORE it logs `auth: bearer` (L-4); `os-ui/scripts/gate.sh` now runs
+  the parity test, both trino-rules tests, the kernel-events test, the components-health test and
+  the new chart check (M-7).
+
+### Fixed — Data engine rebuild, Phase B3 (loose ends from the B2 review)
+
+- **A collided domain's schedule can be addressed again.** `core/infra/dagster.ts` `sanitizeAll` is
+  a transcription of `os_projects.sanitize_all`, and both assert the same golden
+  (`images/extensions/dagster/tests/sanitize-collisions.golden.json`), so
+  `scheduleNameFor(domain, datasetId, allDomains)` computes the digest form the code location really
+  used instead of a plain form that does not exist. `sync-status-server.ts` passes the domains that
+  have a repo; without a list the plain form is still returned, which is right whenever nothing
+  collides.
+- **Cold start no longer grows with the number of domains.** Every run tag a domain's jobs carry
+  pins **only that domain's** commit (`os_projects.pinned_one`), so a run pod clones and
+  `dbt parse`s exactly what its own job needs.
+- **The repo-sync status server is bound and authenticated.** It binds `POD_IP` (downward API;
+  `127.0.0.1` when unset — fail-closed) instead of `0.0.0.0`, and requires a bearer when
+  `REPO_SYNC_STATUS_TOKEN`/`AGENT_RUNTIME_TOKEN` is set, refusing the shipped dev placeholder as a
+  credential.
+
+
+### Added — Agent engine rebuild, Phase A4: runs execute in a worker
+
+- **A run is a row, not a request.** Two tables in the `agent_runs` database (same one as the
+  LangGraph checkpointer; idempotent DDL at boot next to `PostgresSaver.setup()`):
+  `run_jobs` — one row per run (`run_id` primary key, `system_id`, `domain`, `requested_by`,
+  `principal_snapshot`, `input`, `kind start|resume`, `status queued|running|parked|done|failed`,
+  `locked_by`, `locked_at`, `attempts`) — and `run_events` — append-only, `(run_id, seq)` primary
+  key, carrying exactly the SSE vocabulary the Run panel consumes. Access is behind a port
+  (`tabs/agents/lib/engine/jobs.ts`) with a Postgres implementation
+  (`engine/jobs-postgres.ts`) and an in-memory one that is the contract the tests pin.
+- **`POST …/run` enqueues and tails.** It validates as before, mints the run id, files the job and
+  streams `run_events` from `seq = 0`; `GET …/run/stream?runId=&afterSeq=` tails the same table
+  from the client's cursor, replacing the in-process re-attach topic of A2 on the read path. Owner
+  checks unchanged (404 on a foreign run). The tail is a short poll of the `(run_id, seq)` primary
+  key — correct across pods and after any reconnect.
+- **`os-ui-worker` Deployment** (`charts/.../base/os-ui/os-ui-worker.yaml`, off by default behind
+  `osUI.worker.enabled`): the SAME image with a different command
+  (`node --experimental-strip-types worker/start.mjs` from `/app/src`), the SAME environment (the
+  os-ui env list is now one named template, `soa.osUI.env`, used by both workloads), plus
+  `AGENTS_WORKER=worker`. It claims one run at a time with `FOR UPDATE SKIP LOCKED`, heartbeats
+  `locked_at`, and on SIGTERM finishes the current superstep, checkpoints it and returns the run to
+  the queue (`terminationGracePeriodSeconds` defaults to 420 s, one superstep — not a whole run).
+  A lease nobody renews (`AGENTS_WORKER_LEASE_MS`, default 10 min) is re-queued **once** as a
+  resume and then failed, so no run sits `running` forever.
+- **`AGENTS_WORKER=inline|worker`, default `inline`:** the pod that files a job also executes it,
+  immediately, writing the same events — a kind install, a laptop and the whole test suite behave
+  exactly as before and need no worker process.
+- **One start door.** The run route, `build/scheduled.ts`, the MCP `run_agent_system` and
+  `resume_agent_run`, and the Governance `onDecided` hook all file jobs through
+  `tabs/agents/lib/build/run-jobs-server.ts`. A decision no longer drives the graph inside the
+  decider's request: it files a `resume` job, and `ApprovalResume.status` gains `queued`.
+- **The runner's identity is re-read live before every execution** (`engine/runner-identity.ts`):
+  the job's `principal_snapshot` is evidence, never authority. A runner who is gone or disabled,
+  downgraded below the role the run was filed under, or no longer in the run's domain gets a typed
+  refusal (`runner_unavailable` / `runner_role_changed` / `runner_domain_lost`) and the job fails
+  visibly. A role *upgrade* still runs — the yaml is re-governed against the owner's live role on
+  every run.
+- The image now carries two entrypoints: `node server.js` (the Next standalone server) and the
+  worker. The os-ui source tree is baked at `/app/src` beside the standalone `node_modules`,
+  because `output: 'standalone'` emits no entry for a process that serves no HTTP; the worker
+  therefore runs the TypeScript source with the tsconfig path aliases registered
+  (`worker/resolve-hook.mjs`) under Node type stripping — **the image's Node must be ≥ 22.6**.
+
+### Fixed — A4 review
+
+- **Security: a run id is no longer an authorisation.** `POST …/run { resume: true, runId }`
+  checked only that the caller could run the SYSTEM, then re-queued the run (overwriting
+  `requested_by` and the principal snapshot) and streamed its whole history before the engine's own
+  owner gate refused it — so a guessed run id replayed somebody else's run. One shared gate
+  (`engine/run-visibility.ts` `assertRunVisible`, 404 semantics, no 403) now runs BEFORE any side
+  effect in the run route, the re-attach stream and MCP `resume_agent_run`; and the store refuses a
+  resume whose `requested_by` differs from the row's — in Postgres as a predicate on the UPDATE, so
+  a refused resume writes nothing.
+- **Security: the `os-ui-worker` pod no longer holds admin credentials.** The chart's env list is
+  split into `soa.osUI.runEnv` (what a run needs) and `soa.osUI.adminEnv` (session + MCP token
+  signing keys, the Graph mail secret, the LiteLLM UI login and the LiteLLM **master** key);
+  `soa.osUI.env` is both, so the os-ui Deployment is unchanged, and the worker includes only the
+  run path. `scripts/check-worker-env.mjs` keeps it that way in the gate.
+- **A lost lease now aborts the run.** A worker whose heartbeat reported that the row was no longer
+  its own kept executing, and could settle a run another pod had re-claimed. The heartbeat is now a
+  watch that aborts the run in flight; the pod then neither settles nor re-queues it, and every
+  settle is lease-guarded in SQL (`AND locked_by=… AND status='running'`). A heartbeat that THROWS
+  is treated as a database blip, not a lost lease.
+- **`AGENTS_WORKER=inline` reaps and heartbeats.** `ensureRunJobsReady()` runs one `reapStale`
+  sweep at boot and an inline run heartbeats its own lease, so an os-ui pod killed mid-run is
+  picked up by the next pod instead of leaving a row `running` forever where no worker exists.
+- **An approval decided while the run was still parking is honoured.** The one-await window in
+  which the row is still `running` returned a 409 and stamped the approval `failed`; the resume
+  enqueue now retries briefly (5 × 200 ms) and only for a `running` row — a `queued` or missing row
+  still fails at once.
+- **A run killed before its first checkpoint restarts instead of failing.** The lease reaper
+  preserves the row's kind, so a reaped `start` is re-started (a resume of a thread with no
+  checkpoint is a 404); a SIGTERM requeue still continues from its checkpoint.
+- **The Run panel follows a long run instead of blaming the user.** The `queued { runId, afterSeq }`
+  frame both doors emit at their 240-second tail budget had no handler, so the panel said "please
+  run again" about a run that was still executing. The SSE reader and the re-attach decision moved
+  to `tabs/agents/lib/build/run-stream-client.ts` (pure, unit-tested) and the panel now re-attaches
+  from the server's cursor, up to 40 hops.
+- **A tail no longer hangs on a settled run** that produced no terminal event — unless it is
+  `parked`, which is settled but not finished (its stream is what shows the decision resuming it).
+- **A pod serves at most 64 run tails**, then answers `503` + `Retry-After: 5`: each tail polls
+  `run_events` every 400 ms against a `pg` pool of 6 shared with the checkpointer, and sign-in must
+  not lose to a wall of open Run panels.
+- **The worker's liveness probe means something.** It was `node -e 'process.exit(0)'` — a test of
+  whether a NEW process could start. The worker now touches `AGENTS_WORKER_ALIVE_FILE`
+  (`/tmp/worker-alive`, an `emptyDir`) every 15 s from an unref'd interval and the probe fails when
+  that file is older than 60 s or missing, which is what catches a wedged event loop.
+- **The worker's module aliases are read from `tsconfig.json`** instead of a hand-kept copy that
+  could drift from the compiler's — a drift that fails in the cluster, not in CI.
+- **`run_events` is documented as exempt from `LANGFUSE_REDACTION`**: the switch governs the trace,
+  while the panel's own event log is written in full and lives beside the checkpoints under the same
+  (absent) retention. `scripts/deploy.sh` also smoke-tests, in the built image, that the worker's
+  TypeScript source still loads under Node's type stripping; `check-structure.mjs` now requires the
+  explanatory header on `os-ui/worker/**` too.
+
+### Changed — A3 review follow-ups
+
+- `core/runtime/runtime.test.ts` MODEL-KEY now matches `litellmMasterKey|LITELLM_MASTER_KEY|
+  PROXY_MASTER_KEY` and asserts the EXACT expected file set (a file *dropping out* is as
+  interesting as a new one); `core/infra/tool-sso-litellm.ts` left the set — it never read the key.
+- `LANGFUSE_REDACTION=structure|strict` (`osUI.langfuseRedaction`): `strict` records tool-argument
+  **key names and sizes only** and drops the 160-character result preview. `structure` stays the
+  default. Documented in `docs/components/langfuse.md`, including that LiteLLM's nested generation
+  still ships the full prompt unless `turn_off_message_logging` is set at the gateway.
+- `tabs/agents/lib/engine/observe.ts`: the header no longer claims results are recorded as
+  character counts only (they carry a preview under `structure`), and a tool result whose error
+  code is `not_found` is now `error`, not `denied` — a missing object is not a governance decision.
+- Knowledge and Files retrieval bill the EMBEDDING to the acting principal
+  (`tabs/knowledge/lib/retrieve.ts`, `tabs/files/lib/retrieve.ts`); `core/runtime/complete.ts`
+  tags the caller's **active** domain, falling back to the first.
+- `core/infra/langfuse.ts` registers `process.once('SIGTERM', …shutdownAsync())` so a stopping pod
+  hands over its buffered spans.
+- `core/runtime/runtime.ts` drops the duplicate `trace_id` beside `existing_trace_id`.
+- `tabs/agents/lib/build/server.ts` no longer offers a `/traces` LIST link for a legacy run with no
+  run id (checklist A20: the link opens *that* trace or nothing).
+- `scripts/check-litellm-allowlist.mjs` also reads `default_fallbacks`,
+  `context_window_fallbacks` and `content_policy_fallbacks` — any of them can route to an alias the
+  scoped key never allowed.
+- `app/api/knowledge/workflows/[id]/publish/route.ts` reports `indexing: { ok, code, error }`
+  instead of swallowing a `GatewayRejectedError`: a publish whose embedding was rejected leaves the
+  unit unretrievable, and the caller has to be able to see that.
+
+### Added — Agent engine rebuild, Phase A3: one Langfuse trace per run; LiteLLM attribution and keys
+
+- **One trace per run, id = run id.** `tabs/agents/lib/engine/observe.ts` over the official
+  `langfuse` SDK (`core/infra/langfuse.ts`): nodes are spans, model calls generations with usage,
+  tool calls spans carrying the governance decision (`ok|held|denied|error|dedup|not_advertised`),
+  governance `trace()` events spans of the run trace; a resume continues the same trace. LiteLLM's
+  own Langfuse callback is nested into the run trace (`existing_trace_id` / `parent_observation_id`).
+  Message content is redacted to roles + character counts; the tool-call structure is kept.
+- **Deep link.** `LastRun.traceUrl` / the run report / MCP `run_agent_system`, `get_agent_run`,
+  `resume_agent_run` carry `<console>/trace/<runId>` — one trace, never the list.
+- **Leak closed.** `…/run/diagnostics` reads Langfuse **by trace id** (`?runId=`), else by the
+  caller's user id and a time window; `observationsQuery` refuses an unfiltered read (typed, tested).
+- **Judge as score.** `…/evaluate` writes the LLM-judge verdict as a Langfuse score `judge` on the
+  run trace (and now attributes the judge call to the caller's domain).
+- **Attribution.** `TAG_RUN = 'run:'`; every model call carries `user`, `domain:`, `agent:`, `tab:`,
+  `run:` — the engine (`agentic-graph-server.ts`, both callers), the assistant
+  (`core/runtime/complete.ts` reads the user's domain), the OS assistant (`core/runtime/agent-loop.ts`),
+  classify and both embedders. The gateway mirror buckets `run:` spend (`spend.byRun`).
+- **No master key on any inference path** (repo-wide `MODEL-KEY` test): classify, knowledge and files
+  embeddings go through `callerCredential`; seven admin surfaces moved onto `litellm-admin.ts` /
+  `litellm-write.ts` (`/api/gateway`, platform-admin `mcp-apis`, `providers`, `models/assistant`,
+  `models/[id]` + `tabs/admin/lib/model-remove.ts` with injected IO, Monitoring `cost.ts`).
+- **Per-agent key by reference.** A live Build persists `LastBuild.litellmKeyRef` (secret
+  reference, never the value); runs resolve it through `callerCredential`, else the shared agent key.
+- **Embeds: the fallback is explicit.** Timeout / transport / 5xx / dim mismatch → labelled
+  `offline-hash` / `mock`; any 4xx → typed `GatewayRejectedError` is thrown, nothing indexed.
+- **Chart (`litellm:` block).** `failure_callback: ["langfuse"]`; Valkey response cache
+  (`cache_params.host: valkey`, `mode: default_off` — only classify and the embedders opt in);
+  `scripts/check-litellm-allowlist.mjs` asserts `litellmAgentKey.models` ⊇ every config default,
+  `agentRuntime.*Model` and router fallback alias on both profiles (wired into `gate.sh`); the
+  STACKIT overlay gains the `litellmAgentKey.models` its fallbacks needed.
+- **A2 review absorbed.** Approval queue hydrated on the engine/MCP path before any read (M-A);
+  per-thread in-flight lock in `executeTeamRun` (`engine/run-lock.ts`, typed 409) (M-B); the
+  requester can never approve their own item (`canApprove`) (L-G); `ApprovalResume.status`
+  gains `parked` (L-F); a decision with no resume handler stamps `resume_hook_unregistered` (L-C);
+  file headers on the run/stream routes (L-A).
+- **Tests:** `engine/observe.test.ts` (one trace-create, tree shape, redaction, resume),
+  `engine/attribution.test.ts` (real engine run through `liteLlmCaller`), `core/infra/langfuse.test.ts`,
+  `engine/run-lock.test.ts`, MODEL-KEY repo-wide, embed 4xx/timeout, hydrate-after-restart,
+  self-approval, `byRun`.
+
+### Added — Agent engine rebuild, Phase A2: approvals as interrupts
+
+- **A held write pauses the run; the decision resumes it.** `tools_<id>` now computes the hold
+  decision for the whole batch first (`tabs/agents/lib/build/hold.ts`, the pure rule lifted out of
+  the executor), enqueues each held call **once** (`enqueueOnce`, idempotent on
+  `<threadId>:<callId>`) and parks the run on LangGraph `interrupt()` — nothing in the batch
+  executes before the decision. Approving executes the call **exactly once as the runner** (never
+  the approver) through the unchanged `grantedToolExecutor`; denying returns a typed
+  `{"error":{"code":"rejected","approvalId"}}` to the model, which continues.
+- **Approvals carry the thread** (`core/policy/approvals.ts`): `runId`, `threadId`, `interruptKey`,
+  `systemId`, `node`, `tool`, `args`, the runner's principal snapshot and the `resume` outcome.
+  `decide()` fires registered `onDecided` handlers; `decisionSettled(id)` awaits them. The Agents
+  tab registers the resume at boot (`engine/resume-boot.ts`) — the kernel never imports a tab.
+  The resume (`engine/resume.ts`) re-reads the runner's role **live** and refuses, typed, when the
+  runner is disabled, lost the role or left the domain. `applyEffect` performs no approver-side
+  effect for a run approval.
+- **Run route**: additive SSE events `approval-required { approvalId, tool, node }` and (on the
+  re-attach stream) `resumed { approvalId, decision }`; the `done` body gains `parked` and
+  `heldApprovals`. New `GET …/run/stream?runId=` re-attaches to a parked run's events
+  (owner-checked). The Run panel shows the parked state, re-attaches automatically, and renders
+  compile `warnings` + the checkpointer kind.
+- **Governance inbox** card for an agent-run approval shows system · agent · tool · runner with
+  "Open run ↗" and the resume outcome; both decide doors (inbox route, MCP `decide_approval`)
+  await and return `resume`.
+- **MCP**: `get_agent_run { runId }` (state, path, held approvals, who can decide) and
+  `resume_agent_run { runId }` (restart recovery); `run_agent_system` returns `parked` /
+  `heldApprovals`; `decide_approval` resumes the thread.
+- **Tests (P3)**: `tabs/agents/lib/engine/approvals.test.ts` (a–e, H1, M4, M5),
+  `resume.test.ts` (f), `run-events.test.ts`, `core/policy/approvals-hook.test.ts`.
+
+### Fixed — A1 review (absorbed in A2)
+
+- **H1/L5 (security)**: run ids are `crypto.randomUUID()` from `core/kernel/run-id.ts` (the store
+  re-exports); the first superstep stamps `state.owner = { systemId, userId, domain }` and every
+  resume (`POST …/run { resume }`, `resume_agent_run`, the decision hook) verifies system **and**
+  user — a foreign thread is a 404, never confirming it exists.
+- **M4**: resuming a finished thread is a typed `RunAlreadyFinishedError` (409), not a silent
+  no-op that rewrote `LastRun`.
+- **M5**: `tools_<id>` executes **one call per superstep** (checkpointed between executions), so a
+  crash mid-batch re-executes at most the call in flight — tested.
+- **M2**: every agent visit costs one budget step; an unguarded handoff cycle is a compile warning.
+- **M1**: the Run panel renders `warnings` and the checkpointer kind. **M3**: `RunCheckpoint` /
+  `LastRun` record the checkpointer; Resume is offered only for `postgres`.
+- **L1**: `when` expressions are capped at 512 chars (typed syntax error). **L2**:
+  `node-started.total` never reads below `index`. **L3/L4**: single-replica assumption and
+  checkpoint retention documented.
+
+### Added — Data products in git, Phase B2: Dagster is the scheduler, the OS reads Dagster (flag `DATA_PROJECT_GIT`, default off **at the time of B2** — B4 flipped it on)
+
+- **The `sovereign` Dagster code location** (`images/extensions/dagster/repo.py` + the pure
+  `os_projects.py`): one location for every domain. Per validated checkout
+  `/repos-checkout/<domain>/current/` it builds `@dbt_assets` keyed `[<domain>, <node>]`
+  (`DagsterDbtTranslator` prefix, group = domain), a `<domain>__all` job the OS launches with an
+  explicit asset subset, one job + UTC `ScheduleDefinition` per `os/schedules.yml` entry
+  (`cron_schedule`, `execution_timezone="UTC"`, selection `<model>+`, `default_status` from
+  `enabled`, tags `os/dataset` · `os/principal` · `os/domain` · `os/schedule` · `os/commit` and
+  `dagster-k8s/config` setting `OS_PRINCIPAL`), and a weekly (Sun 03:00 UTC) Iceberg maintenance job
+  per schema running the generated `os_maintenance` macro (`optimize` + `expire_snapshots`) as the
+  schema's owning principal. `hello_sovereign` stays as the smoke asset. A run-failure sensor
+  (`os_quarantine`) pauses a schedule after `OS_QUARANTINE_THRESHOLD` (10 — the OS's own threshold)
+  consecutive failures, replacing `isQuarantined`; a second sensor (`os_principals`) pauses the
+  schedules of a principal the OS reports inactive. A domain that fails to load is logged and
+  skipped — one broken repository can never take the location down. A K8s run pod, whose
+  `/repos-checkout` starts empty, clones and `dbt parse`s the commits named in `OS_PINNED_COMMITS`.
+- **Repo index** `GET /api/data/projects` → `{domains:[{name, head, principals:[{id, active}]}]}`
+  (`tabs/data/lib/dbt/read.ts` `projectIndex`, `core/infra/git-store.ts` `listRepos`). The git
+  protocol cannot enumerate repositories (deviation B1-8): `repo-sync` and the inactive-principal
+  sensor poll this with the cluster-internal runtime bearer; a signed-in user sees only their domains.
+- **Dagster client** `os-ui/core/infra/dagster.ts` — the ONE typed GraphQL client, `Fetched<T>` result
+  style like `litellm-admin.ts`, hard timeout, injectable `fetch`, nothing thrown and nothing logged:
+  `launchRun`, `run`, `runsForDataset`, `recentOsRuns`, `assetChecks`, `allAssetChecks`,
+  `latestMaterialization`, `assetGraph`, `reloadLocation`, `nextTick`. Config `DAGSTER_LOCATION`
+  (`sovereign`), `DAGSTER_REPOSITORY` (`__repository__`), `DAGSTER_LAUNCH_WAIT_MS`.
+- **Launch after commit** (`tabs/data/lib/dbt/launch.ts`, `asset-keys.ts`): Build, `transform_silver`,
+  `build_gold_join` and `sync_dataset_now` commit, wait (bounded) for the location to expose the
+  dataset's assets, then `launchRun` for exactly that subset with the runner's principal as
+  `OS_PRINCIPAL` and `OS_PINNED_COMMITS` pinning the commit. `{commit, dagsterRunId}` — or an honest
+  `launchError` — is recorded on the version (`setVersionRun`). A sync **retry** re-uses the failed
+  run's `os/batch_id`, which `repo.py` passes as `--vars os_batch_id` so `delete+insert` re-covers
+  exactly that slice.
+- **The OS stops being its own ledger** (checklist D9). `tabs/data/lib/sync-status-server.ts`
+  (`syncStatusFor`, `latestSyncSignals`) reads `runsForDataset` + `nextTick`;
+  `tabs/data/lib/dq-status-server.ts` (`latestDqRun`, `dqTrend`, `latestDqRuns`) reads `assetChecks`
+  — one dbt test is one asset check, with `dagster_dbt/failed_row_count` as the violation count;
+  Monitoring's pipeline lens reads Dagster runs by their `os/*` tags. The Data tab's sync panel and
+  `get_sync_status` now call one shared function, so route and MCP cannot drift. `quarantined` means
+  the schedule is STOPPED in Dagster while the OS config says enabled. With the flag on no
+  `os-sync-runs` or `os-dq-results` row is written for a Dagster-executed run, `set_dataset_sync`
+  provisions no CronJob (and removes a pre-B2 one), and `/api/data/sync-due` + `/api/data/dq/run-all`
+  stand down so nothing fires twice. **The flag-off path is unchanged** (deletion is B3/B4).
+- **Image and chart:** `sovereign-os/dagster:0.3.0` (Postgres drivers and `git` confirmed present;
+  `os_projects.py` added). The Dagster user-code deployment is renamed `example-user-code` →
+  **`sovereign`**, because the deployment name *is* the code location name;
+  `DAGSTER_RELOAD_LOCATION=sovereign`, `REPO_SYNC_INDEX_URL`/`OS_INDEX_URL` → os-ui,
+  `OS_QUARANTINE_THRESHOLD=10`, and the runtime bearer injected from the `agent-runtime-token` Secret.
+  `repo-sync.sh` now discovers domains from the index, emits `target/manifest.json` via `dbt parse`
+  and calls `reloadRepositoryLocation` for real.
+
+### Fixed — B2 review findings (engine rebuild)
+
+- **Run pods can reach the git daemon.** Launched Dagster run pods carried no
+  `component: user-deployments` label, the only one the `os-repos` NetworkPolicy admits to port
+  9418 — so a scheduled run could not clone its pinned commit. The run launcher now stamps it on
+  every run pod (`dagster.runLauncher.config.k8sRunLauncher.runK8sConfig.podTemplateSpecMetadata`),
+  and a test asserts the values file and the NetworkPolicy template still name the same label.
+- **`accepted_values` can no longer carry SQL or Jinja.** dbt renders each value as `'{{ value }}'`
+  with no escaping, into a test executed as the dataset's owner. `addCheck` now refuses a value
+  that is empty, over 200 characters, or carries a quote, backslash, backtick, control character or
+  Jinja delimiter, and the generator records such a check as an intention — as a whole, never as a
+  test with the offending values quietly dropped.
+- **`dbt parse` no longer inherits the pod's environment, and authored text is no longer a
+  template.** The parse allowlist lives in one place (`os_projects.PARSE_ENV_*` / `dbt_parse`),
+  which both the run-pod bootstrap and `repo-sync.sh` use, so `AGENT_RUNTIME_TOKEN` and the
+  Postgres password are provably out of reach of a `{{ env_var(...) }}` in a repository. Authored
+  dataset names, descriptions and column names now pass through `stripJinja` before they are
+  emitted — dbt renders model SQL as Jinja too, so even a `--` header comment was template input.
+- **A run Job can complete.** The Dagster subchart copies the `repo-sync` sidecar into every run
+  pod, and a Job only finishes once every container exits. repo-sync now reads `POD_NAME` and exits
+  0 in a `dagster-run-*` pod; the inert (flag-off) branch idles only where it can prove it is the
+  code-server pod.
+- **One bad domain no longer takes the whole code location down.** `sanitize` mapped `-` and `.` to
+  `_`, so `sales-eu` and `sales.eu` collapsed onto one Dagster name and `Definitions(...)` raised
+  for every domain. Names are now collision-free by a deterministic digest, and the workspace is
+  built with per-domain gating (one call on the happy path, per-domain probing only on failure).
+- **`GET /api/data/projects` is fail-closed.** It refuses the shared runtime bearer when
+  `AGENT_RUNTIME_TOKEN` is unset or still the shipped dev default under `NODE_ENV=production`,
+  instead of handing the un-narrowed cross-domain repository index to anyone holding a value from
+  this repository. A signed-in user is still served, narrowed to their domains.
+- **"Last sync" is no longer under-reported.** The Monitoring lists asked for the newest 200 runs of
+  the whole instance and grouped them by tag, so a dataset outside that window read as "never
+  synced"; the read is now one tag-filtered query per dataset, and a Dagster outage is reported as
+  `unknown` rather than "never".
+- **A quality verdict says who produced it.** `DqRunRecord.source` now reaches the monitoring
+  overview and dataset-detail payloads and is rendered as a small "dbt test" / "OS probe" badge in
+  the Data and Monitoring tabs; a record from before the distinction claims nothing.
+- **Flag-off parity restored** for the ledger "last sync" value (`startedAt`, as before B2).
+- **Quarantine counts terminal runs only** (an in-flight run used to truncate the window and leave
+  a dead schedule firing), a repository's `timezone` is honoured when `zoneinfo` knows it and falls
+  back to UTC with a log when it does not, and the `agent-runtime-token` Secret now renders from its
+  own template whenever Dagster, the data-project git flag or the agent runtime is enabled — so
+  disabling the agent runtime no longer stops the Dagster user-code pod from starting.
+
+### Fixed — B1 review findings (engine rebuild)
+
+- **SQL injection into generated dbt tests.** A quality rule's column is interpolated **unquoted**
+  into the `schema.yml` test SQL that `dbt test` executes as the impersonated principal.
+  `store.addCheck` now refuses any column that is not `/^[A-Za-z_][A-Za-z0-9_]*$/`, and the
+  generator routes a non-matching column — plus an empty `accepted_values` and a bound-less `range` —
+  to `meta.os_intentions` instead of `data_tests`. Both ends are tested.
+- **Free-text model bodies are no longer Jinja.** `add_dataset_version`'s authored `body` used to
+  become a dbt model, so `{{ … }}` in it was rendered at `dbt parse`. The store now records
+  *provenance* (`compiled: true`, set only by the transform / gold-join routes and
+  `transform_silver` / `build_gold_join`); only compiled bodies become models, and a layer built out
+  of band is rendered as a dbt **source** (`meta.os_built: out-of-band`) that dbt reads, tests and
+  never rewrites.
+- **Commit attribution under concurrent writes.** The commit hook now captures
+  `datasetsForProject(domain)` and the object labels **synchronously** in the writer's turn and
+  serialises commits per domain with a promise chain, so two rapid writes produce two commits each
+  carrying its own author, action and state.
+- `core/infra/git-store.ts` accepts a `ref` only as `main`, `HEAD` or a hex sha; `mirror.ts` rejects
+  a URL with embedded credentials (the token must be a Secret reference); `repo-sync.sh` serves
+  `status.json` and nothing else; commits carry an `OS-Actor: <id>` trailer; the batch-idempotency
+  comment in the generated sync model now says what is true (a plain re-run duplicates the lookback
+  rows; only a retry passing the same `os_batch_id` is idempotent).
+- **Admin Console** reported Dagster `v1.9.1`; the image pins **1.13.11**.
+- **Files connector** fired `launchPipelineExecution` for a job no code location defines and reported
+  `live` from the HTTP status; it is now a logged no-op with a TODO for the B3/B4 external-source
+  asset. The in-process sync was and remains the real executor.
+
+
+### Added — Data products in git, Phase B1: generated dbt project per domain + the one commit path (flag `DATA_PROJECT_GIT`, default off **at the time of B1** — B4 flipped it on)
+
+- **Git store** (`os-ui/core/infra/git-store.ts`, isomorphic-git 1.44.13, MIT): one bare repository
+  per domain under `OS_REPOS_DIR` (`/repos`, PVC `os-repos`). `commitTree` writes the whole desired
+  tree and commits **only when the tree hash changed**; `log`, `readBlob`, `listTree`, `archive`
+  (dependency-free ustar writer, `core/infra/tar.ts`), `push` to a mirror (token from a Secret
+  reference, never logged, scrubbed from errors). Author = acting user, committer `Sovereign OS`,
+  message `data(<domain>): <action> <object> — via ui:<route>|mcp:<tool>` with trailers
+  `OS-Action`, `OS-Object`, `OS-Surface`, `OS-Request-Id` (+ `OS-Author-Email: synthesized` when the
+  user has no e-mail). Per-repo in-process mutex.
+- **dbt project generator** (`os-ui/tabs/data/lib/dbt/`): `dbt_project.yml`, `profiles.yml`
+  (`env_var()` only, Trino target, `impersonation_user: env_var('OS_PRINCIPAL')`), the
+  `generate_schema_name` macro, generic tests `range` / `not_blank` (predicates from `dq.ts`),
+  `models/sources.yml` (Bronze + federated sources, `freshness` on `_loaded_at`), Silver/Gold models
+  whose bodies are the recorded `compileSilver`/`compileGoldJoin` SELECTs with FQNs → `ref()` /
+  `source()`, personal-lane models under `models/personal/<uid>/`, sync landings as incremental
+  models (`delete+insert` on `_batch_id` + lookback; `merge` on keys; `table` for full-refresh),
+  `schema.yml` tests from quality rules, `os/schedules.yml`, `os/external.yml` (Kafka / API-batch).
+  Byte-stable; golden tests for three shapes; a pure test asserts a composition's body equals
+  today's `compileGoldJoin` SELECT after FQN substitution.
+- **Every data writer commits** (behind the flag): `store.ts` emits a `ProjectChange` from its one
+  `persist()` and from every writer that bypasses it (`tabs/data/lib/project-events.ts`);
+  `tabs/data/lib/dbt/commit.ts` subscribes at boot (`instrumentation.ts`). `commit.test.ts`
+  enumerates the store's exports and asserts each of the 31 mutators reaches the commit path with the
+  flag on and none does with it off. Request surface via `core/infra/request-surface.ts`: `withRoute`
+  sets `ui:<route>`, the data MCP tools set `mcp:<tool>`.
+- **Read access:** `GET /api/data/projects/<domain>` (`{head, tree, log}`), `…/blob?ref&path`,
+  `…/export?ref` (tar) — domain members only; admin
+  `PUT /api/platform-admin/data-projects/<domain>/mirror` (URL + token Secret reference; push after
+  each changed commit reports, never blocks).
+- **Chart** (rendered only with `osUI.dataProjectGit.enabled`): PVC `os-repos` mounted at `/repos`
+  in os-ui, env `DATA_PROJECT_GIT=true` / `OS_REPOS_DIR=/repos`, `git-daemon` sidecar
+  (`alpine/git`, read-only, port 9418), Service `os-repos`, NetworkPolicy admitting only the Dagster
+  user-code pod to 9418 (port 3000 stays open as before). Dagster user-code Deployment gains the
+  `repo-sync` sidecar (`images/extensions/dagster/repo-sync.sh`; inert until `REPO_SYNC_ENABLED`),
+  the image gains `git`. `TRINO_SCHEMA` drift (`analytics` → `sales`) fixed.
+- **Config:** `DATA_PROJECT_GIT`, `OS_REPOS_DIR`, `DATA_PROJECT_MIRRORS_INDEX`.
+- **Docs:** `docs/components/dbt.md` and `dagster.md` rewritten honestly (demo project today;
+  generated project per domain with the flag; parsed by the sidecar, run in B2/B3);
+  `os-ui/tabs/data/README.md`; `os-ui/ARCHITECTURE.md` "A data product is a dbt project in a git repo
+  the OS owns"; licence rows for isomorphic-git (`THIRD-PARTY-LICENSES.md`, `licenses/components.tsv`,
+  `licenses/notices/os-ui-git-store-npm-NOTICE.txt`).
+
+### Added — Agent engine rebuild, Phase A1: real graph, in-request, checkpointed
+
+- **`buildGraph`** (`os-ui/tabs/agents/lib/engine/build-graph.ts`): the unchanged system.yaml IR
+  becomes a real `@langchain/langgraph` `StateGraph`. Typed state via `Annotation.Root` —
+  `messages` in the OpenAI wire shape (append), every `state.channels` entry with its declared
+  reducer, plus `task`/`current`/`handoffs`/`nodeRuns`/`routes`/`budget`/`held`/`final`. Four nodes
+  per agent (`plan_`, `act_`, `tools_`, `route_`); act → tools is a conditional edge. The supervisor
+  **decides** through a mandatory `route` tool (text fallback `NEXT: <member>`) and
+  `addConditionalEdges` to members ∪ END. Handoffs return `Command({ goto })` when their `when`
+  guard is true. END on supervisor END / all guards false / team step budget (graceful);
+  `recursionLimit` derived from the budget. Disabled agents pruned; unmapped legacy tools are a
+  compile error.
+- **Node-level tool narrowing is now enforced at execution** (A0 finding 1): `tools_<id>` lets
+  only the tools the node is advertised reach `grantedToolExecutor`; anything else is a typed
+  `not_found` that never executes.
+- **`when` guard language** (`engine/when.ts`): `true|false`, string literals, `state.<channel>`,
+  bare identifiers (= channel), `==`/`!=`, `&&`/`||`, parentheses; hand-written parser, no `eval`.
+  A guard over a channel nothing sets is a compile **warning** on the run report.
+- **Checkpointing + resume**: `engine/checkpointer.ts` — `PostgresSaver` on
+  `AGENT_RUNS_DATABASE_URL` (new `agent_runs` database in the chart's `postgres.extraDatabases`,
+  wired into the os-ui Deployment like LiteLLM's; `setup()` runs idempotently at boot) or
+  `MemorySaver` when unset, reported as `checkpointer: 'memory'`. **Thread id = run id**
+  (`newRunId`, minted in the run route). `POST …/run { resume: true, runId }` continues an
+  interrupted thread; the Run panel replaces "re-run to continue" with **Resume**. `LastRun`
+  gains `runId`, `engine`, `checkpointer`.
+- `runOsTeam` takes the engine branch for the route, scheduled runs and the MCP
+  `run_agent_system` (which now returns `runId`). SSE events are unchanged (`node-started`,
+  `tool-step`, `node-completed`, `done`, `error`), emitted from graph nodes through the stream
+  writer.
+- **Parity**: every A0 `todo` flipped — P1 green under `langgraph` for all 13 fixtures (supervisor
+  fixtures driven by the scripted model's declared-order `route` rule, `SCRIPT_ID`
+  `first-tool-then-final@2`), HANDOFF-GUARD green (`when: state.findings_ready` no longer visits
+  `publisher`), **P2** (abort after node 1, resume on the same thread, identical path / tools /
+  final text). Fixtures record `outcome: ok|held|error` instead of `isError`.
+- Docs: `os-ui/ARCHITECTURE.md` → "How a system.yaml becomes a StateGraph".
+
+### Added — Agent engine rebuild, Phase A0: dependencies, parity harness, engine flag
+
+- **Dependencies** (all MIT, exact-pinned, `serverExternalPackages`): `@langchain/langgraph`
+  1.7.4, `@langchain/langgraph-checkpoint-postgres` 1.1.3, `@langchain/core` 1.4.0, `pg` 8.23.1,
+  `langfuse` 3.39.2. Recorded in `THIRD-PARTY-LICENSES.md`, `licenses/components.tsv` and
+  `licenses/notices/os-ui-agent-engine-npm-NOTICE.txt`. `langfuse-langchain` was **not** added
+  (peer-incompatible with `@langchain/core@1`). Nothing uses the new packages yet.
+- **Record/replay model caller** `core/runtime/llm-replay.ts`: `recordingCaller` captures each
+  model exchange, `replayCaller` serves them in order and fails loudly on a model/tool-set
+  mismatch or an exhausted transcript — so two engines see identical model outputs.
+- **Golden fixtures** `tabs/agents/lib/engine/fixtures/*.json` (13): the four `templates.ts`
+  starters, the five `agent-templates.ts` roles, the Software Delivery Team and three canonical
+  shapes (single agent + read tool; supervisor with two members; guarded handoff with a held
+  write), each with its yaml, a deterministic scripted-model transcript and the current walker's
+  path / `(tool, args)` sequence / final text. `fixtures.test.ts` proves they are reproducible;
+  **parity test P1** (`parity.test.ts`) replays them through the walker and carries one `todo`
+  per fixture for the LangGraph engine (Phase A1), plus the HANDOFF-GUARD `todo` (the walker
+  visits a guarded target even when `when` is false).
+- **Engine flag** `AGENTS_ENGINE=walker|langgraph` (default `walker`) → `config.agentsEngine`;
+  per-system opt-out `runtime: walker` in `system.yaml`; `selectEngine` in
+  `tabs/agents/lib/engine/select.ts`, read by the run route, scheduled runs and the MCP tool
+  `run_agent_system`. Run reports now carry `engine`. `langgraph` is accepted but still runs
+  the walker until A1.
+
+### Fixed
+
+- **An agent with an explicit empty `tools: []` is now advertised NO tools.** `grantedToolSpecs`
+  treated an empty per-agent list like an absent one ("inherit every system grant"), so the
+  Software Delivery Team's `orchestrator` and `communication` agents — declared tool-less — were
+  handed `create_software`, `commit`, … The golden fixtures exposed it; `undefined` still inherits.
+- **Seeded demo systems grant MCP-registered tools.** `seed/campaign` and `seed/ecommerce` used the
+  legacy `knowledge_search` / `metrics_query` / `predict` vocabulary, which the A1 compile rule
+  rejects; they now grant `search_knowledge`, `list_metrics` + `query_metric`, `query_data`
+  (there is no governed `predict` tool). A test keeps them that way.
+
 ### Changed — Admin becomes Platform: one route, six tabs, ten surfaces rehomed
 
 - **The tab label `Admin` is now `Platform`**, and `/platform` is **one route

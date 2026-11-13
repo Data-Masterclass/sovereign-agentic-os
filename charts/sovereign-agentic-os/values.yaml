@@ -146,6 +146,11 @@ postgres:
       secretName: postgres-polaris-credentials
       createdb: false
       localPassword: polaris-local-dev
+    - name: agent_runs        # LangGraph checkpoints of agent runs (os-ui engine; thread id = run id)
+      username: agent_runs
+      secretName: postgres-agent-runs-credentials
+      createdb: false
+      localPassword: agent-runs-local-dev
   # CLOUD-DURABLE CNPG extras (engine:cnpg ONLY).
   cnpg:
     # Durable zonal CSI storage class for the Postgres data volume (a zonal disk
@@ -463,6 +468,15 @@ litellm:
     SERVER_ROOT_PATH: "/tools/litellm"
     # DURABLE admin-registered models.
     STORE_MODEL_IN_DB: "true"
+  # A3: the Valkey password for the response cache (`cache_params.password` above reads it
+  # as os.environ/REDIS_PASSWORD). Same Secret Langfuse uses (local: chart-created;
+  # STACKIT: external) — one Valkey credential, not two.
+  extraEnvVars:
+    - name: REDIS_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: valkey-credentials
+          key: password
   resources:
     # This proxy was OOMKilled during the all-at-once boot.
     requests: { cpu: 100m, memory: 1Gi }
@@ -505,7 +519,23 @@ litellm:
       # which is a duplicate reasoning route to fail over to.
     litellm_settings:
       success_callback: ["langfuse"]          # gateway-level tracing to Langfuse
+      # A3 (checklist A30): a REJECTED or failed call is observable too — it lands in
+      # Langfuse as a failed generation (inside the run trace when the OS passed one).
+      failure_callback: ["langfuse"]
       drop_params: true
+      # A3: response cache on the bundled Valkey, OPT-IN PER REQUEST. `mode: default_off`
+      # means nothing is cached unless the caller sends `cache: {"use-cache": true}` —
+      # the OS does so only on its deterministic paths (classify at temperature 0, both
+      # embedders). Agent runs never opt in, so a run is never served a stale answer.
+      cache: true
+      cache_params:
+        type: redis
+        host: valkey                           # the chart's Valkey Service (templates/base/valkey)
+        port: 6379
+        password: os.environ/REDIS_PASSWORD    # extraEnvVars below, from valkey-credentials
+        mode: default_off
+        ttl: 86400                             # 24h — embeddings/classifications are stable
+        supported_call_types: ["acompletion", "completion", "aembedding", "embedding"]
     general_settings:
       master_key: os.environ/PROXY_MASTER_KEY
       # Persist admin-registered models (via /model/new)
@@ -580,23 +610,25 @@ retrieval:
   knnDimension: 384
 
 # MCP test agent — proves the OS's own real, governed MCP registry (/api/mcp)
-# Agent runtime — the live-execution backend for the Agents tab (Phase 4).
+# Agent schedules + the shared SERVICE BEARER the OS's own CronJobs present to os-ui.
+#
+# A5 (engine rebuild, 2026-11-13) deleted the Python `agent-runtime` Deployment this block
+# was named after — agent systems now execute as a real LangGraph StateGraph inside os-ui,
+# as the signed-in user. Gone with it: `enabled`, `image`, `replicas`, `resources` and the
+# three model aliases (`chatModel` / `reasoningModel` / `executionModel` — os-ui's own
+# LITELLM_*_MODEL defaults are the live ones, and `scripts/check-litellm-allowlist.mjs`
+# checks those).
+#
+# What is left:
+#   • token     — the shared bearer os-ui mounts as AGENT_RUNTIME_TOKEN and validates on its
+#                 service paths (scheduled runs, data-sync, catalog-refresh); the Dagster
+#                 sidecar reads the same Secret. Renamed once the data side owns it.
+#   • schedules — declarative agent-schedule CronJobs (empty by default; the Agents tab
+#                 provisions schedules itself at runtime).
 agentRuntime:
-  enabled: true
-  image:
-    repository: sovereign-os/agent-runtime   # built locally, loaded into kind
-    tag: "0.1.2"   # 0.1.2 = capture LiteLLM token usage per run (Monitoring truth)
-  chatModel: sovereign-mock
-  # Two-tier model strategy (stack-decisions): EVERY agent PLANS with the reasoning
-  # tier, then HANDS OFF execution to the execution tier.
-  reasoningModel: sovereign-reasoning   # PLAN phase of every agent
-  executionModel: sovereign-default     # EXECUTE phase of every agent
-  # Shared runtime <-> OS UI token.
   token: "agent-runtime-local-dev-token"
-  resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { cpu: 500m, memory: 512Mi }
   # CronJob-per-schedule entries (empty by default -> no CronJob renders).
+  # Each: { name, systemId, cron, prompt }
   schedules: []
 
 # =============================================================================
@@ -721,15 +753,33 @@ dagster:
     postgresqlHost: pg-rw
     postgresqlUsername: dagster
     postgresqlDatabase: dagster
+  # ── Launched RUN pods (engine rebuild B2, review B2-review-H1).
+  # The subchart derives each code location's container context from its deployment entry, but the
+  # ONLY label it puts on a run pod is none: `component: user-deployments` lives on the CODE-SERVER
+  # Deployment's pod template and nowhere else. Run pods must reach the read-only git daemon
+  # (`git://os-repos`, port 9418) to clone their pinned commit, and the one ingress rule that opens
+  # 9418 selects exactly that label (templates/base/os-ui/os-repos.yaml) — so the run launcher
+  # stamps it on every run pod. Keep the `component` value IN STEP with that NetworkPolicy;
+  # images/extensions/dagster/tests/test_os_projects.py (ChartContract) asserts they agree.
+  runLauncher:
+    config:
+      k8sRunLauncher:
+        runK8sConfig:
+          podTemplateSpecMetadata:
+            labels:
+              component: user-deployments
+              app.kubernetes.io/part-of: sovereign-os
   # Official dagster/* images are amd64-only; we use an arm64-native image we
   # build (sovereign-os/dagster)
   dagster-user-deployments:
     enabled: true
     deployments:
-      - name: example-user-code
+      # The code location NAME is this deployment's name: `sovereign` is what
+      # `reloadRepositoryLocation` and the OS's `DAGSTER_LOCATION` address (engine rebuild B2).
+      - name: sovereign
         image:
           repository: sovereign-os/dagster
-          tag: "0.2.0"
+          tag: "0.3.0"
           pullPolicy: IfNotPresent
         dagsterApiGrpcArgs:
           - "--python-file"
@@ -740,17 +790,108 @@ dagster:
         env:
           - { name: TRINO_HOST, value: trino }
           - { name: TRINO_PORT, value: "8080" }
-          - { name: TRINO_USER, value: dbt-sales }
+          # The Trino user dbt-trino CONNECTS as (profiles.yml `user`), before
+          # `impersonation_user: OS_PRINCIPAL` sets the governed session identity. It MUST equal
+          # `trino.accessControl.serviceUser` below, because that is the only `original_user` the
+          # generated `rules.json` lets become an OS principal — `dbt-sales` (the old value) is
+          # denied by its own impersonation rule the moment Trino authenticates clients.
+          # A subchart's values cannot be templated from here, so the equality is asserted by
+          # `scripts/check-trino-rules-chart.mjs` (run from os-ui/scripts/gate.sh). B3-review-H-5.
+          - { name: TRINO_USER, value: dbt-runner }
           - { name: TRINO_CATALOG, value: iceberg }
-          - { name: TRINO_SCHEMA, value: analytics }
+          # The domain schema the marts land in — the SAME value as dbt.trino.schema and
+          # marts.schema (`sales`); the old `analytics` literal here had drifted from them.
+          - { name: TRINO_SCHEMA, value: sales }
+          # repo-sync settings the USER-CODE container sees. The sidecar that actually runs the
+          # script carries its own copy under `sidecarContainers` below — flip BOTH to opt out.
+          - { name: REPO_SYNC_ENABLED, value: "true" }
+          - { name: REPO_SYNC_DOMAINS, value: "" }          # extra domains; the index discovers the rest
+          - { name: REPO_SYNC_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
+          - { name: REPO_SYNC_GIT_BASE, value: "git://os-repos" }
+          - { name: REPO_SYNC_CHECKOUT, value: "/repos-checkout" }
+          - { name: REPO_SYNC_INTERVAL, value: "15" }
+          - { name: REPO_SYNC_STATUS_PORT, value: "8089" }
+          - { name: DAGSTER_RELOAD_LOCATION, value: "sovereign" }
+          - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
+          # The `os_principals` sensor reads the OS repo index to pause a deactivated owner's
+          # schedules (concept §6); unset ⇒ the sensor skips with that reason, never guesses.
+          - { name: OS_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
+          # Consecutive failures after which the failure sensor pauses a schedule — the OS's
+          # own QUARANTINE_THRESHOLD (tabs/data/lib/sync-runs.ts).
+          - { name: OS_QUARANTINE_THRESHOLD, value: "10" }
+          # The shared runtime bearer the OS index route accepts (cluster-internal, the same
+          # contract as the sync trigger). A Secret reference — never a literal, and never
+          # written into a repository or a dbt profile.
+          - name: AGENT_RUNTIME_TOKEN
+            valueFrom:
+              secretKeyRef: { name: agent-runtime-token, key: token }
         resources:
           requests: { cpu: 50m, memory: 384Mi }
           limits: { cpu: "1", memory: 1Gi }   # headroom for dbt materializations
+        # ── Data products in git (engine rebuild B1/B2): the validated-commit checkout the
+        # `sovereign` code location loads from. `repo-sync` (same image, `git` added) discovers
+        # domains from the OS index, fetches git://os-repos/<domain>.git, runs `dbt parse` in a
+        # worktree, repoints /repos-checkout/<domain>/current ONLY on success and then calls
+        # reloadRepositoryLocation (images/extensions/dagster/repo-sync.sh).
+        # NOTE (corrected — review B2-review-M1): includeConfigInLaunchedRuns propagates
+        # volumes/volumeMounts/env AND `sidecarContainers` into run pods — the subchart renders the
+        # latter as `run_k8s_config.pod_spec_config.containers`. A K8s Job only completes once EVERY
+        # container exits, so the repo-sync copy in a run pod MUST exit: it reads POD_NAME (downward
+        # API, below) and returns 0 in a `dagster-run-*` pod. The sidecar cannot be dropped here —
+        # the code-server pod is the only place it can maintain the shared `current` checkout.
+        # A run pod's emptyDir starts EMPTY and `os_projects.ensure_checkout` clones the commits
+        # named in the run's OS_PINNED_COMMITS env before building definitions.
+        volumes:
+          - name: repos-checkout
+            emptyDir: {}
+        volumeMounts:
+          - name: repos-checkout
+            mountPath: /repos-checkout
+        sidecarContainers:
+          - name: repo-sync
+            image: sovereign-os/dagster:0.3.0
+            imagePullPolicy: IfNotPresent
+            command: ["/bin/sh", "/opt/dagster/app/repo-sync.sh"]
+            env:
+              # Which pod am I in? A Dagster run pod is `dagster-run-<run id>-…`; repo-sync exits 0
+              # there so the run Job can complete (review B2-review-M1).
+              - name: POD_NAME
+                valueFrom:
+                  fieldRef: { fieldPath: metadata.name }
+              # The status server binds THIS address, not 0.0.0.0 (review B2-review-L5, closed in
+              # B3): reachable through the pod's own IP only. Unset would mean 127.0.0.1.
+              - name: POD_IP
+                valueFrom:
+                  fieldRef: { fieldPath: status.podIP }
+              # ON since B4, together with osUI.dataProjectGit.enabled. THIS is the copy the
+              # script reads (the deployment `env` list above belongs to the user-code container).
+              # In a Dagster RUN pod the same sidecar is inherited and exits 0 on POD_NAME, so a
+              # run Job still completes (review B2-review-M1).
+              - { name: REPO_SYNC_ENABLED, value: "true" }
+              - { name: REPO_SYNC_DOMAINS, value: "" }
+              - { name: REPO_SYNC_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
+              - { name: REPO_SYNC_GIT_BASE, value: "git://os-repos" }
+              - { name: REPO_SYNC_CHECKOUT, value: "/repos-checkout" }
+              - { name: REPO_SYNC_INTERVAL, value: "15" }
+              - { name: REPO_SYNC_STATUS_PORT, value: "8089" }
+              - { name: DAGSTER_RELOAD_LOCATION, value: "sovereign" }
+              - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
+              - name: AGENT_RUNTIME_TOKEN
+                valueFrom:
+                  secretKeyRef: { name: agent-runtime-token, key: token }
+            ports:
+              - { name: repo-status, containerPort: 8089 }
+            volumeMounts:
+              - name: repos-checkout
+                mountPath: /repos-checkout
+            resources:
+              requests: { cpu: 20m, memory: 128Mi }
+              limits: { cpu: 500m, memory: 512Mi }
         # ── dbt.projectSource: git — Dagster user-code from the repo (epic #146 Ph 4)
   dagsterWebserver:
     image:
       repository: sovereign-os/dagster
-      tag: "0.2.0"
+      tag: "0.3.0"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }
@@ -758,7 +899,7 @@ dagster:
   dagsterDaemon:
     image:
       repository: sovereign-os/dagster
-      tag: "0.2.0"
+      tag: "0.3.0"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }
@@ -949,6 +1090,16 @@ queryTool:
     catalog: iceberg
     # Default session schema for unqualified queries.
     schema: sales
+  # READ BUDGET for /query and MCP `query_data` (B4-review-E-1). `maxRunTime` becomes Trino's
+  # `query_max_run_time` session property, which is the ONLY thing that makes Trino abandon a
+  # runaway read — os-ui's 8 s abort ends its own wait, not the query. `maxRows` bounds what the
+  # query-tool buffers and returns; past it the payload carries `truncated: true` and the limit
+  # rather than a silently clipped result set.
+  # `executeMaxRunTime` (unset) would bound WRITES too; left off on purpose, because a
+  # full-refresh sync or a promote CTAS legitimately runs for minutes.
+  budget:
+    maxRunTime: "60s"
+    maxRows: 10000
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 768Mi }
@@ -1051,6 +1202,32 @@ trino:
     domains:
       - sales
       - marketing
+  # FILE-BASED ACCESS CONTROL, CHAINED AFTER OPA (engine rebuild B3). Trino accepts a
+  # LIST of system access controls (`access-control.config-files`) and every one of them
+  # must allow — so this file can only ever NARROW what policies/trino.rego permits. It
+  # expresses the two things the OPA plugin cannot: IMPERSONATION (dbt-trino in a Dagster
+  # run pod connects as `serviceUser` and acts as `OS_PRINCIPAL`) and SCHEMA OWNERSHIP
+  # (who may CTAS into a domain schema / a personal lane).
+  #   What ships here is the BOOTSTRAP file: impersonation bounded by the OS id SHAPE,
+  #   nothing ownable. os-ui then reconciles the same ConfigMap key from real domain
+  #   membership (core/infra/trino-rules-server.ts) and Trino re-reads it within
+  #   `refreshPeriod` — no roll. Enumerated principals replace the pattern at that point.
+  #   NO SECRET may ever go in this file: it is a ConfigMap, visible to anyone who can read it.
+  accessControl:
+    enabled: true
+    # The Trino user dbt-trino authenticates as (profiles.yml `user`), allowed to act as
+    # an OS principal and as nothing else.
+    serviceUser: dbt-runner
+    # The shape of an OS principal id (domain name or uid). MUST equal
+    # core/infra/trino-rules.ts OS_PRINCIPAL_PATTERN (os-ui/core/infra/trino-rules.test.ts
+    # asserts it, together with the whole bootstrap document below).
+    principalPattern: "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+    # How often Trino re-reads rules.json (so a membership change lands without a restart).
+    refreshPeriod: 30s
+    # How often os-ui re-reconciles the ConfigMap even when nothing changed (minutes, jittered,
+    # a no-op PATCH-wise when the bytes already match). This is what repairs a `helm upgrade`,
+    # which rewrites Helm's bootstrap value over the OS's enumerated one — B3-review-H-3.
+    reconcileIntervalMinutes: 10
   resources:
     requests: { cpu: "1", memory: 2Gi }
     limits: { cpu: "4", memory: 8Gi }
@@ -1069,31 +1246,20 @@ metrics:
       osUiUrl: "http://os-ui:3000"
 
 # Data — the Data tab's scheduled surfaces.
-data:
-  quality:
-    cron:
-      enabled: false             # operator turns it on
-      schedule: "*/15 * * * *"   # every 15 minutes
-      # Secret holding the builder+ service principal's credentials (keys:
-      # username, password). Provision it before enabling.
-      principalSecret: dq-run-principal
-      # os-ui service DNS (in-cluster). Override only for non-default topologies.
-      osUiUrl: "http://os-ui:3000"
-
-# Data sync — the SCHEDULED INCREMENTAL SYNC fallback sweep (Data tab).
-dataSync:
-  sweep:
-    enabled: false               # operator turns it on
-    schedule: "*/15 * * * *"     # every 15 minutes
-    # The due-window the sweep passes to the route; keep >= the schedule cadence
-    # so no cron slot can fall between two sweeps.
-    windowMinutes: 15
-    # os-ui service DNS (in-cluster). Override only for non-default topologies.
-    osUiUrl: "http://os-ui:3000"
-    # Secret + key holding the shared agent-runtime bearer (the same one the
-    # os-ui Deployment mounts as AGENT_RUNTIME_TOKEN).
-    tokenSecret: os-ui
-    tokenSecretKey: agent-runtime-token
+#
+# REMOVED in engine rebuild B4: `data.quality.cron` (the DQ sweep CronJob → POST /api/data/dq/run-all)
+# and `dataSync.sweep` (the fallback sync sweep CronJob → POST /api/data/sync-due), together with
+# both routes. Quality rules ARE dbt tests now: every scheduled `dbt build` runs them inside the
+# Dagster run and the OS reads them back as asset checks, so a second OS-side sweep would write rows
+# Dagster does not know about; and sync schedules live in each domain's repository
+# (`os/schedules.yml`), executed by the Dagster `sovereign` code location, so a sweep that also
+# fired them would run every slice twice. Nothing in the OS provisions a `batch/v1` CronJob for data
+# any more (checklist D7).
+#
+# Known gap, recorded as a follow-up in the plan: the DQ sweep was also what delivered the
+# "new failure" e-mail to a dataset owner. The Dagster failure sensor quarantines a repeatedly
+# failing schedule, but nobody is notified yet; the smallest fix is to alert from the asset-check
+# read-back (`latestDqRun` + a persisted last-alerted badge + `deliverDqAlert`, all of which exist).
 
 # Admin Console — REMOVED.
 
@@ -1115,6 +1281,40 @@ osUI:
   image:
     repository: sovereign-os/os-ui    # built locally, loaded into kind
     tag: "0.1.0"
+  # AGENT RUNS IN A WORKER (engine rebuild A4). Off by default: with `enabled: false` the pod
+  # that files a run in `run_jobs` also executes it (AGENTS_WORKER=inline) — a kind install or a
+  # single-pod deploy behaves exactly as before and needs no second workload.
+  # With `enabled: true` a second Deployment (`os-ui-worker`, SAME image, the worker command)
+  # claims jobs with FOR UPDATE SKIP LOCKED and drives them off-request, and os-ui switches to
+  # AGENTS_WORKER=worker so it only ENQUEUES and TAILS `run_events`. That is what makes a run
+  # longer than the 300 s request cap finish, and an os-ui rolling restart lose no run.
+  # Requires postgres.enabled (the `agent_runs` database holds the queue AND the checkpoints).
+  # X9 (engine rebuild Part D) — the agent engine's guardrails on EVERY tool call, so a large or
+  # slow data read can neither blow the prompt nor hang a superstep. Empty ⇒ the code defaults
+  # (20 000 characters, 60 000 ms). Run-path: the os-ui-worker pod gets them as well.
+  agentToolResultMaxChars: ""
+  agentToolCallTimeoutMs: ""
+
+  worker:
+    enabled: false
+    replicas: 1
+    # Lease a worker holds on a claimed run (ms). A `running` job whose heartbeat is older than
+    # this is re-queued ONCE (it continues from its checkpoint), then failed. Must exceed the
+    # longest superstep (one model call + one tool call).
+    leaseMs: 600000
+    # Must be >= one superstep: SIGTERM lets the current superstep finish and checkpoint, then the
+    # run goes back on the queue. Too short and the pod is killed mid-model-call (still resumable
+    # from the previous checkpoint, but a wasted call).
+    terminationGracePeriodSeconds: 420
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits:   { cpu: "2",  memory: 1536Mi }
+  # How much of a model/tool call reaches Langfuse (LANGFUSE_REDACTION). Empty = `structure`:
+  # roles + character counts for message content, the full tool-call structure, a 160-char result
+  # preview. `strict`: argument KEY NAMES + character counts only, no preview — for tenants whose
+  # tool arguments may carry personal data. Either way LiteLLM's own nested generation ships the
+  # full prompt unless `turn_off_message_logging` is set (docs/components/langfuse.md).
+  langfuseRedaction: ""
   # Model pricing for Monitoring cost facts — EUR per 1M tokens per LiteLLM
   # model_name.
   modelPricesJson: '{"sovereign-default":{"inputPerM":0.15,"outputPerM":0.25},"sovereign-mock":{"inputPerM":0.15,"outputPerM":0.25},"sovereign-reasoning":{"inputPerM":1.5,"outputPerM":1.75}}'
@@ -1144,6 +1344,38 @@ osUI:
   # each tool keeps its own auth).
   langfuseConsoleUrl: "http://localhost:3000"
   dagsterConsoleUrl:  "http://localhost:3070"  # internal on ingress (no public host)
+  # ---- Data products in git (engine rebuild B1-B4). ON by default since B4: os-ui gets
+  # DATA_PROJECT_GIT=true + the `os-repos` PVC at /repos (one bare repo per domain, every
+  # dataset change committed as the acting user), a read-only `git daemon` sidecar + Service
+  # `os-repos` (:9418) + a NetworkPolicy admitting only the Dagster user-code pod, which runs the
+  # repo-sync sidecar (see dagster.dagster-user-deployments above — REPO_SYNC_ENABLED is on too).
+  #
+  # ONE flag, TWO halves — flipping it enables BOTH (B4-review-H-2/H-4):
+  #   DATA:   a dataset/composition/quality-rule/schedule change is a git commit in the domain's
+  #           repository, the generated dbt project is what Dagster materialises from a validated
+  #           commit, and the OS reads run state back from Dagster instead of its own ledger.
+  #           NOTE (B4-review-L-1): dbt/Dagster own the SCHEDULED path. An interactive build
+  #           (the Silver/Gold buttons, their MCP twins) still runs the OS's own TypeScript CTAS
+  #           first — the honesty gate registers a version only after a real apply+verify — and
+  #           then commits and launches the equivalent dbt assets. Deviations B4-6/B4-7.
+  #   AGENTS: every agent-system definition write commits an `agents/<slug>/…` subtree into the
+  #           SAME repository (Part D).
+  # The FIRST boot commits every existing dataset and every existing agent system
+  # (`OS-Reason: boot-reconcile`), and DELETES every pre-B2 per-dataset sync CronJob before that
+  # first commit, so one slice cannot fire twice during the upgrade — which is why the os-ui Role
+  # carries a `batch`/`cronjobs` grant (base/os-ui/os-ui.yaml).
+  #
+  # `enabled: false` remains the EMERGENCY OPT-OUT for one release (then the flag goes): the OS
+  # falls back to its own CTAS/ledger execution and the repositories stop being written. Read the
+  # CHANGELOG entry before flipping it off — scheduled syncs no longer run in that state, because
+  # B4 deleted the per-dataset CronJob provisioning and the fallback sweeps.
+  dataProjectGit:
+    enabled: true
+    reposSize: 2Gi
+    gitDaemon:
+      image:
+        repository: alpine/git     # stock image; git (GPL-2.0) runs as a separate process, never linked
+        tag: "v2.47.2"
   # Secret-backed credentials — reuse the stack's existing Secrets so nothing
   # sensitive sits in plaintext (names/keys verified against the running cluster).
   langfuseSecret:

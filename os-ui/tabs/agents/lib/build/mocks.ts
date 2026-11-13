@@ -9,7 +9,7 @@ import {
   routeProbe,
 } from '@tabs/agents/lib/routing';
 import { type Gateway, type GwTrace } from '@tabs/agents/lib/gateway';
-import { runGraph } from '@tabs/agents/lib/build/run-graph';
+import { compileVerify } from '@tabs/agents/lib/build/compile-verify';
 import { type BuildAdapter, type StepResult } from '@tabs/agents/lib/build/adapter';
 
 /**
@@ -140,18 +140,19 @@ export function makeMockAdapters(backends: MockBackends): BuildAdapter[] {
   const langgraph: BuildAdapter = {
     tool: 'langgraph',
     async apply(ctx) {
-      // "Compile + reload": the IR is already validated by the compiler; record it.
-      return ok(`graph reloaded — ${ctx.ir.nodes.length} node(s), entrypoint '${ctx.ir.entrypoint}'`);
+      // A5: compile the REAL StateGraph (`buildGraph`) — the same check the live adapter runs,
+      // because compiling needs no cluster. The old mock walked the IR with a hand-rolled BFS
+      // and called that a "test invocation"; it verified a walk the engine never performs.
+      const built = await compileVerify(ctx.system, ctx.ir);
+      if (!built.ok) return fail(built.error);
+      return ok(`graph compiled — ${built.nodes} agent(s), entrypoint '${ctx.ir.entrypoint}', step budget ${built.stepBudget}`);
     },
     async verify(ctx) {
-      const gw = gatewayFor(backends);
-      const res = await runGraph(ctx.ir, { gateway: gw, probe: ctx.probe });
-      if (!res.reachedEnd) return fail('test invocation did not reach END');
-      const denied = res.steps.filter((s) => s.effect === 'deny').map((s) => s.tool);
-      const detail = `test invocation ran ${res.path.join(' → ')} (${res.steps.length} governed tool call(s))`;
-      // A denied granted-graph tool is a real failure (the graph references a tool
-      // the system isn't granted) — though the compiler already rejects that case.
-      if (denied.length > 0) return fail(`tool(s) blocked during the run: ${denied.join(', ')}`);
+      const built = await compileVerify(ctx.system, ctx.ir);
+      if (!built.ok) return fail(built.error);
+      const detail =
+        `${built.graphNodes} graph node(s) over ${built.nodes} agent(s); recursion limit ${built.recursionLimit}` +
+        (built.warnings.length > 0 ? ` — warnings: ${built.warnings.join('; ')}` : '');
       return ok(detail);
     },
   };
@@ -170,8 +171,8 @@ export function makeMockAdapters(backends: MockBackends): BuildAdapter[] {
     },
   };
 
-  // Order matters: write files + grants + routing, THEN run the graph (needs the
-  // grants to authorize, and produces the traces Langfuse then verifies).
+  // Order matters: grants + routing first, then the graph compile; Langfuse reports from the
+  // traces a real RUN leaves behind (pending until the system has run once).
   return [opa, litellm, langgraph, langfuse];
 }
 

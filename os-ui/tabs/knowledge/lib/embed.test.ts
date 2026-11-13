@@ -13,6 +13,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { embed, embedQuery } from '@tabs/knowledge/lib/embed';
 import { config } from '@core/kernel/config';
+import { GatewayRejectedError } from '@core/infra/litellm-credential';
 
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });
@@ -50,4 +51,48 @@ test('embedQuery falls back to the offline hash (at the index dim) when LiteLLM 
 test('an empty batch embeds nothing (no network call)', async () => {
   const r = await embed([]);
   assert.deepEqual(r.vectors, []);
+});
+
+// ---------------------------------------------------------------- A3: the fallback rule (A31) --
+
+test('A31: a 403 (model outside the key allowlist) THROWS a typed rejection — no substitute vectors', async () => {
+  globalThis.fetch = (async () => new Response('{"error":{"message":"key not allowed to access model"}}', { status: 403 })) as typeof fetch;
+  await assert.rejects(embed(['a']), (e: unknown) => e instanceof GatewayRejectedError && e.code === 'forbidden' && e.status === 403);
+});
+
+test('A31: a 400 budget rejection THROWS `budget_exceeded`; a 401 THROWS `unauthorized`', async () => {
+  globalThis.fetch = (async () => new Response('Budget has been exceeded! Current cost: 5.2, Max budget: 5', { status: 400 })) as typeof fetch;
+  await assert.rejects(embedQuery('q'), (e: unknown) => e instanceof GatewayRejectedError && e.code === 'budget_exceeded');
+  globalThis.fetch = (async () => new Response('invalid api key', { status: 401 })) as typeof fetch;
+  await assert.rejects(embed(['a']), (e: unknown) => e instanceof GatewayRejectedError && e.code === 'unauthorized');
+});
+
+test('A31: a 5xx or a timeout falls back to the LABELLED offline hash at the index dim', async () => {
+  globalThis.fetch = (async () => new Response('upstream down', { status: 503 })) as typeof fetch;
+  const r5 = await embed(['a', 'b']);
+  assert.equal(r5.source, 'offline-hash');
+  assert.ok(r5.vectors.every((v) => v.length === config.embedDim));
+  globalThis.fetch = (async (_u: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_res, rej) => {
+    init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')));
+  })) as typeof fetch;
+  // A hung gateway: the 4s guard aborts the request and the labelled fallback answers.
+  const ctl = embed(['x']);
+  const r = await ctl;
+  assert.equal(r.source, 'offline-hash');
+});
+
+test('A25/A27: the embedding call carries the SCOPED key, the user and the tags — never the master key', async () => {
+  let seen: { auth: string; body: Record<string, unknown> } | null = null;
+  const dim = config.embedDim;
+  globalThis.fetch = (async (_u: RequestInfo | URL, init?: RequestInit) => {
+    seen = { auth: String((init?.headers as Record<string, string>).authorization), body: JSON.parse(String(init?.body)) };
+    return new Response(JSON.stringify({ data: [{ embedding: Array.from({ length: dim }, () => 0.1) }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const r = await embed(['a'], { userId: 'rae', domain: 'sales', tab: 'knowledge' });
+  assert.equal(r.source, 'litellm');
+  assert.equal(seen!.auth, `Bearer ${config.litellmAgentKey}`);
+  assert.notEqual(seen!.auth, `Bearer ${config.litellmMasterKey}`);
+  assert.equal(seen!.body.user, 'os-rae');
+  assert.deepEqual((seen!.body.metadata as { tags: string[] }).tags, ['domain:sales', 'tab:knowledge']);
+  assert.deepEqual(seen!.body.cache, { 'use-cache': true });
 });

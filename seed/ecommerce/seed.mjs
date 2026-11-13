@@ -356,7 +356,7 @@ async function phaseAgents() {
       const sha = cur.body?.sha ?? '';
       const put = await s.put(`/api/agents/systems/${id}/files`, { path: 'system.yaml', content: buildSystemYaml(a), sha });
       if (put.status >= 400) throw new Error(`write system.yaml → ${put.status} ${JSON.stringify(put.body)}`);
-      // build (5 adapters; live agent-runtime or honest offline-mock)
+      // build (4 adapters; live services or honest offline-mock)
       const built = await s.post(`/api/agents/systems/${id}/build`);
       // run a governed invocation (every tool call OPA-checked + Langfuse-traced)
       const run = await s.post(`/api/agents/systems/${id}/run`, { prompt: a.runPrompt });

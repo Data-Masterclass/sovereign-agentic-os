@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { recompile } from '../_compile';
-import { config } from '@core/kernel/config';
+import { adminPost } from '@core/infra/litellm-write';
 import { registerModel } from '@tabs/admin/lib/models';
 import { classifyProviderType, litellmModelString, PROVIDER_TYPE_LABELS, type ProviderType } from '@tabs/agents/lib/routing';
 import { putSecret, secretFingerprint, getSecretServerSide } from '@core/infra/secrets';
@@ -28,30 +28,13 @@ export const dynamic = 'force-dynamic';
 const SUPPORTED: ProviderType[] = ['openai-compatible', 'stackit'];
 
 async function registerWithGateway(alias: string, model: string, baseUrl: string, apiKey: string, mode: string): Promise<boolean> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 4000);
-  try {
-    const res = await fetch(`${config.litellmUrl}/model/new`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${config.litellmMasterKey}`,
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify({
-        model_name: alias,
-        litellm_params: { model, api_base: baseUrl, api_key: apiKey },
-        model_info: { mode },
-      }),
-      cache: 'no-store',
-      signal: ctrl.signal,
-    });
-    return res.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
+  // The ONE admin write door (`litellm-write.ts`): master key stays inside it; a failure is a result.
+  const res = await adminPost('/model/new', {
+    model_name: alias,
+    litellm_params: { model, api_base: baseUrl, api_key: apiKey },
+    model_info: { mode },
+  }, 4000);
+  return res.ok;
 }
 
 export async function POST(req: Request) {

@@ -48,6 +48,8 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   commit_agent_files: 'agents',
   build_agent_system: 'agents',
   run_agent_system: 'agents',
+  // A2: resuming a parked/interrupted run executes the system — a write like run_agent_system.
+  resume_agent_run: 'agents',
   request_promotion: 'data',
   approve_promotion: 'data',
   set_app_design: 'software',

@@ -37,7 +37,7 @@
  *       counterparts. Keeping the shell thin is what makes the rules testable.
  *
  *   Spend attribution depends on LiteLLM request tags (`domain:`, `agent:`,
- *   `tab:`). Untagged traffic is NOT guessed at and simply does not appear in
+ *   `tab:`, `run:`). Untagged traffic is NOT guessed at and simply does not appear in
  *   the per-dimension breakdown; the panels say so rather than implying zero.
  */
 import 'server-only';
@@ -55,7 +55,7 @@ export type GatewayMirror = {
   teams: { teamId: string; alias: string; maxBudget: number | null; spend: number; models: string[] }[];
   keys: { alias: string; owner: 'agent' | 'service' | 'unknown'; blocked: boolean; spend: number }[];
   guardrails: { name: string; provider: string; failOpen: boolean }[];
-  spend: { byDomain: Record<string, number>; byUser: Record<string, number>; byAgent: Record<string, number>; byTab: Record<string, number> };
+  spend: { byDomain: Record<string, number>; byUser: Record<string, number>; byAgent: Record<string, number>; byTab: Record<string, number>; byRun: Record<string, number> };
   /** Exists in LiteLLM, has no OS counterpart. Reported, never adopted. */
   unmanaged: { kind: 'team' | 'key'; id: string }[];
   fetchedAt: number;
@@ -130,13 +130,14 @@ function unhealthyNames(health: Fetched<LiteLlmHealthBody>): Set<string> {
 
 /**
  * Spend per tag dimension. The OS tags gateway requests `domain:<id>`,
- * `agent:<id>` and `tab:<id>`; any other tag is ignored rather than bucketed
- * into a dimension it does not belong to.
+ * `agent:<id>`, `tab:<id>` and `run:<runId>` (A3 — one run's spend); any other tag is
+ * ignored rather than bucketed into a dimension it does not belong to.
  */
-export function spendByTag(tags: Fetched<LiteLlmTagActivityBody>): Pick<GatewayMirror['spend'], 'byDomain' | 'byAgent' | 'byTab'> {
+export function spendByTag(tags: Fetched<LiteLlmTagActivityBody>): Pick<GatewayMirror['spend'], 'byDomain' | 'byAgent' | 'byTab' | 'byRun'> {
   const byDomain: Record<string, number> = {};
   const byAgent: Record<string, number> = {};
   const byTab: Record<string, number> = {};
+  const byRun: Record<string, number> = {};
   for (const r of ok(tags, {} as LiteLlmTagActivityBody).results ?? []) {
     const tag = r.tag ?? '';
     const spend = Number(r.metrics?.spend ?? 0);
@@ -144,11 +145,11 @@ export function spendByTag(tags: Fetched<LiteLlmTagActivityBody>): Pick<GatewayM
     const i = tag.indexOf(':');
     if (i <= 0) continue;
     const [kind, id] = [tag.slice(0, i), tag.slice(i + 1)];
-    const bucket = kind === 'domain' ? byDomain : kind === 'agent' ? byAgent : kind === 'tab' ? byTab : null;
+    const bucket = kind === 'domain' ? byDomain : kind === 'agent' ? byAgent : kind === 'tab' ? byTab : kind === 'run' ? byRun : null;
     if (!bucket || !id) continue;
     bucket[id] = (bucket[id] ?? 0) + spend;
   }
-  return { byDomain, byAgent, byTab };
+  return { byDomain, byAgent, byTab, byRun };
 }
 
 /**

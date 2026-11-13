@@ -1,16 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { QualityBadge } from '@tabs/data/lib/dq';
+import type { DqSource, QualityBadge } from '@tabs/data/lib/dq';
 
 /**
  * The Monitoring-tab DATA-QUALITY ROLLUP (Data Quality Phase 1 · §5.2) — PURE ranking.
  *
  * A read-only tenant/domain overview: governed datasets ranked by RISK so the few that
- * need a human lead, greens recede. It reuses the SAME persisted `dq-results` runs the
- * Validate stage does — no second store, no re-run. Author quality in Data; monitor it
- * here. Each row deep-links back to that dataset's Validate stage (monitor here, fix
- * there — the hybrid IA).
+ * need a human lead, greens recede. It ranks the verdicts the caller already read through the
+ * Data tab's one seam (`dq-status-server.latestDqRuns` — Dagster asset checks with
+ * `DATA_PROJECT_GIT` on, the persisted `os-dq-results` series under the opt-out): no second store,
+ * no re-run, and `source` is carried through so a row can say WHICH engine decided. Author quality
+ * in Data; monitor it here. Each row deep-links back to that dataset's Validate stage (monitor
+ * here, fix there — the hybrid IA).
  *
  * Pure: dataset-summaries + their latest runs in → ranked rows + a domain roll-up out,
  * no engine, no network, so the risk ordering is unit-tested. Scoping happens BEFORE this
@@ -31,6 +33,8 @@ export type DqDatasetInput = {
     openFailures: number;
     /** Whether the freshness monitor failed (SLA missed) in that run. */
     freshnessLate: boolean;
+    /** Who ran it: a Dagster dbt test or the OS's own probe (review B2-review-M5). */
+    source?: DqSource;
   } | null;
 };
 
@@ -44,6 +48,8 @@ export type DqRiskRow = {
   openFailures: number;
   freshnessLate: boolean;
   ranAt: string | null;
+  /** Who produced the verdict — `undefined` for a pre-B2 record (review B2-review-M5). */
+  source?: DqSource;
   /** 0–100 — higher is riskier. Drives the ordering; surfaced for transparency. */
   risk: number;
 };
@@ -94,6 +100,7 @@ export function buildDqOverview(inputs: DqDatasetInput[]): DqOverview {
     openFailures: d.latest?.openFailures ?? 0,
     freshnessLate: d.latest?.freshnessLate ?? false,
     ranAt: d.latest?.ranAt ?? null,
+    ...(d.latest?.source ? { source: d.latest.source } : {}),
     risk: riskScore(d),
   }));
   // Riskiest first; ties broken by lower health, then name (stable, readable ordering).

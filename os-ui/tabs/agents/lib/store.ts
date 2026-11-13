@@ -19,6 +19,10 @@ import { normaliseFolderPath } from '@core/kernel/folders';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked (mirrors Data).
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
+// Part D: the pure event seam the git commit hook subscribes to (never git from here — this
+// module is reachable from the client bundle).
+import { emitSystemChange } from '@tabs/agents/lib/system-events';
+import { assertSystemWriteAvailable } from '@tabs/agents/lib/write-availability';
 
 /**
  * The agent-system store — the durable file-backed record behind the Agents tab (kind-only,
@@ -51,7 +55,16 @@ export type LastBuildRow = {
 };
 
 /** The last build outcome persisted server-side so it survives tab-switches + reloads. */
-export type LastBuild = { ok: boolean; at: number; rows: LastBuildRow[] };
+export type LastBuild = {
+  ok: boolean;
+  at: number;
+  rows: LastBuildRow[];
+  /**
+   * A3: the system's own LiteLLM virtual key, by secret REFERENCE (never the value), when the live
+   * Build minted it. Runs resolve it through `callerCredential`; absent → the shared agent key.
+   */
+  litellmKeyRef?: { name: string; key: string };
+};
 
 /**
  * A per-PROCESS nonce, generated once when this module first loads. It stamps
@@ -96,6 +109,11 @@ export type RunCheckpoint = {
   completedNodes: { node: string; status: string; finalText?: string }[];
   /** The node currently executing (started, not yet finished), if any. */
   currentNode?: string;
+  /** The LangGraph thread id (= run id) when the `langgraph` engine ran it — what a Resume continues. */
+  runId?: string;
+  /** Where that thread's checkpoints live. Only `postgres` survives a process restart, so recovery
+   *  offers Resume only then (review finding M3). */
+  checkpointer?: 'postgres' | 'memory';
 };
 
 /** The last interactive run report — persisted so navigating away and back does not wipe it. */
@@ -165,9 +183,19 @@ export type LastRun = {
    * UI shows an "interrupted — resume" affordance instead of a stale live spinner.
    */
   interrupted?: boolean;
-  /** For an interrupted run: the node index the walk reached, so a resume can
-   *  re-enter from the next node (when full-resume ships). Best-effort. */
+  /** For an interrupted run: the node index the run reached. Best-effort, informational. */
   resumeFromIndex?: number;
+  /** The run id (= LangGraph thread id = Langfuse trace id).
+   *  `POST …/run { resume: true, runId }` continues it from its last checkpoint. */
+  runId?: string;
+  /** Which executor produced this run. Always `'langgraph'` since A5; a record written before
+   *  that may still carry `'walker'`, which is why the string is not narrowed on READ. */
+  engine?: string;
+  checkpointer?: 'postgres' | 'memory';
+  /** A2: the approvals a PARKED run is waiting on (LangGraph `interrupt()`); the decision resumes it. */
+  heldApprovals?: { approvalId: string; tool: string; node: string }[];
+  /** A2: `buildGraph` compile warnings reported with the run (e.g. a guard over a channel nothing sets). */
+  warnings?: string[];
 };
 
 export type SystemRecord = {
@@ -246,6 +274,8 @@ type AgentsState = {
   hydration: Promise<void> | null;
   /** Set when the last hydration found the mirror DOWN — gates the throttled retry. */
   hydrateFailedAt?: number;
+  /** Set when a hydration READ THE MIRROR SUCCESSFULLY — what `hydrationState` reports. */
+  hydratedAt?: number;
 };
 const STATE_KEY = Symbol.for('soa.agents.store');
 function state(): AgentsState {
@@ -288,8 +318,31 @@ const mirror = osMirror({
 // canonical `yaml` is snapshotted here on every meaningful edit + on restore.
 const versions = versionLog('agent-system');
 
-function writeThrough(rec: SystemRecord): void {
+/**
+ * What a write means, for the git commit hook (Part D). REQUIRED on every `writeThrough` so a
+ * new writer cannot be added without deciding: a `SystemChangeSpec` is a DEFINITION change and
+ * becomes a commit; `null` says "run/build bookkeeping — deliberately not a commit", and
+ * `lib/git/commit.test.ts` enumerates both sets so neither can grow silently.
+ */
+type SystemChangeSpec = { action: string; actorId: string; previousDomain?: string };
+
+function writeThrough(rec: SystemRecord, change: SystemChangeSpec | null): void {
+  // Part D review H-3: a DEFINITION change (a non-null `change`) must become a commit. In the
+  // run-worker process it cannot — no `os-repos` mount, no commit hook — so it fails CLOSED with
+  // a typed error instead of reaching the durable mirror uncommitted. Run/build bookkeeping
+  // (`change === null`) is exactly what the worker is for and passes straight through.
+  if (change) assertSystemWriteAvailable(change.action);
   mirror.writeThrough(rec.id, rec);
+  if (change) {
+    emitSystemChange({
+      domain: rec.domain,
+      systemId: rec.id,
+      name: rec.name,
+      action: change.action,
+      actorId: change.actorId,
+      previousDomain: change.previousDomain,
+    });
+  }
 }
 
 /** The versioned slice of a system record — the single source (system.yaml). */
@@ -313,6 +366,28 @@ export async function ensureHydrated(): Promise<void> {
   return s.hydration;
 }
 
+/**
+ * Did the registry in memory actually come from the durable mirror?
+ *
+ * THE POINT (Part D review H-1): {@link ensureHydrated} RESOLVES when `mirror.hydrate()` returned
+ * null — a mirror-down hydration is recorded for the throttled retry and never thrown. Every read
+ * path is right to degrade that way; a boot-time WRITER is not. The Sept-2026 login outage was
+ * exactly this shape: an os-ui/OpenSearch startup race hydrated a store to EMPTY without any
+ * error, and an empty store looks identical to a tenant that owns nothing. Anything that would
+ * COMMIT or DELETE on the strength of the store being empty must check this first.
+ *
+ *   'hydrated' — a mirror read succeeded in this process; the registry is as complete as the
+ *                mirror is. (An empty answer here is a genuinely empty mirror.)
+ *   'failed'   — the last attempt found the mirror unreachable; the registry may be missing
+ *                everything, and nothing may be deleted on its authority.
+ *   'pending'  — no attempt has completed yet.
+ */
+export function hydrationState(): 'hydrated' | 'failed' | 'pending' {
+  const s = state();
+  if (s.hydratedAt !== undefined) return 'hydrated';
+  return s.hydrateFailedAt !== undefined ? 'failed' : 'pending';
+}
+
 async function hydrate(): Promise<void> {
   const s = state();
   const docs = await mirror.hydrate(2000);
@@ -324,6 +399,7 @@ async function hydrate(): Promise<void> {
     return;
   }
   s.hydrateFailedAt = undefined;
+  s.hydratedAt = Date.now();
   for (const rec of docs as SystemRecord[]) {
     if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
   }
@@ -363,7 +439,11 @@ export function recoverInterrupted(rec: SystemRecord): boolean {
   const outputLines = [
     `Run interrupted by a restart after ${completed.length}${planned.length ? ` of ${planned.length}` : ''} step(s).`,
     cp?.currentNode ? `Was executing '${cp.currentNode}' when the process stopped.` : '',
-    'The steps below completed before the interruption. Re-run to continue.',
+    cp?.runId && cp.checkpointer === 'postgres'
+      ? 'The steps below completed before the interruption. Resume to continue from the last checkpoint.'
+      : cp?.runId
+        ? 'The steps below completed before the interruption. Its checkpoints were in memory and died with the process — re-run to continue.'
+        : 'The steps below completed before the interruption. Re-run to continue.',
   ].filter(Boolean);
   const lastRun: LastRun = {
     at: cp?.updatedAt ?? marker.startedAt,
@@ -378,13 +458,16 @@ export function recoverInterrupted(rec: SystemRecord): boolean {
     mode: 'live',
     interrupted: true,
     resumeFromIndex: reachedIdx,
+    runId: cp?.runId,
+    engine: cp?.runId ? 'langgraph' : undefined,
+    checkpointer: cp?.checkpointer,
   };
   rec.lastRun = lastRun;
   delete rec.activity; // clear the stale live spinner
   delete rec.runCheckpoint; // the checkpoint has been consumed into lastRun
   rec.running = false;
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, null); // run bookkeeping salvaged from a dead process — not a definition change
   return true;
 }
 
@@ -397,6 +480,10 @@ function now(): string {
 function id(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
 }
+
+/** Mint a run id — the LangGraph thread id of one run. Lives in the kernel (`core/kernel/run-id.ts`,
+ *  `crypto.randomUUID`) since A2: the old store-shaped id was guessable (review finding H1). */
+export { newRunId } from '@core/kernel/run-id';
 
 /** Stable blob sha for optimistic concurrency. */
 function sha(content: string): string {
@@ -469,6 +556,7 @@ export function __resetStore(): void {
   s.seeded = false;
   s.hydration = null;
   s.hydrateFailedAt = undefined;
+  s.hydratedAt = undefined;
   mirror.__reset();
   versions.__reset();
 }
@@ -485,8 +573,11 @@ export function moveSystemsDomain(sel: { id?: string; onlyUnassigned?: boolean }
     if (sel.id !== undefined && rec.id !== sel.id) continue;
     if (sel.onlyUnassigned && rec.domain) continue;
     if (rec.domain === target) continue;
+    const previousDomain = rec.domain;
     rec.domain = target;
-    writeThrough(rec);
+    // Part D: a cross-domain move changes TWO repos — the old one loses the system, the new one
+    // gains it. `previousDomain` is what tells the commit hook to regenerate both.
+    writeThrough(rec, { action: `move domain from ${previousDomain || '(unassigned)'} to ${target}`, actorId: 'system', previousDomain });
     moved.push(rec.id);
   }
   return moved;
@@ -785,7 +876,7 @@ export function createSystem(
     yaml,
   });
   state().store.set(rec.id, rec);
-  writeThrough(rec);
+  writeThrough(rec, { action: 'create system', actorId: user.id });
   return rec;
 }
 
@@ -802,7 +893,7 @@ export function reassignOwner(fromId: string, toId: string): number {
     if (rec.visibility !== 'Personal') continue; // personal lane only
     rec.owner = toId;
     rec.updatedAt = now();
-    writeThrough(rec);
+    writeThrough(rec, { action: `reassign owner to ${toId}`, actorId: toId });
     moved++;
   }
   return moved;
@@ -833,7 +924,7 @@ export function promoteSystem(systemId: string, user: Principal): SystemRecord {
     fail('This system is already published to the Marketplace', 400);
   }
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: `promote to ${rec.visibility}`, actorId: user.id });
   return rec;
 }
 
@@ -861,7 +952,7 @@ export function demoteSystem(systemId: string, user: Principal): SystemRecord {
     fail('This system is already personal — nothing to revoke', 400);
   }
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: `demote to ${rec.visibility}`, actorId: user.id });
   return rec;
 }
 
@@ -889,7 +980,7 @@ export function forkSystem(systemId: string, user: Principal): SystemRecord {
     yaml: src.yaml,
   });
   state().store.set(rec.id, rec);
-  writeThrough(rec);
+  writeThrough(rec, { action: `install system from ${src.id}`, actorId: user.id });
   return rec;
 }
 
@@ -971,7 +1062,7 @@ export function writeFile(
   }
 
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: `edit ${path}`, actorId: user.id });
   const newContent = project(rec, path);
   return { path, content: newContent, sha: sha(newContent) };
 }
@@ -983,7 +1074,7 @@ export function setRunning(systemId: string, user: Principal, running: boolean):
   rec.running = running;
   rec.updatedAt = now();
   if (running) rec.lastActivity = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: running ? 'start system' : 'stop system', actorId: user.id });
   return rec;
 }
 
@@ -991,7 +1082,7 @@ export function setSchedule(systemId: string, user: Principal, schedule: Schedul
   const rec = requireEdit(systemId, user);
   rec.schedule = schedule;
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: `set schedule ${schedule.kind}`, actorId: user.id });
   return rec;
 }
 
@@ -1004,21 +1095,21 @@ export function toggleAgent(systemId: string, user: Principal, agentId: string, 
   else set.add(agentId);
   rec.disabledAgents = [...set];
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: `${on ? 'enable' : 'disable'} agent ${agentId}`, actorId: user.id });
   return rec;
 }
 
 export function recordActivity(systemId: string): void {
   const rec = state().store.get(systemId);
   if (rec) rec.lastActivity = now();
-  if (rec) writeThrough(rec);
+  if (rec) writeThrough(rec, null); // last-activity stamp — a run artefact, never a commit
 }
 
 export function setLastBuild(systemId: string, user: Principal, build: LastBuild): SystemRecord {
   const rec = requireEdit(systemId, user);
   rec.lastBuild = build;
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: `build system (${build.ok ? 'ok' : 'failed'})`, actorId: user.id });
   return rec;
 }
 
@@ -1034,7 +1125,7 @@ export function setActivity(systemId: string, marker: ActivityMarker): void {
   // Stamp the marker with THIS process's nonce (unless the caller already set one),
   // so a later process can recognise a run this process abandoned on a crash.
   rec.activity = { ...marker, instanceId: marker.instanceId ?? PROCESS_INSTANCE };
-  writeThrough(rec);
+  writeThrough(rec, null); // in-flight marker — a run artefact, never a commit
 }
 
 /** Clear the in-progress marker once a build or run completes (or errors). Also
@@ -1044,7 +1135,7 @@ export function clearActivity(systemId: string): void {
   if (!rec) return;
   delete rec.activity;
   delete rec.runCheckpoint;
-  writeThrough(rec);
+  writeThrough(rec, null); // in-flight marker cleared — a run artefact, never a commit
 }
 
 /**
@@ -1056,7 +1147,7 @@ export function clearActivity(systemId: string): void {
  */
 export function startRunCheckpoint(
   systemId: string,
-  input: { prompt?: string; plannedNodes?: string[] },
+  input: { prompt?: string; plannedNodes?: string[]; runId?: string; checkpointer?: 'postgres' | 'memory' },
 ): void {
   const rec = state().store.get(systemId);
   if (!rec) return;
@@ -1068,8 +1159,10 @@ export function startRunCheckpoint(
     prompt: input.prompt,
     plannedNodes: input.plannedNodes,
     completedNodes: [],
+    runId: input.runId,
+    checkpointer: input.checkpointer,
   };
-  writeThrough(rec);
+  writeThrough(rec, null); // run checkpoint — a run artefact, never a commit
 }
 
 /** Upper bound on a checkpointed node's finalText (chars) — the checkpoint stays lean. */
@@ -1101,7 +1194,7 @@ export function checkpointNode(
     cp.completedNodes.push({ node: ev.node, status: ev.status ?? 'ok', finalText });
     if (cp.currentNode === ev.node) delete cp.currentNode;
   }
-  writeThrough(rec);
+  writeThrough(rec, null); // run checkpoint — a run artefact, never a commit
 }
 
 /**
@@ -1114,7 +1207,7 @@ export function setLastRun(systemId: string, user: Principal, run: LastRun): Sys
   const rec = requireEdit(systemId, user);
   rec.lastRun = run;
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, null); // last-run report — a run artefact, never a commit
   return rec;
 }
 
@@ -1146,7 +1239,7 @@ export function renameAgentSystem(systemId: string, user: Principal, newName: st
   versions.record(rec.id, user.id, snapshotState(rec), 'rename');
   rec.name = name; // DISPLAY name only — `id` (and the yaml's system.name) stay frozen
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: 'rename system', actorId: user.id });
   return rec;
 }
 
@@ -1184,7 +1277,7 @@ export function moveAgentSystem(systemId: string, user: Principal, folder: strin
   const rec = requireEdit(systemId, user);
   rec.folder = normaliseFolderPath(folder);
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: `move to folder ${rec.folder}`, actorId: user.id });
   // The move already passed the record's edit-scope gate above, so this same-owner
   // folder create can only mirror an authorised move (best-effort; never rolls it back).
   upsertFolderRow(rec, user);
@@ -1204,7 +1297,7 @@ export function archiveSystem(systemId: string, user: Principal): SystemRecord {
   rec.archived = true;
   rec.running = false;
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: 'archive system', actorId: user.id });
   return rec;
 }
 
@@ -1213,7 +1306,7 @@ export function unarchiveSystem(systemId: string, user: Principal): SystemRecord
   const rec = requireEdit(systemId, user);
   rec.archived = false;
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: 'unarchive system', actorId: user.id });
   return rec;
 }
 
@@ -1229,7 +1322,36 @@ export function deleteSystem(systemId: string, user: Principal): SystemRecord {
   state().store.delete(rec.id);
   mirror.deleteThrough(rec.id);
   versions.purge(rec.id);
+  // Part D: the ONE path a removal takes. The record is already gone, so the commit hook's
+  // snapshot no longer contains it and the commit REMOVES the system's directory with this reason.
+  emitSystemChange({ domain: rec.domain, systemId: rec.id, name: rec.name, action: 'delete system', actorId: user.id });
   return rec;
+}
+
+/**
+ * Part D — the unscoped, server-side read the git generator works from: every LIVE (non-archived)
+ * system of one domain, with the version number of its canonical source. Sorted by id so every
+ * generated file is byte-stable. An archived system is deliberately absent: archive leaves the
+ * working lists, so it leaves the repo too (and the commit that archives it REMOVES its directory).
+ */
+/** Every domain that currently holds a live system — the set the boot reconcile walks. */
+export function projectDomains(): string[] {
+  ensureSeeded();
+  const out = new Set<string>();
+  for (const rec of state().store.values()) {
+    if (!rec.archived && rec.domain) out.add(rec.domain);
+  }
+  return [...out].sort();
+}
+
+export function systemsForProject(domain: string): { rec: SystemRecord; version: number }[] {
+  ensureSeeded();
+  const out: { rec: SystemRecord; version: number }[] = [];
+  for (const rec of state().store.values()) {
+    if (rec.archived || rec.domain !== domain) continue;
+    out.push({ rec, version: versions.latest(rec.id) });
+  }
+  return out.sort((a, b) => a.rec.id.localeCompare(b.rec.id));
 }
 
 /** Version history for a system, newest first (view-scoped). */
@@ -1255,7 +1377,7 @@ export function restoreSystemVersion(systemId: string, user: Principal, version:
   versions.record(systemId, user.id, snapshotState(rec), `restore of v${version}`);
   rec.yaml = restored;
   rec.updatedAt = now();
-  writeThrough(rec);
+  writeThrough(rec, { action: `restore v${version}`, actorId: user.id });
   return rec;
 }
 

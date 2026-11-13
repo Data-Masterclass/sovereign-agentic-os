@@ -11,6 +11,7 @@
   see os-ui/INTEGRATION.md. Without that block this file renders to nothing.
 */}}
 {{- $u := .Values.osUI }}
+{{- $dpg := $u.dataProjectGit | default dict }}
 {{- /*
   Scoped RBAC for the native Components surface. The OS UI server reads workload
   status + scales Deployments/StatefulSets 0<->1 and reads CNPG Clusters
@@ -42,16 +43,39 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "services"]
     verbs: ["get", "list"]
+  # `batch/v1` CronJobs (B4-review-H-2). The os-ui server reconciles CronJobs through the
+  # in-cluster API on TWO paths, and before this rule BOTH failed with a 403 that was reported as
+  # "Kubernetes rejected the …" and nothing else:
+  #   - AGENT SCHEDULES (`tabs/agents/lib/schedule-cron.ts`): GET + POST/PUT + DELETE of
+  #     `agent-schedule-<system>`, so a saved cron schedule actually fires. This path is NOT gated
+  #     on `dataProjectGit`, which is why the rule is unconditional — see the deviation.
+  #   - the DATA-SYNC CLEANUP (`tabs/data/lib/sync-cron-removal.ts`): DELETE only, of the pre-B2
+  #     `data-sync-<dataset>` CronJob, at boot and on every sync save, so one slice cannot fire
+  #     twice once Dagster schedules it from the repository.
+  # Namespaced, CronJobs only: no Jobs, no pod exec, no other `batch` resource.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "create", "update", "delete"]
   {{- if .Values.osUI.externalConnectorsEnabled }}
   # One-click external-warehouse catalog registration (Connections tab): the os-ui
   # server merges the catalog `.properties` into the `trino-catalog` ConfigMap and
   # materializes a `trino-ext-<catalog>` Secret in-namespace, then rolls Trino
-  # (lib/connections/warehouse/k8s-registration.ts). Least-privilege: namespaced
-  # configmaps + secrets read/write only — gated on the same flag as the feature, so a
-  # deployment with external connectors OFF grants no secret access at all.
+  # (lib/connections/warehouse/k8s-registration.ts). Namespaced configmaps + secrets
+  # read/write, gated on the FEATURE's own flag — a deployment with external connectors
+  # OFF grants no Secret access at all. This is the ONLY rule that grants Secrets.
   - apiGroups: [""]
     resources: ["configmaps", "secrets"]
     verbs: ["get", "list", "create", "patch", "update"]
+  {{- end }}
+  {{- if and .Values.trino.enabled (.Values.trino.accessControl | default dict).enabled .Values.trino.opa.enabled }}
+  # Trino access rules (engine rebuild B3; narrowed in B3-review-H-6). The reconciler reads and
+  # PATCHes ONE ConfigMap and nothing else, so the grant names it: no `secrets`, no `create`, no
+  # `list`, no other ConfigMap. Previously this rode on the external-connector rule — a
+  # namespace-wide Secrets grant handed to every install with `dataProjectGit` on.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["trino-access-rules"]
+    verbs: ["get", "patch"]
   {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -143,266 +167,21 @@ spec:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
             readOnlyRootFilesystem: true
           env:
-            - name: PORT
-              value: "3000"
-            - name: HOSTNAME
-              value: "0.0.0.0"
-            {{- /* Model pricing for Monitoring cost facts (EUR per 1M tokens per
-                 LiteLLM model_name). Nil-safe: absent under --reuse-values ⇒ env
-                 unset ⇒ cost shows an honest "—". */}}
-            {{- if .Values.osUI.modelPricesJson }}
-            - name: MODEL_PRICES_JSON
-              value: {{ .Values.osUI.modelPricesJson | quote }}
+            {{- include "soa.osUI.env" . | nindent 12 }}
+            {{- /* A4: os-ui ENQUEUES and TAILS; it only stops executing runs in-process once
+                 the worker Deployment exists. */}}
+            {{- if and $u.worker $u.worker.enabled }}
+            - name: AGENTS_WORKER
+              value: "worker"
             {{- end }}
-            # Namespace the stack workloads live in — the native Components
-            # surface reads their status + scales them 0<->1 here via the k8s API.
-            - name: NAMESPACE
-              value: {{ .Release.Namespace | quote }}
-            {{- /* Offline (in-memory) user seeding is a no-cluster DEV convenience.
-                 Production fails closed (503) instead of reverting passwords. */}}
-            - name: OS_ALLOW_OFFLINE_USER_SEED
-              value: {{ ternary "true" "false" (eq (toString $u.allowOfflineUserSeed) "true") | quote }}
-            {{- /* Tab gating. Empty = base-tier default. */}}
-            {{- if .Values.osUI.enabledTabs }}
-            - name: OS_ENABLED_TABS
-              value: {{ .Values.osUI.enabledTabs | quote }}
+            {{- if and $u.worker $u.worker.leaseMs }}
+            - name: AGENTS_WORKER_LEASE_MS
+              value: {{ $u.worker.leaseMs | quote }}
             {{- end }}
-            # Session-signing secret (HMAC-SHA256 for the auth cookie). Sourced
-            # from the generated `os-ui-session` Secret — NEVER the in-code
-            # dev fallback, which would let anyone forge an admin session.
-            - name: OS_SESSION_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: os-ui-session
-                  key: OS_SESSION_SECRET
-            # Signs the per-user bearer token for the remote MCP endpoint
-            # (/api/mcp). Sourced from the same os-ui-session Secret so it works
-            # out of the box; repoint to its own Secret/key later to rotate MCP
-            # tokens independently of session cookies.
-            - name: OS_MCP_TOKEN_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: os-ui-session
-                  key: OS_SESSION_SECRET
-            {{- with .Values.osUI.usersSeed }}
-            # Optional operator pre-seed of REAL users (JSON array). Not shipped;
-            # plaintext passwords here are hashed on ingest. Empty = first-run
-            # bootstrap admin only (admin/admin, forced-change on first login).
-            - name: OS_USERS
+            {{- with $u.langfuseRedaction }}
+            - name: LANGFUSE_REDACTION
               value: {{ . | quote }}
             {{- end }}
-            # ---- Outbound email (OPTIONAL — os-ui/lib/mailer.ts pluggable mailer,
-            # transports selected Graph > SMTP > none). With NEITHER block enabled
-            # the platform works fully without email (the first-run admin
-            # auto-verifies, later accounts are active at once). Secrets come from
-            # k8s Secrets — never plaintext here.
-            {{- if .Values.osUI.graph.enabled }}
-            # Transport 1 — Microsoft Graph sendMail (recommended for M365).
-            # GRAPH_CLIENT_SECRET comes from the os-ui-graph Secret.
-            - name: GRAPH_TENANT_ID
-              value: {{ .Values.osUI.graph.tenantId | quote }}
-            - name: GRAPH_CLIENT_ID
-              value: {{ .Values.osUI.graph.clientId | quote }}
-            - name: GRAPH_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: os-ui-graph
-                  key: GRAPH_CLIENT_SECRET
-                  optional: true
-            - name: MAIL_FROM
-              value: {{ .Values.osUI.graph.mailFrom | default "support@datamasterclass.com" | quote }}
-            {{- end }}
-            {{- if .Values.osUI.smtp.enabled }}
-            # Transport 2 — generic SMTP relay (fallback). SMTP_PASS comes from the
-            # os-ui-smtp Secret.
-            - name: SMTP_HOST
-              value: {{ .Values.osUI.smtp.host | quote }}
-            - name: SMTP_PORT
-              value: {{ .Values.osUI.smtp.port | quote }}
-            - name: SMTP_SECURE
-              value: {{ .Values.osUI.smtp.secure | quote }}
-            {{- with .Values.osUI.smtp.user }}
-            - name: SMTP_USER
-              value: {{ . | quote }}
-            {{- end }}
-            - name: SMTP_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: os-ui-smtp
-                  key: SMTP_PASS
-                  optional: true
-            - name: SMTP_FROM
-              value: {{ .Values.osUI.smtp.from | default "support@datamasterclass.com" | quote }}
-            {{- end }}
-            {{- with (toString .Values.osUI.emailVerification) }}
-            # Coerced via toString so a YAML/`--set` boolean false is honoured too.
-            - name: OS_EMAIL_VERIFICATION
-              value: {{ . | quote }}
-            {{- end }}
-            {{- $publicUrl := .Values.osUI.publicUrl | default (include "soa.consoleUrl" (dict "ctx" . "key" "osUI" "fallback" "")) }}
-            {{- with $publicUrl }}
-            # Absolute base for emailed verification links AND the remote MCP
-            # endpoint URL (/api/mcp). Defaults to the os-ui ingress host; set
-            # osUI.publicUrl to override.
-            - name: OS_PUBLIC_URL
-              value: {{ . | quote }}
-            {{- end }}
-            # In-cluster backend Service URLs (overridable per environment).
-            # Live agent-runtime backend (Agents tab) + the shared token the UI
-            # uses to call it and to validate the runtime's governed-tool calls.
-            - name: AGENT_RUNTIME_URL
-              value: "http://agent-runtime:8000"
-            - name: AGENT_RUNTIME_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: agent-runtime-token
-                  key: token
-            - name: QUERY_TOOL_URL
-              value: {{ $u.queryToolUrl | quote }}
-            # Shared service bearer the os-ui presents to query-tool + data-runner
-            # (defense-in-depth behind the NetworkPolicies). Rendered ONLY when
-            # serviceBearer.enabled — nil-safe: absent => no header, services skip check.
-            {{- include "soa.serviceBearerEnv" . | nindent 12 }}
-            {{- if .Values.softwareRunner.enabled }}
-            # ---- Software live-app runner (Software tab). The os-ui provisions a
-            # real Deployment+Service+Ingress per built app into softwareRunner.namespace
-            # (RBAC in templates/os-ui/apps-runner.yaml). Per-app host is
-            # <slug>.<domain>.<appsDomain>; runnerImage is the teaching default when a
-            # built app has no image of its own. ----
-            - name: SOFTWARE_RUNNER_NAMESPACE
-              value: {{ .Values.softwareRunner.namespace | quote }}
-            - name: OS_APPS_DOMAIN
-              value: {{ .Values.softwareRunner.appsDomain | quote }}
-            - name: SOFTWARE_RUNNER_IMAGE
-              value: {{ .Values.softwareRunner.runnerImage | quote }}
-            - name: OS_APPS_INGRESS_CLASS
-              value: {{ .Values.softwareRunner.ingressClass | default .Values.ingress.className | quote }}
-            - name: OS_APPS_TLS_ISSUER
-              value: {{ .Values.softwareRunner.tlsIssuer | default .Values.ingress.tlsIssuer | quote }}
-            {{- end }}
-            # ---- Data-tab ingest (T3). os-ui streams an uploaded file to MinIO
-            # (uploads/<uid>/) with a SigV4 PUT, then calls the data-runner /ingest —
-            # which writes the physical Iceberg Bronze table. Reuses the SAME
-            # object-storage endpoint + `objectStorage.secretName` Secret the lakehouse
-            # uses (no new broad creds), and the SAME warehouse bucket for uploads/. ----
-            - name: DATA_RUNNER_URL
-              value: {{ $u.dataRunnerUrl | default "http://data-runner:8000" | quote }}
-            - name: S3_ENDPOINT
-              value: {{ include "soa.s3Endpoint" . | quote }}
-            - name: S3_REGION
-              value: {{ .Values.objectStorage.region | default "us-east-1" | quote }}
-            - name: S3_PATH_STYLE
-              value: "true"
-            - name: UPLOADS_BUCKET
-              value: {{ $u.uploadsBucket | default "lakehouse" | quote }}
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.objectStorage.secretName }}
-                  key: AWS_ACCESS_KEY_ID
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.objectStorage.secretName }}
-                  key: AWS_SECRET_ACCESS_KEY
-            - name: LANGFUSE_URL
-              value: {{ $u.langfuseUrl | quote }}
-            - name: OPENSEARCH_URL
-              value: {{ $u.opensearchUrl | quote }}
-            - name: KNOWLEDGE_INDEX
-              value: {{ $u.knowledgeIndex | quote }}
-            # Knowledge k-NN dimension — sourced from the SINGLE retrieval.knnDimension
-            # (same source as FILES_EMBED_DIM) so real embed vectors aren't rejected and
-            # silently downgraded to the offline hash when the dim changes (384↔4096).
-            - name: KNOWLEDGE_EMBED_DIM
-              value: {{ .Values.retrieval.knnDimension | quote }}
-            # ---- Files tab (unstructured context products). The `files` hybrid
-            # index + the SHARED embedding model. FILES_EMBED_DIM is sourced from
-            # the SINGLE retrieval.knnDimension so the knn_vector mapping and the
-            # query vectors always match — NEVER hardcoded here.
-            - name: FILES_INDEX
-              value: {{ $u.filesIndex | default "files" | quote }}
-            - name: FILES_EMBED_MODEL
-              value: {{ $u.filesEmbedModel | default "sovereign-embed" | quote }}
-            - name: FILES_EMBED_DIM
-              value: {{ .Values.retrieval.knnDimension | quote }}
-            {{- with $u.doclingUrl }}
-            - name: DOCLING_URL
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with $u.transcribeUrl }}
-            - name: TRANSCRIBE_URL
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with $u.ocrUrl }}
-            - name: OCR_URL
-              value: {{ . | quote }}
-            {{- end }}
-            # UI-only credential for the EMBEDDED LiteLLM admin console. os-ui mints a
-            # browser session from this server-side (core/infra/tool-sso-litellm.ts) so an
-            # admin opening Admin -> LLM Gateway is already signed in. Same Secret LiteLLM
-            # itself reads, so there is one credential, not two. Deliberately NOT the proxy
-            # master key: a leaked UI session must not equal full API access. Absent =>
-            # the OS reports "not configured" instead of framing LiteLLM's own login.
-            # The SCOPED virtual key the run path uses instead of the master key.
-            # Provisioned + registered in LiteLLM by the litellm-agent-key-init Job
-            # (model allowlist + USD cap). `optional` so a cluster without the
-            # agent key still starts; the run path then refuses to run rather
-            # than silently falling back to the master key.
-            - name: LITELLM_AGENT_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: agent-litellm-key
-                  key: apiKey
-                  optional: true
-            - name: LITELLM_UI_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: litellm-credentials
-                  key: UI_USERNAME
-                  optional: true
-            - name: LITELLM_UI_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: litellm-credentials
-                  key: UI_PASSWORD
-                  optional: true
-            - name: LITELLM_URL
-              value: {{ $u.litellmUrl | quote }}
-            - name: OPA_URL
-              value: {{ $u.opaUrl | quote }}
-            - name: DAGSTER_URL
-              value: {{ $u.dagsterUrl | quote }}
-            # External-warehouse connectors (Glue/Snowflake/BigQuery/Databricks/Fabric).
-            # OFF by default — surfaces the warehouse create-flow + MCP tools only when the
-            # operator opts in (lib/core/config.ts reads EXTERNAL_CONNECTORS_ENABLED).
-            - name: EXTERNAL_CONNECTORS_ENABLED
-              value: {{ $u.externalConnectorsEnabled | default false | quote }}
-            # Browser-reachable consoles (linked/opened from the browser). When
-            # ingress is enabled these resolve to the PUBLIC ingress host
-            # (https://<tool>.<domain>) via soa.consoleUrl — never localhost — so
-            # deployed links work; tools with no public host (e.g. dagster) get an
-            # empty value and the UI hides their "Open" link. Local-kind keeps the
-            # port-forward defaults from values.yaml.
-            - name: LANGFUSE_CONSOLE_URL
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "langfuse" "fallback" $u.langfuseConsoleUrl) | quote }}
-            - name: DAGSTER_CONSOLE_URL
-              value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "dagster" "fallback" $u.dagsterConsoleUrl) | quote }}
-            # Langfuse project keys — public key is non-secret; secret key via Secret.
-            - name: LANGFUSE_PUBLIC_KEY
-              value: {{ .Values.langfuseInit.publicKey | quote }}
-            - name: LANGFUSE_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $u.langfuseSecret.name | quote }}
-                  key: {{ $u.langfuseSecret.key | quote }}
-            # LiteLLM master key — from a Secret so it never sits in plaintext.
-            # Override the name/key per environment.
-            - name: LITELLM_MASTER_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $u.litellmSecret.name | quote }}
-                  key: {{ $u.litellmSecret.key | quote }}
           ports:
             - { name: http, containerPort: 3000 }
           readinessProbe:
@@ -416,6 +195,34 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml $u.resources | nindent 12 }}
+          {{- if $dpg.enabled }}
+          volumeMounts:
+            - name: os-repos
+              mountPath: /repos
+        # Read-only git daemon exporting every domain repo in-cluster (git://os-repos/<domain>.git)
+        # for the Dagster repo-sync sidecar. --export-all: bare repos written by isomorphic-git
+        # carry no git-daemon-export-ok marker. Nothing in a repo is a secret.
+        - name: git-daemon
+          image: "{{ $dpg.gitDaemon.image.repository }}:{{ $dpg.gitDaemon.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          command: ["git", "daemon", "--export-all", "--base-path=/repos", "--reuseaddr", "--verbose", "--port=9418", "--informative-errors"]
+          ports:
+            - { name: git, containerPort: 9418 }
+          volumeMounts:
+            - name: os-repos
+              mountPath: /repos
+              readOnly: true
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+      volumes:
+        - name: os-repos
+          persistentVolumeClaim:
+            claimName: os-repos
+          {{- end }}
 ---
 apiVersion: v1
 kind: Service

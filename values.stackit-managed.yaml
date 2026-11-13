@@ -195,10 +195,19 @@ osUI:
   argocdUrl: "https://argocd.REPLACE-DNS-NAME"
   openmetadataUrl: "https://openmetadata.REPLACE-DNS-NAME"
 
-agentRuntime:
-  image:
-    repository: ghcr.io/aborek/sovereign-os/agent-runtime
-    tag: "0.1.0@sha256:85cb9c3109beebf447422a0dbbbf05435f31cf38a73d705cc1dd185d1cae0eab"
+# A3 (checklist A28): the scoped agent key's allowlist MUST cover every alias the OS can
+# request on this profile — including the router fallback targets below, which the base
+# chart's four-alias list does not know. `scripts/check-litellm-allowlist.mjs` fails the
+# gate when this list misses one; the `litellm-agent-key-init` Job pushes it on upgrade.
+litellmAgentKey:
+  models:
+    - sovereign-default
+    - sovereign-mock
+    - sovereign-reasoning
+    - sovereign-embed
+    - sovereign-premium         # fallback target of sovereign-default / sovereign-mock
+    - sovereign-reasoning-fast  # fallback target of sovereign-reasoning
+    - sovereign-vision          # vision inputs route here (platform-admin role override)
 
 sampleAgent:
   image:

@@ -22,10 +22,12 @@ import {
   getSystemForEdit,
   getSystemForRun,
 } from '@tabs/agents/lib/store';
+import { newRunId } from '@core/kernel/run-id';
 import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { buildSystem } from '@tabs/agents/lib/build/server';
 
 import { normalizeContextGrants } from '@core/kernel/context-grants';
+import { config } from '@core/kernel/config';
 
 // ================================ AGENTS ======================================
 export const agentWriteTools: McpTool[] = [
@@ -116,7 +118,7 @@ export const agentWriteTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'RUN an agentic-os team (LangGraph, OS-MCP tool grants) for one turn and return the reply + the per-node governed tool steps — the same in-process, run-as-user executor the Agents tab uses. Purpose: close the Agents golden path (build → RUN) over MCP. Before: list_agent_systems / get_agent_system (and build_agent_system for a ✓ build). After: read the per-node steps; wire the system into a Big Bet or schedule. Governance + recursion, stated honestly: the team’s OWN tool calls dispatch through the SAME governed door as this call (grant-scoped, OPA `os-<systemId>` pre-gated, then handleRpc AS YOU) — so a team can never exceed its declared grants NOR your role; there is no escalation in the loop. You must own the system or be entitled to run it (a domain-Shared system is runnable by in-domain members); a non-runnable id is a typed forbidden. A hermes/legacy-grant system cannot run in-process — that is a typed bad_request pointing to the Agents tab UI. Note: the run drives a live LLM; each node takes seconds.',
+      'RUN an agent system (a real LangGraph StateGraph over your OS-MCP tool grants) for one turn and return the reply + the per-node governed tool steps — the SAME queue, engine and executor the Agents tab uses. Purpose: close the Agents golden path (build → RUN → approval → resume → trace) over MCP. Before: list_agent_systems / get_agent_system (and build_agent_system for a ✓ build). After: get_agent_run(runId) to follow it, decide_approval if it parks, resume_agent_run after a restart, get_run_trace(runId) for the trace. Returns `runId` (= the LangGraph thread id AND the Langfuse trace id) and `traceUrl`. Governance + recursion, stated honestly: the team’s OWN tool calls dispatch through the SAME governed door as this call (grant-scoped, OPA `os-<systemId>` pre-gated, then handleRpc AS YOU) — so a team can never exceed its declared grants NOR your role; there is no escalation in the loop. You must own the system or be entitled to run it (a domain-Shared system is runnable by in-domain members); a non-runnable id is a typed forbidden. A grant naming a tool with no governed MCP tool behind it is a typed bad_request that names the tool. A run that hits a write needing approval PARKS (`parked: true` + `heldApprovals`) instead of executing it. Note: the run drives a live LLM; each node takes seconds, and in worker mode it may return `queued: true` with the runId to follow.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -138,29 +140,85 @@ export const agentWriteTools: McpTool[] = [
       // in-domain member of a Shared system) — the same gate as the Agents tab run.
       const view = getSystemForRun(systemId, P(user));
       const msgs = runMessages(args);
-      // Dynamic imports: agentic-graph-server reads the tool registry at module init,
-      // so a static import here would be a server.ts ↔ write-tools.ts cycle.
-      const { isAgenticOsTeam } = await import('@tabs/agents/lib/build/os-tools');
-      if (!isAgenticOsTeam(view.system)) {
+      // PRE-FLIGHT (A5): the one engine runs every system; the only definition bug that stops a
+      // run is a grant naming a tool with no governed MCP tool behind it. Name them.
+      // Dynamic import: os-tools reads the tool registry at module init, so a static import here
+      // would be a server.ts ↔ write-tools.ts cycle.
+      const { unmappedGrantNames } = await import('@tabs/agents/lib/build/os-tools');
+      const unmapped = unmappedGrantNames(view.system);
+      if (unmapped.length > 0) {
         fail(
-          'This system does not run on the in-process agentic-os path (hermes runtime or legacy/unmapped tool grants) — run it from the Agents tab UI instead',
+          `This system grants tool(s) with no governed MCP tool behind them: ${unmapped.join(', ')}. ` +
+            'Fix the grants with commit_agent_files (system.yaml), then run again.',
           400,
         );
       }
-      const runTeam = runTeamOverride ?? (await import('@tabs/agents/lib/build/agentic-graph-server')).runOsTeam;
-      const team = await runTeam({ user, yaml: view.yaml, systemId, messages: msgs, disabledAgents: view.disabledAgents });
+      // Thread id = run id, returned so an MCP client can correlate (and resume) the run.
+      const runId = newRunId();
+      // A4: the MCP goes through the SAME queue as the UI and the scheduler — one start door.
+      const startRun = startQueuedRunOverride ?? (await import('@tabs/agents/lib/build/run-jobs-server')).startQueuedRun;
+      const out = await startRun({ user, systemId, domain: view.system.system.domain, messages: msgs, runId });
+      if (out.error) fail(out.error.message, out.error.status ?? 500);
+      if (!out.body) return { systemId, mode: 'live', engine: 'langgraph', runId, queued: true, note: 'filed on the run queue — tail it with get_agent_run' };
+      const b = out.body;
       return {
         systemId,
         mode: 'live',
-        reachedEnd: team.reachedEnd,
-        path: team.path,
-        finalText: team.finalText,
+        engine: 'langgraph',
+        runId: b.runId ?? runId,
+        checkpointer: b.checkpointer,
+        // A3: the deep link to THIS run's Langfuse trace (id = run id), when the trace store recorded it.
+        traceUrl: b.traceUrl,
+        reachedEnd: b.reachedEnd,
+        // A2: a run PARKED on a held write — decide its approvals (decide_approval) to resume it.
+        parked: b.parked,
+        heldApprovals: b.heldApprovals ?? [],
+        path: b.path,
+        finalText: b.finalText,
         // Per-node summary: model + governed tool steps (no raw model text — tight).
-        nodes: team.runs.map((r) => ({
-          node: r.node,
-          model: r.model,
-          steps: r.result.steps.map((s) => ({ tool: s.tool, isError: s.isError })),
-        })),
+        nodes: b.nodes.map((r) => ({ node: r.node, model: r.model, steps: r.steps.map((x) => ({ tool: x.tool, isError: x.isError })) })),
+      };
+    },
+  },
+  {
+    name: 'resume_agent_run',
+    tab: 'agents',
+    minRole: 'creator',
+    description:
+      'RESUME an interrupted agent run (LangGraph engine) from its last checkpoint — restart recovery after a pod restart or a dropped request. NOT for a run parked on an approval: that one resumes by itself when the approval is decided (decide_approval). Governance: only the RUNNER can resume their run (typed not_found otherwise); a finished run is a typed conflict; the resumed run executes AS YOU through the same governed door. Returns the completed report (or the next parked state).',
+    inputSchema: {
+      type: 'object',
+      properties: { runId: { type: 'string', description: 'The run id to continue.' } },
+      required: ['runId'],
+      examples: [{ runId: 'run_1b4e28ba-2fa1-11d2-883f-0016d3cca427' }],
+    },
+    call: async (user, args) => {
+      const runId = str(args.runId).trim();
+      if (!runId) fail('resume_agent_run needs a `runId`', 400);
+      // A4-review-H-1: the SAME visibility gate the run route and the re-attach stream use — the
+      // checkpoint's owner AND the `run_jobs` row must both be this caller's, both answering 404.
+      const { assertRunVisible } = await import('@tabs/agents/lib/engine/run-visibility');
+      const { peekRunOwner } = await import('@tabs/agents/lib/build/agentic-graph-server');
+      const owner = await peekRunOwner(runId);
+      const seen = assertRunVisible(owner ? { requestedBy: owner.userId, systemId: owner.systemId } : null, runId, user.id);
+      const view = getSystemForRun(seen.systemId, P(user));
+      // A4: a resume is a `run_jobs` row too — the same queue the decision hook and the UI use.
+      const { resumeQueuedRun, runJobStore } = await import('@tabs/agents/lib/build/run-jobs-server');
+      assertRunVisible(await (await runJobStore()).get(runId), runId, user.id, seen.systemId);
+      const out = await resumeQueuedRun({ user, systemId: seen.systemId, domain: view.system.system.domain, runId });
+      if (out.error) fail(out.error.message, out.error.status ?? 500);
+      if (!out.body) return { runId, systemId: seen.systemId, engine: 'langgraph', queued: true, note: 'the resume is filed — the worker is executing it' };
+      const body = out.body;
+      return {
+        runId,
+        systemId: seen.systemId,
+        engine: 'langgraph',
+        traceUrl: body.traceUrl,
+        reachedEnd: body.reachedEnd,
+        parked: body.parked,
+        heldApprovals: body.heldApprovals,
+        path: body.path,
+        finalText: body.finalText,
       };
     },
   },
@@ -179,25 +237,36 @@ function runMessages(args: Record<string, unknown>): { role: 'user' | 'assistant
   return [{ role: 'user', content: message }];
 }
 
-/** The runOsTeam signature the tool drives (structural, so tests can inject a spy). */
-type RunTeamFn = (input: {
+/**
+ * The `startQueuedRun` signature the tool drives (structural, so tests can inject a spy).
+ * A5 replaced the old `RunTeamFn` seam: there is one start door now, and it is this one.
+ */
+type StartRunFn = (input: {
   user: CurrentUser;
-  yaml: string;
   systemId: string;
+  domain: string;
   messages: { role: 'user' | 'assistant'; content: string }[];
-  disabledAgents?: string[];
+  prompt?: string;
+  runId: string;
 }) => Promise<{
-  path: string[];
-  finalText: string;
-  reachedEnd: boolean;
-  runs: { node: string; model: string; result: { steps: { tool: string; isError: boolean }[] } }[];
+  runId: string;
+  body?: {
+    runId?: string;
+    checkpointer?: 'postgres' | 'memory';
+    traceUrl?: string;
+    reachedEnd: boolean;
+    parked?: boolean;
+    heldApprovals?: { approvalId: string; tool: string; node: string }[];
+    path: string[];
+    finalText: string;
+    nodes: { node: string; model: string; steps: { tool: string; isError: boolean }[] }[];
+  };
+  error?: { message: string; status?: number };
 }>;
 
-// runOsTeam drives a LIVE LiteLLM call; tests inject a spy so the wrapper's
-// identity threading + governance gates are testable offline (mirrors the
-// injectable deps runOsTeam itself exposes). null → the real function.
-let runTeamOverride: RunTeamFn | null = null;
-export function __setRunOsTeamForTests(fn: RunTeamFn | null): void {
-  runTeamOverride = fn;
+// A real start files a `run_jobs` row and drives a LIVE LiteLLM call; tests inject a spy so the
+// wrapper's identity threading + governance gates are testable offline. null → the real function.
+let startQueuedRunOverride: StartRunFn | null = null;
+export function __setStartQueuedRunForTests(fn: StartRunFn | null): void {
+  startQueuedRunOverride = fn;
 }
-

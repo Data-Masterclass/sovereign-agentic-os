@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { embed, type EmbedResult } from '@tabs/knowledge/lib/embed';
+import { GatewayRejectedError } from '@core/infra/litellm-credential';
 import type { EmbedFn } from '@core/infra/context/librarian';
 
 /**
@@ -27,17 +28,25 @@ export type LiveEmbedder = {
  * Build a live embedder over the OS `embed()` path. It records the source of each
  * batch so a caller can detect the `offline-hash` fallback AFTER embedding and skip
  * relevance curation (relevance over hash vectors is meaningless). `embed()` itself
- * never hard-fails — it degrades to the offline hash — so this adapter never throws
- * for provider reasons; a genuinely thrown error still propagates to the Librarian,
- * which treats it as its `embed-error` passthrough.
+ * degrades to the offline hash for an UNREACHABLE gateway, and (A3) THROWS a typed
+ * `GatewayRejectedError` for a 4xx. The handoff curation indexes nothing, so a rejection
+ * here is treated like the offline source (`offline-hash` → keepRows handoff) rather than
+ * failing the node; any other thrown error still propagates to the Librarian, which
+ * treats it as its `embed-error` passthrough.
  */
 export function liveEmbedder(): LiveEmbedder {
   let source: EmbedResult['source'] | undefined;
   return {
     embed: async (texts) => {
-      const res = await embed(texts);
-      source = res.source;
-      return res.vectors;
+      try {
+        const res = await embed(texts);
+        source = res.source;
+        return res.vectors;
+      } catch (e) {
+        if (!(e instanceof GatewayRejectedError)) throw e;
+        source = 'offline-hash';
+        return [];
+      }
     },
     lastSource: () => source,
   };
@@ -54,7 +63,12 @@ export function liveEmbedder(): LiveEmbedder {
  */
 export function guardedEmbedder(): EmbedFn {
   return async (texts) => {
-    const res = await embed(texts);
-    return res.source === 'offline-hash' ? [] : res.vectors;
+    try {
+      const res = await embed(texts);
+      return res.source === 'offline-hash' ? [] : res.vectors;
+    } catch (e) {
+      if (e instanceof GatewayRejectedError) return [];
+      throw e;
+    }
   };
 }

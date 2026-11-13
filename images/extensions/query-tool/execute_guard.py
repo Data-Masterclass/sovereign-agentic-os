@@ -351,13 +351,27 @@ def connect_kwargs(
     catalog: str,
     http_scheme: str,
     default_user: str,
+    request_timeout: Optional[int] = None,
+    max_run_time: Optional[str] = None,
 ):
     """Build the Trino connection kwargs. Factored out (and unit-tested) so the key
     invariant is provable without a live Trino: the session `user` is the CALLER's
     principal — never dropped or replaced by the tool's service identity — so the
     reads inside a CTAS SELECT are governed by the Trino->OPA plugin AS THE CALLER
-    (a build can only read what the builder may read)."""
-    return {
+    (a build can only read what the builder may read).
+
+    BOUNDING THE STATEMENT (B4-review E-1). Both halves are needed, and neither
+    substitutes for the other:
+      * `request_timeout` bounds ONE HTTP poll of the client/coordinator exchange —
+        it makes the CLIENT give up;
+      * `query_max_run_time` is the session property that makes TRINO ITSELF abandon
+        the query. Without it, a client that gives up (or an os-ui `AbortSignal` that
+        fires at 8 s) leaves the query running on the cluster, holding a slot for as
+        long as the scan takes.
+    `None` for either leaves it out entirely, so a caller that must not be bounded
+    (a long write) is unaffected. Mirrors `images/extensions/dagster/repo.py`'s
+    `_trino_rows`, which already does this for the observation probe."""
+    kwargs = {
         "host": host,
         "port": port,
         "user": principal or default_user,
@@ -365,3 +379,8 @@ def connect_kwargs(
         "schema": schema,
         "http_scheme": http_scheme,
     }
+    if request_timeout is not None:
+        kwargs["request_timeout"] = request_timeout
+    if max_run_time:
+        kwargs["session_properties"] = {"query_max_run_time": max_run_time}
+    return kwargs

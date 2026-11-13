@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { isFrequentCron, nextCronRun } from '@tabs/data/lib/sync-next-run';
+import { saveScheduleMessage, schedulingDisabled, schedulingDisabledNote } from '@tabs/data/lib/sync-schedule-view';
 import { kajabiCursorField } from '@tabs/connections/lib/kajabi-resources';
 
 /**
@@ -51,6 +52,11 @@ type SyncStatus = {
   consecutiveErrors: number;
   /** The source connection's platform (kafka ⇒ offsets cursor, append only). */
   platform?: string | null;
+  /** Where the read-back came from. `ledger` ⇒ `DATA_PROJECT_GIT` is off ⇒ nothing schedules a
+   *  saved cadence at all (B4-8), which the pickers have to say in words (review M-7). */
+  source?: 'ledger' | 'dagster';
+  /** The next tick Dagster reports; `null` with the flag off, where there is no next run. */
+  nextRunAt?: string | null;
 };
 
 const PRESETS: { label: string; cron: string }[] = [
@@ -200,10 +206,11 @@ export default function SyncPanel({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setMsg(`✗ ${data.error ?? 'Could not save the sync'}`); return; }
-      // Honest about the trigger: saved is saved, but a CronJob that could not be
-      // provisioned must not be presented as live.
-      const cronOut = data.cron as { ok?: boolean; live?: boolean; detail?: string } | undefined;
-      setMsg(cronOut && !cronOut.ok ? `Saved — but: ${cronOut.detail ?? 'the schedule trigger could not be provisioned.'}` : '✓ Saved');
+      // Honest about the trigger. `reconcileSyncSchedule` answers `ok: true` in BOTH worlds and
+      // puts the difference in `detail` — "Dagster schedules this from the repository" vs
+      // "nothing schedules it" — so the detail is shown WHENEVER it is non-empty, not only on a
+      // failure (review H-3a). The wording lives in a tested `.ts` helper.
+      setMsg(saveScheduleMessage(data.cron as { ok?: boolean; detail?: string } | undefined));
       await load();
     } catch (e) {
       setMsg(`✗ ${(e as Error).message}`);
@@ -374,7 +381,9 @@ export default function SyncPanel({
               </>
             ) : null}
           </div>
-          {enabled ? (
+          {schedulingDisabled(status.source) ? (
+            <p className="muted" style={{ margin: '10px 0 0', fontSize: 13 }}>{schedulingDisabledNote(status.source)}</p>
+          ) : enabled ? (
             <p style={{ margin: '10px 0 0', fontSize: 13, fontWeight: 600 }}>{cadenceLine(cron)}</p>
           ) : null}
           {effMode === 'merge' && isFrequentCron(cron) ? (

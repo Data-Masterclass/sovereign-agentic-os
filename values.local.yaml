@@ -85,6 +85,11 @@ litellm:
     limits:   { cpu: 1,    memory: 3Gi }
 
 osUI:
+  # Data products in git (engine rebuild B4): ON, like the chart default — the laptop profile is
+  # where the whole path is exercised (one bare repo per domain on the `os-repos` PVC, the
+  # git-daemon sidecar, the Dagster `sovereign` code location reading a validated commit).
+  dataProjectGit:
+    enabled: true
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits:   { cpu: 2,    memory: 1536Mi }

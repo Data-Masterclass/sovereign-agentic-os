@@ -68,9 +68,10 @@ export const REGISTRY: Component[] = [
   { id: 'mock-model', name: 'Mock model (local dev only)', layer: 'Layer 1 — Agent core', kind: 'deploy',
     workload: 'mock-model', svc: 'mock-model', port: 8080, ui: false, login: 'none', toggle: true,
     summary: 'Offline OpenAI-compatible stub for local/kind only (deterministic embeddings). Not deployed on STACKIT — managed inference is used there instead.' },
-  { id: 'agent-runtime', name: 'Agent runtime', layer: 'Layer 1 — Agent core', kind: 'deploy',
-    workload: 'agent-runtime', svc: 'agent-runtime', port: 8000, ui: false, login: 'via LiteLLM virtual key', toggle: true,
-    summary: 'Live-execution backend for the Agents tab. Two-tier: plan (reasoning model) → execute (worker model). Least-privilege scoped key; egress default-deny.' },
+  // A5 (engine rebuild): `agent-runtime` is NOT here any more. The Python IR interpreter it
+  // described is deleted — agent systems execute as a real LangGraph StateGraph inside os-ui,
+  // as the signed-in user, optionally in the `os-ui-worker` Deployment. A registry row for a
+  // workload the chart no longer renders is a component that reads "down" forever.
   { id: 'opensearch', name: 'OpenSearch (retrieval)', layer: 'Layer 1 — Agent core', kind: 'sts',
     workload: 'opensearch-master', svc: 'opensearch', port: 9200, ui: false, login: 'none (security disabled locally)',
     toggle: true, summary: 'Vector + lexical retrieval backbone for RAG.' },

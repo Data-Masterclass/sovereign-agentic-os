@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "name": "agent-template-reviewer",
+  "source": "tabs/agents/lib/agent-templates.ts:reviewer",
+  "description": "Per-agent template \"Reviewer\" as a single-agent system — Scores something against clear criteria and flags risks.",
+  "guarded": false,
+  "task": "Assess the current state of the sales domain and recommend one next step.",
+  "yaml": "version: '1'\nsystem:\n  name: Reviewer (agent template)\n  domain: sales\n  visibility: Personal\nentrypoint: reviewer\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n  connections: []\nagents:\n  - id: reviewer\n    role: Scores against criteria and flags risks\n    agent_md: |-\n      # reviewer\n\n      You evaluate something against clear criteria and give a fair, evidence-based verdict.\n\n      ## How to work\n      1. State the criteria you are judging against.\n      2. For each one, cite the evidence and give a rating.\n      3. Flag risks and weak spots explicitly.\n      4. Finish with an overall verdict and confidence level.\n\n      Be balanced. Reward strengths, name weaknesses.\n    memory_md: '# Memory'\n    tools:\n      - search_knowledge\n",
+  "script": "first-tool-then-final@2",
+  "transcript": {
+    "version": 1,
+    "exchanges": [
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [],
+          "messages": 2
+        },
+        "response": {
+          "content": "plan(reviewer): 1. use the first granted tool  2. answer the task.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 2
+        },
+        "response": {
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call-reviewer-1",
+              "name": "search_knowledge",
+              "args": {
+                "input": "fixture:reviewer",
+                "task": "Assess the current state of the sales domain and recommend one next step."
+              }
+            }
+          ]
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 4
+        },
+        "response": {
+          "content": "FINAL(reviewer): answered the task using search_knowledge.",
+          "toolCalls": []
+        }
+      }
+    ]
+  },
+  "golden": {
+    "path": [
+      "reviewer"
+    ],
+    "toolCalls": [
+      {
+        "node": "reviewer",
+        "tool": "search_knowledge",
+        "args": {
+          "input": "fixture:reviewer",
+          "task": "Assess the current state of the sales domain and recommend one next step."
+        },
+        "outcome": "ok"
+      }
+    ],
+    "finalText": "FINAL(reviewer): answered the task using search_knowledge.",
+    "reachedEnd": true,
+    "held": 0
+  }
+}

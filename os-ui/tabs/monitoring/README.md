@@ -37,6 +37,30 @@ _No MCP tools yet. Every user-facing action should grow one — the MCP server i
 - `guide.md` — the golden path, shown in-product
 - `context.md` — the system prompt context this tab gives an agent
 
+## Where the numbers come from (engine rebuild B2–B4)
+
+- **Pipelines lens** (`lib/adapters/pipeline-health.ts`) reads **Dagster runs** through the one typed
+  client (`core/infra/dagster.ts` `recentOsRuns`, READ-ONLY — no launch or terminate here) and
+  labels each row from the run's `os/*` tags: `os/dataset`, `os/domain`, `os/principal`,
+  `os/action`, `os/commit`. A run without those tags keeps its job name rather than being hidden.
+  Dagster unreachable ⇒ nothing, or the demo fixtures where `monitoringDemoFixtures` is on — never a
+  red alert no one can act on.
+- **Data quality, freshness and last-sync** (`lib/artifacts-view.ts`, `lib/detail-view.ts`) read
+  `@tabs/data/lib/dq-status-server` and `@tabs/data/lib/sync-status-server`, which resolve to
+  **Dagster asset checks and runs** — the default since B4 (`DATA_PROJECT_GIT` is on) — and to the
+  OS's own `os-dq-results` / `os-sync-runs` series only under the emergency opt-out. One function per
+  signal, shared with the Data tab, so the two tabs cannot disagree. This tab holds no ledger read
+  of its own — `grep -rn "sync-runs\|dq-results" tabs/monitoring` finds no import, only the
+  comments that explain the opt-out fallback. Unknown is `null`, never a guess.
+- **Which engine produced a verdict is visible.** `DqRunRecord.source` reaches the dataset detail as
+  a `sourceLabel` the `.ts` payload computes (`dqSourceLabel` in `@tabs/data/lib/dq` — `dagster` →
+  "dbt test", `os` → "OS probe", absent → nothing, because a pre-B2 record cannot know). The UI
+  renders what the payload says; a tab's UI may not import another tab.
+- **`lastSync` means when the newest run ENDED** (its start while it is still running) on the
+  Dagster path, which is when the data actually landed. An unreadable dataset is `unknown: true`,
+  distinct from "never synced" — a read that failed is not a fact.
+- **Agent run traces** still come from Langfuse / the in-process ring (Part A of the engine rebuild).
+
 ## Rules that apply here
 
 1. **Import only `@core/*` and this module.** A cross-tab need means the shared part belongs in `@core`.

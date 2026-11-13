@@ -27,6 +27,7 @@ import {
 import type { System } from '@tabs/agents/lib/system-schema';
 import { downloadRunPdf } from '@tabs/agents/lib/build/agent-pdf';
 import { agentDisplayName } from '@tabs/agents/lib/build/eval-report';
+import { isRunOver, parseSseChunk, reattachFrom, runStreamUrl, REATTACH_LIMIT } from '@tabs/agents/lib/build/run-stream-client';
 
 /**
  * Build = execute + verify (Task 4) and Run (Task 7). Build runs the 5 adapters
@@ -67,6 +68,12 @@ type LastRun = {
   interrupted?: boolean;
   /** Node index the interrupted walk reached (for a future full-resume). */
   resumeFromIndex?: number;
+  /** The run id (= LangGraph thread id) under the langgraph engine — what Resume continues. */
+  runId?: string;
+  /** Where the thread's checkpoints live — Resume is offered only for `postgres` (memory died with the pod). */
+  checkpointer?: 'postgres' | 'memory';
+  heldApprovals?: HeldApproval[];
+  warnings?: string[];
 };
 
 /** Grant ids per kind, mirroring ContextKind — for the Evaluate granted-vs-used strip. */
@@ -124,7 +131,16 @@ type RunReport = {
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;
   traceUrl?: string;
+  /** Engine rebuild A1/A2: the run id (= LangGraph thread), where its checkpoints live, compile warnings. */
+  runId?: string;
+  checkpointer?: 'postgres' | 'memory';
+  warnings?: string[];
+  interrupted?: boolean;
+  /** A2: the run is PARKED on these approvals; the decision in Governance resumes it. */
+  parked?: boolean;
+  heldApprovals?: HeldApproval[];
 };
+type HeldApproval = { approvalId: string; tool: string; node: string };
 
 // The run route returns TWO shapes: a single-agent report (output/steps/traces/held)
 // and a multi-agent "team" run (finalText/nodes, no steps/traces). Normalize both
@@ -181,6 +197,12 @@ function normalizeRun(body: RawRun): RunReport {
     mode: body.mode,
     traceStoreAvailable: body.traceStoreAvailable,
     traceUrl: body.traceUrl,
+    runId: body.runId,
+    checkpointer: body.checkpointer,
+    warnings: Array.isArray(body.warnings) ? body.warnings : undefined,
+    interrupted: body.interrupted,
+    parked: body.parked ?? ((body.heldApprovals?.length ?? 0) > 0),
+    heldApprovals: Array.isArray(body.heldApprovals) ? body.heldApprovals : undefined,
   };
 }
 
@@ -325,6 +347,10 @@ type LiveProgress = {
   /** Nodes that have started (active or done) and nodes that have completed. */
   started: string[];
   completed: string[];
+  /** A2: the held write the run is parked on right now (cleared by `resumed`). */
+  awaiting?: HeldApproval;
+  /** A2: the last decision that resumed the run. */
+  resumed?: { approvalId: string; decision: string };
 };
 
 // ── Context actually used (#177) ────────────────────────────────────────────
@@ -529,7 +555,8 @@ function GrantsVsUsage({ granted, usage }: { granted: GrantedIds; usage?: RunCon
 
 /** A calm one-line "what is happening right now" for the live banner. */
 function liveLine(p: LiveProgress): string {
-  if (!p.node) return 'Starting the team…';
+  if (p.awaiting) return `${p.awaiting.node} · ${p.awaiting.tool} — parked, awaiting approval in Governance → Inbox`;
+  if (!p.node) return p.resumed ? `Resumed after the ${p.resumed.decision === 'approve' ? 'approval' : 'rejection'}…` : 'Starting the team…';
   const where = p.index && p.total ? ` (agent ${p.index} of ${p.total})` : '';
   if (!p.tool) return `${p.node} — thinking${where}`;
   const verb = p.stepStatus === 'running' ? 'running' : p.stepStatus ?? 'done';
@@ -779,7 +806,10 @@ export default function BuildRunPanel({
     if (!runComplete || !run) { setMetrics(null); return; }
     let cancelled = false;
     const nodes = (run.nodes ?? []).map((n) => n.node).join(',');
-    fetch(`/api/agents/systems/${systemId}/run/diagnostics?nodes=${encodeURIComponent(nodes)}`, { cache: 'no-store' })
+    // A3: read BY THE RUN'S TRACE ID (= run id); a run recorded before the rebuild (no run id) is bounded server-side to
+    // this user's own recent traces. Never an unfiltered read.
+    const scope = run.runId ? `&runId=${encodeURIComponent(run.runId)}` : '';
+    fetch(`/api/agents/systems/${systemId}/run/diagnostics?nodes=${encodeURIComponent(nodes)}${scope}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((b: { metrics?: TraceMetrics } | null) => { if (!cancelled) setMetrics(b?.metrics ?? null); })
       .catch(() => { if (!cancelled) setMetrics(null); });
@@ -981,10 +1011,96 @@ export default function BuildRunPanel({
         ...(p ?? { started: [], completed: [] }),
         completed: p?.completed.includes(node) ? p.completed : [...(p?.completed ?? []), node],
       }));
+    } else if (event === 'approval-required') {
+      // A2: a held write parked the run — say so, and keep the banner until the decision resumes it.
+      setLive((p) => ({
+        ...(p ?? { started: [], completed: [] }),
+        awaiting: { approvalId: String(data.approvalId ?? ''), tool: String(data.tool ?? ''), node: String(data.node ?? '') },
+      }));
+    } else if (event === 'resumed') {
+      setLive((p) => ({
+        ...(p ?? { started: [], completed: [] }),
+        awaiting: undefined,
+        resumed: { approvalId: String(data.approvalId ?? ''), decision: String(data.decision ?? '') },
+      }));
     }
   };
 
-  const doRun = async (stop = false) => {
+  /**
+   * Consume one SSE response frame-by-frame. `onFrame` returns true to stop reading (a terminal
+   * frame). Resolves `settled` = whether a terminal frame arrived (never a stuck spinner otherwise).
+   */
+  const readSse = async (res: Response, onFrame: (event: string, data: Record<string, unknown>) => boolean): Promise<boolean> => {
+    if (!res.body) return false;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let settled = false;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      // Frame splitting lives in `run-stream-client.ts` (pure, unit-tested): a frame can arrive
+      // across two network chunks, and a frame we cannot read must not break the stream.
+      const parsed = parseSseChunk(buf, decoder.decode(value, { stream: true }));
+      buf = parsed.rest;
+      for (const frame of parsed.frames) {
+        if (onFrame(frame.event, frame.data)) settled = true;
+      }
+      if (settled) break;
+    }
+    return settled;
+  };
+
+  /**
+   * A2 — re-attach to a run that outlived its request: a PARKED run the Governance decision
+   * resumes elsewhere, or (A4-review-M-3) a run whose tail budget expired. The stream replays from
+   * `afterSeq` and follows the run to its real end; when the server hands back another `queued`
+   * cursor we simply re-attach from it, as many times as the run needs. Nothing asks the user to
+   * "run again" while the run is still executing.
+   */
+  const attachToRun = async (runId: string, afterSeq = 0) => {
+    setRunningNow(true);
+    setRunErr('');
+    let cursor = { runId, afterSeq };
+    try {
+      for (let hop = 0; hop < REATTACH_LIMIT; hop += 1) {
+        const res = await fetch(runStreamUrl(systemId, cursor.runId, cursor.afterSeq), { headers: { accept: 'text/event-stream' } });
+        if (!res.ok || !(res.headers.get('content-type') ?? '').includes('text/event-stream')) {
+          const body = await res.json().catch(() => ({}));
+          setRunErr(body.error ?? 'Could not attach to the run — it continues on its own; refresh to see the result.');
+          return;
+        }
+        let next: { runId: string; afterSeq: number } | undefined;
+        const settled = await readSse(res, (event, data) => {
+          const frame = { event, data };
+          const again = reattachFrom(frame, cursor.runId);
+          if (again) { next = again; return true; }
+          if (event === 'done') {
+            const r = normalizeRun(data as RawRun);
+            setRun(r);
+            if (!isRunOver(frame)) return false; // the replayed parked `done` — keep listening
+            setLive(null);
+            return true;
+          }
+          if (event === 'error') { setRunErr(String(data.error ?? 'Run failed')); return true; }
+          applyEvent(event, data);
+          return false;
+        });
+        if (next) { cursor = next; continue; }
+        if (!settled) setRunErr('The run stream ended before the run finished — refresh to see its current state.');
+        onStateChange();
+        return;
+      }
+      setRunErr('This run is still going after many hours of watching — refresh to see its current state.');
+    } catch (e) {
+      setRunErr((e as Error).message);
+    } finally {
+      setRunningNow(false);
+      setLive(null);
+    }
+  };
+
+  const doRun = async (stop = false, resumeRunId?: string) => {
     setRunningNow(true);
     setRunErr('');
     // Immediately clear the prior result so the in-progress state is unambiguous —
@@ -999,7 +1115,10 @@ export default function BuildRunPanel({
         headers: { 'content-type': 'application/json', ...(stop ? {} : { accept: 'text/event-stream' }) },
         // Send the typed task; an empty prompt lets the server fill a real, purpose-derived
         // default task (NOT "Test invocation"), so the run does the team's actual job.
-        body: JSON.stringify(stop ? { stop: true } : prompt.trim() ? { prompt: prompt.trim() } : {}),
+        // Resume continues an interrupted langgraph thread from its last checkpoint (engine rebuild A1).
+        body: JSON.stringify(
+          stop ? { stop: true } : resumeRunId ? { resume: true, runId: resumeRunId } : prompt.trim() ? { prompt: prompt.trim() } : {},
+        ),
       });
 
       const isStream = (res.headers.get('content-type') ?? '').includes('text/event-stream');
@@ -1007,38 +1126,33 @@ export default function BuildRunPanel({
         // Parse the SSE stream frame-by-frame: light up agents as they run and show
         // the current step live; `done` carries the SAME full result the non-stream
         // path returns, so the completed view is byte-for-byte unchanged.
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-        let settled = false;
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const frames = buf.split('\n\n');
-          buf = frames.pop() ?? '';
-          for (const frame of frames) {
-            const evLine = frame.split('\n').find((l) => l.startsWith('event:'));
-            const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
-            if (!evLine || !dataLine) continue;
-            const event = evLine.slice(6).trim();
-            let data: Record<string, unknown> = {};
-            try { data = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
-            if (event === 'done') {
-              settled = true;
-              setRun(normalizeRun(data as RawRun));
-              setLive(null);
-            } else if (event === 'error') {
-              settled = true;
-              setRunErr(String(data.error ?? 'Run failed'));
-            } else {
-              applyEvent(event, data);
-            }
+        let follow: { runId: string; afterSeq: number } | undefined;
+        const settled = await readSse(res, (event, data) => {
+          const frame = { event, data };
+          // A4-review-M-3: the server's tail budget ran out — it handed us a cursor, not a
+          // failure. Re-attach from it instead of telling the user to run again.
+          const again = reattachFrom(frame, resumeRunId);
+          if (again) { follow = again; return true; }
+          if (event === 'done') {
+            const r = normalizeRun(data as RawRun);
+            setRun(r);
+            // A2: a PARKED run — the request is over, but the run is not: re-attach below.
+            if (!isRunOver(frame) && r.runId) follow = { runId: r.runId, afterSeq: 0 };
+            else setLive(null);
+            return true;
           }
-        }
+          if (event === 'error') { setRunErr(String(data.error ?? 'Run failed')); return true; }
+          applyEvent(event, data);
+          return false;
+        });
         // Stream ended without a terminal frame (disconnect): never leave a stuck
         // spinner — surface an honest message so the student can retry.
         if (!settled) setRunErr('The run stream ended before a result arrived — please run again.');
+        if (follow) {
+          onStateChange();
+          void attachToRun(follow.runId, follow.afterSeq);
+          return;
+        }
       } else {
         // Non-streaming (stop press, or a server without the stream): read JSON.
         const body = await res.json();
@@ -1163,9 +1277,46 @@ export default function BuildRunPanel({
       ) : null}
       {/* An interrupted run (recovered after a mid-run restart) is legible, not lost:
           the completed steps are preserved above; a re-run continues the work. */}
-      {lastRun?.interrupted && !runningNow ? (
+      {/* A2: a run PARKED on held writes — the decision in Governance resumes it; watch it finish here. */}
+      {run?.parked && run.heldApprovals && run.heldApprovals.length > 0 && !runningNow ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
-          Interrupted by a restart {timeAgo(lastRun.at)} — completed steps preserved below; press ▶ Run to continue.
+          Parked — awaiting approval of{' '}
+          {run.heldApprovals.map((h, i) => (
+            <span key={h.approvalId}>
+              {i > 0 ? ', ' : ''}<code>{h.tool}</code> ({h.node})
+            </span>
+          ))}{' '}
+          in <a href={`/governance?focus=${encodeURIComponent(run.heldApprovals[0].approvalId)}`}>Governance → Inbox</a>. The decision resumes the run as you;{' '}
+          {run.runId ? (
+            <button type="button" className="btn-ghost" onClick={() => void attachToRun(run.runId!)} disabled={runningNow}>
+              watch it finish
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {lastRun?.interrupted && !runningNow && !run?.parked ? (
+        <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
+          {lastRun.runId && lastRun.checkpointer === 'postgres' ? (
+            <>
+              Interrupted {timeAgo(lastRun.at)} — completed steps preserved below;{' '}
+              <button type="button" className="btn-ghost" onClick={() => void doRun(false, lastRun.runId)} disabled={runningNow}>
+                Resume
+              </button>{' '}
+              continues from the last checkpoint.
+            </>
+          ) : lastRun.runId ? (
+            <>Interrupted {timeAgo(lastRun.at)} — completed steps preserved below. Its checkpoints were in memory and did not survive the restart; press ▶ Run to start again.</>
+          ) : (
+            <>Interrupted by a restart {timeAgo(lastRun.at)} — completed steps preserved below; press ▶ Run to continue.</>
+          )}
+        </div>
+      ) : null}
+      {/* Engine notes (review M1): compile warnings (e.g. a guard over a channel nothing sets) and
+          where this run's checkpoints live — one calm amber line, never silent. */}
+      {run && !runningNow && ((run.warnings && run.warnings.length > 0) || run.checkpointer) ? (
+        <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
+          {run.checkpointer ? <>Checkpoints: {run.checkpointer === 'postgres' ? 'Postgres (durable)' : 'in memory (not durable across restarts)'}{run.warnings && run.warnings.length > 0 ? ' · ' : ''}</> : null}
+          {run.warnings && run.warnings.length > 0 ? <>{run.warnings.length} compile warning{run.warnings.length === 1 ? '' : 's'}: {run.warnings.join(' · ')}</> : null}
         </div>
       ) : null}
       {/* Seed timestamp for the persisted run result. */}

@@ -225,10 +225,17 @@ test('DATA QUALITY: define_quality_rules stores executable rules; run_quality_ch
 
   // Running them: no physical table is materialized in-process, so every rule is
   // honestly "not_run" and the badge is unknown — NEVER a fake pass.
-  const report = payload<{ badge: string; results: { status: string }[] }>(
+  // Engine rebuild B4 (checklist X8): `run_quality_checks` now calls the SAME service the "Run
+  // checks" button calls, so the report carries the dataset's RULES **and** its three heuristic
+  // monitors (freshness / volume / schema, default-on) — 3 + 3. The monitors are `not_run` here
+  // too, for the same honest reason: there is no table to observe.
+  const report = payload<{ badge: string; results: { label: string; status: string }[] }>(
     await call(creator, 'run_quality_checks', { datasetId: d.id }),
   );
-  assert.equal(report.results.length, 3);
+  assert.equal(report.results.length, 6, 'the 3 rules plus the 3 default-on monitors (same as the UI)');
+  for (const prefix of ['not_null(order_id)', 'accepted_values(status,', 'range(net_amount,']) {
+    assert.ok(report.results.some((r) => r.label.startsWith(prefix)), `the report names the rule ${prefix}`);
+  }
   assert.ok(report.results.every((r) => r.status === 'not_run'), 'no built layer ⇒ not_run, never a fake pass');
   assert.equal(report.badge, 'unknown');
 });

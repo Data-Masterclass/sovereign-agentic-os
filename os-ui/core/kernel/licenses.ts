@@ -22,6 +22,12 @@ export type Component = {
 export const COMPONENTS: Component[] = [
   // ---- Agent & gateway tier ----
   { name: 'LangGraph', license: 'MIT', layer: 'Agents', note: 'Agent runtime (retrieve → generate → trace).' },
+  { name: '@langchain/langgraph (JS)', license: 'MIT', layer: 'Agents', note: 'In-process graph engine for agent systems (os-ui; engine rebuild). MIT library only — the LangGraph Platform is not bundled.' },
+  { name: '@langchain/langgraph-checkpoint-postgres', license: 'MIT', layer: 'Agents', note: 'Run checkpoints in the platform Postgres (os-ui).' },
+  { name: '@langchain/core (JS)', license: 'MIT', layer: 'Agents', note: 'Peer dependency of the LangGraph JS engine (os-ui).' },
+  { name: 'node-postgres (pg)', license: 'MIT', layer: 'Agents', note: 'Postgres driver for the run checkpointer (os-ui).' },
+  { name: 'langfuse (JS SDK)', license: 'MIT', layer: 'Monitoring', note: 'One Langfuse trace per agent run (os-ui).' },
+  { name: 'isomorphic-git (JS)', license: 'MIT', layer: 'Structured Data', note: 'In-process git store: one bare repository per domain holding the generated dbt project (os-ui; engine rebuild B1).' },
   { name: 'LiteLLM', license: 'MIT', layer: 'Gateway', note: 'One governed model + MCP endpoint.' },
   { name: 'Langfuse', license: 'MIT', layer: 'Monitoring', note: 'Tracing, evals, cost — every action traced.' },
   { name: 'Haystack', license: 'Apache-2.0', layer: 'Agents', note: 'RAG retrieval pipeline over OpenSearch.' },

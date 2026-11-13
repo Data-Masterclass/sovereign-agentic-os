@@ -4,11 +4,10 @@
 import type { CurrentUser } from '@core/kernel/auth';
 import { getPublicUser } from '@tabs/admin/lib/users';
 import { autonomousAgentsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
-import { parseSystem, serializeSystem, downgradeGrantsForRole } from '@tabs/agents/lib/system-schema';
-import { governSystemForOwner } from '@tabs/agents/lib/build/owner-grants';
-import { isAgenticOsTeam } from '@tabs/agents/lib/build/os-tools';
-import { runOsTeam } from '@tabs/agents/lib/build/agentic-graph-server';
-import { runSystem } from '@tabs/agents/lib/build/server';
+import { parseSystem } from '@tabs/agents/lib/system-schema';
+import { unmappedGrantNames } from '@tabs/agents/lib/build/os-tools';
+import { newRunId } from '@tabs/agents/lib/store';
+import type { StartedRunReport, StartRunInput } from '@tabs/agents/lib/build/run-jobs-server';
 
 /** The record the in-cluster scheduler reads (unscoped, no human session). */
 export type SchedulerSystem = { yaml: string; owner: string; disabledAgents: string[] };
@@ -17,8 +16,8 @@ export type SchedulerSystem = { yaml: string; owner: string; disabledAgents: str
 export type ScheduledDeps = {
   /** Stored owner id → live governed principal, or null if unresolvable. */
   resolveOwner?: (ownerId: string) => Promise<CurrentUser | null>;
-  runOsTeam?: typeof runOsTeam;
-  runSystem?: typeof runSystem;
+  /** A4: the ONE queued start door. Default: `startQueuedRun`. */
+  startQueuedRun?: (input: StartRunInput) => Promise<StartedRunReport>;
   /** The platform autonomous-execution gate (default: live setting). Injected for tests. */
   autonomousEnabled?: () => boolean;
 };
@@ -49,15 +48,14 @@ export async function resolveOwner(
 /**
  * Run one scheduled/unattended invocation of a system with NO human session.
  *
- * An agentic-os LangGraph team (`isAgenticOsTeam`) runs LIVE, in-process, under the
- * system OWNER's resolved live identity — the agent's governed tool calls execute
- * with exactly the owner's role + domains (OPA / DLS / Trino-RLS under `user:<id>`),
- * never a service principal, never escalated. If the owner cannot be resolved
- * (deleted / disabled / setup-incomplete) the run fails cleanly (409) rather than
- * falling back to a service identity or running ungoverned.
+ * The run goes onto the SAME run queue the UI and the MCP use, under the system OWNER's
+ * resolved live identity — the agent's governed tool calls execute with exactly the owner's
+ * role + domains (OPA / DLS / Trino-RLS under `user:<id>`), never a service principal, never
+ * escalated. If the owner cannot be resolved (deleted / disabled / setup-incomplete) the run
+ * fails cleanly (409) rather than falling back to a service identity or running ungoverned.
  *
- * Hermes / unmapped-legacy systems keep the existing `runSystem` fallback path
- * (attributed to 'scheduler'), which has no per-tool user identity to thread.
+ * A5: there is no second path. A system whose grants name tools with no governed MCP tool
+ * behind them is refused here (400, naming them) instead of being handed to a Python runtime.
  */
 export async function runScheduledSystem(
   systemId: string,
@@ -84,59 +82,64 @@ export async function runScheduledSystem(
   }
 
   const sys = parseSystem(rec.yaml);
-
-  if (isAgenticOsTeam(sys)) {
-    const owner = await (deps.resolveOwner ?? resolveOwner)(rec.owner);
-    if (!owner) {
-      return {
-        ok: false,
-        status: 409,
-        error:
-          `Scheduled run refused: the system owner (${rec.owner}) could not be resolved ` +
-          `to an active user. Governed scheduled runs act under the owner's identity and ` +
-          `never fall back to a service principal.`,
-      };
-    }
-    // S1: re-assert the builder-gate against the owner's LIVE role — a scheduled
-    // run acts under the owner's delegated identity, so a stale direct-write grant
-    // must be neutralised to held-for-approval when the owner is no longer builder+.
-    const governedYaml = serializeSystem(downgradeGrantsForRole(sys, owner.role));
-    const run = deps.runOsTeam ?? runOsTeam;
-    const team = await run({
-      user: owner,
-      yaml: governedYaml,
-      systemId,
-      messages: [{ role: 'user', content: prompt }],
-      disabledAgents: rec.disabledAgents,
-    });
+  // PRE-FLIGHT (A5): a grant with no governed MCP tool behind it is a definition bug, not a
+  // reason to run somewhere else. Name the offending tools and refuse.
+  const unmapped = unmappedGrantNames(sys);
+  if (unmapped.length > 0) {
     return {
-      ok: true,
-      report: {
-        mode: 'live',
-        team: true,
-        path: team.path,
-        finalText: team.finalText,
-        nodes: team.runs.map((r) => ({
-          node: r.node,
-          model: r.model,
-          steps: r.result.steps.map((s) => ({ tool: s.tool, isError: s.isError })),
-        })),
-      },
+      ok: false,
+      status: 400,
+      error:
+        `Scheduled run refused: this system grants tool(s) with no governed MCP tool behind ` +
+        `them: ${unmapped.join(', ')}. Fix the grants in system.yaml.`,
     };
   }
 
-  // Hermes / unmapped-legacy fallback: still re-assert the builder-gate against
-  // the owner's LIVE role (S-B) — `runSystem` re-registers grants from this yaml at
-  // run time, so it must be governed exactly like the interactive run route.
-  // Owner role is read fresh; missing/disabled ⇒ least privilege (fail-safe). This
-  // path resolves the role directly (not via deps.resolveOwner) — it never threads
-  // a per-tool owner identity into the dispatch.
-  const governedYaml = serializeSystem(await governSystemForOwner(sys, rec.owner));
-  const run = deps.runSystem ?? runSystem;
-  const report = await run(systemId, governedYaml, {
+  const owner = await (deps.resolveOwner ?? resolveOwner)(rec.owner);
+  if (!owner) {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        `Scheduled run refused: the system owner (${rec.owner}) could not be resolved ` +
+        `to an active user. Governed scheduled runs act under the owner's identity and ` +
+        `never fall back to a service principal.`,
+    };
+  }
+  // S1: the builder-gate is re-asserted against the owner's LIVE role by the executor
+  // (`prepareRunYaml` → `governYamlForOwner`), so a stale direct-write grant is neutralised to
+  // held-for-approval when the owner is no longer builder+ — on this path as on every other.
+  // Thread id = a fresh run id.
+  const runId = newRunId();
+  // A4: a scheduled run goes through the SAME queue as the UI, so it is not bound to this
+  // request either — a 20-minute nightly run finishes in the worker.
+  const start = deps.startQueuedRun ?? (await import('@tabs/agents/lib/build/run-jobs-server')).startQueuedRun;
+  const out = await start({
+    user: owner,
+    systemId,
+    domain: sys.system.domain,
+    messages: [{ role: 'user', content: prompt }],
     prompt,
-    requestedBy: 'scheduler',
-    disabledAgents: rec.disabledAgents,
+    runId,
   });
-  return { ok: true, report };
+  if (out.error) return { ok: false, status: out.error.status ?? 500, error: out.error.message };
+  if (!out.body) {
+    return { ok: true, report: { mode: 'live', engine: 'langgraph', runId, queued: true, team: true, note: 'filed on the run queue — the worker is executing it' } };
+  }
+  const b = out.body;
+  return {
+    ok: true,
+    report: {
+      mode: 'live',
+      engine: 'langgraph',
+      runId: b.runId ?? runId,
+      checkpointer: b.checkpointer,
+      reachedEnd: b.reachedEnd,
+      parked: b.parked,
+      team: true,
+      path: b.path,
+      finalText: b.finalText,
+      nodes: b.nodes.map((r) => ({ node: r.node, model: r.model, steps: r.steps.map((x) => ({ tool: x.tool, isError: x.isError })) })),
+    },
+  };
 }

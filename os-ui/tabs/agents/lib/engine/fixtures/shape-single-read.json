@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "name": "shape-single-read",
+  "source": "hand-written shape (a)",
+  "description": "Single agent with one read tool.",
+  "guarded": false,
+  "task": "Assess the current state of the sales domain and recommend one next step.",
+  "yaml": "version: '1'\nsystem:\n  name: Shape A — single agent, one read tool\n  domain: sales\n  visibility: Personal\nentrypoint: reader\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - search_knowledge\n  connections: []\nagents:\n  - id: reader\n    role: Reads the granted knowledge and answers\n    agent_md: |\n      # reader\n      Answer the question from the granted knowledge only. Cite what you used.\n    memory_md: '# Memory'\n    tools:\n      - search_knowledge\n",
+  "script": "first-tool-then-final@2",
+  "transcript": {
+    "version": 1,
+    "exchanges": [
+      {
+        "request": {
+          "model": "sovereign-reasoning",
+          "tools": [],
+          "messages": 2
+        },
+        "response": {
+          "content": "plan(reader): 1. use the first granted tool  2. answer the task.",
+          "toolCalls": []
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 2
+        },
+        "response": {
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call-reader-1",
+              "name": "search_knowledge",
+              "args": {
+                "input": "fixture:reader",
+                "task": "Assess the current state of the sales domain and recommend one next step."
+              }
+            }
+          ]
+        }
+      },
+      {
+        "request": {
+          "model": "sovereign-default",
+          "tools": [
+            "list_knowledge",
+            "search_knowledge"
+          ],
+          "messages": 4
+        },
+        "response": {
+          "content": "FINAL(reader): answered the task using search_knowledge.",
+          "toolCalls": []
+        }
+      }
+    ]
+  },
+  "golden": {
+    "path": [
+      "reader"
+    ],
+    "toolCalls": [
+      {
+        "node": "reader",
+        "tool": "search_knowledge",
+        "args": {
+          "input": "fixture:reader",
+          "task": "Assess the current state of the sales domain and recommend one next step."
+        },
+        "outcome": "ok"
+      }
+    ],
+    "finalText": "FINAL(reader): answered the task using search_knowledge.",
+    "reachedEnd": true,
+    "held": 0
+  }
+}

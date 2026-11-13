@@ -5,7 +5,7 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { McpTool } from '@core/mcp/server';
 import { pendingHandle, whoCanApprove } from '@core/mcp/pending';
-import { decide, getApproval, listApprovals, recordEffect, type Approval, type ApprovalStatus } from '@core/policy/approvals';
+import { decide, decisionSettled, ensureHydrated, getApproval, listApprovals, recordEffect, type Approval, type ApprovalStatus } from '@core/policy/approvals';
 import { canApprove, canSee, roleLabel } from '@core/policy/roles';
 import { applyEffect } from '@core/policy/effects';
 import { buildEffectDeps, fileArtifactCertification, isLadderKind, type LadderKind } from '@core/policy/ladder';
@@ -117,7 +117,7 @@ export const governanceTools: McpTool[] = [
     tab: 'governance',
     minRole: 'builder',
     description:
-      'APPROVE or DENY a request you are entitled to decide — and on approve, EXECUTE the governed effect (the approval IS the action: promote/certify/grant/deploy runs now). Path: the decide step of every gated golden path. Governance: rank-aware canApprove re-gate PER ITEM — a domain item needs a Builder/Domain-admin of that domain; a certification (scope tenant) needs a platform Admin; a creator can never decide. `remember:true` writes a standing policy where the item is rememberable — NOTE: standing policy is currently IN-PROCESS only (session-scoped), so it is not yet a durable tenant rule. Idempotency: an already-decided request → conflict.',
+      'APPROVE or DENY a request you are entitled to decide — and on approve, EXECUTE the governed effect (the approval IS the action: promote/certify/grant/deploy runs now). Path: the decide step of every gated golden path. AGENT RUNS: when the request came from a PARKED agent run (a write the run interrupted on), approving RESUMES that run from its checkpoint instead of performing the write here — the write then executes exactly once as the RUNNER, not as you; the result carries `resume: { status, runId }` and `get_agent_run(runId)` shows the run continuing. Nothing was written before your decision. Governance: rank-aware canApprove re-gate PER ITEM — a domain item needs a Builder/Domain-admin of that domain; a certification (scope tenant) needs a platform Admin; a creator can never decide, and neither can the requester. `remember:true` writes a standing policy where the item is rememberable — NOTE: standing policy is currently IN-PROCESS only (session-scoped), so it is not yet a durable tenant rule. Idempotency: an already-decided request → conflict.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -134,6 +134,9 @@ export const governanceTools: McpTool[] = [
       const decision = str(args.decision) === 'deny' ? 'reject' : str(args.decision) === 'approve' ? 'approve' : '';
       if (!decision) fail('decide_approval needs `decision` = approve | deny', 400);
 
+      // A2 review M-A: the queue is hydrated from the durable mirror before it is read — an MCP
+      // decision right after a pod restart must find the approval the Inbox would show.
+      await ensureHydrated();
       const a = getApproval(id);
       if (!a || !canSee(actor(user), a)) fail('Request not found', 404); // no existence leak
       if (a.status !== 'pending') fail(`Already ${a.status}`, 409);
@@ -142,6 +145,8 @@ export const governanceTools: McpTool[] = [
       // here (floor), and a domain_admin cannot decide cross-domain or certify.
       if (!canApprove(actor(user), a)) {
         const need = a.scope === 'tenant' ? 'a platform Admin' : `a ${roleLabel(a.approverRole)} of ${a.domain}`;
+        // A2 review L-G: the requester never decides their own item — four-eyes, whatever the rank.
+        if (a.requestedBy === user.id) fail(`You cannot approve your own request — it needs ${need} other than you`, 403);
         fail(`This request needs ${need}`, 403);
       }
 
@@ -149,7 +154,10 @@ export const governanceTools: McpTool[] = [
         const rejected = decide(id, 'reject', user.id);
         if (!rejected) fail('Could not decide (raced?)', 409);
         audit({ actor: user.id, action: 'deny', subject: rejected.tool || rejected.kind, domain: rejected.domain, reason: `${rejected.kind} denied`, detail: { approvalId: rejected.id } });
-        return { decided: 'denied', requestId: rejected.id, kind: rejected.kind };
+        // A2: a denied agent-run approval resumes the parked run (the agent receives the typed rejection).
+        await decisionSettled(rejected.id);
+        const after = getApproval(rejected.id);
+        return { decided: 'denied', requestId: rejected.id, kind: rejected.kind, ...(after?.runId ? { runId: after.runId, resume: after.resume } : {}) };
       }
 
       // Approve === act. APPLY THE EFFECT FIRST (mirrors approve_promotion): only on
@@ -182,12 +190,17 @@ export const governanceTools: McpTool[] = [
       }
       recordEffect(updated.id, { applied: effect.applied, live: effect.live, publish: effect.publish });
       audit({ actor: user.id, action: effect.audit.action, subject: effect.audit.subject, domain: updated.domain, reason: effect.audit.reason, detail: { approvalId: updated.id, ...effect.audit.detail } });
+      // A2: an agent-run approval's decide() fired the resume hook — the run continues AS ITS RUNNER;
+      // wait for it so the caller learns whether the run finished, parked again, or was refused.
+      await decisionSettled(updated.id);
+      const settled = getApproval(updated.id);
       return {
         decided: 'approved',
         requestId: updated.id,
         kind: updated.kind,
         effect: { applied: effect.applied, live: effect.live, ok: effect.ok, audit: effect.audit.action },
         ...(remembered ? { remembered } : {}),
+        ...(settled?.runId ? { runId: settled.runId, resume: settled.resume } : {}),
       };
     },
   },

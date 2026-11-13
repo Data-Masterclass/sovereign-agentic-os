@@ -1,0 +1,54 @@
+{{- /*
+  The shared cluster-internal runtime bearer Secret (engine rebuild B2, review B2-review-L6).
+
+  It used to be rendered inside agent-runtime.yaml, i.e. only when `agentRuntime.enabled`. Since B2
+  the Dagster user-code Deployment AND its repo-sync sidecar hard-require the same Secret (they
+  present it to `GET /api/data/projects`), so disabling — or, in A5, deleting — the agent runtime
+  would leave those pods unable to start. It therefore lives in its OWN template, rendered whenever
+  ANY consumer is enabled:
+
+    • agentRuntime            — the runtime presents it to the governed-tool endpoint;
+    • dagster                 — the `sovereign` code location + repo-sync read the repo index;
+    • osUI.dataProjectGit     — the same index, with the engine-rebuild flag on;
+    • osUI (schedules)        — the agent + data-sync CronJobs curl with it.
+
+  ONE Secret name (`agent-runtime-token`), defined in exactly one place, so there is no risk of a
+  duplicate-resource error. Local profile ONLY: on every other profile External Secrets (ESO)
+  delivers it, and rendering a literal here would both fight ESO and put a value in the chart.
+
+  A5 (deviation A5-1, plus review findings A5-review-H-1 / A5-review-M-4): the Python
+  `agent-runtime` Deployment, ConfigMap and Service that `agent-runtime.yaml` used to carry are
+  DELETED — agent systems execute as a real `StateGraph` inside os-ui
+  (`os-ui/tabs/agents/lib/engine/`), as the signed-in user, through the in-process governed
+  dispatcher. There is no second process, no IR on a wire and no callback door. The Secret
+  outlived the workload it was named after: it is the shared bearer the OS's own CronJobs
+  present to os-ui on the service paths (agent scheduled runs, the metrics data-sync sweep, the
+  connections catalog-refresh sweep — see `runtimeTokenOk` in
+  `os-ui/tabs/agents/lib/build/runtime-auth.ts`), and the data side's Dagster pods read the same
+  Secret. `agentRuntime.enabled` no longer exists, so `$r.enabled` below is simply nil and the
+  osUI / dagster consumers decide. The gate deliberately does NOT test `$r.token`: os-ui mounts
+  the key through a NON-optional `secretKeyRef` (`_os-ui-env.tpl`), so a deployment with
+  `agentRuntime.token: ""` must still find the Secret — gating on the value bricked os-ui
+  (A5-review-M-4). Follow-up: drop the token and rename the key once no consumer needs it.
+*/}}
+{{- $r := .Values.agentRuntime | default dict }}
+{{- $u := .Values.osUI | default dict }}
+{{- $dpg := $u.dataProjectGit | default dict }}
+{{- $dagster := .Values.dagster | default dict }}
+{{- $needed := or $r.enabled $dagster.enabled $dpg.enabled $u.enabled }}
+{{- if and $needed (eq .Values.global.profile "local") }}
+# Local-profile shared token. The runtime presents this on its calls back to the OS UI
+# governed-tool endpoint, the OS UI presents the SAME token to the runtime, and the Dagster
+# user-code pod + repo-sync sidecar present it to the OS repo index — all read `agent-runtime-token`.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agent-runtime-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "agent-runtime") | nindent 4 }}
+type: Opaque
+stringData:
+  token: {{ $r.token | quote }}
+{{- end }}

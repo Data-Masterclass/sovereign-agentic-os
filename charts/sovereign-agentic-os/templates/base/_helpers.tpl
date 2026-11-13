@@ -112,6 +112,20 @@ http://minio:9000
   value: {{ .Values.queryTool.trino.catalog | quote }}
 - name: TRINO_SCHEMA
   value: {{ .Values.queryTool.trino.schema | quote }}
+{{- /* READ BUDGET (B4-review-E-1). Both are needed: QUERY_MAX_RUN_TIME becomes Trino's
+       `query_max_run_time` session property (so TRINO abandons a runaway read, instead of it
+       outliving the os-ui client that stopped waiting at 8 s), and QUERY_MAX_ROWS bounds what the
+       query-tool buffers and returns, reporting `truncated` rather than clipping silently.
+       EXECUTE_MAX_RUN_TIME is deliberately NOT set: a full-refresh sync legitimately runs for
+       minutes, so the write ceiling stays opt-in. */}}
+- name: QUERY_MAX_RUN_TIME
+  value: {{ (.Values.queryTool.budget | default dict).maxRunTime | default "60s" | quote }}
+- name: QUERY_MAX_ROWS
+  value: {{ (.Values.queryTool.budget | default dict).maxRows | default 10000 | quote }}
+{{- if ((.Values.queryTool.budget | default dict).executeMaxRunTime) }}
+- name: EXECUTE_MAX_RUN_TIME
+  value: {{ .Values.queryTool.budget.executeMaxRunTime | quote }}
+{{- end }}
 {{- end -}}
 
 {{/*

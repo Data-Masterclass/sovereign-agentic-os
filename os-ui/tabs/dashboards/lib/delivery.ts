@@ -73,23 +73,14 @@ export async function deliverAlert(
 }
 
 /**
- * Deliver a DATA-QUALITY failure notice to its recipient (the dataset owner). Reuses the
- * exact in-app delivery boundary the metric alerts use (a durable in-app notification —
- * never a silent drop). The scheduled DQ cron calls this ONLY on a new failure (see
- * `isNewFailure`), so a dataset doesn't re-notify while it stays broken.
+ * Deliver a DATA-QUALITY failure notice to its recipient (the dataset owner).
+ *
+ * It MOVED to `@core/notifications/dq-alert` (B4-review L-2): its new caller is the Data tab's
+ * Dagster asset-check read-back, and a tab may not import another tab. Re-exported here so this
+ * module remains the one place a reader looks for "what the OS delivers".
  */
-export async function deliverDqAlert(
-  input: { datasetName: string; healthScore: number | null; failingLabels: string[] },
-  recipient: { userId: string; email?: string },
-): Promise<DeliveryResult> {
-  const title = `Data quality alert: ${input.datasetName}`;
-  const bodyLines = [
-    `Quality checks failed for "${input.datasetName}".`,
-    input.healthScore !== null ? `Health score: ${input.healthScore}/100.` : 'Health score: unknown.',
-    input.failingLabels.length ? `Failing: ${input.failingLabels.join(', ')}.` : '',
-  ].filter(Boolean);
-  return deliver(recipient, 'alert', title, bodyLines);
-}
+export { deliverDqAlert } from '@core/notifications/dq-alert';
+export type { DqDeliveryResult } from '@core/notifications/dq-alert';
 
 // Re-exported so the route/tests don't need to reach across modules for the types.
 export type { Cadence, Channel };

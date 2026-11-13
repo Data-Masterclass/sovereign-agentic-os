@@ -18,6 +18,14 @@
  *   • builder            → `sovereign-default`   (gpt-oss-20b — code/execution; see routing.ts)
  *   • all five others    → `sovereign-reasoning` (Qwen3-VL-235B — reasoning)
  *
+ * Phase gates (A5-review-H-2): the five `when` guards below route on five declared
+ * boolean state channels, and each is written by the agent whose turn the guard
+ * follows, through the engine's built-in `os_set_state` tool. The team therefore
+ * advances planner → builder → tester → deployer → communication on EVIDENCE the
+ * agents record, not only on the supervisor's opinion; a tester FAIL routes straight
+ * back to the builder. Before this the five guards read channels nothing could set,
+ * so every one of them was false and the chain was unreachable.
+ *
  * Governance by construction: grants are exactly the software-MCP write surface
  * the team may touch; `decide_deploy` is deliberately NOT granted, so a running
  * Creator can create/commit/preview/request_deploy but NEVER self-approve a
@@ -34,6 +42,14 @@ entrypoint: orchestrator
 state:
   channels:
     messages: add_messages
+    # The five phase gates the handoffs below route on. Each is written by the agent
+    # whose turn it follows, with the built-in os_set_state tool (declared type =
+    # what the tool accepts; the default is false until that agent sets it).
+    plan_ready: boolean     # planner: the build plan is complete and the builder can start
+    committed: boolean      # builder: the app exists and the files are committed
+    tests_failed: boolean   # tester: the preview failed review and the builder must fix it
+    tests_passed: boolean   # tester: the preview passed and a deploy may be REQUESTED
+    reported: boolean       # deployer: the deploy request is filed (or refused) and reported
 grants:
   data: []
   knowledge: []
@@ -72,7 +88,8 @@ agents:
       Produce a SHORT numbered plan: the pages/routes, the data model, the files
       the builder should commit, and which granted resources (data/knowledge) the
       app should consume by reference. Prefer the smallest app that satisfies the
-      brief. Output the plan only — do not write code.
+      brief. Output the plan only — do not write code. When the plan is complete,
+      set plan_ready — that is what hands control to the builder.
     memory_md: '# Memory'
   - id: builder
     role: Writes the code and commits it through the governed platform
@@ -84,7 +101,8 @@ agents:
       unless an appId is already in the conversation, then commit complete,
       runnable files (never placeholders) with a clear message. Consume granted
       resources ONLY via the use_* tools — references, never raw credentials.
-      State every design decision you make.
+      State every design decision you make. Once the files are committed, set
+      committed — that is what hands control to the tester.
     memory_md: '# Memory'
   - id: tester
     role: Verifies the preview before anything ships
@@ -95,7 +113,8 @@ agents:
       Call start_preview for the app and review what the platform reports (scan
       findings, generated MCP tools, preview URL) against the plan. Give a verdict:
       PASS with evidence, or FAIL with a numbered fix list for the builder. You
-      cannot deploy; you gate quality only.
+      cannot deploy; you gate quality only. Record the verdict in state: set
+      tests_passed on a PASS, tests_failed on a FAIL — one of the two, never both.
     memory_md: '# Memory'
   - id: deployer
     role: Requests the governed go-live (never approves it)
@@ -105,7 +124,8 @@ agents:
       # Deployer
       Only after a tester PASS: call request_deploy. This opens a Builder review
       card — it does NOT go live. Report the review card id and stop. If deploy is
-      denied or you lack the role, report that plainly.
+      denied or you lack the role, report that plainly. Either way set reported,
+      which hands control to the communication agent.
     memory_md: '# Memory'
   - id: communication
     role: Narrates progress to the user and asks the clarifying questions
