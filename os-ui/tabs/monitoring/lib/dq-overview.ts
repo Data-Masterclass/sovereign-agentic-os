@@ -7,10 +7,12 @@ import type { DqSource, QualityBadge } from '@tabs/data/lib/dq';
  * The Monitoring-tab DATA-QUALITY ROLLUP (Data Quality Phase 1 · §5.2) — PURE ranking.
  *
  * A read-only tenant/domain overview: governed datasets ranked by RISK so the few that
- * need a human lead, greens recede. It reuses the SAME persisted `dq-results` runs the
- * Validate stage does — no second store, no re-run. Author quality in Data; monitor it
- * here. Each row deep-links back to that dataset's Validate stage (monitor here, fix
- * there — the hybrid IA).
+ * need a human lead, greens recede. It ranks the verdicts the caller already read through the
+ * Data tab's one seam (`dq-status-server.latestDqRuns` — Dagster asset checks with
+ * `DATA_PROJECT_GIT` on, the persisted `os-dq-results` series under the opt-out): no second store,
+ * no re-run, and `source` is carried through so a row can say WHICH engine decided. Author quality
+ * in Data; monitor it here. Each row deep-links back to that dataset's Validate stage (monitor
+ * here, fix there — the hybrid IA).
  *
  * Pure: dataset-summaries + their latest runs in → ranked rows + a domain roll-up out,
  * no engine, no network, so the risk ordering is unit-tested. Scoping happens BEFORE this

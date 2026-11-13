@@ -45,7 +45,41 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 - `guide.md` — the golden path, shown in-product
 - `context.md` — the system prompt context this tab gives an agent
 
-## Data products in git (engine rebuild B1/B2 — flag `DATA_PROJECT_GIT`, default off)
+## A data product is a dbt project in a git repository (engine rebuild B1–B4)
+
+**This is the shipped architecture.** `DATA_PROJECT_GIT` is **on by default** since B4
+(`osUI.dataProjectGit.enabled: true`), and the whole path is:
+
+```
+a change in the Data tab  ─┐
+a call to the data MCP    ─┴─▶ tabs/data/lib/mutations-server.ts   (ONE service per mutation)
+                                 │
+                                 ├─▶ the governed store write  ──▶ ProjectChange event
+                                 │                                   │
+                                 │        core/infra/git-store ◀──  lib/dbt/commit.ts
+                                 │        git commit as the acting user in /repos/<domain>.git
+                                 │        (the generated dbt project: models, schema.yml tests,
+                                 │         os/schedules.yml, os/sources.yml)
+                                 │                                   │
+                                 │                      repo-sync sidecar: dbt parse per commit,
+                                 │                      reload the `sovereign` code location
+                                 │                                   │
+                                 └─▶ lib/dbt/launch.ts ──▶ Dagster run of THAT commit's assets
+                                                              │
+                                                              ▼
+                                                      dbt-trino → Trino, impersonating
+                                                      the acting principal (OPA governs)
+                                                              │
+   the Data tab, Monitoring and the MCP read run state, asset checks, freshness and lineage
+   BACK from Dagster — the OS keeps no parallel ledger.
+```
+
+Both doors are the same door: a route adds HTTP shaping, an MCP tool adds argument coercion, and
+`tabs/data/lib/mcp-parity.test.ts` proves per tool that the commit (files, author, `OS-Actor`) and
+the Dagster launch are identical — the `via mcp:<tool>` / `via ui:<route>` half of the commit
+subject is the one deliberate difference.
+
+### The commit, in detail (B1)
 
 With `DATA_PROJECT_GIT=true` (chart: `osUI.dataProjectGit.enabled`), every mutation of a dataset,
 composition, quality rule, sync, publish or retire — through a route or an MCP tool — regenerates
@@ -105,7 +139,8 @@ With the flag on, the OS stops being its own run ledger (checklist D7–D11):
   `launchError` saying honestly why no run exists.
 - **Schedules, not CronJobs.** `set_dataset_sync` provisions **no** `batch/v1` CronJob and removes a
   pre-B2 one (`reconcileSyncSchedule`); the schedule is the `os/schedules.yml` entry this same write
-  committed. `/api/data/sync-due` and `/api/data/dq/run-all` stand down so nothing fires twice.
+  committed. B4 **deleted** `/api/data/sync-due` and `/api/data/dq/run-all` (and the CronJob
+  provisioning itself) so nothing can fire twice.
 - **Read-back.** `lib/sync-status-server.ts` (`syncStatusFor`, `latestSyncSignals`) reads
   `runsForDataset` + `nextTick`; `lib/dq-status-server.ts` (`latestDqRun`, `dqTrend`,
   `latestDqRuns`) reads `assetChecks` — one dbt test = one asset check, with
@@ -181,6 +216,58 @@ With the flag on (checklist D7, D14, D15, D16):
   absent under `method: none`). `docs/components/trino.md` has the numbered procedure for turning
   real impersonation on, and states plainly that a governed READ runs as the caller's FIRST DOMAIN,
   not as the person — pre-existing, and a follow-up.
+
+### B4 — the MCP is the UI, the repository catches up at boot, and the old paths are gone
+
+- **One service per mutation** (`lib/mutations-server.ts`): `createDatasetService`,
+  `commitVersionService`, `transformSilverService`, `buildGoldJoinService`,
+  `defineQualityRulesService`, `runQualityChecksService`, `saveDatasetSyncService`,
+  `syncDatasetNowService` (+ `rematerializeDomainTableService` for the repair mode). Each is the
+  whole mutation: validation that names the offending field, the governed store write, the physical
+  build, the commit and the Dagster launch. Failures are thrown status-tagged, so `withRoute` renders
+  `{error}` + status and `handleRpc` the typed `{code, reason, hint}` — from the same throw.
+  Tests: `lib/mcp-parity.test.ts` (checklist X8, in `gate.sh`), `lib/mcp-conformance.test.ts`
+  (checklist X7's data half: every data tool `list_capabilities` advertises dispatches, has a usable
+  schema, refuses a foreign dataset as `not_found`/`forbidden` with a hint and no stack, names the
+  role a gate needs, and writes nothing when it refuses).
+- **The data MCP tools** — 23 under `tab: 'data'` plus `get_lineage`, which is registered under
+  `governance` with `extraTabs: ['data', …]`. Where they live:
+
+  | File | Tools |
+  |---|---|
+  | `core/mcp/experimental/data-write-tools.ts` | `create_dataset` · `add_dataset_version` · `document_dataset` · `ingest_dataset` · `transform_silver` · `build_gold_join` · `define_quality_rules` · `run_quality_checks` · `propose_quality_fixes` · `apply_quality_fixes` · `set_dataset_sync` · `sync_dataset_now` · `retire_dataset` · `reconcile_domain_tables` |
+  | `core/mcp/experimental/promotion-write-tools.ts` | `request_promotion` · `approve_promotion` |
+  | `core/mcp/experimental/exposure-write-tools.ts` | `list_exposed_tables` · `adopt_exposed_table` |
+  | `tabs/admin/mcp/discovery-read-tools.ts` | `list_datasets` · `get_dataset` · `profile_dataset` · `get_sync_status` |
+  | `tabs/data/mcp/data-query-tools.ts` | `query_data` |
+  | `core/mcp/governance-tools.ts` | `get_lineage` |
+
+  The golden path is `guide.md` / `sovereign-os://guide/path/data`. NOT present, by decision:
+  `dbt_run`, `dbt_test`, `dagster_materialize` — they address asset keys rather than objects, so
+  they would bypass the dataset guard; the same work is reachable through `transform_silver`,
+  `build_gold_join` and `sync_dataset_now`, which commit and then launch `dbt build --select` for
+  that dataset's assets. A `get_dagster_run {runId}` read is a recorded gap (plan deviation B4-1).
+- **Boot reconcile** (`lib/dbt/boot-reconcile.ts`): the commit hook only sees writes from the moment
+  it is installed, so at boot the OS commits, for every domain it knows (datasets in the registry ∪
+  repositories on disk), the difference between the generated project and the repository HEAD — as
+  the platform principal, trailer `OS-Reason: boot-reconcile`. That is both the migration for an
+  install that ran with the flag off and the repair for a crash between a store write and its commit.
+  It commits only where the tree moved, is fail-soft per domain, and launches nothing.
+- **Deleted** (checklist D7/D12): `lib/sync-cron.ts` (CronJob provisioning, manifest builder, cron
+  matcher), `/api/data/sync-due`, `/api/data/dq/run-all`, the two chart CronJob templates and their
+  values, `store.datasetsWithSync`. What remains is `lib/sync-cron-removal.ts` — delete-only, so an
+  upgrade from a pre-B2 install still has its per-dataset CronJob removed; a test asserts the module
+  cannot create one.
+- **What the one-release opt-out still covers.** `enabled: false` restores the OS's own CTAS
+  execution, the `os-sync-runs` / `os-dq-results` ledger reads and the OS DQ probe — but it no
+  longer **schedules** anything, and `reconcileSyncSchedule` says so in the outcome the panel
+  renders. Removing the flag is a recorded follow-up.
+- **Still the OS's own, deliberately:** the query-tool's `/execute` (the build CTAS, but also
+  `apply_quality_fixes`'s MERGE, physical deletes, the warehouse import and the publish CTAS) and
+  the ad-hoc DQ probe (labelled `OS probe`, written to `os-dq-results`). Deleting the CTAS build
+  path needs the row-set parity run in kind (checklist D15) first — the honesty gate registers a
+  version only after a real apply+verify, and without the CTAS that gate would have to wait on a
+  Dagster asset check.
 
 ## Rules that apply here
 

@@ -61,12 +61,13 @@ One shape, two renderers, one test that keeps them equal
 
    **When the env var is set, exactly.** `TRINO_ACCESS_RULES` renders under
    `trino.enabled AND trino.accessControl.enabled AND trino.opa.enabled` — character for character
-   the gate the `trino-access-rules` ConfigMap itself renders under. It is **not** gated on
-   `osUI.dataProjectGit`: that flag defaults `false` while `trino.accessControl.enabled` defaults
-   `true`, so for one release a default install shipped the permissive bootstrap with nothing ever
-   reconciling it (review B3-review-H-1), and an install with access control off used to log
-   "ConfigMap does not exist" on every boot (L-5). `scripts/check-trino-rules-chart.mjs` renders
-   four value sets and asserts the two gates agree.
+   the gate the `trino-access-rules` ConfigMap itself renders under. It is deliberately **not** gated
+   on `osUI.dataProjectGit`: the two flags are independent (B4 turned `dataProjectGit` on by
+   default, but an operator may still opt out of it for a release, and the schema-ownership rules
+   must keep applying), an install with access control off used to log "ConfigMap does not exist" on
+   every boot (L-5), and before the gates were aligned a default install shipped the permissive
+   bootstrap with nothing ever reconciling it (review B3-review-H-1).
+   `scripts/check-trino-rules-chart.mjs` renders four value sets and asserts the two gates agree.
 
    **Three triggers** (`startTrinoRulesReconciler`, review B3-review-H-2/H-3):
 
@@ -206,8 +207,12 @@ kubectl -n agentic-os get pod -l app.kubernetes.io/component=trino -o wide
 **Can a user run arbitrary SQL?** Reads: yes, through `query_data` / the Data tab, and Trino→OPA
 governs every row and column — `guard_read` in the query-tool additionally refuses anything that is
 not a single read-only statement. Writes: no free-text path. `/execute` accepts only the statement
-shapes `execute_guard.py` allowlists, and with the data-project flag on the writes are dbt models
-the OS generated from structured specs.
+shapes `execute_guard.py` allowlists, and the writes that matter are dbt models the OS generated
+from structured specs. `/execute` itself is NOT gone (B4 kept it deliberately): besides the build
+CTAS it carries `apply_quality_fixes`'s MERGE, physical deletes, the warehouse import and the
+promote/publish CTAS — five live paths. Deleting the build CTAS specifically waits on the row-set
+parity run in kind (checklist D15), because the honesty gate registers a version only after a real
+apply+verify.
 
 **Why does a build read as the builder and not as a service account?** Because a CTAS contains
 reads, and a build that could read more than its author would be a privilege escalation with extra

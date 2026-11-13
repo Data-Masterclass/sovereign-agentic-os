@@ -10,12 +10,12 @@ Two things exist side by side; be clear which one you are looking at.
 **1. The demo project (`images/extensions/dbt/project`).** `raw_orders` → `stg_orders` →
 `daily_revenue`, baked into the dbt and Dagster images. It runs once as a non-blocking
 `post-install` Helm hook (`templates/extensions/dbt/dbt-build.yaml`) and on manual materialisation
-in Dagster. **No OS dataset is part of it.** Until the engine rebuild lands, every transform,
-composition, sync and quality check a user builds in the Data tab is TypeScript-compiled SQL run
-through the query-tool as the acting principal — not a dbt model.
+in Dagster. **No OS dataset is part of it.** It is a leftover of the pre-rebuild world and is
+scheduled for deletion; nothing in the OS path reads it.
 
-**2. The generated project per domain (engine rebuild, Phases B1–B2 — behind `DATA_PROJECT_GIT`).**
-With `osUI.dataProjectGit.enabled: true` (env `DATA_PROJECT_GIT=true`), every dataset,
+**2. The generated project per domain (engine rebuild, Phases B1–B4 — `DATA_PROJECT_GIT`, ON by
+default since B4).** With `osUI.dataProjectGit.enabled: true` (env `DATA_PROJECT_GIT=true`, the
+default), every dataset,
 composition, quality rule, sync, publish and retire change — made in the UI or through the OS MCP —
 regenerates the owning domain's **dbt project** and commits it to a bare git repository the OS owns
 (`/repos/<domain>.git`, PVC `os-repos`), authored as the acting user. The OS is the writer; users
@@ -35,10 +35,18 @@ The generated project is what an engineer would write:
 | Sync full-refresh | `materialized: table` over the federated `{{ source() }}` |
 | Sync append (cursor, 15-min lookback, `_batch_id`) | `incremental`, `incremental_strategy: delete+insert`, `unique_key: _batch_id`, `where cursor > (select max(cursor) from {{ this }}) - interval '15' minute` |
 | Sync merge | `incremental`, `incremental_strategy: merge`, `unique_key: [merge keys]`, `on_schema_change: append_new_columns` |
-| Kafka offsets / API-batch sources | **not** faked as models: listed in `os/external.yml`. Still not assets — the Dagster Python asset that calls the OS's governed slice executor is B4 work |
+| Kafka offsets / API-batch sources | **not** faked as models: listed in `os/external.yml`. Still not assets — the Dagster Python asset that calls the OS's governed slice executor is NOT in B4 either; it needs the slice executor's HTTP contract and is a recorded follow-up. These syncs run through the OS executor, triggered manually or by the OS's own path |
 | A federated sync **source** | `os/sources.yml` (engine rebuild B3) → one **observable source asset** per entry, keyed `[<domain>, <source>, <table>]` so the silver model that reads it depends on it. Freshness = two schedule intervals, derived from the sync's own cron; `max_updated` on a timestamp cursor, else `row_count`. See `dagster.md` → "External sources are assets too" |
 | Sync schedule | `os/schedules.yml` `{dataset, select: "<model>+", cron, timezone: UTC, principal, enabled}` → one UTC `ScheduleDefinition` in the Dagster `sovereign` location |
 | Iceberg maintenance | `macros/os_maintenance.sql` — `ALTER TABLE … EXECUTE optimize` + `expire_snapshots(retention_threshold => '7d')` per schema, run weekly by Dagster as the schema's owner |
+
+**One door, both surfaces (engine rebuild B4).** The project is regenerated and committed by exactly
+one service per mutation (`os-ui/tabs/data/lib/mutations-server.ts`), which the Data tab's route and
+the MCP tool both call — so a dataset built through the MCP produces the same files, the same author
+and the same Dagster launch as one built in the UI (`tabs/data/lib/mcp-parity.test.ts`, checklist
+X8). At boot the OS also commits the difference between the generated project and the repository
+HEAD for every domain (`OS-Reason: boot-reconcile`), which is both the migration for an install that
+ran with the flag off and the repair for a crash between a store write and its commit.
 
 `profiles.yml` uses `env_var()` only: `TRINO_HOST/PORT/USER/CATALOG`, `TRINO_AUTH_METHOD`
 (default `none`) and **`impersonation_user: env_var('OS_PRINCIPAL')`** with no default — a run

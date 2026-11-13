@@ -292,8 +292,26 @@ deviations` below. New: `core/kernel/events.ts`, `scripts/check-trino-rules-char
 **Gates:** `tsc --noEmit` clean · `npm --prefix os-ui test` **5162 tests, 0 fail, 7 todo** (5008 → 5162) · `check-structure.mjs` **no new violations** (TAB-ISOLATION 421/422, CORE-INDEPENDENCE 206/207, FILE-HEADER 1244/1245 — all below baseline, NOT re-locked) · `gate.sh` exit 0 · `helm lint` exit 0 · `helm template` defaults **and** `--set osUI.dataProjectGit.enabled=true`, with the `trino-access-rules` ConfigMap's `rules.json` asserted to `JSON.parse` in both · `python3 -m unittest discover -s images/extensions/dagster/tests` **40 tests OK** (31 → 40) · `py_compile` on `repo.py`, `os_projects.py`, `tests/regen_sanitize_golden.py` · `sh -n repo-sync.sh`.
 
 ### Phase B4 — MCP, docs, deletion
-- [ ] MCP tools map 1:1 to engineer operations: `dbt_run`, `dbt_test`, `dagster_materialize`, `get_dagster_run`, `get_lineage` — same governed path as the UI. Remove the OS-native sync and transform executors once B2–B3 parity holds.
-- [ ] Docs: `docs/components/{dagster,dbt,trino}.md` describe the real flow; `tabs/data/README.md` lists the MCP tools; `os-ui/ARCHITECTURE.md` explains "a data product is a dbt project".
+- [x] MCP tools map 1:1 to engineer operations — **re-scoped by the owner's B4 brief** to "MCP = UI for every data mutation" (checklist X8) and the data half of the dispatcher contract (X7), which is what landed. The four engineer-NAMED tools (`dbt_run`, `dbt_test`, `dagster_materialize`, `get_dagster_run`) were deliberately NOT added — deviation B4-1. `get_lineage` already reads the dbt graph (B3).
+- [x] Flip `DATA_PROJECT_GIT` on by default, guarded by the data parity harness in `gate.sh`, with a boot-time reconcile commit so the repository catches up with the registry (the B2-review follow-up).
+- [x] Delete the ledger execution paths the flag-on world no longer uses: the CronJob provisioning, both sweep routes and their chart CronJobs. *(`/execute` and the TS CTAS build path stay — deviations B4-6 and B4-7.)*
+- [x] Monitoring reads Dagster for pipeline health, the DQ rollup and freshness, with the `source` label visible in the UI. *(B2/B3 did the work; B4 verified there is no ledger import left in `tabs/monitoring` and corrected the last stale claim.)*
+- [x] Docs: `docs/components/{dagster,dbt,trino}.md` describe the real flow; `tabs/data/README.md` lists the MCP tools; `os-ui/ARCHITECTURE.md` explains "a data product is a dbt project"; `tabs/monitoring/README.md`, `tabs/data/guide.md`, `CHANGELOG.md`.
+
+#### B4 — what landed (three commits on `feat/engine-rebuild-b2`)
+
+| Piece | Where |
+|---|---|
+| One service per data mutation | `tabs/data/lib/mutations-server.ts` — `createDatasetService`, `commitVersionService`, `transformSilverService`, `buildGoldJoinService`, `rematerializeDomainTableService`, `defineQualityRulesService`, `runQualityChecksService`, `saveDatasetSyncService`, `syncDatasetNowService`; `DataMutationError {status, field}`; `__setMutationDepsForTests` (the one seam for platform/reconcile/queryFn) |
+| Both doors on it | routes `app/api/data/datasets/{route,[id]/version,[id]/transform,[id]/gold-join,[id]/checks,[id]/sync}` (HTTP shaping only) and `core/mcp/experimental/data-write-tools.ts` (argument coercion only) |
+| X8 parity harness | `tabs/data/lib/mcp-parity.test.ts` — 8 tools × (MCP handler vs the route's service) over the real commit path with an injected committer + a fake Dagster client; commit tree/author/`OS-Actor` and launch args deep-equal; surface asserted as the ONE difference; 404/403/400 parity cases. `launch.ts` gained `__setLaunchDepsForTests` + `awaitDataProjectLaunches` so a fire-and-forget launch is observable from both doors |
+| X7 conformance (data half) | `tabs/data/lib/mcp-conformance.test.ts` — every `tab === 'data'` tool (+ `extraTabs`) dispatches, has a described schema, refuses a foreign dataset as `not_found`/`forbidden` with a hint and no stack, names the role a gate needs, and writes nothing |
+| Boot reconcile | `tabs/data/lib/dbt/boot-reconcile.ts` (`reconcileDataProjectsAtBoot`, `PLATFORM_ACTOR`, `OS-Reason: boot-reconcile`), wired in `instrumentation.ts`; `commit.ts` `CommitMeta.extraTrailers`; `boot-reconcile.test.ts` (6) |
+| Flag flip | `charts/.../values.yaml` `osUI.dataProjectGit.enabled: true` **and** the repo-sync sidecar's own `REPO_SYNC_ENABLED: "true"` (the copy the script actually reads); `values.local.yaml` states it explicitly |
+| Deletion | `git rm`: `tabs/data/lib/sync-cron.ts` + test, `app/api/data/sync-due/route.ts`, `app/api/data/dq/run-all/route.ts`, `templates/extensions/metrics/{data-sync,dq}-cronjob.yaml`; values `dataSync.sweep` + `data.quality.cron`; `store.datasetsWithSync`. **New:** `tabs/data/lib/sync-cron-removal.ts` (delete-only) + test (6) |
+| Guide + docs | `tabs/data/guide.md` ("What actually happens when you call these tools" + the real sequence + lineage step), `tabs/data/README.md` (the shipped architecture diagram, the MCP tool list, B4 section), `tabs/monitoring/README.md`, `docs/components/{dagster,dbt,trino}.md`, `os-ui/ARCHITECTURE.md`, `CHANGELOG.md` (breaking change + migration note) |
+
+**Gates:** `tsc --noEmit` clean · `npm --prefix os-ui test` **5202 tests, 0 fail, 7 todo** (5162 → 5202) · `check-structure.mjs` **all three counts BELOW baseline** (TAB-ISOLATION 420/422, CORE-INDEPENDENCE **200/207** — the MCP now reaches the Data tab through one module — FILE-HEADER 1242/1245; NOT re-locked) · `gate.sh` exit 0 (226 tests, the two new data-MCP tests in it) · `helm lint` + `helm template` on the defaults, `osUI.dataProjectGit.enabled=false`, `trino.accessControl.enabled=false` and `values.local.yaml` — **0 `batch/v1` CronJob** in every render · `check-trino-rules-chart.mjs` ok · `python3 -m unittest discover -s images/extensions/dagster/tests` **45 tests OK** · `py_compile` on `repo.py` + `os_projects.py`.
 
 ---
 
@@ -774,5 +792,110 @@ reason is here.
   resource; no `list` is used); that `observable_source_asset`s inside a `define_asset_job` are
   materialisable as OBSERVATIONS by a schedule in Dagster 1.13; and that `trino.dbapi.connect`
   accepts `request_timeout` and `session_properties` in the pinned client version.
+
+#### B4 deviations (`feat/engine-rebuild-b2`, fifth–seventh commits)
+
+- **B4-1 The four engineer-NAMED MCP tools were not added, deliberately.** The outline asked for
+  `dbt_run`, `dbt_test`, `dagster_materialize`, `get_dagster_run`. The owner's B4 brief replaced that
+  line with "MCP = UI for every data mutation" (X8) + the dispatcher contract (X7), which is what
+  landed — and the named tools are the wrong shape for this OS anyway: they address **asset keys and
+  select strings**, not objects, so a caller could materialise or test an asset without passing
+  through the `canView`/`canEdit` guard on a dataset id. Every operation they name is already
+  reachable object-addressed: `transform_silver` / `build_gold_join` / `sync_dataset_now` commit and
+  then launch `dbt build --select` for exactly that dataset's assets (that IS `dbt_run` +
+  `dagster_materialize`), `run_quality_checks` runs the rules and the DQ surfaces read the dbt tests
+  back as asset checks (`dbt_test`), and `get_lineage` reads the dbt graph. **The real gap is one
+  READ:** there is no `get_dagster_run {runId}` — `get_sync_status(datasetId)` is the only way to see
+  a run, so an MCP client that launched a build cannot poll that run id. Recorded as a follow-up with
+  its gate: resolve the run's `os/dataset` tag → `getDataset` (canView) → return the run; refuse a
+  run with no OS tags. Checklist D17 is scored accordingly, not ticked.
+- **B4-2 The parity test compares the MCP handler with the SERVICE, not with a route.** A test may
+  not import a `route.ts` (CONTRIBUTING), so the route's half of the comparison is the service
+  function it calls. That is only honest because the routes were REDUCED to shells in the same
+  commit — each is now `service(...)` plus `NextResponse.json(...)`, visible in a 40-line file. If a
+  route ever grows logic again, the parity test stops proving what it claims; the cheap guard
+  (asserted nowhere yet, recorded) would be a line-count or an import ratchet on
+  `app/api/data/datasets/**`.
+- **B4-3 Three divergences the harness found were real bugs, fixed here.** (a) MCP `build_gold_join`
+  resolved a join partner with `assetTarget(up)` while the route used `reuseSourceFqn(up)` — the
+  owner-aware resolver — so joining a personal-lane partner through the MCP compiled a read of the
+  wrong schema. (b) MCP `transform_silver` never refreshed the governed domain copy of a promoted
+  dataset, so a rebuild through the MCP left dashboards on the prior snapshot with no "stale"
+  report. (c) MCP `run_quality_checks` called `runQualityChecks` (rules only, nothing persisted)
+  while the button called `runAndRecord` (rules + the three default-on monitors, persisted). All
+  three now run one code path; the existing MCP test that asserted 3 results was updated to 6 with
+  the reason in the test.
+- **B4-4 Two UI-door behaviour changes, deliberate, because parity means the stricter door wins.**
+  (a) The sync PUT route now enforces the per-source mode/cursor LOCKS (Kafka append-only, Salesforce
+  / Kajabi cursor rules) that only the MCP tool enforced, at config time. (b) It refuses a connection
+  the caller cannot read: the platform resolver's 403/404 is no longer swallowed (`.catch(() => null)`
+  would have let a sync be attached to an invisible connection through the UI door). Conversely the
+  MCP's own stricter rule — "at least one pick" for `build_gold_join` — was DROPPED, because zero
+  picks is a legal single-table projection in the route and the rule fired before the dataset guard.
+- **B4-5 The ambient test seams are the honest price of fire-and-forget.** `launchDatasetBuild` and
+  the services are called by both doors with no injection, so observing them identically needed one
+  module-level seam each (`__setLaunchDepsForTests` + `awaitDataProjectLaunches` in `dbt/launch.ts`,
+  `__setMutationDepsForTests` in `mutations-server.ts`). They follow the codebase's existing
+  `__setDataProjectGitForTests` / `__setRunOsTeamForTests` pattern, are never set in production, and
+  are what let the parity test use the REAL commit path rather than a re-implementation.
+- **B4-6 `/execute` is NOT deleted, and the brief's condition was the wrong test.** The brief said to
+  keep it "ONLY if `query_data`/preview still go through it" — they do not (reads go through
+  `/query`). But `/execute` carries five other live paths: `apply_quality_fixes`'s whitelisted MERGE,
+  `physical-delete`, the warehouse import, the promote/publish CTAS and the domain-table
+  re-materialise. Deleting it would break all five. Kept, documented in `docs/components/trino.md`.
+- **B4-7 The TypeScript CTAS build path for silver/gold is NOT deleted either — this is the one
+  place B4 refuses its own brief.** The honesty gate registers a version only after a real
+  apply+verify of the physical target. With the CTAS gone, a Silver build would have to wait on a
+  Dagster run AND its asset check before it could register anything, or register optimistically —
+  the first is a redesign of the gate whose correctness cannot be shown offline, the second is
+  exactly the stale-"built" bug the gate exists to prevent. B3-11 had already refused to delete this
+  path on the strength of an offline test, and nothing in B4 changed that evidence: the row-set
+  parity run in kind (checklist D15) is its gate. Recorded as the next data deletion.
+- **B4-8 The flag-off opt-out LOST scheduling, and says so.** Deleting the CronJob provisioning means
+  `enabled: false` no longer schedules anything; the saved config waits for a manual "Sync now".
+  `reconcileSyncSchedule` returns that sentence in the outcome the panel already renders rather than
+  implying a trigger exists, and it carries an unreachable API server into the detail so "no
+  CronJob" can never mean "nobody could check". The opt-out still covers the OS's CTAS execution,
+  the ledger reads and the OS DQ probe. Recorded as the honest answer to the brief's "say so
+  honestly and drop the opt-out instead": the SCHEDULING half is dropped, the EXECUTION half stays.
+- **B4-9 The DQ failure e-mail has no sender any more.** `/api/data/dq/run-all` was the only caller
+  of `deliverDqAlert`, and quality rules now run inside Dagster. Nobody is notified on a new
+  failure; the Dagster failure sensor only quarantines after the threshold. Both building blocks
+  (`isNewFailure`, `deliverDqAlert`) are kept and tested, and the follow-up is written down: alert
+  from the asset-check read-back plus a persisted last-alerted badge. This is a real regression of
+  the flag-on default and is in the CHANGELOG as one.
+- **B4-10 `REPO_SYNC_ENABLED` exists twice and only one copy mattered.** The deployment's `env` list
+  is the user-code container's; the sidecar that runs `repo-sync.sh` carries its OWN env under
+  `sidecarContainers`. Flipping only the first would have left the flag "on" with no sidecar syncing
+  anything — which is exactly how the whole path fails silently. Both are now `"true"`, and the
+  rendered manifest was checked for all four occurrences (two plain, two inside the run-launcher's
+  JSON).
+- **B4-11 The 404-for-an-invisible-object reading is not what the store does, and B4 did not change
+  it.** The brief asked for "foreign/invisible dataset → 404-semantics". `store.getDataset` answers
+  **403** for an existing dataset the caller may not view and 404 only for one that does not exist.
+  Both doors agree (the parity test asserts the identical code AND message, and that a missing id is
+  404/`not_found` on both), but the no-existence-leak reading would mean changing `getDataset` for
+  every surface in the OS — a cross-cutting change with its own test fallout, outside this phase.
+  Recorded as a follow-up.
+- **B4-12 Two new tests moved out of `core/mcp/` into `tabs/data/lib/`.** Written beside the
+  dispatcher they tripped CORE-INDEPENDENCE (+3: a test under `core/` importing `@tabs/data/...`).
+  In the Data tab they import only `@core/*` and their own tab, so the counts went the other way:
+  **CORE-INDEPENDENCE 207 → 200**, because extracting the service also removed six `@tabs/data/...`
+  imports from `core/mcp/experimental/data-write-tools.ts`. The baseline is left for the coordinator
+  to lock after the merge (B2-9's convention).
+- **B4-13 A bronze-only dataset contributes no file to its project.** Found while testing the boot
+  reconcile: a raw Bronze landing is neither a dbt model nor a source (only a FEDERATED sync source
+  is), so a domain of bronze-only datasets commits `dbt_project.yml`, `profiles.yml`, the macros and
+  the generic tests — and nothing per dataset. "Every existing dataset gets its initial commit" is
+  therefore true of the project, not of a file per dataset; the CHANGELOG says so.
+- **B4-14 The checklist's shape differs between this branch and `main`.** `main` (the A5 agent) added
+  a `Status (end of A5)` COLUMN plus rows X7/X8/X9; this worktree's copy carries the B2/B3 statuses
+  INLINE in the Test column. B4 followed the local convention and appended X7/X8/X9 with the same
+  wording as `main` so the rows line up; the coordinator resolves one table shape at merge.
+- **B4-15 What proved wrong in the plan/concept, beyond B4-1 and B4-6:** the concept's B2 line
+  "**Delete:** … `sync-next-run.ts`" — it is a pure, CLIENT-safe cron estimator the SyncPanel renders
+  and `sync-status-server` falls back to, not an execution path, so it stays. And the concept's B4
+  line "Old names become aliases for one release, then go" presumes the new names of B4-1, which
+  were not added; nothing was aliased or renamed, so no deprecation window is open.
 
 - **B2-11 What still needs the live cluster:** that a scheduled sync materialises in kind under the owner principal (D7, D10); that `dagster-k8s/config` really propagates `OS_PRINCIPAL` / `OS_PINNED_COMMITS` into run pods; that the subchart honours `sidecarContainers` / `volumes` / `volumeMounts` and an `env` entry with `valueFrom`; that `reloadRepositoryLocation` succeeds against the webserver Service; that the webserver's GraphQL schema matches the documents in `core/infra/dagster.ts` (field names were taken from Dagster 1.13's schema, not probed); and that `Definitions`-based locations really report the repository name `__repository__`.

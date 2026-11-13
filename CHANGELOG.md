@@ -13,6 +13,60 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Data engine rebuild, Phase B4: the MCP is the UI, for every data mutation
+
+- **One service per data mutation** (`os-ui/tabs/data/lib/mutations-server.ts`): `create_dataset`,
+  `add_dataset_version`, `transform_silver`, `build_gold_join`, `define_quality_rules`,
+  `run_quality_checks`, `set_dataset_sync` and `sync_dataset_now` each exist ONCE. The Data tab's
+  route shapes HTTP, the MCP tool coerces arguments, and neither holds logic. Errors are thrown
+  status-tagged once, so a route renders `{error}` + status and the MCP dispatcher the typed
+  `{code, reason, hint}` — from the same throw.
+- **Proved, not asserted** (checklist X8): `tabs/data/lib/mcp-parity.test.ts` drives each tool
+  through `handleRpc` exactly as a client would, then the same input through the service the route
+  calls, against the real commit path with an injected committer and a fake Dagster client, and
+  compares the committed file map, the author, the `OS-Actor` trailer and the launch args
+  deep-equal. `via mcp:<tool>` vs `via ui:<route>` in the commit subject is the one deliberate
+  difference, asserted as such. It runs in `os-ui/scripts/gate.sh`.
+- **Checklist X7, data half**: `tabs/data/lib/mcp-conformance.test.ts` walks every tool
+  `list_capabilities` advertises for the data pathway and asserts it dispatches (no
+  "Tool not available"), carries a usable input schema whose required fields are described, refuses
+  a foreign dataset as `not_found`/`forbidden` with an actionable hint and no stack trace, names the
+  role a gate needs, and writes nothing when it refuses.
+- **Bugs this found and fixed, which had been live:** MCP `build_gold_join` resolved a join partner
+  with `assetTarget` while the UI used the owner-aware `reuseSourceFqn`, so a personal-lane partner
+  was read from the wrong schema; MCP `transform_silver` never refreshed the promoted domain copy;
+  the UI sync save did not enforce the per-source mode/cursor locks the MCP did, nor refuse a
+  connection the caller cannot read; MCP `run_quality_checks` ran the rules without the monitors and
+  persisted nothing.
+- `tabs/data/guide.md` and `sovereign-os://guide/path/data` now describe what actually happens — the
+  commit per call with its real trailers, the generated dbt project, the Dagster schedule, Trino as
+  the principal, read-back from Dagster — and the real sequence connect → ingest → silver → gold →
+  quality → schedule → lineage.
+
+### Removed — Data engine rebuild, Phase B4: the OS-side scheduler and the sweeps Dagster replaced
+
+- `os-ui/tabs/data/lib/sync-cron.ts` — the per-dataset `batch/v1` CronJob provisioning, its manifest
+  builder and the in-process cron matcher. **Nothing in the OS can create a CronJob for a sync any
+  more** (checklist D7). `sync-cron-removal.ts` keeps the DELETE half, because an upgrade from a
+  pre-B2 install must still remove the CronJob a save left behind; a test asserts it cannot create
+  one.
+- `POST /api/data/sync-due` (the fallback sync sweep) and `POST /api/data/dq/run-all` (the scheduled
+  DQ sweep), with their chart CronJobs (`templates/extensions/metrics/{data-sync,dq}-cronjob.yaml`)
+  and values (`dataSync.sweep`, `data.quality.cron`). Schedules live in each domain's
+  `os/schedules.yml` and quality rules ARE dbt tests, so both sweeps would double-run work and write
+  rows Dagster does not know about. Also `store.datasetsWithSync`, the sweep's worklist.
+- **A loss worth naming:** the DQ sweep was also what e-mailed a dataset owner on a NEW quality
+  failure. The Dagster failure sensor quarantines a repeatedly failing schedule, but nobody is
+  notified yet. `isNewFailure` and `deliverDqAlert` are kept and tested because the recorded
+  follow-up — alert from the asset-check read-back plus a persisted last-alerted badge — needs
+  exactly them.
+- **Deliberately NOT removed**, against the phase outline, with the reason recorded in the plan: the
+  query-tool's `/execute` (it also carries `apply_quality_fixes`'s MERGE, physical deletes, the
+  warehouse import and the promote/publish CTAS) and the TypeScript CTAS build path for silver/gold
+  (the honesty gate registers a version only after a real apply+verify; replacing it with a wait on
+  a Dagster asset check is a redesign that cannot be shown correct offline — the kind row-set parity
+  run, checklist D15, is its gate).
+
 ### Changed — **BREAKING** — Data engine rebuild, Phase B4: data products in git are ON by default
 
 - **`osUI.dataProjectGit.enabled` now defaults to `true`** (and the Dagster `repo-sync` sidecar's

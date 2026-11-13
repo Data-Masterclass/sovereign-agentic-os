@@ -6,9 +6,12 @@ it is not a demo any more: **every OS dataset in a domain with a repository is a
 scheduled from a validated git commit, and the OS **reads run state back from Dagster instead of
 keeping its own ledger** (checklist D7–D11, D9).
 
-Everything below is behind `osUI.dataProjectGit.enabled` / `DATA_PROJECT_GIT` (default **off**).
-With the flag off nothing changes: syncs are Kubernetes CronJobs calling os-ui, quality runs are the
-OS's own probes, and Dagster hosts only the demo mart.
+Everything below is behind `osUI.dataProjectGit.enabled` / `DATA_PROJECT_GIT`, which is **on by
+default since B4**. With the flag off the OS falls back to its own CTAS execution, its
+`os-sync-runs` / `os-dq-results` ledger reads and its own DQ probe — but it **schedules nothing**:
+B4 deleted the CronJob provisioning (`tabs/data/lib/sync-cron.ts`) and both fallback sweeps, so a
+saved sync in that state waits for a manual "Sync now". The flag is an emergency opt-out for one
+release and then goes.
 
 ## The flow, end to end
 
@@ -196,13 +199,18 @@ kubectl -n agentic-os exec deploy/agentic-os-dagster-sovereign -c repo-sync -- c
 
 **Q: What is NOT a Dagster asset?** Kafka-offset syncs and API-batch sources (Salesforce, Kajabi,
 the Files connectors) — dbt cannot express a per-partition watermark or an API pull. The generator
-lists them honestly in `os/external.yml`; the external-source assets are B3/B4 work. The Files
+lists them honestly in `os/external.yml`. **Federated** sync sources ARE assets since B3
+(`os/sources.yml` → one observable source asset each, with a freshness check derived from the sync's
+own cron); the Kafka/API half stays out, and `repo.py` ignores `os/external.yml`. The Files
 connector's old `launchPipelineExecution` call targeted a job that never existed and is now a logged
 no-op with that TODO.
 
-**Q: Where did my CronJob go?** With the flag on, saving a sync provisions **no** CronJob and removes
-any pre-B2 one, so a slice cannot run twice; `/api/data/sync-due` and `/api/data/dq/run-all` stand
-down for the same reason. The schedule lives in the repo and runs in Dagster.
+**Q: Where did my CronJob go?** Saving a sync provisions **no** CronJob and removes any pre-B2 one,
+so a slice cannot run twice. The schedule lives in the repo (`os/schedules.yml`) and runs in Dagster.
+Since **B4** this is not a flag-dependent behaviour but the only behaviour: the provisioning code,
+the two fallback sweep routes (`/api/data/sync-due`, `/api/data/dq/run-all`) and their chart
+CronJobs are deleted. All that survives is the delete-only
+`tabs/data/lib/sync-cron-removal.ts`, so an upgrade still cleans up what a pre-B2 save left behind.
 
 **Q: Volume and schema monitors?** They are not dbt tests. dbt has no native volume or drift monitor,
 so with the flag on they are **absent**, not faked (concept §1); Dagster asset checks over

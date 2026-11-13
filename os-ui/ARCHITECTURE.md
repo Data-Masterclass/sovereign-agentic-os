@@ -475,7 +475,7 @@ In particular a decision no longer drives the graph inside the decider's request
 
 ## A data product is a dbt project in a git repo the OS owns
 
-(Engine rebuild, Phases B1–B2 — behind `DATA_PROJECT_GIT`, default off. Concept:
+(Engine rebuild, Phases B1–B4 — `DATA_PROJECT_GIT`, **on by default** since B4. Concept:
 `docs/superpowers/plans/2026-11-13-data-products-concept.md`.)
 
 A domain's data product is a **dbt project** an engineer could clone and run, and it lives in a
@@ -490,6 +490,17 @@ Author = the acting `CurrentUser`, committer = `Sovereign OS`, message
 `<area>(<domain>): <action> <object> — via ui:<route>|mcp:<tool>` plus `OS-*` trailers. It lives in
 `@core` because the Data and the Agents tab both commit through it; it knows nothing about either.
 
+**One service per mutation, two surfaces.** `tabs/data/lib/mutations-server.ts` holds the eight
+mutating data operations (create, version, silver, gold, quality rules, run checks, sync config,
+sync now). A Data-tab route adds HTTP shaping; an MCP tool adds argument coercion; neither holds
+logic. That is what makes "the MCP is the same governed path, not a back door" checkable rather than
+aspirational — `tabs/data/lib/mcp-parity.test.ts` drives each tool through `handleRpc` and the same
+input through the service, and compares the committed tree, the author, the `OS-Actor` trailer and
+the Dagster launch args. Errors are thrown status-tagged once, so `withRoute` renders `{error}` +
+status and `handleRpc` the typed `{code, reason, hint}` from the same throw. It also deleted seven
+cross-layer imports: the MCP tools no longer reach into the Data tab's store, panels, compilers and
+publish server — they call one module.
+
 **Every writer commits.** `tabs/data/lib/store.ts` has one `persist()`; it — and the few writers
 that bypass it (create, adopt, archive, delete, restore, propagation sweeps) — emit a
 `ProjectChange` through `tabs/data/lib/project-events.ts`. The store is reachable from the **client
@@ -498,6 +509,13 @@ dynamically — hence the event seam. `tabs/data/lib/dbt/commit.ts` subscribes a
 (`instrumentation.ts`): snapshot the domain (`snapshot.ts`, the only impure read) → `generateProject`
 (`generate.ts`, pure, byte-stable: sorted keys, one newline, no timestamps) → `commitTree`.
 `commit.test.ts` enumerates the store's exports — a new mutator fails until it is classified.
+
+**The hook cannot see the past, so boot does.** A listener installed at boot sees only writes from
+then on, and a crash between the store write and the commit loses that commit. `boot-reconcile.ts`
+closes both: at startup, for every domain the OS knows (datasets in the registry ∪ repositories on
+disk), it commits the difference between the generated project and the repository HEAD as the
+platform principal with the trailer `OS-Reason: boot-reconcile`. It commits only where the tree
+moved, survives one broken domain, and launches nothing.
 
 **Where "via" comes from.** `core/infra/request-surface.ts` (AsyncLocalStorage): `withRoute` wraps
 every handler in `ui:<route>`, the data MCP tools wrap each call in `mcp:<tool>`; the hook reads it
@@ -532,7 +550,9 @@ recorded as `meta.os_intentions`, never emitted as a test.
 
 ## Dagster schedules the repo
 
-(Phase B2, same flag.)
+(Phase B2, same flag. Since B4 nothing in the OS provisions a `batch/v1` CronJob for data: the
+provisioning module and both fallback sweep routes are deleted, and all that survives is a
+delete-only cleanup so an upgrade removes what a pre-B2 save left behind.)
 
 The OS does not run data products and does not keep a run ledger for them. **One** Dagster code
 location, `sovereign` (`images/extensions/dagster/repo.py`, with the pure half in `os_projects.py`),
