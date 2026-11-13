@@ -3792,3 +3792,27 @@ button.card.tile:hover .tile-action { opacity: 1; }
   .launch-card { transition: none; }
 }
 
+
+/* ---- Lifecycle badges (Draft / Testing / Live) — night 2, stream V ----------
+ * The SECOND axis beside the visibility badges above: those say WHO may use an
+ * artefact, these say WHICH VERSION runs. Same `.badge` skin so a tile carrying
+ * both reads as one row of two small facts, with deliberately different hues:
+ * Draft is quiet, Testing is in-flight, Live is the settled state. */
+.badge.lc-draft {
+  color: var(--text-muted);
+  background: transparent;
+  border-color: var(--border);
+}
+.badge.lc-testing {
+  color: var(--gold-text);
+  background: var(--gold-soft);
+  border-color: var(--gold-line);
+}
+.badge.lc-live {
+  color: var(--teal);
+  background: rgba(42, 163, 155, 0.16);
+  border-color: var(--teal-dim);
+  font-weight: 600;
+}
+/* The Studio | Run header toggle reuses the `.seg` segmented control. */
+.topbar-actions .seg button { padding: 5px 11px; font-size: 12px; }
