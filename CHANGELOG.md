@@ -23,6 +23,17 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   four read-only research reports beside them as the evidence base. No product code changes in this
   commit.
 
+- **Chat to the data — one trace per turn, and the semantic layer comes first (stream C, C1–C4).**
+  An "Ask the OS" turn is now ONE Langfuse trace with its model calls nested
+  (`observe: { traceId }` reaches `liteLlmCaller` from the assistant path), tagged `tab:ask` +
+  `run:<turn>` so the flagship chat surface's cost is readable back instead of being hidden inside
+  whichever tab the user stood on. `OS_RULES` and all four MCP guides
+  (`core/guides/overview.guide.md`, `tabs/{metrics,dashboards,data}/guide.md`) now carry the same
+  verbatim rule: for any question about a number, `list_metrics` → `query_metric`; `query_data` only
+  when no governed member exists, and then show the SQL and the row bound. `DISCOVERY_COMPANIONS`
+  gains `query_metric` and `create_dashboard` entries — widening discovery, never authority. One
+  source of truth (`core/runtime/ask-rules.ts`) with content tripwires in five places.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a

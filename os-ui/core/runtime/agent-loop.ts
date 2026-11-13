@@ -15,6 +15,8 @@ import {
 import { loadTabContext, tabTitle } from '@core/tabs-meta/context';
 import { buildInstructions } from '@core/mcp/instructions';
 import { runAgentic, type AgenticResult, type LlmCall, type ToolExecutor, type ToolSpec } from '@core/runtime/agentic';
+import { ASK_RULES_BLOCK } from '@core/runtime/ask-rules';
+import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
 import { liteLlmCaller } from '@core/runtime/runtime';
 import { resolveAssistantModelId } from '@core/runtime/complete';
 import { inputBudget, modelContext } from '@core/models/context-windows';
@@ -106,6 +108,11 @@ const OS_RULES = [
   '   3. Only AFTER the user confirms do you execute the plan with the mutating tools.',
   '   4. Keep it lightweight: one obvious, low-risk step needs only a one-line',
   '      heads-up, not a ceremony. Bigger or irreversible work gets the full plan.',
+  '',
+  // C2 / C5 / C6 — the semantic-layer-first, truncation-honesty and ad-hoc-labelling
+  // rules, imported from the ONE module the four MCP guides also carry verbatim so the
+  // in-app assistant and an external MCP client are told the same thing.
+  ASK_RULES_BLOCK,
 ].join('\n');
 
 /**
@@ -162,7 +169,7 @@ export function osToolSpecs(user: CurrentUser, tab: McpTab | null): ToolSpec[] {
  * function (OPA + Langfuse) is the real authority, so this never bypasses
  * governance. A denial comes back as an honest `isError` result, not a throw.
  */
-export function osToolExecutor(user: CurrentUser): ToolExecutor {
+export function osToolExecutor(user: CurrentUser, sink?: ChatArtifact[]): ToolExecutor {
   return async (name, args) => {
     const res = await handleRpc(user, {
       jsonrpc: '2.0',
@@ -171,7 +178,20 @@ export function osToolExecutor(user: CurrentUser): ToolExecutor {
       params: { name, arguments: args },
     });
     if (res?.error) return { text: `Error: ${res.error.message}`, isError: true };
-    const result = (res?.result ?? {}) as { content?: { text?: string }[]; isError?: boolean };
+    const result = (res?.result ?? {}) as {
+      content?: { text?: string }[];
+      structuredContent?: unknown;
+      isError?: boolean;
+    };
+    // C5 / C9 — the tool's OWN `structuredContent` is the artifact payload (D14). The
+    // model still sees the flattened text, but the TRUNCATION fields, the SQL and the
+    // citation travel structurally to the surface alongside it, so a clipped result can
+    // never reach the user as a confident total just because the model omitted to mention
+    // it. One serialiser: the drawer renders the identical payload an external MCP client
+    // receives. A denial (`isError`) carries `{ error }`, which yields no artifacts.
+    if (sink && !result.isError) {
+      for (const artifact of parseArtifacts(result.structuredContent)) sink.push(artifact);
+    }
     const text = result.content?.map((c) => c.text ?? '').join('\n') ?? '';
     return { text: text || '(no output)', isError: !!result.isError };
   };
@@ -187,11 +207,42 @@ export type RunOsAssistantInput = {
   page?: PageContext | null;
   messages: { role: 'user' | 'assistant'; content: string }[];
   maxIterations?: number;
+  /**
+   * C1 — the id this TURN is traced under. Every model call the turn makes nests inside
+   * it, so one turn is ONE Langfuse trace instead of N orphans, and it is also the run
+   * dimension on the LiteLLM tags (`run:<id>`). Server-minted per turn; a caller may
+   * inject one (tests, and the durable-thread work that comes later) but the browser
+   * never supplies it — a client-chosen trace id would let one user write into another
+   * user's trace.
+   */
+  traceId?: string;
   /** Injected in tests; defaults to the live governed LiteLLM caller. */
   llm?: LlmCall;
 };
 
-export type OsAssistantResult = AgenticResult & { tab: McpTab | null };
+export type OsAssistantResult = AgenticResult & {
+  tab: McpTab | null;
+  /** The typed artifacts the governed tools produced this turn, in call order. */
+  artifacts: ChatArtifact[];
+  /** The Langfuse trace (= turn) id every model call on this turn was logged under. */
+  traceId: string;
+};
+
+/**
+ * The LiteLLM `tab:` dimension for the Ask-the-OS surface. Deliberately NOT the tab lens
+ * the user happens to be standing on: before this, an Ask-the-OS turn on the Data tab was
+ * tagged `tab:data` and was indistinguishable from the Data tab's own model calls, so the
+ * cost of the flagship chat surface could not be read back at all. The tab lens is still
+ * in the system prompt and in the response's `tab` field.
+ */
+export const ASK_COST_TAB = 'ask';
+
+/** A fresh turn id. `randomUUID` where available, else a timestamped random fallback. */
+function mintTraceId(): string {
+  const c = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (c?.randomUUID) return `ask-${c.randomUUID()}`;
+  return `ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 /**
  * Run one PLAN→ACT turn for the overarching OS assistant and return the full
@@ -201,6 +252,8 @@ export type OsAssistantResult = AgenticResult & { tab: McpTab | null };
  */
 export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssistantResult> {
   const injected = input.llm;
+  const traceId = input.traceId || mintTraceId();
+  const artifacts: ChatArtifact[] = [];
   // Production: the ONE assistant model for both plan + act. Tests inject `llm`
   // and own model selection, so the config tier ids are opaque placeholders.
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
@@ -209,12 +262,17 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     system: osAssistantSystem(input.tab, input.page),
     userMessages: input.messages,
     tools: osToolSpecs(input.user, input.tab),
-    callTool: osToolExecutor(input.user),
-    // A3: attributed — the user, their active domain and the tab lens (never the master key).
+    callTool: osToolExecutor(input.user, artifacts),
+    // C1 — ONE trace per turn: the plan call, every act iteration and the cap synthesis all
+    // nest under this turn's id instead of each creating its own unlinked Langfuse trace.
+    observe: { traceId },
+    // A3: attributed — the user, their active domain, the Ask surface and this turn
+    // (never the master key).
     llm: injected ?? liteLlmCaller({
       userId: input.user.id,
       domain: input.user.activeDomain ?? input.user.domains[0] ?? 'none',
-      tab: input.tab ?? 'assistant',
+      tab: ASK_COST_TAB,
+      runId: traceId,
     }),
     planModel: injected ? config.litellmReasoningModel : assistantId,
     actModel: assistantId,
@@ -222,5 +280,5 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     budget: inputBudget(assistantId),
     maxOutputTokens: ctx.reservedOutput,
   });
-  return { ...result, tab: input.tab };
+  return { ...result, tab: input.tab, artifacts, traceId };
 }

@@ -95,6 +95,13 @@ export function resolveAlias(name: string): string {
 export const DISCOVERY_COMPANIONS: Record<string, string[]> = {
   // Data: to query a table you must first learn its exact FQN + columns.
   query_data: ['list_datasets', 'get_dataset', 'profile_dataset'],
+  // Metrics (C4): to evaluate a governed metric you must first learn which members exist
+  // and what the member actually means — the semantic-layer-first rule is useless if the
+  // model cannot see the members it is told to prefer.
+  query_metric: ['list_metrics', 'get_metric', 'get_dataset'],
+  // Dashboards (C4): every chart binds a governed metric member, so a dashboard author
+  // needs the member list and the view behind it before it can propose a tile.
+  create_dashboard: ['list_dashboards', 'list_metrics', 'get_dataset'],
   // Knowledge: browse the catalog before a semantic search.
   search_knowledge: ['list_knowledge'],
   // Files: enumerate/search before reading a specific file.

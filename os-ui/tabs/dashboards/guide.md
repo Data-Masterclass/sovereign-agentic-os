@@ -63,3 +63,15 @@ create_dashboard({
 ```
 
 The dashboard renders natively at View time (ECharts on the governed Cube layer). A domain admin then promotes it to Domain; each panel re-queries as its viewer, scoped to that viewer's own DLS.
+
+## Answering a question about a number (chat to the data)
+
+For any question about a NUMBER, go through the semantic layer first: `list_metrics` → `query_metric`. Use `query_data` only when no governed metric member exists for the question, and then always show the SQL you ran and the row bound that applied.
+
+An answer computed with `query_data` is AD HOC AND UNVERIFIED: say so in the answer, because the aggregation and the joins were chosen by you and not by the governed metric definition everyone else reads. A `query_metric` answer is the governed number and needs no such caveat.
+
+NEVER aggregate, total, average or summarise a TRUNCATED result set. When a tool result carries `truncated: true`, the rows you were given are the FIRST n rows at the `rowLimit` ceiling — not a sample — so any number you compute over them is wrong. Say that the result was clipped, repeat the tool's own `message` verbatim, and offer a narrower query or a governed metric instead.
+
+Discovery companions widen what you can SEE, never what you may DO: `query_metric` pulls in
+`list_metrics`, `get_metric` and `get_dataset`; `create_dashboard` pulls in `list_dashboards`,
+`list_metrics` and `get_dataset`.
