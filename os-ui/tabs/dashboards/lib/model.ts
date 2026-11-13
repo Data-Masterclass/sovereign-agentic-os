@@ -24,12 +24,74 @@ import type { Granularity } from '@tabs/metrics/lib/explorer';
  * delegated identity. This module is the pure, tested SPEC model only — no query execution.
  */
 
-/** The native panel viz types. `big_number_total` is the legacy alias of `big_number`;
- *  both remain valid so a seeded/legacy spec never breaks. */
-export type VizType = 'big_number_total' | 'big_number' | 'line' | 'area' | 'bar' | 'pie' | 'table';
+/**
+ * The native panel viz types, as DATA. `VizType` is derived from this array, so the MCP
+ * `create_dashboard` enum, the PanelBuilder dropdown and the type can never drift from each other
+ * — `mcp/dashboard-write-tools.ts` spreads this verbatim and `lib/viz-enum.test.ts` asserts the
+ * equality (D11; before this, the MCP tool advertised four of the seven and silently rejected a
+ * `pie` or an `area` an agent had every reason to ask for).
+ *
+ * `big_number_total` is the legacy alias of `big_number`; both remain valid so a seeded or legacy
+ * spec never breaks.
+ */
+export const VIZ_TYPES = ['big_number', 'big_number_total', 'line', 'area', 'bar', 'pie', 'table'] as const;
 
-/** A panel filter clause: an equality/comparison pushed into the governed WHERE. */
+/** The native panel viz types. Derived from {@link VIZ_TYPES} — never written out twice. */
+export type VizType = (typeof VIZ_TYPES)[number];
+
+/** A panel filter clause: a comparison pushed into the governed WHERE. */
 export type PanelFilter = { member: string; operator: string; values: string[] };
+
+/**
+ * The filter operators the GOVERNED query path can actually serve. The explorer compiles a
+ * panel filter to `column IN (<parameterised values>)`, so an equality — of one value or many —
+ * is servable and nothing else is.
+ *
+ * D10/D-R4.1: anything else used to be dropped on the floor in `lib/build/panel-query.ts`
+ * (`.filter((f) => f.operator === 'equals')`) with no report, so a panel authored with
+ * `amount >= 1000` silently rendered the UNFILTERED number. A silent under-filter is a wrong
+ * number presented as a right one, which is the single thing this product may never do. It is now
+ * a typed `bad_request` at write time AND at query time.
+ */
+export const SERVABLE_FILTER_OPERATORS = ['equals', 'in'] as const;
+
+/** A servable filter operator. */
+export type ServableFilterOperator = (typeof SERVABLE_FILTER_OPERATORS)[number];
+
+/** Is this operator one the governed path can serve? */
+export function isServableOperator(operator: string): operator is ServableFilterOperator {
+  return (SERVABLE_FILTER_OPERATORS as readonly string[]).includes(operator);
+}
+
+/** The panel filters whose operator the governed path cannot serve (empty ⇒ all servable). */
+export function unservableFilters(panel: Panel): PanelFilter[] {
+  return (panel.filters ?? []).filter((f) => !isServableOperator(f.operator));
+}
+
+/**
+ * The typed refusal for a filter the governed path cannot serve: `status: 400`, naming the member,
+ * the operator and what IS servable, so the message is actionable rather than a shrug.
+ */
+export function unservableFilterError(panel: Panel): (Error & { status: number }) | null {
+  const bad = unservableFilters(panel);
+  if (bad.length === 0) return null;
+  const list = bad.map((f) => `“${f.member} ${f.operator}”`).join(', ');
+  const e = new Error(
+    `Panel “${panel.name}”: filter ${list} cannot be served by the governed query path, which ` +
+      `compiles a panel filter to an IN list — only ${SERVABLE_FILTER_OPERATORS.map((o) => `\`${o}\``).join(' and ')} ` +
+      'are servable. The panel is REFUSED rather than rendered with the filter silently dropped, ' +
+      'because that would show an unfiltered number as if it were filtered. Express the range as a ' +
+      'governed metric (Metrics tab → define a filtered metric) and chart that instead.',
+  ) as Error & { status: number };
+  e.status = 400;
+  return e;
+}
+
+/** Throw {@link unservableFilterError} when the panel carries an unservable filter. */
+export function assertServableFilters(panel: Panel): void {
+  const e = unservableFilterError(panel);
+  if (e) throw e;
+}
 
 /** A panel's position on the dashboard grid (12-column units). Optional —
  *  the native grid falls back to a flow layout when absent. */

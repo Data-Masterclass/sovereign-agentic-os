@@ -1982,3 +1982,79 @@ deviation is.
 
 (empty)
 
+
+### Stream D — dashboards
+
+- **D-1 `instrumentation.ts` was edited, which the shared-file table assigns to E and G.** The
+  dashboards commit hook needs `reserveSubtree('dashboards/')` to run **before** the data side's
+  boot reconcile, which is a whole-tree commit that would otherwise commit the subtree's deletion —
+  so the reservation could not simply be appended at the end of the file as the table's rule asks.
+  It is one line added immediately beside the existing `reserveSubtree('agents/')`, and the hook
+  install is appended as a new step 2b after the agents hook. No existing step was reordered or
+  changed. `tabs/dashboards/lib/git/boot.test.ts` pins both the literal and the ordering, so a
+  merger who moves either breaks a test rather than losing every dashboard in every repository.
+- **D-2 The commit message is composed in the tab rather than by `core/infra/git-store.ts`.**
+  `commitMessage`'s `area` is typed `'data' | 'agents'`, and that file is assigned tonight to S (the
+  tag API) and G (the read/diff API), so widening the union is not this stream's change to make.
+  `tabs/dashboards/lib/git/commit.ts` `dashboardCommitMessage` composes the identical string through
+  the store's own exported `appendTrailers`, and `lib/git/commit.test.ts` asserts it is
+  **byte-identical** to `commitMessage` for the same input. **For the merger:** widen `area` to
+  include `'dashboards'` and delete `dashboardCommitMessage`, keeping its test as the proof.
+- **D-3 `ownerToken` is duplicated from `tabs/agents/lib/git/generate.ts`.** The structure rules
+  forbid a tab importing another tab and there is no shared `core` git-identity module, so the
+  twelve-hex sha256 owner token is implemented a second time in
+  `tabs/dashboards/lib/git/snapshot.ts`. `lib/git/generate.test.ts` pins the exact value for a
+  fixture principal so the two cannot drift (one repository with two tokens for the same person
+  would be worse than the duplication). **For the merger:** `core/infra/git-identity.ts`.
+- **D-4 Stream G's hand-off is landed against the contract, not against the code.**
+  `core/infra/git-objects.ts` and `core/ui/git/GitHeadBadge.tsx` are on `night2/G` and not in this
+  worktree, and a tab may not import a module that does not compile. What landed:
+  `tabs/dashboards/lib/git/git-object.ts` — the real resolver, tested, returning G's
+  `GitObjectLocation` shape (domain, the dashboard's directory **and** `dashboards/index.yml`, the
+  `OS-Object` trailer id, the display name), resolving through the store's own visibility gate so an
+  invisible dashboard is indistinguishable from a missing one (G5). **The three-line merge patch:**
+  (a) in the boot step, `import { registerGitObject } from '@core/infra/git-objects';` +
+  `import { dashboardGitObjectResolver } from '@tabs/dashboards/lib/git/git-object';` +
+  `registerGitObject('dashboard', dashboardGitObjectResolver);`; (b) in `GIT_OBJECT_LAYOUT.dashboard`,
+  flip `writer` from `{ state: 'landing', … }` to
+  `{ state: 'committed', via: 'tabs/dashboards/lib/git/commit.ts', since: 'night 2 stream D' }`;
+  (c) in `tabs/dashboards/ui/DashboardBuilder.tsx`, the detail header gains
+  `import GitHeadBadge from '@core/ui/git/GitHeadBadge';` and
+  `<GitHeadBadge kind="dashboard" id={id} />`. The local `GitObjectLocation` copy in
+  `git-object.ts` is deleted in favour of G's import at the same time.
+- **D-5 Lifecycle is READ through a port, never implemented here.** Stream V owns
+  `core/kernel/lifecycle.ts`, which is not in this worktree, so
+  `tabs/dashboards/lib/lifecycle-port.ts` is a one-function read port with V's exact
+  `{ draft, testing?, live? }` shape: V calls `setLifecycleReader(reader)` once at boot, and until
+  it does, `livePin()` returns `null` and every surface behaves exactly as it does today — absent,
+  never invented. A throwing reader degrades to "no pin" rather than breaking a dashboard. The
+  generator records the pin in `dashboard.yaml` and the README when one exists and writes no
+  `lifecycle` block when one does not. **For the merger:** wire `setLifecycleReader` from V's boot
+  step; nothing else changes.
+- **D-6 Node's type-stripping loader forbids two TypeScript constructs the vendored code used.**
+  `enum` (`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`) and parameter properties both fail under
+  `node --test`, which is how this repo runs its suite. Upstream Superset's seven enums became
+  `as const` objects plus a union type of the same name — the VALUES are verbatim and
+  `AxisType.Category` still reads as upstream wrote it — and `DashboardFileError` assigns its field
+  in the constructor body. Both are recorded in the vendored files' `Changes:` lists and in
+  `os-ui/ARCHITECTURE.md`'s new charts section.
+- **D-7 Superset's default series ordering would have silently reordered a user's panel.**
+  Upstream's `extractSeries` always sorts (its default branch orders series reverse-alphabetically),
+  so a two-measure panel would have drawn the author's second measure first. The vendored
+  transformer gained an explicit `seriesOrder` option, documented in its `Changes:` list, and
+  `core/ui/charts/spec.ts` passes the declared measure order. Upstream's `sortSeriesType` still
+  applies when `seriesOrder` is absent.
+- **D-8 The SBOM was NOT regenerated with syft.** `scripts/license-check.sh --update-sbom` scans the
+  repository ROOT, which contains `.claude/worktrees/`, so a regeneration from this worktree rewrote
+  the single-line `sbom.cdx.json` with paths from eight sibling worktrees — a bogus SBOM and a
+  guaranteed conflict for every other stream. The committed SBOM was restored and ONE CycloneDX
+  component was appended for the vendored source
+  (`pkg:generic/apache-superset@c83fb2bb…`, Apache-2.0, with `os:vendored:*` properties). syft would
+  never have emitted it anyway: a vendored source slice is not an npm package. **Note for the
+  coordinator:** the committed SBOM already carried a sibling worktree path before tonight, so a
+  clean regeneration from a pristine clone is worth doing once, outside the worktrees.
+- **D-9 `tabs/dashboards/ui/shared.ts` still declares its own `VizType` literal.** It is the
+  client-side mirror of the lib types by design, so it was left as the duplicate it has always been
+  rather than re-pointed at `lib/model.ts` mid-stream; `lib/honesty.test.ts` asserts the UI list and
+  the MCP enum agree, so the duplication cannot drift silently. Collapsing the two is a one-line
+  follow-up.

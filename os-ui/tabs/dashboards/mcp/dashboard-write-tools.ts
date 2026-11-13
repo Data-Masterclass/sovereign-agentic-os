@@ -96,7 +96,7 @@ import { putBlob } from '@tabs/files/lib/object-store';
 import type { Sensitivity } from '@tabs/files/lib/asset-schema';
 
 import { saveDashboard } from '@tabs/dashboards/lib/store';
-import { fromTiles, missingPanelMembers, type ChartSpec } from '@tabs/dashboards/lib/model';
+import { VIZ_TYPES, assertServableFilters, fromTiles, missingPanelMembers, type ChartSpec } from '@tabs/dashboards/lib/model';
 import { panelViewsFor, type RegistryViewDims } from '@tabs/dashboards/lib/panel-views';
 import { listMetrics } from '@tabs/metrics/lib/store';
 import { claimsFromUser, delegate } from '@tabs/data/lib/identity';
@@ -134,7 +134,10 @@ export const dashboardWriteTools: McpTool[] = [
             type: 'object',
             properties: {
               name: { type: 'string' },
-              vizType: { type: 'string', enum: ['big_number_total', 'line', 'bar', 'table'] },
+              // D11: spread from lib/model's VIZ_TYPES so the advertised enum IS the VizType
+              // union. It used to list four of the seven, so an agent asking for a pie or an
+              // area chart was refused a panel the UI offers in its own dropdown.
+              vizType: { type: 'string', enum: [...VIZ_TYPES] },
               metric: { type: 'string', description: 'Governed metric member, e.g. "Orders.revenue".' },
               dimensions: { type: 'array', items: { type: 'string' } },
             },
@@ -155,6 +158,9 @@ export const dashboardWriteTools: McpTool[] = [
       const charts = (Array.isArray(args.charts) ? args.charts : []) as ChartSpec[];
       if (!charts.length) fail('a dashboard needs at least one chart on a governed metric', 400);
       const id = str(args.id).trim() || `dash_${slug(name)}_${rand()}`;
+      // D10: a filter the governed path cannot serve is refused HERE, at write time, so an
+      // un-renderable panel never reaches the store — never silently under-filtered at render.
+      for (const chart of charts) assertServableFilters(chart);
       // Scope the dashboard's governed view to the caller's domain. Tier-1 native dashboards
       // render at VIEW time (Apache ECharts on the governed metric layer, per-viewer RLS) —
       // there is no external import step, so create_dashboard is persist-only (mirrors

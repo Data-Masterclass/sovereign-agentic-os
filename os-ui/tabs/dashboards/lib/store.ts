@@ -11,6 +11,12 @@ import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 // as an explicit row so it persists even when empty. Reused, never forked (mirrors Data).
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { normaliseFolderPath } from '@core/kernel/folders';
+// Every dashboard mutation announces itself ONCE here; the server-only git commit hook
+// (lib/git/commit.ts) subscribes at boot. This module is reachable from the CLIENT bundle through
+// lib/index.ts, so it must not import node:fs or isomorphic-git — hence the event seam (D8).
+import { emitDashboardChange } from '@tabs/dashboards/lib/dashboard-events';
+import { snapshotDashboard, type SnapshotDashboard, type SnapshotResolvers } from '@tabs/dashboards/lib/git/snapshot';
+import { dashboardLifecycle } from '@tabs/dashboards/lib/lifecycle-port';
 
 /**
  * A small in-memory dashboard registry (mirrors lib/data/store's shape + discipline:
@@ -109,8 +115,12 @@ export function moveDashboardsDomain(sel: { id?: string; onlyUnassigned?: boolea
     if (sel.id !== undefined && d.id !== sel.id) continue;
     if (sel.onlyUnassigned && d.domain) continue;
     if (d.domain === target) continue;
+    const previousDomain = d.domain;
     d.domain = target;
     writeThrough(d);
+    // A cross-domain move changes TWO repositories: the old one loses the dashboard, the new one
+    // gains it. The hook commits both, each from its own captured state.
+    announce(d, 'system', 'move dashboard between domains', previousDomain);
     moved.push(d.id);
   }
   return moved;
@@ -126,6 +136,43 @@ export function listAllDashboardsInternal(): { id: string; name: string; spec: D
   return dashState().dashboards
     .filter((d) => !d.archived)
     .map((d) => ({ id: d.id, name: d.spec.name, spec: d.spec }));
+}
+
+/**
+ * Announce a dashboard write. Called by EVERY mutator in this module — the enumeration test in
+ * `lib/git/commit.test.ts` fails when a new writer is added without one, which is what makes
+ * "every mutation is a git commit" non-optional rather than a convention (D8, G1).
+ *
+ * `previousDomain` is set only for a cross-domain move, where TWO repositories change.
+ */
+function announce(rec: Stored, actorId: string, action: string, previousDomain?: string): void {
+  emitDashboardChange({
+    domain: rec.domain ?? '',
+    dashboardId: rec.id,
+    name: rec.spec.name,
+    action,
+    actorId,
+    ...(previousDomain && previousDomain !== rec.domain ? { previousDomain } : {}),
+  });
+}
+
+/**
+ * UNSCOPED per-domain read, flattened for the git generator — the dashboards of ONE domain as the
+ * `dashboards/**` subtree should hold them. Server-side only (the commit hook): it deliberately
+ * ignores the caller's visibility, because the repository must contain the domain's dashboards
+ * regardless of who happened to trigger the write. No secrets and no principal ids leave: the
+ * snapshot hashes the owner (see `lib/git/snapshot.ts`).
+ */
+export function dashboardsForProject(domain: string, resolvers: SnapshotResolvers = {}): SnapshotDashboard[] {
+  if (!domain) return [];
+  const withLifecycle: SnapshotResolvers = {
+    ...resolvers,
+    // Stream V owns lifecycle; this tab only RECORDS the pin it is given (lib/lifecycle-port.ts).
+    lifecycle: resolvers.lifecycle ?? ((id: string) => dashboardLifecycle(id)),
+  };
+  return dashState()
+    .dashboards.filter((d) => d.domain === domain && !d.archived)
+    .map((d) => snapshotDashboard(d, withLifecycle));
 }
 
 export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number; folder: string; archived?: boolean };
@@ -190,11 +237,13 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec):
     versions.record(existing.id, user.id, snapshotState(existing), 'edit');
     existing.spec = spec;
     writeThrough(existing);
+    announce(existing, user.id, 'edit dashboard');
     return existing;
   }
   const rec = { ...dashboardRecord(id, spec, user.id, 'personal'), domain: user.domains[0] ?? 'sales' };
   dashState().dashboards.push(rec);
   writeThrough(rec);
+  announce(rec, user.id, 'create dashboard');
   return rec;
 }
 
@@ -219,6 +268,7 @@ export function renameDashboard(id: string, user: Principal, newName: string): S
   // DISPLAY name only — spec.view (the frozen Cube identity) is deliberately untouched.
   d.spec = { ...d.spec, name };
   writeThrough(d);
+  announce(d, user.id, 'rename dashboard');
   return d;
 }
 
@@ -229,6 +279,9 @@ export function transitionDashboard(id: string, approver: Principal, transition:
   if (!res.ok) throw status(res.reason ?? 'transition denied', 403);
   d.tier = res.record.tier;
   writeThrough(d);
+  // A tier change MOVES the directory between the personal lane and the domain tree, so the
+  // commit is a real content change, not only a metadata one.
+  announce(d, approver.id, `${transition} to ${d.tier}`);
   return d;
 }
 
@@ -253,6 +306,7 @@ export function demoteDashboard(id: string, user: Principal): Stored {
     throw status('this dashboard is already personal — nothing to revoke', 400);
   }
   writeThrough(d);
+  announce(d, user.id, `revoke sharing to ${d.tier}`);
   return d;
 }
 
@@ -270,6 +324,9 @@ export function setDashboardArchived(id: string, user: Principal, archived: bool
   const d = requireOwned(id, user);
   d.archived = archived;
   writeThrough(d);
+  // An archived dashboard leaves the subtree (it is a reversible soft-hide, so unarchiving brings
+  // it back) — either way the commit records what the domain's repository should now contain.
+  announce(d, user.id, archived ? 'archive dashboard' : 'unarchive dashboard');
   return d;
 }
 
@@ -284,6 +341,7 @@ export function moveDashboard(id: string, user: Principal, folder: string): Stor
   const d = requireOwned(id, user);
   d.folder = normaliseFolderPath(folder);
   writeThrough(d);
+  announce(d, user.id, 'move dashboard to a folder');
   // The move already passed the dashboard's edit-scope gate above, so this same-owner
   // folder create can only mirror an authorised move (best-effort; never rolls it back).
   upsertFolderRow(d, user);
@@ -319,6 +377,9 @@ export function deleteDashboard(id: string, user: Principal): void {
   arr.splice(arr.indexOf(d), 1);
   mirror.deleteThrough(d.id);
   versions.purge(d.id);
+  // Announced AFTER removal, so the hook's capture of the domain no longer holds it and the
+  // commit IS the deletion.
+  announce(d, user.id, 'delete dashboard');
 }
 
 /** Version history for a dashboard, newest first (view-scoped). */
@@ -339,6 +400,7 @@ export function restoreDashboardVersion(id: string, user: Principal, version: nu
   versions.record(id, user.id, snapshotState(d), `restore of v${version}`);
   d.spec = (snap.state as { spec: DashboardSpec }).spec;
   writeThrough(d);
+  announce(d, user.id, `restore dashboard to v${version}`);
   return d;
 }
 

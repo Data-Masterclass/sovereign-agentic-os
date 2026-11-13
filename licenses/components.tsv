@@ -15,6 +15,8 @@ Langfuse (core)	chart 1.5.36 / app 3.194.1	MIT	yes	licenses/MIT.txt	Observabilit
 pg (node-postgres, os-ui npm)	8.23.1	MIT	yes	licenses/MIT.txt	Postgres driver for the checkpointer
 langfuse (JS SDK v3, os-ui npm)	3.39.2	MIT	yes	licenses/MIT.txt	One Langfuse trace per run; tarball ships no LICENSE file, text from upstream in the NOTICE
 isomorphic-git (JS, os-ui npm)	1.44.13	MIT	yes	licenses/MIT.txt	In-process git store for per-domain data-product repos (engine rebuild B1); notices/os-ui-git-store-npm-NOTICE.txt
+Apache ECharts (JS, os-ui npm)	5.6.0	Apache-2.0	yes	licenses/Apache-2.0.txt	The OS UI chart renderer (dashboards, query results, app charts); ONE registration surface at os-ui/core/ui/charts
+js-yaml (JS, os-ui npm)	4.1.0	MIT	yes	licenses/MIT.txt	YAML reader for dashboard-as-code and agent system.yaml
 OpenSearch	chart 3.7.0	Apache-2.0	yes	licenses/Apache-2.0.txt	Retrieval backbone; NOTICE bundled
 OpenSearch Dashboards	chart 3.7.0	Apache-2.0	yes	licenses/Apache-2.0.txt	Search UI
 ClickHouse	24.8	Apache-2.0	yes	licenses/Apache-2.0.txt	Langfuse analytics backend

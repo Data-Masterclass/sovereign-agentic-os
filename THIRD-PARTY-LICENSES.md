@@ -75,6 +75,8 @@ the os-ui image. Per-package copyright notices: `licenses/notices/os-ui-agent-en
 | Component | Version | License (SPDX) | Full text | Notes |
 |---|---|---|---|---|
 | isomorphic-git | 1.44.13 | MIT | `licenses/MIT.txt` | In-process git for the per-domain data-product repositories (bare repos on the `os-repos` PVC; commit/log/read/archive/push). Notice: `licenses/notices/os-ui-git-store-npm-NOTICE.txt`. The `git` binary (GPL-2.0) is NOT bundled by os-ui; the chart runs it as a separate process from the stock `alpine/git` image (git daemon) and the Dagster image's distro package (repo-sync) |
+| Apache ECharts (JS, os-ui npm) | 5.6.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | The OS UI chart renderer (dashboard panels, query results, app charts). ONE registration surface at `os-ui/core/ui/charts`; the line/area/bar transformers are the vendored Apache Superset slice below |
+| js-yaml (JS, os-ui npm) | 4.1.0 | MIT | `licenses/MIT.txt` | YAML reader for dashboard-as-code (`dashboards/<slug>/dashboard.yaml`) and agent `system.yaml` |
 
 Deliberately **not** added: `langfuse-langchain@3` — its peer range is the legacy `langchain <0.4`
 (`@langchain/core` 0.x), incompatible with `@langchain/core@1` that LangGraph 1.x requires; its

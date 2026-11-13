@@ -8,7 +8,7 @@ import { type Principal } from '@tabs/data/lib/store';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
 import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { getMetric, listMetrics } from '@tabs/metrics/lib/store';
-import { type Panel, normalizePanel, panelMetrics } from '@tabs/dashboards/lib/model';
+import { type Panel, assertServableFilters, normalizePanel, panelMetrics } from '@tabs/dashboards/lib/model';
 
 /**
  * Server boundary for a NATIVE dashboard panel (Tier 1). A panel resolves its numbers
@@ -123,16 +123,22 @@ export async function runPanelQuery(
   }
 
   // The slice the panel asks for, shared across every measure (bare leaf names — the explorer
-  // re-qualifies them against each measure's view and drops non-members loudly). Panel filters
-  // thread through as equality filters (the drill-down shape) — only `equals` is servable on
-  // the governed-SQL path; any other operator would silently under-filter, so it is dropped
-  // via the explorer's loud reconciliation by mapping ONLY the equals ones here.
+  // re-qualifies them against each measure's view and drops non-members loudly).
+  //
+  // D10/D-R4.1 — NO SILENT UNDER-FILTER. The governed path compiles a panel filter to
+  // `column IN (<parameterised values>)`, so `equals`/`in` are servable and nothing else is. This
+  // used to be `.filter((f) => f.operator === 'equals')`: a panel authored with `amount >= 1000`
+  // rendered the UNFILTERED number with no warning anywhere. It is now a typed `bad_request`
+  // (`status: 400`) naming the member and the operator, raised BEFORE any query runs.
+  assertServableFilters(p);
   const slice = {
     dimensions: (p.dimensions ?? []).map(leaf),
     timeDimension: p.timeDimension ? leaf(p.timeDimension) : undefined,
     granularity: p.timeGrain as Granularity | undefined,
+    // An empty value list is not a filter at all (`IN ()` is not valid SQL) — it is dropped, which
+    // is faithful: the author expressed no restriction.
     filters: (p.filters ?? [])
-      .filter((f) => f.operator === 'equals' && (f.values ?? []).length > 0)
+      .filter((f) => (f.values ?? []).length > 0)
       .map((f) => ({ column: leaf(f.member), values: f.values })),
   };
 

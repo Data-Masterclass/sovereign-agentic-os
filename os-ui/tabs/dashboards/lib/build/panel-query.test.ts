@@ -136,3 +136,50 @@ test('the panel number IS the exploreMetric number (one-number-everywhere by con
   assert.equal(res.mode, 'live', "live (sql) is surfaced as the panel's stable 'live' mode");
   assert.ok(seen, 'exploreMetric was called under the viewer token with the panel slice');
 });
+
+test('D10 — an unservable filter operator is a typed bad_request BEFORE any query runs', async () => {
+  // The old code did `.filter((f) => f.operator === 'equals')` and dropped the rest unreported, so
+  // a panel authored with `amount >= 1000` rendered the UNFILTERED number as though it were
+  // filtered. It is now refused, and refused before the governed query is even attempted.
+  const panel: Panel = {
+    name: 'Big orders',
+    vizType: 'bar',
+    metrics: ['Sales.revenue'],
+    filters: [{ member: 'Sales.amount', operator: '>=', values: ['1000'] }],
+  };
+  let explored = 0;
+  const explore = (async (...args: unknown[]) => {
+    explored += 1;
+    void args;
+    return { rows: [{ 'Sales.revenue': 999 }], mode: 'live' as const, sql: 'SELECT 1' };
+  }) as unknown as Parameters<typeof runPanelQuery>[4]['explore'];
+  await assert.rejects(
+    () => runPanelQuery('Sales', panel, viewerToken('DE'), asUser('DE'), { resolve, explore }),
+    (e: unknown) => {
+      assert.equal((e as { status?: number }).status, 400, 'a typed bad_request, never a 500');
+      assert.match((e as Error).message, /cannot be served by the governed query path/);
+      assert.match((e as Error).message, /Sales\.amount >=/);
+      return true;
+    },
+  );
+  assert.equal(explored, 0, 'no governed query may run for a panel that cannot be served');
+});
+
+test('D10 — a servable `in` filter still reaches the governed WHERE, and an empty one is dropped', async () => {
+  const seen: { filters?: { column: string; values: string[] }[] }[] = [];
+  const explore = (async (_d: unknown, _m: unknown, _t: unknown, slice: { filters?: { column: string; values: string[] }[] }) => {
+    seen.push(slice);
+    return { rows: [{ 'Sales.revenue': 1 }], mode: 'live' as const, sql: 'SELECT 1' };
+  }) as unknown as Parameters<typeof runPanelQuery>[4]['explore'];
+  const panel: Panel = {
+    name: 'Channels',
+    vizType: 'bar',
+    metrics: ['Sales.revenue'],
+    filters: [
+      { member: 'Sales.channel', operator: 'in', values: ['web', 'retail'] },
+      { member: 'Sales.region', operator: 'equals', values: [] },
+    ],
+  };
+  await runPanelQuery('Sales', panel, viewerToken('DE'), asUser('DE'), { resolve, explore });
+  assert.deepEqual(seen[0].filters, [{ column: 'channel', values: ['web', 'retail'] }]);
+});

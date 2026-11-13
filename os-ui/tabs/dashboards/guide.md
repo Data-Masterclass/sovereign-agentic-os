@@ -63,3 +63,64 @@ create_dashboard({
 ```
 
 The dashboard renders natively at View time (ECharts on the governed Cube layer). A domain admin then promotes it to Domain; each panel re-queries as its viewer, scoped to that viewer's own DLS.
+
+## The dashboard is code — and the second door is `git push`
+
+Every save, from the UI or from `create_dashboard`, commits the dashboard to the owning domain's
+repository:
+
+```
+dashboards/
+  index.yml                       # slug → id, owner (opaque token), tier, view, panel count
+  sales-overview/
+    dashboard.yaml                # THE artefact — one human-editable file
+    README.md                     # generated: what it charts, and how to work on it outside the OS
+```
+
+```yaml
+apiVersion: os.sovereign/v1
+kind: Dashboard
+metadata:
+  id: dash_sales_overview_ab12cd
+  name: Sales Overview
+  domain: analytics
+  owner: fc4a050fe512             # opaque token — never a username or an e-mail address
+  tier: domain                    # personal | domain | marketplace (the AUDIENCE ladder)
+spec:
+  view: Orders
+  sources:
+    - ref: dataset:ds_orders_gold
+      view: Orders
+    - ref: metric:met_orders_revenue
+      member: Orders.revenue
+  panels:
+    - id: p_total-revenue
+      name: Total revenue
+      viz: big_number
+      metrics: [Orders.revenue]
+```
+
+To work on it as an engineer:
+
+```sh
+git clone <os>/git/<domain>.git && cd <domain>
+$EDITOR dashboards/sales-overview/dashboard.yaml
+git commit -am "chart orders by channel" && git push
+```
+
+Three things the format guarantees, each of them tested:
+
+1. **References are stable OS ids**, never an embedded query. There is no `sql:` field and the
+   reader refuses one anywhere in `spec`, so a dashboard cannot smuggle a number past the metric
+   registry.
+2. **A missing id fails loudly.** A push that charts `metric:met_churn` in a domain that has no such
+   metric is refused on your terminal, naming the file and the id. It is never rebound to a
+   same-named member, because that would attach the panel to a different number.
+3. **Generate → read → generate is byte-stable**, so regenerating commits nothing when nothing
+   changed, and `git log` shows real changes only.
+
+`index.yml` and `README.md` are **generated** — hand edits to them are ignored and regenerated.
+
+Panel filters are limited to `equals` and `in`, because the governed query path compiles a filter to
+an `IN` list. A `>=` is refused with a message saying so, rather than dropped: an unfiltered number
+shown as a filtered one is the one thing this product may never do.

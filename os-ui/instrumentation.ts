@@ -33,6 +33,13 @@ export async function register(): Promise<void> {
       if (config.dataProjectGit) {
         const { reserveSubtree } = await import('./core/infra/git-store.ts');
         reserveSubtree('agents/');
+        // Night 2 / stream D: the Dashboards tab owns `dashboards/` in the same domain repo, so it
+        // needs the same reservation for the same reason — the dbt generator writes the WHOLE tree
+        // and its next commit would otherwise delete the subtree. Reserved HERE rather than only in
+        // the commit hook because the data boot reconcile (step 3 below) runs a whole-tree commit.
+        // The literal must stay equal to `DASHBOARDS_PREFIX`
+        // (`tabs/dashboards/lib/git/generate.ts`); `tabs/dashboards/lib/git/boot.test.ts` asserts it.
+        reserveSubtree('dashboards/');
       }
     } catch (err) {
       console.error(`[os-ui] agent projects: could NOT reserve the 'agents/' subtree — ${err instanceof Error ? err.message : String(err)}`);
@@ -210,6 +217,20 @@ export async function register(): Promise<void> {
       } catch (err) {
         console.error(`[os-ui] agent projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
       }
+      // 2b. DASHBOARDS commit hook (night 2 / stream D) — every dashboard write becomes a commit
+      // under `dashboards/**`. Installed after the agents hook and BEFORE the data boot reconcile,
+      // for the same ordering reason: the reconcile is a whole-tree commit and the subtree must
+      // already be reserved (it is, at the top of `register()`, and again by this hook).
+      let dashboardsHookInstalled = false;
+      try {
+        const { installDashboardCommitHook } = await import('./tabs/dashboards/lib/git/commit.ts');
+        installDashboardCommitHook({ resolveActor });
+        dashboardsHookInstalled = true;
+        console.info(`[os-ui] dashboard projects: committing every dashboard change to ${config.reposDir}/<domain>.git (dashboards/)`);
+      } catch (err) {
+        console.error(`[os-ui] dashboard projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+      void dashboardsHookInstalled;
       // 3. DATA boot reconcile (engine rebuild B4): the hook only sees writes from NOW on, so the
       // first boot with the flag on — and any boot after a crash between a store write and its
       // commit — must commit the difference between the generated project and the repository HEAD,

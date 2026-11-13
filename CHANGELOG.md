@@ -15,6 +15,22 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ### Added
 
+- **A dashboard is code in git.** Every save — from the Dashboards tab or from `create_dashboard` —
+  now commits `dashboards/<slug>/dashboard.yaml` plus a generated `README.md` and
+  `dashboards/index.yml` to the owning domain's repository, authored as the acting user with the
+  `OS-Action` / `OS-Object` / `OS-Surface` / `OS-Request-Id` trailers, through
+  `reserveSubtree('dashboards/')` + `commitSubtree`. The format references **stable OS ids**
+  (`metric:<id>` / `dataset:<id>`) and has no SQL field; generate → read → generate is byte-stable;
+  a hand-edited file imports, and a reference the domain does not have is refused by name.
+  `ingestFromRepo('dashboard', files)` is the contract for the `git push` door and
+  `engineeringView('dashboard', id)` for the Under-the-hood panel.
+- **Two dashboard honesty fixes.** A filter operator the governed path cannot serve (`>=`,
+  `between`, …) is now a typed `bad_request` naming the member and the operator, at write time and
+  before any query runs — it used to be dropped silently, rendering an UNFILTERED number as though
+  it were filtered. And `create_dashboard`'s `vizType` enum now equals the full `VizType` union
+  (it advertised four of seven, refusing `big_number`, `area` and `pie` to an agent while offering
+  them in the UI), with a drift tripwire.
+
 - **One chart surface, and the first vendored Apache Superset source.** `os-ui/core/ui/charts/`
   now owns the OS's single Apache-ECharts registration, theme bridge, formatters and `<Chart>`
   shell; the Dashboards, Data and Software-appspec call sites consume it and register nothing of
