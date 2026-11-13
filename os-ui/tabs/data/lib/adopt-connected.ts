@@ -148,8 +148,9 @@ export async function adoptExposedTable(user: CurrentUser, input: AdoptExposedIn
     ...(sync ? { sync } : {}),
   });
 
-  // Provision the per-dataset CronJob for an enabled sync (honest best-effort — the dataset
-  // is already created either way).
+  // Reconcile the SCHEDULE for an enabled sync — Dagster owns it from the domain repo's
+  // os/schedules.yml; any pre-B2 CronJob is removed (honest best-effort — the dataset is
+  // already created either way).
   let cron: AdoptExposedResult['cron'];
   if (sync) cron = await reconcileSyncSchedule(dataset.id, sync);
 

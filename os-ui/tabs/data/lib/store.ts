@@ -908,7 +908,8 @@ export function adoptConnectedDataset(
  *     banner.
  *   • SYNC datasets — the SOVEREIGN DATA is kept: the last-landed governed copy stays in
  *     the domain schema (`versions[tier].built` is left true), but the sync is DISABLED and
- *     the per-dataset CronJob removed (`reconcileSyncCron(id, null)`), so no further landing
+ *     any pre-B2 CronJob removed (`removeSyncCronJob(id)`) and the Dagster schedule dropped
+ *     from the next commit's `os/schedules.yml`, so no further landing
  *     runs. Status still flips to `'source-revoked'` — the Source stage banners "copy frozen
  *     as of <last successful run>" while preview/Talk/metrics keep reading the frozen table.
  * Returns the affected datasets (id + name + owner) so the route can notify each owner +

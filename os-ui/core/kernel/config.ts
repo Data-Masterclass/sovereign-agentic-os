@@ -103,9 +103,10 @@ export const config = {
   scheduleCronImage: env('SCHEDULE_CRON_IMAGE', 'curlimages/curl:8.11.1'),
   agentRuntimeTokenSecret: env('AGENT_RUNTIME_TOKEN_SECRET', 'os-ui'),
   agentRuntimeTokenSecretKey: env('AGENT_RUNTIME_TOKEN_SECRET_KEY', 'agent-runtime-token'),
-  // Data-sync CronJobs (Data tab scheduled incremental sync). Saving an enabled sync
-  // schedule provisions a CronJob that curls `<dataSyncUrlBase>/<datasetId>/sync` with
-  // the SAME shared runtime bearer (Secret-mounted) the agent schedules use.
+  // The per-dataset sync trigger URL — `<dataSyncUrlBase>/<datasetId>/sync`, called with the
+  // shared runtime bearer. B4 deleted the CronJob that used to call it (Dagster schedules the
+  // domain repository instead); the base stays for the planned Kafka/API-batch Dagster asset,
+  // which reaches the OS's governed slice executor through that same door.
   dataSyncUrlBase: base(env('DATA_SYNC_URL_BASE', 'http://os-ui:3000/api/data/datasets')),
 
   // Shared service bearer for the in-cluster data-plane services (query-tool +

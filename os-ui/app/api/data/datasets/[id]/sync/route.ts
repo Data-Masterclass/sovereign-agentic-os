@@ -18,24 +18,25 @@ export const dynamic = 'force-dynamic';
  * SCHEDULED INCREMENTAL SYNC — the per-dataset trigger + history endpoint.
  *
  * POST — run one sync. Two callers, two auths (both governed, no bypass):
- *   • the sync CronJob (`data-sync-<datasetId>`) presents the shared runtime bearer
- *     (same contract as the agents scheduled-run route) → trigger 'schedule'; the
- *     executor resolves the OWNER's live identity (409 when unresolvable) and runs
- *     AS them — never a service principal;
- *   • a signed-in user pressing "Sync now" / "Reset & full re-sync" → edit-gated
- *     (`requireDatasetEditable`), then the SAME owner-identity execution.
- * PUT  — save the sync config (edit-gated; strict validation in `setDatasetSync`),
- *        then reconcile the SCHEDULE: with `DATA_PROJECT_GIT` off the per-dataset CronJob
- *        `data-sync-<datasetId>` (enabled + cron ⇒ upsert, disabled/cleared ⇒ delete),
- *        reporting the cluster outcome HONESTLY (`live:false` when the API server is
- *        unreachable, never a claim); with the flag ON the schedule is declared in the
- *        domain repo's `os/schedules.yml` (committed by this same write) and run by the
- *        Dagster `sovereign` code location — no CronJob, and a pre-B2 one is removed.
+ *   • a signed-in user pressing "Sync now" / "Reset & full re-sync" → `syncDatasetNowService`,
+ *     the SAME function MCP `sync_dataset_now` calls (checklist X8), which carries the edit gate
+ *     (`requireDatasetEditable`) and then the owner-identity execution;
+ *   • a SERVICE presenting the shared runtime bearer → trigger 'schedule'; the executor resolves
+ *     the OWNER's live identity (409 when unresolvable) and runs AS them, never a service
+ *     principal. Since B4 no CronJob calls this: Dagster runs the dbt assets instead. The door
+ *     stays because it is the contract the planned Kafka/API-batch Dagster asset will use to reach
+ *     the OS's governed slice executor (deviation B2-6).
+ * PUT  — save the sync config through `saveDatasetSyncService` (per-source mode/cursor locks, then
+ *        the store's strict gate: edit scope, cron, cursor-for-incremental, merge keys), then
+ *        reconcile the SCHEDULE: the schedule is declared in the domain repo's `os/schedules.yml`
+ *        (committed by this same write) and run by the Dagster `sovereign` code location — the OS
+ *        provisions NO CronJob and removes a pre-B2 one. With `DATA_PROJECT_GIT` off nothing
+ *        schedules the saved config and the outcome says exactly that (B4 deleted the provisioning).
  * GET  — sync status + run history for the UI (canView gate), read from DAGSTER with the
  *        flag on and from the OS ledger with it off (`syncStatusFor`).
  *
- * With the flag on, POST launches a DAGSTER run for the dataset's asset selection from the
- * committed head as the dataset owner and writes no `os-sync-runs` row (checklist D9).
+ * With the flag on (the default), POST launches a DAGSTER run for the dataset's asset selection
+ * from the committed head as the dataset owner and writes no `os-sync-runs` row (checklist D9).
  *
  * SKIP (POST): non-standard bearer-OR-user auth at top, not a single gate.
  */
