@@ -28,6 +28,14 @@
  *     where it belongs — git authorship is the one place a person is meant to be named.
  *   - A system whose stored yaml does not parse still gets its `system.yaml` committed verbatim
  *     plus a README that says so — losing the source would be worse than an unreadable one.
+ *   - THE SAME FOR A SYSTEM THAT PARSES BUT DOES NOT COMPILE (X-R2). `parseSystem` accepts
+ *     `agents: []` — a system someone created and has not populated yet — but `compile` refuses it
+ *     ("at least one agent is required"), and `compile` used to run OUTSIDE the guard. One such
+ *     system therefore threw out of `generateAgentFiles`, which is the WHOLE domain's subtree, so
+ *     a single empty draft took down every other system's commit in that domain and failed the
+ *     boot reconcile for the domain with it. The compile is now guarded exactly like the parse:
+ *     the source and the prompts are still committed, `graph.json` is omitted, and the README
+ *     names the reason. The failure is scoped to the one system, which is what X-R2 asks for.
  */
 import { createHash } from 'node:crypto';
 import { parseSystem, type System, type ArtifactGrant, type AgentSpec } from '@tabs/agents/lib/system-schema';
@@ -163,8 +171,14 @@ function memberRow(a: AgentSpec, disabled: Set<string>): string {
   return `| \`${a.id}\` | ${a.role || '—'} | ${a.model ? `\`${a.model}\`` : 'auto'} | ${tools} | ${supervises} | ${disabled.has(a.id) ? 'disabled' : 'yes'} |`;
 }
 
-/** The generated README — purpose, members, grants, channels, handoffs, last build. */
-export function renderReadme(s: SnapshotSystem, placed: PlacedSystem, sys: System | null): string {
+/**
+ * The generated README — purpose, members, grants, channels, handoffs, last build.
+ *
+ * `graphError` is the reason `graph.json` is absent for a system that DID parse (X-R2): the
+ * compiler refused it, most often because it has no agents yet. Stated here rather than swallowed,
+ * and deterministic, so the subtree stays byte-stable.
+ */
+export function renderReadme(s: SnapshotSystem, placed: PlacedSystem, sys: System | null, graphError?: string | null): string {
   const out: string[] = [`# ${s.name}`, ''];
   if (!sys) {
     out.push(
@@ -184,6 +198,15 @@ export function renderReadme(s: SnapshotSystem, placed: PlacedSystem, sys: Syste
     return out.join('\n');
   }
   if (sys.system.description) out.push(sys.system.description.trim(), '');
+  if (graphError) {
+    out.push(
+      '> **This system does not compile yet, so `graph.json` is not in this directory.** The',
+      '> compiler said: ' + `\`${graphError}\`` + '. The source and the prompt files are committed',
+      '> as the OS holds them; the compiled graph appears on the first regeneration after it',
+      '> compiles. Nothing else in this domain is affected.',
+      '',
+    );
+  }
   out.push(
     `- **Id** \`${s.id}\` · **Source version** ${s.version}`,
     `- **Scope** ${placed.scope} — visibility \`${s.visibility}\`, owner \`${ownerToken(s.owner)}\` (opaque token), domain \`${sys.system.domain}\``,
@@ -261,14 +284,21 @@ export function generateSystemFiles(placed: PlacedSystem): Map<string, string> {
   } catch {
     sys = null; // recorded in the README; the source is still committed above
   }
+  let graphError: string | null = null;
   if (sys) {
     for (const a of sys.agents) {
       const body = (a.agent_md ?? '').replace(/\s+$/, '');
       files.set(`${placed.dir}/agents/${segment(a.id, 'agent')}.md`, `${body}\n`);
     }
-    files.set(`${placed.dir}/graph.json`, `${JSON.stringify(compile(sys), null, 2)}\n`);
+    try {
+      files.set(`${placed.dir}/graph.json`, `${JSON.stringify(compile(sys), null, 2)}\n`);
+    } catch (e) {
+      // X-R2: a parseable-but-uncompilable system (`agents: []` is the common one) must cost ITS
+      // OWN graph file and nothing else. Throwing here aborted the whole domain's subtree.
+      graphError = e instanceof Error ? e.message : String(e);
+    }
   }
-  files.set(`${placed.dir}/README.md`, renderReadme(s, placed, sys));
+  files.set(`${placed.dir}/README.md`, renderReadme(s, placed, sys, graphError));
   return files;
 }
 

@@ -287,3 +287,64 @@ test('segment refuses to produce an unsafe or empty path piece', () => {
   assert.equal(segment('...', 'fallback'), 'fallback');
   assert.equal(segment('Über Käse', 'x'), 'ber-k-se');
 });
+
+// --------------------------------------------------------------------- X-R2 ---
+// A system that PARSES but does not COMPILE must cost only its own `graph.json`. `agents: []` is
+// the real-world case: a system created in the UI and not populated yet. `compile` refuses it, and
+// before this fix that exception left `generateSystemFiles` → `generateAgentFiles`, which is the
+// WHOLE domain's subtree — so one empty draft stopped every other system in the domain from being
+// committed, and failed the domain's boot reconcile with it.
+
+const EMPTY_YAML = `version: '1'
+system:
+  name: Not populated yet
+  domain: sales
+  visibility: Shared
+entrypoint: ''
+state:
+  channels:
+    messages: add_messages
+grants:
+  data: []
+  knowledge: []
+  metrics: []
+  tools: []
+  connections: []
+agents: []
+`;
+
+test('X-R2: a zero-agent system loses only its own graph.json — the domain still generates', () => {
+  const snapshot: AgentProjectSnapshot = {
+    domain: 'sales',
+    systems: [
+      sys({ id: 'sys_empty1', name: 'Not populated yet', owner: 'amir', visibility: 'Shared', yaml: EMPTY_YAML }),
+      sys({ id: 'sys_ok1', name: 'Support triage', owner: 'amir', visibility: 'Personal', yaml: PERSONAL_YAML }),
+    ],
+  };
+  // Before the fix this call THREW ("at least one agent is required").
+  const files = generateAgentFiles(snapshot);
+  const paths = [...files.keys()];
+  // The empty system keeps its source and its README, and has no compiled graph.
+  assert.ok(paths.includes('agents/not-populated-yet/system.yaml'), 'the uncompilable source is still committed verbatim');
+  assert.ok(paths.includes('agents/not-populated-yet/README.md'), 'its README is still written');
+  assert.ok(!paths.includes('agents/not-populated-yet/graph.json'), 'no graph.json for a system that does not compile');
+  // The README says WHY, in the compiler's own words — not silently.
+  const readme = files.get('agents/not-populated-yet/README.md') ?? '';
+  assert.match(readme, /does not compile yet/, 'the README states that the system does not compile');
+  assert.match(readme, /at least one agent is required/, "the compiler's own reason is quoted");
+  assert.match(readme, /Nothing else in this domain is affected/, 'and that the blast radius is this system');
+  // The HEALTHY system in the same domain is complete — the point of the fix.
+  assert.ok(paths.includes('agents/personal/' + ownerToken('amir') + '/support-triage/graph.json'), "the healthy system's graph is still generated");
+  assert.ok(paths.includes('agents/index.yml'), 'and the index still lists the domain');
+  // The index names both systems — the empty one is not hidden from the repo.
+  const index = yaml.load(files.get('agents/index.yml') ?? '') as { systems: { id: string }[] };
+  assert.deepEqual(index.systems.map((e) => e.id).sort(), ['sys_empty1', 'sys_ok1']);
+});
+
+test('X-R2: generation of an uncompilable system is still idempotent (byte-stable)', () => {
+  const snapshot: AgentProjectSnapshot = {
+    domain: 'sales',
+    systems: [sys({ id: 'sys_empty1', name: 'Not populated yet', owner: 'amir', visibility: 'Shared', yaml: EMPTY_YAML })],
+  };
+  assert.deepEqual([...generateAgentFiles(snapshot)], [...generateAgentFiles(snapshot)]);
+});
