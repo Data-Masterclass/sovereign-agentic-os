@@ -443,12 +443,15 @@ export default function AppSpecComposer({
     try {
       const res = await fetch(`/api/apps/${app.id}/spec/generate`, { method: 'POST' });
       const d = (await res.json().catch(() => ({}))) as {
-        ok?: boolean; spec?: AppSpec; error?: string; issues?: { path: string; reason: string; fix: string }[];
+        ok?: boolean; spec?: AppSpec; error?: string; issues?: { path: string; reason: string; fix: string }[]; notes?: string[];
       };
       if (d.ok && d.spec) {
         loadSpec(d.spec);
         const storyCount = new Set(d.spec.tabs.flatMap((t) => (t.stories ?? []).map((s) => s.storyId))).size;
-        setGenNote({ kind: 'ok', text: `Generated ${d.spec.tabs.length} tab${d.spec.tabs.length === 1 ? '' : 's'} from ${storyCount} stor${storyCount === 1 ? 'y' : 'ies'} — review and Save.` });
+        // Tolerant-parse notes (e.g. "normalised metric id → { metricId }") ride along with the
+        // success line: the build fixed a shape rather than failing on it, and says so.
+        const fixes = Array.isArray(d.notes) && d.notes.length > 0 ? ` Fixed on the way in: ${d.notes.slice(0, 4).join('; ')}.` : '';
+        setGenNote({ kind: 'ok', text: `Generated ${d.spec.tabs.length} tab${d.spec.tabs.length === 1 ? '' : 's'} from ${storyCount} stor${storyCount === 1 ? 'y' : 'ies'} — review and Save.${fixes}` });
       } else {
         // Surface the SPECIFIC blockers (e.g. "dataset … is not granted", "column … not in dataset")
         // the generator hit — the generic "Review the notes" text was a dead-end when no notes showed.

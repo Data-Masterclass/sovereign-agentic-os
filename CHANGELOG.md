@@ -13,6 +13,20 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Fixed
+
+- **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a
+  reference slot as a bare id (`"metric": "m_revenue"`) where the AppSpec grammar wants
+  `{ "metricId": "m_revenue" }`, so the structural gate failed all three attempts and the stage
+  showed "The assistant couldn't produce a valid app from your design … metric must be an object.
+  use { metricId }". The build now NORMALISES the unambiguous shapes before validating — a bare id
+  for `metric`/`function`/`source`, and `{ id }` → `{ <slot>Id }` for those plus `dataset` and
+  `assignTo` — and reports each rewrite in the build notes ("normalised metric id → { metricId }")
+  instead of failing. `parseAppSpec` stays strict, so the stored spec is still canonical, and a
+  genuinely wrong value is rejected with the same typed issue as before. The generator prompt now
+  states the canonical shape with an example. Pre-existing since os-ui 0.6.137 — not a 0.8.0
+  regression.
+
 ### Fixed — first production rollout of 0.8.0 (chart 0.3.0)
 
 - **Dagster webserver crash-looped on image 0.3.0.** The image let SQLAlchemy float to 2.1 and

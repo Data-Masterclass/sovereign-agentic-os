@@ -36,6 +36,8 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 
 - `lib/` tab logic · `ui/` tab-specific components · `mcp/` this tab's MCP handlers
 
+- `lib/appspec/` — the declarative AppSpec grammar. TOLERANT PARSE, STRICT OUTPUT: the build normalises bare ids in the assistant's reply into the canonical reference objects (`"metric": "m_1"` → `{ metricId: "m_1" }`, likewise `function`/`source`, plus `{ id }` → `{ <slot>Id }`) and reports each rewrite in the build notes, while `parseAppSpec` stays strict so the stored spec is always canonical.
+
 - `guide.md` — the golden path, shown in-product
 - `context.md` — the system prompt context this tab gives an agent
 
