@@ -15,6 +15,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ### Added
 
+- **Lifecycle — Studio → Test → Run, a second axis beside audience (night 2, stream V).** Every
+  object now carries `{ draft, testing?, live? }` beside its unchanged `My · Domain · Company`,
+  and the two never interact: a `My` object can be Live and a `Company` object can have a Draft.
+  `go_live(kind, id, sha?)` pins a version and `retire(kind, id)` unpins — the only two new MCP
+  tools — with one guard refusing a go-live whose dependency is not itself live, naming it.
+  What OPERATES reads the pin: a scheduled agent run executes the pinned `system.yaml` from the
+  repo (and is refused, loudly, if it cannot be read), and a dashboard's Run view renders the
+  pinned spec, so **editing a live dashboard changes nothing for its viewers until someone goes
+  live again**. One `Studio | Run` header toggle, remembered per user, two small badges per tile,
+  one Go-live button on the existing confirm dialog. Every list tool takes an **optional**
+  `lifecycle` filter through one central helper and every row carries `lifecycle` + `audience`;
+  no tool anywhere gained a required argument. Runs carry the LiteLLM `env:studio|test|run` tag
+  and set the Langfuse trace `environment`, with a smaller budget share off Run. The pin is
+  committed to `os/lifecycle/pins.yml` so an engineer's clone can read exactly what is live.
+  See `docs/components/lifecycle.md`, including what is physically versus only logically
+  separated.
+
 - **Night run 2 — the plan of record for metrics, dashboards, chat-to-data, vibe-engineered software,
   git everywhere, the engineering view, the engineer's door and lifecycle.** Nine parallel streams
   (M · D · C · S · G · T · E · V · X) are specified in

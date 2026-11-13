@@ -173,6 +173,12 @@ export type LangfuseObserverInput = {
   task?: string;
   /** Continuing an existing thread: no trace-create, spans reference the same id. */
   resume?: boolean;
+  /**
+   * LIFECYCLE (night 2, V-R4.2): the Langfuse trace `environment` — `studio`, `test` or `run`,
+   * the same word the LiteLLM `env:` tag carries. Omitted ⇒ the field is not set, so a trace
+   * never claims an environment the OS did not establish.
+   */
+  environment?: string;
   /** The SDK client, or null to get the no-op observer. */
   client: Langfuse | null;
   /** How much of a call to record (default `structure`); the server passes `config.langfuseRedaction`. */
@@ -183,8 +189,14 @@ export type LangfuseObserverInput = {
 const TASK_MAX = 500;
 
 /** The tags every run trace carries (the vocabulary Monitoring and the gateway mirror share). */
-export function runTraceTags(input: Pick<LangfuseObserverInput, 'domain' | 'systemId' | 'runId' | 'engine'>): string[] {
-  return [`domain:${input.domain}`, `agent:${input.systemId}`, `run:${input.runId}`, `engine:${input.engine ?? 'langgraph'}`];
+export function runTraceTags(
+  input: Pick<LangfuseObserverInput, 'domain' | 'systemId' | 'runId' | 'engine' | 'environment'>,
+): string[] {
+  const tags = [`domain:${input.domain}`, `agent:${input.systemId}`, `run:${input.runId}`, `engine:${input.engine ?? 'langgraph'}`];
+  // The same `env:` word the LiteLLM credential tags a model call with, so one filter in
+  // Langfuse and one filter in the gateway mirror select the same set of calls.
+  if (input.environment) tags.push(`env:${input.environment}`);
+  return tags;
 }
 
 /**
@@ -212,6 +224,7 @@ export function langfuseRunObserver(input: LangfuseObserverInput): RunObserver {
         userId: input.userId,
         sessionId: input.systemId,
         tags: runTraceTags(input),
+        ...(input.environment ? { environment: input.environment } : {}),
         input: input.task ? { task: input.task.length > TASK_MAX ? `${input.task.slice(0, TASK_MAX)}…` : input.task } : undefined,
         metadata: { systemId: input.systemId, domain: input.domain, engine: input.engine ?? 'langgraph', runId: traceId, ...(input.metadata ?? {}) },
       }),

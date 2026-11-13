@@ -1980,5 +1980,69 @@ stream's prefix — `M-1`, `D-1`, `C-1`, `S-1`, `G-1`, `T-1`, `E-1`, `V-1`, `X-1
 `<X>-review-<id>` for findings from the review round. A deviation is not a failure; an unrecorded
 deviation is.
 
-(empty)
+### Stream V — lifecycle
+
+- **V-1 — the pure model is `core/kernel/object-lifecycle.ts`, not `core/kernel/lifecycle.ts`.**
+  That filename was already taken, by the archive/restore/delete CONFIRM COPY module. Rather than
+  mix two unrelated meanings of the word in one file, the Studio → Test → Run model is a sibling
+  and `@core/kernel/lifecycle` re-exports it, so the import path the plan names resolves and the
+  existing module is untouched.
+- **V-2 — the pin file is `os/lifecycle/pins.yml`, in its own reserved subtree, not a flat
+  `os/lifecycle.yml`.** `commitSubtree` replaces a whole prefix, so a single file under `os/`
+  would delete the dbt generator's `os/schedules.yml`; and `commitTree` would delete the pin file
+  unless all of `os/` were reserved, which changes another stream's delete semantics. The third
+  option — read `os/*` and pass it through — races the generator between the read and the commit.
+  **Exact change needed:** one additive export in `core/infra/git-store.ts` (owned by S and G
+  tonight), `commitPaths(domain, files, opts)` — replace only the named paths, keep every other
+  path at its current blob. With that, the file moves to `os/lifecycle.yml` and nothing above it
+  changes, because the pin treats its location as a detail of the store.
+- **V-3 — no git tag.** The pin needs `annotatedTag` from S's tag API in `core/infra/git-store.ts`,
+  which is not in this branch. `go_live` returns `tag: { name: 'live/<kind>/<id>', written: false }`
+  — the name the tag will have, and an honest statement that it does not exist yet — rather than
+  claiming a tag. `liveTagName` is already the one place the name is computed.
+- **V-4 — the go-live service is `core/kernel/go-live.ts`, not `tabs/governance/lib/**`.** The MCP
+  tool module must reach the service, and a `core/mcp/*` file may not import a tab
+  (CORE-INDEPENDENCE is a hard structural ratchet, not a style preference). The per-kind knowledge
+  lives in each tab's own adapter instead, registered at boot in `instrumentation.ts` — so the
+  kernel still never imports a tab. The promotion tools and the audience ladder are untouched.
+- **V-5 — the pin is honoured for TWO kinds, as the MVP cut line says: agent systems and
+  dashboards.** The other five carry the lifecycle, show the badges, filter, go live and retire,
+  but no surface reads their pin to decide what to operate yet. `docs/components/lifecycle.md`
+  states this per kind rather than implying coverage.
+- **V-6 — "consumers default to Run" is not expressible.** The role ladder is
+  creator / builder / domain_admin / admin; every one of them can author, so every one defaults to
+  Studio. `defaultViewSurface` already answers `run` for any role outside that set, so a future
+  viewer role needs no code change.
+- **V-7 — the agent adapter derives the repo path itself (stream G hand-off).** G landed
+  `core/infra/git-objects.ts` with `objectGitInfo(kind, id)` and ONE kind+layout table on
+  `night2/G`, which is not in this branch, so `systemYamlPath` uses the agents generator's own
+  `placeSystems`. **Exact change needed:** once G merges, replace `systemYamlPath` and the
+  `systemGitInfo` call in `agentLifecycleAdapter.resolve` with `objectGitInfo('agent', id)`.
+  Nothing else changes — the pin already treats ref and path as opaque. (The pin will still
+  RECORD the path at go-live time: placement depends on the current set of systems, so resolving
+  it again later could land on a directory that has since moved.)
+- **V-8 — a scheduled run does not yet pass `env: 'run'` end to end.** The `env:` tag and the
+  Langfuse `environment` field are implemented, threaded through `runOsTeam` and tested on the
+  outgoing request body and the trace payload, but the scheduled door cannot set them: the value
+  would have to travel through the persisted run-queue record. **Exact change needed:** add
+  `env?: RunEnv` to `StartRunInput` and to `enqueueRun`'s `input` payload
+  (`tabs/agents/lib/build/run-jobs-server.ts`), read it in `run-service.ts` and pass it to
+  `runOsTeam`; the scheduled-run route then sends `env: 'run'` and the Studio run route `'studio'`.
+  Until then every run is attributed `studio`, which is true of a run started by hand and
+  understated for a scheduled one — understated, never overstated.
+- **V-9 — the shared tile hook is not yet mounted in each tab's tile list.** `useLifecycleView`
+  and the one filter rule are in place, tested, and the header toggle broadcasts to every mounted
+  list; wiring each of the thirteen tile lists is one line per tab in files other streams own
+  tonight. The Studio|Run toggle therefore shows and persists, and filters any list that calls the
+  hook, but the existing lists still render everything until those lines land.
+- **V-10 — the dashboard pin is a spec CONTENT DIGEST, not a commit sha.** Dashboards are not
+  git-backed yet (D is landing dashboard-as-code tonight), so `specRef(spec)` is
+  `spec:<12 hex of sha256 of canonical JSON>` and the pinned spec is whichever retained version
+  hashes to it. This is byte-exact and needs no new file. **Exact change needed:** when D's
+  `dashboards/` subtree lands, `specRef` becomes the commit sha and `dashboardForSurface` reads
+  the blob at that sha; the pin, the service, the UI and the MCP tools are unaffected.
+- **V-11 — a Run read whose pinned version is gone shows NOTHING and says why.** Not in the plan,
+  but the alternative was to serve the draft, which is a wrong dashboard that looks right. The
+  same rule makes an unreadable agent pin refuse the scheduled run instead of running the head.
+
 
