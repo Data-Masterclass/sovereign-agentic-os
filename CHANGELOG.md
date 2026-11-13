@@ -13,6 +13,8 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+## [os-ui 0.8.0] — 2026-11-13 — Engine rebuild: real LangGraph/Langfuse/LiteLLM, dbt/Dagster/Trino data products, git-based working, MCP parity
+
 ### Fixed — Data engine rebuild, B4 review round
 
 - **A pre-B2 upgrade no longer fires every sync twice (H-1).** The boot reconcile commits
