@@ -43,7 +43,15 @@
 import { config } from '@core/kernel/config';
 import { getSettings } from '@tabs/admin/lib/settings';
 
-export type ModelRole = 'reasoning' | 'standard' | 'tools' | 'embeddings';
+export type ModelRole = 'reasoning' | 'standard' | 'tools' | 'embeddings' | 'coder';
+
+/**
+ * The FOUR roles a platform admin can re-point in the Admin panel. `coder` is deliberately NOT
+ * one of them: it is env-only (`LITELLM_CODER_MODEL`) and falls back to the reasoning tier when
+ * unset, so the agentic builder gains a tier without adding a noun to the admin UI. See
+ * `roleDefault('coder')` below.
+ */
+export type AdminModelRole = Exclude<ModelRole, 'coder'>;
 
 /** The offline/testing fallback alias — the ONLY non-role model we present. */
 export const MOCK_MODEL = 'sovereign-mock';
@@ -57,6 +65,13 @@ export const MOCK_MODEL = 'sovereign-mock';
  * (the STACKIT default, or an operator override) keeps that alias — "connected".
  */
 export function roleDefault(role: ModelRole): string {
+  // CODER — the agentic builder's code-writing tier (stream H). Additive and env-only: an unset
+  // `LITELLM_CODER_MODEL` means the role resolves to the REASONING tier, so no deployment needs a
+  // new variable for the builder to work, and a code-specialised model is a one-env-var upgrade.
+  if (role === 'coder') {
+    const pinned = config.litellmCoderModel;
+    return pinned && pinned.trim().length > 0 ? pinned : roleDefault('reasoning');
+  }
   const configured = (() => {
     switch (role) {
       case 'reasoning':
@@ -74,6 +89,8 @@ export function roleDefault(role: ModelRole): string {
 
 /** Effective LiteLLM model_name for a role: admin override if set, else env default. */
 export function roleModel(role: ModelRole): string {
+  // `coder` has no admin override (it is not an admin-editable role — see AdminModelRole).
+  if (role === 'coder') return roleDefault('coder');
   const override = getSettings().modelRoles[role];
   return override && override.trim().length > 0 ? override : roleDefault(role);
 }
@@ -96,5 +113,6 @@ export function roleModels(): Record<ModelRole, string> {
     standard: roleModel('standard'),
     tools: roleModel('tools'),
     embeddings: roleModel('embeddings'),
+    coder: roleModel('coder'),
   };
 }
