@@ -215,8 +215,11 @@ when the scoped credential is absent rather than borrowing the admin one.
 
 ## How a system.yaml becomes a StateGraph
 
-The Agents tab's `langgraph` engine (`AGENTS_ENGINE=langgraph`; default still `walker`
-until the deletion phase) executes a real `@langchain/langgraph` graph. The path is:
+The Agents tab executes a real `@langchain/langgraph` graph, and since A5 of the engine
+rebuild that is the **only** executor: no flag, no `runtime:` choice, no fallback. The
+hand-rolled IR walker, its mock twin and the Python `agent-runtime` interpreter are gone;
+an `AGENTS_ENGINE` left in an environment is ignored with one deprecation line at boot.
+The path is:
 
 ```
 system.yaml ─ parseSystem ─> System ─ compile ─> IR ─ buildGraph(ir, deps) ─> CompiledStateGraph
@@ -226,8 +229,10 @@ system.yaml ─ parseSystem ─> System ─ compile ─> IR ─ buildGraph(ir, d
 **State** (`Annotation.Root`). `messages` is the shared conversation in the OpenAI wire
 shape (`LlmMessage[]`, append) — not LangChain `BaseMessage`, because every model call
 goes to LiteLLM as chat-completions. Every `state.channels` entry of the yaml becomes a
-state key with its declared reducer (`add_messages` → append, anything else → last
-value). The engine adds its own keys: `task`, `current` (the agent visit in flight),
+**typed** state key: `add_messages` appends; `boolean` / `number` / `string` / `json` is a
+last-write-wins channel starting at that type's default; any other declaration (the legacy
+`last_value`) is an untyped `json` channel, so a file written before the types runs
+unchanged. The engine adds its own keys: `task`, `current` (the agent visit in flight),
 `handoffs` (the team-progress blocks, append), `nodeRuns` (append), `routes` (append),
 `budget`, `held` (append), `final`, `failed`, `routeNext`. A channel that shadows one
 of those is a compile error.
@@ -236,7 +241,7 @@ of those is a compile error.
 the team step budget and emits `node-started`. `act_<id>` runs the execution tier with
 the node's advertised tools (`toOpenAiTools`); if the gateway rejects `tools` it flips
 a `react` flag and retries with the ReAct text protocol; a cap or loop-guard triggers
-the same one-shot synthesis the walker did. `tools_<id>` is the **node-level gate**:
+a one-shot synthesis. `tools_<id>` is the **node-level gate**:
 only tools this node is advertised reach `grantedToolExecutor` (an un-advertised call
 gets a typed `not_found` and never executes). It runs in two phases: first the **hold
 decision for the whole batch** (`holdDecisionFor`, parking the run on `interrupt()` —
@@ -259,8 +264,23 @@ text; otherwise the last agent's answer is.
 literals, `state.<channel>`, bare identifiers (= the channel of that name), `==`/`!=`,
 `&&`/`||`, parentheses — a hand-written parser, never `eval`. A true guard returns
 `new Command({ goto: 'plan_<to>' })`; absent `when` is unconditional. A guard over a
-channel nothing sets is a **compile warning** carried on the run report, not a silent
-false. Handoffs are tried in declared order before the supervisor return / END.
+channel nothing **can** set is a **compile warning** carried on the run report, not a
+silent false. Handoffs are tried in declared order before the supervisor return / END.
+
+**Who writes a channel** (A5-review-H-2). A guard is useless if nothing can make it true,
+so the agent whose turn the guard follows — the `from` of the guarded handoff, since the
+guard is evaluated in `route_<from>` immediately after that visit — is advertised one extra,
+built-in tool, `os_set_state` (`{ channel, value }`). It is closed to the **declared**
+channels and type-checked against the declaration. It is not an MCP tool and not a grant:
+it writes the team's own state, so it never reaches `grantedToolExecutor`, is never held for
+approval, and an undeclared channel or a mistyped value returns a typed `invalid_argument`
+result the model can correct. The write is part of that superstep's state update, so the
+following `route_<id>` sees it — as does the supervisor, whose routing prompt carries a
+`--- TEAM STATE ---` line of the current channel values. Each writer's system prompt gains a
+generated `--- STATE CHANNELS ---` block (one sentence per channel, derived from the
+declaration), so the instructions cannot drift from the yaml. This is what makes the shipped
+Software Delivery Team's five-phase chain reachable; before it, every `when` guard in the OS
+evaluated false by construction.
 
 **END and bounds.** The supervisor routes END; a leaf's handoffs all evaluate false; or
 `budget.stepsUsed` (tool rounds + supervisor decisions) reaches the team step budget —
@@ -285,8 +305,17 @@ user or it is a typed `ResumeNotFoundError` (404 — never confirming the thread
 thread with nothing left to run is a `RunAlreadyFinishedError` (409), never a silent no-op.
 Run ids come from `core/kernel/run-id.ts` (`crypto.randomUUID`): a run id is a capability.
 Checkpoints hold the full state — raw tool results included — indefinitely; retention is an
-open item (plan A13 follow-up). The checkpointer and the in-process run-event topic assume a
-**single os-ui replica** until A4's worker.
+open item (plan A13 follow-up).
+
+**Build compiles the same graph.** `tabs/agents/lib/build/compile-verify.ts` calls the SAME
+`buildGraph` with inert deps (a model and a tool executor that throw if touched — compiling
+calls neither), so Build's `langgraph` row means "the graph this `system.yaml` describes can
+be constructed", and a bad guard, an unmapped grant, a disabled entrypoint or a channel
+shadowing an engine key fails at Build rather than mid-run. It replaced two things that each
+verified something the engine never executes: a POST of the IR to the Python runtime's
+`/reload` plus a `/run` test invocation, and a hand-rolled BFS over the IR in the mock
+adapter. Build's Langfuse row is consequently `pending` until the system has really run —
+its probe reads the traces a RUN leaves behind, and a build no longer stages a fake one.
 
 ## Approvals are interrupts
 
@@ -309,8 +338,8 @@ act_<id> ──tool calls──▶ tools_<id>  phase 1: holdDecisionFor(preset, 
 **Where the hold lives.** The rule is the pure module `tabs/agents/lib/build/hold.ts`
 (`writeTargetScope`, `holdDecision`, `holdDecisionFor`) — the same rule the executor's gate 1b
 applied in A1, lifted out so the graph builder (no `server-only`) can call it before anything
-executes. Under `langgraph` the executor runs with `holdAt: 'node'` and no longer re-holds; the
-walker keeps `holdAt: 'executor'` and the old out-of-band `held` result.
+executes. The executor runs with `holdAt: 'node'` and no longer re-holds; `'executor'` remains its
+DEFAULT as defence in depth for any caller that is not a graph node.
 
 **Idempotency.** LangGraph re-runs an interrupted node from its start on every resume, so the
 node enqueues through `enqueueOnce` keyed on `interruptKey = <threadId>:<callId>` — one approval
@@ -472,6 +501,88 @@ and `resume_agent_run`, and the Governance `onDecided` hook all go through
 `build/run-jobs-server.ts` (`startQueuedRun` / `resumeQueuedRun` / `enqueueResumeAfterDecision`).
 In particular a decision no longer drives the graph inside the decider's request — it files a
 `resume` job, and the approval card says `queued` until the run reports back.
+
+## Git-based working: one repo per domain, two generators, one commit path
+
+(Engine rebuild, Part D — behind `DATA_PROJECT_GIT`, default off. The flag's name is historical:
+it is the ONE switch for both halves, because they share the repository, the PVC and the
+read-only `git daemon` sidecar it provisions.)
+
+Everything built in the OS — from the UI or through the MCP — lands in a real git repository, as a
+commit authored by the person who made the change. There is no "export to git" step and no second
+ledger: the Agents tab and `get_agent_system` read the commit back out of the repo.
+
+**One repository per domain, two owned subtrees.**
+
+```
+$OS_REPOS_DIR/<domain>.git          # bare, on the os-repos PVC (RWO; os-ui is single-replica)
+├── dbt_project.yml  profiles.yml  models/…  os/…     # the Data tab's generator (B1)
+└── agents/                                           # the Agents tab's generator (Part D)
+    ├── index.yml                                     # slug -> id, owner, scope, source version
+    ├── <slug>/                                       # a Shared / Marketplace system
+    │   ├── system.yaml                               # THE canonical definition
+    │   ├── agents/<agent-id>.md                      # each agent's instruction file
+    │   ├── graph.json                                # the compiled LangGraph IR the engine runs
+    │   └── README.md                                 # purpose, members, grants, channels, edges
+    └── personal/<uid>/<slug>/…                       # a Personal system, in its owner's lane
+```
+
+The personal lane mirrors the data side's `models/personal/<uid>/` deliberately: one repository,
+one convention. A promotion therefore MOVES the directory out of the lane in the same commit that
+changes the visibility — and the id in `index.yml` and in the `OS-Object` trailer is what stays
+frozen, because a directory name is a slug, not an identity.
+
+**Two generators, one tree, no clobbering.** The dbt generator writes the WHOLE tree
+(`commitTree`); the agents generator writes exactly its prefix (`commitSubtree`, which keeps every
+other path at its current blob — so an EMPTY file map is how an archive or a delete is recorded).
+For the other direction, `reserveSubtree('agents/')` (registered when the agents hook installs)
+tells the whole-tree writer to keep paths it does not itself mention. Both primitives are generic:
+`core/infra/git-store.ts` holds path prefixes and knows nothing about datasets or systems.
+
+The BOOT ORDER in `instrumentation.ts` is therefore load-bearing, and both halves live in one
+block for that reason: data commit hook → agents commit hook (which reserves `agents/`) → data
+boot reconcile → agents boot reconcile. The data reconcile is a whole-tree commit, so running it
+before the reservation would commit the subtree's deletion; if the agents hook fails to install,
+the data reconcile is SKIPPED rather than allowed to do that. Both directions are pinned by
+`tabs/data/lib/dbt/boot-reconcile.test.ts` (the reserved subtree survives a real reconcile, and
+without the reservation it does not).
+
+**Every writer commits — and the compiler says so.** `tabs/agents/lib/store.ts` has one
+`writeThrough(rec, change)` whose second parameter is **required**: a `SystemChangeSpec` makes the
+write a commit, `null` says "run bookkeeping, deliberately not a commit". A new writer cannot be
+added without deciding, and `tabs/agents/lib/git/commit.test.ts` pins which decision each of the
+24 writers made (17 commit; 7 — the activity marker, the run checkpoint, the last-run report and
+restart recovery — do not, because a run's artefacts are the LangGraph checkpoint, the `run_events`
+rows and the Langfuse trace). The store is reachable from the client bundle, so it emits a pure
+`SystemChange` (`tabs/agents/lib/system-events.ts`) and the server-only
+`tabs/agents/lib/git/commit.ts` subscribes at boot — the same seam, for the same reason, as the
+data side's `project-events.ts`.
+
+**Where "via" comes from, for the MCP too.** `core/mcp/server.ts` now runs EVERY `tools/call`
+inside an `mcp:<tool>` request-surface scope, so no tool surface can be forgotten; `withRoute`
+supplies `ui:<route>` for the UI, and the hand-rolled build route sets its own scope. A writer
+outside any scope is recorded as `ui:agents` and logged once as a gap.
+
+**Boot reconcile.** At boot the OS regenerates each domain's `agents/**` once and lets the git
+store decide whether anything changed, so a window with the flag off (or a failed write) is caught
+up as the platform principal with `OS-Reason: boot-reconcile`. Domains walked: those holding a
+live system, plus any repo that already carries an `agents/` subtree — so a removal is committed
+too, and a data-only repo never grows an `agents/` directory.
+
+**Mirror.** One admin-configured remote per domain (`{url, tokenSecretRef}`; the URL may not embed
+credentials and its host must be on the egress allowlist). After every CHANGED commit —
+either generator — `core/infra/git-mirror.ts` pushes `main`, resolving the token from its Secret
+reference at call time, using it once and scrubbing it from any error. The push is
+fire-and-forget: it reports, never blocks a save, and is retried by the next commit. The last
+outcome is the `git-mirror` row on Platform → Components & Health (red when a mirror's last push
+failed, amber before its first), because a fire-and-forget failure that is only a log line is a
+remote silently falling behind.
+
+**What is NOT in the tree.** No secrets: grants are names and ids, the LiteLLM key is a Secret
+*reference* held on the record and excluded by the snapshot, and no run artefact (activity,
+checkpoint, last run, last activity) is committed — those belong to Langfuse, `run_events` and the
+checkpointer. A `system.yaml` that does not parse is still committed verbatim, with a README that
+says so: losing the source would be worse than an unreadable one.
 
 ## A data product is a dbt project in a git repo the OS owns
 

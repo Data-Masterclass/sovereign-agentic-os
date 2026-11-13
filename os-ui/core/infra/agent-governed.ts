@@ -324,7 +324,7 @@ function remember(rec: TraceRecord): TraceRecord {
 /**
  * Record one governed event. Under a run (`event.run`) it becomes a span of the run trace via the
  * buffered SDK — never blocking the run; otherwise it is its own trace through direct ingestion,
- * exactly as before, so the walker and the build probes keep their standalone records.
+ * exactly as before, so the Build probes and the agent-chat path keep their standalone records.
  */
 export async function trace(event: TraceEvent): Promise<TraceRecord> {
   const id = `os-agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

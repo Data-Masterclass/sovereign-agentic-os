@@ -8,6 +8,7 @@ import { buildSystem } from '@tabs/agents/lib/build/server';
 import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
 import { agentKeyValue } from '@tabs/agents/lib/build/live-clients';
 import { putSecret } from '@core/infra/secrets';
+import { runWithSurface, uiSurfaceFor } from '@core/infra/request-surface';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,8 +17,18 @@ function fail(e: unknown) {
   return NextResponse.json({ error: (e as Error).message }, { status });
 }
 
-/** POST → execute + verify the system across the 5 adapters; returns ✓/✗ rows. */
-export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+/**
+ * POST → execute + verify the system across the 5 adapters; returns ✓/✗ rows.
+ *
+ * This route is hand-rolled (it owns a `finally` that clears the in-progress marker), so it sets
+ * the request surface itself instead of inheriting it from `withRoute` — Part D: the build's
+ * `setLastBuild` is a definition change and its commit must say `via ui:agents/systems/<id>/build`.
+ */
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  return runWithSurface(uiSurfaceFor(req.url), () => build(ctx));
+}
+
+async function build(ctx: { params: Promise<{ id: string }> }) {
   let id: string | undefined;
   let user: Awaited<ReturnType<typeof requireUser>> | undefined;
   try {

@@ -18,7 +18,6 @@ say() { printf '\n==> %s\n' "$*"; }
 # component key → Dockerfile ('-' = <context>/Dockerfile) → build context. Tags come from values.yaml.
 IMAGES='
 osUI         images/base/os-ui/Dockerfile        .
-agentRuntime -                                    images/base/agent-runtime
 egressProxy  -                                    images/base/egress-proxy
 webFetch     -                                    images/base/web-fetch
 mockModel    -                                    images/base/mock-model

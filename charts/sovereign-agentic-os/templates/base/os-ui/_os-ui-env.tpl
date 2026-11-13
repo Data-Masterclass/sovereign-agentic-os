@@ -106,10 +106,11 @@
   value: {{ . | quote }}
 {{- end }}
 # In-cluster backend Service URLs (overridable per environment).
-# Live agent-runtime backend (Agents tab) + the shared token the UI
-# uses to call it and to validate the runtime's governed-tool calls.
-- name: AGENT_RUNTIME_URL
-  value: "http://agent-runtime:8000"
+# The shared SERVICE BEARER. A5 deleted the Python agent-runtime this was named
+# after (agent graphs run in this process now), but the token stayed: os-ui
+# VALIDATES it on its unauthenticated service paths — the agent scheduled-run
+# endpoint, the metrics data-sync sweep and the connections catalog-refresh sweep
+# all present it from their CronJobs. Renamed when the data side owns the Secret.
 - name: AGENT_RUNTIME_TOKEN
   valueFrom:
     secretKeyRef:
@@ -223,6 +224,16 @@
     secretKeyRef: { name: postgres-agent-runs-credentials, key: password }
 - name: AGENT_RUNS_DATABASE_URL
   value: postgresql://$(AGENT_RUNS_DB_USERNAME):$(AGENT_RUNS_DB_PASSWORD)@pg-rw/agent_runs
+{{- end }}
+{{- /* X9 (engine rebuild Part D) — the agent engine's guardrails on EVERY tool call. Both are
+     RUN-path, so the worker gets them too. Unset ⇒ the code defaults (20 000 chars / 60 s). */}}
+{{- with $u.agentToolResultMaxChars }}
+- name: AGENT_TOOL_RESULT_MAX_CHARS
+  value: {{ . | quote }}
+{{- end }}
+{{- with $u.agentToolCallTimeoutMs }}
+- name: AGENT_TOOL_CALL_TIMEOUT_MS
+  value: {{ . | quote }}
 {{- end }}
 - name: LITELLM_URL
   value: {{ $u.litellmUrl | quote }}

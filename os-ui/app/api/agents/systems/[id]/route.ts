@@ -26,6 +26,15 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   } catch (e) {
     compileError = (e as Error).message;
   }
+  // Part D: which commit this system is AT, read from the domain repository (null when the OS is
+  // not committing to git, or the repo cannot be read — never a fabricated sha).
+  let git = null;
+  try {
+    const { systemGitInfo } = await import('@tabs/agents/lib/git/history');
+    git = await systemGitInfo(view.domain, view.id);
+  } catch {
+    git = null;
+  }
   const canEdit = view.owner === user.id || (user.role === 'admin' && user.domains.includes(view.domain));
   const canRun = canRunCheck(view, user);
   return NextResponse.json({
@@ -56,6 +65,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
     // documented as gated-off (no gateway provisioned in base/kind).
     hermesEnabled: config.hermesEnabled,
     archived: view.archived ?? false,
+    git,
   });
 }, { hydrate: ensureHydrated, defaultStatus: 500 });
 

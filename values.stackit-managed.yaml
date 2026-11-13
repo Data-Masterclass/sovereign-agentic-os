@@ -209,11 +209,6 @@ litellmAgentKey:
     - sovereign-reasoning-fast  # fallback target of sovereign-reasoning
     - sovereign-vision          # vision inputs route here (platform-admin role override)
 
-agentRuntime:
-  image:
-    repository: ghcr.io/aborek/sovereign-os/agent-runtime
-    tag: "0.1.0@sha256:85cb9c3109beebf447422a0dbbbf05435f31cf38a73d705cc1dd185d1cae0eab"
-
 sampleAgent:
   image:
     repository: ghcr.io/aborek/sovereign-os/sample-agent

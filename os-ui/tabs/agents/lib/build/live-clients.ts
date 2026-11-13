@@ -12,17 +12,10 @@ import {
   type LiteLlmKeyInput,
   type LiveDeps,
   type OpaClient,
-  type RuntimeClient,
 } from '@tabs/agents/lib/build/live';
-import {
-  type ReloadRequest,
-  type ReloadResponse,
-  type RunRequest,
-  type RunResponse,
-} from '@tabs/agents/lib/build/runtime-contract';
 
 /**
- * The REAL fetch-backed clients for the 4 live Build adapters. Server-only: they
+ * The REAL fetch-backed clients for the live Build adapters. Server-only: they
  * use `config` (credentials, in-cluster Service URLs) and never reach the browser.
  * Kept separate from the PURE `live.ts` adapter logic so the adapters stay
  * unit-testable against fakes; these thin wrappers are exercised by the kind gate.
@@ -156,26 +149,6 @@ export function realLitellm(): LiteLlmClient {
   };
 }
 
-// ------------------------------------------------------------------ Runtime ------
-
-export function realRuntime(): RuntimeClient {
-  const post = async <T>(path: string, body: unknown, ms: number): Promise<T> => {
-    const res = await withTimeout(`${config.agentRuntimeUrl}${path}`, {
-      method: 'POST',
-      // Present the shared runtime bearer so the runtime's /reload + /run accept us
-      // (the runtime gates its control plane on this same token).
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.agentRuntimeToken}` },
-      body: JSON.stringify(body),
-    }, ms);
-    if (!res) throw new Error(`agent-runtime ${path} unreachable`);
-    return (await res.json().catch(() => ({}))) as T;
-  };
-  return {
-    reload: (req: ReloadRequest) => post<ReloadResponse>('/reload', req, 8000),
-    run: (req: RunRequest) => post<RunResponse>('/run', req, Math.max(req.timeoutMs + 5000, 10000)),
-  };
-}
-
 // ----------------------------------------------------------------- Langfuse ------
 
 export function realLangfuse(): LangfuseClient {
@@ -221,13 +194,17 @@ export async function traceStoreReachable(): Promise<boolean> {
 }
 
 /**
- * Is the shared agent-runtime reachable? Used by the server boundary to choose the
- * LIVE path (cluster up) vs the in-process teaching MOCK (laptop, no cluster) —
- * honestly labelled either way. The runtime is the one dependency live execution
- * cannot fake, so its health is the switch.
+ * Is the model gateway's ADMIN API reachable — i.e. is a cluster up? This is the switch
+ * between the LIVE Build adapters (which mint the system's scoped LiteLLM key and probe OPA)
+ * and the in-process teaching MOCK, honestly labelled either way.
+ *
+ * A5: this used to probe the Python `agent-runtime` `/health`. That runtime is gone, and the
+ * dependency Build genuinely cannot fake is the gateway — the key it provisions is the thing a
+ * later run actually uses. The graph step no longer needs a cluster at all: it compiles the
+ * StateGraph in this process.
  */
-export async function runtimeReachable(): Promise<boolean> {
-  const res = await withTimeout(`${config.agentRuntimeUrl}/health`, { method: 'GET' }, 2500);
+export async function gatewayAdminReachable(): Promise<boolean> {
+  const res = await withTimeout(`${config.litellmUrl}/health/readiness`, { method: 'GET' }, 2500);
   return Boolean(res && res.ok);
 }
 
@@ -236,7 +213,6 @@ export function makeRealClients(): LiveDeps {
   return {
     opa: realOpa(),
     litellm: realLitellm(),
-    runtime: realRuntime(),
     langfuse: realLangfuse(),
   };
 }

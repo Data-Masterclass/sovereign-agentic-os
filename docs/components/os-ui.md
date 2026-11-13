@@ -39,15 +39,17 @@ navigation instead of failing when clicked; `OS_ENABLED_TABS` gates the same set
 ## Agent engine
 
 **Current state, stated plainly.** A `system.yaml` is compiled to a LangGraph-shaped IR
-(`tabs/agents/lib/langgraph-compile.ts`), but what *executes* a run today is a hand-rolled,
-in-process **walker** (`tabs/agents/lib/build/agentic-graph.ts`): it visits the IR nodes in a
-fixed, visited-once order (entrypoint → supervisor members in declared order → handoffs) and
-runs each node through the PLAN→ACT harness as the signed-in user. It does **not** evaluate
-handoff `when` guards and does not checkpoint; a supervisor's routing decision is the declared
-member order, not a model decision. No LangGraph library runs in os-ui yet.
+(`tabs/agents/lib/langgraph-compile.ts`) and that IR is then compiled to a real
+`@langchain/langgraph` `StateGraph` (`tabs/agents/lib/engine/build-graph.ts`) which is what
+executes the run — in a worker process, as the signed-in user, checkpointed every superstep.
+There is exactly **one** engine. The hand-rolled in-process walker that used to run agent
+systems, its mock twin in the Build adapters, and the Python `agent-runtime` IR interpreter were
+all deleted in A5; `AGENTS_ENGINE` and `runtime: walker` are gone with them (an environment that
+still sets the variable gets one deprecation line at boot, and a stored `system.yaml` carrying
+`runtime: hermes | walker` is normalised to `langgraph` on parse rather than refused).
 
-**A rebuild on real LangGraph is in progress** (plan of record:
-`docs/superpowers/plans/2026-11-13-engine-rebuild.md`). Phase A0 (landed) added the dependencies
+**How it got here** (plan of record:
+`docs/superpowers/plans/2026-11-13-engine-rebuild.md`). Phase A0 added the dependencies
 (`@langchain/langgraph`, `@langchain/langgraph-checkpoint-postgres`, `pg`, `langfuse` — all MIT),
 a record/replay model caller, golden fixtures for every shipped template and a parity test, and
 the engine flag. **Phase A1 (landed)** adds the real engine behind the flag: `tabs/agents/lib/
@@ -68,8 +70,11 @@ executes exactly once as the runner, a denied one reaches the agent as a typed `
 and the run continues. The Run panel shows the parked state and re-attaches to the run's stream
 to watch it finish; `get_agent_run` / `resume_agent_run` cover the same over MCP. **Phase A3
 (landed)** gives every run one Langfuse trace whose id is the run id, and attributes every model
-call to the acting user and their own LiteLLM key. **Phase A4 (landed)** takes runs off the
-request — see "Runs execute in a worker" below. Still ahead: A5 deletes the walker. How the graph
+call to the acting user and their own LiteLLM key. **Phase A4** took runs off the
+request — see "Runs execute in a worker" below. **Phase A5** deleted the walker, the Python
+runtime and the flag, re-based Build's graph row onto the same `buildGraph`, and made the MCP run
+surface (`run_agent_system` → `get_agent_run` → `decide_approval` → `resume_agent_run` →
+`get_run_trace`) the UI's own path with the UI's owner gate. How the graph
 is shaped is written up in `os-ui/ARCHITECTURE.md` → "How a system.yaml becomes a StateGraph",
 "Approvals are interrupts", "One trace per run" and "Runs execute in a worker".
 
@@ -213,25 +218,72 @@ assume a **single os-ui replica**. Since A4 the run EVENTS are durable rows (`ru
 tail survives a restart and works from any pod; the pieces still single-replica are the
 checkpointer connection and the approvals-queue hydration.
 
-**The flag.** `AGENTS_ENGINE=walker|langgraph` (env, default `walker`; `core/kernel/config.ts`
-`agentsEngine`). A system may pin itself to the walker with `runtime: walker` in its
-`system.yaml` (an opt-out; the default `langgraph` runtime follows the flag). The decision is one
-pure function, `tabs/agents/lib/engine/select.ts` `selectEngine`, read by the run route, the
-scheduled-run path and the MCP tool `run_agent_system` — all three hand the decision to
-`runOsTeam`, which takes the `langgraph` branch, so they cannot disagree. Every run report carries
-the `engine` that produced it, and a `langgraph` report also carries `runId`, `checkpointer`
-and any compile `warnings` (e.g. a handoff guard over a channel nothing sets — the shipped
-Software Delivery Team's `plan_ready`/`committed`/… guards are exactly that today, so under
-`langgraph` its supervisor drives the order and each guard is reported).
+**No flag.** There is one engine, so there is nothing to select: A5 deleted
+`AGENTS_ENGINE`, `core/kernel/config.ts` `agentsEngine`, `tabs/agents/lib/engine/select.ts` and
+the per-system `runtime: walker` opt-out. That opt-out had become a way for a user to keep the
+LOOSER rules (no `when` guards, no node-level tool narrowing), which is the opposite of what an
+engine flag is for. Every run report carries `engine: 'langgraph'`, `runId`, `checkpointer` and
+any compile `warnings` — e.g. a handoff guard over a channel that nothing **can** set (an
+undeclared one, or one declared with the `add_messages` reducer).
 
-**Known limits (honest).** No node writes a system channel yet, so every `when` guard over a
-channel is a warning and evaluates false until a later phase adds a channel-setting mechanism;
-the run report's `warnings` (rendered in the Run panel) say so. The Context Librarian handoff
-curation runs in the graph only when a live embedder is wired (same rule as the walker). A
-Under the `walker` engine a held write still returns the old out-of-band typed `held` result, and
-the walker is **request-bound**: it has no thread, no checkpoint and no queue, so `AGENTS_WORKER`
-does not apply to it. A resume after a decision is filed as a job (A4); with the worker off it
+**State channels, and who writes them.** A `when` guard routes on a declared state channel, and
+the agent whose turn the guard follows is advertised the engine's built-in `os_set_state` tool —
+closed to the declared channels, type-checked against the declaration, never a governed MCP call
+and never held for approval. The write lands in the same superstep, so the next routing decision
+(and the supervisor's `--- TEAM STATE ---` line) sees it. The shipped Software Delivery Team
+declares five boolean channels (`plan_ready`, `committed`, `tests_failed`, `tests_passed`,
+`reported`) written by its planner, builder, tester and deployer, so the five-phase chain actually
+fires and a tester FAIL routes back to the builder. Until the A5 review round this was the
+engine's biggest gap: no node could write a channel, so EVERY `when` guard in the OS evaluated
+false and those five guards were five compile warnings. See `os-ui/tabs/agents/README.md` →
+"State channels".
+
+**Known limits (honest).** The Context Librarian handoff
+curation runs in the graph only when a live embedder is wired, and never over the offline-hash
+fallback's vectors (relevance over them is noise). A
+A resume after a decision is filed as a job (A4); with the worker off it
 still executes inside the decider's request, exactly as in A2.
+
+### Agent systems in git (Part D)
+
+With `DATA_PROJECT_GIT=true` (chart `osUI.dataProjectGit.enabled`) every change to an agent
+system is a commit in the owning domain's bare repository — **the same repository** the Data tab's
+dbt project lives in, under the `agents/` subtree:
+
+```
+agents/index.yml                      slug -> id, owner, scope, visibility, source version
+agents/<slug>/system.yaml             the canonical definition
+agents/<slug>/agents/<id>.md          each agent's instruction file
+agents/<slug>/graph.json              the compiled LangGraph IR the engine runs
+agents/<slug>/README.md               purpose, members, grants, channels, edges, last build
+agents/personal/<uid>/<slug>/…        a Personal system, in its owner's lane
+```
+
+`agents(<domain>): <action> <slug> — via ui:<route> | mcp:<tool>`, authored as the acting user,
+committed by `Sovereign OS`, trailers `OS-Action` / `OS-Object` / `OS-Surface` / `OS-Request-Id` /
+`OS-Actor`. Runs do not commit. Archive and delete REMOVE the directory. At boot the OS reconciles
+each domain (`OS-Reason: boot-reconcile`). `get_agent_system` and the Agents tab header report the
+commit the system is at, read from the repo.
+
+**Operator notes.**
+
+- One switch for both halves (`DATA_PROJECT_GIT`): the repository, the `os-repos` PVC and the
+  read-only `git daemon` sidecar are shared, so a second flag could only ever disagree with itself.
+- `AGENT_TOOL_RESULT_MAX_CHARS` (default 20 000) bounds every agent tool result before it enters
+  the prompt, with a visible `[truncated: showing N of M rows]` marker;
+  `AGENT_TOOL_CALL_TIMEOUT_MS` (default 60 000) is the per-tool-call deadline, surfacing as a
+  typed `timeout` tool step. Both are run-path, so the `os-ui-worker` pod gets them too.
+- **Mirror**: `PUT /api/platform-admin/data-projects/<domain>/mirror` `{url, tokenSecretRef}` is
+  the ONE config for both halves. The push happens after every changed commit, never blocks a
+  save, and its last outcome is the **`git-mirror`** row on Platform → Components & Health — red
+  when a mirror's last push failed, amber before its first. Verify in a cluster:
+
+  ```bash
+  kubectl -n agentic-os exec deploy/os-ui -- sh -lc 'git --git-dir=/repos/<domain>.git log --oneline -5'
+  kubectl -n agentic-os exec deploy/os-ui -- sh -lc 'git --git-dir=/repos/<domain>.git ls-tree -r --name-only main | grep ^agents/'
+  # save a system twice in the UI, then once through the MCP, and expect three commits whose
+  # authors are the acting users and whose subjects name `ui:agents/…` then `mcp:commit_agent_files`
+  ```
 
 ## Admin → Components — native stack operator
 

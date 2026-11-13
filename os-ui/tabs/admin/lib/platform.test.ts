@@ -35,10 +35,8 @@ test('mock-model summary makes clear it is local-dev only', () => {
   );
 });
 
-test('agent-runtime is in the registry', () => {
-  const ar = BY_ID['agent-runtime'];
-  assert.ok(ar, 'agent-runtime must be in registry');
-  assert.equal(ar.layer, 'Layer 1 — Agent core');
+test('A5: agent-runtime is NOT in the registry (the Python IR interpreter is deleted)', () => {
+  assert.equal(BY_ID['agent-runtime'], undefined, 'a registry row for a workload the chart never renders reads "down" forever');
 });
 
 test('data-runner is in the registry', () => {

@@ -64,7 +64,7 @@ const VERSIONS: Record<string, string> = {
   postgres: 'CNPG 1.24', clickhouse: 'v24.8', minio: 'RELEASE.2026-05', valkey: 'v8.0',
   dagster: 'v1.13.11',   // images/extensions/dagster/Dockerfile pins dagster==1.13.11
   'mock-model': 'v0.1.1', 'query-tool': 'v0.4', polaris: 'v1.1.0-incubating', haystack: 'v2.8',
-  trino: '476', 'data-runner': 'v0.1.0', 'agent-runtime': 'v0.1.1',
+  trino: '476', 'data-runner': 'v0.1.0',
   mlflow: 'v2.19', jupyterhub: 'v5.2', 'os-ui': 'v0.5.14',
 };
 
@@ -126,4 +126,79 @@ export function trinoAccessRulesRow(input: {
     };
   }
   return { ...base, health: 'green', at, detail: `Reconciled (${code}): ${detail}` };
+}
+
+/**
+ * Git mirror — the Platform → Components & Health row (engine rebuild Part D, checklist X2).
+ *
+ * The push after a commit is fire-and-forget by design: it must never block a save. That used to
+ * mean a failure was one `console.warn` nobody reads, with the remote silently behind. This turns
+ * the last recorded outcome of every configured mirror into one visible signal:
+ *   • git off, or no mirror configured anywhere -> no row (a deployment without the feature grows
+ *     nothing);
+ *   • a mirror configured but never pushed -> amber (nothing has been committed yet, or the very
+ *     first push has not happened);
+ *   • any mirror whose LAST outcome is an error -> RED, naming the domains and the first error;
+ *   • a mirror whose last success is older than the oldest local commit cannot be detected here
+ *     (the row reads status, not the repo), so a stale-but-successful mirror stays green and the
+ *     detail states when it last pushed — say what is known, never imply more.
+ * PURE — the route injects the signals and the clock.
+ */
+export type MirrorSignalRow = {
+  domain: string;
+  url: string;
+  lastSha?: string;
+  lastPushedAt?: string;
+  lastError?: string;
+  lastErrorAt?: string;
+};
+
+export type GitMirrorRow = {
+  id: 'git-mirror';
+  name: string;
+  health: 'green' | 'amber' | 'red';
+  detail: string;
+  /** When the newest recorded outcome happened (epoch ms); absent before the first push. */
+  at?: number;
+};
+
+/** The host of a mirror URL (never its path or any credential — the setter forbids those). */
+function mirrorHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '(unparseable url)';
+  }
+}
+
+export function gitMirrorRow(input: { enabled: boolean; signals: MirrorSignalRow[]; now: number }): GitMirrorRow | null {
+  if (!input.enabled || input.signals.length === 0) return null;
+  const base = { id: 'git-mirror' as const, name: 'Git mirror (domain repositories)' };
+  const times = input.signals
+    .flatMap((s) => [s.lastErrorAt, s.lastPushedAt])
+    .filter((t): t is string => typeof t === 'string' && Date.parse(t) > 0)
+    .map((t) => Date.parse(t));
+  const at = times.length > 0 ? Math.max(...times) : undefined;
+  const failing = input.signals.filter((s) => s.lastError);
+  if (failing.length > 0) {
+    const first = failing[0];
+    return {
+      ...base,
+      health: 'red',
+      ...(at ? { at } : {}),
+      detail:
+        `Last push FAILED for ${failing.map((s) => s.domain).join(', ')} — ${mirrorHost(first.url)}: ${first.lastError}. ` +
+        'The commit is safe in the OS-side repository; the remote is behind and the next commit retries the push.',
+    };
+  }
+  const never = input.signals.filter((s) => !s.lastPushedAt);
+  if (never.length === input.signals.length) {
+    return { ...base, health: 'amber', detail: `Configured for ${input.signals.map((s) => s.domain).join(', ')} but nothing has been pushed yet (no commit since it was configured).` };
+  }
+  const pushed = input.signals.filter((s) => s.lastPushedAt);
+  const detail =
+    `${pushed.length} of ${input.signals.length} mirror(s) pushed — ` +
+    pushed.map((s) => `${s.domain} → ${mirrorHost(s.url)} @ ${(s.lastSha ?? '').slice(0, 7)} (${s.lastPushedAt})`).join('; ') +
+    (never.length > 0 ? `; awaiting a first push: ${never.map((s) => s.domain).join(', ')}` : '');
+  return { ...base, health: never.length > 0 ? 'amber' : 'green', ...(at ? { at } : {}), detail };
 }

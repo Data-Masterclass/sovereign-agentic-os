@@ -111,7 +111,7 @@ Shared and **a participant Creator RUNs it (HTTP 200)** while a WRITE/PROMOTE is
 denied (403); the Campaign App promotes Shared.
 
 Needs the live cluster to be *live* rather than honest-mock:
-- **Agents** report `mode: offline-mock` locally; with `agent-runtime` + LiteLLM
+- **Agents** report `mode: offline-mock` locally; with LiteLLM
   reachable, Build/Run execute the real LangGraph and every tool call is
   OPA-checked + Langfuse-traced.
 - **Knowledge docs** RAG ingest (`POST /api/knowledge/docs`) needs OpenSearch

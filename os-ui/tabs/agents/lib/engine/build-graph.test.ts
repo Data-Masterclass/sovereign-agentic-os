@@ -17,7 +17,16 @@ import assert from 'node:assert/strict';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { ToolCallingUnsupportedError, type LlmCall, type LlmRequest, type ToolSpec } from '@core/runtime/agentic';
-import { buildGraph, GraphCompileError, type GraphDeps } from '@tabs/agents/lib/engine/build-graph';
+import {
+  buildGraph,
+  channelDefault,
+  channelTypeOf,
+  GraphCompileError,
+  parseStateWrite,
+  SET_STATE_TOOL_NAME,
+  type GraphDeps,
+  type SettableChannel,
+} from '@tabs/agents/lib/engine/build-graph';
 import { memoryCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { runGraphEngine, type EngineRunInput } from '@tabs/agents/lib/engine/run';
 
@@ -205,13 +214,12 @@ test('A7: a supervisor naming a non-member ends the run honestly instead of rout
   assert.match(result.finalText, /not one of its members/);
 });
 
-test('A8: a handoff whose guard is false does not visit its target; a literal true does; unset channels warn at compile', async () => {
+test('A8: a handoff whose guard is false does not visit its target; a literal true does; a channel nothing CAN set warns at compile', async () => {
   const falsy = await run(guarded('state.findings_ready'), script());
-  assert.deepEqual(falsy.result.path, ['a'], 'findings_ready is never set → b is not visited');
+  assert.deepEqual(falsy.result.path, ['a'], 'findings_ready is declared but never set → b is not visited');
   assert.equal(falsy.result.reachedEnd, true);
-  assert.equal(falsy.result.warnings.length, 1);
-  assert.match(falsy.result.warnings[0], /findings_ready/);
-  assert.match(falsy.result.warnings[0], /no node sets/);
+  // The channel IS declared, so an agent could have set it: a false guard, not a broken one.
+  assert.deepEqual(falsy.result.warnings, []);
 
   const truthy = await run(guarded('true'), script());
   assert.deepEqual(truthy.result.path, ['a', 'b']);
@@ -220,6 +228,121 @@ test('A8: a handoff whose guard is false does not visit its target; a literal tr
   const bare = await run(guarded('plan_ready'), script());
   assert.deepEqual(bare.result.path, ['a']);
   assert.match(bare.result.warnings[0], /not declared in state.channels/);
+  assert.match(bare.result.warnings[0], /no agent can set it/);
+});
+
+// --------------------------------------------- A8 / A5-review-H-2: writing a state channel --
+
+/** The guarded two-agent shape with a TYPED channel `a` may set. */
+function typedGuard(type: string, when = 'plan_ready'): string {
+  return `version: '1'
+system: { name: tg, domain: sales, visibility: Personal }
+entrypoint: a
+state:
+  channels:
+    messages: add_messages
+    plan_ready: ${type}
+grants: { data: [], knowledge: [], metrics: [], tools: [search_knowledge], connections: [] }
+agents:
+  - { id: a, role: first, agent_md: '# a', memory_md: '# Memory', tools: [search_knowledge] }
+  - { id: b, role: second, agent_md: '# b', memory_md: '# Memory', tools: [search_knowledge] }
+edges:
+  - { from: a, to: b, type: handoff, when: ${JSON.stringify(when)} }
+`;
+}
+
+/** A model that writes one channel from node `a`'s first turn, then answers. */
+function writerScript(args: Record<string, unknown> | null): LlmCall {
+  const acts = new Map<string, number>();
+  return async (req) => {
+    const node = nodeOf(req);
+    if (!req.tools) return { content: `plan(${node})`, toolCalls: [] };
+    const n = (acts.get(node) ?? 0) + 1;
+    acts.set(node, n);
+    if (n === 1 && node === 'a' && args) {
+      return { content: '', toolCalls: [{ id: `s-${node}`, name: SET_STATE_TOOL_NAME, args }] };
+    }
+    return { content: `FINAL(${node})`, toolCalls: [] };
+  };
+}
+
+test('H-2: the agent the guard follows is advertised `os_set_state`, and setting the channel ROUTES the guarded handoff', async () => {
+  const offered = new Map<string, string[]>();
+  const base = writerScript({ channel: 'plan_ready', value: true });
+  const spy: LlmCall = async (req) => {
+    if (req.tools) offered.set(nodeOf(req), req.tools.map((t) => t.function.name));
+    return base(req);
+  };
+  const { result, calls } = await run(typedGuard('boolean'), spy);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(result.path, ['a', 'b'], 'the write made the guard true');
+  assert.deepEqual(calls, [], 'the state write never reaches the GOVERNED executor');
+  assert.ok(offered.get('a')?.includes(SET_STATE_TOOL_NAME), 'a carries the guard → a may set the channel');
+  assert.ok(!offered.get('b')?.includes(SET_STATE_TOOL_NAME), 'b has no guard of its own → no setter');
+  assert.ok(offered.get('a')?.includes('search_knowledge'), 'its governed grants are untouched');
+});
+
+test('H-2: the writer\'s system prompt names the channel it may set, generated from the declaration', async () => {
+  const prompts: string[] = [];
+  const base = writerScript(null);
+  const spy: LlmCall = async (req) => {
+    for (const m of req.messages) if (m.role === 'system' && nodeOf(req) === 'a') prompts.push(m.content);
+    return base(req);
+  };
+  await run(typedGuard('boolean'), spy);
+  const text = prompts.join('\n');
+  assert.match(text, /--- STATE CHANNELS ---/);
+  assert.match(text, /plan_ready \(boolean\): set it when control should pass to b/);
+  assert.match(text, /os_set_state/);
+});
+
+test('H-2: the channel is closed to the DECLARATION — an undeclared name and a wrong type are typed tool errors, and neither routes', async () => {
+  const undeclared = await run(typedGuard('boolean'), writerScript({ channel: 'nope', value: true }));
+  assert.deepEqual(undeclared.result.path, ['a']);
+  const mistyped = await run(typedGuard('boolean'), writerScript({ channel: 'plan_ready', value: { deep: 1 } }));
+  assert.deepEqual(mistyped.result.path, ['a']);
+  // The string forms a model emits for a boolean are accepted (and nothing else).
+  const coerced = await run(typedGuard('boolean'), writerScript({ channel: 'plan_ready', value: 'true' }));
+  assert.deepEqual(coerced.result.path, ['a', 'b']);
+  // A number channel compared by value routes too (the `when` grammar's equality).
+  const numeric = await run(typedGuard('number', 'plan_ready == "3"'), writerScript({ channel: 'plan_ready', value: 3 }));
+  assert.deepEqual(numeric.result.path, ['a', 'b']);
+});
+
+test('H-2: `parseStateWrite` is the whole rule — it names what it refuses', () => {
+  const allowed: SettableChannel[] = [['ready', 'boolean'], ['count', 'number'], ['note', 'string'], ['blob', 'json']];
+  assert.deepEqual(parseStateWrite({ channel: 'ready', value: false }, allowed), { channel: 'ready', value: false });
+  assert.deepEqual(parseStateWrite({ channel: 'count', value: '7' }, allowed), { channel: 'count', value: 7 });
+  assert.deepEqual(parseStateWrite({ channel: 'blob', value: { a: 1 } }, allowed), { channel: 'blob', value: { a: 1 } });
+  for (const [args, re] of [
+    [{ value: true }, /needs a 'channel'/],
+    [{ channel: 'other', value: true }, /not a declared state channel/],
+    [{ channel: 'ready' }, /needs a 'value'/],
+    [{ channel: 'ready', value: 3 }, /declared boolean/],
+    [{ channel: 'count', value: 'many' }, /declared number/],
+    [{ channel: 'note', value: 1 }, /declared string/],
+  ] as const) {
+    const out = parseStateWrite(args as Record<string, unknown>, allowed);
+    assert.ok('error' in out, `${JSON.stringify(args)} must be refused`);
+    assert.match(out.error, re);
+  }
+});
+
+test('H-2: a guard over an `add_messages` channel still warns — the setter writes single values', async () => {
+  const { result } = await run(typedGuard('add_messages'), writerScript(null));
+  assert.deepEqual(result.path, ['a']);
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /add_messages reducer/);
+});
+
+test('H-2: a declared channel starts at its type\'s default', () => {
+  assert.equal(channelDefault('boolean'), false);
+  assert.equal(channelDefault('number'), 0);
+  assert.equal(channelDefault('string'), '');
+  assert.equal(channelDefault('json'), null);
+  assert.equal(channelTypeOf('add_messages'), 'add_messages');
+  assert.equal(channelTypeOf('boolean'), 'boolean');
+  assert.equal(channelTypeOf('last_value'), 'json', 'a pre-types declaration stays an untyped json channel');
 });
 
 test('A10: the team step budget ends the run gracefully with what completed', async () => {

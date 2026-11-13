@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc, ALL_MCP_TOOLS, type JsonRpcResponse, type ToolError } from '@core/mcp/server';
-import { ALL_WRITE_TOOLS, __setRunOsTeamForTests } from '@core/mcp/write-tools';
+import { ALL_WRITE_TOOLS, __setStartQueuedRunForTests } from '@core/mcp/write-tools';
 import { __resetStore as resetData } from '@tabs/data/lib/store';
 import { __resetStore as resetAgents } from '@tabs/agents/lib/store';
 import { __resetApprovals } from '@core/policy/approvals';
@@ -284,49 +284,62 @@ test('query_metric: a metric on a dataset the caller cannot see → typed forbid
 
 // ---- RUN_AGENT_SYSTEM ----------------------------------------------------------
 
-test('run_agent_system: runs the team AS THE CALLER (identity threaded to runOsTeam) and returns per-node steps', async () => {
+test('run_agent_system: runs the team AS THE CALLER (identity threaded to the one start door) and returns per-node steps', async () => {
   resetAll();
   const sys = payload<{ id: string }>(await call(builder, 'create_agent_system', { name: 'Support triage', template: 'analyze' }));
 
-  let seen: { userId?: string; systemId?: string; messages?: unknown[] } = {};
-  __setRunOsTeamForTests(async (input) => {
-    seen = { userId: input.user.id, systemId: input.systemId, messages: input.messages };
+  let seen: { userId?: string; systemId?: string; messages?: unknown[]; runId?: string } = {};
+  __setStartQueuedRunForTests(async (input) => {
+    seen = { userId: input.user.id, systemId: input.systemId, messages: input.messages, runId: input.runId };
     return {
-      path: ['analyst'],
-      finalText: 'Tickets triaged.',
-      reachedEnd: true,
-      runs: [{ node: 'analyst', model: 'exec-model', result: { steps: [{ tool: 'search_knowledge', isError: false }] } }],
+      runId: input.runId,
+      body: {
+        path: ['analyst'],
+        finalText: 'Tickets triaged.',
+        reachedEnd: true,
+        checkpointer: 'memory',
+        nodes: [{ node: 'analyst', model: 'exec-model', steps: [{ tool: 'search_knowledge', isError: false }] }],
+      },
     };
   });
   try {
-    const r = payload<{ finalText: string; reachedEnd: boolean; path: string[]; nodes: { node: string; steps: { tool: string }[] }[] }>(
+    const r = payload<{ finalText: string; reachedEnd: boolean; runId: string; engine: string; path: string[]; nodes: { node: string; steps: { tool: string }[] }[] }>(
       await call(builder, 'run_agent_system', { systemId: sys.id, message: 'Triage the queue' }),
     );
-    assert.equal(seen.userId, 'ben', 'runOsTeam received the CALLER identity — never a service principal');
+    assert.equal(seen.userId, 'ben', 'the start door received the CALLER identity — never a service principal');
     assert.equal(seen.systemId, sys.id);
     assert.deepEqual(seen.messages, [{ role: 'user', content: 'Triage the queue' }]);
+    assert.ok(seen.runId, 'a run id (= thread id = trace id) is minted before the job is filed');
+    assert.equal(r.runId, seen.runId, 'and returned so the client can follow, resume and trace the run');
+    assert.equal(r.engine, 'langgraph');
     assert.equal(r.finalText, 'Tickets triaged.');
     assert.equal(r.reachedEnd, true);
     assert.equal(r.nodes[0].steps[0].tool, 'search_knowledge');
   } finally {
-    __setRunOsTeamForTests(null);
+    __setStartQueuedRunForTests(null);
   }
 });
 
-test('run_agent_system: a system the caller cannot run → typed forbidden; a hermes system → typed bad_request to the UI', async () => {
+test('run_agent_system: a system the caller cannot run → typed forbidden; an unmapped grant → typed bad_request naming the tool', async () => {
   resetAll();
   // Cara's Personal system: Dan (out of domain) AND Ben (in-domain, but Personal ≠ Shared) may not run it.
   const sys = payload<{ id: string }>(await call(creator, 'create_agent_system', { name: 'Cara private', template: 'analyze' }));
   const e = errorOf(await call(outsider, 'run_agent_system', { systemId: sys.id, message: 'hi' }));
   assert.equal(e.code, 'forbidden');
 
-  // A hermes-runtime system is honestly refused with a pointer to the UI path.
-  const own = payload<{ id: string }>(await call(builder, 'create_agent_system', { name: 'Autono', template: 'blank' }));
+  // A5: `runtime: hermes` is a RETIRED name, not a second engine — a stored system carrying it
+  // is normalised and runs like any other. What is genuinely un-runnable is a grant with no
+  // governed tool behind it, and the refusal names it.
+  const own = payload<{ id: string }>(await call(builder, 'create_agent_system', { name: 'Legacy grants', template: 'blank' }));
   const view = payload<{ yaml: string }>(await call(builder, 'get_agent_system', { systemId: own.id }));
-  payload(await call(builder, 'commit_agent_files', { systemId: own.id, path: 'system.yaml', content: `${view.yaml}\nruntime: hermes\n` }));
-  const hermes = errorOf(await call(builder, 'run_agent_system', { systemId: own.id, message: 'hi' }));
-  assert.equal(hermes.code, 'bad_request');
-  assert.match(hermes.reason, /Agents tab UI/);
+  payload(await call(builder, 'commit_agent_files', {
+    systemId: own.id,
+    path: 'system.yaml',
+    content: view.yaml.replace(/^  tools:$/m, '  tools:\n    - web_fetch'),
+  }));
+  const refused = errorOf(await call(builder, 'run_agent_system', { systemId: own.id, message: 'hi' }));
+  assert.equal(refused.code, 'bad_request');
+  assert.match(refused.reason, /web_fetch/);
 });
 
 // ---- SCIENCE READ SURFACE ------------------------------------------------------

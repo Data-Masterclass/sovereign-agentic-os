@@ -15,6 +15,21 @@
   ONE Secret name (`agent-runtime-token`), defined in exactly one place, so there is no risk of a
   duplicate-resource error. Local profile ONLY: on every other profile External Secrets (ESO)
   delivers it, and rendering a literal here would both fight ESO and put a value in the chart.
+
+  A5 (deviation A5-1, plus review findings A5-review-H-1 / A5-review-M-4): the Python
+  `agent-runtime` Deployment, ConfigMap and Service that `agent-runtime.yaml` used to carry are
+  DELETED — agent systems execute as a real `StateGraph` inside os-ui
+  (`os-ui/tabs/agents/lib/engine/`), as the signed-in user, through the in-process governed
+  dispatcher. There is no second process, no IR on a wire and no callback door. The Secret
+  outlived the workload it was named after: it is the shared bearer the OS's own CronJobs
+  present to os-ui on the service paths (agent scheduled runs, the metrics data-sync sweep, the
+  connections catalog-refresh sweep — see `runtimeTokenOk` in
+  `os-ui/tabs/agents/lib/build/runtime-auth.ts`), and the data side's Dagster pods read the same
+  Secret. `agentRuntime.enabled` no longer exists, so `$r.enabled` below is simply nil and the
+  osUI / dagster consumers decide. The gate deliberately does NOT test `$r.token`: os-ui mounts
+  the key through a NON-optional `secretKeyRef` (`_os-ui-env.tpl`), so a deployment with
+  `agentRuntime.token: ""` must still find the Secret — gating on the value bricked os-ui
+  (A5-review-M-4). Follow-up: drop the token and rename the key once no consumer needs it.
 */}}
 {{- $r := .Values.agentRuntime | default dict }}
 {{- $u := .Values.osUI | default dict }}

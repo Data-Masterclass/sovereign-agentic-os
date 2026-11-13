@@ -169,13 +169,39 @@ Not a compiled system, left as is: `core/kernel/artifacts.ts` seeded registry re
 | Tests | `engine/jobs.test.ts` (14), `engine/jobs-postgres.test.ts` (8 SQL tripwires), `engine/worker-loop.test.ts` (9), `engine/jobs-resume.test.ts` (2, over A2's P3 fixtures + a real `MemorySaver`), `engine/runner-identity.test.ts` (7), strict-redaction case in `observe.test.ts`; all five added to `os-ui/scripts/gate.sh` |
 
 ### Phase A5 — Deletion and docs
-- [ ] Delete: `agentic-graph.ts` walk (keep the Librarian/handoff-curation helpers), `build/run-graph.ts`, `images/base/agent-runtime/` and its chart block, `live.ts` `/reload` path, `runtime-contract.ts` wire types; the `hermes` runtime option unless a runtime exists for it (it does not). Flip the engine default to `langgraph`, then delete the flag.
-- [ ] Make `README.md`, `docs/components/os-ui.md`, `docs/components/langfuse.md`, `docs/components/litellm.md`, the runtime badge, `core/kernel/licenses.ts` and `sbom.cdx.json` true. Explain in `os-ui/ARCHITECTURE.md` how a `system.yaml` becomes a StateGraph.
-- [ ] MCP: `run_agent_system` returns `runId` and `traceUrl`; add `resume_agent_run` and `get_agent_run` (state, held approvals); `decide_approval` resumes the thread. `tabs/agents/README.md` lists them.
+- [x] Delete: `agentic-graph.ts` walk (keep the Librarian/handoff-curation helpers), `build/run-graph.ts`, `images/base/agent-runtime/` and its chart block, `live.ts` `/reload` path, `runtime-contract.ts` wire types; the `hermes` runtime option unless a runtime exists for it (it does not). ~~Flip the engine default to `langgraph`, then delete~~ **delete** the flag (A5-2: there was no reason to ship a default nobody could change).
+- [x] Make `README.md`, `docs/components/os-ui.md`, `docs/components/langfuse.md`, `docs/components/litellm.md`, the runtime badge, `core/kernel/licenses.ts` and `sbom.cdx.json` true. Explain in `os-ui/ARCHITECTURE.md` how a `system.yaml` becomes a StateGraph.
+- [x] MCP: `run_agent_system` returns `runId` and `traceUrl`; add `resume_agent_run` and `get_agent_run` (state, held approvals); `decide_approval` resumes the thread. `tabs/agents/README.md` lists them.
+
+#### A5 — what landed (three commits on `feat/engine-rebuild`)
+
+| Piece | Where |
+|---|---|
+| Parity gate, recorded before any deletion | this file, "A5 — the parity gate, fixture by fixture" (A5-review-L-2: the real split is **parity 16 · fixtures 16 · MCP run surface 9**, not one file of 28; the review round takes parity to 21 with shape (d)) — 0 failures; 11 fixtures identical, `software-team` identical, `shape-guarded-handoff-held-write` deliberately divergent |
+| The walk, deleted | `build/agentic-graph.ts` loses `runAgenticGraph` + `nodeOrder` (−146 lines) and becomes the **agent NODE layer** the graph calls into (model tier, system prompt, handoff + Librarian, status classification, `runNode` for the phase-router chat). `build/run-graph.ts` + test `git rm`'d |
+| The Python runtime, deleted | `images/base/agent-runtime/**` (7 files), the Deployment/ConfigMap/Service in `charts/.../base/agent-runtime/agent-runtime.yaml`, its dedicated egress policy + the `NotIn` exclusion in `network/egress-policies.yaml`, `AGENT_RUNTIME_URL` in `_os-ui-env.tpl` and `config.ts`, `realRuntime`/`RuntimeClient`, `app/api/agents/tool/route.ts`, the CI pytest steps, the `scripts/os` image row, `agentRuntime.{enabled,image,resources,*Model}` |
+| The flag, deleted | `core/kernel/agents-engine.ts` + test, `engine/select.ts` + test, `config.agentsEngine`, `runtime: walker`; `Runtime` collapses to `'langgraph'` with retired names normalised on parse; `instrumentation.ts` logs one deprecation line if `AGENTS_ENGINE` is still set |
+| The branch points, collapsed | `runOsTeam` (one path, `runId` now required), the run route (always enqueue + tail; `runSystem`/legacy branch gone), `build/scheduled.ts` (one start door), MCP `run_agent_system`; `run-service.ts` loses its `engine` parameter and reports `engine: 'langgraph'` |
+| The gate that replaced `isAgenticOsTeam` | `os-tools.ts` `unmappedGrantNames(sys)`; the three run doors return a 400 naming the offending grants |
+| Build, re-based | `build/compile-verify.ts` (`compileVerify(sys, ir)` → `buildGraph` with inert deps) consumed by BOTH `live.ts` and `mocks.ts`; `gatewayAdminReachable()` replaces `runtimeReachable()` as the live/mock switch |
+| MCP | `get_agent_run` + `run_events` tail (`afterSeq`/`limit`/`nextSeq`, `eventsAvailable`) and `assertRunVisible`; diagnostics route owner-gated; descriptions + `tabs/agents/guide.md` teach build → run → follow → approve → resume → trace |
+| Docs | `tabs/agents/README.md` (engine section rewritten), `os-ui/ARCHITECTURE.md`, `docs/components/{os-ui,langfuse,litellm}.md`, `README.md`, `components/README.md`, `os-ui/README.md`, both seed READMEs, `CHANGELOG.md` |
+| Tests | `core/mcp/agent-run-surface.test.ts` (9, new); rewritten `build/agentic-graph.test.ts` (12), `engine/fixtures.test.ts` (frozen-fixture checks incl. the recorded defect), `engine/parity.test.ts` (engine side only), `build/scheduled.test.ts` (one start door + a tripwire), `build/live.test.ts` (compile + compile-failure rows), `gateway.test.ts`, `wave-a.test.ts`, `orchestrate.test.ts`, `validation-gate.test.ts`, `platform.test.ts`, `model-prices.test.ts`, `os-tools.test.ts`, `agentic-graph-server.test.ts`; `gate.sh` gains parity, fixtures, build-graph and the MCP surface |
+
+**Gate at A5:** `tsc --noEmit` clean · `npm --prefix os-ui test` **4956 tests, 0 failures, 4 todo**
+(baseline before A5: 4988 / 0 / 7 — the walker's own tests went with it) · `check-structure` ok,
+baseline LOWERED by deletion (TAB-ISOLATION 422→421, FILE-HEADER 1245→1240) · `gate.sh` exit 0
+(161 → 182 tests) · `helm lint` with and without `osUI.worker.enabled=true`, and with
+`agentRuntime` removed entirely · `helm template` renders **no** `agent-runtime` Deployment or
+Service · `check-litellm-allowlist` PASS on both profiles.
 
 #### A5 — the parity gate, fixture by fixture (run 2026-11-13, before any deletion)
 
-`node --test tabs/agents/lib/engine/parity.test.ts` — 28 tests, 0 failures, 2 `todo`. The harness
+`node --test tabs/agents/lib/engine/parity.test.ts` — 16 tests, 0 failures, 2 `todo` (A5-review-L-2:
+the "28" first recorded here counted the parity + fixtures files together; the two files are 16 and
+16, and `core/mcp/agent-run-surface.test.ts` is 9. After the review round parity is **21** — shape
+(d) `channel-guarded-handoff` is driven four ways plus a node-narrowing test — and fixtures is
+still 16). The harness
 drives BOTH engines per fixture in one process (`replayWalker` vs `replayGraph`/`scriptGraph`), so
 there is no `AGENTS_ENGINE` to set: the table IS the two-engine comparison.
 
@@ -192,7 +218,7 @@ there is no `AGENTS_ENGINE` to set: the table IS the two-engine comparison.
 | `template-blank` | green | green (replayed transcript) | identical |
 | `template-evaluate` | green | green (replayed transcript) | identical |
 | `template-recommend` | green | green (replayed transcript) | identical |
-| `software-team` | `todo` (guarded; the walker ignores its five `when` guards) | green — same path, tools and final text as the walker golden, **plus** five compile warnings naming `plan_ready`, `committed`, `tests_failed`, `tests_passed`, `reported` | identical path, honest warnings |
+| `software-team` | `todo` (guarded; the walker ignores its five `when` guards) | green — same path, tools and final text as the walker golden, **plus** five compile warnings naming `plan_ready`, `committed`, `tests_failed`, `tests_passed`, `reported` (A5-review-H-2: those five channels are now DECLARED and settable, so the warnings are **zero** and the path is unchanged — the scripted model simply never sets them) | identical path, warnings now zero |
 | `shape-guarded-handoff-held-write` | `todo` (guarded) | green — path `['researcher']`, `held=0` | **deliberate divergence** |
 
 P2 (abort after node 1 → resume on the same thread) and "resume of an unknown thread is a typed
@@ -209,6 +235,108 @@ the defect on purpose (`assert.ok(golden.path.includes('publisher'), 'the walker
 records the defect')`) and the HANDOFF-GUARD test asserts the new, correct behaviour. The gate is
 therefore **passed**: every fixture either matches or diverges in the direction the plan requires,
 and the divergence is pinned by a test rather than by a comment.
+
+#### A5 review round (2026-11-13) — what the review found and what was done
+
+Decisions recorded as `A5-review-<id>`; the fixes are three commits on `feat/engine-rebuild`.
+
+- **A5-review-H2-1 A channel DECLARATION is a type, and the type is the default.** `state.channels`
+  was a map of name → *reducer*, with everything but `add_messages` meaning "last value, default
+  `undefined`". For `os_set_state` to type-check a write, the declaration has to say what the
+  channel holds, so the value is now read as `add_messages` | `boolean` | `number` | `string` |
+  `json`, each typed key starting at that type's default (`false` / `0` / `''` / `null`). No new
+  YAML shape was invented for an explicit default (`plan_ready: { type: boolean, default: false }`
+  would have needed schema, serializer and UI changes for one value that is already implied). Any
+  unrecognised declaration — notably the legacy `last_value`, which three fixtures use — stays an
+  untyped `json` channel, so **no existing `system.yaml` changes meaning**.
+- **A5-review-H2-2 The setter is advertised to the agent whose guard reads the channel, not to
+  every agent.** The brief said "every agent gets a built-in `set_channel` tool". Two reasons it is
+  narrower: (a) node-level tool narrowing is the engine's own rule — an agent is advertised what it
+  needs and nothing else — and the guard of a handoff FROM node `n` is evaluated in `route_<n>`,
+  immediately after `n`'s turn, so `n` is exactly the agent that can act on it; (b) a tool-less
+  agent (the orchestrator and the communication agent of the shipped team) would otherwise be
+  handed `os_set_state` as its FIRST advertised tool, which the frozen parity script calls — the
+  goldens would have changed for a reason that has nothing to do with the walker. The tool's
+  `channel` enum is still the system's full declared set, so a writer is closed to the
+  DECLARATION, not to its own edges.
+- **A5-review-H2-3 The write is not a governed tool call.** `os_set_state` never reaches
+  `deps.callTool` / `grantedToolExecutor`, is filtered out of the hold batch before
+  `holdDecisionFor` sees it, and cannot be held for approval: there is no OS object behind it. It
+  is recorded as a normal `tool-step` (so the Run panel, the event log and the Langfuse span tree
+  all show it, with `state.<channel> = <value>` as the span detail) and an illegal write comes back
+  as a typed `invalid_argument` result the model can read. Wrong-typed values are REFUSED, with the
+  one tolerance that a model's string forms of a boolean/number (`"true"`, `"3"`) are coerced —
+  rejecting those teaches nothing and burns a tool round.
+- **A5-review-H2-4 The supervisor sees the channels.** `route_<sup>`'s prompt gained a
+  `--- TEAM STATE ---` line listing the current channel values. It was already *routing* on them
+  (handoff guards are evaluated in the route node before the model is asked), but its own decision
+  was blind to the team's recorded state, which is the thing that makes a supervisor + guards
+  combination coherent.
+- **A5-review-H2-5 Shape (d) is an ENGINE shape, not a frozen fixture.** The new
+  `channel-guarded-handoff` lives in `parity-harness.ts` beside `P2_YAML` and is driven from
+  `parity.test.ts`, NOT added to `fixtureSpecs()`: a frozen fixture is a WALKER golden, the walker
+  is deleted, and `fixtures.test.ts` would (correctly) demand a `.json` that cannot exist. The
+  proof is the comparison of two runs of ONE graph — with the write and without it — plus the
+  undeclared-channel and wrong-type refusals and a node-narrowing test that reads the advertised
+  tools off the real model requests. Checklist **A8** is updated to cite it.
+- **A5-review-H2-6 The shipped team's yaml changed, so three files changed with it.**
+  `SOFTWARE_TEAM_YAML` declares the five channels (one-line purpose each) and four `agent_md`
+  blocks say which gate they record; `seed/software-team/system.yaml` is regenerated from the
+  constant (the byte-identical test) and the frozen fixture's `yaml` field is updated — which is
+  exactly the "a template edit must be a visible fixture change" that `fixtures.test.ts` asks for.
+  The fixture's GOLDEN is untouched: `software-team` is supervisor-driven, so its path comes from
+  the scripted route rule, and the scripted model never calls the setter.
+- **A5-review-H-3 The schedule CronJobs were wearing the deleted runtime's label.** A5 deleted the
+  runtime's dedicated egress policy and widened `allow-intra-namespace-egress` to `podSelector: {}`
+  with the note "there is nothing left to lock down here". There was: `schedule-cronjobs.yaml`
+  still labelled its pods `component: agent-runtime`, so a pod whose entire job is one `curl` to
+  os-ui inherited the whole in-namespace plane — and, through `allow-apiserver-egress` (which
+  carries no `to:`), 443/6443 to anywhere. Pods are now `component: agent-schedule`, excluded from
+  both blanket policies with the same `NotIn` the runtime used (an absent label still matches
+  `NotIn`, so nothing else loses its allow), and governed by `allow-agent-schedule-egress`:
+  `component: os-ui` port 3000, plus the namespace-wide DNS policy. Verified by rendering the chart
+  with one populated schedule.
+- **A5-review-H-1 / M-4 The token Secret moved to B2's file and stopped depending on its own
+  value.** A5 kept the Secret in `agent-runtime.yaml` to avoid conflicting with the data branch,
+  which had already moved it to `agent-runtime-token.yaml`; the merge would have had to resolve two
+  files defining one Secret. This branch now `git rm`s `agent-runtime.yaml` and carries B2's file
+  verbatim (A5-1's note moved into its header), so the merge sees one file with a comment-block
+  difference. B2's gate also happens to be the M-4 fix: it does not test `$r.token`, where A5's
+  `and $token (eq profile "local")` rendered nothing for `agentRuntime.token: ""` while
+  `_os-ui-env.tpl` mounts the key through a NON-optional `secretKeyRef` — os-ui would fail to
+  start. `helm template --set agentRuntime.token=` renders exactly one Secret and the reference.
+- **A5-review-M-1 An agent run id is owner-gated in Monitoring too.** `get_run_trace` used
+  `assertInScope`, which is builder-domain-wide AND answers 403 for an in-scope-but-foreign trace —
+  so a builder could read a colleague's agent run, and the 403/404 split confirmed a guessed id
+  exists. For `isRunId(id)` the tool now goes through `assertRunVisible` over the checkpoint's
+  owner stamp (`peekRunOwner`), the same gate as `get_agent_run`; an unreadable checkpointer falls
+  through to 404 rather than widening. Other trace ids keep the scope gate.
+- **A5-review-M-3 The judge route was a run-addressed door nobody had treated as one.** `POST
+  /api/agents/systems/<id>/evaluate` accepted a body `runId` and wrote a Langfuse SCORE on that
+  run's trace; `getSystem` is read-scope, so even the implicit `view.lastRun` can be a colleague's
+  run on a Shared system. The gate now runs before the judge's model call: an explicitly requested
+  foreign run is 404, the implicit fall-back scores nothing and still returns the verdict. Both
+  this route and `monitoring-tools.ts` joined the tripwire door list, which now also requires the
+  gate to precede `scoreTrace(` and `fetchTrace(`.
+- **A5-review-L-4 `list_runs` stays scope-wide — documented, not changed.** `filterScope` is the
+  Monitoring tab's own ladder, and the MCP must not be stricter than the UI it mirrors. What was
+  missing is that the two halves differ: the LISTING is scope-wide (a builder sees that a
+  colleague's run exists, its health and its cost), the CONTENTS are owner-only. Both tool
+  descriptions now say so, because `list_capabilities` is what an AI reads. Narrowing the listing
+  to the owner is a Monitoring-tab decision, with the UI, not an MCP-only change.
+- **A5-review-L-5 `holdAt: 'executor'` stays, as A5-9 already argued.** It has no production
+  caller — every graph node passes `'node'` — but gate 1b in the executor is the only hold a
+  non-graph caller would get, and its tests are the only proof the executor can hold at all.
+  Removing it would delete a defence and a test for no behaviour change. Recorded as a follow-up
+  for whoever retires the executor hold path entirely.
+- **What the review itself got slightly wrong.** (a) It said the declared channels "become real
+  typed state keys" as if none existed — they were already state keys with declared reducers
+  (`A9` tests that); what was missing was the TYPE and the WRITER. (b) It read `egress-policies.yaml`
+  policy 6 as deleted and the fix as "give them their own policy"; a narrow policy alone would not
+  have helped, because NetworkPolicy is additive — the `NotIn` exclusions in policies 3 AND 4 are
+  what makes it a lockdown. (c) `agentRuntime.enabled` no longer exists, so B2's `$needed` leans
+  on `osUI.enabled` / `dagster.enabled`; that is correct today but it is a gate on OTHER
+  components' flags, which is worth a second look when the data side lands.
 
 ---
 
@@ -328,9 +456,26 @@ deviations` below. New: `core/kernel/events.ts`, `scripts/check-trino-rules-char
 
 - [x] One commit path. `core/infra/git-store.ts` (isomorphic-git, MIT): `openOrInit(repo)`, `commitTree(repo, files, {author, message, trailers})` committing **iff the tree hash changed**, `log`, `readBlob`, `archive`, `push(mirror)`. Author = acting `CurrentUser` (name + email); committer = `Sovereign OS`. Message `<area>(<domain>): <action> <object> — via <mcp:tool | ui:<route>>`, trailers `OS-Action`, `OS-Object`, `OS-Surface`, `OS-Request-Id`. *(B1; `listTree` added; `CurrentUser` has no e-mail field — resolved through the user directory at boot, synthesized + declared otherwise, deviation B1-4.)*
 - [x] Repos: one bare repo per domain on PVC `os-repos` (RWO; os-ui is single-replica). Layout: `agents/<system>/{system.yaml,graph.ts,README.md}`, `dbt_project.yml`, `models/…`, `os/schedules.yml`. Served read-only in-cluster by a `git daemon` sidecar; NetworkPolicy limits consumers to the Dagster user-code pod. *(B1 ships the data half of the layout; `agents/<system>/…` is A2/A5's write into the same repo through the same store. The NetworkPolicy also keeps port 3000 open — os-ui had no ingress policy before, deviation B1-6. Chart objects render only with `osUI.dataProjectGit.enabled`.)*
-- [ ] **Every writer commits.** Agent store saves (`tabs/agents/lib/store.ts`), data store mutations (dataset, composition, check, sync, publish), and their MCP tools all route through the one commit path. A unit test enumerates the store's mutating exports and asserts each calls the commit builder (checklist X1). *(Data side DONE in B1 — `commit.test.ts` enumerates 31 mutators, flag on/off; the agent store is A2's area and still open.)*
+- [x] **Every writer commits.** Agent store saves (`tabs/agents/lib/store.ts`), data store mutations (dataset, composition, check, sync, publish), and their MCP tools all route through the one commit path. A unit test enumerates the store's mutating exports and asserts each calls the commit builder (checklist X1). *(Data side in B1 — `commit.test.ts` enumerates 31 mutators, flag on/off. Agents side NOW DONE: `writeThrough(rec, change)` takes a REQUIRED change descriptor or an explicit `null`, so the compiler forces the decision; `tabs/agents/lib/git/commit.test.ts` pins 17 committing writers × flag on/off plus 7 deliberately-not-committing run writers.)*
 - [x] Read access: `GET /api/<tab>/projects/<domain>` tree/log/blob at a ref; export as an archive at a commit; admin-only mirror config (URL + token Secret) with push-after-commit that reports but never blocks. *(Data tab routes in B1; the push itself is `kind`-only — checklist X2 untestable here.)*
-- [ ] Gates: checklist A2, A3, D2, D3, X1, X2.
+- [x] Gates: checklist A2, A3, D2, D3, X1, X2. *(A2 `true`, A3 `true`, D2/D3 `true` from B1, X1 `true`, X2 `true (unit)` with the real-remote half `untestable here`. A4 and A33 stay `false`/partial — see the checklist rows and deviation D-8.)*
+- [x] **X9 — agents use the data as context robustly** (added at the owner's request): bounded tool results, a per-call deadline, typed `timeout`/`upstream_error` steps, the runner's identity on the dispatch and the dataset in the run trace.
+
+#### Part D — what landed (agents half; five commits on `feat/engine-rebuild`)
+
+| Piece | Where |
+|---|---|
+| Subtree ownership in the ONE git store | `core/infra/git-store.ts` — `commitSubtree(domain, prefix, files, opts)` (replaces one prefix, keeps the rest; empty map = delete), `reserveSubtree`/`reservedSubtrees` (a whole-tree writer keeps a declared prefix), tree builder generalised to keep existing blobs by oid; `core/infra/git-store-subtree.test.ts` (6) |
+| Generator (pure, byte-stable) | `tabs/agents/lib/git/{snapshot,generate}.ts` — `agents/index.yml`, `agents/<slug>/{system.yaml,agents/<id>.md,graph.json,README.md}`, `agents/personal/<uid>/<slug>/…`; goldens `lib/git/fixtures/*.golden.json` (3 shapes incl. slug collisions + an unparseable source); `generate.test.ts` (12) |
+| One commit path + the event seam | `tabs/agents/lib/system-events.ts` (pure), `store.ts` `writeThrough(rec, change \| null)` + `systemsForProject` / `projectDomains`, `tabs/agents/lib/git/commit.ts` (`commitAgentSystem`, `installAgentProjectCommitHook`, per-domain serialisation, synchronous capture, two-repo cross-domain move), `instrumentation.ts`; `commit.test.ts` (49) |
+| Surface everywhere | `core/mcp/server.ts` wraps EVERY `tools/call` in `mcp:<tool>` (one place, so no tool can be forgotten — the data half benefits too); `app/api/agents/systems/[id]/build/route.ts` sets its own `ui:…` scope |
+| Boot reconcile | `tabs/agents/lib/git/reconcile.ts` (`reconcileAgentProjects`, `PLATFORM_ACTOR`, `OS-Reason: boot-reconcile`, domains = live systems ∪ repos already carrying `agents/`), wired in `instrumentation.ts` |
+| Read-back from the repo | `tabs/agents/lib/git/history.ts` (`systemGitInfo`, filtered on `OS-Object`), `get_agent_system`, `GET /api/agents/systems/<id>`, `SystemView.tsx` header line; `repo.test.ts` (7, against a REAL bare repo) |
+| Mirror push (X2) | `core/infra/git-mirror.ts` over B1's ONE record (same map symbol, same index, no second setter/credential path), `push` gains an injectable `http` transport, `gitMirrorRow` in `tabs/admin/lib/components-extra.ts` + the components route; `core/infra/git-mirror.test.ts` (8), `tabs/admin/lib/components-git-mirror.test.ts` (1) |
+| X9 | `tabs/agents/lib/engine/tool-result.ts` (`boundToolResult`, `callToolGuarded`, typed codes), `build-graph.ts` tools node, `os-tools.ts` typed `upstream_error`, `config.agentTool{ResultMaxChars,CallTimeoutMs}`, chart `soa.osUI.runEnv` (so the worker gets them), harness shape `agent-reads-gold-dataset`; `engine/data-context.test.ts` (9) |
+| Docs | `tabs/agents/README.md` ("Every change is a commit", "Agents use the data as context, robustly"), `os-ui/ARCHITECTURE.md` ("Git-based working: one repo per domain, two generators, one commit path"), `docs/components/os-ui.md`, `CHANGELOG.md` |
+
+**Gates at Part D:** `tsc --noEmit` clean · `npm --prefix os-ui test` **5246 tests, 0 failures, 4 todo** (5162 → 5246) · `check-structure` no new violations (TAB-ISOLATION 420/421, CORE-INDEPENDENCE 206/207, FILE-HEADER 1237/1240 — all below baseline, NOT re-locked) · `bash os-ui/scripts/gate.sh` exit 0 (**356 tests**, 8 files added) · `helm lint` + `helm template` with defaults and with `osUI.worker.enabled=true`, the two new env vars rendered for BOTH os-ui and the worker and absent when unset.
 
 ## Part E — The final document
 
@@ -531,6 +676,112 @@ After each full pass over Parts A, B and D: a read-only test agent scores `2026-
 
 - **Follow-ups recorded, not implemented (A4):** (1) other Langfuse readers are scope-filtered CLIENT-side rather than through `observationsQuery` — only the diagnostics route goes through the typed, refuses-unfiltered query; the rest fetch and then filter in the OS, which is correct today only because the OS is the one asking. (2) The three remaining embed sites (`indexWorkflow`, `indexDomain`, `indexAsset`) still bill the platform principal (A3-11); A4 threaded the two RETRIEVE sites only, because the index sites have no acting user in scope. (3) `BuildRunPanel.tsx` re-attaches with no `afterSeq`, so it replays the whole run on re-attach — the same behaviour the A2 replay buffer gave it, but now it could ask for only what it missed. (4) `run_events` has no retention; it joins the A13 item with the checkpoints and the held approval args. (5) **A4 review:** image-level verification that the worker's type stripping works is a `docker build` away and cannot run in the unit gate — the exact `docker run --rm --entrypoint node … --experimental-strip-types -e "import('./worker/agent-runs.ts')"` command is now step 4 of `docs/components/os-ui.md` → "Verify it in a cluster" and a post-build smoke step in `scripts/deploy.sh` (it imports the whole run-path graph without touching a database, so it fails loudly on a base image below Node 22.6 and on an alias mistake). (6) **A4 review:** raising the `pg` pool `max` for the worker only, together with the 64-tail ceiling, if a tenant ever needs more concurrent panels. (7) **A4 review:** the Run panel still re-attaches to a PARKED run with `afterSeq=0` (it has no seq to resume from, because frames carry no `seq`); sending `seq` on the wire would let the parked re-attach be incremental too.
 
+- **A5-1 `AGENT_RUNTIME_TOKEN`, `config.agentRuntimeToken` and the `agent-runtime-token` Secret are KEPT.**
+  The token outlived the workload it was named after. os-ui does not *present* it any more (there
+  is nothing to call), it **validates** it on the service paths the OS's own CronJobs hit:
+  `/api/agents/scheduled-run`, the metrics data-sync sweep and the connections catalog-refresh
+  sweep, all through `build/runtime-auth.ts` `runtimeTokenOk`. The data branch's Dagster sidecar
+  reads the same Secret (review finding B2 L-6 is moving it into its own template), so the Secret
+  stayed exactly where it was — `charts/.../base/agent-runtime/agent-runtime.yaml`, now a
+  Secret-only template, ungated and nil-safe — rather than being moved and conflicting with that
+  work. `agentRuntime` values shrank to `{ token, schedules }`. **Follow-up: drop the token (and
+  rename the key) once the data side has its own Secret template; this file and that template
+  carry the same note.**
+- **A5-2 The flag is REMOVED, not flipped.** The plan said "flip the default to `langgraph`, then
+  delete the flag". Flipping first buys a rollback that does not exist: the thing the flag would
+  roll back to is deleted in the same commit, so a `AGENTS_ENGINE=walker` after A5 would select an
+  engine that is not there. So: no default, no selector, no `runtime: walker`. What IS kept is a
+  single boot WARNING when the variable is still set — the one failure mode worth insuring against
+  is an operator who believes they pinned the old engine and is not told otherwise.
+- **A5-3 `runtime: hermes | walker` in a stored file is NORMALISED, not rejected.** The global
+  constraint is "existing `system.yaml` files must keep working unchanged". Removing the values
+  from the `Runtime` union would have made `parseSystem` throw on a saved file, i.e. a 400 on
+  every read of that system — unopenable, not just un-runnable. `parseSystem` therefore accepts
+  both retired names and returns `langgraph`; the serializer already omits the key, so the next
+  save rewrites the file without it. A1-10's requirement ("A5 must actually remove
+  `runtime: walker`") is met in the sense that mattered: there is no way to opt a system out of
+  the stricter rules.
+- **A5-4 `isAgenticOsTeam` is gone, replaced by `unmappedGrantNames(sys): string[]`.** The boolean
+  chose between the in-process path and the Python fallback; with one path the question is not
+  yes/no but *which grants have no governed tool behind them*, and that answer belongs in the
+  error the door returns. Two behaviour changes follow, both deliberate: (a) a system with NO tool
+  grants is now runnable (its agents are plain completions) — the old `grants.tools.length === 0`
+  refusal was an artefact of the fallback; (b) a system with an unmapped grant gets a 400 NAMING
+  the tool at the route / scheduler / MCP instead of being quietly routed to a weaker executor.
+- **A5-5 Build's graph step now compiles the real StateGraph** (`build/compile-verify.ts` →
+  `buildGraph` with inert deps). The plan only said to delete `live.ts`'s `/reload` path; deleting
+  it left the `langgraph` Build row with nothing to do, and the two things it used to do each
+  verified something the engine never executes (a POST of the IR to a Python interpreter; a
+  hand-rolled BFS in the mock adapter). Compiling needs no cluster, so live and offline now run
+  the SAME check — and it is the tripwire that `langgraph-compile.ts`'s output is CONSUMED rather
+  than merely emitted. Consequence: Build's Langfuse row is `pending` (neutral, `report.ok`
+  tolerates it) until the system has actually run, because its probe reads the traces a RUN leaves
+  behind and a build no longer manufactures them. Four test files were updated to assert that
+  instead of a fabricated trace.
+- **A5-6 `runtime-contract.ts` keeps its path, loses its name's meaning.** Only the WIRE types
+  were deleted (`/reload`, `/run`, the governed-tool callback, `RUNTIME_DEFAULTS`); `principalFor`
+  and `runCostUsd` live there and are imported by a dozen modules across three tabs and the
+  kernel. A rename would have been a 12-file diff for no behaviour change; the header now says
+  what the file is. Same reasoning for `build/agentic-graph.ts`, which is now the agent NODE layer
+  (it is still what one agent of a graph IS) and for the `templates/base/agent-runtime/` directory
+  (see A5-1).
+- **A5-7 The fixtures are FROZEN and `REGEN_FIXTURES` is deleted.** The generator ran the walker;
+  the walker is gone. Regenerating a "golden" from the engine under test would prove only that the
+  engine equals itself, and it would erase what the two guarded fixtures exist to record — the
+  walker visiting a node whose `when` guard is false. `fixtures.test.ts` therefore checks what can
+  still be checked without a generator (the set covers every shipped template + the team + the
+  three shapes, each file well-formed, carrying the current `SCRIPT_ID`, its yaml still matching
+  the shipped template, `guarded` matching the yaml, no orphans) plus one test that the guarded
+  fixture still records the defect. A new shape means a NEW fixture beside them.
+- **A5-8 The Runtime card lost its second option.** `RuntimeSelector.tsx` offered "Structured
+  (LangGraph)" and "Autonomous (Hermes)". Hermes never executed a system in this OS, so the second
+  card was a promise the product did not keep; the component is now one honest line about the
+  engine plus the safety presets (which are the real choice moment). `SystemView` stops passing
+  `hermesEnabled`; the API field and the hermes-gateway health row are left alone — that extension
+  is a separate component and not A5's business.
+- **A5-9 `holdAt: 'executor'` stays the DEFAULT.** After A5 the only production caller passes
+  `'node'`, so the option is single-valued in practice. It is kept because gate 1b in the executor
+  is defence in depth for any future caller that is not a graph node, and its tests are the only
+  thing that proves the executor can hold at all.
+- **A5-10 What proved wrong in the plan, and what the audit items actually needed.**
+  (a) The plan listed `runtime-contract.ts` for deletion; two widely-used pure helpers live in it
+  (A5-6). (b) It did not mention that deleting the Python runtime removes Build's `langgraph`
+  verify and `runSystem` entirely (A5-5), nor that `isAgenticOsTeam` becomes meaningless (A5-4).
+  (c) It called `AGENT_RUNTIME_TOKEN` an agents-side concern; it is in fact the shared bearer for
+  three CronJob paths across two tabs (A5-1). (d) **The audit item "diagnostics are owner-filtered"
+  was NOT satisfied before this phase:** the route filtered Langfuse observations by `traceId`,
+  and the trace id IS the run id, so a guessed run id returned another user's generations — the
+  same defect class as A4-review-H-1, one layer further out. Now `assertRunVisible` runs before
+  any trace read. (e) The audit item "`langgraph-compile.ts` output is consumed" was already true
+  on the RUN path (`compile` → `buildGraph`) but FALSE on the Build path, which only counted the
+  IR's nodes; A5-5 fixes that and `agent-run-surface.test.ts` + `live.test.ts` are the tripwires.
+- **A5-11 (REWRITTEN in the review round — the original was wrong) `grant-rehydrate.ts` was DEAD
+  CODE, and deleting it changes no gate.** The original note said that because the module is never
+  imported, "after a pod restart an `os-<systemId>` principal's grants are NOT rehydrated and gate
+  1a falls through to the static chart grants" — implying a live agent-path defect. It is not one.
+  The app-registry grant map is read by exactly one function, `authorizeAppTool`
+  (`core/infra/agent-governed.ts`), and that function is called from exactly one place:
+  `tabs/software/lib/app-tool-call.ts`, the **auto-generated app MCP** path of the Software tab.
+  The AGENT path never consults it: an agent's tools are narrowed by `grantedToolSpecs` and
+  executed by `grantedToolExecutor` (`tabs/agents/lib/build/os-tools.ts`), both of which read the
+  system YAML's own grants in-process (gate 1/1b) before dispatching as the acting user (gate 2) —
+  and the engine additionally narrows per node in `tools_<id>`. So on the agent path the module is
+  neither fail-open nor fail-closed; it is simply unreachable. On the APP path, `grantsForDurable`
+  with no registered resolver is **fail-closed** by construction (`core/infra/app-registry.ts`:
+  `if (!resolver) return existing;` → the in-memory set, then OPA's default-deny), which is what
+  happens today anyway because nothing imports the registrant. The review round therefore `git
+  rm`'d `grant-rehydrate.ts` and its test rather than wiring a resolver nobody asked for.
+  **Follow-up (app path, not agents):** `registerDurableGrantResolver` now has no caller at all,
+  and the comment above `authorizeAppTool` still describes grants that "self-heal" from a durable
+  record after a restart. Either the Software tab registers a resolver of its own or that comment
+  should go; both live in `core/infra` / `tabs/software` and were left to their owners.
+- **A5-12 The repo-wide grep does not come back empty, by design.** `walker` / `agent-runtime` /
+  `AGENT_RUNTIME` still appear in: the KEPT shared bearer and its Secret name (A5-1); historical
+  "A5 deleted X" notes in the files that lost the code; the frozen parity fixtures and their tests,
+  which exist to describe the walker; `llm-replay.ts`, whose purpose was recording for both
+  engines; and the unrelated pure `tree-walker` in `tabs/software/lib/appspec/`. No live code path
+  references either. `tabs/data/**` keeps `config.agentRuntimeTokenSecret*` (its CronJobs use the
+  same bearer) and was not touched — that tree belongs to the data branch.
 - **B1-1 The store emits events; it does not import the commit path.** `tabs/data/lib/store.ts` is reachable from the client bundle through `lib/index.ts` (the `markDatasetsSourceRevoked` comment records that even a dynamic import of a node-only module there broke the production build). So the store emits a pure `ProjectChange` (`tabs/data/lib/project-events.ts`) from its one `persist()` and from every writer that bypasses it, and the server-only `dbt/commit.ts` subscribes at boot. One code path for commits still holds — the listener is the only caller of `commitDataProject`; a second listener would be visible in `instrumentation.ts`.
 - **B1-2 Model bodies come from the compiled artifact recorded at build, not from a re-run of the compilers at generation time.** *(Corrected in B2 — review M2: the sentence below said "the recorded body IS `compileSilver`/`compileGoldJoin`'s output". That was only true for bodies the OS itself compiled; `add_dataset_version` and the version route accept a free-text `body` through the same field, and the generator rendered it as a model, so user text was handed to Jinja at `dbt parse`. The store now records provenance and ONLY a compiled body becomes a model — see B2-1. The last sentence below, "a built layer with no recorded body renders a commented pass-through", is also superseded: such a layer is a dbt source now.)* The Silver guided ops are not persisted (only `compileSilver`'s CTAS is, via `buildVersion({body})`), and the Gold `goldSpec` is the panel's own vocabulary converted client-side — the server never held a `GoldJoinSpec`. Recompiling would have meant re-implementing the panel's mapping on the server (drift risk). The recorded body IS `compileSilver`/`compileGoldJoin`'s output, so the generator strips `create or replace table … as` and rewrites FQNs; the pure parity test asserts byte equality with `compileGoldJoin` after substitution. A built layer with no recorded body (seeded / adopted) renders a commented pass-through of the layer below, never a stub.
 - **B1-3 Surface via AsyncLocalStorage, not threaded signatures.** Adding `{surface, requestId}` to every store mutator would have touched ~30 signatures and every caller (several in A2's area). `core/infra/request-surface.ts` sets the scope in `withRoute` (all wrapped routes), in the data MCP tools (`mcp:<tool>`) and in the two hand-rolled data POST routes; the hook reads it synchronously at mutation time. Gap, logged at runtime as `ui:data`: writers outside any scope — e.g. the scheduled sync marking Bronze built (`sync-run-server.ts`, no request) and agent-side callers (`tabs/agents/**`, not touched). There is no request-id convention in the OS yet; one is minted per scope (`req_<16 hex>`).
@@ -899,3 +1150,104 @@ reason is here.
   were not added; nothing was aliased or renamed, so no deprecation window is open.
 
 - **B2-11 What still needs the live cluster:** that a scheduled sync materialises in kind under the owner principal (D7, D10); that `dagster-k8s/config` really propagates `OS_PRINCIPAL` / `OS_PINNED_COMMITS` into run pods; that the subchart honours `sidecarContainers` / `volumes` / `volumeMounts` and an `env` entry with `valueFrom`; that `reloadRepositoryLocation` succeeds against the webserver Service; that the webserver's GraphQL schema matches the documents in `core/infra/dagster.ts` (field names were taken from Dagster 1.13's schema, not probed); and that `Definitions`-based locations really report the repository name `__repository__`.
+
+
+#### Part D deviations (agents half, five commits on `feat/engine-rebuild`) — `D-n`
+
+- **D-1 One repository, two OWNED SUBTREES — and the git store learned the concept.** `commitTree`
+  writes the whole desired tree, so the data generator's next commit would have DELETED
+  `agents/**`, and an agents generator written the same way would have deleted the dbt project.
+  Rather than teach either generator about the other (they are in different tabs and may not
+  import each other), `core/infra/git-store.ts` gained two generic primitives: `commitSubtree`
+  (replace exactly one path prefix, keep every other path at its current blob — so an EMPTY file
+  map is how a deletion is recorded) and `reserveSubtree(prefix)` (a whole-tree writer keeps paths
+  under a declared prefix that its own map does not mention). The registry holds path prefixes and
+  nothing else, so the store still knows nothing about datasets or systems. The reservation is
+  deliberately NOT implicit: without it, `commitTree` behaves exactly as before, which is what the
+  B1 tests assert.
+- **D-2 ONE switch, keeping its historical name.** `DATA_PROJECT_GIT` gates both halves. The
+  repository, the `os-repos` PVC and the read-only `git daemon` sidecar it provisions are shared,
+  so a second flag could only ever disagree with itself (git on for agents, off for data = an
+  `agents/` subtree in a repo nothing else maintains). Renaming the variable would touch
+  `tabs/data/**`, the chart and four docs for no behaviour change; it is a follow-up, recorded
+  here so nobody mistakes the name for a scope.
+- **D-3 PERSONAL systems live in the DOMAIN repo, in the owner's lane — mirroring B1.** The brief
+  allowed "the user's personal repo if B1 has that concept". It does not: B1 puts an un-promoted
+  dataset in the domain repo under `models/personal/<uid>/` with `+schema: personal_<uid>`, and
+  documents (`tabs/data/README.md` → "Who can read what") that every domain member can therefore
+  read every member's dataset DEFINITIONS while the DATA stays governed. The agents half mirrors
+  that decision exactly — `agents/personal/<uid>/<slug>/` — so one repository keeps one
+  convention and the read gate stays one gate. The same caveat applies and is now stated in
+  `tabs/agents/README.md`: a Personal system's definition (its prompts and its grant NAMES, never
+  a credential) is readable by the domain, which is wider than the Agents tab's own listing.
+- **D-4 The slug follows the display name; the ID is the identity.** A directory is
+  `<slug(name)>`, so a rename MOVES the directory and a promotion moves it out of the personal
+  lane — which is what an engineer reading the tree expects, and what makes the path meaningful.
+  Identity is carried by `agents/index.yml` (slug → id, owner, scope, version) and by the
+  `OS-Object: <id> (<name>)` trailer, which is also what `systemGitInfo` filters on — so a
+  rename, a lane move and even a delete stay in ONE history. Collisions are resolved
+  deterministically in id order (`<slug>-<id suffix>` for the later claimant), and a domain-scope
+  system that would slug to `personal` is disambiguated so it can never shadow the personal lane.
+- **D-5 The mirror is ONE config read by two modules, not one module.** The brief said "reuse
+  B1's mirror config and credential handling exactly — do not add a second config", and the admin
+  write path with its validation (http(s) only, no embedded credentials, egress allowlist, the
+  Secret must exist) lives in `tabs/data/lib/dbt/mirror.ts` — which the agents tab may not import
+  and which this phase must not edit (Phase B4 is live in that tree). `core/infra/git-mirror.ts`
+  therefore reads and writes the SAME record: the same `globalThis` symbol
+  (`soa.data.project-mirrors`) and the same durable index (`config.dataProjectMirrorsIndex`), with
+  no setter and no second validation of its own. The consequence is two push wrappers over one
+  record and one credential path; the health row reads the record's status, so it tells the truth
+  about whichever side pushed last. **Follow-up:** collapse `tabs/data/lib/dbt/mirror.ts` onto
+  `core/infra/git-mirror.ts` (keeping its setter) once B4 has landed.
+- **D-6 `OS-Reason` is additive, not a rename of `OS-Action`.** Part D's prose said "`OS-Actor` +
+  `OS-Reason` trailers"; B1 shipped the per-write reason as `OS-Action` and the whole data history
+  uses it. Renaming it would have rewritten the convention for every existing commit's reader, so
+  `OS-Action` stays the action and `OS-Reason` is added only where the CAUSE differs from the
+  action — today exactly one case, `boot-reconcile`.
+- **D-7 A BUILD commits; a RUN does not.** `setLastBuild` is a definition-level fact (this
+  definition built, or failed to, at this time) and the generated README states it, so a build is
+  a commit. Every run writer (`setActivity`, `clearActivity`, `startRunCheckpoint`,
+  `checkpointNode`, `setLastRun`, `recordActivity`, `recoverInterrupted`) is
+  `writeThrough(rec, null)`: a run's artefacts are the LangGraph checkpoint, the `run_events` rows
+  and the Langfuse trace, and committing per node would bury every real change under run noise.
+  `setRunning` and `setSchedule` DO commit — enabling or scheduling a system is a configuration
+  act an engineer would commit, exactly like a dbt schedule.
+- **D-8 A4 (run the export outside the OS) is NOT closed, and `graph.json` is why.** The committed
+  IR is the compiled graph in a readable, diff-able form — which is checklist A3's requirement and
+  the brief's — but it is not a runnable artefact: executing it still needs `buildGraph`, the
+  governed executor and the LiteLLM credential, i.e. this repository. Emitting a standalone
+  `graph.ts` + a thin runner is a real piece of work (the node bodies, the hold decision and the
+  tool specs all have to be expressible without `@core`), so A4 stays `false` with the exact gap
+  named rather than being half-claimed. What IS true today: the whole repository, `agents/**`
+  included, is readable and exportable as a tar through the existing project routes.
+- **D-9 The MCP surface was fixed in ONE place, for every tool.** B1 wrapped each data MCP tool
+  individually (`runWithSurface('mcp:<tool>')`), which left every other tool — including the
+  generic `archive` / `delete` / promotion-ladder tools that mutate an agent system — recording the
+  default `ui:` surface. `core/mcp/server.ts` now wraps the single `tools/call` dispatch instead,
+  so no tool surface can be forgotten; the per-tool wrappers simply nest with the same name.
+- **D-10 X9's guardrails are the ENGINE's, and a thrown dispatch is still a crash.** The brief
+  asked for a typed `timeout` / `upstream_error` the graph routes on. The deadline produces
+  `timeout` as a typed result (there is no exception to propagate and nothing to resume onto).
+  A THROW out of the governed executor is deliberately NOT converted: it means the dispatch itself
+  broke, and A2's M5 property — the superstep fails, the checkpoint keeps every call that already
+  ran, and a resume re-runs exactly the one in flight — is worth more than a readable message that
+  invites the model to continue from an unverified state. What the model now gets instead is a
+  TYPED `upstream_error` from the executor's own JSON-RPC-error branch (previously the prose
+  `Error: <message>`), so an upstream failure is routable on a code.
+- **D-11 Follow-up in `tabs/data` (not done here, by instruction).** The real `query_data` handler
+  has no row cap, no `LIMIT` injection and no `request_timeout` of its own: it runs the SQL the
+  model wrote and returns every row. The engine-side bound and deadline protect the RUN (and every
+  other tool), but the Trino query itself still executes in full and the full result still crosses
+  the process boundary once. The handler should also (a) bound its own result set, (b) carry a
+  statement timeout, and (c) report the true row count beside the truncated rows. That belongs to
+  the next iteration in `tabs/data/mcp/data-query-tools.ts` + `core/infra/governed.ts`.
+- **D-12 What proved wrong in the plan.** (1) "Layout: `agents/<system>/{system.yaml,graph.ts,
+  README.md}`" — `graph.ts` cannot be generated honestly (D-8), so the compiled graph is
+  `graph.json`, and each agent's prompt is its own `agents/<id>.md` rather than being buried in
+  the yaml only. (2) Part D assumed the agent store could be hooked the way the data store was;
+  it could, but only after `writeThrough` was given a required change descriptor — the data side's
+  `persist()` + 11 bypassing writers pattern would have left 22 call sites silently deciding by
+  omission. (3) The plan's X2 wording ("`kind` with a local bare remote") is not achievable with
+  isomorphic-git: it speaks only smart-HTTP, so a local bare repo is not a valid remote. The unit
+  half is therefore a FAKE TRANSPORT at the isomorphic-git boundary (which is where the brief
+  allowed it), and the `kind` half needs a real git server.

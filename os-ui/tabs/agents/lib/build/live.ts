@@ -11,15 +11,8 @@ import {
 } from '@tabs/agents/lib/routing';
 import { type Decision } from '@tabs/agents/lib/gateway';
 import { type BuildAdapter, type StepResult } from '@tabs/agents/lib/build/adapter';
-import {
-  type ReloadRequest,
-  type ReloadResponse,
-  type RunRequest,
-  type RunResponse,
-  principalFor,
-  reloadRequest,
-  runRequest,
-} from '@tabs/agents/lib/build/runtime-contract';
+import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
+import { compileVerify } from '@tabs/agents/lib/build/compile-verify';
 
 /**
  * The 4 LIVE Build adapters (Approach A) — the real apply→verify against the
@@ -39,8 +32,10 @@ import {
  *   • litellm  — idempotent /key/generate (alias os-<id>, routed models, budget +
  *                per-model caps, rpm/tpm); verify /key/info + routing resolves
  *                light→Standard, reasoning→Reasoning.
- *   • langgraph— compile()→IR→runtime /reload; verify runtime /run reaches END with
- *                every tool call governed and no granted tool denied.
+ *   • langgraph— compile()→IR→`buildGraph` (the REAL StateGraph the run path executes);
+ *                verify re-compiles and reports the node set, the step budget and every
+ *                compile warning. A5 replaced a POST to the Python runtime's /reload +
+ *                a mock test-invocation with the actual compile, in this process.
  *   • langfuse — ensure the project; verify a trace landed for the test invocation.
  */
 
@@ -70,11 +65,6 @@ export interface LiteLlmClient {
   models(): Promise<string[]>;
 }
 
-export interface RuntimeClient {
-  reload(req: ReloadRequest): Promise<ReloadResponse>;
-  run(req: RunRequest): Promise<RunResponse>;
-}
-
 export interface LangfuseClient {
   ensureProject(name: string): Promise<void>;
   /** How many traces have landed for the system principal (os-<id>). */
@@ -99,7 +89,6 @@ export const DEFAULT_KEY_CAPS: KeyCaps = {
 export type LiveDeps = {
   opa: OpaClient;
   litellm: LiteLlmClient;
-  runtime: RuntimeClient;
   langfuse: LangfuseClient;
   caps?: KeyCaps;
 };
@@ -243,20 +232,23 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
   const langgraph: BuildAdapter = {
     tool: 'langgraph',
     async apply(ctx) {
-      const res = await deps.runtime.reload(reloadRequest(ctx.systemId ?? 'sys', ctx.ir));
-      if (!res.ok) return fail(res.error ?? 'runtime /reload failed');
-      if (res.nodes !== ctx.ir.nodes.length) {
-        return fail(`runtime reloaded ${res.nodes} node(s), expected ${ctx.ir.nodes.length}`);
-      }
-      return ok(`graph reloaded — ${res.nodes} node(s), entrypoint '${res.entrypoint}'`);
+      // A5: the graph is COMPILED here, with `buildGraph` — the same function the run path
+      // calls. A build that passes therefore proves the StateGraph the engine will execute can
+      // be constructed from this system.yaml: unmapped grants, a disabled entrypoint, a
+      // malformed `when` guard and a channel shadowing an engine key all fail HERE.
+      const built = await compileVerify(ctx.system, ctx.ir);
+      if (!built.ok) return fail(built.error);
+      return ok(`graph compiled — ${built.nodes} agent(s), entrypoint '${ctx.ir.entrypoint}', step budget ${built.stepBudget}`);
     },
     async verify(ctx) {
-      const res = await deps.runtime.run(runRequest(ctx.systemId ?? 'sys', ctx.probe ?? 'Build verification'));
-      if (res.error) return fail(res.error);
-      if (!res.reachedEnd) return fail('test invocation did not reach END');
-      const denied = res.steps.filter((s) => s.effect === 'deny').map((s) => s.tool);
-      if (denied.length > 0) return fail(`granted tool(s) blocked during the run: ${denied.join(', ')}`);
-      return ok(`test invocation ran ${res.path.join(' → ')} (${res.steps.length} governed tool call(s))`);
+      const built = await compileVerify(ctx.system, ctx.ir);
+      if (!built.ok) return fail(built.error);
+      // Compile warnings are not failures (a guard over a channel nothing sets still routes —
+      // to false), but they must be SEEN. The row stays ✓ and says what is wrong.
+      const detail =
+        `${built.graphNodes} graph node(s) over ${built.nodes} agent(s); recursion limit ${built.recursionLimit}` +
+        (built.warnings.length > 0 ? ` — warnings: ${built.warnings.join('; ')}` : '');
+      return ok(detail);
     },
   };
 

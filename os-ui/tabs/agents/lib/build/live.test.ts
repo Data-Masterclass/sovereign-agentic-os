@@ -4,23 +4,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
+import { parseSystem } from '@tabs/agents/lib/system-schema';
 import { type Decision } from '@tabs/agents/lib/gateway';
 import { orchestrateBuild } from '@tabs/agents/lib/build/orchestrate';
 import {
   type OpaClient,
   type LiteLlmClient,
-  type RuntimeClient,
   type LangfuseClient,
   type LiveDeps,
   makeLiveAdapters,
 } from '@tabs/agents/lib/build/live';
-import { type ReloadRequest, type RunRequest, type RunResponse } from '@tabs/agents/lib/build/runtime-contract';
 
 /**
  * Live-adapter unit tests run the REAL adapter logic against in-memory FAKES that
- * behave like OPA / LiteLLM / the runtime / Langfuse — so apply→verify
- * is genuinely exercised (the cardinal rule: ✓ only when both pass) without any
- * network or STACKIT.
+ * behave like OPA / LiteLLM / Langfuse — so apply→verify is genuinely exercised
+ * (the cardinal rule: ✓ only when both pass) without any network or STACKIT.
+ *
+ * A5: there is no runtime fake any more. The `langgraph` adapter used to POST the compiled
+ * IR to the Python `agent-runtime` `/reload` and then ask it for a test `/run`; it now
+ * COMPILES the real StateGraph in this process (`compileVerify` → `buildGraph`), so the
+ * adapter needs no injected client and the fake that pretended to be an interpreter is gone.
+ * The Langfuse row is consequently `pending` after a build — honestly, because its probe
+ * reads the traces a RUN leaves behind and a build no longer performs one.
  */
 
 const YAML = `
@@ -78,35 +83,6 @@ function fakeLitellm(): LiteLlmClient & { keys: Map<string, unknown> } {
   };
 }
 
-/** A runtime fake that walks the IR like the real interpreter would. */
-function fakeRuntime(opa: OpaClient): RuntimeClient & { reloaded: Map<string, ReloadRequest> } {
-  const reloaded = new Map<string, ReloadRequest>();
-  return {
-    reloaded,
-    async reload(req: ReloadRequest) {
-      reloaded.set(req.systemId, req);
-      return { ok: true, systemId: req.systemId, nodes: req.ir.nodes.length, entrypoint: req.ir.entrypoint };
-    },
-    async run(req: RunRequest): Promise<RunResponse> {
-      const r = reloaded.get(req.systemId);
-      if (!r) return { ok: false, reachedEnd: false, path: [], steps: [], traces: 0, error: 'system not reloaded' };
-      const ir = r.ir;
-      const path: string[] = [];
-      const steps: RunResponse['steps'] = [];
-      const principal = `os-${req.systemId}`;
-      for (const n of ir.nodes) {
-        if (req.disabledAgents.includes(n.id)) continue;
-        path.push(n.id);
-        for (const tool of n.tools) {
-          const d = await opa.decision(principal, tool);
-          steps.push({ node: n.id, tool, effect: d.effect, ran: d.effect === 'allow' });
-        }
-      }
-      return { ok: true, reachedEnd: true, path, steps, traces: steps.length, output: 'ok' };
-    },
-  };
-}
-
 function fakeLangfuse(): LangfuseClient & { projects: Set<string>; traces: Map<string, number> } {
   const projects = new Set<string>();
   const traces = new Map<string, number>();
@@ -129,29 +105,16 @@ function deps(): LiveDeps & {
 } {
   const opa = fakeOpa();
   const langfuse = fakeLangfuse();
-  const runtime = fakeRuntime(opa);
-  // Wire the langgraph run's traces into Langfuse the way os-ui does (every
-  // governed tool call traced). The runtime fake doesn't trace; simulate it by
-  // counting after the run via a wrapper.
-  const tracedRuntime: RuntimeClient = {
-    reload: runtime.reload,
-    async run(req) {
-      const res = await runtime.run(req);
-      langfuse.traces.set(`os-${req.systemId}`, (langfuse.traces.get(`os-${req.systemId}`) ?? 0) + res.traces);
-      return res;
-    },
-  };
   return {
     opa,
     litellm: fakeLitellm(),
-    runtime: tracedRuntime,
     langfuse,
   };
 }
 
 // --------------------------------------------------------------- tests ----------
 
-test('the 4 live adapters build all-green against the fakes', async () => {
+test('the live adapters build all-green against the fakes (Langfuse pending until a run)', async () => {
   const d = deps();
   const report = await orchestrateBuild({
     yaml: YAML,
@@ -161,7 +124,12 @@ test('the 4 live adapters build all-green against the fakes', async () => {
   });
   assert.equal(report.ok, true, JSON.stringify(report.rows, null, 2));
   assert.deepEqual(report.rows.map((r) => r.tool).sort(), ['langfuse', 'langgraph', 'litellm', 'opa']);
-  for (const r of report.rows) assert.equal(r.status, 'ok', `${r.tool}: ${r.error ?? ''}`);
+  for (const r of report.rows) assert.notEqual(r.status, 'fail', `${r.tool}: ${r.error ?? ''}`);
+  // Langfuse is the one NEUTRAL row: its probe reads the traces a RUN produced, and a build
+  // no longer fakes a run to manufacture them.
+  const byTool = new Map(report.rows.map((r) => [r.tool, r]));
+  for (const t of ['opa', 'litellm', 'langgraph']) assert.equal(byTool.get(t)!.status, 'ok', t);
+  assert.match(byTool.get('langfuse')!.detail, /run the agent once/);
 });
 
 test('opa grants the system principal + holds the write tool for approval', async () => {
@@ -202,23 +170,43 @@ test('litellm apply is idempotent (an already-provisioned key is not regenerated
   assert.strictEqual(d.litellm.keys.get('os-sys_live'), before, 'key object unchanged on re-build');
 });
 
-test('langgraph reloads the compiled IR and the run reaches END with every tool governed', async () => {
+test('langgraph COMPILES the real StateGraph and reports its node set, budget and warnings', async () => {
   const d = deps();
-  await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
-  const reloaded = (d.runtime as unknown as { reloaded?: Map<string, ReloadRequest> }).reloaded;
-  // reloaded map lives on the inner fake; assert via a fresh run instead:
-  const res = await d.runtime.run({ systemId: 'sys_live', prompt: 'p', recursionLimit: 25, timeoutMs: 1000, disabledAgents: [] });
-  assert.equal(res.reachedEnd, true);
-  assert.ok(res.steps.length >= 2, 'each node tool produced a governed step');
-  assert.ok(res.steps.every((s) => (s.effect === 'allow') === s.ran), 'ran iff allowed');
-  void reloaded;
+  const report = await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
+  const row = report.rows.find((r) => r.tool === 'langgraph')!;
+  assert.equal(row.status, 'ok', row.error ?? '');
+  const ir = compile(parseSystem(YAML));
+  assert.match(row.detail, new RegExp(`${ir.nodes.length * 4} graph node\\(s\\)`), 'four LangGraph nodes per agent');
+  assert.match(row.detail, /recursion limit \d+/);
 });
 
-test('langfuse ensures the project and verify sees the run trace', async () => {
+test('langgraph FAILS the build when the graph cannot be compiled (an unmapped legacy grant)', async () => {
   const d = deps();
-  await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
+  const report = await orchestrateBuild({
+    yaml: YAML.replace('tools: [retrieve, write_file]', 'tools: [retrieve, web_fetch]').replace('tools: [write_file]', 'tools: [web_fetch]'),
+    systemId: 'sys_unmapped',
+    adapters: makeLiveAdapters(d),
+    probe: 'p',
+  });
+  const row = report.rows.find((r) => r.tool === 'langgraph')!;
+  assert.equal(row.status, 'fail');
+  assert.match(row.error ?? '', /web_fetch/, 'the build names the grant that has no governed tool');
+  assert.equal(report.ok, false);
+});
+
+test('langfuse ensures the project; its verify is PENDING with no run, and ✓ once a run has traced', async () => {
+  const d = deps();
+  const first = await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
   assert.ok(d.langfuse.projects.has('os-sys_live'));
-  assert.ok((await d.langfuse.tracesFor('os-sys_live')) > 0);
+  assert.equal(await d.langfuse.tracesFor('os-sys_live'), 0, 'a build performs no run, so it leaves no trace');
+  assert.match(first.rows.find((r) => r.tool === 'langfuse')!.detail, /run the agent once/);
+
+  // A real run traces every governed tool call; the next build reports it.
+  d.langfuse.traces.set('os-sys_live', 3);
+  const second = await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
+  const row = second.rows.find((r) => r.tool === 'langfuse')!;
+  assert.equal(row.status, 'ok');
+  assert.match(row.detail, /3 trace\(s\)/);
 });
 
 test('CARDINAL RULE — a failing verify surfaces ✗ (opa grants silently dropped)', async () => {

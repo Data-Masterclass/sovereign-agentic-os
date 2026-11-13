@@ -11,7 +11,6 @@
  * so credentials/keys never reach the browser.
  */
 import { parseEnabledTabs } from '@core/kernel/tabs';
-import { parseAgentsEngine } from '@core/kernel/agents-engine';
 import { parseAgentsWorkerMode } from '@core/kernel/agents-worker';
 
 function env(name: string, fallback: string): string {
@@ -85,14 +84,12 @@ export const config = {
   // sample-agent (LangGraph RAG): GET {SAMPLE_AGENT_URL}/ask?q=...
   sampleAgentUrl: base(env('SAMPLE_AGENT_URL', 'http://sample-agent:8000')),
 
-  // agent-runtime (shared LangGraph IR interpreter, Agents tab live execution):
-  // POST {AGENT_RUNTIME_URL}/reload  {systemId, ir}  — register a compiled graph;
-  // POST {AGENT_RUNTIME_URL}/run     {systemId, prompt, ...guards} — one invocation.
-  // The runtime holds ONLY its scoped LiteLLM key + can reach ONLY LiteLLM, this
-  // governed-tool endpoint and Forgejo-read (Cilium default-deny egress).
-  agentRuntimeUrl: base(env('AGENT_RUNTIME_URL', 'http://agent-runtime:8000')),
-  // Shared bearer the runtime presents to the os-ui governed-tool endpoint (the
-  // ONLY way the runtime reaches OPA/Langfuse — it has neither itself). Server-only.
+  // The shared SERVICE BEARER. A5 (engine rebuild) deleted the Python `agent-runtime` this
+  // was named after — and with it `AGENT_RUNTIME_URL`, `/reload`, `/run` and the
+  // governed-tool callback. The token stayed because os-ui VALIDATES it on the service
+  // paths its own CronJobs call: the agent scheduled-run receiver, the metrics data-sync
+  // sweep and the connections catalog-refresh sweep (`build/runtime-auth.ts`
+  // `runtimeTokenOk`). Renamed when the data side owns the Secret. Server-only.
   agentRuntimeToken: env('AGENT_RUNTIME_TOKEN', DEV_DEFAULT_AGENT_RUNTIME_TOKEN),
   // Agent SCHEDULE CronJobs (Agents tab). Saving a `cron` schedule provisions a
   // batch/v1 CronJob in the platform namespace that curls the scheduled-run
@@ -366,13 +363,10 @@ export const config = {
   // Each node is clamped to whatever is LEFT of this budget; the run stops early and
   // degrades gracefully once it is spent. Env-overridable.
   agentTeamRunMaxSteps: Number(env('AGENT_TEAM_RUN_MAX_STEPS', '')) || 400,
-  // Agent ENGINE (engine rebuild, plan 2026-11-13, Phases A0→A5). Which executor runs an
-  // agent system: `walker` = the hand-rolled deterministic IR walk (tabs/agents/lib/build/
-  // agentic-graph.ts, today's only implemented engine); `langgraph` = the real StateGraph
-  // engine (tabs/agents/lib/engine, lands in Phase A1). A system may pin `runtime: walker`
-  // in its system.yaml to opt out (tabs/agents/lib/engine/select.ts). Unknown values fall
-  // back to `walker`. The default flips to `langgraph` only in the deletion phase (A5).
-  agentsEngine: parseAgentsEngine(process.env.AGENTS_ENGINE),
+  // AGENTS_ENGINE is GONE (engine rebuild A5). There is one engine — the real StateGraph in
+  // `tabs/agents/lib/engine/` — and no flag to select another, because there is no other. An
+  // environment that still SETS the variable gets a deprecation line at boot
+  // (`instrumentation.ts`) saying it is ignored, rather than silently behaving as if it mattered.
   // LangGraph checkpoint store for the `langgraph` engine (engine rebuild, Phase A1): the
   // `agent_runs` database on the CNPG cluster (chart: postgres.extraDatabases → the os-ui
   // Deployment composes this URL from `postgres-agent-runs-credentials`). Thread id = run id;
@@ -392,6 +386,16 @@ export const config = {
   // this is re-queued once (the thread resumes from its checkpoint), then failed. Must exceed
   // the longest superstep (one model call + one tool call); default 10 minutes.
   agentsWorkerLeaseMs: Math.max(60_000, Number(env('AGENTS_WORKER_LEASE_MS', '600000')) || 600_000),
+  // X9 — the engine's guardrails on EVERY agent tool call (engine rebuild Part D).
+  // `AGENT_TOOL_RESULT_MAX_CHARS`: a tool result longer than this is TRUNCATED before it enters
+  // the prompt, with a visible marker naming the kept and total rows (or characters) — a silently
+  // shortened answer is how an agent reaches a confident wrong conclusion. ~20k chars ≈ 5k tokens.
+  // `AGENT_TOOL_CALL_TIMEOUT_MS`: one tool call's deadline. Exceeded ⇒ a typed `timeout` tool
+  // result the graph routes on, so a slow Trino query ends the step instead of hanging the run.
+  // Both are read where the graph deps are wired (`build/agentic-graph-server.ts`) and apply to
+  // every tool, not just the data ones — see tabs/agents/lib/engine/tool-result.ts.
+  agentToolResultMaxChars: Math.max(500, Number(env('AGENT_TOOL_RESULT_MAX_CHARS', '20000')) || 20_000),
+  agentToolCallTimeoutMs: Math.max(1_000, Number(env('AGENT_TOOL_CALL_TIMEOUT_MS', '60000')) || 60_000),
   // How much of a model call the run observer records in Langfuse (A3 review M-2). `structure`
   // (default): roles + character counts for message content, the tool-call structure (names,
   // ids, arguments) and a 160-char result preview. `strict`: argument KEY NAMES + character

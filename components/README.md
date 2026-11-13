@@ -7,7 +7,7 @@ version). No Dockerfile that adds layers, no templates, no scripts, no configura
 Everything we wrote — Helm templates, init jobs, policies, clients — lives in the chart or in
 the tab that owns it. If a file here would contain our code, it is in the wrong place.
 
-The images we build ourselves (os-ui, agent-runtime, egress-proxy, web-fetch, mock-model, dbt,
+The images we build ourselves (os-ui, egress-proxy, web-fetch, mock-model, dbt,
 dagster user code, data-runner, query-tool) are under `images/`, not here.
 
 | Component | Licence |

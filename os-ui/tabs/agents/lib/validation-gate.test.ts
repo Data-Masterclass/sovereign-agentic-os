@@ -65,9 +65,14 @@ async function assertBuildsAndVerifies(systemId: string): Promise<void> {
   assert.equal(report.ok, true, `Build should verify; rows: ${JSON.stringify(report.rows)}`);
   const tools = report.rows.map((r) => r.tool).sort();
   assert.deepEqual(tools, ['langfuse', 'langgraph', 'litellm', 'opa']);
-  for (const r of report.rows) assert.equal(r.status, 'ok', `${r.tool}: ${r.error ?? ''}`);
-  // A trace landed for the test invocation (Langfuse verify only passes if so).
-  assert.ok(backends.langfuse.traces.length > 0, 'a Langfuse trace must land for the test invocation');
+  const byTool = new Map(report.rows.map((r) => [r.tool, r]));
+  // A5: the graph row is the REAL compile (`buildGraph`), so a ✓ here means the StateTable the
+  // engine will execute could be constructed from this system.yaml.
+  for (const t of ['opa', 'litellm', 'langgraph']) assert.equal(byTool.get(t)!.status, 'ok', `${t}: ${byTool.get(t)!.error ?? ''}`);
+  // Langfuse stays NEUTRAL (`pending`): its probe reads the traces a RUN leaves behind, and a
+  // build no longer stages a fake run to manufacture them. `report.ok` tolerates pending.
+  assert.equal(byTool.get('langfuse')!.status, 'pending');
+  assert.equal(backends.langfuse.traces.length, 0, 'a build traces nothing, because it runs nothing');
 }
 
 test('GATE A — build a 2-agent supervisor+sub by editor/canvas; it executes + verifies', async () => {

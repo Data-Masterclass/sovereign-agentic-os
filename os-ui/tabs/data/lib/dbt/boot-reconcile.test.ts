@@ -10,13 +10,30 @@
  *   - Drives the real `reconcileDataProjectsAtBoot` against the real store with an INJECTED
  *     committer (the in-memory git store) and an injected domain list, so no repository, no
  *     OpenSearch and no cluster are involved.
+ *   - The last two tests are the exception: they use the REAL `commitTree` against a mkdtemp
+ *     repository, because the thing under test is the merge invariant between the data half and
+ *     the agents half (Part D) — the reconcile is a WHOLE-TREE writer, so `agents/` survives it
+ *     only while that subtree is reserved. `instrumentation.ts` therefore installs the agents
+ *     commit hook (which calls `reserveSubtree('agents/')`) BEFORE running this reconcile.
  */
-import { test, beforeEach, afterEach } from 'node:test';
+import { test, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import * as store from '@tabs/data/lib/store';
 import type { Principal } from '@tabs/data/lib/store';
 import { __resetProjectListeners } from '@tabs/data/lib/project-events';
-import { parseTrailers, appendTrailers, COMMITTER, type CommitTreeOptions } from '@core/infra/git-store';
+import {
+  parseTrailers,
+  appendTrailers,
+  COMMITTER,
+  commitSubtree,
+  listTree,
+  reserveSubtree,
+  __clearReservedSubtrees,
+  type CommitTreeOptions,
+} from '@core/infra/git-store';
 import { __setDataProjectGitForTests } from '@tabs/data/lib/dbt/commit';
 import { reconcileDataProjectsAtBoot, BOOT_REASON } from '@tabs/data/lib/dbt/boot-reconcile';
 
@@ -151,4 +168,55 @@ test('a domain whose last dataset was deleted is reconciled too (the repository 
   const out = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, domains: async () => ['sales', 'finance'] });
   assert.deepEqual(out.committed.map((c) => c.domain), ['finance']);
   assert.ok(calls[0].files.has('dbt_project.yml'), 'a domain with no datasets still has a parseable project');
+});
+
+// --- the merge invariant with the agents half (Part D): a whole-tree reconcile must not delete
+// `agents/`. Real repository, real `commitTree` (no injected committer).
+
+const realRepos = mkdtempSync(join(tmpdir(), 'os-repos-boot-reconcile-'));
+after(() => {
+  __clearReservedSubtrees();
+  rmSync(realRepos, { recursive: true, force: true });
+});
+
+const nadia: Principal = { id: 'nadia', domains: ['sales2'], role: 'creator' };
+const AGENTS_PREFIX = 'agents/'; // `@tabs/agents/lib/git/generate` owns it; a data test may not import a tab
+
+async function seedRepoWithBothHalves(domain: string): Promise<void> {
+  await commitSubtree(
+    domain,
+    AGENTS_PREFIX,
+    new Map([
+      ['agents/index.yml', 'systems:\n  - slug: triage\n'],
+      ['agents/triage/system.yaml', "version: '1'\n"],
+    ]),
+    { author: { name: 'Sovereign OS', email: 'os@sovereign.local' }, message: `agents(${domain}): create triage`, reposDir: realRepos },
+  );
+}
+
+test('the data boot reconcile KEEPS a reserved `agents/` subtree in a domain that has both halves', async () => {
+  __clearReservedSubtrees();
+  seedDataset('ds_orders', 'Orders', amir, 'sales', 'orders');
+  await seedRepoWithBothHalves('sales');
+  // This is exactly what `installAgentProjectCommitHook` does at boot, before the reconcile runs.
+  reserveSubtree(AGENTS_PREFIX);
+  const out = await reconcileDataProjectsAtBoot({ hydrate: async () => {}, domains: async () => ['sales'], reposDir: realRepos });
+  assert.deepEqual(out.committed.map((c) => c.domain), ['sales'], 'the dbt project was missing, so the tree moved');
+  const paths = (await listTree('sales', 'main', { reposDir: realRepos })).map((e) => e.path);
+  assert.ok(paths.includes('dbt_project.yml'), 'the data half is committed');
+  assert.deepEqual(
+    paths.filter((p) => p.startsWith(AGENTS_PREFIX)),
+    ['agents/index.yml', 'agents/triage/system.yaml'],
+    'the agents subtree survives a whole-tree reconcile untouched',
+  );
+});
+
+test('without the reservation the same reconcile DELETES `agents/` — which is why the hook is installed first', async () => {
+  __clearReservedSubtrees();
+  seedDataset('ds_orders', 'Orders', nadia, 'sales2', 'orders');
+  await seedRepoWithBothHalves('sales2');
+  const out = await reconcileDataProjectsAtBoot({ hydrate: async () => {}, domains: async () => ['sales2'], reposDir: realRepos });
+  assert.deepEqual(out.committed.map((c) => c.domain), ['sales2']);
+  const paths = (await listTree('sales2', 'main', { reposDir: realRepos })).map((e) => e.path);
+  assert.equal(paths.filter((p) => p.startsWith(AGENTS_PREFIX)).length, 0, 'the reservation is the ONLY thing that protects the subtree');
 });

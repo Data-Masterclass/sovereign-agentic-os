@@ -2,54 +2,59 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * TAB:        agents
- * FEATURE:    Engine parity harness — golden fixtures for the walker → LangGraph rebuild
- * USER STORY: As the engineer replacing the hand-rolled graph walker with a real LangGraph
- *             engine I want, for every shipped system.yaml template plus three canonical shapes,
- *             a reproducible recording of what the CURRENT walker does (visited path, governed
- *             tool calls, final text) so the new engine can be held to exactly that behaviour.
+ * FEATURE:    Engine parity harness — the FROZEN golden fixtures of the pre-rebuild walker
+ * USER STORY: As the engineer who replaced the hand-rolled graph walker with a real LangGraph
+ *             engine I want the recording of what the OLD walker did (visited path, governed
+ *             tool calls, final text) for every shipped system.yaml template plus three
+ *             canonical shapes to stay in the repo as the thing the new engine is held to —
+ *             so "existing system.yaml files run unchanged" is a measurement, not a claim.
  * ARCHITECTURE:
- *   - Pure orchestration over existing modules: `runAgenticGraph` (the walker under test), the
- *     REAL `grantedToolSpecs` / `grantedToolExecutor` gates (so hold/not_found decisions in the
- *     golden are the production rules, not a mock's), and the record/replay caller in
- *     `core/runtime/llm-replay.ts`. Only the model and the MCP dispatch are faked.
+ *   - The fixtures in `./fixtures/*.json` are FROZEN. They were generated in A0/A1 by the walker
+ *     under the scripted model `SCRIPT_ID`, and A5 deleted the walker — so there is no generator
+ *     any more and `REGEN_FIXTURES` is gone. They are historical evidence; a fixture is changed
+ *     only by adding a NEW one beside it (a regenerated "golden" from the engine under test would
+ *     prove nothing, and would erase what the two guarded fixtures deliberately record).
+ *   - What is left here drives the ENGINE against those goldens: the REAL `grantedToolSpecs` /
+ *     `grantedToolExecutor` gates (so hold/not_found decisions are the production rules, not a
+ *     mock's) and the replay caller in `core/runtime/llm-replay.ts`. Only the model and the MCP
+ *     dispatch are faked.
  *   - The model is a DETERMINISTIC SCRIPT (`scriptedLlm`, rule set `SCRIPT_ID`): PLAN returns a
  *     fixed plan; a node's first ACT calls its first advertised tool; its next ACT answers
  *     `FINAL(<node>)`; a SUPERVISOR ROUTE request (the single `route` tool) picks the members in
  *     DECLARED order, then END. The node id is read from the `--- YOUR ROLE IN THE TEAM ---`
- *     marker both engines put in the system prompt. Changing the rules bumps `SCRIPT_ID` and
- *     regenerates every fixture (single file, see `fixtures.test.ts`).
+ *     marker the engine puts in the system prompt.
  *   - The MCP dispatch (`handleRpc`) is replaced by an echo of the call; `enqueue` records held
  *     writes; `trace` is a no-op. The acting user is a fixed BUILDER so role-floor narrowing is
  *     exercised the same way on every machine.
- *   - Fixture JSON lives in `./fixtures/<name>.json`; `fixtures.test.ts` proves each file equals
- *     a fresh generation (or rewrites it under REGEN_FIXTURES=1); `parity.test.ts` replays the
- *     transcript through the walker AND drives `buildGraph` (P1), plus P2 (abort + resume).
- *   - ENGINE PARITY RULE SET (A0 finding 3): the walker never asks a model where to go, so its
- *     transcript has no routing exchanges. A fixture WITHOUT a supervisor is replayed from the
+ *   - ENGINE PARITY RULE SET (A0 finding 3): the walker never asked a model where to go, so its
+ *     transcripts carry no routing exchanges. A fixture WITHOUT a supervisor is replayed from the
  *     transcript through `buildGraph` (`replayGraph` — every exchange must be consumed); a
  *     fixture WITH a supervisor is driven by the scripted model (`scriptGraph`), whose route rule
  *     reproduces the walker's declared-order visit. Both assert the same golden fields.
+ *   - The two GUARDED fixtures are where the engine deliberately DIVERGES: the walker ignored
+ *     `when` guards, so `shape-guarded-handoff-held-write`'s golden records it visiting (and
+ *     holding a write in) a node whose guard is false. `parity.test.ts` asserts both the golden's
+ *     record of the defect and the engine's correct behaviour.
  */
 import type { CurrentUser } from '@core/kernel/auth';
 import type { JsonRpcRequest, JsonRpcResponse } from '@core/mcp/server';
 import type { AgenticStep, LlmCall, LlmRequest } from '@core/runtime/agentic';
-import { recordingCaller, replayCaller, type LlmTranscript, type RecordedExchange } from '@core/runtime/llm-replay';
+import { replayCaller, type LlmTranscript } from '@core/runtime/llm-replay';
 import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { TEMPLATES, templateYaml } from '@tabs/agents/lib/templates';
 import { AGENT_TEMPLATES, agentTemplate } from '@tabs/agents/lib/agent-templates';
 import { SOFTWARE_TEAM_YAML } from '@tabs/agents/lib/software-team';
 import { grantedToolExecutor, grantedToolSpecs, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
-import { runAgenticGraph, type AgenticGraphDeps } from '@tabs/agents/lib/build/agentic-graph';
-import type { GraphDeps } from '@tabs/agents/lib/engine/build-graph';
+import { SET_STATE_TOOL_NAME, type GraphDeps } from '@tabs/agents/lib/engine/build-graph';
 import { memoryCheckpointer, type SelectedCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { runGraphEngine, type EngineHooks } from '@tabs/agents/lib/engine/run';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import { memoryApprovalPort, type MemoryApprovalPort } from '@tabs/agents/lib/engine/approval-port';
 
-/** Bump when the scripted model's rules change — every fixture must then be regenerated.
- *  @2: adds the declared-order `route` rule for supervisors (the walker never triggers it, so
- *  walker goldens are unchanged; the id records that the LangGraph side is driven by it too). */
+/** The rule set every frozen fixture was recorded under; a fixture carrying another id is stale.
+ *  @2: adds the declared-order `route` rule for supervisors (the walker never triggered it, so the
+ *  walker goldens are unchanged; the id records that the engine side is driven by it too). */
 export const SCRIPT_ID = 'first-tool-then-final@2';
 
 /** The one task every fixture runs — purpose-neutral so it fits every template. */
@@ -98,7 +103,7 @@ export type EngineFixture = {
   name: string;
   source: string;
   description: string;
-  /** True when any handoff edge carries a `when` guard — P1 skips these (walker ignores guards). */
+  /** True when any handoff edge carries a `when` guard — P1's walker side skipped these. */
   guarded: boolean;
   task: string;
   yaml: string;
@@ -265,6 +270,122 @@ edges:
     when: state.findings_ready
 `;
 
+/**
+ * Shape (d): the CHANNEL-WRITING shape (A5-review-H-2). A guarded handoff `when: plan_ready`
+ * whose channel is DECLARED (`boolean`), so the `planner` — the agent the guard follows — is
+ * advertised the engine's built-in `os_set_state` tool and can make the guard true. It is
+ * deliberately NOT a frozen fixture: there is no walker golden for it (the walker ignored guards
+ * and its generator is deleted), so it belongs beside `P2_YAML` as an ENGINE shape driven twice
+ * from `parity.test.ts` — once with the write, once without — which is the proof that the guard
+ * fires if and only if the channel is set.
+ */
+export const SHAPE_CHANNEL_GUARDED_YAML = `version: '1'
+system:
+  name: Shape D — a guarded handoff whose channel an agent can set
+  domain: sales
+  visibility: Personal
+entrypoint: planner
+state:
+  channels:
+    messages: add_messages
+    plan_ready: boolean
+grants:
+  data: []
+  knowledge: []
+  metrics: []
+  tools:
+    - search_knowledge
+    - query_data
+  connections: []
+agents:
+  - id: planner
+    role: Plans the task and records plan_ready when the plan is complete
+    agent_md: |
+      # planner
+      Plan the task from the granted knowledge. Record plan_ready when, and only when,
+      the plan is complete.
+    memory_md: '# Memory'
+    tools:
+      - search_knowledge
+  - id: builder
+    role: Builds what the plan asked for
+    agent_md: |
+      # builder
+      Query the granted data and build what the plan asked for.
+    memory_md: '# Memory'
+    tools:
+      - query_data
+edges:
+  - from: planner
+    to: builder
+    type: handoff
+    when: plan_ready
+`;
+
+/**
+ * Shape (e): AN AGENT READING GOLD DATA (checklist X9, `agent-reads-gold-dataset`). One agent,
+ * a Read grant on a GOLD dataset and the two governed data tools an engineer would reach for:
+ * `query_data` (SQL over the governed marts) and `get_dataset` (the dataset by id, layer-aware).
+ * Like shape (d) it is an ENGINE shape, not a frozen fixture: there is no walker golden for it
+ * (the walker is deleted), and what it proves is the behaviour of the engine's tool path — the
+ * runner's identity on the dispatch, the bound on a large result, the deadline, the typed error
+ * and the Langfuse span — which a golden path/text comparison could not express.
+ */
+export const SHAPE_GOLD_DATA_YAML = `version: '1'
+system:
+  name: Agent reads gold dataset
+  domain: sales
+  visibility: Personal
+  description: Answer questions from the granted gold dataset, and nothing else.
+entrypoint: analyst
+state:
+  channels:
+    messages: add_messages
+grants:
+  data:
+    - id: ds_gold_orders
+      capability: Read
+  knowledge: []
+  metrics: []
+  tools:
+    - query_data
+    - get_dataset
+  connections: []
+agents:
+  - id: analyst
+    role: Queries the granted gold dataset and explains what it says
+    agent_md: |
+      # analyst
+      Answer from the granted gold dataset only. Query it, then explain what the rows say.
+      If a result says it was truncated, say so instead of generalising from the sample.
+    memory_md: '# Memory'
+    tools:
+      - query_data
+      - get_dataset
+`;
+
+/** The gold dataset the shape grants, and the Iceberg table it serves. */
+export const GOLD_DATASET_ID = 'ds_gold_orders';
+export const GOLD_DATASET_FQN = 'iceberg.sales.gold_orders';
+
+/**
+ * A scripted model that issues GIVEN tool calls, in order, one per ACT turn, then answers
+ * `FINAL(<node>)`. Used by the X9 shape, where WHICH call is made (and with which arguments) is
+ * the point — unlike `scriptedLlm`, which calls whatever the first advertised tool happens to be.
+ */
+export function toolCallingLlm(calls: { name: string; args: Record<string, unknown> }[]): LlmCall {
+  const acts = new Map<string, number>();
+  return async (req) => {
+    const node = nodeOfRequest(req);
+    if (!req.tools) return { content: `plan(${node}): read the granted data, then answer.`, toolCalls: [] };
+    const n = (acts.get(node) ?? 0) + 1;
+    acts.set(node, n);
+    const next = calls[n - 1];
+    if (next) return { content: '', toolCalls: [{ id: `call-${node}-${n}`, name: next.name, args: next.args }] };
+    return { content: `FINAL(${node}): answered from the granted data.`, toolCalls: [] };
+  };
+}
+
 /** Every fixture spec: shipped templates, shipped per-agent templates, the software team, three shapes. */
 export function fixtureSpecs(): FixtureSpec[] {
   const specs: FixtureSpec[] = [];
@@ -321,7 +442,7 @@ export function hasWhenGuard(sys: System): boolean {
 
 const ROLE_MARKER = /--- YOUR ROLE IN THE TEAM: (\S+) ---/;
 
-/** The node a request belongs to, read from the walker's own system-prompt marker. */
+/** The node a request belongs to, read from the engine's own system-prompt marker. */
 export function nodeOfRequest(req: LlmRequest): string {
   for (const m of req.messages) {
     if (m.role !== 'system') continue;
@@ -378,61 +499,98 @@ export function scriptedLlm(task: string): LlmCall {
   };
 }
 
+/**
+ * A scripted model for the CHANNEL shape: an agent advertised `os_set_state` writes `write` on
+ * its first turn (or, when `write` is null, calls its first governed tool instead) and answers
+ * `FINAL(<node>)` after that. Pass an undeclared channel to drive the rejection path.
+ */
+export function stateWritingLlm(task: string, write: { channel: string; value: unknown } | null): LlmCall {
+  const acts = new Map<string, number>();
+  return async (req) => {
+    const node = nodeOfRequest(req);
+    if (!req.tools) return { content: `plan(${node}): record the team state, then answer.`, toolCalls: [] };
+    const n = (acts.get(node) ?? 0) + 1;
+    acts.set(node, n);
+    const canSet = req.tools.some((t) => t.function.name === SET_STATE_TOOL_NAME);
+    if (n === 1 && canSet && write) {
+      return { content: '', toolCalls: [{ id: `set-${node}-1`, name: SET_STATE_TOOL_NAME, args: { channel: write.channel, value: write.value } }] };
+    }
+    const first = req.tools.find((t) => t.function.name !== SET_STATE_TOOL_NAME)?.function.name;
+    if (n === 1 && first) return { content: '', toolCalls: [{ id: `call-${node}-1`, name: first, args: { input: `fixture:${node}`, task } }] };
+    return { content: `FINAL(${node}): answered the task.`, toolCalls: [] };
+  };
+}
+
 // ----------------------------------------------------------- fake dispatch --
 
-/** Records what the REAL hold gate enqueued (executor gate 1b on the walker; the node's ApprovalPort under langgraph). */
+/** Records what the REAL hold gate enqueued (the tools node's ApprovalPort). */
 export type HoldSink = { enqueued: string[]; port?: MemoryApprovalPort };
 
 /**
  * Collaborators for `grantedToolExecutor`: the gates stay REAL; only the MCP dispatch is an
  * echo (`{ mock, tool, args }`), `enqueue` records the held tool, `trace` is a no-op.
  */
-export function fixtureToolDeps(sink: HoldSink): OsToolDeps {
+export type FixtureDispatch = { user: CurrentUser; tool: string; args: Record<string, unknown> };
+
+/** Per-tool fake answers for the MCP dispatch, and a record of WHO dispatched what (X9). */
+export type FixtureToolOptions = {
+  /** `tool -> handler`. The handler's return value is JSON-stringified as the tool's text. */
+  handlers?: Record<string, (args: Record<string, unknown>, user: CurrentUser) => Promise<unknown> | unknown>;
+  /** Every dispatch, in order, with the ACTING USER the executor passed to `handleRpc`. */
+  dispatches?: FixtureDispatch[];
+};
+
+export function fixtureToolDeps(sink: HoldSink, opts: FixtureToolOptions = {}): OsToolDeps {
   const enqueue = ((req: { tool?: string }) => {
     sink.enqueued.push(req.tool ?? '?');
     return { id: `fixture-approval-${sink.enqueued.length}` };
   }) as unknown as OsToolDeps['enqueue'];
-  const handleRpc = (async (_user: CurrentUser, req: JsonRpcRequest): Promise<JsonRpcResponse> => ({
-    jsonrpc: '2.0',
-    id: req.id ?? 1,
-    result: { content: [{ type: 'text', text: JSON.stringify({ mock: true, tool: req.params?.name, args: req.params?.arguments ?? {} }) }] },
-  })) as unknown as OsToolDeps['handleRpc'];
+  const handleRpc = (async (user: CurrentUser, req: JsonRpcRequest): Promise<JsonRpcResponse> => {
+    const tool = String(req.params?.name ?? '');
+    const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
+    opts.dispatches?.push({ user, tool, args });
+    const handler = opts.handlers?.[tool];
+    let payload: unknown;
+    try {
+      payload = handler ? await handler(args, user) : { mock: true, tool, args };
+    } catch (e) {
+      // The real `handleRpc` never lets a tool's exception escape: it answers with a typed error.
+      // The fake must behave the same way, or a test would measure a crash the OS cannot produce.
+      return { jsonrpc: '2.0', id: req.id ?? 1, error: { code: -32603, message: e instanceof Error ? e.message : String(e) } };
+    }
+    return {
+      jsonrpc: '2.0',
+      id: req.id ?? 1,
+      result: { content: [{ type: 'text', text: typeof payload === 'string' ? payload : JSON.stringify(payload) }] },
+    };
+  }) as unknown as OsToolDeps['handleRpc'];
   const trace = (async () => undefined) as unknown as OsToolDeps['trace'];
   return { enqueue, handleRpc, trace };
 }
 
-/** The walker deps, wired EXACTLY as `agentic-graph-server.ts` wires production (minus embedder). */
-export function walkerDeps(
-  sys: System,
-  systemId: string,
-  llm: LlmCall,
-  sink: HoldSink,
-  onStep: AgenticGraphDeps['onStep'],
-): AgenticGraphDeps {
-  return {
-    llm,
-    toolSpecsFor: (node) => grantedToolSpecs(FIXTURE_USER, sys, node.tools),
-    callTool: grantedToolExecutor(FIXTURE_USER, sys, systemId, fixtureToolDeps(sink)),
-    preamble: FIXTURE_PREAMBLE,
-    reasoningModel: 'sovereign-reasoning',
-    execModel: 'sovereign-default',
-    maxIterations: 4,
-    maxRunSteps: 40,
-    onStep,
-  };
-}
-
 /**
- * The LangGraph engine's deps — the SAME gates and wiring as {@link walkerDeps}, minus the hooks
- * (events stream). A2: the hold is decided in the tools NODE (`hold`, over a memory ApprovalPort
- * recorded on the sink) and the executor runs with `holdAt: 'node'` — exactly as production wires it.
+ * The engine's deps, wired EXACTLY as `agentic-graph-server.ts` wires production (minus the
+ * embedder and the live hooks, since events flow through the stream writer). A2: the hold is
+ * decided in the tools NODE (`hold`, over a memory ApprovalPort recorded on the sink) and the
+ * executor runs with `holdAt: 'node'` — exactly as production wires it.
  */
-export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: HoldSink): Omit<GraphDeps, 'checkpointer'> {
+export type GraphDepsOptions = FixtureToolOptions & {
+  /** X9 — the engine's per-tool-call deadline and prompt bound (defaults apply when absent). */
+  toolCallTimeoutMs?: number;
+  toolResultMaxChars?: number;
+  /** The acting user the executor dispatches as (default {@link FIXTURE_USER}). */
+  user?: CurrentUser;
+};
+
+export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: HoldSink, opts: GraphDepsOptions = {}): Omit<GraphDeps, 'checkpointer'> {
   sink.port ??= memoryApprovalPort();
+  const user = opts.user ?? FIXTURE_USER;
   return {
     llm,
-    toolSpecsFor: (node) => grantedToolSpecs(FIXTURE_USER, sys, node.tools),
-    callTool: grantedToolExecutor(FIXTURE_USER, sys, systemId, fixtureToolDeps(sink), { holdAt: 'node' }),
+    toolSpecsFor: (node) => grantedToolSpecs(user, sys, node.tools),
+    callTool: grantedToolExecutor(user, sys, systemId, fixtureToolDeps(sink, opts), { holdAt: 'node' }),
+    ...(opts.toolCallTimeoutMs !== undefined ? { toolCallTimeoutMs: opts.toolCallTimeoutMs } : {}),
+    ...(opts.toolResultMaxChars !== undefined ? { toolResultMaxChars: opts.toolResultMaxChars } : {}),
     preamble: FIXTURE_PREAMBLE,
     reasoningModel: 'sovereign-reasoning',
     execModel: 'sovereign-default',
@@ -443,7 +601,7 @@ export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: Hol
       approvals: sink.port,
       systemId,
       domain: sys.system.domain,
-      runner: { id: FIXTURE_USER.id, role: FIXTURE_USER.role, domains: FIXTURE_USER.domains },
+      runner: { id: user.id, role: user.role, domains: user.domains },
       agent: `os-${systemId}`,
     },
   };
@@ -456,24 +614,10 @@ export function hasSupervisor(sys: System): boolean {
 
 // --------------------------------------------------------- generate/replay --
 
-export type WalkerRun = Pick<EngineFixture['golden'], 'path' | 'toolCalls' | 'finalText' | 'reachedEnd' | 'held'>;
+/** The golden fields a run is compared on: where it went, what it called, what it said. */
+export type GoldenRun = Pick<EngineFixture['golden'], 'path' | 'toolCalls' | 'finalText' | 'reachedEnd' | 'held'>;
 
-async function runWalker(spec: Pick<EngineFixture, 'name' | 'yaml' | 'task'>, llm: LlmCall): Promise<WalkerRun> {
-  const sys = parseSystem(spec.yaml);
-  const ir = compile(sys);
-  const toolCalls: GoldenToolCall[] = [];
-  const sink: HoldSink = { enqueued: [] };
-  const result = await runAgenticGraph(
-    ir,
-    [{ role: 'user', content: spec.task }],
-    walkerDeps(sys, `fixture-${spec.name}`, llm, sink, (ev) => {
-      toolCalls.push({ node: ev.node, tool: ev.step.tool, args: ev.step.args, outcome: stepOutcome(ev.step) });
-    }),
-  );
-  return { path: result.path, toolCalls, finalText: result.finalText, reachedEnd: result.reachedEnd, held: sink.enqueued.length };
-}
-
-export type GraphRun = WalkerRun & { warnings: string[]; interrupted: boolean; runId: string };
+export type GraphRun = GoldenRun & { warnings: string[]; interrupted: boolean; runId: string };
 
 export type GraphRunOptions = {
   runId?: string;
@@ -532,29 +676,4 @@ export async function replayGraph(fx: EngineFixture): Promise<GraphRun & { remai
 /** Drive a fixture through `buildGraph` with the scripted model (supervisor fixtures — see the rule set above). */
 export async function scriptGraph(fx: EngineFixture, opts: GraphRunOptions = {}): Promise<GraphRun> {
   return runGraph(fx, scriptedLlm(fx.task), opts);
-}
-
-/** Run the CURRENT walker on the scripted model and record the golden + the transcript. */
-export async function generateFixture(spec: FixtureSpec): Promise<EngineFixture> {
-  const exchanges: RecordedExchange[] = [];
-  const golden = await runWalker({ name: spec.name, yaml: spec.yaml, task: FIXTURE_TASK }, recordingCaller(scriptedLlm(FIXTURE_TASK), exchanges));
-  return {
-    version: 1,
-    name: spec.name,
-    source: spec.source,
-    description: spec.description,
-    guarded: hasWhenGuard(parseSystem(spec.yaml)),
-    task: FIXTURE_TASK,
-    yaml: spec.yaml,
-    script: SCRIPT_ID,
-    transcript: { version: 1, exchanges },
-    golden,
-  };
-}
-
-/** Replay a fixture's transcript through the walker; `remaining` must be 0 for a faithful replay. */
-export async function replayWalker(fx: EngineFixture): Promise<WalkerRun & { remaining: number }> {
-  const llm = replayCaller(fx.transcript);
-  const run = await runWalker(fx, llm);
-  return { ...run, remaining: llm.remaining() };
 }

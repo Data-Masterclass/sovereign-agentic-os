@@ -16,6 +16,11 @@
  *   - In-process per-repo mutex (os-ui is single-replica; one RWO writer — see the concept §2.1).
  *   - Lives in @core because BOTH the Data and the Agents tab commit through it (a tab may not
  *     import another tab). It knows nothing about datasets or systems: paths + strings in.
+ *   - SUBTREE OWNERSHIP (Part D): one repo per domain holds two generated worlds — the dbt
+ *     project at the root and `agents/` — written by two independent generators. `commitSubtree`
+ *     replaces exactly one prefix and keeps the rest of the tree; `reserveSubtree` lets a subtree
+ *     owner declare its prefix so a WHOLE-TREE writer (`commitTree`) cannot clobber it. Both are
+ *     generic: the registry holds path prefixes, never a tab's vocabulary.
  *   - `push` to a mirror resolves the token through the secrets helper at call time and never
  *     logs, returns or persists it; errors are scrubbed before they leave this module.
  */
@@ -231,13 +236,51 @@ export function authorFor(user: { id: string; name?: string | null; email?: stri
   return { author: { name, email: `${user.id}@os.local` }, synthesized: true };
 }
 
+// ------------------------------------------------------- subtree ownership ---
+
+const RESERVE_KEY = Symbol.for('soa.git-store.reserved-subtrees');
+function reserved(): Set<string> {
+  const g = globalThis as unknown as Record<symbol, Set<string> | undefined>;
+  if (!g[RESERVE_KEY]) g[RESERVE_KEY] = new Set();
+  return g[RESERVE_KEY]!;
+}
+
+/** `agents` / `agents/` → `agents/`. Throws on an unsafe or empty prefix. */
+function normalizePrefix(prefix: string): string {
+  const p = String(prefix ?? '').replace(/^\/+/, '').replace(/\/+$/, '');
+  if (!p) throw new GitStoreError('a subtree needs a path prefix');
+  assertRepoPath(p);
+  return `${p}/`;
+}
+
+/**
+ * Declare `prefix` the property of another writer. A WHOLE-TREE commit (`commitTree`) then keeps
+ * every existing path under it that its own file map does not mention, instead of deleting it.
+ * Idempotent; registered at boot by the subtree's owner (os-ui is single-process per replica).
+ */
+export function reserveSubtree(prefix: string): void {
+  reserved().add(normalizePrefix(prefix));
+}
+
+/** The reserved prefixes, sorted (each ends in `/`). */
+export function reservedSubtrees(): string[] {
+  return [...reserved()].sort();
+}
+
+/** Test hook. */
+export function __clearReservedSubtrees(): void {
+  reserved().clear();
+}
+
 // ------------------------------------------------------------------ commit ---
 
-type Dir = { files: Map<string, string>; dirs: Map<string, Dir> };
+/** A tree leaf: new content to write, or an existing blob kept verbatim. */
+type Leaf = { content: string; oid?: undefined; mode?: string } | { oid: string; content?: undefined; mode?: string };
+type Dir = { files: Map<string, Leaf>; dirs: Map<string, Dir> };
 
-function buildDirTree(files: Map<string, string>): Dir {
+function buildDirTree(files: Map<string, Leaf>): Dir {
   const root: Dir = { files: new Map(), dirs: new Map() };
-  for (const [p, content] of files) {
+  for (const [p, leaf] of files) {
     assertRepoPath(p);
     const parts = p.split('/');
     let cur = root;
@@ -249,19 +292,19 @@ function buildDirTree(files: Map<string, string>): Dir {
       }
       cur = next;
     }
-    const leaf = parts[parts.length - 1];
-    if (cur.dirs.has(leaf)) throw new GitStoreError(`'${p}' is both a file and a directory`);
-    cur.files.set(leaf, content);
+    const leafName = parts[parts.length - 1];
+    if (cur.dirs.has(leafName)) throw new GitStoreError(`'${p}' is both a file and a directory`);
+    cur.files.set(leafName, leaf);
   }
   return root;
 }
 
 async function writeDir(gitdir: string, dir: Dir): Promise<string> {
   const entries: { mode: string; path: string; oid: string; type: 'blob' | 'tree' }[] = [];
-  for (const [name, content] of dir.files) {
+  for (const [name, leaf] of dir.files) {
     if (dir.dirs.has(name)) throw new GitStoreError(`'${name}' is both a file and a directory`);
-    const oid = await git.writeBlob({ fs, gitdir, blob: new Uint8Array(Buffer.from(content, 'utf8')) });
-    entries.push({ mode: '100644', path: name, oid, type: 'blob' });
+    const oid = leaf.oid ?? (await git.writeBlob({ fs, gitdir, blob: new Uint8Array(Buffer.from(leaf.content ?? '', 'utf8')) }));
+    entries.push({ mode: leaf.mode ?? '100644', path: name, oid, type: 'blob' });
   }
   for (const [name, sub] of dir.dirs) {
     const oid = await writeDir(gitdir, sub);
@@ -286,34 +329,91 @@ export type CommitTreeOptions = GitStoreOptions & {
   timestamp?: number;
 };
 
+/** Every blob of a commit, as repo-relative path → `{oid, mode}`. */
+async function entriesAt(gitdir: string, commitOid: string): Promise<Map<string, Leaf>> {
+  const out = new Map<string, Leaf>();
+  const walk = async (treeOid: string, prefix: string): Promise<void> => {
+    const { tree } = await git.readTree({ fs, gitdir, oid: treeOid });
+    for (const e of tree) {
+      const p = prefix ? `${prefix}/${e.path}` : e.path;
+      if (e.type === 'tree') await walk(e.oid, p);
+      else out.set(p, { oid: e.oid, mode: e.mode });
+    }
+  };
+  const { commit } = await git.readCommit({ fs, gitdir, oid: commitOid });
+  await walk(commit.tree, '');
+  return out;
+}
+
+/** Write the merged tree and commit iff its hash differs from HEAD's. Call inside the repo lock. */
+async function commitLeaves(gitdir: string, head: string | null, files: Map<string, Leaf>, opts: CommitTreeOptions): Promise<CommitResult> {
+  const tree = await writeDir(gitdir, buildDirTree(files));
+  if (head) {
+    const { commit } = await git.readCommit({ fs, gitdir, oid: head });
+    if (commit.tree === tree) return { sha: head, changed: false };
+  }
+  const timestamp = opts.timestamp ?? Math.floor(Date.now() / 1000);
+  const message = appendTrailers(opts.message, opts.trailers ?? {});
+  const sha = await git.writeCommit({
+    fs,
+    gitdir,
+    commit: {
+      message,
+      tree,
+      parent: head ? [head] : [],
+      author: { ...opts.author, timestamp, timezoneOffset: 0 },
+      committer: { ...COMMITTER, timestamp, timezoneOffset: 0 },
+    },
+  });
+  await git.writeRef({ fs, gitdir, ref: MAIN, value: sha, force: true });
+  return { sha, changed: true };
+}
+
 /**
  * Write `files` as the complete tree of `main` and commit iff the tree hash changed.
  * Returns the resulting head (`changed: false` ⇒ the existing head, nothing written).
+ *
+ * Paths under a {@link reserveSubtree} prefix that `files` does not itself mention are KEPT from
+ * the current head: a whole-tree generator owns everything except another writer's declared
+ * subtree. With no reservation this is exactly "the tree is what you passed".
  */
 export async function commitTree(domain: string, files: Map<string, string>, opts: CommitTreeOptions): Promise<CommitResult> {
   const { gitdir } = await openOrInit(domain, opts);
   return withLock(gitdir, async () => {
-    const tree = await writeDir(gitdir, buildDirTree(files));
     const head = await headSha(gitdir);
-    if (head) {
-      const { commit } = await git.readCommit({ fs, gitdir, oid: head });
-      if (commit.tree === tree) return { sha: head, changed: false };
+    const leaves = new Map<string, Leaf>();
+    const prefixes = reservedSubtrees();
+    if (head && prefixes.length > 0) {
+      for (const [p, leaf] of await entriesAt(gitdir, head)) {
+        if (prefixes.some((pre) => p.startsWith(pre)) && !files.has(p)) leaves.set(p, leaf);
+      }
     }
-    const timestamp = opts.timestamp ?? Math.floor(Date.now() / 1000);
-    const message = appendTrailers(opts.message, opts.trailers ?? {});
-    const sha = await git.writeCommit({
-      fs,
-      gitdir,
-      commit: {
-        message,
-        tree,
-        parent: head ? [head] : [],
-        author: { ...opts.author, timestamp, timezoneOffset: 0 },
-        committer: { ...COMMITTER, timestamp, timezoneOffset: 0 },
-      },
-    });
-    await git.writeRef({ fs, gitdir, ref: MAIN, value: sha, force: true });
-    return { sha, changed: true };
+    for (const [p, content] of files) leaves.set(p, { content });
+    return commitLeaves(gitdir, head, leaves, opts);
+  });
+}
+
+/**
+ * Replace exactly the subtree `prefix` with `files` and keep every other path at its current
+ * blob. An empty `files` therefore DELETES the subtree — which is how an archive or a delete is
+ * recorded. Every key must sit under `prefix`. Commits iff the resulting tree hash changed.
+ */
+export async function commitSubtree(domain: string, prefix: string, files: Map<string, string>, opts: CommitTreeOptions): Promise<CommitResult> {
+  const pre = normalizePrefix(prefix);
+  for (const p of files.keys()) {
+    if (!p.startsWith(pre)) throw new GitStoreError(`'${p}' is outside the subtree '${pre}'`);
+  }
+  const { gitdir } = await openOrInit(domain, opts);
+  return withLock(gitdir, async () => {
+    const head = await headSha(gitdir);
+    const leaves = new Map<string, Leaf>();
+    if (head) {
+      for (const [p, leaf] of await entriesAt(gitdir, head)) {
+        if (!p.startsWith(pre)) leaves.set(p, leaf);
+      }
+    }
+    for (const [p, content] of files) leaves.set(p, { content });
+    return commitLeaves(gitdir, head, leaves, opts);
   });
 }
 
@@ -398,6 +498,12 @@ function scrub(message: string, secret: string | null): string {
 export type PushDeps = GitStoreOptions & {
   /** Resolve the mirror token from its Secret reference. Defaults to the secrets helper. */
   resolveToken?: (ref: { name: string; key: string }) => Promise<string | null> | string | null;
+  /**
+   * The isomorphic-git HTTP transport. Defaults to `isomorphic-git/http/node`. Injected by the
+   * tests as a FAKE transport (a real remote needs a git smart-HTTP server — checklist X2's
+   * `kind` half), so the credential handling and the error scrubbing are still measured here.
+   */
+  http?: typeof http;
 };
 
 /**
@@ -419,7 +525,7 @@ export async function push(domain: string, mirror: MirrorConfig, deps: PushDeps 
   try {
     const res = await git.push({
       fs,
-      http,
+      http: deps.http ?? http,
       gitdir,
       url: mirror.url,
       ref: MAIN,

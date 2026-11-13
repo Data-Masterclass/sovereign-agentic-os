@@ -35,11 +35,22 @@ node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/agents/lib/engine/jobs-lease.test.ts \
   tabs/agents/lib/build/run-stream-client.test.ts \
   tabs/agents/lib/build/worker-resolve-hook.test.ts \
+  tabs/agents/lib/engine/parity.test.ts \
+  tabs/agents/lib/engine/fixtures.test.ts \
+  tabs/agents/lib/engine/build-graph.test.ts \
+  core/mcp/agent-run-surface.test.ts \
   core/infra/trino-rules.test.ts \
   core/infra/trino-rules-server.test.ts \
   core/kernel/events.test.ts \
   tabs/admin/lib/directory-events.test.ts \
   tabs/admin/lib/components-extra.test.ts \
   tabs/data/lib/dbt/parity.test.ts \
+  core/infra/git-store-subtree.test.ts \
+  core/infra/git-mirror.test.ts \
+  tabs/admin/lib/components-git-mirror.test.ts \
+  tabs/agents/lib/git/generate.test.ts \
+  tabs/agents/lib/git/commit.test.ts \
+  tabs/agents/lib/git/repo.test.ts \
+  tabs/agents/lib/engine/data-context.test.ts \
   tabs/data/lib/mcp-parity.test.ts \
   tabs/data/lib/mcp-conformance.test.ts

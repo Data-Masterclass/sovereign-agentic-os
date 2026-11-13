@@ -10,7 +10,6 @@
  *   For each profile (base `values.yaml`, and `values.stackit-managed.yaml` layered over it the way
  *   Helm merges values — maps deep-merge, lists replace), the REQUIRED set is:
  *     • every `LITELLM_*_MODEL` / `*_EMBED_MODEL` default literal in `os-ui/core/kernel/config.ts`;
- *     • `agentRuntime.chatModel` / `reasoningModel` / `executionModel`;
  *     • every `router_settings` fallback source AND target alias — `fallbacks`,
  *       `context_window_fallbacks`, `content_policy_fallbacks` and `default_fallbacks`.
  *   and it must be ⊆ `litellmAgentKey.models`. Exit 1 with the gap named. Wired into
@@ -59,8 +58,9 @@ function required(values, configSrc) {
     need.get(alias).push(why);
   };
   for (const a of configModelDefaults(configSrc)) add(a, 'core/kernel/config.ts default');
-  const rt = values.agentRuntime ?? {};
-  for (const k of ['chatModel', 'reasoningModel', 'executionModel']) add(rt[k], `agentRuntime.${k}`);
+  // A5: `agentRuntime.{chat,reasoning,execution}Model` are gone with the Python runtime. Every
+  // alias the OS can request now comes from os-ui's own config defaults (above) and the router's
+  // fallback maps (below) — nothing else asks the gateway for a model.
   // A4 review: LiteLLM has FOUR fallback maps, not one. `default_fallbacks` is a flat list of
   // aliases used when no per-model rule matches; `context_window_fallbacks` and
   // `content_policy_fallbacks` have the same shape as `fallbacks` and fire on exactly the errors a

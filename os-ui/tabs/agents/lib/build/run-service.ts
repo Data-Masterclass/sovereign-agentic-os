@@ -29,7 +29,6 @@
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
-import type { AgentsEngine } from '@core/kernel/agents-engine';
 import { runOsTeam, type RunOsTeamResult } from '@tabs/agents/lib/build/agentic-graph-server';
 import { classifyStepError } from '@tabs/agents/lib/build/agentic-graph';
 import { resolveFolderGrantsForRun, summarizeWriteOutcomes, writeOutcomesLine } from '@tabs/agents/lib/build/os-tools';
@@ -131,7 +130,7 @@ function grantedIdsFromYaml(yaml: string) {
  * Finalize a team run into (a) the JSON body every door returns and (b) the `LastRun` record. ONE
  * function so the streamed `done` frame, the JSON response and a hook-driven resume agree.
  */
-export function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: string, engine: AgentsEngine) {
+export function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: string) {
   const teamSteps = team.runs.flatMap((r) =>
     r.result.steps.map((s) => ({
       node: r.node,
@@ -157,7 +156,7 @@ export function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: s
     path: team.path,
     reachedEnd: team.reachedEnd,
     traces: 0,
-    // Held = typed `held` steps (walker path) + the approvals a parked run is waiting on (A2).
+    // Held = write outcomes the model saw as held + the approvals a parked run is waiting on (A2).
     held: outcomes.heldTotal + heldApprovals.length,
     steps: teamSteps,
     nodes,
@@ -167,7 +166,7 @@ export function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: s
     writeSummary,
     mode: 'live',
     runId: team.runId,
-    engine,
+    engine: 'langgraph',
     checkpointer: team.checkpointer,
     interrupted: team.interrupted || undefined,
     heldApprovals: parked ? heldApprovals : undefined,
@@ -179,7 +178,7 @@ export function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: s
   const body = {
     running,
     mode: 'live' as const,
-    engine,
+    engine: 'langgraph' as const,
     runId: team.runId,
     checkpointer: team.checkpointer,
     traceUrl: team.traceUrl,
@@ -221,7 +220,6 @@ export type ExecuteTeamRunInput = {
   /** The prepared (governed) yaml — `prepareRunYaml`. */
   yaml: string;
   messages: ChatMsg[];
-  engine: AgentsEngine;
   runId: string;
   resume?: boolean;
   resumeWith?: Record<string, ApprovalDecision>;
@@ -239,23 +237,23 @@ export type ExecuteTeamRunInput = {
  * event is published for a refused resume.
  */
 export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunReportBody> {
-  const { user, systemId: id, view, yaml, engine, runId } = input;
+  const { user, systemId: id, view, yaml, runId } = input;
   const owner = { systemId: id, userId: user.id, domain: view.system.system.domain };
   // A2 review M-B: one entrant per thread. Thrown BEFORE any marker or event — a refused entrant
   // never looks like a run. Released in `finally` below.
-  const release = engine === 'langgraph' ? acquireRunLock(runId) : () => undefined;
+  const release = acquireRunLock(runId);
   const emit = (event: string, data: unknown) => {
     input.emit?.(event, data);
-    if (engine === 'langgraph') publishRunEvent(runId, event, data);
+    publishRunEvent(runId, event, data);
   };
-  if (engine === 'langgraph') openRunTopic(runId, owner);
+  openRunTopic(runId, owner);
   setActivity(id, { kind: 'running', startedAt: Date.now() });
   if (!input.resume) {
     startRunCheckpoint(id, {
       prompt: input.prompt,
       plannedNodes: view.system.agents.map((a) => a.id),
-      runId: engine === 'langgraph' ? runId : undefined,
-      checkpointer: engine === 'langgraph' ? configuredCheckpointer() : undefined,
+      runId,
+      checkpointer: configuredCheckpointer(),
     });
   }
   try {
@@ -265,7 +263,6 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
       systemId: id,
       messages: input.messages,
       disabledAgents: view.disabledAgents,
-      engine,
       runId,
       resume: input.resume,
       resumeWith: input.resumeWith,
@@ -291,7 +288,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
       onInterrupt: (ev) => emit('approval-required', { approvalId: ev.approvalId, tool: ev.tool, node: ev.node }),
     });
     const running = markRunFinished(id, user);
-    const { body, lastRun } = finalizeTeamRun(team, running, yaml, engine);
+    const { body, lastRun } = finalizeTeamRun(team, running, yaml);
     try { setLastRun(id, user, lastRun); } catch { /* run-only consumer: persist best-effort */ }
     emit('done', body);
     return body;

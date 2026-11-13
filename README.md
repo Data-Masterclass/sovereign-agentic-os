@@ -74,7 +74,6 @@ visible to everyone in the tenant regardless of domain. Approvals land in **Gove
 | | MinIO | files, lakehouse objects, backups |
 | | LiteLLM | the only model gateway |
 | | OPA | authorization, fail-closed |
-| | agent-runtime | LangGraph execution |
 | | Langfuse + ClickHouse | run traces |
 | | egress-proxy, web-fetch | governed outbound HTTP |
 | Data | Trino, Polaris, dbt, data-runner, query-tool | SQL, Iceberg catalog, transforms |
@@ -91,7 +90,7 @@ navigation instead of broken.
 ```
 charts/sovereign-agentic-os/   the one Helm chart (local defaults; values.stackit-managed.yaml overlays a cloud install)
 os-ui/                         the application: UI, API routes, MCP server, agent build + run
-images/                        the images we build (os-ui, agent-runtime, egress-proxy, web-fetch, mock-model, dbt, dagster, data-runner, query-tool)
+images/                        the images we build (os-ui, egress-proxy, web-fetch, mock-model, dbt, dagster, data-runner, query-tool)
 scripts/os                     local lifecycle: up · test · down
 deploy/                        Terraform (targeted) and Velero backups for the managed install
 docs/superpowers/plans/        the rework plan of record

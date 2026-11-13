@@ -13,6 +13,161 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Git-based working for agent systems, automatically (engine rebuild Part D)
+
+- **Every change to an agent system is a git commit**, in the UI and through the MCP alike, with
+  no "export to git" step. It lands in the SAME per-domain bare repository the dbt project lives
+  in (`$OS_REPOS_DIR/<domain>.git`, PVC `os-repos`), under `agents/`: `system.yaml` (the canonical
+  definition), `agents/<agent-id>.md` (each agent's instruction file), `graph.json` (the compiled
+  LangGraph IR the engine actually runs) and a generated `README.md` (purpose, members, grants,
+  channels, edges, last build), plus `agents/index.yml` mapping slug → id, owner, scope and source
+  version. A Personal system sits in `agents/personal/<uid>/`, the lane split the data side
+  already uses. Author = the acting user, committer = `Sovereign OS`, subject
+  `agents(<domain>): <action> <slug> — via ui:<route> | mcp:<tool>`, trailers `OS-Action`,
+  `OS-Object`, `OS-Surface`, `OS-Request-Id`, `OS-Actor`. Behind the same single switch as the data
+  half (`DATA_PROJECT_GIT`, default off) because they share the repository and the PVC.
+- **One commit path, and the compiler enforces it.** The store's `writeThrough(rec, change)` takes
+  a required second parameter: a change descriptor (⇒ a commit) or an explicit `null` ("run
+  bookkeeping, deliberately not a commit"). 17 writers commit; 7 — the activity marker, the run
+  checkpoint, the last-run report and restart recovery — do not, because a run's artefacts are the
+  LangGraph checkpoint, the `run_events` rows and the Langfuse trace. Archive and delete are
+  commits that REMOVE the directory; a cross-domain move commits both repositories.
+- **Two generators in one tree, neither clobbering the other.** `commitSubtree` replaces exactly
+  one prefix and keeps the rest of the tree (an empty file map is how a deletion is recorded);
+  `reserveSubtree` lets a subtree owner protect its prefix from the whole-tree writer. Both are
+  generic path-prefix primitives in `core/infra/git-store.ts`.
+- **Boot reconcile**: at startup each domain's subtree is regenerated and any delta committed as
+  the platform principal with `OS-Reason: boot-reconcile`, so a window with the flag off is caught
+  up without anyone re-saving. A data-only repository never grows an `agents/` directory.
+- **Read-back from the repository, not a ledger**: `get_agent_system` and
+  `GET /api/agents/systems/<id>` return `git: { head: { sha, author, at, action, surface },
+  history[] }`, and the Agents tab header shows `git <sha7> by <author> <time>`. With git off the
+  answer is `null`, never a fabricated sha.
+- **The MCP records its surface everywhere**: every `tools/call` now runs inside an `mcp:<tool>`
+  request-surface scope, so a change made through the MCP is distinguishable from the same change
+  made in the UI — for the data half too.
+- **Mirror push** (`core/infra/git-mirror.ts`): after every changed commit, either generator, the
+  OS pushes `main` to the domain's admin-configured remote, resolving the token from its Secret
+  reference at call time and scrubbing it from every error. Fire-and-forget — it reports, never
+  blocks a save, and is retried by the next commit — with the last outcome as the new
+  **`git-mirror`** row on Platform → Components & Health (red when a push failed, amber before the
+  first). One config for both halves; no second credential path.
+
+### Added — Agents use the granted data as context, robustly (checklist X9)
+
+- Every agent tool result is **bounded before it enters the prompt**
+  (`AGENT_TOOL_RESULT_MAX_CHARS`, default 20 000 characters). A tabular answer is truncated BY
+  ROWS and keeps well-formed JSON plus a visible `[truncated: showing 243 of 50000 rows]`; anything
+  else is cut by characters with the counts named. A truncated result always carries the marker.
+- Every agent tool call has a **deadline** (`AGENT_TOOL_CALL_TIMEOUT_MS`, default 60 s) and
+  surfaces as a typed `{"error":{"code":"timeout"}}` tool step the graph can route on, so a hung
+  upstream ends the step rather than the run. An upstream dispatch failure is now a typed
+  `upstream_error` envelope instead of a prose `Error: <message>`. A thrown dispatch still fails
+  the superstep, so the checkpoint keeps the exactly-once property of the calls that already ran.
+- Both guardrails live in the engine's tool path, so they protect every tool — not only the data
+  ones — and the governed executor is unchanged: a data read still dispatches **as the runner**,
+  never a service principal, and appears as a span of the run's one Langfuse trace with the
+  dataset in the span input.
+
+
+### Fixed — Agent engine rebuild, A5 review round: `when` guards can finally be true
+
+- **An agent can write a state channel.** The A5 engine evaluated every handoff guard but
+  nothing could set the channel a guard reads, so EVERY `when` guard in the OS was false by
+  construction — including the five that drive the shipped Software Delivery Team, whose
+  planner → builder → tester → deployer → communication chain was therefore unreachable. A
+  `state.channels` declaration is now a **typed** state key (`boolean` / `number` / `string` /
+  `json`, last-write-wins, starting at that type's default; `add_messages` still appends; an
+  unrecognised declaration stays an untyped `json` channel so existing files run unchanged),
+  and the agent whose turn a guard follows is advertised one built-in tool, **`os_set_state`**
+  — closed to the declared channels, type-checked against the declaration, never a governed MCP
+  call and never held for approval. The write lands in the same superstep, so the next routing
+  decision sees it; the supervisor's routing prompt gained a `--- TEAM STATE ---` line, and each
+  writer's prompt a generated `--- STATE CHANNELS ---` block (one sentence per channel, derived
+  from the yaml). `software-team.ts` declares its five channels with a purpose each, and its five
+  compile warnings are now zero. A guard over an **undeclared** channel (or an `add_messages`
+  one) is still a compile warning. New tests drive one graph with and without the write.
+- **A run's contents are owner-only on every door.** `get_run_trace` gated on the
+  builder-domain-wide monitoring scope, so a builder could read a colleague's agent run and the
+  403/404 split confirmed a guessed run id existed; for a `run_<uuid>` it now uses the same
+  owner gate as every other run door (404 both ways). The `POST .../evaluate` route took a
+  `runId` from the request body and wrote a Langfuse score on that run's trace with no owner
+  gate at all; it is gated before the judge even runs. `list_runs` stays scope-wide by design,
+  and both tool descriptions now say which half is which.
+- **Schedule CronJob pods lose their borrowed egress.** They still carried the deleted runtime's
+  `component: agent-runtime` label, so widening the intra-namespace allow to every pod handed a
+  one-endpoint `curl` the whole in-namespace plane. They are relabelled `agent-schedule`,
+  excluded from the two blanket allows and given their own policy: os-ui:3000 and DNS.
+- **`agentRuntime.token: ""` no longer bricks os-ui.** The `agent-runtime-token` Secret was
+  gated on the token's VALUE while `_os-ui-env.tpl` mounts it through a non-optional
+  `secretKeyRef`. The Secret moved to its own template (`agent-runtime-token.yaml`) and renders
+  whenever any consumer is enabled.
+- **Removed** `tabs/agents/lib/build/grant-rehydrate.ts` and its test: dead code. Its only
+  consumer would have been `authorizeAppTool`, which serves the software app-MCP path; the agent
+  path's gates are in-process over the system YAML.
+
+### Changed — Agent engine rebuild, Phase A5: the LangGraph engine is the only engine
+
+- **Deleted, after the parity gate passed.** The hand-rolled BFS that used to execute agent
+  systems (`tabs/agents/lib/build/agentic-graph.ts` `runAgenticGraph` + `nodeOrder`), the mock
+  graph walk the Build adapters called a "test invocation" (`build/run-graph.ts`), the Python
+  `agent-runtime` image (`images/base/agent-runtime/`, incl. `interpreter.py`) with its
+  Deployment, ConfigMap, Service and dedicated egress NetworkPolicy, the governed-tool callback
+  door it called back through (`/api/agents/tool`), the IR-as-wire-format (`runtime-contract.ts`'s
+  `/reload` + `/run` types and the `realRuntime` client), and `build/server.ts`'s `runSystem`
+  fallback path. 15 files removed, ~1.4k lines.
+- **The engine flag is REMOVED, not defaulted.** `AGENTS_ENGINE`, `core/kernel/config.ts`
+  `agentsEngine`, `core/kernel/agents-engine.ts`, `engine/select.ts` and the per-system
+  `runtime: walker` opt-out are gone. An environment that still sets the variable gets one
+  deprecation line at boot saying it is ignored — silence would let an operator believe they had
+  pinned the old executor. `runtime: hermes | walker` in a stored `system.yaml` is NORMALISED to
+  `langgraph` on parse rather than refused: a retired engine name must not make a saved system
+  un-openable. The Runtime card that offered "Autonomous (Hermes)" is replaced by one honest line
+  about the engine, because Hermes never executed a system in this OS.
+- **`isAgenticOsTeam` → `unmappedGrantNames`.** The boolean existed to choose between the
+  in-process path and the Python fallback. With no fallback, the only honest question left is
+  which grants have no governed tool behind them — and the answer belongs in the error the run
+  doors return, naming them (400 at the route, the scheduler and MCP). Consequence, deliberate: a
+  system with NO tool grants is now runnable (its agents are plain completions); the old refusal
+  was an accident of the fallback, not a rule.
+- **Build compiles the real graph.** `tabs/agents/lib/build/compile-verify.ts` calls the same
+  `buildGraph` the run path calls (with inert deps — compiling makes no model and no tool call),
+  for the live adapters and the offline mock alike. A ✓ on the `langgraph` row now means the
+  StateGraph the engine will execute can be constructed from this `system.yaml`: an unmapped
+  grant, a malformed `when` guard, a disabled entrypoint or a channel shadowing an engine key
+  fails at Build. The Langfuse row is consequently `pending` after a build — honestly, because its
+  probe reads the traces a RUN leaves behind and a build no longer stages a fake run.
+- **The MCP run surface is the UI's path.** `get_agent_run` gains the `run_events` tail
+  (`afterSeq` / `limit` → `nextSeq`), so following a long run is a cheap poll; it and every other
+  run-addressed door (the run route's resume, the re-attach stream, the DIAGNOSTICS read, MCP
+  `resume_agent_run`) call `assertRunVisible` **before** any side effect or read. The diagnostics
+  route was reading Langfuse observations by trace id with no owner gate at all — and the trace id
+  IS the run id, so a guessed id returned somebody else's generations. Fixed: unknown and foreign
+  both answer 404. Tool descriptions and `tabs/agents/guide.md` now teach the real sequence
+  (build → run → get_agent_run → decide_approval, which resumes the run itself and executes as the
+  runner → resume_agent_run for restart recovery only → get_run_trace).
+- **Chart.** `agentRuntime` keeps only `token` and `schedules`: the shared service bearer (os-ui
+  mounts it as `AGENT_RUNTIME_TOKEN` and VALIDATES it on the paths the OS's own CronJobs call —
+  scheduled runs, data-sync, catalog-refresh — and the Dagster sidecar reads the same Secret) and
+  the declarative agent-schedule CronJobs, which never talked to the runtime and are no longer
+  gated on `agentRuntime.enabled`. `AGENT_RUNTIME_URL` is gone from the os-ui env. The chart
+  renders with `agentRuntime` removed entirely. The `agent-runtime` row is out of the Admin →
+  Components registry, `core/manifest.ts` and the Agents manifest's `services`; the interpreter's
+  pytest steps are out of CI.
+- **Fixtures are FROZEN.** The 13 golden recordings in `tabs/agents/lib/engine/fixtures/` are the
+  pre-rebuild walker's behaviour and stay exactly as recorded; `REGEN_FIXTURES` is gone with the
+  generator. `parity.test.ts` holds the engine to them; `fixtures.test.ts` keeps them frozen and
+  well-formed, including the one fixture that deliberately records the DEFECT the engine must not
+  reproduce (`shape-guarded-handoff-held-write`: the walker ignored `when: state.findings_ready`
+  and visited the guarded target, holding its write; the StateGraph routes to END).
+- **Tests.** `core/mcp/agent-run-surface.test.ts` (9, new) pins the surface, the sequence in the
+  descriptions and the guide, `not_found` from every run-addressed door, and tripwires for the
+  owner gate, "no Langfuse trace without a run id / no link to a trace LIST", and the labelled
+  embedding fallback. `build/agentic-graph.test.ts` was rewritten to test the node layer the graph
+  still uses — handoff material, the Context Librarian (including the offline-hash guard), node
+  status — directly instead of through a deleted walk. Suite: 4956 tests, 0 failures. Structure
+  ratchet lowered (TAB-ISOLATION 422 → 421, FILE-HEADER 1245 → 1240).
+
 ### Added — Data engine rebuild, Phase B4: the MCP is the UI, for every data mutation
 
 - **One service per data mutation** (`os-ui/tabs/data/lib/mutations-server.ts`): `create_dataset`,
@@ -232,6 +387,7 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   `127.0.0.1` when unset — fail-closed) instead of `0.0.0.0`, and requires a bearer when
   `REPO_SYNC_STATUS_TOKEN`/`AGENT_RUNTIME_TOKEN` is set, refusing the shipped dev placeholder as a
   credential.
+
 
 ### Added — Agent engine rebuild, Phase A4: runs execute in a worker
 

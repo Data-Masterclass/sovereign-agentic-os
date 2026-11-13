@@ -14,7 +14,8 @@
  *     re-exports them; the rule itself is UNCHANGED (plan deviation A1-2 → lifted in A2).
  *   - `holdDecisionFor(preset, tool)` is the one entry point the engine uses: a non-write tool is
  *     never held; a write is held per {@link holdDecision}. The executor's own gate 1b applies the
- *     same rule when it runs with `holdAt: 'executor'` (the walker path).
+ *     same rule when it runs with `holdAt: 'executor'` (its default — defence in depth for any
+ *     caller that is not a graph node).
  */
 import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
 import type { SafetyPreset } from '@tabs/agents/lib/system-schema';

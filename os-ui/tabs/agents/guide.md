@@ -17,9 +17,21 @@ The Agents tab is where you define, build, and run agent systems inside the OS. 
 
    **Capabilities & grants.** The Define grants are **default-on capabilities**: every agent **inherits the full set of the system's Define grants by default** — you narrow a sub-agent to *reduce* what it can touch, never to widen it. In `system.yaml`, `grants` are grouped like the builder's "What your team can use" surface: CONTEXT (`data` · `knowledge` · `metrics` · `connections` · `files`-folders) and PLAN items (`plan` — Operating Model, Strategic Pillars, Big Bets). Each item's ACCESS LEVEL is its `capability`: `Read` (read-only), `Write-approval` (read + propose — **every write is held for a human to approve before it runs**; nothing is written directly), or `Write-bounded` (read + write). **Granting a resource at `Write-approval` or `Write-bounded` is what gives the agent that resource's write tools** — including `metrics` (`define_metric`, a My-scope KPI definition wired through the same governed metrics path as the MCP tool).
 5. **Build.** Call `build_agent_system` to compile, validate, and verify the system. The response includes a `status` (`success` | `failed`), a `checks` array, and Langfuse trace IDs for every verification run. A failed build returns typed errors per file.
-6. **Run.** Call `run_agent_system` with the `systemId` and a `message` (or a `messages` history). The team runs live, in-process, AS YOU — and the recursion is governed: every tool call the team makes dispatches through the SAME governed door as your own MCP calls (grant-scoped, OPA-pre-gated per system, role-floored per tool), so a team can never exceed its declared grants nor your role. You get back the reply plus per-node governed tool steps. A hermes-runtime or legacy-grant system cannot run in-process — that returns `bad_request` pointing to the Agents tab UI.
+6. **Run.** Call `run_agent_system` with the `systemId` and a `message` (or a `messages` history). What runs is a real **LangGraph `StateGraph`** compiled from your `system.yaml`: one subgraph per agent (plan → act → tools → route), the edges you declared, your `when` guards evaluated, a supervisor that *decides* which member goes next. It runs in-process **AS YOU** — every tool call the team makes dispatches through the SAME governed door as your own MCP calls (grant-scoped, OPA-pre-gated per system, role-floored per tool), so a team can never exceed its declared grants nor your role.
 
-   **The write gate is scope-aware.** Because the team runs AS you, a **My (personal)** write is exactly what you could do by hand with no approval, so the agent performs it **directly** (run-as-user, OPA/DLS-checked) — it is not held. Only a **Domain / Company** write is an escalation, and *that* is held in Policies & Approvals for the right admin. This holds under BOTH `Write-approval` (read + propose) and `Write-bounded` (read + write): a My-scope write runs directly either way — proposing a change to yourself is empty ceremony. `read-only` is the sole preset that blocks every write. Earlier "all agent writes are held for approval" wording is out of date. The run report states the outcome plainly: *wrote N to My &lt;tab&gt;* for direct writes and *N awaiting approval in Governance → Inbox* for held ones.
+   You get back `runId` — one id that is **three things at once**: the LangGraph thread id, the Langfuse trace id, and the handle for every follow-up tool below. Also `traceUrl`, the reply, and the per-node governed tool steps. If a grant names a tool with no governed MCP tool behind it (a retired legacy name, a typo), the call is a `bad_request` that NAMES the tool — fix `system.yaml` with `commit_agent_files`.
+
+   **A long run does not block you.** In worker mode the call may return `queued: true` with the `runId`; follow it with `get_agent_run`.
+
+7. **Follow it.** Call `get_agent_run({ runId })` for the live state: which agents ran, the budget spent, compile warnings, whether it finished — plus the tail of the run's own event log (`node-started`, `tool-step`, `node-completed`, `approval-required`, `resumed`, `done`). Pass the `nextSeq` it returns back as `afterSeq` to poll only what is new. Only the user who STARTED a run can read it; any other id is `not_found`.
+
+8. **Decide an approval, and the run continues itself.** A write that needs a human **pauses the run** (a LangGraph `interrupt`): `get_agent_run` reports `parked: true` and `heldApprovals: [{ approvalId, tool, node, whoCanApprove }]`, and nothing was executed. Call `decide_approval({ approvalId, decision: 'approve' | 'reject' })` — approving RESUMES the thread from its checkpoint and the write executes **exactly once, as the original runner, not as you the approver**; rejecting hands the model a typed result and the run carries on. You do not call run again.
+
+9. **Resume after a restart.** Only for a run interrupted by a pod restart or a dropped connection — NOT for a parked one (that resumes from its decision). `resume_agent_run({ runId })` continues from the last checkpoint. A finished run is a typed conflict; somebody else's run is `not_found`.
+
+10. **Read the trace.** `get_run_trace({ runId })` opens the one Langfuse trace for that run (trace id = run id): every agent a span, every model call a generation with token usage, every tool call a span carrying its governance decision. One run, one trace — never a list.
+
+⛔ Sharing an agent system requires a domain admin to promote it to Domain; certifying to Company requires an Admin. Anyone in the domain may RUN a domain-shared system; editing stays with the owner (you can only change what you built).
 
 ⛔ Sharing an agent system requires a domain admin to promote it to Domain; certifying to Company requires an Admin. Anyone in the domain may RUN a domain-shared system; editing stays with the owner (you can only change what you built).
 
@@ -37,7 +49,8 @@ The Agents tab is where you define, build, and run agent systems inside the OS. 
 |---|---|
 | `list_agent_systems`, `get_agent_system`, `search_knowledge` | Creator |
 | `create_agent_system`, `commit_agent_files`, `build_agent_system` | Creator (own work) |
-| `run_agent_system` | Creator (own / domain-shared systems; runs as you) |
+| `run_agent_system`, `get_agent_run`, `resume_agent_run`, `get_run_trace` | Creator (own / domain-shared systems; runs as you — a run id is readable only by the user who started it) |
+| `decide_approval` on a held write | The approver role the escalation requires (never the requester) |
 | ⛔ Promote to Domain | Domain admin |
 | ⛔ Certify to Company | Admin |
 
@@ -64,6 +77,25 @@ build_agent_system({ id: "as_11C..." })
 → { status: "success", checks: ["grants_valid","knowledge_resolved"], traceId: "lf_..." }
 
 run_agent_system({ systemId: "as_11C...", message: "Reconcile this week's invoice exceptions" })
-→ { finalText: "3 exceptions reconciled, 1 escalated…", path: ["reconciler"],
-    nodes: [{ node: "reconciler", model: "…", steps: [{ tool: "search_knowledge", isError: false }] }] }
+→ { runId: "run_1b4e...", traceUrl: "https://langfuse…/trace/run_1b4e...",
+    parked: true, heldApprovals: [{ approvalId: "ap_7K...", tool: "request_promotion", node: "reconciler" }],
+    path: ["reconciler"], nodes: [{ node: "reconciler", model: "…", steps: [{ tool: "search_knowledge", isError: false }] }] }
+   — the run PAUSED on a write that needs a human; nothing was written.
+
+get_agent_run({ runId: "run_1b4e..." })
+→ { parked: true, next: ["tools_reconciler"], budget: { stepsUsed: 3 },
+    heldApprovals: [{ approvalId: "ap_7K...", status: "pending", whoCanApprove: ["dana (domain_admin)"] }],
+    events: [{ seq: 7, event: "approval-required", data: { approvalId: "ap_7K..." } }], nextSeq: 7 }
+
+decide_approval({ approvalId: "ap_7K...", decision: "approve" })
+→ { decided: "approved", resume: { status: "queued", runId: "run_1b4e..." } }
+   — the thread resumes itself; the write executes as the RUNNER, not as the approver.
+
+get_agent_run({ runId: "run_1b4e...", afterSeq: 7 })
+→ { finished: true, finalText: "3 exceptions reconciled, 1 escalated…",
+    events: [{ seq: 8, event: "resumed" }, { seq: 11, event: "done" }], nextSeq: 11 }
+
+get_run_trace({ runId: "run_1b4e..." })
+→ the ONE Langfuse trace for that run: agents as spans, model calls as generations with usage,
+  tool calls as spans carrying the governance decision.
 ```

@@ -146,5 +146,5 @@ operator seed remains the way to pin accounts in that mode.
 All optional; every default is the in-cluster Service name. `core/kernel/config.ts` is the
 single source of truth — read it rather than a table that drifts. The chart sets them in
 `templates/base/os-ui/os-ui.yaml`; the ones you are most likely to change are
-`OPENSEARCH_URL`, `LITELLM_URL`, `OPA_URL`, `AGENT_RUNTIME_URL`, `OS_ENABLED_TABS` and
+`OPENSEARCH_URL`, `LITELLM_URL`, `OPA_URL`, `AGENT_RUNS_DATABASE_URL`, `OS_ENABLED_TABS` and
 `OS_PUBLIC_URL`.

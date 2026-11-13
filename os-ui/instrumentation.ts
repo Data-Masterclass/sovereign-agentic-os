@@ -123,57 +123,110 @@ export async function register(): Promise<void> {
         const { ensureRunJobsReady } = await import('./tabs/agents/lib/build/run-jobs-server.ts');
         const jobs = await ensureRunJobsReady();
         console.info(`[os-ui] agent runs: run queue ready (${jobs}); AGENTS_WORKER=${config.agentsWorker}`);
+        // A5: AGENTS_ENGINE is retired. An environment that still sets it is told, once, that it
+        // does nothing — silence would let an operator believe they had pinned the old walker.
+        if (process.env.AGENTS_ENGINE) {
+          console.warn(
+            `[os-ui] AGENTS_ENGINE=${process.env.AGENTS_ENGINE} is IGNORED and deprecated: ` +
+              'there is one agent engine (LangGraph) since the engine rebuild (A5). Remove the variable.',
+          );
+        }
       } catch (err) {
         console.error(`[os-ui] agent runs: checkpointer setup FAILED — langgraph runs will fail until it is reachable: ${err instanceof Error ? err.message : String(err)}`);
       }
     })();
   }
 
-  // DATA PROJECTS IN GIT (engine rebuild B1): when DATA_PROJECT_GIT=true, subscribe the one commit
-  // path to the data store's project-change events so every dataset / composition / check / sync /
-  // publish / retire write regenerates the domain's dbt project and commits it as the acting user
-  // (name + e-mail from the user directory; a missing e-mail is synthesized and said so in the
-  // commit). OFF (the default) ⇒ nothing is installed and no repo is touched. Fail-soft: a wiring
-  // error is logged, never a boot failure.
+  // PROJECTS IN GIT (engine rebuild B1 for data, Part D for agent systems): when
+  // DATA_PROJECT_GIT=true, subscribe the ONE commit path to both stores' change events so every
+  // dataset / composition / check / sync / publish / retire write regenerates the domain's dbt
+  // project at the repository root, and every create / edit / grant change / build / promote /
+  // rename / move / archive / delete of an agent system regenerates that domain's `agents/`
+  // subtree — each committed as the acting user (name + e-mail from the user directory; a missing
+  // e-mail is synthesized and said so in the commit). OFF (the default) ⇒ nothing is installed and
+  // no repo is touched. Fail-soft per step: a wiring error is logged, never a boot failure.
+  //
+  // THE ORDER IN THIS BLOCK IS LOAD-BEARING, and it is why the two halves share one block:
+  //   1. the data commit hook,
+  //   2. the agents commit hook — which also calls `reserveSubtree('agents/')`,
+  //   3. the DATA boot reconcile — a WHOLE-TREE commit, which keeps `agents/` only because step 2
+  //      already reserved it; reconciling first would commit the subtree's DELETION,
+  //   4. the AGENTS boot reconcile.
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     void (async () => {
+      const { config } = await import('./core/kernel/config.ts');
+      if (!config.dataProjectGit) {
+        console.info('[os-ui] data projects: DATA_PROJECT_GIT off — dataset and agent-system changes are not committed to git');
+        return;
+      }
+      const { getPublicUser } = await import('./tabs/admin/lib/users.ts');
+      const resolveActor = async (id: string) => {
+        const u = await getPublicUser(id).catch(() => null);
+        return { id, name: u?.name, email: u?.email };
+      };
+      // 1. data commit hook
+      let dataHookInstalled = false;
+      let connectionCatalog: Awaited<typeof import('./tabs/data/lib/sync-run-server.ts')>['connectionCatalogForOwner'] | undefined;
       try {
-        const { config } = await import('./core/kernel/config.ts');
-        if (!config.dataProjectGit) {
-          console.info('[os-ui] data projects: DATA_PROJECT_GIT off — dataset changes are not committed to git');
-          return;
-        }
         const { installDataProjectCommitHook } = await import('./tabs/data/lib/dbt/commit.ts');
-        const { getPublicUser } = await import('./tabs/admin/lib/users.ts');
-        const { connectionCatalogForOwner } = await import('./tabs/data/lib/sync-run-server.ts');
-        installDataProjectCommitHook({
-          resolveActor: async (id) => {
-            const u = await getPublicUser(id).catch(() => null);
-            return { id, name: u?.name, email: u?.email };
-          },
-          connectionCatalog: connectionCatalogForOwner,
-        });
+        ({ connectionCatalogForOwner: connectionCatalog } = await import('./tabs/data/lib/sync-run-server.ts'));
+        installDataProjectCommitHook({ resolveActor, connectionCatalog });
+        dataHookInstalled = true;
         console.info(`[os-ui] data projects: committing every dataset change to ${config.reposDir}/<domain>.git`);
-        // BOOT RECONCILE (engine rebuild B4): the hook only sees writes from NOW on, so the first
-        // boot with the flag on — and any boot after a crash between a store write and its commit —
-        // must commit the difference between the generated project and the repository HEAD, for
-        // every domain, as the platform principal (`OS-Reason: boot-reconcile`). Commits only where
-        // the tree actually moved; one unreadable domain never stops the others or the boot.
-        const { reconcileDataProjectsAtBoot } = await import('./tabs/data/lib/dbt/boot-reconcile.ts');
-        const reconciled = await reconcileDataProjectsAtBoot({
-          resolveActor: async (id) => ({ id }),
-          connectionCatalog: connectionCatalogForOwner,
-        });
-        if (reconciled.committed.length || reconciled.failed.length) {
-          console.info(
-            `[os-ui] data projects: boot reconcile over ${reconciled.domains.length} domain(s) — committed ${reconciled.committed.map((c) => `${c.domain}@${c.sha.slice(0, 7)}`).join(', ') || 'nothing'}` +
-              (reconciled.failed.length ? `; FAILED ${reconciled.failed.map((f) => `${f.domain} (${f.error})`).join(', ')}` : ''),
-          );
-        } else {
-          console.info(`[os-ui] data projects: boot reconcile — ${reconciled.domains.length} domain(s) already match their repository`);
-        }
       } catch (err) {
         console.error(`[os-ui] data projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+      // 2. agents commit hook — RESERVES `agents/` for the data side's whole-tree commit
+      let agentsHookInstalled = false;
+      try {
+        const { installAgentProjectCommitHook } = await import('./tabs/agents/lib/git/commit.ts');
+        installAgentProjectCommitHook({ resolveActor });
+        agentsHookInstalled = true;
+        console.info(`[os-ui] agent projects: committing every agent-system change to ${config.reposDir}/<domain>.git (agents/)`);
+      } catch (err) {
+        console.error(`[os-ui] agent projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+      // 3. DATA boot reconcile (engine rebuild B4): the hook only sees writes from NOW on, so the
+      // first boot with the flag on — and any boot after a crash between a store write and its
+      // commit — must commit the difference between the generated project and the repository HEAD,
+      // for every domain, as the platform principal (`OS-Reason: boot-reconcile`). Commits only
+      // where the tree actually moved; one unreadable domain never stops the others or the boot.
+      // It runs AFTER step 2 so the reserved `agents/` subtree survives the whole-tree commit; if
+      // step 2 failed, the reconcile is SKIPPED rather than allowed to delete the subtree.
+      if (dataHookInstalled && agentsHookInstalled) {
+        try {
+          const { reconcileDataProjectsAtBoot } = await import('./tabs/data/lib/dbt/boot-reconcile.ts');
+          const reconciled = await reconcileDataProjectsAtBoot({
+            resolveActor: async (id) => ({ id }),
+            connectionCatalog,
+          });
+          if (reconciled.committed.length || reconciled.failed.length) {
+            console.info(
+              `[os-ui] data projects: boot reconcile over ${reconciled.domains.length} domain(s) — committed ${reconciled.committed.map((c) => `${c.domain}@${c.sha.slice(0, 7)}`).join(', ') || 'nothing'}` +
+                (reconciled.failed.length ? `; FAILED ${reconciled.failed.map((f) => `${f.domain} (${f.error})`).join(', ')}` : ''),
+            );
+          } else {
+            console.info(`[os-ui] data projects: boot reconcile — ${reconciled.domains.length} domain(s) already match their repository`);
+          }
+        } catch (err) {
+          console.error(`[os-ui] data projects: boot reconcile FAILED — ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } else if (dataHookInstalled) {
+        console.error("[os-ui] data projects: boot reconcile SKIPPED — the agents hook did not install, so 'agents/' is unreserved and a whole-tree commit would delete it");
+      }
+      // 4. AGENTS boot reconcile: whatever happened while the flag was off (or while a write
+      // failed) is committed now, as the platform principal with `OS-Reason: boot-reconcile`, so
+      // the repo is TRUE without anyone re-saving every system. Awaited inside this
+      // fire-and-forget block only (never on the boot path), and it needs the store hydrated first.
+      if (agentsHookInstalled) {
+        try {
+          const { ensureHydrated } = await import('./tabs/agents/lib/store.ts');
+          await ensureHydrated();
+          const { reconcileAgentProjectsAtBoot } = await import('./tabs/agents/lib/git/reconcile.ts');
+          await reconcileAgentProjectsAtBoot();
+        } catch (err) {
+          console.error(`[os-ui] agent projects: boot reconcile FAILED — ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     })();
   }

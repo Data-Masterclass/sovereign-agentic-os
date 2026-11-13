@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { listComponentsWithStatus, statusOf, toggleComponent, BY_ID } from '@tabs/admin/lib/platform';
-import { selfHealFor, versionFor, nodes, pools, OPTIONAL_LAYERS, trinoAccessRulesRow } from '@tabs/admin/lib/components-extra';
+import { selfHealFor, versionFor, nodes, pools, OPTIONAL_LAYERS, trinoAccessRulesRow, gitMirrorRow } from '@tabs/admin/lib/components-extra';
 import { config } from '@core/kernel/config';
 import { lastReconcileOutcome, DEFAULT_RECONCILE_PERIOD_MS } from '@core/infra/trino-rules-server';
 import { assertGuarded } from '@tabs/admin/lib/guard';
@@ -88,6 +88,39 @@ export async function GET() {
           source: 'live',
         },
       ];
+    }
+
+    // Git mirror (engine rebuild Part D, checklist X2). The push after a commit is
+    // fire-and-forget, so its last outcome has to be VISIBLE — otherwise the remote silently
+    // falls behind. Pure row (`gitMirrorRow`); absent when git is off or no mirror is configured.
+    try {
+      const { ensureMirrorsHydrated, mirrorSignals } = await import('@core/infra/git-mirror');
+      await ensureMirrorsHydrated();
+      const mirrorRow = gitMirrorRow({ enabled: config.dataProjectGit, signals: mirrorSignals(), now: Date.now() });
+      if (mirrorRow) {
+        systemHealth = [
+          ...systemHealth,
+          {
+            id: `sys-${mirrorRow.id}`,
+            lens: 'system',
+            title: mirrorRow.name,
+            health: mirrorRow.health,
+            detail: mirrorRow.detail,
+            owner: 'platform',
+            domain: 'platform',
+            cluster: true,
+            ts: mirrorRow.at ? new Date(mirrorRow.at).toISOString() : undefined,
+            selfHeal:
+              mirrorRow.health === 'green'
+                ? 'Healthy — every changed commit is pushed, and a failure is retried by the next commit.'
+                : 'Needs a human: check the mirror URL, the token Secret and the egress allowlist on Platform → Data projects.',
+            links: { systemId: `sys-${mirrorRow.id}` },
+            source: 'live',
+          },
+        ];
+      }
+    } catch {
+      /* the mirror store is best-effort: no row rather than a failed components read */
     }
 
     return NextResponse.json({
