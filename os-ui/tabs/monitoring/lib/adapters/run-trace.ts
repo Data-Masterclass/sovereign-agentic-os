@@ -16,11 +16,49 @@ import type { Health, HealthItem, TraceDetail, TraceStep } from '@tabs/monitorin
  * REUSE: the same `recentTraces()` ring buffer `lib/agent-governed.ts` already
  * fills on every governed tool call — so a run shows here even with no live
  * Langfuse — and Langfuse's own public traces API when it is reachable.
+ *
+ * X-R3/X-R4 — WHY FAILURE IS READ STRUCTURALLY AND NOT BY GREP. Every "did this
+ * step fail" question used to be answered by running /error|fail|aborted/i over
+ * `JSON.stringify(output)`. The observer's own payloads defeat that: a SUCCESSFUL
+ * tool span's output is `{"isError":false,…}` (the KEY NAME contains "error") and
+ * `run.result`'s output is `{"failed":false,…}` (the key name contains "fail"), so
+ * on production 0.8.0 EVERY tool span read back as `status: 'error'` and every
+ * successful run read back red. The fix is to read what the writer actually wrote:
+ * Langfuse's own `level`, and the boolean fields `isError` / `failed`. The text
+ * probe survives only for a genuinely TEXTUAL output, where a word is a word.
  */
 
-function runHealth(t: { decision?: string; output?: unknown }): Health {
-  const out = typeof t.output === 'string' ? t.output : JSON.stringify(t.output ?? '');
-  if (t.decision === 'deny' || /error|fail|aborted/i.test(out)) return 'red';
+/** The error-ish booleans the OS's own span payloads carry, read by name. */
+function flaggedFailure(output: unknown): boolean | null {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
+  const o = output as Record<string, unknown>;
+  // `isError` is the tool-result flag; `failed` is `run.result`'s outcome flag. A present
+  // boolean is AUTHORITATIVE in both directions — `false` means success, and must not be
+  // overridden by a text probe that matched its own key name.
+  if (typeof o.isError === 'boolean') return o.isError;
+  if (typeof o.failed === 'boolean') return o.failed;
+  return null;
+}
+
+/** True when a TEXT output reads as a failure. Only applied to strings (see the header). */
+function textReadsAsFailure(output: unknown): boolean {
+  return typeof output === 'string' && /error|fail|aborted/i.test(output);
+}
+
+/**
+ * Did this observation/trace fail? Structured first (`level`, then the boolean flags), text last.
+ * Exported for the X-R3 test, which drives the exact payloads the observer writes.
+ */
+export function outputFailed(output: unknown, level?: unknown): boolean {
+  const lv = String(level ?? '').toUpperCase();
+  if (lv === 'ERROR') return true;
+  const flagged = flaggedFailure(output);
+  if (flagged !== null) return flagged;
+  return textReadsAsFailure(output);
+}
+
+function runHealth(t: { decision?: string; output?: unknown; level?: unknown }): Health {
+  if (t.decision === 'deny' || outputFailed(t.output, t.level)) return 'red';
   if (t.decision === 'requires_approval') return 'amber';
   return 'green';
 }
@@ -67,7 +105,7 @@ async function langfuseRuns(): Promise<HealthItem[]> {
     const rows = Array.isArray(data?.data) ? data.data : [];
     return rows.map((t: Record<string, unknown>): HealthItem => {
       const meta = (t.metadata ?? {}) as Record<string, unknown>;
-      const owner = String(meta.principal ?? 'unknown');
+      const owner = traceOwner(t, meta);
       return {
         id: String(t.id ?? ''),
         lens: 'runs',
@@ -75,7 +113,7 @@ async function langfuseRuns(): Promise<HealthItem[]> {
         health: runHealth({ decision: meta.decision as string, output: t.output }),
         detail: preview(t.output),
         owner,
-        domain: String(meta.domain ?? principalDomain(owner)),
+        domain: traceDomain(meta, owner),
         ts: (t.timestamp as string) ?? undefined,
         links: { runId: String(t.id ?? '') },
         source: 'live',
@@ -106,12 +144,13 @@ export async function fetchTrace(id: string): Promise<TraceDetail | null> {
         ms: numOrUndef(o.latency),
         status: obsError(o) ? 'error' : 'ok',
       }));
+      const owner = traceOwner(t, meta);
       return {
         id: String(t.id ?? id),
         name: String(t.name ?? 'run'),
-        owner: String(meta.principal ?? 'unknown'),
-        domain: String(meta.domain ?? principalDomain(String(meta.principal ?? ''))),
-        health: /error|fail/i.test(preview(t.output)) ? 'red' : 'green',
+        owner,
+        domain: traceDomain(meta, owner),
+        health: outputFailed(t.output) ? 'red' : 'green',
         ts: (t.timestamp as string) ?? undefined,
         contextPack: contextPackFrom(t, obs),
         steps,
@@ -193,10 +232,47 @@ function logsFrom(t: Record<string, unknown>, obs: Record<string, unknown>[]): s
   return lines;
 }
 
-/** True when an observation recorded an error (Langfuse level or an error output). */
+/**
+ * True when an observation recorded an error. X-R3: structured signals only — Langfuse's `level`,
+ * then the payload's own `isError` / `failed` boolean. `statusMessage` counts only when it is
+ * actually set, because the observer writes it ONLY on a failure (or on `parked on approval`,
+ * which is neither an error nor silent — it is reported as the parked span it is).
+ */
 function obsError(o: Record<string, unknown>): boolean {
-  if (String(o.level ?? '').toUpperCase() === 'ERROR') return true;
-  return /error|fail|aborted/i.test(preview(o.output) + ' ' + preview(o.statusMessage));
+  if (outputFailed(o.output, o.level)) return true;
+  const msg = String(o.statusMessage ?? '').trim();
+  return msg.length > 0 && /error|fail|aborted/i.test(msg);
+}
+
+/**
+ * Who ran this trace. X-R4: `get_run_trace` answered `owner: 'unknown'` for every agent run,
+ * because the header only ever read `metadata.principal` — a field the GOVERNED-tool traces set
+ * and the AGENT-run observer does not. The observer writes the acting user to the trace's own
+ * `userId` (`trace({ userId: input.userId, … })`), which is the authoritative field for exactly
+ * this. Read it, then the governed-trace metadata, and only then say `unknown` — which now means
+ * "the trace really records nobody", not "we looked in one place".
+ *
+ * Order matters: `metadata.principal` is the DELEGATED principal of a governed tool call and is
+ * preferred where it exists; `userId` is the fallback for an agent run.
+ */
+export function traceOwner(t: Record<string, unknown>, meta: Record<string, unknown>): string {
+  const first = [meta.principal, t.userId, meta.userId]
+    .map((v) => String(v ?? '').trim())
+    .find((v) => v.length > 0);
+  return first ?? 'unknown';
+}
+
+/**
+ * Which domain owns this trace. X-R4: the header showed an EMPTY domain whenever the observer's
+ * `metadata.domain` was present but blank (an unassigned system) — `??` only guards `undefined`,
+ * so `''` passed straight through and the scope gate compared against nothing. Falls back to the
+ * owner's domain, then to `unknown`; never returns an empty string.
+ */
+export function traceDomain(meta: Record<string, unknown>, owner: string): string {
+  const declared = String(meta.domain ?? '').trim();
+  if (declared) return declared;
+  const derived = principalDomain(owner).trim();
+  return derived || 'unknown';
 }
 
 /** Map a principal to its domain. Sales-family principals → 'sales' (worked example). */
