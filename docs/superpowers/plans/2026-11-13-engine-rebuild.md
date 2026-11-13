@@ -506,7 +506,7 @@ curl -fsS https://<OS_PUBLIC_URL>/api/health                    # expect: 200, {
 
 **2. The worker is up and durable** (A14/A18 depend on it).
 ```bash
-helm upgrade agentic-os charts/sovereign-agentic-os -n $NS --reuse-values --set osUI.worker.enabled=true
+helm upgrade agentic-os charts/sovereign-agentic-os -n $NS --reuse-values --set osUI.worker.enabled=true --force-conflicts --skip-schema-validation
 kubectl -n $NS rollout status deploy/os-ui-worker
 kubectl -n $NS logs deploy/os-ui-worker | grep 'agent-runs-worker. boot:'
 # expect EXACTLY: checkpointer=postgres jobs=postgres resumeHook=true approvals=true

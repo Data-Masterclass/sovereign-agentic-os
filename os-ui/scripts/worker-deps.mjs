@@ -93,6 +93,27 @@ for (const [spec, url] of traced) {
   roots.set(root, name);
 }
 
+// The static trace cannot see what the run path imports LAZILY — the MCP dispatcher loads tool
+// modules on first call, and those reach e.g. isomorphic-git (git-store) and pg. The first
+// os-ui-worker rollout crash-looped on exactly that after a green smoke. So every production
+// dependency the project declares is a seed too, minus the packages that only a browser can
+// load (they touch `window` at import, and Next bundles them for the client anyway).
+const BROWSER_ONLY = new Set([
+  'next', 'react', 'react-dom', // the framework: the standalone server already carries what it needs
+  'monaco-editor', '@monaco-editor/react', '@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links',
+  'echarts', '@xyflow/react', 'jspdf', 'jspdf-autotable',
+]);
+const projectPkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+for (const dep of Object.keys(projectPkg.dependencies ?? {})) {
+  if (BROWSER_ONLY.has(dep)) continue;
+  const found = findDep(ROOT, dep);
+  if (!found) {
+    console.error(`worker-deps: declared dependency '${dep}' is not installed`);
+    process.exit(1);
+  }
+  if (!roots.has(found)) roots.set(found, dep);
+}
+
 // --- 3. closure over declared dependencies ----------------------------------------------------
 function findDep(fromDir, name) {
   let dir = fromDir;
