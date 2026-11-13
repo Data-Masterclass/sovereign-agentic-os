@@ -171,7 +171,7 @@ Not a compiled system, left as is: `core/kernel/artifacts.ts` seeded registry re
 | Tests | `core/infra/dagster.test.ts`, `tabs/data/lib/dbt/{launch,asset-keys}.test.ts`, `tabs/data/lib/{sync-status-server,dq-status-server}.test.ts`, `tabs/monitoring/lib/adapters/pipeline-health.test.ts`, 3 new cases in `dbt/commit.test.ts`, 6 new Python cases |
 | Docs | `docs/components/{dagster,dbt}.md`, `tabs/data/README.md`, `tabs/monitoring/README.md`, `os-ui/ARCHITECTURE.md` ("Dagster schedules the repo"), `CHANGELOG.md` |
 
-**Gates:** `tsc --noEmit` clean · `npm --prefix os-ui test` **5007 tests, 0 fail, 7 todo** (4985 → 5007) · `check-structure.mjs` **no new violations** (TAB-ISOLATION 421/422, CORE-INDEPENDENCE 206/207, FILE-HEADER 1248/1249 — all *below* baseline) · `gate.sh` exit 0 (86 pass) · `helm lint` exit 0 with the flag off **and** `--set osUI.dataProjectGit.enabled=true` · `py_compile repo.py os_projects.py` + `python3 -m unittest` **15 tests OK**.
+**Gates:** `tsc --noEmit` clean · `npm --prefix os-ui test` **5008 tests, 0 fail, 7 todo** (4985 → 5008) · `check-structure.mjs` **no new violations** (TAB-ISOLATION 421/422, CORE-INDEPENDENCE 206/207, FILE-HEADER 1248/1249 — all *below* baseline) · `gate.sh` exit 0 (86 pass) · `helm lint` exit 0 with the flag off **and** `--set osUI.dataProjectGit.enabled=true` · `py_compile repo.py os_projects.py` + `python3 -m unittest` **15 tests OK**.
 
 ### Phase B3 — Trino as the engine, lineage from dbt
 - [ ] dbt runs on Trino via `dbt-trino`; incremental models carry the OS's cursor/late-data semantics (`sync-sql.ts`) as model config, not bespoke SQL. Row-level security and OPA stay at the query-tool / Trino boundary (verify nothing bypasses them).

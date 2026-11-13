@@ -193,3 +193,18 @@ test('runSyncNow with the flag on launches Dagster as the OWNER and writes no le
   assert.match(launches[0].tags!['os/batch_id'], /^b_ds_/);
   assert.equal(launches[0].env!.OS_PRINCIPAL, 'amir');
 });
+
+test('setVersionRun survives the dataset.yaml round trip; a cleared launchError disappears', () => {
+  const id = seedOrders();
+  store.setVersionRun(id, 'silver', { commit: 'c'.repeat(40), dagsterRunId: 'run_9' }, 'amir');
+  const after = store.getDataset(id, amir).versions.silver;
+  assert.equal(after.commit, 'c'.repeat(40));
+  assert.equal(after.dagsterRunId, 'run_9');
+  assert.equal(after.launchError ?? null, null, 'an explicit null is not persisted as a key');
+
+  store.setVersionRun(id, 'silver', { commit: null, dagsterRunId: null, launchError: 'Dagster unreachable: HTTP 503' }, 'amir');
+  const failed = store.getDataset(id, amir).versions.silver;
+  assert.equal(failed.launchError, 'Dagster unreachable: HTTP 503');
+  assert.equal(failed.dagsterRunId ?? null, null, 'no fabricated run id beside an error');
+  assert.equal(failed.commit ?? null, null);
+});
