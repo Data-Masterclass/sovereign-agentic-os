@@ -39,23 +39,24 @@ export const TOOL_LABELS: Record<EngineeringTool, string> = {
 };
 
 /**
- * The OS's own nouns for the same things. Allowed as the bridge in parentheses, never alone —
- * these are the words the owner objected to reading where a tool's noun belongs.
+ * The OS's nouns for the five object KINDS — the words the owner objected to reading where a
+ * tool's noun belongs. The panel's own frame (its heading and section headings) may not use these
+ * at all: a frame that says "data product" is describing the OS, not the tool.
+ */
+export const OS_KIND_NOUNS: readonly string[] = ['data product', 'dataset', 'KPI', 'dashboard', 'agent system', 'app'];
+
+/**
+ * Every OS noun: the kinds plus the OS's other words for a tool's object. Allowed as the bridge in
+ * parentheses, never alone.
  */
 export const OS_NOUNS: readonly string[] = [
-  'data product',
-  'dataset',
-  'KPI',
+  ...OS_KIND_NOUNS,
   'metric definition',
-  'dashboard',
-  'agent system',
   'AI team',
-  'app',
   'application',
   'pipeline',
   'run',
   'workflow',
-  'artefact',
 ];
 
 const lower = (s: string) => s.toLowerCase();
@@ -106,6 +107,22 @@ export function vocabularyViolations(view: EngineeringView): string[] {
       out.push(...labelViolations(s.tool, `${view.kind}:${view.id} ${s.tool} artefact`, a.noun));
     }
     for (const l of s.links) out.push(...labelViolations(s.tool, `${view.kind}:${view.id} ${s.tool} link`, l.label));
+  }
+  return out;
+}
+
+/**
+ * The panel's own frame — its heading, its section headings, its loading and error copy — must not
+ * name an object KIND at all: those strings sit above every tool's section, so an OS kind noun
+ * there would re-label every artefact underneath it. (The neutral word "artefact" is deliberate:
+ * it is the plan's own word for "the real thing", not a rename of anyone's object.)
+ */
+export function frameCopyViolations(copy: Record<string, string>): string[] {
+  const out: string[] = [];
+  for (const [key, text] of Object.entries(copy)) {
+    for (const noun of OS_KIND_NOUNS) {
+      if (new RegExp(`\\b${noun}\\b`, 'i').test(text)) out.push(`${key}: the panel frame names the OS kind "${noun}" — "${text}"`);
+    }
   }
   return out;
 }

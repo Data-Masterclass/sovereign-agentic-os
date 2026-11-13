@@ -24,10 +24,22 @@ import {
   LANGFUSE_REDACTIONS,
 } from '@core/engineering/sections';
 import { ENGINEERING_KINDS, ENGINEERING_TOOLS, sealView, unresolvedLink, type EngineeringView } from '@core/engineering/types';
-import { hasOsNoun, hasToolNoun, labelViolations, TOOL_LABELS, vocabularyViolations } from '@core/engineering/vocabulary';
+import { frameCopyViolations, hasOsNoun, hasToolNoun, labelViolations, OS_KIND_NOUNS, TOOL_LABELS, vocabularyViolations } from '@core/engineering/vocabulary';
 import { graphJson, type EngineeringGraph } from '@core/engineering/graph';
 import { agentColumns, layoutGraph } from '@core/ui/engineering/graph-layout';
-import { emptyText, orderedSections, PANEL_TITLE, tabCaption, unresolvedText } from '@core/ui/engineering/panel';
+import {
+  CAVEATS_HEADING,
+  COMMANDS_HEADING,
+  EXPORT_HEADING,
+  PANEL_ERROR_PREFIX,
+  PANEL_LOADING,
+  PANEL_SUBTITLE,
+  PANEL_TITLE,
+  emptyText,
+  orderedSections,
+  tabCaption,
+  unresolvedText,
+} from '@core/ui/engineering/panel';
 import {
   engineeringAdapter,
   registeredEngineeringKinds,
@@ -90,6 +102,24 @@ test('T2: a label that uses ONLY an OS noun fails, and the bridge may appear onc
   // The whole-view checker catches an OS-only section title.
   const bad = view([{ tool: 'dbt', label: 'dbt', title: 'Data product definition', artefacts: [], links: [], commands: [], unavailable: 'x' }]);
   assert.ok(vocabularyViolations(bad).length >= 1);
+});
+
+test('T2: the panel\'s own frame copy names no OS object kind — every kind noun belongs to a tool\'s section', () => {
+  assert.deepEqual(
+    frameCopyViolations({
+      PANEL_TITLE,
+      PANEL_SUBTITLE,
+      PANEL_LOADING,
+      PANEL_ERROR_PREFIX,
+      COMMANDS_HEADING,
+      CAVEATS_HEADING,
+      EXPORT_HEADING,
+    }),
+    [],
+  );
+  // The checker has teeth: a frame string that renames an object fails it.
+  assert.equal(frameCopyViolations({ bad: 'Everything about this data product' }).length, 1);
+  assert.ok(OS_KIND_NOUNS.includes('KPI'));
 });
 
 test('T2: the tab label is the tool\'s own name for every tool', () => {

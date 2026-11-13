@@ -71,9 +71,12 @@ export async function datasetEngineeringView(principal: EngineeringPrincipal, id
   const listed = await repoPaths(domain);
   const modelPaths = modelPathsFor(listed.paths, slug);
   const dirs = new Set(modelPaths.map((p) => p.split('/').slice(0, -1).join('/')));
+  const tracked = new Set(listed.paths);
   const wanted = new Set<string>(modelPaths);
-  for (const dir of dirs) wanted.add(`${dir}/schema.yml`);
-  if (listed.paths.includes('models/sources.yml')) wanted.add('models/sources.yml');
+  // Only paths that are REALLY tracked: a `schema.yml` the generator has not written yet must not
+  // appear in the git file list as though it were committed.
+  for (const dir of dirs) if (tracked.has(`${dir}/schema.yml`)) wanted.add(`${dir}/schema.yml`);
+  if (tracked.has('models/sources.yml')) wanted.add('models/sources.yml');
   for (const p of listed.paths) if (p.startsWith('models/semantic/') && modelPaths.some((m) => p.endsWith(`/${nodeOf(m)}.yml`))) wanted.add(p);
   const read = await readRepoFiles(domain, (p) => wanted.has(p));
   const node = preferredNode(modelPaths);
