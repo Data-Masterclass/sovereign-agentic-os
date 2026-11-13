@@ -194,7 +194,7 @@ export async function goLive(
   const decision = goLiveGuard(dependencies);
   if (!decision.ok) throw lifecycleError(decision.reason, 409);
 
-  const written = await setLivePin(object.kind, object.id, target, actor, object.domain, deps);
+  const written = await setLivePin(object.kind, object.id, target, actor, object.domain, deps, object.path);
   const index = await lifecycleIndex();
   const starts = (await adapter.consequences?.(actor, object)) ?? [];
   return {

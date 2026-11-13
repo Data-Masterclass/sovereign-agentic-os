@@ -114,8 +114,15 @@ export type Pin = {
   at: string;
   /** The principal that went live. */
   by: string;
-  /** The domain whose repo carries the tag + `os/lifecycle.yml` entry. */
+  /** The domain whose repo carries the tag + the pin file's entry. */
   domain: string;
+  /**
+   * Where the pinned definition LIVES in the repo at `ref`, when the kind is git-backed.
+   * Recorded at go-live time because a generator's placement depends on the current set of
+   * objects: resolving the path again later could land on a directory that has since moved.
+   * Absent for a kind whose definition is not a file (a dashboard pins a spec digest).
+   */
+  path?: string;
 };
 
 /** The in-flight test marker — a ref being exercised from Studio, never a managed state. */

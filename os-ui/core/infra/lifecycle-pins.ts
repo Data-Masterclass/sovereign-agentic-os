@@ -66,6 +66,8 @@ type PinDoc = {
   at: string;
   by: string;
   domain: string;
+  /** The repo path of the pinned definition, for a git-backed kind. */
+  path?: string;
   /** A test marker, not a pin: set while a draft is being run from Studio. */
   test?: boolean;
 };
@@ -110,7 +112,7 @@ export async function lifecycleIndex(): Promise<LifecycleIndex> {
   for (const d of docs as PinDoc[]) {
     if (!d?.key || !d.ref) continue;
     if (d.test) tests[d.key] = { ref: d.ref, at: d.at };
-    else pins[d.key] = { ref: d.ref, at: d.at, by: d.by, domain: d.domain };
+    else pins[d.key] = { ref: d.ref, at: d.at, by: d.by, domain: d.domain, ...(d.path ? { path: d.path } : {}) };
   }
   s.cache = { pins, tests };
   return s.cache;
@@ -175,12 +177,13 @@ export async function setLivePin(
   by: { id: string; name?: string | null; email?: string | null },
   domain: string,
   deps: PinWriteDeps = {},
+  path?: string,
 ): Promise<SetPinResult> {
   const index = await lifecycleIndex();
   const key = pinKey(kind, id);
-  const pin: Pin = { ref, at: new Date().toISOString(), by: by.id, domain };
+  const pin: Pin = { ref, at: new Date().toISOString(), by: by.id, domain, ...(path ? { path } : {}) };
   index.pins[key] = pin;
-  mirror.writeThrough(docId(key, false), { key, kind, id, ref, at: pin.at, by: by.id, domain });
+  mirror.writeThrough(docId(key, false), { key, kind, id, ref, at: pin.at, by: by.id, domain, ...(path ? { path } : {}) });
   const commit = deps.commit === false ? null : await commitPinFile(domain, index, by, 'go-live', `${kind}:${id}`, deps);
   return { pin, tag: { name: liveTagName(kind, id), written: false }, commit };
 }
@@ -290,6 +293,7 @@ export function pinRowsFor(domain: string, index: LifecycleIndex): PinRow[] {
       tag: liveTagName(parts.kind, parts.id),
       at: pin.at,
       by: pin.by,
+      ...(pin.path ? { path: pin.path } : {}),
     });
   }
   return rows.sort((a, b) => (a.kind === b.kind ? a.id.localeCompare(b.id) : a.kind.localeCompare(b.kind)));

@@ -39,6 +39,23 @@ export async function register(): Promise<void> {
     }
   }
 
+  // LIFECYCLE (night 2, stream V): reserve the pin file's own subtree and register the per-kind
+  // adapters. The kernel must never import a tab, so each tab's adapter registers itself HERE —
+  // the one place in os-ui that is allowed to know both halves. Registration is pure (a Map
+  // write), never awaited on a request path, and a kind with no adapter is an honest refusal
+  // from go_live rather than a silent success, so a failure here cannot corrupt anything.
+  try {
+    const { reserveLifecycleSubtree } = await import('./core/infra/lifecycle-pins.ts');
+    reserveLifecycleSubtree();
+    const { registerLifecycleAdapter } = await import('./core/kernel/lifecycle-adapters.ts');
+    const { dashboardLifecycleAdapter } = await import('./tabs/dashboards/lib/lifecycle-adapter.ts');
+    const { agentLifecycleAdapter } = await import('./tabs/agents/lib/lifecycle-adapter.ts');
+    registerLifecycleAdapter(dashboardLifecycleAdapter);
+    registerLifecycleAdapter(agentLifecycleAdapter);
+  } catch (err) {
+    console.error(`[os-ui] lifecycle: adapters NOT registered — go_live will refuse, naming the kind. ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // Boot-time SECURITY guard: refuse to serve in production with the insecure
   // dev-default session/MCP signing secret. This runs HERE (real server start) so it
   // NEVER fires during `next build` static prerender or on the edge — where a

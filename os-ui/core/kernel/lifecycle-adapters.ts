@@ -41,6 +41,8 @@ export type LifecycleObject = {
   head: string;
   /** The persisted tier/visibility, for the audience badge only. Never a lifecycle input. */
   tier: string;
+  /** Where this object's definition lives in the repo, when the kind is git-backed. */
+  path?: string;
 };
 
 /** A dependency, named but not yet resolved to a lifecycle (the service does that). */
