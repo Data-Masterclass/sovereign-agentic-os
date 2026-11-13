@@ -10,14 +10,16 @@ RUN pip install --no-cache-dir \
       "dagster-webserver==1.13.11" \
       "dagster-graphql==1.13.11" \
       "dagster-postgres==0.29.11" \
-      # slim base carries no driver at all, so the webserver and daemon crashed on
-      # connection handling closes the connection before the first query.
-      # The slim base ships NO Postgres driver, so the webserver and daemon both
-      # crashed on boot — which is why Dagster shows 0 runs in 90 days. Install
-      # both: dagster-postgres 0.29 builds a `postgresql+psycopg` URL (psycopg v3),
-      # while some code paths still ask for the legacy psycopg2 dialect.
-      "psycopg[binary]>=3.1" \
+      # The slim base ships NO Postgres driver, so the webserver and daemon crashed on
+      # boot (the "0 runs in 90 days" of the audit). The driver set below is the one that
+      # ran 0.2.0 in production for weeks: psycopg2 + SQLAlchemy 2.0. Do NOT add psycopg
+      # (v3) and do NOT let SQLAlchemy float to 2.1: with both present SQLAlchemy 2.1 picks
+      # the psycopg3 dialect and dagster-webserver 1.13's startup telemetry query
+      # (`instance_info.run_storage_id`) dies with "the connection is closed" — the 0.3.0
+      # webserver crash-looped on exactly that while the daemon, which never makes that
+      # call, ran fine.
       "psycopg2-binary>=2.9" \
+      "SQLAlchemy>=2.0,<2.1" \
       "dagster-k8s==0.29.11" \
       "dagster-dbt==0.29.11" \
       "dbt-core>=1.8,<1.10" \

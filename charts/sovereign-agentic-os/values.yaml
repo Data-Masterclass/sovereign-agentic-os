@@ -779,7 +779,7 @@ dagster:
       - name: sovereign
         image:
           repository: sovereign-os/dagster
-          tag: "0.3.0"
+          tag: "0.3.1"
           pullPolicy: IfNotPresent
         dagsterApiGrpcArgs:
           - "--python-file"
@@ -849,7 +849,7 @@ dagster:
             mountPath: /repos-checkout
         sidecarContainers:
           - name: repo-sync
-            image: sovereign-os/dagster:0.3.0
+            image: sovereign-os/dagster:0.3.1
             imagePullPolicy: IfNotPresent
             command: ["/bin/sh", "/opt/dagster/app/repo-sync.sh"]
             env:
@@ -891,7 +891,7 @@ dagster:
   dagsterWebserver:
     image:
       repository: sovereign-os/dagster
-      tag: "0.3.0"
+      tag: "0.3.1"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }
@@ -899,7 +899,7 @@ dagster:
   dagsterDaemon:
     image:
       repository: sovereign-os/dagster
-      tag: "0.3.0"
+      tag: "0.3.1"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }
