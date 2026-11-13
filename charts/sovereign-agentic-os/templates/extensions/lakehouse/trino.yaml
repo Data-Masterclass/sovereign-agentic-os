@@ -143,7 +143,10 @@ data:
   Impersonation IS bounded from the first second: the dbt service user may act as something
   shaped like an OS principal and as nothing else, and no other user may become anyone but
   themselves. NOTHING SECRET MAY EVER BE PUT IN THIS FILE — it is a ConfigMap.
-  Helm owns the bootstrap value, so a `helm upgrade` resets it; the OS reconciles again at boot.
+  Helm owns the bootstrap value, so a `helm upgrade` RESETS it to this permissive form. The OS
+  therefore reconciles on a periodic repair pass as well as at boot and on every directory write
+  (`trino.accessControl.reconcileIntervalMinutes`, default 10) — review B3-review-H-3. The window
+  between an upgrade and the next pass is the one time ownership is open after the first boot.
 */}}
 apiVersion: v1
 kind: ConfigMap

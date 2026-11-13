@@ -150,3 +150,55 @@ test('layerOfModel reads the OS naming and refuses to guess', () => {
   assert.equal(layerOfModel('stg_orders'), null);
   assert.equal(layerOfModel(''), null);
 });
+
+test('a PARTIALLY parsed project falls back, rather than labelling a truncated graph "dbt"', () => {
+  // B3-review-M-1. Gold is in the asset graph but Silver is not (a half-parsed domain, or a commit
+  // Dagster has only partly caught up with). The old code kept whatever it found and still set
+  // `source: 'dbt'`, so the view said "dbt knows of no Silver here" — a wrong statement about
+  // lineage, not a late one. All of the dataset's models, or none.
+  const composition = ds({
+    id: 'ds_oc000001',
+    name: 'Order Customer',
+    owner: 'amir',
+    domain: 'sales',
+    origin: 'curated',
+    versions: { ...emptyVersions(), silver: built('silver/orders.sql'), gold: built('gold/mart_order_customer.sql') },
+    upstreams: [{ datasetId: 'ds_orders1', name: 'Orders', fqn: 'iceberg.personal_amir.silver_orders', joinType: 'inner' }],
+  });
+  const snap: ProjectSnapshot = {
+    domain: 'sales',
+    datasets: [{
+      dataset: composition,
+      artifacts: {
+        'silver/orders.sql': 'create or replace table iceberg.personal_amir.silver_orders as select 1',
+        'gold/mart_order_customer.sql': 'create or replace table iceberg.personal_amir.gold_order_customer as select 1',
+      },
+      compiled: ['silver/orders.sql', 'gold/mart_order_customer.sql'],
+    }],
+    catalogs: {},
+  };
+  const keys = datasetAssetKeys(snap, 'ds_oc000001');
+  assert.deepEqual(keys.models.map((m) => m.name), ['silver_order_customer', 'gold_order_customer']);
+
+  // A manifest that carries BOTH of this dataset's models…
+  const manifest = {
+    nodes: {
+      ...MANIFEST.nodes,
+      'model.sales.silver_order_customer': { resource_type: 'model', name: 'silver_order_customer', description: 'Silver' },
+    },
+    sources: MANIFEST.sources,
+    parent_map: {
+      ...MANIFEST.parent_map,
+      'model.sales.silver_order_customer': ['source.sales.personal_amir.bronze_orders'],
+      'model.sales.gold_order_customer': ['model.sales.silver_order_customer'],
+    },
+  };
+  const full = assetNodesFromManifest(manifest, 'sales');
+  assert.ok(graphLineage(composition, full, keys), 'with every model present the dbt graph is used');
+
+  // …and the same manifest minus the Silver model: a truncated graph is NOT dbt's answer.
+  const partial = full.filter((n) => n.key[1] !== 'silver_order_customer');
+  assert.equal(graphLineage(composition, partial, keys), null, 'one missing model ⇒ fall back to the registry');
+  // And the registry graph (the fallback) is complete and honestly labelled.
+  assert.equal(lineageFor(composition).source, 'registry');
+});

@@ -788,7 +788,14 @@ dagster:
         env:
           - { name: TRINO_HOST, value: trino }
           - { name: TRINO_PORT, value: "8080" }
-          - { name: TRINO_USER, value: dbt-sales }
+          # The Trino user dbt-trino CONNECTS as (profiles.yml `user`), before
+          # `impersonation_user: OS_PRINCIPAL` sets the governed session identity. It MUST equal
+          # `trino.accessControl.serviceUser` below, because that is the only `original_user` the
+          # generated `rules.json` lets become an OS principal — `dbt-sales` (the old value) is
+          # denied by its own impersonation rule the moment Trino authenticates clients.
+          # A subchart's values cannot be templated from here, so the equality is asserted by
+          # `scripts/check-trino-rules-chart.mjs` (run from os-ui/scripts/gate.sh). B3-review-H-5.
+          - { name: TRINO_USER, value: dbt-runner }
           - { name: TRINO_CATALOG, value: iceberg }
           # The domain schema the marts land in — the SAME value as dbt.trino.schema and
           # marts.schema (`sales`); the old `analytics` literal here had drifted from them.
@@ -1201,6 +1208,10 @@ trino:
     principalPattern: "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
     # How often Trino re-reads rules.json (so a membership change lands without a restart).
     refreshPeriod: 30s
+    # How often os-ui re-reconciles the ConfigMap even when nothing changed (minutes, jittered,
+    # a no-op PATCH-wise when the bytes already match). This is what repairs a `helm upgrade`,
+    # which rewrites Helm's bootstrap value over the OS's enumerated one — B3-review-H-3.
+    reconcileIntervalMinutes: 10
   resources:
     requests: { cpu: "1", memory: 2Gi }
     limits: { cpu: "4", memory: 8Gi }

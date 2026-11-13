@@ -51,9 +51,28 @@ export function renderDbtProject(domain: string, plan: ModelPlanSet): string {
   });
 }
 
-/** `profiles.yml` — Trino target, `env_var()` only, impersonation of the acting principal. */
+/**
+ * `profiles.yml` — Trino target, `env_var()` only, impersonation of the acting principal.
+ *
+ * The CREDENTIAL (B3-review, "impersonation reality"). `method` defaults to `none`, and Trino with
+ * no authenticator has no `original_user` for an impersonation rule to match — so impersonation is
+ * inert until an operator turns PASSWORD (or JWT/OAUTH2) authentication on. When they do, dbt-trino
+ * needs a `password`, and `TrinoNoneCredentials` would REJECT the key — so the line is emitted
+ * inside a Jinja guard rather than always. dbt renders `profiles.yml` through Jinja BEFORE parsing
+ * the YAML, so the guard is evaluated and the key simply is not there under `method: none`.
+ *
+ * The guard is written as a YAML COMMENT (`# {% if … %}`) on purpose. Jinja does not know it is
+ * looking at YAML, so the block still controls the `password:` line; but the file ALSO has to be
+ * valid YAML before rendering, because the generator's own gate parses every emitted `.yml`
+ * (`generate.test.ts` "valid yaml and no secrets") and a reader should be able to open it. A bare
+ * `{% if %}` line is a YAML flow-collection error. Rendered, the guard leaves an empty comment
+ * line either way.
+ *
+ * Only `env_var()` ever appears: a literal password in a repo anyone in the domain can clone is
+ * not a path the generator offers. See docs/components/trino.md -> "Enable real impersonation".
+ */
 export function renderProfiles(domain: string): string {
-  return yml({
+  const doc = yml({
     [PROFILE_NAME]: {
       target: 'trino',
       outputs: {
@@ -72,6 +91,18 @@ export function renderProfiles(domain: string): string {
       },
     },
   });
+  // Spliced textually (the YAML emitter cannot express a conditional key), after the `user:` line
+  // and at its own indentation, so the file stays byte-stable and the generator goldens assert it.
+  return doc.replace(
+    /^([ \t]*)user: (.*)$/m,
+    (_whole, indent: string, value: string) =>
+      [
+        `${indent}user: ${value}`,
+        `${indent}# {% if env_var('TRINO_AUTH_METHOD', 'none') != 'none' %}`,
+        `${indent}password: "{{ env_var('TRINO_PASSWORD', '') }}"`,
+        `${indent}# {% endif %}`,
+      ].join('\n'),
+  );
 }
 
 export function renderMacros(): Map<string, string> {

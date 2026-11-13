@@ -126,7 +126,15 @@ def _merge_bundles(a: Dict[str, object], b: Dict[str, object]) -> Dict[str, obje
     }
 
 
-def _trino_rows(sql: str, principal: str):
+#: Wall-clock bound on the observation probe. BOTH halves are needed (B3-review-M-5): the HTTP
+#: `request_timeout` bounds one poll of the client/coordinator exchange, while `query_max_run_time`
+#: is what makes TRINO itself abandon the query — without it, a `select count(*)` over a federated
+#: source that has gone slow runs until the cluster kills it, holding a run pod and a Trino slot
+#: for as long as it takes. Configurable so an operator with a genuinely slow source can raise it.
+OBSERVE_TIMEOUT_SECONDS = int(os.environ.get("OS_OBSERVE_TIMEOUT_SECONDS", "60") or 60)
+
+
+def _trino_rows(sql: str, principal: str, timeout_seconds: int = OBSERVE_TIMEOUT_SECONDS):
     """Run ONE read on Trino as `principal` (the observation probe, engine rebuild B3).
 
     The same identity contract as everything else here: the session user IS the OS principal, so
@@ -141,22 +149,30 @@ def _trino_rows(sql: str, principal: str):
         user=principal,
         catalog=os.environ.get("TRINO_CATALOG", "iceberg"),
         http_scheme=os.environ.get("TRINO_HTTP_SCHEME", "http"),
+        request_timeout=timeout_seconds,
+        session_properties={"query_max_run_time": f"{timeout_seconds}s"},
     )
     cur = conn.cursor()
     cur.execute(sql)
     return cur.fetchall()
 
 
-def _source_assets(p: osp.Project, dom: str) -> Tuple[List[object], List[object]]:
+def _source_assets(p: osp.Project, dom: str) -> Tuple[List[object], List[object], Dict[str, object]]:
     """`os/sources.yml` → one OBSERVABLE source asset per federated sync source, plus its
-    freshness check where the OS derived a window from the schedule's own cron.
+    freshness check where the OS derived a window from the schedule's own cron, plus the
+    Dagster asset key each one got (so the caller can put them in an observation job).
 
     The asset KEY is dagster-dbt's key for the dbt source, so the silver model that reads it
     depends on this node — the graph has no dangling upstream and `get_lineage` shows the
     warehouse table the data actually came from.
+
+    A DISABLED entry keeps its asset (the graph and the lineage view must still show where the
+    data comes from) but is left out of the observation schedule by `osp.observe_crons`, so
+    nothing probes a source whose sync the owner turned off (B3-review-M-4).
     """
     assets: List[object] = []
     checks: List[object] = []
+    keys: Dict[str, object] = {}
     for a in p.source_assets:
         key = AssetKey(osp.source_asset_key(p.domain, a))
         sql = osp.observe_sql(a)
@@ -181,13 +197,14 @@ def _source_assets(p: osp.Project, dom: str) -> Tuple[List[object], List[object]
             return _observed
 
         assets.append(_make())
+        keys[f"{a.source}.{a.table}"] = key
         seconds = osp.freshness_seconds(a)
         if seconds:
             try:
                 checks.extend(build_last_update_freshness_checks(assets=[key], lower_bound_delta=timedelta(seconds=seconds)))
             except Exception as e:  # noqa: BLE001 — a freshness API shift must not drop the asset
                 log.warning("sovereign: %s source %s: no freshness check (%s: %s)", p.domain, a.table, type(e).__name__, e)
-    return assets, checks
+    return assets, checks, keys
 
 
 def build_definitions() -> Definitions:
@@ -195,7 +212,9 @@ def build_definitions() -> Definitions:
     projects, skipped = osp.discover(CHECKOUT, pinned, GIT_BASE)
     for s in skipped:
         log.warning("sovereign: domain %s skipped — %s", s.domain, s.reason)
-    pinned_env = osp.pinned_env(projects)
+    # NOTE: the location-wide pinned list (`osp.pinned_env`) is deliberately NOT computed here any
+    # more — every job pins only its own domain's commit (`osp.pinned_one`), so the wide value had
+    # no consumer left (B3-review-L-3). `pinned_env` stays in os_projects for the status surface.
 
     base_assets = [hello_sovereign]
     base_resources: Dict[str, object] = {}
@@ -216,7 +235,7 @@ def build_definitions() -> Definitions:
     bundles: List[Tuple[str, Dict[str, object]]] = []
     for p in projects:
         try:
-            bundles.append((p.domain, _wire_project(p, dagster_names[p.domain], pinned_env)))
+            bundles.append((p.domain, _wire_project(p, dagster_names[p.domain])))
         except Exception as e:  # noqa: BLE001 — per-domain gating
             log.error("sovereign: domain %s failed to load (%s: %s) — skipped", p.domain, type(e).__name__, e)
 
@@ -274,12 +293,14 @@ def build_definitions() -> Definitions:
     return defs_  # type: ignore[return-value]
 
 
-def _wire_project(p: osp.Project, dom: str, pinned_env: str) -> Dict[str, object]:
+def _wire_project(p: osp.Project, dom: str) -> Dict[str, object]:
     """One domain's Dagster objects. `dom` is its COLLISION-FREE Dagster name (`sanitize_all`).
 
     Every tag this function writes pins ONLY THIS DOMAIN's commit (review B2-review-L4): a run pod
     checks out and `dbt parse`s what its own job needs, not the whole workspace, so cold start stays
-    flat as domains are added. `pinned_env` (the location-wide list) is deliberately unused here.
+    flat as domains are added. The location-wide pinned list is therefore NOT a parameter — it used
+    to be one and was shadowed on the first line, which read as if the caller's value mattered
+    (B3-review-L-3).
     """
     pinned_env = osp.pinned_one(p.domain, p.sha)
     assets: List[object] = []
@@ -315,9 +336,44 @@ def _wire_project(p: osp.Project, dom: str, pinned_env: str) -> Dict[str, object
     assets.append(domain_assets)
 
     # `os/sources.yml` → observable external-source assets + their freshness checks (B3).
-    src_assets, src_checks = _source_assets(p, dom)
+    src_assets, src_checks, src_keys = _source_assets(p, dom)
     assets.extend(src_assets)
     checks.extend(src_checks)
+
+    # …and the job + schedule that actually OBSERVE them (B3-review-M-3). Without this the assets
+    # were defined but in no job and no schedule, so no observation ever ran and every freshness
+    # check measured a data version that never arrived. One job per distinct cron, at the source's
+    # own cron (which the generator derived from the sync's schedule).
+    for cron, group in osp.observe_crons(p.source_assets).items():
+        group_keys = [src_keys[f"{a.source}.{a.table}"] for a in group if f"{a.source}.{a.table}" in src_keys]
+        if not group_keys:
+            continue
+        selection = AssetSelection.assets(*group_keys)
+        obs_name = osp.observe_job_name(dom, cron)
+        obs_job = define_asset_job(
+            name=obs_name,
+            selection=selection,
+            tags=osp.observe_tags(p.domain, group, p.sha, pinned_env, obs_name),
+            description=f"Observe {len(group)} external source(s) of domain {p.domain} on cron '{cron}' (one read each, as the source's own principal).",
+        )
+        jobs.append(obs_job)
+        tz = "UTC"
+        schedules.append(
+            ScheduleDefinition(
+                name=obs_name,
+                job=obs_job,
+                cron_schedule=cron,
+                execution_timezone=tz,
+                default_status=DefaultScheduleStatus.RUNNING,
+                description=f"Observation of {', '.join(f'{a.source}.{a.table}' for a in group)} (from os/sources.yml).",
+            )
+        )
+        principals = sorted({a.principal for a in group})
+        if len(principals) == 1:
+            # The inactive-principal sensor pauses by schedule name; only claim a principal when the
+            # whole group shares one, otherwise one deactivated owner would pause other people's
+            # observations too.
+            schedule_principals[obs_name] = principals[0]
 
     # The job the OS launches with an explicit asset subset (Build, transform, gold join, sync now).
     jobs.append(

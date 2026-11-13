@@ -84,16 +84,44 @@ per federated sync source, and the code location turns each into an
 | `freshness_minutes` | **two schedule intervals**, derived from the sync's own cron by `cronIntervalMinutes` (pure, tested): one missed tick is jitter, two is late. A cron shape the OS's picker does not produce yields **no claim** rather than a wrong one. Rendered as a `build_last_update_freshness_checks` asset check |
 | `downstream` | the model that reads it, so the file is readable on its own |
 
+**Who runs the observation** (review B3-review-M-3/M-4). An observable asset that is in no job and
+no schedule is never observed — so B3's assets were defined and inert, and their freshness checks
+measured a data version that never arrived. The code location now also builds, per domain:
+
+- **one observation job + schedule per DISTINCT cron** among that domain's ENABLED sources, at the
+  source's own cron (which the generator derived from the sync's schedule). The job is named
+  `<domain>__observe_<sha6(cron)>` — stable, so adding or removing an unrelated source never
+  renames an existing schedule;
+- `enabled: false` on an entry keeps the ASSET (the graph and the lineage view still need the node)
+  and leaves it out of the schedule — nothing probes a source whose sync the owner turned off;
+- `os/principal` + `OS_PRINCIPAL` on the run tag only when every source in the group shares one
+  principal, and the inactive-principal sensor only registers such a group — one deactivated owner
+  must not pause other people's observations.
+
+**Bounded** (review B3-review-M-5): the probe connects with `request_timeout` AND a
+`query_max_run_time` session property (`OS_OBSERVE_TIMEOUT_SECONDS`, default 60 s). The HTTP
+timeout bounds one poll; only the session property makes Trino itself abandon a `select count(*)`
+over a source that has gone slow, instead of holding a run pod and a Trino slot indefinitely.
+
 Safety: every identifier in an entry must match `^[A-Za-z_][A-Za-z0-9_$]{0,127}$` or
 `os_projects.parse_source_assets` **drops the entry** — the probe interpolates them into SQL, and a
-half-built probe is worse than none. The Iceberg Bronze landing is deliberately NOT a source asset:
+half-built probe is worse than none. The `principal` is validated separately against the OS
+principal shape `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (a principal is not a SQL identifier — it
+legitimately contains `-` and `.`) and a malformed one DROPS the entry rather than being coerced
+into a different identity (B3-review-L-2); the same bound applies to a schedule's principal, which
+becomes `OS_PRINCIPAL` for the whole build. The Iceberg Bronze landing is deliberately NOT a source asset:
 it lives in the same lakehouse and already carries `_loaded_at` dbt source freshness. Kafka-offset
 and API-batch syncs are still in `os/external.yml` and still not assets — see the FAQ.
 
 ## Lineage comes from the manifest (engine rebuild B3)
 
 `get_lineage` and the Data tab's lineage view read **dbt's own `ref()`/`source()` graph**, not the
-OS's version records, whenever `DATA_PROJECT_GIT` is on:
+OS's version records, whenever `DATA_PROJECT_GIT` is on. It is **all of a dataset's models or none**
+(B3-review-M-1): a half-parsed project would otherwise yield a graph missing a layer while still
+labelled `source: 'dbt'`, which reads as "dbt says there is no Silver here" rather than "dbt has not
+caught up". A missing model falls back to the registry graph, and the `source` label (`dbt` /
+`registry`) is carried all the way out through MCP `get_lineage` (B3-review-M-2) so a caller can
+always tell which graph it got.
 
 ```
 tabs/data/lib/lineage-server.ts  datasetLineage(dataset)

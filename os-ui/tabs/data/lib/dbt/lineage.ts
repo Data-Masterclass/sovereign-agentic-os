@@ -49,7 +49,12 @@ export function layerOfModel(name: string): Layer | null {
 export function graphLineage(d: Dataset, nodes: GraphNode[], keys: DatasetAssetKeys): LineageGraph | null {
   const byId = new Map(nodes.map((n) => [keyId(n.key), n]));
   const mine = keys.models.filter((m) => byId.has(keyId(m.key)));
-  if (mine.length === 0) return null;
+  // ALL of the dataset's models, or none of them (B3-review-M-1). A partially-parsed project — Gold
+  // in the asset graph, Silver not yet, or a domain whose parse half-failed — would otherwise
+  // produce a graph that is missing a layer while still being LABELLED `source: 'dbt'`, which reads
+  // as "dbt says this dataset has no Silver" rather than "dbt has not caught up". Returning null
+  // falls back to the registry graph, which is complete and labelled as the registry's.
+  if (keys.models.length === 0 || mine.length !== keys.models.length) return null;
 
   const mineIds = new Set(mine.map((m) => keyId(m.key)));
   const columns = d.columns.map((c) => c.name);

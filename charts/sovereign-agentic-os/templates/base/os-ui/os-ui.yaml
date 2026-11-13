@@ -43,18 +43,26 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "services"]
     verbs: ["get", "list"]
-  {{- if or .Values.osUI.externalConnectorsEnabled .Values.osUI.dataProjectGit.enabled }}
+  {{- if .Values.osUI.externalConnectorsEnabled }}
   # One-click external-warehouse catalog registration (Connections tab): the os-ui
   # server merges the catalog `.properties` into the `trino-catalog` ConfigMap and
   # materializes a `trino-ext-<catalog>` Secret in-namespace, then rolls Trino
-  # (lib/connections/warehouse/k8s-registration.ts). Least-privilege: namespaced
-  # configmaps + secrets read/write only — gated on the same flag as the feature, so a
-  # deployment with external connectors OFF grants no secret access at all.
-  # ALSO granted with osUI.dataProjectGit (engine rebuild B3): the OS reconciles the
-  # `trino-access-rules` ConfigMap from domain membership (core/infra/trino-rules-server.ts).
+  # (lib/connections/warehouse/k8s-registration.ts). Namespaced configmaps + secrets
+  # read/write, gated on the FEATURE's own flag — a deployment with external connectors
+  # OFF grants no Secret access at all. This is the ONLY rule that grants Secrets.
   - apiGroups: [""]
     resources: ["configmaps", "secrets"]
     verbs: ["get", "list", "create", "patch", "update"]
+  {{- end }}
+  {{- if and .Values.trino.enabled (.Values.trino.accessControl | default dict).enabled .Values.trino.opa.enabled }}
+  # Trino access rules (engine rebuild B3; narrowed in B3-review-H-6). The reconciler reads and
+  # PATCHes ONE ConfigMap and nothing else, so the grant names it: no `secrets`, no `create`, no
+  # `list`, no other ConfigMap. Previously this rode on the external-connector rule — a
+  # namespace-wide Secrets grant handed to every install with `dataProjectGit` on.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["trino-access-rules"]
+    verbs: ["get", "patch"]
   {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

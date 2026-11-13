@@ -116,21 +116,33 @@ export function buildTrinoRules(input: RulesInput): TrinoRules {
   const schemas: SchemaRule[] = [];
   const tables: TableRule[] = [];
 
-  // (d) schema ownership — a domain schema is owned by that domain's principals; a personal lane by
-  // its own uid. Everything else: not an owner (so no CREATE / DROP / CTAS in it).
+  // (d) schema ownership — a personal lane is owned by its one uid; a domain schema by that
+  // domain's principals. Everything else: not an owner (so no CREATE / DROP / CTAS in it).
+  //
+  // PERSONAL LANES COME FIRST, and that order is load-bearing (B3-review-M-8). Trino takes the
+  // FIRST matching rule, and a domain's sanitized schema name is not guaranteed to differ from a
+  // lane's: a domain literally called `personal_amir` sanitizes to `personal_amir`. With the
+  // domain rules first, its members would own — and its `SELECT` fallthrough would re-open — a
+  // personal lane that `trino.rego` hard-denies. With the lane rules first, the lane's owner-only
+  // pair and its empty-privileges fallthrough match before any domain rule can be consulted.
+  for (const l of lanes) {
+    schemas.push({ user: literal(l.uid), schema: literal(l.schema), owner: true });
+    // CLOSE the lane for everyone else right here, rather than relying on the catch-all. First
+    // match wins, so without this line a later DOMAIN rule whose sanitized schema happens to equal
+    // a lane name (`personal_amir` as a domain) would answer for the lane — which is exactly the
+    // defect B3-review-M-8 found. Order plus an explicit close is what makes it unreachable.
+    schemas.push({ schema: literal(l.schema), owner: false });
+    tables.push({ user: literal(l.uid), schema: literal(l.schema), privileges: [...OWNER_PRIVILEGES] });
+    // No SELECT fallthrough for a personal lane: `trino.rego` hard-denies a foreign `personal_*`
+    // read and this file must not be the place that re-opens it.
+    tables.push({ schema: literal(l.schema), privileges: [] });
+  }
   for (const d of domains) {
     const owners = [...new Set([d.name, ...d.principals])].sort();
     schemas.push({ user: alternation(owners), schema: literal(d.schema), owner: true });
     tables.push({ user: alternation(owners), schema: literal(d.schema), privileges: [...OWNER_PRIVILEGES] });
     // A reader from outside the domain keeps SELECT: row filters and column masks stay OPA's job.
     tables.push({ schema: literal(d.schema), privileges: [...READ_ONLY] });
-  }
-  for (const l of lanes) {
-    schemas.push({ user: literal(l.uid), schema: literal(l.schema), owner: true });
-    tables.push({ user: literal(l.uid), schema: literal(l.schema), privileges: [...OWNER_PRIVILEGES] });
-    // No SELECT fallthrough for a personal lane: `trino.rego` hard-denies a foreign `personal_*`
-    // read and this file must not be the place that re-opens it.
-    tables.push({ schema: literal(l.schema), privileges: [] });
   }
   for (const u of [...new Set(input.readAnySchema ?? [])].sort()) {
     tables.push({ user: literal(u), privileges: [...READ_ONLY] });
@@ -194,9 +206,20 @@ export function renderTrinoRules(rules: TrinoRules): string {
   return JSON.stringify(rules, null, 2) + '\n';
 }
 
+/**
+ * Trino's file access control matches a rule pattern against the WHOLE value (`Pattern.matches`,
+ * not `find`), so the evaluator must too (B3-review-L-1). Anchoring here rather than trusting the
+ * generator's own `^…$` means a hand-written or future rule fragment cannot silently match a
+ * longer string in the tests while Trino would refuse it — or, worse, the other way round.
+ * Wrapping an already-anchored pattern is harmless: `^(?:^x$)$` still matches exactly `x`.
+ */
+function fullPattern(pattern: string): string {
+  return `^(?:${pattern})$`;
+}
+
 function matches(pattern: string, value: string): boolean {
   try {
-    return new RegExp(pattern).test(value);
+    return new RegExp(fullPattern(pattern)).test(value);
   } catch {
     return false;
   }
@@ -211,7 +234,7 @@ export function impersonationAllowed(rules: TrinoRules, originalUser: string, ne
   for (const r of rules.impersonation) {
     let m: RegExpExecArray | null = null;
     try {
-      m = new RegExp(r.original_user).exec(originalUser);
+      m = new RegExp(fullPattern(r.original_user)).exec(originalUser);
     } catch {
       continue;
     }

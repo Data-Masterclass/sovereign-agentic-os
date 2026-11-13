@@ -486,13 +486,19 @@ export const config = {
   dataProjectMirrorsIndex: env('DATA_PROJECT_MIRRORS_INDEX', 'os-data-project-mirrors'),
 
   // ---- Trino file-based access control (engine rebuild B3). When TRINO_ACCESS_RULES=true the OS
-  // reconciles the `trino-access-rules` ConfigMap from real domain membership at boot and on a
-  // directory change (core/infra/trino-rules-server.ts); Trino re-reads the file on its
-  // refresh-period. The chart's bootstrap file bounds IMPERSONATION only, so with this off the
-  // engine behaves exactly as before. `trinoServiceUser` must equal the chart's
-  // `trino.accessControl.serviceUser` and the generated `profiles.yml` user.
+  // reconciles the `trino-access-rules` ConfigMap from real domain membership on THREE triggers
+  // (core/infra/trino-rules-server.ts `startTrinoRulesReconciler`): at boot, on every user/domain
+  // write (kernel `directory-changed` event, debounced), and every
+  // `trinoAccessRulesIntervalMinutes` as a repair pass — the periodic one exists because a
+  // `helm upgrade` rewrites Helm's bootstrap value over the OS's enumerated file and fires no OS
+  // event (B3-review-H-2/H-3). Trino re-reads the file on its own refresh-period.
+  // The chart's bootstrap file bounds IMPERSONATION only, so with this off the engine behaves
+  // exactly as before. `trinoServiceUser` must equal the chart's
+  // `trino.accessControl.serviceUser`, the Dagster code location's `TRINO_USER` and the generated
+  // `profiles.yml` user (asserted by scripts/check-trino-rules-chart.mjs).
   trinoAccessRules: env('TRINO_ACCESS_RULES', '').toLowerCase() === 'true',
   trinoServiceUser: env('TRINO_DBT_USER', 'dbt-runner'),
+  trinoAccessRulesIntervalMinutes: Number(env('TRINO_ACCESS_RULES_INTERVAL_MINUTES', '10')) || 10,
 
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
   dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),

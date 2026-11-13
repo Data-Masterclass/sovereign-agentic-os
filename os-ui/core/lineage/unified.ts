@@ -19,7 +19,20 @@ import { getAppForUser } from '@tabs/software/lib/apps';
 
 export type UnifiedNode = { id: string; kind: string; label: string; redacted?: boolean };
 export type UnifiedEdge = { from: string; to: string; rel: string };
-export type UnifiedLineage = { ref: string; kind: LineageRefKind; id: string; nodes: UnifiedNode[]; edges: UnifiedEdge[] };
+export type UnifiedLineage = {
+  ref: string;
+  kind: LineageRefKind;
+  id: string;
+  nodes: UnifiedNode[];
+  edges: UnifiedEdge[];
+  /**
+   * Where the edges came from, when the collector knows (dataset/metric only, engine rebuild B3;
+   * carried through in B3-review-M-2). `dbt` = dbt's own `ref()`/`source()` graph; `registry` = the
+   * OS's own records because the flag is off, Dagster was unreachable, or the project has not been
+   * parsed yet. Dropping it made an MCP caller unable to tell a dbt graph from a fallback.
+   */
+  source?: 'dbt' | 'registry';
+};
 
 export type LineageRefKind = 'dataset' | 'metric' | 'dashboard' | 'app';
 const REF_KINDS: readonly LineageRefKind[] = ['dataset', 'metric', 'dashboard', 'app'];
@@ -57,6 +70,7 @@ export async function getLineage(ref: string, user: CurrentUser): Promise<Unifie
       const g = await datasetLineage(d);
       for (const n of g.nodes) out.nodes.push({ id: n.id, kind: n.kind, label: n.label });
       for (const e of g.edges) out.edges.push({ from: e.from, to: e.to, rel: e.kind });
+      if (g.source) out.source = g.source;
       return out;
     }
     case 'dashboard': {

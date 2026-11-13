@@ -72,6 +72,12 @@ INTERVAL="${REPO_SYNC_INTERVAL:-15}"
 PORT="${REPO_SYNC_STATUS_PORT:-8089}"
 BIND="${POD_IP:-127.0.0.1}"
 STATUS_TOKEN="${REPO_SYNC_STATUS_TOKEN:-${AGENT_RUNTIME_TOKEN:-}}"
+# The shipped placeholder is NOT a credential. The status server already treats it as empty; strip
+# it HERE too, before anything reads $STATUS_TOKEN, so the startup log cannot say "auth: bearer"
+# about a default nobody set (B3-review-L-4). One rule, one place.
+if [ "$STATUS_TOKEN" = "dev-only-insecure-agent-runtime-token" ]; then
+  STATUS_TOKEN=""
+fi
 RELOAD_LOCATION="${DAGSTER_RELOAD_LOCATION-sovereign}"
 GRAPHQL="${DAGSTER_GRAPHQL_URL:-http://agentic-os-dagster-webserver:80/graphql}"
 

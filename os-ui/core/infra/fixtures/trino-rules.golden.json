@@ -6,6 +6,24 @@
   ],
   "schemas": [
     {
+      "user": "^amir$",
+      "schema": "^personal_amir$",
+      "owner": true
+    },
+    {
+      "schema": "^personal_amir$",
+      "owner": false
+    },
+    {
+      "user": "^bea$",
+      "schema": "^personal_bea$",
+      "owner": true
+    },
+    {
+      "schema": "^personal_bea$",
+      "owner": false
+    },
+    {
       "user": "^(cleo|finance)$",
       "schema": "^finance$",
       "owner": true
@@ -13,16 +31,6 @@
     {
       "user": "^(amir|bea|sales)$",
       "schema": "^sales$",
-      "owner": true
-    },
-    {
-      "user": "^amir$",
-      "schema": "^personal_amir$",
-      "owner": true
-    },
-    {
-      "user": "^bea$",
-      "schema": "^personal_bea$",
       "owner": true
     },
     {
@@ -31,6 +39,36 @@
   ],
   "tables": [
     {
+      "user": "^amir$",
+      "schema": "^personal_amir$",
+      "privileges": [
+        "SELECT",
+        "INSERT",
+        "DELETE",
+        "UPDATE",
+        "OWNERSHIP"
+      ]
+    },
+    {
+      "schema": "^personal_amir$",
+      "privileges": []
+    },
+    {
+      "user": "^bea$",
+      "schema": "^personal_bea$",
+      "privileges": [
+        "SELECT",
+        "INSERT",
+        "DELETE",
+        "UPDATE",
+        "OWNERSHIP"
+      ]
+    },
+    {
+      "schema": "^personal_bea$",
+      "privileges": []
+    },
+    {
       "user": "^(cleo|finance)$",
       "schema": "^finance$",
       "privileges": [
@@ -63,36 +101,6 @@
       "privileges": [
         "SELECT"
       ]
-    },
-    {
-      "user": "^amir$",
-      "schema": "^personal_amir$",
-      "privileges": [
-        "SELECT",
-        "INSERT",
-        "DELETE",
-        "UPDATE",
-        "OWNERSHIP"
-      ]
-    },
-    {
-      "schema": "^personal_amir$",
-      "privileges": []
-    },
-    {
-      "user": "^bea$",
-      "schema": "^personal_bea$",
-      "privileges": [
-        "SELECT",
-        "INSERT",
-        "DELETE",
-        "UPDATE",
-        "OWNERSHIP"
-      ]
-    },
-    {
-      "schema": "^personal_bea$",
-      "privileges": []
     },
     {
       "privileges": [

@@ -684,3 +684,88 @@ class ChartContract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SourceObservation(unittest.TestCase):
+    """The observation job + schedule, and `enabled` (review B3-review-M-3 / M-4)."""
+
+    def test_only_enabled_sources_are_grouped_for_observation(self):
+        assets = osp.parse_source_assets(GENERATED_SOURCES_YML)
+        groups = osp.observe_crons(assets)
+        # `accounts` is `enabled: false` — its asset still exists (the lineage view needs the node)
+        # but nothing schedules a probe against it.
+        self.assertEqual(list(groups), ["*/15 * * * *"])
+        self.assertEqual([a.table for a in groups["*/15 * * * *"]], ["events"])
+        self.assertEqual(osp.observe_crons([]), {})
+
+    def test_one_job_per_distinct_cron_with_a_stable_name(self):
+        assets = osp.parse_source_assets(GENERATED_SOURCES_YML)
+        a = assets[1]
+        other = osp.SourceAsset(
+            source="wh__public", table="orders", schema="public", dataset="ds_ord", principal="bea",
+            downstream="silver_orders", observe="row_count", cron="0 * * * *",
+        )
+        groups = osp.observe_crons([a, other])
+        self.assertEqual(sorted(groups), ["*/15 * * * *", "0 * * * *"])
+        names = {cron: osp.observe_job_name("sales", cron) for cron in groups}
+        self.assertEqual(len(set(names.values())), 2, "two crons, two jobs")
+        for name in names.values():
+            self.assertRegex(name, r"^sales__observe_[0-9a-f]{6}$")
+        # Stable: the name depends ONLY on the domain and the cron, so adding or removing an
+        # unrelated source never renames an existing schedule.
+        self.assertEqual(names["0 * * * *"], osp.observe_job_name("sales", "0 * * * *"))
+
+    def test_observation_tags_claim_a_principal_only_when_the_group_shares_one(self):
+        one = osp.SourceAsset(source="wh__public", table="a", schema="public", dataset="ds_a", principal="bea",
+                              downstream="silver_a", observe="row_count", cron="0 * * * *")
+        two = osp.SourceAsset(source="wh__public", table="b", schema="public", dataset="ds_b", principal="amir",
+                              downstream="silver_b", observe="row_count", cron="0 * * * *")
+        same = osp.observe_tags("sales", [one], "deadbeef", "sales=deadbeef", "sales__observe_x")
+        self.assertEqual(same["os/principal"], "bea")
+        self.assertIn('"OS_PRINCIPAL"', same["dagster-k8s/config"])
+        self.assertEqual(same["os/action"], "observe external sources")
+        self.assertEqual(same["os/sources"], "wh__public.a")
+
+        mixed = osp.observe_tags("sales", [one, two], "deadbeef", "sales=deadbeef", "sales__observe_x")
+        self.assertNotIn("os/principal", mixed, "two owners in one group ⇒ claim neither")
+        self.assertNotIn('"OS_PRINCIPAL"', mixed["dagster-k8s/config"])
+        self.assertIn('"OS_PINNED_COMMITS"', mixed["dagster-k8s/config"])
+
+
+class PrincipalShape(unittest.TestCase):
+    """A principal becomes a Trino session user and a run-pod env value (B3-review-L-2)."""
+
+    def _sources(self, principal):
+        return osp.parse_source_assets(
+            "version: 1\n"
+            "source_assets:\n"
+            "  - source: wh__public\n"
+            "    table: events\n"
+            "    schema: public\n"
+            "    dataset: ds_a\n"
+            f"    principal: {principal}\n"
+            "    downstream: silver_a\n"
+            "    observe: row_count\n"
+            '    cron: "0 * * * *"\n'
+        )
+
+    def test_a_real_principal_survives_and_a_malformed_one_is_dropped(self):
+        for good in ('bea', 'sales-eu', 'sales.eu', 'a_b-c.d', 'x' * 64):
+            self.assertEqual([a.principal for a in self._sources(good)], [good], good)
+        for bad in ('"bea admin"', '"-bea"', '"bea\'"', '"x' + 'y' * 64 + '"', '""'):
+            self.assertEqual(self._sources(bad), [], f"{bad} must be dropped, never sanitized into another identity")
+
+    def test_a_schedule_with_a_malformed_principal_is_dropped_too(self):
+        yml = (
+            "version: 1\n"
+            "schedules:\n"
+            "  - dataset: ds_a\n"
+            "    name: silver_a\n"
+            '    cron: "0 * * * *"\n'
+            '    principal: "bea; drop"\n'
+            "  - dataset: ds_b\n"
+            "    name: silver_b\n"
+            '    cron: "0 * * * *"\n'
+            "    principal: bea\n"
+        )
+        self.assertEqual([s.dataset for s in osp.parse_schedules(yml)], ["ds_b"])

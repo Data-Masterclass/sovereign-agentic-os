@@ -180,3 +180,43 @@ test('the BOOTSTRAP file (nothing enumerated) bounds impersonation but leaves ow
   assert.equal(impersonationAllowed(rules, 'dbt-runner', 'sales; drop'), false);
   assert.equal(impersonationAllowed(rules, 'dbt-runner', ''), false);
 });
+
+// --------------------------------------------- B3 review round (B3-review-M-8 / L-1) ---
+
+test('a domain named like a personal lane cannot re-open that lane (rule ORDER)', () => {
+  // `sanitizeIdent` maps a domain called `personal_amir` to the schema `personal_amir` — the same
+  // name as amir's lane. With the DOMAIN rules emitted first, its members owned amir's lane and its
+  // SELECT fallthrough re-opened a schema `trino.rego` hard-denies. Lanes must come first.
+  const rules = buildTrinoRules({
+    serviceUsers: ['dbt-runner'],
+    principalPattern: OS_PRINCIPAL_PATTERN,
+    domains: [{ name: 'personal_amir', schema: 'personal_amir', principals: ['bea'] }],
+    personalLanes: [{ uid: 'amir', schema: 'personal_amir' }],
+  });
+  assert.equal(schemaOwnerAllowed(rules, 'amir', 'personal_amir'), true, 'the lane owner still owns it');
+  assert.equal(schemaOwnerAllowed(rules, 'bea', 'personal_amir'), false, 'a member of the look-alike domain must NOT own the lane');
+  assert.deepEqual(tablePrivilegesFor(rules, 'bea', 'personal_amir'), [], 'and must not even read it');
+  assert.deepEqual(tablePrivilegesFor(rules, 'amir', 'personal_amir'), [...OWNER_PRIVILEGES]);
+  // The order is visible in the document itself, which is what Trino reads.
+  const firstLane = rules.schemas.findIndex((r) => r.schema === literal('personal_amir') && r.user === literal('amir'));
+  const firstDomain = rules.schemas.findIndex((r) => r.user === '^(bea|personal_amir)$');
+  assert.ok(firstLane >= 0 && firstDomain >= 0 && firstLane < firstDomain, 'personal-lane rules must precede domain rules');
+});
+
+test('the evaluator matches the WHOLE value, like Trino', () => {
+  // Trino's file access control uses Pattern.matches (full match), so an unanchored fragment must
+  // not match a longer string in our evaluator either.
+  const rules: ReturnType<typeof buildTrinoRules> = {
+    catalogs: [{ allow: 'all' }],
+    schemas: [{ user: 'amir', schema: 'sales', owner: true }, { owner: false }],
+    tables: [{ user: 'amir', schema: 'sales', privileges: ['SELECT'] }, { privileges: [] }],
+    impersonation: [{ original_user: 'dbt', new_user: 'sales', allow: true }, { original_user: '.*', new_user: '.*', allow: false }],
+  };
+  assert.equal(schemaOwnerAllowed(rules, 'amir', 'sales'), true);
+  assert.equal(schemaOwnerAllowed(rules, 'amir2', 'sales'), false, 'a longer user must not match an unanchored fragment');
+  assert.equal(schemaOwnerAllowed(rules, 'amir', 'sales_secret'), false, 'a longer schema must not match either');
+  assert.deepEqual(tablePrivilegesFor(rules, 'amir-evil', 'sales'), []);
+  assert.equal(impersonationAllowed(rules, 'dbt', 'sales'), true);
+  assert.equal(impersonationAllowed(rules, 'dbt-evil', 'sales'), false);
+  assert.equal(impersonationAllowed(rules, 'dbt', 'sales-other'), false);
+});

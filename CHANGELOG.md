@@ -60,6 +60,77 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   proves the translation is faithful and invertible, not that two materialisations agree row for
   row.
 
+### Fixed — B3 review findings (engine rebuild)
+
+- **The reconciler never ran on a default install** (H-1). `TRINO_ACCESS_RULES` was rendered inside
+  the `osUI.dataProjectGit` block, which defaults `false`, while `trino.accessControl.enabled`
+  defaults `true` — so the stock install shipped the permissive bootstrap `rules.json` permanently
+  and os-ui never reconciled it. The env var now renders under exactly the gate the ConfigMap
+  renders under (`trino.enabled AND trino.accessControl.enabled AND trino.opa.enabled`), which
+  also stops os-ui logging "ConfigMap does not exist" every boot when the feature is off (L-5).
+  `scripts/check-trino-rules-chart.mjs` renders four value sets and fails the gate if the two gates
+  ever disagree again.
+- **Reconcile was boot-only** (H-2, H-3). It now has three triggers: boot; the kernel
+  `directory-changed` event (new `core/kernel/events.ts`) that the user and domain stores emit from
+  their single write-through, debounced 2 s and serialised so a bulk membership import is ONE
+  reconcile; and a jittered periodic repair pass (`trino.accessControl.reconcileIntervalMinutes`,
+  default 10) — because `helm upgrade` rewrites Helm's bootstrap value over the OS's enumerated
+  file and fires no OS event. A write path never imports the reconciler and `core/` never imports a
+  tab: the stores emit, `instrumentation.ts` subscribes. Two comments that claimed "and on a
+  directory change" before the path existed are now true.
+- **A failed reconcile was a silent warn** (H-4). Each pass retries 3× with exponential backoff
+  (capped 30 s), records a typed outcome (`ok`/`code`/`detail`/`at`), and publishes the last one on
+  **Platform → Components & Health** as a `Trino access rules` row — RED when the last attempt
+  failed, and RED when the last SUCCESS is older than twice the repair interval, because a stale
+  file means the permissive bootstrap is what Trino is enforcing.
+- **The Dagster run pod connected as a user the rules deny** (H-5). `TRINO_USER: dbt-sales` in the
+  code location's env against `trino.accessControl.serviceUser: dbt-runner` — invisible today
+  (nothing authenticates) and a hard denial the moment authentication is switched on. The literal
+  is now `dbt-runner` and the equality is asserted from `values.yaml` by the new chart check.
+- **A namespace-wide Secrets grant** (H-6). The os-ui Role granted `configmaps, secrets:
+  get,list,create,patch,update` under `externalConnectorsEnabled OR dataProjectGit.enabled`. The
+  Secrets half is back on `externalConnectorsEnabled` alone; the rules reconciler gets its own rule
+  — `resources: ["configmaps"], resourceNames: ["trino-access-rules"], verbs: ["get","patch"]`.
+  Asserted from the rendered Role.
+- **A domain named like a personal lane could re-open it** (M-8). `rules.json` now emits the
+  personal-lane rules BEFORE the domain rules and closes each lane explicitly
+  (`{schema: ^personal_x$, owner: false}`), so a domain whose sanitized schema collides with a lane
+  name can never answer for that lane under first-match-wins. The rules evaluator also anchors every
+  pattern (`^(?:…)$`) to match Trino's full-match semantics (L-1).
+- **Lineage was truncated, not labelled** (M-1). `graphLineage` requires ALL of a dataset's models
+  to be in the asset graph, else it falls back to the registry graph — a half-parsed project used to
+  yield a graph missing a layer while still labelled `source: 'dbt'`. And the `source` label
+  (`dbt` / `registry`) is now carried through `core/lineage/unified.ts`, so MCP `get_lineage` says
+  which graph it returned (M-2).
+- **Observable source assets were never observed** (M-3, M-4). They were in no job and no schedule,
+  so every freshness check measured a data version that never arrived. The code location now builds
+  one observation job + schedule per domain per distinct cron, at the source's own cron, named from
+  a digest of the cron so it is stable; `enabled: false` keeps the asset (lineage needs the node)
+  and drops it from the schedule. The probe is bounded by `request_timeout` **and** a
+  `query_max_run_time` session property (`OS_OBSERVE_TIMEOUT_SECONDS`, default 60 s) — only the
+  latter makes Trino itself abandon a query (M-5).
+- **The parity harness checked the plan against itself** (M-6). `substitutionsFor` derived its
+  `ref()` map from the same plan the rewriter used, so a wrong lane mapping was consistently wrong
+  on both sides and passed. `ref()` now resolves to the FQN the OS actually wrote (the target of
+  that model's own recorded CTAS), and a model reached through `source()` instead of `ref()` — the
+  exact symptom of a lane mapping that disagrees with the CTAS — is reported as a mismatch. A
+  deliberately wrong mapping now fails; the correct one still passes.
+- **`profiles.yml` had no password field.** It now emits
+  `password: "{{ env_var('TRINO_PASSWORD', '') }}"` inside a
+  `{% if env_var('TRINO_AUTH_METHOD', 'none') != 'none' %}` guard — absent under `method: none`
+  (which `TrinoNoneCredentials` requires), present the moment an operator switches. `env_var()`
+  only; never a literal. `docs/components/trino.md` gains **"Enable real impersonation"**, a
+  numbered deploy procedure (authenticator, TLS or `allow-insecure-over-http`, the two credentials,
+  where `TRINO_PASSWORD` is mounted, the user alignment above), and states plainly that
+  `readPrincipalFor` maps a governed read to the caller's **first domain**, not to the person —
+  pre-existing, recorded as a follow-up.
+- Smaller: the `principal` in `os/sources.yml` and `os/schedules.yml` is validated against the OS
+  principal shape and a malformed one DROPS the entry rather than becoming a different identity
+  (L-2); `_wire_project`'s dead `pinned_env` parameter removed (L-3); `repo-sync.sh` neutralises the
+  shipped placeholder token BEFORE it logs `auth: bearer` (L-4); `os-ui/scripts/gate.sh` now runs
+  the parity test, both trino-rules tests, the kernel-events test, the components-health test and
+  the new chart check (M-7).
+
 ### Fixed — Data engine rebuild, Phase B3 (loose ends from the B2 review)
 
 - **A collided domain's schedule can be addressed again.** `core/infra/dagster.ts` `sanitizeAll` is

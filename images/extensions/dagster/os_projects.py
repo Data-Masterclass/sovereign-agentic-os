@@ -189,6 +189,10 @@ def parse_schedules(text: str) -> List[Schedule]:
             continue
         if len(cron.split()) != 5:
             continue
+        # Same bound as a source asset's principal: it becomes `OS_PRINCIPAL` in the run pod and the
+        # Trino session user for the whole scheduled build (B3-review-L-2).
+        if not _PRINCIPAL_RE.match(principal):
+            continue
         out.append(
             Schedule(
                 dataset=dataset,
@@ -224,6 +228,18 @@ def maintenance_job_name(domain: str, schema: str) -> str:
 #: A Trino identifier the OS generator writes. Anything else is REFUSED, not quoted-and-hoped:
 #: `observe_sql` interpolates these into SQL, so the allowlist is the whole defence.
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,127}$")
+
+#: The shape of an OS principal (a domain name or a uid) — the SAME pattern as
+#: `os-ui/core/infra/trino-rules.ts` OS_PRINCIPAL_PATTERN and the chart's
+#: `trino.accessControl.principalPattern`.
+#:
+#: Review B3-review-L-2 asked for `_IDENT_RE` here. That would be WRONG: a principal is not a SQL
+#: identifier and legitimately contains `-` and `.` (`sales-eu`), which `_IDENT_RE` rejects — it
+#: would drop real datasets. What the validation is actually for is that `principal` becomes the
+#: Trino session user (`_trino_rows`) and an `OS_PRINCIPAL` env value in a run tag, so it must not
+#: carry whitespace, a newline or a quote. This pattern is exactly that bound, and the one the
+#: generated `rules.json` already enforces on the other side.
+_PRINCIPAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -281,6 +297,10 @@ def parse_source_assets(text: str) -> List[SourceAsset]:
             continue
         if not all(_IDENT_RE.match(v) for v in (table, schema, *( [database] if database else [] ), *( [updated] if updated else [] ))):
             continue
+        # The principal reaches Trino as the session user and a run-pod env value — validate its
+        # SHAPE and DROP the entry otherwise, never sanitize it into a different identity (L-2).
+        if not _PRINCIPAL_RE.match(principal):
+            continue
         fresh = e.get("freshness_minutes")
         minutes = int(fresh) if isinstance(fresh, int) and fresh > 0 else None
         out.append(
@@ -300,6 +320,50 @@ def parse_source_assets(text: str) -> List[SourceAsset]:
             )
         )
     return sorted(out, key=lambda a: (a.source, a.table))
+
+
+def observe_job_name(domain: str, cron: str) -> str:
+    """`<domain>__observe_<digest>` — the job that OBSERVES every enabled source sharing one cron.
+
+    Engine rebuild B3 created the observable source assets but put them in no job and no schedule,
+    so nothing ever observed them: the freshness checks had no observation to measure and the asset
+    graph showed a node that never got a data version (B3-review-M-3). One job per DISTINCT cron
+    (an observation is one `select count(*)`, so grouping is pure saving), named from a digest of
+    the cron so the name is stable when an unrelated source is added or removed.
+    """
+    return f"{sanitize(domain)}__observe_{hashlib.sha256(cron.encode('utf-8')).hexdigest()[:6]}"
+
+
+def observe_crons(assets: Iterable[SourceAsset]) -> Dict[str, List[SourceAsset]]:
+    """`{cron: [enabled source assets on it]}`, cron-sorted. DISABLED sources are left out — their
+    asset still exists (the graph and the lineage view keep the node) but nothing schedules it."""
+    out: Dict[str, List[SourceAsset]] = {}
+    for a in sorted(assets, key=lambda x: (x.source, x.table)):
+        if not a.enabled:
+            continue
+        out.setdefault(a.cron, []).append(a)
+    return {cron: out[cron] for cron in sorted(out)}
+
+
+def observe_tags(domain: str, assets: Sequence[SourceAsset], sha: str, pinned: str, schedule: str) -> Dict[str, str]:
+    """Run tags for an observation. `OS_PRINCIPAL` is set only when every source in the group has
+    the SAME principal — the probe connects as `a.principal` itself, so the env is informational,
+    and a wrong single value would be worse than none."""
+    tags = base_tags(domain, sha, pinned)
+    principals = sorted({a.principal for a in assets})
+    env = {"OS_PINNED_COMMITS": pinned}
+    if len(principals) == 1:
+        tags["os/principal"] = principals[0]
+        env["OS_PRINCIPAL"] = principals[0]
+    tags.update(
+        {
+            "os/schedule": schedule,
+            "os/action": "observe external sources",
+            "os/sources": ",".join(f"{a.source}.{a.table}" for a in assets),
+            "dagster-k8s/config": k8s_env_tag(env),
+        }
+    )
+    return tags
 
 
 def source_asset_key(domain: str, a: SourceAsset) -> List[str]:

@@ -25,8 +25,15 @@
  *     normalisation, the output TYPES follow — Trino derives them from the same expressions over the
  *     same relations. The physical `DESCRIBE` comparison and the row-set `EXCEPT ALL` both need a
  *     cluster and stay the `kind` half of D15.
- *   - `resolveJinja` is the inverse of `models.rewriteFqns`, driven by the planner's own output, so
- *     the two directions cannot drift apart silently.
+ *   - WHERE THE RESOLUTION MAP COMES FROM (B3-review-M-6). `resolveJinja` is the inverse of
+ *     `models.rewriteFqns`, but it must NOT be driven by the same plan the rewriter used: a plan
+ *     that puts a model in the wrong schema makes both directions agree on the wrong answer and
+ *     the comparison passes. So `ref()` resolves to the FQN the OS ITSELF wrote — the target of
+ *     that model's own recorded CTAS — and only falls back to the plan for a model the OS never
+ *     compiled. And because a wrong lane mapping shows up as a model being reached through
+ *     `source()` instead of `ref()` (the rewriter's `modelByFqn` lookup misses, so the FQN is
+ *     treated as external), `sourceRefConflicts` reports exactly that as a mismatch. A
+ *     consistently-wrong mapping therefore FAILS where it used to pass.
  */
 import type { ModelPlan, ModelPlanSet } from '@tabs/data/lib/dbt/models';
 import { stripCtas } from '@tabs/data/lib/dbt/models';
@@ -64,8 +71,9 @@ export function normalizeSql(sql: string): string {
 }
 
 /**
- * `{{ ref('x') }}` / `{{ source('a', 'b') }}` → the FQN the CTAS used. The map comes from the
- * planner, which is the same place `rewriteFqns` got it — one source of truth, both directions.
+ * `{{ ref('x') }}` / `{{ source('a', 'b') }}` → the FQN the CTAS used. `refs` is built from the
+ * recorded CTAS targets where there are any (see the header): ground truth, not the plan the
+ * rewriter already used.
  */
 export function resolveJinja(sql: string, refs: Map<string, string>, sources: Map<string, string>): string {
   return sql
@@ -205,13 +213,62 @@ export function compareSelects(ctasSelect: string, dbtSelect: string): string[] 
   return out;
 }
 
-/** The FQN maps that invert `rewriteFqns`, taken from the planner's own output. */
-export function substitutionsFor(plan: ModelPlanSet): { refs: Map<string, string>; sources: Map<string, string> } {
+const CTAS_TARGET_RE = /^\s*create\s+(?:or\s+replace\s+)?table\s+(\S+)\s+as\s+/i;
+
+/** `create or replace table <fqn> as …` → `<fqn>` (normalised), or null. */
+export function ctasTarget(sql: string): string | null {
+  const m = CTAS_TARGET_RE.exec(normalizeSql(sql));
+  return m ? m[1].replace(/"/g, '') : null;
+}
+
+/**
+ * The FQN maps that invert `rewriteFqns`.
+ *
+ * `refs` prefers the TARGET of the model's own recorded CTAS — the FQN the OS physically wrote —
+ * over `iceberg.<plan schema>.<name>`, so the plan's lane mapping is not used to check itself
+ * (B3-review-M-6). `recorded` is the same accessor `parityReport` uses for the CTAS body; a model
+ * the OS never compiled has no target and keeps the plan's FQN, which is all that is available.
+ */
+export function substitutionsFor(
+  plan: ModelPlanSet,
+  recorded?: (datasetId: string, layer: string) => string | undefined,
+): { refs: Map<string, string>; sources: Map<string, string>; modelTargets: Map<string, string> } {
   const refs = new Map<string, string>();
-  for (const m of plan.models) refs.set(m.name, `iceberg.${m.schema}.${m.name}`);
+  const modelTargets = new Map<string, string>();
+  for (const m of plan.models) {
+    const own = recorded?.(m.dataset.id, m.layer);
+    const target = own ? ctasTarget(own) : null;
+    const fqn = target ?? normalizeSql(`iceberg.${m.schema}.${m.name}`);
+    refs.set(m.name, fqn);
+    modelTargets.set(fqn, m.name);
+  }
   const sources = new Map<string, string>();
   for (const s of plan.sources) sources.set(`${s.source}::${s.table}`, `${s.database ?? 'iceberg'}.${s.schema}.${s.table}`);
-  return { refs, sources };
+  return { refs, sources, modelTargets };
+}
+
+/**
+ * A relation that IS a model of this project must be reached with `ref()`, never `source()`.
+ *
+ * `rewriteFqns` keys its model lookup on `<schema>.<table>` as it appears in the recorded CTAS, so
+ * when the planner's lane mapping disagrees with what the OS actually wrote, the lookup misses and
+ * the model is emitted as an external `source()`. dbt would then build no edge, run the models in
+ * the wrong order, and read a table it does not own. The round trip hides it (the same wrong map
+ * resolves the source back to the same FQN), so it is asserted here explicitly.
+ */
+export function sourceRefConflicts(
+  body: string,
+  sources: Map<string, string>,
+  modelTargets: Map<string, string>,
+): string[] {
+  const out: string[] = [];
+  for (const m of body.matchAll(/\{\{\s*source\(\s*'([^']+)'\s*,\s*'([^']+)'\s*\)\s*\}\}/g)) {
+    const fqn = sources.get(`${m[1]}::${m[2]}`);
+    if (!fqn) continue;
+    const model = modelTargets.get(normalizeSql(fqn).replace(/"/g, ''));
+    if (model) out.push(`${fqn} is this project's model "${model}" but is read as source('${m[1]}', '${m[2]}') — the lane mapping disagrees with the FQN the OS wrote`);
+  }
+  return out;
 }
 
 /** The model body with the header comments removed — what dbt will compile. */
@@ -229,14 +286,18 @@ export function modelBody(model: ModelPlan): string {
  * WITH and is reported as skipped, with the reason — never as a pass.
  */
 export function parityReport(fixture: string, plan: ModelPlanSet, artifacts: (datasetId: string, layer: string) => string | undefined): ParityResult[] {
-  const { refs, sources } = substitutionsFor(plan);
+  const { refs, sources, modelTargets } = substitutionsFor(plan, artifacts);
   return plan.models.map((m) => {
     const base = { fixture, dataset: m.dataset.id, model: m.name };
     const ctas = artifacts(m.dataset.id, m.layer);
     if (m.kind !== 'compiled' || !ctas) {
       return { ...base, ok: true, mismatches: [], skipped: `${m.kind} — the OS compiled no CTAS for this layer` };
     }
-    const mismatches = compareSelects(stripCtas(ctas), resolveJinja(modelBody(m), refs, sources));
+    const body = modelBody(m);
+    const mismatches = [
+      ...sourceRefConflicts(body, sources, modelTargets),
+      ...compareSelects(stripCtas(ctas), resolveJinja(body, refs, sources)),
+    ];
     return { ...base, ok: mismatches.length === 0, mismatches };
   });
 }

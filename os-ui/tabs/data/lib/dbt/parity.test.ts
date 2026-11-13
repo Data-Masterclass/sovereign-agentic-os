@@ -22,7 +22,7 @@ import { emptyVersions } from '@tabs/data/lib/dataset-schema';
 import { compileGoldJoin, compileSilver } from '@tabs/data/lib/transform';
 import { planModels } from '@tabs/data/lib/dbt/models';
 import type { ProjectSnapshot } from '@tabs/data/lib/dbt/snapshot';
-import { parityReport, compareSelects, selectShape, resolveJinja, normalizeSql } from '@tabs/data/lib/dbt/parity';
+import { parityReport, compareSelects, selectShape, resolveJinja, normalizeSql, substitutionsFor, ctasTarget } from '@tabs/data/lib/dbt/parity';
 
 function ds(input: Partial<Dataset> & { id: string; name: string; owner: string; domain: string }): Dataset {
   return {
@@ -209,4 +209,46 @@ test('an unreadable shape is a mismatch, never a pass; WHERE order does not matt
   );
   assert.ok(compareSelects('select "a" from t', 'select "b" from t').length > 0);
   assert.equal(normalizeSql('  select\n  1 -- note\n'), 'select 1');
+});
+
+// ------------------------------------------------- B3 review round (B3-review-M-6) ---
+
+test('a WRONG lane mapping now FAILS — the harness no longer checks the plan against itself', () => {
+  // The defect: `substitutionsFor` built its `ref()` map from the SAME plan `rewriteFqns` used, so
+  // a plan that disagrees with the FQN the OS actually wrote produced a consistently-wrong round
+  // trip and passed. Here the Orders dataset is owned by `zed` (plan schema `personal_zed`) while
+  // the recorded CTAS wrote `iceberg.personal_amir.silver_orders` — so the rewriter's model lookup
+  // misses and emits the model as an EXTERNAL `source()`. dbt would build no edge, run the models
+  // in the wrong order and read a table the model does not own.
+  const base = workedExample();
+  const wrong: ProjectSnapshot = {
+    ...base.snapshot,
+    datasets: base.snapshot.datasets.map((d) =>
+      d.dataset.id === 'ds_orders1' ? { ...d, dataset: { ...d.dataset, owner: 'zed' } } : d,
+    ),
+  };
+  const plan = planModels(wrong);
+  const results = parityReport('wrong-lane-mapping', plan, artifactsOf({ ...base, snapshot: wrong }));
+  const gold = results.find((r) => r.model === 'gold_order_customer')!;
+  assert.equal(gold.ok, false, 'a lane mapping that disagrees with the recorded CTAS must FAIL');
+  assert.ok(
+    gold.mismatches.some((m) => /is this project's model "silver_orders" but is read as source\(/.test(m)),
+    `expected a source/ref conflict, got: ${gold.mismatches.join(' | ')}`,
+  );
+  // The CORRECT mapping still passes, so this is a real discriminator and not a blanket failure.
+  const right = parityReport('worked', planModels(base.snapshot), artifactsOf(base));
+  assert.deepEqual(right.filter((r) => !r.skipped && !r.ok), []);
+});
+
+test('ref() resolves to the FQN the OS WROTE, not the one the plan assumed', () => {
+  const f = workedExample();
+  const plan = planModels(f.snapshot);
+  const { refs, modelTargets } = substitutionsFor(plan, artifactsOf(f));
+  assert.equal(refs.get('silver_orders'), 'iceberg.personal_amir.silver_orders');
+  assert.equal(modelTargets.get('iceberg.personal_amir.silver_orders'), 'silver_orders');
+  // A model the OS never compiled has no recorded target and keeps the plan's FQN — all there is.
+  const noCtas = substitutionsFor(plan, () => undefined);
+  assert.equal(noCtas.refs.get('silver_orders'), 'iceberg.personal_amir.silver_orders');
+  assert.equal(ctasTarget('CREATE OR REPLACE TABLE iceberg.sales.x AS select 1'), 'iceberg.sales.x');
+  assert.equal(ctasTarget('select 1'), null);
 });

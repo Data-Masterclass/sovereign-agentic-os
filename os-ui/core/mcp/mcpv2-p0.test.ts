@@ -243,9 +243,13 @@ test('P0.5 get_lineage returns a normalized graph, scoped at the root (not_found
   const ds = await call<{ id: string }>(cara, 'create_dataset', { name: 'Orders', columns: [{ name: 'a', description: 'A' }] });
   await call(cara, 'add_dataset_version', { datasetId: ds.id, layer: 'bronze' });
 
-  const g = await call<{ ref: string; kind: string; nodes: unknown[]; edges: unknown[] }>(cara, 'get_lineage', { ref: `dataset:${ds.id}` });
+  const g = await call<{ ref: string; kind: string; nodes: unknown[]; edges: unknown[]; source?: string }>(cara, 'get_lineage', { ref: `dataset:${ds.id}` });
   assert.equal(g.kind, 'dataset');
   assert.ok(Array.isArray(g.nodes) && g.nodes.length > 0, 'dataset lineage has nodes');
+  // B3-review-M-2: the collector LABELS where the edges came from (`dbt` vs `registry`) and the
+  // unified graph must carry it through, or an MCP caller cannot tell dbt's graph from a fallback.
+  // With DATA_PROJECT_GIT off (the test environment) the honest answer is `registry`.
+  assert.equal(g.source, 'registry', 'get_lineage must say which graph it returned');
 
   // A foreign-domain caller cannot see the root → a governance denial, no content
   // leak (getDataset's own gate: forbidden for out-of-scope, not_found for unknown).

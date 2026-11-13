@@ -54,11 +54,36 @@ One shape, two renderers, one test that keeps them equal
    `{"owner": true}`, full privileges. Closing ownership here would deny every CTAS the OS already
    runs on a fresh install, before the OS has said anything about membership.
 2. **The OS's reconciled file** (`core/infra/trino-rules-server.ts`, enabled by
-   `TRINO_ACCESS_RULES=true`, which the chart sets with `trino.accessControl.enabled`). At boot,
-   os-ui enumerates domains and users (`tabs/admin/lib/users.ts`) and PATCHes the same ConfigMap
-   key. Trino re-reads the file within `security.refresh-period` (default 30 s) — **no pod restart,
-   no roll**. The volume is mounted as a directory, not a `subPath`, because only a whole-ConfigMap
-   volume is refreshed by the kubelet.
+   `TRINO_ACCESS_RULES=true`). os-ui enumerates domains and users (`tabs/admin/lib/users.ts`) and
+   PATCHes the same ConfigMap key. Trino re-reads the file within `security.refresh-period`
+   (default 30 s) — **no pod restart, no roll**. The volume is mounted as a directory, not a
+   `subPath`, because only a whole-ConfigMap volume is refreshed by the kubelet.
+
+   **When the env var is set, exactly.** `TRINO_ACCESS_RULES` renders under
+   `trino.enabled AND trino.accessControl.enabled AND trino.opa.enabled` — character for character
+   the gate the `trino-access-rules` ConfigMap itself renders under. It is **not** gated on
+   `osUI.dataProjectGit`: that flag defaults `false` while `trino.accessControl.enabled` defaults
+   `true`, so for one release a default install shipped the permissive bootstrap with nothing ever
+   reconciling it (review B3-review-H-1), and an install with access control off used to log
+   "ConfigMap does not exist" on every boot (L-5). `scripts/check-trino-rules-chart.mjs` renders
+   four value sets and asserts the two gates agree.
+
+   **Three triggers** (`startTrinoRulesReconciler`, review B3-review-H-2/H-3):
+
+   | Trigger | When | Why it exists |
+   |---|---|---|
+   | boot | once, as the process starts | the bootstrap file is open until the first pass lands |
+   | event | every user / domain / membership write | the kernel `directory-changed` event (`core/kernel/events.ts`) that `tabs/admin/lib/{users,domains}.ts` emit from their one write-through; debounced (2 s) and serialised, so a bulk import is ONE reconcile |
+   | periodic | every `trino.accessControl.reconcileIntervalMinutes` (default 10), jittered | **`helm upgrade` rewrites Helm's bootstrap value over the OS's enumerated file** and emits no OS event. This pass is a GET plus a byte compare when nothing drifted. |
+
+   A write path never imports the reconciler and `core/` never imports a tab: the stores emit, and
+   `instrumentation.ts` is the only subscriber.
+
+   **When it fails** the reconciler retries 3× with exponential backoff (capped at 30 s), records a
+   typed outcome (`ok`/`code`/`detail`/`at`) and publishes it on **Platform → Components & Health**
+   as the `Trino access rules` row — red when the last attempt failed, and red when the last
+   SUCCESS is older than twice the repair interval (the loop itself is gone). A failed reconcile is
+   not cosmetic: it means the permissive bootstrap is what Trino is enforcing.
 
 What the enumerated file says (`core/infra/trino-rules.ts` `buildTrinoRules`, first match wins):
 
@@ -105,11 +130,42 @@ network boundary (NetworkPolicies, and the service bearer between os-ui and quer
 fact that every principal is resolved server-side from the signed session and never from a request
 body. The schema-ownership rules DO bite immediately, because they match on the session user.
 
-Making impersonation load-bearing needs, on the cluster: `http-server.authentication.type=PASSWORD`
-(or `JWT`/`OAUTH2`), a password authenticator with a credential for `dbt-runner` and for the OS's
-query path, `TRINO_PASSWORD` in the Dagster run pod and the query-tool, and `http_scheme=https` or
-`http-server.authentication.allow-insecure-over-http=true` for a local cluster. That is a deploy
-decision with a new secret in it, so it is written here rather than guessed at.
+### Enable real impersonation — the procedure
+
+**This is a deploy decision with a new secret in it.** Nothing below is on by default and nothing
+below is done by the OS; an operator does it, in this order. The generated `profiles.yml` is
+already ready for it: it emits `password: "{{ env_var('TRINO_PASSWORD', '') }}"` inside a
+`{% if env_var('TRINO_AUTH_METHOD', 'none') != 'none' %}` guard, so the key is simply absent under
+`method: none` (which is what `TrinoNoneCredentials` requires) and present the moment you switch.
+Only `env_var()` ever appears — a literal password in a repo anyone in the domain can clone is not
+a path the generator offers.
+
+1. **Pick an authenticator.** Add to the Trino coordinator's `config.properties`
+   (`templates/extensions/lakehouse/trino.yaml`):
+   `http-server.authentication.type=PASSWORD`, plus a `password-authenticator.properties`
+   (`password-authenticator.name=file`, `file.password-file=/etc/trino/password.db`). `JWT` or
+   `OAUTH2` work the same way for the rules file; PASSWORD is the smallest step.
+2. **Allow it over the cluster-internal protocol.** Either terminate TLS on the coordinator
+   (`http-server.https.*`) and set `TRINO_HTTP_SCHEME=https` everywhere, or — in-cluster only, with
+   the NetworkPolicies in place — set
+   `http-server.authentication.allow-insecure-over-http=true`. Trino refuses PASSWORD over plain
+   HTTP without it.
+3. **Create exactly two credentials** in a Kubernetes Secret (never in values.yaml, never in the
+   repo): one for `trino.accessControl.serviceUser` (`dbt-runner`) and one for the OS's query path
+   (the query-tool's `TRINO_USER`). Hash them into the password file with `htpasswd -B -C 10`.
+4. **Mount them.** `TRINO_PASSWORD` from that Secret into (a) the Dagster **run pod** — add it to
+   the code location's `env` in `values.yaml` so `includeConfigInLaunchedRuns` propagates it — and
+   (b) the **query-tool** Deployment. Set `TRINO_AUTH_METHOD` from `none` to the matching
+   dbt-trino method at the same time, in the same place.
+5. **Check the user alignment first.** The run pod's `TRINO_USER` MUST equal
+   `trino.accessControl.serviceUser`, because that is the only `original_user` the generated
+   impersonation rule lets become an OS principal. A mismatch is invisible today (nothing
+   authenticates) and a hard denial the second you finish step 1 — exactly the trap review
+   B3-review-H-5 found, with `TRINO_USER: dbt-sales` against `serviceUser: dbt-runner`.
+   `scripts/check-trino-rules-chart.mjs` now fails the gate on that mismatch.
+6. **Verify.** `dbt-runner` must be able to become `sales` and must NOT be able to become `root`
+   (see "Verify it in a cluster", step 4). Until step 1 is done, both succeed, because there is no
+   `original_user` to match.
 
 ## Verify it in a cluster
 
@@ -130,6 +186,20 @@ kubectl -n agentic-os get pod -l app.kubernetes.io/component=trino -o wide
 #    become `root`.
 #    (Without authentication both succeed, because there is no original_user to match — see above.)
 ```
+
+## Known limits (follow-ups, not news)
+
+- **A governed READ runs as the caller's first domain, not as the person.**
+  `readPrincipalFor(sql, user)` resolves to `user.domains[0]` for anything outside the caller's own
+  `personal_<uid>` lane. So two people in the same domain are indistinguishable to Trino on a
+  domain-schema read, and a person in two domains reads as whichever one sorts first in their
+  membership list. Row filters and column masks are therefore evaluated for the DOMAIN, not for the
+  individual. This is pre-existing (it predates the engine rebuild) and it is a **follow-up**, not
+  something B3 changed: making the read run as the uid needs per-user grants in `trino.rego` and a
+  per-user Trino credential, which is the same deploy decision as the impersonation procedure
+  above. The WRITE path has the same shape (`identity.principal = user.domains[0] ?? user.id`).
+- The impersonation section of `rules.json` is inert until authentication is enabled (above).
+- Column-level lineage is not derived from the manifest (deviation B3-6).
 
 ## FAQ
 

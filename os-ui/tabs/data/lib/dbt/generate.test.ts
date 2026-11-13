@@ -195,12 +195,28 @@ for (const [shape, make] of Object.entries(SHAPES)) {
   test(`valid yaml and no secrets: ${shape}`, () => {
     const files = generateProject('sales', make());
     for (const [k, v] of files) {
+      // Every emitted `.yml` must still parse AS YAML, even the one carrying a Jinja guard — the
+      // guard is therefore written as a YAML comment (B3-review, "impersonation reality").
       if (k.endsWith('.yml')) yaml.load(v);
-      assert.doesNotMatch(v, /password|secret|token/i, `${k} must not carry credentials`);
+      // A credential-shaped KEY is allowed, but ONLY as `env_var()` indirection: the repository is
+      // readable by anyone who can clone it, so a literal value is what must never appear. Check
+      // the key's value explicitly, then run the blanket word hunt over everything else.
+      for (const m of v.matchAll(/^\s*(?:password|secret|token)\w*:\s*(.*)$/gim)) {
+        assert.match(m[1], /^"\{\{\s*env_var\(/, `${k}: a credential key may only hold an env_var() call`);
+      }
+      const withoutEnvVars = v
+        .replace(/^\s*(?:password|secret|token)\w*:.*$/gim, '')
+        .replace(/\{[{%][^}]*[}%]\}/g, '');
+      assert.doesNotMatch(withoutEnvVars, /password|secret|token/i, `${k} must not carry credentials`);
       assert.doesNotMatch(v, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/, `${k} must not carry timestamps`);
     }
     assert.match(files.get('profiles.yml')!, /impersonation_user: "\{\{ env_var\('OS_PRINCIPAL'\) \}\}"/);
     assert.match(files.get('profiles.yml')!, /method: "\{\{ env_var\('TRINO_AUTH_METHOD', 'none'\) \}\}"/);
+    // The password line exists, is guarded, and is never a literal.
+    assert.match(
+      files.get('profiles.yml')!,
+      /# \{% if env_var\('TRINO_AUTH_METHOD', 'none'\) != 'none' %\}\n\s+password: "\{\{ env_var\('TRINO_PASSWORD', ''\) \}\}"\n\s+# \{% endif %\}/,
+    );
   });
 }
 

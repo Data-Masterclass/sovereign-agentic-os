@@ -163,6 +163,25 @@ With the flag on (checklist D7, D14, D15, D16):
   **skipped with a reason**, never as a pass. What it cannot prove — that the two produce the same
   ROWS — needs a cluster and stays checklist D15's `kind` half.
 
+#### B3 review round — what changed after the review
+
+- **The reconciler now actually runs**, and runs more than once: boot, every user/domain write (the
+  kernel `directory-changed` event — the stores emit, `instrumentation.ts` subscribes, nothing in a
+  write path imports a reconciler), and a jittered periodic repair pass, because `helm upgrade`
+  rewrites the chart's permissive bootstrap over the OS's file. Its last outcome is a row on
+  Platform → Components & Health, red on failure or staleness.
+- **Lineage is all-or-nothing.** `graphLineage` returns null unless every model of the dataset is in
+  the asset graph, so a half-parsed project falls back to the registry graph instead of showing a
+  truncated one labelled `dbt`. The `source` label now reaches MCP `get_lineage` too.
+- **The parity harness no longer checks the plan against itself.** `ref()` resolves to the FQN the
+  OS actually WROTE (the recorded CTAS's own target), and a model read through `source()` instead of
+  `ref()` is a mismatch — that is the signature of a lane mapping that disagrees with the CTAS, and
+  it used to round-trip and pass.
+- **`profiles.yml` can carry a password** (`env_var()` only, inside a Jinja guard so the key is
+  absent under `method: none`). `docs/components/trino.md` has the numbered procedure for turning
+  real impersonation on, and states plainly that a governed READ runs as the caller's FIRST DOMAIN,
+  not as the person — pre-existing, and a follow-up.
+
 ## Rules that apply here
 
 1. **Import only `@core/*` and this module.** A cross-tab need means the shared part belongs in `@core`.

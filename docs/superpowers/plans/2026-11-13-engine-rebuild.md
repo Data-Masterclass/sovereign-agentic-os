@@ -282,6 +282,13 @@ and the divergence is pinned by a test rather than by a comment.
 | Docs | **new** `docs/components/trino.md`; `docs/components/{dagster,dbt}.md`; `tabs/data/README.md` "B3"; `os-ui/ARCHITECTURE.md` "Data products execute as the principal"; `CHANGELOG.md` |
 | Tests | `core/infra/trino-rules.test.ts` (10), `core/infra/trino-rules-server.test.ts` (4), `tabs/data/lib/dbt/source-assets.test.ts` (4), `tabs/data/lib/dbt/lineage.test.ts` (5), `tabs/data/lib/dbt/parity.test.ts` (6), 2 new cases in `core/infra/dagster.test.ts`, 9 new Python cases (`SourceAssets`, `PerSchedulePinning`, `SanitizeGolden`) |
 
+**B3 review round (fourth commit on the branch):** all 6 H, all 8 M and all 3 L findings fixed with
+tests, plus the "impersonation reality" item; the reconcile trigger set is **boot + directory event
+(debounced, serialised) + jittered periodic repair**, with the last outcome published as a
+`Trino access rules` row on Platform → Components & Health. Deviations: `#### B3 review round
+deviations` below. New: `core/kernel/events.ts`, `scripts/check-trino-rules-chart.mjs`,
+`core/kernel/events.test.ts`, `tabs/admin/lib/components-extra.test.ts`.
+
 **Gates:** `tsc --noEmit` clean · `npm --prefix os-ui test` **5162 tests, 0 fail, 7 todo** (5008 → 5162) · `check-structure.mjs` **no new violations** (TAB-ISOLATION 421/422, CORE-INDEPENDENCE 206/207, FILE-HEADER 1244/1245 — all below baseline, NOT re-locked) · `gate.sh` exit 0 · `helm lint` exit 0 · `helm template` defaults **and** `--set osUI.dataProjectGit.enabled=true`, with the `trino-access-rules` ConfigMap's `rules.json` asserted to `JSON.parse` in both · `python3 -m unittest discover -s images/extensions/dagster/tests` **40 tests OK** (31 → 40) · `py_compile` on `repo.py`, `os_projects.py`, `tests/regen_sanitize_golden.py` · `sh -n repo-sync.sh`.
 
 ### Phase B4 — MCP, docs, deletion
@@ -632,5 +639,140 @@ After each full pass over Parts A, B and D: a read-only test agent scores `2026-
   pinned Dagster 1.13; that `trino.dbapi` is importable in the run pod (it is dbt-trino's own
   dependency) and that the probe's reads pass OPA as the owner; and everything on B2's list below,
   which B3 did not revisit.
+
+#### B3 review round deviations (`feat/engine-rebuild-b2`, fourth commit)
+
+Every H and M finding of the B3 review is fixed with a test; the three L findings and the
+impersonation-reality item are fixed too. Where the fix differs from what the review proposed, the
+reason is here.
+
+- **B3-review-H-1 Fixed as written, and the gate is now asserted from rendered YAML.**
+  `TRINO_ACCESS_RULES` / `TRINO_DBT_USER` moved out of the `$dpg` block in `_os-ui-env.tpl` and are
+  gated on `and .Values.trino.enabled $ac.enabled .Values.trino.opa.enabled` — the FULL `$acOn`
+  expression from `trino.yaml`, not just `$ac.enabled`, which is also the L-5 fix (one gate, so
+  os-ui can never log "ConfigMap does not exist" on a boot where the file is absent by design).
+  `scripts/check-trino-rules-chart.mjs` renders stock, `dataProjectGit=true`,
+  `accessControl.enabled=false` and `opa.enabled=false` and asserts `TRINO_ACCESS_RULES` is present
+  **iff** the ConfigMap is.
+- **B3-review-H-2 The event hook is a KERNEL EVENT BUS, and the chokepoint is `writeThrough`.** New
+  `core/kernel/events.ts` (`emitDirectoryChange` / `onDirectoryChange`, synchronous, listener
+  failures logged and swallowed). `tabs/admin/lib/users.ts` and `domains.ts` emit from their single
+  durable `writeThrough` — which every create / edit / role / domain / archive / restore / verify
+  path already goes through — plus `deleteUser`'s mirror delete. That is one line per store instead
+  of one per mutator, and a mutator added later gets the event for free. `instrumentation.ts` is the
+  only subscriber. The debounce + serialisation live in `startTrinoRulesReconciler`
+  (`core/infra/trino-rules-server.ts`) so they are unit-testable with injected timings;
+  `core/kernel/events.test.ts` drives the REAL `createUser`/`updateUser`/`archiveUser` and
+  `createDomain`/`setArchived` and counts reconciles.
+- **B3-review-H-3 Periodic repair, not a second ConfigMap key.** The review offered either. The
+  two-key alternative does not work: Trino's `security.config-file` is ONE path, so "read the OS key
+  when present" would need a second access-control entry or an init container that merges files, and
+  a merge step is a new failure mode between the OS and the engine. A jittered `setInterval`
+  (`trino.accessControl.reconcileIntervalMinutes`, default 10) in the same boot block is a GET plus
+  a byte compare when nothing drifted, needs no new moving part, and also covers the cases an event
+  cannot see at all (a ConfigMap edited by hand, a replica that missed an event). The residual
+  window — between a `helm upgrade` and the next pass — is documented in the chart comment and in
+  `docs/components/trino.md`.
+- **B3-review-H-4 The health row is PURE and lives in `components-extra.ts`; the route assembles the
+  `HealthItem`.** `trinoAccessRulesRow({enabled, outcome, now, periodMs})` is a pure mapper in
+  `tabs/admin/lib/components-extra.ts` with its own row type — it deliberately does NOT import
+  `@tabs/monitoring/lib/types`, because a tab importing another tab would be a new TAB-ISOLATION
+  violation. `app/api/platform-admin/components/route.ts` (a route, which already imports both tabs)
+  turns the row into the `systemHealth` item. `ReconcileOutcome` gained `code` and `at`;
+  `lastReconcileOutcome()` is the process-wide record the row reads. Retry is 3 attempts with
+  backoff doubling from 2 s and capped at 30 s, EXCEPT for `no-cluster` and `no-configmap`, which
+  are configuration facts rather than blips and are not retried inside the pass.
+- **B3-review-H-5 The subchart's `TRINO_USER` is a LITERAL plus an asserted equality, because Helm
+  cannot template a subchart's values.** The Dagster code-location env lives under
+  `dagster.dagster-user-deployments.deployments[0].env` in `values.yaml`, which is data passed to a
+  dependency chart — there is no template to interpolate `.Values.trino.accessControl.serviceUser`
+  into. So the literal is corrected to `dbt-runner` and `check-trino-rules-chart.mjs` parses
+  `values.yaml` and fails on any future divergence. The review's "or a helm-template assertion in a
+  script under `scripts/` that gate.sh runs" is what shipped, with the skip condition "helm missing
+  OR no subchart .tgz" as asked.
+- **B3-review-H-6 Fixed as written. The Secrets grant is back on `externalConnectorsEnabled` alone**
+  and the reconciler has its own `resourceNames: ["trino-access-rules"]` rule with `get,patch` only
+  — no `list`, no `create`. Note the consequence, which the review did not call out: an install with
+  `dataProjectGit.enabled=true` and external connectors off now has NO ConfigMap/Secret write at all
+  beyond that one named ConfigMap. Nothing in the data-project path needed it (the mirror config
+  lives in OpenSearch), and `helm template` confirms the rendered Role carries no `secrets`
+  resource in every value set the check renders.
+- **B3-review-M-1/M-2 Fixed as written**, with the fallback path's own label asserted
+  (`lineageFor(...).source === 'registry'`), and `UnifiedLineage.source` added as an OPTIONAL field
+  so no existing MCP consumer breaks.
+- **B3-review-M-3 One observation job per (domain, CRON), not one per domain.** A domain's sources
+  do not share a cron — the generator derives each from its own sync's schedule — and a single
+  per-domain job would have to pick one, either over-probing the slow sources or under-probing the
+  fast ones. Grouping by cron keeps "at the source's own cron" literally true. Names are
+  `<domain>__observe_<sha6(cron)>` so adding or removing a source never renames an existing
+  schedule. `os/principal` and `OS_PRINCIPAL` are set only when the group shares one principal, and
+  only such a group is registered with the inactive-principal sensor — otherwise one deactivated
+  owner would pause other people's observations.
+- **B3-review-M-4 `enabled: false` drops the SCHEDULE, not the asset.** Removing the asset would
+  remove the node the silver model depends on, so the lineage view would lose the external source
+  the moment a sync is paused — a worse answer than a node nobody probes. The asset and its
+  freshness check stay; `observe_crons` filters disabled entries out of the scheduled groups.
+- **B3-review-M-5 Fixed as written**, with the reason recorded in the code: `request_timeout` alone
+  bounds one HTTP poll, and only `query_max_run_time` makes TRINO abandon the query.
+  `OS_OBSERVE_TIMEOUT_SECONDS`, default 60.
+- **B3-review-M-6 Two changes, because resolving refs from the CTAS is not enough on its own.**
+  `refs` now resolves from each model's own recorded CTAS TARGET (`ctasTarget`), falling back to the
+  plan only where the OS compiled nothing. But a wrong lane mapping does not survive as a wrong
+  `ref()`: `rewriteFqns` keys its model lookup on the FQN as it appears in the CTAS, so the lookup
+  MISSES and the model is emitted as an external `{{ source(...) }}` — which the plan's own source
+  map then resolves straight back, which is why it passed. The discriminating assertion is therefore
+  `sourceRefConflicts`: a relation that is one of this project's model targets must be reached with
+  `ref()`, never `source()`. The test drives the worked example with the Orders dataset re-owned
+  (plan schema `personal_zed`, recorded CTAS `personal_amir`) and asserts it FAILS, and that the
+  correct mapping still passes. The header's "one source of truth, both directions" claim is
+  replaced by what is actually true.
+- **B3-review-M-7 Fixed as written**, plus `core/kernel/events.test.ts` and
+  `tabs/admin/lib/components-extra.test.ts`, plus `check-trino-rules-chart.mjs`.
+- **B3-review-M-8 Order AND an explicit close, because order alone does not fix it.** Emitting the
+  personal-lane rules first is necessary but insufficient: the lane's `schemas` entry is
+  `{user: ^amir$, schema: ^personal_amir$, owner: true}`, so a DIFFERENT user falls through it to
+  the next matching rule — which, for a domain whose sanitized schema is also `personal_amir`, was
+  the domain's owner rule. So each lane now also emits `{schema: ^personal_amir$, owner: false}`
+  immediately after its owner rule, exactly mirroring the empty-privileges fallthrough the `tables`
+  list already had. The golden file was regenerated. (The review's alternative — excluding domains
+  matching `^personal_` — would have left the domain silently un-ownable instead, which is a
+  different bug.)
+- **B3-review-L-1 Fixed as written** (`^(?:…)$` in the evaluator, including the `original_user`
+  exec), with a test that an unanchored fragment no longer matches a longer value.
+- **B3-review-L-2 Validated against the PRINCIPAL pattern, not `_IDENT_RE`.** The review said "the
+  identifier regex". That would be wrong: `_IDENT_RE` is `^[A-Za-z_][A-Za-z0-9_$]{0,127}$` and a
+  principal legitimately contains `-` and `.` (`sales-eu`), so it would drop real datasets and real
+  schedules. What the check is for is that the principal becomes a Trino session user and an
+  `OS_PRINCIPAL` env value, so it must carry no whitespace, newline or quote — which is exactly
+  `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`, the same `OS_PRINCIPAL_PATTERN` the generated `rules.json`
+  enforces on the other side. Applied to `parse_source_assets` AND `parse_schedules`.
+- **B3-review-L-3/L-4 Fixed as written.** `_wire_project` lost the shadowed `pinned_env` parameter
+  (and `build_definitions` lost the now-consumerless `osp.pinned_env(projects)` call);
+  `repo-sync.sh` neutralises the shipped placeholder immediately after reading it, so one rule
+  governs both the log line and the server.
+- **Impersonation reality — fixed as written, and the pre-existing limit is now stated.**
+  `profiles.yml` emits `password: "{{ env_var('TRINO_PASSWORD', '') }}"` inside
+  `{% if env_var('TRINO_AUTH_METHOD', 'none') != 'none' %}` (dbt renders `profiles.yml` through
+  Jinja before parsing the YAML, so the key is genuinely absent under `method: none`, which
+  `TrinoNoneCredentials` requires). Spliced textually after the `user:` line at its own indentation,
+  because the YAML emitter cannot express a conditional key. `docs/components/trino.md` gains
+  "Enable real impersonation" as a six-step numbered procedure marked a deploy decision, and a
+  "Known limits" section stating plainly that `readPrincipalFor` maps a governed read to the
+  caller's FIRST DOMAIN, not to the person (and that the write path has the same shape) — recorded
+  as a **follow-up**, since fixing it needs per-user grants in `trino.rego` and a per-user Trino
+  credential, i.e. the same deploy decision.
+- **What the B3 review got wrong or incomplete:** L-2's "identifier regex" would have dropped valid
+  principals (above). M-8's ordering fix alone does not close the hole — an explicit per-lane
+  `owner: false` rule is required. M-6's "resolve refs from the recorded CTAS's own FQNs" alone does
+  not make a wrong lane mapping fail, because the mapping error turns a `ref()` into a `source()`
+  that round-trips; the source/ref conflict check is what actually discriminates. H-5's "template
+  the Dagster env block" is not possible for a subchart's values. And every line number in the
+  review's H-2 (`unified.ts:111-115`, `lineage.ts:51-52` partly), M-1 and M-2 citations is off by
+  enough to matter — the findings themselves were real and were located by reading the code.
+- **Still needs the live cluster (unchanged from B3-12), plus:** that a `resourceNames`-scoped
+  ConfigMap Role really permits the reconciler's GET + PATCH (strategic-merge PATCH on a named
+  resource; no `list` is used); that `observable_source_asset`s inside a `define_asset_job` are
+  materialisable as OBSERVATIONS by a schedule in Dagster 1.13; and that `trino.dbapi.connect`
+  accepts `request_timeout` and `session_properties` in the pinned client version.
 
 - **B2-11 What still needs the live cluster:** that a scheduled sync materialises in kind under the owner principal (D7, D10); that `dagster-k8s/config` really propagates `OS_PRINCIPAL` / `OS_PINNED_COMMITS` into run pods; that the subchart honours `sidecarContainers` / `volumes` / `volumeMounts` and an `env` entry with `valueFrom`; that `reloadRepositoryLocation` succeeds against the webserver Service; that the webserver's GraphQL schema matches the documents in `core/infra/dagster.ts` (field names were taken from Dagster 1.13's schema, not probed); and that `Definitions`-based locations really report the repository name `__repository__`.
