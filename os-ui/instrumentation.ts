@@ -302,4 +302,31 @@ export async function register(): Promise<void> {
       }
     })();
   }
+
+  // ---- stream E: the engineer's door (git → OS) ------------------------------------------
+  // APPENDED boot step (shared file; nothing above is reordered). Two jobs, both idempotent:
+  //   1. register each object kind's validator + ingest with the receive gate, because a core
+  //      module may not import a tab (`registerRepoKind` is the seam — decision D29);
+  //   2. make every existing bare repo pushable AND gated (`http.receivepack`, the pre-receive and
+  //      post-receive hooks). A repo created later is covered by /api/git/authenticate, which
+  //      calls the same function per request.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { config } = await import('./core/kernel/config.ts');
+        if (!config.dataProjectGit) return;
+        const { registerDbtIngest } = await import('./tabs/data/lib/dbt/ingest.ts');
+        const { registerAgentSystemIngest } = await import('./tabs/agents/lib/git/ingest.ts');
+        registerDbtIngest();
+        registerAgentSystemIngest();
+        const { ensureReceiveHooks } = await import('./core/infra/git-receive.ts');
+        const { listRepos } = await import('./core/infra/git-store.ts');
+        const repos = await listRepos();
+        for (const repo of repos) ensureReceiveHooks(repo.name);
+        console.info(`[os-ui] git receive gate: 2 kinds registered, hooks installed in ${repos.length} repositor${repos.length === 1 ? 'y' : 'ies'}`);
+      } catch (err) {
+        console.warn(`[os-ui] git receive gate: not armed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
 }

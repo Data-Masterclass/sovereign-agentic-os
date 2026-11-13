@@ -1389,6 +1389,18 @@ osUI:
         # git (GPL-2.0) still runs as a separate process from a distro package, never linked.
         repository: ghcr.io/aborek/sovereign-os/git-daemon
         tag: "1.0.0"
+    # ---- stream E: the engineer's door (decision D27) -------------------------------------
+    # Authenticated git over HTTP at https://<os>/git/<domain>.git — clone, fetch and push from
+    # VS Code. The transport is git's OWN `git-http-backend` CGI behind lighttpd in our own image
+    # (images/base/git-http); authentication is an OS personal access token, resolved by
+    # /api/git/authenticate through the ingress sub-request, and every push passes the receive
+    # gate (/api/git/receive). Needs `ingress.enabled` + `ingress.hosts.osUI` to be reachable
+    # from outside; in-cluster the NetworkPolicy admits the ingress controller only.
+    gitHttp:
+      enabled: true
+      image:
+        repository: ghcr.io/aborek/sovereign-os/git-http
+        tag: "1.0.0"
   # Secret-backed credentials — reuse the stack's existing Secrets so nothing
   # sensitive sits in plaintext (names/keys verified against the running cluster).
   langfuseSecret:

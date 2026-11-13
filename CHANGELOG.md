@@ -12,6 +12,7 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 `alpha`/`beta` pre-releases without notice.
 
 ## [Unreleased]
+- **The engineer's door (stream E).** Authenticated git over HTTP at `/git/<domain>.git` served by git's own `git-http-backend` (`images/base/git-http`, a non-root sidecar on the os-ui pod); OS personal access tokens (Platform → Access tokens — hashed at rest, shown once, revocable, one identity); a `Clone this repository` affordance for every detail page; the receive gate (`core/infra/git-receive.ts` + `app/api/git/receive`) holding the same per-domain git-store lock for the whole receive, refusing non-fast-forward `main`, enforcing path ownership and running the UI's own validators; and post-receive ingest reconciling datasets and agent systems **from the files**, attributed to the pusher with `OS-Surface: git:push`. See `docs/components/git.md` → "Work from VS Code".
 
 ### Added
 

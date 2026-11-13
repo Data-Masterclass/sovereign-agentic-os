@@ -70,4 +70,16 @@ spec:
               component: user-deployments
       ports:
         - { protocol: TCP, port: 9418 }
+    {{- if ($dpg.gitHttp | default dict).enabled }}
+    # Stream E: authenticated git over HTTP (port 9419, the `git-http` sidecar). ONLY the ingress
+    # controller may reach it — the Ingress is where the OS's `auth-url` sub-request runs, so any
+    # other in-cluster path to this port would be a way around authentication. The brief's rule
+    # holds: the `os-repos` policy is not widened beyond what the sidecar needs.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $dpg.gitHttp.ingressNamespace | default "ingress-nginx" | quote }}
+      ports:
+        - { protocol: TCP, port: 9419 }
+    {{- end }}
 {{- end }}

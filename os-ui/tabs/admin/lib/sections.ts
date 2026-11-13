@@ -56,6 +56,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: 'domains', label: 'Domains', href: '/platform?section=domains', sub: 'Create domains & toggle optional layers', group: 'Tenant', minRole: 'admin' },
   { id: 'settings', label: 'Tenant Settings', href: '/platform?section=settings', sub: 'SSO, branding, tenant defaults', group: 'Tenant', minRole: 'admin' },
   { id: 'access', label: 'Users & Access', href: '/platform?section=access', sub: 'Invite, assign domains, offboard', group: 'Tenant', minRole: 'admin' },
+  // PERSONAL, not administration (stream E / E-R2.1): the section lists only the caller's OWN git
+  // access tokens, so its floor is the lowest role. Reaching Platform at all still needs the
+  // sidebar's own `builder` floor (core/kernel/tabs.ts) — recorded as deviation E-4.
+  { id: 'tokens', label: 'Access tokens', href: '/platform?section=tokens', sub: 'Personal tokens for git over HTTPS', group: 'Tenant', minRole: 'creator' },
 
   // Models — the LLM control room
   // NO 'gateway' tab. Removed 2026-10-30 at the user's request: the embedded

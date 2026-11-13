@@ -1,0 +1,92 @@
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  The engineer's door (decision D27): authenticated git over HTTP at
+  `https://<os>/git/<domain>.git`, served by git's OWN `git-http-backend` CGI in the `git-http`
+  sidecar on the os-ui pod (see os-ui.yaml). We write no git protocol.
+
+  Rendered ONLY when osUI.dataProjectGit.enabled AND its gitHttp.enabled.
+
+  AUTHENTICATION is the OS's, not the transport's: the Ingress below sends every `/git/**` request
+  to os-ui's `/api/git/authenticate` as a sub-request (ingress-nginx `auth-url`), which resolves an
+  OS personal access token to a live principal and checks domain membership. Only then does nginx
+  forward the request to the sidecar, with the resolved principal copied onto it.
+  The sidecar is NEVER reachable from outside the cluster by any other path: the NetworkPolicy in
+  os-repos.yaml admits port 9419 from the ingress controller's namespace only.
+
+  WRITE is gated a second time, server-side: the repo's pre-receive hook calls
+  `/api/git/receive`, which authenticates the SAME token itself, holds the per-domain git-store
+  lock for the whole receive, decides path ownership and runs the UI's own validators (D28).
+*/}}
+{{- $u := .Values.osUI }}
+{{- $dpg := $u.dataProjectGit | default dict }}
+{{- $gh := $dpg.gitHttp | default dict }}
+{{- if and $u.enabled $dpg.enabled $gh.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: os-git-http
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+  ports:
+    - name: git-http
+      port: 9419
+      targetPort: git-http
+{{- $ing := .Values.ingress }}
+{{- $host := index ($ing.hosts | default dict) "osUI" }}
+{{- if and $ing.enabled $host }}
+---
+{{- /*
+  A SECOND Ingress on the SAME host, for the `/git` prefix only. ingress-nginx merges rules per
+  host across Ingress objects, so this adds one path beside os-ui's `/` without touching
+  templates/base/ingress.yaml (which stream E does not own).
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: os-git-http-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/name: os-git-http
+    app.kubernetes.io/component: ingress
+  annotations:
+    cert-manager.io/cluster-issuer: {{ $ing.tlsIssuer | quote }}
+    {{- with $ing.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    # The OS authenticates every request. A 401 from this sub-request is returned to git verbatim,
+    # with the WWW-Authenticate header that makes a git client ask for credentials.
+    nginx.ingress.kubernetes.io/auth-url: "http://os-ui.{{ .Release.Namespace }}.svc.cluster.local:3000/api/git/authenticate"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Os-Principal, X-Os-Principal-Role, X-Os-Token-Prefix"
+    # git sends the token in the Authorization header; the sub-request needs to see it.
+    nginx.ingress.kubernetes.io/auth-snippet: |
+      proxy_set_header X-Original-URI $request_uri;
+    # A `git push` of a large repository is one big POST and a `git clone` one long response.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+spec:
+  ingressClassName: {{ $ing.className }}
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: {{ printf "%s-tls" $host | quote }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /git
+            pathType: Prefix
+            backend:
+              service:
+                name: os-git-http
+                port:
+                  number: 9419
+{{- end }}
+{{- end }}
