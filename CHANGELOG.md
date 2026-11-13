@@ -29,6 +29,16 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ### Fixed — first production rollout of 0.8.0 (chart 0.3.0)
 
+- **`os-ui-worker` crash-looped on `isomorphic-git`.** The build-time trace of the worker's import
+  graph sees only static imports; the MCP dispatcher loads tool modules lazily and reaches
+  isomorphic-git, pg and friends. `scripts/worker-deps.mjs` now seeds the copy with every
+  production dependency in `package.json` (minus browser-only libraries) as well — 191 packages,
+  ~100 MB — so a lazy import can never miss a package again.
+- **Manual `helm upgrade` conflicted on `trino-access-rules`.** os-ui co-owns `rules.json` (it
+  PATCHes the reconciled rules), so a plain server-side apply conflicts. `deploy.sh` already passes
+  `--force-conflicts`; the documented manual commands now do too. Forcing reseeds the bootstrap
+  rules, which the os-ui boot reconcile restores within seconds.
+
 - **Dagster webserver crash-looped on image 0.3.0.** The image let SQLAlchemy float to 2.1 and
   carried psycopg (v3); SQLAlchemy 2.1 picks the psycopg3 dialect and dagster-webserver 1.13's
   startup telemetry query dies with "the connection is closed" (the daemon never makes that call,

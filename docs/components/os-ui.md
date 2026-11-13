@@ -158,7 +158,9 @@ tails its events**, and the work happens elsewhere:
 ```bash
 # 0) turn the worker on
 helm upgrade agentic-os charts/sovereign-agentic-os -f values.local.yaml \
-  --set osUI.worker.enabled=true --reuse-values
+  --set osUI.worker.enabled=true --reuse-values --force-conflicts --skip-schema-validation
+# --force-conflicts: os-ui co-owns trino-access-rules/rules.json (it PATCHes the reconciled rules), so a
+# plain server-side apply conflicts; forcing reseeds the bootstrap, which the boot reconcile restores in seconds.
 kubectl -n agentic-os rollout status deploy/os-ui-worker
 kubectl -n agentic-os logs deploy/os-ui-worker | grep 'agent-runs-worker. boot:'
 #    expect: checkpointer=postgres jobs=postgres resumeHook=true approvals=true
