@@ -6,72 +6,79 @@
 
 Legend for the **Test** column: `unit` = automated test in the suite · `kind` = verified against the local kind cluster · `stackit` = verified against production after deploy · `inspect` = read the generated artifact or the source and confirm · `mcp` = exercised through the OS MCP as a client would.
 
+**Status column** (added 2026-11-13 at the end of Phase A5, from the branch `feat/engine-rebuild`
+at commit of A5; no cluster was available): `true (test: …)` names the file that makes it true ·
+`untestable here (…)` gives the exact step that would prove it · `false (…)` says what is missing.
+Part 1 is scored; Part 2 (data products) and Part 3 are Part B/D work and are scored `false (not
+started)` where the phase has not run, since claiming otherwise is the failure mode this document
+exists to prevent.
+
 ---
 
 ## Part 1 — AI products (agent systems)
 
 ### 1.1 Definition and versioning
 
-| # | Must be true | Test |
-|---|---|---|
-| A1 | An agent system is defined by a single `system.yaml` that fully determines its graph: agents, entrypoint, edges with guards, grants, safety preset, state channels. No behaviour lives outside the file. | `inspect` the schema; `unit`: parse → compile → build is deterministic (same YAML, same graph). |
-| A2 | Every save of a system, from the UI or the MCP, is a **git commit** in the owning domain's repository, authored as the acting user, with a message naming the action and its origin (`ui:agents` or `mcp:<tool>`). | `unit` on the commit builder; `kind`: save twice, `git log` shows two commits with the right author and message. |
-| A3 | The repository holds the human-readable artifacts an engineer would commit: `system.yaml`, the compiled graph as `graph.ts` (or an equivalent readable form), and a README. Nothing opaque. | `inspect` a checkout of a domain repo. |
-| A4 | A system can be exported and run outside the OS: the compiled graph plus a thin runner compiles and executes with LangGraph alone, against LiteLLM, with tools stubbed. | `kind`: export, `npx tsx` the runner, reaches END. |
-| A5 | Existing `system.yaml` files from before the rebuild load and run unchanged. | `unit` golden fixtures from the old walker still pass. |
+| # | Must be true | Test | Status (end of A5) |
+|---|---|---|---|
+| A1 | An agent system is defined by a single `system.yaml` that fully determines its graph: agents, entrypoint, edges with guards, grants, safety preset, state channels. No behaviour lives outside the file. | `inspect` the schema; `unit`: parse → compile → build is deterministic (same YAML, same graph). | true (test: `tabs/agents/lib/langgraph-compile.test.ts`, `system-schema.test.ts` byte-stable serialize, `engine/parity.test.ts` — the same yaml reproduces the same path, tools and final text every run) |
+| A2 | Every save of a system, from the UI or the MCP, is a **git commit** in the owning domain's repository, authored as the acting user, with a message naming the action and its origin (`ui:agents` or `mcp:<tool>`). | `unit` on the commit builder; `kind`: save twice, `git log` shows two commits with the right author and message. | false (Part D has not run — no commit path exists; `core/infra/git-store.ts` is not written) |
+| A3 | The repository holds the human-readable artifacts an engineer would commit: `system.yaml`, the compiled graph as `graph.ts` (or an equivalent readable form), and a README. Nothing opaque. | `inspect` a checkout of a domain repo. | false (Part D — there is no domain repo; `system.yaml` + AGENT.md/MEMORY.md live in the agent store only) |
+| A4 | A system can be exported and run outside the OS: the compiled graph plus a thin runner compiles and executes with LangGraph alone, against LiteLLM, with tools stubbed. | `kind`: export, `npx tsx` the runner, reaches END. | false (no exporter: the compiled graph is built in memory by `buildGraph`, never emitted as `graph.ts`) |
+| A5 | Existing `system.yaml` files from before the rebuild load and run unchanged. | `unit` golden fixtures from the old walker still pass. | true (test: `engine/parity.test.ts` + `engine/fixtures.test.ts` — the 13 FROZEN walker goldens, every shipped template among them, still reproduced by the engine) |
 
 ### 1.2 Execution is real LangGraph
 
-| # | Must be true | Test |
-|---|---|---|
-| A6 | The production run path executes a compiled `StateGraph` from `@langchain/langgraph`. No hand-rolled walk remains on any reachable path. | `inspect`: grep for `nodeOrder`, `runAgenticGraph` BFS, `run-graph.ts`, `interpreter.py` → absent; `unit`: the run route dispatches to `buildGraph`. |
-| A7 | Supervisors **decide** which member runs next; members are not visited in declared order. | `unit`: a scripted supervisor choosing `writer` first visits `writer` first. |
-| A8 | `when` guards route: a handoff with a false guard does not visit its target. | `unit`: the formerly-`todo` HANDOFF-GUARD test passes. |
-| A9 | State channels declared in `system.yaml` exist in the graph state with the declared reducer. | `unit`: `add_messages` appends, a last-value channel overwrites. |
-| A10 | Loops are bounded: the team step budget maps to `recursionLimit`, and exhaustion is a graceful stop that returns what completed. | `unit`. |
-| A11 | Tool calls use the model's native tool-calling, with the text fallback only when the model rejects the tools parameter. | `unit`: both branches exercised; `kind`: a run against the STACKIT model succeeds. |
-| A12 | Planner and executor tiers are separate models and configurable per agent. | `inspect` + `unit`. |
+| # | Must be true | Test | Status (end of A5) |
+|---|---|---|---|
+| A6 | The production run path executes a compiled `StateGraph` from `@langchain/langgraph`. No hand-rolled walk remains on any reachable path. | `inspect`: grep for `nodeOrder`, `runAgenticGraph` BFS, `run-graph.ts`, `interpreter.py` → absent; `unit`: the run route dispatches to `buildGraph`. | true (test: `engine/build-graph.test.ts`, `engine/parity.test.ts`, `core/mcp/agent-run-surface.test.ts`; `inspect`: `nodeOrder`/`runAgenticGraph`/`run-graph.ts`/`interpreter.py` are all DELETED — the grep returns only history and the kept service-bearer name, see deviation A5-12) |
+| A7 | Supervisors **decide** which member runs next; members are not visited in declared order. | `unit`: a scripted supervisor choosing `writer` first visits `writer` first. | true (test: `engine/build-graph.test.ts` "A7: the supervisor DECIDES" + the non-member case) |
+| A8 | `when` guards route: a handoff with a false guard does not visit its target. | `unit`: the formerly-`todo` HANDOFF-GUARD test passes. | true (test: `engine/build-graph.test.ts` "A8", and `engine/parity.test.ts` HANDOFF-GUARD — formerly `todo`, now the place the engine deliberately diverges from the walker golden) |
+| A9 | State channels declared in `system.yaml` exist in the graph state with the declared reducer. | `unit`: `add_messages` appends, a last-value channel overwrites. | true (test: `engine/build-graph.test.ts` "A9") |
+| A10 | Loops are bounded: the team step budget maps to `recursionLimit`, and exhaustion is a graceful stop that returns what completed. | `unit`. | true (test: `engine/build-graph.test.ts` "A10" ×2 — graceful stop and the `recursionLimit` derivation) |
+| A11 | Tool calls use the model's native tool-calling, with the text fallback only when the model rejects the tools parameter. | `unit`: both branches exercised; `kind`: a run against the STACKIT model succeeds. | true for both branches (test: `engine/build-graph.test.ts` "A11"); the `kind` half (a run against the STACKIT model) is **untestable here** — needs a cluster with managed inference |
+| A12 | Planner and executor tiers are separate models and configurable per agent. | `inspect` + `unit`. | true (test: `build/resolve-node-model.test.ts` — 6 cases incl. an explicit per-agent pin beating Auto; `inspect`: `plan_<id>` takes `reasoningModel`, `act_<id>` the resolved tier) |
 
 ### 1.3 Durability and human-in-the-loop
 
-| # | Must be true | Test |
-|---|---|---|
-| A13 | Every superstep is checkpointed to Postgres; **thread id = run id**. | `kind`: `SELECT count(*) FROM checkpoints WHERE thread_id = <runId>` grows during a run. |
-| A14 | A run interrupted by a pod restart or the request cap **resumes** from its last checkpoint and reaches the same end state as an uninterrupted run. | `unit` P2 **green**; `unit` A4: a SIGTERM between supersteps returns the job to `queued` as a `resume` and the events already written stay durable (`worker-loop.test.ts`); **`kind` half `untestable here`** — "a rolling restart loses no run" needs a cluster: enable the worker (`--set osUI.worker.enabled=true`), start a long run, `kubectl -n agentic-os rollout restart deploy/os-ui-worker` while `run_jobs.status='running'`, then assert the old pod logged "SIGTERM — finishing the current superstep", the row returned to `queued`/`kind=resume`, `locked_by` changed, `run_events` continued at the next `seq`, and the final `done` reports the same `path` as an uninterrupted run. Full commands: `docs/components/os-ui.md` → "Verify it in a cluster". |
-| A15 | A write that needs approval **pauses the run** via `interrupt()`; nothing executes before the decision. | `unit` P3. |
-| A16 | Approving from Governance **resumes the run** and the approved write executes exactly once, as the original runner, not the approver. | `unit` P3; `kind`: end-to-end approve → the artifact exists, authored as the runner. |
-| A17 | Rejecting returns a typed result to the model and the run continues. | `unit`. |
-| A18 | Runs longer than the request cap complete (worker mode). | **`untestable here`** — needs a cluster and a genuinely >300 s run. `kind`: `--set osUI.worker.enabled=true`; `kubectl -n agentic-os logs deploy/os-ui-worker \| grep 'boot:'` must say `checkpointer=postgres jobs=postgres`; start a >6-minute run from the Agents tab and **close the browser tab**; then `psql -d agent_runs -c "select status from run_jobs where run_id='<RUN>'"` → `done` and `select seq,event,at from run_events where run_id='<RUN>' order by seq` → a terminal `done` more than 300 s after the first event, with no client attached. Re-attach mid-run with `GET /api/agents/systems/<id>/run/stream?runId=<RUN>&afterSeq=<n>`. Full commands: `docs/components/os-ui.md` → "Verify it in a cluster". Covered by unit tests here: enqueue → claim → events → settle, the stale-lease re-queue-once-then-fail, and P1–P3 in `inline` mode. |
+| # | Must be true | Test | Status (end of A5) |
+|---|---|---|---|
+| A13 | Every superstep is checkpointed to Postgres; **thread id = run id**. | `kind`: `SELECT count(*) FROM checkpoints WHERE thread_id = <runId>` grows during a run. | true for the invariant (test: `engine/build-graph.test.ts` "every superstep checkpointed under thread id = run id", `engine/parity.test.ts` P2); the `kind` SELECT is **untestable here** — `psql -d agent_runs -c "select count(*) from checkpoints where thread_id='<RUN>'"` twice during a run |
+| A14 | A run interrupted by a pod restart or the request cap **resumes** from its last checkpoint and reaches the same end state as an uninterrupted run. | `unit` P2 **green**; `unit` A4: a SIGTERM between supersteps returns the job to `queued` as a `resume` and the events already written stay durable (`worker-loop.test.ts`); **`kind` half `untestable here`** — "a rolling restart loses no run" needs a cluster: enable the worker (`--set osUI.worker.enabled=true`), start a long run, `kubectl -n agentic-os rollout restart deploy/os-ui-worker` while `run_jobs.status='running'`, then assert the old pod logged "SIGTERM — finishing the current superstep", the row returned to `queued`/`kind=resume`, `locked_by` changed, `run_events` continued at the next `seq`, and the final `done` reports the same `path` as an uninterrupted run. Full commands: `docs/components/os-ui.md` → "Verify it in a cluster". | unchanged: `unit` P2 green + the SIGTERM re-queue in `engine/worker-loop.test.ts`; the `kind` half **untestable here** (commands in `docs/components/os-ui.md` → "Verify it in a cluster") |
+| A15 | A write that needs approval **pauses the run** via `interrupt()`; nothing executes before the decision. | `unit` P3. | true (test: `engine/approvals.test.ts` P3(a)+(d) — the batch parks before ANY call executes) |
+| A16 | Approving from Governance **resumes the run** and the approved write executes exactly once, as the original runner, not the approver. | `unit` P3; `kind`: end-to-end approve → the artifact exists, authored as the runner. | true (test: `engine/approvals.test.ts` P3(b)+(d) exactly once as the runner, `engine/resume.test.ts` P3(f) the live re-read); the `kind` end-to-end (the artifact exists, authored as the runner) is **untestable here** — approve from Governance → Inbox in a cluster and read the artifact's author |
+| A17 | Rejecting returns a typed result to the model and the run continues. | `unit`. | true (test: `engine/approvals.test.ts` P3(c)) |
+| A18 | Runs longer than the request cap complete (worker mode). | **`untestable here`** — needs a cluster and a genuinely >300 s run. `kind`: `--set osUI.worker.enabled=true`; `kubectl -n agentic-os logs deploy/os-ui-worker \| grep 'boot:'` must say `checkpointer=postgres jobs=postgres`; start a >6-minute run from the Agents tab and **close the browser tab**; then `psql -d agent_runs -c "select status from run_jobs where run_id='<RUN>'"` → `done` and `select seq,event,at from run_events where run_id='<RUN>' order by seq` → a terminal `done` more than 300 s after the first event, with no client attached. Re-attach mid-run with `GET /api/agents/systems/<id>/run/stream?runId=<RUN>&afterSeq=<n>`. Full commands: `docs/components/os-ui.md` → "Verify it in a cluster". Covered by unit tests here: enqueue → claim → events → settle, the stale-lease re-queue-once-then-fail, and P1–P3 in `inline` mode. | **untestable here**, unchanged (steps in `docs/components/os-ui.md`) |
 
 ### 1.4 Observability is Langfuse, used as Langfuse
 
-| # | Must be true | Test |
-|---|---|---|
-| A19 | **One Langfuse trace per run**, trace id = run id; nodes are spans, model calls are generations with token usage, tool calls are spans carrying the governance decision. | `kind`: fetch `/api/public/traces/<runId>`, assert the observation tree. |
-| A20 | The run's "Trace" link opens that trace, not a list. | `inspect` the URL built in code; `kind`: click-through. |
-| A21 | Traces carry `userId`, `sessionId`, and tags for domain, agent, run. | `kind`: read the trace. |
-| A22 | The LLM-judge verdict is written as a Langfuse **score** on the run trace. | `kind`: `/api/public/scores?traceId=`. |
-| A23 | No Langfuse query in the OS returns another user's observations: every read is filtered by run, user or scope. | `unit` on the diagnostics route; `inspect` every `/api/public/` call site. |
-| A24 | Model calls are not double-traced unlinked: LiteLLM's callback generations and the OS's spans share the run trace. | `kind`: one trace, generations nested. |
+| # | Must be true | Test | Status (end of A5) |
+|---|---|---|---|
+| A19 | **One Langfuse trace per run**, trace id = run id; nodes are spans, model calls are generations with token usage, tool calls are spans carrying the governance decision. | `kind`: fetch `/api/public/traces/<runId>`, assert the observation tree. | true (test: `engine/observe.test.ts` "TRACE-PER-RUN" — the REAL SDK with a recording `fetch`: exactly one `trace-create` with id = runId, N spans sharing it, and a resume adding no second trace); the `kind` fetch of `/api/public/traces/<runId>` is **untestable here** |
+| A20 | The run's "Trace" link opens that trace, not a list. | `inspect` the URL built in code; `kind`: click-through. | true (test: `core/infra/langfuse.test.ts` "LANGFUSE-LINK", plus the tripwire in `core/mcp/agent-run-surface.test.ts` that no module builds a `/traces` LIST link) |
+| A21 | Traces carry `userId`, `sessionId`, and tags for domain, agent, run. | `kind`: read the trace. | true (test: `engine/observe.test.ts` A21 — `userId`, `sessionId` = systemId, tags `domain:`/`agent:`/`run:`) |
+| A22 | The LLM-judge verdict is written as a Langfuse **score** on the run trace. | `kind`: `/api/public/scores?traceId=`. | true at the client (test: `core/infra/langfuse.test.ts` `scoreTrace`, `tabs/agents/lib/evaluate-judge.test.ts` for the verdict); the ROUTE that writes it cannot be unit-tested (a test may not import a `route.ts`) and the `kind` read `/api/public/scores?traceId=` is **untestable here** |
+| A23 | No Langfuse query in the OS returns another user's observations: every read is filtered by run, user or scope. | `unit` on the diagnostics route; `inspect` every `/api/public/` call site. | true (test: `core/infra/langfuse.test.ts` ×3 — unfiltered refused, run-scoped by trace id, user+window otherwise; `core/mcp/agent-run-surface.test.ts` tripwire that the diagnostics route owner-gates BEFORE the read). **A5 fixed a real hole here**: the route filtered by `traceId` only, and a trace id IS a run id, so a guessed id returned another user's generations. Named gap: two other Langfuse readers (`monitoring/lib/adapters/run-trace.ts`, the Build probe) fetch then filter OS-side rather than through `observationsQuery` — correct today because the OS is the only caller, listed as an A4 follow-up |
+| A24 | Model calls are not double-traced unlinked: LiteLLM's callback generations and the OS's spans share the run trace. | `kind`: one trace, generations nested. | true (test: `engine/attribution.test.ts` — `existing_trace_id` + `parent_observation_id` on the outgoing request, and `metadata.trace_id` deliberately absent); the `kind` "generations nested in one trace" is **untestable here** |
 
 ### 1.5 Models are LiteLLM, used as LiteLLM
 
-| # | Must be true | Test |
-|---|---|---|
-| A25 | **No inference path uses the master key.** Only gateway administration does. | `unit` MODEL-KEY repo-wide: the only files referencing `litellmMasterKey` are the admin read/write clients and key provisioning. |
-| A26 | Every run uses a **per-principal key** (per agent when it exists, else the shared agent key), with an allowlist and budget enforced by the gateway. | `unit`; `kind`: a run with an over-budget key fails with a typed `budget_exceeded`, not a raw 400. |
-| A27 | Every model call carries `user` and tags `domain:`, `agent:`, `run:`, including from the Python runtime if any remains, and from embeddings and classify. | `unit`: assert on the outgoing request body at each call site. |
-| A28 | The key allowlist always covers every model alias the OS can request, including router fallbacks. | `unit` chart test; `stackit`: the provisioning Job log shows the full list. |
-| A29 | Gateway spend per domain and per agent is real and visible on Platform and Monitoring, read from LiteLLM, not computed by the OS. | `kind`: after a run, the mirror shows non-zero spend for that domain and agent. |
-| A30 | Failures are observable: LiteLLM `failure_callback` is configured; a rejected call appears in Langfuse. | `inspect` chart; `kind`. |
-| A31 | A failed embedding never silently indexes substitute vectors; the fallback is explicit and labelled, and 4xx errors throw. | `unit`. |
+| # | Must be true | Test | Status (end of A5) |
+|---|---|---|---|
+| A25 | **No inference path uses the master key.** Only gateway administration does. | `unit` MODEL-KEY repo-wide: the only files referencing `litellmMasterKey` are the admin read/write clients and key provisioning. | true (test: `core/runtime/runtime.test.ts` MODEL-KEY repo-wide — `deepEqual` against the expected file set, so a file LEAVING the set fails too) |
+| A26 | Every run uses a **per-principal key** (per agent when it exists, else the shared agent key), with an allowlist and budget enforced by the gateway. | `unit`; `kind`: a run with an over-budget key fails with a typed `budget_exceeded`, not a raw 400. | true (test: `engine/attribution.test.ts` A25/A26 — the scoped key by reference, else the shared agent key, never the master); the `kind` `budget_exceeded` surface is **untestable here** — needs a cluster key with an exhausted budget |
+| A27 | Every model call carries `user` and tags `domain:`, `agent:`, `run:`, including from the Python runtime if any remains, and from embeddings and classify. | `unit`: assert on the outgoing request body at each call site. | true for every run, classify and retrieval call (test: `engine/attribution.test.ts`, `tabs/knowledge/lib/embed.test.ts`, `tabs/files/lib/embed.test.ts`). Named gap, unchanged from A3-11: the three INDEX sites (`indexWorkflow`, `indexDomain`, `indexAsset`) have no acting user in scope and still bill `user os-system` + `domain:platform`, so their attribution is per-surface, not per-user |
+| A28 | The key allowlist always covers every model alias the OS can request, including router fallbacks. | `unit` chart test; `stackit`: the provisioning Job log shows the full list. | true (test: `scripts/check-litellm-allowlist.mjs` in `gate.sh`, both chart profiles, all four fallback maps); `stackit` Job-log confirmation is **untestable here** |
+| A29 | Gateway spend per domain and per agent is real and visible on Platform and Monitoring, read from LiteLLM, not computed by the OS. | `kind`: after a run, the mirror shows non-zero spend for that domain and agent. | **untestable here** — needs a cluster: after a run, `GET /api/platform-admin/...` spend mirror (`tabs/admin/lib/gateway-mirror.ts` `spend.byRun`) must show non-zero for that domain and agent. Unit side: `gateway-mirror.test.ts` proves the `run:` tag is parsed |
+| A30 | Failures are observable: LiteLLM `failure_callback` is configured; a rejected call appears in Langfuse. | `inspect` chart; `kind`. | true by `inspect` (chart `litellm.proxy_config.failure_callback: ["langfuse"]` in `values.yaml`); the `kind` half (a rejected call appears in Langfuse) is **untestable here** |
+| A31 | A failed embedding never silently indexes substitute vectors; the fallback is explicit and labelled, and 4xx errors throw. | `unit`. | true (test: `tabs/knowledge/lib/embed.test.ts`, `tabs/files/lib/embed.test.ts`, plus the tripwire in `core/mcp/agent-run-surface.test.ts`: the fallback is labelled in the result (`source: 'offline-hash'` / `mode: 'mock'`) and a 4xx THROWS; the Context Librarian refuses to curate over hash vectors at all) |
 
 ### 1.6 Same path through the MCP
 
-| # | Must be true | Test |
-|---|---|---|
-| A32 | `run_agent_system` returns `runId` and `traceUrl`; `get_agent_run` returns state and held approvals; `resume_agent_run` resumes; `decide_approval` resumes the thread. | `mcp`: drive a full run → hold → approve → completion with the MCP alone. |
-| A33 | A system created through the MCP produces the same git commit, graph, trace and spend attribution as one created in the UI. | `mcp` + `kind`: compare artifacts byte-for-byte except timestamps. |
+| # | Must be true | Test | Status (end of A5) |
+|---|---|---|---|
+| A32 | `run_agent_system` returns `runId` and `traceUrl`; `get_agent_run` returns state and held approvals; `resume_agent_run` resumes; `decide_approval` resumes the thread. | `mcp`: drive a full run → hold → approve → completion with the MCP alone. | the doors and their semantics are true (test: `core/mcp/agent-run-surface.test.ts` — the five tools, the sequence in their descriptions and the guide, `not_found` from every run-addressed door, the owner-gate tripwires; `core/mcp/wave-a.test.ts` for `run_agent_system`'s identity threading and the unmapped-grant refusal). Driving a FULL run → hold → approve → completion over MCP is **untestable here**: it needs a live model and a cluster — `mcp` steps: `run_agent_system` → `get_agent_run` until `parked` → `decide_approval` → `get_agent_run {afterSeq}` until `done` → `get_run_trace` |
+| A33 | A system created through the MCP produces the same git commit, graph, trace and spend attribution as one created in the UI. | `mcp` + `kind`: compare artifacts byte-for-byte except timestamps. | false (depends on A2/A3 — there is no commit to compare; the graph, trace and spend attribution ARE identical because the MCP tool and the UI share one start door, `run-jobs-server.ts` `startQueuedRun`, which `core/mcp/agent-run-surface.test.ts` pins) |
 
 ---
 
@@ -79,54 +86,54 @@ Legend for the **Test** column: `unit` = automated test in the suite · `kind` =
 
 ### 2.1 Definition and versioning
 
-| # | Must be true | Test |
-|---|---|---|
-| D1 | A data product is a **dbt project** an engineer could clone and run: `dbt_project.yml`, `profiles.yml` with a Trino target and no inlined credentials, `models/`, `schema.yml`. | `inspect` a generated project; `kind`: `dbt parse` and `dbt compile` succeed in the dbt image. |
-| D2 | Every change to a dataset, composition, quality rule or schedule, from the UI or the MCP, is a **git commit** in the domain repo, authored as the acting user, naming the action and origin. | `unit`; `kind`: `git log`. |
-| D3 | Regeneration is idempotent: the same OS state produces a byte-identical project. | `unit` golden files. |
-| D4 | A composition is a dbt **model** that `{{ ref() }}`s its sources; the SQL body is the governed projection the OS compiles, inside a model, not an ad-hoc CTAS. | `inspect` the model file; `unit`. |
-| D5 | Quality rules are `schema.yml` **tests** (`not_null`, `unique`, `accepted_values`, `relationships`), and `dbt test` runs them. | `kind`: a violated rule fails `dbt test`; the failure is visible in the OS. |
-| D6 | Incremental sync semantics (cursor, late-data lookback, batch idempotency) are expressed as dbt **incremental model config**, not bespoke SQL. | `inspect` + `unit`; `kind`: a second run appends only new rows and re-delivers the lookback window once. |
+| # | Must be true | Test | Status (end of A5) |
+|---|---|---|---|
+| D1 | A data product is a **dbt project** an engineer could clone and run: `dbt_project.yml`, `profiles.yml` with a Trino target and no inlined credentials, `models/`, `schema.yml`. | `inspect` a generated project; `kind`: `dbt parse` and `dbt compile` succeed in the dbt image. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D2 | Every change to a dataset, composition, quality rule or schedule, from the UI or the MCP, is a **git commit** in the domain repo, authored as the acting user, naming the action and origin. | `unit`; `kind`: `git log`. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D3 | Regeneration is idempotent: the same OS state produces a byte-identical project. | `unit` golden files. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D4 | A composition is a dbt **model** that `{{ ref() }}`s its sources; the SQL body is the governed projection the OS compiles, inside a model, not an ad-hoc CTAS. | `inspect` the model file; `unit`. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D5 | Quality rules are `schema.yml` **tests** (`not_null`, `unique`, `accepted_values`, `relationships`), and `dbt test` runs them. | `kind`: a violated rule fails `dbt test`; the failure is visible in the OS. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D6 | Incremental sync semantics (cursor, late-data lookback, batch idempotency) are expressed as dbt **incremental model config**, not bespoke SQL. | `inspect` + `unit`; `kind`: a second run appends only new rows and re-delivers the lookback window once. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
 
 ### 2.2 Scheduling is Dagster, used as Dagster
 
-| # | Must be true | Test |
-|---|---|---|
-| D7 | A sync schedule is a **Dagster schedule** over `dbt_assets` for the domain's project plus one asset per external source. No Kubernetes CronJob provisioning remains for syncs. | `inspect`: `sync-cron.ts` absent; `kind`: the Dagster UI lists the schedule. |
-| D8 | Dagster loads the domain's code location **from a git commit**, and a commit that fails `dbt parse` does not replace the last good location. | `kind`: push a broken model, schedules keep running on the previous commit, the OS shows the parse error. |
-| D9 | Run status, materialisations and failures in the OS are **read from Dagster** (GraphQL), not a parallel OS ledger. | `inspect`: no OS-native sync run store remains; `kind`: trigger in Dagster, the OS shows it. |
-| D10 | The Dagster image works: it has its Postgres driver and completes a run. | `kind`. |
-| D11 | UTC schedules and skipped-missed-slot semantics are preserved. | `inspect` the generated schedule config. |
+| # | Must be true | Test | Status (end of A5) |
+|---|---|---|---|
+| D7 | A sync schedule is a **Dagster schedule** over `dbt_assets` for the domain's project plus one asset per external source. No Kubernetes CronJob provisioning remains for syncs. | `inspect`: `sync-cron.ts` absent; `kind`: the Dagster UI lists the schedule. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D8 | Dagster loads the domain's code location **from a git commit**, and a commit that fails `dbt parse` does not replace the last good location. | `kind`: push a broken model, schedules keep running on the previous commit, the OS shows the parse error. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D9 | Run status, materialisations and failures in the OS are **read from Dagster** (GraphQL), not a parallel OS ledger. | `inspect`: no OS-native sync run store remains; `kind`: trigger in Dagster, the OS shows it. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D10 | The Dagster image works: it has its Postgres driver and completes a run. | `kind`. | false (unchanged, and the audit's finding: the Dagster image has no Postgres driver and 0 runs in 90 days — B2 fixes it) |
+| D11 | UTC schedules and skipped-missed-slot semantics are preserved. | `inspect` the generated schedule config. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
 
 ### 2.3 Execution is Trino, governed
 
-| # | Must be true | Test |
-|---|---|---|
-| D12 | dbt executes on Trino through `dbt-trino`; the OS does not run its own CTAS for anything a model covers. | `inspect`: the old CTAS execution path deleted after parity; `kind`: `dbt run` materialises the Iceberg table. |
-| D13 | The `iceberg.<schema>.<table>` naming and the personal/domain lane model are honoured by every generated model. | `unit`. |
-| D14 | Row-level security and OPA still apply to every read, including reads dbt performs; nothing bypasses the governed boundary. | `inspect` the execution principal and target; `kind`: a user without a grant cannot cause a model to read the ungranted table. |
-| D15 | Parity: the same composition yields the **same rows** through the old path and through `dbt run`, before the old path is deleted. | `kind` parity test with a fixture dataset. |
-| D16 | Lineage shown in the Data tab comes from dbt's `manifest.json`. | `inspect` + `kind`. |
+| # | Must be true | Test | Status (end of A5) |
+|---|---|---|---|
+| D12 | dbt executes on Trino through `dbt-trino`; the OS does not run its own CTAS for anything a model covers. | `inspect`: the old CTAS execution path deleted after parity; `kind`: `dbt run` materialises the Iceberg table. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D13 | The `iceberg.<schema>.<table>` naming and the personal/domain lane model are honoured by every generated model. | `unit`. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D14 | Row-level security and OPA still apply to every read, including reads dbt performs; nothing bypasses the governed boundary. | `inspect` the execution principal and target; `kind`: a user without a grant cannot cause a model to read the ungranted table. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D15 | Parity: the same composition yields the **same rows** through the old path and through `dbt run`, before the old path is deleted. | `kind` parity test with a fixture dataset. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D16 | Lineage shown in the Data tab comes from dbt's `manifest.json`. | `inspect` + `kind`. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
 
 ### 2.4 Same path through the MCP
 
-| # | Must be true | Test |
-|---|---|---|
-| D17 | MCP tools map one-to-one to engineer operations: `dbt_run`, `dbt_test`, `dagster_materialize`, `get_dagster_run`, `get_lineage`, under the same governance as the UI. | `mcp`: drive define → generate → materialise → read status with the MCP alone. |
-| D18 | A data product created through the MCP produces the same commit, project and Dagster definitions as one created in the UI. | `mcp` + `kind`: byte-for-byte except timestamps. |
+| # | Must be true | Test | Status (end of A5) |
+|---|---|---|---|
+| D17 | MCP tools map one-to-one to engineer operations: `dbt_run`, `dbt_test`, `dagster_materialize`, `get_dagster_run`, `get_lineage`, under the same governance as the UI. | `mcp`: drive define → generate → materialise → read status with the MCP alone. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
+| D18 | A data product created through the MCP produces the same commit, project and Dagster definitions as one created in the UI. | `mcp` + `kind`: byte-for-byte except timestamps. | false (Part B has not started — Phase B0 is unticked; the data side still ingests/transforms with TypeScript-composed Trino CTAS and provisions `batch/v1` CronJobs) |
 
 ---
 
 ## Part 3 — Cross-cutting
 
-| # | Must be true | Test |
-|---|---|---|
-| X1 | **Git everywhere, automatically.** No OS or MCP write to an agent system or data product bypasses the commit; there is one code path for commits and every writer uses it. | `unit`: a test asserts every store write goes through the commit builder; `inspect`. |
-| X2 | The domain repo can be mirrored to an admin-configured remote, and the OS pushes after each commit when one is set. | `kind` with a local bare remote. |
-| X3 | Documentation describes what ships: README, `docs/components/{langfuse,litellm,dagster,dbt,trino,os-ui}.md`, tab READMEs, `ARCHITECTURE.md`, licences, SBOM. No claim without code behind it. | `inspect`, claim by claim, as the audit did. |
-| X4 | The structure ratchet, the regression gate and the test suite are green, and the ratchet baseline is lower than at the start of the programme. | `unit`. |
-| X5 | The deployed version on STACKIT passes: health; one agent run with hold → approve → resume → one trace; one Dagster-scheduled sync; one dbt composition; the key allowlist from the Job log. | `stackit`. |
-| X6 | The final PDF exists and, for each tool, maps engineer practice → OS source → tool functions used → what the OS adds. Every reinvention that remains is listed, not hidden. | `inspect`. |
+| # | Must be true | Test | Status (end of A5) |
+|---|---|---|---|
+| X1 | **Git everywhere, automatically.** No OS or MCP write to an agent system or data product bypasses the commit; there is one code path for commits and every writer uses it. | `unit`: a test asserts every store write goes through the commit builder; `inspect`. | false (depends on A2/D2 — there is no commit path to route writes through) |
+| X2 | The domain repo can be mirrored to an admin-configured remote, and the OS pushes after each commit when one is set. | `kind` with a local bare remote. | false (Part D) |
+| X3 | Documentation describes what ships: README, `docs/components/{langfuse,litellm,dagster,dbt,trino,os-ui}.md`, tab READMEs, `ARCHITECTURE.md`, licences, SBOM. No claim without code behind it. | `inspect`, claim by claim, as the audit did. | true for the AGENT side as of A5 (`docs/components/{os-ui,langfuse,litellm}.md`, `os-ui/ARCHITECTURE.md`, `tabs/agents/README.md`, `tabs/agents/guide.md`, `README.md`, `components/README.md`, both seed READMEs and `CHANGELOG.md` were corrected in this phase; `core/kernel/licenses.ts` / `licenses/components.tsv` / `sbom.cdx.json` never listed the Python runtime's deps, so nothing to remove). FALSE for the data side until Part B lands `docs/components/{dagster,dbt,trino}.md` |
+| X4 | The structure ratchet, the regression gate and the test suite are green, and the ratchet baseline is lower than at the start of the programme. | `unit`. | true (test: the suite — 4956 tests, 0 failures, 4 todo; `node scripts/check-structure.mjs` ok; `bash os-ui/scripts/gate.sh` exit 0). The ratchet baseline is LOWER than at the start of the programme and was lowered again by A5 **by deletion only**: TAB-ISOLATION 422 → 421, FILE-HEADER 1245 → 1240 |
+| X5 | The deployed version on STACKIT passes: health; one agent run with hold → approve → resume → one trace; one Dagster-scheduled sync; one dbt composition; the key allowlist from the Job log. | `stackit`. | **untestable here** — no cluster in this environment. `scripts/deploy.sh <version>` then the Part C order: health; one run with hold → approve → resume → one trace; the key allowlist from the Job log |
+| X6 | The final PDF exists and, for each tool, maps engineer practice → OS source → tool functions used → what the OS adds. Every reinvention that remains is listed, not hidden. | `inspect`. | false (Part E — written last, from the shipped code) |
 
 ---
 
@@ -140,3 +147,21 @@ Legend for the **Test** column: `unit` = automated test in the suite · `kind` =
 
 ## Gap reports
 (Appended by the test agent at the end of each iteration: date, items passed / failed / untestable, the gap list.)
+
+### 2026-11-13 — end of Phase A5 (agent side complete; data side not started)
+
+Scored on the branch `feat/engine-rebuild`, **no cluster available**. Part 1 (A1–A33):
+
+- **true: 21** — A1, A5, A6, A7, A8, A9, A10, A11 (unit half), A12, A13 (invariant), A15, A16
+  (unit half), A17, A19 (unit half), A20, A21, A22 (client half), A23, A24 (unit half), A25, A26
+  (unit half), A27 (with one named gap), A28 (unit half), A30 (inspect half), A31, A32 (doors).
+  Counting only items whose every testable clause passes here: **21**.
+- **untestable here: 5** — A14 (cluster half), A18, A29, A32 (the full MCP-driven run), X5. Each
+  carries the exact command or step above.
+- **false: 5** — A2, A3, A4, A33 (all four wait on Part D's git commit path and an exporter) and
+  A2's dependant X1.
+
+The agent side's remaining gaps are therefore **not engine gaps**. Three are Part D (git: A2, A3,
+X1), one is a missing exporter (A4), one is comparing artifacts that do not exist yet (A33). The
+two honest weaknesses inside A5's own scope are recorded as deviations: the index-site embedding
+attribution (A27, deviation A3-11) and `grant-rehydrate.ts` never being imported (A5-11).

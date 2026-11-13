@@ -20,6 +20,8 @@
  *     `tabs/agents/lib/engine/run-visibility.test.ts`; what these tripwires pin is that each
  *     door actually goes through it — the A4-review-H-1 defect was a missing CALL, not a wrong
  *     gate.
+ *   - Imports NO tab (CORE-INDEPENDENCE): the tab-owned state these tools read is reached through
+ *     the dispatcher, exactly as a client reaches it.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,7 +29,6 @@ import { readFileSync } from 'node:fs';
 import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc, ALL_MCP_TOOLS, type JsonRpcResponse, type ToolError } from '@core/mcp/server';
 import { ALL_WRITE_TOOLS } from '@core/mcp/write-tools';
-import { __resetStore as resetAgents } from '@tabs/agents/lib/store';
 import { __resetApprovals } from '@core/policy/approvals';
 
 const creator: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' };
@@ -114,7 +115,6 @@ test('the agents guide teaches that same sequence, in order', () => {
 // ---- a run id is a capability, not an index ----------------------------------
 
 test('an unknown run id is not_found from every run-addressed tool (never forbidden, never empty)', async () => {
-  resetAgents();
   __resetApprovals();
   for (const name of ['get_agent_run', 'resume_agent_run']) {
     const e = errorOf(await call(creator, name, { runId: GHOST }));
@@ -126,7 +126,6 @@ test('an unknown run id is not_found from every run-addressed tool (never forbid
 });
 
 test('list_runs is hard-scoped to the caller and says so in its payload', async () => {
-  resetAgents();
   const out = payload<{ scope: { level: string }; runs: unknown[] }>(await call(creator, 'list_runs', { limit: 5 }));
   assert.ok(out.scope.level, 'every listing states the scope it was filtered to');
   assert.ok(Array.isArray(out.runs));

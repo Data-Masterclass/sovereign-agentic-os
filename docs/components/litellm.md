@@ -222,8 +222,9 @@ send**, or the scoped key fails closed on exactly the model the OS picked. Since
 is a **chart test**: `scripts/check-litellm-allowlist.mjs` (run by `os-ui/scripts/gate.sh`)
 asserts, for the base `values.yaml` and for `values.stackit-managed.yaml` layered over it,
 that the allowlist covers every `LITELLM_*_MODEL` / `*_EMBED_MODEL` default in
-`core/kernel/config.ts`, every `agentRuntime.*Model`, and every `router_settings.fallbacks`
-source and target. It caught a real gap on first run: the STACKIT overlay's fallbacks target
+`core/kernel/config.ts` and every `router_settings.fallbacks` source and target (A5 removed the
+`agentRuntime.*Model` inputs with the Python runtime they belonged to — os-ui's own config
+defaults and the router's fallback maps are now the complete set of aliases the OS can request). It caught a real gap on first run: the STACKIT overlay's fallbacks target
 `sovereign-premium` and `sovereign-reasoning-fast`, which the base four-alias list never
 allowed — the overlay now carries its own `litellmAgentKey.models`. The aliases come from:
 
@@ -235,7 +236,6 @@ allowed — the overlay now carries its own `litellmAgentKey.models`. The aliase
 | tools | `config.litellmToolsModel` ← `LITELLM_TOOLS_MODEL` | `sovereign-default` |
 | knowledge embeddings | `config.embedModel` ← `KNOWLEDGE_EMBED_MODEL` | `sovereign-embed` |
 | files embeddings | `config.filesEmbedModel` ← `FILES_EMBED_MODEL` | `sovereign-embed` |
-| agent-runtime chat | `agentRuntime.chatModel` (chart) | `sovereign-mock` |
 
 plus any **admin override** per role in Platform Settings (`modelRoles`, read by
 `core/models/roles.ts`). Renaming an alias or re-pointing a role means updating

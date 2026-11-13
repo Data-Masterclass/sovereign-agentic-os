@@ -13,6 +13,69 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Changed — Agent engine rebuild, Phase A5: the LangGraph engine is the only engine
+
+- **Deleted, after the parity gate passed.** The hand-rolled BFS that used to execute agent
+  systems (`tabs/agents/lib/build/agentic-graph.ts` `runAgenticGraph` + `nodeOrder`), the mock
+  graph walk the Build adapters called a "test invocation" (`build/run-graph.ts`), the Python
+  `agent-runtime` image (`images/base/agent-runtime/`, incl. `interpreter.py`) with its
+  Deployment, ConfigMap, Service and dedicated egress NetworkPolicy, the governed-tool callback
+  door it called back through (`/api/agents/tool`), the IR-as-wire-format (`runtime-contract.ts`'s
+  `/reload` + `/run` types and the `realRuntime` client), and `build/server.ts`'s `runSystem`
+  fallback path. 15 files removed, ~1.4k lines.
+- **The engine flag is REMOVED, not defaulted.** `AGENTS_ENGINE`, `core/kernel/config.ts`
+  `agentsEngine`, `core/kernel/agents-engine.ts`, `engine/select.ts` and the per-system
+  `runtime: walker` opt-out are gone. An environment that still sets the variable gets one
+  deprecation line at boot saying it is ignored — silence would let an operator believe they had
+  pinned the old executor. `runtime: hermes | walker` in a stored `system.yaml` is NORMALISED to
+  `langgraph` on parse rather than refused: a retired engine name must not make a saved system
+  un-openable. The Runtime card that offered "Autonomous (Hermes)" is replaced by one honest line
+  about the engine, because Hermes never executed a system in this OS.
+- **`isAgenticOsTeam` → `unmappedGrantNames`.** The boolean existed to choose between the
+  in-process path and the Python fallback. With no fallback, the only honest question left is
+  which grants have no governed tool behind them — and the answer belongs in the error the run
+  doors return, naming them (400 at the route, the scheduler and MCP). Consequence, deliberate: a
+  system with NO tool grants is now runnable (its agents are plain completions); the old refusal
+  was an accident of the fallback, not a rule.
+- **Build compiles the real graph.** `tabs/agents/lib/build/compile-verify.ts` calls the same
+  `buildGraph` the run path calls (with inert deps — compiling makes no model and no tool call),
+  for the live adapters and the offline mock alike. A ✓ on the `langgraph` row now means the
+  StateGraph the engine will execute can be constructed from this `system.yaml`: an unmapped
+  grant, a malformed `when` guard, a disabled entrypoint or a channel shadowing an engine key
+  fails at Build. The Langfuse row is consequently `pending` after a build — honestly, because its
+  probe reads the traces a RUN leaves behind and a build no longer stages a fake run.
+- **The MCP run surface is the UI's path.** `get_agent_run` gains the `run_events` tail
+  (`afterSeq` / `limit` → `nextSeq`), so following a long run is a cheap poll; it and every other
+  run-addressed door (the run route's resume, the re-attach stream, the DIAGNOSTICS read, MCP
+  `resume_agent_run`) call `assertRunVisible` **before** any side effect or read. The diagnostics
+  route was reading Langfuse observations by trace id with no owner gate at all — and the trace id
+  IS the run id, so a guessed id returned somebody else's generations. Fixed: unknown and foreign
+  both answer 404. Tool descriptions and `tabs/agents/guide.md` now teach the real sequence
+  (build → run → get_agent_run → decide_approval, which resumes the run itself and executes as the
+  runner → resume_agent_run for restart recovery only → get_run_trace).
+- **Chart.** `agentRuntime` keeps only `token` and `schedules`: the shared service bearer (os-ui
+  mounts it as `AGENT_RUNTIME_TOKEN` and VALIDATES it on the paths the OS's own CronJobs call —
+  scheduled runs, data-sync, catalog-refresh — and the Dagster sidecar reads the same Secret) and
+  the declarative agent-schedule CronJobs, which never talked to the runtime and are no longer
+  gated on `agentRuntime.enabled`. `AGENT_RUNTIME_URL` is gone from the os-ui env. The chart
+  renders with `agentRuntime` removed entirely. The `agent-runtime` row is out of the Admin →
+  Components registry, `core/manifest.ts` and the Agents manifest's `services`; the interpreter's
+  pytest steps are out of CI.
+- **Fixtures are FROZEN.** The 13 golden recordings in `tabs/agents/lib/engine/fixtures/` are the
+  pre-rebuild walker's behaviour and stay exactly as recorded; `REGEN_FIXTURES` is gone with the
+  generator. `parity.test.ts` holds the engine to them; `fixtures.test.ts` keeps them frozen and
+  well-formed, including the one fixture that deliberately records the DEFECT the engine must not
+  reproduce (`shape-guarded-handoff-held-write`: the walker ignored `when: state.findings_ready`
+  and visited the guarded target, holding its write; the StateGraph routes to END).
+- **Tests.** `core/mcp/agent-run-surface.test.ts` (9, new) pins the surface, the sequence in the
+  descriptions and the guide, `not_found` from every run-addressed door, and tripwires for the
+  owner gate, "no Langfuse trace without a run id / no link to a trace LIST", and the labelled
+  embedding fallback. `build/agentic-graph.test.ts` was rewritten to test the node layer the graph
+  still uses — handoff material, the Context Librarian (including the offline-hash guard), node
+  status — directly instead of through a deleted walk. Suite: 4956 tests, 0 failures. Structure
+  ratchet lowered (TAB-ISOLATION 422 → 421, FILE-HEADER 1245 → 1240).
+
+
 ### Added — Agent engine rebuild, Phase A4: runs execute in a worker
 
 - **A run is a row, not a request.** Two tables in the `agent_runs` database (same one as the

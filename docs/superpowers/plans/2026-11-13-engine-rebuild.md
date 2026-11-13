@@ -169,9 +169,31 @@ Not a compiled system, left as is: `core/kernel/artifacts.ts` seeded registry re
 | Tests | `engine/jobs.test.ts` (14), `engine/jobs-postgres.test.ts` (8 SQL tripwires), `engine/worker-loop.test.ts` (9), `engine/jobs-resume.test.ts` (2, over A2's P3 fixtures + a real `MemorySaver`), `engine/runner-identity.test.ts` (7), strict-redaction case in `observe.test.ts`; all five added to `os-ui/scripts/gate.sh` |
 
 ### Phase A5 — Deletion and docs
-- [ ] Delete: `agentic-graph.ts` walk (keep the Librarian/handoff-curation helpers), `build/run-graph.ts`, `images/base/agent-runtime/` and its chart block, `live.ts` `/reload` path, `runtime-contract.ts` wire types; the `hermes` runtime option unless a runtime exists for it (it does not). Flip the engine default to `langgraph`, then delete the flag.
-- [ ] Make `README.md`, `docs/components/os-ui.md`, `docs/components/langfuse.md`, `docs/components/litellm.md`, the runtime badge, `core/kernel/licenses.ts` and `sbom.cdx.json` true. Explain in `os-ui/ARCHITECTURE.md` how a `system.yaml` becomes a StateGraph.
-- [ ] MCP: `run_agent_system` returns `runId` and `traceUrl`; add `resume_agent_run` and `get_agent_run` (state, held approvals); `decide_approval` resumes the thread. `tabs/agents/README.md` lists them.
+- [x] Delete: `agentic-graph.ts` walk (keep the Librarian/handoff-curation helpers), `build/run-graph.ts`, `images/base/agent-runtime/` and its chart block, `live.ts` `/reload` path, `runtime-contract.ts` wire types; the `hermes` runtime option unless a runtime exists for it (it does not). ~~Flip the engine default to `langgraph`, then delete~~ **delete** the flag (A5-2: there was no reason to ship a default nobody could change).
+- [x] Make `README.md`, `docs/components/os-ui.md`, `docs/components/langfuse.md`, `docs/components/litellm.md`, the runtime badge, `core/kernel/licenses.ts` and `sbom.cdx.json` true. Explain in `os-ui/ARCHITECTURE.md` how a `system.yaml` becomes a StateGraph.
+- [x] MCP: `run_agent_system` returns `runId` and `traceUrl`; add `resume_agent_run` and `get_agent_run` (state, held approvals); `decide_approval` resumes the thread. `tabs/agents/README.md` lists them.
+
+#### A5 — what landed (three commits on `feat/engine-rebuild`)
+
+| Piece | Where |
+|---|---|
+| Parity gate, recorded before any deletion | this file, "A5 — the parity gate, fixture by fixture" (28 tests, 0 failures; 11 fixtures identical, `software-team` identical + 5 honest warnings, `shape-guarded-handoff-held-write` deliberately divergent) |
+| The walk, deleted | `build/agentic-graph.ts` loses `runAgenticGraph` + `nodeOrder` (−146 lines) and becomes the **agent NODE layer** the graph calls into (model tier, system prompt, handoff + Librarian, status classification, `runNode` for the phase-router chat). `build/run-graph.ts` + test `git rm`'d |
+| The Python runtime, deleted | `images/base/agent-runtime/**` (7 files), the Deployment/ConfigMap/Service in `charts/.../base/agent-runtime/agent-runtime.yaml`, its dedicated egress policy + the `NotIn` exclusion in `network/egress-policies.yaml`, `AGENT_RUNTIME_URL` in `_os-ui-env.tpl` and `config.ts`, `realRuntime`/`RuntimeClient`, `app/api/agents/tool/route.ts`, the CI pytest steps, the `scripts/os` image row, `agentRuntime.{enabled,image,resources,*Model}` |
+| The flag, deleted | `core/kernel/agents-engine.ts` + test, `engine/select.ts` + test, `config.agentsEngine`, `runtime: walker`; `Runtime` collapses to `'langgraph'` with retired names normalised on parse; `instrumentation.ts` logs one deprecation line if `AGENTS_ENGINE` is still set |
+| The branch points, collapsed | `runOsTeam` (one path, `runId` now required), the run route (always enqueue + tail; `runSystem`/legacy branch gone), `build/scheduled.ts` (one start door), MCP `run_agent_system`; `run-service.ts` loses its `engine` parameter and reports `engine: 'langgraph'` |
+| The gate that replaced `isAgenticOsTeam` | `os-tools.ts` `unmappedGrantNames(sys)`; the three run doors return a 400 naming the offending grants |
+| Build, re-based | `build/compile-verify.ts` (`compileVerify(sys, ir)` → `buildGraph` with inert deps) consumed by BOTH `live.ts` and `mocks.ts`; `gatewayAdminReachable()` replaces `runtimeReachable()` as the live/mock switch |
+| MCP | `get_agent_run` + `run_events` tail (`afterSeq`/`limit`/`nextSeq`, `eventsAvailable`) and `assertRunVisible`; diagnostics route owner-gated; descriptions + `tabs/agents/guide.md` teach build → run → follow → approve → resume → trace |
+| Docs | `tabs/agents/README.md` (engine section rewritten), `os-ui/ARCHITECTURE.md`, `docs/components/{os-ui,langfuse,litellm}.md`, `README.md`, `components/README.md`, `os-ui/README.md`, both seed READMEs, `CHANGELOG.md` |
+| Tests | `core/mcp/agent-run-surface.test.ts` (9, new); rewritten `build/agentic-graph.test.ts` (12), `engine/fixtures.test.ts` (frozen-fixture checks incl. the recorded defect), `engine/parity.test.ts` (engine side only), `build/scheduled.test.ts` (one start door + a tripwire), `build/live.test.ts` (compile + compile-failure rows), `gateway.test.ts`, `wave-a.test.ts`, `orchestrate.test.ts`, `validation-gate.test.ts`, `platform.test.ts`, `model-prices.test.ts`, `os-tools.test.ts`, `agentic-graph-server.test.ts`; `gate.sh` gains parity, fixtures, build-graph and the MCP surface |
+
+**Gate at A5:** `tsc --noEmit` clean · `npm --prefix os-ui test` **4956 tests, 0 failures, 4 todo**
+(baseline before A5: 4988 / 0 / 7 — the walker's own tests went with it) · `check-structure` ok,
+baseline LOWERED by deletion (TAB-ISOLATION 422→421, FILE-HEADER 1245→1240) · `gate.sh` exit 0
+(161 → 182 tests) · `helm lint` with and without `osUI.worker.enabled=true`, and with
+`agentRuntime` removed entirely · `helm template` renders **no** `agent-runtime` Deployment or
+Service · `check-litellm-allowlist` PASS on both profiles.
 
 #### A5 — the parity gate, fixture by fixture (run 2026-11-13, before any deletion)
 
@@ -459,3 +481,97 @@ After each full pass over Parts A, B and D: a read-only test agent scores `2026-
   these entrypoints MAY import a tab.
 
 - **Follow-ups recorded, not implemented (A4):** (1) other Langfuse readers are scope-filtered CLIENT-side rather than through `observationsQuery` — only the diagnostics route goes through the typed, refuses-unfiltered query; the rest fetch and then filter in the OS, which is correct today only because the OS is the one asking. (2) The three remaining embed sites (`indexWorkflow`, `indexDomain`, `indexAsset`) still bill the platform principal (A3-11); A4 threaded the two RETRIEVE sites only, because the index sites have no acting user in scope. (3) `BuildRunPanel.tsx` re-attaches with no `afterSeq`, so it replays the whole run on re-attach — the same behaviour the A2 replay buffer gave it, but now it could ask for only what it missed. (4) `run_events` has no retention; it joins the A13 item with the checkpoints and the held approval args. (5) **A4 review:** image-level verification that the worker's type stripping works is a `docker build` away and cannot run in the unit gate — the exact `docker run --rm --entrypoint node … --experimental-strip-types -e "import('./worker/agent-runs.ts')"` command is now step 4 of `docs/components/os-ui.md` → "Verify it in a cluster" and a post-build smoke step in `scripts/deploy.sh` (it imports the whole run-path graph without touching a database, so it fails loudly on a base image below Node 22.6 and on an alias mistake). (6) **A4 review:** raising the `pg` pool `max` for the worker only, together with the 64-tail ceiling, if a tenant ever needs more concurrent panels. (7) **A4 review:** the Run panel still re-attaches to a PARKED run with `afterSeq=0` (it has no seq to resume from, because frames carry no `seq`); sending `seq` on the wire would let the parked re-attach be incremental too.
+
+- **A5-1 `AGENT_RUNTIME_TOKEN`, `config.agentRuntimeToken` and the `agent-runtime-token` Secret are KEPT.**
+  The token outlived the workload it was named after. os-ui does not *present* it any more (there
+  is nothing to call), it **validates** it on the service paths the OS's own CronJobs hit:
+  `/api/agents/scheduled-run`, the metrics data-sync sweep and the connections catalog-refresh
+  sweep, all through `build/runtime-auth.ts` `runtimeTokenOk`. The data branch's Dagster sidecar
+  reads the same Secret (review finding B2 L-6 is moving it into its own template), so the Secret
+  stayed exactly where it was — `charts/.../base/agent-runtime/agent-runtime.yaml`, now a
+  Secret-only template, ungated and nil-safe — rather than being moved and conflicting with that
+  work. `agentRuntime` values shrank to `{ token, schedules }`. **Follow-up: drop the token (and
+  rename the key) once the data side has its own Secret template; this file and that template
+  carry the same note.**
+- **A5-2 The flag is REMOVED, not flipped.** The plan said "flip the default to `langgraph`, then
+  delete the flag". Flipping first buys a rollback that does not exist: the thing the flag would
+  roll back to is deleted in the same commit, so a `AGENTS_ENGINE=walker` after A5 would select an
+  engine that is not there. So: no default, no selector, no `runtime: walker`. What IS kept is a
+  single boot WARNING when the variable is still set — the one failure mode worth insuring against
+  is an operator who believes they pinned the old engine and is not told otherwise.
+- **A5-3 `runtime: hermes | walker` in a stored file is NORMALISED, not rejected.** The global
+  constraint is "existing `system.yaml` files must keep working unchanged". Removing the values
+  from the `Runtime` union would have made `parseSystem` throw on a saved file, i.e. a 400 on
+  every read of that system — unopenable, not just un-runnable. `parseSystem` therefore accepts
+  both retired names and returns `langgraph`; the serializer already omits the key, so the next
+  save rewrites the file without it. A1-10's requirement ("A5 must actually remove
+  `runtime: walker`") is met in the sense that mattered: there is no way to opt a system out of
+  the stricter rules.
+- **A5-4 `isAgenticOsTeam` is gone, replaced by `unmappedGrantNames(sys): string[]`.** The boolean
+  chose between the in-process path and the Python fallback; with one path the question is not
+  yes/no but *which grants have no governed tool behind them*, and that answer belongs in the
+  error the door returns. Two behaviour changes follow, both deliberate: (a) a system with NO tool
+  grants is now runnable (its agents are plain completions) — the old `grants.tools.length === 0`
+  refusal was an artefact of the fallback; (b) a system with an unmapped grant gets a 400 NAMING
+  the tool at the route / scheduler / MCP instead of being quietly routed to a weaker executor.
+- **A5-5 Build's graph step now compiles the real StateGraph** (`build/compile-verify.ts` →
+  `buildGraph` with inert deps). The plan only said to delete `live.ts`'s `/reload` path; deleting
+  it left the `langgraph` Build row with nothing to do, and the two things it used to do each
+  verified something the engine never executes (a POST of the IR to a Python interpreter; a
+  hand-rolled BFS in the mock adapter). Compiling needs no cluster, so live and offline now run
+  the SAME check — and it is the tripwire that `langgraph-compile.ts`'s output is CONSUMED rather
+  than merely emitted. Consequence: Build's Langfuse row is `pending` (neutral, `report.ok`
+  tolerates it) until the system has actually run, because its probe reads the traces a RUN leaves
+  behind and a build no longer manufactures them. Four test files were updated to assert that
+  instead of a fabricated trace.
+- **A5-6 `runtime-contract.ts` keeps its path, loses its name's meaning.** Only the WIRE types
+  were deleted (`/reload`, `/run`, the governed-tool callback, `RUNTIME_DEFAULTS`); `principalFor`
+  and `runCostUsd` live there and are imported by a dozen modules across three tabs and the
+  kernel. A rename would have been a 12-file diff for no behaviour change; the header now says
+  what the file is. Same reasoning for `build/agentic-graph.ts`, which is now the agent NODE layer
+  (it is still what one agent of a graph IS) and for the `templates/base/agent-runtime/` directory
+  (see A5-1).
+- **A5-7 The fixtures are FROZEN and `REGEN_FIXTURES` is deleted.** The generator ran the walker;
+  the walker is gone. Regenerating a "golden" from the engine under test would prove only that the
+  engine equals itself, and it would erase what the two guarded fixtures exist to record — the
+  walker visiting a node whose `when` guard is false. `fixtures.test.ts` therefore checks what can
+  still be checked without a generator (the set covers every shipped template + the team + the
+  three shapes, each file well-formed, carrying the current `SCRIPT_ID`, its yaml still matching
+  the shipped template, `guarded` matching the yaml, no orphans) plus one test that the guarded
+  fixture still records the defect. A new shape means a NEW fixture beside them.
+- **A5-8 The Runtime card lost its second option.** `RuntimeSelector.tsx` offered "Structured
+  (LangGraph)" and "Autonomous (Hermes)". Hermes never executed a system in this OS, so the second
+  card was a promise the product did not keep; the component is now one honest line about the
+  engine plus the safety presets (which are the real choice moment). `SystemView` stops passing
+  `hermesEnabled`; the API field and the hermes-gateway health row are left alone — that extension
+  is a separate component and not A5's business.
+- **A5-9 `holdAt: 'executor'` stays the DEFAULT.** After A5 the only production caller passes
+  `'node'`, so the option is single-valued in practice. It is kept because gate 1b in the executor
+  is defence in depth for any future caller that is not a graph node, and its tests are the only
+  thing that proves the executor can hold at all.
+- **A5-10 What proved wrong in the plan, and what the audit items actually needed.**
+  (a) The plan listed `runtime-contract.ts` for deletion; two widely-used pure helpers live in it
+  (A5-6). (b) It did not mention that deleting the Python runtime removes Build's `langgraph`
+  verify and `runSystem` entirely (A5-5), nor that `isAgenticOsTeam` becomes meaningless (A5-4).
+  (c) It called `AGENT_RUNTIME_TOKEN` an agents-side concern; it is in fact the shared bearer for
+  three CronJob paths across two tabs (A5-1). (d) **The audit item "diagnostics are owner-filtered"
+  was NOT satisfied before this phase:** the route filtered Langfuse observations by `traceId`,
+  and the trace id IS the run id, so a guessed run id returned another user's generations — the
+  same defect class as A4-review-H-1, one layer further out. Now `assertRunVisible` runs before
+  any trace read. (e) The audit item "`langgraph-compile.ts` output is consumed" was already true
+  on the RUN path (`compile` → `buildGraph`) but FALSE on the Build path, which only counted the
+  IR's nodes; A5-5 fixes that and `agent-run-surface.test.ts` + `live.test.ts` are the tripwires.
+- **A5-11 Found, not fixed: `tabs/agents/lib/build/grant-rehydrate.ts` is never imported.** It
+  registers a durable grant resolver with `core/infra/app-registry` at module load, and nothing in
+  production imports the module — so after a pod restart an `os-<systemId>` principal's grants are
+  NOT rehydrated from the store and gate 1a falls through to the static chart grants. Its stale
+  reference to the now-deleted `/api/agents/tool` is what surfaced it. Pre-existing, unrelated to
+  the engine, and wiring an authorization resolver is not a change to make inside a deletion phase:
+  recorded here for the next iteration.
+- **A5-12 The repo-wide grep does not come back empty, by design.** `walker` / `agent-runtime` /
+  `AGENT_RUNTIME` still appear in: the KEPT shared bearer and its Secret name (A5-1); historical
+  "A5 deleted X" notes in the files that lost the code; the frozen parity fixtures and their tests,
+  which exist to describe the walker; `llm-replay.ts`, whose purpose was recording for both
+  engines; and the unrelated pure `tree-walker` in `tabs/software/lib/appspec/`. No live code path
+  references either. `tabs/data/**` keeps `config.agentRuntimeTokenSecret*` (its CronJobs use the
+  same bearer) and was not touched — that tree belongs to the data branch.

@@ -215,8 +215,11 @@ when the scoped credential is absent rather than borrowing the admin one.
 
 ## How a system.yaml becomes a StateGraph
 
-The Agents tab's `langgraph` engine (`AGENTS_ENGINE=langgraph`; default still `walker`
-until the deletion phase) executes a real `@langchain/langgraph` graph. The path is:
+The Agents tab executes a real `@langchain/langgraph` graph, and since A5 of the engine
+rebuild that is the **only** executor: no flag, no `runtime:` choice, no fallback. The
+hand-rolled IR walker, its mock twin and the Python `agent-runtime` interpreter are gone;
+an `AGENTS_ENGINE` left in an environment is ignored with one deprecation line at boot.
+The path is:
 
 ```
 system.yaml ─ parseSystem ─> System ─ compile ─> IR ─ buildGraph(ir, deps) ─> CompiledStateGraph
@@ -236,7 +239,7 @@ of those is a compile error.
 the team step budget and emits `node-started`. `act_<id>` runs the execution tier with
 the node's advertised tools (`toOpenAiTools`); if the gateway rejects `tools` it flips
 a `react` flag and retries with the ReAct text protocol; a cap or loop-guard triggers
-the same one-shot synthesis the walker did. `tools_<id>` is the **node-level gate**:
+a one-shot synthesis. `tools_<id>` is the **node-level gate**:
 only tools this node is advertised reach `grantedToolExecutor` (an un-advertised call
 gets a typed `not_found` and never executes). It runs in two phases: first the **hold
 decision for the whole batch** (`holdDecisionFor`, parking the run on `interrupt()` —
@@ -285,8 +288,17 @@ user or it is a typed `ResumeNotFoundError` (404 — never confirming the thread
 thread with nothing left to run is a `RunAlreadyFinishedError` (409), never a silent no-op.
 Run ids come from `core/kernel/run-id.ts` (`crypto.randomUUID`): a run id is a capability.
 Checkpoints hold the full state — raw tool results included — indefinitely; retention is an
-open item (plan A13 follow-up). The checkpointer and the in-process run-event topic assume a
-**single os-ui replica** until A4's worker.
+open item (plan A13 follow-up).
+
+**Build compiles the same graph.** `tabs/agents/lib/build/compile-verify.ts` calls the SAME
+`buildGraph` with inert deps (a model and a tool executor that throw if touched — compiling
+calls neither), so Build's `langgraph` row means "the graph this `system.yaml` describes can
+be constructed", and a bad guard, an unmapped grant, a disabled entrypoint or a channel
+shadowing an engine key fails at Build rather than mid-run. It replaced two things that each
+verified something the engine never executes: a POST of the IR to the Python runtime's
+`/reload` plus a `/run` test invocation, and a hand-rolled BFS over the IR in the mock
+adapter. Build's Langfuse row is consequently `pending` until the system has really run —
+its probe reads the traces a RUN leaves behind, and a build no longer stages a fake one.
 
 ## Approvals are interrupts
 
@@ -309,8 +321,8 @@ act_<id> ──tool calls──▶ tools_<id>  phase 1: holdDecisionFor(preset, 
 **Where the hold lives.** The rule is the pure module `tabs/agents/lib/build/hold.ts`
 (`writeTargetScope`, `holdDecision`, `holdDecisionFor`) — the same rule the executor's gate 1b
 applied in A1, lifted out so the graph builder (no `server-only`) can call it before anything
-executes. Under `langgraph` the executor runs with `holdAt: 'node'` and no longer re-holds; the
-walker keeps `holdAt: 'executor'` and the old out-of-band `held` result.
+executes. The executor runs with `holdAt: 'node'` and no longer re-holds; `'executor'` remains its
+DEFAULT as defence in depth for any caller that is not a graph node.
 
 **Idempotency.** LangGraph re-runs an interrupted node from its start on every resume, so the
 node enqueues through `enqueueOnce` keyed on `interruptKey = <threadId>:<callId>` — one approval

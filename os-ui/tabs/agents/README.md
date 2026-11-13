@@ -23,7 +23,6 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 
 **Needs deployed**
 
-- `agent-runtime`
 - `litellm`
 - `opa`
 - `langfuse`
@@ -40,100 +39,141 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 - `guide.md` — the golden path, shown in-product
 - `context.md` — the system prompt context this tab gives an agent
 
-## Agent engine (rebuild in progress)
+## The agent engine — one engine, and it is LangGraph
 
-Runs execute as the signed-in user — in a WORKER process since A4, not in the request. Two
-executors exist behind one flag (plan: `docs/superpowers/plans/2026-11-13-engine-rebuild.md`):
+Since A5 of the rebuild (`docs/superpowers/plans/2026-11-13-engine-rebuild.md`) there is exactly
+ONE executor. There is no engine flag, no `runtime:` choice and no fallback path: the hand-rolled
+IR walker, its mock twin and the Python `agent-runtime` interpreter are deleted. `AGENTS_ENGINE`,
+if an environment still sets it, is ignored with one deprecation line at boot.
 
-- `walker` (default) — the hand-rolled IR walker (`lib/build/agentic-graph.ts`).
-- `langgraph` — the real `@langchain/langgraph` StateGraph under `lib/engine/`:
-  `build-graph.ts` (IR → graph: four nodes per agent, supervisor `route` tool, `when` guards via
-  `when.ts`, node-level tool narrowing, step budget → `recursionLimit`), `run.ts`
-  (`runGraphEngine`: stream, resume, result), `checkpointer.ts` (Postgres or memory),
-  `jobs.ts` + `jobs-postgres.ts` (the `run_jobs` / `run_events` queue and the event tail),
-  `worker-loop.ts` (claim / heartbeat / reap) and `runner-identity.ts` (the live re-read).
-  `lib/build/run-jobs-server.ts` wires them; `os-ui/worker/agent-runs.ts` is the worker pod's
-  entrypoint.
+### From `system.yaml` to a running graph
 
-Environment:
+1. `lib/system-schema.ts` parses and byte-stably serialises the file (the definition layer, unchanged).
+2. `lib/langgraph-compile.ts` compiles it to the **IR** — nodes, supervisor members, conditional
+   edges, handoff commands with their `when` guards, state channels.
+3. `lib/engine/build-graph.ts` `buildGraph(ir, deps)` turns that IR into a real
+   `StateGraph` from `@langchain/langgraph`. **Four nodes per agent:**
+   - `plan_<id>` — the reasoning tier, no tools. One pass per visit.
+   - `act_<id>` — the execution tier WITH the node's tools. Native tool-calling; the ReAct text
+     protocol only after the model rejects the `tools` parameter.
+   - `tools_<id>` — the **node-level gate**: it executes only what this node is *advertised*, not
+     every system grant, one call per superstep so each is checkpointed before the next.
+   - `route_<id>` — where the run goes next: a handoff whose `when` guard evaluates true
+     (`Command({ goto })`), else END.
+   A **supervisor** is `route_<sup>` with a mandatory `route` tool returning `{ next, brief }`
+   (text fallback `NEXT: <member>`) and `addConditionalEdges` to its members ∪ END — it *decides*,
+   it does not visit in declared order. A member returns to the supervisor's ROUTE node, so one
+   decision call per return. `when` guards are a ~40-line safe parser (`lib/engine/when.ts`) —
+   literals, `state.<channel>` truthiness, bare channel names, `==`/`!=`, `&&`/`||` — never `eval`.
+   A guard over a channel no node sets is a compile WARNING carried on the run report, not a silent
+   false. The team step budget becomes `recursionLimit`; exhaustion is a graceful stop that returns
+   what completed. Disabled agents are pruned at build; an unmapped legacy grant, a disabled
+   entrypoint or a channel shadowing an engine key is a compile ERROR.
+   What `build-graph.ts` does NOT own is what one agent *is* — its model tier, its system prompt,
+   the running team transcript, the Context-Librarian handoff and how an outcome is classified all
+   live in `lib/build/agentic-graph.ts`, which the graph calls into.
+4. `lib/engine/run.ts` `runGraphEngine` streams it (`['custom','updates']`), maps the custom
+   chunks onto the live hooks, and reads the result back from `getState`.
+5. **Build compiles the same graph.** The `langgraph` row of Build is
+   `lib/build/compile-verify.ts` → `buildGraph` (live and offline alike), so a ✓ there means the
+   graph the engine will execute can actually be constructed from this `system.yaml`.
 
-- `AGENTS_ENGINE=walker|langgraph` — the platform default; a system pins the walker with
-  `runtime: walker` in its `system.yaml`. `lib/engine/select.ts` is the one place that decision
-  is made (route, scheduler and the MCP tool `run_agent_system` all use it, then `runOsTeam`
-  branches).
-- `AGENT_RUNS_DATABASE_URL` — the `agent_runs` Postgres database for LangGraph checkpoints
-  (chart: `postgres.extraDatabases`; os-ui runs `PostgresSaver.setup()` at boot). Unset → an
-  in-memory checkpointer, reported as `checkpointer: 'memory'` on every run.
+### Durability: thread id = run id
 
-Resume: a `langgraph` run has a `runId` (= its LangGraph thread id, minted by
-`core/kernel/run-id.ts`, on the run report and `LastRun`). `POST /api/agents/systems/<id>/run
-{ resume: true, runId }` continues it from its last checkpoint — only for the run's own system and
-runner (404 otherwise; 409 once finished); the Run panel offers **Resume** on an interrupted run
-whose checkpoints are in Postgres.
+`lib/engine/checkpointer.ts` selects `PostgresSaver` over `AGENT_RUNS_DATABASE_URL` (the
+`agent_runs` database; chart `postgres.extraDatabases`, `setup()` runs at os-ui boot) and falls
+back to an in-memory saver, reported as `checkpointer: 'memory'` on every run — a fallback must
+never pass for durability. **The thread id IS the run id** (`core/kernel/run-id.ts`), which is also
+the Langfuse trace id. `POST /api/agents/systems/<id>/run { resume: true, runId }` continues a run
+from its last checkpoint — only for its own system and runner (404 otherwise, 409 once finished);
+the Run panel offers **Resume** when the checkpoints are in Postgres.
 
-Approvals as interrupts (A2): a held write parks the run on `interrupt()` before any call of the
-batch executes (`lib/build/hold.ts` is the pure rule; `lib/engine/approval-port.ts` the queue port,
-`approvals-bridge.ts` its server implementation). The decision in Governance resumes the run as
-the runner (`lib/engine/resume.ts`, registered into `core/policy/approvals.ts` `onDecided` by
-`resume-boot.ts` at boot; `lib/build/run-service.ts` drives start/resume/finalise for every door).
+### Approvals are interrupts
 
-SSE events of `POST …/run` (stream): `node-started`, `tool-step`, `node-completed` (unchanged);
-`approval-required { approvalId, tool, node }` when a held write parks the run; `done` (body
-carries `parked`, `heldApprovals`, `warnings`, `checkpointer`) or `error`. The re-attach stream
-`GET …/run/stream?runId=` (owner-checked) replays a parked run's events and adds
-`resumed { approvalId, decision }` when a decision continues it. Events live on an in-process topic
-(`lib/engine/run-events.ts`, single replica until A4).
+A write that needs a human parks the run **before any call of the batch executes**: `tools_<id>`
+computes the hold for the whole batch first (`lib/build/hold.ts`, the pure rule), enqueues each
+held call once (idempotent on `(threadId, callId)`), then `interrupt()`s. The approver
+**authorises**; the **runner executes** on resume. Rejecting returns a typed tool result and the
+model continues. `lib/engine/approval-port.ts` is the queue port, `approvals-bridge.ts` its server
+implementation, `lib/engine/resume.ts` the resume (registered into `core/policy/approvals.ts`
+`onDecided` by `resume-boot.ts`), and `lib/build/run-service.ts` drives start/resume/finalise for
+every door. A parked approval has no TTL in v1 (open policy question, `docs/components/os-ui.md`).
 
-MCP tools: `run_agent_system` and `resume_agent_run { runId }` (restart recovery; runner-only) in
-`core/mcp/agent-write-tools.ts` (bundle `agent-write`; both are in the static write catalog),
-`get_agent_run { runId }` (state summary, path, held approvals with who can decide; runner-only; a
-read) beside `get_agent_system` in `core/mcp/discovery-base-tools.ts`. `run_agent_system` returns
-`runId`, `traceUrl`, `parked`, `heldApprovals`.
-The Governance tool `decide_approval` resumes a parked run's thread through the same hook and
-returns the `resume` outcome.
+### A run is a row, not a request
 
-One trace per run (A3): `lib/engine/observe.ts` builds the Langfuse trace (id = run id; nodes as
-spans, model calls as generations with usage, tool calls as spans carrying the decision) over the
-SDK client in `core/infra/langfuse.ts`; `build-graph.ts` `observed()` wraps every node. The run
-report and `LastRun` carry `traceUrl` (`<console>/trace/<runId>`) and `traceStoreAvailable`;
-`run_agent_system`, `get_agent_run` and `resume_agent_run` return `traceUrl`. Every model call of a
-run is attributed to the runner (`user = os-<id>`), `domain:`, `agent:`, `run:` and uses the
-system's own LiteLLM key by reference (`LastBuild.litellmKeyRef`, minted by a live Build) or the
-shared agent key — never the master key. The diagnostics route reads Langfuse **by the run's trace
-id**; the Evaluate judge writes a `judge` score on the trace. `lib/engine/run-lock.ts` is the
-per-thread in-flight lock `executeTeamRun` holds inside one process (a concurrent resume is a
-typed 409); across pods the authority is the `run_jobs` row's status.
-
-Runs in a worker (A4): a run is a ROW, not a request. `POST …/run` validates, mints the run id,
-inserts a `queued` `run_jobs` row and tails that run's `run_events` from `seq = 0`;
-`GET …/run/stream?runId=&afterSeq=` tails the same table from a cursor (the A2 in-process topic is
-gone from the read path). `AGENTS_WORKER=inline` (default) executes the job in the same process
-right after filing it — identical events, so every test runs without a worker;
-`AGENTS_WORKER=worker` leaves it to the `os-ui-worker` Deployment, which claims with
+`POST …/run` validates, mints the run id, inserts a `queued` `run_jobs` row and tails that run's
+`run_events`; `GET …/run/stream?runId=&afterSeq=` tails the same table from a cursor.
+`AGENTS_WORKER=inline` (default) executes the job in the same process right after filing it —
+identical events, so every test runs without a worker; `AGENTS_WORKER=worker` leaves it to the
+`os-ui-worker` Deployment (`os-ui/worker/agent-runs.ts`), which claims with
 `FOR UPDATE SKIP LOCKED`, heartbeats its lease, and on SIGTERM finishes the current superstep and
-re-queues the run. One start door for everything: `run-jobs-server.ts` `startQueuedRun`
-(route, `build/scheduled.ts`, MCP `run_agent_system`), `resumeQueuedRun` (owner Resume, MCP
-`resume_agent_run`) and `enqueueResumeAfterDecision` (the Governance `onDecided` hook — a decision
-FILES a resume, it no longer drives the graph in the decider's request). `AGENTS_WORKER_LEASE_MS`
-bounds a lease; an abandoned one is re-queued once (keeping `kind='start'` when the run never
-reached a checkpoint), then failed.
+re-queues the run. `AGENTS_WORKER_LEASE_MS` bounds a lease; an abandoned one is re-queued once
+(keeping `kind='start'` when the run never reached a checkpoint), then failed. One start door for
+everything: `run-jobs-server.ts` `startQueuedRun` (the run route, `build/scheduled.ts`, MCP
+`run_agent_system`), `resumeQueuedRun` (owner Resume, MCP `resume_agent_run`) and
+`enqueueResumeAfterDecision` (the Governance `onDecided` hook — a decision FILES a resume rather
+than driving the graph inside the decider's request).
 
-A run id is NOT an authorisation (A4 review): `lib/engine/run-visibility.ts` `assertRunVisible` is
-the one gate every run-id door calls before any side effect — the run route's resume, the re-attach
-stream, MCP `resume_agent_run` — always 404, never 403, and the store refuses a resume filed by
-anyone but the run's requester. A worker that loses its lease ABORTS the run and settles nothing
-(`engine/worker-loop.ts` `leaseWatch` / `settlementOf`, both pure); `complete` is lease-guarded,
-`appendEvent` deliberately is not. `inline` mode reaps stale leases once at boot and heartbeats its
-own runs. A decision that arrives while the run is still parking retries the enqueue briefly
-instead of stamping the approval `failed`. The panel's SSE parsing and its re-attach decision live
-in `lib/build/run-stream-client.ts` (pure — a test may not import the `.tsx`), so a `queued`
-cursor at the server's 240-second tail budget re-attaches transparently; `engine/tail-limit.ts`
-caps a pod at 64 concurrent tails (`503` + `Retry-After` beyond that).
+SSE events of `POST …/run` (stream): `node-started`, `tool-step`, `node-completed`;
+`approval-required { approvalId, tool, node }` when a held write parks the run; `resumed
+{ approvalId, decision }` on the re-attach stream when a decision continues it; then `done` (body
+carries `parked`, `heldApprovals`, `warnings`, `checkpointer`) or `error`. The panel's SSE parsing
+and its re-attach decision are pure (`lib/build/run-stream-client.ts` — a test may not import the
+`.tsx`), so a `queued` cursor at the server's 240-second tail budget re-attaches transparently;
+`engine/tail-limit.ts` caps a pod at 64 concurrent tails (`503` + `Retry-After` beyond that).
 
-Parity: `lib/engine/parity-harness.ts` + `lib/engine/fixtures/*.json` are the golden recordings
-both engines must reproduce (`parity.test.ts`: P1 for both engines, HANDOFF-GUARD, P2 abort +
-resume). Regenerate fixtures with ONE file, never the whole suite:
-`REGEN_FIXTURES=1 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test tabs/agents/lib/engine/fixtures.test.ts`.
+**A run id is NOT an authorisation.** `lib/engine/run-visibility.ts` `assertRunVisible` is the one
+gate every run-id door calls BEFORE any side effect or read — the run route's resume, the re-attach
+stream, the diagnostics read, MCP `resume_agent_run` and `get_agent_run` — always 404, never 403,
+and the store refuses a resume filed by anyone but the run's requester. A worker that loses its
+lease ABORTS the run and settles nothing (`engine/worker-loop.ts` `leaseWatch` / `settlementOf`,
+both pure); `complete` is lease-guarded, `appendEvent` deliberately is not. `inline` mode reaps
+stale leases once at boot and heartbeats its own runs. `lib/engine/run-lock.ts` is the per-thread
+in-flight lock inside one process (a concurrent resume is a typed 409); across pods the authority
+is the `run_jobs` row's status.
+
+### One Langfuse trace per run, one scoped LiteLLM key
+
+`lib/engine/observe.ts` builds the trace over the SDK client in `core/infra/langfuse.ts`: **trace
+id = run id**, every node a span (`build-graph.ts` `observed()`), every model call a generation
+with token usage, every tool call a span carrying its governance decision. A resume adds to the
+same trace and creates no second one. The run report and `LastRun` carry `traceUrl`
+(`<console>/trace/<runId>`) and `traceStoreAvailable`; the Evaluate judge writes a `judge` score on
+that trace; the diagnostics route reads Langfuse **by the run's trace id**, owner-gated.
+`LANGFUSE_REDACTION` governs how much of a call reaches the TRACE (`run_events` is exempt by
+design — the panel's own log is written in full).
+
+Every model call of a run is attributed to the runner (`user = os-<id>`) with tags `domain:`,
+`agent:`, `run:`, and uses the system's own LiteLLM key by reference
+(`LastBuild.litellmKeyRef`, minted by a live Build) or else the shared agent key — **never the
+master key** (`core/runtime/runtime.test.ts` `MODEL-KEY` enforces that repo-wide).
+
+### The MCP surface — the same doors the UI uses
+
+| Tool | What it does |
+|---|---|
+| `build_agent_system` | compile + verify; the `langgraph` row IS `buildGraph` |
+| `run_agent_system` | files the run on the queue and returns `runId` (= thread id = trace id), `traceUrl`, `parked`, `heldApprovals`. A grant with no governed tool behind it is a `bad_request` naming it |
+| `get_agent_run { runId, afterSeq?, limit? }` | run state (path, budget, warnings, parked + held approvals with who can decide) **and the `run_events` tail** from a cursor, returning `nextSeq` |
+| `resume_agent_run { runId }` | restart recovery only — NOT for a parked run |
+| `decide_approval` (governance) | approving RESUMES the parked thread; the write executes once, as the runner |
+| `get_run_trace { runId }` (monitoring) | the one Langfuse trace for that run |
+| `list_runs` (monitoring) | recent runs, hard-scoped to the caller |
+
+All of them go through `enqueueRun`/the jobs path and `assertRunVisible`, with identical 404/409
+semantics to the UI. The sequence is taught in `guide.md` and pinned by
+`core/mcp/agent-run-surface.test.ts`.
+
+### Parity with what came before
+
+`lib/engine/parity-harness.ts` + `lib/engine/fixtures/*.json` are the **frozen** golden recordings
+of the pre-rebuild walker — every shipped template, the software team and three canonical shapes.
+`parity.test.ts` holds the engine to them (P1), plus HANDOFF-GUARD and P2 (abort + resume);
+`fixtures.test.ts` keeps them frozen and well-formed. There is no `REGEN_FIXTURES` any more: the
+walker that produced them is gone, a golden regenerated by the engine under test would only prove
+the engine equals itself, and `shape-guarded-handoff-held-write` exists precisely to record a
+defect the engine must NOT reproduce (the walker ignored `when` and visited the guarded target).
+A new shape means a new fixture beside them.
 
 ## Rules that apply here
 
