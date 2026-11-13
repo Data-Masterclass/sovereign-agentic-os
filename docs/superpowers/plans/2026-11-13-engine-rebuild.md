@@ -444,9 +444,168 @@ deviations` below. New: `core/kernel/events.ts`, `scripts/check-trino-rules-char
 ---
 
 ## Part C — Deploy and verify
-- [ ] Deploy to STACKIT with `scripts/deploy.sh <version>` (directly, not piped; `colima start` first, `colima stop` after). Engine flag flips only after A1–A3 gates are green on the branch; B2–B3 deletions only after their parity gates.
-- [ ] Post-deploy verification, in this order: health; one agent run end-to-end with an approval and a resume; one Langfuse trace for that run; the LiteLLM key allowlist from the Job log; one scheduled sync through Dagster; one composition through dbt.
-- [ ] `helm rollback agentic-os <previous>` is the recovery path; no data migration in this plan is irreversible except the `agent_runs` database creation, which is additive.
+
+**Written out as an executable list at the end of Part F (iteration 1), from the shipped code.** No
+cluster was available in this worktree, so every step below is `untestable here` until it is run —
+that is the point of writing it down exactly. Run the whole list in order; a step that disagrees
+with its expected output is a finding to fix in the code, not in the cluster.
+
+### C.0 — Version
+
+`charts/sovereign-agentic-os/Chart.yaml` is `version: 0.2.12`, `appVersion: "0.2.0-alpha.11"`;
+`os-ui/package.json` is `0.2.0-alpha.11`. The programme is a **breaking change** — data scheduling
+moves from Kubernetes CronJobs to Dagster schedules (the CronJob templates are DELETED, so the
+upgrade removes objects), the agent engine moves from the walker to a compiled LangGraph
+`StateGraph`, and `DATA_PROJECT_GIT` now defaults ON in both the chart and `config.ts`.
+
+- **Proposed app version: `0.2.0-alpha.12`** (the alpha train is where this repo has carried
+  breaking platform changes — alpha.8 → .9 → .10 → .11 each did).
+- **Proposed chart version: `0.3.0` — a MINOR bump, not a patch.** The rendered object set changes
+  incompatibly: the data-sync CronJob templates are gone, `os-ui-worker`, the `git-daemon` sidecar,
+  the `os-repos` PVC and its NetworkPolicy are new, and values keys were added
+  (`osUI.dataProjectGit`, `osUI.worker`, `queryTool.budget`) and removed.
+- **CHANGELOG stays `[Unreleased]`.** This repo stamps the version in its own `release: sync
+  v<version> — <title>` commit (`3c72f885`, `4abec9ce`), never on the feature branch: every Part D
+  and B4 commit edited `CHANGELOG.md` and left the heading alone. **The deploy stamps nothing in
+  git** — `scripts/deploy.sh <version>` only tags and pins the image
+  (`--set osUI.image.tag="<version>@<digest>"`); it does not touch `Chart.yaml` or `CHANGELOG.md`.
+  So the release commit that merges this branch is what converts `[Unreleased]` → `[0.2.0-alpha.12]
+  — 2026-11-13` and bumps the chart to `0.3.0`.
+
+### C.1 — Build and roll out
+
+```bash
+colima start                                   # the build runs in a 14 GB VM
+cd ~/Documents/Claude/Projects/'Data Masterclass Apps'/sovereign-os-stack
+./scripts/deploy.sh 0.2.0-alpha.12             # DIRECTLY — never `| tail`: a pipe masks a failed
+                                               # upgrade as success (2026-11-04)
+colima stop                                    # frees 14 GB before anything else needs kubectl
+```
+
+`deploy.sh` already does, in this order and aborting on any failure: derive the values from the
+LIVE release (never the chart defaults), diff the rendered manifest and **refuse** if the upgrade
+would delete a PVC or StatefulSet, take the pre-upgrade Velero backup, build `linux/amd64`, run the
+**post-build strip-types smoke** (`docker run --entrypoint node … --experimental-strip-types -e
+"import('./worker/agent-runs.ts')…"` — this is the only check that the image's Node can run the
+worker's TypeScript source; a base image below 22.6 fails here instead of at boot), push, pin the
+digest, `helm upgrade --skip-schema-validation`, and wait for the rollout. Expect the final line
+`DEPLOY_0.2.0-alpha.12_OK`.
+
+### C.2 — Post-deploy verification, in this order
+
+```bash
+NS=agentic-os; CTX=dmagenticos; kubectl config use-context $CTX
+```
+
+**1. Health.**
+```bash
+kubectl -n $NS get pods | grep -vE 'Running|Completed'          # expect: no rows
+kubectl -n $NS rollout status deploy/os-ui --timeout=5m         # expect: successfully rolled out
+curl -fsS https://<OS_PUBLIC_URL>/api/health                    # expect: 200, {"ok":true,…}
+```
+
+**2. The worker is up and durable** (A14/A18 depend on it).
+```bash
+helm upgrade agentic-os charts/sovereign-agentic-os -n $NS --reuse-values --set osUI.worker.enabled=true
+kubectl -n $NS rollout status deploy/os-ui-worker
+kubectl -n $NS logs deploy/os-ui-worker | grep 'agent-runs-worker. boot:'
+# expect EXACTLY: checkpointer=postgres jobs=postgres resumeHook=true approvals=true
+# ERR_UNKNOWN_FILE_EXTENSION here ⇒ the image's Node is below 22.6 (the C.1 smoke should have caught it)
+```
+
+**3. One agent run: hold → approve → resume → one trace** (A13, A15, A16, A19).
+Start a run from the Agents tab on a system whose safety preset holds a write (or over MCP:
+`run_agent_system`), approve it in Governance → Inbox, note `RUN=<runId>`.
+```bash
+kubectl -n $NS exec deploy/postgres -- psql -d agent_runs -c \
+  "select status, kind, attempts, locked_by from run_jobs where run_id='$RUN'"
+# expect: status done (it passed through parked → queued/kind=resume → running → done)
+kubectl -n $NS exec deploy/postgres -- psql -d agent_runs -c \
+  "select seq, event, at from run_events where run_id='$RUN' order by seq"
+# expect: a contiguous seq with no gap, a `held` event before the decision and a terminal `done`
+kubectl -n $NS exec deploy/postgres -- psql -d agent_runs -c \
+  "select count(*) from checkpoints where thread_id='$RUN'"
+# expect: > 1 — thread id IS the run id (A13)
+curl -fsS -H "Authorization: Bearer $LANGFUSE_PUBLIC_KEY" \
+  "https://<langfuse>/api/public/traces/$RUN"
+# expect: ONE trace whose id is the run id, userId = the runner, sessionId = the systemId,
+# tags domain:/agent:/run:, node spans beneath it and model calls as generations (A19, A21, A24).
+# The run's "Trace" link in Monitoring must open THIS trace, not a /traces list (A20).
+```
+Then assert the artifact the approved write produced is authored as the **runner**, not the
+approver (A16) — open it in its tab and read its author.
+
+**4. The run's work is a commit, authored as the acting user** (A2, A33, X1).
+```bash
+kubectl -n $NS exec deploy/os-ui -- sh -lc 'git --git-dir=/repos/<domain>.git log --oneline -5'
+kubectl -n $NS exec deploy/os-ui -- sh -lc \
+  'git --git-dir=/repos/<domain>.git ls-tree -r --name-only main | grep ^agents/'
+# expect: agents/<slug>/{system.yaml,agents/<id>.md,graph.json,README.md} and agents/index.yml,
+# the commit authored as the acting user with OS-Action/OS-Object/OS-Surface (+ OS-Run-Id) trailers.
+# Save the same system once from the UI and once over MCP: two commits, differing ONLY in
+# `via ui:<route>` vs `via mcp:<tool>` (A33).
+```
+
+**5. A scheduled sync materialises in Dagster, as the owner** (D7, D8, D9, D11).
+```bash
+kubectl -n $NS port-forward svc/agentic-os-dagster-webserver 3070:80 &
+# Automation tab: the domain's schedule is listed, UTC, and its next tick is in the future.
+# Trigger it (or wait), then in the OS the Data tab must show the SAME run — it is read from
+# Dagster, not from an OS ledger (D9).
+kubectl -n $NS get job -l dagster/job -o name | head -1 | xargs kubectl -n $NS get \
+  -o jsonpath='{.spec.template.spec.containers[0].env[*].name}'
+# expect BOTH OS_PRINCIPAL and TRINO_HOST — the run tag MERGED with the location's container
+# context rather than replacing it (dagster.md "Verify it in a cluster" step 2)
+kubectl -n $NS get pods -l component=user-deployments -o custom-columns=NAME:.metadata.name
+# expect the code-server pod AND any live dagster-run-* pod — without that label a run pod cannot
+# reach the git daemon on 9418 and every scheduled sync dies at ensure_checkout
+kubectl -n $NS logs job/<a dagster-run job> -c repo-sync | tail -2
+# expect "in a Dagster run pod … exiting 0" — a Job only completes once every container exits
+kubectl -n $NS exec deploy/agentic-os-dagster-user-deployments-sovereign -c repo-sync -- \
+  python -c "import psycopg2, dagster_dbt, trino; print('drivers ok')"
+# D10 — the image has its Postgres driver. Then launch `<domain>__all` and assert SUCCESS.
+```
+
+**6. One composition through dbt, on Trino** (D1, D12, D13, D16).
+Build a gold composition from the Data tab, then:
+```bash
+kubectl -n $NS exec deploy/agentic-os-dagster-user-deployments-sovereign -c repo-sync -- \
+  python /opt/dagster/app/os_projects.py --parse /repos-checkout/<domain>/current
+# expect: dbt parse + compile succeed (D1)
+# then in Trino: the iceberg.<schema>.<table> exists and DESCRIBE matches the OS's column list,
+# and the Data tab's lineage comes from the manifest/assetGraph, not the OS registry (D16 —
+# the fallback is labelled source: 'registry', so a 'registry' label here is a FAILURE).
+```
+
+**7. The old world is gone.**
+```bash
+kubectl -n $NS get cronjobs                      # expect: NO per-dataset data-sync CronJob
+kubectl -n $NS get cronjob -o name | grep -i sync   # expect: no output
+kubectl -n $NS delete secret dq-run-principal    # the chart no longer renders it; remove by hand
+```
+
+**8. Governance plumbing: the three health rows and the key allowlist** (X2, A28, D14).
+```bash
+kubectl -n $NS logs job/litellm-agent-key-init | tail -20
+# expect the FULL alias list on the key: sovereign-default, sovereign-mock, sovereign-reasoning,
+# sovereign-embed, sovereign-premium, sovereign-reasoning-fast (+ sovereign-vision) — A28
+kubectl -n $NS logs deploy/os-ui | grep 'trino access rules'
+kubectl -n $NS get cm trino-access-rules -o jsonpath='{.data.rules\.json}' | python3 -m json.tool | head
+# Platform → Components & Health must show, all GREEN:
+#   `trino-access-rules`   (RED until the first successful reconcile — that is deliberate)
+#   `git-mirror`           (after configuring a remote via PUT /api/platform-admin/data-projects/<domain>/mirror,
+#                           then: git --git-dir=/repos/<domain>.git log --oneline -1 on the REMOTE)
+#   `data-products-git`    (present in both states; amber "scheduling disabled" when the flag is off)
+```
+
+**9. Rollback.** `helm rollback agentic-os <previous>` is the recovery path. Nothing in this
+programme is irreversible except the `agent_runs` database creation, which is additive — but note
+the upgrade DELETES the data-sync CronJobs, so a rollback re-creates them while `os/schedules.yml`
+is already committed: stand the CronJobs down again (`reconcileDataProjectsAtBoot` does it at the
+next os-ui boot) or both schedulers own the same slice.
+
+- [ ] C.1 executed
+- [ ] C.2 steps 1–9 executed and each expected output seen
 
 ---
 
@@ -487,6 +646,19 @@ deviations` below. New: `core/kernel/events.ts`, `scripts/check-trino-rules-char
 ## Part F — Iterate against the checklist
 
 After each full pass over Parts A, B and D: a read-only test agent scores `2026-11-13-engineering-checklist.md`, writes a gap report there, and a new "Iteration N" is appended below with phases closing the gaps. Repeat until two consecutive iterations close nothing further. Deploy after each green iteration; the engine flag flips only when A5–A17 pass.
+
+- [x] **Iteration 1 — 2026-11-13.** All 60 items re-scored independently against the tree at
+  `6d6c1391`, every cited test read rather than trusted, the full gate suite run at the start and
+  the end. Gap report in `2026-11-13-engineering-checklist.md` → "Gap reports" →
+  "2026-11-13 — end of Part F (iteration 1)". Closed in this pass: **X7** (the conformance contract
+  generalised from the 23 data tools to all 113 in the registry), **A4** (`false` → `partly true` —
+  the committed `system.yaml` now runs from a plain checkout), **X4** (the ratchet baseline
+  re-locked downward so it bites). Three defects were found by the new tests and fixed:
+  `suggest_metrics`' raw `fetch failed`, six software tool descriptions too terse to act on, and a
+  dead rule-violating test under `app/`. Two gaps were found that no gate covered: the Python
+  suites ran nowhere (now in CI) and the query-tool tests cross-contaminate under one discovery
+  pass (open). Part E (X6) remains the only wholly unstarted item.
+- [ ] Iteration 2 — scoped in the gap report's recommendation.
 
 ## Decisions taken without the owner (autonomous mode) — review these
 1. `when` grammar: safe expression language, not model-judged predicates.
@@ -1469,3 +1641,54 @@ reason is here.
   `enqueueRun` in all three places; the "~40-line parser" is 203 lines (`lib/engine/when.ts`); and
   the worker's "Langfuse singleton at boot" is a PROBE — `langfuseClient()` is resolved lazily at
   each use site.
+
+- **F-1 A test that could never run was DELETED, not fixed.**
+  `os-ui/app/api/agents/systems/[id]/assistant/route.test.ts` sat outside the runner's globs
+  (`core/**/*.test.ts`, `tabs/**/*.test.ts`), so it never executed; it imported its own
+  `./route.ts` — which the repo's rules forbid a test to do — and `../../../../../../lib/agents/store.ts`,
+  a path that has not existed since the v2 layout, so it would have thrown on line 46 if it ever had
+  run. One `git rm`. Coverage that claims to exist and does not is worse than none; writing it
+  properly means moving the route's logic into a `tabs/agents/lib` service the test may import,
+  which is the same shape B4 used for the data routes and belongs to whoever next touches that route.
+- **F-2 `upstream_error` added to the MCP error vocabulary.** The registry-wide conformance test
+  (X7) asserts no tool answers the `error` catch-all. `suggest_metrics` did, with a bare
+  `fetch failed`, whenever the model gateway was unreachable — a client cannot tell that from a bug
+  in its own arguments. Rather than exempt the tool, `structuredError` gained a fifth documented
+  code: a thrown error with NO HTTP status whose cause chain carries a transport failure
+  (`fetch failed`, `ECONNREFUSED`/`ETIMEDOUT`/`UND_ERR…`, `AbortError`) is `upstream_error`, hinting
+  at Platform → Components rather than at the caller's arguments. One function, one call site; the
+  documented set is now `not_found | forbidden | bad_request | conflict | upstream_error`, with
+  `error` reserved as the last-resort catch-all a conformant tool never reaches.
+- **F-3 The software tab's foreign-object convention is MEASURED, not changed.** A software app
+  that exists but the caller cannot see is `not_found` from the read/build doors
+  (`get_software`, `read_app_files`, `build_software`, `design_software`, `get_app_spec`,
+  `generate_app_spec`, `set_app_design`, `verify_software`, `get_software_status`) and `forbidden`
+  from the grant/preview/deploy/archive doors (`request_deploy`, `start_preview`, `set_app_spec`,
+  `use_connection`, `use_data`, `use_knowledge`, `use_as_data`, `archive`). The second set
+  therefore tells an enumerating caller that an app EXISTS while the first denies it. Every other
+  tab is consistent (`forbidden`, the B4-11 convention; agent RUNS deliberately `not_found`).
+  Converging the two needs a decision on WHICH convention wins repo-wide and a change to seven
+  tools' security semantics, so Part F pinned the current behaviour per tool in
+  `core/mcp/mcp-conformance.test.ts` (`SOFTWARE_FOREIGN`) — it can no longer drift unnoticed — and
+  recorded the leak as an iteration-2 item rather than changing it unreviewed.
+- **F-4 The Python suites ran in no gate at all.** `images/extensions/query-tool/*` (X9's handler
+  half — the `query_max_run_time` / `request_timeout` / `max+1` ceilings that closed deviation
+  D-11) and `images/extensions/dagster/tests/test_os_projects.py` (D7/D8/D11's unit halves, 45
+  tests) were cited as evidence by five checklist rows while `ci.yml` ran only data-runner and
+  web-fetch and `gate.sh` is node-only. Both are now in CI's `test-python` job. They run PER FILE:
+  the four query-tool modules patch the same `app` module at import time, so a single
+  `unittest discover`/pytest pass over the directory cross-contaminates — 7 of the 12 budget tests
+  fail together and all 12 pass individually. The per-file invocation makes them run honestly
+  today; the isolation defect itself is an iteration-2 item, named rather than papered over.
+- **F-5 Test files are not type-checked, and do not type-check.** `os-ui/tsconfig.json` excludes
+  `**/*.test.ts`, so `tsc --noEmit` is clean while the tests are not: a temporary config that
+  INCLUDES them reports **599 errors**. 510 are one systemic cause (a test-local `CurrentUser`
+  object literal omits `allDomains` / `activeDomain`, which the type requires), 18 are deliberate
+  assignments to `readonly` config fields, and **2 are real**: a stale `@tabs/data/lib/types`
+  specifier in `tabs/data/lib/model-view-collision.test.ts` (type-only, so it erases at runtime and
+  the import silently types as an error rather than failing) and the dead `route.test.ts` deleted
+  as F-1. Including tests in the project config is not a Part F change — it would turn 599 errors
+  into a red gate — so it is an iteration-2 item with the systemic cause already identified.
+- **F-6 Commit trailer.** Part F's commits are trailed `Co-Authored-By: Claude Opus 5 (1M context)`
+  rather than the branch's `Claude Fable 5.1`, because that is the model that wrote them. The
+  trailer records authorship; recording a model that did not do the work would make it decorative.
