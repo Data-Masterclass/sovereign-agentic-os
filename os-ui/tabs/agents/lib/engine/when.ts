@@ -82,9 +82,15 @@ function tokenize(src: string): Token[] {
 }
 
 /** Parse a `when` expression into its AST. Throws {@link WhenSyntaxError}. */
+/** Longest `when` expression accepted (characters). */
+export const MAX_WHEN_LENGTH = 512;
+
 export function parseWhen(expression: string): WhenAst {
   const src = expression.trim();
   if (src.length === 0) throw new WhenSyntaxError(expression, 0, 'empty expression');
+  // A bound on the source keeps the recursive descent from overflowing the stack on a pathological
+  // guard (10k parentheses) — a typed syntax error, never a RangeError (review finding L1).
+  if (src.length > MAX_WHEN_LENGTH) throw new WhenSyntaxError(expression, MAX_WHEN_LENGTH, `expression longer than ${MAX_WHEN_LENGTH} characters`);
   const toks = tokenize(src);
   let pos = 0;
   const peek = () => toks[pos];

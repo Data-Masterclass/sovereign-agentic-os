@@ -91,6 +91,44 @@ export async function register(): Promise<void> {
       });
   }
 
+  // APPROVAL → RESUME hook (engine rebuild A2): the Agents tab registers its graph-resume with the
+  // Governance queue's `onDecided` so approving a parked run's write (inbox route or MCP
+  // `decide_approval`) continues the run as its runner. A registration, never a core→tab import.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      const { registerResumeHook } = await import('./tabs/agents/lib/engine/resume-boot.ts');
+      registerResumeHook();
+    } catch (err) {
+      console.error(`[os-ui] agent runs: approval-resume hook NOT registered — parked runs will not resume on decision: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // AGENT-RUN CHECKPOINTER init (engine rebuild A1): when AGENT_RUNS_DATABASE_URL is set, run
+  // `PostgresSaver.setup()` once at boot (idempotent CREATE TABLE IF NOT EXISTS + migrations) so
+  // the first run never races the schema. Not awaited (boot must not wait on Postgres); a
+  // failure is logged LOUDLY and the first run retries it — it never falls back to memory
+  // silently. Unset → the memory checkpointer, logged once so an operator can see it.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { config } = await import('./core/kernel/config.ts');
+        const { ensureCheckpointerReady } = await import('./tabs/agents/lib/engine/checkpointer.ts');
+        const kind = await ensureCheckpointerReady(config.agentRunsDatabaseUrl);
+        if (kind === 'memory') console.warn('[os-ui] agent runs: AGENT_RUNS_DATABASE_URL unset — LangGraph checkpoints are IN MEMORY (not durable across restarts)');
+        else console.info('[os-ui] agent runs: Postgres checkpointer ready (agent_runs)');
+        // RUN QUEUE (engine rebuild A4): `run_jobs` + `run_events` live in the same database and
+        // their DDL is idempotent, so it runs right here next to the checkpointer's setup().
+        // os-ui ENQUEUES and TAILS; `AGENTS_WORKER=worker` means the `os-ui-worker` Deployment
+        // executes the jobs, `inline` (default) means this process does, straight after filing.
+        const { ensureRunJobsReady } = await import('./tabs/agents/lib/build/run-jobs-server.ts');
+        const jobs = await ensureRunJobsReady();
+        console.info(`[os-ui] agent runs: run queue ready (${jobs}); AGENTS_WORKER=${config.agentsWorker}`);
+      } catch (err) {
+        console.error(`[os-ui] agent runs: checkpointer setup FAILED — langgraph runs will fail until it is reachable: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
   // DATA PROJECTS IN GIT (engine rebuild B1): when DATA_PROJECT_GIT=true, subscribe the one commit
   // path to the data store's project-change events so every dataset / composition / check / sync /
   // publish / retire write regenerates the domain's dbt project and commits it as the acting user
@@ -118,25 +156,6 @@ export async function register(): Promise<void> {
         console.info(`[os-ui] data projects: committing every dataset change to ${config.reposDir}/<domain>.git`);
       } catch (err) {
         console.error(`[os-ui] data projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
-      }
-    })();
-  }
-
-  // AGENT-RUN CHECKPOINTER init (engine rebuild A1): when AGENT_RUNS_DATABASE_URL is set, run
-  // `PostgresSaver.setup()` once at boot (idempotent CREATE TABLE IF NOT EXISTS + migrations) so
-  // the first run never races the schema. Not awaited (boot must not wait on Postgres); a
-  // failure is logged LOUDLY and the first run retries it — it never falls back to memory
-  // silently. Unset → the memory checkpointer, logged once so an operator can see it.
-  if (process.env.NEXT_RUNTIME === 'nodejs') {
-    void (async () => {
-      try {
-        const { config } = await import('./core/kernel/config.ts');
-        const { ensureCheckpointerReady } = await import('./tabs/agents/lib/engine/checkpointer.ts');
-        const kind = await ensureCheckpointerReady(config.agentRunsDatabaseUrl);
-        if (kind === 'memory') console.warn('[os-ui] agent runs: AGENT_RUNS_DATABASE_URL unset — LangGraph checkpoints are IN MEMORY (not durable across restarts)');
-        else console.info('[os-ui] agent runs: Postgres checkpointer ready (agent_runs)');
-      } catch (err) {
-        console.error(`[os-ui] agent runs: checkpointer setup FAILED — langgraph runs will fail until it is reachable: ${err instanceof Error ? err.message : String(err)}`);
       }
     })();
   }

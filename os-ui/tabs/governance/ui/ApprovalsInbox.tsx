@@ -39,7 +39,20 @@ type Approval = {
   effect?: { applied: string; live: boolean; standingPolicyId?: string };
   createdAt: string;
   mayApprove: boolean;
+  /** A2: raised by a PARKED agent run — the decision resumes it (the approver authorises, the runner executes). */
+  runId?: string;
+  systemId?: string;
+  node?: string;
+  runner?: { id: string; role: string; domains: string[] };
+  args?: Record<string, unknown>;
+  resume?: { status: 'started' | 'done' | 'refused' | 'failed'; at: string; error?: { code: string; reason: string } };
 };
+
+function ResumeBadge({ r }: { r: NonNullable<Approval['resume']> }) {
+  if (r.status === 'done') return <span className="badge ok">run resumed</span>;
+  if (r.status === 'started') return <span className="badge warn">run resuming…</span>;
+  return <span className="badge err" title={r.error?.reason}>{r.status === 'refused' ? `resume refused: ${r.error?.code ?? ''}` : `resume failed: ${r.error?.code ?? ''}`}</span>;
+}
 
 function StatusBadge({ s }: { s: Approval['status'] }) {
   if (s === 'approved') return <span className="badge ok">approved</span>;
@@ -353,6 +366,37 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                         </pre>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* A2: an agent-run approval — the run it parked, and the link to it. */}
+                {a.runId && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      background: 'var(--bg-elevated)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 7,
+                      padding: '8px 10px',
+                      fontSize: 12,
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 10,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <span className="badge">agent run</span>
+                    <span>system <span className="mono">{a.systemId ?? '?'}</span></span>
+                    <span>agent <span className="mono">{a.node ?? '?'}</span></span>
+                    <span>tool <code>{a.tool}</code></span>
+                    <span>runs as <span className="mono">{a.runner?.id ?? a.requestedBy}</span></span>
+                    {a.systemId ? (
+                      <a href={`/agents?system=${encodeURIComponent(a.systemId)}`} style={{ marginLeft: 'auto' }}>
+                        Open run ↗
+                      </a>
+                    ) : null}
+                    {a.resume ? <ResumeBadge r={a.resume} /> : a.status === 'pending' ? <span className="muted">run parked until you decide</span> : null}
+                    {a.resume?.error ? <div className="muted" style={{ flexBasis: '100%' }}>{a.resume.error.reason}</div> : null}
                   </div>
                 )}
 

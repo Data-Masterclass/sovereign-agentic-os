@@ -131,6 +131,24 @@ function approverPrincipal(approver: EffectApprover, fallbackRole: Principal['ro
 export async function applyEffect(a: Approval, approver: EffectApprover, deps: EffectDeps = {}): Promise<EffectResult> {
   const p = a.payload ?? {};
   const who = approverId(approver);
+  // A2 — an approval raised by a PARKED agent run: the approver AUTHORISES, the RUNNER executes.
+  // There is deliberately NO approver-side effect here: `decide()` fires the registered resume
+  // hook, which continues the run's LangGraph thread under the runner's (live-re-read) principal
+  // and executes the held call through the same governed executor the run uses. The record's
+  // `resume` field says what that did; `live:false` because nothing ran AS the approver.
+  if (a.runId) {
+    return {
+      ok: true,
+      applied: `Authorised ${a.tool} for agent run ${a.runId} (${a.node ?? 'agent'}) — the run resumes as its runner ${a.runner?.id ?? a.requestedBy} and executes the call.`,
+      live: false,
+      audit: {
+        action: 'approve',
+        subject: a.tool || a.kind,
+        reason: `Held agent-run write approved by ${who}; executed by the runner on resume`,
+        detail: { kind: a.kind, runId: a.runId, systemId: a.systemId, node: a.node, tool: a.tool, runner: a.runner?.id },
+      },
+    };
+  }
   switch (a.kind) {
     case 'app_deploy': {
       // Approval IS the action: a Software deploy-review filed by `requestDeploy`.

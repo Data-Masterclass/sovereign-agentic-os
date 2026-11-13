@@ -178,8 +178,14 @@ export async function retrieveKnowledge(
     return { decision: 'deny', policy: authz.policy, reason: authz.reason, store: 'memory', mode: 'offline', embedSource: 'offline-hash', hits: [] };
   }
 
-  // (2) Embed the query (live model or offline hash).
-  const { vector, source: embedSource } = await embedQuery(query);
+  // (2) Embed the query (live model or offline hash). A3 review: the embedding is BILLED to the
+  // acting principal (`user`/`domain:` tags, their scoped key when one exists) — a retrieval is
+  // the user's spend, not the platform's.
+  const { vector, source: embedSource } = await embedQuery(query, {
+    userId: principal.id,
+    domain: principal.domains[0],
+    tab: 'knowledge',
+  });
 
   // (3) Candidate set — live OpenSearch (adaptive hybrid, DLS pushed down), else offline mirror.
   let candidates: { unit: KnowledgeUnit; relevance: number }[];

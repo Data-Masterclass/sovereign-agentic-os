@@ -12,6 +12,7 @@
  */
 import { parseEnabledTabs } from '@core/kernel/tabs';
 import { parseAgentsEngine } from '@core/kernel/agents-engine';
+import { parseAgentsWorkerMode } from '@core/kernel/agents-worker';
 
 function env(name: string, fallback: string): string {
   const v = process.env[name];
@@ -378,6 +379,25 @@ export const config = {
   // (tests, a laptop without the DB) → an in-memory checkpointer, and every run report says so
   // (`checkpointer: 'memory'`) — a fallback must never pass for durability.
   agentRunsDatabaseUrl: env('AGENT_RUNS_DATABASE_URL', ''),
+  // WHO executes a queued agent run (engine rebuild, Phase A4). `inline` (default): the process
+  // that enqueues the job in `run_jobs` also executes it at once — a laptop / kind install with
+  // one os-ui pod behaves exactly as before and tests need no worker. `worker`: os-ui only
+  // enqueues and tails `run_events`; the `os-ui-worker` Deployment (same image, entrypoint
+  // worker/agent-runs.ts) claims the job with FOR UPDATE SKIP LOCKED and runs it off-request —
+  // runs longer than the request cap complete and a rolling restart loses none. Set by the
+  // chart only when `osUI.worker.enabled`.
+  agentsWorker: parseAgentsWorkerMode(process.env.AGENTS_WORKER),
+  // Lease a worker holds on a claimed job (ms). A `running` job whose heartbeat is older than
+  // this is re-queued once (the thread resumes from its checkpoint), then failed. Must exceed
+  // the longest superstep (one model call + one tool call); default 10 minutes.
+  agentsWorkerLeaseMs: Math.max(60_000, Number(env('AGENTS_WORKER_LEASE_MS', '600000')) || 600_000),
+  // How much of a model call the run observer records in Langfuse (A3 review M-2). `structure`
+  // (default): roles + character counts for message content, the tool-call structure (names,
+  // ids, arguments) and a 160-char result preview. `strict`: argument KEY NAMES + character
+  // counts only, no preview — for tenants whose tool arguments may carry personal data. Either
+  // way LiteLLM's own nested generation ships the full prompt unless its callback is told not
+  // to (`turn_off_message_logging`) — see docs/components/langfuse.md.
+  langfuseRedaction: (env('LANGFUSE_REDACTION', 'structure').trim().toLowerCase() === 'strict' ? 'strict' : 'structure') as 'structure' | 'strict',
   // LLM Gateway tab — the read-only, tenant-total usage/spend panel
   // (app/api/gateway/usage). The budget envelope is DISPLAY-ONLY: set it to
   // mirror the chart's litellmAgentKey.maxBudget / budgetDuration (the USD cap

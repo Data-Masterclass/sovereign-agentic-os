@@ -4,6 +4,7 @@
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { recentTraces } from '@core/infra/agent-governed';
+import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { type Decision } from '@tabs/agents/lib/gateway';
 import {
   type LangfuseClient,
@@ -100,6 +101,15 @@ export function realOpa(): OpaClient {
 /** Deterministic per-system virtual key value (kept out of git; derived, not stored). */
 function keyValue(alias: string): string {
   return `sk-${alias}`;
+}
+
+/**
+ * The virtual key value Build mints for one system (`sk-os-<systemId>`). A3: the build route writes it
+ * to the secrets store ONCE and persists only the reference on the system record; runs read the
+ * value back by reference. Exported for that single caller — never for a run path.
+ */
+export function agentKeyValue(systemId: string): string {
+  return keyValue(principalFor(systemId));
 }
 
 export function realLitellm(): LiteLlmClient {

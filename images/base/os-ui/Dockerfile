@@ -5,6 +5,10 @@
 # From the repo root:
 #   docker build -t sovereign-os/os-ui:0.1.0 -f images/os-ui/Dockerfile .
 #
+# The image carries TWO entrypoints: `node server.js` (the Next standalone HTTP server, the
+# default CMD) and `node --experimental-strip-types worker/start.mjs` from /app/src (the
+# agent-run worker — see the COPY of the source tree below and charts' os-ui-worker.yaml).
+#
 # Node base pinned by tag (Alpine = small, ships a uid-1000 `node` user we drop to).
 
 # ---- deps: install node_modules from the lockfile ----
@@ -62,6 +66,21 @@ COPY --from=builder /app/public ./public
 # Bake in the per-component docs so the Components surface reads them natively
 # (read straight off disk, no cross-pod fetch).
 COPY docs/components ./docs/components
+
+# THE AGENT-RUN WORKER (engine rebuild A4). `output: 'standalone'` traces only what the HTTP
+# server requires, so it emits no entry for a process that serves no requests. The `os-ui-worker`
+# Deployment therefore runs the TypeScript source directly — `worker/start.mjs` registers the
+# tsconfig path aliases (`@core/*`, `@tabs/*`) and Node (>= 22.6) strips the types.
+#
+# The source lands at /app/src, i.e. ONE level under /app, so bare imports resolve up into the
+# standalone `/app/node_modules` (which already carries `@langchain/langgraph`, `pg`, `langfuse`
+# and everything else the run path is traced for — they are `serverExternalPackages`).
+# `.ts` sources only, plus the two bootstrap `.mjs` files: no build step, no second node_modules,
+# and the worker executes byte-for-byte the modules the Next build compiles.
+COPY --from=builder /app/worker ./src/worker
+COPY --from=builder /app/core   ./src/core
+COPY --from=builder /app/tabs   ./src/tabs
+COPY --from=builder /app/tsconfig.json ./src/tsconfig.json
 
 # Drop to the built-in non-root `node` user (uid 1000).
 USER node

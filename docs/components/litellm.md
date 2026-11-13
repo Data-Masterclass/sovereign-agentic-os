@@ -109,26 +109,52 @@ separable by a reviewer.
 
 ## How the OS calls the gateway (and what it must never use)
 
-Run traffic uses a **scoped virtual key**, never the proxy master key. The chart
-provisions it and an idempotent Job (`litellm-agent-key-init`) registers it in
-LiteLLM with a model allowlist, a USD cap and rate limits, and **re-asserts
-those properties on every `helm upgrade`** (see below); os-ui reads it as
-`LITELLM_AGENT_KEY`. The master key is reserved for administering the gateway
-itself.
+**No inference path uses the master key** (A3; checklist A25). Every model call —
+agent runs, the assistant, the OS assistant, classify, both embedders — goes through
+`core/infra/litellm-credential.ts` `callerCredential`, which chooses, in this order and
+with no third branch:
 
-This is enforced, not documented: the `MODEL-KEY` gate test inspects the
-outgoing `Authorization` header of a real run-path call and fails if it is the
-master key.
+1. the system's **own virtual key** when Build minted one, read from the secrets store by
+   **reference** (`LastBuild.litellmKeyRef`, never the value on a record);
+2. the **shared agent key** the chart provisions (`LITELLM_AGENT_KEY`, alias
+   `sovereign-agents`, idempotent Job `litellm-agent-key-init`, re-asserted on every
+   `helm upgrade` — see below);
+3. otherwise the caller **refuses to run**. There is no fallback to the master key, because a
+   fallback would quietly remove both the model allowlist and the spend cap at exactly the
+   moment someone misconfigured the thing meant to enforce them.
 
-If no scoped key is configured the run path **refuses to run**. It does not fall
-back to the master key, because a fallback would quietly remove both the model
-allowlist and the spend cap at exactly the moment someone misconfigured the
-thing meant to enforce them.
+The master key is reserved for administering the gateway itself, through exactly two doors:
+`core/infra/litellm-admin.ts` (reads) and `core/infra/litellm-write.ts` (writes), plus the
+key-provisioning client (`tabs/agents/lib/build/live-clients.ts`) and the config definition.
+This is enforced, not documented: the `MODEL-KEY` gate test checks the `Authorization`
+header of a real run-path call **and** scans every non-test source file under `os-ui/` —
+any other file that mentions `litellmMasterKey` fails the gate.
 
-Every call carries attribution: LiteLLM's `user` field as `os-<id>`, plus
-`domain:`, `agent:` and `tab:` tags. That is what makes per-domain and
-per-agent spend answerable, and it is the same vocabulary the gateway mirror
-reads back.
+**Attribution (checklist A27).** Every call carries LiteLLM's `user` field as `os-<id>` plus
+tags `domain:<d>`, `agent:<systemId>`, `tab:<tab>` and, for an engine run, `run:<runId>`.
+That is what makes spend per domain, per agent and **per run** answerable, and it is the
+same vocabulary the gateway mirror reads back (`byDomain`, `byAgent`, `byTab`, `byRun`) and
+Langfuse tags the run trace with. Engine runs also pass `existing_trace_id` /
+`parent_observation_id`, so LiteLLM's own Langfuse callback nests inside the run trace
+(`docs/components/langfuse.md`).
+
+**Rejections are typed.** A 400 budget message is `BudgetExceededError` (402); any other 4xx
+on an inference call is `GatewayRejectedError` with `code` `forbidden` (model outside the
+key's allowlist) / `unauthorized` / `budget_exceeded` / `rate_limited` / `bad_request`.
+
+**Embeddings never index substitutes** (checklist A31). Both embedders
+(`tabs/knowledge/lib/embed.ts`, `tabs/files/lib/embed.ts`) fall back to the deterministic
+hash/mock vector **only** for a timeout, a transport error, a 5xx or a mis-dimensioned
+reply — and label it (`source: 'offline-hash'` / `mode: 'mock'`). A 4xx **throws**
+`GatewayRejectedError`; nothing is indexed. The run-time handoff curation treats a
+rejection like the offline source (it indexes nothing).
+
+**Cache and failure callback (chart).** `litellm_settings.failure_callback: ["langfuse"]`
+makes a rejected or failed call observable (checklist A30). `cache: true` on the bundled
+Valkey (`cache_params.host: valkey`, password via `extraEnvVars` from `valkey-credentials`)
+runs in `mode: default_off`: nothing is cached unless the request says
+`cache: {"use-cache": true}`, which only the deterministic paths do (classify at temperature
+0, both embedders). Agent runs never opt in.
 
 ## Reconcile: OS → LiteLLM, one way, plan first
 
@@ -192,8 +218,14 @@ or edit the key by hand in the LiteLLM console (Admin → LLM Gateway, i.e.
 will converge the key to chart values on the next upgrade either way.
 
 **`litellmAgentKey.models` must contain every alias the OS's run paths can
-send**, or the scoped key fails closed on exactly the model the OS picked. The
-aliases are not hard-coded in one place; they come from:
+send**, or the scoped key fails closed on exactly the model the OS picked. Since A3 this
+is a **chart test**: `scripts/check-litellm-allowlist.mjs` (run by `os-ui/scripts/gate.sh`)
+asserts, for the base `values.yaml` and for `values.stackit-managed.yaml` layered over it,
+that the allowlist covers every `LITELLM_*_MODEL` / `*_EMBED_MODEL` default in
+`core/kernel/config.ts`, every `agentRuntime.*Model`, and every `router_settings.fallbacks`
+source and target. It caught a real gap on first run: the STACKIT overlay's fallbacks target
+`sovereign-premium` and `sovereign-reasoning-fast`, which the base four-alias list never
+allowed — the overlay now carries its own `litellmAgentKey.models`. The aliases come from:
 
 | Role / use | Source | Default alias |
 |---|---|---|

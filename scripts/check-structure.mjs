@@ -9,7 +9,8 @@
  *             lands a source file with no explanation of what it does.
  * ARCHITECTURE:
  *   - Pure filesystem + regex checks, no dependencies, no network. Exits 1 on any violation.
- *   - Five rules (below). Each prints every offending path, not just the first.
+ *   - Five rules (below). Each prints every offending path, not just the first. The header rule
+ *     also covers os-ui/worker/ (the worker entrypoint, outside core/ and tabs/).
  *   - Runs before the layout migration too: missing core//tabs/ is reported, not crashed on.
  */
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'node:fs';
@@ -76,9 +77,10 @@ if (!existsSync(coreDir) || !existsSync(tabsDir)) {
     if (!existsSync(join(tabsDir, tab, 'manifest.ts'))) fail('TAB-MANIFEST', `${tabsDir}/${tab}`, 'missing manifest.ts (feature key, nav, routes, api, mcpTools, policies, services)');
   }
 
-  // rule 5: every source file explains itself
+  // rule 5: every source file explains itself — including the non-Next entrypoints in
+  // os-ui/worker/, which are production code the Next build never compiles (A4 review L-7).
   const SECTIONS = ['FEATURE:', 'USER STORY:', 'ARCHITECTURE:'];
-  for (const f of [...walk(coreDir), ...walk(tabsDir)].filter(code)) {
+  for (const f of [...walk(coreDir), ...walk(tabsDir), ...walk(join(UI, 'worker'))].filter(code)) {
     const head = readFileSync(f, 'utf8').slice(0, 2000);
     const missing = SECTIONS.filter((s) => !head.includes(s));
     if (missing.length) fail('FILE-HEADER', f, `header missing ${missing.join(' ')}`);

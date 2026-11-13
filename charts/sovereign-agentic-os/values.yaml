@@ -468,6 +468,15 @@ litellm:
     SERVER_ROOT_PATH: "/tools/litellm"
     # DURABLE admin-registered models.
     STORE_MODEL_IN_DB: "true"
+  # A3: the Valkey password for the response cache (`cache_params.password` above reads it
+  # as os.environ/REDIS_PASSWORD). Same Secret Langfuse uses (local: chart-created;
+  # STACKIT: external) — one Valkey credential, not two.
+  extraEnvVars:
+    - name: REDIS_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: valkey-credentials
+          key: password
   resources:
     # This proxy was OOMKilled during the all-at-once boot.
     requests: { cpu: 100m, memory: 1Gi }
@@ -510,7 +519,23 @@ litellm:
       # which is a duplicate reasoning route to fail over to.
     litellm_settings:
       success_callback: ["langfuse"]          # gateway-level tracing to Langfuse
+      # A3 (checklist A30): a REJECTED or failed call is observable too — it lands in
+      # Langfuse as a failed generation (inside the run trace when the OS passed one).
+      failure_callback: ["langfuse"]
       drop_params: true
+      # A3: response cache on the bundled Valkey, OPT-IN PER REQUEST. `mode: default_off`
+      # means nothing is cached unless the caller sends `cache: {"use-cache": true}` —
+      # the OS does so only on its deterministic paths (classify at temperature 0, both
+      # embedders). Agent runs never opt in, so a run is never served a stale answer.
+      cache: true
+      cache_params:
+        type: redis
+        host: valkey                           # the chart's Valkey Service (templates/base/valkey)
+        port: 6379
+        password: os.environ/REDIS_PASSWORD    # extraEnvVars below, from valkey-credentials
+        mode: default_off
+        ttl: 86400                             # 24h — embeddings/classifications are stable
+        supported_call_types: ["acompletion", "completion", "aembedding", "embedding"]
     general_settings:
       master_key: os.environ/PROXY_MASTER_KEY
       # Persist admin-registered models (via /model/new)
@@ -1213,6 +1238,34 @@ osUI:
   image:
     repository: sovereign-os/os-ui    # built locally, loaded into kind
     tag: "0.1.0"
+  # AGENT RUNS IN A WORKER (engine rebuild A4). Off by default: with `enabled: false` the pod
+  # that files a run in `run_jobs` also executes it (AGENTS_WORKER=inline) — a kind install or a
+  # single-pod deploy behaves exactly as before and needs no second workload.
+  # With `enabled: true` a second Deployment (`os-ui-worker`, SAME image, the worker command)
+  # claims jobs with FOR UPDATE SKIP LOCKED and drives them off-request, and os-ui switches to
+  # AGENTS_WORKER=worker so it only ENQUEUES and TAILS `run_events`. That is what makes a run
+  # longer than the 300 s request cap finish, and an os-ui rolling restart lose no run.
+  # Requires postgres.enabled (the `agent_runs` database holds the queue AND the checkpoints).
+  worker:
+    enabled: false
+    replicas: 1
+    # Lease a worker holds on a claimed run (ms). A `running` job whose heartbeat is older than
+    # this is re-queued ONCE (it continues from its checkpoint), then failed. Must exceed the
+    # longest superstep (one model call + one tool call).
+    leaseMs: 600000
+    # Must be >= one superstep: SIGTERM lets the current superstep finish and checkpoint, then the
+    # run goes back on the queue. Too short and the pod is killed mid-model-call (still resumable
+    # from the previous checkpoint, but a wasted call).
+    terminationGracePeriodSeconds: 420
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits:   { cpu: "2",  memory: 1536Mi }
+  # How much of a model/tool call reaches Langfuse (LANGFUSE_REDACTION). Empty = `structure`:
+  # roles + character counts for message content, the full tool-call structure, a 160-char result
+  # preview. `strict`: argument KEY NAMES + character counts only, no preview — for tenants whose
+  # tool arguments may carry personal data. Either way LiteLLM's own nested generation ships the
+  # full prompt unless `turn_off_message_logging` is set (docs/components/langfuse.md).
+  langfuseRedaction: ""
   # Model pricing for Monitoring cost facts — EUR per 1M tokens per LiteLLM
   # model_name.
   modelPricesJson: '{"sovereign-default":{"inputPerM":0.15,"outputPerM":0.25},"sovereign-mock":{"inputPerM":0.15,"outputPerM":0.25},"sovereign-reasoning":{"inputPerM":1.5,"outputPerM":1.75}}'

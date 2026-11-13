@@ -4,7 +4,9 @@
 import 'server-only';
 import type { McpTool } from '@core/mcp/server';
 import { P, fail, str } from '@core/mcp/write-common';
-import { getSystem } from '@tabs/agents/lib/store';
+import { getSystem, getSystemForRun } from '@tabs/agents/lib/store';
+import { getApproval } from '@core/policy/approvals';
+import { whoCanApprove } from '@core/mcp/pending';
 import { loadGuide, isGuidePath, GUIDE_PATHS, type GuidePath } from '@core/tabs-meta/guides';
 
 /**
@@ -15,6 +17,51 @@ import { loadGuide, isGuidePath, GUIDE_PATHS, type GuidePath } from '@core/tabs-
  * non-base discovery tools — importing it here would drag that into base.
  */
 export const discoveryBaseTools: McpTool[] = [
+  {
+    name: 'get_agent_run',
+    tab: 'agents',
+    minRole: 'creator',
+    description:
+      'READ the state of one agent run (LangGraph engine) by its runId: the agents visited so far, whether it finished, is PARKED on held writes awaiting approval (with their approvalIds and who can decide), or was interrupted; the budget used; compile warnings. Purpose: follow a run started by run_agent_system (or the UI) through hold → approve → completion over MCP alone. Governance: only the RUNNER of the run (the user who started it) can read it; any other runId is a typed not_found — a run id is a capability, not an index.',
+    inputSchema: {
+      type: 'object',
+      properties: { runId: { type: 'string', description: 'The run id returned by run_agent_system (run_<uuid>).' } },
+      required: ['runId'],
+      examples: [{ runId: 'run_1b4e28ba-2fa1-11d2-883f-0016d3cca427' }],
+    },
+    call: async (user, args) => {
+      const runId = str(args.runId).trim();
+      if (!runId) fail('get_agent_run needs a `runId`', 400);
+      const { peekRunOwner, inspectOsRun } = await import('@tabs/agents/lib/build/agentic-graph-server');
+      const owner = await peekRunOwner(runId);
+      if (!owner || owner.userId !== user.id) fail('Run not found', 404); // no existence leak
+      const view = getSystemForRun(owner.systemId, P(user));
+      const run = await inspectOsRun({ user, yaml: view.yaml, systemId: owner.systemId, runId });
+      if (!run.exists) fail('Run not found', 404);
+      const heldApprovals = run.heldApprovals.map((h) => {
+        const a = getApproval(h.approvalId);
+        return { ...h, status: a?.status ?? 'unknown', whoCanApprove: a ? whoCanApprove(a) : undefined, approverRole: a?.approverRole };
+      });
+      const { traceUrlFor, langfuseEnabled } = await import('@core/infra/langfuse');
+      return {
+        runId,
+        systemId: owner.systemId,
+        engine: 'langgraph',
+        // A3: the run's Langfuse trace (id = run id) — a deep link, never a list.
+        traceUrl: langfuseEnabled() ? traceUrlFor(runId) : undefined,
+        finished: run.finished,
+        parked: run.parked,
+        heldApprovals,
+        next: run.next,
+        path: run.path,
+        finalText: run.finalText,
+        budget: run.budget,
+        decidedHolds: run.held,
+        warnings: run.warnings,
+        lastRun: view.lastRun?.runId === runId ? { at: view.lastRun.at, ok: view.lastRun.ok, reachedEnd: view.lastRun.reachedEnd, interrupted: view.lastRun.interrupted } : undefined,
+      };
+    },
+  },
   {
     name: 'get_agent_system',
     tab: 'agents',

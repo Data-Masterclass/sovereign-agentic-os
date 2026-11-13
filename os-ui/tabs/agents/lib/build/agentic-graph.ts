@@ -70,7 +70,8 @@ export type ErrorKind = 'policy' | 'exec';
  * a Trino syntax/type error, a bad_request, a timeout, a raw thrown message — is an
  * EXECUTION error, which is not a policy denial.
  */
-const POLICY_ERROR_CODES = new Set(['forbidden', 'held', 'not_found']);
+// `rejected` (A2): a human denied the held call in Governance — a policy outcome, not an execution failure.
+const POLICY_ERROR_CODES = new Set(['forbidden', 'held', 'not_found', 'rejected']);
 
 /**
  * Classify an errored step as a POLICY denial vs an EXECUTION error by parsing the

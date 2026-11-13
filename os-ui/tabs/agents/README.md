@@ -42,14 +42,18 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 
 ## Agent engine (rebuild in progress)
 
-Runs execute in-process, as the signed-in user. Two executors exist behind one flag
-(plan: `docs/superpowers/plans/2026-11-13-engine-rebuild.md`):
+Runs execute as the signed-in user — in a WORKER process since A4, not in the request. Two
+executors exist behind one flag (plan: `docs/superpowers/plans/2026-11-13-engine-rebuild.md`):
 
 - `walker` (default) — the hand-rolled IR walker (`lib/build/agentic-graph.ts`).
 - `langgraph` — the real `@langchain/langgraph` StateGraph under `lib/engine/`:
   `build-graph.ts` (IR → graph: four nodes per agent, supervisor `route` tool, `when` guards via
   `when.ts`, node-level tool narrowing, step budget → `recursionLimit`), `run.ts`
-  (`runGraphEngine`: stream, resume, result), `checkpointer.ts` (Postgres or memory).
+  (`runGraphEngine`: stream, resume, result), `checkpointer.ts` (Postgres or memory),
+  `jobs.ts` + `jobs-postgres.ts` (the `run_jobs` / `run_events` queue and the event tail),
+  `worker-loop.ts` (claim / heartbeat / reap) and `runner-identity.ts` (the live re-read).
+  `lib/build/run-jobs-server.ts` wires them; `os-ui/worker/agent-runs.ts` is the worker pod's
+  entrypoint.
 
 Environment:
 
@@ -61,10 +65,70 @@ Environment:
   (chart: `postgres.extraDatabases`; os-ui runs `PostgresSaver.setup()` at boot). Unset → an
   in-memory checkpointer, reported as `checkpointer: 'memory'` on every run.
 
-Resume: a `langgraph` run has a `runId` (= its LangGraph thread id, on the run report and
-`LastRun`). `POST /api/agents/systems/<id>/run { resume: true, runId }` continues it from its last
-checkpoint; the Run panel offers **Resume** on an interrupted run. `run_agent_system` returns the
-`runId` (resume over MCP arrives in A5).
+Resume: a `langgraph` run has a `runId` (= its LangGraph thread id, minted by
+`core/kernel/run-id.ts`, on the run report and `LastRun`). `POST /api/agents/systems/<id>/run
+{ resume: true, runId }` continues it from its last checkpoint — only for the run's own system and
+runner (404 otherwise; 409 once finished); the Run panel offers **Resume** on an interrupted run
+whose checkpoints are in Postgres.
+
+Approvals as interrupts (A2): a held write parks the run on `interrupt()` before any call of the
+batch executes (`lib/build/hold.ts` is the pure rule; `lib/engine/approval-port.ts` the queue port,
+`approvals-bridge.ts` its server implementation). The decision in Governance resumes the run as
+the runner (`lib/engine/resume.ts`, registered into `core/policy/approvals.ts` `onDecided` by
+`resume-boot.ts` at boot; `lib/build/run-service.ts` drives start/resume/finalise for every door).
+
+SSE events of `POST …/run` (stream): `node-started`, `tool-step`, `node-completed` (unchanged);
+`approval-required { approvalId, tool, node }` when a held write parks the run; `done` (body
+carries `parked`, `heldApprovals`, `warnings`, `checkpointer`) or `error`. The re-attach stream
+`GET …/run/stream?runId=` (owner-checked) replays a parked run's events and adds
+`resumed { approvalId, decision }` when a decision continues it. Events live on an in-process topic
+(`lib/engine/run-events.ts`, single replica until A4).
+
+MCP tools: `run_agent_system` and `resume_agent_run { runId }` (restart recovery; runner-only) in
+`core/mcp/agent-write-tools.ts` (bundle `agent-write`; both are in the static write catalog),
+`get_agent_run { runId }` (state summary, path, held approvals with who can decide; runner-only; a
+read) beside `get_agent_system` in `core/mcp/discovery-base-tools.ts`. `run_agent_system` returns
+`runId`, `traceUrl`, `parked`, `heldApprovals`.
+The Governance tool `decide_approval` resumes a parked run's thread through the same hook and
+returns the `resume` outcome.
+
+One trace per run (A3): `lib/engine/observe.ts` builds the Langfuse trace (id = run id; nodes as
+spans, model calls as generations with usage, tool calls as spans carrying the decision) over the
+SDK client in `core/infra/langfuse.ts`; `build-graph.ts` `observed()` wraps every node. The run
+report and `LastRun` carry `traceUrl` (`<console>/trace/<runId>`) and `traceStoreAvailable`;
+`run_agent_system`, `get_agent_run` and `resume_agent_run` return `traceUrl`. Every model call of a
+run is attributed to the runner (`user = os-<id>`), `domain:`, `agent:`, `run:` and uses the
+system's own LiteLLM key by reference (`LastBuild.litellmKeyRef`, minted by a live Build) or the
+shared agent key — never the master key. The diagnostics route reads Langfuse **by the run's trace
+id**; the Evaluate judge writes a `judge` score on the trace. `lib/engine/run-lock.ts` is the
+per-thread in-flight lock `executeTeamRun` holds inside one process (a concurrent resume is a
+typed 409); across pods the authority is the `run_jobs` row's status.
+
+Runs in a worker (A4): a run is a ROW, not a request. `POST …/run` validates, mints the run id,
+inserts a `queued` `run_jobs` row and tails that run's `run_events` from `seq = 0`;
+`GET …/run/stream?runId=&afterSeq=` tails the same table from a cursor (the A2 in-process topic is
+gone from the read path). `AGENTS_WORKER=inline` (default) executes the job in the same process
+right after filing it — identical events, so every test runs without a worker;
+`AGENTS_WORKER=worker` leaves it to the `os-ui-worker` Deployment, which claims with
+`FOR UPDATE SKIP LOCKED`, heartbeats its lease, and on SIGTERM finishes the current superstep and
+re-queues the run. One start door for everything: `run-jobs-server.ts` `startQueuedRun`
+(route, `build/scheduled.ts`, MCP `run_agent_system`), `resumeQueuedRun` (owner Resume, MCP
+`resume_agent_run`) and `enqueueResumeAfterDecision` (the Governance `onDecided` hook — a decision
+FILES a resume, it no longer drives the graph in the decider's request). `AGENTS_WORKER_LEASE_MS`
+bounds a lease; an abandoned one is re-queued once (keeping `kind='start'` when the run never
+reached a checkpoint), then failed.
+
+A run id is NOT an authorisation (A4 review): `lib/engine/run-visibility.ts` `assertRunVisible` is
+the one gate every run-id door calls before any side effect — the run route's resume, the re-attach
+stream, MCP `resume_agent_run` — always 404, never 403, and the store refuses a resume filed by
+anyone but the run's requester. A worker that loses its lease ABORTS the run and settles nothing
+(`engine/worker-loop.ts` `leaseWatch` / `settlementOf`, both pure); `complete` is lease-guarded,
+`appendEvent` deliberately is not. `inline` mode reaps stale leases once at boot and heartbeats its
+own runs. A decision that arrives while the run is still parking retries the enqueue briefly
+instead of stamping the approval `failed`. The panel's SSE parsing and its re-attach decision live
+in `lib/build/run-stream-client.ts` (pure — a test may not import the `.tsx`), so a `queued`
+cursor at the server's 240-second tail budget re-attaches transparently; `engine/tail-limit.ts`
+caps a pod at 64 concurrent tails (`503` + `Retry-After` beyond that).
 
 Parity: `lib/engine/parity-harness.ts` + `lib/engine/fixtures/*.json` are the golden recordings
 both engines must reproduce (`parity.test.ts`: P1 for both engines, HANDOFF-GUARD, P2 abort +

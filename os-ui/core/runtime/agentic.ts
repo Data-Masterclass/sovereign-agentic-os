@@ -66,6 +66,13 @@ export type LlmRequest = {
   temperature?: number;
   /** Cap on the model's OWN output (the model window's reserved tail). */
   maxTokens?: number;
+  /**
+   * Where this call sits in the run's Langfuse trace (A3): the run trace id and the OS
+   * generation it nests under. The LiteLLM caller forwards it as gateway metadata so the
+   * gateway's own Langfuse callback lands INSIDE the run trace instead of as a stray trace.
+   * Absent on calls outside a run (the assistant, classify).
+   */
+  observe?: { traceId: string; parentObservationId?: string };
 };
 export type LlmCall = (req: LlmRequest) => Promise<LlmCompletion>;
 

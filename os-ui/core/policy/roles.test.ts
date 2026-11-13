@@ -80,6 +80,16 @@ test('SCOPE: a domain deploy item — Builder of that domain approves, a non-Bui
   );
 });
 
+test('SCOPE (A2 review L-G): the requester can never approve their own item, whatever their rank', () => {
+  const item = { domain: 'sales', approverRole: 'domain_admin' as const, scope: 'domain' as const, requestedBy: 'dana' };
+  const dana = { id: 'dana', role: 'domain_admin' as const, domains: ['sales'] };
+  const eve = { id: 'eve', role: 'domain_admin' as const, domains: ['sales'] };
+  assert.equal(canApprove(dana, item), false, 'a domain admin approved their own run escalation');
+  assert.equal(canApprove(eve, item), true);
+  const root = { id: 'root', role: 'admin' as const, domains: [] };
+  assert.equal(canApprove(root, { ...item, requestedBy: 'root' }), false, 'even an admin cannot self-approve');
+});
+
 test('SCOPE: a tenant egress/certification item is (platform) Admin-only', () => {
   const egress = { domain: 'sales', approverRole: 'admin' as const, scope: 'tenant' as const };
   assert.equal(canApprove(admin, egress), true);

@@ -13,6 +13,7 @@ import { config } from '@core/kernel/config';
 import { newRunId } from '@tabs/agents/lib/store';
 import { selectEngine } from '@tabs/agents/lib/engine/select';
 import type { AgentsEngine } from '@core/kernel/agents-engine';
+import type { StartedRunReport, StartRunInput } from '@tabs/agents/lib/build/run-jobs-server';
 
 /** The record the in-cluster scheduler reads (unscoped, no human session). */
 export type SchedulerSystem = { yaml: string; owner: string; disabledAgents: string[] };
@@ -22,6 +23,8 @@ export type ScheduledDeps = {
   /** Stored owner id → live governed principal, or null if unresolvable. */
   resolveOwner?: (ownerId: string) => Promise<CurrentUser | null>;
   runOsTeam?: typeof runOsTeam;
+  /** A4: the queued start door (`langgraph` engine only). Default: `startQueuedRun`. */
+  startQueuedRun?: (input: StartRunInput) => Promise<StartedRunReport>;
   runSystem?: typeof runSystem;
   /** The platform autonomous-execution gate (default: live setting). Injected for tests. */
   autonomousEnabled?: () => boolean;
@@ -110,9 +113,43 @@ export async function runScheduledSystem(
     // run acts under the owner's delegated identity, so a stale direct-write grant
     // must be neutralised to held-for-approval when the owner is no longer builder+.
     const governedYaml = serializeSystem(downgradeGrantsForRole(sys, owner.role));
-    const run = deps.runOsTeam ?? runOsTeam;
     // ENGINE (A1): the scheduler takes the same branch as the route — thread id = a fresh run id.
     const runId = newRunId();
+    // A4: under the governed engine a scheduled run goes through the SAME queue as the UI, so it
+    // is not bound to this request either — a 20-minute nightly run finishes in the worker. The
+    // walker keeps its request-bound call (it has no thread, no checkpoint and no queue).
+    if (engine === 'langgraph') {
+      const start = deps.startQueuedRun ?? (await import('@tabs/agents/lib/build/run-jobs-server')).startQueuedRun;
+      const out = await start({
+        user: owner,
+        systemId,
+        domain: sys.system.domain,
+        messages: [{ role: 'user', content: prompt }],
+        prompt,
+        runId,
+      });
+      if (out.error) return { ok: false, status: out.error.status ?? 500, error: out.error.message };
+      if (!out.body) {
+        return { ok: true, report: { mode: 'live', engine, runId, queued: true, team: true, note: 'filed on the run queue — the worker is executing it' } };
+      }
+      const b = out.body;
+      return {
+        ok: true,
+        report: {
+          mode: 'live',
+          engine,
+          runId: b.runId ?? runId,
+          checkpointer: b.checkpointer,
+          reachedEnd: b.reachedEnd,
+          parked: b.parked,
+          team: true,
+          path: b.path,
+          finalText: b.finalText,
+          nodes: b.nodes.map((r) => ({ node: r.node, model: r.model, steps: r.steps.map((x) => ({ tool: x.tool, isError: x.isError })) })),
+        },
+      };
+    }
+    const run = deps.runOsTeam ?? runOsTeam;
     const team = await run({
       user: owner,
       yaml: governedYaml,
@@ -127,7 +164,7 @@ export async function runScheduledSystem(
       report: {
         mode: 'live',
         engine,
-        runId: team.runId ?? (engine === 'langgraph' ? runId : undefined),
+        runId: team.runId ?? undefined,
         checkpointer: team.checkpointer,
         reachedEnd: team.reachedEnd,
         team: true,

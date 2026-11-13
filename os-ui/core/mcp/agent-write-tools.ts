@@ -21,8 +21,8 @@ import {
   writeFile as writeAgentFile,
   getSystemForEdit,
   getSystemForRun,
-  newRunId,
 } from '@tabs/agents/lib/store';
+import { newRunId } from '@core/kernel/run-id';
 import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { buildSystem } from '@tabs/agents/lib/build/server';
 
@@ -153,10 +153,33 @@ export const agentWriteTools: McpTool[] = [
       // scheduler use. Only the walker exists today; Phase A1 branches on `langgraph` HERE.
       const { selectEngine } = await import('@tabs/agents/lib/engine/select');
       const engine = selectEngine(config, view.system);
-      const runTeam = runTeamOverride ?? (await import('@tabs/agents/lib/build/agentic-graph-server')).runOsTeam;
       // ENGINE (A1): the same branch as the route and the scheduler; thread id = a fresh run id,
-      // returned so an MCP client can correlate (and, from A5, resume) the run.
+      // returned so an MCP client can correlate (and resume) the run.
       const runId = newRunId();
+      // A4: under the governed engine the MCP goes through the SAME queue as the UI and the
+      // scheduler — one start door. `runTeamOverride` (tests) and the walker stay in-request.
+      if (engine === 'langgraph' && !runTeamOverride) {
+        const { startQueuedRun } = await import('@tabs/agents/lib/build/run-jobs-server');
+        const out = await startQueuedRun({ user, systemId, domain: view.system.system.domain, messages: msgs, runId });
+        if (out.error) fail(out.error.message, out.error.status ?? 500);
+        if (!out.body) return { systemId, mode: 'live', engine, runId, queued: true, note: 'filed on the run queue — tail it with get_agent_run' };
+        const b = out.body;
+        return {
+          systemId,
+          mode: 'live',
+          engine,
+          runId: b.runId ?? runId,
+          checkpointer: b.checkpointer,
+          traceUrl: b.traceUrl,
+          reachedEnd: b.reachedEnd,
+          parked: b.parked,
+          heldApprovals: b.heldApprovals ?? [],
+          path: b.path,
+          finalText: b.finalText,
+          nodes: b.nodes.map((r) => ({ node: r.node, model: r.model, steps: r.steps.map((x) => ({ tool: x.tool, isError: x.isError })) })),
+        };
+      }
+      const runTeam = runTeamOverride ?? (await import('@tabs/agents/lib/build/agentic-graph-server')).runOsTeam;
       const team = await runTeam({ user, yaml: view.yaml, systemId, messages: msgs, disabledAgents: view.disabledAgents, engine, runId });
       return {
         systemId,
@@ -164,7 +187,12 @@ export const agentWriteTools: McpTool[] = [
         engine,
         runId: team.runId ?? (engine === 'langgraph' ? runId : undefined),
         checkpointer: team.checkpointer,
+        // A3: the deep link to THIS run's Langfuse trace (id = run id), when the trace store recorded it.
+        traceUrl: team.traceUrl,
         reachedEnd: team.reachedEnd,
+        // A2: a run PARKED on a held write — decide its approvals (decide_approval) to resume it.
+        parked: team.parked ?? false,
+        heldApprovals: team.heldApprovals ?? [],
         path: team.path,
         finalText: team.finalText,
         // Per-node summary: model + governed tool steps (no raw model text — tight).
@@ -173,6 +201,48 @@ export const agentWriteTools: McpTool[] = [
           model: r.model,
           steps: r.result.steps.map((s) => ({ tool: s.tool, isError: s.isError })),
         })),
+      };
+    },
+  },
+  {
+    name: 'resume_agent_run',
+    tab: 'agents',
+    minRole: 'creator',
+    description:
+      'RESUME an interrupted agent run (LangGraph engine) from its last checkpoint — restart recovery after a pod restart or a dropped request. NOT for a run parked on an approval: that one resumes by itself when the approval is decided (decide_approval). Governance: only the RUNNER can resume their run (typed not_found otherwise); a finished run is a typed conflict; the resumed run executes AS YOU through the same governed door. Returns the completed report (or the next parked state).',
+    inputSchema: {
+      type: 'object',
+      properties: { runId: { type: 'string', description: 'The run id to continue.' } },
+      required: ['runId'],
+      examples: [{ runId: 'run_1b4e28ba-2fa1-11d2-883f-0016d3cca427' }],
+    },
+    call: async (user, args) => {
+      const runId = str(args.runId).trim();
+      if (!runId) fail('resume_agent_run needs a `runId`', 400);
+      // A4-review-H-1: the SAME visibility gate the run route and the re-attach stream use — the
+      // checkpoint's owner AND the `run_jobs` row must both be this caller's, both answering 404.
+      const { assertRunVisible } = await import('@tabs/agents/lib/engine/run-visibility');
+      const { peekRunOwner } = await import('@tabs/agents/lib/build/agentic-graph-server');
+      const owner = await peekRunOwner(runId);
+      const seen = assertRunVisible(owner ? { requestedBy: owner.userId, systemId: owner.systemId } : null, runId, user.id);
+      const view = getSystemForRun(seen.systemId, P(user));
+      // A4: a resume is a `run_jobs` row too — the same queue the decision hook and the UI use.
+      const { resumeQueuedRun, runJobStore } = await import('@tabs/agents/lib/build/run-jobs-server');
+      assertRunVisible(await (await runJobStore()).get(runId), runId, user.id, seen.systemId);
+      const out = await resumeQueuedRun({ user, systemId: seen.systemId, domain: view.system.system.domain, runId });
+      if (out.error) fail(out.error.message, out.error.status ?? 500);
+      if (!out.body) return { runId, systemId: seen.systemId, engine: 'langgraph', queued: true, note: 'the resume is filed — the worker is executing it' };
+      const body = out.body;
+      return {
+        runId,
+        systemId: seen.systemId,
+        engine: 'langgraph',
+        traceUrl: body.traceUrl,
+        reachedEnd: body.reachedEnd,
+        parked: body.parked,
+        heldApprovals: body.heldApprovals,
+        path: body.path,
+        finalText: body.finalText,
       };
     },
   },
@@ -207,6 +277,9 @@ type RunTeamFn = (input: {
   runs: { node: string; model: string; result: { steps: { tool: string; isError: boolean }[] } }[];
   runId?: string;
   checkpointer?: 'postgres' | 'memory';
+  traceUrl?: string;
+  parked?: boolean;
+  heldApprovals?: { approvalId: string; tool: string; node: string }[];
 }>;
 
 // runOsTeam drives a LIVE LiteLLM call; tests inject a spy so the wrapper's

@@ -34,9 +34,17 @@ tabs/      One folder per tab. A tab imports @core/* and itself — never anothe
 
 app/       The Next.js App Router tree. Routes MUST live here, so pages stay put and
            import from @core/* and @tabs/*. Nothing but routing belongs in app/.
+
+worker/    ENTRYPOINTS the Next build never compiles — the `os-ui-worker` container's command.
+           `start.mjs` registers `resolve-hook.mjs` (the tsconfig path aliases, READ from
+           tsconfig.json) and imports `agent-runs.ts` under Node's type stripping; `empty.mjs`
+           is what `server-only` resolves to outside a bundler. Like `instrumentation.ts`, these
+           files MAY import a tab: they are entrypoints, not kernel code. `check-structure.mjs`
+           enforces the FEATURE / USER STORY / ARCHITECTURE header here too.
 ```
 
-Path aliases: `@core/*` → `core/*`, `@tabs/*` → `tabs/*` (tsconfig + the test loader).
+Path aliases: `@core/*` → `core/*`, `@tabs/*` → `tabs/*` (tsconfig + the test loader + the
+worker's resolve hook, which derives them from `tsconfig.json` so the three cannot disagree).
 
 ## The 13 tabs
 
@@ -230,10 +238,15 @@ the node's advertised tools (`toOpenAiTools`); if the gateway rejects `tools` it
 a `react` flag and retries with the ReAct text protocol; a cap or loop-guard triggers
 the same one-shot synthesis the walker did. `tools_<id>` is the **node-level gate**:
 only tools this node is advertised reach `grantedToolExecutor` (an un-advertised call
-gets a typed `not_found` and never executes); the hold decision stays inside the
-executor, whose typed `held` result is recorded in `state.held`. `route_<id>` records
-the visit (`nodeRuns`, `handoffs`, `node-completed`), then routes. act → tools is a
-conditional edge on "the reply carried tool calls"; tools → act is a plain edge.
+gets a typed `not_found` and never executes). It runs in two phases: first the **hold
+decision for the whole batch** (`holdDecisionFor`, parking the run on `interrupt()` —
+see "Approvals are interrupts"), then **one executed call per superstep**, so every
+execution is checkpointed before the next one starts. `route_<id>` records the visit
+(`nodeRuns`, `handoffs`, `node-completed`), then routes. act → tools is a conditional
+edge on "the reply carried tool calls"; tools → tools while calls remain, else → act.
+Every agent visit costs one budget step in `plan_<id>` (plus one per tool round and per
+supervisor decision), so an unguarded handoff cycle ends at the budget — and is a
+compile warning.
 
 **Supervisor.** `route_<sup>` asks the model through a mandatory `route` tool
 (`{ next: <member>|'END', brief }`, text fallback `NEXT: <member>`) and
@@ -265,7 +278,200 @@ with `streamMode: ['custom','updates']`; nodes emit through `config.writer`, and
 route forwards the same SSE events as before (`node-started`, `tool-step`,
 `node-completed`, `done`, `error`). `POST …/run { resume: true, runId }` calls
 `stream(null, { configurable: { thread_id } })` and continues from the last checkpoint;
-the Run panel's "Resume" button does exactly that.
+the Run panel's "Resume" button does exactly that — offered only when the checkpointer is
+`postgres` (a memory thread died with the pod). The first superstep stamps
+`state.owner = { systemId, userId, domain }`; a resume must name the same system **and**
+user or it is a typed `ResumeNotFoundError` (404 — never confirming the thread exists), and a
+thread with nothing left to run is a `RunAlreadyFinishedError` (409), never a silent no-op.
+Run ids come from `core/kernel/run-id.ts` (`crypto.randomUUID`): a run id is a capability.
+Checkpoints hold the full state — raw tool results included — indefinitely; retention is an
+open item (plan A13 follow-up). The checkpointer and the in-process run-event topic assume a
+**single os-ui replica** until A4's worker.
+
+## Approvals are interrupts
+
+A write that needs a human **pauses the run**; the decision **resumes it**. Nothing executes
+in between — not the held call, and not the other calls of the same batch.
+
+```
+act_<id> ──tool calls──▶ tools_<id>  phase 1: holdDecisionFor(preset, tool) for EVERY call
+                            │          held → ApprovalPort.enqueueOnce(<threadId>:<callId>)   (idempotent)
+                            │          pending → interrupt({ approvalId, tool, node, args })  ── run PARKS
+                            │                                                                   SSE approval-required
+   Governance inbox / MCP decide_approval ── decide() ── onDecided hook ── resume.ts
+                            │          runner re-read LIVE (principalById): disabled / role lost / domain lost → refused
+                            │          Command({ resume: { [approvalId]: decision } }) as the RUNNER
+                            ▼          SSE resumed
+                         tools_<id>  phase 2: one call per superstep — approved → grantedToolExecutor(user = runner)
+                                              rejected → {"error":{"code":"rejected","approvalId"}} to the model
+```
+
+**Where the hold lives.** The rule is the pure module `tabs/agents/lib/build/hold.ts`
+(`writeTargetScope`, `holdDecision`, `holdDecisionFor`) — the same rule the executor's gate 1b
+applied in A1, lifted out so the graph builder (no `server-only`) can call it before anything
+executes. Under `langgraph` the executor runs with `holdAt: 'node'` and no longer re-holds; the
+walker keeps `holdAt: 'executor'` and the old out-of-band `held` result.
+
+**Idempotency.** LangGraph re-runs an interrupted node from its start on every resume, so the
+node enqueues through `enqueueOnce` keyed on `interruptKey = <threadId>:<callId>` — one approval
+per held call however many times the node re-runs. The **queue is the source of truth**: on every
+re-run the node reads each approval's state back; a decided one never interrupts again, a pending
+one parks again. A resume payload meant for another approval therefore cannot unblock the wrong
+call. Phase 2 executes one call per superstep so a crash between two executions re-executes only
+the call in flight.
+
+**Who executes.** The approval record carries `runId`, `threadId`, `interruptKey`, `systemId`,
+`node`, `tool`, `args` and the **runner's principal snapshot**. `core/policy/approvals.ts`
+`decide()` fires the registered `onDecided` handlers (a registration at boot from
+`tabs/agents/lib/engine/resume-boot.ts`, mirroring `core/folders/adapters.ts` — the kernel never
+imports the tab); `decisionSettled(id)` lets both decide doors await the outcome. The handler
+(`engine/resume.ts`) re-reads the runner live and refuses — typed, stamped on the record's
+`resume` field — when the runner is gone or no longer clears the tool's role floor; otherwise it
+rebuilds the run context **as the runner** (`run-service.ts`) and continues the thread. The
+approver authorises; the runner executes. `applyEffect` performs **no approver-side effect** for a
+run approval. A rejection also resumes: the agent receives the typed `rejected` result (a policy
+outcome in the UI) and continues. A parked approval has **no TTL** in v1 — an open policy
+question recorded in `docs/components/os-ui.md`.
+
+**Watching it finish.** The run route's `done` body carries `parked` and `heldApprovals`; the
+resume happens in the decider's request, so the panel re-attaches to the run's event topic
+(`GET …/run/stream?runId=`, owner-checked) and sees `resumed` → `node-started` … `done`. MCP:
+`get_agent_run { runId }` (state, path, held approvals), `resume_agent_run { runId }` (restart
+recovery), and `decide_approval` resumes through the same hook.
+
+## One trace per run
+
+A run is **one Langfuse trace whose id is the run id** (= the LangGraph thread id). The engine
+does not use a LangChain callback handler — our model calls are OpenAI-shaped requests to
+LiteLLM, not LangChain runnables — so the tree is built explicitly with the `langfuse` SDK,
+which gives exact control over ids:
+
+```
+core/infra/langfuse.ts            the ONE SDK client (buffered, never awaited by a run), traceUrlFor,
+                                  scoreTrace, readObservations (+ observationsQuery, which refuses
+                                  an unfiltered read with a typed error)
+tabs/agents/lib/engine/observe.ts the RunObserver port + the Langfuse implementation (client injected)
+build-graph.ts  observed(name, body)   every plan_/act_/tools_/route_ node runs inside a span; the node
+                                  gets an LlmCall that records each completion as a GENERATION
+                                  (model, usage, redacted input/output) and a tool() wrapper that
+                                  records each governed call as a span with the DECISION
+run.ts                            finish() → the terminal `run.result` span; flush() in the background
+agentic-graph-server.ts           builds the observer per run (resume: no new trace), wires the
+                                  caller context and the executor's traceContext
+```
+
+Three rules keep it one tree:
+
+1. **One `trace-create` per run start; a resume creates none.** The trace carries
+   `userId` (the runner), `sessionId` (the system), tags `domain:` `agent:` `run:` `engine:`.
+   The outcome is a terminal `run.result` span rather than a trace update (a trace update is
+   a second trace event in the SDK; the recorded-ingestion test asserts exactly one).
+2. **Everything nests.** Governance `trace()` events (`core/infra/agent-governed.ts`) become
+   spans of the run trace when the executor passes `traceContext` — through the deps, never a
+   global. The LiteLLM caller forwards `existing_trace_id` + `parent_observation_id`, so the
+   gateway's own Langfuse callback lands under the OS generation instead of as a stray trace.
+3. **Every read is filtered.** The diagnostics route reads observations by `traceId=<runId>`;
+   without a run id, by the caller's user id and a time window. `observationsQuery` throws on
+   anything looser, and that rule has a test.
+
+The LiteLLM side carries the same identity: `callerCredential` tags every call `domain:`,
+`agent:`, `tab:`, `run:` with `user = os-<id>`, resolves the system's own key by **reference**
+when Build minted one and the shared agent key otherwise — and never the master key, which the
+repo-wide `MODEL-KEY` test confines to `litellm-admin.ts`, `litellm-write.ts`, the key
+provisioner and `config.ts`.
+
+**Redaction, two levels** (`LANGFUSE_REDACTION`, `config.langfuseRedaction`). `structure` (the
+default): message content as roles + character counts, the tool-call structure (names, ids,
+arguments) in full, each tool result as a character count plus a 160-character preview. `strict`:
+argument **key names** and their sizes only, and no preview — for tenants whose tool arguments can
+carry personal data. Neither level reaches LiteLLM's own nested generation, which carries the full
+prompt unless the gateway is told otherwise (`turn_off_message_logging`) — see
+`docs/components/langfuse.md`.
+
+**In-flight lock.** `executeTeamRun` takes a per-thread lock (`engine/run-lock.ts`) before any
+marker or event and releases it in `finally`; a second entrant on the same run gets a typed 409
+instead of executing an approved write twice. Since A4 the authoritative lock is the `run_jobs`
+row (a `queued`/`running` run cannot be re-queued, typed 409 across pods); the in-process lock
+stays as a second belt inside one process.
+
+## Runs execute in a worker
+
+Before A4 a run was bound to the request that started it: the HTTP handler drove `graph.stream()`
+to the end, so `maxDuration = 300` was the real ceiling on a run and an os-ui rolling restart
+killed whatever was in flight. Since A4 **the route files the run and tails its events; something
+else executes it.**
+
+**Two tables in the `agent_runs` database** (the same one as the checkpointer; idempotent DDL at
+boot, next to `PostgresSaver.setup()` — `engine/jobs-postgres.ts`):
+
+| Table | Shape | Why |
+|---|---|---|
+| `run_jobs` | `run_id` **primary key**, `system_id`, `domain`, `requested_by`, `principal_snapshot jsonb`, `input jsonb`, `kind start\|resume`, `status queued\|running\|parked\|done\|failed`, `locked_by`, `locked_at`, `attempts`, `error`, `created_at`, `updated_at` | ONE ROW PER RUN. A resume re-queues the same row, so the status column *is* the cross-process in-flight lock. |
+| `run_events` | `(run_id, seq)` **primary key**, `event`, `data jsonb`, `at` | Append-only, written only by the lease holder. `event` is exactly the SSE vocabulary (`node-started`, `tool-step`, `node-completed`, `approval-required`, `resumed`, `done`, `error`); anything else is dropped and reported. `seq` is the client's cursor. |
+
+**The port** is `engine/jobs.ts` (`RunJobStore`) with two implementations: Postgres, and an
+in-memory one that is the contract every implementation must meet — it is what the tests drive,
+and what a laptop without `AGENT_RUNS_DATABASE_URL` runs on.
+
+**The worker loop** (`engine/worker-loop.ts`, pure; wired by `build/run-jobs-server.ts`;
+entrypoint `worker/agent-runs.ts`): claim the oldest `queued` row with
+`UPDATE … WHERE run_id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)` — two workers never take the
+same run and neither blocks — stamp `locked_by`/`locked_at`, re-read the runner **live**, run it,
+write every engine event to `run_events`, settle the row. A `running` lease nobody heartbeats is
+re-queued **once** (as a `resume` when there is a checkpoint to continue, keeping `kind='start'`
+when the run never reached one) and then **failed**, so a run never sits `running` forever.
+SIGTERM stops new claims and aborts the run in flight at its next superstep boundary: what
+completed is checkpointed and the row goes back to `queued`.
+
+**A lost lease is an abort.** The heartbeat is a watch (`leaseWatch`): the first beat that reports
+the row is no longer `running` under this pod aborts the run *and* marks the job abandoned, so
+this process settles nothing and re-queues nothing — the pod that re-claimed the row owns it. The
+settle itself is lease-guarded in SQL (`AND locked_by=… AND status='running'`), so a stale
+holder's `done` updates no rows. `run_events` appends are deliberately **not** guarded: a late
+event is ordered after the new holder's by `seq` and is at worst a duplicate line in the panel,
+whereas a stale settle would end a run somebody else is still driving. `settlementOf` (pure) is
+the whole decision: abandon ▸ failed ▸ requeue ▸ parked/done.
+
+**`inline` still reaps.** There is no loop to sweep leases in `inline` mode, so
+`ensureRunJobsReady()` runs one `reapStale` sweep at boot and an inline run heartbeats its own
+lease. An os-ui pod OOM-killed mid-run is picked up by the next pod's boot.
+
+**A run id is not an authorisation.** `engine/run-visibility.ts` `assertRunVisible` is the ONE
+gate every run-id door calls *before* any side effect — `POST …/run` with `{ resume: true }`,
+`GET …/run/stream`, MCP `resume_agent_run` — and the store refuses a resume whose `requested_by`
+differs from the row's as defence in depth. Always 404, never 403: a 403 would confirm that the
+run exists and belongs to someone else.
+
+**Identity, again.** The job carries a `principal_snapshot` — what was true when the run was
+filed, never the authority. Before executing, `engine/runner-identity.ts` re-reads the runner from
+the live directory and refuses typed when the identity changed: `runner_unavailable` (gone or
+disabled), `runner_role_changed` (downgraded below the filed role), `runner_domain_lost`. A role
+*upgrade* is not a refusal — the yaml is re-governed against the owner's live role on every run.
+
+**The tail** is a **poll** of `(run_id, seq)` (a primary-key range scan, 400 ms), not
+`LISTEN/NOTIFY`: it is correct across pods and after any reconnect, needs no dedicated connection
+per watcher, and a few hundred milliseconds is invisible next to a model call. `POST …/run` tails
+from `seq = 0`; `GET …/run/stream?runId=&afterSeq=` tails from the client's cursor, so a re-attach
+replays only what it missed. A `done` whose body says `parked: true` is **not** terminal — the
+decision will continue the run on the same id. At 240 s both doors emit a `queued`
+`{ runId, afterSeq }` frame and the panel re-attaches from that cursor
+(`build/run-stream-client.ts`, pure and unit-tested — the panel is a `.tsx` a test may not
+import). One pod holds at most 64 tails (`engine/tail-limit.ts`); the next gets `503` +
+`Retry-After`, because a tail borrows a pooled connection every 400 ms and sign-in must not lose
+to a wall of open Run panels.
+
+**One switch, `AGENTS_WORKER`.** `inline` (the default) means the process that files the job also
+executes it, immediately, writing the same `run_events` — a kind install, a laptop and the whole
+test suite behave exactly as before and need no worker process. `worker` means os-ui only enqueues
+and tails, and the `os-ui-worker` Deployment (same image, `node --experimental-strip-types
+worker/start.mjs`, `AGENTS_WORKER=worker`) executes. The chart sets it only when
+`osUI.worker.enabled`.
+
+**Every door is the same door.** The run route, `build/scheduled.ts`, the MCP `run_agent_system`
+and `resume_agent_run`, and the Governance `onDecided` hook all go through
+`build/run-jobs-server.ts` (`startQueuedRun` / `resumeQueuedRun` / `enqueueResumeAfterDecision`).
+In particular a decision no longer drives the graph inside the decider's request — it files a
+`resume` job, and the approval card says `queued` until the run reports back.
 
 ## A data product is a dbt project in a git repo the OS owns
 

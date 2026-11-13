@@ -1,32 +1,52 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Run one agent system (start or resume) through the governed engine, streaming progress.
+ * USER STORY: As a builder I press Run and watch each agent work, every tool call governed as me; a
+ *             run interrupted by a restart resumes from its checkpoint instead of starting over.
+ * ARCHITECTURE: ENQUEUE + TAIL (A4). Under the `langgraph` engine the route validates, mints the
+ *             run id, files a `run_jobs` row and then TAILS that run's `run_events` — it never
+ *             drives the graph itself. A RESUME is owner-gated HERE, before the enqueue
+ *             (`assertRunVisible`, A4-review-H-1): the engine's own gate fires only after the row
+ *             has been re-queued and the history has streamed, which let a guessed run id replay
+ *             somebody else's run. `AGENTS_WORKER=inline` (the default) executes the job in
+ *             this process right after filing it, so the response, the events and the error
+ *             statuses are identical to before; `worker` leaves it to the `os-ui-worker` pod, so a
+ *             run outlives the request. The walker engine keeps its request-bound path.
+ *             Thin route over `tabs/agents/lib/build/run-jobs-server.ts` + `engine/jobs.ts`.
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { getSystemForRun, setRunning, recordActivity, setActivity, clearActivity, setLastRun, startRunCheckpoint, checkpointNode, newRunId } from '@tabs/agents/lib/store';
+import { getSystemForRun, setRunning, recordActivity, clearActivity, setActivity, setLastRun, startRunCheckpoint } from '@tabs/agents/lib/store';
 import type { LastRun } from '@tabs/agents/lib/store';
+import { newRunId } from '@core/kernel/run-id';
 import { runSystem } from '@tabs/agents/lib/build/server';
-import { runOsTeam, type RunOsTeamResult } from '@tabs/agents/lib/build/agentic-graph-server';
-import { isAgenticOsTeam, resolveFolderGrantsForRun, summarizeWriteOutcomes, writeOutcomesLine } from '@tabs/agents/lib/build/os-tools';
-import { classifyStepError } from '@tabs/agents/lib/build/agentic-graph';
-import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
-import { deriveContextUsage } from '@tabs/agents/lib/build/context-usage';
-import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
+import { executeTeamRun, prepareRunYaml } from '@tabs/agents/lib/build/run-service';
+import { enqueueRun, runJobStore } from '@tabs/agents/lib/build/run-jobs-server';
+import { isTerminalEvent, tailRunEvents, type RunEventRow } from '@tabs/agents/lib/engine/jobs';
+import { assertRunVisible } from '@tabs/agents/lib/engine/run-visibility';
+import { acquireTail } from '@tabs/agents/lib/engine/tail-limit';
+import { isAgenticOsTeam } from '@tabs/agents/lib/build/os-tools';
 import { cleanTurns } from '@core/runtime/turns';
 import { config } from '@core/kernel/config';
 import { selectEngine } from '@tabs/agents/lib/engine/select';
-import type { AgentsEngine } from '@core/kernel/agents-engine';
 
 export const dynamic = 'force-dynamic';
 // A multi-node team walk (each node a PLAN→ACT loop on a large model) can run long;
 // give the streamed turn room before the platform kills it (mirrors the software team).
 export const maxDuration = 300;
+/** How long the route follows a queued run before handing the client a 202 + the run id to re-attach. */
+const TAIL_BUDGET_MS = 240_000;
 
 type ChatMsg = { role: 'user' | 'assistant'; content: string };
 
 function fail(e: unknown) {
   const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
+  const retryAfter = (e as { retryAfterSeconds?: number })?.retryAfterSeconds;
+  return NextResponse.json(
+    { error: (e as Error).message },
+    { status, ...(retryAfter ? { headers: { 'retry-after': String(retryAfter) } } : {}) },
+  );
 }
 
 /**
@@ -45,160 +65,6 @@ function defaultRunTask(system: { system: { name: string; domain: string } }): s
   );
 }
 
-/** A one-line, single-line result summary for a tool step (observability, kept tight). */
-function summarizeResult(text: string, max = 240): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
-}
-
-/** Bound a full step field (tool args JSON / raw result) for the drill-down. */
-function boundField(text: string, max = 4_000): string {
-  return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
-}
-
-/** The per-node reveal shape returned to the UI (and persisted into LastRun). */
-function nodeReveal(r: {
-  node: string;
-  model: string;
-  tier?: 'fast' | 'reasoning';
-  tierReason?: string;
-  status: string;
-  error?: string;
-  input?: string;
-  result: { finalText: string; steps: { tool: string; args: Record<string, unknown>; result: string; isError: boolean }[] };
-}) {
-  return {
-    node: r.node,
-    model: r.model,
-    // AUTO per-node routing decision: which tier, and the deterministic reason —
-    // so the drill-down shows "performance_analyst → fast · read-only gatherer".
-    tier: r.tier,
-    tierReason: r.tierReason,
-    status: r.status,
-    error: r.error,
-    // What this agent was GIVEN (role prompt + team-progress handoff + user turn).
-    input: r.input ? boundField(r.input, 8_000) : undefined,
-    finalText: r.result.finalText,
-    steps: r.result.steps.map((s) => ({
-      tool: s.tool,
-      isError: s.isError,
-      // Errored steps carry WHY: a real governance block ('policy') vs an execution
-      // failure ('exec'), so the UI shows "DENIED" only for the former.
-      errorKind: s.isError ? classifyStepError(s.result) : undefined,
-      summary: summarizeResult(s.result),
-      // Full INPUT (args) and OUTPUT (result) so a step can be inspected, not just named.
-      args: boundField(JSON.stringify(s.args ?? {})),
-      result: boundField(s.result),
-    })),
-  };
-}
-
-/**
- * The system's declared grant ids per kind, read from the (already governed) yaml —
- * for the Evaluate "granted vs. used" strip. Best-effort: an unparseable yaml yields
- * empty lists (the strip then just shows what was used). Files carry no grant list in
- * the schema, so `files` is always empty here.
- */
-function grantedIdsFromYaml(yaml: string) {
-  try {
-    const g = parseSystem(yaml).grants;
-    return {
-      data: g.data.map((x) => x.id),
-      knowledge: g.knowledge.map((x) => x.id),
-      files: [] as string[],
-      metrics: g.metrics.map((x) => x.id),
-      connections: g.connections.map((x) => x.id),
-    };
-  } catch {
-    return { data: [], knowledge: [], files: [], metrics: [], connections: [] };
-  }
-}
-
-/**
- * Finalize a completed team run into (a) the exact JSON body the non-streaming path
- * has always returned AND (b) the `LastRun` record persisted so the 0.1.80 legible
- * render + per-node persistence keep working. Kept as ONE function so the streaming
- * `done` frame and the non-streaming JSON response are byte-for-byte the same shape.
- */
-function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: string, engine: AgentsEngine) {
-  // Normalise team run into LastRun shape and persist it.
-  const teamSteps = team.runs.flatMap((r) =>
-    r.result.steps.map((s) => ({
-      node: r.node,
-      // A real policy block → 'deny'; an execution failure → 'error'; else 'allow'.
-      effect: !s.isError ? 'allow' : classifyStepError(s.result) === 'policy' ? 'deny' : 'error',
-      tool: s.tool,
-      ran: true,
-    })),
-  );
-  // A run is ok iff no node failed or had a denied/errored tool.
-  const teamOk = team.runs.every((r) => r.status === 'ok');
-  // Per-node drill-down: model + STATUS + what that agent was GIVEN (input) + what
-  // it concluded (finalText) + its tool calls with args → result. Built once, and
-  // PERSISTED into LastRun so the per-agent cards survive a tab-switch / reseed.
-  const nodes = team.runs.map(nodeReveal);
-  // "Context actually used per run" (#177): derived from the RAW team runs — args are
-  // real objects here (highest fidelity), before the per-node persistence stringifies
-  // them. Agents discover context at runtime (no pre-injected pack), so this trace IS
-  // the honest consumption record. Attached to the response + LastRun.
-  const contextUsage = deriveContextUsage(team.runs.map((r) => ({ steps: r.result.steps })));
-  const grantedIds = grantedIdsFromYaml(yaml);
-  // Honest WRITE accounting — counted DIRECTLY from every node's executed steps: direct
-  // My-scope writes (the My-direct rule) vs writes held in Governance → Inbox. `held` is
-  // now the REAL held-write count (was hard-coded 0), so the panel never under-reports a
-  // queued write.
-  const outcomes = summarizeWriteOutcomes(
-    team.runs.flatMap((r) => r.result.steps.map((s) => ({ tool: s.tool, result: s.result, isError: s.isError }))),
-  );
-  const writeSummary = { line: writeOutcomesLine(outcomes), ...outcomes };
-  const lastRun: LastRun = {
-    at: Date.now(),
-    running,
-    // A run is only genuinely ok if every node that ran finished 'ok' AND the walk
-    // reached the end of the path — `teamOk` alone reads true for a budget-stopped
-    // partial run (every node that DID run was fine; the run just didn't finish).
-    ok: teamOk && team.reachedEnd,
-    path: team.path,
-    reachedEnd: team.reachedEnd,
-    traces: 0,
-    held: outcomes.heldTotal,
-    steps: teamSteps,
-    nodes,
-    contextUsage,
-    grantedIds,
-    output: team.finalText,
-    writeSummary,
-    mode: 'live',
-    // Engine rebuild A1: the run id (= LangGraph thread id) a Resume continues, the engine and
-    // where its checkpoints live. Absent on walker runs.
-    runId: team.runId,
-    engine,
-    checkpointer: team.checkpointer,
-    // An aborted/limit-hit LangGraph run is legible AND resumable (the same banner a restart shows).
-    interrupted: team.interrupted || undefined,
-  };
-  const body = {
-    running,
-    mode: 'live' as const,
-    // Which executor produced this result (engine rebuild A0/A1).
-    engine,
-    runId: team.runId,
-    checkpointer: team.checkpointer,
-    warnings: team.warnings,
-    interrupted: team.interrupted,
-    team: true,
-    ok: teamOk && team.reachedEnd,
-    reachedEnd: team.reachedEnd,
-    path: team.path,
-    finalText: team.finalText,
-    nodes,
-    contextUsage,
-    grantedIds,
-    writeSummary,
-  };
-  return { body, lastRun };
-}
-
 /** A turn's conversation from the request body (`messages`, else `prompt`). */
 function runMessages(body: Record<string, unknown>, prompt: string): ChatMsg[] {
   const clean = cleanTurns(body.messages);
@@ -207,9 +73,7 @@ function runMessages(body: Record<string, unknown>, prompt: string): ChatMsg[] {
 
 /**
  * Mark the run FINISHED: clear the persistent running flag for editors (the run has
- * completed by the time this is called, in `complete()`), record activity for
- * run-only consumers. Returns the resulting running state (false) for the report
- * body — so a completed run never lingers as "running" with a live Stop button.
+ * completed by the time this is called), record activity for run-only consumers.
  */
 function markRunFinished(id: string, user: Parameters<typeof setRunning>[1]): boolean {
   try {
@@ -220,17 +84,24 @@ function markRunFinished(id: string, user: Parameters<typeof setRunning>[1]): bo
   }
 }
 
-/**
- * POST → run a test invocation of the system through the governed gateway (every
- * tool call OPA-checked + Langfuse-traced), and flip the running flag. `stop:true`
- * just halts the system without an invocation.
- */
 /** The client opts into live SSE progress by asking for `text/event-stream`. */
 function wantsStream(req: Request, body: Record<string, unknown>): boolean {
   if (body.stream === true) return true;
   return (req.headers.get('accept') ?? '').includes('text/event-stream');
 }
 
+/**
+ * POST → run a test invocation of the system through the governed gateway (every
+ * tool call OPA-checked + Langfuse-traced), and flip the running flag. `stop:true`
+ * just halts the system without an invocation. `{ resume: true, runId }` continues a
+ * LangGraph thread (restart recovery); a run PARKED on an approval is resumed by the
+ * Governance decision itself (A2) — the panel re-attaches to `GET …/run/stream?runId=`.
+ *
+ * SSE events: `node-started`, `tool-step`, `node-completed` (unchanged), `approval-required`
+ * `{ approvalId, tool, node }` when a held write parks the run, `resumed` `{ approvalId,
+ * decision }` on the re-attach stream when a decision continues it, then `done` (whose body
+ * carries `parked` + `heldApprovals` for a parked run) or `error`.
+ */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   let resolvedId: string | undefined;
   let resolvedUser: Awaited<ReturnType<typeof requireUser>> | undefined;
@@ -273,26 +144,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // Thread id = run id: minted here, carried on the run report and LastRun, continued by Resume.
     const runId = resume ? requestedRunId : newRunId();
 
-    // Mark in-progress so a returning user sees "running since…" not a blank slate.
-    setActivity(id, { kind: 'running', startedAt: Date.now() });
-    // Open a durable, per-step run checkpoint (stamped with this process's instance
-    // id) so a pod restart mid-run leaves a legible, recoverable record — see
-    // recoverInterrupted() in the store. Cleared by clearActivity() on completion.
-    startRunCheckpoint(id, { prompt, plannedNodes: view.system.agents.map((a) => a.id), runId: engine === 'langgraph' ? runId : undefined });
-
-    // Re-assert the builder-gate against the OWNER's CURRENT role (S1): a stale
-    // direct-write grant (set while the owner was a builder, or by an admin) is
-    // downgraded to held-for-approval before this run — read live, never trusted
-    // from the saved yaml.
-    let yaml = await governYamlForOwner(view.yaml, view.owner);
-
-    // Wave 3 — resolve FOLDER grants to the concrete item ids they currently cover
-    // against the acting user's live DLS-scoped lists (late-binding; the resolved set
-    // is provably a subset of what the runner may see). No-op when there are no folder
-    // grants. Records a "resolved M of P" note per grant to the trace.
-    yaml = serializeSystem(
-      await resolveFolderGrantsForRun(resolvedUser, parseSystem(yaml), id),
-    );
+    // The governed yaml this run executes: the OWNER's current role re-asserted over the grants
+    // (a stale direct-write grant downgrades to held — S1) and folder grants late-bound to the
+    // acting user's live DLS-scoped lists (Wave 3). Read live, never trusted from the saved yaml.
+    // LAZY: a queued (langgraph) run is governed by the EXECUTOR as the live runner, so this route
+    // must not do the same work a second time — only the request-bound paths below need it here.
+    const governedYaml = () => prepareRunYaml(resolvedUser!, view, id);
 
     // Any agentic-os LangGraph team (data + knowledge + connections + software
     // grants, all resolving to the MCP registry) runs LIVE, in-process, as the
@@ -304,30 +161,88 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       const messages = runMessages(body, prompt);
       const user = resolvedUser;
 
-      // Complete a finished team result: flip the running flag, persist LastRun, and
-      // return the exact JSON body (shared by the stream's `done` frame and the
-      // non-streaming response, so the final render is identical either way).
-      const complete = (team: RunOsTeamResult) => {
-        const running = markRunFinished(id, user);
-        const { body: out, lastRun } = finalizeTeamRun(team, running, yaml, engine);
-        try { setLastRun(id, user, lastRun); } catch { /* run-only consumer: persist best-effort */ }
-        return out;
-      };
+      // ---- A4: the governed engine runs through the QUEUE, never in this request ----------
+      if (engine === 'langgraph') {
+        const store = await runJobStore();
+        // OWNER GATE FIRST (A4-review-H-1). A resume names an EXISTING run, so before anything is
+        // enqueued or streamed the row must be this caller's and this system's — otherwise 404,
+        // the same answer an unknown id gets. Without this, `enqueueRun` re-queued the foreign row
+        // (overwriting `requested_by`) and the tail replayed its whole history from seq 0 before
+        // the engine's own owner check refused it.
+        if (resume) assertRunVisible(await store.get(runId), runId, user.id, id);
+        // File the job. A start that collides with an existing run id, or a resume of a run that
+        // is already queued/running, is a typed 409; a resume of an unknown run is a typed 404 —
+        // both thrown BEFORE anything looks like a run.
+        const queued = await enqueueRun({
+          runId,
+          systemId: id,
+          domain: view.system.system.domain,
+          requestedBy: user.id,
+          user,
+          kind: resume ? 'resume' : 'start',
+          input: { messages, prompt: resume ? undefined : prompt },
+        });
 
-      // Durable per-node checkpointing (both paths): each node boundary is written
-      // through to the mirror, so a restart after any node leaves that node's
-      // completion recoverable. Best-effort — a checkpoint hiccup never fails a run.
-      const checkpointHooks = {
-        onNodeStart: (ev: { node: string }) => { try { checkpointNode(id, { phase: 'start', node: ev.node }); } catch { /* best-effort */ } },
-        onNodeComplete: (ev: { node: string; status: string; finalText: string }) => {
-          try { checkpointNode(id, { phase: 'complete', node: ev.node, status: ev.status, finalText: ev.finalText }); } catch { /* best-effort */ }
-        },
-      };
+        // STREAMING path: tail `run_events` from seq 0 — the same ordered vocabulary
+        // (`node-started`, `tool-step`, `node-completed`, `approval-required`, `resumed`, then
+        // `done` / `error`) the panel already understands, now replayable and re-attachable from
+        // any pod. A run that parks on an approval ends this stream with a `done{parked}`; the
+        // panel re-attaches to GET …/run/stream?runId= to see the decision continue it.
+        if (wantsStream(req, body)) {
+          // One tail slot per open stream (L-6): a pod refuses the 65th honestly instead of
+          // starving its connection pool. Released on close OR on client disconnect.
+          const releaseTail = acquireTail();
+          streamed = true;
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream<Uint8Array>({
+            async start(controller) {
+              const send = (event: string, data: unknown) =>
+                controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+              try {
+                const out = await tailRunEvents(store, runId, { until: 'settled', afterSeq: 0, signal: req.signal, timeoutMs: TAIL_BUDGET_MS }, (ev) => send(ev.event, ev.data));
+                if (out.ended === 'timeout') send('queued', { runId, afterSeq: out.lastSeq, note: 'still running — re-attach to /run/stream' });
+              } catch (e) {
+                send('error', { error: (e as Error).message });
+              } finally {
+                releaseTail();
+                controller.close();
+              }
+            },
+            cancel() { releaseTail(); },
+          });
+          return new Response(stream, {
+            headers: {
+              'content-type': 'text/event-stream; charset=utf-8',
+              'cache-control': 'no-store, no-transform',
+              connection: 'keep-alive',
+            },
+          });
+        }
 
-      // STREAMING path: the client asked for live progress (Accept: text/event-stream
-      // or {stream:true}). Emit ordered node/step events as the walk happens, then a
-      // terminal `done` carrying the SAME full result the non-stream path returns. On
-      // any run error, emit `error` so the client falls back — never a stuck spinner.
+        // NON-STREAMING: inline mode awaits its own execution, so a refused run keeps the exact
+        // status it had before A4; worker mode follows the event log until the job settles.
+        if (queued.inflight) await queued.inflight;
+        const seen: RunEventRow[] = [];
+        const releaseTail = acquireTail();
+        let out;
+        try {
+          out = await tailRunEvents(store, runId, { until: 'settled', afterSeq: 0, signal: req.signal, timeoutMs: TAIL_BUDGET_MS }, (ev) => { seen.push(ev); });
+        } finally {
+          releaseTail();
+        }
+        const terminal = seen.filter(isTerminalEvent).at(-1) ?? seen.filter((e) => e.event === 'done').at(-1);
+        if (!terminal) {
+          return NextResponse.json({ queued: true, runId, engine, mode: queued.mode, afterSeq: out.lastSeq, note: 'the run is still executing — tail /run/stream?runId=' }, { status: 202 });
+        }
+        if (terminal.event === 'error') {
+          const d = (terminal.data ?? {}) as { error?: string; status?: number };
+          return NextResponse.json({ error: d.error ?? 'the run failed', runId }, { status: d.status ?? 500 });
+        }
+        return NextResponse.json(terminal.data);
+      }
+
+      // ---- the walker engine stays request-bound (it has no thread to resume and no queue) ----
+      const common = { user, systemId: id, view, yaml: await governedYaml(), messages, engine, runId, resume, prompt };
       if (wantsStream(req, body)) {
         streamed = true;
         const encoder = new TextEncoder();
@@ -336,39 +251,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
             const send = (event: string, data: unknown) =>
               controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
             try {
-              const team = await runOsTeam({
-                user,
-                yaml,
-                systemId: id,
-                messages,
-                disabledAgents: view.disabledAgents,
-                engine,
-                runId,
-                resume,
-                onNodeStart: (ev) => { checkpointHooks.onNodeStart(ev); send('node-started', ev); },
-                onStep: (ev) =>
-                  send('tool-step', {
-                    node: ev.node,
-                    tool: ev.step.tool,
-                    // Match the persisted per-step semantics: a policy block reads
-                    // 'denied', any other tool error 'error', else 'ok'.
-                    status: !ev.step.isError
-                      ? 'ok'
-                      : classifyStepError(ev.step.result) === 'policy'
-                        ? 'denied'
-                        : 'error',
-                    index: ev.index,
-                  }),
-                onNodeComplete: (ev) => {
-                  checkpointHooks.onNodeComplete(ev);
-                  send('node-completed', { node: ev.node, status: ev.status, finalTextPreview: summarizeResult(ev.finalText) });
-                },
-              });
-              send('done', complete(team));
+              await executeTeamRun({ ...common, emit: send });
             } catch (e) {
               send('error', { error: (e as Error).message });
             } finally {
-              clearActivity(id);
               controller.close();
             }
           },
@@ -381,28 +267,17 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           },
         });
       }
-
-      // NON-STREAMING fallback: run to completion and return the final JSON as before.
-      // Still checkpoints per node (via the shared hooks) so a restart is recoverable.
-      const team = await runOsTeam({
-        user,
-        yaml,
-        systemId: id,
-        messages,
-        disabledAgents: view.disabledAgents,
-        engine,
-        runId,
-        resume,
-        onNodeStart: checkpointHooks.onNodeStart,
-        onNodeComplete: checkpointHooks.onNodeComplete,
-      });
-      return NextResponse.json(complete(team));
+      return NextResponse.json(await executeTeamRun(common));
     }
 
     if (resume) {
       return NextResponse.json({ error: 'This system does not run on the in-process engine (hermes runtime or unmapped legacy grants) — nothing to resume' }, { status: 400 });
     }
-    const report = await runSystem(id, yaml, {
+    // Legacy (hermes / unmapped-grant) path: mark in-progress + open the durable store checkpoint
+    // exactly as before (the team path does this inside `executeTeamRun`).
+    setActivity(id, { kind: 'running', startedAt: Date.now() });
+    startRunCheckpoint(id, { prompt, plannedNodes: view.system.agents.map((a) => a.id) });
+    const report = await runSystem(id, await governedYaml(), {
       prompt,
       requestedBy: resolvedUser.id,
       disabledAgents: view.disabledAgents,

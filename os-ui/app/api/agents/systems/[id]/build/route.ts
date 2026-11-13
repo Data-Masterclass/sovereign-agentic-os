@@ -6,6 +6,8 @@ import { requireUser } from '@core/kernel/auth';
 import { getSystemForEdit, setLastBuild, setActivity, clearActivity } from '@tabs/agents/lib/store';
 import { buildSystem } from '@tabs/agents/lib/build/server';
 import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
+import { agentKeyValue } from '@tabs/agents/lib/build/live-clients';
+import { putSecret } from '@core/infra/secrets';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,8 +33,15 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     // into live OPA/LiteLLM policy.
     const yaml = await governYamlForOwner(view.yaml, view.owner);
     const report = await buildSystem(id, yaml);
+    // A3: a LIVE build minted (or confirmed) the system's own LiteLLM key. Write the value to the
+    // secrets store ONCE and keep only its REFERENCE on the record; runs resolve it by reference and
+    // fall back to the shared agent key when absent. Never the master key, never the value in a record.
+    const keyRow = report.rows.find((r) => r.tool === 'litellm');
+    const litellmKeyRef = report.mode === 'live' && keyRow?.status === 'ok'
+      ? putSecret('agent-litellm-key', id, agentKeyValue(id))
+      : view.lastBuild?.litellmKeyRef;
     // Persist the build outcome so it survives tab-switches, reloads, and redeploys.
-    setLastBuild(id, user, { ok: report.ok, at: Date.now(), rows: report.rows });
+    setLastBuild(id, user, { ok: report.ok, at: Date.now(), rows: report.rows, litellmKeyRef });
     return NextResponse.json(report);
   } catch (e) {
     return fail(e);

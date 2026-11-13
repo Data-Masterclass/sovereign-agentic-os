@@ -175,6 +175,7 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
     // module scope takes down every module that constructs one eagerly.
     if (!runCredentialConfigured()) throw new NoRunCredentialError();
     const cred = callerCredential(caller ?? { userId: 'system', domain: 'platform' });
+    if (!cred.apiKey) throw new NoRunCredentialError();
     const body: Record<string, unknown> = {
       model: req.model,
       messages: req.messages,
@@ -186,6 +187,17 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
     if (req.tools && req.tools.length > 0) {
       body.tools = req.tools;
       body.tool_choice = 'auto';
+    }
+    // A3 — ONE trace per run: when the call belongs to a run, LiteLLM's own Langfuse callback is
+    // told to log INTO that trace (existing_trace_id) under the OS generation that recorded this
+    // call (parent_observation_id), so the gateway's generation nests instead of starting a
+    // second, unlinked trace. Vocabulary is LiteLLM's (docs: Langfuse integration metadata).
+    const metadata: Record<string, unknown> = { tags: cred.tags };
+    if (req.observe) {
+      metadata.existing_trace_id = req.observe.traceId;
+      if (req.observe.parentObservationId) metadata.parent_observation_id = req.observe.parentObservationId;
+      if (caller?.userId) metadata.trace_user_id = caller.userId;
+      if (caller?.systemId) metadata.session_id = caller.systemId;
     }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
@@ -199,7 +211,7 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
           'content-type': 'application/json',
           accept: 'application/json',
         },
-        body: JSON.stringify({ ...body, user: cred.user, metadata: { tags: cred.tags } }),
+        body: JSON.stringify({ ...body, user: cred.user, metadata }),
         cache: 'no-store',
         signal: ctrl.signal,
       });

@@ -18,7 +18,9 @@ import assert from 'node:assert/strict';
 import {
   callerCredential, runCredentialConfigured, endUserId,
   NoRunCredentialError, BudgetExceededError, isBudgetRejection,
+  TAG_RUN, GatewayRejectedError, isClientRejection,
 } from './litellm-credential.ts';
+import { putSecret, deleteSecret } from '@core/infra/secrets';
 import { config } from '@core/kernel/config';
 
 type Cfg = { litellmAgentKey: string; litellmMasterKey: string };
@@ -61,6 +63,34 @@ test('RUN-CRED: the tag vocabulary matches what the gateway mirror buckets', () 
     const kind = tag.slice(0, tag.indexOf(':'));
     assert.ok(['domain', 'agent', 'tab'].includes(kind), `mirror cannot bucket "${tag}"`);
   }
+});
+
+test('RUN-CRED (A3): a run tags `run:<runId>` and the vocabulary includes the run prefix', () => {
+  const cred = callerCredential({ userId: 'u1', domain: 'sales', systemId: 'sys1', runId: 'run_abc' });
+  assert.ok(cred.tags.includes(`${TAG_RUN}run_abc`));
+  assert.equal(TAG_RUN, 'run:');
+  assert.ok(!callerCredential({ userId: 'u1', domain: 'sales' }).tags.some((t) => t.startsWith(TAG_RUN)), 'no run → no run tag');
+});
+
+test('RUN-CRED (A3): a per-agent key by REFERENCE wins over the shared key; a dangling reference falls back to the shared key — never the master key', () => {
+  const ref = putSecret('agent-litellm-key', 'sys-own', 'sk-os-sys-own');
+  const own = callerCredential({ userId: 'u1', domain: 'sales', systemId: 'sys-own', keyRef: ref });
+  assert.equal(own.apiKey, 'sk-os-sys-own');
+  assert.equal(own.keySource, 'agent-key');
+  const dangling = callerCredential({ userId: 'u1', domain: 'sales', systemId: 'sys-other', keyRef: { name: 'agent-litellm-key', key: 'nope' } });
+  assert.equal(dangling.apiKey, config.litellmAgentKey);
+  assert.equal(dangling.keySource, 'shared-agent-key');
+  assert.notEqual(dangling.apiKey, config.litellmMasterKey);
+  deleteSecret(ref);
+});
+
+test('RUN-CRED (A3): a gateway 4xx is a typed rejection with the right code', () => {
+  assert.equal(new GatewayRejectedError(403, 'key not allowed to access model').code, 'forbidden');
+  assert.equal(new GatewayRejectedError(401, 'invalid key').code, 'unauthorized');
+  assert.equal(new GatewayRejectedError(400, 'Budget has been exceeded! Current cost: 5.1, Max budget: 5').code, 'budget_exceeded');
+  assert.equal(new GatewayRejectedError(400, 'invalid request').code, 'bad_request');
+  assert.equal(isClientRejection(403), true);
+  assert.equal(isClientRejection(503), false);
 });
 
 test('RUN-CRED: refusing to run is typed, so the UI can explain it', () => {

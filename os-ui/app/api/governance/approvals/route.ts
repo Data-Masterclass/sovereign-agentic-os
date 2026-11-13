@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { errorResponse } from '@core/kernel/route-server';
-import { decide, ensureHydrated, getApproval, listApprovals, recordEffect } from '@core/policy/approvals';
+import { decide, decisionSettled, ensureHydrated, getApproval, listApprovals, recordEffect } from '@core/policy/approvals';
 import { canApprove, canSee, roleLabel } from '@core/policy/roles';
 import { applyEffect } from '@core/policy/effects';
 import { buildEffectDeps } from '@core/policy/ladder';
@@ -99,7 +99,9 @@ export async function POST(req: Request) {
       reason: `${updated.kind} denied`,
       detail: { approvalId: updated.id },
     });
-    return NextResponse.json({ approval: updated, applied: null });
+    // A2: a denied agent-run approval still RESUMES the parked run (the agent gets the typed rejection).
+    await decisionSettled(updated.id);
+    return NextResponse.json({ approval: { ...getApproval(updated.id) }, applied: null, resume: getApproval(updated.id)?.resume });
   }
 
   // Approve === act: execute the governed effect, then audit (+ optional standing).
@@ -150,11 +152,15 @@ export async function POST(req: Request) {
     detail: { approvalId: updated.id, ...effect.audit.detail, standingPolicyId },
   });
 
+  // A2: for an agent-run approval the decide() hook resumed the run as its runner — wait for it so
+  // the card can show what the resume did (done / refused / failed) right away.
+  await decisionSettled(updated.id);
   return NextResponse.json({
     approval: { ...getApproval(updated.id) },
     applied: effect.applied,
     live: effect.live,
     publish: effect.publish,
     standingPolicyId,
+    resume: getApproval(updated.id)?.resume,
   });
 }

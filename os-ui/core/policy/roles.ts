@@ -147,11 +147,14 @@ export function canSee(actor: Actor, a: Pick<Approval, 'domain' | 'requestedBy'>
  * Can `actor` APPROVE this item? The control-plane gate: role rank ≥ the item's
  * required approver AND the item is in the actor's scope. Egress / tenant items
  * are Admin-only; domain items need a Builder (or Admin) of that domain.
+ * NEVER the requester (A2 review L-G): a domain admin who runs an agent cannot
+ * approve their own run's escalation — four-eyes is the point of the hold.
  */
 export function canApprove(
   actor: Actor,
-  a: Pick<Approval, 'domain' | 'approverRole' | 'scope'>,
+  a: Pick<Approval, 'domain' | 'approverRole' | 'scope'> & Partial<Pick<Approval, 'requestedBy'>>,
 ): boolean {
+  if (a.requestedBy && a.requestedBy === actor.id) return false;
   if (roleRank(actor.role) < roleRank(a.approverRole)) return false;
   return inScope(actor, a.domain, a.scope);
 }

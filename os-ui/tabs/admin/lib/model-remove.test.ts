@@ -6,89 +6,90 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { removeGatewayModel, type GatewayModelRow } from '@tabs/admin/lib/model-remove';
+import { removeGatewayModel, type GatewayIo, type GatewayModelRow } from '@tabs/admin/lib/model-remove';
 
 const OSUI = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const read = (p: string) => readFileSync(resolve(OSUI, p), 'utf8');
 
-type Call = { url: string; method: string; body: unknown; auth: string };
+type Call = { path: string; method: string; body: unknown };
 
-/** Stub fetch: /model/info returns `rows`; /model/delete returns `deleteOk`. */
+/** Stub gateway IO: /model/info returns `rows`; /model/delete returns `deleteOk`. */
 function stubGateway(rows: GatewayModelRow[] | 'down', deleteOk = true) {
   const calls: Call[] = [];
-  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    const headers = (init?.headers ?? {}) as Record<string, string>;
-    calls.push({ url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : undefined, auth: headers.authorization ?? '' });
-    if (rows === 'down') throw new Error('ECONNREFUSED');
-    if (url.endsWith('/model/info')) return { ok: true, status: 200, json: async () => ({ data: rows }) } as Response;
-    if (url.endsWith('/model/delete')) return { ok: deleteOk, status: deleteOk ? 200 : 400, json: async () => ({}) } as Response;
-    throw new Error(`unexpected url ${url}`);
-  }) as typeof fetch;
-  return { calls, fetchImpl };
+  const io: GatewayIo = {
+    get: async <T,>(path: string) => {
+      calls.push({ path, method: 'GET', body: undefined });
+      if (rows === 'down') return { ok: false as const, error: 'fetch failed' };
+      if (path === '/model/info') return { ok: true as const, data: { data: rows } as unknown as T };
+      throw new Error(`unexpected path ${path}`);
+    },
+    post: async <T,>(path: string, body: unknown) => {
+      calls.push({ path, method: 'POST', body });
+      if (path === '/model/delete') return deleteOk ? { ok: true as const, data: {} as T } : { ok: false as const, error: 'HTTP 400' };
+      throw new Error(`unexpected path ${path}`);
+    },
+  };
+  return { calls, io };
 }
 
-const OPTS = { url: 'http://litellm:4000', masterKey: 'sk-test-master' };
-
 test('db-registered model: verifies via /model/info then POSTs /model/delete with the row id', async () => {
-  const { calls, fetchImpl } = stubGateway([
+  const { calls, io } = stubGateway([
     { model_name: 'my-cloud-llm', model_info: { id: 'uuid-1', db_model: true } },
     { model_name: 'sovereign-default', model_info: { id: 'uuid-2', db_model: false } },
   ]);
-  const res = await removeGatewayModel('my-cloud-llm', { ...OPTS, fetchImpl });
+  const res = await removeGatewayModel('my-cloud-llm', { io });
   assert.deepEqual(res, { status: 'removed', ids: ['uuid-1'] });
   assert.equal(calls.length, 2);
-  assert.ok(calls[0].url.endsWith('/model/info'));
+  assert.equal(calls[0].path, '/model/info');
   assert.equal(calls[1].method, 'POST');
-  assert.ok(calls[1].url.endsWith('/model/delete'));
+  assert.equal(calls[1].path, '/model/delete');
   // The RIGHT id: the /model/info row's model_info.id, not the alias.
   assert.deepEqual(calls[1].body, { id: 'uuid-1' });
-  // Master key used server-side as a Bearer header (never in the body/result).
-  assert.ok(calls[1].auth.startsWith('Bearer '));
-  assert.ok(!JSON.stringify(res).includes('sk-test-master'));
+  // A3: no credential flows through this module at all — the admin clients hold the master key.
+  assert.ok(!JSON.stringify({ res, calls }).includes('sk-'));
 });
 
 test('config-seeded model (db_model false) is refused as managed — no delete call', async () => {
-  const { calls, fetchImpl } = stubGateway([
+  const { calls, io } = stubGateway([
     { model_name: 'sovereign-default', model_info: { id: 'uuid-2', db_model: false } },
   ]);
-  const res = await removeGatewayModel('sovereign-default', { ...OPTS, fetchImpl });
+  const res = await removeGatewayModel('sovereign-default', { io });
   assert.deepEqual(res, { status: 'managed' });
   assert.equal(calls.length, 1); // only /model/info — never /model/delete
 });
 
 test('db_model absent counts as seeded (fail-safe managed)', async () => {
-  const { fetchImpl } = stubGateway([{ model_name: 'x', model_info: { id: 'u' } }]);
-  assert.deepEqual(await removeGatewayModel('x', { ...OPTS, fetchImpl }), { status: 'managed' });
+  const { io } = stubGateway([{ model_name: 'x', model_info: { id: 'u' } }]);
+  assert.deepEqual(await removeGatewayModel('x', { io }), { status: 'managed' });
 });
 
 test('mixed alias (one seeded + one db row) stays managed', async () => {
-  const { calls, fetchImpl } = stubGateway([
+  const { calls, io } = stubGateway([
     { model_name: 'x', model_info: { id: 'u1', db_model: true } },
     { model_name: 'x', model_info: { id: 'u2', db_model: false } },
   ]);
-  assert.deepEqual(await removeGatewayModel('x', { ...OPTS, fetchImpl }), { status: 'managed' });
+  assert.deepEqual(await removeGatewayModel('x', { io }), { status: 'managed' });
   assert.equal(calls.length, 1);
 });
 
 test('alias not at the gateway → not-found', async () => {
-  const { fetchImpl } = stubGateway([{ model_name: 'other', model_info: { id: 'u', db_model: true } }]);
-  assert.deepEqual(await removeGatewayModel('ghost', { ...OPTS, fetchImpl }), { status: 'not-found' });
+  const { io } = stubGateway([{ model_name: 'other', model_info: { id: 'u', db_model: true } }]);
+  assert.deepEqual(await removeGatewayModel('ghost', { io }), { status: 'not-found' });
 });
 
 test('gateway down → unreachable (nothing deleted, no guess)', async () => {
-  const { fetchImpl } = stubGateway('down');
-  assert.deepEqual(await removeGatewayModel('x', { ...OPTS, fetchImpl }), { status: 'unreachable' });
+  const { io } = stubGateway('down');
+  assert.deepEqual(await removeGatewayModel('x', { io }), { status: 'unreachable' });
 });
 
 test('rejected /model/delete → failed', async () => {
-  const { fetchImpl } = stubGateway([{ model_name: 'x', model_info: { id: 'u1', db_model: true } }], false);
-  assert.deepEqual(await removeGatewayModel('x', { ...OPTS, fetchImpl }), { status: 'failed' });
+  const { io } = stubGateway([{ model_name: 'x', model_info: { id: 'u1', db_model: true } }], false);
+  assert.deepEqual(await removeGatewayModel('x', { io }), { status: 'failed' });
 });
 
 test('db rows without an addressable id → failed (never a blind delete)', async () => {
-  const { calls, fetchImpl } = stubGateway([{ model_name: 'x', model_info: { db_model: true } }]);
-  assert.deepEqual(await removeGatewayModel('x', { ...OPTS, fetchImpl }), { status: 'failed' });
+  const { calls, io } = stubGateway([{ model_name: 'x', model_info: { db_model: true } }]);
+  assert.deepEqual(await removeGatewayModel('x', { io }), { status: 'failed' });
   assert.equal(calls.length, 1);
 });
 

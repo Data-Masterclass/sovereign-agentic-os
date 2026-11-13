@@ -13,6 +13,216 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Agent engine rebuild, Phase A4: runs execute in a worker
+
+- **A run is a row, not a request.** Two tables in the `agent_runs` database (same one as the
+  LangGraph checkpointer; idempotent DDL at boot next to `PostgresSaver.setup()`):
+  `run_jobs` — one row per run (`run_id` primary key, `system_id`, `domain`, `requested_by`,
+  `principal_snapshot`, `input`, `kind start|resume`, `status queued|running|parked|done|failed`,
+  `locked_by`, `locked_at`, `attempts`) — and `run_events` — append-only, `(run_id, seq)` primary
+  key, carrying exactly the SSE vocabulary the Run panel consumes. Access is behind a port
+  (`tabs/agents/lib/engine/jobs.ts`) with a Postgres implementation
+  (`engine/jobs-postgres.ts`) and an in-memory one that is the contract the tests pin.
+- **`POST …/run` enqueues and tails.** It validates as before, mints the run id, files the job and
+  streams `run_events` from `seq = 0`; `GET …/run/stream?runId=&afterSeq=` tails the same table
+  from the client's cursor, replacing the in-process re-attach topic of A2 on the read path. Owner
+  checks unchanged (404 on a foreign run). The tail is a short poll of the `(run_id, seq)` primary
+  key — correct across pods and after any reconnect.
+- **`os-ui-worker` Deployment** (`charts/.../base/os-ui/os-ui-worker.yaml`, off by default behind
+  `osUI.worker.enabled`): the SAME image with a different command
+  (`node --experimental-strip-types worker/start.mjs` from `/app/src`), the SAME environment (the
+  os-ui env list is now one named template, `soa.osUI.env`, used by both workloads), plus
+  `AGENTS_WORKER=worker`. It claims one run at a time with `FOR UPDATE SKIP LOCKED`, heartbeats
+  `locked_at`, and on SIGTERM finishes the current superstep, checkpoints it and returns the run to
+  the queue (`terminationGracePeriodSeconds` defaults to 420 s, one superstep — not a whole run).
+  A lease nobody renews (`AGENTS_WORKER_LEASE_MS`, default 10 min) is re-queued **once** as a
+  resume and then failed, so no run sits `running` forever.
+- **`AGENTS_WORKER=inline|worker`, default `inline`:** the pod that files a job also executes it,
+  immediately, writing the same events — a kind install, a laptop and the whole test suite behave
+  exactly as before and need no worker process.
+- **One start door.** The run route, `build/scheduled.ts`, the MCP `run_agent_system` and
+  `resume_agent_run`, and the Governance `onDecided` hook all file jobs through
+  `tabs/agents/lib/build/run-jobs-server.ts`. A decision no longer drives the graph inside the
+  decider's request: it files a `resume` job, and `ApprovalResume.status` gains `queued`.
+- **The runner's identity is re-read live before every execution** (`engine/runner-identity.ts`):
+  the job's `principal_snapshot` is evidence, never authority. A runner who is gone or disabled,
+  downgraded below the role the run was filed under, or no longer in the run's domain gets a typed
+  refusal (`runner_unavailable` / `runner_role_changed` / `runner_domain_lost`) and the job fails
+  visibly. A role *upgrade* still runs — the yaml is re-governed against the owner's live role on
+  every run.
+- The image now carries two entrypoints: `node server.js` (the Next standalone server) and the
+  worker. The os-ui source tree is baked at `/app/src` beside the standalone `node_modules`,
+  because `output: 'standalone'` emits no entry for a process that serves no HTTP; the worker
+  therefore runs the TypeScript source with the tsconfig path aliases registered
+  (`worker/resolve-hook.mjs`) under Node type stripping — **the image's Node must be ≥ 22.6**.
+
+### Fixed — A4 review
+
+- **Security: a run id is no longer an authorisation.** `POST …/run { resume: true, runId }`
+  checked only that the caller could run the SYSTEM, then re-queued the run (overwriting
+  `requested_by` and the principal snapshot) and streamed its whole history before the engine's own
+  owner gate refused it — so a guessed run id replayed somebody else's run. One shared gate
+  (`engine/run-visibility.ts` `assertRunVisible`, 404 semantics, no 403) now runs BEFORE any side
+  effect in the run route, the re-attach stream and MCP `resume_agent_run`; and the store refuses a
+  resume whose `requested_by` differs from the row's — in Postgres as a predicate on the UPDATE, so
+  a refused resume writes nothing.
+- **Security: the `os-ui-worker` pod no longer holds admin credentials.** The chart's env list is
+  split into `soa.osUI.runEnv` (what a run needs) and `soa.osUI.adminEnv` (session + MCP token
+  signing keys, the Graph mail secret, the LiteLLM UI login and the LiteLLM **master** key);
+  `soa.osUI.env` is both, so the os-ui Deployment is unchanged, and the worker includes only the
+  run path. `scripts/check-worker-env.mjs` keeps it that way in the gate.
+- **A lost lease now aborts the run.** A worker whose heartbeat reported that the row was no longer
+  its own kept executing, and could settle a run another pod had re-claimed. The heartbeat is now a
+  watch that aborts the run in flight; the pod then neither settles nor re-queues it, and every
+  settle is lease-guarded in SQL (`AND locked_by=… AND status='running'`). A heartbeat that THROWS
+  is treated as a database blip, not a lost lease.
+- **`AGENTS_WORKER=inline` reaps and heartbeats.** `ensureRunJobsReady()` runs one `reapStale`
+  sweep at boot and an inline run heartbeats its own lease, so an os-ui pod killed mid-run is
+  picked up by the next pod instead of leaving a row `running` forever where no worker exists.
+- **An approval decided while the run was still parking is honoured.** The one-await window in
+  which the row is still `running` returned a 409 and stamped the approval `failed`; the resume
+  enqueue now retries briefly (5 × 200 ms) and only for a `running` row — a `queued` or missing row
+  still fails at once.
+- **A run killed before its first checkpoint restarts instead of failing.** The lease reaper
+  preserves the row's kind, so a reaped `start` is re-started (a resume of a thread with no
+  checkpoint is a 404); a SIGTERM requeue still continues from its checkpoint.
+- **The Run panel follows a long run instead of blaming the user.** The `queued { runId, afterSeq }`
+  frame both doors emit at their 240-second tail budget had no handler, so the panel said "please
+  run again" about a run that was still executing. The SSE reader and the re-attach decision moved
+  to `tabs/agents/lib/build/run-stream-client.ts` (pure, unit-tested) and the panel now re-attaches
+  from the server's cursor, up to 40 hops.
+- **A tail no longer hangs on a settled run** that produced no terminal event — unless it is
+  `parked`, which is settled but not finished (its stream is what shows the decision resuming it).
+- **A pod serves at most 64 run tails**, then answers `503` + `Retry-After: 5`: each tail polls
+  `run_events` every 400 ms against a `pg` pool of 6 shared with the checkpointer, and sign-in must
+  not lose to a wall of open Run panels.
+- **The worker's liveness probe means something.** It was `node -e 'process.exit(0)'` — a test of
+  whether a NEW process could start. The worker now touches `AGENTS_WORKER_ALIVE_FILE`
+  (`/tmp/worker-alive`, an `emptyDir`) every 15 s from an unref'd interval and the probe fails when
+  that file is older than 60 s or missing, which is what catches a wedged event loop.
+- **The worker's module aliases are read from `tsconfig.json`** instead of a hand-kept copy that
+  could drift from the compiler's — a drift that fails in the cluster, not in CI.
+- **`run_events` is documented as exempt from `LANGFUSE_REDACTION`**: the switch governs the trace,
+  while the panel's own event log is written in full and lives beside the checkpoints under the same
+  (absent) retention. `scripts/deploy.sh` also smoke-tests, in the built image, that the worker's
+  TypeScript source still loads under Node's type stripping; `check-structure.mjs` now requires the
+  explanatory header on `os-ui/worker/**` too.
+
+### Changed — A3 review follow-ups
+
+- `core/runtime/runtime.test.ts` MODEL-KEY now matches `litellmMasterKey|LITELLM_MASTER_KEY|
+  PROXY_MASTER_KEY` and asserts the EXACT expected file set (a file *dropping out* is as
+  interesting as a new one); `core/infra/tool-sso-litellm.ts` left the set — it never read the key.
+- `LANGFUSE_REDACTION=structure|strict` (`osUI.langfuseRedaction`): `strict` records tool-argument
+  **key names and sizes only** and drops the 160-character result preview. `structure` stays the
+  default. Documented in `docs/components/langfuse.md`, including that LiteLLM's nested generation
+  still ships the full prompt unless `turn_off_message_logging` is set at the gateway.
+- `tabs/agents/lib/engine/observe.ts`: the header no longer claims results are recorded as
+  character counts only (they carry a preview under `structure`), and a tool result whose error
+  code is `not_found` is now `error`, not `denied` — a missing object is not a governance decision.
+- Knowledge and Files retrieval bill the EMBEDDING to the acting principal
+  (`tabs/knowledge/lib/retrieve.ts`, `tabs/files/lib/retrieve.ts`); `core/runtime/complete.ts`
+  tags the caller's **active** domain, falling back to the first.
+- `core/infra/langfuse.ts` registers `process.once('SIGTERM', …shutdownAsync())` so a stopping pod
+  hands over its buffered spans.
+- `core/runtime/runtime.ts` drops the duplicate `trace_id` beside `existing_trace_id`.
+- `tabs/agents/lib/build/server.ts` no longer offers a `/traces` LIST link for a legacy run with no
+  run id (checklist A20: the link opens *that* trace or nothing).
+- `scripts/check-litellm-allowlist.mjs` also reads `default_fallbacks`,
+  `context_window_fallbacks` and `content_policy_fallbacks` — any of them can route to an alias the
+  scoped key never allowed.
+- `app/api/knowledge/workflows/[id]/publish/route.ts` reports `indexing: { ok, code, error }`
+  instead of swallowing a `GatewayRejectedError`: a publish whose embedding was rejected leaves the
+  unit unretrievable, and the caller has to be able to see that.
+
+### Added — Agent engine rebuild, Phase A3: one Langfuse trace per run; LiteLLM attribution and keys
+
+- **One trace per run, id = run id.** `tabs/agents/lib/engine/observe.ts` over the official
+  `langfuse` SDK (`core/infra/langfuse.ts`): nodes are spans, model calls generations with usage,
+  tool calls spans carrying the governance decision (`ok|held|denied|error|dedup|not_advertised`),
+  governance `trace()` events spans of the run trace; a resume continues the same trace. LiteLLM's
+  own Langfuse callback is nested into the run trace (`existing_trace_id` / `parent_observation_id`).
+  Message content is redacted to roles + character counts; the tool-call structure is kept.
+- **Deep link.** `LastRun.traceUrl` / the run report / MCP `run_agent_system`, `get_agent_run`,
+  `resume_agent_run` carry `<console>/trace/<runId>` — one trace, never the list.
+- **Leak closed.** `…/run/diagnostics` reads Langfuse **by trace id** (`?runId=`), else by the
+  caller's user id and a time window; `observationsQuery` refuses an unfiltered read (typed, tested).
+- **Judge as score.** `…/evaluate` writes the LLM-judge verdict as a Langfuse score `judge` on the
+  run trace (and now attributes the judge call to the caller's domain).
+- **Attribution.** `TAG_RUN = 'run:'`; every model call carries `user`, `domain:`, `agent:`, `tab:`,
+  `run:` — the engine (`agentic-graph-server.ts`, both callers), the assistant
+  (`core/runtime/complete.ts` reads the user's domain), the OS assistant (`core/runtime/agent-loop.ts`),
+  classify and both embedders. The gateway mirror buckets `run:` spend (`spend.byRun`).
+- **No master key on any inference path** (repo-wide `MODEL-KEY` test): classify, knowledge and files
+  embeddings go through `callerCredential`; seven admin surfaces moved onto `litellm-admin.ts` /
+  `litellm-write.ts` (`/api/gateway`, platform-admin `mcp-apis`, `providers`, `models/assistant`,
+  `models/[id]` + `tabs/admin/lib/model-remove.ts` with injected IO, Monitoring `cost.ts`).
+- **Per-agent key by reference.** A live Build persists `LastBuild.litellmKeyRef` (secret
+  reference, never the value); runs resolve it through `callerCredential`, else the shared agent key.
+- **Embeds: the fallback is explicit.** Timeout / transport / 5xx / dim mismatch → labelled
+  `offline-hash` / `mock`; any 4xx → typed `GatewayRejectedError` is thrown, nothing indexed.
+- **Chart (`litellm:` block).** `failure_callback: ["langfuse"]`; Valkey response cache
+  (`cache_params.host: valkey`, `mode: default_off` — only classify and the embedders opt in);
+  `scripts/check-litellm-allowlist.mjs` asserts `litellmAgentKey.models` ⊇ every config default,
+  `agentRuntime.*Model` and router fallback alias on both profiles (wired into `gate.sh`); the
+  STACKIT overlay gains the `litellmAgentKey.models` its fallbacks needed.
+- **A2 review absorbed.** Approval queue hydrated on the engine/MCP path before any read (M-A);
+  per-thread in-flight lock in `executeTeamRun` (`engine/run-lock.ts`, typed 409) (M-B); the
+  requester can never approve their own item (`canApprove`) (L-G); `ApprovalResume.status`
+  gains `parked` (L-F); a decision with no resume handler stamps `resume_hook_unregistered` (L-C);
+  file headers on the run/stream routes (L-A).
+- **Tests:** `engine/observe.test.ts` (one trace-create, tree shape, redaction, resume),
+  `engine/attribution.test.ts` (real engine run through `liteLlmCaller`), `core/infra/langfuse.test.ts`,
+  `engine/run-lock.test.ts`, MODEL-KEY repo-wide, embed 4xx/timeout, hydrate-after-restart,
+  self-approval, `byRun`.
+
+### Added — Agent engine rebuild, Phase A2: approvals as interrupts
+
+- **A held write pauses the run; the decision resumes it.** `tools_<id>` now computes the hold
+  decision for the whole batch first (`tabs/agents/lib/build/hold.ts`, the pure rule lifted out of
+  the executor), enqueues each held call **once** (`enqueueOnce`, idempotent on
+  `<threadId>:<callId>`) and parks the run on LangGraph `interrupt()` — nothing in the batch
+  executes before the decision. Approving executes the call **exactly once as the runner** (never
+  the approver) through the unchanged `grantedToolExecutor`; denying returns a typed
+  `{"error":{"code":"rejected","approvalId"}}` to the model, which continues.
+- **Approvals carry the thread** (`core/policy/approvals.ts`): `runId`, `threadId`, `interruptKey`,
+  `systemId`, `node`, `tool`, `args`, the runner's principal snapshot and the `resume` outcome.
+  `decide()` fires registered `onDecided` handlers; `decisionSettled(id)` awaits them. The Agents
+  tab registers the resume at boot (`engine/resume-boot.ts`) — the kernel never imports a tab.
+  The resume (`engine/resume.ts`) re-reads the runner's role **live** and refuses, typed, when the
+  runner is disabled, lost the role or left the domain. `applyEffect` performs no approver-side
+  effect for a run approval.
+- **Run route**: additive SSE events `approval-required { approvalId, tool, node }` and (on the
+  re-attach stream) `resumed { approvalId, decision }`; the `done` body gains `parked` and
+  `heldApprovals`. New `GET …/run/stream?runId=` re-attaches to a parked run's events
+  (owner-checked). The Run panel shows the parked state, re-attaches automatically, and renders
+  compile `warnings` + the checkpointer kind.
+- **Governance inbox** card for an agent-run approval shows system · agent · tool · runner with
+  "Open run ↗" and the resume outcome; both decide doors (inbox route, MCP `decide_approval`)
+  await and return `resume`.
+- **MCP**: `get_agent_run { runId }` (state, path, held approvals, who can decide) and
+  `resume_agent_run { runId }` (restart recovery); `run_agent_system` returns `parked` /
+  `heldApprovals`; `decide_approval` resumes the thread.
+- **Tests (P3)**: `tabs/agents/lib/engine/approvals.test.ts` (a–e, H1, M4, M5),
+  `resume.test.ts` (f), `run-events.test.ts`, `core/policy/approvals-hook.test.ts`.
+
+### Fixed — A1 review (absorbed in A2)
+
+- **H1/L5 (security)**: run ids are `crypto.randomUUID()` from `core/kernel/run-id.ts` (the store
+  re-exports); the first superstep stamps `state.owner = { systemId, userId, domain }` and every
+  resume (`POST …/run { resume }`, `resume_agent_run`, the decision hook) verifies system **and**
+  user — a foreign thread is a 404, never confirming it exists.
+- **M4**: resuming a finished thread is a typed `RunAlreadyFinishedError` (409), not a silent
+  no-op that rewrote `LastRun`.
+- **M5**: `tools_<id>` executes **one call per superstep** (checkpointed between executions), so a
+  crash mid-batch re-executes at most the call in flight — tested.
+- **M2**: every agent visit costs one budget step; an unguarded handoff cycle is a compile warning.
+- **M1**: the Run panel renders `warnings` and the checkpointer kind. **M3**: `RunCheckpoint` /
+  `LastRun` record the checkpointer; Resume is offered only for `postgres`.
+- **L1**: `when` expressions are capped at 512 chars (typed syntax error). **L2**:
+  `node-started.total` never reads below `index`. **L3/L4**: single-replica assumption and
+  checkpoint retention documented.
+
 ### Added — Data products in git, Phase B2: Dagster is the scheduler, the OS reads Dagster (flag `DATA_PROJECT_GIT`, default off)
 
 - **The `sovereign` Dagster code location** (`images/extensions/dagster/repo.py` + the pure

@@ -210,7 +210,12 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     userMessages: input.messages,
     tools: osToolSpecs(input.user, input.tab),
     callTool: osToolExecutor(input.user),
-    llm: injected ?? liteLlmCaller(),
+    // A3: attributed — the user, their active domain and the tab lens (never the master key).
+    llm: injected ?? liteLlmCaller({
+      userId: input.user.id,
+      domain: input.user.activeDomain ?? input.user.domains[0] ?? 'none',
+      tab: input.tab ?? 'assistant',
+    }),
     planModel: injected ? config.litellmReasoningModel : assistantId,
     actModel: assistantId,
     maxIterations: input.maxIterations ?? config.assistantMaxSteps,

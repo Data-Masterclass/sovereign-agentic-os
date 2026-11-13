@@ -1,0 +1,116 @@
+{{- if and .Values.osUI.enabled .Values.osUI.worker .Values.osUI.worker.enabled }}
+{{- /*
+  os-ui-worker — agent runs execute HERE, not in a request (engine rebuild, Phase A4).
+
+  SAME image as os-ui, SAME RUN-PATH environment (`soa.osUI.runEnv`, the one list os-ui includes
+  too, so the two can never drift), different command: `node --experimental-strip-types
+  worker/start.mjs` drains the `run_jobs` queue in the `agent_runs` database, claiming one run at
+  a time with FOR UPDATE SKIP LOCKED and writing each engine event to `run_events`, which os-ui
+  tails.
+
+  NOT `soa.osUI.env`: that adds `soa.osUI.adminEnv` — the session/MCP signing keys, the Graph mail
+  secret, the LiteLLM UI login and the LiteLLM MASTER key. The worker serves no HTTP and the run
+  path never reads them, so a run compromised in this pod must not find them here (A4 review M-4).
+
+  NO Service points at this Deployment: it serves no HTTP. Liveness is therefore a FRESHNESS check
+  on a heartbeat file the loop touches every 15 s (`/tmp/worker-alive`, A4 review L-2): a wedged
+  event loop stops touching it and the pod is restarted, where `node -e 'process.exit(0)'` only
+  proved that a NEW process could start.
+
+  SIGTERM: the loop stops claiming at once and the run in flight is aborted at its next superstep
+  boundary, checkpointed, and put back on the queue as a `resume`. That is why
+  terminationGracePeriodSeconds must cover ONE superstep (one model call + one tool call), not a
+  whole run.
+
+  replicas: 1 for now. The claim is safe for several replicas (SKIP LOCKED), but the in-process
+  pieces a run still touches (the approvals queue hydration, the run-event topic) are single-
+  replica by design until they move behind the database — see docs/components/os-ui.md.
+*/}}
+{{- $u := .Values.osUI }}
+{{- $w := $u.worker }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: os-ui-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui-worker") | nindent 4 }}
+spec:
+  replicas: {{ $w.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui-worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui-worker") | nindent 8 }}
+    spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      {{- /* The SAME ServiceAccount as os-ui: the worker executes the same governed tool calls,
+           so it needs the same (scoped) cluster reads. */}}
+      serviceAccountName: os-ui
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      terminationGracePeriodSeconds: {{ $w.terminationGracePeriodSeconds | default 420 }}
+      containers:
+        - name: os-ui-worker
+          image: "{{ $u.image.repository }}:{{ $u.image.tag }}"
+          imagePullPolicy: IfNotPresent      # locally-built image, loaded into kind
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          workingDir: /app/src
+          {{- /* The standalone Next output has no entry for a non-HTTP process, so the worker runs
+               its TypeScript source directly: `worker/start.mjs` registers the tsconfig path
+               aliases and Node strips the types. The source tree is baked at /app/src next to the
+               standalone node_modules (images/base/os-ui/Dockerfile). */}}
+          command: ["node", "--experimental-strip-types", "--no-warnings", "worker/start.mjs"]
+          env:
+            {{- include "soa.osUI.runEnv" . | nindent 12 }}
+            # This pod EXECUTES runs; os-ui only enqueues and tails.
+            - name: AGENTS_WORKER
+              value: "worker"
+            {{- if $w.leaseMs }}
+            - name: AGENTS_WORKER_LEASE_MS
+              value: {{ $w.leaseMs | quote }}
+            {{- end }}
+            {{- with $u.langfuseRedaction }}
+            - name: LANGFUSE_REDACTION
+              value: {{ . | quote }}
+            {{- end }}
+            # The liveness heartbeat file (A4 review L-2) — touched every 15 s by the loop.
+            - name: AGENTS_WORKER_ALIVE_FILE
+              value: /tmp/worker-alive
+          {{- /* No HTTP server, so liveness is a FRESHNESS check on the process's own heartbeat
+               file: `worker/agent-runs.ts` touches AGENTS_WORKER_ALIVE_FILE every 15 s from an
+               unref'd interval, which only keeps running while the event loop does. Stale by more
+               than twice the probe period (60 s) ⇒ the process is wedged ⇒ restart, and the run it
+               held is re-queued by the next pod's lease reaper (or its boot sweep). A missing file
+               fails too, so a process that never booted is restarted rather than idling. */}}
+          livenessProbe:
+            exec:
+              command:
+                - node
+                - -e
+                - "const s=require('node:fs').statSync('/tmp/worker-alive');if(Date.now()-s.mtimeMs>60000)process.exit(1)"
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          {{- /* readOnlyRootFilesystem: the heartbeat file needs a writable /tmp. */}}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml ($w.resources | default $u.resources) | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}
