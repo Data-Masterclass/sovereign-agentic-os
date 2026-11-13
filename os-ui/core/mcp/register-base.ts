@@ -8,6 +8,7 @@ import { agentWriteTools } from '@core/mcp/agent-write-tools';
 import { MANUAL_TOOLS } from '@core/mcp/manual-tools';
 import { governanceBaseTools } from '@core/mcp/governance-tools';
 import { discoveryBaseTools } from '@core/mcp/discovery-base-tools';
+import { lifecycleTools } from '@core/mcp/lifecycle-tools';
 
 /**
  * Base bundles — always on, no flag. server.ts imports this for its side
@@ -24,3 +25,6 @@ registerToolBundle({ name: 'agent-write', tools: agentWriteTools });
 registerToolBundle({ name: 'manual', tools: MANUAL_TOOLS });
 registerToolBundle({ name: 'governance', tools: governanceBaseTools });
 registerToolBundle({ name: 'discovery', tools: discoveryBaseTools });
+// Lifecycle (night 2): go_live + retire. Always on — "which version runs" is not a feature
+// flag, and the migration marks every existing object Live so day one is unchanged.
+registerToolBundle({ name: 'lifecycle', tools: lifecycleTools });
