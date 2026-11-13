@@ -2,54 +2,59 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * TAB:        agents
- * FEATURE:    Engine parity harness — golden fixtures for the walker → LangGraph rebuild
- * USER STORY: As the engineer replacing the hand-rolled graph walker with a real LangGraph
- *             engine I want, for every shipped system.yaml template plus three canonical shapes,
- *             a reproducible recording of what the CURRENT walker does (visited path, governed
- *             tool calls, final text) so the new engine can be held to exactly that behaviour.
+ * FEATURE:    Engine parity harness — the FROZEN golden fixtures of the pre-rebuild walker
+ * USER STORY: As the engineer who replaced the hand-rolled graph walker with a real LangGraph
+ *             engine I want the recording of what the OLD walker did (visited path, governed
+ *             tool calls, final text) for every shipped system.yaml template plus three
+ *             canonical shapes to stay in the repo as the thing the new engine is held to —
+ *             so "existing system.yaml files run unchanged" is a measurement, not a claim.
  * ARCHITECTURE:
- *   - Pure orchestration over existing modules: `runAgenticGraph` (the walker under test), the
- *     REAL `grantedToolSpecs` / `grantedToolExecutor` gates (so hold/not_found decisions in the
- *     golden are the production rules, not a mock's), and the record/replay caller in
- *     `core/runtime/llm-replay.ts`. Only the model and the MCP dispatch are faked.
+ *   - The fixtures in `./fixtures/*.json` are FROZEN. They were generated in A0/A1 by the walker
+ *     under the scripted model `SCRIPT_ID`, and A5 deleted the walker — so there is no generator
+ *     any more and `REGEN_FIXTURES` is gone. They are historical evidence; a fixture is changed
+ *     only by adding a NEW one beside it (a regenerated "golden" from the engine under test would
+ *     prove nothing, and would erase what the two guarded fixtures deliberately record).
+ *   - What is left here drives the ENGINE against those goldens: the REAL `grantedToolSpecs` /
+ *     `grantedToolExecutor` gates (so hold/not_found decisions are the production rules, not a
+ *     mock's) and the replay caller in `core/runtime/llm-replay.ts`. Only the model and the MCP
+ *     dispatch are faked.
  *   - The model is a DETERMINISTIC SCRIPT (`scriptedLlm`, rule set `SCRIPT_ID`): PLAN returns a
  *     fixed plan; a node's first ACT calls its first advertised tool; its next ACT answers
  *     `FINAL(<node>)`; a SUPERVISOR ROUTE request (the single `route` tool) picks the members in
  *     DECLARED order, then END. The node id is read from the `--- YOUR ROLE IN THE TEAM ---`
- *     marker both engines put in the system prompt. Changing the rules bumps `SCRIPT_ID` and
- *     regenerates every fixture (single file, see `fixtures.test.ts`).
+ *     marker the engine puts in the system prompt.
  *   - The MCP dispatch (`handleRpc`) is replaced by an echo of the call; `enqueue` records held
  *     writes; `trace` is a no-op. The acting user is a fixed BUILDER so role-floor narrowing is
  *     exercised the same way on every machine.
- *   - Fixture JSON lives in `./fixtures/<name>.json`; `fixtures.test.ts` proves each file equals
- *     a fresh generation (or rewrites it under REGEN_FIXTURES=1); `parity.test.ts` replays the
- *     transcript through the walker AND drives `buildGraph` (P1), plus P2 (abort + resume).
- *   - ENGINE PARITY RULE SET (A0 finding 3): the walker never asks a model where to go, so its
- *     transcript has no routing exchanges. A fixture WITHOUT a supervisor is replayed from the
+ *   - ENGINE PARITY RULE SET (A0 finding 3): the walker never asked a model where to go, so its
+ *     transcripts carry no routing exchanges. A fixture WITHOUT a supervisor is replayed from the
  *     transcript through `buildGraph` (`replayGraph` — every exchange must be consumed); a
  *     fixture WITH a supervisor is driven by the scripted model (`scriptGraph`), whose route rule
  *     reproduces the walker's declared-order visit. Both assert the same golden fields.
+ *   - The two GUARDED fixtures are where the engine deliberately DIVERGES: the walker ignored
+ *     `when` guards, so `shape-guarded-handoff-held-write`'s golden records it visiting (and
+ *     holding a write in) a node whose guard is false. `parity.test.ts` asserts both the golden's
+ *     record of the defect and the engine's correct behaviour.
  */
 import type { CurrentUser } from '@core/kernel/auth';
 import type { JsonRpcRequest, JsonRpcResponse } from '@core/mcp/server';
 import type { AgenticStep, LlmCall, LlmRequest } from '@core/runtime/agentic';
-import { recordingCaller, replayCaller, type LlmTranscript, type RecordedExchange } from '@core/runtime/llm-replay';
+import { replayCaller, type LlmTranscript } from '@core/runtime/llm-replay';
 import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { TEMPLATES, templateYaml } from '@tabs/agents/lib/templates';
 import { AGENT_TEMPLATES, agentTemplate } from '@tabs/agents/lib/agent-templates';
 import { SOFTWARE_TEAM_YAML } from '@tabs/agents/lib/software-team';
 import { grantedToolExecutor, grantedToolSpecs, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
-import { runAgenticGraph, type AgenticGraphDeps } from '@tabs/agents/lib/build/agentic-graph';
 import type { GraphDeps } from '@tabs/agents/lib/engine/build-graph';
 import { memoryCheckpointer, type SelectedCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { runGraphEngine, type EngineHooks } from '@tabs/agents/lib/engine/run';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import { memoryApprovalPort, type MemoryApprovalPort } from '@tabs/agents/lib/engine/approval-port';
 
-/** Bump when the scripted model's rules change — every fixture must then be regenerated.
- *  @2: adds the declared-order `route` rule for supervisors (the walker never triggers it, so
- *  walker goldens are unchanged; the id records that the LangGraph side is driven by it too). */
+/** The rule set every frozen fixture was recorded under; a fixture carrying another id is stale.
+ *  @2: adds the declared-order `route` rule for supervisors (the walker never triggered it, so the
+ *  walker goldens are unchanged; the id records that the engine side is driven by it too). */
 export const SCRIPT_ID = 'first-tool-then-final@2';
 
 /** The one task every fixture runs — purpose-neutral so it fits every template. */
@@ -98,7 +103,7 @@ export type EngineFixture = {
   name: string;
   source: string;
   description: string;
-  /** True when any handoff edge carries a `when` guard — P1 skips these (walker ignores guards). */
+  /** True when any handoff edge carries a `when` guard — P1's walker side skipped these. */
   guarded: boolean;
   task: string;
   yaml: string;
@@ -321,7 +326,7 @@ export function hasWhenGuard(sys: System): boolean {
 
 const ROLE_MARKER = /--- YOUR ROLE IN THE TEAM: (\S+) ---/;
 
-/** The node a request belongs to, read from the walker's own system-prompt marker. */
+/** The node a request belongs to, read from the engine's own system-prompt marker. */
 export function nodeOfRequest(req: LlmRequest): string {
   for (const m of req.messages) {
     if (m.role !== 'system') continue;
@@ -380,7 +385,7 @@ export function scriptedLlm(task: string): LlmCall {
 
 // ----------------------------------------------------------- fake dispatch --
 
-/** Records what the REAL hold gate enqueued (executor gate 1b on the walker; the node's ApprovalPort under langgraph). */
+/** Records what the REAL hold gate enqueued (the tools node's ApprovalPort). */
 export type HoldSink = { enqueued: string[]; port?: MemoryApprovalPort };
 
 /**
@@ -401,31 +406,11 @@ export function fixtureToolDeps(sink: HoldSink): OsToolDeps {
   return { enqueue, handleRpc, trace };
 }
 
-/** The walker deps, wired EXACTLY as `agentic-graph-server.ts` wires production (minus embedder). */
-export function walkerDeps(
-  sys: System,
-  systemId: string,
-  llm: LlmCall,
-  sink: HoldSink,
-  onStep: AgenticGraphDeps['onStep'],
-): AgenticGraphDeps {
-  return {
-    llm,
-    toolSpecsFor: (node) => grantedToolSpecs(FIXTURE_USER, sys, node.tools),
-    callTool: grantedToolExecutor(FIXTURE_USER, sys, systemId, fixtureToolDeps(sink)),
-    preamble: FIXTURE_PREAMBLE,
-    reasoningModel: 'sovereign-reasoning',
-    execModel: 'sovereign-default',
-    maxIterations: 4,
-    maxRunSteps: 40,
-    onStep,
-  };
-}
-
 /**
- * The LangGraph engine's deps — the SAME gates and wiring as {@link walkerDeps}, minus the hooks
- * (events stream). A2: the hold is decided in the tools NODE (`hold`, over a memory ApprovalPort
- * recorded on the sink) and the executor runs with `holdAt: 'node'` — exactly as production wires it.
+ * The engine's deps, wired EXACTLY as `agentic-graph-server.ts` wires production (minus the
+ * embedder and the live hooks, since events flow through the stream writer). A2: the hold is
+ * decided in the tools NODE (`hold`, over a memory ApprovalPort recorded on the sink) and the
+ * executor runs with `holdAt: 'node'` — exactly as production wires it.
  */
 export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: HoldSink): Omit<GraphDeps, 'checkpointer'> {
   sink.port ??= memoryApprovalPort();
@@ -456,24 +441,10 @@ export function hasSupervisor(sys: System): boolean {
 
 // --------------------------------------------------------- generate/replay --
 
-export type WalkerRun = Pick<EngineFixture['golden'], 'path' | 'toolCalls' | 'finalText' | 'reachedEnd' | 'held'>;
+/** The golden fields a run is compared on: where it went, what it called, what it said. */
+export type GoldenRun = Pick<EngineFixture['golden'], 'path' | 'toolCalls' | 'finalText' | 'reachedEnd' | 'held'>;
 
-async function runWalker(spec: Pick<EngineFixture, 'name' | 'yaml' | 'task'>, llm: LlmCall): Promise<WalkerRun> {
-  const sys = parseSystem(spec.yaml);
-  const ir = compile(sys);
-  const toolCalls: GoldenToolCall[] = [];
-  const sink: HoldSink = { enqueued: [] };
-  const result = await runAgenticGraph(
-    ir,
-    [{ role: 'user', content: spec.task }],
-    walkerDeps(sys, `fixture-${spec.name}`, llm, sink, (ev) => {
-      toolCalls.push({ node: ev.node, tool: ev.step.tool, args: ev.step.args, outcome: stepOutcome(ev.step) });
-    }),
-  );
-  return { path: result.path, toolCalls, finalText: result.finalText, reachedEnd: result.reachedEnd, held: sink.enqueued.length };
-}
-
-export type GraphRun = WalkerRun & { warnings: string[]; interrupted: boolean; runId: string };
+export type GraphRun = GoldenRun & { warnings: string[]; interrupted: boolean; runId: string };
 
 export type GraphRunOptions = {
   runId?: string;
@@ -532,29 +503,4 @@ export async function replayGraph(fx: EngineFixture): Promise<GraphRun & { remai
 /** Drive a fixture through `buildGraph` with the scripted model (supervisor fixtures — see the rule set above). */
 export async function scriptGraph(fx: EngineFixture, opts: GraphRunOptions = {}): Promise<GraphRun> {
   return runGraph(fx, scriptedLlm(fx.task), opts);
-}
-
-/** Run the CURRENT walker on the scripted model and record the golden + the transcript. */
-export async function generateFixture(spec: FixtureSpec): Promise<EngineFixture> {
-  const exchanges: RecordedExchange[] = [];
-  const golden = await runWalker({ name: spec.name, yaml: spec.yaml, task: FIXTURE_TASK }, recordingCaller(scriptedLlm(FIXTURE_TASK), exchanges));
-  return {
-    version: 1,
-    name: spec.name,
-    source: spec.source,
-    description: spec.description,
-    guarded: hasWhenGuard(parseSystem(spec.yaml)),
-    task: FIXTURE_TASK,
-    yaml: spec.yaml,
-    script: SCRIPT_ID,
-    transcript: { version: 1, exchanges },
-    golden,
-  };
-}
-
-/** Replay a fixture's transcript through the walker; `remaining` must be 0 for a faithful replay. */
-export async function replayWalker(fx: EngineFixture): Promise<WalkerRun & { remaining: number }> {
-  const llm = replayCaller(fx.transcript);
-  const run = await runWalker(fx, llm);
-  return { ...run, remaining: llm.remaining() };
 }

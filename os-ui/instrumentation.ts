@@ -123,6 +123,14 @@ export async function register(): Promise<void> {
         const { ensureRunJobsReady } = await import('./tabs/agents/lib/build/run-jobs-server.ts');
         const jobs = await ensureRunJobsReady();
         console.info(`[os-ui] agent runs: run queue ready (${jobs}); AGENTS_WORKER=${config.agentsWorker}`);
+        // A5: AGENTS_ENGINE is retired. An environment that still sets it is told, once, that it
+        // does nothing — silence would let an operator believe they had pinned the old walker.
+        if (process.env.AGENTS_ENGINE) {
+          console.warn(
+            `[os-ui] AGENTS_ENGINE=${process.env.AGENTS_ENGINE} is IGNORED and deprecated: ` +
+              'there is one agent engine (LangGraph) since the engine rebuild (A5). Remove the variable.',
+          );
+        }
       } catch (err) {
         console.error(`[os-ui] agent runs: checkpointer setup FAILED — langgraph runs will fail until it is reachable: ${err instanceof Error ? err.message : String(err)}`);
       }

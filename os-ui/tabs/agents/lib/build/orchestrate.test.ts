@@ -30,7 +30,7 @@ edges:
   - { from: supervisor, to: worker, type: supervise }
 `;
 
-test('a valid system builds all-green across the 4 adapters', async () => {
+test('a valid system builds all-green across the 4 adapters (Langfuse pending until a run)', async () => {
   const backends = newMockBackends();
   const report = await orchestrateBuild({
     yaml: SUP,
@@ -42,12 +42,15 @@ test('a valid system builds all-green across the 4 adapters', async () => {
     report.rows.map((r) => r.tool).sort(),
     ['langfuse', 'langgraph', 'litellm', 'opa'],
   );
-  for (const r of report.rows) assert.equal(r.status, 'ok', `${r.tool}: ${r.error ?? ''}`);
+  const byTool = new Map(report.rows.map((r) => [r.tool, r]));
+  for (const t of ['opa', 'litellm', 'langgraph']) assert.equal(byTool.get(t)!.status, 'ok', `${t}: ${byTool.get(t)!.error ?? ''}`);
 
   // The system's grants really landed in the (mock) OPA.
   assert.ok(backends.opa.tools.size > 0);
-  // The test invocation produced Langfuse traces (what the langfuse row verifies).
-  assert.ok(backends.langfuse.traces.length > 0);
+  // A5: the langgraph row is the REAL compile (`buildGraph`) and traces nothing, so the Langfuse
+  // row is NEUTRAL (`pending`, which `report.ok` tolerates) until the system has actually run.
+  assert.equal(byTool.get('langfuse')!.status, 'pending');
+  assert.equal(backends.langfuse.traces.length, 0, 'a build traces nothing, because it runs nothing');
 });
 
 test('a pending verify row does NOT fail the report (needs-a-run-first is neutral)', async () => {

@@ -509,7 +509,6 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       <RuntimeSelector
         system={sys}
         canEdit={data.canEdit && !acting}
-        hermesEnabled={data.hermesEnabled}
         onChange={(next) => mutate(next)}
       />
 

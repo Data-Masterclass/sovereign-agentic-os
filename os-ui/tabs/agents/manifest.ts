@@ -18,5 +18,5 @@ export const manifest: TabManifest = {
   api: ["/api/agents", "/api/agent", "/api/agent-chat", "/api/assistant"],
   mcpTools: ["agent-write"],
   policies: [],
-  services: ["agent-runtime", "litellm", "opa", "langfuse", "opensearch", "postgres"],
+  services: ["litellm", "opa", "langfuse", "opensearch", "postgres"],
 };

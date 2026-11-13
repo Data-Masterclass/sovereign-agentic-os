@@ -261,7 +261,6 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
       view,
       yaml,
       messages: job.input.messages ?? [],
-      engine: 'langgraph',
       runId: job.runId,
       resume: job.kind === 'resume',
       resumeWith: job.input.resumeWith,

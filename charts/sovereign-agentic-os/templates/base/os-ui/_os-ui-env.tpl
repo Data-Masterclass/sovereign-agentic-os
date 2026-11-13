@@ -106,10 +106,11 @@
   value: {{ . | quote }}
 {{- end }}
 # In-cluster backend Service URLs (overridable per environment).
-# Live agent-runtime backend (Agents tab) + the shared token the UI
-# uses to call it and to validate the runtime's governed-tool calls.
-- name: AGENT_RUNTIME_URL
-  value: "http://agent-runtime:8000"
+# The shared SERVICE BEARER. A5 deleted the Python agent-runtime this was named
+# after (agent graphs run in this process now), but the token stayed: os-ui
+# VALIDATES it on its unauthenticated service paths — the agent scheduled-run
+# endpoint, the metrics data-sync sweep and the connections catalog-refresh sweep
+# all present it from their CronJobs. Renamed when the data side owns the Secret.
 - name: AGENT_RUNTIME_TOKEN
   valueFrom:
     secretKeyRef:

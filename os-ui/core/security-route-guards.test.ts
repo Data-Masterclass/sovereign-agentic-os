@@ -88,7 +88,9 @@ test('GAP 8 (4-rank migration): the Platform-group user routes stay requireAdmin
 test('GAP 5: the unauthenticated knowledge GET route is gone; retrieve callers pass a DLS principal', () => {
   assert.ok(!existsSync(resolve(OSUI, 'app/api/knowledge/route.ts')), 'bare /api/knowledge route deleted');
   assert.match(read('app/api/agent/tool/route.ts'), /retrieveTool\(query, \{/, 'session principal threaded');
-  assert.match(read('app/api/agents/tool/route.ts'), /retrieveTool\([^)]*dls\)/, 'system DLS principal threaded');
+  // A5: `app/api/agents/tool` (the Python agent-runtime's callback door) is deleted — the engine
+  // runs in-process and calls `handleRpc(user, …)` directly, so there is no second tool door left.
+  assert.ok(!existsSync(resolve(OSUI, 'app/api/agents/tool/route.ts')), 'the runtime callback tool route is deleted');
 });
 
 test('GAP 6: the governance policies read gates on the policy.view right', () => {
@@ -307,7 +309,7 @@ test('RUN PATH: the agent RUN route derives a real default task, never "Test inv
 //   • health         — liveness probe (no data)
 //   • mcp, mcp/[tab] — gated by an OS-issued per-user Bearer token (not the cookie)
 //   • cube/models    — cluster-internal model-sync sidecar (governed tiers only; see its docstring)
-//   • agents/scheduled-run, agents/tool — gated by the runtime Bearer token (runtimeTokenOk)
+//   • agents/scheduled-run — gated by the shared service Bearer token (runtimeTokenOk)
 const UNAUTHENTICATED_BY_DESIGN = new Set([
   'app/api/health/route.ts',
   'app/api/auth/verify/route.ts',
@@ -317,7 +319,6 @@ const UNAUTHENTICATED_BY_DESIGN = new Set([
   'app/api/mcp/route.ts',
   'app/api/mcp/[tab]/route.ts',
   'app/api/agents/scheduled-run/route.ts',
-  'app/api/agents/tool/route.ts',
 ]);
 
 function allApiRoutes(): string[] {

@@ -30,7 +30,7 @@ import { exposureWriteTools } from '@core/mcp/experimental/exposure-write-tools'
  * This module is a BARREL: each per-domain cluster lives in its own file
  * (data/knowledge/file/promotion/metric/dashboard/agent/software), sharing
  * helpers via ./write-common. The public surface (ALL_WRITE_TOOLS,
- * __setRunOsTeamForTests, WriteToolSchema) is unchanged.
+ * __setStartQueuedRunForTests, WriteToolSchema) is unchanged.
  */
 
 export { dataWriteTools } from '@core/mcp/experimental/data-write-tools';
@@ -39,7 +39,7 @@ export { fileWriteTools } from '@tabs/files/mcp/file-write-tools';
 export { promotionTools } from '@core/mcp/experimental/promotion-write-tools';
 export { metricWriteTools } from '@tabs/metrics/mcp/metric-write-tools';
 export { dashboardWriteTools } from '@tabs/dashboards/mcp/dashboard-write-tools';
-export { agentWriteTools, __setRunOsTeamForTests } from '@core/mcp/agent-write-tools';
+export { agentWriteTools, __setStartQueuedRunForTests } from '@core/mcp/agent-write-tools';
 export { softwareWriteTools } from '@tabs/software/mcp/software-write-tools';
 export { exposureWriteTools } from '@core/mcp/experimental/exposure-write-tools';
 

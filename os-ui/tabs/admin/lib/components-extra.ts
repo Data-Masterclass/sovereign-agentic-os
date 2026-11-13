@@ -64,7 +64,7 @@ const VERSIONS: Record<string, string> = {
   postgres: 'CNPG 1.24', clickhouse: 'v24.8', minio: 'RELEASE.2026-05', valkey: 'v8.0',
   dagster: 'v1.9.1',
   'mock-model': 'v0.1.1', 'query-tool': 'v0.4', polaris: 'v1.1.0-incubating', haystack: 'v2.8',
-  trino: '476', 'data-runner': 'v0.1.0', 'agent-runtime': 'v0.1.1',
+  trino: '476', 'data-runner': 'v0.1.0',
   mlflow: 'v2.19', jupyterhub: 'v5.2', 'os-ui': 'v0.5.14',
 };
 

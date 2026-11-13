@@ -26,4 +26,7 @@ node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/agents/lib/engine/run-visibility.test.ts \
   tabs/agents/lib/engine/jobs-lease.test.ts \
   tabs/agents/lib/build/run-stream-client.test.ts \
-  tabs/agents/lib/build/worker-resolve-hook.test.ts
+  tabs/agents/lib/build/worker-resolve-hook.test.ts \
+  tabs/agents/lib/engine/parity.test.ts \
+  tabs/agents/lib/engine/fixtures.test.ts \
+  tabs/agents/lib/engine/build-graph.test.ts

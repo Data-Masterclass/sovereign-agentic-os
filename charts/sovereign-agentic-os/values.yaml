@@ -610,23 +610,25 @@ retrieval:
   knnDimension: 384
 
 # MCP test agent — proves the OS's own real, governed MCP registry (/api/mcp)
-# Agent runtime — the live-execution backend for the Agents tab (Phase 4).
+# Agent schedules + the shared SERVICE BEARER the OS's own CronJobs present to os-ui.
+#
+# A5 (engine rebuild, 2026-11-13) deleted the Python `agent-runtime` Deployment this block
+# was named after — agent systems now execute as a real LangGraph StateGraph inside os-ui,
+# as the signed-in user. Gone with it: `enabled`, `image`, `replicas`, `resources` and the
+# three model aliases (`chatModel` / `reasoningModel` / `executionModel` — os-ui's own
+# LITELLM_*_MODEL defaults are the live ones, and `scripts/check-litellm-allowlist.mjs`
+# checks those).
+#
+# What is left:
+#   • token     — the shared bearer os-ui mounts as AGENT_RUNTIME_TOKEN and validates on its
+#                 service paths (scheduled runs, data-sync, catalog-refresh); the Dagster
+#                 sidecar reads the same Secret. Renamed once the data side owns it.
+#   • schedules — declarative agent-schedule CronJobs (empty by default; the Agents tab
+#                 provisions schedules itself at runtime).
 agentRuntime:
-  enabled: true
-  image:
-    repository: sovereign-os/agent-runtime   # built locally, loaded into kind
-    tag: "0.1.2"   # 0.1.2 = capture LiteLLM token usage per run (Monitoring truth)
-  chatModel: sovereign-mock
-  # Two-tier model strategy (stack-decisions): EVERY agent PLANS with the reasoning
-  # tier, then HANDS OFF execution to the execution tier.
-  reasoningModel: sovereign-reasoning   # PLAN phase of every agent
-  executionModel: sovereign-default     # EXECUTE phase of every agent
-  # Shared runtime <-> OS UI token.
   token: "agent-runtime-local-dev-token"
-  resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { cpu: 500m, memory: 512Mi }
   # CronJob-per-schedule entries (empty by default -> no CronJob renders).
+  # Each: { name, systemId, cron, prompt }
   schedules: []
 
 # =============================================================================

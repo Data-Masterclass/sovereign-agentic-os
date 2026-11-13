@@ -1,18 +1,29 @@
-{{- if .Values.agentRuntime.enabled }}
 {{- /*
-  Agent runtime — the live-execution backend for the Agents tab. It holds ONLY
-  its scoped LiteLLM virtual key (least privilege): no OPA, no Langfuse, no
-  Forgejo, no platform creds. It reaches the model gateway (LiteLLM) and calls
-  back into the OS UI's governed-tool endpoint; everything else is denied by its
-  dedicated egress NetworkPolicy (templates/network/egress-policies.yaml).
-  Graph semantics arrive via the OS UI /reload, not Forgejo.
+  THE SHARED SERVICE BEARER — `agent-runtime-token`.
+
+  What used to live in this file (engine rebuild A5, 2026-11-13): the Python
+  `agent-runtime` Deployment, its ConfigMap and its Service — a generic LangGraph IR
+  interpreter that os-ui POSTed a compiled graph to (`/reload`) and then asked to run
+  it (`/run`), calling back into os-ui's governed-tool endpoint for every tool call.
+  All of it is deleted. Agent systems now execute as a real `StateGraph` INSIDE os-ui
+  (`os-ui/tabs/agents/lib/engine/`), as the signed-in user, through the in-process
+  governed dispatcher — so there is no second process, no IR on a wire, and no
+  callback door (`/api/agents/tool` is gone with it).
+
+  What REMAINS is the Secret, because the token outlived the workload it was named
+  after: it is the shared bearer the OS's own CronJobs present to os-ui on the
+  service paths (agent scheduled runs, the metrics data-sync sweep, the connections
+  catalog-refresh sweep — see `runtimeTokenOk` in
+  `os-ui/tabs/agents/lib/build/runtime-auth.ts`), and the data side's Dagster sidecar
+  reads this same Secret. It therefore stays here, ungated, until that side lands its
+  own template — at which point this file goes too and the key is renamed with it
+  (deviation A5-1 in docs/superpowers/plans/2026-11-13-engine-rebuild.md).
+
+  Local profile only: on non-local profiles the Secret is delivered by External
+  Secrets (ESO), exactly as before.
 */}}
-{{- $r := .Values.agentRuntime }}
-{{- if eq .Values.global.profile "local" }}
-# Local-profile shared token. The runtime presents this on its calls back to the
-# OS UI governed-tool endpoint, and the OS UI presents the SAME token to the
-# runtime — both read `agent-runtime-token`. On non-local profiles this Secret is
-# delivered by External Secrets (ESO), so it is NOT rendered here.
+{{- $token := (.Values.agentRuntime).token }}
+{{- if and $token (eq .Values.global.profile "local") }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -23,98 +34,5 @@ metadata:
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "agent-runtime") | nindent 4 }}
 type: Opaque
 stringData:
-  token: {{ $r.token | quote }}
----
-{{- end }}
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: agent-runtime-config
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "soa.labels" . | nindent 4 }}
-    {{- include "soa.selectorLabels" (dict "ctx" . "component" "agent-runtime") | nindent 4 }}
-data:
-  # Non-secret runtime config (the two secret values stay in Secrets below).
-  PORT: "8000"
-  LITELLM_BASE_URL: "http://agentic-os-litellm:4000/v1"
-  CHAT_MODEL: {{ $r.chatModel | quote }}
-  # Two-tier hand-off: PLAN on the reasoning tier, EXECUTE on the execution tier.
-  REASONING_MODEL: {{ $r.reasoningModel | quote }}
-  EXECUTION_MODEL: {{ $r.executionModel | quote }}
-  # The OS UI in-cluster Service ("os-ui", http port 3000) governed-tool endpoint.
-  GOVERNED_TOOL_URL: "http://os-ui:3000/api/agents/tool"
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: agent-runtime
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "soa.labels" . | nindent 4 }}
-    {{- include "soa.selectorLabels" (dict "ctx" . "component" "agent-runtime") | nindent 4 }}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      {{- include "soa.selectorLabels" (dict "ctx" . "component" "agent-runtime") | nindent 6 }}
-  template:
-    metadata:
-      labels:
-        {{- include "soa.labels" . | nindent 8 }}
-        {{- include "soa.selectorLabels" (dict "ctx" . "component" "agent-runtime") | nindent 8 }}
-    spec:
-      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
-      {{- with .Values.global.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      securityContext:
-        {{- include "soa.podSecurityContext" . | nindent 8 }}
-        runAsUser: 1000
-      containers:
-        - name: agent-runtime
-          image: "{{ $r.image.repository }}:{{ $r.image.tag }}"
-          imagePullPolicy: IfNotPresent      # locally-built image, loaded into kind
-          securityContext:
-            {{- include "soa.containerSecurityContext" . | nindent 12 }}
-            readOnlyRootFilesystem: true
-          # Non-secret config (PORT, LITELLM_BASE_URL, CHAT_MODEL, GOVERNED_TOOL_URL).
-          envFrom:
-            - configMapRef:
-                name: agent-runtime-config
-          env:
-            # Scoped LiteLLM virtual key (REUSED — not a freshly minted key).
-            - name: LITELLM_API_KEY
-              valueFrom: { secretKeyRef: { name: agent-litellm-key, key: apiKey } }
-            # Shared token: validates the runtime <-> OS UI governed-tool calls.
-            - name: AGENT_RUNTIME_TOKEN
-              valueFrom: { secretKeyRef: { name: agent-runtime-token, key: token } }
-          ports:
-            - { name: http, containerPort: 8000 }
-          readinessProbe:
-            httpGet: { path: /health, port: http }
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            failureThreshold: 6
-          livenessProbe:
-            httpGet: { path: /health, port: http }
-            initialDelaySeconds: 15
-            periodSeconds: 20
-          resources:
-            {{- toYaml $r.resources | nindent 12 }}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: agent-runtime
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "soa.labels" . | nindent 4 }}
-    {{- include "soa.selectorLabels" (dict "ctx" . "component" "agent-runtime") | nindent 4 }}
-spec:
-  selector:
-    {{- include "soa.selectorLabels" (dict "ctx" . "component" "agent-runtime") | nindent 4 }}
-  ports:
-    - { name: http, port: 8000, targetPort: http }
+  token: {{ $token | quote }}
 {{- end }}

@@ -118,7 +118,7 @@ export const agentWriteTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'RUN an agentic-os team (LangGraph, OS-MCP tool grants) for one turn and return the reply + the per-node governed tool steps — the same in-process, run-as-user executor the Agents tab uses. Purpose: close the Agents golden path (build → RUN) over MCP. Before: list_agent_systems / get_agent_system (and build_agent_system for a ✓ build). After: read the per-node steps; wire the system into a Big Bet or schedule. Governance + recursion, stated honestly: the team’s OWN tool calls dispatch through the SAME governed door as this call (grant-scoped, OPA `os-<systemId>` pre-gated, then handleRpc AS YOU) — so a team can never exceed its declared grants NOR your role; there is no escalation in the loop. You must own the system or be entitled to run it (a domain-Shared system is runnable by in-domain members); a non-runnable id is a typed forbidden. A hermes/legacy-grant system cannot run in-process — that is a typed bad_request pointing to the Agents tab UI. Note: the run drives a live LLM; each node takes seconds.',
+      'RUN an agent system (a real LangGraph StateGraph over your OS-MCP tool grants) for one turn and return the reply + the per-node governed tool steps — the SAME queue, engine and executor the Agents tab uses. Purpose: close the Agents golden path (build → RUN → approval → resume → trace) over MCP. Before: list_agent_systems / get_agent_system (and build_agent_system for a ✓ build). After: get_agent_run(runId) to follow it, decide_approval if it parks, resume_agent_run after a restart, get_run_trace(runId) for the trace. Returns `runId` (= the LangGraph thread id AND the Langfuse trace id) and `traceUrl`. Governance + recursion, stated honestly: the team’s OWN tool calls dispatch through the SAME governed door as this call (grant-scoped, OPA `os-<systemId>` pre-gated, then handleRpc AS YOU) — so a team can never exceed its declared grants NOR your role; there is no escalation in the loop. You must own the system or be entitled to run it (a domain-Shared system is runnable by in-domain members); a non-runnable id is a typed forbidden. A grant naming a tool with no governed MCP tool behind it is a typed bad_request that names the tool. A run that hits a write needing approval PARKS (`parked: true` + `heldApprovals`) instead of executing it. Note: the run drives a live LLM; each node takes seconds, and in worker mode it may return `queued: true` with the runId to follow.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -140,67 +140,43 @@ export const agentWriteTools: McpTool[] = [
       // in-domain member of a Shared system) — the same gate as the Agents tab run.
       const view = getSystemForRun(systemId, P(user));
       const msgs = runMessages(args);
-      // Dynamic imports: agentic-graph-server reads the tool registry at module init,
-      // so a static import here would be a server.ts ↔ write-tools.ts cycle.
-      const { isAgenticOsTeam } = await import('@tabs/agents/lib/build/os-tools');
-      if (!isAgenticOsTeam(view.system)) {
+      // PRE-FLIGHT (A5): the one engine runs every system; the only definition bug that stops a
+      // run is a grant naming a tool with no governed MCP tool behind it. Name them.
+      // Dynamic import: os-tools reads the tool registry at module init, so a static import here
+      // would be a server.ts ↔ write-tools.ts cycle.
+      const { unmappedGrantNames } = await import('@tabs/agents/lib/build/os-tools');
+      const unmapped = unmappedGrantNames(view.system);
+      if (unmapped.length > 0) {
         fail(
-          'This system does not run on the in-process agentic-os path (hermes runtime or legacy/unmapped tool grants) — run it from the Agents tab UI instead',
+          `This system grants tool(s) with no governed MCP tool behind them: ${unmapped.join(', ')}. ` +
+            'Fix the grants with commit_agent_files (system.yaml), then run again.',
           400,
         );
       }
-      // ENGINE FLAG (engine rebuild, Phase A0): the same selector the run route and the
-      // scheduler use. Only the walker exists today; Phase A1 branches on `langgraph` HERE.
-      const { selectEngine } = await import('@tabs/agents/lib/engine/select');
-      const engine = selectEngine(config, view.system);
-      // ENGINE (A1): the same branch as the route and the scheduler; thread id = a fresh run id,
-      // returned so an MCP client can correlate (and resume) the run.
+      // Thread id = run id, returned so an MCP client can correlate (and resume) the run.
       const runId = newRunId();
-      // A4: under the governed engine the MCP goes through the SAME queue as the UI and the
-      // scheduler — one start door. `runTeamOverride` (tests) and the walker stay in-request.
-      if (engine === 'langgraph' && !runTeamOverride) {
-        const { startQueuedRun } = await import('@tabs/agents/lib/build/run-jobs-server');
-        const out = await startQueuedRun({ user, systemId, domain: view.system.system.domain, messages: msgs, runId });
-        if (out.error) fail(out.error.message, out.error.status ?? 500);
-        if (!out.body) return { systemId, mode: 'live', engine, runId, queued: true, note: 'filed on the run queue — tail it with get_agent_run' };
-        const b = out.body;
-        return {
-          systemId,
-          mode: 'live',
-          engine,
-          runId: b.runId ?? runId,
-          checkpointer: b.checkpointer,
-          traceUrl: b.traceUrl,
-          reachedEnd: b.reachedEnd,
-          parked: b.parked,
-          heldApprovals: b.heldApprovals ?? [],
-          path: b.path,
-          finalText: b.finalText,
-          nodes: b.nodes.map((r) => ({ node: r.node, model: r.model, steps: r.steps.map((x) => ({ tool: x.tool, isError: x.isError })) })),
-        };
-      }
-      const runTeam = runTeamOverride ?? (await import('@tabs/agents/lib/build/agentic-graph-server')).runOsTeam;
-      const team = await runTeam({ user, yaml: view.yaml, systemId, messages: msgs, disabledAgents: view.disabledAgents, engine, runId });
+      // A4: the MCP goes through the SAME queue as the UI and the scheduler — one start door.
+      const startRun = startQueuedRunOverride ?? (await import('@tabs/agents/lib/build/run-jobs-server')).startQueuedRun;
+      const out = await startRun({ user, systemId, domain: view.system.system.domain, messages: msgs, runId });
+      if (out.error) fail(out.error.message, out.error.status ?? 500);
+      if (!out.body) return { systemId, mode: 'live', engine: 'langgraph', runId, queued: true, note: 'filed on the run queue — tail it with get_agent_run' };
+      const b = out.body;
       return {
         systemId,
         mode: 'live',
-        engine,
-        runId: team.runId ?? (engine === 'langgraph' ? runId : undefined),
-        checkpointer: team.checkpointer,
+        engine: 'langgraph',
+        runId: b.runId ?? runId,
+        checkpointer: b.checkpointer,
         // A3: the deep link to THIS run's Langfuse trace (id = run id), when the trace store recorded it.
-        traceUrl: team.traceUrl,
-        reachedEnd: team.reachedEnd,
+        traceUrl: b.traceUrl,
+        reachedEnd: b.reachedEnd,
         // A2: a run PARKED on a held write — decide its approvals (decide_approval) to resume it.
-        parked: team.parked ?? false,
-        heldApprovals: team.heldApprovals ?? [],
-        path: team.path,
-        finalText: team.finalText,
+        parked: b.parked,
+        heldApprovals: b.heldApprovals ?? [],
+        path: b.path,
+        finalText: b.finalText,
         // Per-node summary: model + governed tool steps (no raw model text — tight).
-        nodes: team.runs.map((r) => ({
-          node: r.node,
-          model: r.model,
-          steps: r.result.steps.map((s) => ({ tool: s.tool, isError: s.isError })),
-        })),
+        nodes: b.nodes.map((r) => ({ node: r.node, model: r.model, steps: r.steps.map((x) => ({ tool: x.tool, isError: x.isError })) })),
       };
     },
   },
@@ -261,32 +237,36 @@ function runMessages(args: Record<string, unknown>): { role: 'user' | 'assistant
   return [{ role: 'user', content: message }];
 }
 
-/** The runOsTeam signature the tool drives (structural, so tests can inject a spy). */
-type RunTeamFn = (input: {
+/**
+ * The `startQueuedRun` signature the tool drives (structural, so tests can inject a spy).
+ * A5 replaced the old `RunTeamFn` seam: there is one start door now, and it is this one.
+ */
+type StartRunFn = (input: {
   user: CurrentUser;
-  yaml: string;
   systemId: string;
+  domain: string;
   messages: { role: 'user' | 'assistant'; content: string }[];
-  disabledAgents?: string[];
-  engine?: 'walker' | 'langgraph';
-  runId?: string;
+  prompt?: string;
+  runId: string;
 }) => Promise<{
-  path: string[];
-  finalText: string;
-  reachedEnd: boolean;
-  runs: { node: string; model: string; result: { steps: { tool: string; isError: boolean }[] } }[];
-  runId?: string;
-  checkpointer?: 'postgres' | 'memory';
-  traceUrl?: string;
-  parked?: boolean;
-  heldApprovals?: { approvalId: string; tool: string; node: string }[];
+  runId: string;
+  body?: {
+    runId?: string;
+    checkpointer?: 'postgres' | 'memory';
+    traceUrl?: string;
+    reachedEnd: boolean;
+    parked?: boolean;
+    heldApprovals?: { approvalId: string; tool: string; node: string }[];
+    path: string[];
+    finalText: string;
+    nodes: { node: string; model: string; steps: { tool: string; isError: boolean }[] }[];
+  };
+  error?: { message: string; status?: number };
 }>;
 
-// runOsTeam drives a LIVE LiteLLM call; tests inject a spy so the wrapper's
-// identity threading + governance gates are testable offline (mirrors the
-// injectable deps runOsTeam itself exposes). null → the real function.
-let runTeamOverride: RunTeamFn | null = null;
-export function __setRunOsTeamForTests(fn: RunTeamFn | null): void {
-  runTeamOverride = fn;
+// A real start files a `run_jobs` row and drives a LIVE LiteLLM call; tests inject a spy so the
+// wrapper's identity threading + governance gates are testable offline. null → the real function.
+let startQueuedRunOverride: StartRunFn | null = null;
+export function __setStartQueuedRunForTests(fn: StartRunFn | null): void {
+  startQueuedRunOverride = fn;
 }
-

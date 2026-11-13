@@ -6,10 +6,14 @@ import { timingSafeEqual } from 'node:crypto';
 import { config } from '@core/kernel/config';
 
 /**
- * Service-to-service auth for the runtime-facing endpoints (the governed-tool
- * chokepoint and the scheduled-run trigger). The caller is the agent-runtime Pod
- * or a schedule CronJob — NOT a browser user — so it presents the shared runtime
- * bearer instead of a session cookie. Constant-time compared; server-only.
+ * Service-to-service auth for the SERVICE paths: the agent scheduled-run trigger, the
+ * metrics data-sync sweep and the connections catalog-refresh sweep. The caller is one of
+ * the OS's own CronJobs — NOT a browser user — so it presents the shared service bearer
+ * instead of a session cookie. Constant-time compared; server-only.
+ *
+ * A5: the governed-tool chokepoint this also guarded (`/api/agents/tool`, the Python
+ * agent-runtime's callback door) is deleted. The engine runs in this process and calls
+ * `handleRpc(user, …)` directly, so no external caller executes a tool any more.
  */
 export function runtimeTokenOk(authHeader: string | null): boolean {
   const expected = config.agentRuntimeToken;

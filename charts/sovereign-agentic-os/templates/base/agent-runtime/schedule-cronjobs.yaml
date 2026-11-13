@@ -1,13 +1,14 @@
-{{- if .Values.agentRuntime.enabled }}
 {{- /*
   CronJob-per-schedule. Each entry in `.Values.agentRuntime.schedules` becomes one
-  CronJob that POSTs to the OS UI scheduled-run endpoint (which fans out to the
-  agent-runtime under the same shared token). The list is EMPTY by default, so no
-  CronJob renders out of the box (helm lint/template stay clean). Each entry:
+  CronJob that POSTs to the OS UI scheduled-run endpoint, authenticating with the shared
+  service bearer. os-ui then files the run on its own queue and the engine executes it
+  under the system OWNER's live identity. The list is EMPTY by default, so no CronJob
+  renders out of the box (helm lint/template stay clean). Each entry:
     { name, systemId, cron, prompt }
+  A5: no longer gated on `agentRuntime.enabled` — the workload that flag switched is gone,
+  and these CronJobs never talked to it.
 */}}
-{{- $r := .Values.agentRuntime }}
-{{- range $s := $r.schedules }}
+{{- range $s := ((.Values.agentRuntime).schedules | default list) }}
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -59,5 +60,4 @@ spec:
               resources:
                 requests: { cpu: 25m, memory: 32Mi }
                 limits: { cpu: 200m, memory: 64Mi }
-{{- end }}
 {{- end }}

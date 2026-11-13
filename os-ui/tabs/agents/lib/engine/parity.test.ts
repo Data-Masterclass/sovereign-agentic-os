@@ -2,19 +2,20 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * TAB:        agents
- * FEATURE:    Parity tests P1 + P2 — the old walker and the LangGraph engine agree on every golden
- * USER STORY: As the engine-rebuild engineer I want a table-driven test proving that, for every
- *             fixture, `buildGraph` reproduces the walker's visited path, (tool, args, outcome)
- *             sequence and final text (P1); that handoff guards now ROUTE where the walker ignored
- *             them (HANDOFF-GUARD, flipped from `todo` in A1); and that a run killed mid-way and
+ * FEATURE:    Parity tests P1 + P2 — the LangGraph engine still reproduces every frozen golden
+ * USER STORY: As the engineer who deleted the walker I want a table-driven test proving that, for
+ *             every fixture the walker recorded, `buildGraph` reproduces its visited path,
+ *             (tool, args, outcome) sequence and final text (P1); that handoff guards now ROUTE
+ *             where the walker ignored them (HANDOFF-GUARD); and that a run killed mid-way and
  *             resumed on the same thread ends exactly like an uninterrupted one (P2).
  * ARCHITECTURE:
  *   - Reads every ./fixtures/*.json inside a guarded loader (a missing directory is a FAILING
- *     test, never zero tests). `replayWalker` drives the walker; `replayGraph` / `scriptGraph`
- *     drive the engine (parity-harness.ts documents which fixtures use which and why).
- *   - Guarded fixtures: the walker side stays excluded (it ignores guards). The engine side is
- *     asserted explicitly: the software team's guards are all false (nothing sets their channels)
- *     so its supervisor drives the walker's order; shape (c) must NOT visit `publisher`.
+ *     test, never zero tests). `replayGraph` / `scriptGraph` drive the engine (parity-harness.ts
+ *     documents which fixtures use which and why). A5 deleted the walker side: the goldens in the
+ *     files ARE the walker, frozen, and `fixtures.test.ts` keeps them that way.
+ *   - Guarded fixtures are asserted explicitly, because the engine is SUPPOSED to differ there:
+ *     the software team's guards are all false (nothing sets their channels) so its supervisor
+ *     drives the walker's order; shape (c) must NOT visit `publisher`, which the walker did.
  *   - P2 aborts the stream after the first `node-completed`, resumes with the same thread id on
  *     the same MemorySaver and compares path, tool sequence and final text with a clean run.
  */
@@ -27,7 +28,6 @@ import { parseSystem } from '@tabs/agents/lib/system-schema';
 import {
   hasSupervisor,
   replayGraph,
-  replayWalker,
   runGraph,
   scriptedLlm,
   scriptGraph,
@@ -57,23 +57,12 @@ test('P1 has fixtures to run against', () => {
 });
 
 for (const fx of fixtures) {
-  if (fx.guarded) {
-    test.todo(`P1 ${fx.name} [walker]: excluded from P1 (guarded) — the walker ignores its \`when\` guards`);
-    continue;
-  }
-
-  test(`P1 ${fx.name} [walker]: replayed transcript reproduces the golden path, tool sequence and final text`, async () => {
-    const run = await replayWalker(fx);
-    assert.deepEqual(run.path, fx.golden.path, 'visited node path');
-    assert.deepEqual(run.toolCalls, fx.golden.toolCalls, '(node, tool, args, outcome) sequence');
-    assert.equal(run.finalText, fx.golden.finalText, 'final text');
-    assert.equal(run.reachedEnd, fx.golden.reachedEnd, 'reachedEnd');
-    assert.equal(run.held, fx.golden.held, 'writes held by the real gate');
-    assert.equal(run.remaining, 0, 'every recorded exchange was consumed');
-  });
+  // A guarded fixture's golden records the walker IGNORING its `when` guards, so the engine must
+  // NOT reproduce it; each one is asserted on its own below.
+  if (fx.guarded) continue;
 
   const supervised = hasSupervisor(parseSystem(fx.yaml));
-  test(`P1 ${fx.name} [langgraph]: buildGraph reproduces the same golden (${supervised ? 'scripted route decisions in declared order' : 'replayed transcript'})`, async () => {
+  test(`P1 ${fx.name}: buildGraph reproduces the frozen golden (${supervised ? 'scripted route decisions in declared order' : 'replayed transcript'})`, async () => {
     const run = supervised ? await scriptGraph(fx) : await replayGraph(fx);
     assert.deepEqual(run.path, fx.golden.path, 'visited node path');
     assert.deepEqual(run.toolCalls, fx.golden.toolCalls, '(node, tool, args, outcome) sequence');
@@ -88,7 +77,7 @@ for (const fx of fixtures) {
 // ------------------------------------------------------ guarded fixtures, engine side --
 
 const softwareTeam = fixtures.find((f) => f.name === 'software-team');
-test('P1 software-team [langgraph]: every guard is false (no node sets plan_ready/committed/…), so the supervisor drives the walker\'s declared order — and each guard is a compile warning', async (t) => {
+test('P1 software-team: every guard is false (no node sets plan_ready/committed/…), so the supervisor drives the walker\'s declared order — and each guard is a compile warning', async (t) => {
   if (!softwareTeam) return t.skip('fixture missing');
   const run = await scriptGraph(softwareTeam);
   assert.deepEqual(run.path, softwareTeam.golden.path);
@@ -102,7 +91,7 @@ test('P1 software-team [langgraph]: every guard is false (no node sets plan_read
 });
 
 const guardedShape = fixtures.find((f) => f.name === 'shape-guarded-handoff-held-write');
-test('HANDOFF-GUARD shape-guarded-handoff-held-write [langgraph]: when:"state.findings_ready" is never true, so publisher is NOT visited and nothing is held', async (t) => {
+test('HANDOFF-GUARD shape-guarded-handoff-held-write: when:"state.findings_ready" is never true, so publisher is NOT visited and nothing is held', async (t) => {
   if (!guardedShape) return t.skip('fixture missing');
   assert.ok(guardedShape.golden.path.includes('publisher'), 'the walker golden still records the defect (visits publisher)');
   const run = await scriptGraph(guardedShape);

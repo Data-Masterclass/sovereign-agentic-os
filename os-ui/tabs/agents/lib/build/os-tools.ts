@@ -442,18 +442,20 @@ export function resolveGrantedTools(sys: System): { mcpNames: string[]; unmapped
 }
 
 /**
- * Is this a system whose grants resolve entirely to the OS MCP registry? Such a
- * system runs the in-process, run-as-user governed path (T4). It REPLACES the old
- * `isAgenticSoftwareTeam` gate — software-only teams are a strict subset (their
- * tools are already MCP names), so their existing behaviour is preserved, while
- * mixed data/knowledge grants now qualify too. A `hermes` runtime or ANY unmapped
- * legacy tool (`web_fetch`, …) → false, keeping the honest legacy fallback. A
- * `walker`-pinned system (the engine-flag opt-out) qualifies like `langgraph`.
+ * The granted tool names that resolve to NOTHING in the OS MCP registry (`web_fetch`,
+ * `knowledge_certify`, a typo, …). Empty = the system is runnable.
+ *
+ * A5 replaced the old `isAgenticOsTeam` boolean with this list. The boolean existed to
+ * choose between the in-process path and the legacy Python-runtime fallback; there is no
+ * fallback any more, so the only honest question left is "which grants have no governed
+ * tool behind them" — and the answer belongs in the error message the run doors return,
+ * naming the offending tools, rather than in a yes/no that sent the user to another path.
+ * `buildGraph` enforces the same rule as a compile error; this is the earlier, friendlier
+ * door. A system with NO tool grants is runnable (its agents are plain completions) —
+ * under the old boolean it was not, which was an accident of the fallback, not a rule.
  */
-export function isAgenticOsTeam(sys: System): boolean {
-  if (sys.runtime === 'hermes') return false;
-  if (sys.grants.tools.length === 0) return false;
-  return resolveGrantedTools(sys).unmapped.length === 0;
+export function unmappedGrantNames(sys: System): string[] {
+  return resolveGrantedTools(sys).unmapped;
 }
 
 /** The `McpTool` objects a system is granted (registry ∩ resolved grants). */
@@ -570,8 +572,10 @@ function errorResult(code: string, reason: string): { text: string; isError: boo
  */
 export type ExecutorOptions = {
   /**
-   * WHERE the write-approval hold (gate 1b) is decided. `executor` (default — the walker path):
-   * this executor holds + enqueues and returns the typed `held` result. `node` (the LangGraph
+   * WHERE the write-approval hold (gate 1b) is decided. `executor` (the default, and what any
+   * caller that is not a graph node gets): this executor holds + enqueues and returns the typed
+   * `held` result — defence in depth, kept after A5 even though the only production caller now
+   * passes `node`. `node` (the LangGraph
    * engine, A2): the `tools_<id>` node has ALREADY computed the hold for the whole batch with the
    * same `holdDecisionFor` rule and parked the run on `interrupt()`; only non-held and APPROVED
    * calls reach this executor, so gate 1b must not re-hold them. Gates 1 and 2 are identical

@@ -179,14 +179,14 @@ export type LastRun = {
    * UI shows an "interrupted — resume" affordance instead of a stale live spinner.
    */
   interrupted?: boolean;
-  /** For an interrupted run: the node index the walk reached, so a resume can
-   *  re-enter from the next node (when full-resume ships). Best-effort. */
+  /** For an interrupted run: the node index the run reached. Best-effort, informational. */
   resumeFromIndex?: number;
-  /** The run id (= LangGraph thread id) under the `langgraph` engine; absent on walker runs.
+  /** The run id (= LangGraph thread id = Langfuse trace id).
    *  `POST …/run { resume: true, runId }` continues it from its last checkpoint. */
   runId?: string;
-  /** Which executor produced this run and where its checkpoints live (langgraph only). */
-  engine?: 'walker' | 'langgraph';
+  /** Which executor produced this run. Always `'langgraph'` since A5; a record written before
+   *  that may still carry `'walker'`, which is why the string is not narrowed on READ. */
+  engine?: string;
   checkpointer?: 'postgres' | 'memory';
   /** A2: the approvals a PARKED run is waiting on (LangGraph `interrupt()`); the decision resumes it. */
   heldApprovals?: { approvalId: string; tool: string; node: string }[];

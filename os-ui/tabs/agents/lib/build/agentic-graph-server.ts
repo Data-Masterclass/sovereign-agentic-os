@@ -20,9 +20,8 @@ import { parseSystem, type System } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { principalFor, runCostUsd, type ModelPrice } from '@tabs/agents/lib/build/runtime-contract';
 import { effectiveModelPrices } from '@tabs/admin/lib/model-prices';
-import { runAgenticGraph, runNode, type AgenticGraphResult, type AgenticGraphDeps } from '@tabs/agents/lib/build/agentic-graph';
+import { runNode, type AgenticGraphResult, type AgenticGraphDeps } from '@tabs/agents/lib/build/agentic-graph';
 import { liveEmbedder } from '@core/infra/context/librarian-live';
-import type { AgentsEngine } from '@core/kernel/agents-engine';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engine/checkpointer';
 import type { HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
@@ -51,7 +50,7 @@ import {
 } from '@tabs/agents/lib/build/phase-router';
 
 /**
- * SERVER WIRING for the agentic graph executor. Binds the pure walker
+ * SERVER WIRING for the agentic graph executor. Binds the pure node layer
  * (`agentic-graph.ts`) to the SAME governed surface the live software build chat
  * uses — per-user MCP execution via `handleRpc`, the software tab context, and
  * the two LiteLLM tiers — so the Software Delivery Team genuinely builds and
@@ -245,21 +244,15 @@ export type RunOsTeamInput = {
   onNodeStart?: AgenticGraphDeps['onNodeStart'];
   onStep?: AgenticGraphDeps['onStep'];
   onNodeComplete?: AgenticGraphDeps['onNodeComplete'];
-  /**
-   * ENGINE (engine rebuild A1): `langgraph` runs the compiled StateGraph (`tabs/agents/lib/
-   * engine`) with thread id = `runId`; anything else (or unset) runs the walker exactly as
-   * before. Decided by the caller through `selectEngine` so route, scheduler and MCP agree.
-   */
-  engine?: AgentsEngine;
-  /** The run id (= LangGraph thread id). Required for `langgraph`; minted by the caller. */
-  runId?: string;
-  /** `langgraph` only: continue the thread `runId` from its last checkpoint instead of starting. */
+  /** The run id (= LangGraph thread id = Langfuse trace id). Minted by the caller. */
+  runId: string;
+  /** Continue the thread `runId` from its last checkpoint instead of starting it. */
   resume?: boolean;
-  /** `langgraph` only (A2): the Governance decision a resume carries, `{ [approvalId]: decision }`. */
+  /** A2: the Governance decision a resume carries, `{ [approvalId]: decision }`. */
   resumeWith?: Record<string, ApprovalDecision>;
-  /** `langgraph` only: abort the stream (a client disconnect); the thread stays resumable. */
+  /** Abort the stream (a client disconnect); the thread stays resumable. */
   signal?: AbortSignal;
-  /** `langgraph` only (A2): fired when a held write PARKS the run (the route's `approval-required`). */
+  /** A2: fired when a held write PARKS the run (the route's `approval-required`). */
   onInterrupt?: (ev: { approvalId: string; tool: string; node: string }) => void;
   /** Injected in tests; defaults to the Governance queue (`approvals-bridge.ts`). */
   approvalPort?: ApprovalPort;
@@ -267,7 +260,7 @@ export type RunOsTeamInput = {
   keyRef?: SecretRef;
 };
 
-/** The walker's result plus what the LangGraph engine adds (all optional on a walker run). */
+/** One agent's-eye view of the run (path, per-node traces, final text) plus the engine's own record. */
 export type RunOsTeamResult = AgenticGraphResult & {
   runId?: string;
   checkpointer?: CheckpointerKind;
@@ -287,7 +280,7 @@ export type RunOsTeamResult = AgenticGraphResult & {
 };
 
 /**
- * Run ANY agentic-os team (`isAgenticOsTeam`) over one turn, live, in-process, as
+ * Run ANY agent system over one turn as a real LangGraph `StateGraph`, live, in-process, as
  * the RUNNING USER. Generalises the former `runAgenticTeam` (software-only) to the
  * whole governed OS MCP toolset: per node, the granted, role-scoped tool schemas
  * (`grantedToolSpecs`) go to LiteLLM, and every tool call is dispatched through
@@ -309,7 +302,6 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   const embedder = liveEmbedder();
   // Aggregate token usage across EVERY model call this run makes (plan + act on
   // every node) — the source for the Monitoring run-summary trace below.
-  const langgraph = input.engine === 'langgraph';
   // A3 — ATTRIBUTION: every model call carries the runner, the domain, the system, the run and
   // (when Build minted one) the system's own key by reference. Never the master key.
   const caller: CallerContext = {
@@ -317,19 +309,19 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     domain: sys.system.domain,
     systemId: input.systemId,
     tab: 'agents',
-    runId: langgraph ? input.runId : undefined,
+    runId: input.runId,
     keyRef: input.keyRef,
   };
   const tracked = trackUsage(input.llm ?? liteLlmCaller(caller));
   // A3 — the run's governance traces nest under the run trace (id = run id) instead of standing alone.
-  const traceContext = langgraph && input.runId ? { traceId: input.runId } : undefined;
-  // The ONE deps object both engines run on: the same gates, the same models, the same budgets.
+  const traceContext = { traceId: input.runId };
+  // The deps every node runs on: the gates, the models and the budgets.
   const deps: AgenticGraphDeps = {
     llm: tracked.llm,
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
-    // A2: under `langgraph` the tools NODE decides the hold (and parks the run); the executor then
-    // only sees non-held and approved calls, so its gate 1b steps aside. The walker keeps gate 1b.
-    callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps, { holdAt: langgraph ? 'node' : 'executor', traceContext }),
+    // A2: the tools NODE decides the hold (and parks the run); the executor then only sees
+    // non-held and approved calls, so its gate 1b steps aside (it stays the default elsewhere).
+    callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps, { holdAt: 'node', traceContext }),
     embed: embedder.embed,
     embedSource: embedder.lastSource,
     preamble: osPreamble(input.user, sys),
@@ -354,10 +346,10 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     onNodeComplete: input.onNodeComplete,
   };
 
-  if (input.engine === 'langgraph') {
+  {
     // ENGINE REBUILD A1: the real StateGraph. Thread id = run id; checkpointed to the
     // `agent_runs` database when AGENT_RUNS_DATABASE_URL is set, else in memory (reported).
-    if (!input.runId) throw new Error('runOsTeam: the langgraph engine needs a runId (thread id)');
+    if (!input.runId) throw new Error('runOsTeam: a run needs a runId (thread id)');
     const checkpointer = await selectCheckpointer(config.agentRunsDatabaseUrl);
     const { onNodeStart, onStep, onNodeComplete, tieBreaker: _tb, ...graphDeps } = deps;
     void _tb;
@@ -405,10 +397,6 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     emitRunSummaryTrace(input, result, tracked, prices, traceContext);
     return { ...result, traceUrl: observe.enabled ? traceUrlFor(input.runId) : undefined, traceStoreAvailable: observe.enabled };
   }
-
-  const result = await runAgenticGraph(ir, input.messages, deps);
-  emitRunSummaryTrace(input, result, tracked, prices);
-  return result;
 }
 
 /**
@@ -455,8 +443,8 @@ const RUN_TRACE_PROMPT_MAX = 500;
 
 /**
  * One run-summary trace so Monitoring attributes the run's tokens/cost to this
- * system (mirrors `runSystem`'s summary in server.ts — the in-process agentic path
- * was silently untraced, leaving the tiles at tokens=0). MUST use principalFor
+ * system (the in-process agentic path was silently untraced, leaving the tiles at
+ * tokens=0). MUST use principalFor
  * (`os-<id>`) — the telemetry batch only groups `os-` principals. Tokens are the
  * run's AGGREGATE reported usage; when NO model call reported usage they stay
  * undefined (never fabricated). Cost is priced ONLY from the explicit price book
