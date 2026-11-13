@@ -808,3 +808,46 @@ result, and the UI must surface that label.
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,
 taking its prose from the file headers, the tab manifests and the component pins, so
 it cannot drift. CI fails if the committed page is stale.
+
+## Charts: one surface, and vendored third-party source
+
+**`core/ui/charts/` is the only place the OS registers Apache ECharts.** Before night run 2 there
+were three independent `echarts.use([…])` call sites — `tabs/dashboards/ui/PanelChart.tsx`,
+`tabs/data/ui/ResultChart.tsx` and `tabs/software/ui/appspec/ChartExplorerRenderer.tsx` — each with
+its own tree-shaken bundle, its own `cssVar` theme bridge, its own compact-number formatter and its
+own canvas lifecycle. That is how the same number came to be drawn three slightly different ways.
+The surface is now:
+
+| File | What it owns |
+|---|---|
+| `register.ts` | the single `echarts.use([…])` and `initChart` — the ONLY module allowed to name the `echarts` package |
+| `theme.ts` | the CSS-custom-property → concrete-colour bridge (`resolveChartColors` is pure, so it is tested without a DOM) |
+| `format.ts` | `leaf` · `num` · `fmtCompact` · `fileSlug` · `toCsv` — one formatting rule for the whole product |
+| `spec.ts` | the pure `ChartSpec → EChartsOption` builder and `fromRows`, the one row→spec adapter |
+| `Chart.tsx` | a shell: canvas lifecycle, resize, dispose, point click. No option building |
+
+`core/ui/charts/echarts-surface.test.ts` greps the whole tree and fails on a second registration.
+A host maps its own model onto `fromRows` (`tabs/dashboards/lib/chart-spec.ts` is the worked
+example) and gets an option identical to every other host's for the same rows.
+
+**`os-ui/vendor/superset/` is attributed third-party source, and it has its own rules.** The
+line/area/bar families are built by a vendored slice of Apache Superset's pure ECharts
+transformers (`extractSeries`, `getAxisType`, `getChartPadding`, `getMinAndMaxFromBounds`,
+`transformProps`, `transformSeries`), Apache-2.0 into Apache-2.0, pinned to an upstream **commit
+sha**. Things this codebase will punish you for:
+
+- **Rewriting an upstream licence header.** Apache-2.0 §4(a)/(c) forbids it, so `os-ui/vendor/**`
+  is excluded from the `FEATURE:`/`USER STORY:`/`ARCHITECTURE:` ratchet and covered by
+  `check-structure.mjs`'s **hard** `VENDOR-LICENCE-HEADER` rule instead: the upstream header
+  verbatim, a `Modified from <repo> <path> @ <40-char sha>` notice, a `Changes:` list, an SPDX id.
+- **`npm i`-ing an `@superset-ui/*` package.** Every one was last published 2024-12-10 and peers on
+  React `^16.13.1`; npm would install a second React tree against this repo's React 19 with no
+  warning. Vendor pure functions, never components.
+- **Adding a dependency to the vendored tree.** It imports nothing — not `echarts`, not `lodash`.
+  `lodash`'s `orderBy`/`sumBy` are reimplemented locally with lodash's own null-last ordering.
+- **A TypeScript `enum` in `os-ui/vendor/**` (or anywhere a test reaches).** Node's type-stripping
+  loader, which runs the suite, refuses one: `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`. Upstream enums
+  become `as const` objects plus a union type of the same name.
+- **Letting upstream reorder a user's series.** Superset's default branch sorts series
+  reverse-alphabetically. The OS passes `seriesOrder` so the measure order the panel author declared
+  is the order on screen.

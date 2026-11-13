@@ -3,18 +3,15 @@
  */
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 // Tree-shaken ECharts (same registration surface the dashboards use — no new dependency).
-import * as echarts from 'echarts/core';
-import { LineChart, BarChart } from 'echarts/charts';
-import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components';
-import { CanvasRenderer } from 'echarts/renderers';
-import type { EChartsOption } from 'echarts';
+import Chart from '@core/ui/charts/Chart';
+import type { EChartsOption } from '@core/ui/charts/register';
+import { cssVar } from '@core/ui/charts/theme';
 import { Alert, Select, Spinner } from '@core/app-ui/index';
 import type { OsClient, QueryResult } from '@core/app-sdk/index';
 import type { ChartExplorerConfig } from '@tabs/software/lib/appspec/patterns';
 
-echarts.use([LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
 
 /** The leaf of a Cube member (`Orders.revenue` → `revenue`) for calm axis/label text. */
 function leaf(member: string): string {
@@ -22,34 +19,11 @@ function leaf(member: string): string {
   return i >= 0 ? member.slice(i + 1) : member;
 }
 
-/** Read a themed CSS custom property (echarts needs concrete colors, not var()). */
-function cssVar(name: string, fallback: string): string {
-  if (typeof window === 'undefined') return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
-}
 
 const num = (v: string) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
-
-function EchartsCanvas({ option, height }: { option: EChartsOption; height: number }) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    const chart = echarts.init(node, undefined, { renderer: 'canvas' });
-    chart.setOption(option);
-    const ro = new ResizeObserver(() => chart.resize());
-    ro.observe(node);
-    return () => {
-      ro.disconnect();
-      chart.dispose();
-    };
-  }, [option]);
-  return <div ref={ref} style={{ width: '100%', height }} />;
-}
 
 /**
  * Render the `chart-explorer` pattern: query a GOVERNED metric via `os.metrics.query` (per-viewer
@@ -167,7 +141,7 @@ export function ChartExplorerRenderer({ view, os }: { view: ChartExplorerConfig;
         </div>
       )}
       {option ? (
-        <EchartsCanvas option={option} height={300} />
+        <Chart option={option as unknown as Record<string, unknown>} height={300} />
       ) : (
         <Alert variant="info">The metric “{measure}” is not in the served result.</Alert>
       )}

@@ -9,9 +9,13 @@
  *             lands a source file with no explanation of what it does.
  * ARCHITECTURE:
  *   - Pure filesystem + regex checks, no dependencies, no network. Exits 1 on any violation.
- *   - Five rules (below). Each prints every offending path, not just the first. The header rule
+ *   - Six rules (below). Each prints every offending path, not just the first. The header rule
  *     also covers os-ui/worker/ (the worker entrypoint, outside core/ and tabs/).
  *   - Runs before the layout migration too: missing core//tabs/ is reported, not crashed on.
+ *   - `os-ui/vendor/**` (attributed third-party source) is EXCLUDED from the FEATURE / USER STORY /
+ *     ARCHITECTURE header rule — ASF policy forbids rewriting a third-party licence header, so a
+ *     vendored file could never satisfy it — and is covered by rule 6 instead, which demands the
+ *     upstream header verbatim plus our `Modified from … @ <sha>` notice. Both are hard rules.
  */
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -80,10 +84,37 @@ if (!existsSync(coreDir) || !existsSync(tabsDir)) {
   // rule 5: every source file explains itself — including the non-Next entrypoints in
   // os-ui/worker/, which are production code the Next build never compiles (A4 review L-7).
   const SECTIONS = ['FEATURE:', 'USER STORY:', 'ARCHITECTURE:'];
+  // VENDOR_EXCLUDED_FROM_HEADER_RULE: os-ui/vendor/ is deliberately NOT in this walk list —
+  // rewriting a third-party licence header to add our own sections would breach ASF policy.
+  // Rule 6 below is its ratchet instead.
   for (const f of [...walk(coreDir), ...walk(tabsDir), ...walk(join(UI, 'worker'))].filter(code)) {
+    if (relative(UI, f).split('/')[0] === 'vendor') continue; // belt and braces for the exclusion
     const head = readFileSync(f, 'utf8').slice(0, 2000);
     const missing = SECTIONS.filter((s) => !head.includes(s));
     if (missing.length) fail('FILE-HEADER', f, `header missing ${missing.join(' ')}`);
+  }
+}
+
+// ---- rule 6: every vendored file keeps its upstream header + our modification notice -------
+// Apache-2.0 §4(a)/(c): retain the upstream licence header VERBATIM. §4(b): carry a prominent
+// notice of the changes made. This repo additionally pins the upstream COMMIT SHA, because
+// vendored source has no release, and demands an SPDX id so the licence gate can see the file.
+const VENDOR_DIR = join(UI, 'vendor');
+const VENDOR_HEADER_MARKERS = [
+  // Add a marker here when source is vendored from a project other than an ASF one.
+  'Licensed to the Apache Software Foundation (ASF) under one',
+];
+const MODIFIED_FROM = /Modified from \S+[\s\S]{0,2000}?@ [0-9a-f]{40}/;
+for (const f of walk(VENDOR_DIR).filter(code)) {
+  const head = readFileSync(f, 'utf8').slice(0, 4000);
+  if (!VENDOR_HEADER_MARKERS.some((m) => head.includes(m))) {
+    fail('VENDOR-LICENCE-HEADER', f, 'upstream licence header missing or rewritten — keep it VERBATIM, never replace it');
+  } else if (!MODIFIED_FROM.test(head)) {
+    fail('VENDOR-LICENCE-HEADER', f, 'missing the `Modified from <repo> <path> @ <40-char sha>` notice (Apache-2.0 §4(b))');
+  } else if (!head.includes('Changes:')) {
+    fail('VENDOR-LICENCE-HEADER', f, 'the modification notice must list the changes made under `Changes:`');
+  } else if (!/SPDX-License-Identifier:/.test(head)) {
+    fail('VENDOR-LICENCE-HEADER', f, 'missing the SPDX-License-Identifier line');
   }
 }
 
@@ -94,7 +125,7 @@ if (!existsSync(coreDir) || !existsSync(tabsDir)) {
 const BASELINE_FILE = 'scripts/structure-baseline.json';
 const counts = {};
 for (const p of problems) { const rule = p.trim().split(/\s+/)[0]; counts[rule] = (counts[rule] ?? 0) + 1; }
-const HARD = ['COMPONENT-UPSTREAM-ONLY', 'TAB-MANIFEST'];
+const HARD = ['COMPONENT-UPSTREAM-ONLY', 'TAB-MANIFEST', 'VENDOR-LICENCE-HEADER'];
 const baseline = existsSync(BASELINE_FILE) ? JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) : {};
 
 if (process.argv.includes('--baseline')) {
@@ -119,7 +150,7 @@ for (const rule of new Set([...HARD, ...Object.keys(counts), ...Object.keys(base
   }
 }
 if (failed) {
-  console.error('\nRules: components/ is upstream-only · a tab imports only @core and itself · core never imports a tab · every tab has a manifest · every source file carries a FEATURE / USER STORY / ARCHITECTURE header.\n');
+  console.error('\nRules: components/ is upstream-only · a tab imports only @core and itself · core never imports a tab · every tab has a manifest · every source file carries a FEATURE / USER STORY / ARCHITECTURE header · every os-ui/vendor file keeps its upstream licence header plus a `Modified from … @ <sha>` notice.\n');
   process.exit(1);
 }
 console.log('check-structure: ok (no new violations)');

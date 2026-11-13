@@ -31,6 +31,7 @@ Dagster	chart 1.13.11	Apache-2.0	yes	licenses/Apache-2.0.txt	Orchestrator
 DuckDB	in query-tool image	MIT	yes	licenses/MIT.txt	Default lakehouse query engine
 Apache Polaris	1.0.1-incubating	Apache-2.0	yes	licenses/Apache-2.0.txt	Iceberg REST catalog; NOTICE bundled
 Superset	chart 0.17.2 / app 6.1.0	Apache-2.0	yes	licenses/Apache-2.0.txt	Dashboards/BI; NOTICE bundled
+Apache Superset (vendored source)	c83fb2bb1dcfac41ac51bcebd82471f4a7180d18	Apache-2.0	yes	licenses/Apache-2.0.txt	Vendored pure chart transformers + series algebra under os-ui/vendor/superset/; pinned to a COMMIT SHA (vendored source has no release); NOTICE bundled
 Trino	optional	Apache-2.0	optional	licenses/Apache-2.0.txt	Optional scale/federation engine (off by default)
 Apache Spark	optional	Apache-2.0	optional	licenses/Apache-2.0.txt	Optional distributed ETL (off by default); NOTICE bundled
 SeaweedFS	3.97	Apache-2.0	yes	licenses/Apache-2.0.txt	Air-gap object storage

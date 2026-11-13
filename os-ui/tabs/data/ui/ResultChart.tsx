@@ -15,27 +15,18 @@
  *   • Blank / non-numeric cells are SKIPPED (`connectNulls`), never plotted as 0.
  *   • When the plotted rows are a capped subset, the caption says "first N of M rows".
  *
- * ECharts is tree-shaken (only the charts + components we use are registered) to match the
- * dashboards bundle discipline — a thin canvas wrapper avoids echarts-for-react friction
- * with React 19. This is the minimal shared leaf: `PanelChart` stays coupled to Cube panels
+ * Rendering goes through the OS's ONE chart surface (`@core/ui/charts` — the single ECharts
+ * registration, the shared theme bridge and the shared `<Chart>` canvas shell), so this view and
+ * a dashboard panel cannot drift apart. This is the minimal shared leaf: `PanelChart` stays coupled to Cube panels
  * (metrics, drill-downs, big-number KPIs), while this one is a plain `{columns, rows}` view.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
-import * as echarts from 'echarts/core';
-import { LineChart, BarChart, PieChart } from 'echarts/charts';
-import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components';
-import { CanvasRenderer } from 'echarts/renderers';
-import type { EChartsOption } from 'echarts';
+import { useMemo, useState } from 'react';
+import Chart from '@core/ui/charts/Chart';
+import type { EChartsOption } from '@core/ui/charts/register';
+import { cssVar } from '@core/ui/charts/theme';
 import { parseNumber, type ChartHint, type ChartType } from '@tabs/data/lib/ask-chart';
 
-echarts.use([LineChart, BarChart, PieChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
 
-/** Read a themed CSS custom property (echarts needs concrete colors, not `var()`). */
-function cssVar(name: string, fallback: string): string {
-  if (typeof window === 'undefined') return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
-}
 
 type Colors = { gold: string; teal: string; ink: string; line: string; panel: string };
 
@@ -116,23 +107,6 @@ function buildOption(
   };
 }
 
-function EchartsCanvas({ option, height }: { option: EChartsOption; height: number }) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    const chart = echarts.init(node, undefined, { renderer: 'canvas' });
-    chart.setOption(option);
-    const ro = new ResizeObserver(() => chart.resize());
-    ro.observe(node);
-    return () => {
-      ro.disconnect();
-      chart.dispose();
-    };
-  }, [option]);
-  return <div ref={ref} style={{ width: '100%', height }} />;
-}
-
 const TOGGLE_LABEL: Record<ChartType, string> = { bar: 'Bar', line: 'Line', pie: 'Pie', table: 'Table' };
 
 export default function ResultChart({
@@ -189,7 +163,7 @@ export default function ResultChart({
       </div>
 
       {option ? (
-        <EchartsCanvas option={option} height={height} />
+        <Chart option={option as unknown as Record<string, unknown>} height={height} />
       ) : (
         <div className="table-wrap" style={{ maxHeight: height, overflow: 'auto' }}>
           <table>

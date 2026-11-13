@@ -102,6 +102,7 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
 | DuckDB | in sandbox-duckdb image | MIT | `licenses/MIT.txt` | Personal/sandbox lane engine (behind Trino) |
 | Apache Polaris | 1.0.1-incubating | Apache-2.0 | `licenses/Apache-2.0.txt` | NOTICE: `licenses/notices/Apache-Polaris-NOTICE.txt` |
 | Superset | chart 0.17.2 / app 6.1.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | NOTICE: `licenses/notices/Apache-Superset-NOTICE.txt` |
+| Apache Superset (vendored source) | `c83fb2bb1dcfac41ac51bcebd82471f4a7180d18` | Apache-2.0 | `licenses/Apache-2.0.txt` | Pure chart transformers vendored into `os-ui/vendor/superset/`, pinned to a commit sha; NOTICE: `licenses/notices/Apache-Superset-NOTICE.txt` |
 | Trino | 476 | Apache-2.0 | `licenses/Apache-2.0.txt` | Central governed query engine (all shared marts) |
 | Apache Spark | optional (off) | Apache-2.0 | `licenses/Apache-2.0.txt` | Optional; NOTICE: `licenses/notices/Apache-Spark-NOTICE.txt` |
 | SeaweedFS | 3.97 | Apache-2.0 | `licenses/Apache-2.0.txt` | Air-gap object storage |
