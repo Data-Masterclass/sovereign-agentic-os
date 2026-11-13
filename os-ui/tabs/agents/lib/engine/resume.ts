@@ -12,8 +12,9 @@
  *     must carry a thread (`runId`, `systemId`, `runner`); (2) the runner is RE-READ LIVE
  *     (`deps.loadPrincipal`) — missing/disabled → `runner_unavailable`; (3) the live role must
  *     still permit the tool (`deps.toolPermitted`) — else `runner_role_insufficient`; (4) the run
- *     continues through `deps.resumeRun` with `Command({ resume: { [approvalId]: decision } })`
- *     under the live principal. Every outcome is stamped on the approval (`deps.markResume`) and
+ *     continues through `deps.resumeRun` — A4: that FILES a `resume` job (`run_jobs`) which the
+ *     worker, or this process under `AGENTS_WORKER=inline`, executes with
+ *     `Command({ resume: { [approvalId]: decision } })` under the live principal. Every outcome is stamped on the approval (`deps.markResume`) and
  *     returned typed. Nothing here throws into `decide()`.
  *   - Registered as a `core/policy/approvals.ts` `onDecided` handler by `resume-boot.ts` (server
  *     wiring) — `core` never imports this tab. Tests inject fakes for all four deps.
@@ -26,7 +27,7 @@ import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 export type LivePrincipal = { id: string; name: string; role: Role; domains: string[] };
 
 export type ResumeOutcome =
-  | { status: 'done'; approvalId: string; runId: string; parked: boolean; reachedEnd: boolean }
+  | { status: 'done'; approvalId: string; runId: string; parked: boolean; reachedEnd: boolean; queued?: boolean }
   | { status: 'refused'; approvalId: string; runId?: string; code: 'not_a_run_approval' | 'runner_unavailable' | 'runner_role_insufficient' | 'runner_domain_lost'; reason: string }
   | { status: 'failed'; approvalId: string; runId: string; code: string; reason: string };
 
@@ -36,7 +37,7 @@ export type ResumeDeps = {
   /** Does this role still clear the tool's role floor? */
   toolPermitted: (role: Role, tool: string) => boolean;
   /** Continue the thread as the live runner with the decision; returns what the run did. */
-  resumeRun: (input: { runner: LivePrincipal; approval: Approval; decision: ApprovalDecision }) => Promise<{ parked: boolean; reachedEnd: boolean }>;
+  resumeRun: (input: { runner: LivePrincipal; approval: Approval; decision: ApprovalDecision }) => Promise<{ parked: boolean; reachedEnd: boolean; queued?: boolean }>;
   /** Stamp the outcome on the approval record. */
   markResume: (approvalId: string, resume: ApprovalResume) => void;
   now?: () => string;
@@ -68,8 +69,9 @@ export async function resumeAfterDecision(a: Approval, decision: ApprovalDecisio
   try {
     const out = await deps.resumeRun({ runner: live, approval: a, decision });
     // L-F: a run that parked again on another held call is not "done" — say so on the card.
-    deps.markResume(a.id, { status: out.parked ? 'parked' : 'done', at: now() });
-    return { status: 'done', approvalId: a.id, runId: a.runId, parked: out.parked, reachedEnd: out.reachedEnd };
+    // A4: in worker mode the resume is only FILED here; the card says `queued`, not `done`.
+    deps.markResume(a.id, { status: out.queued ? 'queued' : out.parked ? 'parked' : 'done', at: now() });
+    return { status: 'done', approvalId: a.id, runId: a.runId, parked: out.parked, reachedEnd: out.reachedEnd, queued: out.queued };
   } catch (e) {
     const err = e as Error & { name?: string };
     const code = err?.name && err.name !== 'Error' ? err.name : 'resume_failed';

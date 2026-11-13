@@ -42,14 +42,18 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 
 ## Agent engine (rebuild in progress)
 
-Runs execute in-process, as the signed-in user. Two executors exist behind one flag
-(plan: `docs/superpowers/plans/2026-11-13-engine-rebuild.md`):
+Runs execute as the signed-in user — in a WORKER process since A4, not in the request. Two
+executors exist behind one flag (plan: `docs/superpowers/plans/2026-11-13-engine-rebuild.md`):
 
 - `walker` (default) — the hand-rolled IR walker (`lib/build/agentic-graph.ts`).
 - `langgraph` — the real `@langchain/langgraph` StateGraph under `lib/engine/`:
   `build-graph.ts` (IR → graph: four nodes per agent, supervisor `route` tool, `when` guards via
   `when.ts`, node-level tool narrowing, step budget → `recursionLimit`), `run.ts`
-  (`runGraphEngine`: stream, resume, result), `checkpointer.ts` (Postgres or memory).
+  (`runGraphEngine`: stream, resume, result), `checkpointer.ts` (Postgres or memory),
+  `jobs.ts` + `jobs-postgres.ts` (the `run_jobs` / `run_events` queue and the event tail),
+  `worker-loop.ts` (claim / heartbeat / reap) and `runner-identity.ts` (the live re-read).
+  `lib/build/run-jobs-server.ts` wires them; `os-ui/worker/agent-runs.ts` is the worker pod's
+  entrypoint.
 
 Environment:
 
@@ -97,7 +101,21 @@ run is attributed to the runner (`user = os-<id>`), `domain:`, `agent:`, `run:` 
 system's own LiteLLM key by reference (`LastBuild.litellmKeyRef`, minted by a live Build) or the
 shared agent key — never the master key. The diagnostics route reads Langfuse **by the run's trace
 id**; the Evaluate judge writes a `judge` score on the trace. `lib/engine/run-lock.ts` is the
-per-thread in-flight lock `executeTeamRun` holds (a concurrent resume is a typed 409).
+per-thread in-flight lock `executeTeamRun` holds inside one process (a concurrent resume is a
+typed 409); across pods the authority is the `run_jobs` row's status.
+
+Runs in a worker (A4): a run is a ROW, not a request. `POST …/run` validates, mints the run id,
+inserts a `queued` `run_jobs` row and tails that run's `run_events` from `seq = 0`;
+`GET …/run/stream?runId=&afterSeq=` tails the same table from a cursor (the A2 in-process topic is
+gone from the read path). `AGENTS_WORKER=inline` (default) executes the job in the same process
+right after filing it — identical events, so every test runs without a worker;
+`AGENTS_WORKER=worker` leaves it to the `os-ui-worker` Deployment, which claims with
+`FOR UPDATE SKIP LOCKED`, heartbeats its lease, and on SIGTERM finishes the current superstep and
+re-queues the run. One start door for everything: `run-jobs-server.ts` `startQueuedRun`
+(route, `build/scheduled.ts`, MCP `run_agent_system`), `resumeQueuedRun` (owner Resume, MCP
+`resume_agent_run`) and `enqueueResumeAfterDecision` (the Governance `onDecided` hook — a decision
+FILES a resume, it no longer drives the graph in the decider's request). `AGENTS_WORKER_LEASE_MS`
+bounds a lease; an abandoned one is re-queued once, then failed.
 
 Parity: `lib/engine/parity-harness.ts` + `lib/engine/fixtures/*.json` are the golden recordings
 both engines must reproduce (`parity.test.ts`: P1 for both engines, HANDOFF-GUARD, P2 abort +

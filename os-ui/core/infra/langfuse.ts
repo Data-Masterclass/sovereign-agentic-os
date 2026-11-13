@@ -65,6 +65,12 @@ export function langfuseClient(): Langfuse | null {
     // An unreachable trace store must not spam the pod log on every batch: the ring in
     // `agent-governed.ts` keeps Monitoring legible without Langfuse.
     s.client.on('error', () => undefined);
+    // A3 review: the SDK buffers (flushAt 20 / flushInterval 2s), so a pod that is told to stop —
+    // a rolling restart, or the agent-run worker finishing its superstep — must hand the buffer
+    // over before it exits, or the last spans of the last run are lost. `shutdownAsync` flushes
+    // and stops the timer; `once` so repeated construction cannot stack listeners.
+    const client = s.client;
+    process.once('SIGTERM', () => void client.shutdownAsync().catch(() => undefined));
   }
   return s.client;
 }

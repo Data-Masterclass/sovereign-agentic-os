@@ -10,8 +10,8 @@
  *   - Imported once at os-ui boot (`instrumentation.ts`). `registerResumeHook()` is idempotent
  *     (globalThis-pinned) and wires the REAL deps into `resumeAfterDecision`: `principalById`
  *     (live user), the MCP registry's role floor (`ALL_MCP_TOOLS` + `roleCanUse`), the run service
- *     (`resumeOsRunAfterDecision`, which re-prepares the system yaml AS THE RUNNER and continues the
- *     thread) and `recordResume`. Mirrors `core/folders/adapters.ts`: a registration, not an import.
+ *     (`enqueueResumeAfterDecision`, which files a `resume` job the worker — or, inline, this
+ *     process — executes as the live runner) and `recordResume`. Mirrors `core/folders/adapters.ts`: a registration, not an import.
  */
 import 'server-only';
 import { onDecided, recordResume } from '@core/policy/approvals';
@@ -19,7 +19,7 @@ import { principalById } from '@core/kernel/auth';
 import { ALL_MCP_TOOLS, roleCanUse } from '@core/mcp/server';
 import type { Role } from '@core/kernel/session';
 import { resumeAfterDecision, type ResumeDeps } from '@tabs/agents/lib/engine/resume';
-import { resumeOsRunAfterDecision } from '@tabs/agents/lib/build/run-service';
+import { enqueueResumeAfterDecision } from '@tabs/agents/lib/build/run-jobs-server';
 
 const KEY = Symbol.for('soa.agents.resume-hook-registered');
 
@@ -34,7 +34,7 @@ export function productionResumeDeps(): ResumeDeps {
   return {
     loadPrincipal: principalById,
     toolPermitted: toolPermittedForRole,
-    resumeRun: resumeOsRunAfterDecision,
+    resumeRun: enqueueResumeAfterDecision,
     markResume: (id, r) => { recordResume(id, r); },
   };
 }

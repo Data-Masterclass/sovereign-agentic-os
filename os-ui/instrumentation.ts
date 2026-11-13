@@ -116,6 +116,13 @@ export async function register(): Promise<void> {
         const kind = await ensureCheckpointerReady(config.agentRunsDatabaseUrl);
         if (kind === 'memory') console.warn('[os-ui] agent runs: AGENT_RUNS_DATABASE_URL unset — LangGraph checkpoints are IN MEMORY (not durable across restarts)');
         else console.info('[os-ui] agent runs: Postgres checkpointer ready (agent_runs)');
+        // RUN QUEUE (engine rebuild A4): `run_jobs` + `run_events` live in the same database and
+        // their DDL is idempotent, so it runs right here next to the checkpointer's setup().
+        // os-ui ENQUEUES and TAILS; `AGENTS_WORKER=worker` means the `os-ui-worker` Deployment
+        // executes the jobs, `inline` (default) means this process does, straight after filing.
+        const { ensureRunJobsReady } = await import('./tabs/agents/lib/build/run-jobs-server.ts');
+        const jobs = await ensureRunJobsReady();
+        console.info(`[os-ui] agent runs: run queue ready (${jobs}); AGENTS_WORKER=${config.agentsWorker}`);
       } catch (err) {
         console.error(`[os-ui] agent runs: checkpointer setup FAILED — langgraph runs will fail until it is reachable: ${err instanceof Error ? err.message : String(err)}`);
       }

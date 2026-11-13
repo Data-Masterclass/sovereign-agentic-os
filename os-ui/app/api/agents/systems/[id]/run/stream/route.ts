@@ -1,29 +1,29 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * FEATURE:    Re-attach to a run's live event stream (A2) — watch a parked run finish after a decision.
- * USER STORY: As the runner I keep the Run panel open while a domain admin decides; when the decision
- *             resumes my run in another request, my panel sees `resumed` → `node-started` … `done`.
- * ARCHITECTURE: GET ?runId= over the in-process run topic (`engine/run-events.ts`); owner-checked
- *             (system + runner) — anything else is 404, never confirming the run exists. Single
- *             replica until A4 moves the topic to `run_events`.
+ * FEATURE:    Tail a run's durable event log — watch a parked or worker-executed run from any pod.
+ * USER STORY: As the runner I keep the Run panel open while a domain admin decides, or while the
+ *             worker executes a run far longer than my request could live; when the run continues
+ *             — in another request, in another pod, after a restart — my panel sees `resumed` →
+ *             `node-started` … `done` exactly as if I had never left, and a reconnect replays only
+ *             what I missed.
+ * ARCHITECTURE: GET ?runId=[&afterSeq=] tails `run_events` through `engine/jobs.ts` `tailRunEvents`
+ *             (A4; replaces the in-process topic of A2). Owner-checked against the `run_jobs` row
+ *             (system + runner) AND the caller's run scope — anything else is 404, never confirming
+ *             the run exists. `afterSeq` is the client's cursor: 0 replays the whole run.
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { isRunId } from '@core/kernel/run-id';
 import { getSystemForRun } from '@tabs/agents/lib/store';
-import { runTopicOwner, subscribeRun } from '@tabs/agents/lib/engine/run-events';
+import { runJobStore } from '@tabs/agents/lib/build/run-jobs-server';
+import { tailRunEvents } from '@tabs/agents/lib/engine/jobs';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
+/** Hand the client a cursor rather than holding the connection past the platform's cap. */
+const TAIL_BUDGET_MS = 240_000;
 
-/**
- * GET ?runId= → re-attach to the live event stream of a run (A2). A run PARKED on an approval
- * is resumed by the Governance decision in ANOTHER request; the panel attaches here to watch it
- * finish. Replays what it missed, then streams until a terminal `done` (non-parked) / `error`.
- * Only the run's own system + runner may attach — anything else is 404 (never confirming the
- * run exists). Single-replica: the topic lives in this process (A4 moves it to `run_events`).
- */
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   let user;
   try {
@@ -32,41 +32,38 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
   const { id } = await ctx.params;
-  const runId = new URL(req.url).searchParams.get('runId') ?? '';
+  const url = new URL(req.url);
+  const runId = url.searchParams.get('runId') ?? '';
   if (!isRunId(runId)) return NextResponse.json({ error: 'runId required' }, { status: 400 });
+  const afterSeq = Math.max(0, Number(url.searchParams.get('afterSeq') ?? '0') || 0);
   try {
     getSystemForRun(id, user);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 403 });
   }
-  const owner = runTopicOwner(runId);
-  if (!owner || owner.systemId !== id || owner.userId !== user.id) {
-    return NextResponse.json({ error: 'No live stream for this run' }, { status: 404 });
+  const store = await runJobStore();
+  const job = await store.get(runId);
+  if (!job || job.systemId !== id || job.requestedBy !== user.id) {
+    return NextResponse.json({ error: 'No run stream for this run' }, { status: 404 });
   }
 
   const encoder = new TextEncoder();
-  let unsubscribe: (() => void) | null = null;
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    async start(controller) {
       let closed = false;
-      const close = () => {
+      const send = (event: string, data: unknown) => {
         if (closed) return;
-        closed = true;
-        unsubscribe?.();
-        try { controller.close(); } catch { /* already closed */ }
+        try { controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)); } catch { closed = true; }
       };
-      unsubscribe = subscribeRun(
-        runId,
-        (ev) => {
-          if (closed) return;
-          controller.enqueue(encoder.encode(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`));
-        },
-        close,
-      );
-      req.signal.addEventListener('abort', close);
-    },
-    cancel() {
-      unsubscribe?.();
+      try {
+        const out = await tailRunEvents(store, runId, { until: 'terminal', afterSeq, signal: req.signal, timeoutMs: TAIL_BUDGET_MS }, (ev) => send(ev.event, ev.data));
+        if (out.ended === 'timeout') send('queued', { runId, afterSeq: out.lastSeq, note: 'still running — re-attach with afterSeq' });
+      } catch (e) {
+        send('error', { error: (e as Error).message });
+      } finally {
+        closed = true;
+        try { controller.close(); } catch { /* already closed */ }
+      }
     },
   });
   return new Response(stream, {

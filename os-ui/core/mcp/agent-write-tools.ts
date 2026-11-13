@@ -153,10 +153,33 @@ export const agentWriteTools: McpTool[] = [
       // scheduler use. Only the walker exists today; Phase A1 branches on `langgraph` HERE.
       const { selectEngine } = await import('@tabs/agents/lib/engine/select');
       const engine = selectEngine(config, view.system);
-      const runTeam = runTeamOverride ?? (await import('@tabs/agents/lib/build/agentic-graph-server')).runOsTeam;
       // ENGINE (A1): the same branch as the route and the scheduler; thread id = a fresh run id,
-      // returned so an MCP client can correlate (and, from A5, resume) the run.
+      // returned so an MCP client can correlate (and resume) the run.
       const runId = newRunId();
+      // A4: under the governed engine the MCP goes through the SAME queue as the UI and the
+      // scheduler — one start door. `runTeamOverride` (tests) and the walker stay in-request.
+      if (engine === 'langgraph' && !runTeamOverride) {
+        const { startQueuedRun } = await import('@tabs/agents/lib/build/run-jobs-server');
+        const out = await startQueuedRun({ user, systemId, domain: view.system.system.domain, messages: msgs, runId });
+        if (out.error) fail(out.error.message, out.error.status ?? 500);
+        if (!out.body) return { systemId, mode: 'live', engine, runId, queued: true, note: 'filed on the run queue — tail it with get_agent_run' };
+        const b = out.body;
+        return {
+          systemId,
+          mode: 'live',
+          engine,
+          runId: b.runId ?? runId,
+          checkpointer: b.checkpointer,
+          traceUrl: b.traceUrl,
+          reachedEnd: b.reachedEnd,
+          parked: b.parked,
+          heldApprovals: b.heldApprovals ?? [],
+          path: b.path,
+          finalText: b.finalText,
+          nodes: b.nodes.map((r) => ({ node: r.node, model: r.model, steps: r.steps.map((x) => ({ tool: x.tool, isError: x.isError })) })),
+        };
+      }
+      const runTeam = runTeamOverride ?? (await import('@tabs/agents/lib/build/agentic-graph-server')).runOsTeam;
       const team = await runTeam({ user, yaml: view.yaml, systemId, messages: msgs, disabledAgents: view.disabledAgents, engine, runId });
       return {
         systemId,
@@ -200,9 +223,12 @@ export const agentWriteTools: McpTool[] = [
       const owner = await peekRunOwner(runId);
       if (!owner || owner.userId !== user.id) fail('Run not found', 404);
       const view = getSystemForRun(owner.systemId, P(user));
-      const { executeTeamRun, prepareRunYaml } = await import('@tabs/agents/lib/build/run-service');
-      const yaml = await prepareRunYaml(user, view, owner.systemId);
-      const body = await executeTeamRun({ user, systemId: owner.systemId, view, yaml, messages: [], engine: 'langgraph', runId, resume: true });
+      // A4: a resume is a `run_jobs` row too — the same queue the decision hook and the UI use.
+      const { resumeQueuedRun } = await import('@tabs/agents/lib/build/run-jobs-server');
+      const out = await resumeQueuedRun({ user, systemId: owner.systemId, domain: view.system.system.domain, runId });
+      if (out.error) fail(out.error.message, out.error.status ?? 500);
+      if (!out.body) return { runId, systemId: owner.systemId, engine: 'langgraph', queued: true, note: 'the resume is filed — the worker is executing it' };
+      const body = out.body;
       return {
         runId,
         systemId: owner.systemId,

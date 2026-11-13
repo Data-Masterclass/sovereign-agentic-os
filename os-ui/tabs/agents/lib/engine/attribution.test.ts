@@ -85,7 +85,9 @@ test('ATTRIBUTION (A27): every model call of a real engine run carries user, dom
     assert.ok(meta.tags.includes(`${TAG_TAB}agents`), 'tab tag');
     // A24: the gateway's own Langfuse callback is told to log INTO the run trace, under the OS generation.
     assert.equal(meta.existing_trace_id, runId);
-    assert.equal(meta.trace_id, runId);
+    // A4 review: `existing_trace_id` is the key LiteLLM's Langfuse callback reads. The duplicate
+    // `trace_id` was dropped — two names for one id invite them to disagree.
+    assert.equal(meta.trace_id, undefined, 'only existing_trace_id carries the run trace');
     assert.ok(meta.parent_observation_id, 'parent observation forwarded');
     assert.equal(meta.trace_user_id, 'rae');
     assert.equal(meta.session_id, 'sys-attr');

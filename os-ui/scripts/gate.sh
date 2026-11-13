@@ -13,4 +13,9 @@ node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/agents/lib/build/agentic-graph.test.ts \
   tabs/agents/lib/engine/attribution.test.ts \
   tabs/agents/lib/engine/observe.test.ts \
-  core/infra/langfuse.test.ts
+  core/infra/langfuse.test.ts \
+  tabs/agents/lib/engine/jobs.test.ts \
+  tabs/agents/lib/engine/jobs-postgres.test.ts \
+  tabs/agents/lib/engine/jobs-resume.test.ts \
+  tabs/agents/lib/engine/worker-loop.test.ts \
+  tabs/agents/lib/engine/runner-identity.test.ts

@@ -15,6 +15,9 @@
  *     checkpoints + `emit` (the request's SSE) + `publishRunEvent` (the re-attachable topic), then
  *     completes (`setRunning` false, `setLastRun`). `resumeOsRunAfterDecision` is what the decide()
  *     hook calls: it rebuilds the context AS THE LIVE RUNNER and resumes with the decision.
+ *   - A4: `executeTeamRun` is no longer called from a route. The run QUEUE
+ *     (`build/run-jobs-server.ts`) calls it — inline in the enqueueing process, or in the
+ *     `os-ui-worker` pod — and mirrors every event into `run_events`.
  *   - IN-FLIGHT LOCK (A2 review M-B): one thread runs in one process at a time. `executeTeamRun`
  *     acquires a `globalThis`-pinned lock on the run id and releases it in `finally`; a second
  *     entrant (the owner's `POST {resume}` racing a decision-driven resume, or two deciders) gets a
@@ -27,7 +30,6 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import type { AgentsEngine } from '@core/kernel/agents-engine';
-import type { Approval } from '@core/policy/approvals';
 import { runOsTeam, type RunOsTeamResult } from '@tabs/agents/lib/build/agentic-graph-server';
 import { classifyStepError } from '@tabs/agents/lib/build/agentic-graph';
 import { resolveFolderGrantsForRun, summarizeWriteOutcomes, writeOutcomesLine } from '@tabs/agents/lib/build/os-tools';
@@ -37,7 +39,6 @@ import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
 import {
   checkpointNode,
   clearActivity,
-  getSystemForRun,
   recordActivity,
   setActivity,
   setLastRun,
@@ -310,28 +311,6 @@ export function currentUserOf(p: LivePrincipal): CurrentUser {
   return { id: p.id, name: p.name, domains: p.domains, allDomains: p.domains, activeDomain: null, role: p.role };
 }
 
-/**
- * The decide() hook's resume: rebuild the run context AS THE LIVE RUNNER (system view, governed yaml)
- * and continue the parked thread with the decision. Returns whether it parked again / reached END.
- */
-export async function resumeOsRunAfterDecision(input: { runner: LivePrincipal; approval: Approval; decision: ApprovalDecision }): Promise<{ parked: boolean; reachedEnd: boolean }> {
-  const a = input.approval;
-  if (!a.runId || !a.systemId) throw new Error('resume: the approval carries no run');
-  const user = currentUserOf(input.runner);
-  const view = getSystemForRun(a.systemId, user);
-  const yaml = await prepareRunYaml(user, view, a.systemId);
-  openRunTopic(a.runId, { systemId: a.systemId, userId: user.id, domain: view.system.system.domain });
-  publishRunEvent(a.runId, 'resumed', { approvalId: a.id, decision: input.decision });
-  const body = await executeTeamRun({
-    user,
-    systemId: a.systemId,
-    view,
-    yaml,
-    messages: [],
-    engine: 'langgraph',
-    runId: a.runId,
-    resume: true,
-    resumeWith: { [a.id]: input.decision },
-  });
-  return { parked: body.parked, reachedEnd: body.reachedEnd };
-}
+/* The decide() hook's resume moved to `build/run-jobs-server.ts` `enqueueResumeAfterDecision` in
+ * A4: a decision FILES a `resume` job (executed by the worker, or in this process under
+ * `AGENTS_WORKER=inline`) instead of driving the graph inside the decider's request. */

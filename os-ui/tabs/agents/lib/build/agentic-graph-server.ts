@@ -372,6 +372,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
       task: input.resume ? undefined : lastUserText(input.messages),
       resume: input.resume,
       client: langfuseClient(),
+      // A3 review M-2: how much of a call reaches the trace (LANGFUSE_REDACTION).
+      redaction: config.langfuseRedaction,
     });
     const result = await runGraphEngine({
       ir,

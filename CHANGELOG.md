@@ -13,6 +13,76 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Agent engine rebuild, Phase A4: runs execute in a worker
+
+- **A run is a row, not a request.** Two tables in the `agent_runs` database (same one as the
+  LangGraph checkpointer; idempotent DDL at boot next to `PostgresSaver.setup()`):
+  `run_jobs` — one row per run (`run_id` primary key, `system_id`, `domain`, `requested_by`,
+  `principal_snapshot`, `input`, `kind start|resume`, `status queued|running|parked|done|failed`,
+  `locked_by`, `locked_at`, `attempts`) — and `run_events` — append-only, `(run_id, seq)` primary
+  key, carrying exactly the SSE vocabulary the Run panel consumes. Access is behind a port
+  (`tabs/agents/lib/engine/jobs.ts`) with a Postgres implementation
+  (`engine/jobs-postgres.ts`) and an in-memory one that is the contract the tests pin.
+- **`POST …/run` enqueues and tails.** It validates as before, mints the run id, files the job and
+  streams `run_events` from `seq = 0`; `GET …/run/stream?runId=&afterSeq=` tails the same table
+  from the client's cursor, replacing the in-process re-attach topic of A2 on the read path. Owner
+  checks unchanged (404 on a foreign run). The tail is a short poll of the `(run_id, seq)` primary
+  key — correct across pods and after any reconnect.
+- **`os-ui-worker` Deployment** (`charts/.../base/os-ui/os-ui-worker.yaml`, off by default behind
+  `osUI.worker.enabled`): the SAME image with a different command
+  (`node --experimental-strip-types worker/start.mjs` from `/app/src`), the SAME environment (the
+  os-ui env list is now one named template, `soa.osUI.env`, used by both workloads), plus
+  `AGENTS_WORKER=worker`. It claims one run at a time with `FOR UPDATE SKIP LOCKED`, heartbeats
+  `locked_at`, and on SIGTERM finishes the current superstep, checkpoints it and returns the run to
+  the queue (`terminationGracePeriodSeconds` defaults to 420 s, one superstep — not a whole run).
+  A lease nobody renews (`AGENTS_WORKER_LEASE_MS`, default 10 min) is re-queued **once** as a
+  resume and then failed, so no run sits `running` forever.
+- **`AGENTS_WORKER=inline|worker`, default `inline`:** the pod that files a job also executes it,
+  immediately, writing the same events — a kind install, a laptop and the whole test suite behave
+  exactly as before and need no worker process.
+- **One start door.** The run route, `build/scheduled.ts`, the MCP `run_agent_system` and
+  `resume_agent_run`, and the Governance `onDecided` hook all file jobs through
+  `tabs/agents/lib/build/run-jobs-server.ts`. A decision no longer drives the graph inside the
+  decider's request: it files a `resume` job, and `ApprovalResume.status` gains `queued`.
+- **The runner's identity is re-read live before every execution** (`engine/runner-identity.ts`):
+  the job's `principal_snapshot` is evidence, never authority. A runner who is gone or disabled,
+  downgraded below the role the run was filed under, or no longer in the run's domain gets a typed
+  refusal (`runner_unavailable` / `runner_role_changed` / `runner_domain_lost`) and the job fails
+  visibly. A role *upgrade* still runs — the yaml is re-governed against the owner's live role on
+  every run.
+- The image now carries two entrypoints: `node server.js` (the Next standalone server) and the
+  worker. The os-ui source tree is baked at `/app/src` beside the standalone `node_modules`,
+  because `output: 'standalone'` emits no entry for a process that serves no HTTP; the worker
+  therefore runs the TypeScript source with the tsconfig path aliases registered
+  (`worker/resolve-hook.mjs`) under Node type stripping — **the image's Node must be ≥ 22.6**.
+
+### Changed — A3 review follow-ups
+
+- `core/runtime/runtime.test.ts` MODEL-KEY now matches `litellmMasterKey|LITELLM_MASTER_KEY|
+  PROXY_MASTER_KEY` and asserts the EXACT expected file set (a file *dropping out* is as
+  interesting as a new one); `core/infra/tool-sso-litellm.ts` left the set — it never read the key.
+- `LANGFUSE_REDACTION=structure|strict` (`osUI.langfuseRedaction`): `strict` records tool-argument
+  **key names and sizes only** and drops the 160-character result preview. `structure` stays the
+  default. Documented in `docs/components/langfuse.md`, including that LiteLLM's nested generation
+  still ships the full prompt unless `turn_off_message_logging` is set at the gateway.
+- `tabs/agents/lib/engine/observe.ts`: the header no longer claims results are recorded as
+  character counts only (they carry a preview under `structure`), and a tool result whose error
+  code is `not_found` is now `error`, not `denied` — a missing object is not a governance decision.
+- Knowledge and Files retrieval bill the EMBEDDING to the acting principal
+  (`tabs/knowledge/lib/retrieve.ts`, `tabs/files/lib/retrieve.ts`); `core/runtime/complete.ts`
+  tags the caller's **active** domain, falling back to the first.
+- `core/infra/langfuse.ts` registers `process.once('SIGTERM', …shutdownAsync())` so a stopping pod
+  hands over its buffered spans.
+- `core/runtime/runtime.ts` drops the duplicate `trace_id` beside `existing_trace_id`.
+- `tabs/agents/lib/build/server.ts` no longer offers a `/traces` LIST link for a legacy run with no
+  run id (checklist A20: the link opens *that* trace or nothing).
+- `scripts/check-litellm-allowlist.mjs` also reads `default_fallbacks`,
+  `context_window_fallbacks` and `content_policy_fallbacks` — any of them can route to an alias the
+  scoped key never allowed.
+- `app/api/knowledge/workflows/[id]/publish/route.ts` reports `indexing: { ok, code, error }`
+  instead of swallowing a `GatewayRejectedError`: a publish whose embedding was rejected leaves the
+  unit unretrievable, and the caller has to be able to see that.
+
 ### Added — Agent engine rebuild, Phase A3: one Langfuse trace per run; LiteLLM attribution and keys
 
 - **One trace per run, id = run id.** `tabs/agents/lib/engine/observe.ts` over the official

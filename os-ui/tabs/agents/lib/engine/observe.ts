@@ -17,10 +17,14 @@
  *     `parent_observation_id` and the gateway's own Langfuse generation nests under ours (A24).
  *   - ONE `trace-create` per run start; a RESUME creates no trace event (the trace exists) — spans
  *     simply reference the same trace id. The run's outcome is a terminal `run.result` span.
- *   - REDACTION: model-call content is recorded as roles + character counts, never the text; the
- *     tool-call STRUCTURE (names, ids, args) is kept in full. Tool spans record args and the
- *     decision; results as character counts. PII in traces is a checklist concern — this is the
- *     conservative default until a redaction policy exists.
+ *   - REDACTION, two levels (`config.langfuseRedaction`, env `LANGFUSE_REDACTION`):
+ *     `structure` (default) records model-call content as roles + character counts — never the
+ *     text — keeps the tool-call STRUCTURE (names, ids, full arguments) and records each tool
+ *     RESULT as its character count PLUS a 160-character preview; `strict` keeps only the
+ *     argument KEY NAMES and their character counts and drops the preview, for tenants whose tool
+ *     arguments may carry personal data. Either way LiteLLM's own callback generation — nested
+ *     under ours — ships the full prompt unless the gateway is told otherwise
+ *     (`turn_off_message_logging`); see `docs/components/langfuse.md`.
  *   - Buffered by the SDK; `flush()` is fire-and-forget at run end. Nothing here throws into a run.
  */
 import { randomUUID } from 'node:crypto';
@@ -74,32 +78,68 @@ export type RunObserver = {
 
 // ----------------------------------------------------------------- redaction --
 
-/** Roles and sizes only — never the text. The tool-call structure is kept whole. */
-export function redactMessages(messages: LlmMessage[]): Array<Record<string, unknown>> {
+/**
+ * How much of a call reaches the trace. `structure`: roles + sizes for message content, the whole
+ * tool-call structure (names, ids, arguments) and a short result preview. `strict`: argument KEY
+ * NAMES and their character counts only, and no result preview.
+ */
+export type RedactionLevel = 'structure' | 'strict';
+export const DEFAULT_REDACTION: RedactionLevel = 'structure';
+
+/** Argument values replaced by their sizes — the shape of the call without its content. */
+export function argShape(args: unknown): Record<string, unknown> {
+  if (!args || typeof args !== 'object') return { chars: JSON.stringify(args ?? null).length };
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
+    out[k] = { chars: (typeof v === 'string' ? v : JSON.stringify(v ?? null)).length };
+  }
+  return out;
+}
+
+/** A tool-call argument blob as the given level records it. */
+function redactArgs(args: unknown, level: RedactionLevel): unknown {
+  return level === 'strict' ? argShape(args) : args;
+}
+
+/** Raw JSON arguments (the wire form on an assistant message) as the given level records them. */
+function redactArgString(json: string | undefined, level: RedactionLevel): unknown {
+  if (level !== 'strict') return json;
+  try { return argShape(JSON.parse(json ?? '{}')); } catch { return { chars: (json ?? '').length }; }
+}
+
+/** Roles and sizes only — never the text. The tool-call structure is kept per {@link RedactionLevel}. */
+export function redactMessages(messages: LlmMessage[], level: RedactionLevel = DEFAULT_REDACTION): Array<Record<string, unknown>> {
   return messages.map((m) => {
     const row: Record<string, unknown> = { role: m.role, chars: m.content?.length ?? 0 };
-    if (m.tool_calls) row.tool_calls = m.tool_calls.map((c) => ({ id: c.id, name: c.function.name, arguments: c.function.arguments }));
+    if (m.tool_calls) row.tool_calls = m.tool_calls.map((c) => ({ id: c.id, name: c.function.name, arguments: redactArgString(c.function.arguments, level) }));
     if (m.tool_call_id) row.tool_call_id = m.tool_call_id;
     return row;
   });
 }
 
-export function redactRequest(req: LlmRequest): Record<string, unknown> {
+export function redactRequest(req: LlmRequest, level: RedactionLevel = DEFAULT_REDACTION): Record<string, unknown> {
   return {
-    messages: redactMessages(req.messages),
+    messages: redactMessages(req.messages, level),
     tools: (req.tools ?? []).map((t) => t.function.name),
     temperature: req.temperature,
     maxTokens: req.maxTokens,
+    redaction: level,
   };
 }
 
-export function redactCompletion(c: LlmCompletion): Record<string, unknown> {
-  return { role: 'assistant', chars: c.content?.length ?? 0, toolCalls: c.toolCalls };
+export function redactCompletion(c: LlmCompletion, level: RedactionLevel = DEFAULT_REDACTION): Record<string, unknown> {
+  return {
+    role: 'assistant',
+    chars: c.content?.length ?? 0,
+    toolCalls: (c.toolCalls ?? []).map((t) => ({ id: t.id, name: t.name, args: redactArgs(t.args, level) })),
+  };
 }
 
 const RESULT_PREVIEW = 160;
 
-function boundedResult(text: string): { chars: number; preview: string } {
+/** `structure` keeps a 160-char preview beside the size; `strict` keeps only the size. */
+export function boundedResult(text: string, level: RedactionLevel = DEFAULT_REDACTION): { chars: number; preview?: string } {
+  if (level === 'strict') return { chars: text.length };
   const flat = text.replace(/\s+/g, ' ').trim();
   return { chars: text.length, preview: flat.length > RESULT_PREVIEW ? `${flat.slice(0, RESULT_PREVIEW)}…` : flat };
 }
@@ -135,6 +175,8 @@ export type LangfuseObserverInput = {
   resume?: boolean;
   /** The SDK client, or null to get the no-op observer. */
   client: Langfuse | null;
+  /** How much of a call to record (default `structure`); the server passes `config.langfuseRedaction`. */
+  redaction?: RedactionLevel;
   metadata?: Record<string, unknown>;
 };
 
@@ -153,6 +195,7 @@ export function langfuseRunObserver(input: LangfuseObserverInput): RunObserver {
   const client = input.client;
   if (!client) return noopObserver(input.runId);
   const traceId = input.runId;
+  const level: RedactionLevel = input.redaction ?? DEFAULT_REDACTION;
   const safe = (fn: () => void): void => {
     try {
       fn();
@@ -194,7 +237,7 @@ export function langfuseRunObserver(input: LangfuseObserverInput): RunObserver {
             name: genName ?? `llm.${name}`,
             model: req.model,
             startTime: new Date(),
-            input: redactRequest(req),
+            input: redactRequest(req, level),
             modelParameters: { temperature: req.temperature ?? 0.2, ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}) },
             metadata: { tools: (req.tools ?? []).length, node: metadata?.agent },
           });
@@ -202,7 +245,7 @@ export function langfuseRunObserver(input: LangfuseObserverInput): RunObserver {
         try {
           const completion = await inner(observed);
           safe(() => gen?.end({
-            output: redactCompletion(completion),
+            output: redactCompletion(completion, level),
             usage: completion.usage ? { input: completion.usage.input, output: completion.usage.output, total: completion.usage.total, unit: 'TOKENS' } : undefined,
           }));
           return completion;
@@ -220,14 +263,16 @@ export function langfuseRunObserver(input: LangfuseObserverInput): RunObserver {
             parentObservationId: id,
             name: `tool.${call.name}`,
             startTime: new Date(),
-            input: { tool: call.name, callId: call.id, args: call.args },
-            metadata: { decision: meta.decision, approvalId: meta.approvalId },
+            input: { tool: call.name, callId: call.id, args: redactArgs(call.args, level) },
+            metadata: { decision: meta.decision, approvalId: meta.approvalId, redaction: level },
           });
         });
         try {
           const out = await fn();
-          const decision: ToolDecision = out.isError ? (/"code":"(forbidden|denied|held|rejected|not_found)"/.test(out.text) ? 'denied' : 'error') : meta.decision;
-          safe(() => toolSpan?.end({ output: { isError: out.isError, ...boundedResult(out.text) }, level: out.isError ? 'WARNING' : 'DEFAULT', metadata: { decision, approvalId: meta.approvalId } }));
+          // A POLICY refusal (`forbidden`/`denied`/`held`/`rejected`) is `denied`; `not_found` is
+          // the tool reporting a missing object — an ERROR, not a governance decision.
+          const decision: ToolDecision = out.isError ? (/"code":"(forbidden|denied|held|rejected)"/.test(out.text) ? 'denied' : 'error') : meta.decision;
+          safe(() => toolSpan?.end({ output: { isError: out.isError, ...boundedResult(out.text, level) }, level: out.isError ? 'WARNING' : 'DEFAULT', metadata: { decision, approvalId: meta.approvalId } }));
           return out;
         } catch (e) {
           const message = (e as Error)?.message ?? String(e);
@@ -243,7 +288,7 @@ export function langfuseRunObserver(input: LangfuseObserverInput): RunObserver {
           name: `tool.${call.name}`,
           startTime: at,
           endTime: at,
-          input: { tool: call.name, callId: call.id, args: call.args },
+          input: { tool: call.name, callId: call.id, args: redactArgs(call.args, level) },
           output: meta.detail ? { detail: meta.detail } : undefined,
           level: meta.decision === 'held' ? 'DEFAULT' : 'WARNING',
           metadata: { decision: meta.decision, approvalId: meta.approvalId },

@@ -130,10 +130,11 @@ export async function runSystem(
       costUsd: runCostUsd(res.usage, [config.litellmReasoningModel, config.litellmExecModel], prices),
     });
     const traceStoreAvailable = await traceStoreReachable();
-    const traceUrl =
-      traceStoreAvailable && config.langfuseConsoleUrl
-        ? `${config.langfuseConsoleUrl}/traces`
-        : undefined;
+    // A3 review: no `/traces` LIST link. This legacy (hermes / unmapped-grant) path has no run id,
+    // so there is no trace to deep-link to — checklist A20 is "the link opens THAT trace, not a
+    // list". The governed engine builds its link from the run id (`traceUrlFor`); here the panel
+    // shows "traced" without a link rather than dumping the viewer into every tenant's traces.
+    const traceUrl = undefined;
     return {
       ok: res.reachedEnd,
       path: res.path,

@@ -11,7 +11,8 @@
  *   Helm merges values — maps deep-merge, lists replace), the REQUIRED set is:
  *     • every `LITELLM_*_MODEL` / `*_EMBED_MODEL` default literal in `os-ui/core/kernel/config.ts`;
  *     • `agentRuntime.chatModel` / `reasoningModel` / `executionModel`;
- *     • every `router_settings.fallbacks` source AND target alias.
+ *     • every `router_settings` fallback source AND target alias — `fallbacks`,
+ *       `context_window_fallbacks`, `content_policy_fallbacks` and `default_fallbacks`.
  *   and it must be ⊆ `litellmAgentKey.models`. Exit 1 with the gap named. Wired into
  *   `os-ui/scripts/gate.sh` (checklist A28). Pure file reads — no cluster, no network.
  */
@@ -60,14 +61,23 @@ function required(values, configSrc) {
   for (const a of configModelDefaults(configSrc)) add(a, 'core/kernel/config.ts default');
   const rt = values.agentRuntime ?? {};
   for (const k of ['chatModel', 'reasoningModel', 'executionModel']) add(rt[k], `agentRuntime.${k}`);
-  const fallbacks = values.litellm?.proxy_config?.router_settings?.fallbacks ?? [];
-  for (const entry of Array.isArray(fallbacks) ? fallbacks : []) {
-    if (!isMap(entry)) continue;
-    for (const [from, targets] of Object.entries(entry)) {
-      add(from, 'router_settings.fallbacks source');
-      for (const t of Array.isArray(targets) ? targets : []) add(t, `router_settings.fallbacks target of ${from}`);
+  // A4 review: LiteLLM has FOUR fallback maps, not one. `default_fallbacks` is a flat list of
+  // aliases used when no per-model rule matches; `context_window_fallbacks` and
+  // `content_policy_fallbacks` have the same shape as `fallbacks` and fire on exactly the errors a
+  // long agent prompt or a refused completion produces. Any of them can route to an alias the
+  // scoped key never allowed — a 403 at the worst possible moment.
+  const rs = values.litellm?.proxy_config?.router_settings ?? {};
+  for (const key of ['fallbacks', 'context_window_fallbacks', 'content_policy_fallbacks']) {
+    const entries = rs[key] ?? [];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      if (!isMap(entry)) continue;
+      for (const [from, targets] of Object.entries(entry)) {
+        add(from, `router_settings.${key} source`);
+        for (const t of Array.isArray(targets) ? targets : []) add(t, `router_settings.${key} target of ${from}`);
+      }
     }
   }
+  for (const t of Array.isArray(rs.default_fallbacks) ? rs.default_fallbacks : []) add(t, 'router_settings.default_fallbacks');
   return need;
 }
 

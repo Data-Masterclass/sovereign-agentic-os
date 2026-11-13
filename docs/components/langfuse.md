@@ -41,11 +41,32 @@ A held write ends `tools_<agent>` as `parked` (statusMessage) with a `tool.<name
 decision is `held`; the decision in Governance resumes the thread and the next segment's spans
 reference the same trace id.
 
-**Redaction.** Model-call *content* is recorded as roles and character counts, never the text.
-The tool-call *structure* (names, ids, args) is kept whole; tool results as a character count
-and a 160-character preview. LiteLLM's own generation carries the full content and the cost —
-that is the gateway's callback, configured in the chart, not the OS's record. PII in traces is a
-checklist concern (A-section "PII handling"); the OS default is deliberately conservative.
+**Redaction — two levels, one switch.** `LANGFUSE_REDACTION` (chart: `osUI.langfuseRedaction`;
+code: `config.langfuseRedaction`, applied in `tabs/agents/lib/engine/observe.ts`):
+
+| Level | Message content | Tool-call arguments | Tool result |
+|---|---|---|---|
+| `structure` (default) | role + character count, never the text | **kept whole** (names, ids, the argument object) | character count **+ a 160-character preview** |
+| `strict` | role + character count, never the text | argument **key names** and the character count of each value — no values | character count only, **no preview** |
+
+Pick `strict` when tool arguments can carry personal data (a query predicate with an identifier,
+a document body, a customer name): the trace still shows which tool ran with which fields, which
+is what a debugging session needs, without the values. The level is recorded on the generation
+(`input.redaction`) and on each tool span (`metadata.redaction`), so a trace always says how it
+was written.
+
+**The OS's redaction does not reach LiteLLM's generation.** The gateway's own Langfuse callback
+creates a second generation *nested under* the OS's (A24: same trace, `existing_trace_id` +
+`parent_observation_id`), and that one carries the **full prompt, the full completion and the
+cost** — it is the gateway's record of what it sent to the provider, not the OS's record of what
+the node decided. `strict` therefore reduces what the OS writes, not what LiteLLM writes. To
+redact at the gateway too, set `turn_off_message_logging: true` under
+`litellm.proxy_config.litellm_settings` in the chart — you keep usage, latency and cost and lose
+the prompt/completion bodies. Decide this per tenant: with it on, nobody can read back what a
+model was actually asked.
+
+PII in traces remains a checklist concern (A-section "PII handling"), together with the fact that
+LangGraph checkpoints in `agent_runs` keep raw tool results with no retention (plan item A13).
 
 ## What the OS does NOT use
 

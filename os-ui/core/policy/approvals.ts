@@ -90,8 +90,10 @@ export type ApprovalRunner = { id: string; role: Role; domains: string[] };
 
 /** What the resume after a decision did (A2). */
 export type ApprovalResume = {
-  /** `parked`: the run resumed and parked again on ANOTHER held call (A2 review L-F). */
-  status: 'started' | 'done' | 'parked' | 'refused' | 'failed';
+  /** `parked`: the run resumed and parked again on ANOTHER held call (A2 review L-F).
+   *  `queued`: the resume was FILED as a `run_jobs` job and the worker will execute it (A4 —
+   *  `AGENTS_WORKER=worker`); the card is honest that the run has not finished yet. */
+  status: 'started' | 'queued' | 'done' | 'parked' | 'refused' | 'failed';
   at: string;
   /** Typed refusal/failure (`runner_unavailable`, `runner_role_insufficient`, `run_not_found`, …). */
   error?: { code: string; reason: string };

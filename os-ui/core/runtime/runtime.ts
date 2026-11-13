@@ -195,7 +195,6 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
     const metadata: Record<string, unknown> = { tags: cred.tags };
     if (req.observe) {
       metadata.existing_trace_id = req.observe.traceId;
-      metadata.trace_id = req.observe.traceId;
       if (req.observe.parentObservationId) metadata.parent_observation_id = req.observe.parentObservationId;
       if (caller?.userId) metadata.trace_user_id = caller.userId;
       if (caller?.systemId) metadata.session_id = caller.systemId;

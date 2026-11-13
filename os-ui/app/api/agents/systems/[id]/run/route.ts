@@ -4,8 +4,13 @@
  * FEATURE:    Run one agent system (start or resume) through the governed engine, streaming progress.
  * USER STORY: As a builder I press Run and watch each agent work, every tool call governed as me; a
  *             run interrupted by a restart resumes from its checkpoint instead of starting over.
- * ARCHITECTURE: thin route over `tabs/agents/lib/build/run-service.ts` (`prepareRunYaml`,
- *             `executeTeamRun`); engine chosen by `selectEngine`; SSE or JSON; thread id = run id.
+ * ARCHITECTURE: ENQUEUE + TAIL (A4). Under the `langgraph` engine the route validates, mints the
+ *             run id, files a `run_jobs` row and then TAILS that run's `run_events` — it never
+ *             drives the graph itself. `AGENTS_WORKER=inline` (the default) executes the job in
+ *             this process right after filing it, so the response, the events and the error
+ *             statuses are identical to before; `worker` leaves it to the `os-ui-worker` pod, so a
+ *             run outlives the request. The walker engine keeps its request-bound path.
+ *             Thin route over `tabs/agents/lib/build/run-jobs-server.ts` + `engine/jobs.ts`.
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
@@ -14,6 +19,8 @@ import type { LastRun } from '@tabs/agents/lib/store';
 import { newRunId } from '@core/kernel/run-id';
 import { runSystem } from '@tabs/agents/lib/build/server';
 import { executeTeamRun, prepareRunYaml } from '@tabs/agents/lib/build/run-service';
+import { enqueueRun, runJobStore } from '@tabs/agents/lib/build/run-jobs-server';
+import { isTerminalEvent, tailRunEvents, type RunEventRow } from '@tabs/agents/lib/engine/jobs';
 import { isAgenticOsTeam } from '@tabs/agents/lib/build/os-tools';
 import { cleanTurns } from '@core/runtime/turns';
 import { config } from '@core/kernel/config';
@@ -23,6 +30,8 @@ export const dynamic = 'force-dynamic';
 // A multi-node team walk (each node a PLAN→ACT loop on a large model) can run long;
 // give the streamed turn room before the platform kills it (mirrors the software team).
 export const maxDuration = 300;
+/** How long the route follows a queued run before handing the client a 202 + the run id to re-attach. */
+const TAIL_BUDGET_MS = 240_000;
 
 type ChatMsg = { role: 'user' | 'assistant'; content: string };
 
@@ -129,7 +138,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // The governed yaml this run executes: the OWNER's current role re-asserted over the grants
     // (a stale direct-write grant downgrades to held — S1) and folder grants late-bound to the
     // acting user's live DLS-scoped lists (Wave 3). Read live, never trusted from the saved yaml.
-    const yaml = await prepareRunYaml(resolvedUser, view, id);
+    // LAZY: a queued (langgraph) run is governed by the EXECUTOR as the live runner, so this route
+    // must not do the same work a second time — only the request-bound paths below need it here.
+    const governedYaml = () => prepareRunYaml(resolvedUser!, view, id);
 
     // Any agentic-os LangGraph team (data + knowledge + connections + software
     // grants, all resolving to the MCP registry) runs LIVE, in-process, as the
@@ -140,12 +151,72 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (isAgenticOsTeam(view.system)) {
       const messages = runMessages(body, prompt);
       const user = resolvedUser;
-      const common = { user, systemId: id, view, yaml, messages, engine, runId, resume, prompt };
 
-      // STREAMING path: the client asked for live progress (Accept: text/event-stream
-      // or {stream:true}). Emit ordered node/step events as the walk happens, then a
-      // terminal `done` carrying the SAME full result the non-stream path returns. On
-      // any run error, emit `error` so the client falls back — never a stuck spinner.
+      // ---- A4: the governed engine runs through the QUEUE, never in this request ----------
+      if (engine === 'langgraph') {
+        // File the job. A start that collides with an existing run id, or a resume of a run that
+        // is already queued/running, is a typed 409; a resume of an unknown run is a typed 404 —
+        // both thrown BEFORE anything looks like a run.
+        const queued = await enqueueRun({
+          runId,
+          systemId: id,
+          domain: view.system.system.domain,
+          requestedBy: user.id,
+          user,
+          kind: resume ? 'resume' : 'start',
+          input: { messages, prompt: resume ? undefined : prompt },
+        });
+        const store = await runJobStore();
+
+        // STREAMING path: tail `run_events` from seq 0 — the same ordered vocabulary
+        // (`node-started`, `tool-step`, `node-completed`, `approval-required`, `resumed`, then
+        // `done` / `error`) the panel already understands, now replayable and re-attachable from
+        // any pod. A run that parks on an approval ends this stream with a `done{parked}`; the
+        // panel re-attaches to GET …/run/stream?runId= to see the decision continue it.
+        if (wantsStream(req, body)) {
+          streamed = true;
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream<Uint8Array>({
+            async start(controller) {
+              const send = (event: string, data: unknown) =>
+                controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+              try {
+                const out = await tailRunEvents(store, runId, { until: 'settled', afterSeq: 0, signal: req.signal, timeoutMs: TAIL_BUDGET_MS }, (ev) => send(ev.event, ev.data));
+                if (out.ended === 'timeout') send('queued', { runId, afterSeq: out.lastSeq, note: 'still running — re-attach to /run/stream' });
+              } catch (e) {
+                send('error', { error: (e as Error).message });
+              } finally {
+                controller.close();
+              }
+            },
+          });
+          return new Response(stream, {
+            headers: {
+              'content-type': 'text/event-stream; charset=utf-8',
+              'cache-control': 'no-store, no-transform',
+              connection: 'keep-alive',
+            },
+          });
+        }
+
+        // NON-STREAMING: inline mode awaits its own execution, so a refused run keeps the exact
+        // status it had before A4; worker mode follows the event log until the job settles.
+        if (queued.inflight) await queued.inflight;
+        const seen: RunEventRow[] = [];
+        const out = await tailRunEvents(store, runId, { until: 'settled', afterSeq: 0, signal: req.signal, timeoutMs: TAIL_BUDGET_MS }, (ev) => { seen.push(ev); });
+        const terminal = seen.filter(isTerminalEvent).at(-1) ?? seen.filter((e) => e.event === 'done').at(-1);
+        if (!terminal) {
+          return NextResponse.json({ queued: true, runId, engine, mode: queued.mode, afterSeq: out.lastSeq, note: 'the run is still executing — tail /run/stream?runId=' }, { status: 202 });
+        }
+        if (terminal.event === 'error') {
+          const d = (terminal.data ?? {}) as { error?: string; status?: number };
+          return NextResponse.json({ error: d.error ?? 'the run failed', runId }, { status: d.status ?? 500 });
+        }
+        return NextResponse.json(terminal.data);
+      }
+
+      // ---- the walker engine stays request-bound (it has no thread to resume and no queue) ----
+      const common = { user, systemId: id, view, yaml: await governedYaml(), messages, engine, runId, resume, prompt };
       if (wantsStream(req, body)) {
         streamed = true;
         const encoder = new TextEncoder();
@@ -156,9 +227,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
             try {
               await executeTeamRun({ ...common, emit: send });
             } catch (e) {
-              const err = e as Error & { status?: number };
-              // A refused resume (404 unknown/foreign thread, 409 finished) never published `error`.
-              if (err?.status === 404 || err?.status === 409) send('error', { error: err.message, status: err.status });
+              send('error', { error: (e as Error).message });
             } finally {
               controller.close();
             }
@@ -172,8 +241,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           },
         });
       }
-
-      // NON-STREAMING fallback: run to completion and return the final JSON as before.
       return NextResponse.json(await executeTeamRun(common));
     }
 
@@ -184,7 +251,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // exactly as before (the team path does this inside `executeTeamRun`).
     setActivity(id, { kind: 'running', startedAt: Date.now() });
     startRunCheckpoint(id, { prompt, plannedNodes: view.system.agents.map((a) => a.id) });
-    const report = await runSystem(id, yaml, {
+    const report = await runSystem(id, await governedYaml(), {
       prompt,
       requestedBy: resolvedUser.id,
       disabledAgents: view.disabledAgents,

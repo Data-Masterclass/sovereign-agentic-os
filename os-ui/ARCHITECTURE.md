@@ -372,14 +372,73 @@ when Build minted one and the shared agent key otherwise — and never the maste
 repo-wide `MODEL-KEY` test confines to `litellm-admin.ts`, `litellm-write.ts`, the key
 provisioner and `config.ts`.
 
-**Redaction default.** Message content is recorded as roles and character counts; the tool-call
-structure (names, ids, args) and bounded result previews are kept. PII in args is a checklist
-concern, not yet a policy.
+**Redaction, two levels** (`LANGFUSE_REDACTION`, `config.langfuseRedaction`). `structure` (the
+default): message content as roles + character counts, the tool-call structure (names, ids,
+arguments) in full, each tool result as a character count plus a 160-character preview. `strict`:
+argument **key names** and their sizes only, and no preview — for tenants whose tool arguments can
+carry personal data. Neither level reaches LiteLLM's own nested generation, which carries the full
+prompt unless the gateway is told otherwise (`turn_off_message_logging`) — see
+`docs/components/langfuse.md`.
 
 **In-flight lock.** `executeTeamRun` takes a per-thread lock (`engine/run-lock.ts`) before any
-marker or event and releases it in `finally`; a second entrant on the same run — the owner's
-Resume racing a decision-driven resume — gets a typed 409 instead of executing an approved
-write twice. Single replica, like the checkpointer; A4's worker moves it to `run_jobs`.
+marker or event and releases it in `finally`; a second entrant on the same run gets a typed 409
+instead of executing an approved write twice. Since A4 the authoritative lock is the `run_jobs`
+row (a `queued`/`running` run cannot be re-queued, typed 409 across pods); the in-process lock
+stays as a second belt inside one process.
+
+## Runs execute in a worker
+
+Before A4 a run was bound to the request that started it: the HTTP handler drove `graph.stream()`
+to the end, so `maxDuration = 300` was the real ceiling on a run and an os-ui rolling restart
+killed whatever was in flight. Since A4 **the route files the run and tails its events; something
+else executes it.**
+
+**Two tables in the `agent_runs` database** (the same one as the checkpointer; idempotent DDL at
+boot, next to `PostgresSaver.setup()` — `engine/jobs-postgres.ts`):
+
+| Table | Shape | Why |
+|---|---|---|
+| `run_jobs` | `run_id` **primary key**, `system_id`, `domain`, `requested_by`, `principal_snapshot jsonb`, `input jsonb`, `kind start\|resume`, `status queued\|running\|parked\|done\|failed`, `locked_by`, `locked_at`, `attempts`, `error`, `created_at`, `updated_at` | ONE ROW PER RUN. A resume re-queues the same row, so the status column *is* the cross-process in-flight lock. |
+| `run_events` | `(run_id, seq)` **primary key**, `event`, `data jsonb`, `at` | Append-only, written only by the lease holder. `event` is exactly the SSE vocabulary (`node-started`, `tool-step`, `node-completed`, `approval-required`, `resumed`, `done`, `error`); anything else is dropped and reported. `seq` is the client's cursor. |
+
+**The port** is `engine/jobs.ts` (`RunJobStore`) with two implementations: Postgres, and an
+in-memory one that is the contract every implementation must meet — it is what the tests drive,
+and what a laptop without `AGENT_RUNS_DATABASE_URL` runs on.
+
+**The worker loop** (`engine/worker-loop.ts`, pure; wired by `build/run-jobs-server.ts`;
+entrypoint `worker/agent-runs.ts`): claim the oldest `queued` row with
+`UPDATE … WHERE run_id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)` — two workers never take the
+same run and neither blocks — stamp `locked_by`/`locked_at`, re-read the runner **live**, run it,
+write every engine event to `run_events`, settle the row. A `running` lease nobody heartbeats is
+re-queued **once** as a `resume` (the checkpoint continues the thread) and then **failed**, so a
+run never sits `running` forever. SIGTERM stops new claims and aborts the run in flight at its
+next superstep boundary: what completed is checkpointed and the row goes back to `queued`.
+
+**Identity, again.** The job carries a `principal_snapshot` — what was true when the run was
+filed, never the authority. Before executing, `engine/runner-identity.ts` re-reads the runner from
+the live directory and refuses typed when the identity changed: `runner_unavailable` (gone or
+disabled), `runner_role_changed` (downgraded below the filed role), `runner_domain_lost`. A role
+*upgrade* is not a refusal — the yaml is re-governed against the owner's live role on every run.
+
+**The tail** is a **poll** of `(run_id, seq)` (a primary-key range scan, 400 ms), not
+`LISTEN/NOTIFY`: it is correct across pods and after any reconnect, needs no dedicated connection
+per watcher, and a few hundred milliseconds is invisible next to a model call. `POST …/run` tails
+from `seq = 0`; `GET …/run/stream?runId=&afterSeq=` tails from the client's cursor, so a re-attach
+replays only what it missed. A `done` whose body says `parked: true` is **not** terminal — the
+decision will continue the run on the same id.
+
+**One switch, `AGENTS_WORKER`.** `inline` (the default) means the process that files the job also
+executes it, immediately, writing the same `run_events` — a kind install, a laptop and the whole
+test suite behave exactly as before and need no worker process. `worker` means os-ui only enqueues
+and tails, and the `os-ui-worker` Deployment (same image, `node --experimental-strip-types
+worker/start.mjs`, `AGENTS_WORKER=worker`) executes. The chart sets it only when
+`osUI.worker.enabled`.
+
+**Every door is the same door.** The run route, `build/scheduled.ts`, the MCP `run_agent_system`
+and `resume_agent_run`, and the Governance `onDecided` hook all go through
+`build/run-jobs-server.ts` (`startQueuedRun` / `resumeQueuedRun` / `enqueueResumeAfterDecision`).
+In particular a decision no longer drives the graph inside the decider's request — it files a
+`resume` job, and the approval card says `queued` until the run reports back.
 
 ## Things this codebase will punish you for
 

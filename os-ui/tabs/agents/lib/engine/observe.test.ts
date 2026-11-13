@@ -27,7 +27,7 @@ import {
   scriptedLlm,
   type HoldSink,
 } from '@tabs/agents/lib/engine/parity-harness';
-import { langfuseRunObserver, redactRequest, runTraceTags } from '@tabs/agents/lib/engine/observe';
+import { argShape, boundedResult, langfuseRunObserver, redactCompletion, redactRequest, runTraceTags } from '@tabs/agents/lib/engine/observe';
 
 type IngestionEvent = { id: string; type: string; body: Record<string, unknown> };
 
@@ -138,6 +138,33 @@ test('TRACE-PER-RUN: redaction — model text never enters the trace, the tool-c
   const red = redactRequest({ model: 'm', messages: [{ role: 'user', content: 'secret text' }], tools: [{ type: 'function', function: { name: 'query_data', description: '', parameters: {} } }] });
   assert.deepEqual(red.messages, [{ role: 'user', chars: 11 }]);
   assert.deepEqual(red.tools, ['query_data']);
+  assert.equal(red.redaction, 'structure', 'the level the trace was written at is recorded with it');
+});
+
+test('A4 review: `strict` redaction keeps argument KEY NAMES and sizes only, and drops the result preview', () => {
+  // `structure` (the default) keeps the whole argument object and a 160-char result preview.
+  const loose = redactRequest(
+    { model: 'm', messages: [{ role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'query_data', arguments: '{"sql":"select * from patients where ssn = 123"}' } }] }] },
+    'structure',
+  );
+  assert.match(JSON.stringify(loose), /patients/, 'structure keeps the arguments — that is the point of it');
+  assert.deepEqual(boundedResult('a b  c', 'structure'), { chars: 6, preview: 'a b c' });
+
+  // `strict` keeps the SHAPE of the call and nothing of its content.
+  const strict = redactRequest(
+    { model: 'm', messages: [{ role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'query_data', arguments: '{"sql":"select * from patients where ssn = 123"}' } }] }] },
+    'strict',
+  );
+  const json = JSON.stringify(strict);
+  assert.ok(!json.includes('patients'), 'strict must not carry argument VALUES');
+  assert.match(json, /"sql"/, 'the argument key names are kept — a trace must still be readable');
+  assert.match(json, /"chars"/);
+  assert.deepEqual(boundedResult('a b  c', 'strict'), { chars: 6 }, 'no preview under strict');
+  assert.deepEqual(argShape({ sql: 'abc', k: 12 }), { sql: { chars: 3 }, k: { chars: 2 } });
+
+  const comp = redactCompletion({ content: 'hello', toolCalls: [{ id: 'c1', name: 'query_data', args: { sql: 'secret-sql' } }] }, 'strict');
+  assert.ok(!JSON.stringify(comp).includes('secret-sql'));
+  assert.equal(comp.chars, 5);
 });
 
 test('TRACE-PER-RUN (resume): a resumed thread continues the SAME trace id and creates no second trace', async () => {

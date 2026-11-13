@@ -202,7 +202,9 @@ test('parseLlmUsage never fabricates usage from an absent/malformed block', () =
 
 // --- Phase-0 regression gate: run-path model calls use the master key (review finding 4) ------
 
-/** Every non-test source file under os-ui that mentions the master key config field. */
+/** Every non-test source file under os-ui that mentions the master key — by config field OR by
+ *  the raw env names, so a `process.env.LITELLM_MASTER_KEY` read cannot slip past the gate. */
+const MASTER_KEY_RE = /litellmMasterKey|LITELLM_MASTER_KEY|PROXY_MASTER_KEY/;
 function filesReferencingMasterKey(): string[] {
   const root = fileURLToPath(new URL('../../', import.meta.url));
   const hits: string[] = [];
@@ -211,7 +213,7 @@ function filesReferencingMasterKey(): string[] {
       if (entry.name === 'node_modules' || entry.name === '.next' || entry.name.startsWith('.')) continue;
       const full = join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (/\.(ts|tsx|mjs)$/.test(entry.name) && !/\.test\.(ts|tsx)$/.test(entry.name) && readFileSync(full, 'utf8').includes('litellmMasterKey')) {
+      else if (/\.(ts|tsx|mjs)$/.test(entry.name) && !/\.test\.(ts|tsx)$/.test(entry.name) && MASTER_KEY_RE.test(readFileSync(full, 'utf8'))) {
         hits.push(relative(root, full));
       }
     }
@@ -222,20 +224,29 @@ function filesReferencingMasterKey(): string[] {
   return hits.sort();
 }
 
-/** The ONLY places the master key may be read: gateway administration and key provisioning. */
-const MASTER_KEY_ALLOWLIST = [
+/**
+ * The EXACT set of files that may name the master key: the config definition, the two gateway
+ * administration IO modules, and the key-provisioning client. `tool-sso-litellm.ts` was on the
+ * A3 allowlist "reserved"; it does not read the key, so it is NOT expected (A4 review).
+ * This is an equality assertion, not a subset one: a file DROPPING out is as interesting as a new
+ * one appearing (it means an administration path stopped going through the IO layer).
+ */
+const MASTER_KEY_EXPECTED = [
   'core/infra/litellm-admin.ts',
   'core/infra/litellm-write.ts',
-  'core/infra/tool-sso-litellm.ts',
   'core/kernel/config.ts',
   'tabs/agents/lib/build/live-clients.ts',
 ];
 
 test('MODEL-KEY (repo-wide, A25): only gateway administration and key provisioning reference the master key', () => {
   const hits = filesReferencingMasterKey();
-  assert.ok(hits.includes('core/kernel/config.ts'), 'the scan must at least see the config definition');
-  const offenders = hits.filter((f) => !MASTER_KEY_ALLOWLIST.includes(f));
-  assert.deepEqual(offenders, [], `an inference or route path references the LiteLLM master key: ${offenders.join(', ')} — use callerCredential (inference) or litellm-admin/litellm-write (administration)`);
+  assert.deepEqual(
+    hits,
+    MASTER_KEY_EXPECTED,
+    'the set of files naming the LiteLLM master key changed. A NEW file: use callerCredential ' +
+      '(inference) or litellm-admin/litellm-write (administration). A file GONE: update ' +
+      'MASTER_KEY_EXPECTED in this test so the gate keeps describing the truth.',
+  );
 });
 
 test('MODEL-KEY: a run-path completion must NOT carry the LiteLLM master key', async () => {
