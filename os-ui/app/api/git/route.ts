@@ -16,7 +16,7 @@ import {
   GIT_OBJECT_LAYOUT,
   type GitObjectKind,
 } from '@core/infra/git-objects';
-import { repoSummaries } from '@core/infra/git-store';
+import { repoSummaries, log as repoLog } from '@core/infra/git-store';
 import { mirrorSignals } from '@core/infra/git-mirror';
 
 export const dynamic = 'force-dynamic';
@@ -29,6 +29,7 @@ export const dynamic = 'force-dynamic';
  *
  * GET ?action=history|version|diff|releases&kind=&id=[&sha=|&shaA=&shaB=] → one object's versioning
  * GET ?action=repos                                              → every domain repo (builder+)
+ * GET ?action=repolog&domain=                                    → one repo's commit log (builder+)
  * POST {kind, id, sha}                                           → restore, through the writer
  */
 function kindOf(value: string | null): GitObjectKind {
@@ -60,6 +61,31 @@ export const GET = withRoute(async ({ user, req }) => {
         paths: GIT_OBJECT_LAYOUT[k].paths,
         personalLane: GIT_OBJECT_LAYOUT[k].personalLane,
         writer: GIT_OBJECT_LAYOUT[k].writer,
+      })),
+    });
+  }
+
+  if (action === 'repolog') {
+    // The commit log of ONE domain repository, for the operator view. Builder+ like `repos`;
+    // subjects and authors only — never file contents, so this cannot become a data read.
+    if (!roleAtLeast(user.role, 'builder')) {
+      return NextResponse.json({ error: 'Repositories needs the builder role or higher' }, { status: 403 });
+    }
+    const domain = (url.searchParams.get('domain') ?? '').trim();
+    if (!domain) return NextResponse.json({ error: 'domain is required' }, { status: 400 });
+    const limit = Number(url.searchParams.get('limit') ?? '');
+    const entries = await repoLog(domain, { limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : 25 });
+    return NextResponse.json({
+      domain,
+      commits: entries.map((e) => ({
+        sha: e.sha,
+        subject: e.subject,
+        author: e.author.name,
+        at: new Date(e.timestamp * 1000).toISOString(),
+        action: e.trailers['OS-Action'] ?? '',
+        surface: e.trailers['OS-Surface'] ?? '',
+        object: e.trailers['OS-Object'] ?? '',
+        reason: e.trailers['OS-Reason'] ?? '',
       })),
     });
   }

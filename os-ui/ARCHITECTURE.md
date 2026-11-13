@@ -853,3 +853,19 @@ kind claims a `committed` writer whose module does not reach `commitTree`/`commi
 the direction that catches drift — when a module imports those primitives and **no object kind
 claims it**. A new writer therefore cannot land without classifying its artefact kind as
 committed, landing (naming the stream) or backlog (with a reason).
+
+### Governance → Repositories, and why the mirror verdict is not a boolean
+
+The Repositories section (`tabs/governance/ui/RepositoriesView.tsx` over
+`tabs/governance/lib/repositories.ts`) exists so "everything built in the OS lives in git" is
+checkable rather than asserted: every domain repository with its head, its commit count, its last
+author, its commit log on demand, and the layout table straight out of `GIT_OBJECT_LAYOUT`.
+
+The mirror verdict has **four** states for one reason: `pushMirror` records the sha it last
+pushed, and a push that SUCCEEDED two commits ago is not the same thing as a healthy mirror. So
+`ok` requires the last successful push to be AT the repository's current head; an older one reads
+`behind` and names both shas; a failed attempt reads `failed` and carries the real error (an
+egress refusal, an auth failure) rather than "push failed"; no configuration at all reads `none`
+and says the repository lives only on the OS volume. A boolean would have made the most common
+real state — configured, working, one commit behind until the next write — look identical to
+either health or failure.

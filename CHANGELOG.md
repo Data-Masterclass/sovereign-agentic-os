@@ -37,6 +37,13 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   in `docs/components/git.md`. Restore is gated and refuses with a typed `restore_unsupported`
   until a tab registers its writer — the OS never rewrites a human's history.
 
+- **Governance → Repositories (night 2, stream G).** One row per domain repository: head,
+  commit count, last author and subject, an on-demand commit log, and the push-mirror verdict
+  judged against the repository's CURRENT head — `ok` only when the last successful push was AT
+  that head, `behind` when it was older, `failed` with the real error, `none` when no mirror is
+  configured — plus the authoritative layout table saying which object kinds are in git today
+  and which are not. Reads the existing `git-mirror` health record; adds no second health source.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a

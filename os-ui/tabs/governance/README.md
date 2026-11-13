@@ -1,6 +1,8 @@
 # Governance · Manage
 
-Approvals, policy, audit, role definitions and the egress allowlist. Everything that is policy rather than administration.
+Approvals, policy, audit, role definitions, the egress allowlist and the domain **Repositories** —
+git is the system of record, so "which repositories exist, where is each head and is the mirror
+healthy" is a governance question. Everything that is policy rather than administration.
 
 The authoritative contract is [`manifest.ts`](./manifest.ts) — this file explains it; the manifest is what the checks and the docs generator read. If the two disagree, the manifest is right.
 
@@ -14,6 +16,7 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 
 - `/api/governance`
 - `/api/policy`
+- `/api/git`
 
 **MCP tools**
 

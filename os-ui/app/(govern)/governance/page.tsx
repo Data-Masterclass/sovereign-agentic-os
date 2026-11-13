@@ -14,8 +14,10 @@ import AuditLog from '@tabs/governance/ui/AuditLog';
 import CostLimits from '@tabs/governance/ui/CostLimits';
 import RolesView from '@tabs/governance/ui/RolesView';
 import EgressView from '@tabs/governance/ui/EgressView';
+// Night 2 (stream G): the domain repositories, their heads and their mirror health.
+import RepositoriesView from '@tabs/governance/ui/RepositoriesView';
 
-type Section = 'inbox' | 'policies' | 'roles' | 'egress' | 'audit' | 'cost';
+type Section = 'inbox' | 'policies' | 'roles' | 'egress' | 'audit' | 'cost' | 'repos';
 
 // `minRole` gates a tab STRIP ENTRY. The Governance tab itself is minRole
 // 'builder' (core/kernel/tabs.ts), but defining what a role may do and curating
@@ -28,6 +30,9 @@ const SECTIONS: { id: Section; label: string; minRole?: Role }[] = [
   { id: 'egress', label: 'Security & egress', minRole: 'admin' },
   { id: 'audit', label: 'Audit' },
   { id: 'cost', label: 'Cost & limits' },
+  // Git is the system of record, so "which repositories exist and are they mirrored" is a
+  // governance question. The tab's own 'builder' floor applies; the API re-checks it.
+  { id: 'repos', label: 'Repositories' },
 ];
 
 export default function GovernancePage() {
@@ -89,6 +94,7 @@ function GovernancePageInner() {
         {current === 'egress' && <EgressView />}
         {current === 'audit' && <AuditLog />}
         {current === 'cost' && <CostLimits />}
+        {current === 'repos' && <RepositoriesView />}
       </div>
     </>
   );
