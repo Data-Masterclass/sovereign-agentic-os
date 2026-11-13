@@ -13,6 +13,16 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added
+
+- **Night run 2 — the plan of record for metrics, dashboards, chat-to-data, vibe-engineered software,
+  git everywhere, the engineering view, the engineer's door and lifecycle.** Nine parallel streams
+  (M · D · C · S · G · T · E · V · X) are specified in
+  `docs/superpowers/plans/2026-11-14-metrics-dashboards-chat-software.md`, with 129 testable
+  acceptance items in `docs/superpowers/plans/2026-11-14-engineering-checklist-night2.md` and the
+  four read-only research reports beside them as the evidence base. No product code changes in this
+  commit.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a
