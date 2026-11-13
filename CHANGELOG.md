@@ -13,6 +13,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Fixed — Data engine rebuild, B4 review round
+
+- **A pre-B2 upgrade no longer fires every sync twice (H-1).** The boot reconcile commits
+  `os/schedules.yml` for every synced dataset, which hands those schedules to Dagster — but the
+  per-dataset `batch/v1` CronJob a pre-B2 save left behind was only removed when that dataset's
+  sync was saved again or its source revoked. Between the upgrade and the next save, both
+  schedulers ran the same slice. `reconcileDataProjectsAtBoot` now calls `removeSyncCronJob` for
+  every dataset with a sync BEFORE its first commit: idempotent (404 is the normal answer),
+  fail-soft (a 403 or an unreachable API server is logged, never thrown — a cleanup may not stop a
+  boot) and logged per dataset, with the outcome returned as `cronsStoodDown`.
+- **The os-ui Role may actually touch CronJobs (H-2).** Nothing in the chart granted
+  `batch`/`cronjobs`, so BOTH CronJob paths 403'd in a real cluster: agent schedule provisioning
+  (`tabs/agents/lib/schedule-cron.ts` — a saved cron schedule silently never fired) and the
+  pre-B2 data-sync cleanup. The Role now carries `batch`/`cronjobs` with
+  `get, list, create, update, delete`, and `scripts/check-trino-rules-chart.mjs` fails if the rule
+  or any of those verbs goes missing from any render.
+
 ### Fixed — Part D review round 3: a boot reconcile can no longer empty a repository
 
 - **An unverified registry no longer deletes anything (H-1).** `ensureHydrated()` RESOLVES when the

@@ -43,6 +43,19 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "services"]
     verbs: ["get", "list"]
+  # `batch/v1` CronJobs (B4-review-H-2). The os-ui server reconciles CronJobs through the
+  # in-cluster API on TWO paths, and before this rule BOTH failed with a 403 that was reported as
+  # "Kubernetes rejected the …" and nothing else:
+  #   - AGENT SCHEDULES (`tabs/agents/lib/schedule-cron.ts`): GET + POST/PUT + DELETE of
+  #     `agent-schedule-<system>`, so a saved cron schedule actually fires. This path is NOT gated
+  #     on `dataProjectGit`, which is why the rule is unconditional — see the deviation.
+  #   - the DATA-SYNC CLEANUP (`tabs/data/lib/sync-cron-removal.ts`): DELETE only, of the pre-B2
+  #     `data-sync-<dataset>` CronJob, at boot and on every sync save, so one slice cannot fire
+  #     twice once Dagster schedules it from the repository.
+  # Namespaced, CronJobs only: no Jobs, no pod exec, no other `batch` resource.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "create", "update", "delete"]
   {{- if .Values.osUI.externalConnectorsEnabled }}
   # One-click external-warehouse catalog registration (Connections tab): the os-ui
   # server merges the catalog `.properties` into the `trino-catalog` ConfigMap and

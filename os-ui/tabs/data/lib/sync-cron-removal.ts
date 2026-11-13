@@ -3,13 +3,20 @@
  *
  * FEATURE:    Remove a pre-B2 sync CronJob — the only half of the old scheduler B4 keeps
  * USER STORY: As an operator upgrading into the Dagster world I want the per-dataset `batch/v1`
- *             CronJob a pre-B2 save left behind to be DELETED when the sync is saved again or its
- *             source is revoked, so one slice can never fire twice; and I want nothing in the OS
- *             able to create one again.
+ *             CronJob a pre-B2 save left behind to be DELETED at the first boot of the new world,
+ *             when the sync is saved again, and when its source is revoked — so one slice can never
+ *             fire twice; and I want nothing in the OS able to create a DATA-SYNC CronJob again.
  * ARCHITECTURE:
- *   - Engine rebuild B4 deleted `sync-cron.ts`: the OS no longer provisions CronJobs for syncs
- *     (checklist D7), and the fallback sweeps that matched crons in-process are gone with it. What
- *     survives is this delete-only reconciler, because an UPGRADE must still clean up.
+ *   - Engine rebuild B4 deleted `sync-cron.ts`: the OS no longer provisions CronJobs for DATA
+ *     SYNCS (checklist D7), and the fallback sweeps that matched crons in-process are gone with it.
+ *     It still provisions them for AGENT schedules — `tabs/agents/lib/schedule-cron.ts` creates,
+ *     updates and deletes one `batch/v1` CronJob per scheduled agent system, independent of
+ *     `DATA_PROJECT_GIT` — so "the OS creates no CronJobs" would be false and is not claimed here,
+ *     and the chart's `batch` RBAC is granted for both (B4-review H-2). What survives on the data
+ *     side is this delete-only reconciler, because an UPGRADE must still clean up.
+ *   - Three callers, all idempotent: the boot reconcile (every synced dataset, BEFORE the first
+ *     `os/schedules.yml` commit — B4-review H-1), `reconcileSyncSchedule` on a sync save, and
+ *     exposure revocation.
  *   - Idempotent and honest: a 404 is a benign no-op, an unreachable API server is `live: false`
  *     with the reason — never a claim that the CronJob is gone when nobody could check.
  *   - The k8s client is injected, so this is unit-testable with no cluster.

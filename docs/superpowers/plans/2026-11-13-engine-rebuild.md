@@ -1343,3 +1343,33 @@ reason is here.
   refusal on the mirror record (so Platform → Components & Health shows it like any failure), and
   fails CLOSED if the allowlist itself cannot be read.
 
+#### B4 review round deviations — `B4-review-<id>`
+
+- **B4-review-H-1 The stand-down runs for every SYNCED dataset, and its result is reported.**
+  `reconcileDataProjectsAtBoot` deletes the pre-B2 CronJob of every dataset with `d.sync` before
+  its first commit. Two choices beyond the brief: (a) the per-dataset outcome is returned as
+  `cronsStoodDown` on `BootReconcileResult`, not only logged, so the boot log and a future health
+  row read the same data; (b) a cron client that THROWS (which `removeSyncCronJob` documents it
+  never does) is also caught, because a broken injected client must not be the one thing that
+  takes a boot down. The ordering assertion is in the test, not a comment: the index of the first
+  `commit:` must be after the last `delete:`.
+- **B4-review-H-2 The `batch`/`cronjobs` rule is UNCONDITIONAL, which contradicts the review.** The
+  review asked for it gated on `osUI.dataProjectGit.enabled`. That would be wrong:
+  `tabs/agents/lib/schedule-cron.ts` creates, updates and deletes one CronJob per scheduled agent
+  system through `app/api/agents/systems/[id]/{route,schedule}` and is NOT gated on that flag, so
+  an opted-out install would 403 every agent cron save — the exact silent failure H-2 is about.
+  The data-sync cleanup needs only `delete`, which is a subset, so one rule serves both and a
+  flag-gated second rule would be dead weight. `scripts/check-trino-rules-chart.mjs` therefore
+  asserts the rule is present in EVERY render (a fifth case, `dataProjectGit.enabled=false`, was
+  added) with `get, create, update, delete` and without `*`/`deletecollection` — i.e. the gate's
+  "present iff flag on" wording is deliberately not implemented, and the reason is recorded here.
+- **B4-review-H-5 The guard was already in place; what was missing was the ALLOWED case.** Commit
+  `72c9ee6f` had already added the `hydrationState()` gate, the `OS-Reason: boot-reconcile`
+  destructive-delta guard and two tests for the refusal paths (an empty registry over a repo whose
+  models are the bulk of the tree, and `hydration` ∈ {`failed`,`pending`} examining nothing). The
+  line-161 "the repository is emptied" test was still asserting through an injected committer that
+  an emptying reconcile COMMITS, which is true but proves nothing about the guard, so it was
+  renamed to what it actually pins (discovery is the UNION) and a new real-repository test covers
+  the guard's second condition: a hydrated registry with zero datasets over a legacy repo of
+  hand-written models IS allowed to empty it, because the skeleton it writes adds paths the repo
+  did not have. Nothing in the guard itself was changed.

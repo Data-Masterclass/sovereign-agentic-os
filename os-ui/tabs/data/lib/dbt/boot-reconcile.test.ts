@@ -10,6 +10,9 @@
  *   - Drives the real `reconcileDataProjectsAtBoot` against the real store with an INJECTED
  *     committer (the in-memory git store) and an injected domain list, so no repository, no
  *     OpenSearch and no cluster are involved.
+ *   - The pre-B2 CronJob stand-down (B4-review H-1) is driven with a FAKE k8s client: N synced
+ *     datasets must produce exactly N DELETEs before the first commit, and a 403 must be logged
+ *     rather than thrown.
  *   - The last two tests are the exception: they use the REAL `commitTree` against a mkdtemp
  *     repository, because the thing under test is the merge invariant between the data half and
  *     the agents half (Part D) — the reconcile is a WHOLE-TREE writer, so `agents/` survives it
@@ -29,6 +32,7 @@ import {
   appendTrailers,
   COMMITTER,
   commitSubtree,
+  commitTree,
   listTree,
   reserveSubtree,
   __clearReservedSubtrees,
@@ -38,6 +42,15 @@ import { __setDataProjectGitForTests } from '@tabs/data/lib/dbt/commit';
 import { reconcileDataProjectsAtBoot, BOOT_REASON } from '@tabs/data/lib/dbt/boot-reconcile';
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };
+/** The smallest sync the store accepts — enough to make the dataset "synced" for the stand-down. */
+const SYNC = {
+  connectionId: 'conn_wh',
+  source: { schema: 'public', table: 'events' },
+  mode: 'append' as const,
+  cursor: { kind: 'timestamp' as const, column: 'updated_at' },
+  schedule: { cron: '0 6 * * *' },
+  enabled: true,
+};
 const fatima: Principal = { id: 'fatima', domains: ['finance'], role: 'builder' };
 
 type Call = { domain: string; files: Map<string, string>; opts: CommitTreeOptions };
@@ -154,20 +167,105 @@ test('with the flag off the reconcile does nothing and claims nothing', async ()
   seed();
   __setDataProjectGitForTests(false);
   const out = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales'] });
-  assert.deepEqual(out, { domains: [], committed: [], failed: [], ran: false });
+  assert.deepEqual(out, { domains: [], committed: [], failed: [], ran: false, cronsStoodDown: [] });
   assert.equal(calls.length, 0);
 });
 
-test('a domain whose last dataset was deleted is reconciled too (the repository is emptied)', async () => {
+test('a domain whose last dataset was deleted is reconciled too — discovery is the UNION', async () => {
   seed();
   await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });
   calls = [];
   store.deleteDataset('ds_ledger', fatima);
   // The domain no longer appears in the store, but its repository is still on disk — discovery is
-  // the UNION, so the empty project is committed.
+  // the UNION, so the domain is still EXAMINED. Whether its models may be removed is not this
+  // test's business: that is the destructive-delta guard's, asserted against a real repository in
+  // the two tests below (review H-1 / B4-review H-5).
   const out = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });
+  assert.ok(out.domains.includes('finance'), 'the domain is examined even with no dataset left');
   assert.deepEqual(out.committed.map((c) => c.domain), ['finance']);
   assert.ok(calls[0].files.has('dbt_project.yml'), 'a domain with no datasets still has a parseable project');
+});
+
+// --- B4-review H-1: the pre-B2 scheduler is stood down BEFORE the first commit ------------------
+
+test('every dataset with a sync has its pre-B2 CronJob DELETED before the first commit (B4-review H-1)', async () => {
+  seed();
+  seedDataset('ds_visits', 'Visits', amir, 'sales', 'visits');
+  for (const id of ['ds_orders', 'ds_ledger', 'ds_visits']) {
+    store.setDatasetSync(id, id === 'ds_ledger' ? fatima : amir, SYNC);
+  }
+  const deletes: string[] = [];
+  const order: string[] = [];
+  const out = await reconcileDataProjectsAtBoot({
+    hydrate: async () => {},
+    hydration: () => 'hydrated' as const,
+    domains: async () => ['sales', 'finance'],
+    cron: async (datasetId) => {
+      deletes.push(datasetId);
+      order.push(`delete:${datasetId}`);
+      return { ok: true, live: true, action: 'deleted' as const, name: `data-sync-${datasetId}`, detail: 'Deleted.' };
+    },
+    committer: async (domain, files, opts) => {
+      order.push(`commit:${domain}`);
+      return committer(domain, files, opts);
+    },
+  });
+  assert.deepEqual(deletes.slice().sort(), ['ds_ledger', 'ds_orders', 'ds_visits'], 'N synced datasets ⇒ N deletes, one each');
+  assert.ok(
+    order.indexOf('commit:finance') > order.lastIndexOf('delete:ds_visits'),
+    'every delete happens BEFORE the first commit of os/schedules.yml — otherwise a slice fires twice',
+  );
+  assert.deepEqual(
+    out.cronsStoodDown.map((c) => c.removed),
+    [true, true, true],
+    'the result reports what was stood down',
+  );
+});
+
+test('a 403 from a cluster with no `batch` grant is LOGGED, not thrown, and the reconcile still commits (B4-review H-1)', async () => {
+  seed();
+  store.setDatasetSync('ds_orders', amir, SYNC);
+  const errors: string[] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+  let out: Awaited<ReturnType<typeof reconcileDataProjectsAtBoot>>;
+  try {
+    out = await reconcileDataProjectsAtBoot({
+      committer,
+      hydrate: async () => {},
+      hydration: () => 'hydrated' as const,
+      domains: async () => ['sales', 'finance'],
+      // The honest shape `removeSyncCronJob` returns for a refusal: ok false, live false.
+      cron: async (datasetId) => ({ ok: false, live: false, action: 'noop' as const, name: `data-sync-${datasetId}`, detail: 'Kubernetes rejected the CronJob deletion (HTTP 403).' }),
+    });
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(out.ran, true, 'the boot carried on');
+  assert.deepEqual(out.committed.map((c) => c.domain), ['finance', 'sales'], 'the projects were still committed');
+  assert.deepEqual(out.cronsStoodDown, [{ datasetId: 'ds_orders', removed: false, detail: 'Kubernetes rejected the CronJob deletion (HTTP 403).' }]);
+  assert.ok(errors.some((e) => e.includes('ds_orders') && e.includes('403')), 'the refusal is logged, loudly');
+});
+
+test('a cron client that THROWS cannot take the boot down (B4-review H-1)', async () => {
+  seed();
+  store.setDatasetSync('ds_orders', amir, SYNC);
+  const realError = console.error;
+  console.error = () => {};
+  let out: Awaited<ReturnType<typeof reconcileDataProjectsAtBoot>>;
+  try {
+    out = await reconcileDataProjectsAtBoot({
+      committer,
+      hydrate: async () => {},
+      hydration: () => 'hydrated' as const,
+      domains: async () => ['sales'],
+      cron: async () => { throw new Error('ECONNREFUSED'); },
+    });
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(out.ran, true);
+  assert.deepEqual(out.cronsStoodDown, [{ datasetId: 'ds_orders', removed: false, detail: 'ECONNREFUSED' }]);
 });
 
 // --- the merge invariant with the agents half (Part D): a whole-tree reconcile must not delete
@@ -254,7 +352,36 @@ test('the boot reconcile does NOT run while the dataset registry is unverified (
   seedDataset('ds_orders', 'Orders', amir, 'sales', 'orders');
   for (const hydration of ['failed', 'pending'] as const) {
     const out = await reconcileDataProjectsAtBoot({ hydrate: async () => {}, hydration: () => hydration, committer, reposDir: '/nope' });
-    assert.deepEqual(out, { domains: [], committed: [], failed: [], ran: false }, `'${hydration}' examines nothing and claims nothing`);
+    assert.deepEqual(
+      out,
+      { domains: [], committed: [], failed: [], ran: false, cronsStoodDown: [] },
+      `'${hydration}' examines nothing and claims nothing`,
+    );
   }
   assert.deepEqual(calls, [], 'not one commit was attempted');
+});
+
+test('a hydrated registry with NO datasets may still empty a legacy repo — because the skeleton it writes is new (B4-review H-5)', async () => {
+  __clearReservedSubtrees();
+  // A repository from before the generator existed: three model files and no project skeleton.
+  // Written as a PERSON, so the guard was never in play for this commit.
+  await commitTree(
+    'legacy',
+    new Map([
+      ['models/legacy/old_a.sql', 'select 1\n'],
+      ['models/legacy/old_b.sql', 'select 2\n'],
+      ['models/legacy/old_c.sql', 'select 3\n'],
+    ]),
+    { author: { name: 'Fatima', email: 'fatima@example.com' }, message: 'data(legacy): hand-written models', reposDir: realRepos },
+  );
+  // The store is hydrated and this domain genuinely owns nothing. The generated project deletes
+  // all three files — 100%, far past the ratio — but it ADDS `dbt_project.yml`, `profiles.yml`,
+  // the macros and the generic tests, so it is REPLACING a tree, not reading an empty registry.
+  // The guard's second condition is what lets this through, and it must.
+  const out = await reconcileDataProjectsAtBoot({ hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['legacy'], reposDir: realRepos });
+  assert.deepEqual(out.failed, [], 'the guard did not fire — the commit creates paths of its own');
+  assert.deepEqual(out.committed.map((c) => c.domain), ['legacy']);
+  const paths = (await listTree('legacy', 'main', { reposDir: realRepos })).map((e) => e.path);
+  assert.ok(paths.includes('dbt_project.yml') && paths.includes('profiles.yml'), 'the skeleton is there');
+  assert.equal(paths.filter((p) => p.startsWith('models/legacy/old_')).length, 0, 'the hand-written models are gone, as asked');
 });

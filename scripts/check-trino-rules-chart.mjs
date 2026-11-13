@@ -17,6 +17,11 @@
  *     (H-5, read straight out of values.yaml — a subchart's values cannot be templated), and the
  *     os-ui Role grants `secrets` only under `externalConnectorsEnabled`, with a ConfigMap grant
  *     scoped by `resourceNames` (H-6).
+ *   - Plus (B4-review-H-2): the Role carries a `batch`/`cronjobs` rule in EVERY render — including
+ *     `osUI.dataProjectGit.enabled=false` — because the agent-schedule reconciler creates and
+ *     deletes CronJobs independent of that flag, while the data-sync cleanup only deletes. The
+ *     review asked for the rule to appear *iff* the flag is on; that would 403 every agent cron
+ *     save on an opted-out install, so the rule is unconditional and this check pins it both ways.
  *   - SKIPS (exit 0, loudly) when `helm` is not on PATH OR a subchart `.tgz` is missing — the unit
  *     gate must run on a laptop with neither. docs/components/trino.md carries the commands.
  *   - No dependencies, no YAML parser: it splits the manifest stream and matches lines.
@@ -70,6 +75,14 @@ function osUiRole(text) {
   return docs(text).find((d) => /^kind: Role$/m.test(d) && /^\s{2}name: os-ui$/m.test(d)) ?? '';
 }
 
+/** The verbs of the first rule whose `resources:` line names `cronjobs`, or null when there is none.
+ *  Comments are ignored: only a real `resources: [...]` line followed by a `verbs: [...]` counts. */
+function cronJobVerbs(role) {
+  const m = role.match(/^\s*- apiGroups: \["batch"\]\s*\n\s*resources: \[(.*?)\]\s*\n\s*verbs: \[(.*?)\]\s*$/m);
+  if (!m || !/"cronjobs"/.test(m[1])) return null;
+  return m[2].split(',').map((v) => v.trim().replace(/"/g, ''));
+}
+
 /** Only the `resources:` lines count — a comment that MENTIONS secrets is not a grant. */
 function grantsSecrets(role) {
   return [...role.matchAll(/^\s*resources: \[(.*)\]\s*$/gm)].some((m) => /"secrets"/.test(m[1]));
@@ -83,6 +96,7 @@ function hasRulesConfigMap(text) {
 const CASES = [
   { label: 'stock values', sets: [] },
   { label: 'osUI.dataProjectGit.enabled=true', sets: ['osUI.dataProjectGit.enabled=true'] },
+  { label: 'osUI.dataProjectGit.enabled=false', sets: ['osUI.dataProjectGit.enabled=false'] },
   { label: 'trino.accessControl.enabled=false', sets: ['trino.accessControl.enabled=false'] },
   { label: 'trino.opa.enabled=false', sets: ['trino.opa.enabled=false'] },
 ];
@@ -112,6 +126,23 @@ for (const c of CASES) {
   if (role && cm && !/resourceNames: \["trino-access-rules"\]/.test(role)) {
     problems.push(`${c.label}: the os-ui Role has no resourceNames-scoped configmaps rule for trino-access-rules (B3-review-H-6)`);
   }
+
+  // ---- 4. B4-review-H-2: the batch/cronjobs grant, in every render.
+  const verbs = cronJobVerbs(role);
+  if (!verbs) {
+    problems.push(
+      `${c.label}: the os-ui Role has no \`batch\`/\`cronjobs\` rule — agent schedule CronJobs (create/update/delete) and the pre-B2 data-sync cleanup (delete) both 403 (B4-review-H-2)`,
+    );
+  } else {
+    for (const need of ['get', 'create', 'update', 'delete']) {
+      if (!verbs.includes(need)) {
+        problems.push(`${c.label}: the os-ui Role's batch/cronjobs rule lacks \`${need}\` — ${need === 'delete' ? 'the pre-B2 data-sync cleanup' : 'the agent schedule reconciler'} needs it (B4-review-H-2)`);
+      }
+    }
+    for (const forbidden of ['*', 'deletecollection']) {
+      if (verbs.includes(forbidden)) problems.push(`${c.label}: the os-ui Role's batch/cronjobs rule grants \`${forbidden}\` — wider than any caller needs`);
+    }
+  }
 }
 
 // externalConnectorsEnabled=true is the ONE case that may grant Secrets.
@@ -139,4 +170,7 @@ if (problems.length) {
   for (const p of problems) console.error(`  - ${p}`);
   process.exit(1);
 }
-console.log(`check-trino-rules-chart: ok — env/ConfigMap gates agree on ${CASES.length} value sets, TRINO_USER matches serviceUser, Role grants no Secrets without externalConnectors`);
+console.log(
+  `check-trino-rules-chart: ok — env/ConfigMap gates agree on ${CASES.length} value sets, TRINO_USER matches serviceUser, ` +
+    'Role grants no Secrets without externalConnectors, batch/cronjobs granted in every render',
+);
