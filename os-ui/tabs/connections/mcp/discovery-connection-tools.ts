@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import type { McpTool } from '@core/mcp/server';
+import { withLifecycleArg, lifecycleView } from '@core/mcp/list-args';
 import { fail, str, strArr, NO_ARGS, idArg } from '@core/mcp/experimental/discovery-common';
 
 // --- Governed connection lib functions (the EXACT same the UI + /api call) ------
@@ -109,8 +110,8 @@ export const connectionTools: McpTool[] = [
     minRole: 'creator',
     description:
       'List the connections you can see (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) — personal + shared. Path: step 1 (reuse!) of the Connections golden path (guide: sovereign-os://guide/path/connections). Before: whoami. After: get_connection, or create_connection only if nothing fits. Governance: read-only, DLS-scoped — you never see another user’s personal connection.',
-    inputSchema: NO_ARGS,
-    call: async (user) => listConnectionsForUser(user),
+    inputSchema: withLifecycleArg(NO_ARGS),
+    call: async (user, args) => lifecycleView('connection', args, listConnectionsForUser(user)),
   },
   {
     name: 'get_connection',

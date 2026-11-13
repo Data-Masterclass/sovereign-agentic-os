@@ -8,6 +8,7 @@ import { config } from '@core/kernel/config';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 import { listSystems, ensureHydrated as agentsHydrated } from '@tabs/agents/lib/store';
 import { getRegisteredTools, getBundleTools, hydrateAllBundles } from '@core/mcp/registry';
+import { withLifecycleArg, lifecycleView } from '@core/mcp/list-args';
 import { runWithSurface, currentSurface } from '@core/infra/request-surface';
 import '@core/mcp/register-base';
 import '@core/mcp/register-experimental';
@@ -124,8 +125,9 @@ const agentTools: McpTool[] = [
       'List the agent systems you can see (also called: AI teams, assistant teams) — yours, domain-shared, marketplace. Read-only and scoped to your identity — the same visibility rule as the Agents tab.',
     minRole: 'creator',
     tab: 'agents',
-    inputSchema: { type: 'object', properties: {} },
-    call: async (user) => listSystems({ id: user.id, domains: user.domains, role: user.role }),
+    inputSchema: withLifecycleArg({ type: 'object', properties: {}, examples: [{}] }),
+    call: async (user, args) =>
+      lifecycleView('agent', args, listSystems({ id: user.id, domains: user.domains, role: user.role })),
   },
 ];
 
