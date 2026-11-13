@@ -387,6 +387,9 @@ export type QualityRuleInput = {
   values?: unknown;
   min?: unknown;
   max?: unknown;
+  /** `reference`: the dataset id + column every value of `column` must exist in. */
+  toDataset?: unknown;
+  toColumn?: unknown;
 };
 
 function numOrUndef(v: unknown): number | undefined {
@@ -418,14 +421,21 @@ export function defineQualityRulesService(user: Principal, datasetId: string, ru
     const rule = ruleName as DataCheckRule;
     const column = typeof r.column === 'string' ? r.column.trim() : '';
     if (!column) fail(`${rule} needs a column`, 400, 'column');
+    const toDataset = typeof r.toDataset === 'string' ? r.toDataset.trim() : '';
+    const toColumn = typeof r.toColumn === 'string' ? r.toColumn.trim() : '';
+    if (rule === 'reference' && (!toDataset || !toColumn)) {
+      fail('reference needs `toDataset` and `toColumn` (the dataset + column every value must exist in)', 400, toDataset ? 'toColumn' : 'toDataset');
+    }
     dataset = addCheck(datasetId, user, {
-      name: name || `${rule}(${column})`,
+      name: name || (rule === 'reference' ? `${rule}(${column} -> ${toDataset}.${toColumn})` : `${rule}(${column})`),
       description,
       rule,
       column,
       values: Array.isArray(r.values) ? r.values.map((x) => String(x)) : undefined,
       min: numOrUndef(r.min),
       max: numOrUndef(r.max),
+      toDataset: toDataset || undefined,
+      toColumn: toColumn || undefined,
     });
   }
   return dataset;

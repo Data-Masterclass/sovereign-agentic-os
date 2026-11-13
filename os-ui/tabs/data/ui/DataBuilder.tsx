@@ -38,10 +38,11 @@ const DATA_MODE_KEY = 'data.viewMode';
 type Layer = 'bronze' | 'silver' | 'gold';
 type VersionState = { built: boolean; updatedAt: string | null; artifact: string | null };
 type ColumnDoc = { name: string; description: string };
-type DataCheckRule = 'not_null' | 'not_blank' | 'unique' | 'accepted_values' | 'range';
+type DataCheckRule = 'not_null' | 'not_blank' | 'unique' | 'accepted_values' | 'range' | 'reference';
 type DataCheck = {
   id: string; name: string; description: string; createdBy: string; createdAt: string;
   rule?: DataCheckRule; column?: string; values?: string[]; min?: number; max?: number;
+  toDataset?: string; toColumn?: string;
 };
 type CheckStatus = 'pass' | 'fail' | 'not_run';
 type CheckResult = { id: string; label: string; status: CheckStatus; violations: number | null; reason?: string };
@@ -72,14 +73,10 @@ type RowPreview =
   | { available: true; layer: string; fqn: string; limit: number; columns: string[]; rows: string[][]; rowCount: number }
   | { available: false; layer?: string; fqn?: string; reason: string };
 
-const RULE_LABELS: Record<DataCheckRule, string> = {
-  not_null: 'Not null',
-  not_blank: 'Not blank',
-  unique: 'Unique',
-  accepted_values: 'Accepted values',
-  range: 'In range',
-};
-const RULE_KINDS = new Set<DataCheckRule>(['not_null', 'not_blank', 'unique', 'accepted_values', 'range']);
+// The rule matrix (labels, which extra fields a rule needs, the add payload, the stored label)
+// lives in `lib/dq-rule-form.ts` so it can be unit-tested — a test may not import a `.tsx`.
+import { RULE_LABELS, fieldsFor, addPayload, canSubmit as canSubmitRule, ruleText } from '@tabs/data/lib/dq-rule-form';
+const RULE_KINDS = new Set<DataCheckRule>(Object.keys(RULE_LABELS) as DataCheckRule[]);
 
 /** A human, exception-first label for a suggested check (Apple-simple, no jargon). */
 function suggestionText(s: SuggestedCheck): string {
@@ -89,6 +86,7 @@ function suggestionText(s: SuggestedCheck): string {
     case 'unique': return `${s.column} is unique`;
     case 'accepted_values': return `${s.column} is one of {${(s.values ?? []).join(', ')}}`;
     case 'range': return `${s.column} is in range ${s.min ?? '−∞'}–${s.max ?? '∞'}`;
+    case 'reference': return `${s.column} exists in ${s.column}'s referenced dataset`;
     default: return s.column;
   }
 }
@@ -135,19 +133,6 @@ function Sparkline({ points }: { points: TrendPoint[] }) {
       ))}
     </svg>
   );
-}
-
-/** The dbt-style label the editor shows for a stored rule. */
-function ruleText(c: DataCheck): string {
-  const col = c.column ?? '';
-  switch (c.rule) {
-    case 'not_null': return `not_null(${col})`;
-    case 'not_blank': return `not_blank(${col})`;
-    case 'unique': return `unique(${col})`;
-    case 'accepted_values': return `accepted_values(${col}, [${(c.values ?? []).join(', ')}])`;
-    case 'range': return `range(${col}, ${c.min ?? ''}, ${c.max ?? ''})`;
-    default: return c.name || 'check';
-  }
 }
 
 type Dataset = {
@@ -492,6 +477,9 @@ export default function DataBuilder({
   const [ruleValues, setRuleValues] = useState(''); // comma-separated (accepted_values)
   const [ruleMin, setRuleMin] = useState('');
   const [ruleMax, setRuleMax] = useState('');
+  // `reference`: the dataset + column every value of the chosen column must exist in.
+  const [ruleToDataset, setRuleToDataset] = useState('');
+  const [ruleToColumn, setRuleToColumn] = useState('');
   const [checksBusy, setChecksBusy] = useState(false);
   const [checksErr, setChecksErr] = useState('');
   // In-progress plain-language descriptions per check id — the editable text (typed or
@@ -686,18 +674,11 @@ export default function DataBuilder({
     }
   }, [datasetId]);
 
+  const ruleDraft = { column: ruleColumn, values: ruleValues, min: ruleMin, max: ruleMax, toDataset: ruleToDataset, toColumn: ruleToColumn };
   const addRule = useCallback(async () => {
-    const extra: { values?: string[]; min?: number; max?: number } = {};
-    if (ruleKind === 'accepted_values') {
-      extra.values = ruleValues.split(',').map((v) => v.trim()).filter(Boolean);
-    }
-    if (ruleKind === 'range') {
-      if (ruleMin.trim() !== '') extra.min = Number(ruleMin);
-      if (ruleMax.trim() !== '') extra.max = Number(ruleMax);
-    }
-    await addRuleWith(ruleKind, ruleColumn, extra);
-    if (!checksErr) { setRuleColumn(''); setRuleValues(''); setRuleMin(''); setRuleMax(''); }
-  }, [ruleKind, ruleColumn, ruleValues, ruleMin, ruleMax, addRuleWith, checksErr]);
+    await addRuleWith(ruleKind, ruleColumn, addPayload(ruleKind, { column: ruleColumn, values: ruleValues, min: ruleMin, max: ruleMax, toDataset: ruleToDataset, toColumn: ruleToColumn }));
+    if (!checksErr) { setRuleColumn(''); setRuleValues(''); setRuleMin(''); setRuleMax(''); setRuleToDataset(''); setRuleToColumn(''); }
+  }, [ruleKind, ruleColumn, ruleValues, ruleMin, ruleMax, ruleToDataset, ruleToColumn, addRuleWith, checksErr]);
 
   // The Checks section's primary "Save Data Quality Checks" action. Authored rules and
   // monitor toggles ALREADY persist the instant they change (POST /checks, POST /dq —
@@ -1780,7 +1761,13 @@ export default function DataBuilder({
                       <input style={{ maxWidth: 90 }} placeholder="max" value={ruleMax} onChange={(e) => setRuleMax(e.target.value)} inputMode="decimal" />
                     </>
                   ) : null}
-                  <button className="btn" onClick={addRule} disabled={checksBusy || !ruleColumn.trim()}>
+                  {fieldsFor(ruleKind).includes('toDataset') ? (
+                    <>
+                      <input style={{ maxWidth: 180 }} placeholder="referenced dataset id" value={ruleToDataset} onChange={(e) => setRuleToDataset(e.target.value)} />
+                      <input style={{ maxWidth: 170 }} placeholder="referenced column" value={ruleToColumn} onChange={(e) => setRuleToColumn(e.target.value)} />
+                    </>
+                  ) : null}
+                  <button className="btn" onClick={addRule} disabled={checksBusy || !canSubmitRule(ruleKind, ruleDraft)}>
                     {checksBusy ? <span className="spin" /> : 'Add check'}
                   </button>
                 </div>

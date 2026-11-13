@@ -1864,3 +1864,29 @@ reason is here.
   `metadata.tags`), which is what A27's Test column asks for, not that a helper returned the right
   shape: `tabs/knowledge/lib/index-attribution.test.ts` (4) + 2 cases in
   `tabs/files/lib/index-pipeline.test.ts`. **A27 → `true`.**
+
+- **F2-7 The `reference` rule, and why it is dbt-only.** D5's follow-up (dropped from the row in
+  B4-review E-4 because no FK-style rule existed) is now `{type:'reference', column, toDataset,
+  toColumn}` → dbt's own `relationships: { to: ref('<model>'), field: <col> }`. Three gates, two of
+  them the SAME predicates `accepted_values` already uses and one new:
+  (1) the referenced COLUMN must be a plain identifier — `field` is interpolated unquoted into the
+  test's SQL, which runs as the dataset's owner;
+  (2) the MODEL NAME never comes from authored text. `to: ref('…')` is Jinja dbt evaluates at
+  parse, so the name is resolved from the PLAN by a new `modelRefResolver(models)`, and a hostile
+  name from any resolver is still refused by the identifier gate (tested);
+  (3) a target with NO model in this project becomes an intention, not a test — `ref()` on an
+  unknown name fails `dbt parse`, which takes the whole DOMAIN's project down, not just that test.
+  That third one is why the golden carries both cases.
+  `store.addCheck` gates the write end on top: the referenced dataset must exist, be visible
+  through `canView` (so a rule cannot probe which ids exist), and not be the dataset itself.
+  **Deliberately dbt-only.** The OS's ad-hoc `run_quality_checks` probe reports `reference` as
+  `not_run` with a reason naming the dbt test, because a referential check needs the TARGET
+  table's physical FQN: the referenced dataset may live in a schema the owner's principal cannot
+  read, and a probe that guessed one would report a pass or a fail about the wrong table. The
+  authoritative verdict for this rule is the scheduled build's asset check — which is already how
+  the architecture describes the dbt tests. `violationPredicate` and `failingRowsSql` refuse it for
+  the same reason they refuse `unique`: there is no single-table per-row predicate.
+  The editor's field matrix moved OUT of `DataBuilder.tsx` into `tabs/data/lib/dq-rule-form.ts`
+  (labels, which fields a rule shows, the add payload, the submit guard, the stored-rule label) so
+  it has a `.test.ts` — including one that fails if a rule is added to `DATA_CHECK_RULES` without a
+  form field. **D5 → `true`** for the generation half.

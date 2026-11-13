@@ -783,3 +783,36 @@ test('updateCheckDescriptions sets rule descriptions by id, leaves the rule unto
   // A non-owner peer cannot rewrite descriptions on a private dataset.
   assert.throws(() => updateCheckDescriptions(id, kenji, [{ id: before[0].id, description: 'x' }]), DatasetError);
 });
+
+// ----------------------------- D5 follow-up: the `reference` rule's gate ------
+
+test('addCheck: a reference rule is gated on BOTH halves of its target, at the one write path', () => {
+  const orders = seedOrders();
+  const customers = createDataset(amir, { name: 'Customers' }).id;
+
+  // The happy path: a visible, different dataset and an identifier column.
+  const ok = addCheck(orders, amir, { name: 'ref', rule: 'reference', column: 'customer_id', toDataset: customers, toColumn: 'customer_id' });
+  const stored = ok.checks!.at(-1)!;
+  assert.equal(stored.rule, 'reference');
+  assert.equal(stored.toDataset, customers);
+  assert.equal(stored.toColumn, 'customer_id');
+
+  // The referenced COLUMN is interpolated unquoted into the generated test's SQL — same gate as
+  // the checked column, refused here rather than left for the generator to decide.
+  for (const bad of ['has space', "x' or 1=1", '{{ env_var("X") }}', '1leading', '']) {
+    assert.throws(
+      () => addCheck(orders, amir, { name: 'ref', rule: 'reference', column: 'customer_id', toDataset: customers, toColumn: bad }),
+      DatasetError,
+      `toColumn '${bad}' must be refused`,
+    );
+  }
+  // A missing target dataset is a 400, not a silently rule-less check.
+  assert.throws(() => addCheck(orders, amir, { name: 'ref', rule: 'reference', column: 'customer_id', toColumn: 'customer_id' }), DatasetError);
+  // Self-reference is meaningless and would emit a test a model runs against itself.
+  assert.throws(() => addCheck(orders, amir, { name: 'ref', rule: 'reference', column: 'customer_id', toDataset: orders, toColumn: 'customer_id' }), DatasetError);
+  // A dataset that does not exist, and one the author cannot see, are both refused — so a rule
+  // cannot be used to probe which ids exist.
+  assert.throws(() => addCheck(orders, amir, { name: 'ref', rule: 'reference', column: 'customer_id', toDataset: 'ds_nope', toColumn: 'customer_id' }), DatasetError);
+  const kenjisOwn = createDataset(kenji, { name: 'Ledger' }).id;
+  assert.throws(() => addCheck(orders, amir, { name: 'ref', rule: 'reference', column: 'customer_id', toDataset: kenjisOwn, toColumn: 'id' }), DatasetError);
+});
