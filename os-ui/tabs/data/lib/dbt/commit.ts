@@ -78,7 +78,9 @@ export type CommitDeps = SnapshotDeps & {
 export async function commitDataProject(domain: string, actor: ActorIdentity, meta: CommitMeta, deps: CommitDeps = {}): Promise<CommitResult | null> {
   if (!dataProjectGitEnabled()) return null;
   const snapshot = await projectSnapshot(domain, deps, deps.captured);
-  const files = generateProject(domain, snapshot);
+  // The generator reads no env: the auth method is handed in, because `profiles.yml`'s
+  // `password:` key is a generator decision, not a Jinja-time one (B4-review E-3).
+  const files = generateProject(domain, snapshot, { trinoAuthMethod: config.trinoAuthMethod });
   const object = meta.object ?? domain;
   const message = commitMessage({
     area: 'data',

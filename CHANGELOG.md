@@ -62,6 +62,34 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   OS's own ad-hoc probe never alerts; a dataset with no resolvable owner is logged, not retried
   forever. `deliverDqAlert` moved from `tabs/dashboards/lib/delivery.ts` to
   `@core/notifications/dq-alert` (a tab may not import another tab) and is re-exported there.
+- **`query_data` is bounded end to end (E-1).** The read path had no statement ceiling of any kind:
+  no `request_timeout`, no `query_max_run_time`, and a `fetchall()` that buffered the whole result
+  set. os-ui's 8 s abort only ended os-ui's WAIT — the query kept running on the cluster and the
+  query-tool kept buffering. Reads now carry both halves (`QUERY_MAX_RUN_TIME`, default **`60s`**,
+  as Trino's own session property, plus a `request_timeout` of that **+5 s** so the client never
+  gives up first and orphans the query) and fetch at most `QUERY_MAX_ROWS + 1` rows (default
+  **10000**), reporting `truncated: true` with the limit — measured from the extra row, never a
+  silently clipped answer. Both are chart-wired (`queryTool.budget`), and `truncated` /
+  `row_limit` / the message reach `query_data`'s payload. Writes stay unbounded unless
+  `EXECUTE_MAX_RUN_TIME` is set, because a full-refresh sync legitimately runs for minutes — and
+  the comment that claimed "the client owns the statement budget" now says that instead.
+  12 new Python tests (`images/extensions/query-tool/test_query_budget.py`).
+- **A Trino rules reconciler that never succeeds is RED, and retried (E-2).** `no-cluster` and
+  `no-configmap` ended a pass on its first attempt, read as permanent facts. At boot they are
+  usually RBAC propagation and Helm's object ordering, so the chart's PERMISSIVE bootstrap stayed
+  the live access-control file — ownership open — until the 10-minute repair pass. Every failure
+  code now gets the pass's backoff. And the "Trino access rules" health row is RED (not amber)
+  until the first success, naming what is open and what to check: a never-reconciled install is
+  governed by **OPA alone**, which `docs/components/trino.md` now states.
+- **`profiles.yml` emits `password:` only when auth is on (E-3).** The key sat inside a
+  `# {% if … %}` Jinja guard written as a YAML comment, on the belief that dbt renders the whole
+  file through Jinja before parsing the YAML. It does not — dbt loads the YAML first and renders
+  each scalar afterwards, so the comment carrying the guard was discarded and `password:` was
+  present under `method: none`, which dbt rejects. The method is now a GENERATOR INPUT
+  (`config.trinoAuthMethod`, default `none`): `method:` is emitted as a literal and `password:
+  "{{ env_var('TRINO_PASSWORD') }}"` only when the method is not `none` — with no `''` default, so
+  a missing password fails loudly instead of connecting as nobody. The three generator goldens were
+  regenerated.
 - **Documentation corrected where it was wrong, not just stale (L-1, L-3…L-8, L-10).** The
   breaking-change note now says which path dbt owns (the SCHEDULED one — an interactive build still
   runs the OS's TypeScript CTAS first, by decision B4-6/B4-7) and tells an operator to delete the

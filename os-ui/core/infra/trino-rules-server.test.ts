@@ -174,11 +174,30 @@ test('a failing pass retries with backoff, then records and warns once', async (
   handle.stop();
 });
 
-test('a missing ConfigMap is not retried — it is a configuration fact, not a blip', async () => {
+test('a missing ConfigMap IS retried — at boot it is Helm object ordering, not a verdict (B4-review E-2)', async () => {
+  // This test used to assert the opposite: one attempt, then give up, on the reading that
+  // `no-configmap` / `no-cluster` are permanent configuration facts. At BOOT they are usually
+  // transient — the ServiceAccount's Role may not have propagated and Helm does not order the
+  // ConfigMap before the Deployment — and giving up left the chart's PERMISSIVE bootstrap as the
+  // live access-control file until the 10-minute repair pass. So every failure code now gets the
+  // pass's backoff, and a configmap that appears on the second attempt is reconciled at boot.
   const missing = { ok: false, changed: false, code: 'no-configmap', detail: 'gone', at: 0 } as ReconcileOutcome;
-  const { handle, calls } = harness([missing]);
+  const written = { ok: true, changed: true, code: 'written', detail: 'x', at: 0 } as ReconcileOutcome;
+  const { handle, calls } = harness([missing, written]);
   await handle.idle();
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2, 'the second attempt found it and wrote the rules');
+  handle.stop();
+});
+
+test('a cluster that never answers gives up after `attempts` and warns ONCE (B4-review E-2)', async () => {
+  const none = { ok: false, changed: false, code: 'no-cluster', detail: 'no API', at: 0 } as ReconcileOutcome;
+  const { handle, calls, logs } = harness([none]);
+  await handle.idle();
+  assert.equal(calls.length, 3, 'the default attempt budget, not an unbounded loop');
+  const warnings = logs.filter((l) => l.startsWith('warn:'));
+  assert.equal(warnings.length, 1, 'one warning per pass — a laptop must not fill the log');
+  assert.match(warnings[0], /no-cluster/);
+  assert.match(warnings[0], /bootstrap still applies/);
   handle.stop();
 });
 

@@ -110,7 +110,17 @@ export function trinoAccessRulesRow(input: {
   if (!input.enabled) return null;
   const base = { id: 'trino-access-rules' as const, name: 'Trino access rules' };
   if (!input.outcome) {
-    return { ...base, health: 'amber', detail: 'Not reconciled yet — the chart bootstrap is in force (impersonation bounded by id shape, ownership open).' };
+    // RED, not amber (B4-review E-2). "Not reconciled yet" is not a warm-up state to be patient
+    // about: until the first success, the chart's permissive bootstrap IS the access-control file,
+    // so table ownership is open and the install is effectively OPA-only. A reconciler that never
+    // succeeds stays in exactly this state forever, and amber is how that goes unnoticed.
+    return {
+      ...base,
+      health: 'red',
+      detail:
+        'NOT reconciled yet — the chart bootstrap is in force: impersonation is bounded only by principal-id SHAPE and table ownership is OPEN, so this install is governed by OPA alone. ' +
+        'If this persists past the first minutes, the reconciler is not reaching the cluster: check that the os-ui Role grants get+patch on the trino-access-rules ConfigMap and that the ConfigMap exists.',
+    };
   }
   const { ok, code, detail, at } = input.outcome;
   if (!ok) {

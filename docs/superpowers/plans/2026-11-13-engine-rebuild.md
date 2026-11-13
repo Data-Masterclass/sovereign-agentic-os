@@ -74,7 +74,7 @@ Not a compiled system, left as is: `core/kernel/artifacts.ts` seeded registry re
 - [x] `tabs/agents/lib/engine/build-graph.ts`: `buildGraph(ir, deps)` → compiled `StateGraph`. Typed state root: `messages` (append; keep the OpenAI wire shape, not LangChain `BaseMessage`), every `state.channels` entry (`add_messages` → append, else last-value), `task`, `current`, `handoffs`, `nodeRuns`, `budget`, `held`, `final`.
 - [x] One subgraph per agent: `plan_<id>` (reasoning tier, no tools), `act_<id>` (execution tier, tools, ReAct fallback on tools-unsupported — preserve `agentic.ts` helpers), `tools_<id>` (hold decision first, then `grantedToolExecutor` unchanged), `route_<id>`. Conditional edge act → tools when the reply has tool calls, else → route.
 - [x] Supervisor = `route_<sup>` with a mandatory `route` tool returning `{ next, brief }` and a text fallback (`NEXT: <member>`); `addConditionalEdges` to members ∪ END from IR `conditionalEdges`; `supervise` edges return to the supervisor's act.
-- [x] Handoffs: evaluate `when` and return `Command({ goto })`. `when` grammar v1: literals, `state.<channel>` truthiness, **bare identifiers resolving to a channel of the same name** (A0 finding 2: the shipped software team uses `plan_ready`, `committed`, …), `==`/`!=` on strings, `&&`/`||`; a ~40-line parser, never `eval`. Absent `when` = unconditional. A guard naming a channel no node ever sets is a **compile warning** surfaced in Build, not a silent false. **Decision taken for the owner:** safe expressions, not model-judged predicates.
+- [x] Handoffs: evaluate `when` and return `Command({ goto })`. `when` grammar v1: literals, `state.<channel>` truthiness, **bare identifiers resolving to a channel of the same name** (A0 finding 2: the shipped software team uses `plan_ready`, `committed`, …), `==`/`!=` on strings, `&&`/`||`; a small hand-written tokeniser + recursive-descent parser, never `eval` (`lib/engine/when.ts`, 203 lines including its header and the compile-warning path — the plan's "~40-line parser" was an estimate written before it existed; B4-review E-4). Absent `when` = unconditional. A guard naming a channel no node ever sets is a **compile warning** surfaced in Build, not a silent false. **Decision taken for the owner:** safe expressions, not model-judged predicates.
 - [x] Node-level tool narrowing becomes a real gate (A0 finding 1): `tools_<id>` executes only the tools the node is advertised, not every system grant; test it.
 - [x] Supervisor parity (A0 finding 3): walker transcripts carry no routing exchanges, so P1 for supervisor fixtures drives `buildGraph` with the scripted model `first-tool-then-final@1` (plus a scripted `route` decision in declared order) rather than the replayed transcript; document the rule set.
 - [x] END: supervisor routes END; a leaf whose handoffs all evaluate false → END; `recursionLimit` = team step budget; graceful stop. Disabled agents pruned at build. Unmapped legacy tools → compile error.
@@ -160,7 +160,7 @@ Not a compiled system, left as is: `core/kernel/artifacts.ts` seeded registry re
 | Worker loop (pure) | `engine/worker-loop.ts` — `workerTick` / `workerLoop`: reap → claim → heartbeat → execute; store, executor, clock and `sleep` injected |
 | Live identity | `engine/runner-identity.ts` — `principalSnapshotOf`, `hydrateRunner` (typed `runner_unavailable` / `runner_role_changed` / `runner_domain_lost`) |
 | Server wiring + the one start door | `tabs/agents/lib/build/run-jobs-server.ts` — `runJobStore`, `ensureRunJobsReady`, `enqueueRun`, `drainOne`, `executeJob`, `startAgentRunsWorker`, `startQueuedRun`, `resumeQueuedRun`, `followRun`, `enqueueResumeAfterDecision` |
-| Worker entrypoint | `os-ui/worker/agent-runs.ts` (`bootWorker` = instrumentation parity: secret guard, resume hook, approvals hydration, checkpointer `setup()`, `run_jobs` DDL, Langfuse singleton; `main()` = loop + SIGTERM), `worker/start.mjs`, `worker/resolve-hook.mjs`, `worker/empty.mjs` |
+| Worker entrypoint | `os-ui/worker/agent-runs.ts` (`bootWorker` = instrumentation parity: secret guard, resume hook, approvals hydration, checkpointer `setup()`, `run_jobs` DDL, a Langfuse PROBE — `langfuseClient()` is resolved lazily at each use site and the boot only records whether one is configured, so a worker with no Langfuse starts normally (B4-review E-4); `main()` = loop + SIGTERM), `worker/start.mjs`, `worker/resolve-hook.mjs`, `worker/empty.mjs` |
 | Config | `core/kernel/agents-worker.ts` (`parseAgentsWorkerMode`), `config.agentsWorker` ← `AGENTS_WORKER`, `config.agentsWorkerLeaseMs` ← `AGENTS_WORKER_LEASE_MS`, `config.langfuseRedaction` ← `LANGFUSE_REDACTION` |
 | Routes | `app/api/agents/systems/[id]/run/route.ts` (langgraph → enqueue + tail from `seq=0`; walker unchanged and request-bound; governed yaml now lazy), `run/stream/route.ts` (tails `run_events` from `afterSeq`, owner-checked against the `run_jobs` row) |
 | Other doors | `build/scheduled.ts` (`deps.startQueuedRun`, langgraph branch), `core/mcp/agent-write-tools.ts` (`run_agent_system`, `resume_agent_run`), `engine/resume-boot.ts` → `enqueueResumeAfterDecision`; `ApprovalResume.status` gains `queued`; `resumeOsRunAfterDecision` removed from `run-service.ts` |
@@ -347,7 +347,7 @@ Decisions recorded as `A5-review-<id>`; the fixes are three commits on `feat/eng
 **Detail:** `2026-11-13-data-products-concept.md` (Phase B0 output). Decisions recorded there and adopted here: isomorphic-git in os-ui with bare repos on a PVC and a read-only git-daemon sidecar; **one Dagster code location for all domains** with per-domain parse gating; `dbt-runner` is an impersonation-only Trino user and OPA's write floor becomes authoritative; commit first, validate second; no OS run ledger.
 
 ### Phase B0 — Audit and concept (read-only; may run in parallel with A0)
-- [ ] Audit how datasets, transforms, compositions, syncs and quality rules execute today (`tabs/data/lib/{ingest,transform,sync-sql,sync-cron,sync-run-server,auto-gold,auto-pipeline,dq-*}.ts`, the Dagster image and chart block, the dbt image, the data-runner and query-tool services). Separate docs claims / code present / wired at runtime, as the agent audit did. Known facts to verify: scheduled syncs are Kubernetes CronJobs curling an os-ui route, not Dagster; transforms are Trino CTAS composed in TypeScript, not dbt models; Dagster had no Postgres driver in its image and 0 runs in 90 days.
+- [ ] Audit how datasets, transforms, compositions, syncs and quality rules execute today (`tabs/data/lib/{ingest,transform,sync-sql,sync-cron,sync-run-server,auto-gold,auto-pipeline,dq-*}.ts`, the Dagster image and chart block, the dbt image, the data-runner and query-tool services). Separate docs claims / code present / wired at runtime, as the agent audit did. **Attribution (B4-review E-4):** the 2026-11-10 audit PDF covered only the AGENTS side — LangGraph, Langfuse, LiteLLM — so none of the data-side facts below come from it. They are B0's own findings, recorded in `2026-11-13-data-products-concept.md`; where this file or the checklist credited "the audit" for a data claim, it meant the B0 concept. Known facts B0 established and this phase verifies: scheduled syncs are Kubernetes CronJobs curling an os-ui route, not Dagster; transforms are Trino CTAS composed in TypeScript, not dbt models; Dagster had no Postgres driver in its image and 0 runs in 90 days.
 - [ ] Concept: the mapping. Dataset/composition → dbt model (`models/<domain>/<slug>.sql` + `schema.yml` with tests from quality rules); sync → Dagster asset with a schedule/sensor, `dbt_assets` for the project; Trino as dbt's target via `dbt-trino`; lineage from dbt manifest; run history from Dagster GraphQL. Where the generated project lives (a git-backed volume or the OS's object store), how the OS reads back `manifest.json` / `run_results.json`, and how the MCP exposes the same operations. Decide and write the plan for B1–B4 into this file.
 
 ### Phase B1 — dbt project generation
@@ -1430,3 +1430,42 @@ reason is here.
   checked out against the code (`scheduled.ts` → `startQueuedRun`, `resume_agent_run` →
   `resumeQueuedRun`, `onDecided` → `enqueueResumeAfterDecision`), so the second item is recorded as
   not reproducible rather than silently "fixed".
+
+#### B4 review round — the final report writer's data-side defects — `B4-review-E-<n>`
+
+- **B4-review-E-1 Two ceilings for reads, none for writes, and the client timeout derived from the
+  server one.** `QUERY_MAX_RUN_TIME` (`60s`) becomes Trino's `query_max_run_time`, which is the
+  only thing that makes TRINO abandon a runaway read; `request_timeout` is set to that **+5 s**,
+  because a client that gives up FIRST orphans the query on the cluster — the exact defect. Rows
+  are fetched as `max+1` so `truncated` is MEASURED, and the flag reaches `query_data`'s payload
+  (`QueryResult.truncated` / `rowLimit` / `message`), because a clipped result set a caller cannot
+  see is worse than an error. `EXECUTE_MAX_RUN_TIME` is deliberately UNSET: a full-refresh sync or
+  a promote CTAS legitimately runs for minutes, and a ceiling guessed here would abort real work —
+  so the /execute comment now says plainly that nothing bounds a write statement, instead of
+  claiming the client owns the budget. `_seconds()` parses `60s`/`5m`/`1h`/`90`/`1500ms` and never
+  raises: a malformed env var must not take the service down while the ceiling still applies.
+  Checklist D11 wording unchanged; `D-11` recorded DONE.
+- **B4-review-E-2 The review's premise was half right.** `no-cluster`/`no-configmap` were NOT
+  retried *within* a pass — fixed, every code now gets the backoff — but the jittered PERIODIC
+  pass always retried them unconditionally, so the failure mode was a 10-minute window of open
+  ownership rather than a permanent one. Both halves are now closed: the window shrinks to the
+  pass's own backoff, and the health row is RED until the first success so a permanently failing
+  reconciler cannot read as a warm-up state. The test that asserted "a missing ConfigMap is not
+  retried" was inverted with the reason written in it.
+- **B4-review-E-3 This was a real latent bug, and the reason matters.** dbt reads `profiles.yml`
+  as YAML and THEN renders each scalar through Jinja, so a `{% if %}` carried inside a YAML
+  comment is discarded by the parser: `password:` was emitted unconditionally and `method: none`
+  rejects it. The fix is a generator input, which also makes `method:` a literal — the file must
+  not say one thing in `method` and another in whether `password` exists. Consequence to know:
+  changing `TRINO_AUTH_METHOD` now requires a REGENERATION (any dataset write, or the boot
+  reconcile) rather than taking effect on the next dbt run.
+- **B4-review-E-4 `relationships` was corrected, not implemented.** The OS has no FK-style quality
+  rule to compile from (`DATA_CHECK_RULES` = `not_null, not_blank, unique, accepted_values,
+  range`), so checklist D5 claimed a test the generator could never emit; the row now names the
+  implemented set and records a `relationships` rule as a follow-up with its shape (a referenced
+  dataset + column, resolved through `canView`). Also fixed: the B0 line and checklist D10 now
+  attribute the data-side findings to the B0 concept rather than the 2026-11-10 audit PDF, which
+  covered only LangGraph/Langfuse/LiteLLM; "`startQueuedRun` is the one start door" became
+  `enqueueRun` in all three places; the "~40-line parser" is 203 lines (`lib/engine/when.ts`); and
+  the worker's "Langfuse singleton at boot" is a PROBE — `langfuseClient()` is resolved lazily at
+  each use site.

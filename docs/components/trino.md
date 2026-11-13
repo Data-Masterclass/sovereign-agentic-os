@@ -202,6 +202,25 @@ kubectl -n agentic-os get pod -l app.kubernetes.io/component=trino -o wide
 - The impersonation section of `rules.json` is inert until authentication is enabled (above).
 - Column-level lineage is not derived from the manifest (deviation B3-6).
 
+## If the rules were never reconciled
+
+The chart installs a PERMISSIVE bootstrap `rules.json` so Trino starts; the OS replaces it from
+real domain membership (`core/infra/trino-rules-server.ts`). Until the FIRST successful reconcile,
+that bootstrap is the live file: impersonation is bounded only by the shape of a principal id, and
+table ownership is OPEN. Such an install is governed by **OPA alone** — row filters and column
+masks still apply, the file-based ownership layer does not (B4-review E-2).
+
+This is visible, deliberately: Platform → Components & Health shows the `Trino access rules` row
+**RED** (not amber) until the first success, with what is open and what to check. It used to be
+amber, which read as a warm-up state — and a reconciler that never reaches the cluster stays in
+exactly that state forever. Every failure code is retried, `no-cluster` and `no-configmap`
+included, because at boot those are usually RBAC propagation and Helm's object ordering rather
+than verdicts; the jittered periodic pass remains the long-horizon retry.
+
+What to check when the row stays red: the os-ui Role grants `get` + `patch` on the
+`trino-access-rules` ConfigMap (`resourceNames`-scoped), the ConfigMap exists, and
+`trino.accessControl.enabled` + `trino.opa.enabled` are both on.
+
 ## FAQ
 
 **Can a user run arbitrary SQL?** Reads: yes, through `query_data` / the Data tab, and Trino→OPA

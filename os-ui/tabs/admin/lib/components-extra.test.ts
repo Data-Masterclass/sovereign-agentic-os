@@ -20,10 +20,17 @@ test('the feature off grows no row at all', () => {
   assert.equal(trinoAccessRulesRow({ enabled: false, outcome: bad(NOW), now: NOW, periodMs: PERIOD }), null);
 });
 
-test('enabled but never attempted is amber and says the bootstrap is in force', () => {
+test('enabled but never reconciled is RED, names what is open, and says how to check (B4-review E-2)', () => {
+  // It used to be amber, on the reading that a boot has not finished yet. But a reconciler that
+  // NEVER succeeds sits in this exact state forever with the chart's permissive bootstrap as the
+  // live access-control file — ownership open, impersonation bounded only by id shape. That is a
+  // failure, not a warm-up, and amber is how it goes unnoticed.
   const row = trinoAccessRulesRow({ enabled: true, outcome: null, now: NOW, periodMs: PERIOD })!;
-  assert.equal(row.health, 'amber');
+  assert.equal(row.health, 'red');
   assert.match(row.detail, /bootstrap/);
+  assert.match(row.detail, /OPEN/, 'it names what is open, not just that something is pending');
+  assert.match(row.detail, /OPA alone/, 'and that the install is effectively OPA-only until it lands');
+  assert.match(row.detail, /trino-access-rules ConfigMap/, 'and what an operator should check');
   assert.equal(row.at, undefined);
 });
 

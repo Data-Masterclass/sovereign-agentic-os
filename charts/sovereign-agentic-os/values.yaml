@@ -1090,6 +1090,16 @@ queryTool:
     catalog: iceberg
     # Default session schema for unqualified queries.
     schema: sales
+  # READ BUDGET for /query and MCP `query_data` (B4-review-E-1). `maxRunTime` becomes Trino's
+  # `query_max_run_time` session property, which is the ONLY thing that makes Trino abandon a
+  # runaway read — os-ui's 8 s abort ends its own wait, not the query. `maxRows` bounds what the
+  # query-tool buffers and returns; past it the payload carries `truncated: true` and the limit
+  # rather than a silently clipped result set.
+  # `executeMaxRunTime` (unset) would bound WRITES too; left off on purpose, because a
+  # full-refresh sync or a promote CTAS legitimately runs for minutes.
+  budget:
+    maxRunTime: "60s"
+    maxRows: 10000
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 768Mi }

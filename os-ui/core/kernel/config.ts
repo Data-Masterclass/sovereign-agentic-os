@@ -500,6 +500,14 @@ export const config = {
   // suppression key has to outlive the process and be shared across pods — B4-review L-2.
   dqAlertsIndex: env('DQ_ALERTS_INDEX', 'os-dq-alerts'),
 
+  // The Trino client auth method dbt's generated `profiles.yml` is written FOR (B4-review E-3).
+  // It is a GENERATOR INPUT, not a Jinja-time condition: dbt loads `profiles.yml` as YAML first
+  // and only then renders each scalar through Jinja, so a `# {% if %}` guard around the
+  // `password:` key is dropped by the YAML parse and the key is present either way — which
+  // `TrinoNoneCredentials` rejects. The generator therefore emits `password:` iff this is not
+  // 'none'. Changing it takes effect on the next regeneration (any write, or the boot reconcile).
+  trinoAuthMethod: env('TRINO_AUTH_METHOD', 'none'),
+
   // ---- Trino file-based access control (engine rebuild B3). When TRINO_ACCESS_RULES=true the OS
   // reconciles the `trino-access-rules` ConfigMap from real domain membership on THREE triggers
   // (core/infra/trino-rules-server.ts `startTrinoRulesReconciler`): at boot, on every user/domain

@@ -16,6 +16,8 @@
  *       boot      — once, as soon as the process has a directory to read;
  *       event     — every user/domain/membership write, debounced and serialised, so a bulk import
  *                   is one reconcile and two rapid writes are one reconcile;
+ *       Every failure code is retried, `no-cluster` and `no-configmap` included (B4-review E-2):
+ *       at boot those are RBAC propagation and Helm's object ordering, not permanent facts.
  *       periodic  — every `periodMs` (default 10 min, jittered), because `helm upgrade` rewrites
  *                   Helm's BOOTSTRAP value over the OS's enumerated one and no OS event fires for
  *                   that. The periodic pass is a GET + byte compare when nothing drifted, so the
@@ -188,7 +190,16 @@ export function startTrinoRulesReconciler(opts: ReconcilerOptions): ReconcilerHa
         if (out.changed) log('info', `[os-ui] trino access rules: written (${reason}) — ${out.detail}`);
         return;
       }
-      if (i === attempts || out.code === 'no-configmap' || out.code === 'no-cluster') {
+      // RETRY `no-cluster` / `no-configmap` TOO (B4-review E-2). They used to end the pass on the
+      // first attempt, on the reading that they are permanent facts ("not in a cluster", "the
+      // feature is off"). At BOOT they are usually transient instead: the ServiceAccount's Role
+      // may not have propagated yet, and Helm does not order the ConfigMap before the Deployment.
+      // Ending the pass there left the chart's permissive bootstrap in force until the periodic
+      // repair came round — up to `reconcileIntervalMinutes` (10 by default) of open ownership.
+      // Now every failure code gets the pass's backoff; a genuinely cluster-less process (a
+      // laptop, the test suite) pays `attempts` short sleeps once and then the same single
+      // warning, and the periodic repair remains the long-horizon retry it always was.
+      if (i === attempts) {
         log('warn', `[os-ui] trino access rules NOT reconciled after ${i} attempt(s) (${reason}, ${out.code}) — the chart bootstrap still applies: ${out.detail}`);
         return;
       }

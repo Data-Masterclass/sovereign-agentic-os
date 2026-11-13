@@ -211,14 +211,38 @@ for (const [shape, make] of Object.entries(SHAPES)) {
       assert.doesNotMatch(v, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/, `${k} must not carry timestamps`);
     }
     assert.match(files.get('profiles.yml')!, /impersonation_user: "\{\{ env_var\('OS_PRINCIPAL'\) \}\}"/);
-    assert.match(files.get('profiles.yml')!, /method: "\{\{ env_var\('TRINO_AUTH_METHOD', 'none'\) \}\}"/);
-    // The password line exists, is guarded, and is never a literal.
-    assert.match(
-      files.get('profiles.yml')!,
-      /# \{% if env_var\('TRINO_AUTH_METHOD', 'none'\) != 'none' %\}\n\s+password: "\{\{ env_var\('TRINO_PASSWORD', ''\) \}\}"\n\s+# \{% endif %\}/,
-    );
+    // The method is a LITERAL from the generator input, not a Jinja call (B4-review E-3): it has
+    // to agree with whether `password:` was emitted at all, and only the generator knows that.
+    assert.match(files.get('profiles.yml')!, /method: none/);
   });
 }
+
+test('profiles.yml emits `password:` iff the generator is told auth is ON (B4-review E-3)', () => {
+  // The bug this pins: the key used to sit inside a `# {% if … %}` YAML COMMENT, on the belief
+  // that dbt renders the whole file through Jinja before parsing the YAML. It does not — dbt loads
+  // the YAML first and renders each scalar afterwards, so the comment (and the guard inside it)
+  // was discarded and `password:` was present under `method: none`, which dbt rejects.
+  const off = generateProject('sales', shapeIngested()).get('profiles.yml')!;
+  assert.doesNotMatch(off, /password/, 'method none ⇒ NO password key at all, not a guarded one');
+  assert.match(off, /method: none/);
+  assert.doesNotMatch(off, /\{%/, 'and no Jinja statement block, which YAML-first parsing cannot honour');
+
+  for (const method of ['ldap', 'basic', 'jwt']) {
+    const on = generateProject('sales', shapeIngested(), { trinoAuthMethod: method }).get('profiles.yml')!;
+    assert.match(on, new RegExp(`method: ${method}`));
+    assert.match(on, /password: "\{\{ env_var\('TRINO_PASSWORD'\) \}\}"/, 'an env_var call, never a literal');
+    assert.doesNotMatch(on, /env_var\('TRINO_PASSWORD', ''\)/, 'no empty-string default — a missing password must fail loudly');
+    // Still one valid YAML document, and the key sits under the same mapping as `user:`.
+    assert.match(on, /\n(\s+)user: .*\n\1password: /);
+  }
+});
+
+test('profiles.yml stays byte-stable for a given auth method (B4-review E-3)', () => {
+  const a = generateProject('sales', shapeIngested(), { trinoAuthMethod: 'ldap' });
+  const b = generateProject('sales', shapeIngested(), { trinoAuthMethod: 'ldap' });
+  assert.equal(a.get('profiles.yml'), b.get('profiles.yml'));
+  assert.notEqual(a.get('profiles.yml'), generateProject('sales', shapeIngested()).get('profiles.yml'));
+});
 
 test('shape (a): bronze is a source with freshness, silver + gold are pass-through models in the personal lane', () => {
   const files = generateProject('sales', shapeIngested());

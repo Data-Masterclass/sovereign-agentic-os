@@ -57,28 +57,34 @@ export function renderDbtProject(domain: string, plan: ModelPlanSet): string {
  * The CREDENTIAL (B3-review, "impersonation reality"). `method` defaults to `none`, and Trino with
  * no authenticator has no `original_user` for an impersonation rule to match — so impersonation is
  * inert until an operator turns PASSWORD (or JWT/OAUTH2) authentication on. When they do, dbt-trino
- * needs a `password`, and `TrinoNoneCredentials` would REJECT the key — so the line is emitted
- * inside a Jinja guard rather than always. dbt renders `profiles.yml` through Jinja BEFORE parsing
- * the YAML, so the guard is evaluated and the key simply is not there under `method: none`.
+ * needs a `password`, and `TrinoNoneCredentials` would REJECT the key — so the key must be
+ * present for one method and ABSENT for the other.
  *
- * The guard is written as a YAML COMMENT (`# {% if … %}`) on purpose. Jinja does not know it is
- * looking at YAML, so the block still controls the `password:` line; but the file ALSO has to be
- * valid YAML before rendering, because the generator's own gate parses every emitted `.yml`
- * (`generate.test.ts` "valid yaml and no secrets") and a reader should be able to open it. A bare
- * `{% if %}` line is a YAML flow-collection error. Rendered, the guard leaves an empty comment
- * line either way.
+ * WHICH IS A GENERATOR INPUT, NOT A JINJA CONDITION (B4-review E-3). This used to splice a
+ * `# {% if env_var('TRINO_AUTH_METHOD') != 'none' %}` guard, as a YAML comment, around the
+ * `password:` line, on the belief that dbt renders the whole file through Jinja before parsing the
+ * YAML. It does not: dbt loads `profiles.yml` as YAML FIRST and then renders each scalar value
+ * through Jinja — so the comment carrying the guard is discarded by the YAML parser and
+ * `password:` was present unconditionally, which `method: none` rejects. The generator is now
+ * TOLD the method (`config.trinoAuthMethod`, default `none`) and emits `method:` as a literal and
+ * `password:` only when it is not `none`. Changing the method takes effect on the next
+ * regeneration — any dataset write, or the boot reconcile.
  *
- * Only `env_var()` ever appears: a literal password in a repo anyone in the domain can clone is
- * not a path the generator offers. See docs/components/trino.md -> "Enable real impersonation".
+ * Only `env_var()` ever appears as a VALUE: a literal password in a repo anyone in the domain can
+ * clone is not a path the generator offers, and with auth on there is no `''` default either — a
+ * missing `TRINO_PASSWORD` must fail loudly, not connect as nobody. See
+ * docs/components/trino.md -> "Enable real impersonation".
  */
-export function renderProfiles(domain: string): string {
+export function renderProfiles(domain: string, trinoAuthMethod: string = 'none'): string {
   const doc = yml({
     [PROFILE_NAME]: {
       target: 'trino',
       outputs: {
         trino: {
           type: 'trino',
-          method: "{{ env_var('TRINO_AUTH_METHOD', 'none') }}",
+          // A literal, not `{{ env_var(...) }}`: it has to agree with whether `password:` below
+          // was emitted at all, and only the generator knows that (B4-review E-3).
+          method: trinoAuthMethod,
           host: "{{ env_var('TRINO_HOST', 'trino') }}",
           port: "{{ env_var('TRINO_PORT', '8080') | as_number }}",
           user: "{{ env_var('TRINO_USER', 'dbt-runner') }}",
@@ -91,17 +97,13 @@ export function renderProfiles(domain: string): string {
       },
     },
   });
+  if (trinoAuthMethod === 'none') return doc;
   // Spliced textually (the YAML emitter cannot express a conditional key), after the `user:` line
   // and at its own indentation, so the file stays byte-stable and the generator goldens assert it.
   return doc.replace(
     /^([ \t]*)user: (.*)$/m,
     (_whole, indent: string, value: string) =>
-      [
-        `${indent}user: ${value}`,
-        `${indent}# {% if env_var('TRINO_AUTH_METHOD', 'none') != 'none' %}`,
-        `${indent}password: "{{ env_var('TRINO_PASSWORD', '') }}"`,
-        `${indent}# {% endif %}`,
-      ].join('\n'),
+      [`${indent}user: ${value}`, `${indent}password: "{{ env_var('TRINO_PASSWORD') }}"`].join('\n'),
   );
 }
 

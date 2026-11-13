@@ -18,12 +18,20 @@ import { renderSchedules, renderExternal } from '@tabs/data/lib/dbt/schedules';
 import { renderSourceAssets } from '@tabs/data/lib/dbt/source-assets';
 import { renderDbtProject, renderProfiles, renderMacros, renderGenericTests, renderReadme, renderGitignore } from '@tabs/data/lib/dbt/project';
 
+/** What the generator must be TOLD about the deployment (it reads no env of its own). */
+export type GenerateOptions = {
+  /** The Trino client auth method `profiles.yml` is written for; `password:` is emitted iff it is
+   *  not 'none' (B4-review E-3 — dbt parses the YAML before rendering Jinja, so a guard inside a
+   *  comment cannot decide this). Default 'none'. */
+  trinoAuthMethod?: string;
+};
+
 /** The complete project tree: path → content. Sorted by path. */
-export function generateProject(domain: string, snapshot: ProjectSnapshot): Map<string, string> {
+export function generateProject(domain: string, snapshot: ProjectSnapshot, opts: GenerateOptions = {}): Map<string, string> {
   const plan = planModels(snapshot);
   const files = new Map<string, string>();
   files.set('dbt_project.yml', renderDbtProject(domain, plan));
-  files.set('profiles.yml', renderProfiles(domain));
+  files.set('profiles.yml', renderProfiles(domain, opts.trinoAuthMethod ?? 'none'));
   files.set('README.md', renderReadme(domain, plan));
   files.set('.gitignore', renderGitignore());
   for (const [p, c] of renderMacros()) files.set(p, c);

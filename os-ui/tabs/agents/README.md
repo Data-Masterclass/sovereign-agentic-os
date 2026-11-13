@@ -63,7 +63,9 @@ if an environment still sets it, is ignored with one deprecation line at boot.
    A **supervisor** is `route_<sup>` with a mandatory `route` tool returning `{ next, brief }`
    (text fallback `NEXT: <member>`) and `addConditionalEdges` to its members ∪ END — it *decides*,
    it does not visit in declared order. A member returns to the supervisor's ROUTE node, so one
-   decision call per return. `when` guards are a ~40-line safe parser (`lib/engine/when.ts`) —
+   decision call per return. `when` guards are a safe hand-written parser — a tokeniser plus
+   recursive descent in `lib/engine/when.ts` (203 lines, header and compile-warning path included;
+   the "~40 lines" this used to claim was the plan's pre-implementation estimate) —
    literals, `state.<channel>` truthiness, bare channel names, `==`/`!=`, `&&`/`||` — never `eval`.
    A guard over a channel nothing **can** set is a compile WARNING carried on the run report, not a
    silent false (see *State channels* below). The team step budget becomes `recursionLimit`; exhaustion is a graceful stop that returns
