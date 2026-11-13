@@ -808,3 +808,29 @@ result, and the UI must surface that label.
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,
 taking its prose from the file headers, the tab manifests and the component pins, so
 it cannot drift. CI fails if the committed page is stale.
+
+## The agentic app builder (stream H)
+
+`tabs/software/lib/builder/**` is a second, flag-gated builder for the Software tab: a bounded
+**planner → coder → build → reviewer** loop. Three things about its shape are load-bearing, and
+breaking any of them is how it would rot.
+
+1. **Pure core, injected edges.** `grounding.ts`, `acceptance.ts`, `prompts.ts`, `loop.ts` and
+   `dispatch.ts` have no model client, no store, no `fs` and no `fetch`. That is why the loop's
+   headline property — *the first coder output fails to compile and the loop recovers on iteration
+   2* — is a deterministic unit test with a scripted coder rather than a live-model hope. The real
+   world lives in `grounding-server.ts`, `tools.ts` and `loop-server.ts` only.
+2. **The API surfaces are EXTRACTED FROM SOURCE, never written down.** The pack reads the shipped
+   `core/app-sdk` / `core/app-ui` source through the existing vendor readers and parses the
+   `OsClient` interface and each `*Props` type out of it. Hand-writing that list is the failure mode
+   it exists to prevent: the prompt would drift from what `compile-gate.ts` actually checks, and the
+   model would be blamed for the harness's stale brief.
+3. **Compile IS the write gate.** The loop never writes anything itself; it calls `commitToApp`,
+   which runs the compile gate before any write and throws the exact diagnostics as a typed 422. Do
+   not add a second write path "just for the builder" — a red tree would then be able to land.
+
+The honesty rules this codebase already punishes you for breaking apply with extra force here,
+because a builder is judged by its own report: an ungated shape is `unknown`, never a pass; a
+`manual` acceptance check is never machine-passed; a tree that compiles but satisfies no story is
+committed (on budget exhaustion) with `ok: false` and the unmet checks named; and a reviewer that
+says PASS over a scorecard with a FAIL is **overridden** and told so.

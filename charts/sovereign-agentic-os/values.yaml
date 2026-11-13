@@ -1433,3 +1433,23 @@ osUI:
 
 # Components are added to this file as each is wired into the chart
 # (thinnest runnable slice first).
+
+# ---------------------------------------------------------------------------
+# THE APP-BUILDING HARNESS (stream H). Additive, OFF by default.
+#
+# softwareBuilder.mode selects which builder the Software "Build" stage uses:
+#   • "spec"    (DEFAULT) — today's behaviour, unchanged: one reasoning-model
+#     turn fills a declarative AppSpec, with validator-seeded repair turns.
+#   • "agentic" — the bounded planner -> coder -> build -> reviewer loop: a
+#     grounding pack extracted from the shipped source (dataset schemas with
+#     real sample rows, metric definitions, the OS SDK and UI API surfaces,
+#     design tokens, one exemplar), the real in-process compile gate run every
+#     iteration with its diagnostics fed back, and acceptance checks derived
+#     from the app's own user stories. Max 4 iterations.
+#
+# coderModel optionally pins a code-specialised LiteLLM model_name for the
+# `coder` model role. EMPTY means the coder role falls back to the REASONING
+# tier, so turning the loop on needs no model change.
+softwareBuilder:
+  mode: "spec"
+  coderModel: ""

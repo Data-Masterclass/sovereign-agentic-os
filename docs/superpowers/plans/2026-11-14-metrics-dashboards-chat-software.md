@@ -540,6 +540,16 @@ So the cut line is drawn on one rule: **a thin end-to-end slice with tests beats
 **Tonight.** R4's S1 and S2 in full — the documentation purge and the trap fixes — because an IT reviewer who greps for `build-service.ts` and finds nothing stops believing the parts that are true: the scaffold README/Dockerfile lies, `tabs/software/lib/README.md`, the Forgejo/Harbor/Kaniko comment blocks and dead config in `config.ts`, `forgejoConsoleUrl`, the dangling `values.yaml` comment, and the Admin UI's "Argo CD reverts drift automatically" over mock data; plus the `'image'`-default trap (default becomes `'spec'`, a missing image fails closed and loudly) and the capture-then-delete instruction for the orphan `cron-deploy-pipelines` CronJob written into Part C. Then the foundation: the **additive tag API in `core/infra/git-store.ts`** (`annotatedTag`, `listTags(prefix)`, `resolveTag`, path-scoped `log`) with temp-dir tests, and app source trees committing through `commitSubtree('apps/<slug>')` + `reserveSubtree('apps/')` with the OpenSearch mirror demoted to a cache; then `push_app_files` as the one documented verb from Claude.
 **Not tonight.** `release_software` and the release manifest; the six approval-card fields; `PipelineRun` and the pipeline MCP tools; the tests/SAST/dependency/licence/SBOM gates; `rollback_software`; the content-addressed Tier-2 bundle; the adoption gate for app actions; quotas; PSS `restricted`; Tier 3 in any form.
 
+### Stream H — the app-building harness (added after the plan was written)
+
+**Tonight.** The grounding pack (stories + dataset schemas and real sample rows + metric definitions
++ the SDK/UI API surface extracted from source + design tokens + one exemplar + the Tier-2
+constraints), story-derived acceptance checks, the `os.appsmith` planner → coder → build → reviewer
+loop bounded at 4 iterations writing through the governed file-write door, and the
+`SOFTWARE_BUILDER=agentic` flag whose default keeps today's behaviour byte-identical.
+**Not tonight.** jsdom/screenshot rendering inside the loop; story-derived *runtime* tests;
+model-quality evals; the loop driving the Tier-1 AppSpec generator.
+
 ### Stream G — git everywhere and the git UI
 
 **Tonight.** `core/infra/git-objects.ts`: the generic `objectGitInfo(kind, id)` read-back keyed on `OS-Object` **with the path-based `git log -- <path>` fallback** (this is the night-1 follow-up that makes `git.head` non-null for pre-existing objects), plus `getVersion` and `diffVersions`; the additive `core/infra/git-store.ts` support they need (read-at-commit, path-scoped log, unified diff) — **coordinated with S, which owns the tag half of the same file**; the repo-layout table for every object kind; the shared `core/ui/git/` components (`GitHeadBadge`, `HistoryDrawer`) with the logic in `.ts`; the generic MCP reads `get_history`, `get_version`, `diff_versions`; and the X1-style enumeration test over **all** kinds, which is the gate that makes "everything lives in git" non-optional.
@@ -1743,6 +1753,77 @@ stream owns — a finding in your report is the correct output. Never tick a row
 
 ---
 
+### Phase H — The app-building harness (`night2-H`)
+
+> **Added after the planner finished.** Owner, verbatim: *"The app builder in the UI is more by
+> configuration but it is not creating great apps. The user stories are well described. Why is it so
+> hard to build a good software out of it using the Qwen Reasoning model or any other open source
+> model?"* Diagnosis agreed with the owner: **~80% harness, ~20% model.** Today the builder asks the
+> model to fill an AppSpec schema **once** (`appspec/generate-server.ts`: three attempts, each a
+> whole-spec retry seeded only by validator issues) with **no compile/test/preview loop**, **no
+> structured grounding** (dataset schemas, sample rows, metric definitions, the SDK API surface,
+> design tokens, an exemplar) and **no acceptance criteria derived from the stories**. A coding agent
+> that cannot compile, cannot see the API it is coding against and has no definition of done will
+> produce mediocre software on *any* model. **Fix the harness.**
+
+**Owns (new files only):** `os-ui/tabs/software/lib/builder/**` ·
+`os-ui/tabs/agents/lib/builtin/appsmith.ts` (+ its fixture under the engine fixtures dir) ·
+additive `coder` role in `os-ui/core/models/roles.ts` · additive `softwareBuilder` +
+`litellmCoderModel` keys in `os-ui/core/kernel/config.ts` (appended as **one** commented block at
+the end of the object, so S's deletions elsewhere in the file merge cleanly) · additive chart env ·
+an appended "Agentic builder" section in `os-ui/tabs/software/README.md` and `docs/components/os-ui.md`.
+
+**Reads but never edits:** `tabs/software/lib/{generate,generate-server,appspec/*,scaffolds/*,app-runtime,preview-runtime,apps,server,compile-gate}.ts` (S owns them) ·
+`tabs/agents/lib/engine/*` and `tabs/agents/lib/software-team.ts` (how a built-in system is defined and how a scripted LLM drives a fixture).
+
+**Exactly ONE guarded line in the existing build dispatch.** Coordinated with S: the line goes in
+`tabs/software/lib/platform-mcp.ts` `callPlatformMcp`, `case 'build_software'` — the one place both
+the MCP build directive and (by contract) the UI build turn converge, and the one case S is not
+editing tonight.
+
+**Tonight's MVP.**
+
+1. **Grounding pack** (pure + a thin server gatherer). For an app request, assemble: the user
+   stories (with their features/NFRs/rules), the granted datasets' **schemas and up to N real
+   sample rows** read through the governed MCP door **as the signed-in user** (bounded, and honestly
+   labelled when unavailable), the granted **metric definitions**, the **OS SDK API surface
+   extracted from `core/app-sdk` source** (never hand-written, so it cannot drift), the
+   **`@sovereign-os/ui` component surface**, the **design tokens** from the portable theme, **one
+   exemplar app tree**, and the **Tier-2 constraints** (Vite/React SPA on the SDK, same-origin
+   session, no secrets, granted ids only).
+2. **Acceptance checks derived from the stories** — a structured list
+   `{ story, check, kind: 'compile' | 'route' | 'render' | 'manual' }` the reviewer node scores.
+   `compile` reuses the existing in-process gate (`compileGate`: tsc + esbuild over the merged tree);
+   `route`/`render` are **cheap static checks over the generated files** tonight (jsdom-level
+   rendering is backlog, and is named as backlog rather than faked); `manual` is listed for the human.
+3. **`os.appsmith`** — a built-in LangGraph system: **planner** (reasoning role) → **coder** (the new
+   `coder` role, falling back to reasoning when unset) → **build** (compile; returns diagnostics) →
+   **reviewer** (scores the stories, decides loop or stop), with a **bounded loop (≤ 4 iterations,
+   budget-aware)**, writing files through the **normal governed file-write door as the signed-in
+   user**, every step traced in the run's Langfuse trace.
+4. **Flag-gated dispatch.** `SOFTWARE_BUILDER=agentic` routes Build to the loop; the default
+   `spec` keeps today's behaviour **byte-identical**, asserted by a test.
+5. **Fixture + tests.** A parity-style fixture with a scripted LLM where the **first coder output
+   fails to compile and the loop recovers on iteration 2**; a grounding-pack snapshot test; an
+   acceptance-derivation test; a flag-off byte-identical test.
+6. **Docs + plan + checklist**, scored honestly, with the backlog named: jsdom/preview screenshot
+   inside the loop, story-derived **runtime** tests, and model-quality evals.
+
+**Not tonight (backlog, named so nobody thinks it shipped).** jsdom or screenshot rendering inside
+the loop · story-derived runtime tests (we derive and score *static* route/render checks only) ·
+model-quality evals comparing Qwen against other open models on the same harness · the loop driving
+the Tier-1 AppSpec generator as well as the Tier-2 code tree · a human-in-the-loop review card for
+a loop that stops short.
+
+**Hard rules for H:** the software tab must **not** import the agents tab's internals — the built-in
+system definition lives in `tabs/agents/lib/builtin/`, and software reaches a run through the
+governed run door like any other caller. Every new file imports only `@core/*` and its own tab. No
+new cluster component, no fourteenth tab, no new required MCP argument. A missing sample row, an
+unreachable model or a skipped gate pass is a **labelled, typed, honest** result — never a
+substituted value that reads as success.
+
+---
+
 ## Review protocol
 
 **One read-only reviewer per stream, all nine in parallel.** A reviewer never edits; it reads the
@@ -1980,5 +2061,76 @@ stream's prefix — `M-1`, `D-1`, `C-1`, `S-1`, `G-1`, `T-1`, `E-1`, `V-1`, `X-1
 `<X>-review-<id>` for findings from the review round. A deviation is not a failure; an unrecorded
 deviation is.
 
-(empty)
+### Stream H — the app-building harness
+
+- **H-1 — design tokens come from `core/app-ui/theme.css`, not `core/ui`.** The brief said
+  "design tokens from `core/ui`". `core/ui` holds the OS's own shell components (Sidebar, PageHeader,
+  ThemeToggle); the tokens an *app* can rely on live in the portable `core/app-ui/theme.css`, which is
+  the stylesheet a generated app actually imports. Using `core/ui` would have grounded the coder in
+  tokens the app cannot see.
+- **H-2 — the exemplar is the shipped `vite-os` scaffold tree, not a seeded app.** `seed/` carries a
+  campaign, an ecommerce dataset and the software team's `system.yaml`; it has no app with a code
+  tree or an exported AppSpec (`appspec/seed-demo.ts`'s spec is a module-private constant). The
+  scaffold IS the shape every OS app starts from and it is read from the same source the compile gate
+  checks against, so it is the stronger exemplar anyway.
+- **H-3 — a SECOND additive config key beyond the briefed one.** The brief named only
+  `softwareBuilder`. The new `coder` model role needs somewhere to resolve from, so
+  `litellmCoderModel` (`LITELLM_CODER_MODEL`) was added in the same appended block. Its default is
+  **empty**, which makes `coder` fall back to the reasoning tier — no deployment needs a new variable.
+- **H-4 — two lines touched outside ownership.** Adding `coder` to the `ModelRole` union makes
+  `tabs/admin/lib/model-references.ts` fail to typecheck (`Record<ModelRole, string>` and an index
+  into the four-key settings blob). Fixed with one additive label (`coder: 'Coder'`) and by retyping
+  that file's local `ROLES` array to the new `AdminModelRole`. No behaviour change: `coder` stays out
+  of the admin-editable list, so the admin UI gains **no** new noun (the simplicity contract).
+- **H-5 — the fixture uses its own shape, not `EngineFixture`.** `EngineFixture` requires a frozen
+  pre-rebuild walker `transcript`, and the walker was deleted in A5 — there is no transcript to
+  record for a system that never ran under it. `fixtures/builtin-appsmith.json` therefore carries
+  `{ yaml, script, scenario, golden }` and is driven through the **real** engine by a scripted LLM with
+  the **real** `grantedToolSpecs` / `grantedToolExecutor` gates, which is the parity harness's own
+  pattern for its two non-frozen engine shapes (d) and (e).
+- **H-6 — the fixture raises the per-node round cap to 8.** `parity-harness.graphDeps` pins
+  `maxIterations: 4`; the appsmith coder legitimately needs four rounds (rejected commit → fixed
+  commit → record the channel → report), so the scenario would have been shaped around the cap rather
+  than around the property being proved. Production's cap is `agentTeamNodeMaxSteps` (100), so 8 is
+  not a production-relevant relaxation.
+- **H-7 — on budget exhaustion a COMPILING tree is committed, with `ok: false`.** The brief did not
+  say what to do with a near-miss. Discarding a tree that passes the compile gate (which *is* the
+  write gate everywhere else in this tab) would throw away real work and leave the user with nothing
+  to look at. So it lands, the result is `ok: false`, `stopped: 'budget'`, the commit message says
+  `(acceptance incomplete)` and the summary says *"This build is NOT done"* with the unmet checks
+  named. A tree that does **not** compile is never committed.
+- **H-8 — two model-tier surfaces, deliberately.** A `system.yaml` addresses LiteLLM aliases, not OS
+  model roles, so `os.appsmith`'s coder node names `sovereign-default` while the software-side harness
+  resolves the `coder` ROLE (which falls back to reasoning). Both are documented in the files; no third
+  model surface was invented.
+- **H-9 — the loop writes through `commitToApp`, so it inherits S's git path by contract.** The
+  builder adds no write path of its own: when S's change makes `commitToApp` commit to
+  `apps/<slug>/`, the builder commits to git with no change here. Tonight it writes wherever
+  `commitToApp` writes.
+- **H-10 — flag-on changes the `build_software` RESULT SHAPE.** With `SOFTWARE_BUILDER=agentic` the
+  tool returns `{ builder: 'agentic', ok, stopped, iterations, grounding, acceptance, compile, files,
+  committed, steps, summary, next }` instead of the read-only directive. That is the point of the
+  flag, but an MCP client that hard-codes the directive shape sees a different payload when an
+  operator turns the loop on. Recorded rather than papered over.
+- **H-11 — the fixture lives beside the built-in, not in the engine fixtures dir.** The brief said
+  "a fixture under the engine fixtures dir". `parity.test.ts` auto-discovers **every** file in
+  `engine/fixtures/` and replays it from a recorded walker `transcript`; a fixture without one makes
+  that test throw. Rather than weaken a guard I do not own, the fixture lives at
+  `tabs/agents/lib/builtin/fixtures/builtin-appsmith.json`, beside the system it records, and is
+  driven by `tabs/agents/lib/builtin/appsmith.test.ts` through the same real engine and real gates.
+- **H-12 — a REAL BUG this stream introduced and fixed, worth recording.** The first draft imported
+  `handleRpc` statically in `builder/grounding-server.ts`. That closes a module cycle —
+  `core/mcp/server` top-level-awaits its experimental bundle registration → `platform-tools` →
+  `tabs/software/lib/platform-mcp` (the Build dispatch) → `builder/loop-server` →
+  `builder/grounding-server` → `core/mcp/server` — and **deadlocked every test file that touches the
+  MCP server** (28 files, reported by node as "unsettled top-level await"). The import is now lazy
+  at the call site with the cycle written into the file header. Anything new that the Build dispatch
+  can reach must not take a static edge back to `@core/mcp/server`.
+- **H-13 — `os.appsmith` is DEFINED but not SEEDED.** The brief asked for the built-in system; it
+  exists, parses, compiles and is driven through the real engine by the fixture. What is **not** done
+  is registering it as a domain-Shared system in the Agents catalogue (the Software Delivery Team gets
+  that from the instructor seed), so it cannot yet be run from the Agents tab or through
+  `run_agent_system`. Tonight the Build path uses the software-side harness directly — the same
+  nodes, the same gates, the same bound — and the seed is the named next item. Recorded rather than
+  implied: nothing in the UI will show "App Smith" until that seed lands.
 

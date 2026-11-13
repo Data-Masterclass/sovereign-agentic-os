@@ -15,6 +15,16 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ### Added
 
+- **The app-building harness (night run 2, stream H).** A second, flag-gated builder for the
+  Software tab (`SOFTWARE_BUILDER=agentic`; default `spec` is byte-identical to today): a bounded
+  planner → coder → build → reviewer loop over a grounding pack extracted from the shipped source
+  (dataset real columns and real sample rows read as the signed-in user, metric definitions, the
+  `@sovereign-os/app-sdk` and `@sovereign-os/ui` API surfaces parsed out of `core/app-sdk` /
+  `core/app-ui`, the design tokens, one exemplar, the Tier-2 constraints), with acceptance checks
+  **derived from the app's user stories**, the existing in-process compile gate run every iteration
+  and its diagnostics fed back verbatim, and the `os.appsmith` built-in LangGraph system
+  (`tabs/agents/lib/builtin/appsmith.ts`). New additive `coder` model role, env-only, falling back
+  to the reasoning tier when unset.
 - **Night run 2 — the plan of record for metrics, dashboards, chat-to-data, vibe-engineered software,
   git everywhere, the engineering view, the engineer's door and lifecycle.** Nine parallel streams
   (M · D · C · S · G · T · E · V · X) are specified in

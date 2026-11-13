@@ -386,3 +386,14 @@
       name: {{ $u.litellmSecret.name | quote }}
       key: {{ $u.litellmSecret.key | quote }}
 {{- end }}
+
+# ---------------------------------------------------------------------------
+# THE APP-BUILDING HARNESS (stream H). Additive; the default value "spec" keeps
+# the Software Build stage byte-identical to today. SOFTWARE_BUILDER=agentic
+# routes Build to the bounded planner -> coder -> build -> reviewer loop.
+# LITELLM_CODER_MODEL is optional: empty means the `coder` model role resolves
+# to the reasoning tier.
+- name: SOFTWARE_BUILDER
+  value: {{ (.Values.softwareBuilder | default dict).mode | default "spec" | quote }}
+- name: LITELLM_CODER_MODEL
+  value: {{ (.Values.softwareBuilder | default dict).coderModel | default "" | quote }}
