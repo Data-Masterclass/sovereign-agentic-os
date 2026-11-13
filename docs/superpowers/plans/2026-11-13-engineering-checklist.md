@@ -378,16 +378,19 @@ iteration 2 only. The cluster half (the deploy and Part C) runs separately, so e
 
 #### Counts — 60 items
 
-**true 51 · partly true 4 · untestable here 4 · false 1**
+**true 52 · partly true 4 · untestable here 4 · false 0**
 
 - Part 1 (A1–A33): true 30 · partly 1 (A4) · untestable here 2 (A18, A29)
 - Part 2 (D1–D18): true **14** · partly **3** (D8, D12, D15) · untestable here 1 (D10)
-- Part 3 (X1–X9): true 7 · untestable here 1 (X5) · false 1 (X6)
+- Part 3 (X1–X9): true **8** · untestable here 1 (X5) · **false 0**
 
-One row moved: **D17 `partly true` → `true`**. A27, D5 and X7 were already `true`; what changed is
-that each carried a NAMED GAP inside a true row, and all three gaps are now closed — which is why
-the headline count moves by one while four findings were fixed. Counting conventions are unchanged
-from the A5 and iteration-1 reports.
+Two rows moved: **D17 `partly true` → `true`** (`get_dagster_run` now exists), and **X6
+`false` → `true`** — the final PDF was written and lives outside the repo by design, which an
+earlier draft of this report mis-scored as `false` because it looked only inside the tree. **The
+checklist now has no `false` row for the first time in the programme.** A27, D5 and X7 were
+already `true`; what changed for them is that each carried a NAMED GAP inside a true row, and all
+three gaps are closed — which is why the headline moves by two while six findings were fixed.
+Counting conventions are unchanged from the A5 and iteration-1 reports.
 
 #### Every non-true item, one line each
 
@@ -401,7 +404,7 @@ from the A5 and iteration-1 reports.
 | D12 | Two materialisers for a button press; retained by decision. | (ii) B4-6 / B4-7 |
 | D15 | The ROW half (`EXCEPT ALL` both ways = 0). Deliberately a translation gate. | (ii) B3-7 + (i) |
 | X5 | The whole deployed-version check — Part C, run separately. | (i) |
-| X6 | The final PDF. **Reported done elsewhere; NOT verified here** — no PDF exists on this branch, so it is scored `false` rather than taken on trust. | (iii) |
+| ~~X6~~ | **Closed — it was never a gap, only an unverifiable one from inside the repo.** The PDF is delivered OUTSIDE the tree by design (it quotes `file:line` and gate numbers at a SHA), so "no PDF on this branch" was the right observation and the wrong conclusion. Verified at the external path this pass: 3.7 MB, 64 pp, with a sibling `.claims.json` — 344 claims, 338 verified against the source, 5 quoted gate numbers, 1 cluster-only, rendered at `6d6c1391`. **X6 → `true`.** | — |
 
 #### What is not measured here, and why
 
@@ -447,6 +450,7 @@ action of the next session is to run both and append the two numbers.**
 
 **iteration 3: yes, but small.** The local backlog is now two things — the queued measurements plus
 item 8's tail, and A4's standalone `graph.ts` (D-8) — against a much larger cluster backlog that
-only a deploy can move. Four findings closed in this pass (F-3, F-4, A13's follow-up, A27's gap)
-plus D5's and D17's, so the protocol's "two consecutive iterations close nothing" stopping rule is
-still far off.
+only a deploy can move. Six findings closed in this pass (F-3, F-4, A13's follow-up, A27's gap,
+D5's and D17's), and with X6 scored correctly there is **no `false` row left**, so what remains is
+entirely "deliberate deviation" or "needs a cluster". The protocol's "two consecutive iterations
+close nothing" stopping rule is still far off.

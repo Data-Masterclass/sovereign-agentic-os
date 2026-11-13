@@ -640,8 +640,23 @@ next os-ui boot) or both schedulers own the same slice.
 
 **Requirement (2026-11-13, product owner):** a PDF explaining, step by step, how each tool is really used after the refactor and where that manifests in the OS source; which tool functions are implemented at which step; and how it follows the same approach a data or AI engineer would follow — the OS as an abstraction layer, not a reinvention of "how".
 
-- [ ] Written **last, from the shipped code**, by a read-only agent, one chapter per tool (LangGraph, Langfuse, LiteLLM, git, dbt, Dagster, Trino): the engineer's workflow step by step → the OS source performing that step (`file:line`) → the tool functions used and deliberately not used → what the OS adds on top (identity, policy, approvals). A closing chapter lists every reinvention that remains, with the reason.
-- [ ] Rendered with headless Chrome like the audit PDF; stored next to it in `~/Documents/Claude/Projects/Data Masterclass Apps/stackit/`. Checklist X6.
+- [x] Written **last, from the shipped code**, by a read-only agent, one chapter per tool (LangGraph, Langfuse, LiteLLM, git, dbt, Dagster, Trino): the engineer's workflow step by step → the OS source performing that step (`file:line`) → the tool functions used and deliberately not used → what the OS adds on top (identity, policy, approvals). A closing chapter lists every reinvention that remains, with the reason.
+- [x] Rendered with headless Chrome like the audit PDF; stored next to it in `~/Documents/Claude/Projects/Data Masterclass Apps/stackit/`. Checklist X6.
+
+**Delivered 2026-11-13: `sovereign-os-engine-rebuild-2026-11-13.pdf`** (64 pp), with its `.html`
+source and a `.claims.json` beside it: **344 claims — 338 verified by `grep -n` / `sed -n` against
+the source, 5 gate numbers quoted with the commit that produced them, 1 cluster-only.** It found
+the two `docs/components/trino.md` inaccuracies that became iteration-2 item 7 (deviation F2-8).
+
+**It lives OUTSIDE the repo by design, and that is the point of the `.claims.json` next to it.**
+The report is a snapshot *of a SHA*: it cites `file:line` and quotes gate numbers, both of which
+go stale on the next commit. In-tree it would either be regenerated on every change (a 3.7 MB
+binary in every diff, for a document nobody reads per-commit) or silently drift into claiming
+things the code no longer does — the exact failure mode this programme's checklist exists to
+prevent. Outside the tree it carries its own provenance instead: `head`, `branch` and `method` in
+the claims file say which SHA it is true of (**`6d6c1391`** — the Part F scoring point, so it
+predates iteration 2 and does not describe F2-1…F2-8), and the checklist's X6 row points at the
+path. Re-render it when a reader needs it to be current; do not vendor it.
 
 ## Part F — Iterate against the checklist
 
