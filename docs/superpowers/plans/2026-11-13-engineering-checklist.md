@@ -373,8 +373,8 @@ iteration 2 only. The cluster half (the deploy and Part C) runs separately, so e
 | `python3.11 -m unittest discover -s images/extensions/query-tool/tests` | **116 tests, OK in ONE pass** (was: 7 failures, per-file only) |
 | `python3 -m unittest discover -s images/extensions/dagster/tests` | 46 tests, OK |
 | `find . -name '* 2.*'` (new gate step) | 0 — and verified to exit 1 when one is planted |
-| `npm --prefix os-ui test` (full suite) | **queued** — see "What is not measured here" |
-| `npx tsc --noEmit -p tsconfig.test.json` | **queued** — same reason |
+| `npm --prefix os-ui test` (full suite) | exit 0 — **5359** tests, 5355 pass, **0 fail**, 4 todo |
+| `npx tsc --noEmit -p tsconfig.test.json` (NEW, not yet in `gate.sh`) | exit 2 — **597 errors, all of them in `.test.ts` files**; production stays at 0 |
 
 #### Counts — 60 items
 
@@ -406,17 +406,43 @@ Counting conventions are unchanged from the A5 and iteration-1 reports.
 | X5 | The whole deployed-version check — Part C, run separately. | (i) |
 | ~~X6~~ | **Closed — it was never a gap, only an unverifiable one from inside the repo.** The PDF is delivered OUTSIDE the tree by design (it quotes `file:line` and gate numbers at a SHA), so "no PDF on this branch" was the right observation and the wrong conclusion. Verified at the external path this pass: 3.7 MB, 64 pp, with a sibling `.claims.json` — 344 claims, 338 verified against the source, 5 quoted gate numbers, 1 cluster-only, rendered at `6d6c1391`. **X6 → `true`.** | — |
 
-#### What is not measured here, and why
+#### The two held gates, now run
 
-Two gates are **queued, not run**: the full `npm --prefix os-ui test` and
-`npx tsc --noEmit -p tsconfig.test.json`. A production image build was running from the main
-checkout on the same host, and the coordinator asked for both to be held until it finishes;
-per-file `node --test` and `tsc -p tsconfig.json` were used throughout instead. Every file touched
-in this pass was run per file and is green, and `gate.sh` (430 tests, which includes the registry
-conformance, the data conformance/parity, the git and engine suites) is exit 0 — but the number
-this report should carry for the whole suite is the one that was not taken, and it is named here
-rather than estimated. **The honest reading: this report's suite row is unverified, and the first
-action of the next session is to run both and append the two numbers.**
+Both were held while a production image build had the host's memory, and both were run afterwards
+at `30d434b4`. Neither changed the picture; the numbers are recorded here rather than left as an
+estimate.
+
+- **Full suite: 5359 tests, 5355 pass, 0 fail, 4 todo, exit 0.** Up from 5320 at the end of
+  iteration 1 — 39 new tests, which is this pass's work (10 retention, 7 `get_dagster_run`, 5
+  isolation, 5 rule-form, 6 reference, 4 index attribution, and the rest the conformance and gate
+  pins).
+- **Test-tree type-check: 597 errors, exit 2.** This gate is NEW and is **deliberately not in
+  `gate.sh` yet** — the brief's condition for adding it is that it reaches 0, and it has not.
+  What it decomposes into, which is what makes the remaining work estimable:
+
+  | Code | n | What it is |
+  |---|---|---|
+  | TS2345 | 415 | a `CurrentUser` literal passed as an ARGUMENT |
+  | TS2739 | 91 | a `CurrentUser` literal DECLARED (`const x: CurrentUser = {…}`) |
+  | TS2741 | 14 | the same, one property short |
+  | TS2322 | 19 | assignment mismatches |
+  | TS2540 / TS2704 | 18 / 2 | writes to, and `delete` of, `readonly` config fields — the 18 F-5 named |
+  | TS2339 · TS7006 · TS2367 · TS2353 · TS18048 · TS2554 · TS2352 | 10 · 9 · 8 · 4 · 3 · 2 · 2 | the long tail |
+
+  **520 of the 597 (87 %) are the one `CurrentUser` shape F-5 identified**, which is what
+  `core/testing/user.ts` exists to retire. **Every error is in a `.test.ts` file — 117 of them;
+  the production tree type-checks clean at 0**, so this is latent test debt, not a product defect.
+- **Nothing in this pass's own work contributes.** The eleven test files added or edited in
+  iteration 2 were checked individually: the four errors reported inside files this pass touched
+  all `git blame` to commits that predate it (`4a7a4c37`, `c99dbd43`, `22d5f119`, `daa194c1`) —
+  pre-existing lines in files whose OTHER parts were edited, not new debt.
+- **One real error was fixed while measuring** (F2-9): `tabs/data/lib/model-view-collision.test.ts`
+  imported `Dataset` from `@tabs/data/lib/types`, a module that has not existed since the v2
+  layout. It is a TYPE-only import, so it erased at runtime and the test kept passing while
+  `Dataset` silently resolved to an error type — the second of the two "real" errors F-5 named
+  (the first, a dead `route.test.ts`, was deleted in F-1). Repointed to
+  `@tabs/data/lib/dataset-schema`: the fixture needed no other change, the 3 tests still pass, and
+  the count went 598 → 597.
 
 #### Findings carried into the next pass
 

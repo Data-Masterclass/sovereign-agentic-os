@@ -678,9 +678,11 @@ After each full pass over Parts A, B and D: a read-only test agent scores `2026-
   production image build). Deviations `F2-1`…`F2-8`. Gap report in
   `2026-11-13-engineering-checklist.md` → "2026-11-13 — end of Part F iteration 2 (local)".
   **D17 → `true`** (`get_dagster_run`), and the named gaps inside A27, D5 and X7's rows are closed.
-  OPEN: the cluster half (the deploy + Part C), item 8's tail (the `testUser` adoption and the
-  residual type-error count), and two gates that were QUEUED rather than run — the full unit suite
-  and `tsc -p tsconfig.test.json` — because an image build held the host's memory.
+  Both held gates were run afterwards at `30d434b4`: the **full suite is 5359 tests / 0 fail** and
+  the **test tree is 597 type errors** (520 of them the one `CurrentUser` shape; all 597 in
+  `.test.ts` files, production clean at 0). OPEN: the cluster half (the deploy + Part C) and item
+  8's tail — adopting `testUser()` across the remaining 117 files, then adding
+  `tsc -p tsconfig.test.json` to `gate.sh` once it reaches 0.
 - [ ] Iteration 3 — the queued measurements first, then item 8's tail and A4's `graph.ts` (D-8).
 
 ## Decisions taken without the owner (autonomous mode) — review these
@@ -1938,3 +1940,13 @@ reason is here.
   (`git -C <repo> show HEAD:profiles.yml | grep -E 'method:|password:'`) and what happens if you
   skip it: the repositories still say `method: none` and every dbt run fails authentication the
   moment step 1 goes live.
+
+- **F2-9 One of F-5's two "real" errors, fixed while measuring.**
+  `tabs/data/lib/model-view-collision.test.ts` imported `Dataset` from `@tabs/data/lib/types` — a
+  module that has not existed since the v2 layout. Because it is a TYPE-only import it erases at
+  runtime, so the test ran and passed for months while `Dataset` silently resolved to an error
+  type: the fixture was being checked against nothing. Repointed to
+  `@tabs/data/lib/dataset-schema`, which is where that type lives. The fixture needed no other
+  change (it was structurally valid all along), the file's 3 tests still pass, and the test-tree
+  error count went 598 → 597. The other "real" error F-5 named was the dead `route.test.ts`,
+  already deleted in F-1 — so both are now closed.
