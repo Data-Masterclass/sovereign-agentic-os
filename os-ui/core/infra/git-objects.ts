@@ -173,6 +173,11 @@ export type GitObjectLocation = {
   trailerId?: string;
   /** A display name for the drawer header. */
   name?: string;
+  /**
+   * The tag prefix this object's releases live under (`app/<slug>/` for a software app). Absent
+   * for a kind that does not publish releases — which is most of them.
+   */
+  tagPrefix?: string;
 };
 
 export type GitObjectResolver = (user: CurrentUser, id: string) => Promise<GitObjectLocation | null> | GitObjectLocation | null;
@@ -286,6 +291,9 @@ export type ObjectGitInfo = {
 };
 
 export type GitInfoOptions = GitStoreOptions & { limit?: number; scan?: number };
+
+/** `{ reposDir? }` — re-exported so a caller need not import the git store for one option. */
+export type GitStoreOptionsLike = GitStoreOptions;
 
 /** How many commits of an object's history are returned by default. */
 export const DEFAULT_OBJECT_HISTORY = 10;
@@ -550,4 +558,60 @@ export async function restoreVersion(user: CurrentUser, kind: GitObjectKind, id:
   }
   const result = await reg.restore(user, id, { sha: at.sha, files: at.files, location });
   return { kind, id, domain: location.domain, restoredFrom: at.sha, sha: result.sha, changed: result.changed, files: at.files.length };
+}
+
+
+// ---------------------------------------------------------------- releases ---
+
+/** One release tag of an object (`app/<slug>/v1.2.0`), normalised for the UI. */
+export type ObjectRelease = { tag: string; sha: string; at?: string; author?: string; message?: string };
+
+export type ObjectReleases = {
+  kind: GitObjectKind;
+  id: string;
+  domain: string;
+  /** False ⇒ the surface renders NOTHING: "no releases" and "releases are not available" differ. */
+  available: boolean;
+  /** Why it is unavailable, in the operator's words. Empty when it is available. */
+  reason: string;
+  releases: ObjectRelease[];
+};
+
+type UnknownTag = { tag?: unknown; name?: unknown; sha?: unknown; oid?: unknown; at?: unknown; author?: unknown; message?: unknown };
+
+function normaliseTag(raw: UnknownTag): ObjectRelease {
+  const text = (v: unknown): string => (typeof v === 'string' ? v : '');
+  return {
+    tag: text(raw.tag) || text(raw.name),
+    sha: text(raw.sha) || text(raw.oid),
+    ...(text(raw.at) ? { at: text(raw.at) } : {}),
+    ...(text(raw.author) ? { author: text(raw.author) } : {}),
+    ...(text(raw.message) ? { message: text(raw.message) } : {}),
+  };
+}
+
+/**
+ * The release tags of one object, gated exactly like its history.
+ *
+ * DELIBERATELY TOLERANT OF A MISSING TAG API: the annotated-tag half of
+ * `core/infra/git-store.ts` is another stream's, so this looks it up at run time and answers
+ * `available: false` with the reason when it is absent — rather than failing to compile against
+ * an export that does not exist yet, or showing an empty "Releases" panel that reads as "this
+ * app has never been released".
+ */
+export async function objectReleases(user: CurrentUser, kind: GitObjectKind, id: string, opts: GitStoreOptions = {}): Promise<ObjectReleases> {
+  const location = await locate(user, kind, id);
+  const base = { kind, id, domain: location.domain };
+  if (!location.domain) return { ...base, available: false, reason: 'this object has no domain repository yet', releases: [] };
+  if (!location.tagPrefix) {
+    return { ...base, available: false, reason: `a ${GIT_OBJECT_LAYOUT[kind].label} does not publish release tags`, releases: [] };
+  }
+  const store = (await import('@core/infra/git-store')) as unknown as Record<string, unknown>;
+  const listTags = typeof store.listTags === 'function' ? (store.listTags as (domain: string, prefix: string, o?: GitStoreOptions) => Promise<UnknownTag[]>) : null;
+  if (!listTags) {
+    return { ...base, available: false, reason: 'the annotated-tag API is not in this build yet, so releases cannot be read', releases: [] };
+  }
+  const reposDir = opts.reposDir ?? config.reposDir;
+  const tags = await listTags(location.domain, location.tagPrefix, { reposDir });
+  return { ...base, available: true, reason: '', releases: tags.map(normaliseTag).filter((r) => r.tag.length > 0) };
 }

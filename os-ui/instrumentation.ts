@@ -302,4 +302,28 @@ export async function register(): Promise<void> {
       }
     })();
   }
+
+  // Night 2 (stream G), appended LAST so no existing boot step moves: the generic versioning
+  // reads need each tab's object-kind resolver. Never awaited in a way that can fail boot.
+  void registerGitObjectKindsAtBoot();
+}
+
+/**
+ * Night 2 (stream G): register the OBJECT-KIND resolvers the generic versioning reads use.
+ *
+ * `core/infra/git-objects.ts` holds the kind/layout table and the gate, but the kernel may not
+ * import a tab — so each tab hands it a resolver that runs the TAB'S OWN governed read as the
+ * calling user. Appended as its own boot step (the shared-file rule: never reorder an existing
+ * one), fail-soft: a resolver that cannot be installed leaves its kind answering the typed
+ * `kind_not_wired`, which is visible and honest, rather than breaking boot.
+ */
+export async function registerGitObjectKindsAtBoot(): Promise<void> {
+  if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+  try {
+    const { registerAgentSystemGitObject } = await import('./tabs/agents/lib/git/history.ts');
+    registerAgentSystemGitObject();
+    console.info('[os-ui] git versioning: agent-system registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: agent-system NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
 }

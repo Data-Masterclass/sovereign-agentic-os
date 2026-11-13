@@ -130,6 +130,26 @@ and no kind claims it, so a new writer cannot be added without classifying it.
   `core/infra/git-store.ts` lands; until then the release panel is hidden rather than empty.
 - **Conflicts resolve at the git level** — last writer wins. There is no OS-level merge.
 
+## The surfaces
+
+| Surface | Where | What it shows |
+|---|---|---|
+| `GitHeadBadge` | `os-ui/core/ui/git/GitHeadBadge.tsx`, mounted as ONE line in a detail header | `git <sha7> · <author> · <when>`; the tooltip carries the full sha, the action, the surface, the actor and the `git log --` command |
+| `HistoryDrawer` | `os-ui/core/ui/git/HistoryDrawer.tsx` (the badge opens it) | the commit list with action / actor / surface, the per-commit unified diff against the current version, and the restore confirm |
+| `ReleaseList` | `os-ui/core/ui/git/ReleaseList.tsx` | an app's release tags — **hidden entirely** while the annotated-tag API is absent |
+| Governance → Repositories | `os-ui/tabs/governance/ui/RepositoriesView.tsx` | per-domain head, commit count, last author, mirror status and the layout table |
+| `/api/git` | `os-ui/app/api/git/route.ts` | `?action=history\|version\|diff\|releases&kind=&id=` and `?action=repos`; POST `{kind,id,sha}` restores |
+
+All of the logic is in `os-ui/core/ui/git/git-view.ts` (a test cannot import a `.tsx`), including
+the badge's three empty states — "not in git", "no commit yet", "no repository yet" — which exist
+so the absence of a version is never shown as a version.
+
+The mount is one line and the tabs own nothing else about git:
+
+```tsx
+<GitHeadBadge kind="dataset" id={dataset.id} />
+```
+
 ## Commands an engineer would run
 
 ```bash
