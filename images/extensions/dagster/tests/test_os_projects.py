@@ -670,6 +670,47 @@ class ChartContract(unittest.TestCase):
         self.assertIn("component: user-deployments", text)
         self.assertEqual(labels.get("component"), "user-deployments")
 
+    def test_every_dagster_image_reference_carries_the_same_tag(self):
+        """Part F / checklist D10: the OS's Dagster image is referenced in FOUR places in
+        values.yaml — the user-deployment image, the repo-sync sidecar's inline
+        `sovereign-os/dagster:<tag>`, and the run launcher's two image blocks. A bump that
+        misses one silently runs a code location and its run pods on DIFFERENT images, which is
+        exactly the "no driver, 0 runs" failure mode D10 exists to catch. The row claimed this
+        was asserted here and it was not; now it is.
+        """
+        import yaml
+
+        root = self._repo_root()
+        path = os.path.join(root, "charts", "sovereign-agentic-os", "values.yaml")
+        with open(path, encoding="utf-8") as fh:
+            values = yaml.safe_load(fh)
+
+        tags = []
+        deployment = values["dagster"]["dagster-user-deployments"]["deployments"][0]
+        tags.append(("user-deployment image", deployment["image"]["tag"]))
+        sidecar = next(c for c in deployment["sidecarContainers"] if c["name"] == "repo-sync")
+        self.assertTrue(
+            sidecar["image"].startswith("sovereign-os/dagster:"),
+            "the repo-sync sidecar no longer runs the OS's Dagster image: %s" % sidecar["image"],
+        )
+        tags.append(("repo-sync sidecar image", sidecar["image"].split(":", 1)[1]))
+        for block in ("dagsterWebserver", "dagsterDaemon"):
+            image = values["dagster"][block]["image"]
+            self.assertEqual(
+                image["repository"], "sovereign-os/dagster",
+                "%s no longer runs the OS's Dagster image" % block,
+            )
+            tags.append(("%s image" % block, image["tag"]))
+        self.assertEqual(len(tags), 4, "expected FOUR image references; the chart changed shape")
+
+        distinct = sorted({t for _, t in tags})
+        self.assertEqual(
+            len(distinct), 1,
+            "the Dagster image tag disagrees across values.yaml: %s" % ", ".join("%s=%s" % kv for kv in tags),
+        )
+        # And it must be the OS's own image, never an upstream dagster tag.
+        self.assertRegex(distinct[0], r"^\d+\.\d+\.\d+$", "the OS Dagster image tag is not a semver")
+
     def test_the_repo_sync_sidecar_can_tell_it_is_in_a_run_pod(self):
         import yaml
 

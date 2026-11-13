@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { CurrentUser } from '@core/kernel/auth';
 import {
   handleRpc,
@@ -212,4 +213,41 @@ test('global topbar MCP button: the overarching endpoint (no tab) exposes all to
   }
   // The global button passes no tab — 'global' is NOT a MCP_TAB entry.
   assert.ok(!MCP_TABS.includes('global' as never), '"global" must not appear in MCP_TABS — it is the overarching endpoint, not a tab');
+});
+
+/**
+ * X3 (Part F) — a tab manifest is the "authoritative contract", so every name in its `mcpTools`
+ * must be a tool module that exists: `<name>-tools.ts`, which is also how the registry's bundles
+ * are named. Nothing checked this, and two entries had rotted — `tabs/data` listed
+ * `dataset-write`, a name no module or bundle has ever had (its README had already been corrected
+ * to `data-write`, so the manifest contradicted the file the README calls authoritative), and
+ * `tabs/connections` listed `connection-lifecycle`, whose module was folded into
+ * `discovery-connection-tools.ts`. Source text only: no tab is imported.
+ */
+test('MANIFEST-MCP: every name in a tab manifest\'s mcpTools is a tool module that exists', () => {
+  // `fileURLToPath`, not `URL.pathname`: the checkout path contains spaces, which a URL
+  // percent-encodes into a path `readFileSync` cannot open.
+  const uiRoot = fileURLToPath(new URL('../../', import.meta.url));
+  const modules = new Set<string>();
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.isDirectory()) { if (e.name !== 'node_modules' && !e.name.startsWith('.')) walk(join(dir, e.name)); continue; }
+      if (e.name.endsWith('-tools.ts') && !e.name.endsWith('.test.ts')) modules.add(e.name.replace(/-tools\.ts$/, ''));
+    }
+  };
+  walk(join(uiRoot, 'core'));
+  walk(join(uiRoot, 'tabs'));
+  assert.ok(modules.has('data-write'), 'the module scan found no data-write — the scan itself is wrong');
+
+  const tabsDir = join(uiRoot, 'tabs');
+  const problems: string[] = [];
+  for (const tab of readdirSync(tabsDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)) {
+    const manifest = join(tabsDir, tab, 'manifest.ts');
+    if (!existsSync(manifest)) continue;
+    const listed = /mcpTools:\s*\[([^\]]*)\]/.exec(readFileSync(manifest, 'utf8'))?.[1] ?? '';
+    for (const m of listed.matchAll(/["']([^"']+)["']/g)) {
+      if (!modules.has(m[1])) problems.push(`tabs/${tab}/manifest.ts lists mcpTools "${m[1]}", but there is no ${m[1]}-tools.ts`);
+    }
+  }
+  assert.deepEqual(problems, [], problems.join('\n'));
 });

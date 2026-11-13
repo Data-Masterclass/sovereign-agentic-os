@@ -16,7 +16,9 @@ export const manifest: TabManifest = {
   nav: { label: 'Data', icon: '▤', href: '/data', group: 'Context' },
   routes: ["/data"],
   api: ["/api/data", "/api/tables", "/api/query", "/api/catalog"],
-  mcpTools: ["data-query", "dataset-write"],
+  // The bundle NAMES `core/mcp/register-experimental.ts` registers — `data-write`, never
+  // `dataset-write`, which no bundle has ever been called (X3, Part F).
+  mcpTools: ["data-query", "data-write"],
   policies: [],
   services: ["postgres", "opensearch", "minio", "trino", "polaris", "dbt", "dagster", "data-runner", "query-tool"],
 };
