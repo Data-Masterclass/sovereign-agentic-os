@@ -2,7 +2,6 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import 'server-only';
-import { cookies } from 'next/headers';
 import { config } from '@core/kernel/config';
 import { SESSION_COOKIE, type Role, verifySession } from '@core/kernel/session';
 import { authenticate as authUser, getPublicUser } from '@tabs/admin/lib/users';
@@ -55,6 +54,11 @@ export async function authenticate(username: string, password: string) {
 
 /** The signed-in user for the current request, or null. Server-only. */
 export async function currentUser(): Promise<CurrentUser | null> {
+  // Imported lazily, not at module top: `next/headers` is a request-bound API that only
+  // exists inside a Next.js request, and the run worker (`worker/agent-runs.ts`) imports this
+  // module for `CurrentUser`/`authenticate` without ever having a request. The standalone
+  // image does not even ship `next/headers.js`, so a static import would fail at worker boot.
+  const { cookies } = await import('next/headers');
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   const claims = await verifySession(token, config.sessionSecret);
