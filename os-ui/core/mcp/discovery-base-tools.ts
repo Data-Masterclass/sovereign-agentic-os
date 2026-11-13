@@ -75,7 +75,7 @@ export const discoveryBaseTools: McpTool[] = [
         // checkpointer). An unreachable store says so rather than pretending the run was silent.
         eventsAvailable = false;
       }
-            const { traceUrlFor, langfuseEnabled } = await import('@core/infra/langfuse');
+      const { traceUrlFor, langfuseEnabled } = await import('@core/infra/langfuse');
       return {
         runId,
         systemId: seen.systemId,

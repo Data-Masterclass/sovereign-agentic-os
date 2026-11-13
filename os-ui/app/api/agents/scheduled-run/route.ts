@@ -12,11 +12,15 @@ export const dynamic = 'force-dynamic';
  * Scheduled-run trigger (CronJob-per-schedule). A schedule CronJob curls this with
  * the shared runtime bearer (no user session) and a systemId.
  *
- * For an agentic-os LangGraph team the system is run LIVE, in-process, under the
- * system OWNER's resolved live identity — every governed tool call executes with
- * exactly the owner's role + domains (never a service principal, never escalated).
- * A deleted/disabled owner fails the run cleanly (409), never a service fallback.
- * Hermes / unmapped-legacy systems keep the runtime `runSystem` path ('scheduler').
+ * The system is run LIVE, in-process, under the system OWNER's resolved live
+ * identity — every governed tool call executes with exactly the owner's role +
+ * domains (never a service principal, never escalated). A deleted/disabled owner
+ * fails the run cleanly (409), never a service fallback.
+ *
+ * A5-review-L-1: there is no second path any more. A5 deleted `runSystem` and the
+ * Python runtime with it, so a system whose grants map to no governed tool is a 400
+ * NAMING those grants (`unmappedGrantNames`, deviation A5-4) — it is never quietly
+ * routed to a weaker executor.
  */
 export async function POST(req: Request) {
   if (!runtimeTokenOk(req.headers.get('authorization'))) {

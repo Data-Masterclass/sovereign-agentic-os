@@ -120,9 +120,12 @@ test('an unknown run id is not_found from every run-addressed tool (never forbid
     const e = errorOf(await call(creator, name, { runId: GHOST }));
     assert.equal(e.code, 'not_found', `${name} on an unknown run`);
   }
-  // get_run_trace is scope-gated the same way: missing and out-of-scope are indistinguishable.
+  // A5-review-M-1: `get_run_trace` on an AGENT run id is the OWNER gate, not the scope gate, so
+  // the answer is not_found — never forbidden (which would confirm the run exists), never a
+  // successful read of somebody else's trace.
   const trace = await call(creator, 'get_run_trace', { runId: GHOST });
-  if (trace.isError === true) assert.ok(['not_found', 'forbidden'].includes(errorOf(trace).code));
+  assert.equal(trace.isError, true, 'an unknown agent run id is an error, not an empty success');
+  assert.equal(errorOf(trace).code, 'not_found', 'owner-gated: 404 both ways');
 });
 
 test('list_runs is hard-scoped to the caller and says so in its payload', async () => {
@@ -141,6 +144,11 @@ test('TRIPWIRE: every run-addressed door calls assertRunVisible, and does it FIR
     { file: 'app/api/agents/systems/[id]/run/route.ts' },
     { file: 'app/api/agents/systems/[id]/run/stream/route.ts' },
     { file: 'app/api/agents/systems/[id]/run/diagnostics/route.ts' },
+    // A5-review-M-3: the judge route takes a `runId` from the body and writes a SCORE on that
+    // run's Langfuse trace, so it is a run-addressed door like the others.
+    { file: 'app/api/agents/systems/[id]/evaluate/route.ts' },
+    // A5-review-M-1: the monitoring trace read is owner-gated for an agent run id.
+    { file: 'core/mcp/monitoring-tools.ts' },
   ];
   for (const d of doors) {
     const text = src(d.file);
@@ -148,7 +156,7 @@ test('TRIPWIRE: every run-addressed door calls assertRunVisible, and does it FIR
     // …and before anything that mutates or streams: the A4-review-H-1 defect was a gate that
     // fired AFTER the row had been re-queued and the history had already streamed.
     const gate = text.indexOf('assertRunVisible(');
-    for (const sideEffect of ['enqueueRun(', 'resumeQueuedRun(', 'readObservations(', 'tailRunEvents(', 'eventsAfter(']) {
+    for (const sideEffect of ['enqueueRun(', 'resumeQueuedRun(', 'readObservations(', 'tailRunEvents(', 'eventsAfter(', 'scoreTrace(', 'fetchTrace(']) {
       const at = text.indexOf(sideEffect);
       if (at >= 0) assert.ok(gate >= 0 && gate < at, `${d.file}: the owner gate must precede ${sideEffect}`);
     }
