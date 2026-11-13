@@ -173,6 +173,43 @@ Not a compiled system, left as is: `core/kernel/artifacts.ts` seeded registry re
 - [ ] Make `README.md`, `docs/components/os-ui.md`, `docs/components/langfuse.md`, `docs/components/litellm.md`, the runtime badge, `core/kernel/licenses.ts` and `sbom.cdx.json` true. Explain in `os-ui/ARCHITECTURE.md` how a `system.yaml` becomes a StateGraph.
 - [ ] MCP: `run_agent_system` returns `runId` and `traceUrl`; add `resume_agent_run` and `get_agent_run` (state, held approvals); `decide_approval` resumes the thread. `tabs/agents/README.md` lists them.
 
+#### A5 — the parity gate, fixture by fixture (run 2026-11-13, before any deletion)
+
+`node --test tabs/agents/lib/engine/parity.test.ts` — 28 tests, 0 failures, 2 `todo`. The harness
+drives BOTH engines per fixture in one process (`replayWalker` vs `replayGraph`/`scriptGraph`), so
+there is no `AGENTS_ENGINE` to set: the table IS the two-engine comparison.
+
+| Fixture | walker | langgraph | verdict |
+|---|---|---|---|
+| `agent-template-analyst` | green | green (replayed transcript) | identical |
+| `agent-template-blank` | green | green (replayed transcript) | identical |
+| `agent-template-recommender` | green | green (replayed transcript) | identical |
+| `agent-template-researcher` | green | green (replayed transcript) | identical |
+| `agent-template-reviewer` | green | green (replayed transcript) | identical |
+| `shape-single-read` | green | green (replayed transcript) | identical |
+| `shape-supervisor-two-members` | green | green (scripted route, declared order) | identical |
+| `template-analyze` | green | green (replayed transcript) | identical |
+| `template-blank` | green | green (replayed transcript) | identical |
+| `template-evaluate` | green | green (replayed transcript) | identical |
+| `template-recommend` | green | green (replayed transcript) | identical |
+| `software-team` | `todo` (guarded; the walker ignores its five `when` guards) | green — same path, tools and final text as the walker golden, **plus** five compile warnings naming `plan_ready`, `committed`, `tests_failed`, `tests_passed`, `reported` | identical path, honest warnings |
+| `shape-guarded-handoff-held-write` | `todo` (guarded) | green — path `['researcher']`, `held=0` | **deliberate divergence** |
+
+P2 (abort after node 1 → resume on the same thread) and "resume of an unknown thread is a typed
+error" are green. Full suite at the gate: **4988 tests, 0 failures, 7 `todo`**; `check-structure`
+no new violations.
+
+**The one divergence, and why it is not a parity failure.** `shape-guarded-handoff-held-write`
+carries `when: state.findings_ready`, which nothing sets. The walker ignored the guard, visited
+`publisher` and held its `request_promotion` write (`held=1` in the golden). The LangGraph engine
+evaluates the guard, finds it false, routes to END and never visits `publisher`. The audit named
+exactly this: `when` guards, conditional edges, supervisor return and channels were *silently
+discarded* by the walkers. "The walker ignored it" is not parity to preserve — the golden records
+the defect on purpose (`assert.ok(golden.path.includes('publisher'), 'the walker golden still
+records the defect')`) and the HANDOFF-GUARD test asserts the new, correct behaviour. The gate is
+therefore **passed**: every fixture either matches or diverges in the direction the plan requires,
+and the divergence is pinned by a test rather than by a comment.
+
 ---
 
 ## Part B — Data products: dbt + Dagster + Trino
