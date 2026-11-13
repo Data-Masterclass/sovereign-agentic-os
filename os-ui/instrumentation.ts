@@ -168,6 +168,35 @@ export async function register(): Promise<void> {
     })();
   }
 
+  // AGENT SYSTEMS IN GIT (engine rebuild Part D): the same flag, the same repos, the SAME commit
+  // discipline as the data side — with `DATA_PROJECT_GIT=true` every create / edit / grant change /
+  // build / promote / rename / move / archive / delete of an agent system regenerates the domain's
+  // `agents/**` subtree and commits it as the acting user. Installing the hook also RESERVES that
+  // subtree, so the dbt generator's whole-tree commit keeps it. OFF ⇒ nothing is installed.
+  // Fail-soft: a wiring error is logged, never a boot failure.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { config } = await import('./core/kernel/config.ts');
+        if (!config.dataProjectGit) {
+          console.info('[os-ui] agent projects: DATA_PROJECT_GIT off — agent-system changes are not committed to git');
+          return;
+        }
+        const { installAgentProjectCommitHook } = await import('./tabs/agents/lib/git/commit.ts');
+        const { getPublicUser } = await import('./tabs/admin/lib/users.ts');
+        installAgentProjectCommitHook({
+          resolveActor: async (id) => {
+            const u = await getPublicUser(id).catch(() => null);
+            return { id, name: u?.name, email: u?.email };
+          },
+        });
+        console.info(`[os-ui] agent projects: committing every agent-system change to ${config.reposDir}/<domain>.git (agents/)`);
+      } catch (err) {
+        console.error(`[os-ui] agent projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
   // TRINO ACCESS RULES (engine rebuild B3; triggers fixed in B3-review-H-2/H-3/H-4): when
   // TRINO_ACCESS_RULES=true, write the file-based access-control rules Trino chains after OPA —
   // who the dbt service user may act as, and which principals own which Iceberg schema — from the
