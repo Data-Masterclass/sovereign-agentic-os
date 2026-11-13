@@ -247,6 +247,157 @@ schedules:
         self.assertEqual(osp.parse_schedules("version: 1"), [])
 
 
+# The EXACT bytes `tabs/data/lib/dbt/source-assets.ts` emits (golden
+# fixtures/append-sync-with-cursor.golden.json → `os/sources.yml`). Engine rebuild B3.
+GENERATED_SOURCES_YML = """version: 1
+source_assets:
+  - source: wh__public
+    table: accounts
+    database: wh
+    schema: public
+    dataset: ds_accts001
+    principal: bea
+    downstream: gold_accounts
+    mode: merge
+    observe: row_count
+    cron: 0 6 * * *
+    timezone: UTC
+    freshness_minutes: 2880
+    enabled: false
+  - source: wh__public
+    table: events
+    database: wh
+    schema: public
+    dataset: ds_events01
+    principal: bea
+    downstream: silver_events
+    mode: append
+    observe: max_updated
+    updated_column: updated_at
+    cron: "*/15 * * * *"
+    timezone: UTC
+    freshness_minutes: 30
+    enabled: true
+"""
+
+
+class SourceAssets(unittest.TestCase):
+    """`os/sources.yml` → observable source assets (engine rebuild B3, checklist D7)."""
+
+    def test_the_os_generated_sources_yml_parses_into_source_assets(self):
+        out = osp.parse_source_assets(GENERATED_SOURCES_YML)
+        self.assertEqual([(a.table, a.observe, a.updated_column) for a in out], [("accounts", "row_count", None), ("events", "max_updated", "updated_at")])
+        accounts, events = out
+        self.assertEqual(events.downstream, "silver_events")
+        self.assertEqual(events.principal, "bea")
+        self.assertEqual(osp.freshness_seconds(events), 30 * 60)
+        self.assertEqual(osp.freshness_seconds(accounts), 2880 * 60)
+        self.assertFalse(accounts.enabled)
+
+    def test_the_asset_key_is_the_key_dagster_dbt_gives_the_dbt_source(self):
+        events = osp.parse_source_assets(GENERATED_SOURCES_YML)[1]
+        # dagster-dbt keys a source `[<source_name>, <table>]`; the OS translator prefixes the
+        # domain. Observing THAT key describes the node the silver model depends on.
+        self.assertEqual(osp.source_asset_key("sales", events), ["sales", "wh__public", "events"])
+
+    def test_the_observation_reads_exactly_one_statement_per_mode(self):
+        accounts, events = osp.parse_source_assets(GENERATED_SOURCES_YML)
+        self.assertEqual(osp.observe_sql(events), 'select max("updated_at") as max_updated, count(*) as row_count from wh.public.events')
+        self.assertEqual(osp.observe_sql(accounts), "select count(*) as row_count from wh.public.accounts")
+        for sql in (osp.observe_sql(events), osp.observe_sql(accounts)):
+            self.assertNotIn(";", sql)
+
+    def test_an_entry_that_cannot_be_probed_safely_is_dropped(self):
+        bad = """
+version: 1
+source_assets:
+  - source: wh__public
+    table: "events; drop table x"
+    schema: public
+    dataset: ds_a
+    principal: bea
+    downstream: silver_a
+    observe: row_count
+    cron: "0 * * * *"
+  - source: wh__public
+    table: events
+    schema: "public schema"
+    dataset: ds_b
+    principal: bea
+    downstream: silver_b
+    observe: row_count
+    cron: "0 * * * *"
+  - source: wh__public
+    table: events
+    schema: public
+    dataset: ds_c
+    principal: bea
+    downstream: silver_c
+    observe: max_updated
+    cron: "0 * * * *"
+  - source: wh__public
+    table: events
+    schema: public
+    dataset: ds_d
+    principal: bea
+    downstream: silver_d
+    observe: something_else
+    cron: "0 * * * *"
+  - "a string, not a mapping"
+  - source: wh__public
+    table: ok_table
+    schema: public
+    dataset: ds_ok
+    principal: bea
+    downstream: silver_ok
+    observe: row_count
+    cron: "0 * * * *"
+"""
+        out = osp.parse_source_assets(bad)
+        self.assertEqual([a.dataset for a in out], ["ds_ok"], "a bad identifier, a missing cursor and an unknown mode are all dropped")
+        self.assertIsNone(osp.freshness_seconds(out[0]), "no freshness_minutes ⇒ no freshness claim")
+        self.assertEqual(osp.parse_source_assets(""), [])
+        self.assertEqual(osp.parse_source_assets("version: 1"), [])
+
+    def test_a_project_without_the_file_has_no_source_assets(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "target"))
+            with open(os.path.join(root, "target", "manifest.json"), "w", encoding="utf-8") as fh:
+                json.dump({"nodes": {}}, fh)
+            project, skipped = osp.load_project("sales", root, "a" * 40)
+            self.assertIsNone(skipped)
+            self.assertEqual(project.source_assets, [])
+            os.makedirs(os.path.join(root, "os"))
+            with open(os.path.join(root, "os", "sources.yml"), "w", encoding="utf-8") as fh:
+                fh.write(GENERATED_SOURCES_YML)
+            project, _ = osp.load_project("sales", root, "a" * 40)
+            self.assertEqual([a.table for a in project.source_assets], ["accounts", "events"])
+
+
+class PerSchedulePinning(unittest.TestCase):
+    """Review B2-review-L4: a run pod checks out ITS domain, not every domain."""
+
+    def test_pinned_one_pins_exactly_one_domain_and_round_trips(self):
+        pin = osp.pinned_one("sales", "b" * 40)
+        self.assertEqual(pin, "sales=" + "b" * 40)
+        self.assertEqual(osp.parse_pinned(pin), {"sales": "b" * 40})
+
+    def test_the_run_tag_of_a_schedule_carries_only_its_own_domain(self):
+        s = osp.Schedule(dataset="ds_1", model="silver_x", select="silver_x+", cron="0 6 * * *", principal="bea", enabled=True)
+        tags = osp.schedule_tags("sales", s, "c" * 40, osp.pinned_one("sales", "c" * 40))
+        env = json.loads(tags["dagster-k8s/config"])["container_config"]["env"]
+        pinned = [e["value"] for e in env if e["name"] == "OS_PINNED_COMMITS"][0]
+        self.assertEqual(osp.parse_pinned(pinned), {"sales": "c" * 40}, "one domain per run pod")
+        self.assertEqual([e["value"] for e in env if e["name"] == "OS_PRINCIPAL"], ["bea"])
+
+    def test_repo_py_pins_per_domain_not_per_workspace(self):
+        """A source tripwire: `_wire_project` must derive its pin from its OWN project."""
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(here, "repo.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn("pinned_env = osp.pinned_one(p.domain, p.sha)", src)
+
+
 class Maintenance(unittest.TestCase):
     """The weekly Iceberg job needs a schema AND the principal that owns it — never a guess."""
 
@@ -472,6 +623,21 @@ class Quarantine(unittest.TestCase):
         self.assertEqual(osp.consecutive_failures(["STARTED", "FAILURE", "FAILURE"]), 2)
         terminal = [s for s in ["FAILURE"] * 10 if s in osp.TERMINAL_STATUSES]
         self.assertTrue(osp.should_pause(terminal, 10))
+
+
+class SanitizeGolden(unittest.TestCase):
+    """The shared collision golden — asserted here AND by core/infra/dagster.test.ts (B3)."""
+
+    def test_sanitize_all_matches_the_shared_golden(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "sanitize-collisions.golden.json"), encoding="utf-8") as fh:
+            golden = json.load(fh)
+        self.assertEqual(osp.sanitize_all(golden["inputs"]), golden["expected"])
+        # The property the OS depends on: a name never changes because an unrelated domain appeared.
+        subset = [n for n in golden["inputs"] if n != "finance"]
+        for name in subset:
+            if list(golden["inputs"]).count(name) == 1 and osp.sanitize(name) not in {osp.sanitize(o) for o in subset if o != name}:
+                self.assertEqual(osp.sanitize_all(subset)[name], golden["expected"][name], name)
 
 
 class ChartContract(unittest.TestCase):

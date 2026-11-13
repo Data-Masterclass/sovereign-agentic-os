@@ -485,6 +485,15 @@ export const config = {
   // REFERENCE — never the token). See tabs/data/lib/dbt/mirror.ts.
   dataProjectMirrorsIndex: env('DATA_PROJECT_MIRRORS_INDEX', 'os-data-project-mirrors'),
 
+  // ---- Trino file-based access control (engine rebuild B3). When TRINO_ACCESS_RULES=true the OS
+  // reconciles the `trino-access-rules` ConfigMap from real domain membership at boot and on a
+  // directory change (core/infra/trino-rules-server.ts); Trino re-reads the file on its
+  // refresh-period. The chart's bootstrap file bounds IMPERSONATION only, so with this off the
+  // engine behaves exactly as before. `trinoServiceUser` must equal the chart's
+  // `trino.accessControl.serviceUser` and the generated `profiles.yml` user.
+  trinoAccessRules: env('TRINO_ACCESS_RULES', '').toLowerCase() === 'true',
+  trinoServiceUser: env('TRINO_DBT_USER', 'dbt-runner'),
+
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
   dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),
   // The `sovereign` code location (engine rebuild B2): one location for every domain's dbt

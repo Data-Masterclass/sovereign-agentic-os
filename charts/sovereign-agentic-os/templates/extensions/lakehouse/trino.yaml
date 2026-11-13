@@ -12,6 +12,8 @@
 {{- $t := .Values.trino }}
 {{- $pl := .Values.polaris }}
 {{- $ice := $t.catalog.iceberg }}
+{{- $ac := $t.accessControl | default dict }}
+{{- $acOn := and $ac.enabled $t.opa.enabled }}
 {{- if eq .Values.global.profile "local" }}
 apiVersion: v1
 kind: Secret
@@ -47,6 +49,13 @@ data:
     spill-enabled=true
     spiller-spill-path=/data/trino/spill
     {{- end }}
+    {{- if $acOn }}
+    # TWO chained system access controls (engine rebuild B3): OPA (row filters, column
+    # masks, the foreign personal_* deny) AND the file-based rules (impersonation +
+    # schema ownership). Trino requires EVERY one of them to allow, so the file can only
+    # narrow the policy — never widen it.
+    access-control.config-files=/etc/trino/access-control-opa.properties,/etc/trino/access-control-file.properties
+    {{- end }}
   node.properties: |
     node.environment={{ $t.environment }}
     node.data-dir=/data/trino
@@ -65,12 +74,21 @@ data:
   # Governance = the official Trino->OPA access-control plugin, pointed at the SAME
   # OPA that governs agent tools (package `trino`: row filter by domain + column
   # mask by sensitivity). Tool/domain ACLs stay in package agentic.authz.
+  {{- $opaProps := printf "access-control.name=opa\nopa.policy.uri=%s/v1/data/trino/allow\nopa.policy.row-filters-uri=%s/v1/data/trino/rowFilters\nopa.policy.column-masking-uri=%s/v1/data/trino/columnMask\nopa.policy.batch-column-masking-uri=%s/v1/data/trino/batchColumnMask\n" $t.opa.uri $t.opa.uri $t.opa.uri $t.opa.uri }}
+  {{- if $acOn }}
+  # Chained: BOTH files are listed in `access-control.config-files` above.
+  access-control-opa.properties: |
+{{ $opaProps | indent 4 }}
+  access-control-file.properties: |
+    access-control.name=file
+    # NOT a subPath mount — the kubelet only refreshes a whole-ConfigMap volume, and the OS
+    # rewrites `rules.json` whenever domain membership changes.
+    security.config-file=/etc/trino/access-rules/rules.json
+    security.refresh-period={{ $ac.refreshPeriod | default "30s" }}
+  {{- else }}
   access-control.properties: |
-    access-control.name=opa
-    opa.policy.uri={{ $t.opa.uri }}/v1/data/trino/allow
-    opa.policy.row-filters-uri={{ $t.opa.uri }}/v1/data/trino/rowFilters
-    opa.policy.column-masking-uri={{ $t.opa.uri }}/v1/data/trino/columnMask
-    opa.policy.batch-column-masking-uri={{ $t.opa.uri }}/v1/data/trino/batchColumnMask
+{{ $opaProps | indent 4 }}
+  {{- end }}
   {{- end }}
   {{- if $t.resourceGroups.enabled }}
   {{- $rg := $t.resourceGroups }}
@@ -114,6 +132,78 @@ data:
       ]
     }
   {{- end }}
+{{- if $acOn }}
+---
+{{- /*
+  BOOTSTRAP access rules. os-ui OVERWRITES `rules.json` in this ConfigMap from real domain
+  membership (core/infra/trino-rules-server.ts, same JSON shape, principals enumerated) and
+  Trino re-reads the file within `security.refresh-period`. Until it does, ownership is left
+  exactly as it is WITHOUT this file — `{"owner": true}` / full privileges — because closing it
+  here would deny every CTAS the OS already runs as the domain principal on a fresh install.
+  Impersonation IS bounded from the first second: the dbt service user may act as something
+  shaped like an OS principal and as nothing else, and no other user may become anyone but
+  themselves. NOTHING SECRET MAY EVER BE PUT IN THIS FILE — it is a ConfigMap.
+  Helm owns the bootstrap value, so a `helm upgrade` resets it; the OS reconciles again at boot.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-access-rules
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+  annotations:
+    # The OS is the runtime author of `rules.json`; Helm only seeds it.
+    soa.sovereign-os/reconciled-by: os-ui
+data:
+  rules.json: |
+    {
+      "catalogs": [
+        {
+          "allow": "all"
+        }
+      ],
+      "schemas": [
+        {
+          "owner": true
+        }
+      ],
+      "tables": [
+        {
+          "privileges": [
+            "SELECT",
+            "INSERT",
+            "DELETE",
+            "UPDATE",
+            "OWNERSHIP"
+          ]
+        }
+      ],
+      "impersonation": [
+        {
+          "original_user": "^{{ $ac.serviceUser | default "dbt-runner" }}$",
+          "new_user": "^{{ $ac.principalPattern | default "[A-Za-z0-9][A-Za-z0-9._-]{0,63}" }}$",
+          "allow": true
+        },
+        {
+          "original_user": "^{{ $ac.serviceUser | default "dbt-runner" }}$",
+          "new_user": ".*",
+          "allow": false
+        },
+        {
+          "original_user": "(.*)",
+          "new_user": "$1",
+          "allow": true
+        },
+        {
+          "original_user": ".*",
+          "new_user": ".*",
+          "allow": false
+        }
+      ]
+    }
+{{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -281,7 +371,13 @@ spec:
             - { name: config, mountPath: /etc/trino/node.properties, subPath: node.properties, readOnly: true }
             - { name: config, mountPath: /etc/trino/jvm.config, subPath: jvm.config, readOnly: true }
             - { name: config, mountPath: /etc/trino/log.properties, subPath: log.properties, readOnly: true }
-            {{- if $t.opa.enabled }}
+            {{- if $acOn }}
+            - { name: config, mountPath: /etc/trino/access-control-opa.properties, subPath: access-control-opa.properties, readOnly: true }
+            - { name: config, mountPath: /etc/trino/access-control-file.properties, subPath: access-control-file.properties, readOnly: true }
+            # Directory mount, NOT subPath: only a whole-ConfigMap volume is refreshed by the
+            # kubelet, and the OS rewrites rules.json on every membership change.
+            - { name: access-rules, mountPath: /etc/trino/access-rules, readOnly: true }
+            {{- else if $t.opa.enabled }}
             - { name: config, mountPath: /etc/trino/access-control.properties, subPath: access-control.properties, readOnly: true }
             {{- end }}
             {{- if $t.resourceGroups.enabled }}
@@ -295,6 +391,11 @@ spec:
         - name: config
           configMap:
             name: trino-config
+        {{- if $acOn }}
+        - name: access-rules
+          configMap:
+            name: trino-access-rules
+        {{- end }}
         - name: catalog
           configMap:
             name: trino-catalog

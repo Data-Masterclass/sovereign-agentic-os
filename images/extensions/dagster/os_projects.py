@@ -219,6 +219,113 @@ def maintenance_job_name(domain: str, schema: str) -> str:
     return f"{sanitize(domain)}__maintenance__{sanitize(schema)}"
 
 
+# --------------------------------------------------------------- source assets --
+
+#: A Trino identifier the OS generator writes. Anything else is REFUSED, not quoted-and-hoped:
+#: `observe_sql` interpolates these into SQL, so the allowlist is the whole defence.
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,127}$")
+
+
+@dataclass(frozen=True)
+class SourceAsset:
+    """One external (federated) table a sync reads — `os/sources.yml`, engine rebuild B3.
+
+    The Dagster asset key is `[<domain>, <source>, <table>]`: exactly the key dagster-dbt derives
+    for the dbt source under the OS's prefixing translator, so OBSERVING this asset describes the
+    very node the silver model depends on instead of creating a parallel one.
+    """
+
+    source: str
+    table: str
+    schema: str
+    dataset: str
+    principal: str
+    #: The model that reads it (the sync landing) — the downstream edge in the asset graph.
+    downstream: str
+    observe: str  # "max_updated" | "row_count"
+    cron: str
+    database: Optional[str] = None
+    updated_column: Optional[str] = None
+    #: Minutes after which the source counts as late; None ⇒ no freshness claim.
+    freshness_minutes: Optional[int] = None
+    enabled: bool = True
+
+
+def parse_source_assets(text: str) -> List[SourceAsset]:
+    """`os/sources.yml` → source assets. An entry the probe could not safely query is DROPPED.
+
+    Dropped, not degraded: an entry whose catalog/schema/table/column is not a plain identifier
+    cannot be interpolated into the observation SQL, and a half-built probe is worse than none.
+    """
+    doc = _load_yaml(text) or {}
+    entries = doc.get("source_assets", []) if isinstance(doc, dict) else []
+    out: List[SourceAsset] = []
+    for e in entries or []:
+        if not isinstance(e, dict):
+            continue
+        source = str(e.get("source") or "").strip()
+        table = str(e.get("table") or "").strip()
+        schema = str(e.get("schema") or "").strip()
+        dataset = str(e.get("dataset") or "").strip()
+        principal = str(e.get("principal") or "").strip()
+        downstream = str(e.get("downstream") or "").strip()
+        observe = str(e.get("observe") or "").strip()
+        cron = str(e.get("cron") or "").strip()
+        database = str(e.get("database") or "").strip() or None
+        updated = str(e.get("updated_column") or "").strip() or None
+        if not (source and table and schema and dataset and principal and downstream and cron):
+            continue
+        if observe not in ("max_updated", "row_count"):
+            continue
+        if observe == "max_updated" and not updated:
+            continue
+        if not all(_IDENT_RE.match(v) for v in (table, schema, *( [database] if database else [] ), *( [updated] if updated else [] ))):
+            continue
+        fresh = e.get("freshness_minutes")
+        minutes = int(fresh) if isinstance(fresh, int) and fresh > 0 else None
+        out.append(
+            SourceAsset(
+                source=source,
+                table=table,
+                schema=schema,
+                dataset=dataset,
+                principal=principal,
+                downstream=downstream,
+                observe=observe,
+                cron=cron,
+                database=database,
+                updated_column=updated,
+                freshness_minutes=minutes,
+                enabled=_as_bool(e.get("enabled", True)),
+            )
+        )
+    return sorted(out, key=lambda a: (a.source, a.table))
+
+
+def source_asset_key(domain: str, a: SourceAsset) -> List[str]:
+    """`[<domain>, <source>, <table>]` — the key dagster-dbt gives the dbt source."""
+    return [domain, a.source, a.table]
+
+
+def observe_sql(a: SourceAsset) -> str:
+    """The ONE read an observation performs, as the asset's own principal.
+
+    `max_updated` → the newest cursor value plus the row count (the same column the incremental
+    model filters on, so "the source moved" and "the sync has work" are the same fact).
+    `row_count`   → the row count alone, which is all a non-timestamp cursor supports.
+    Every identifier was allowlisted by `parse_source_assets`; nothing user-authored reaches here.
+    """
+    rel = ".".join(p for p in (a.database, a.schema, a.table) if p)
+    if a.observe == "max_updated" and a.updated_column:
+        return f'select max("{a.updated_column}") as max_updated, count(*) as row_count from {rel}'
+    return f"select count(*) as row_count from {rel}"
+
+
+def freshness_seconds(a: SourceAsset) -> Optional[int]:
+    """The freshness window in seconds, or None when the generator made no claim."""
+    return a.freshness_minutes * 60 if a.freshness_minutes else None
+
+
 # -------------------------------------------------------------------- projects --
 
 
@@ -232,6 +339,8 @@ class Project:
     schedules: List[Schedule] = field(default_factory=list)
     #: Iceberg schema → OS principal that owns it (domain schema → domain; personal_<uid> → uid).
     schemas: Dict[str, str] = field(default_factory=dict)
+    #: `os/sources.yml` — the federated tables a sync reads, as OBSERVABLE source assets (B3).
+    source_assets: List["SourceAsset"] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -256,6 +365,17 @@ def parse_pinned(value: Optional[str]) -> Dict[str, str]:
 
 def pinned_env(projects: Iterable[Project]) -> str:
     return ",".join(f"{p.domain}={p.sha}" for p in sorted(projects, key=lambda p: p.domain))
+
+
+def pinned_one(domain: str, sha: str) -> str:
+    """`OS_PINNED_COMMITS` for ONE domain — what a run pod of that domain's job needs.
+
+    Review B2-review-L4: baking the WHOLE workspace's pin list into every run tag made each run
+    pod clone and `dbt parse` every domain before it could start (cold-start cost linear in the
+    number of domains). A schedule, a maintenance job and an OS launch each touch exactly one
+    domain, so they pin exactly that one.
+    """
+    return f"{domain}={sha}"
 
 
 def current_sha(domain_dir: str) -> Optional[str]:
@@ -312,7 +432,27 @@ def load_project(domain: str, sha_dir: str, sha: str) -> Tuple[Optional[Project]
                 schedules = parse_schedules(fh.read())
         except Exception as e:  # noqa: BLE001
             return None, Skipped(domain, f"os/schedules.yml unreadable: {e}")
-    return Project(domain=domain, path=sha_dir, sha=sha, manifest=manifest, schedules=schedules, schemas=schemas_from_manifest(manifest, domain)), None
+    source_assets: List[SourceAsset] = []
+    src_path = os.path.join(sha_dir, "os", "sources.yml")
+    if os.path.isfile(src_path):
+        try:
+            with open(src_path, encoding="utf-8") as fh:
+                source_assets = parse_source_assets(fh.read())
+        except Exception as e:  # noqa: BLE001 — one unreadable file must not drop the domain
+            source_assets = []
+            del e
+    return (
+        Project(
+            domain=domain,
+            path=sha_dir,
+            sha=sha,
+            manifest=manifest,
+            schedules=schedules,
+            schemas=schemas_from_manifest(manifest, domain),
+            source_assets=source_assets,
+        ),
+        None,
+    )
 
 
 def ensure_checkout(

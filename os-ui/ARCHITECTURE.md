@@ -563,6 +563,46 @@ repository with its `main` head and the activity of each schedule principal; the
 and the inactive-principal sensor poll it with the cluster-internal runtime bearer, a signed-in user
 sees only their own domains.
 
+## Data products execute as the principal
+
+(Phase B3, same flag.)
+
+**There is no service identity anywhere in the execution path.** A read through `query_data` or the
+Data tab runs on Trino as the caller's domain principal — or as their uid when the SQL touches their
+own `personal_<uid>` lane, because even the owner is denied their own personal table under a domain
+principal. A write runs as `user.domains[0] ?? user.id`. A dbt model in a Dagster run pod connects as
+`dbt-runner` and acts as `env_var('OS_PRINCIPAL')`, which the `dagster-k8s/config` tag sets per run
+from the schedule's principal, the maintenance schema's owner, or the principal the OS passed. A
+source observation connects as the dataset owner. The full table is
+`docs/components/trino.md` → "Who runs as whom", and it is a table because the answer must be one
+name per path, not a shrug.
+
+**What the engine enforces, and what it cannot yet.** Trino chains two system access controls and
+requires both to allow, so the second can only narrow: the OPA plugin keeps row filters, column masks
+and the foreign-`personal_*` deny; a generated `rules.json` adds impersonation and schema ownership.
+The file is one shape with two renderers — the chart's bootstrap (impersonation bounded by the id
+SHAPE, ownership untouched so a fresh install still works) and the OS's reconciled form (principals
+enumerated, ownership closed), written into the same ConfigMap and re-read within
+`security.refresh-period`. `core/infra/trino-rules.ts` is pure and golden-tested, including the
+property that matters: the service user can become an OS principal and nothing else — not `root`,
+not a deactivated user, not `admin; drop`. **The limit to know:** the chart does not set
+`http-server.authentication.type`, so Trino does not authenticate clients and the impersonation
+rules have no authenticated `original_user` to match. The schema-ownership rules bite immediately;
+making impersonation load-bearing needs authentication and a credential, which is a deploy decision
+and is written down rather than assumed.
+
+**Lineage is dbt's graph, not the OS's memory.** `datasetLineage` reads Dagster's `assetNodes` —
+which dagster-dbt derives from `manifest.json`'s `parent_map` — and folds it into the same
+`LineageGraph` the registry path returns, with one additive field saying which source answered.
+Reading `target/manifest.json` directly was rejected because it lives in a pod volume os-ui cannot
+mount. The fallback is explicit and labelled; an empty graph is never passed off as the truth.
+
+**Parity is a test the deletion will be gated on.** `tabs/data/lib/dbt/parity.ts` compares, per
+fixture, the SQL the OS runs today with the SQL dbt will run. It is honest about its reach: because
+a model body IS the recorded CTAS after rewriting, the test proves the translation is faithful and
+invertible — and catches any future change to the rewriter, the stripper or the lane/FQN mapping —
+but not that two materialisations agree row for row. That needs `EXCEPT ALL` both ways on a cluster.
+
 ## Things this codebase will punish you for
 
 Hard-won, each from a real failure. Read before writing a route, a test, or an

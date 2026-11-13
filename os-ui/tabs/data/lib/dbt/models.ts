@@ -27,6 +27,7 @@ import { physicalSlug, personalSchema, domainSchema, sanitizeIdent } from '@tabs
 import { DEFAULT_LOOKBACK_MINUTES } from '@tabs/data/lib/sync-sql';
 import { qident, qlit, stripJinja } from '@tabs/data/lib/dbt/emit';
 import { columnDocs } from '@tabs/data/lib/dbt/schema';
+import { freshnessMinutesFor } from '@tabs/data/lib/dbt/source-assets';
 import type { ProjectSnapshot, SnapshotDataset } from '@tabs/data/lib/dbt/snapshot';
 
 export type ModelKind = 'compiled' | 'pass-through' | 'sync-full-refresh' | 'sync-append' | 'sync-merge';
@@ -78,9 +79,37 @@ export type ExternalAsset = {
   note: string;
 };
 
+/**
+ * One FEDERATED source table a sync reads, as an OBSERVABLE Dagster asset (`os/sources.yml`,
+ * engine rebuild B3). The asset key is `[<domain>, <source>, <table>]` — the key dagster-dbt
+ * derives for the dbt source — so the silver model that reads it depends on this very node and the
+ * lineage graph has no dangling edge. The Iceberg Bronze landing is deliberately NOT here: it lives
+ * in the same lakehouse and carries `_loaded_at` source freshness instead.
+ */
+export type SourceAssetEntry = {
+  source: string;
+  table: string;
+  database?: string;
+  schema: string;
+  dataset: string;
+  principal: string;
+  /** The model that reads this source (the sync landing) — the downstream edge. */
+  model: string;
+  mode: DatasetSync['mode'];
+  observe: 'max_updated' | 'row_count';
+  /** The timestamp cursor column `max_updated` probes. */
+  updatedColumn?: string;
+  cron: string;
+  /** Minutes after which the source counts as late; null when the cron shape is unknown. */
+  freshnessMinutes: number | null;
+  enabled: boolean;
+};
+
 export type ModelPlanSet = {
   models: ModelPlan[];
   sources: SourceTable[];
+  /** Federated sync sources as observable assets (`os/sources.yml`). */
+  sourceAssets: SourceAssetEntry[];
   externals: ExternalAsset[];
   /** Sanitised uids that own personal-lane models (drives `+schema` in dbt_project.yml). */
   personalUids: string[];
@@ -236,6 +265,7 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
   const modelByFqn = new Map<string, string>();
   const registered: Registered[] = [];
   const externals: ExternalAsset[] = [];
+  const sourceAssets: SourceAssetEntry[] = [];
   const sources = new Map<string, SourceTable>();
   const outOfBandByDataset = new Map<string, Layer[]>();
 
@@ -332,6 +362,26 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
         loadedAt: false,
         ...(catalog ? {} : { meta: { os_connection: d.sync.connectionId, os_catalog: 'unresolved' } }),
       });
+      // The federated table becomes an OBSERVABLE asset (B3). Only when its catalog resolved: a
+      // probe needs a real `catalog.schema.table` to query, and an unresolved connection has none.
+      if (catalog) {
+        const isTs = d.sync.cursor?.kind === 'timestamp';
+        sourceAssets.push({
+          source: sourceName,
+          table: d.sync.source.table,
+          database: catalog,
+          schema: d.sync.source.schema,
+          dataset: d.id,
+          principal: d.owner,
+          model: r.name,
+          mode: d.sync.mode,
+          observe: isTs ? 'max_updated' : 'row_count',
+          ...(isTs && d.sync.cursor ? { updatedColumn: d.sync.cursor.column } : {}),
+          cron: d.sync.schedule.cron,
+          freshnessMinutes: freshnessMinutesFor(d.sync.schedule.cron),
+          enabled: d.sync.enabled,
+        });
+      }
       ({ sql, kind } = syncModelSql(d, d.sync, sourceName, r.name));
     } else {
       const artifactPath = d.versions[r.layer].artifact;
@@ -411,5 +461,6 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
   const layerDirs = LAYER_ORDER.filter((l) => models.some((m) => m.dir === `models/${l}`));
   const sourceList = [...sources.values()].sort((a, b) => (a.source + '::' + a.table).localeCompare(b.source + '::' + b.table));
   externals.sort((a, b) => a.dataset.localeCompare(b.dataset));
-  return { models, sources: sourceList, externals, personalUids, layerDirs };
+  sourceAssets.sort((a, b) => `${a.source}::${a.table}`.localeCompare(`${b.source}::${b.table}`));
+  return { models, sources: sourceList, sourceAssets, externals, personalUids, layerDirs };
 }

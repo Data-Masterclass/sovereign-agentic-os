@@ -46,6 +46,7 @@ lives in `os_projects.py` (pure, unit-tested with `python3 -m unittest discover 
 | `<domain>__maintenance__<schema>` | weekly (Sun 03:00 UTC) `dbt run-operation os_maintenance` → `ALTER TABLE … EXECUTE optimize` + `expire_snapshots(retention_threshold => '7d')` for every table/incremental model in that schema, as the schema's owning principal |
 | `os_quarantine` | run-failure **sensor**: after `OS_QUARANTINE_THRESHOLD` (10, the OS's own threshold) consecutive failures of a schedule's job it **pauses the schedule** — this replaces the OS's `isQuarantined` |
 | `os_principals` | **sensor** (5 min): reads `GET /api/data/projects` and pauses the schedules whose principal the OS reports **inactive** (a deactivated owner), rather than running them |
+| `[<domain>, <source>, <table>]` | **observable source asset** per entry in the repo's `os/sources.yml` (engine rebuild B3) — the federated warehouse table a sync reads. See below. |
 
 **Tags on every run** — `os/domain`, `os/commit`, `os/pinned`, and where applicable `os/dataset`,
 `os/principal`, `os/schedule`, `os/action`, `os/layer`, `os/user`, `os/surface`, `os/batch_id`,
@@ -65,6 +66,53 @@ logged and **skipped**. One broken repository can never take the location down.
 The OS passes `--vars os_batch_id=<id>` on a **retry** (re-using the failed run's `os/batch_id`), so
 that retry re-covers exactly the same slice. A plain re-run gets dbt's `invocation_id` and therefore
 re-delivers the lookback rows as a new batch — that is the honest semantic, not a bug.
+
+## External sources are assets too (engine rebuild B3)
+
+A sync copies a table the OS does not own — a Postgres/Supabase/Snowflake table mounted as a
+federated Trino catalog through the Connections tab. Before B3 that table was an invisible edge: the
+silver model read `{{ source('wh__public', 'events') }}` and the graph simply started there.
+
+The generator now also writes **`os/sources.yml`** (`tabs/data/lib/dbt/source-assets.ts`), one entry
+per federated sync source, and the code location turns each into an
+`@observable_source_asset`:
+
+| Field | Meaning |
+|---|---|
+| asset key | `[<domain>, <source>, <table>]` — **exactly** the key dagster-dbt derives for the dbt source under the OS's prefixing translator, so the silver model depends on this very node instead of a parallel one |
+| `observe` | `max_updated` when the sync has a **timestamp cursor** (`select max("<cursor>") , count(*)`), else `row_count`. The probe runs **as the entry's `principal`** (the dataset owner) — one statement, Trino→OPA governs it like any other read |
+| `freshness_minutes` | **two schedule intervals**, derived from the sync's own cron by `cronIntervalMinutes` (pure, tested): one missed tick is jitter, two is late. A cron shape the OS's picker does not produce yields **no claim** rather than a wrong one. Rendered as a `build_last_update_freshness_checks` asset check |
+| `downstream` | the model that reads it, so the file is readable on its own |
+
+Safety: every identifier in an entry must match `^[A-Za-z_][A-Za-z0-9_$]{0,127}$` or
+`os_projects.parse_source_assets` **drops the entry** — the probe interpolates them into SQL, and a
+half-built probe is worse than none. The Iceberg Bronze landing is deliberately NOT a source asset:
+it lives in the same lakehouse and already carries `_loaded_at` dbt source freshness. Kafka-offset
+and API-batch syncs are still in `os/external.yml` and still not assets — see the FAQ.
+
+## Lineage comes from the manifest (engine rebuild B3)
+
+`get_lineage` and the Data tab's lineage view read **dbt's own `ref()`/`source()` graph**, not the
+OS's version records, whenever `DATA_PROJECT_GIT` is on:
+
+```
+tabs/data/lib/lineage-server.ts  datasetLineage(dataset)
+  → core/infra/dagster.ts assetGraph()        # assetNodes { assetKey dependencyKeys }
+  → tabs/data/lib/dbt/lineage.ts graphLineage(dataset, nodes, datasetAssetKeys(...))
+  → fall back to tabs/data/lib/lineage.ts lineageFor(dataset)   # labelled source: 'registry'
+```
+
+Dagster derives `dependencyKeys` from `manifest.json`'s `parent_map`, so this IS the manifest —
+reached over a path the OS already authenticates to. Reading `target/manifest.json` directly was
+rejected: it lives in the Dagster pod's `/repos-checkout`, which os-ui cannot mount, and the
+repo-sync status port has no Service.
+
+The payload gained one additive field, `source: 'dbt' | 'registry'`, so a surface can say where the
+graph came from. The fallback triggers on: flag off · Dagster not configured · the call failed · the
+dataset has no model in the graph yet (its first commit has not been parsed).
+
+**Column-level lineage is not derived.** dbt's manifest does not carry column-level edges in dbt
+Core; per-node columns stay the OS's documented columns. Recorded as a follow-up, not implied.
 
 ## repo-sync sidecar
 
@@ -209,10 +257,22 @@ If a run Job stays Running with its main container done, the guard did not fire 
   `os_principals` pause through the instance's stored instigator state, and Dagster exposes no
   name-addressed `stop_schedule`; a brand-new schedule therefore pauses on its FIRST tick, not
   before it. Visible as the log line `schedule … has no stored state yet`.
-- **Cold start costs one checkout per domain** (review B2-review-L4). A run pod clones and
-  `dbt parse`s EVERY pinned domain before building definitions, so start-up time grows linearly with
-  the number of domains. Follow-up: pin the single domain a run needs
-  (`OS_PINNED_COMMITS` already carries them all, per-schedule pinning would carry one).
-- **The repo-sync status server binds `0.0.0.0:8089`** (review B2-review-L5). It serves
-  `status.json` and nothing else, and the namespace is not public, but binding the pod IP would be
-  tighter. Follow-up.
+- ~~**Cold start costs one checkout per domain**~~ **CLOSED in B3** (review B2-review-L4). Every
+  tag a domain's jobs carry now pins **only that domain** (`os_projects.pinned_one`,
+  `repo.py` `_wire_project`), so a run pod clones and `dbt parse`s exactly what its own job needs
+  and cold start stays flat as domains are added. The location-wide `pinned_env` is still computed
+  for the code-server pod, which legitimately loads every domain.
+- ~~**The repo-sync status server binds `0.0.0.0:8089`**~~ **CLOSED in B3** (review B2-review-L5).
+  It now binds `POD_IP` (downward API; `127.0.0.1` when unset — fail-closed) and requires
+  `Authorization: Bearer <REPO_SYNC_STATUS_TOKEN or AGENT_RUNTIME_TOKEN>` when one is configured,
+  refusing the shipped dev placeholder as a credential. It still serves `status.json` and nothing
+  else, **no Service exposes the port**, and os-ui does not read it — the OS learns a domain's head
+  commit from its own git store, not from the sidecar.
+- ~~**A collided domain's schedule could not be addressed by the OS**~~ **CLOSED in B3**
+  (review B2-review-M2's recorded consequence). `core/infra/dagster.ts` `sanitizeAll` is a
+  transcription of `os_projects.sanitize_all`, and both assert the same golden
+  (`images/extensions/dagster/tests/sanitize-collisions.golden.json`, regenerate with
+  `tests/regen_sanitize_golden.py`). `scheduleNameFor(domain, datasetId, allDomains)` therefore
+  computes the digest form the location really used; `sync-status-server.ts` passes the domains that
+  have a repo. Without a domain list it still returns the plain form, which is correct whenever
+  nothing collides.

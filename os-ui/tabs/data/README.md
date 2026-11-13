@@ -133,6 +133,36 @@ With the flag on, the OS stops being its own run ledger (checklist D7–D11):
   last build is not the same thing as the OS's own ad-hoc check run, and a record from before the
   distinction says nothing rather than guessing.
 
+### B3 — Trino executes as the principal, lineage comes from dbt
+
+With the flag on (checklist D7, D14, D15, D16):
+
+- **Trino's rules file is generated.** Trino chains a **file-based** system access control after the
+  OPA plugin (`access-control.config-files`); its `rules.json` lets the dbt service user act as an
+  OS principal and as **nothing else**, and makes a domain's Iceberg schema writable only by that
+  domain's principals (`core/infra/trino-rules.ts`, pure + golden-tested;
+  `trino-rules-server.ts` reconciles the ConfigMap from the user directory at boot). Read
+  `docs/components/trino.md` for the who-runs-as-whom table and for the honest limit: **Trino does
+  not authenticate clients today**, so the impersonation rules have no authenticated `original_user`
+  to match and the network boundary is still what makes a claimed session user trustworthy.
+- **External sources are assets.** `lib/dbt/source-assets.ts` writes `os/sources.yml` — one entry
+  per federated sync source — and the code location turns each into an observable source asset keyed
+  `[<domain>, <source>, <table>]`, the same key dagster-dbt gives the dbt source, so the silver model
+  depends on it and the lineage graph has no dangling upstream. Freshness is two schedule intervals,
+  derived from the sync's own cron (`cronIntervalMinutes`); an unfamiliar cron shape makes **no
+  claim** instead of a wrong one.
+- **Lineage is dbt's.** `lib/lineage-server.ts` `datasetLineage` folds Dagster's asset graph (which
+  dagster-dbt derives from `manifest.json`'s `parent_map`) into the same `LineageGraph` shape through
+  `lib/dbt/lineage.ts`, and falls back to `lib/lineage.ts` — **labelled** `source: 'registry'` —
+  when the flag is off, Dagster is unreachable, or the dataset has no model in the graph yet.
+  Column-level lineage is not derived; dbt Core's manifest does not carry it.
+- **Parity is a test, not a hope.** `lib/dbt/parity.ts` + `parity.test.ts` compare the CTAS the OS
+  runs today with the SQL dbt will run, per fixture, including the concept's worked example
+  `gold_order_customer`: same projection and aliases in order, same FROM/JOIN sequence and ON
+  predicates, same WHERE conjuncts, same GROUP BY. A model with no recorded CTAS is reported
+  **skipped with a reason**, never as a pass. What it cannot prove — that the two produce the same
+  ROWS — needs a cluster and stays checklist D15's `kind` half.
+
 ## Rules that apply here
 
 1. **Import only `@core/*` and this module.** A cross-tab need means the shared part belongs in `@core`.

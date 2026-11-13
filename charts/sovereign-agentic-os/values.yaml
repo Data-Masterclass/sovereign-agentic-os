@@ -849,6 +849,11 @@ dagster:
               - name: POD_NAME
                 valueFrom:
                   fieldRef: { fieldPath: metadata.name }
+              # The status server binds THIS address, not 0.0.0.0 (review B2-review-L5, closed in
+              # B3): reachable through the pod's own IP only. Unset would mean 127.0.0.1.
+              - name: POD_IP
+                valueFrom:
+                  fieldRef: { fieldPath: status.podIP }
               - { name: REPO_SYNC_ENABLED, value: "false" }
               - { name: REPO_SYNC_DOMAINS, value: "" }
               - { name: REPO_SYNC_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
@@ -1174,6 +1179,28 @@ trino:
     domains:
       - sales
       - marketing
+  # FILE-BASED ACCESS CONTROL, CHAINED AFTER OPA (engine rebuild B3). Trino accepts a
+  # LIST of system access controls (`access-control.config-files`) and every one of them
+  # must allow — so this file can only ever NARROW what policies/trino.rego permits. It
+  # expresses the two things the OPA plugin cannot: IMPERSONATION (dbt-trino in a Dagster
+  # run pod connects as `serviceUser` and acts as `OS_PRINCIPAL`) and SCHEMA OWNERSHIP
+  # (who may CTAS into a domain schema / a personal lane).
+  #   What ships here is the BOOTSTRAP file: impersonation bounded by the OS id SHAPE,
+  #   nothing ownable. os-ui then reconciles the same ConfigMap key from real domain
+  #   membership (core/infra/trino-rules-server.ts) and Trino re-reads it within
+  #   `refreshPeriod` — no roll. Enumerated principals replace the pattern at that point.
+  #   NO SECRET may ever go in this file: it is a ConfigMap, visible to anyone who can read it.
+  accessControl:
+    enabled: true
+    # The Trino user dbt-trino authenticates as (profiles.yml `user`), allowed to act as
+    # an OS principal and as nothing else.
+    serviceUser: dbt-runner
+    # The shape of an OS principal id (domain name or uid). MUST equal
+    # core/infra/trino-rules.ts OS_PRINCIPAL_PATTERN (os-ui/core/infra/trino-rules.test.ts
+    # asserts it, together with the whole bootstrap document below).
+    principalPattern: "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+    # How often Trino re-reads rules.json (so a membership change lands without a restart).
+    refreshPeriod: 30s
   resources:
     requests: { cpu: "1", memory: 2Gi }
     limits: { cpu: "4", memory: 8Gi }

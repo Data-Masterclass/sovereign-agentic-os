@@ -15,6 +15,7 @@ import { planModels } from '@tabs/data/lib/dbt/models';
 import { renderSources } from '@tabs/data/lib/dbt/sources';
 import { renderSchemas } from '@tabs/data/lib/dbt/schema';
 import { renderSchedules, renderExternal } from '@tabs/data/lib/dbt/schedules';
+import { renderSourceAssets } from '@tabs/data/lib/dbt/source-assets';
 import { renderDbtProject, renderProfiles, renderMacros, renderGenericTests, renderReadme, renderGitignore } from '@tabs/data/lib/dbt/project';
 
 /** The complete project tree: path → content. Sorted by path. */
@@ -35,5 +36,7 @@ export function generateProject(domain: string, snapshot: ProjectSnapshot): Map<
   if (schedules) files.set('os/schedules.yml', schedules);
   const external = renderExternal(plan.externals);
   if (external) files.set('os/external.yml', external);
+  const sourceAssets = renderSourceAssets(plan.sourceAssets);
+  if (sourceAssets) files.set('os/sources.yml', sourceAssets);
   return new Map([...files.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }

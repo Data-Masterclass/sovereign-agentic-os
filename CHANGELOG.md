@@ -13,6 +13,70 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Data engine rebuild, Phase B3: Trino executes as the principal, lineage comes from dbt
+
+- **Trino's access control is now TWO chained system access controls.** `config.properties` gains
+  `access-control.config-files=<opa>,<file>` (values `trino.accessControl`, default on): the OPA
+  plugin keeps row filters, column masks and the foreign-`personal_*` deny, and a generated
+  `rules.json` adds the two things OPA cannot express — **impersonation** (the dbt service user may
+  act as an OS principal and as nothing else; nobody else may become another identity) and **schema
+  ownership** (a domain's Iceberg schema is writable only by that domain's principals, a
+  `personal_<uid>` lane only by its owner). Trino requires every access control to allow, so the
+  file can only narrow the policy. No secret goes in it — identifiers and regexes only.
+- **One shape, two renderers, one test that keeps them equal.** `core/infra/trino-rules.ts` is a
+  pure generator (golden `fixtures/trino-rules.golden.json`, plus a first-match-wins evaluator the
+  tests assert through); the chart renders a **bootstrap** ConfigMap (`trino-access-rules`) that
+  bounds impersonation by the shape of an OS id and leaves ownership untouched, so a fresh install
+  still works before the OS has spoken; `core/infra/trino-rules-server.ts` reconciles the same key
+  from real domain membership at boot (`TRINO_ACCESS_RULES=true`) and Trino re-reads it within
+  `security.refresh-period` — no roll. A directory mount, not a `subPath`, because only a
+  whole-ConfigMap volume is refreshed by the kubelet.
+- **Honest limit, documented not implied:** the chart does not set
+  `http-server.authentication.type`, so Trino does not authenticate clients and the impersonation
+  rules have no authenticated `original_user` to match. The schema-ownership rules bite immediately;
+  making impersonation load-bearing needs authentication plus a credential —
+  `docs/components/trino.md` says exactly what that takes.
+- **External sources are Dagster assets** (closes the open half of checklist D7).
+  `tabs/data/lib/dbt/source-assets.ts` writes `os/sources.yml`, one entry per **federated** sync
+  source, and the `sovereign` code location builds an `@observable_source_asset` per entry keyed
+  `[<domain>, <source>, <table>]` — the key dagster-dbt gives the dbt source — so the silver model
+  that reads it depends on that node and the graph has no dangling upstream. The probe is one
+  statement as the dataset's **owner** (`max("<cursor>")` + `count(*)` with a timestamp cursor, else
+  `count(*)`), and freshness is two schedule intervals derived from the sync's own cron; an
+  unfamiliar cron shape makes **no claim** rather than a wrong one. An entry whose identifiers are
+  not plain identifiers is **dropped**, never quoted-and-hoped.
+- **Lineage comes from the dbt manifest.** `get_lineage` (MCP) and the Data tab's lineage view read
+  Dagster's `assetNodes` — which dagster-dbt derives from `manifest.json`'s `parent_map` — folded
+  into the existing `LineageGraph` shape (`tabs/data/lib/dbt/lineage.ts`, pure;
+  `tabs/data/lib/lineage-server.ts`, one GraphQL call). The fallback to the OS registry is explicit
+  and **labelled** (`source: 'dbt' | 'registry'`, additive). Column-level lineage is not derived —
+  dbt Core's manifest does not carry it — and is recorded as a follow-up rather than implied.
+- **A parity harness the flag flip can be gated on.** `tabs/data/lib/dbt/parity.ts` compares, per
+  fixture (including the concept's worked example `gold_order_customer`), the SQL the OS runs today
+  with the SQL dbt will run: same projection and aliases in order, same FROM/JOIN sequence and ON
+  predicates, same WHERE conjuncts (as a set), same GROUP BY. A model with no recorded CTAS is
+  reported **skipped with its reason**, never as a pass; an unreadable shape is a mismatch, never a
+  pass. It is explicit about its reach: a model body IS the recorded CTAS after rewriting, so this
+  proves the translation is faithful and invertible, not that two materialisations agree row for
+  row.
+
+### Fixed — Data engine rebuild, Phase B3 (loose ends from the B2 review)
+
+- **A collided domain's schedule can be addressed again.** `core/infra/dagster.ts` `sanitizeAll` is
+  a transcription of `os_projects.sanitize_all`, and both assert the same golden
+  (`images/extensions/dagster/tests/sanitize-collisions.golden.json`), so
+  `scheduleNameFor(domain, datasetId, allDomains)` computes the digest form the code location really
+  used instead of a plain form that does not exist. `sync-status-server.ts` passes the domains that
+  have a repo; without a list the plain form is still returned, which is right whenever nothing
+  collides.
+- **Cold start no longer grows with the number of domains.** Every run tag a domain's jobs carry
+  pins **only that domain's** commit (`os_projects.pinned_one`), so a run pod clones and
+  `dbt parse`s exactly what its own job needs.
+- **The repo-sync status server is bound and authenticated.** It binds `POD_IP` (downward API;
+  `127.0.0.1` when unset — fail-closed) instead of `0.0.0.0`, and requires a bearer when
+  `REPO_SYNC_STATUS_TOKEN`/`AGENT_RUNTIME_TOKEN` is set, refusing the shipped dev placeholder as a
+  credential.
+
 ### Added — Agent engine rebuild, Phase A4: runs execute in a worker
 
 - **A run is a row, not a request.** Two tables in the `agent_runs` database (same one as the

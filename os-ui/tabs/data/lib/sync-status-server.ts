@@ -21,6 +21,7 @@ import { config } from '@core/kernel/config';
 import type { Dataset, DatasetSyncMode } from '@tabs/data/lib/dataset-schema';
 import { dataProjectGitEnabled } from '@tabs/data/lib/dbt/commit';
 import * as dagster from '@core/infra/dagster';
+import { listRepos } from '@core/infra/git-store';
 import {
   consecutiveErrorCount, currentWatermark, ensureSyncRunsHydrated, isQuarantined, lastMaintenanceAt, latestSyncRun, listSyncRuns,
   type SyncRunRecord, type SyncRunStatus,
@@ -61,7 +62,16 @@ export type SyncStatusDeps = {
   location?: string;
   flag?: () => boolean;
   now?: () => Date;
+  /** Every domain with a repo. Needed to name a schedule whose domain's sanitized name collides
+   *  with another's — the code location appends a digest then (review B2-review-M2, closed in B3).
+   *  Default: the repos on disk. */
+  domains?: () => Promise<string[]>;
 };
+
+/** Every domain that has a data-project repo, for collision-safe schedule naming. */
+async function repoDomains(): Promise<string[]> {
+  return (await listRepos()).map((r) => r.name);
+}
 
 /** Dagster run status → the panel's vocabulary. */
 export function runStatusToSync(status: dagster.RunStatus): SyncRunStatus {
@@ -120,7 +130,11 @@ export async function syncStatusFor(d: Dataset, deps: SyncStatusDeps = {}): Prom
     };
   }
   const dg = deps.dagster ?? dagster;
-  const schedule = dagster.scheduleNameFor(d.domain, d.id);
+  // The location resolves sanitize collisions with a digest, so the OS must know every domain to
+  // name the schedule it actually defined (review B2-review-M2). A failed read degrades to the
+  // plain form — the pre-B3 behaviour — never to an error.
+  const allDomains = await (deps.domains ?? repoDomains)().catch(() => [] as string[]);
+  const schedule = dagster.scheduleNameFor(d.domain, d.id, allDomains);
   const [runs, tick] = await Promise.all([dg.runsForDataset(d.id, 20), d.sync ? dg.nextTick(schedule) : Promise.resolve(null)]);
   const list = runs.ok ? runs.data : [];
   const tickData = tick && tick.ok ? tick.data : null;

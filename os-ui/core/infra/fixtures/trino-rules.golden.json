@@ -1,0 +1,125 @@
+{
+  "catalogs": [
+    {
+      "allow": "all"
+    }
+  ],
+  "schemas": [
+    {
+      "user": "^(cleo|finance)$",
+      "schema": "^finance$",
+      "owner": true
+    },
+    {
+      "user": "^(amir|bea|sales)$",
+      "schema": "^sales$",
+      "owner": true
+    },
+    {
+      "user": "^amir$",
+      "schema": "^personal_amir$",
+      "owner": true
+    },
+    {
+      "user": "^bea$",
+      "schema": "^personal_bea$",
+      "owner": true
+    },
+    {
+      "owner": false
+    }
+  ],
+  "tables": [
+    {
+      "user": "^(cleo|finance)$",
+      "schema": "^finance$",
+      "privileges": [
+        "SELECT",
+        "INSERT",
+        "DELETE",
+        "UPDATE",
+        "OWNERSHIP"
+      ]
+    },
+    {
+      "schema": "^finance$",
+      "privileges": [
+        "SELECT"
+      ]
+    },
+    {
+      "user": "^(amir|bea|sales)$",
+      "schema": "^sales$",
+      "privileges": [
+        "SELECT",
+        "INSERT",
+        "DELETE",
+        "UPDATE",
+        "OWNERSHIP"
+      ]
+    },
+    {
+      "schema": "^sales$",
+      "privileges": [
+        "SELECT"
+      ]
+    },
+    {
+      "user": "^amir$",
+      "schema": "^personal_amir$",
+      "privileges": [
+        "SELECT",
+        "INSERT",
+        "DELETE",
+        "UPDATE",
+        "OWNERSHIP"
+      ]
+    },
+    {
+      "schema": "^personal_amir$",
+      "privileges": []
+    },
+    {
+      "user": "^bea$",
+      "schema": "^personal_bea$",
+      "privileges": [
+        "SELECT",
+        "INSERT",
+        "DELETE",
+        "UPDATE",
+        "OWNERSHIP"
+      ]
+    },
+    {
+      "schema": "^personal_bea$",
+      "privileges": []
+    },
+    {
+      "privileges": [
+        "SELECT"
+      ]
+    }
+  ],
+  "impersonation": [
+    {
+      "original_user": "^dbt-runner$",
+      "new_user": "^(amir|bea|cleo|finance|sales)$",
+      "allow": true
+    },
+    {
+      "original_user": "^dbt-runner$",
+      "new_user": ".*",
+      "allow": false
+    },
+    {
+      "original_user": "(.*)",
+      "new_user": "$1",
+      "allow": true
+    },
+    {
+      "original_user": ".*",
+      "new_user": ".*",
+      "allow": false
+    }
+  ]
+}

@@ -263,9 +263,26 @@ and the divergence is pinned by a test rather than by a comment.
 **Gates:** `tsc --noEmit` clean · `npm --prefix os-ui test` **5008 tests, 0 fail, 7 todo** (4985 → 5008) · `check-structure.mjs` **no new violations** (TAB-ISOLATION 421/422, CORE-INDEPENDENCE 206/207, FILE-HEADER 1248/1249 — all *below* baseline) · `gate.sh` exit 0 (86 pass) · `helm lint` exit 0 with the flag off **and** `--set osUI.dataProjectGit.enabled=true` · `py_compile repo.py os_projects.py` + `python3 -m unittest` **15 tests OK**.
 
 ### Phase B3 — Trino as the engine, lineage from dbt
-- [ ] dbt runs on Trino via `dbt-trino`; incremental models carry the OS's cursor/late-data semantics (`sync-sql.ts`) as model config, not bespoke SQL. Row-level security and OPA stay at the query-tool / Trino boundary (verify nothing bypasses them).
-- [ ] Lineage and docs from `manifest.json`; the Data tab's lineage view reads it.
-- [ ] Gate: parity test — the same composition yields the same rows via the old CTAS path and via `dbt run`; then delete the old path.
+- [x] dbt runs on Trino via `dbt-trino`; incremental models carry the OS's cursor/late-data semantics (`sync-sql.ts`) as model config, not bespoke SQL (B1). Row-level security and OPA stay at the query-tool / Trino boundary — **verified, nothing bypasses them**, and the who-runs-as-whom table is now written down (`docs/components/trino.md`). The Trino side of `impersonation_user` is real: a second, chained **file-based** access control whose `rules.json` the OS generates and reconciles. *(What it cannot do yet: Trino does not authenticate clients, so the impersonation section has no authenticated `original_user` — deviation B3-2.)*
+- [x] Lineage and docs from `manifest.json`; the Data tab's lineage view reads it — through Dagster's `assetGraph` (the same `parent_map` edges, over a path the OS already authenticates to — deviation B3-5). Column-level lineage: **follow-up**, not derived (deviation B3-6).
+- [x] **One asset per external source** (B2's open half of D7): `os/sources.yml` → one observable source asset per federated sync source, keyed as dagster-dbt keys the dbt source, with a freshness check from the sync's own cron.
+- [~] Gate: parity test — the same composition yields the same rows via the old CTAS path and via `dbt run`; then delete the old path. *(The OFFLINE half is green and gate-able: `tabs/data/lib/dbt/parity.test.ts`, 3 fixtures + the worked example + a negative control. The ROW-SET half needs two materialisations and `EXCEPT ALL` both ways on a cluster — **untestable here**, checklist D15's `kind` half. **No deletion in B3**: the old path stays until the kind parity run passes, which is the honest reading of "then delete".)*
+
+#### B3 — what landed (commit on `feat/engine-rebuild-b2`)
+
+| Piece | Where |
+|---|---|
+| Trino rules generator (pure) | `core/infra/trino-rules.ts` — `buildTrinoRules`, `renderTrinoRules`, `rulesInputFromDirectory`, `OS_PRINCIPAL_PATTERN`, and a first-match-wins evaluator (`impersonationAllowed`, `schemaOwnerAllowed`, `tablePrivilegesFor`) the tests assert THROUGH; golden `core/infra/fixtures/trino-rules.golden.json` |
+| Rules reconciler | `core/infra/trino-rules-server.ts` (`reconcileTrinoAccessRules`: PATCH only on change, every failure a typed outcome); wired fire-and-forget in `instrumentation.ts` behind `config.trinoAccessRules`; `config.{trinoAccessRules,trinoServiceUser}` |
+| Chart | `templates/extensions/lakehouse/trino.yaml` — `access-control.config-files`, `access-control-{opa,file}.properties`, bootstrap ConfigMap `trino-access-rules` + **directory** mount; `values.yaml` `trino.accessControl`; `_os-ui-env.tpl` `TRINO_ACCESS_RULES`/`TRINO_DBT_USER`; os-ui Role's configmap RBAC also granted under `osUI.dataProjectGit` |
+| Source assets | `tabs/data/lib/dbt/source-assets.ts` (`cronIntervalMinutes`, `freshnessMinutesFor`, `renderSourceAssets` → `os/sources.yml`), `models.ts` `SourceAssetEntry` + planner wiring, `generate.ts`; `os_projects.py` `SourceAsset`/`parse_source_assets`/`source_asset_key`/`observe_sql`/`freshness_seconds`; `repo.py` `_source_assets` + `_trino_rows` + `asset_checks` in `Definitions` |
+| Lineage from the manifest | `tabs/data/lib/dbt/lineage.ts` (`graphLineage`, `assetNodesFromManifest`, `layerOfModel`), `tabs/data/lib/lineage-server.ts` (`datasetLineage`); `LineageGraph.source` (additive); consumed by `app/api/data/datasets/[id]/lineage/route.ts` and `core/lineage/unified.ts` (so MCP `get_lineage` too) |
+| Parity harness | `tabs/data/lib/dbt/parity.ts` (`selectShape`, `compareSelects`, `resolveJinja`, `substitutionsFor`, `parityReport`) + `parity.test.ts` |
+| B2 loose ends | `core/infra/dagster.ts` `sanitizeAll` + `scheduleNameFor(…, allDomains)`, shared golden `images/extensions/dagster/tests/sanitize-collisions.golden.json` (+ `regen_sanitize_golden.py`), `sync-status-server.ts` `domains` dep; `os_projects.pinned_one` + `repo.py` per-domain pinning; `repo-sync.sh` binds `POD_IP` and requires a bearer, `values.yaml` `POD_IP` downward API |
+| Docs | **new** `docs/components/trino.md`; `docs/components/{dagster,dbt}.md`; `tabs/data/README.md` "B3"; `os-ui/ARCHITECTURE.md` "Data products execute as the principal"; `CHANGELOG.md` |
+| Tests | `core/infra/trino-rules.test.ts` (10), `core/infra/trino-rules-server.test.ts` (4), `tabs/data/lib/dbt/source-assets.test.ts` (4), `tabs/data/lib/dbt/lineage.test.ts` (5), `tabs/data/lib/dbt/parity.test.ts` (6), 2 new cases in `core/infra/dagster.test.ts`, 9 new Python cases (`SourceAssets`, `PerSchedulePinning`, `SanitizeGolden`) |
+
+**Gates:** `tsc --noEmit` clean · `npm --prefix os-ui test` **5162 tests, 0 fail, 7 todo** (5008 → 5162) · `check-structure.mjs` **no new violations** (TAB-ISOLATION 421/422, CORE-INDEPENDENCE 206/207, FILE-HEADER 1244/1245 — all below baseline, NOT re-locked) · `gate.sh` exit 0 · `helm lint` exit 0 · `helm template` defaults **and** `--set osUI.dataProjectGit.enabled=true`, with the `trino-access-rules` ConfigMap's `rules.json` asserted to `JSON.parse` in both · `python3 -m unittest discover -s images/extensions/dagster/tests` **40 tests OK** (31 → 40) · `py_compile` on `repo.py`, `os_projects.py`, `tests/regen_sanitize_golden.py` · `sh -n repo-sync.sh`.
 
 ### Phase B4 — MCP, docs, deletion
 - [ ] MCP tools map 1:1 to engineer operations: `dbt_run`, `dbt_test`, `dagster_materialize`, `get_dagster_run`, `get_lineage` — same governed path as the UI. Remove the OS-native sync and transform executors once B2–B3 parity holds.
@@ -528,5 +545,92 @@ After each full pass over Parts A, B and D: a read-only test agent scores `2026-
 - **B2-review-L6 One Secret, one template, every consumer.** `agent-runtime-token` moved out of `agent-runtime.yaml` (where it rendered only under `agentRuntime.enabled`) into its own `templates/base/agent-runtime/agent-runtime-token.yaml`, rendered when `agentRuntime` **or** `dagster` **or** `osUI.dataProjectGit` **or** `osUI` is enabled, on the local profile only (ESO delivers it elsewhere). One name, one definition — `helm template` confirms exactly one Secret in all of: flag off, flag on, `agentRuntime.enabled=false`, `dagster.enabled=false`. A5 can now delete the agent runtime without breaking Dagster.
 - **B2-review follow-ups (NOT fixed, they need the live cluster):** the Dagster 1.13 GraphQL field names the client sends (`assetChecksOrError` as a root field, `Schedule.futureTicks`, `ExecutionParams.selector.assetSelection`), whether a `dagster-k8s/config` run tag MERGES with or REPLACES the code location's container context, and whether a `Definitions`-based location really reports the repository name `__repository__`. Each now has an exact command in `docs/components/dagster.md` → "Verify it in a cluster", alongside the run-pod label (H1) and run-pod sidecar-exit (M1) checks. Also recorded there as known limits: the never-ticked schedule (L2), cold-start cost linear in the number of domains (L4 — fix with per-schedule commit pinning), and the status server binding `0.0.0.0` rather than the pod IP (L5).
 - **What the review got wrong or incomplete:** M3's "unless `global.profile`/`config.profile` is local" would have made the guard inert on the live deploy (see B2-review-M3). H1's `pod_template_spec_metadata` on the deployment entry is not a key the Dagster subchart accepts (B2-review-H1). M1's "remove `containers` from the run config" cannot be done without also removing the sidecar from the code-server pod (B2-review-M1). And H3's scope was larger than stated: the Jinja sink is not only `schema.ts` descriptions but model-SQL header comments and `sources.yml` descriptions in `models.ts` too.
+
+#### B3 deviations (`feat/engine-rebuild-b2`, third commit)
+
+- **B3-1 The rules file is generated by BOTH the chart and the OS, deliberately — bootstrap vs
+  reconciled.** The brief offered "a ConfigMap reconciled by the OS on membership change is
+  acceptable; a static template with a clear TODO if not". Neither alone works: a static template
+  cannot know who is in which domain, and an OS-only ConfigMap would not exist on a fresh install,
+  so Trino would fail to start on a missing `security.config-file`. So the chart renders a
+  BOOTSTRAP (impersonation bounded by the id SHAPE, ownership left exactly as it is without the
+  file) and `trino-rules-server.ts` overwrites the same key with the enumerated form at boot. The
+  duplication is held down by a test that feeds the chart's own values through the TS generator with
+  nothing enumerated and asserts the two documents are equal, so the Helm block cannot drift.
+- **B3-2 Trino does not authenticate clients, so the impersonation rules have nothing to match
+  yet.** This is the most important thing B3 learned and the concept did not say. `dbt-trino`'s
+  `impersonation_user` works by connecting as the authenticated principal and setting a DIFFERENT
+  session user; Trino's `impersonation` rules compare `original_user` (authenticated) with
+  `new_user` (the session user). The chart sets no `http-server.authentication.type`, so there is no
+  authenticated principal at all and the session user is simply asserted. The rules are therefore
+  deployed, tested and correct, and the impersonation section is inert until authentication is
+  enabled — which needs `http-server.authentication.type=PASSWORD` (or JWT/OAuth2), a credential for
+  `dbt-runner` and for the OS query path, `TRINO_PASSWORD` in the run pod and query-tool, and
+  `allow-insecure-over-http` or TLS. That is a new secret and a deploy decision, so it is written
+  into `docs/components/trino.md` rather than invented here. The **schema-ownership** half of the
+  file bites immediately, because it matches on the session user.
+- **B3-3 The ownership catch-all is OPEN when nothing is enumerated.** `buildTrinoRules` emits
+  `{"owner": true}` / full privileges as the final rule while `domains` and `personalLanes` are both
+  empty, and closes it the moment either is non-empty. An empty enumeration means "the OS has not
+  spoken yet", not "nobody owns anything"; closing it would deny every CTAS the OS already performs
+  as the domain principal on a fresh install. Tested in both directions.
+- **B3-4 `<domain>_silver` / `<domain>_gold` schemas do not exist.** The brief asked for ownership of
+  "a domain's `<domain>_silver/_gold` schemas". The code has never had those: `store-fqn.ts` gives
+  `personal_<sanitizeIdent(uid)>` and `sanitizeIdent(domain)`, and the LAYER is a table prefix
+  (`silver_orders`, `gold_order_customer`). Ownership is therefore expressed on the real schemas —
+  the domain schema for the domain and its members, `personal_<uid>` for its one owner.
+- **B3-5 Lineage reads Dagster's asset graph, not `manifest.json` on disk.** The brief allowed
+  either. `target/manifest.json` lives in the Dagster pod's `/repos-checkout` emptyDir, which os-ui
+  cannot mount, and the repo-sync status port has no Service — so the only reachable copy of the
+  manifest's edges is `assetNodes { assetKey dependencyKeys }`, which dagster-dbt derives from
+  `parent_map`. `assetNodesFromManifest` (pure) encodes that equivalence and is what the tests feed
+  in, so a manifest fixture is a faithful stand-in and the path is also ready if os-ui ever gets the
+  file.
+- **B3-6 Column-level lineage: follow-up, as the brief allowed.** dbt Core's manifest carries no
+  column-level edges; per-node `columns` stay the OS's documented columns. Recorded here rather than
+  approximated from the SQL.
+- **B3-7 The parity harness is a TRANSLATION gate, not a row gate — and says so.** Because a model
+  body IS the CTAS the OS recorded, rewritten (deviation B1-2), an offline test cannot be an
+  independent recompilation. What it does prove: resolving `ref()`/`source()` back to FQNs yields
+  the same projection (expression AND alias, in order), FROM/JOIN sequence, ON predicates, WHERE
+  conjuncts and GROUP BY — so any future change to the rewriter, the CTAS stripper or the lane/FQN
+  mapping fails here. The negative control drifts ONE side (a join type, a dropped column, an
+  unresolvable `ref`) and asserts each is reported. Shape equality, not byte equality, is the
+  contract: `WHERE` order is semantically irrelevant, and byte equality is already asserted by the
+  generator goldens.
+- **B3-8 The collided-domain schedule name is fixed by a shared ALGORITHM, not by `status.json`.**
+  The brief proposed writing the sanitized name into `status.json` and reading it back. Rejected:
+  nothing in os-ui reads `status.json` today, no Service exposes the port, and adding a network
+  dependency to compute a NAME is heavier than the problem. `sanitizeAll` in `core/infra/dagster.ts`
+  is a transcription of `sanitize_all`, and both languages assert the SAME golden file — which is a
+  stronger guarantee than a round trip through a sidecar, and it runs in CI. `scheduleNameFor` takes
+  the domain list (from the repos on disk) and degrades to the plain form without it.
+- **B3-9 `freshness_minutes` is two schedule intervals, and absent when the cron is unfamiliar.**
+  The concept said "a `FreshnessPolicy` where the OS has a sync interval" without a number. One
+  missed tick is normal jitter; two is late. `cronIntervalMinutes` handles exactly the shapes the
+  OS's own schedule picker produces (`*/n * * * *`, hourly, `*/n` hours, daily, weekly) and returns
+  null for anything richer, which makes no freshness claim at all rather than a wrong one. Dagster's
+  `build_last_update_freshness_checks` is called inside a `try` so a freshness-API shift logs and
+  drops the CHECK, never the asset.
+- **B3-10 The observation probe lives in `repo.py` but its SQL and validation live in
+  `os_projects.py`.** Same split as B2-4 (Dagster is not installable in this worktree): `observe_sql`
+  and `parse_source_assets` are pure and unit-tested, including that an identifier which is not
+  `^[A-Za-z_][A-Za-z0-9_$]{0,127}$` DROPS the entry rather than being quoted and hoped for. `repo.py`
+  carries only the Dagster decorator and the `trino.dbapi` connection, both covered by `py_compile`
+  and the first deploy.
+- **B3-11 No deletion in B3.** The phase's gate line ends "then delete the old path", and the brief
+  did not ask for deletions. The row-set parity run needs a cluster, so deleting query-tool
+  `/execute`, `execute_guard.py`, `sync-sql.ts`'s executor use, `sync-run-server.ts`, `sync-runs.ts`,
+  `dq-run*.ts`, `dq-results.ts`, `auto-pipeline.ts` and the dbt demo project would be deleting a
+  working path on the strength of an offline test. They stay for B4, after the kind parity run.
+- **B3-12 What still needs the live cluster (B3's own list):** that `access-control.config-files`
+  with a `file` controller beside the OPA plugin loads (field name and chaining taken from Trino
+  476's documented behaviour, not probed); that a ConfigMap rewrite is picked up within
+  `security.refresh-period` without a restart (a directory mount, so it should be); that an
+  `@observable_source_asset` whose key equals a dbt source's key is ACCEPTED rather than reported as
+  a duplicate definition; that `build_last_update_freshness_checks` exists under that name in the
+  pinned Dagster 1.13; that `trino.dbapi` is importable in the run pod (it is dbt-trino's own
+  dependency) and that the probe's reads pass OPA as the owner; and everything on B2's list below,
+  which B3 did not revisit.
 
 - **B2-11 What still needs the live cluster:** that a scheduled sync materialises in kind under the owner principal (D7, D10); that `dagster-k8s/config` really propagates `OS_PRINCIPAL` / `OS_PINNED_COMMITS` into run pods; that the subchart honours `sidecarContainers` / `volumes` / `volumeMounts` and an `env` entry with `valueFrom`; that `reloadRepositoryLocation` succeeds against the webserver Service; that the webserver's GraphQL schema matches the documents in `core/infra/dagster.ts` (field names were taken from Dagster 1.13's schema, not probed); and that `Definitions`-based locations really report the repository name `__repository__`.

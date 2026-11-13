@@ -4,7 +4,7 @@
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { getDataset } from '@tabs/data/lib/store';
-import { lineageFor } from '@tabs/data/lib/lineage';
+import { datasetLineage } from '@tabs/data/lib/lineage-server';
 import { getDashboard } from '@tabs/dashboards/lib/store';
 import { panelMetrics } from '@tabs/dashboards/lib/model';
 import { getAppForUser } from '@tabs/software/lib/apps';
@@ -52,7 +52,9 @@ export async function getLineage(ref: string, user: CurrentUser): Promise<Unifie
       // metric:<id> resolves to the gold dataset that carries the measure; both
       // render the dataset's version→metric→dashboard→upstream graph.
       const d = getDataset(id, p); // throws 403/404 → not_found at the root
-      const g = lineageFor(d);
+      // Engine rebuild B3: dbt's own graph when the data-project flag is on, the registry's
+      // otherwise — `datasetLineage` labels which and never throws for a lineage reason.
+      const g = await datasetLineage(d);
       for (const n of g.nodes) out.nodes.push({ id: n.id, kind: n.kind, label: n.label });
       for (const e of g.edges) out.edges.push({ from: e.from, to: e.to, rel: e.kind });
       return out;

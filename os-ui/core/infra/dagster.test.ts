@@ -11,9 +11,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   launchRun, run, runsForDataset, recentOsRuns, assetChecks, allAssetChecks, latestMaterialization,
-  assetGraph, reloadLocation, nextTick, k8sEnvTag, sanitizeName, scheduleNameFor, gql,
+  assetGraph, reloadLocation, nextTick, k8sEnvTag, sanitizeName, sanitizeAll, scheduleNameFor, gql,
 } from '@core/infra/dagster';
 
 type Req = { query: string; variables: Record<string, unknown> };
@@ -141,4 +144,26 @@ test('naming helpers match os_projects.py', () => {
   assert.equal(sanitizeName('9x'), '_9x');
   assert.equal(scheduleNameFor('sales', 'ds_ab12'), 'sales__ds_ab12');
   assert.equal(k8sEnvTag({ B: '2', A: '1' }), JSON.stringify({ container_config: { env: [{ name: 'A', value: '1' }, { name: 'B', value: '2' }] } }));
+});
+
+test('sanitizeAll agrees with os_projects.sanitize_all on the SHARED golden (engine rebuild B3)', () => {
+  // The same file `images/extensions/dagster/tests/test_os_projects.py::SanitizeGolden` asserts
+  // against, so a change to the collision rule fails in CI on whichever side forgot it.
+  const golden = JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'images', 'extensions', 'dagster', 'tests', 'sanitize-collisions.golden.json'), 'utf8'),
+  ) as { inputs: string[]; expected: Record<string, string> };
+  assert.deepEqual(sanitizeAll(golden.inputs), golden.expected);
+});
+
+test('a collided domain gets the schedule name the code location really defined', () => {
+  // Before B3 the OS computed the plain form for BOTH, so `nextTick` asked for a schedule that did
+  // not exist and the panel showed no next tick (review B2-review-M2's recorded consequence).
+  const domains = ['sales-eu', 'sales.eu'];
+  const names = sanitizeAll(domains);
+  assert.notEqual(names['sales-eu'], names['sales.eu'], 'the collision is resolved, not shared');
+  assert.equal(scheduleNameFor('sales.eu', 'ds_ab12', domains), `${names['sales.eu']}__ds_ab12`);
+  assert.equal(scheduleNameFor('sales-eu', 'ds_ab12', domains), 'sales_eu__ds_ab12');
+  // No list ⇒ the plain form, which is right whenever nothing collides and is what pre-B3 did.
+  assert.equal(scheduleNameFor('sales.eu', 'ds_ab12'), 'sales_eu__ds_ab12');
+  assert.equal(scheduleNameFor('sales', 'ds_ab12', ['sales', 'finance']), 'sales__ds_ab12');
 });

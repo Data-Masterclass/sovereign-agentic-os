@@ -35,7 +35,8 @@ The generated project is what an engineer would write:
 | Sync full-refresh | `materialized: table` over the federated `{{ source() }}` |
 | Sync append (cursor, 15-min lookback, `_batch_id`) | `incremental`, `incremental_strategy: delete+insert`, `unique_key: _batch_id`, `where cursor > (select max(cursor) from {{ this }}) - interval '15' minute` |
 | Sync merge | `incremental`, `incremental_strategy: merge`, `unique_key: [merge keys]`, `on_schema_change: append_new_columns` |
-| Kafka offsets / API-batch sources | **not** faked as models: listed in `os/external.yml` for the Dagster assets B2 adds |
+| Kafka offsets / API-batch sources | **not** faked as models: listed in `os/external.yml`. Still not assets — the Dagster Python asset that calls the OS's governed slice executor is B4 work |
+| A federated sync **source** | `os/sources.yml` (engine rebuild B3) → one **observable source asset** per entry, keyed `[<domain>, <source>, <table>]` so the silver model that reads it depends on it. Freshness = two schedule intervals, derived from the sync's own cron; `max_updated` on a timestamp cursor, else `row_count`. See `dagster.md` → "External sources are assets too" |
 | Sync schedule | `os/schedules.yml` `{dataset, select: "<model>+", cron, timezone: UTC, principal, enabled}` → one UTC `ScheduleDefinition` in the Dagster `sovereign` location |
 | Iceberg maintenance | `macros/os_maintenance.sql` — `ALTER TABLE … EXECUTE optimize` + `expire_snapshots(retention_threshold => '7d')` per schema, run weekly by Dagster as the schema's owner |
 
@@ -45,11 +46,29 @@ without a principal fails loudly instead of impersonating the domain. No credent
 repository.
 
 The Dagster user-code pod's `repo-sync` sidecar fetches each domain repo over the read-only git
-daemon and runs `dbt parse` in a worktree, repointing `current` only on success; in **B2** the
-`sovereign` code location then loads that checkout, so the project is parsed *and* run —
-`dbt build --select <assets>` in a Dagster run pod, launched by the OS after the commit or by the
-schedule (see `dagster.md`). Verifying the Trino **impersonation** half end to end (`dbt-trino`
-`impersonation_user` with `method: none`, OPA's `ImpersonateUser` for `dbt-runner`) is B3.
+daemon and runs `dbt parse` in a worktree, repointing `current` only on success; the `sovereign` code
+location then loads that checkout, so the project is parsed *and* run — `dbt build --select <assets>`
+in a Dagster run pod, launched by the OS after the commit or by the schedule (see `dagster.md`).
+
+**The Trino side of `impersonation_user` (engine rebuild B3).** Trino now chains a **file-based**
+system access control after the OPA plugin, whose `rules.json` lets `dbt-runner` act as an OS
+principal and as **nothing else**, and makes a domain's Iceberg schema writable only by that
+domain's principals. The file is generated — `core/infra/trino-rules.ts` (pure, golden-tested), with
+the chart rendering a bootstrap and os-ui reconciling the real membership into the same ConfigMap.
+Read `docs/components/trino.md` before relying on it: **Trino does not authenticate clients today**
+(`http-server.authentication.type` is unset), so the impersonation section has no authenticated
+`original_user` to match and the network boundary is still what makes a claimed session user
+trustworthy. The schema-ownership rules bite immediately; the impersonation rules need
+authentication, which is a deploy decision with a new secret in it.
+
+**Parity before deletion.** `tabs/data/lib/dbt/parity.ts` + `parity.test.ts` compare, per fixture,
+the SQL the OS runs today (`CREATE OR REPLACE TABLE … AS <select>`) with the SQL dbt will run (the
+model body with `ref()`/`source()` resolved back to FQNs): same projection with aliases in order,
+same FROM + JOIN sequence with the same ON predicates, same WHERE conjuncts, same GROUP BY. Note
+what that can and cannot prove — the model body **is** the recorded CTAS after rewriting, so the test
+proves the TRANSLATION is faithful and invertible and catches any future change to the rewriter, the
+stripper or the lane/FQN mapping. It does not prove the two produce the same ROWS; that needs two
+materialisations and an `EXCEPT ALL` both ways on a cluster (checklist D15's `kind` half).
 
 **Who can read the project.** `GET /api/data/projects/<domain>` is gated on **domain membership**,
 and the repository is the whole domain's project — so every member of a domain can read every
@@ -69,6 +88,12 @@ a new per-path read gate, not a property of this design.
 - Read access + mirror: `tabs/data/lib/dbt/{read,mirror}.ts`; repo index `GET /api/data/projects`.
 - Launch after commit: `tabs/data/lib/dbt/{launch,asset-keys}.ts` over `core/infra/dagster.ts`.
 - Read-back: `tabs/data/lib/{sync-status-server,dq-status-server}.ts`.
+- Source assets: `tabs/data/lib/dbt/source-assets.ts` → `os/sources.yml`;
+  `images/extensions/dagster/os_projects.py` `parse_source_assets` / `observe_sql`.
+- Lineage from the manifest: `tabs/data/lib/dbt/lineage.ts` (pure) +
+  `tabs/data/lib/lineage-server.ts` (one `assetGraph()` call, registry fallback).
+- Parity harness: `tabs/data/lib/dbt/parity.ts` + `parity.test.ts`.
+- Trino access rules: `core/infra/trino-rules.ts` + `trino-rules-server.ts`.
 
 ## FAQ
 **Q: Can I run the generated project myself?** Yes — export it (`GET …/export?ref=<sha>`), set the

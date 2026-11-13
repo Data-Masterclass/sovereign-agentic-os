@@ -44,6 +44,13 @@
 #   REPO_SYNC_CHECKOUT     default /repos-checkout (emptyDir shared with the user-code container).
 #   REPO_SYNC_INTERVAL     seconds between passes (default 15).
 #   REPO_SYNC_STATUS_PORT  port for the status.json server (default 8089).
+#   POD_IP                 downward-API `status.podIP` (chart-set). The status server binds THIS
+#                          address, not 0.0.0.0, so it is reachable only through the pod's own IP.
+#                          Unset => 127.0.0.1 (inside the pod only) — fail-CLOSED, review B2-review-L5.
+#   REPO_SYNC_STATUS_TOKEN bearer the status server requires (default: AGENT_RUNTIME_TOKEN, the same
+#                          cluster-internal bearer the OS repo-index route accepts). Set and not the
+#                          shipped placeholder => every request must carry `Authorization: Bearer`.
+#                          Empty => unauthenticated, and the sidecar SAYS so at startup.
 #   DAGSTER_RELOAD_LOCATION  code location to reload after a repoint (default "sovereign"; empty = skip).
 #   DAGSTER_GRAPHQL_URL    the webserver's /graphql.
 #   POD_NAME               downward-API `metadata.name` (chart-set). A Dagster RUN pod inherits
@@ -63,6 +70,8 @@ BASE="${REPO_SYNC_GIT_BASE:-git://os-repos}"
 CHECKOUT="${REPO_SYNC_CHECKOUT:-/repos-checkout}"
 INTERVAL="${REPO_SYNC_INTERVAL:-15}"
 PORT="${REPO_SYNC_STATUS_PORT:-8089}"
+BIND="${POD_IP:-127.0.0.1}"
+STATUS_TOKEN="${REPO_SYNC_STATUS_TOKEN:-${AGENT_RUNTIME_TOKEN:-}}"
 RELOAD_LOCATION="${DAGSTER_RELOAD_LOCATION-sovereign}"
 GRAPHQL="${DAGSTER_GRAPHQL_URL:-http://agentic-os-dagster-webserver:80/graphql}"
 
@@ -97,24 +106,44 @@ if [ "$ENABLED" != "true" ]; then
   exit 0
 fi
 
-# Serve status.json — and ONLY status.json — on a cluster-local port.
-python3 - "$CHECKOUT" "$PORT" <<'PY' >/dev/null 2>&1 &
-import http.server, os, sys
-root, port = sys.argv[1], int(sys.argv[2])
+# Serve status.json — and ONLY status.json — bound to the POD's own IP (never 0.0.0.0) and behind a
+# bearer when one is configured. Review B2-review-L5: the file names every domain and its parse
+# errors — not secret, but not public either, and a wildcard bind is a wider surface than the job
+# needs. No Service exposes this port today and os-ui does not read it (docs/components/dagster.md
+# -> "Known limits").
+python3 - "$CHECKOUT" "$PORT" "$BIND" "$STATUS_TOKEN" <<'PY' >/dev/null 2>&1 &
+import hmac, http.server, os, sys
+root, port, bind, token = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+if token == "dev-only-insecure-agent-runtime-token":
+    token = ""  # the shipped placeholder is not a credential
+
+
 class H(http.server.BaseHTTPRequestHandler):
+    def _authed(self):
+        if not token:
+            return True
+        header = self.headers.get("authorization", "")
+        got = header[7:] if header[:7].lower() == "bearer " else ""
+        return bool(got) and hmac.compare_digest(got, token)
+
     def do_GET(self):
         if self.path.split("?")[0] not in ("/", "/status.json"):
             self.send_response(404); self.end_headers(); return
+        if not self._authed():
+            self.send_response(401); self.send_header("www-authenticate", "Bearer"); self.end_headers(); return
         try:
             body = open(os.path.join(root, "status.json"), "rb").read()
         except OSError:
             body = b'{"enabled": true, "domains": {}}'
         self.send_response(200); self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
     def log_message(self, *a): pass
-http.server.ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
+
+
+http.server.ThreadingHTTPServer((bind, port), H).serve_forever()
 PY
-log "status on :$PORT, base $BASE, index ${INDEX_URL:-off}, extra domains [$DOMAINS], every ${INTERVAL}s"
+log "status on $BIND:$PORT (auth: $([ -n "$STATUS_TOKEN" ] && echo bearer || echo NONE)), base $BASE, index ${INDEX_URL:-off}, extra domains [$DOMAINS], every ${INTERVAL}s"
 
 # Domains from the OS index (newline-separated). Unreachable ⇒ empty (the explicit list still runs).
 index_domains() {

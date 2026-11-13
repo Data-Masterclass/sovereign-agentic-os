@@ -20,6 +20,7 @@
  *   - `server-only`: the Dagster URL is cluster-internal.
  */
 import 'server-only';
+import { createHash } from 'node:crypto';
 import { config } from '@core/kernel/config';
 
 /** A read either produced data or produced a reason. It never throws. */
@@ -216,6 +217,36 @@ export function sanitizeName(name: string): string {
   return s && !/^\d/.test(s) ? s : `_${s}`;
 }
 
+/**
+ * `{original: unique Dagster-safe name}` — the TypeScript twin of `os_projects.sanitize_all`.
+ *
+ * `sanitizeName` is lossy (`sales-eu` and `sales.eu` both give `sales_eu`), and the code location
+ * resolves such a collision by appending a 6-hex digest of the ORIGINAL name to every later
+ * claimant in sorted order (review B2-review-M2). Before B3 the OS could not compute that, so for a
+ * collided domain `scheduleNameFor` named a schedule that did not exist and the panel showed no
+ * next tick. Now the OS runs the SAME algorithm over the domain list it already has from
+ * `GET /api/data/projects`, and a shared golden
+ * (`images/extensions/dagster/tests/sanitize-collisions.golden.json`) is asserted by BOTH languages
+ * so the two can never drift.
+ */
+export function sanitizeAll(names: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  const taken = new Set<string>();
+  for (const name of [...new Set(names.map((n) => String(n)))].sort()) {
+    const base = sanitizeName(name);
+    let candidate = base;
+    if (taken.has(candidate)) {
+      const digest = createHash('sha256').update(name, 'utf8').digest('hex').slice(0, 6);
+      candidate = `${base}_${digest}`;
+      let n = 2;
+      while (taken.has(candidate)) candidate = `${base}_${digest}_${n++}`;
+    }
+    taken.add(candidate);
+    out[name] = candidate;
+  }
+  return out;
+}
+
 function describeUnion(out: Record<string, unknown>): string {
   const t = String(out.__typename ?? 'UnknownError');
   if (typeof out.message === 'string') return `${t}: ${out.message.slice(0, 400)}`;
@@ -390,9 +421,17 @@ export async function nextTick(scheduleName: string, deps: DagsterDeps = {}): Pr
 
 /* ------------------------------------------------------------------ naming -- */
 
-/** The schedule the location defines for a dataset's sync: `<domain>__<datasetId>` (os_projects.schedule_name). */
-export function scheduleNameFor(domain: string, datasetId: string): string {
-  return `${sanitizeName(domain)}__${sanitizeName(datasetId)}`;
+/**
+ * The schedule the location defines for a dataset's sync: `<domain>__<datasetId>`
+ * (`os_projects.schedule_name`).
+ *
+ * `allDomains` is every domain the location loaded (the repo index). Pass it whenever it is known:
+ * without it a domain whose sanitized name collides with another's gets the plain form, which is
+ * NOT the name the location used, and the next-tick read returns not-found.
+ */
+export function scheduleNameFor(domain: string, datasetId: string, allDomains?: string[]): string {
+  const name = allDomains && allDomains.length ? (sanitizeAll(allDomains)[domain] ?? sanitizeName(domain)) : sanitizeName(domain);
+  return `${name}__${sanitizeName(datasetId)}`;
 }
 
 /** The asset key of a dbt model in the location: `[<domain>, <model>]`. */
