@@ -67,4 +67,5 @@ node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/data/lib/sync-schedule-view.test.ts \
   tabs/data/lib/mcp-parity.test.ts \
   tabs/data/lib/mcp-conformance.test.ts \
-  core/mcp/mcp-conformance.test.ts
+  core/mcp/mcp-conformance.test.ts \
+  tabs/agents/lib/engine/run-agent-graph-cli.test.ts

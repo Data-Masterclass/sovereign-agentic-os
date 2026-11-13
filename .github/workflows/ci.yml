@@ -84,6 +84,22 @@ jobs:
       # web-fetch: new tests (zero tests previously)
       - name: pytest (web-fetch)
         run: python3 -m pytest -q images/base/web-fetch/test_app.py
+      # query-tool: the governed Trino door. `test_query_budget.py` is what closes checklist X9's
+      # handler half (the `query_max_run_time` + `request_timeout` + `max+1` ceilings), and
+      # `test_execute_guard.py` / `test_bearer.py` guard the write path and the bearer check.
+      # Part F found these ran in NO gate. Run PER FILE: the four modules patch the same `app`
+      # module at import time, so one discovery pass over all of them cross-contaminates (7 of 12
+      # budget tests fail under `unittest discover` and pass per file) — a real isolation defect,
+      # recorded as a Part F gap, not papered over by running them together.
+      - name: pytest (query-tool)
+        run: |
+          for t in images/extensions/query-tool/test_*.py; do python3 -m pytest -q "$t"; done
+      # dagster: the code location the OS generates — `parse_schedules`, `ensure_checkout`,
+      # `partition_definitions`, the source assets and the chart contract (checklist D7/D8/D11).
+      - name: Install dagster-test deps
+        run: pip install "pyyaml>=6,<7"
+      - name: pytest (dagster extension)
+        run: python3 -m pytest -q images/extensions/dagster/tests/test_os_projects.py
       # agent-runtime: deleted in the engine rebuild (A5) — agent systems execute as a real
       # LangGraph StateGraph inside os-ui, covered by `npm --prefix os-ui test`.
 

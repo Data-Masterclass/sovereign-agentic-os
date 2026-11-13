@@ -252,6 +252,29 @@ agents/<slug>/README.md                 # purpose, members, grants, channels, ed
 agents/personal/<owner-token>/<slug>/…  # a Personal system, in its owner's lane
 ```
 
+**Run the artefact from a plain checkout** (checklist A4). `system.yaml` is not a file only the OS
+can interpret — one command compiles it with the OS's own `parseSystem` → `compile` → `buildGraph`
+and executes it, with the LiteLLM gateway replaced by a deterministic scripted model, the governed
+executor by a stub, and the Postgres checkpointer by LangGraph's in-memory saver. No cluster, no
+database, no model key, nothing written anywhere:
+
+```bash
+cd os-ui
+node scripts/run-agent-graph.mjs <path-to-checkout>/agents/<slug>/system.yaml "the task"
+# system:     Revenue review (domain sales, entrypoint lead)
+# engine:     langgraph, checkpointer memory
+# path:       lead → researcher → publisher
+# tool calls: researcher → search_knowledge, publisher → author_knowledge
+# reachedEnd: true          # exit 0; exit 1 when the run does not reach END
+```
+
+Use it to see where a graph actually goes — which members the supervisor picks, which guards route,
+which tools each node reaches — before trusting it in a cluster. What it does **not** prove is A4's
+"runs with LangGraph alone": `buildGraph` is still the OS's compiler, so a standalone `graph.ts`
+plus a thin runner remains unbuilt (deviation D-8). Pinned by
+`lib/engine/run-agent-graph-cli.test.ts`, which drives the CLI as a subprocess against the exact
+`system.yaml` blob the git golden commits.
+
 A Personal system lives in `agents/personal/<owner-token>/` — the lane split B1 chose for
 `models/personal/<uid>/`, so one repository keeps one convention. The segment is an **opaque,
 stable token** (`sha256(<principal id>)`, first 12 hex characters — `lib/git/generate.ts`
