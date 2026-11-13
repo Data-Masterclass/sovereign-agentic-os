@@ -219,19 +219,23 @@ export const agentWriteTools: McpTool[] = [
     call: async (user, args) => {
       const runId = str(args.runId).trim();
       if (!runId) fail('resume_agent_run needs a `runId`', 400);
+      // A4-review-H-1: the SAME visibility gate the run route and the re-attach stream use — the
+      // checkpoint's owner AND the `run_jobs` row must both be this caller's, both answering 404.
+      const { assertRunVisible } = await import('@tabs/agents/lib/engine/run-visibility');
       const { peekRunOwner } = await import('@tabs/agents/lib/build/agentic-graph-server');
       const owner = await peekRunOwner(runId);
-      if (!owner || owner.userId !== user.id) fail('Run not found', 404);
-      const view = getSystemForRun(owner.systemId, P(user));
+      const seen = assertRunVisible(owner ? { requestedBy: owner.userId, systemId: owner.systemId } : null, runId, user.id);
+      const view = getSystemForRun(seen.systemId, P(user));
       // A4: a resume is a `run_jobs` row too — the same queue the decision hook and the UI use.
-      const { resumeQueuedRun } = await import('@tabs/agents/lib/build/run-jobs-server');
-      const out = await resumeQueuedRun({ user, systemId: owner.systemId, domain: view.system.system.domain, runId });
+      const { resumeQueuedRun, runJobStore } = await import('@tabs/agents/lib/build/run-jobs-server');
+      assertRunVisible(await (await runJobStore()).get(runId), runId, user.id, seen.systemId);
+      const out = await resumeQueuedRun({ user, systemId: seen.systemId, domain: view.system.system.domain, runId });
       if (out.error) fail(out.error.message, out.error.status ?? 500);
-      if (!out.body) return { runId, systemId: owner.systemId, engine: 'langgraph', queued: true, note: 'the resume is filed — the worker is executing it' };
+      if (!out.body) return { runId, systemId: seen.systemId, engine: 'langgraph', queued: true, note: 'the resume is filed — the worker is executing it' };
       const body = out.body;
       return {
         runId,
-        systemId: owner.systemId,
+        systemId: seen.systemId,
         engine: 'langgraph',
         traceUrl: body.traceUrl,
         reachedEnd: body.reachedEnd,

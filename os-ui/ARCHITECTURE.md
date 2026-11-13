@@ -34,9 +34,17 @@ tabs/      One folder per tab. A tab imports @core/* and itself — never anothe
 
 app/       The Next.js App Router tree. Routes MUST live here, so pages stay put and
            import from @core/* and @tabs/*. Nothing but routing belongs in app/.
+
+worker/    ENTRYPOINTS the Next build never compiles — the `os-ui-worker` container's command.
+           `start.mjs` registers `resolve-hook.mjs` (the tsconfig path aliases, READ from
+           tsconfig.json) and imports `agent-runs.ts` under Node's type stripping; `empty.mjs`
+           is what `server-only` resolves to outside a bundler. Like `instrumentation.ts`, these
+           files MAY import a tab: they are entrypoints, not kernel code. `check-structure.mjs`
+           enforces the FEATURE / USER STORY / ARCHITECTURE header here too.
 ```
 
-Path aliases: `@core/*` → `core/*`, `@tabs/*` → `tabs/*` (tsconfig + the test loader).
+Path aliases: `@core/*` → `core/*`, `@tabs/*` → `tabs/*` (tsconfig + the test loader + the
+worker's resolve hook, which derives them from `tsconfig.json` so the three cannot disagree).
 
 ## The 13 tabs
 
@@ -410,9 +418,29 @@ entrypoint `worker/agent-runs.ts`): claim the oldest `queued` row with
 `UPDATE … WHERE run_id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)` — two workers never take the
 same run and neither blocks — stamp `locked_by`/`locked_at`, re-read the runner **live**, run it,
 write every engine event to `run_events`, settle the row. A `running` lease nobody heartbeats is
-re-queued **once** as a `resume` (the checkpoint continues the thread) and then **failed**, so a
-run never sits `running` forever. SIGTERM stops new claims and aborts the run in flight at its
-next superstep boundary: what completed is checkpointed and the row goes back to `queued`.
+re-queued **once** (as a `resume` when there is a checkpoint to continue, keeping `kind='start'`
+when the run never reached one) and then **failed**, so a run never sits `running` forever.
+SIGTERM stops new claims and aborts the run in flight at its next superstep boundary: what
+completed is checkpointed and the row goes back to `queued`.
+
+**A lost lease is an abort.** The heartbeat is a watch (`leaseWatch`): the first beat that reports
+the row is no longer `running` under this pod aborts the run *and* marks the job abandoned, so
+this process settles nothing and re-queues nothing — the pod that re-claimed the row owns it. The
+settle itself is lease-guarded in SQL (`AND locked_by=… AND status='running'`), so a stale
+holder's `done` updates no rows. `run_events` appends are deliberately **not** guarded: a late
+event is ordered after the new holder's by `seq` and is at worst a duplicate line in the panel,
+whereas a stale settle would end a run somebody else is still driving. `settlementOf` (pure) is
+the whole decision: abandon ▸ failed ▸ requeue ▸ parked/done.
+
+**`inline` still reaps.** There is no loop to sweep leases in `inline` mode, so
+`ensureRunJobsReady()` runs one `reapStale` sweep at boot and an inline run heartbeats its own
+lease. An os-ui pod OOM-killed mid-run is picked up by the next pod's boot.
+
+**A run id is not an authorisation.** `engine/run-visibility.ts` `assertRunVisible` is the ONE
+gate every run-id door calls *before* any side effect — `POST …/run` with `{ resume: true }`,
+`GET …/run/stream`, MCP `resume_agent_run` — and the store refuses a resume whose `requested_by`
+differs from the row's as defence in depth. Always 404, never 403: a 403 would confirm that the
+run exists and belongs to someone else.
 
 **Identity, again.** The job carries a `principal_snapshot` — what was true when the run was
 filed, never the authority. Before executing, `engine/runner-identity.ts` re-reads the runner from
@@ -425,7 +453,12 @@ disabled), `runner_role_changed` (downgraded below the filed role), `runner_doma
 per watcher, and a few hundred milliseconds is invisible next to a model call. `POST …/run` tails
 from `seq = 0`; `GET …/run/stream?runId=&afterSeq=` tails from the client's cursor, so a re-attach
 replays only what it missed. A `done` whose body says `parked: true` is **not** terminal — the
-decision will continue the run on the same id.
+decision will continue the run on the same id. At 240 s both doors emit a `queued`
+`{ runId, afterSeq }` frame and the panel re-attaches from that cursor
+(`build/run-stream-client.ts`, pure and unit-tested — the panel is a `.tsx` a test may not
+import). One pod holds at most 64 tails (`engine/tail-limit.ts`); the next gets `503` +
+`Retry-After`, because a tail borrows a pooled connection every 400 ms and sign-in must not lose
+to a wall of open Run panels.
 
 **One switch, `AGENTS_WORKER`.** `inline` (the default) means the process that files the job also
 executes it, immediately, writing the same `run_events` — a kind install, a laptop and the whole

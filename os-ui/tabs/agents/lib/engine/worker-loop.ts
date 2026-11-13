@@ -19,6 +19,10 @@
  *   - GRACEFUL STOP: `stopped()` is checked before each claim, so a SIGTERM never starts a new run;
  *     the in-flight one is aborted at its next superstep boundary by the executor's signal and the
  *     job goes back to `queued` as a `resume`.
+ *   - A LOST LEASE IS AN ABORT, not a log line (A4-review-H-2): `leaseWatch` flips `lost()` the
+ *     first time a heartbeat reports that the row is no longer `running` under this worker, and
+ *     `settlementOf` then says `abandon` — the run belongs to whoever re-claimed it, so this pod
+ *     must neither settle it nor put it back. Both are pure, so the matrix is unit-tested.
  */
 import type { RunJob, RunJobStore } from '@tabs/agents/lib/engine/jobs';
 
@@ -46,6 +50,59 @@ export type WorkerLoopDeps = {
 };
 
 export type TickOutcome = 'ran' | 'idle' | 'stopped';
+
+// --------------------------------------------------------------- lease watch --
+
+export type LeaseWatch = {
+  /** One heartbeat. Flips `lost()` (and calls `onLost`) the first time the lease is gone. */
+  tick: () => Promise<void>;
+  lost: () => boolean;
+};
+
+/**
+ * Watch one claimed run's lease. A heartbeat that returns `false` means the row is no longer
+ * `running` under this worker — the reaper re-queued it and another pod may already be executing
+ * it — so the run in this process must be ABORTED and left alone.
+ * A heartbeat that THROWS is a database blip, not a lost lease: declaring the lease lost on a
+ * failed query would abort healthy runs every time Postgres hiccups. The reaper stays the backstop.
+ */
+export function leaseWatch(opts: { heartbeat: () => Promise<boolean>; onLost?: (reason: string) => void }): LeaseWatch {
+  let lost = false;
+  return {
+    lost: () => lost,
+    async tick() {
+      if (lost) return;
+      let ok = true;
+      try {
+        ok = await opts.heartbeat();
+      } catch {
+        return; // a failed heartbeat query says nothing about the lease
+      }
+      if (ok) return;
+      lost = true;
+      opts.onLost?.('the lease is no longer held by this worker — the run was re-queued or re-claimed');
+    },
+  };
+}
+
+// ----------------------------------------------------------------- settle --
+
+export type Settlement =
+  | { kind: 'complete'; status: 'done' | 'parked' | 'failed'; error?: string }
+  | { kind: 'requeue' }
+  | { kind: 'abandon'; reason: string };
+
+/**
+ * What to do with a job whose execution just returned. PURE — the executor supplies the facts.
+ * `abandon` wins over everything: a worker that lost its lease owns nothing to settle.
+ */
+export function settlementOf(o: { leaseLost: boolean; stopping: boolean; failure?: string; parked?: boolean; reachedEnd?: boolean }): Settlement {
+  if (o.leaseLost) return { kind: 'abandon', reason: 'the lease was lost — another worker owns this run now' };
+  if (o.failure !== undefined) return { kind: 'complete', status: 'failed', error: o.failure };
+  // SIGTERM between supersteps: what completed is checkpointed, so the run goes BACK to the queue.
+  if (o.stopping && !o.parked && !o.reachedEnd) return { kind: 'requeue' };
+  return { kind: 'complete', status: o.parked ? 'parked' : 'done' };
+}
 
 /** One iteration: reap if due, claim one job, execute it under a heartbeat. */
 export async function workerTick(deps: WorkerLoopDeps, state: { lastReapAt: number }): Promise<TickOutcome> {
@@ -76,7 +133,7 @@ export async function workerTick(deps: WorkerLoopDeps, state: { lastReapAt: numb
     // `execute` is contracted not to throw; if it does, the job must not stay `running`.
     deps.log?.(`run ${job.runId} executor threw: ${(e as Error)?.message ?? String(e)}`);
     try {
-      await deps.store.complete(job.runId, 'failed', { error: (e as Error)?.message ?? String(e) });
+      await deps.store.complete(job.runId, 'failed', { error: (e as Error)?.message ?? String(e), lockedBy: deps.workerId });
     } catch { /* the reaper is the backstop */ }
   } finally {
     stopHeartbeat();

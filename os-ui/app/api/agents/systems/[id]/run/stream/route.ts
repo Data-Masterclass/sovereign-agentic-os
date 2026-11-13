@@ -9,8 +9,11 @@
  *             what I missed.
  * ARCHITECTURE: GET ?runId=[&afterSeq=] tails `run_events` through `engine/jobs.ts` `tailRunEvents`
  *             (A4; replaces the in-process topic of A2). Owner-checked against the `run_jobs` row
- *             (system + runner) AND the caller's run scope — anything else is 404, never confirming
- *             the run exists. `afterSeq` is the client's cursor: 0 replays the whole run.
+ *             through the SHARED `assertRunVisible` (system + runner, A4-review-H-1) AND the
+ *             caller's run scope — anything else is 404, never confirming the run exists.
+ *             `afterSeq` is the client's cursor: 0 replays the whole run. One tail slot per open
+ *             stream, so a pod refuses the 65th with 503 + `Retry-After` instead of starving its
+ *             connection pool (A4-review-L-6).
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
@@ -18,6 +21,8 @@ import { isRunId } from '@core/kernel/run-id';
 import { getSystemForRun } from '@tabs/agents/lib/store';
 import { runJobStore } from '@tabs/agents/lib/build/run-jobs-server';
 import { tailRunEvents } from '@tabs/agents/lib/engine/jobs';
+import { assertRunVisible } from '@tabs/agents/lib/engine/run-visibility';
+import { acquireTail } from '@tabs/agents/lib/engine/tail-limit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -42,9 +47,18 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 403 });
   }
   const store = await runJobStore();
-  const job = await store.get(runId);
-  if (!job || job.systemId !== id || job.requestedBy !== user.id) {
-    return NextResponse.json({ error: 'No run stream for this run' }, { status: 404 });
+  try {
+    assertRunVisible(await store.get(runId), runId, user.id, id);
+  } catch (e) {
+    return NextResponse.json({ error: 'No run stream for this run' }, { status: (e as { status?: number }).status ?? 404 });
+  }
+
+  let releaseTail: () => void;
+  try {
+    releaseTail = acquireTail();
+  } catch (e) {
+    const retry = (e as { retryAfterSeconds?: number }).retryAfterSeconds ?? 5;
+    return NextResponse.json({ error: (e as Error).message }, { status: 503, headers: { 'retry-after': String(retry) } });
   }
 
   const encoder = new TextEncoder();
@@ -62,9 +76,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         send('error', { error: (e as Error).message });
       } finally {
         closed = true;
+        releaseTail();
         try { controller.close(); } catch { /* already closed */ }
       }
     },
+    cancel() { releaseTail(); },
   });
   return new Response(stream, {
     headers: {

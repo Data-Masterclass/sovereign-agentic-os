@@ -104,7 +104,9 @@ test('A4 SQL: the reaper re-queues under the attempt cap and fails above it', as
   const out = await postgresRunJobStore(db).reapStale({ olderThanMs: 60_000, maxAttempts: 2, now: 1_000_000 });
   assert.deepEqual(out, { requeued: ['r1'], failed: ['r2'] });
   assert.match(db.sql[0], /attempts < \$2/);
-  assert.match(db.sql[0], /kind='resume'/, 'a retry continues the thread from its checkpoint');
+  // A4-review-M-5: a reaped `start` stays a start (no checkpoint to resume from); anything else
+  // comes back as a resume and continues the thread.
+  assert.match(db.sql[0], /kind=CASE WHEN kind='start' THEN 'start' ELSE 'resume' END/);
   assert.match(db.sql[1], /status='failed'/);
   assert.ok(db.sql.every((s) => /locked_at IS NOT NULL/.test(s)), 'a row with no lease is never reaped');
 });

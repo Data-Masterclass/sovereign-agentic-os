@@ -105,7 +105,10 @@ test('A4 queue: a stale lease is re-queued ONCE, then failed', async () => {
   assert.deepEqual(await store.reapStale({ olderThanMs: 60_000, maxAttempts: 2, now: 120_000 }), { requeued: ['r1'], failed: [] });
   const requeued = await store.get('r1');
   assert.equal(requeued?.status, 'queued');
-  assert.equal(requeued?.kind, 'resume', 'the retry continues from the checkpoint, it does not start over');
+  // A4-review-M-5: the row's ORIGINAL kind survives the reap. This one was a `start`, and a run
+  // killed before its first checkpoint has nothing to resume from — re-queuing it as a resume
+  // turned a retry into a 404 failure. A row that WAS a resume still comes back as a resume.
+  assert.equal(requeued?.kind, 'start', 'a reaped start is re-started; a reaped resume stays a resume');
   assert.equal(requeued?.attempts, 1);
 
   // Claimed again (attempts → 2) and abandoned again: the budget is spent, so it FAILS.

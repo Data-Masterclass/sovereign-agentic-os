@@ -21,6 +21,7 @@
  *   - `run_events` is append-only with a per-run `seq` (primary key `(run_id, seq)`), written only
  *     by the lease holder, so a tail is a PK range scan and `seq` is a resume cursor.
  */
+import { RunNotVisibleError } from '@tabs/agents/lib/engine/run-visibility';
 import {
   boundError,
   isRunEventName,
@@ -154,18 +155,21 @@ export function postgresRunJobStore(sql: SqlClient): RunJobStore {
         const existing = await this.get(job.runId);
         throw new RunJobConflictError(job.runId, existing?.status ?? 'running');
       }
-      // A `resume` re-queues the SAME row — only from a settled state (`parked`/`done`/`failed`).
+      // A `resume` re-queues the SAME row — only from a settled state (`parked`/`done`/`failed`)
+      // and only for the run's OWN requester (A4-review-H-1: the `requested_by` predicate means a
+      // foreign resume cannot overwrite `requested_by`/`principal_snapshot` before being refused).
       const upd = await sql.query(
         `UPDATE run_jobs
-            SET kind='resume', requested_by=$2, principal_snapshot=$3::jsonb, input=$4::jsonb,
+            SET kind='resume', principal_snapshot=$3::jsonb, input=$4::jsonb,
                 status='queued', locked_by=NULL, locked_at=NULL, attempts=0, error=NULL, updated_at=$5
-          WHERE run_id=$1 AND status IN ('parked','done','failed')
+          WHERE run_id=$1 AND requested_by=$2 AND status IN ('parked','done','failed')
           RETURNING ${JOB_COLS}`,
         [job.runId, job.requestedBy, JSON.stringify(job.principal), JSON.stringify(job.input), t],
       );
       if (upd.rows.length > 0) return toJob(upd.rows[0]);
       const existing = await this.get(job.runId);
       if (!existing) throw new RunJobNotFoundError(job.runId);
+      if (existing.requestedBy !== job.requestedBy) throw new RunNotVisibleError(job.runId);
       throw new RunJobConflictError(job.runId, existing.status);
     },
 
@@ -208,10 +212,16 @@ export function postgresRunJobStore(sql: SqlClient): RunJobStore {
     },
 
     async complete(runId, status, opts) {
-      await sql.query(
-        `UPDATE run_jobs SET status=$2, locked_by=NULL, locked_at=NULL, error=$3, updated_at=$4 WHERE run_id=$1`,
-        [runId, status, status === 'failed' ? boundError(opts?.error ?? 'failed') : null, at(opts?.now)],
+      // With `lockedBy` the settle is LEASE-GUARDED (A4-review-H-2): a holder whose lease the
+      // reaper took, and whose job another pod has re-claimed, updates nothing.
+      const guard = opts?.lockedBy !== undefined ? ` AND locked_by=$5 AND status='running'` : '';
+      const values: unknown[] = [runId, status, status === 'failed' ? boundError(opts?.error ?? 'failed') : null, at(opts?.now)];
+      if (opts?.lockedBy !== undefined) values.push(opts.lockedBy);
+      const res = await sql.query(
+        `UPDATE run_jobs SET status=$2, locked_by=NULL, locked_at=NULL, error=$3, updated_at=$4 WHERE run_id=$1${guard}`,
+        values,
       );
+      return (res.rowCount ?? 0) > 0;
     },
 
     async requeue(runId, workerId, now) {
@@ -225,8 +235,12 @@ export function postgresRunJobStore(sql: SqlClient): RunJobStore {
     async reapStale({ olderThanMs, maxAttempts, now }) {
       const cutoff = new Date((now ?? Date.now()) - olderThanMs);
       const t = at(now);
+      // A4-review-M-5: keep `kind='start'` for a row that was never a resume — a run killed before
+      // its first checkpoint has no resume point, and re-queuing it as a resume turns a retry into
+      // a 404 failure.
       const requeued = await sql.query(
-        `UPDATE run_jobs SET status='queued', kind='resume', locked_by=NULL, locked_at=NULL, updated_at=$3
+        `UPDATE run_jobs SET status='queued', kind=CASE WHEN kind='start' THEN 'start' ELSE 'resume' END,
+                locked_by=NULL, locked_at=NULL, updated_at=$3
           WHERE status='running' AND locked_at IS NOT NULL AND locked_at < $1 AND attempts < $2
           RETURNING run_id`,
         [cutoff, maxAttempts, t],

@@ -1,11 +1,28 @@
 {{- /*
-  os-ui ENVIRONMENT — defined once, used by BOTH the os-ui Deployment and the
-  `os-ui-worker` Deployment (engine rebuild A4). The worker executes the SAME code with
-  the SAME governed identity, so it needs the SAME configuration: one list, no drift.
-  Included with `nindent 12`; `AGENTS_WORKER` is NOT here because its value differs per
+  os-ui ENVIRONMENT — defined once, SPLIT IN TWO (engine rebuild A4 review M-4):
+
+    soa.osUI.runEnv    everything an agent RUN needs: the model gateway's scoped agent key,
+                       the stores, the service bearers, the object storage, Langfuse. The
+                       `os-ui-worker` Deployment gets exactly this and nothing more.
+    soa.osUI.adminEnv  the ADMIN/HTTP-only credentials — session + MCP token signing keys,
+                       the Graph mail secret, the LiteLLM UI login and the LiteLLM MASTER
+                       key. None of them is reachable from the run path, and the worker
+                       serves no HTTP, so the worker pod must not hold them: a compromised
+                       run would otherwise find full gateway admin and a session-forging key
+                       in its own environment.
+    soa.osUI.env       both, in that order — what the os-ui Deployment includes, so os-ui.yaml
+                       is unchanged and the two lists can never drift.
+
+  Included with `nindent 12`; `AGENTS_WORKER` is in neither, because its value differs per
   workload (os-ui only switches to `worker` when `osUI.worker.enabled`).
 */}}
 {{- define "soa.osUI.env" -}}
+{{- include "soa.osUI.runEnv" . }}
+{{ include "soa.osUI.adminEnv" . }}
+{{- end }}
+
+{{- /* The RUN path's environment — the only list the worker pod gets. */}}
+{{- define "soa.osUI.runEnv" -}}
 {{- $u := .Values.osUI -}}
 - name: PORT
   value: "3000"
@@ -31,23 +48,6 @@
 - name: OS_ENABLED_TABS
   value: {{ .Values.osUI.enabledTabs | quote }}
 {{- end }}
-# Session-signing secret (HMAC-SHA256 for the auth cookie). Sourced
-# from the generated `os-ui-session` Secret — NEVER the in-code
-# dev fallback, which would let anyone forge an admin session.
-- name: OS_SESSION_SECRET
-  valueFrom:
-    secretKeyRef:
-      name: os-ui-session
-      key: OS_SESSION_SECRET
-# Signs the per-user bearer token for the remote MCP endpoint
-# (/api/mcp). Sourced from the same os-ui-session Secret so it works
-# out of the box; repoint to its own Secret/key later to rotate MCP
-# tokens independently of session cookies.
-- name: OS_MCP_TOKEN_SECRET
-  valueFrom:
-    secretKeyRef:
-      name: os-ui-session
-      key: OS_SESSION_SECRET
 {{- with .Values.osUI.usersSeed }}
 # Optional operator pre-seed of REAL users (JSON array). Not shipped;
 # plaintext passwords here are hashed on ingest. Empty = first-run
@@ -67,12 +67,6 @@
   value: {{ .Values.osUI.graph.tenantId | quote }}
 - name: GRAPH_CLIENT_ID
   value: {{ .Values.osUI.graph.clientId | quote }}
-- name: GRAPH_CLIENT_SECRET
-  valueFrom:
-    secretKeyRef:
-      name: os-ui-graph
-      key: GRAPH_CLIENT_SECRET
-      optional: true
 - name: MAIL_FROM
   value: {{ .Values.osUI.graph.mailFrom | default "support@datamasterclass.com" | quote }}
 {{- end }}
@@ -204,12 +198,6 @@
 - name: OCR_URL
   value: {{ . | quote }}
 {{- end }}
-# UI-only credential for the EMBEDDED LiteLLM admin console. os-ui mints a
-# browser session from this server-side (core/infra/tool-sso-litellm.ts) so an
-# admin opening Admin -> LLM Gateway is already signed in. Same Secret LiteLLM
-# itself reads, so there is one credential, not two. Deliberately NOT the proxy
-# master key: a leaked UI session must not equal full API access. Absent =>
-# the OS reports "not configured" instead of framing LiteLLM's own login.
 # The SCOPED virtual key the run path uses instead of the master key.
 # Provisioned + registered in LiteLLM by the litellm-agent-key-init Job
 # (model allowlist + USD cap). `optional` so a cluster without the
@@ -236,18 +224,6 @@
 - name: AGENT_RUNS_DATABASE_URL
   value: postgresql://$(AGENT_RUNS_DB_USERNAME):$(AGENT_RUNS_DB_PASSWORD)@pg-rw/agent_runs
 {{- end }}
-- name: LITELLM_UI_USERNAME
-  valueFrom:
-    secretKeyRef:
-      name: litellm-credentials
-      key: UI_USERNAME
-      optional: true
-- name: LITELLM_UI_PASSWORD
-  valueFrom:
-    secretKeyRef:
-      name: litellm-credentials
-      key: UI_PASSWORD
-      optional: true
 - name: LITELLM_URL
   value: {{ $u.litellmUrl | quote }}
 - name: OPA_URL
@@ -277,6 +253,61 @@
     secretKeyRef:
       name: {{ $u.langfuseSecret.name | quote }}
       key: {{ $u.langfuseSecret.key | quote }}
+{{- end }}
+
+{{- /*
+  ADMIN / HTTP-only credentials. Deliberately absent from `soa.osUI.runEnv`, so the
+  `os-ui-worker` pod — which executes agent runs and serves no HTTP — never holds them.
+  Checked by `scripts/check-worker-env.mjs` (run from os-ui/scripts/gate.sh when helm is
+  available) and by the manual `helm template` in docs/components/os-ui.md.
+*/}}
+{{- define "soa.osUI.adminEnv" -}}
+{{- $u := .Values.osUI -}}
+# Session-signing secret (HMAC-SHA256 for the auth cookie). Sourced
+# from the generated `os-ui-session` Secret — NEVER the in-code
+# dev fallback, which would let anyone forge an admin session.
+- name: OS_SESSION_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: os-ui-session
+      key: OS_SESSION_SECRET
+# Signs the per-user bearer token for the remote MCP endpoint
+# (/api/mcp). Sourced from the same os-ui-session Secret so it works
+# out of the box; repoint to its own Secret/key later to rotate MCP
+# tokens independently of session cookies.
+- name: OS_MCP_TOKEN_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: os-ui-session
+      key: OS_SESSION_SECRET
+{{- if .Values.osUI.graph.enabled }}
+# GRAPH_CLIENT_SECRET — outbound mail is an HTTP-path concern (verification links,
+# invitations); a run never sends mail.
+- name: GRAPH_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: os-ui-graph
+      key: GRAPH_CLIENT_SECRET
+      optional: true
+{{- end }}
+# UI-only credential for the EMBEDDED LiteLLM admin console. os-ui mints a
+# browser session from this server-side (core/infra/tool-sso-litellm.ts) so an
+# admin opening Admin -> LLM Gateway is already signed in. Same Secret LiteLLM
+# itself reads, so there is one credential, not two. Deliberately NOT the proxy
+# master key: a leaked UI session must not equal full API access. Absent =>
+# the OS reports "not configured" instead of framing LiteLLM's own login.
+- name: LITELLM_UI_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: litellm-credentials
+      key: UI_USERNAME
+      optional: true
+- name: LITELLM_UI_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: litellm-credentials
+      key: UI_PASSWORD
+      optional: true
 # LiteLLM master key — from a Secret so it never sits in plaintext.
 # Override the name/key per environment.
 - name: LITELLM_MASTER_KEY

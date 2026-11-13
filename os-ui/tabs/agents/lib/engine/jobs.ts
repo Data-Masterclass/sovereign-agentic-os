@@ -23,11 +23,21 @@
  *     later `seq` gets only what it missed. A `done` whose body says `parked:true` is NOT terminal
  *     (the decision resumes the run on the same id); `error` and a non-parked `done` are.
  *   - LEASES: `claim` stamps `locked_by`/`locked_at` and bumps `attempts`; `heartbeat` refreshes
- *     `locked_at`; `reapStale` re-queues a `running` job whose lease expired as a `resume`
- *     (attempts < max) or fails it. No `server-only`, no env: pure.
+ *     `locked_at`; `reapStale` re-queues a `running` job whose lease expired (attempts < max) or
+ *     fails it — KEEPING `kind='start'` for a job that never got a resume point (A4-review-M-5).
+ *     `complete` is LEASE-GUARDED when the caller passes `lockedBy`: a holder whose lease was
+ *     reaped and re-claimed elsewhere must not settle the run the new holder owns
+ *     (A4-review-H-2); it returns whether the transition applied.
+ *   - `appendEvent` is deliberately NOT lease-guarded. The engine's `emit` is synchronous and
+ *     carries no lease holder, a late event from a stale holder is ordered after the new holder's
+ *     by `seq` (never interleaved mid-event) and is at worst a duplicate line in the panel —
+ *     whereas a stale `complete` would end a run the new holder is still executing. Guarding the
+ *     settle transition is therefore the cut that matters (A4-review-H-2).
+ *     No `server-only`, no env: pure.
  */
 import type { Role } from '@core/kernel/session';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
+import { RunNotVisibleError } from '@tabs/agents/lib/engine/run-visibility';
 
 /** The SSE event vocabulary of a run — what `run_events.event` may hold. */
 export const RUN_EVENT_NAMES = ['node-started', 'tool-step', 'node-completed', 'approval-required', 'resumed', 'done', 'error'] as const;
@@ -94,11 +104,14 @@ export class RunJobNotFoundError extends Error {
 export class RunJobConflictError extends Error {
   runId: string;
   status: number;
+  /** The state that refused the enqueue — `running` is the one worth retrying (A4-review-M-2). */
+  state: RunJobStatus;
   constructor(runId: string, state: RunJobStatus) {
     super(`Run '${runId}' is already ${state} — wait for it to park or finish before resuming`);
     this.name = 'RunJobConflictError';
     this.runId = runId;
     this.status = 409;
+    this.state = state;
   }
 }
 
@@ -112,8 +125,9 @@ export type RunJobStore = {
   claimById(runId: string, workerId: string, now?: number): Promise<RunJob | null>;
   /** Refresh the lease; false when the job is no longer `running` under this worker (lost lease). */
   heartbeat(runId: string, workerId: string, now?: number): Promise<boolean>;
-  /** Terminal / parked transition; releases the lock. */
-  complete(runId: string, status: 'done' | 'parked' | 'failed', opts?: { error?: string; now?: number }): Promise<void>;
+  /** Terminal / parked transition; releases the lock. With `lockedBy` the transition applies ONLY
+   *  while that worker still holds a `running` lease — a stale holder's settle is a no-op (false). */
+  complete(runId: string, status: 'done' | 'parked' | 'failed', opts?: { error?: string; now?: number; lockedBy?: string }): Promise<boolean>;
   /** A graceful shutdown mid-run: back to `queued` as a `resume` (the checkpoint continues it). */
   requeue(runId: string, workerId: string, now?: number): Promise<void>;
   /** Re-queue (attempts < maxAttempts) or fail every `running` job whose lease is older than `olderThanMs`. */
@@ -173,6 +187,9 @@ export function memoryRunJobStore(): MemoryRunJobStore {
       const t = stamp(now);
       const existing = st.jobs.get(job.runId);
       if (existing) {
+        // Defence in depth (A4-review-H-1): a resume filed by anyone but the run's requester is a
+        // 404 BEFORE the row is touched — the doors check first, the store refuses regardless.
+        if (job.kind === 'resume' && existing.requestedBy !== job.requestedBy) throw new RunNotVisibleError(job.runId);
         if (existing.status === 'queued' || existing.status === 'running') throw new RunJobConflictError(job.runId, existing.status);
         if (job.kind === 'start') throw new RunJobConflictError(job.runId, existing.status);
         const next: RunJob = {
@@ -218,9 +235,13 @@ export function memoryRunJobStore(): MemoryRunJobStore {
     },
     async complete(runId, status, opts) {
       const j = st.jobs.get(runId);
-      if (!j) return;
+      if (!j) return false;
+      // Lease guard: a worker whose lease was reaped and re-claimed elsewhere must not settle the
+      // run its new holder is executing (A4-review-H-2).
+      if (opts?.lockedBy !== undefined && (j.status !== 'running' || j.lockedBy !== opts.lockedBy)) return false;
       const t = stamp(opts?.now);
       Object.assign(j, { status, lockedBy: null, lockedAt: null, updatedAt: t, error: status === 'failed' ? boundError(opts?.error ?? 'failed') : undefined });
+      return true;
     },
     async requeue(runId, workerId, now) {
       const j = st.jobs.get(runId);
@@ -234,7 +255,10 @@ export function memoryRunJobStore(): MemoryRunJobStore {
       for (const j of st.jobs.values()) {
         if (j.status !== 'running' || j.lockedAt === null || t - j.lockedAt <= olderThanMs) continue;
         if (j.attempts < maxAttempts) {
-          Object.assign(j, { status: 'queued', kind: 'resume', lockedBy: null, lockedAt: null, updatedAt: t });
+          // A4-review-M-5: a run killed before its first checkpoint has nothing to resume FROM, so
+          // the reaper keeps the row's original kind — a reaped `start` is re-STARTED, not resumed
+          // (a resume of a thread with no checkpoint is a 404, i.e. a failure instead of a retry).
+          Object.assign(j, { status: 'queued', kind: j.kind === 'start' ? 'start' : 'resume', lockedBy: null, lockedAt: null, updatedAt: t });
           requeued.push(j.runId);
         } else {
           Object.assign(j, { status: 'failed', lockedBy: null, lockedAt: null, updatedAt: t, error: `worker lease expired ${j.attempts} time(s) — the run was not completed` });
@@ -321,10 +345,13 @@ export async function tailRunEvents(store: Pick<RunJobStore, 'eventsAfter' | 'ge
         return { ended: 'settled', lastSeq: seq };
       }
     } else if (batch.length === 0) {
-      // A job that failed without a terminal event (should not happen) must not hang the tail.
+      // A job settled without a terminal event (should not happen) must not hang the tail
+      // (A4-review-L-3). `parked` is excluded ON PURPOSE: a parked run is settled but NOT
+      // finished — the decision resumes it on the same id and this tail is what shows that.
       const job = await store.get(runId);
       if (!job) return { ended: 'missing', lastSeq: seq };
-      if (job.status === 'failed') {
+      if (isSettled(job.status) && job.status !== 'parked') {
+        // The status flips after the last event is written: drain once more before giving up.
         const rest = await store.eventsAfter(runId, seq);
         if (rest.length === 0) return { ended: 'settled', lastSeq: seq };
         continue;
@@ -332,6 +359,36 @@ export async function tailRunEvents(store: Pick<RunJobStore, 'eventsAfter' | 'ge
     }
     if (deadline && Date.now() >= deadline) return { ended: 'timeout', lastSeq: seq };
     await sleep(pollMs, opts.signal);
+  }
+}
+
+// -------------------------------------------------------- resume enqueue --
+
+/**
+ * File a `resume` job, retrying while the row is still `running`.
+ *
+ * A4-review-M-2: a decision taken in the split second between the engine's `interrupt()` and the
+ * executor's `complete(…, 'parked')` found the row `running` and was refused 409 — which stamped
+ * the approval `failed` even though the decision was perfectly valid. The window is one `await`
+ * wide, so a short bounded retry closes it; a row that is `queued` (a resume is already filed) or
+ * that does not exist is NOT retried — those conflicts are real.
+ */
+export async function enqueueResumeWithRetry(
+  store: Pick<RunJobStore, 'enqueue'>,
+  job: NewRunJob,
+  opts: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<RunJob> {
+  const attempts = Math.max(1, opts.attempts ?? 5);
+  const delayMs = opts.delayMs ?? 200;
+  const nap = opts.sleep ?? ((ms: number) => sleep(ms));
+  for (let i = 1; ; i += 1) {
+    try {
+      return await store.enqueue(job);
+    } catch (e) {
+      const conflict = e instanceof RunJobConflictError ? e : null;
+      if (!conflict || conflict.state !== 'running' || i >= attempts) throw e;
+      await nap(delayMs);
+    }
   }
 }
 

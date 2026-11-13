@@ -27,6 +27,7 @@ import {
 import type { System } from '@tabs/agents/lib/system-schema';
 import { downloadRunPdf } from '@tabs/agents/lib/build/agent-pdf';
 import { agentDisplayName } from '@tabs/agents/lib/build/eval-report';
+import { isRunOver, parseSseChunk, reattachFrom, runStreamUrl, REATTACH_LIMIT } from '@tabs/agents/lib/build/run-stream-client';
 
 /**
  * Build = execute + verify (Task 4) and Run (Task 7). Build runs the 5 adapters
@@ -1038,17 +1039,12 @@ export default function BuildRunPanel({
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const frames = buf.split('\n\n');
-      buf = frames.pop() ?? '';
-      for (const frame of frames) {
-        const evLine = frame.split('\n').find((l) => l.startsWith('event:'));
-        const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
-        if (!evLine || !dataLine) continue;
-        const event = evLine.slice(6).trim();
-        let data: Record<string, unknown> = {};
-        try { data = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
-        if (onFrame(event, data)) settled = true;
+      // Frame splitting lives in `run-stream-client.ts` (pure, unit-tested): a frame can arrive
+      // across two network chunks, and a frame we cannot read must not break the stream.
+      const parsed = parseSseChunk(buf, decoder.decode(value, { stream: true }));
+      buf = parsed.rest;
+      for (const frame of parsed.frames) {
+        if (onFrame(frame.event, frame.data)) settled = true;
       }
       if (settled) break;
     }
@@ -1056,33 +1052,46 @@ export default function BuildRunPanel({
   };
 
   /**
-   * A2 — re-attach to a PARKED run: the Governance decision resumes it in another request; this
-   * stream replays what happened and follows it to the real end. Ends on a non-parked `done`.
+   * A2 — re-attach to a run that outlived its request: a PARKED run the Governance decision
+   * resumes elsewhere, or (A4-review-M-3) a run whose tail budget expired. The stream replays from
+   * `afterSeq` and follows the run to its real end; when the server hands back another `queued`
+   * cursor we simply re-attach from it, as many times as the run needs. Nothing asks the user to
+   * "run again" while the run is still executing.
    */
-  const attachToRun = async (runId: string) => {
+  const attachToRun = async (runId: string, afterSeq = 0) => {
     setRunningNow(true);
     setRunErr('');
+    let cursor = { runId, afterSeq };
     try {
-      const res = await fetch(`/api/agents/systems/${systemId}/run/stream?runId=${encodeURIComponent(runId)}`, { headers: { accept: 'text/event-stream' } });
-      if (!res.ok || !(res.headers.get('content-type') ?? '').includes('text/event-stream')) {
-        const body = await res.json().catch(() => ({}));
-        setRunErr(body.error ?? 'Could not attach to the parked run — it will finish on its own; refresh to see the result.');
+      for (let hop = 0; hop < REATTACH_LIMIT; hop += 1) {
+        const res = await fetch(runStreamUrl(systemId, cursor.runId, cursor.afterSeq), { headers: { accept: 'text/event-stream' } });
+        if (!res.ok || !(res.headers.get('content-type') ?? '').includes('text/event-stream')) {
+          const body = await res.json().catch(() => ({}));
+          setRunErr(body.error ?? 'Could not attach to the run — it continues on its own; refresh to see the result.');
+          return;
+        }
+        let next: { runId: string; afterSeq: number } | undefined;
+        const settled = await readSse(res, (event, data) => {
+          const frame = { event, data };
+          const again = reattachFrom(frame, cursor.runId);
+          if (again) { next = again; return true; }
+          if (event === 'done') {
+            const r = normalizeRun(data as RawRun);
+            setRun(r);
+            if (!isRunOver(frame)) return false; // the replayed parked `done` — keep listening
+            setLive(null);
+            return true;
+          }
+          if (event === 'error') { setRunErr(String(data.error ?? 'Run failed')); return true; }
+          applyEvent(event, data);
+          return false;
+        });
+        if (next) { cursor = next; continue; }
+        if (!settled) setRunErr('The run stream ended before the run finished — refresh to see its current state.');
+        onStateChange();
         return;
       }
-      const settled = await readSse(res, (event, data) => {
-        if (event === 'done') {
-          const r = normalizeRun(data as RawRun);
-          setRun(r);
-          if (r.parked) return false; // the replayed parked `done` — keep listening
-          setLive(null);
-          return true;
-        }
-        if (event === 'error') { setRunErr(String(data.error ?? 'Run failed')); return true; }
-        applyEvent(event, data);
-        return false;
-      });
-      if (!settled) setRunErr('The run stream ended before the parked run finished — refresh to see its current state.');
-      onStateChange();
+      setRunErr('This run is still going after many hours of watching — refresh to see its current state.');
     } catch (e) {
       setRunErr((e as Error).message);
     } finally {
@@ -1117,13 +1126,18 @@ export default function BuildRunPanel({
         // Parse the SSE stream frame-by-frame: light up agents as they run and show
         // the current step live; `done` carries the SAME full result the non-stream
         // path returns, so the completed view is byte-for-byte unchanged.
-        let parkedRunId: string | undefined;
+        let follow: { runId: string; afterSeq: number } | undefined;
         const settled = await readSse(res, (event, data) => {
+          const frame = { event, data };
+          // A4-review-M-3: the server's tail budget ran out — it handed us a cursor, not a
+          // failure. Re-attach from it instead of telling the user to run again.
+          const again = reattachFrom(frame, resumeRunId);
+          if (again) { follow = again; return true; }
           if (event === 'done') {
             const r = normalizeRun(data as RawRun);
             setRun(r);
             // A2: a PARKED run — the request is over, but the run is not: re-attach below.
-            if (r.parked && r.runId) parkedRunId = r.runId;
+            if (!isRunOver(frame) && r.runId) follow = { runId: r.runId, afterSeq: 0 };
             else setLive(null);
             return true;
           }
@@ -1134,9 +1148,9 @@ export default function BuildRunPanel({
         // Stream ended without a terminal frame (disconnect): never leave a stuck
         // spinner — surface an honest message so the student can retry.
         if (!settled) setRunErr('The run stream ended before a result arrived — please run again.');
-        if (parkedRunId) {
+        if (follow) {
           onStateChange();
-          void attachToRun(parkedRunId);
+          void attachToRun(follow.runId, follow.afterSeq);
           return;
         }
       } else {

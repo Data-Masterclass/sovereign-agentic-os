@@ -115,7 +115,20 @@ re-queues the run. One start door for everything: `run-jobs-server.ts` `startQue
 (route, `build/scheduled.ts`, MCP `run_agent_system`), `resumeQueuedRun` (owner Resume, MCP
 `resume_agent_run`) and `enqueueResumeAfterDecision` (the Governance `onDecided` hook — a decision
 FILES a resume, it no longer drives the graph in the decider's request). `AGENTS_WORKER_LEASE_MS`
-bounds a lease; an abandoned one is re-queued once, then failed.
+bounds a lease; an abandoned one is re-queued once (keeping `kind='start'` when the run never
+reached a checkpoint), then failed.
+
+A run id is NOT an authorisation (A4 review): `lib/engine/run-visibility.ts` `assertRunVisible` is
+the one gate every run-id door calls before any side effect — the run route's resume, the re-attach
+stream, MCP `resume_agent_run` — always 404, never 403, and the store refuses a resume filed by
+anyone but the run's requester. A worker that loses its lease ABORTS the run and settles nothing
+(`engine/worker-loop.ts` `leaseWatch` / `settlementOf`, both pure); `complete` is lease-guarded,
+`appendEvent` deliberately is not. `inline` mode reaps stale leases once at boot and heartbeats its
+own runs. A decision that arrives while the run is still parking retries the enqueue briefly
+instead of stamping the approval `failed`. The panel's SSE parsing and its re-attach decision live
+in `lib/build/run-stream-client.ts` (pure — a test may not import the `.tsx`), so a `queued`
+cursor at the server's 240-second tail budget re-attaches transparently; `engine/tail-limit.ts`
+caps a pod at 64 concurrent tails (`503` + `Retry-After` beyond that).
 
 Parity: `lib/engine/parity-harness.ts` + `lib/engine/fixtures/*.json` are the golden recordings
 both engines must reproduce (`parity.test.ts`: P1 for both engines, HANDOFF-GUARD, P2 abort +

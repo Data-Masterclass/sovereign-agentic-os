@@ -21,6 +21,13 @@
  *   - The store: Postgres when `AGENT_RUNS_DATABASE_URL` is set (same database as the checkpointer),
  *     else ONE process-wide in-memory store — a laptop keeps working, and the run report's
  *     `checkpointer: 'memory'` already says the durability is not real.
+ *   - A LOST LEASE ABORTS THE RUN (A4-review-H-2). The heartbeat is a `leaseWatch`: the first beat
+ *     that reports the row is no longer `running` under this pod aborts the run and marks the job
+ *     abandoned, so this process neither settles it nor puts it back — whoever re-claimed it owns
+ *     it. Every settle is lease-guarded (`complete(…, { lockedBy })`).
+ *   - INLINE RUNS HEARTBEAT TOO (A4-review-M-1), under the same lease, and
+ *     `ensureRunJobsReady()` runs ONE reap sweep at boot — so an os-ui pod that was OOM-killed
+ *     mid-run does not leave a row `running` forever in a deployment that has no worker pod.
  *   - `server-only`: it touches the store, config and the run service. The pure parts it drives
  *     (`engine/jobs.ts`, `engine/worker-loop.ts`) are what the tests exercise.
  */
@@ -32,6 +39,7 @@ import { hydrateRunner as hydrate, principalSnapshotOf as snapshotOf, type Hydra
 import { config } from '@core/kernel/config';
 import type { AgentsWorkerMode } from '@core/kernel/agents-worker';
 import {
+  enqueueResumeWithRetry,
   isTerminalEvent,
   memoryRunJobStore,
   runEventSink,
@@ -43,7 +51,7 @@ import {
   type RunJobStore,
 } from '@tabs/agents/lib/engine/jobs';
 import { runJobStoreFor } from '@tabs/agents/lib/engine/jobs-postgres';
-import { workerLoop, type WorkerLoopDeps } from '@tabs/agents/lib/engine/worker-loop';
+import { leaseWatch, settlementOf, workerLoop, type LeaseWatch, type WorkerLoopDeps } from '@tabs/agents/lib/engine/worker-loop';
 import { currentUserOf, executeTeamRun, prepareRunYaml, type RunReportBody } from '@tabs/agents/lib/build/run-service';
 import type { LivePrincipal } from '@tabs/agents/lib/engine/resume';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
@@ -68,9 +76,53 @@ export function runJobStore(): Promise<RunJobStore> {
   return s.store;
 }
 
-/** Boot-time init: create `run_jobs` / `run_events` if needed. Returns the store kind. */
+/** Claims a job may accumulate before it is failed instead of re-queued (plan deviation A4-12). */
+const MAX_ATTEMPTS = 2;
+
+/**
+ * One lease-reap sweep. The worker loop runs this periodically; `inline` mode has no loop, so
+ * BOOT runs it once (A4-review-M-1): a pod that was OOM-killed mid-run left its row `running`,
+ * and without this sweep nothing in an `inline` deployment would ever pick it up again.
+ */
+export async function reapStaleOnce(store: RunJobStore, log: (m: string) => void = (m) => console.info(`[agent-runs] ${m}`)): Promise<{ requeued: string[]; failed: string[] }> {
+  try {
+    const out = await store.reapStale({ olderThanMs: config.agentsWorkerLeaseMs, maxAttempts: MAX_ATTEMPTS });
+    for (const id of out.requeued) log(`boot sweep: re-queued run ${id} — its lease was never renewed`);
+    for (const id of out.failed) log(`boot sweep: FAILED run ${id} — the lease expired ${MAX_ATTEMPTS} time(s) without completing`);
+    return out;
+  } catch (e) {
+    log(`boot sweep: lease reap failed: ${(e as Error)?.message ?? String(e)}`);
+    return { requeued: [], failed: [] };
+  }
+}
+
+/** Boot-time init: create `run_jobs` / `run_events` if needed, reap stale leases once. */
 export async function ensureRunJobsReady(): Promise<'postgres' | 'memory'> {
-  return (await runJobStore()).kind;
+  const store = await runJobStore();
+  await reapStaleOnce(store);
+  return store.kind;
+}
+
+/** How often a claimed run's lease is refreshed — a third of the lease, never under 5 s. */
+function heartbeatEveryMs(): number {
+  return Math.max(5_000, Math.floor(config.agentsWorkerLeaseMs / 3));
+}
+
+/**
+ * Keep one claimed run's lease alive while it executes, in the worker AND inline. `onLost` is the
+ * abort: the row is no longer ours, so the run must stop here rather than race its new holder.
+ */
+function startLeaseKeeper(store: RunJobStore, runId: string, id: string, onLost: () => void, log?: (m: string) => void): { watch: LeaseWatch; stop: () => void } {
+  const watch = leaseWatch({
+    heartbeat: () => store.heartbeat(runId, id),
+    onLost: (reason) => {
+      log?.(`run ${runId}: ${reason} — aborting it in this process and leaving the row alone`);
+      onLost();
+    },
+  });
+  const timer = setInterval(() => void watch.tick(), heartbeatEveryMs());
+  timer.unref?.();
+  return { watch, stop: () => clearInterval(timer) };
 }
 
 /** This pod's `locked_by` identity. */
@@ -119,18 +171,34 @@ export async function enqueueRun(input: EnqueueInput): Promise<QueuedRun> {
     input: input.input,
     kind: input.kind,
   };
-  await store.enqueue(job);
+  // A4-review-M-2: a resume that lands while the run is still PARKING (the row is `running` for
+  // the one await between `interrupt()` and `complete(…, 'parked')`) retries briefly instead of
+  // stamping the approval `failed`.
+  if (job.kind === 'resume') await enqueueResumeWithRetry(store, job);
+  else await store.enqueue(job);
   const mode = workerMode();
   if (mode === 'worker') return { runId: input.runId, mode };
   return { runId: input.runId, mode, inflight: drainOne(input.runId) };
 }
 
-/** Claim ONE specific queued job in this process and execute it (inline mode, and tests). */
+/**
+ * Claim ONE specific queued job in this process and execute it (inline mode, and tests).
+ * The lease is heartbeaten here too (A4-review-M-1) — the same lease, the same abort-on-loss — so
+ * the reaper can tell an os-ui pod that is still working from one that died holding a run.
+ */
 export async function drainOne(runId: string): Promise<void> {
   const store = await runJobStore();
-  const job = await store.claimById(runId, workerId());
+  const id = workerId();
+  const job = await store.claimById(runId, id);
   if (!job) return;
-  await executeJob(store, job, {});
+  const abort = new AbortController();
+  const log = (m: string) => console.info(`[agent-runs] ${m}`);
+  const keeper = startLeaseKeeper(store, runId, id, () => abort.abort(), log);
+  try {
+    await executeJob(store, job, { signal: abort.signal, leaseLost: () => keeper.watch.lost(), log });
+  } finally {
+    keeper.stop();
+  }
 }
 
 // --------------------------------------------------------------- execute --
@@ -140,6 +208,8 @@ export type ExecuteJobOptions = {
   signal?: AbortSignal;
   /** True when the abort above is what stopped the run (so it is re-queued, not finished). */
   stopping?: () => boolean;
+  /** True when the lease was lost mid-run: the row belongs to another worker now — do not touch it. */
+  leaseLost?: () => boolean;
   log?: (message: string) => void;
 };
 
@@ -149,6 +219,8 @@ export type ExecuteJobOptions = {
  */
 export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJobOptions): Promise<void> {
   const sink = runEventSink(store, job.runId);
+  const holder = job.lockedBy ?? workerId();
+  const lost = () => opts.leaseLost?.() ?? false;
   const emit = (event: string, data: unknown) => {
     sink.write(event, data);
     // Keep the in-process topic alive too: in inline mode a panel attached before A4 still works.
@@ -157,9 +229,20 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
   const settle = async (status: 'done' | 'parked' | 'failed', error?: string) => {
     await sink.drained();
     for (const p of sink.problems()) opts.log?.(`run ${job.runId}: ${p}`);
-    await store.complete(job.runId, status, { error });
+    // Lease-guarded: a stale holder must not settle a run its new holder is executing.
+    const applied = await store.complete(job.runId, status, { error, lockedBy: holder });
+    if (!applied) opts.log?.(`run ${job.runId}: '${status}' was NOT applied — the row is no longer this worker's`);
+  };
+  /** The lease went while the run was executing: drain what is written and walk away. */
+  const abandon = async (reason: string) => {
+    await sink.drained();
+    opts.log?.(`run ${job.runId} abandoned: ${reason}`);
   };
 
+  if (lost()) {
+    await abandon('the lease was gone before the run started');
+    return;
+  }
   const hydrated = await hydrateRunner(job.principal, job.domain);
   if ('refused' in hydrated) {
     emit('error', { error: hydrated.refused.reason, code: hydrated.refused.code });
@@ -186,18 +269,29 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
       signal: opts.signal,
       emit,
     });
-    // SIGTERM between supersteps: what completed is checkpointed, so the run goes BACK to the
-    // queue as a resume rather than being reported finished.
-    if (opts.stopping?.() && !body.parked && !body.reachedEnd) {
+    // What now: abandon (lease lost), re-queue (SIGTERM mid-superstep — what completed is
+    // checkpointed), or settle. The decision itself is the pure `settlementOf`.
+    const outcome = settlementOf({ leaseLost: lost(), stopping: opts.stopping?.() ?? false, parked: body.parked, reachedEnd: body.reachedEnd });
+    if (outcome.kind === 'abandon') {
+      await abandon(outcome.reason);
+      return;
+    }
+    if (outcome.kind === 'requeue') {
       await sink.drained();
-      await store.requeue(job.runId, job.lockedBy ?? workerId());
+      await store.requeue(job.runId, holder);
       opts.log?.(`run ${job.runId} re-queued: the worker is shutting down and the run stopped mid-superstep`);
       return;
     }
-    await settle(body.parked ? 'parked' : 'done');
+    await settle(outcome.status);
   } catch (e) {
     const err = e as Error & { status?: number };
     const message = err?.message ?? String(e);
+    const outcome = settlementOf({ leaseLost: lost(), stopping: false, failure: message });
+    if (outcome.kind === 'abandon') {
+      // No terminal `error` frame either: it would end the tail of a run another pod is driving.
+      await abandon(`${outcome.reason} (this process stopped with: ${message})`);
+      return;
+    }
     // `executeTeamRun` publishes `error` itself for a real failure but NOT for a refused resume
     // (404/409) — those never looked like a run, so the tail needs a terminal frame from here.
     if (err?.status === 404 || err?.status === 409) emit('error', { error: message, status: err.status });
@@ -219,6 +313,7 @@ export function startAgentRunsWorker(overrides: Partial<WorkerLoopDeps> = {}): W
   const lease = config.agentsWorkerLeaseMs;
   let stopping = false;
   let abort: AbortController | null = null;
+  let keeper: { watch: LeaseWatch; stop: () => void } | null = null;
   const log = overrides.log ?? ((m: string) => console.info(`[agent-runs-worker] ${m}`));
 
   const done = (async () => {
@@ -228,25 +323,23 @@ export function startAgentRunsWorker(overrides: Partial<WorkerLoopDeps> = {}): W
       store,
       workerId: id,
       leaseMs: lease,
-      maxAttempts: 2,
+      maxAttempts: MAX_ATTEMPTS,
       idleMs: 1_000,
       reapEveryMs: Math.max(30_000, Math.floor(lease / 2)),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       stopped: () => stopping,
       log,
+      // A lost lease ABORTS the run (A4-review-H-2): another worker owns the row now, so this pod
+      // stops executing it and settles nothing.
       heartbeat: (runId) => {
-        const timer = setInterval(() => {
-          void store.heartbeat(runId, id).then((ok) => {
-            if (!ok) log(`run ${runId}: lease lost (another worker or the reaper took it) — this pod stops heartbeating`);
-          });
-        }, Math.max(5_000, Math.floor(lease / 3)));
-        timer.unref?.();
-        return () => clearInterval(timer);
+        keeper = startLeaseKeeper(store, runId, id, () => abort?.abort(), log);
+        const k = keeper;
+        return () => { k.stop(); if (keeper === k) keeper = null; };
       },
       execute: async (job) => {
         abort = new AbortController();
         try {
-          await executeJob(store, job, { signal: abort.signal, stopping: () => stopping, log });
+          await executeJob(store, job, { signal: abort.signal, stopping: () => stopping, leaseLost: () => keeper?.watch.lost() ?? false, log });
         } finally {
           abort = null;
         }

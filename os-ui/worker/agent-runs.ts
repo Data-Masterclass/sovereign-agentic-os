@@ -18,7 +18,12 @@
  *     never imports a tab).
  *   - Run by `worker/start.mjs`, which registers the module resolver the `@core/*` / `@tabs/*`
  *     path aliases need and then imports this file under Node's type stripping.
+ *   - LIVENESS (A4 review L-2): the pod serves no HTTP, so the probe reads the FRESHNESS of
+ *     `AGENTS_WORKER_ALIVE_FILE`, which an unref'd 15-second interval here touches. An interval
+ *     only fires while the event loop turns, so a stale file means a wedged process — which is
+ *     exactly what liveness should catch, and what `node -e 'process.exit(0)'` never could.
  */
+import { writeFileSync } from 'node:fs';
 import { startAgentRunsWorker } from '@tabs/agents/lib/build/run-jobs-server';
 
 export type WorkerBoot = {
@@ -31,6 +36,34 @@ export type WorkerBoot = {
 
 const log = (m: string) => console.info(`[agent-runs-worker] ${m}`);
 const warn = (m: string) => console.warn(`[agent-runs-worker] ${m}`);
+
+/** How often the liveness heartbeat file is touched. The probe allows 2x the probe period (60 s). */
+export const ALIVE_EVERY_MS = 15_000;
+
+/**
+ * Touch `AGENTS_WORKER_ALIVE_FILE` every `everyMs` so the liveness probe can tell a working
+ * process from a wedged one. Unref'd: it never keeps the process alive by itself, and a write
+ * failure (a read-only /tmp) is logged ONCE rather than crash-looping the pod — a missing file
+ * fails the probe, which is the honest outcome.
+ */
+export function startAliveHeartbeat(path = (process.env.AGENTS_WORKER_ALIVE_FILE ?? '').trim(), everyMs = ALIVE_EVERY_MS): () => void {
+  if (!path) return () => undefined;
+  let complained = false;
+  const touch = () => {
+    try {
+      writeFileSync(path, `${Date.now()}\n`);
+    } catch (err) {
+      if (!complained) {
+        complained = true;
+        warn(`liveness heartbeat file '${path}' is not writable — the probe will restart this pod: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  };
+  touch();
+  const timer = setInterval(touch, everyMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
 
 /**
  * Register the boot hooks a run needs. Fail-soft per hook, LOUD on failure — but a worker with no
@@ -91,6 +124,7 @@ export async function bootWorker(): Promise<WorkerBoot> {
 /** Boot, drain until SIGTERM/SIGINT, then exit once the current superstep has been checkpointed. */
 export async function main(): Promise<void> {
   await bootWorker();
+  const stopAlive = startAliveHeartbeat();
   const handle = startAgentRunsWorker();
   let stopping = false;
   const stop = (signal: string) => {
@@ -102,6 +136,7 @@ export async function main(): Promise<void> {
   process.once('SIGTERM', () => stop('SIGTERM'));
   process.once('SIGINT', () => stop('SIGINT'));
   await handle.done;
+  stopAlive();
   try {
     const { flushLangfuse } = await import('@core/infra/langfuse');
     await flushLangfuse();

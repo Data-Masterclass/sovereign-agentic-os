@@ -97,7 +97,45 @@ tails its events**, and the work happens elsewhere:
   current superstep, checkpoints it and puts the run back on the queue — which is why
   `osUI.worker.terminationGracePeriodSeconds` (default 420) must cover one superstep, not a whole
   run. A lease nobody renews is re-queued **once** (`AGENTS_WORKER_LEASE_MS`, default 10 min) and
-  then failed, so no run sits `running` forever.
+  then failed, so no run sits `running` forever. A **reaped `start`** is re-STARTED, not resumed:
+  a run killed before its first checkpoint has nothing to resume from.
+- **A lost lease aborts the run.** The heartbeat is a watch, not a log line: the first beat that
+  reports the row is no longer `running` under this pod aborts the run in flight and the pod then
+  settles nothing and re-queues nothing — whoever re-claimed the row owns it. Every settle is
+  lease-guarded in SQL (`AND locked_by=… AND status='running'`), so a stale holder's `done` is a
+  no-op. `run_events` writes are deliberately NOT guarded: a late event is ordered after the new
+  holder's by `seq` and is at worst a duplicate line, where a stale settle would end a live run.
+- **`inline` mode reaps at boot and heartbeats too.** There is no worker loop to sweep leases, so
+  `ensureRunJobsReady()` runs one `reapStale` sweep when the pod starts, and an inline run
+  heartbeats its own lease under the same rules. An os-ui pod that is OOM-killed mid-run is
+  therefore picked up by the next pod's boot rather than leaving a row `running` forever.
+- **Admin credentials are NOT in the worker pod.** The env list is split: `soa.osUI.runEnv` (what a
+  run needs — the scoped LiteLLM agent key, the stores, the service bearers, Langfuse) and
+  `soa.osUI.adminEnv` (the session + MCP signing keys, the Graph mail secret, the LiteLLM UI login
+  and the LiteLLM **master** key). os-ui includes both; `os-ui-worker` includes only the first, so
+  a run compromised in the worker pod cannot read full gateway admin or forge a session.
+  `scripts/check-worker-env.mjs` (in `os-ui/scripts/gate.sh`, skipped when `helm` is absent)
+  asserts it; by hand:
+
+  ```bash
+  helm template charts/sovereign-agentic-os -f values.local.yaml \
+    --set osUI.worker.enabled=true --set osUI.graph.enabled=true \
+    | awk '/name: os-ui-worker$/,/^---$/' \
+    | grep -cE 'LITELLM_MASTER_KEY|LITELLM_UI_|GRAPH_CLIENT_SECRET|OS_SESSION_SECRET|OS_MCP_TOKEN_SECRET'
+  # expect: 0
+  ```
+- **Liveness is a heartbeat FILE, not `node -e 'process.exit(0)'`.** The worker touches
+  `AGENTS_WORKER_ALIVE_FILE` (`/tmp/worker-alive`, on an `emptyDir` because the root filesystem is
+  read-only) every 15 s from an unref'd interval; the probe fails when it is older than 60 s
+  (2× the probe period). An interval only fires while the event loop turns, so this catches a
+  wedged process — which spawning a fresh `node` never could.
+- **At most 64 tails per pod.** Each open Run panel holds a request and polls `run_events` every
+  400 ms against a `pg` pool of 6 shared with the checkpointer, so the 65th tail is refused with
+  `503` + `Retry-After: 5` rather than starving sign-in. Raise it (and the pool) together if a
+  tenant ever needs more; the run itself is never affected by a refused tail.
+- **A tail that runs out of budget hands back a cursor.** Both run doors emit a `queued`
+  `{ runId, afterSeq }` frame at 240 s, and the Run panel re-attaches from that cursor
+  transparently (up to 40 hops) instead of telling the user to run again.
 - **Every door is the same door.** The Run button, `build/scheduled.ts`, the MCP
   `run_agent_system` / `resume_agent_run`, and the Governance decision hook all file jobs through
   `tabs/agents/lib/build/run-jobs-server.ts`. A decision therefore no longer drives the graph
@@ -148,6 +186,20 @@ kubectl -n agentic-os delete pod -l app.kubernetes.io/name=os-ui-worker --grace-
 #    expect: the run stays `running` until the lease (AGENTS_WORKER_LEASE_MS) expires, then the
 #    next worker's reaper re-queues it ONCE ("re-queued run <id>" in the log) and, if it dies
 #    again, fails it with "lease expired".
+
+# 4) the image really does run the TypeScript source (A4-3's constraint, verified in the image)
+#    The unit suite cannot see this: it is a property of the BASE IMAGE's Node, and a base-image
+#    bump below 22.6 breaks the worker with ERR_UNKNOWN_FILE_EXTENSION at boot. Run it against
+#    the built image BEFORE deploying (scripts/deploy.sh does this as a post-build smoke step):
+docker run --rm --entrypoint node --workdir /app/src <os-ui image> \
+  --experimental-strip-types --no-warnings \
+  -e "import('./worker/agent-runs.ts').then(m => { if (typeof m.main !== 'function') process.exit(1); })"
+#    expect: exit 0 and no output. It imports the whole run-path module graph WITHOUT a database
+#    (nothing connects until main() runs), so a failure here is a type-stripping or alias failure.
+
+# 5) liveness is honest (A4 review L-2)
+kubectl -n agentic-os exec deploy/os-ui-worker -- stat -c '%Y %n' /tmp/worker-alive
+#    expect: a timestamp refreshed at least every 15 s, even while a long run executes.
 ```
 
 **Open policy question (A2): parked approvals have no TTL.** A run parked on a held write waits

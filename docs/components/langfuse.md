@@ -65,8 +65,18 @@ redact at the gateway too, set `turn_off_message_logging: true` under
 the prompt/completion bodies. Decide this per tenant: with it on, nobody can read back what a
 model was actually asked.
 
+**`LANGFUSE_REDACTION` does not reach `run_events`.** The switch governs what the OS writes to
+the TRACE. The run's own event log — `run_events` in the `agent_runs` database, the rows the Run
+panel tails — is written unredacted by design: it IS the panel's stream, and a redacted
+`node-completed` would show the user less than the page they are looking at. So the same tool
+arguments and results a `strict` trace reduces to key names and character counts sit in full in
+`run_events.data`, next to the LangGraph `checkpoints` in the same database, under the same
+(absent) retention policy. Treat the two as one disclosure surface: anyone with read access to
+`agent_runs` sees raw run content regardless of `LANGFUSE_REDACTION`.
+
 PII in traces remains a checklist concern (A-section "PII handling"), together with the fact that
-LangGraph checkpoints in `agent_runs` keep raw tool results with no retention (plan item A13).
+LangGraph checkpoints **and `run_events`** in `agent_runs` keep raw tool results with no retention
+(plan item A13 — one follow-up covers both tables and the held approval arguments).
 
 ## What the OS does NOT use
 

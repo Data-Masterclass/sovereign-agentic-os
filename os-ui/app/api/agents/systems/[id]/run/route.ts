@@ -6,7 +6,10 @@
  *             run interrupted by a restart resumes from its checkpoint instead of starting over.
  * ARCHITECTURE: ENQUEUE + TAIL (A4). Under the `langgraph` engine the route validates, mints the
  *             run id, files a `run_jobs` row and then TAILS that run's `run_events` — it never
- *             drives the graph itself. `AGENTS_WORKER=inline` (the default) executes the job in
+ *             drives the graph itself. A RESUME is owner-gated HERE, before the enqueue
+ *             (`assertRunVisible`, A4-review-H-1): the engine's own gate fires only after the row
+ *             has been re-queued and the history has streamed, which let a guessed run id replay
+ *             somebody else's run. `AGENTS_WORKER=inline` (the default) executes the job in
  *             this process right after filing it, so the response, the events and the error
  *             statuses are identical to before; `worker` leaves it to the `os-ui-worker` pod, so a
  *             run outlives the request. The walker engine keeps its request-bound path.
@@ -21,6 +24,8 @@ import { runSystem } from '@tabs/agents/lib/build/server';
 import { executeTeamRun, prepareRunYaml } from '@tabs/agents/lib/build/run-service';
 import { enqueueRun, runJobStore } from '@tabs/agents/lib/build/run-jobs-server';
 import { isTerminalEvent, tailRunEvents, type RunEventRow } from '@tabs/agents/lib/engine/jobs';
+import { assertRunVisible } from '@tabs/agents/lib/engine/run-visibility';
+import { acquireTail } from '@tabs/agents/lib/engine/tail-limit';
 import { isAgenticOsTeam } from '@tabs/agents/lib/build/os-tools';
 import { cleanTurns } from '@core/runtime/turns';
 import { config } from '@core/kernel/config';
@@ -37,7 +42,11 @@ type ChatMsg = { role: 'user' | 'assistant'; content: string };
 
 function fail(e: unknown) {
   const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
+  const retryAfter = (e as { retryAfterSeconds?: number })?.retryAfterSeconds;
+  return NextResponse.json(
+    { error: (e as Error).message },
+    { status, ...(retryAfter ? { headers: { 'retry-after': String(retryAfter) } } : {}) },
+  );
 }
 
 /**
@@ -154,6 +163,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
       // ---- A4: the governed engine runs through the QUEUE, never in this request ----------
       if (engine === 'langgraph') {
+        const store = await runJobStore();
+        // OWNER GATE FIRST (A4-review-H-1). A resume names an EXISTING run, so before anything is
+        // enqueued or streamed the row must be this caller's and this system's — otherwise 404,
+        // the same answer an unknown id gets. Without this, `enqueueRun` re-queued the foreign row
+        // (overwriting `requested_by`) and the tail replayed its whole history from seq 0 before
+        // the engine's own owner check refused it.
+        if (resume) assertRunVisible(await store.get(runId), runId, user.id, id);
         // File the job. A start that collides with an existing run id, or a resume of a run that
         // is already queued/running, is a typed 409; a resume of an unknown run is a typed 404 —
         // both thrown BEFORE anything looks like a run.
@@ -166,7 +182,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           kind: resume ? 'resume' : 'start',
           input: { messages, prompt: resume ? undefined : prompt },
         });
-        const store = await runJobStore();
 
         // STREAMING path: tail `run_events` from seq 0 — the same ordered vocabulary
         // (`node-started`, `tool-step`, `node-completed`, `approval-required`, `resumed`, then
@@ -174,6 +189,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         // any pod. A run that parks on an approval ends this stream with a `done{parked}`; the
         // panel re-attaches to GET …/run/stream?runId= to see the decision continue it.
         if (wantsStream(req, body)) {
+          // One tail slot per open stream (L-6): a pod refuses the 65th honestly instead of
+          // starving its connection pool. Released on close OR on client disconnect.
+          const releaseTail = acquireTail();
           streamed = true;
           const encoder = new TextEncoder();
           const stream = new ReadableStream<Uint8Array>({
@@ -186,9 +204,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
               } catch (e) {
                 send('error', { error: (e as Error).message });
               } finally {
+                releaseTail();
                 controller.close();
               }
             },
+            cancel() { releaseTail(); },
           });
           return new Response(stream, {
             headers: {
@@ -203,7 +223,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         // status it had before A4; worker mode follows the event log until the job settles.
         if (queued.inflight) await queued.inflight;
         const seen: RunEventRow[] = [];
-        const out = await tailRunEvents(store, runId, { until: 'settled', afterSeq: 0, signal: req.signal, timeoutMs: TAIL_BUDGET_MS }, (ev) => { seen.push(ev); });
+        const releaseTail = acquireTail();
+        let out;
+        try {
+          out = await tailRunEvents(store, runId, { until: 'settled', afterSeq: 0, signal: req.signal, timeoutMs: TAIL_BUDGET_MS }, (ev) => { seen.push(ev); });
+        } finally {
+          releaseTail();
+        }
         const terminal = seen.filter(isTerminalEvent).at(-1) ?? seen.filter((e) => e.event === 'done').at(-1);
         if (!terminal) {
           return NextResponse.json({ queued: true, runId, engine, mode: queued.mode, afterSeq: out.lastSeq, note: 'the run is still executing — tail /run/stream?runId=' }, { status: 202 });

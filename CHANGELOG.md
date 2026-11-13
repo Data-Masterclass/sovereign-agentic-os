@@ -56,6 +56,58 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   therefore runs the TypeScript source with the tsconfig path aliases registered
   (`worker/resolve-hook.mjs`) under Node type stripping — **the image's Node must be ≥ 22.6**.
 
+### Fixed — A4 review
+
+- **Security: a run id is no longer an authorisation.** `POST …/run { resume: true, runId }`
+  checked only that the caller could run the SYSTEM, then re-queued the run (overwriting
+  `requested_by` and the principal snapshot) and streamed its whole history before the engine's own
+  owner gate refused it — so a guessed run id replayed somebody else's run. One shared gate
+  (`engine/run-visibility.ts` `assertRunVisible`, 404 semantics, no 403) now runs BEFORE any side
+  effect in the run route, the re-attach stream and MCP `resume_agent_run`; and the store refuses a
+  resume whose `requested_by` differs from the row's — in Postgres as a predicate on the UPDATE, so
+  a refused resume writes nothing.
+- **Security: the `os-ui-worker` pod no longer holds admin credentials.** The chart's env list is
+  split into `soa.osUI.runEnv` (what a run needs) and `soa.osUI.adminEnv` (session + MCP token
+  signing keys, the Graph mail secret, the LiteLLM UI login and the LiteLLM **master** key);
+  `soa.osUI.env` is both, so the os-ui Deployment is unchanged, and the worker includes only the
+  run path. `scripts/check-worker-env.mjs` keeps it that way in the gate.
+- **A lost lease now aborts the run.** A worker whose heartbeat reported that the row was no longer
+  its own kept executing, and could settle a run another pod had re-claimed. The heartbeat is now a
+  watch that aborts the run in flight; the pod then neither settles nor re-queues it, and every
+  settle is lease-guarded in SQL (`AND locked_by=… AND status='running'`). A heartbeat that THROWS
+  is treated as a database blip, not a lost lease.
+- **`AGENTS_WORKER=inline` reaps and heartbeats.** `ensureRunJobsReady()` runs one `reapStale`
+  sweep at boot and an inline run heartbeats its own lease, so an os-ui pod killed mid-run is
+  picked up by the next pod instead of leaving a row `running` forever where no worker exists.
+- **An approval decided while the run was still parking is honoured.** The one-await window in
+  which the row is still `running` returned a 409 and stamped the approval `failed`; the resume
+  enqueue now retries briefly (5 × 200 ms) and only for a `running` row — a `queued` or missing row
+  still fails at once.
+- **A run killed before its first checkpoint restarts instead of failing.** The lease reaper
+  preserves the row's kind, so a reaped `start` is re-started (a resume of a thread with no
+  checkpoint is a 404); a SIGTERM requeue still continues from its checkpoint.
+- **The Run panel follows a long run instead of blaming the user.** The `queued { runId, afterSeq }`
+  frame both doors emit at their 240-second tail budget had no handler, so the panel said "please
+  run again" about a run that was still executing. The SSE reader and the re-attach decision moved
+  to `tabs/agents/lib/build/run-stream-client.ts` (pure, unit-tested) and the panel now re-attaches
+  from the server's cursor, up to 40 hops.
+- **A tail no longer hangs on a settled run** that produced no terminal event — unless it is
+  `parked`, which is settled but not finished (its stream is what shows the decision resuming it).
+- **A pod serves at most 64 run tails**, then answers `503` + `Retry-After: 5`: each tail polls
+  `run_events` every 400 ms against a `pg` pool of 6 shared with the checkpointer, and sign-in must
+  not lose to a wall of open Run panels.
+- **The worker's liveness probe means something.** It was `node -e 'process.exit(0)'` — a test of
+  whether a NEW process could start. The worker now touches `AGENTS_WORKER_ALIVE_FILE`
+  (`/tmp/worker-alive`, an `emptyDir`) every 15 s from an unref'd interval and the probe fails when
+  that file is older than 60 s or missing, which is what catches a wedged event loop.
+- **The worker's module aliases are read from `tsconfig.json`** instead of a hand-kept copy that
+  could drift from the compiler's — a drift that fails in the cluster, not in CI.
+- **`run_events` is documented as exempt from `LANGFUSE_REDACTION`**: the switch governs the trace,
+  while the panel's own event log is written in full and lives beside the checkpoints under the same
+  (absent) retention. `scripts/deploy.sh` also smoke-tests, in the built image, that the worker's
+  TypeScript source still loads under Node's type stripping; `check-structure.mjs` now requires the
+  explanatory header on `os-ui/worker/**` too.
+
 ### Changed — A3 review follow-ups
 
 - `core/runtime/runtime.test.ts` MODEL-KEY now matches `litellmMasterKey|LITELLM_MASTER_KEY|

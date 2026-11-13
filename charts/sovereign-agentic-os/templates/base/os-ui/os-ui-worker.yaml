@@ -2,14 +2,20 @@
 {{- /*
   os-ui-worker — agent runs execute HERE, not in a request (engine rebuild, Phase A4).
 
-  SAME image as os-ui, SAME environment (one `soa.osUI.env` list, so the two can never drift),
-  different command: `node --experimental-strip-types worker/start.mjs` drains the `run_jobs`
-  queue in the `agent_runs` database, claiming one run at a time with FOR UPDATE SKIP LOCKED and
-  writing each engine event to `run_events`, which os-ui tails.
+  SAME image as os-ui, SAME RUN-PATH environment (`soa.osUI.runEnv`, the one list os-ui includes
+  too, so the two can never drift), different command: `node --experimental-strip-types
+  worker/start.mjs` drains the `run_jobs` queue in the `agent_runs` database, claiming one run at
+  a time with FOR UPDATE SKIP LOCKED and writing each engine event to `run_events`, which os-ui
+  tails.
 
-  NO Service points at this Deployment: it serves no HTTP. Its probes are therefore an exec of a
-  trivial Node command — a liveness HTTP probe would need a server this process deliberately does
-  not start.
+  NOT `soa.osUI.env`: that adds `soa.osUI.adminEnv` — the session/MCP signing keys, the Graph mail
+  secret, the LiteLLM UI login and the LiteLLM MASTER key. The worker serves no HTTP and the run
+  path never reads them, so a run compromised in this pod must not find them here (A4 review M-4).
+
+  NO Service points at this Deployment: it serves no HTTP. Liveness is therefore a FRESHNESS check
+  on a heartbeat file the loop touches every 15 s (`/tmp/worker-alive`, A4 review L-2): a wedged
+  event loop stops touching it and the pod is restarted, where `node -e 'process.exit(0)'` only
+  proved that a NEW process could start.
 
   SIGTERM: the loop stops claiming at once and the run in flight is aborted at its next superstep
   boundary, checkpointed, and put back on the queue as a `resume`. That is why
@@ -67,7 +73,7 @@ spec:
                standalone node_modules (images/base/os-ui/Dockerfile). */}}
           command: ["node", "--experimental-strip-types", "--no-warnings", "worker/start.mjs"]
           env:
-            {{- include "soa.osUI.env" . | nindent 12 }}
+            {{- include "soa.osUI.runEnv" . | nindent 12 }}
             # This pod EXECUTES runs; os-ui only enqueues and tails.
             - name: AGENTS_WORKER
               value: "worker"
@@ -79,15 +85,32 @@ spec:
             - name: LANGFUSE_REDACTION
               value: {{ . | quote }}
             {{- end }}
-          {{- /* No HTTP server, so liveness/readiness are process-level: a pod whose Node process
-               is wedged fails the exec and is restarted; the run it held is re-queued by the
-               lease reaper in the next pod. */}}
+            # The liveness heartbeat file (A4 review L-2) — touched every 15 s by the loop.
+            - name: AGENTS_WORKER_ALIVE_FILE
+              value: /tmp/worker-alive
+          {{- /* No HTTP server, so liveness is a FRESHNESS check on the process's own heartbeat
+               file: `worker/agent-runs.ts` touches AGENTS_WORKER_ALIVE_FILE every 15 s from an
+               unref'd interval, which only keeps running while the event loop does. Stale by more
+               than twice the probe period (60 s) ⇒ the process is wedged ⇒ restart, and the run it
+               held is re-queued by the next pod's lease reaper (or its boot sweep). A missing file
+               fails too, so a process that never booted is restarted rather than idling. */}}
           livenessProbe:
             exec:
-              command: ["node", "-e", "process.exit(0)"]
-            initialDelaySeconds: 20
+              command:
+                - node
+                - -e
+                - "const s=require('node:fs').statSync('/tmp/worker-alive');if(Date.now()-s.mtimeMs>60000)process.exit(1)"
+            initialDelaySeconds: 30
             periodSeconds: 30
             timeoutSeconds: 10
+            failureThreshold: 3
+          {{- /* readOnlyRootFilesystem: the heartbeat file needs a writable /tmp. */}}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           resources:
             {{- toYaml ($w.resources | default $u.resources) | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
 {{- end }}

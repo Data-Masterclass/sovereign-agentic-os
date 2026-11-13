@@ -327,4 +327,98 @@ After each full pass over Parts A, B and D: a read-only test agent scores `2026-
 - **A4-review-g** `tabs/agents/lib/build/server.ts` no longer builds `<console>/traces`. That path is the legacy hermes/unmapped-grant run, which has no run id and therefore no trace to open; a LIST link violates checklist A20 and drops the viewer into every tenant's traces. It now reports `traceStoreAvailable` with no link.
 - **A4-review-h** `scripts/check-litellm-allowlist.mjs` reads `default_fallbacks`, `context_window_fallbacks` and `content_policy_fallbacks` as well as `fallbacks`. The last two fire on exactly the errors a long agent prompt or a refused completion produces, so an alias reachable only through them is the worst possible 403.
 - **A4-review-i** `app/api/knowledge/workflows/[id]/publish/route.ts` returns `indexing: { ok: false, code, error }` instead of swallowing the failure. A publish whose embedding was rejected by the gateway leaves the unit invisible to every agent; the caller has to see that the flip succeeded and the indexing did not.
-- **Follow-ups recorded, not implemented (A4):** (1) other Langfuse readers are scope-filtered CLIENT-side rather than through `observationsQuery` — only the diagnostics route goes through the typed, refuses-unfiltered query; the rest fetch and then filter in the OS, which is correct today only because the OS is the one asking. (2) The three remaining embed sites (`indexWorkflow`, `indexDomain`, `indexAsset`) still bill the platform principal (A3-11); A4 threaded the two RETRIEVE sites only, because the index sites have no acting user in scope. (3) `BuildRunPanel.tsx` re-attaches with no `afterSeq`, so it replays the whole run on re-attach — the same behaviour the A2 replay buffer gave it, but now it could ask for only what it missed. (4) `run_events` has no retention; it joins the A13 item with the checkpoints and the held approval args.
+- **A4-review-H-1 A run id was an authorisation.** `POST …/run {resume:true}` checked only
+  `getSystemForRun`, then enqueued and tailed from `seq=0`; the engine's owner gate
+  (`run.ts assertResumable`) fired AFTER the row had been re-queued (overwriting `requested_by`
+  and `principal_snapshot`) and after the whole history had streamed to the caller. Fixed at both
+  layers: `engine/run-visibility.ts` `assertRunVisible` (pure, dependency-free, 404-semantics) is
+  called BEFORE any side effect by the run route, the re-attach stream and MCP `resume_agent_run`
+  (twice there: the checkpoint owner and the `run_jobs` row); and `enqueue(kind:'resume')` in both
+  stores refuses a foreign `requested_by` — in Postgres as a `requested_by=$2` predicate ON the
+  UPDATE, so a refused resume provably writes nothing. Tests: `run-visibility.test.ts` (4).
+- **A4-review-H-2 A lost lease was a log line.** `run-jobs-server.ts` only logged
+  `heartbeat()===false`, so the pod kept executing a run another pod had re-claimed, and
+  `complete` was `WHERE run_id=$1` (unlike `requeue`) so the loser could settle the winner's run.
+  Now: `leaseWatch` (pure) flips `lost()` once and aborts the run; `settlementOf` (pure) says
+  `abandon` — neither settle nor requeue — and `abandon` beats a failure and a shutdown; `complete`
+  takes an optional `lockedBy` and adds `AND locked_by=$5 AND status='running'`, returning whether
+  it applied. **`appendEvent` is deliberately NOT guarded** (decision recorded): the engine's
+  `emit` is synchronous and carries no holder, a late event is ordered after the new holder's by
+  `seq` and is at worst a duplicate panel line, whereas a stale settle ends a live run — and a
+  guard there would need a holder threaded through `executeTeamRun`'s emit for no safety gain. A
+  heartbeat that THROWS is not a lost lease (a DB blip must not abort healthy runs); the reaper
+  stays the backstop. Tests: `jobs-lease.test.ts` (4 of 12).
+- **A4-review-M-1 `inline` mode had no reaper.** `ensureRunJobsReady()` now runs one
+  `reapStaleOnce` sweep at boot, and an inline run heartbeats its own lease through the same
+  `startLeaseKeeper` the worker uses (same lease, same abort-on-loss) — so an OOM-killed os-ui pod's
+  row is reaped by the next pod's boot instead of sitting `running` forever in a deployment with no
+  worker. Tested at the store level plus a source tripwire on the wiring (the module is
+  `server-only`, so a unit test must not import it).
+- **A4-review-M-2 A decision taken while the run was still parking stamped the approval `failed`.**
+  Between `interrupt()` and `complete(…,'parked')` the row is `running`, which `enqueue` refused
+  409 → `resume.ts` recorded `failed` for a perfectly valid decision. CHOSEN: bounded retry
+  (`enqueueResumeWithRetry`, 5 × 200 ms, pure and injectable) rather than a `pending_resume`
+  marker — the window is one `await` wide, a marker adds a second piece of state to the row and a
+  new way for the row and the checkpoint to disagree. `RunJobConflictError` now carries `state`, so
+  ONLY a `running` row is retried: a `queued` row (a resume is already filed) and a missing row
+  fail at once. Applied to every resume door via `enqueueRun`. Tests: 3.
+- **A4-review-M-3 The tail-timeout UX lied.** Both doors emitted `queued {runId, afterSeq}` at
+  240 s and `BuildRunPanel.tsx` had no handler, so the frame fell through to "please run
+  again" — about a run that was still executing — and its own re-attach asked for `afterSeq=0`
+  (replaying everything). The SSE logic moved to `tabs/agents/lib/build/run-stream-client.ts`
+  (pure: `parseSseChunk`, `reattachFrom`, `isRunOver`, `runStreamUrl`, `REATTACH_LIMIT = 40`) and
+  the panel now follows the server's cursor in a loop until the run really ends. Tests: 8
+  (including a source tripwire that the TSX uses the shared helpers).
+- **A4-review-L-3 corrected the review.** The item asked for an event-less `until:'terminal'` tail
+  to end on ANY `isSettled` status; that would close the re-attach stream of a PARKED run, which is
+  exactly the stream that exists to show the decision resuming it (A4-6). Implemented as "settled
+  and not `parked`", plus the extra drain. Tested in both directions.
+- **A4-review-M-4 Admin secrets were in the worker pod.** `_os-ui-env.tpl` is now three defines:
+  `soa.osUI.runEnv` (the run path), `soa.osUI.adminEnv` (`OS_SESSION_SECRET`,
+  `OS_MCP_TOKEN_SECRET`, `GRAPH_CLIENT_SECRET`, `LITELLM_UI_USERNAME/PASSWORD`,
+  `LITELLM_MASTER_KEY`) and `soa.osUI.env` = both, so `os-ui.yaml` is untouched; the worker
+  includes only `runEnv`. Verified with `helm template`: the os-ui Deployment's env NAME SET is
+  identical to before (the six entries moved to the END of the list — identical ordering is not
+  achievable with two defines, and the brief allowed "modulo ordering"), and the worker Deployment
+  contains none of the six. `scripts/check-worker-env.mjs` asserts both in `os-ui/scripts/gate.sh`
+  (skips loudly when `helm` is absent) and the manual one-liner is in `docs/components/os-ui.md`.
+- **A4-review-M-5 A run killed before its first checkpoint failed instead of restarting.**
+  `reapStale` re-queued everything as `kind='resume'`, and a resume of a thread with no checkpoint
+  is a 404 — a retry turned into a visible failure. The reaper now PRESERVES the row's kind
+  (`CASE WHEN kind='start' THEN 'start' ELSE 'resume' END`); `requeue` (SIGTERM) still forces
+  `resume`, because that path always has a checkpoint. Chosen over converting `ResumeNotFoundError`
+  back into a start inside the executor: the store-level rule is testable without a graph and
+  cannot be defeated by a future executor. The two existing A4 tests that asserted the old
+  behaviour were updated with the reason.
+- **A4-review-L-1 corrects A4-8.** The split in M-4 supersedes it, and the claim it made is now
+  stated properly: the os-ui Deployment gains `AGENTS_WORKER_LEASE_MS` ONLY from
+  `osUI.worker.leaseMs`, which is also rendered when the worker is DISABLED — os-ui reads the same
+  value for its inline lease and its boot sweep, so that is correct rather than accidental.
+- **A4-review-L-2 The liveness probe proved nothing.** `node -e 'process.exit(0)'` tested whether a
+  NEW process could start. The worker now touches `AGENTS_WORKER_ALIVE_FILE` (`/tmp/worker-alive`,
+  an `emptyDir` because the root filesystem is read-only) every 15 s from an unref'd interval — an
+  interval only fires while the event loop turns — and the probe fails when the file is older than
+  60 s (2× the probe period) or missing. Documented in `docs/components/os-ui.md`, with the
+  `stat` check in the cluster steps.
+- **A4-review-L-4 `run_events` is exempt from `LANGFUSE_REDACTION`** — stated in
+  `docs/components/langfuse.md` and `docs/components/os-ui.md`: the switch governs the TRACE, while
+  the panel's own event log is written in full by design (a redacted `node-completed` would show
+  less than the page the user is looking at). It lives in `agent_runs` beside the checkpoints,
+  under the same absent retention, so the A13 follow-up now names both tables.
+- **A4-review-L-5 `worker/resolve-hook.mjs` derives its aliases from `tsconfig.json`**
+  (`compilerOptions.paths`, longest prefix first) instead of a hand-kept copy that could drift from
+  the compiler's — a drift that fails as `ERR_MODULE_NOT_FOUND` in the cluster, not in CI. A
+  non-`<prefix>/*` mapping throws rather than being silently ignored. Test: parity with the
+  tsconfig, ordering, actual resolution of `@core/*` and `@tabs/*`, and the `server-only` stub.
+- **A4-review-L-6 A ceiling on tails.** `engine/tail-limit.ts`: 64 concurrent tails per pod, the
+  next refused `503` + `Retry-After: 5` (each tail polls every 400 ms against a `pg` pool of 6
+  shared with the checkpointer). Released on close AND on client disconnect (`cancel()`). The pool
+  was NOT raised: the worker holds one claim at a time and os-ui only enqueues and tails, so the
+  ceiling is the honest fix; raising both together is documented as the next step if a tenant needs
+  more.
+- **A4-review-L-7 `check-structure.mjs` walks `os-ui/worker/`** for the FILE-HEADER rule (it is
+  production code the Next build never compiles), which found `worker/empty.mjs` — now headed. The
+  `worker/` layer is described in `os-ui/ARCHITECTURE.md`'s layout block, including the fact that
+  these entrypoints MAY import a tab.
+
+- **Follow-ups recorded, not implemented (A4):** (1) other Langfuse readers are scope-filtered CLIENT-side rather than through `observationsQuery` — only the diagnostics route goes through the typed, refuses-unfiltered query; the rest fetch and then filter in the OS, which is correct today only because the OS is the one asking. (2) The three remaining embed sites (`indexWorkflow`, `indexDomain`, `indexAsset`) still bill the platform principal (A3-11); A4 threaded the two RETRIEVE sites only, because the index sites have no acting user in scope. (3) `BuildRunPanel.tsx` re-attaches with no `afterSeq`, so it replays the whole run on re-attach — the same behaviour the A2 replay buffer gave it, but now it could ask for only what it missed. (4) `run_events` has no retention; it joins the A13 item with the checkpoints and the held approval args. (5) **A4 review:** image-level verification that the worker's type stripping works is a `docker build` away and cannot run in the unit gate — the exact `docker run --rm --entrypoint node … --experimental-strip-types -e "import('./worker/agent-runs.ts')"` command is now step 4 of `docs/components/os-ui.md` → "Verify it in a cluster" and a post-build smoke step in `scripts/deploy.sh` (it imports the whole run-path graph without touching a database, so it fails loudly on a base image below Node 22.6 and on an alias mistake). (6) **A4 review:** raising the `pg` pool `max` for the worker only, together with the 64-tail ceiling, if a tenant ever needs more concurrent panels. (7) **A4 review:** the Run panel still re-attaches to a PARKED run with `afterSeq=0` (it has no seq to resume from, because frames carry no `seq`); sending `seq` on the wire would let the parked re-attach be incremental too.
