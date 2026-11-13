@@ -340,6 +340,34 @@ secondary, the gold lotus logo/favicon (`app/icon.svg`), and **Oswald** (heading
 runtime CDN. Light mode is the default; the sidebar and top bar stay black in both modes.
 Dark mode is opt-in via Admin → Appearance and persists per device.
 
+## The engineering view — one panel, one adapter per kind
+
+`core/engineering/` holds the `EngineeringView` type (serialisable; no React, no I/O) and the
+adapter registry. Each tab exposes its own `lib/engineering.ts` — `tabs/data`, `tabs/metrics`,
+`tabs/dashboards`, `tabs/agents`, `tabs/software` — which calls **that tab's own visibility gate**
+first (`getDataset`, `getMetric`, `getDashboard`, `getSystem`, `getAppForUser`) and then maps the
+record onto the shared section builders in `core/engineering/sections.ts`. The kernel never imports
+a tab: `core/engineering/register.ts` loads the adapters with dynamic `import()`, exactly as
+`core/mcp/register-experimental.ts` loads its tool bundles.
+
+`core/ui/engineering/UnderTheHood.tsx` renders it with one tab per tool and is mounted with a single
+line on the five detail surfaces. `GET /api/engineering/<kind>/<id>` and the MCP tool
+`get_engineering_view({kind, id})` call the **same** function (`engineeringViewFor`), so the two
+doors cannot drift — `core/mcp/engineering-view.test.ts` asserts both the structural and the
+behavioural parity.
+
+Three rules make the panel trustworthy, and each is a test:
+
+1. **The tool's noun first.** `core/engineering/vocabulary.ts` is a table of the tools' own nouns;
+   a label that uses only an OS-invented noun fails `vocabularyViolations`, and the OS term may
+   appear in parentheses at most once.
+2. **Never a paraphrase.** The SQL and YAML are read from the repository at `main`; the LangGraph
+   graph is derived from the same IR the engine compiles, and `tabs/agents/lib/engineering.test.ts`
+   compares its node names against a real `buildGraph`, so a rename in the engine fails the test
+   rather than quietly changing the picture.
+3. **Say why, never nothing.** `sealView` refuses a section with no artefact and no reason, an
+   artefact with no body and no note, and a link that does not resolve and does not say why.
+
 ## FAQ
 
 **Where are the keys?** Server-side only. Langfuse, LiteLLM and the Kubernetes token are

@@ -191,6 +191,25 @@ kubectl -n agentic-os port-forward svc/agentic-os-dagster-webserver 3070:80
 kubectl -n agentic-os exec deploy/agentic-os-dagster-sovereign -c repo-sync -- cat /repos-checkout/status.json
 ```
 
+## Engineering view ("Under the hood")
+
+A data product's **Dagster** tab shows, in Dagster's own vocabulary: the `Dagster asset` key
+(`["<domain>","<model>"]`), the `Dagster job` (`<domain>__all`), the `Dagster schedule`
+(`<domain>__<datasetId>`), and the last `Dagster run` with its run id and status — read over the
+GraphQL API, as the signed-in user's view of a shared scheduler.
+
+- "Open in Dagster" goes through the **tool proxy** (`/tools/dagster/runs/<runId>`), so there is no
+  second login and no direct exposure of the webserver.
+- When this deployment exposes no Dagster UI, the link is **not** hidden: it says that there is no
+  address to send you to, and why (`dagsterConsoleUrl` is unset).
+- When Dagster is unreachable, the last run is reported as *unknown with the transport error* —
+  never as "no runs".
+- The command is the real one: `dagster asset materialize --select <domain>/<model>`.
+
+Kinds other than a data product say plainly that Dagster does not schedule them: an agent system is
+scheduled by the OS (a CronJob per schedule), a dashboard and a KPI are read on demand, and an app
+is served rather than materialised.
+
 ## FAQ
 
 **Q: Does it run the OS's datasets?** Yes, with the flag on — a dataset's models are assets of the

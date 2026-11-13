@@ -1980,5 +1980,38 @@ stream's prefix — `M-1`, `D-1`, `C-1`, `S-1`, `G-1`, `T-1`, `E-1`, `V-1`, `X-1
 `<X>-review-<id>` for findings from the review round. A deviation is not a failure; an unrecorded
 deviation is.
 
-(empty)
+### Stream T — the engineering view
+
+- **T-1 — the Git section composes G's badge by SLOT, not by import.** `core/ui/git/` does not
+  exist in this worktree (stream G is building it tonight), so importing `GitHeadBadge` would not
+  type-check. `UnderTheHood` therefore takes an optional `gitBadge?: ReactNode` and renders it in
+  the git section's header; the detail page passes G's component once it lands. No badge is drawn
+  here, so T6's "compose, never duplicate" holds — the wiring is one prop away.
+- **T-2 — the LangGraph diagram shipped tonight**, against the plan's "`[later]` the diagram" and
+  with the implementer brief's own MVP line, which lists it. It is a thin read-only
+  `@xyflow/react` shell over a pure layout function (`core/ui/engineering/graph-layout.ts`); the
+  JSON remains the artefact of record and the diagram re-draws it, never a second model.
+- **T-3 — the graph is derived from the IR, not captured from a compiled `StateGraph`.** Compiling
+  a runnable graph needs the engine's deps (model gateway, tool executor, checkpointer), which an
+  adapter must not construct on a read. The derivation uses the SAME IR (`compile`) and the SAME
+  node naming (`safeNodeName`) and is pinned against a real `buildGraph` in
+  `tabs/agents/lib/engineering.test.ts`, so a rename in the engine fails a test instead of
+  silently changing the panel.
+- **T-4 — metric and dashboard sections are written against the plan's file contracts** (M's
+  `models/semantic/<model>.yml`, D's `dashboards/<id>.yml`), because neither had landed when this
+  stream ran. Both adapters select by what is actually committed and, when nothing is, name the
+  missing file and state what it would enable (checklist T3 is therefore `partly` until M and D
+  merge).
+- **T-5 — the app's git section carries no file artefacts.** App source is not in git yet (it
+  lives in the OS file mirror, index `os-app-files`); listing those paths as `git file` artefacts
+  would be exactly the paraphrase this stream exists to remove. The section says so, names the
+  mirror and the `apps/<slug>/` subtree stream S will commit to, and lists the files it does hold
+  as a caveat.
+- **T-6 — `EngineeringPrincipal` is `CurrentUser`**, not a narrowed `{id,domains,role}`: the tab
+  gates take the whole user (`getAppForUser`), and a narrowed type only bought a cast at every
+  call site. It is a type-only import, so `core/engineering/types.ts` stays pure and testable.
+- **T-7 — one new MCP bundle registration** in `core/mcp/register-experimental.ts` (`engineering`,
+  always on). The tool itself refuses a kind whose tab is disabled, naming the reason, so there was
+  nothing to gate at the bundle level.
+
 

@@ -24,6 +24,7 @@ import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
 import type { Visibility } from '@core/kernel/lifecycle';
 import DomainTag from '@core/ui/DomainTag';
+import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
 
 // React Flow + Monaco are heavy, client-only, and SSR-tolerant only when lazy —
 // load the canvas ssr:false (same pattern as MonacoFile) so the standalone build
@@ -641,6 +642,8 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       ) : null}
       </>
       )}
+      {/* night-2 stream T: the compiled LangGraph graph and the rest of the real artefacts. */}
+      <UnderTheHood kind="agent_system" id={systemId} />
     </div>
     </ConfirmProvider>
   );

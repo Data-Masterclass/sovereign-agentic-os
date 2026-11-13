@@ -148,6 +148,10 @@ const BUNDLES: BundleSpec[] = [
     },
   },
 
+  // night-2 stream T: the engineering view's MCP twin. Always on — the tool itself refuses a kind
+  // whose tab is disabled, naming the reason, so there is nothing to gate here.
+  { name: 'engineering', load: async () => (await import('@core/mcp/engineering-tools')).engineeringTools },
+
 ];
 
 /**
