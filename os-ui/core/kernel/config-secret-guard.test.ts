@@ -9,6 +9,9 @@
  */
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   assertNoDevDefaultSecretsInProd,
   runtimeBearerAuthAllowed,
@@ -86,4 +89,11 @@ test('runtimeBearerAuthAllowed: the shipped dev default is refused under a produ
   // Local dev (NODE_ENV!=='production') keeps the convenient default so clone-and-run works.
   assert.equal(runtimeBearerAuthAllowed(DEV_DEFAULT_AGENT_RUNTIME_TOKEN, 'development'), true);
   assert.equal(runtimeBearerAuthAllowed('', undefined), true);
+});
+
+test('the run worker does not invoke the session/MCP secret guard — it signs neither and its env carries neither secret', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const src = readFileSync(resolve(here, '../../worker/agent-runs.ts'), 'utf8');
+  assert.equal(src.includes('assertNoDevDefaultSecretsInProd('), false,
+    'worker/agent-runs.ts must not call assertNoDevDefaultSecretsInProd: the worker Deployment deliberately has no OS_SESSION_SECRET / OS_MCP_TOKEN_SECRET (A4 review M-4) and the first 0.8.0 worker rollout crash-looped on exactly this');
 });

@@ -74,8 +74,13 @@ export function startAliveHeartbeat(path = (process.env.AGENTS_WORKER_ALIVE_FILE
  * crash-loops and the deploy is visibly broken) rather than draining runs into memory.
  */
 export async function bootWorker(): Promise<WorkerBoot> {
-  const { config, assertNoDevDefaultSecretsInProd } = await import('@core/kernel/config');
-  assertNoDevDefaultSecretsInProd(config);
+  const { config } = await import('@core/kernel/config');
+  // Deliberately NOT the dev-default-secret guard from instrumentation.ts: it protects the session
+  // cookie and MCP token signing secrets, and this process signs neither. Its env carries no
+  // OS_SESSION_SECRET / OS_MCP_TOKEN_SECRET on purpose (A4 review M-4 keeps every admin secret
+  // out of the run path), so the guard would — and on the first 0.8.0 worker rollout did —
+  // refuse to boot a correctly configured worker. The secret this process DOES depend on, the
+  // scoped LiteLLM agent key, fails closed per call in core/infra/litellm-credential.ts.
 
   // FAIL CLOSED ON AGENT-SYSTEM WRITES (Part D review H-3). This pod mounts no `os-repos` volume
   // — the PVC is ReadWriteOnce and os-ui owns it — and carries no `DATA_PROJECT_GIT`, so a
