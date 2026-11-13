@@ -232,6 +232,9 @@ const SOFTWARE_FOREIGN: Record<string, 'not_found' | 'forbidden'> = {
   set_app_design: 'not_found',
   get_software: 'not_found',
   read_app_files: 'not_found',
+  // night-2 S6: the push verb is edit-scoped in-lib (`getEditableAppForUser` → `getAppForUser`),
+  // so an app the caller cannot SEE answers `not_found` like every other software door.
+  push_app_files: 'not_found',
   get_software_status: 'not_found',
   commit_software_files: 'not_found',
   request_deploy: 'not_found',

@@ -204,3 +204,44 @@ export function gitCommitNote(outcome: AppCommitOutcome): string {
   if (outcome.ok) return `⚠ not recorded in git: ${outcome.reason}`;
   return `⚠ git commit FAILED: ${outcome.reason} — the files are in the mirror cache only`;
 }
+
+// ------------------------------------------------------------------ read-back ---
+
+/**
+ * READ AN APP'S TREE BACK FROM GIT — the home of record, under `apps/<slug>/`.
+ *
+ * This is the read half of the same service both doors use: `read_app_files` over the MCP and
+ * the editor's file list in the UI resolve through here, so "what you committed is what you
+ * read" is a property of ONE function rather than of two caches agreeing. The OpenSearch mirror
+ * stays as the fast synchronous fallback (and for an app whose domain repo is off), and the
+ * caller is told WHICH it got — `governed-commit` vs `mirror-cache` vs `template-seed` — because
+ * a substituted source that reads as the real thing is the failure mode we refuse.
+ *
+ * Returns `null` (never throws) when git cannot answer, so the caller falls back honestly.
+ */
+export async function readAppTreeFromGit(
+  app: Pick<AppIdentity, 'slug' | 'domain'>,
+  opts: { reposDir?: string; ref?: string } = {},
+): Promise<{ files: ScaffoldFile[]; sha: string } | null> {
+  if (!appProjectGitEnabled()) return null;
+  const domain = String(app.domain ?? '').trim();
+  if (!domain) return null;
+  try {
+    const { listTree, readBlob, repoExists, log } = await import('@core/infra/git-store');
+    const reposDir = opts.reposDir ?? config.reposDir;
+    if (!repoExists(domain, { reposDir })) return null;
+    const prefix = `${appSubtreePrefix(app.slug)}/`;
+    const ref = opts.ref ?? 'main';
+    const entries = (await listTree(domain, ref, { reposDir })).filter((e) => e.path.startsWith(prefix));
+    if (entries.length === 0) return null;
+    const files: ScaffoldFile[] = [];
+    for (const e of entries) {
+      files.push({ path: e.path.slice(prefix.length), content: await readBlob(domain, ref, e.path, { reposDir }) });
+    }
+    const head = (await log(domain, { reposDir, limit: 1 }))[0];
+    return { files, sha: head?.sha ?? '' };
+  } catch (e) {
+    console.warn(`[app-git] read-back of apps/${app.slug} in '${domain}' failed: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+}

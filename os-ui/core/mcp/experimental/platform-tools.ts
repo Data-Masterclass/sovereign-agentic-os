@@ -223,6 +223,25 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
     },
     required: ['appId'],
   },
+  push_app_files: {
+    type: 'object',
+    properties: {
+      appId: { type: 'string', description: 'App id from list_software.' },
+      files: {
+        type: 'array',
+        description:
+          "The files to push, as a CHANGESET merged over the app's current tree (so a partial push never makes the untouched files disappear). Paths are relative to the app root and must not escape it.",
+        items: {
+          type: 'object',
+          properties: { path: { type: 'string' }, content: { type: 'string' } },
+          required: ['path', 'content'],
+        },
+      },
+      message: { type: 'string', description: 'Why you are pushing — it becomes part of the commit subject.' },
+    },
+    required: ['appId', 'files'],
+    examples: [{ appId: 'app_ab12cd34', files: [{ path: 'src/App.tsx', content: 'export default () => null;\n' }], message: 'add the list page' }],
+  },
   start_preview: APP_ID_ONLY,
   request_deploy: APP_ID_ONLY,
   decide_deploy: {

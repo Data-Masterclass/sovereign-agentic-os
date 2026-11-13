@@ -209,16 +209,29 @@ export const waveBReadTools: McpTool[] = [
       // for a fresh app) — the OS's own snapshot store is the source of truth now that
       // there is no external git forge. Hydrate the durable mirror first so this
       // survives a pod restart (the tree is not lost when the committing process is gone).
+      // GIT FIRST (night-2 S5/S6): the home of record is `apps/<slug>/` in the domain
+      // repository, read through the SAME service the UI's file list uses. The OpenSearch
+      // mirror is the fast fallback, and the template seed is the last resort — the answer
+      // SAYS which one you got, because a substituted source that reads as the real thing is
+      // exactly the failure this label exists to prevent.
+      const { readAppTreeFromGit } = await import('@tabs/software/lib/git-commit');
+      const fromGit = await readAppTreeFromGit(app);
       await hydrateSnapshot(app.id);
-      const tree = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
+      const tree = fromGit?.files ?? getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
       // HONEST LABEL (night-2 S1): there is no git forge to be “unreachable”. This is the tree
       // the governed commit door last wrote — committed into `apps/<slug>/` of the domain repo and
       // mirrored to the read cache this reads — or the template seed for an app with no commit yet.
-      const committed = getSnapshot(app.id) !== null;
-      const source = committed ? ('governed-commit' as const) : ('template-seed' as const);
-      const note = committed
-        ? 'The app’s tree as last committed through the governed commit door (`apps/' + app.slug + '/` in the domain repository).'
-        : 'This app has no commit yet — these are the template seed files, not committed source.';
+      const source = fromGit
+        ? ('governed-commit' as const)
+        : getSnapshot(app.id) !== null
+          ? ('mirror-cache' as const)
+          : ('template-seed' as const);
+      const note =
+        source === 'governed-commit'
+          ? 'The app’s tree at commit ' + (fromGit?.sha ?? '').slice(0, 12) + ' in `apps/' + app.slug + '/` of the domain repository — the home of record.'
+          : source === 'mirror-cache'
+            ? 'The app’s tree from the OS read cache (the domain repository had no tree for this app — the cache is what the governed commit door last wrote).'
+            : 'This app has no commit yet — these are the template seed files, not committed source.';
       if (!path) {
         return { appId, source, branch: 'main', files: tree.map((f) => f.path).sort((a, b) => a.localeCompare(b)), note };
       }

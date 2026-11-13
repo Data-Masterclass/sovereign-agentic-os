@@ -86,6 +86,12 @@ export function previewLocation(app: Pick<App, 'slug' | 'serveMode' | 'spec' | '
  * result and where to look.
  */
 export async function pushAppFiles(input: PushAppFilesInput, user: CurrentUser): Promise<PushAppFilesResult> {
+  // EXISTENCE FIRST (the F2-1 convention, pinned by `core/mcp/mcp-conformance.test.ts` X7): an
+  // app the caller cannot SEE must answer `not_found` — the same answer an absent id gets — so
+  // the visibility gate runs BEFORE any argument validation. Validating `files` first would have
+  // told a stranger "your files are missing" about an app they have no right to know exists.
+  const app = await getEditableAppForUser(input.appId, user);
+
   const files = Array.isArray(input.files) ? input.files : [];
   if (files.length === 0) {
     const err = new Error('push_app_files needs at least one file ({ path, content }).') as Error & { status?: number };
@@ -99,8 +105,6 @@ export async function pushAppFiles(input: PushAppFilesInput, user: CurrentUser):
       throw err;
     }
   }
-  // Edit-scope gate under the CALLER's identity (403/404 exactly as the other edit paths).
-  const app = await getEditableAppForUser(input.appId, user);
   const message = String(input.message ?? '').trim() || `push ${files.length} file${files.length === 1 ? '' : 's'}`;
 
   const { app: after, step, git } = await commitToApp(app.id, user, files, message, {

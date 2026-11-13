@@ -1980,5 +1980,64 @@ stream's prefix — `M-1`, `D-1`, `C-1`, `S-1`, `G-1`, `T-1`, `E-1`, `V-1`, `X-1
 `<X>-review-<id>` for findings from the review round. A deviation is not a failure; an unrecorded
 deviation is.
 
-(empty)
+### Stream S
+
+- **S-1 — the purge deleted more than the six named sites.** The brief named the scaffold
+  README/Dockerfile text; the scaffolds also *seeded a `.forgejo/workflows/ci.yml` into every new
+  app* — a workflow that `docker login`s and pushes to `forgejo-http:3000` with a
+  `secrets.REGISTRY_PASS`, against infrastructure that does not exist — and wrote
+  `owner: gitea_admin` into every scaffolded `app.yaml`. Both are shipped false artefacts of the
+  same kind, so both are gone (all five scaffolds, their tests, `apps.test.ts`'s expected paths,
+  `build-spec/software.md`'s file table and the exported `ciWorkflowFile`/`dotforgejoWorkflow`
+  helpers). *Why:* a tripwire that allowed the generated workflow would have had to allow the word
+  `forgejo` in `tabs/software/**`, which defeats the point.
+- **S-2 — the adoption layer is injected, not wired.** D21 says app actions must reuse
+  `adoptActions` rather than grow a parallel store. `adoptActions` lives in
+  `tabs/connections/lib/action-adoptions.ts`, and `CONTRIBUTING.md` forbids a tab importing
+  another tab, so the software tab cannot call it. Rather than copy it (a parallel store, which
+  D21 forbids) or create `@core/action-adoptions` (a connections-tab change S does not own),
+  `authorizeDeclaredAction` reads layer 3 through an injected `AdoptionPort`. The intersection is
+  real, tested and fail-closed; the port is `() => false` until it is wired. *Next:* move
+  `action-adoptions.ts` to `@core/policy/` (connections tab) and pass the real store, then make
+  `callAppTool` consult the intersection for declared actions.
+- **S-3 — the adoption gate applies ONLY to the new declared-action surface.** Making it
+  fail-closed for the *existing* auto-MCP OpenAPI tools would have switched off agent→app calls
+  for every app in production overnight, unattended, with no adoption records in existence. The
+  gate therefore arrives with the surface it governs (`actions.yml`), and the existing path keeps
+  today's exact behaviour. *Next:* a migration that adopts every existing app's actions for its
+  own domain, then extend the gate.
+- **S-4 — `registerGitObject('software', …)` is written by INJECTION.** Stream G owns
+  `core/infra/git-objects.ts` and it is on `night2/G`, so importing it would not typecheck here.
+  `tabs/software/lib/git-object.ts` declares the location type locally (structurally identical),
+  exports `resolveSoftwareGitObject` with `paths: ['apps/<slug>/']`, `trailerId: 'app:<id>'` and
+  `tagPrefix: 'app/<slug>/'`, and `installSoftwareGitObject(register)` takes G's
+  `registerGitObject` as a parameter. *Next (one line, after the merge):*
+  `installSoftwareGitObject(registerGitObject)` in `instrumentation.ts`.
+- **S-5 — no `<GitHeadBadge/>` was mounted.** G asked for it in the Software detail header; the S
+  brief's contract line says verbatim *"mount nothing in headers"*, and `core/ui/git/` is not in
+  this worktree. Refused and handed back to G/the coordinator, with the file and line named.
+- **S-6 — files touched outside the stated ownership, deliberately and minimally.** (a)
+  `os-ui/instrumentation.ts` — one appended boot step registering `reserveSubtree('apps/')`;
+  without it the dbt whole-tree generator deletes `apps/**` on its next commit, and the shared-file
+  rule explicitly contemplates appending at the end. (b) `os-ui/core/app-sdk/*` — the brief assigns
+  the SDK's `os.agents.*` to S but the ownership list does not name the folder; new file
+  `agents.ts`, additive types, an additive `agents` namespace on the client, and `agents.ts` added
+  to the vendored source list. (c) `os-ui/app/api/software/[id]/files/route.ts` — a new POST handler
+  (the UI twin of `push_app_files`); it is the Software tab's own route shell and no stream claims
+  `app/api/software/**`. (d) `os-ui/core/mcp/wave-b.test.ts` — one test updated because
+  `read_app_files` no longer reports `mode: 'offline-mock'`. (e)
+  `os-ui/tabs/software/ui/appspec/ChartExplorerRenderer.tsx` — the two "Cube secures the number"
+  lines filed to S by stream X as X-5.
+- **S-7 — `os.agents.get` takes the system id as well as the run id.** The plan writes
+  `os.agents.get(runId)`. The OS's own governed read door for a run is scoped by system
+  (`/api/agents/systems/<id>/run/stream?runId=`), and there is no system-less JSON run-status route.
+  Inventing one would have meant a new route in `app/api/agents/**` — another stream's area and a
+  second door for the same read. The SDK therefore mirrors the UI's door exactly:
+  `os.agents.get(systemId, runId)`. *Next:* if a system-less read is wanted, it belongs in the
+  agents tab as one route, and the SDK's signature narrows to the plan's.
+- **S-8 — the editor save now commits.** `saveAppFile` wrote only the OpenSearch mirror, which is
+  exactly the "a writer that does not commit" hole the global constraint forbids. It now commits
+  through `commitAppTree`. The compile gate is deliberately NOT added to that path: an editor save
+  of a half-written file must still save, as it always did.
+
 

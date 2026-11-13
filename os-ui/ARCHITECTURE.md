@@ -808,3 +808,48 @@ result, and the UI must surface that label.
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,
 taking its prose from the file headers, the tab manifests and the component pins, so
 it cannot drift. CI fails if the committed page is stale.
+
+## Software: an app's source tree is a git subtree (night-2, stream S)
+
+An app is not an OpenSearch document any more. Its source tree lives in **the domain's bare git
+repository** at `apps/<slug>/` — one repo per domain on the `os-repos` PVC — written through the
+one commit path (`core/infra/git-store.ts` `commitSubtree`) by `tabs/software/lib/git-commit.ts`,
+with a boot-time `reserveSubtree('apps/')` registered from `instrumentation.ts` so the dbt
+generator's whole-tree commit keeps every app. Author = the acting user, committer =
+`Sovereign OS`, trailers `OS-Action` / `OS-Object: app:<id> (<name>)` / `OS-Surface` /
+`OS-Request-Id` (+ `OS-Actor`, + `OS-Run-Id` inside a run). The OpenSearch `os-app-files` mirror
+is **a cache of the committed tree**, not the home of record; `readAppTreeFromGit` is the read
+half both doors use, and every answer is labelled `governed-commit` | `mirror-cache` |
+`template-seed`.
+
+`push_app_files` is the one documented verb for "code in Claude, push to the OS"
+(`tabs/software/lib/push-app-files.ts`). One service, two doors: the MCP tool and
+`POST /api/software/<id>/files`. The compile gate runs **before** any write — a red gate is a 422
+with the diagnostics and nothing is committed — and `commitSubtree` commits only when the tree
+hash changed, so two identical pushes are one commit.
+
+`core/infra/git-store.ts` gained an **additive** tag block (delimited `=== S TAG BLOCK ===`):
+`annotatedTag` (immutable — re-releasing a version is 409), `listTags(prefix)` (one app's release
+history: `app/<slug>/v<MAJOR>.<MINOR>.<PATCH>`), `resolveTag`, and the path-scoped `logPath`. No
+existing export's signature changed.
+
+**Two traps closed.** `normalizeServeMode` now defaults to `'spec'`, and `appImageRef` throws
+`MissingAppImageError` (409) when no image is set — the old `'image'` default plus the chart's
+`traefik/whoami:latest` meant any legacy record going live served a stranger's placeholder
+container on the customer's own domain, and reported success. And a `demo-seed` result is now
+**structurally** unusable as evidence: `tabs/software/lib/seeded-evidence.ts` `assertNotSeeded`
+refuses it at `requestDeploy`, on the review card, at `decideDeploy` and in the
+`verify_software` verdict, because a label in a response field is one a caller can drop.
+
+**The app ↔ agent ↔ data triangle.** `core/app-sdk/agents.ts` gives a governed app
+`os.agents.run/get/decide`, and all three post to the **same routes the OS UI posts to**
+(`/api/agents/systems/<id>/run` → `enqueueRun`, that run's `run_events` stream, and the one
+`/api/governance/approvals` inbox), same-origin with the ambient session — no token exchange, no
+app principal, no key of the app's own. A held write surfaces as `state: 'parked'` with its
+approval id. The other direction: an app **declares** its actions in `actions.yml`
+(`tabs/software/lib/app-actions.ts`) and an agent may call one only through the four-layer
+fail-closed intersection **capability ∩ declaration ∩ adoption ∩ grant**, with a `domain_admin`
+consent step and a write **held** under the reads-on/writes-off preset. Data goes only through
+the governed paths as the end user, so two sessions of the same app see different rows. The
+whole triangle, plus both negative cases, is `tabs/software/lib/triangle.test.ts`.
+

@@ -649,6 +649,9 @@ export async function push(domain: string, mirror: MirrorConfig, deps: PushDeps 
   }
 }
 
+// ======================= === S TAG BLOCK === (stream S, night-2) ===========================
+// Delimited for a textual merge: stream G appends its read/diff block as `=== G READ BLOCK ===`
+// ABOVE this one. Neither block changes an existing export's signature. Do not interleave them.
 // ===========================================================================================
 // TAGS AND RELEASES — stream S's additive block (night-2, D17/S-R2.1).
 //
@@ -859,3 +862,4 @@ export async function logPath(
   }
   return { entries, truncated: scanned >= all.length && all.length >= MAX_LOG_DEPTH };
 }
+// ======================= === END S TAG BLOCK === ==========================================
