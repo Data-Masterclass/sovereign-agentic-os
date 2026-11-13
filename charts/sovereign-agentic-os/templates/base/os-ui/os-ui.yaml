@@ -122,6 +122,13 @@ spec:
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000
+        {{- if $dpg.enabled }}
+        # The os-repos volume arrives owned by root; without fsGroup every git commit failed with
+        # EACCES on the first 0.8.0 rollout (fail-soft, so datasets were created with no history).
+        # OnRootMismatch: chown once, not on every pod start.
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        {{- end }}
       {{- /* Gate startup on the durable user-directory mirror. os-ui booting before
            OpenSearch was reachable took the offline branch and silently re-seeded
            every account from OS_USERS (2026-09-10 all-users lockout). Rendered
