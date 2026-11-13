@@ -310,6 +310,8 @@ test('RUN PATH: the agent RUN route derives a real default task, never "Test inv
 //   • mcp, mcp/[tab] — gated by an OS-issued per-user Bearer token (not the cookie)
 //   • cube/models    — cluster-internal model-sync sidecar (governed tiers only; see its docstring)
 //   • agents/scheduled-run — gated by the shared service Bearer token (runtimeTokenOk)
+//   • git/authenticate, git/receive — gated by an OS personal access token (a git client and a
+//     git hook have no session cookie); see the notes on each entry below
 const UNAUTHENTICATED_BY_DESIGN = new Set([
   'app/api/health/route.ts',
   'app/api/auth/verify/route.ts',
@@ -319,6 +321,15 @@ const UNAUTHENTICATED_BY_DESIGN = new Set([
   'app/api/mcp/route.ts',
   'app/api/mcp/[tab]/route.ts',
   'app/api/agents/scheduled-run/route.ts',
+  // Stream E, the engineer's door: both carry their OWN authentication, which is an OS personal
+  // access token rather than the session cookie, because the caller is a git client or the repo's
+  // own pre-receive hook — neither has a session.
+  //   • git/authenticate — the ingress sub-request; it IS the authenticator (401 + WWW-Authenticate
+  //     on no / unknown / revoked / expired token, 404 for a domain the principal is not in).
+  //   • git/receive     — the receive hook; gated by the shared service Bearer when configured AND
+  //     by re-resolving the pusher's forwarded token through `authenticateGitRequest`.
+  'app/api/git/authenticate/route.ts',
+  'app/api/git/receive/route.ts',
 ]);
 
 function allApiRoutes(): string[] {

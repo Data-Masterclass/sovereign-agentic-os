@@ -1980,5 +1980,78 @@ stream's prefix — `M-1`, `D-1`, `C-1`, `S-1`, `G-1`, `T-1`, `E-1`, `V-1`, `X-1
 `<X>-review-<id>` for findings from the review round. A deviation is not a failure; an unrecorded
 deviation is.
 
-(empty)
+### Stream E — the engineer's door
 
+- **E-1 — the lock is joined through the published global symbol, not an exported `withLock`.**
+  `core/infra/git-receive.ts` must take the SAME per-domain mutex `git-store.ts` serialises its
+  writers on, but `git-store.ts` belongs to streams S and G tonight and the brief forbids editing
+  another stream's file. The lock map is registered under `Symbol.for('soa.git-store.locks')` and
+  keyed by the exported `repoPath(domain)`, so the gate chains onto that map directly. It is real
+  mutual exclusion (the interleave test proves it both ways) but it reaches into a module's
+  internal registry. **Ask:** export `withRepoLock(domain, fn, { timeoutMs })` from `git-store.ts`
+  after S and G land, and switch `git-receive.ts` to it — one import, no behaviour change.
+  *Second, smaller instance:* `git-store.ts`'s own `withLock` never deletes its map entry (its
+  `finally` compares a freshly-created promise, so the condition is always false). Harmless — the
+  map is bounded by the number of domains — but worth one line when that file is next open.
+- **E-2 — the lock is held across pre-receive → post-receive by a LEASE keyed on the domain.**
+  D27 asks for the lock "for the duration of `receive-pack`", and the two hooks are two processes,
+  so the first cannot hand a handle to the second. The lock guarantees at most one open lease per
+  domain, so the domain IS the handle. A lease that is never completed (a killed client) releases
+  itself after `DEFAULT_LEASE_TTL_MS` (180s).
+- **E-3 — authentication for READ is the ingress's sub-request; authentication for WRITE is the
+  OS's own.** `git-http-backend` has no authentication of its own, so the chart's `/git` Ingress
+  carries `nginx.ingress.kubernetes.io/auth-url` → `/api/git/authenticate`. The push path does NOT
+  depend on that: the pre-receive hook forwards the pusher's `Authorization` header and
+  `/api/git/receive` resolves the token itself, which is also what makes every gate case testable
+  offline. Consequence to know: with `ingress.enabled=false` (the bundled/local profile) the
+  sidecar has no authentication in front of it and is reachable only from inside the cluster —
+  which is why the NetworkPolicy admits port 9419 from the ingress-controller namespace only.
+- **E-4 — Platform → Access tokens is `minRole: builder`, and a creator therefore has no way to
+  make a token today.** Access tokens are PERSONAL, so the honest floor is the lowest role — but
+  the Platform tab itself is gated at `builder` in `core/kernel/tabs.ts` (not stream E's file), so a
+  `creator` floor would claim a surface a creator cannot reach. The floor was set to `builder` to
+  match reality rather than the aspiration. **Ask the owner:** either lower the Platform nav floor,
+  or surface "Access tokens" in the sidebar account menu beside My MCP. Until then the engineer's
+  door is open to builders and above only. This also changed five assertions in
+  `tabs/admin/lib/sections.test.ts` (the strip enumerations and "every tab except the overview is
+  admin-only", now "every ADMINISTRATION tab is admin-only" with the two non-admin tabs named) and
+  added two entries to `UNAUTHENTICATED_BY_DESIGN` in `core/security-route-guards.test.ts` —
+  `/api/git/authenticate` and `/api/git/receive` carry their OWN authentication (an access token),
+  because a git client and a git hook have no session cookie.
+- **E-5 — `agents/index.yml` was added to the non-pushable set.** The brief names `os/*`, grants
+  and secret-shaped files. `agents/index.yml` is the slug → frozen-system-id map the OS generates;
+  letting a push rewrite identities would be the same class of hole, so it is refused with the same
+  sentence.
+- **E-6 — the ingest writes through the governed services, with one documented exception.** Datasets
+  go through `createDatasetService` / `defineQualityRulesService` (`mutations-server.ts`); a
+  docs-only write has no `mutations-server` wrapper, so it calls `store.setDocs` — which IS the one
+  chokepoint the docs route itself calls, re-gating edit scope and emitting the commit. Agent
+  systems go through `store.writeFile` / `store.createSystem`, the Agents tab's single save
+  chokepoint (there is no `mutations-server` equivalent in that tab). Both doors therefore leave the
+  same state, which the two coin tests assert.
+- **E-7 — a push never changes an object's audience, and never deletes.** A system or dataset an
+  engineer creates by pushing is `My` / Personal; removing a file is reported, not acted on. Neither
+  is in the brief; both follow from "audience changes only through the existing promotion path" and
+  "a reconcile that would empty a tree is refused".
+- **E-8 — `core/ui/git-clone/` is a new directory, deliberately not `core/ui/git/`.** G owns
+  `core/ui/git/**`. The mount contract is one line — `<CloneRepository domain={d} filePath={p} />` —
+  and the decidable half is `core/infra/git-clone.ts`, which is unit-tested.
+- **E-9 — Part C (live) steps, recorded here because the plan's Part C is not stream E's to edit.**
+  The `kind`/`stackit` halves of E1, E3 and E6 need the image and the ingress:
+  1. `docker build -t ghcr.io/aborek/sovereign-os/git-http:1.0.0 images/base/git-http` and, for
+     kind, `kind load docker-image ghcr.io/aborek/sovereign-os/git-http:1.0.0 --name <cluster>`.
+  2. Roll os-ui; confirm the pod has 3 containers and `kubectl logs -c git-http` shows lighttpd up.
+  3. Create a token in Platform → Access tokens.
+  4. `git clone https://<os-host>/git/<domain>.git` with the token as the password — E1. Confirm
+     `os/schedules.yml` is present in the clone (read is unconditional).
+  5. `git clone` with no credentials → 401; with a revoked token → 401 — E3.
+  6. Edit `models/personal/<you>/<model>.sql` + its `schema.yml`, push → lands, and the dataset
+     changes in the Data tab with `git:push` in its history — E3/E8.
+  7. Edit `os/schedules.yml`, push → rejected with the managed-by-the-OS sentence — E4.
+  8. `git push --force` after an amend → rejected, not a fast-forward — E6.
+  9. Confirm a pushed model appears as a Dagster asset after the repo-sync interval — E8's
+     `kind` half.
+- **E-10 — one file outside stream E's declared ownership:** two additive lines in
+  `os-ui/app/(govern)/platform/page.tsx` (the import and the `{current === 'tokens' && …}` branch).
+  The brief allots "a new file plus one nav line" in `tabs/admin/**`; the section cannot render
+  without the page knowing about it, and no other stream claims that file tonight.

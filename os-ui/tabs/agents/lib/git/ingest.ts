@@ -72,17 +72,21 @@ export function systemIdsByDir(indexYml: string): Map<string, string> {
  * Apply the pushed `system.yaml` files. Reads the index at the PUSHED commit, so a push that adds
  * a system and (necessarily) leaves the index alone still resolves every pre-existing one.
  */
-export async function ingestAgentSystems(input: {
-  domain: string;
-  files: ChangedFile[];
-  pusher: Pusher;
-  sha: string;
-}): Promise<IngestReport> {
+export async function ingestAgentSystems(
+  input: {
+    domain: string;
+    files: ChangedFile[];
+    pusher: Pusher;
+    sha: string;
+  },
+  /** Test seam only: the repos directory to read `agents/index.yml` from. */
+  deps: { reposDir?: string } = {},
+): Promise<IngestReport> {
   const { domain, files, pusher, sha } = input;
   const report: IngestReport = { kind: AGENT_SYSTEM_KIND, created: 0, updated: 0, skipped: 0, notes: [] };
   let index = new Map<string, string>();
   try {
-    index = systemIdsByDir(await readBlob(domain, sha, 'agents/index.yml'));
+    index = systemIdsByDir(await readBlob(domain, sha, 'agents/index.yml', deps));
   } catch {
     report.notes.push('agents/index.yml is not in this commit — every pushed system is treated as new');
   }
