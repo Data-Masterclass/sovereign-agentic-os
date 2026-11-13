@@ -74,6 +74,27 @@ export type CommitMeta = {
    * `boot-reconcile` (B1 spelled the per-write reason `OS-Action`, and that stays the convention).
    */
   reason?: string;
+  /**
+   * X-R1: this commit touched EVERY system in the subtree, not one — so list them all in an
+   * `OS-Objects` trailer beside the single-valued `OS-Object`.
+   *
+   * WHY IT IS NEEDED. The boot reconcile commits one commit for the whole `agents/` subtree, with
+   * `OS-Object: <domain>`. The history read-back (`systemGitInfo`) filters the repo log on
+   * `OS-Object` matching the SYSTEM id, so for a system whose only commit is that reconcile — i.e.
+   * every system that existed before git was switched on — the filter matched nothing and
+   * `git.head` came back `null`, which the UI and `get_agent_system` render as "never committed".
+   * That is a lie about a system that is in the repository.
+   *
+   * WHY A SECOND TRAILER RATHER THAN A REPEATED `OS-Object`. `parseTrailers` returns
+   * `Record<string, string>` — a repeated key keeps only the last value, so N `OS-Object` lines
+   * would attribute the commit to exactly one system. `OS-Objects` is a space-separated list of
+   * ids, which survives `oneLine` and the trailer grammar unchanged.
+   *
+   * The complementary half — the path-based `git log -- <path>` fallback for the GENERIC object
+   * read-back — is stream G's (`core/infra/git-objects.ts`, G-R2.1). Either alone fixes the
+   * symptom; this one also makes the reconcile commit say what it actually did.
+   */
+  allObjects?: boolean;
 };
 
 export type SubtreeCommitter = (
@@ -111,6 +132,16 @@ export async function commitAgentSystem(domain: string, actor: ActorIdentity, me
     surface: meta.surface ?? DEFAULT_SURFACE,
     requestId: meta.requestId ?? newRequestId(),
   });
+  // X-R1: a whole-subtree commit names every system it carried, so each one's history finds it.
+  // Ids with whitespace would break the trailer's grammar; none exist today and a defensive filter
+  // is cheaper than a malformed message.
+  const allObjects = meta.allObjects
+    ? snapshot.systems
+        .map((sy) => sy.id)
+        .filter((id) => id && !/\s/.test(id))
+        .sort()
+        .join(' ')
+    : '';
   const { author, synthesized } = authorFor(actor);
   const reposDir = deps.reposDir ?? config.reposDir;
   const commit = deps.committer ?? commitSubtree;
@@ -120,6 +151,7 @@ export async function commitAgentSystem(domain: string, actor: ActorIdentity, me
     // `OS-Actor` carries the principal id even when the author name is a display name.
     trailers: {
       'OS-Actor': actor.id,
+      ...(allObjects ? { 'OS-Objects': allObjects } : {}),
       ...(meta.reason ? { 'OS-Reason': meta.reason } : {}),
       ...(synthesized ? { 'OS-Author-Email': 'synthesized' } : {}),
     },

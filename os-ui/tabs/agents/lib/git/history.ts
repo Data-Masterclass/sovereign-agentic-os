@@ -14,6 +14,11 @@
  *   - Reads `core/infra/git-store.ts` `log` and filters by the `OS-Object` trailer, which carries
  *     `<systemId> (<name>)`: a rename, a move between lanes and even a delete therefore stay in
  *     one history, because the ID is the identity and the directory is only a slug.
+ *   - X-R1: a WHOLE-SUBTREE commit (the boot reconcile) cannot name one system in `OS-Object`, so
+ *     it lists every system it carried in `OS-Objects` (space-separated ids) and this filter reads
+ *     that too. Without it, a system whose only commit is the reconcile — which is every system
+ *     that existed before git was switched on — reported `head: null`, i.e. "never committed",
+ *     about a system that is sitting in the repository.
  *   - There is NO second source of truth: `sha`, `author`, `at` come from the commit. When the
  *     flag is off, or the domain has no repo yet, the answer is an honest `null`.
  *   - Owner/scope gating is unchanged and happens BEFORE this is called (the caller has already
@@ -93,7 +98,11 @@ function minesIn(entries: Awaited<ReturnType<typeof log>>, systemId: string, lim
   const mine: SystemCommit[] = [];
   for (const e of entries) {
     const object = e.trailers['OS-Object'] ?? '';
-    if (object !== systemId && !object.startsWith(`${systemId} `)) continue;
+    const single = object === systemId || object.startsWith(`${systemId} `);
+    // X-R1: `OS-Objects` is a space-separated id list; compare whole tokens so `sys_a` never
+    // matches `sys_ab`.
+    const inMany = !single && (e.trailers['OS-Objects'] ?? '').split(' ').includes(systemId);
+    if (!single && !inMany) continue;
     mine.push({
       sha: e.sha,
       subject: e.subject,
