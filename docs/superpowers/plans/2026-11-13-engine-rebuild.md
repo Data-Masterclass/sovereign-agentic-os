@@ -1709,3 +1709,39 @@ reason is here.
   command: `CI=true bash scripts/gate.sh` from `os-ui/` is exit 0 with all three checks reporting
   `ok`/`PASS`; with the subcharts moved away, `CI=true` makes both scripts exit 1 with the
   actionable message while a plain laptop run still skips at exit 0.
+
+#### Part F iteration 2 deviations (local half, `feat/engine-rebuild-b2`) — `F2-n`
+
+- **F2-1 The software existence leak is closed towards `not_found`, and the tab's own tool
+  descriptions decided it.** F-3 measured the split without changing it because "which convention
+  wins repo-wide is a decision". It turned out not to need one for this tab: `start_preview`,
+  `use_connection`, `use_data`, `use_knowledge`, `use_as_data` and `archive` already DOCUMENT
+  "an unseeable app id → not_found; an app you can see but may not … → forbidden" in the strings
+  the MCP advertises, so the write doors were violating their own published contract, not an
+  unwritten one. Fixed by putting the visibility gate FIRST in the six functions behind the eight
+  doors — `startPreview`, `requestDeploy` (`tabs/software/lib/review.ts`), `archiveApp`,
+  `useAsData`, `consumeResource` (`tabs/software/lib/lifecycle.ts`) and `setAppSpec`
+  (`tabs/software/lib/apps.ts`) now open the app through the existing `getAppForUser` (the read
+  doors' own door, 404 on invisible) instead of the unscoped `getAppByIdInternal`, and keep their
+  owner/role check afterwards as the 403. **Tools whose refusal code changed for an invisible app
+  (8):** `request_deploy`, `start_preview`, `set_app_spec`, `use_connection`, `use_data`,
+  `use_knowledge`, `use_as_data`, `archive` — `forbidden` → `not_found`. Nothing that was ALLOWED
+  becomes denied, and one thing that was wrongly allowed is now denied: `consumeResource`'s Builder
+  arm carried no domain check at all, so any Builder could grant a resource to an app in a domain
+  they do not belong to; the visibility gate closes that.
+  `SOFTWARE_FOREIGN` in `core/mcp/mcp-conformance.test.ts` collapses to a single expectation and
+  gains a second test asserting (a) the tab answers with exactly ONE code and (b) every software
+  tool addressing an `appId` that a Creator can reach carries a pinned expectation — so a new door
+  cannot re-open the split on the `?? 'forbidden'` default. `platform-mcp-appspec.test.ts`'s pinned
+  403 becomes a 404, and a new case pins the other half: a colleague who CAN see a Shared app but
+  may not write it still gets `forbidden`, because converging the EXISTENCE answer must not swallow
+  genuine PERMISSION answers.
+  **Deliberately NOT changed:** the other tabs. The brief named the repo convention as "invisible =
+  `not_found`", but F-3 recorded the opposite for every non-software tab (`forbidden`, deviation
+  B4-11) and `mcp-conformance.test.ts` still pins that. So this converges the tab that was
+  internally inconsistent — software, where read and write doors disagreed with each other and the
+  write doors disagreed with their own descriptions — and leaves the cross-tab question
+  (software + agent runs hide existence; data/knowledge/files/agents/metrics/dashboards do not)
+  open for a decision, named here rather than changed under cover of a bug fix. `promote`,
+  `delete` and `commit` were also left alone: they floor at `builder`, so the dispatcher's role
+  gate answers before their object gate is ever reached.

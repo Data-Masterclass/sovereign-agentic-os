@@ -1268,8 +1268,9 @@ export async function setAppSpec(
   spec: unknown,
   user: CurrentUser,
 ): Promise<{ app: App; issues: SpecIssue[]; warnings: SpecWarning[]; version: ArtifactVersion | null }> {
-  const app = await getAppByIdInternal(appId);
-  if (!app) throw withStatus(new Error('App not found'), 404);
+  // EXISTENCE FIRST (F2-1): an app the caller cannot SEE is `not_found` — the same answer
+  // `get_app_spec` gives — so a write door never confirms an id a read door denies.
+  const app = await getAppForUser(appId, user);
   const ownerOrBuilder =
     app.owner === user.id || (roleAtLeast(user.role, 'builder') && user.domains.includes(app.domain));
   if (!ownerOrBuilder) throw withStatus(new Error('Only the creator can set this app spec'), 403);
