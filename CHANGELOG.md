@@ -73,7 +73,7 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   `row_limit` / the message reach `query_data`'s payload. Writes stay unbounded unless
   `EXECUTE_MAX_RUN_TIME` is set, because a full-refresh sync legitimately runs for minutes — and
   the comment that claimed "the client owns the statement budget" now says that instead.
-  12 new Python tests (`images/extensions/query-tool/test_query_budget.py`).
+  12 new Python tests (`images/extensions/query-tool/tests/test_query_budget.py`).
 - **A Trino rules reconciler that never succeeds is RED, and retried (E-2).** `no-cluster` and
   `no-configmap` ended a pass on its first attempt, read as permanent facts. At boot they are
   usually RBAC propagation and Helm's object ordering, so the chart's PERMISSIVE bootstrap stayed

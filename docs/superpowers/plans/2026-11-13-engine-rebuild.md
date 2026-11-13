@@ -1745,3 +1745,28 @@ reason is here.
   open for a decision, named here rather than changed under cover of a bug fix. `promote`,
   `delete` and `commit` were also left alone: they floor at `builder`, so the dispatcher's role
   gate answers before their object gate is ever reached.
+
+- **F2-2 The query-tool tests are hermetic, and CI now runs the one honest command.** F-4's defect
+  was not "shared module state" in general: it was `sys.modules.setdefault`. Each of the three
+  app-importing modules installed its OWN mcp/starlette/trino fakes with `setdefault` and then
+  `import app` — so under one discovery pass the FIRST module to import won every key, `app` was
+  bound to that module's fake `trino.dbapi.connect`, and every later module's recording list
+  stayed empty (`0 != 1`). A second, independent leak compounded it: `test_app_concurrency` and
+  `test_bearer` replaced `app.run_query` / `app.run_execute` / `app.SERVICE_BEARER_TOKEN` and never
+  restored them, so even one shared stub would not have been enough.
+  Fixed structurally: the four modules move into `images/extensions/query-tool/tests/` (the layout
+  `images/extensions/dagster/tests` already uses), the fakes live ONCE in `tests/_stubs.py` —
+  installed by whichever module imports first, ASSIGNED rather than `setdefault`-ed, returning a
+  shared handle whose `connects` / `rows` each `setUp` resets — and `snapshot_app`/`restore_app`
+  put every patched `app` knob back in `tearDown`. `tests/test_isolation.py` is the tripwire: it
+  scans its sibling sources for a per-module `setdefault`, asserts every module goes through the
+  installer, asserts `app`'s `trino.dbapi.connect` really records into the shared handle, and —
+  because alphabetical discovery places it after the three patching suites and before the budget
+  suite — fails BY NAME when a monkeypatch outlives its module. Verified by reintroducing the leak
+  in a scratch copy: the tripwire reports "app.run_query is still a test double" before the budget
+  suite's `0 != 1` ever appears.
+  `python3.11 -m unittest discover -s images/extensions/query-tool/tests` → **116 tests, OK**
+  (111 pre-existing + 5 new), and OK in four hand-picked module orders and per file.
+  CI's per-file loop is replaced by that single command, with the comment inverted: running them
+  per file would now HIDE an ordering bug rather than reveal one. The X9 row's and the CHANGELOG's
+  cited paths were repointed into `tests/`.
