@@ -185,6 +185,23 @@ async function liveConnectionCatalog(connId: string, user: CurrentUser): Promise
   }
 }
 
+/**
+ * The Trino catalog a sync connection mounts, resolved AS the dataset OWNER (their live identity) —
+ * `undefined` when the owner or connection cannot be resolved, `null` when it is a non-catalog
+ * (API-batch) connection. The dbt project generator's snapshot uses it (engine rebuild B1).
+ */
+export async function connectionCatalogForOwner(connectionId: string, ownerId: string): Promise<string | null | undefined> {
+  const owner = await liveResolveOwner(ownerId).catch(() => null);
+  if (!owner) return undefined;
+  try {
+    const { getConnectionForUser } = await import('@tabs/connections/lib/store');
+    const c = await getConnectionForUser(connectionId, owner);
+    return c.template === 'warehouse' && c.warehouse ? c.warehouse.catalog : null;
+  } catch {
+    return undefined;
+  }
+}
+
 async function liveSalesforceSlice(
   args: SalesforceSliceArgs,
 ): Promise<{ rowsAffected: number | null; batchId?: string; highWatermark: string | null }> {

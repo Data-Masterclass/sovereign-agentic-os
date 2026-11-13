@@ -446,6 +446,18 @@ export const config = {
   // "" when ingress.hosts.workbench is unset — honour it, don't dial localhost).
   workbenchBrokerUrl: base(consoleEnv('WORKBENCH_BROKER_URL', 'http://localhost:8091')),
 
+  // ---- Data products in git (engine rebuild B1). GATED OFF by default: when
+  // DATA_PROJECT_GIT=true every dataset / composition / check / sync / publish /
+  // retire mutation regenerates the owning domain's dbt project and commits it to a
+  // bare repo `<OS_REPOS_DIR>/<domain>.git` (core/infra/git-store.ts, author = the
+  // acting user). OFF ⇒ no repo is touched and nothing else changes. `reposDir` is
+  // the PVC mount (`os-repos`) in the chart; tests point it at a temp dir.
+  dataProjectGit: env('DATA_PROJECT_GIT', '').toLowerCase() === 'true',
+  reposDir: env('OS_REPOS_DIR', '/repos'),
+  // Durable mirror index for the per-domain push-mirror config (URL + token Secret
+  // REFERENCE — never the token). See tabs/data/lib/dbt/mirror.ts.
+  dataProjectMirrorsIndex: env('DATA_PROJECT_MIRRORS_INDEX', 'os-data-project-mirrors'),
+
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
   dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),
 

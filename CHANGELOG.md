@@ -13,6 +13,49 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Data products in git, Phase B1: generated dbt project per domain + the one commit path (flag `DATA_PROJECT_GIT`, default off)
+
+- **Git store** (`os-ui/core/infra/git-store.ts`, isomorphic-git 1.44.13, MIT): one bare repository
+  per domain under `OS_REPOS_DIR` (`/repos`, PVC `os-repos`). `commitTree` writes the whole desired
+  tree and commits **only when the tree hash changed**; `log`, `readBlob`, `listTree`, `archive`
+  (dependency-free ustar writer, `core/infra/tar.ts`), `push` to a mirror (token from a Secret
+  reference, never logged, scrubbed from errors). Author = acting user, committer `Sovereign OS`,
+  message `data(<domain>): <action> <object> — via ui:<route>|mcp:<tool>` with trailers
+  `OS-Action`, `OS-Object`, `OS-Surface`, `OS-Request-Id` (+ `OS-Author-Email: synthesized` when the
+  user has no e-mail). Per-repo in-process mutex.
+- **dbt project generator** (`os-ui/tabs/data/lib/dbt/`): `dbt_project.yml`, `profiles.yml`
+  (`env_var()` only, Trino target, `impersonation_user: env_var('OS_PRINCIPAL')`), the
+  `generate_schema_name` macro, generic tests `range` / `not_blank` (predicates from `dq.ts`),
+  `models/sources.yml` (Bronze + federated sources, `freshness` on `_loaded_at`), Silver/Gold models
+  whose bodies are the recorded `compileSilver`/`compileGoldJoin` SELECTs with FQNs → `ref()` /
+  `source()`, personal-lane models under `models/personal/<uid>/`, sync landings as incremental
+  models (`delete+insert` on `_batch_id` + lookback; `merge` on keys; `table` for full-refresh),
+  `schema.yml` tests from quality rules, `os/schedules.yml`, `os/external.yml` (Kafka / API-batch).
+  Byte-stable; golden tests for three shapes; a pure test asserts a composition's body equals
+  today's `compileGoldJoin` SELECT after FQN substitution.
+- **Every data writer commits** (behind the flag): `store.ts` emits a `ProjectChange` from its one
+  `persist()` and from every writer that bypasses it (`tabs/data/lib/project-events.ts`);
+  `tabs/data/lib/dbt/commit.ts` subscribes at boot (`instrumentation.ts`). `commit.test.ts`
+  enumerates the store's exports and asserts each of the 31 mutators reaches the commit path with the
+  flag on and none does with it off. Request surface via `core/infra/request-surface.ts`: `withRoute`
+  sets `ui:<route>`, the data MCP tools set `mcp:<tool>`.
+- **Read access:** `GET /api/data/projects/<domain>` (`{head, tree, log}`), `…/blob?ref&path`,
+  `…/export?ref` (tar) — domain members only; admin
+  `PUT /api/platform-admin/data-projects/<domain>/mirror` (URL + token Secret reference; push after
+  each changed commit reports, never blocks).
+- **Chart** (rendered only with `osUI.dataProjectGit.enabled`): PVC `os-repos` mounted at `/repos`
+  in os-ui, env `DATA_PROJECT_GIT=true` / `OS_REPOS_DIR=/repos`, `git-daemon` sidecar
+  (`alpine/git`, read-only, port 9418), Service `os-repos`, NetworkPolicy admitting only the Dagster
+  user-code pod to 9418 (port 3000 stays open as before). Dagster user-code Deployment gains the
+  `repo-sync` sidecar (`images/extensions/dagster/repo-sync.sh`; inert until `REPO_SYNC_ENABLED`),
+  the image gains `git`. `TRINO_SCHEMA` drift (`analytics` → `sales`) fixed.
+- **Config:** `DATA_PROJECT_GIT`, `OS_REPOS_DIR`, `DATA_PROJECT_MIRRORS_INDEX`.
+- **Docs:** `docs/components/dbt.md` and `dagster.md` rewritten honestly (demo project today;
+  generated project per domain with the flag; parsed by the sidecar, run in B2/B3);
+  `os-ui/tabs/data/README.md`; `os-ui/ARCHITECTURE.md` "A data product is a dbt project in a git repo
+  the OS owns"; licence rows for isomorphic-git (`THIRD-PARTY-LICENSES.md`, `licenses/components.tsv`,
+  `licenses/notices/os-ui-git-store-npm-NOTICE.txt`).
+
 ### Added — Agent engine rebuild, Phase A1: real graph, in-request, checkpointed
 
 - **`buildGraph`** (`os-ui/tabs/agents/lib/engine/build-graph.ts`): the unchanged system.yaml IR

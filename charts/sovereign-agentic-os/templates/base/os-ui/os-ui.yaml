@@ -11,6 +11,7 @@
   see os-ui/INTEGRATION.md. Without that block this file renders to nothing.
 */}}
 {{- $u := .Values.osUI }}
+{{- $dpg := $u.dataProjectGit | default dict }}
 {{- /*
   Scoped RBAC for the native Components surface. The OS UI server reads workload
   status + scales Deployments/StatefulSets 0<->1 and reads CNPG Clusters
@@ -388,6 +389,14 @@ spec:
               value: {{ $u.opaUrl | quote }}
             - name: DAGSTER_URL
               value: {{ $u.dagsterUrl | quote }}
+            {{- if $dpg.enabled }}
+            # Data products in git (engine rebuild B1): every dataset change regenerates the
+            # domain's dbt project and commits it to /repos/<domain>.git (the os-repos PVC).
+            - name: DATA_PROJECT_GIT
+              value: "true"
+            - name: OS_REPOS_DIR
+              value: /repos
+            {{- end }}
             # External-warehouse connectors (Glue/Snowflake/BigQuery/Databricks/Fabric).
             # OFF by default — surfaces the warehouse create-flow + MCP tools only when the
             # operator opts in (lib/core/config.ts reads EXTERNAL_CONNECTORS_ENABLED).
@@ -431,6 +440,34 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml $u.resources | nindent 12 }}
+          {{- if $dpg.enabled }}
+          volumeMounts:
+            - name: os-repos
+              mountPath: /repos
+        # Read-only git daemon exporting every domain repo in-cluster (git://os-repos/<domain>.git)
+        # for the Dagster repo-sync sidecar. --export-all: bare repos written by isomorphic-git
+        # carry no git-daemon-export-ok marker. Nothing in a repo is a secret.
+        - name: git-daemon
+          image: "{{ $dpg.gitDaemon.image.repository }}:{{ $dpg.gitDaemon.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          command: ["git", "daemon", "--export-all", "--base-path=/repos", "--reuseaddr", "--verbose", "--port=9418", "--informative-errors"]
+          ports:
+            - { name: git, containerPort: 9418 }
+          volumeMounts:
+            - name: os-repos
+              mountPath: /repos
+              readOnly: true
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+      volumes:
+        - name: os-repos
+          persistentVolumeClaim:
+            claimName: os-repos
+          {{- end }}
 ---
 apiVersion: v1
 kind: Service

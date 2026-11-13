@@ -747,10 +747,58 @@ dagster:
           - { name: TRINO_PORT, value: "8080" }
           - { name: TRINO_USER, value: dbt-sales }
           - { name: TRINO_CATALOG, value: iceberg }
-          - { name: TRINO_SCHEMA, value: analytics }
+          # The domain schema the marts land in — the SAME value as dbt.trino.schema and
+          # marts.schema (`sales`); the old `analytics` literal here had drifted from them.
+          - { name: TRINO_SCHEMA, value: sales }
+          # repo-sync sidecar (engine rebuild B1 — data products in git). Inert until
+          # REPO_SYNC_ENABLED=true (flip together with osUI.dataProjectGit.enabled).
+          - { name: REPO_SYNC_ENABLED, value: "false" }
+          - { name: REPO_SYNC_DOMAINS, value: "" }          # comma-separated; B2 adds discovery
+          - { name: REPO_SYNC_GIT_BASE, value: "git://os-repos" }
+          - { name: REPO_SYNC_CHECKOUT, value: "/repos-checkout" }
+          - { name: REPO_SYNC_INTERVAL, value: "15" }
+          - { name: REPO_SYNC_STATUS_PORT, value: "8089" }
+          - { name: DAGSTER_RELOAD_LOCATION, value: "" }     # TODO B2: "sovereign" once the multi-project location exists
+          - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
+          - { name: OS_PRINCIPAL, value: "repo-sync" }      # dbt parse only; a non-entitled principal
         resources:
           requests: { cpu: 50m, memory: 384Mi }
           limits: { cpu: "1", memory: 1Gi }   # headroom for dbt materializations
+        # ── Data products in git (engine rebuild B1): the validated-commit checkout the code
+        # location will load from (B2). `repo-sync` (same sovereign image, `git` added) fetches
+        # git://os-repos/<domain>.git, runs `dbt parse` in a worktree and repoints
+        # /repos-checkout/<domain>/current ONLY on success (images/extensions/dagster/repo-sync.sh).
+        # NOTE: includeConfigInLaunchedRuns propagates volumes/volumeMounts/env (not sidecars) into
+        # run pods — run pods see an empty /repos-checkout until B2 wires their project path.
+        volumes:
+          - name: repos-checkout
+            emptyDir: {}
+        volumeMounts:
+          - name: repos-checkout
+            mountPath: /repos-checkout
+        sidecarContainers:
+          - name: repo-sync
+            image: sovereign-os/dagster:0.2.0
+            imagePullPolicy: IfNotPresent
+            command: ["/bin/sh", "/opt/dagster/app/repo-sync.sh"]
+            env:
+              - { name: REPO_SYNC_ENABLED, value: "false" }
+              - { name: REPO_SYNC_DOMAINS, value: "" }
+              - { name: REPO_SYNC_GIT_BASE, value: "git://os-repos" }
+              - { name: REPO_SYNC_CHECKOUT, value: "/repos-checkout" }
+              - { name: REPO_SYNC_INTERVAL, value: "15" }
+              - { name: REPO_SYNC_STATUS_PORT, value: "8089" }
+              - { name: DAGSTER_RELOAD_LOCATION, value: "" }
+              - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
+              - { name: OS_PRINCIPAL, value: "repo-sync" }
+            ports:
+              - { name: repo-status, containerPort: 8089 }
+            volumeMounts:
+              - name: repos-checkout
+                mountPath: /repos-checkout
+            resources:
+              requests: { cpu: 20m, memory: 128Mi }
+              limits: { cpu: 500m, memory: 512Mi }
         # ── dbt.projectSource: git — Dagster user-code from the repo (epic #146 Ph 4)
   dagsterWebserver:
     image:
@@ -1149,6 +1197,18 @@ osUI:
   # each tool keeps its own auth).
   langfuseConsoleUrl: "http://localhost:3000"
   dagsterConsoleUrl:  "http://localhost:3070"  # internal on ingress (no public host)
+  # ---- Data products in git (engine rebuild B1). OFF by default: when enabled, os-ui gets
+  # DATA_PROJECT_GIT=true + the `os-repos` PVC at /repos (one bare repo per domain, every
+  # dataset change committed as the acting user), a read-only `git daemon` sidecar + Service
+  # `os-repos` (:9418) + a NetworkPolicy admitting only the Dagster user-code pod, which runs the
+  # repo-sync sidecar (see dagster.dagster-user-deployments above — set REPO_SYNC_ENABLED there).
+  dataProjectGit:
+    enabled: false
+    reposSize: 2Gi
+    gitDaemon:
+      image:
+        repository: alpine/git     # stock image; git (GPL-2.0) runs as a separate process, never linked
+        tag: "v2.47.2"
   # Secret-backed credentials — reuse the stack's existing Secrets so nothing
   # sensitive sits in plaintext (names/keys verified against the running cluster).
   langfuseSecret:

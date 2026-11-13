@@ -42,6 +42,10 @@ import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { isValidCron } from '@tabs/agents/lib/cron-util';
+// Every write announces itself here (pure, sync); the server-only git commit hook subscribes
+// at boot (tabs/data/lib/dbt/commit.ts). The store itself must stay free of node:fs / git —
+// it is reachable from the client bundle through lib/index.ts.
+import { emitProjectChange } from '@tabs/data/lib/project-events';
 
 // Re-export the FQN helpers so existing consumers keep importing them from the store.
 export { assetTarget, productTarget } from '@tabs/data/lib/store-fqn';
@@ -365,7 +369,18 @@ function metricScopeOf(rec: DatasetRecord, user: Principal): Dataset {
   return d;
 }
 
-function persist(rec: DatasetRecord, d: Dataset, snap?: { author: string; summary: string }): DatasetRecord {
+/**
+ * The ONE write path for an existing record. `change` names the acting principal + action for
+ * the project-change event every persist emits (the git commit hook's input); when absent it is
+ * derived from `snap` (author + summary). Every mutation that bypasses persist (create, adopt,
+ * archive, delete, restore, propagation sweeps) emits the same event itself.
+ */
+function persist(
+  rec: DatasetRecord,
+  d: Dataset,
+  snap?: { author: string; summary: string },
+  change?: { actor: string; action: string },
+): DatasetRecord {
   // Capture the PRIOR dataset.yaml as a version BEFORE overwriting it, so the
   // history holds every superseded definition (mirrors lib/files/store.ts). Only
   // user-facing edits pass `snap`; lifecycle/promotion flips (own governance trail)
@@ -376,6 +391,7 @@ function persist(rec: DatasetRecord, d: Dataset, snap?: { author: string; summar
   rec.domain = d.domain;
   rec.updatedAt = now();
   writeThrough(rec); // best-effort durable mirror
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: change?.action ?? snap?.summary ?? 'update', actorId: change?.actor ?? snap?.author ?? 'system' });
   return rec;
 }
 
@@ -394,8 +410,11 @@ export function moveDatasetsDomain(sel: { id?: string; onlyUnassigned?: boolean 
     if (sel.onlyUnassigned && rec.domain) continue;
     if (rec.domain === target) continue;
     const d = parseDataset(rec.yaml);
+    const from = d.domain;
     d.domain = target;
-    persist(rec, d);
+    persist(rec, d, undefined, { actor: 'system', action: 'move domain' });
+    // The dataset LEFT `from` as well — that repo's project shrinks by one dataset.
+    if (from) emitProjectChange({ domain: from, datasetId: d.id, action: 'move domain', actorId: 'system' });
     moved.push(rec.id);
   }
   return moved;
@@ -654,6 +673,22 @@ export function datasetsWithSync(): Dataset[] {
   return out;
 }
 
+/**
+ * UNSCOPED, server-side: a domain's live datasets WITH their recorded native artifact bodies —
+ * the input of the dbt project generator (tabs/data/lib/dbt/snapshot.ts). Archived records are
+ * excluded (archiving retires the dataset from the project); sorted by id for byte-stable output.
+ * The acting user is the commit AUTHOR, not a filter: the project is the whole domain's.
+ */
+export function datasetsForProject(domain: string): { dataset: Dataset; artifacts: Record<string, string> }[] {
+  ensureSeeded();
+  const out: { dataset: Dataset; artifacts: Record<string, string> }[] = [];
+  for (const rec of ds().store.values()) {
+    if (rec.archived || rec.domain !== domain) continue;
+    out.push({ dataset: parseDataset(rec.yaml), artifacts: { ...(rec.artifacts ?? {}) } });
+  }
+  return out.sort((a, b) => a.dataset.id.localeCompare(b.dataset.id));
+}
+
 /** A dataset the caller may JOIN into a Gold build (stage-4 reuse). */
 export type JoinableDataset = { id: string; name: string; domain: string; tier: Tier; fqn: string; columns: string[] };
 
@@ -785,6 +820,7 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
   const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
   ds().store.set(rec.id, rec);
   writeThrough(rec); // best-effort durable mirror
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'create dataset', actorId: user.id });
   return d;
 }
 
@@ -866,6 +902,7 @@ export function adoptConnectedDataset(
   const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
   ds().store.set(rec.id, rec);
   writeThrough(rec);
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'adopt connected table', actorId: user.id });
   return d;
 }
 
@@ -908,6 +945,7 @@ export function markDatasetsSourceRevoked(exposureId: string): { id: string; nam
     rec.yaml = serializeDataset(d);
     rec.updatedAt = now();
     writeThrough(rec);
+    emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'source revoked', actorId: 'system' });
     affected.push({ id: d.id, name: d.name, owner: d.owner, domain: d.domain, syncFrozen: wasSyncEnabled });
   }
   return affected;
@@ -937,6 +975,7 @@ export function markDatasetsDrifted(
     rec.yaml = serializeDataset(d);
     rec.updatedAt = now();
     writeThrough(rec);
+    emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'source drifted', actorId: 'system' });
     affected.push({ id: d.id, name: d.name, owner: d.owner });
   }
   return affected;
@@ -961,6 +1000,7 @@ export function reassignOwner(fromId: string, toId: string): number {
     rec.yaml = serializeDataset(d);
     rec.updatedAt = now();
     writeThrough(rec);
+    emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'reassign owner', actorId: 'system' });
     moved++;
   }
   return moved;
@@ -1060,7 +1100,7 @@ export function setDocs(
   // marker, so a reviewed/edited doc drops it. Attribute the auto write in the audit log
   // ('ai-auto-docs') so the version history reads honestly.
   d.docsProvenance = opts.provenance === 'ai-auto' ? 'ai-auto' : undefined;
-  persist(rec, d, { author: opts.provenance === 'ai-auto' ? 'ai-auto-docs' : user.id, summary: 'edit docs' });
+  persist(rec, d, { author: opts.provenance === 'ai-auto' ? 'ai-auto-docs' : user.id, summary: 'edit docs' }, { actor: user.id, action: 'edit docs' });
   return d;
 }
 
@@ -1403,7 +1443,7 @@ export function transition(
   // Decertify drops the trust badge + marketplace import list (back to an asset).
   if (t === 'decertify') { delete d.certification; delete d.imports; }
 
-  persist(rec, d);
+  persist(rec, d, undefined, { actor: user.id, action: t });
   return d;
 }
 
@@ -1607,7 +1647,7 @@ export function applyApprovedPromotion(
   // clears any stray marker so a demote→re-promote round-trip that flips models stays honest).
   if (artifact === 'view') d.domainArtifact = 'view';
   else delete d.domainArtifact;
-  persist(rec, d);
+  persist(rec, d, undefined, { actor: approver.id, action: 'promote' });
   return d;
 }
 
@@ -1717,7 +1757,7 @@ export function certify(
   d.visibility = visibilityFor('product', opts.visibility ?? 'shared');
   if (opts.grants) d.grants = opts.grants;
   d.certification = { level: opts.level ?? 'gold', by: approver.id, at: now() };
-  persist(rec, d);
+  persist(rec, d, undefined, { actor: approver.id, action: 'certify' });
   return d;
 }
 
@@ -1776,7 +1816,7 @@ export function importProduct(id: string, importer: Principal): Dataset {
   if (!d.grants.some((g) => g.grantee.kind === 'domain' && g.grantee.id === dom)) {
     d.grants = [...d.grants, { grantee: { kind: 'domain', id: dom }, scope: { rows: [], columns: { mask: [], hide: [] } }, cardinality: 'low', action: 'read' }];
   }
-  persist(rec, d);
+  persist(rec, d, undefined, { actor: importer.id, action: 'import product' });
   return d;
 }
 
@@ -1805,6 +1845,7 @@ export function archiveDataset(id: string, user: Principal): DatasetSummary {
   rec.archived = true;
   rec.updatedAt = now();
   writeThrough(rec);
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'archive', actorId: user.id });
   return summarise(d, true);
 }
 
@@ -1815,6 +1856,7 @@ export function unarchiveDataset(id: string, user: Principal): DatasetSummary {
   rec.archived = false;
   rec.updatedAt = now();
   writeThrough(rec);
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'unarchive', actorId: user.id });
   return summarise(d, false);
 }
 
@@ -1834,6 +1876,7 @@ export function deleteDataset(id: string, user: Principal): Dataset {
   ds().store.delete(id);
   mirror.deleteThrough(id);
   versions.purge(id); // forget + delete-through the snapshot history
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'retire', actorId: user.id });
   return d;
 }
 
@@ -1868,6 +1911,7 @@ export function restoreDatasetVersion(id: string, user: Principal, version: numb
   rec.domain = restored.domain;
   rec.updatedAt = now();
   writeThrough(rec);
+  emitProjectChange({ domain: restored.domain, datasetId: restored.id, action: `restore version ${version}`, actorId: user.id });
   return restored;
 }
 
@@ -1912,6 +1956,6 @@ export function writeFile(id: string, user: Principal, input: { path: string; co
   const current = serializeDataset(d);
   if (input.sha && input.sha !== sha(current)) fail('The file changed since you opened it (stale sha) — reload', 409);
   const next = parseDataset(input.content); // throws on bad shape
-  persist(rec, next);
+  persist(rec, next, undefined, { actor: user.id, action: 'edit dataset.yaml' });
   return { path: 'dataset.yaml', content: rec.yaml, sha: sha(rec.yaml) };
 }

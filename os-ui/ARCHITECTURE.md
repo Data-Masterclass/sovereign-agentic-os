@@ -267,6 +267,54 @@ route forwards the same SSE events as before (`node-started`, `tool-step`,
 `stream(null, { configurable: { thread_id } })` and continues from the last checkpoint;
 the Run panel's "Resume" button does exactly that.
 
+## A data product is a dbt project in a git repo the OS owns
+
+(Engine rebuild, Phase B1 — behind `DATA_PROJECT_GIT`, default off. Concept:
+`docs/superpowers/plans/2026-11-13-data-products-concept.md`.)
+
+A domain's data product is a **dbt project** an engineer could clone and run, and it lives in a
+**bare git repository per domain** that the OS writes: `$OS_REPOS_DIR/<domain>.git` on the
+`os-repos` PVC. Users never edit the repo from the UI; the OS is generator, committer and reader.
+
+**The one commit path.** `core/infra/git-store.ts` (isomorphic-git, MIT, in-process — no git
+binary in the os-ui image, no shell) exposes `openOrInit`, `commitTree` (writes the whole desired
+tree, commits **iff the root tree hash changed**), `log`, `readBlob`, `listTree`, `archive` (tar)
+and `push` (mirror; token resolved from a Secret reference at call time, scrubbed from errors).
+Author = the acting `CurrentUser`, committer = `Sovereign OS`, message
+`<area>(<domain>): <action> <object> — via ui:<route>|mcp:<tool>` plus `OS-*` trailers. It lives in
+`@core` because the Data and the Agents tab both commit through it; it knows nothing about either.
+
+**Every writer commits.** `tabs/data/lib/store.ts` has one `persist()`; it — and the few writers
+that bypass it (create, adopt, archive, delete, restore, propagation sweeps) — emit a
+`ProjectChange` through `tabs/data/lib/project-events.ts`. The store is reachable from the **client
+bundle** (`lib/index.ts` re-exports it), so it may not import `node:fs` or isomorphic-git even
+dynamically — hence the event seam. `tabs/data/lib/dbt/commit.ts` subscribes at boot
+(`instrumentation.ts`): snapshot the domain (`snapshot.ts`, the only impure read) → `generateProject`
+(`generate.ts`, pure, byte-stable: sorted keys, one newline, no timestamps) → `commitTree`.
+`commit.test.ts` enumerates the store's exports — a new mutator fails until it is classified.
+
+**Where "via" comes from.** `core/infra/request-surface.ts` (AsyncLocalStorage): `withRoute` wraps
+every handler in `ui:<route>`, the data MCP tools wrap each call in `mcp:<tool>`; the hook reads it
+synchronously at mutation time. A writer outside any scope is recorded as `ui:data` and logged.
+
+**What the project contains.** Bronze is a `source` (the data-runner writes it with PyIceberg, dbt
+never does). Silver and Gold are models whose body is the compiled SELECT the OS recorded at build
+(`compileSilver` / `compileGoldJoin` output) with `iceberg.<schema>.<table>` rewritten to
+`{{ ref() }}` for tables of this project and `{{ source() }}` otherwise — `source()` is exactly the
+governance boundary `reuseSourceFqn` enforces (a cross-domain product). Un-promoted datasets live
+under `models/personal/<uid>/` with `+schema: personal_<uid>`; promoted ones under
+`models/<layer>/` in the domain schema (model name == physical table name, so FQNs hold). Quality
+rules are `schema.yml` tests (`range` and `not_blank` are generator-shipped generic tests carrying
+the `dq.ts` predicates). Syncs are incremental models (`delete+insert` on `_batch_id` with the
+lookback predicate; `merge` on the keys); Kafka offsets and API-batch sources are listed in
+`os/external.yml`, not faked. `profiles.yml` is `env_var()` only with
+`impersonation_user: env_var('OS_PRINCIPAL')` — no default, so a run without a principal fails.
+
+**Commit first, validate second.** The Dagster user-code pod's `repo-sync` sidecar fetches each
+repo over the read-only `git daemon` on the os-ui pod (Service `os-repos:9418`, NetworkPolicy:
+Dagster user-code only), runs `dbt parse` in a worktree and repoints `current` only on success.
+A broken commit stays in history; the gate is deployment, as in any CI.
+
 ## Things this codebase will punish you for
 
 Hard-won, each from a real failure. Read before writing a route, a test, or an

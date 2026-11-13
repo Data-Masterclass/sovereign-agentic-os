@@ -91,6 +91,37 @@ export async function register(): Promise<void> {
       });
   }
 
+  // DATA PROJECTS IN GIT (engine rebuild B1): when DATA_PROJECT_GIT=true, subscribe the one commit
+  // path to the data store's project-change events so every dataset / composition / check / sync /
+  // publish / retire write regenerates the domain's dbt project and commits it as the acting user
+  // (name + e-mail from the user directory; a missing e-mail is synthesized and said so in the
+  // commit). OFF (the default) ⇒ nothing is installed and no repo is touched. Fail-soft: a wiring
+  // error is logged, never a boot failure.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { config } = await import('./core/kernel/config.ts');
+        if (!config.dataProjectGit) {
+          console.info('[os-ui] data projects: DATA_PROJECT_GIT off — dataset changes are not committed to git');
+          return;
+        }
+        const { installDataProjectCommitHook } = await import('./tabs/data/lib/dbt/commit.ts');
+        const { getPublicUser } = await import('./tabs/admin/lib/users.ts');
+        const { connectionCatalogForOwner } = await import('./tabs/data/lib/sync-run-server.ts');
+        installDataProjectCommitHook({
+          resolveActor: async (id) => {
+            const u = await getPublicUser(id).catch(() => null);
+            return { id, name: u?.name, email: u?.email };
+          },
+          connectionCatalog: connectionCatalogForOwner,
+        });
+        console.info(`[os-ui] data projects: committing every dataset change to ${config.reposDir}/<domain>.git`);
+      } catch (err) {
+        console.error(`[os-ui] data projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
   // AGENT-RUN CHECKPOINTER init (engine rebuild A1): when AGENT_RUNS_DATABASE_URL is set, run
   // `PostgresSaver.setup()` once at boot (idempotent CREATE TABLE IF NOT EXISTS + migrations) so
   // the first run never races the schema. Not awaited (boot must not wait on Postgres); a

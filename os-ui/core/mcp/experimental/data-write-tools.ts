@@ -4,6 +4,7 @@
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { McpTool, JsonSchema } from '@core/mcp/server';
+import { runWithSurface } from '@core/infra/request-surface';
 import { roleAtLeast } from '@core/kernel/session';
 import {
   P, mcpToken, fail, str, num, bool, strArr, slug, rand, defaultGoLive,
@@ -119,7 +120,7 @@ import { patchAppDesign, getAppForUser, type AppEpic } from '@tabs/software/lib/
 import { normalizeContextGrants } from '@core/kernel/context-grants';
 
 // ================================ DATA ========================================
-export const dataWriteTools: McpTool[] = [
+const tools: McpTool[] = [
   {
     name: 'create_dataset',
     tab: 'data',
@@ -885,6 +886,16 @@ export const dataWriteTools: McpTool[] = [
     },
   },
 ];
+
+/**
+ * Every data write tool runs inside an `mcp:<tool>` request-surface scope, so a dataset change made
+ * through the OS MCP is committed to the domain repo as `… — via mcp:<tool>` (engine rebuild B1),
+ * exactly as a UI route is recorded `… — via ui:<route>`. Behaviour of the tools is unchanged.
+ */
+export const dataWriteTools: McpTool[] = tools.map((t) => ({
+  ...t,
+  call: (user, args) => runWithSurface(`mcp:${t.name}`, () => t.call(user, args)),
+}));
 
 /** The panel's schedule presets, verbatim (SyncPanel.tsx PRESETS) — plus raw cron. */
 const SYNC_SCHEDULE_PRESETS: Record<string, string> = {

@@ -6,6 +6,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { Role } from '@core/kernel/session';
+import { runWithSurface, uiSurfaceFor } from '@core/infra/request-surface';
 
 /**
  * The `Principal` every tab store scopes on. Structurally identical across the
@@ -195,7 +196,9 @@ export function withRoute<P = Record<string, string>, B = unknown>(
       }
 
       const params = (ctx?.params ? await ctx.params : ({} as P)) as P;
-      return await handler({ user, body, params, req });
+      // The ambient request surface (`ui:<route>`) every store write made in this handler is
+      // attributed to — the git commit hook reads it (core/infra/request-surface).
+      return await runWithSurface(uiSurfaceFor(req.url), () => handler({ user, body, params, req }));
     } catch (e) {
       const status = (e as { status?: number }).status ?? defaultStatus;
       return NextResponse.json({ error: (e as Error).message }, { status });
