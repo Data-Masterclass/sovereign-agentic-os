@@ -1,0 +1,19 @@
+{
+  "//": [
+    "The TEST tree's type-check (Part F deviation F-5, closed/measured in iteration 2).",
+    "`tsconfig.json` excludes `**/*.test.ts`, so `tsc --noEmit` was clean while the tests were not.",
+    "This config is the SAME compiler options with that exclusion lifted, so a test is held to the",
+    "same contract as the code it tests. Run it with:",
+    "    npx tsc --noEmit -p tsconfig.test.json",
+    "It is a SEPARATE file rather than a change to tsconfig.json because `next build` reads the",
+    "latter: folding the tests in would put them in the production type-check and the build's",
+    "critical path for no benefit."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules", ".next"]
+}

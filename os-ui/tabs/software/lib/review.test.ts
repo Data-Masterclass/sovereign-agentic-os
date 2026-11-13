@@ -4,14 +4,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
+import { testUser } from '@core/testing/user';
 import { createApp } from '@tabs/software/lib/apps';
 import { startPreview, requestDeploy, decideDeploy, scopeBroadened } from './review.ts';
 import { consumeResource } from './lifecycle.ts';
 import { commitToApp } from './server.ts';
 
-const creator: CurrentUser = { id: 'alice', name: 'Alice', domains: ['sales'], role: 'creator' };
-const builder: CurrentUser = { id: 'bob', name: 'Bob', domains: ['sales'], role: 'builder' };
-const otherDomainBuilder: CurrentUser = { id: 'eve', name: 'Eve', domains: ['hr'], role: 'builder' };
+const creator: CurrentUser = testUser({ id: 'alice', name: 'Alice', domains: ['sales'], role: 'creator' });
+const builder: CurrentUser = testUser({ id: 'bob', name: 'Bob', domains: ['sales'], role: 'builder' });
+const otherDomainBuilder: CurrentUser = testUser({ id: 'eve', name: 'Eve', domains: ['hr'], role: 'builder' });
 
 async function expectStatus(p: Promise<unknown>, status: number, re?: RegExp) {
   await assert.rejects(p, (e: Error & { status?: number }) => {
