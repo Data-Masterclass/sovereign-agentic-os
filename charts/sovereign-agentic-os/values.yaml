@@ -1344,6 +1344,10 @@ osUI:
   #   DATA:   a dataset/composition/quality-rule/schedule change is a git commit in the domain's
   #           repository, the generated dbt project is what Dagster materialises from a validated
   #           commit, and the OS reads run state back from Dagster instead of its own ledger.
+  #           NOTE (B4-review-L-1): dbt/Dagster own the SCHEDULED path. An interactive build
+  #           (the Silver/Gold buttons, their MCP twins) still runs the OS's own TypeScript CTAS
+  #           first — the honesty gate registers a version only after a real apply+verify — and
+  #           then commits and launches the equivalent dbt assets. Deviations B4-6/B4-7.
   #   AGENTS: every agent-system definition write commits an `agents/<slug>/…` subtree into the
   #           SAME repository (Part D).
   # The FIRST boot commits every existing dataset and every existing agent system

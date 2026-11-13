@@ -20,7 +20,7 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 **MCP tools**
 
 - `data-query`
-- `dataset-write`
+- `data-write`
 
 **Needs deployed**
 
@@ -260,8 +260,13 @@ With the flag on (checklist D7, D14, D15, D16):
   cannot create one.
 - **What the one-release opt-out still covers.** `enabled: false` restores the OS's own CTAS
   execution, the `os-sync-runs` / `os-dq-results` ledger reads and the OS DQ probe — but it no
-  longer **schedules** anything, and `reconcileSyncSchedule` says so in the outcome the panel
-  renders. Removing the flag is a recorded follow-up.
+  longer **schedules** anything. What that means on the surfaces, precisely (B4-review H-3):
+  `reconcileSyncSchedule` returns `ok: true` with "nothing schedules it" in `detail`, and the panel
+  shows that detail on every save (it used to show it only on a failure, i.e. never);
+  `syncStatusFor` returns `nextRunAt: null` rather than an estimate from `nextCronRun`, because
+  nothing fires that cron; both schedule pickers carry "scheduling is off (DATA_PROJECT_GIT
+  disabled)"; and Platform → Components & Health carries an amber `data-products-git` row.
+  Removing the flag is a recorded follow-up.
 - **Still the OS's own, deliberately:** the query-tool's `/execute` (the build CTAS, but also
   `apply_quality_fixes`'s MERGE, physical deletes, the warehouse import and the publish CTAS) and
   the ad-hoc DQ probe (labelled `OS probe`, written to `os-dq-results`). Deleting the CTAS build

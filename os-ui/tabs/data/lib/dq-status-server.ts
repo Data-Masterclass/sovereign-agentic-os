@@ -16,6 +16,13 @@
  *     with the flag on they are absent, not faked (concept §1).
  *   - The trend is a single point (the latest execution) — Dagster keeps the history; a sparkline
  *     over asset-check executions is B4's read.
+ *   - THE OWNER IS TOLD (B4-review L-2). `/api/data/dq/run-all` was the only caller of
+ *     `deliverDqAlert`, and B4 deleted it, so a new failure notified nobody (deviation B4-9). The
+ *     alert now fires from THIS read-back: when a Dagster record transitions INTO `failing`
+ *     (`isNewFailure`) and that execution has not already been alerted (`dq-alert-state.ts`, a
+ *     durable per-dataset record keyed on `ranAt`), the dataset owner gets one in-app
+ *     notification. Fire-and-forget and fail-soft: an alert that cannot be delivered never changes
+ *     what the read returns.
  *   - Fallback, labelled not blended: with the flag on, a dataset whose tested asset has NO check
  *     execution yet (a brand-new model, or a layer built out of band) shows the OS's own ad-hoc
  *     "Run checks" row with `source: 'os'`. A record is never a mix of Dagster and OS results, and
@@ -32,6 +39,9 @@ import { dataProjectGitEnabled } from '@tabs/data/lib/dbt/commit';
 import { projectSnapshot, type SnapshotDeps } from '@tabs/data/lib/dbt/snapshot';
 import { datasetAssetKeys } from '@tabs/data/lib/dbt/asset-keys';
 import * as dagster from '@core/infra/dagster';
+import { deliverDqAlert } from '@core/notifications/dq-alert';
+import { isNewFailure } from '@tabs/data/lib/dq-run-server';
+import { dqAlertRecord, ensureDqAlertsHydrated, putDqAlertRecord } from '@tabs/data/lib/dq-alert-state';
 
 /** The minimum a quality read needs: the dataset id and the domain whose repo holds its models. */
 export type DqDataset = { id: string; domain: string };
@@ -39,7 +49,66 @@ export type DqDataset = { id: string; domain: string };
 export type DqStatusDeps = SnapshotDeps & {
   dagster?: Pick<typeof dagster, 'assetChecks' | 'allAssetChecks'>;
   flag?: () => boolean;
+  /** The alert delivery (tests inject a spy). Default: the in-app notification boundary. */
+  alert?: typeof deliverDqAlert;
+  /** Resolve a dataset's owner + display name (tests inject). Default: the Data tab's store. */
+  ownerOf?: (datasetId: string) => Promise<{ owner: string; name: string } | null>;
+  now?: () => string;
 };
+
+/** The dataset's owner and name, from this tab's own store. Null when it cannot be resolved. */
+async function ownerFromStore(datasetId: string): Promise<{ owner: string; name: string } | null> {
+  try {
+    const { listAllDatasets } = await import('@tabs/data/lib/store');
+    const d = listAllDatasets().find((x) => x.id === datasetId);
+    return d && d.owner ? { owner: d.owner, name: d.name ?? datasetId } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Tell the owner, ONCE, when a Dagster record transitions into `failing`. Never throws, never
+ * changes the caller's value, and never alerts twice for the same check execution.
+ *
+ * Only a `dagster` record alerts: the OS's own ad-hoc probe is something a person just pressed and
+ * is reading the result of, so a notification about it is noise.
+ */
+export async function alertOnNewFailure(record: DqRunRecord | null, deps: DqStatusDeps = {}): Promise<'alerted' | 'suppressed' | 'skipped'> {
+  if (!record || record.source !== 'dagster') return 'skipped';
+  try {
+    await ensureDqAlertsHydrated();
+    const prior = dqAlertRecord(record.datasetId);
+    const seenThisRun = prior?.lastRanAt === record.ranAt;
+    const fresh = isNewFailure(record.badge, prior?.lastBadge ?? null);
+    const nowIso = (deps.now ?? (() => new Date().toISOString()))();
+    if (!fresh || seenThisRun) {
+      // Still record what we saw, so a recovery resets the transition and the next failure fires.
+      if (!seenThisRun) {
+        putDqAlertRecord({ datasetId: record.datasetId, lastBadge: record.badge, lastRanAt: record.ranAt, ...(prior?.lastAlertedAt ? { lastAlertedAt: prior.lastAlertedAt } : {}) });
+      }
+      return 'suppressed';
+    }
+    const who = await (deps.ownerOf ?? ownerFromStore)(record.datasetId);
+    if (!who) {
+      // No resolvable owner ⇒ nobody to tell. Record the badge anyway so the transition is not
+      // replayed forever, and say so in the log.
+      console.warn(`[dq-alert] ${record.datasetId} failed its checks but has no resolvable owner — nobody was notified`);
+      putDqAlertRecord({ datasetId: record.datasetId, lastBadge: record.badge, lastRanAt: record.ranAt });
+      return 'skipped';
+    }
+    const failing = record.results.filter((r) => r.status === 'fail').map((r) => r.label);
+    (deps.alert ?? deliverDqAlert)(
+      { datasetName: who.name, healthScore: record.healthScore, failingLabels: failing },
+      { userId: who.owner },
+    );
+    putDqAlertRecord({ datasetId: record.datasetId, lastBadge: record.badge, lastRanAt: record.ranAt, lastAlertedAt: nowIso });
+    return 'alerted';
+  } catch (e) {
+    console.warn(`[dq-alert] could not evaluate the quality alert for ${record.datasetId}: ${e instanceof Error ? e.message : String(e)}`);
+    return 'skipped';
+  }
+}
 
 /** One Dagster asset check → the OS's check-result row. */
 export function checkToResult(c: dagster.AssetCheck): CheckResult {
@@ -91,7 +160,9 @@ export async function latestDqRun(d: DqDataset, deps: DqStatusDeps = {}): Promis
   const keys = datasetAssetKeys(await projectSnapshot(d.domain, deps), d.id);
   if (!keys.tested) return osRow(latestRun(d.id));
   const r = await (deps.dagster ?? dagster).assetChecks(keys.tested);
-  return (r.ok ? checksToRecord(d, r.data) : null) ?? osRow(latestRun(d.id));
+  const record = (r.ok ? checksToRecord(d, r.data) : null) ?? osRow(latestRun(d.id));
+  await alertOnNewFailure(record, deps);
+  return record;
 }
 
 /** The health trend: the ledger's series, or (flag on) the single latest Dagster execution. */
@@ -124,7 +195,10 @@ export async function latestDqRuns(datasets: DqDataset[], deps: DqStatusDeps = {
       const keys = datasetAssetKeys(snapshot, d.id);
       if (!keys.tested) continue;
       const rec = checksToRecord(d, all.data[keys.tested.join('/')] ?? []);
-      if (rec) out.set(d.id, rec);
+      if (rec) {
+        out.set(d.id, rec);
+        await alertOnNewFailure(rec, deps);
+      }
     }
   }
   return out;

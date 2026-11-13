@@ -926,7 +926,8 @@ export function adoptConnectedDataset(
     viewNamespaced: true,
     origin: 'connected',
     connected: input.connected,
-    // A sync-mode adoption carries its sync config from birth (the scheduler lands the copy).
+    // A sync-mode adoption carries its sync config from birth; the copy is landed by the Dagster
+    // schedule compiled from `os/schedules.yml` (B4 — no CronJob, no in-process sweep).
     ...(isSync && input.sync ? { sync: input.sync } : {}),
   };
   const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
@@ -1330,8 +1331,9 @@ export function setMonitor(
  * validation gate: the tolerant schema parse never rejects, so every invariant an
  * executable sync needs is enforced HERE — valid cron, a cursor for incremental modes,
  * merge keys for merge mode. Edit scope is the same owner/domain_admin/admin gate every
- * structural edit uses ({@link editOf}). CronJob reconciliation is the caller's job
- * (`sync-cron.ts`) — this only persists the definition.
+ * structural edit uses ({@link editOf}). Reconciling the SCHEDULE is the caller's job
+ * (`dbt/launch.ts` `reconcileSyncSchedule`: it commits `os/schedules.yml` for Dagster and deletes
+ * any pre-B2 CronJob) — this only persists the definition.
  */
 export function setDatasetSync(id: string, user: Principal, sync: DatasetSync | null): Dataset {
   const rec = get(id);

@@ -369,9 +369,9 @@ Decisions recorded as `A5-review-<id>`; the fixes are three commits on `feat/eng
 
 ### Phase B2 — Dagster as the scheduler
 - [x] Fix the Dagster image (Postgres driver) and verify a run completes in kind. *(Drivers and `git` confirmed present in the Dockerfile; `os_projects.py` added; image tag bumped `0.2.0` → `0.3.0` in all four places. The **kind run is untestable here** — no cluster in this worktree; checklist D10 stays open.)*
-- [x] Generate a Dagster code location ~~per domain~~ **for all domains** (concept §2.3): `dbt_assets` over each validated commit, schedules from `os/schedules.yml`, a failure sensor, an inactive-principal sensor, a weekly Iceberg maintenance job. `set_dataset_sync` provisions no `batch/v1` CronJob with the flag on (and removes a pre-B2 one); UTC and Dagster's skip-missed-tick semantics are preserved. *(One asset per external sync source is **not** done — see deviation B2-6; `sync-cron.ts` is not deleted yet, that is B3's deletion step.)*
+- [x] Generate a Dagster code location ~~per domain~~ **for all domains** (concept §2.3): `dbt_assets` over each validated commit, schedules from `os/schedules.yml`, a failure sensor, an inactive-principal sensor, a weekly Iceberg maintenance job. `set_dataset_sync` provisions no `batch/v1` CronJob with the flag on (and removes a pre-B2 one); UTC and Dagster's skip-missed-tick semantics are preserved. *(One asset per external sync source is **not** done — see deviation B2-6; `sync-cron.ts` was still present at B2 and was **deleted in B4** — only the delete-only `sync-cron-removal.ts` remains, and since B4-review H-1 the boot reconcile calls it for every synced dataset.)*
 - [x] Read back: run status, materialisations, asset checks and the next tick via Dagster GraphQL into the Data tab, `get_sync_status`, the DQ surfaces and Monitoring; the OS writes no `os-sync-runs` / `os-dq-results` row for a Dagster-executed run.
-- [~] Gate: a scheduled sync materialises through Dagster in kind; the OS shows the Dagster run; `sync-cron.ts` deleted. *(Unit + Python gates green — see the table; the **kind** half and the deletion are open.)*
+- [~] Gate: a scheduled sync materialises through Dagster in kind; the OS shows the Dagster run; `sync-cron.ts` deleted. *(Unit + Python gates green — see the table; `sync-cron.ts` **was deleted in B4**, so only the **kind** half is open.)*
 
 #### B2 — what landed (commit on `feat/engine-rebuild-b2`)
 
@@ -1109,7 +1109,10 @@ reason is here.
   CronJob" can never mean "nobody could check". The opt-out still covers the OS's CTAS execution,
   the ledger reads and the OS DQ probe. Recorded as the honest answer to the brief's "say so
   honestly and drop the opt-out instead": the SCHEDULING half is dropped, the EXECUTION half stays.
-- **B4-9 The DQ failure e-mail has no sender any more.** `/api/data/dq/run-all` was the only caller
+- **B4-9 The DQ failure e-mail has no sender any more.** — **CLOSED by B4-review L-2:**
+  `dq-status-server.ts` `alertOnNewFailure` is the sender, driven by the Dagster asset-check
+  read-back and suppressed by a durable per-dataset record keyed on the check execution's `ranAt`.
+  The original text follows. `/api/data/dq/run-all` was the only caller
   of `deliverDqAlert`, and quality rules now run inside Dagster. Nobody is notified on a new
   failure; the Dagster failure sensor only quarantines after the threshold. Both building blocks
   (`isNewFailure`, `deliverDqAlert`) are kept and tested, and the follow-up is written down: alert
@@ -1409,3 +1412,21 @@ reason is here.
   appears nowhere else in the repository (chart, scripts, images included) — B4 deleted the CronJob
   that built the URL from it. Removed, with the surviving bearer's comment corrected to name only
   the two service paths that still exist.
+- **B4-review-L-2 The alert fires from a READ, which is why the suppression had to be durable.**
+  The only remaining surface that learns a dbt test failed is the read-back every DQ page and the
+  Monitoring rollup already perform, so that is where the alert is raised — not a new sweep, which
+  is the thing B4 deleted. A read happens many times a minute and in any pod, so "the owner has
+  been told about THIS execution" lives in its own small OpenSearch index (`os-dq-alerts`,
+  `config.dqAlertsIndex`) through the same `osMirror` boundary `git-mirror.ts` uses. If that index
+  cannot be read, the first read after a restart may notify twice — chosen deliberately: a
+  duplicate notification is recoverable, a missed failure is not. `deliverDqAlert` MOVED to
+  `@core/notifications/dq-alert` because a tab may not import another tab; `tabs/dashboards/lib/
+  delivery.ts` re-exports it, so no caller or test changed.
+- **B4-review-L-3 Only ONE of the two claimed falsehoods was locatable.** `ARCHITECTURE.md`'s
+  "Every door is the same door" paragraph names `startQueuedRun` as the door the run route uses; it
+  never has (`app/api/agents/systems/[id]/run/route.ts` calls `enqueueRun` directly, because it
+  owns the SSE tail). That is fixed in all three places that repeated it (ARCHITECTURE,
+  `tabs/agents/README.md`, the `startQueuedRun` docstring). Every other claim in those lines
+  checked out against the code (`scheduled.ts` → `startQueuedRun`, `resume_agent_run` →
+  `resumeQueuedRun`, `onDecided` → `enqueueResumeAfterDecision`), so the second item is recorded as
+  not reproducible rather than silently "fixed".

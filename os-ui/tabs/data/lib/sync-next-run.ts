@@ -7,12 +7,19 @@
  * Deliberately NOT a full cron engine: it understands exactly the simple shapes the
  * panel's presets emit (step-minute "star/n", "m * * * *", "m h * * *", "m h * * d")
  * plus a bare `*` minute. Anything else (lists, ranges, restricted dom/month) returns null
- * and the UI honestly omits the estimate rather than guessing. The authoritative
- * matcher stays server-side (`sync-cron.ts` — a server module this client bundle
- * must not import); this mirrors only the subset it renders.
+ * and the UI honestly omits the estimate rather than guessing.
  *
- * All arithmetic is UTC — the CronJobs run with `timeZone: UTC` (sync-cron.ts), so
- * the estimate matches the real trigger; the UI formats the Date in local time.
+ * WHO ACTUALLY TRIGGERS (B4-review L-7): nothing in the OS matches crons in-process any more —
+ * `sync-cron.ts` and both fallback sweeps were deleted in B4. With `DATA_PROJECT_GIT` on, the
+ * authoritative schedule is a DAGSTER schedule compiled from the domain repository's
+ * `os/schedules.yml`, and the next tick is read back from Dagster (`sync-status-server.ts`), not
+ * estimated here. With the flag off, NOTHING triggers the saved cron, and `sync-status-server`
+ * answers `nextRunAt: null` rather than calling this module. What is left for this file is the
+ * SyncPanel's human cadence line ("Refreshes hourly · next ≈ 10:30") and the frequent-cron
+ * warning for merge mode — a rendering aid, never a claim that something will fire.
+ *
+ * All arithmetic is UTC, which is what Dagster's schedules use, so the cadence line matches the
+ * real trigger; the UI formats the Date in local time.
  */
 
 type SimpleCron = {

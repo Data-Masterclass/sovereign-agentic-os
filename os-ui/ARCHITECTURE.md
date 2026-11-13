@@ -496,11 +496,17 @@ and tails, and the `os-ui-worker` Deployment (same image, `node --experimental-s
 worker/start.mjs`, `AGENTS_WORKER=worker`) executes. The chart sets it only when
 `osUI.worker.enabled`.
 
-**Every door is the same door.** The run route, `build/scheduled.ts`, the MCP `run_agent_system`
-and `resume_agent_run`, and the Governance `onDecided` hook all go through
-`build/run-jobs-server.ts` (`startQueuedRun` / `resumeQueuedRun` / `enqueueResumeAfterDecision`).
-In particular a decision no longer drives the graph inside the decider's request — it files a
-`resume` job, and the approval card says `queued` until the run reports back.
+**Every door is the same door — and the door is `enqueueRun`.** The chokepoint in
+`build/run-jobs-server.ts` is `enqueueRun`: it files the job row, and nothing executes a run
+without one. Three callers sit on top of it, and which one a surface uses depends on whether it
+tails the run itself: the SSE run route calls `enqueueRun` DIRECTLY and then tails `run_events`
+(it owns the stream); `build/scheduled.ts` and the MCP `run_agent_system` call `startQueuedRun`
+(file, then follow until it settles); `resume_agent_run` and the owner's Resume call
+`resumeQueuedRun`; and the Governance `onDecided` hook calls `enqueueResumeAfterDecision`.
+Earlier revisions of this file called `startQueuedRun` "the one start door", which the run route
+has never used (B4-review L-3 / E-4). In particular a decision no longer drives the graph inside
+the decider's request — it files a `resume` job, and the approval card says `queued` until the run
+reports back.
 
 ## Git-based working: one repo per domain, two generators, one commit path
 

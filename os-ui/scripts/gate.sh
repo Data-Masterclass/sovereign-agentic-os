@@ -10,14 +10,21 @@ node ../scripts/check-litellm-allowlist.mjs
 # carry the LiteLLM master key, the session-signing secret or the mail secret. Skips when helm is
 # not installed — docs/components/os-ui.md carries the same check by hand.
 node ../scripts/check-worker-env.mjs
-# B4 (checklist X7/X8): the data half of the MCP contract — every data tool dispatches with a
-# schema and refuses a foreign object in the documented shape, and each of the eight mutating tools
-# produces the SAME commit and the SAME Dagster launch as the UI route's service.
 # B3 review H-1/H-5/H-6: the reconciler must run on a DEFAULT install, the Dagster run pod must
 # connect as the user rules.json allows, and the os-ui Role must not grant namespace-wide Secrets.
+# B4 review H-2 rides on the same check: the os-ui Role must carry `batch`/`cronjobs` in EVERY
+# render, or agent schedule CronJobs and the pre-B2 data-sync cleanup both 403 silently.
 # These live in rendered YAML, so a unit test cannot see them. Skips when helm or the subchart
 # .tgz files are absent — docs/components/trino.md carries the commands by hand.
 node ../scripts/check-trino-rules-chart.mjs
+# The reviewed-defect tests themselves. Among them, B4 (checklist X7/X8) — the data half of the
+# MCP contract: `mcp-conformance.test.ts` asserts every data tool dispatches with a schema and
+# refuses a foreign object in the documented code (`forbidden` for an existing invisible dataset,
+# `not_found` for a missing one, with the flag off AND on), and `mcp-parity.test.ts` that each
+# mutating tool produces the SAME commit and the SAME Dagster launch as the UI route's service.
+# `sync-schedule-view.test.ts` (B4-review H-3) pins that the opt-out's "nothing schedules this"
+# always reaches the user. This comment sat above the chart checks, which it never described
+# (B4-review L-8).
 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/agents/lib/build/os-tools.test.ts \
   core/runtime/runtime.test.ts \
@@ -53,5 +60,6 @@ node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/agents/lib/git/commit.test.ts \
   tabs/agents/lib/git/repo.test.ts \
   tabs/agents/lib/engine/data-context.test.ts \
+  tabs/data/lib/sync-schedule-view.test.ts \
   tabs/data/lib/mcp-parity.test.ts \
   tabs/data/lib/mcp-conformance.test.ts

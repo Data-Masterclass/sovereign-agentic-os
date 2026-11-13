@@ -384,10 +384,15 @@ export type StartedRunReport = {
 };
 
 /**
- * The ONE start door behind the run route, the scheduler and the MCP `run_agent_system`: file the
- * job, then follow it until it settles. In `inline` mode the follow is immediate (the run executed
- * in this call); in `worker` mode it tails `run_events` until the budget runs out and then hands
- * back just the run id — the caller reports a queued run instead of inventing a result.
+ * FILE + FOLLOW, for the callers that do not tail the run themselves: the scheduler
+ * (`build/scheduled.ts`) and the MCP `run_agent_system`. It files through `enqueueRun` — which IS
+ * the one door, the job row nothing executes without — and then follows until the run settles. In
+ * `inline` mode the follow is immediate (the run executed in this call); in `worker` mode it tails
+ * `run_events` until the budget runs out and then hands back just the run id — the caller reports
+ * a queued run instead of inventing a result.
+ *
+ * The SSE run route does NOT use this: it calls `enqueueRun` directly and owns the tail. So this
+ * is not "the one start door" (B4-review E-4), and the docs that said so are corrected.
  */
 export async function startQueuedRun(input: StartRunInput): Promise<StartedRunReport> {
   const queued = await enqueueRun({

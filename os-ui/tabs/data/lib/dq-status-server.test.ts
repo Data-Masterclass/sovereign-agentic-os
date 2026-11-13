@@ -11,7 +11,9 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __setDataProjectGitForTests } from '@tabs/data/lib/dbt/commit';
-import { checkToResult, checksToRecord, latestDqRun, type DqDataset } from '@tabs/data/lib/dq-status-server';
+import { alertOnNewFailure, checkToResult, checksToRecord, latestDqRun, type DqDataset } from '@tabs/data/lib/dq-status-server';
+import { __resetDqAlerts } from '@tabs/data/lib/dq-alert-state';
+import type { deliverDqAlert } from '@core/notifications/dq-alert';
 import type { AssetCheck } from '@core/infra/dagster';
 
 afterEach(() => __setDataProjectGitForTests(null));
@@ -68,4 +70,76 @@ test('flag ON: a Dagster outage yields no fabricated record; flag OFF never call
   called = 0;
   assert.equal(await latestDqRun(d, { dagster: down }), null);
   assert.equal(called, 0, 'the flag-off path reads the OS ledger only');
+});
+
+/* ------------------------------------------------- the owner is told (B4 review L-2) -- */
+
+test('a Dagster record that transitions INTO failing alerts the owner exactly once (review L-2)', async () => {
+  __resetDqAlerts();
+  const sent: { name: string; to: string; failing: string[]; score: number | null }[] = [];
+  const deps = {
+    alert: ((input, recipient) => {
+      sent.push({ name: input.datasetName, to: recipient.userId, failing: input.failingLabels, score: input.healthScore });
+      return { channel: 'in_app' as const, delivered: true, to: recipient.userId, notificationId: 'n1' };
+    }) as typeof deliverDqAlert,
+    ownerOf: async () => ({ owner: 'amir', name: 'Orders' }),
+    now: () => '2026-11-13T12:00:00.000Z',
+  };
+  const failing = {
+    id: 'ds_x:2026-11-13T11:00:00.000Z', datasetId: 'ds_x', ranAt: '2026-11-13T11:00:00.000Z',
+    badge: 'failing' as const, healthScore: 40,
+    results: [{ id: 'not_null_order_id', label: 'not_null(order_id)', status: 'fail' as const, violations: 3 }],
+    ranBy: 'run_1', domain: 'sales', rowCount: null, schemaFingerprint: null, source: 'dagster' as const,
+  };
+  assert.equal(await alertOnNewFailure(failing, deps), 'alerted');
+  assert.deepEqual(sent, [{ name: 'Orders', to: 'amir', failing: ['not_null(order_id)'], score: 40 }]);
+
+  // The SAME execution, read again (a second page view): suppressed.
+  assert.equal(await alertOnNewFailure(failing, deps), 'suppressed');
+  // A LATER execution that is still failing: suppressed too — one notification per incident.
+  assert.equal(await alertOnNewFailure({ ...failing, ranAt: '2026-11-13T12:00:00.000Z' }, deps), 'suppressed');
+  assert.equal(sent.length, 1, 'the owner is told once, not once per read');
+});
+
+test('a recovery re-arms the alert, and the OS probe never alerts (review L-2)', async () => {
+  __resetDqAlerts();
+  let count = 0;
+  const deps = {
+    alert: ((_i, r) => { count++; return { channel: 'in_app' as const, delivered: true, to: r.userId }; }) as typeof deliverDqAlert,
+    ownerOf: async () => ({ owner: 'amir', name: 'Orders' }),
+  };
+  const base = {
+    id: 'ds_y:a', datasetId: 'ds_y', ranAt: 'a', badge: 'failing' as const, healthScore: 10,
+    results: [{ id: 'r', label: 'unique(id)', status: 'fail' as const, violations: 1 }],
+    ranBy: 'run', domain: 'sales', rowCount: null, schemaFingerprint: null, source: 'dagster' as const,
+  };
+  assert.equal(await alertOnNewFailure(base, deps), 'alerted');
+  assert.equal(await alertOnNewFailure({ ...base, ranAt: 'b', badge: 'passing', results: [{ id: 'r', label: 'unique(id)', status: 'pass', violations: 0 }] }, deps), 'suppressed');
+  assert.equal(await alertOnNewFailure({ ...base, ranAt: 'c' }, deps), 'alerted', 'the next incident after a recovery fires again');
+  assert.equal(count, 2);
+
+  // The OS's own ad-hoc probe is something a person just pressed and is reading — never an alert.
+  assert.equal(await alertOnNewFailure({ ...base, ranAt: 'd', source: 'os' }, deps), 'skipped');
+  assert.equal(await alertOnNewFailure(null, deps), 'skipped');
+  assert.equal(count, 2);
+});
+
+test('a failing dataset with no resolvable owner is logged, not retried forever (review L-2)', async () => {
+  __resetDqAlerts();
+  const warns: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...a: unknown[]) => { warns.push(a.map(String).join(' ')); };
+  try {
+    const out = await alertOnNewFailure(
+      {
+        id: 'ds_z:a', datasetId: 'ds_z', ranAt: 'a', badge: 'failing', healthScore: null,
+        results: [], ranBy: 'run', domain: 'sales', rowCount: null, schemaFingerprint: null, source: 'dagster',
+      },
+      { alert: (() => assert.fail('must not deliver')) as unknown as typeof deliverDqAlert, ownerOf: async () => null },
+    );
+    assert.equal(out, 'skipped');
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.ok(warns.some((w) => w.includes('ds_z') && w.includes('no resolvable owner')));
 });

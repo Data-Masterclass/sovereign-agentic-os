@@ -209,8 +209,14 @@ governs every row and column — `guard_read` in the query-tool additionally ref
 not a single read-only statement. Writes: no free-text path. `/execute` accepts only the statement
 shapes `execute_guard.py` allowlists, and the writes that matter are dbt models the OS generated
 from structured specs. `/execute` itself is NOT gone (B4 kept it deliberately): besides the build
-CTAS it carries `apply_quality_fixes`'s MERGE, physical deletes, the warehouse import and the
-promote/publish CTAS — five live paths. Deleting the build CTAS specifically waits on the row-set
+CTAS it carries `apply_quality_fixes`'s MERGE, physical deletes, the warehouse import, the
+promote/publish CTAS and — the sixth path, missing from earlier revisions of this list
+(B4-review L-6) — the **sync SLICE EXECUTOR**: with `DATA_PROJECT_GIT` off, and for any sync the
+Dagster path does not cover, `tabs/data/lib/sync-run-server.ts` compiles one slice per run from
+`sync-sql.ts` (a `delete`+`insert` for a cursor window, a `merge` for upsert keys, a full replace
+for full-refresh) and sends it through `/execute` as the dataset OWNER, never a service principal.
+That is why `execute_guard.py`'s allowlist includes those shapes and why the owner's identity is
+resolved live (409 when it cannot be). Deleting the build CTAS specifically waits on the row-set
 parity run in kind (checklist D15), because the honesty gate registers a version only after a real
 apply+verify.
 

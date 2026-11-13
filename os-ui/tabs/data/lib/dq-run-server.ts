@@ -40,10 +40,13 @@ export type DqRunOutcome = {
  * incident, not on every run while a dataset stays broken. Honest: a run that measured nothing
  * (`unknown`) is never treated as a recovery or a failure.
  *
- * NOTE (engine rebuild B4): its caller — the `/api/data/dq/run-all` sweep — is DELETED, because
- * quality rules are dbt tests that Dagster runs. Nothing delivers the owner e-mail today; this
- * predicate and `deliverDqAlert` are what the recorded follow-up needs (alert from the asset-check
- * read-back plus a persisted last-alerted badge), which is why they are kept and tested.
+ * NOTE (engine rebuild B4 + its review): its original caller — the `/api/data/dq/run-all` sweep —
+ * is DELETED, because quality rules are dbt tests that Dagster runs. The alert is NOT lost any
+ * more (B4-review L-2): `dq-status-server.ts` `alertOnNewFailure` calls this predicate from the
+ * DAGSTER asset-check read-back and delivers through `@core/notifications/dq-alert`, suppressed by
+ * a durable per-dataset record keyed on the check execution's `ranAt`
+ * (`tabs/data/lib/dq-alert-state.ts`), so the owner is told once per incident however many times
+ * the read happens.
  */
 export function isNewFailure(current: QualityBadge, prior: QualityBadge | null): boolean {
   return current === 'failing' && prior !== 'failing';

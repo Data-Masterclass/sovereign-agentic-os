@@ -73,6 +73,25 @@ one commit in your domain's repository and, where it materialises something, one
 
 **Keep it in sync (connector-backed datasets) — Dagster owns the schedule.** When the Bronze came from a connection (warehouse table, Kafka topic, Salesforce object, Kajabi resource) rather than a one-off upload, call `set_dataset_sync(...)` after create + first ingest to keep it fresh on a schedule (preset or cron), `sync_dataset_now(...)` to run once immediately (`reset: true` replaces the copy and restarts the cursor), and `get_sync_status(...)` for config, next run, run history and watermark. Cursor semantics are honest per source — Kafka is append-only on partition offsets, Salesforce locks to `SystemModstamp`, Kajabi locks to each resource's documented field (only `purchases` detects edits; created_at-only resources sync new records; cursorless resources are full-refresh only — asking for more is a typed `bad_request`). After ~10 consecutive failures the schedule auto-quarantines; fix the source and run `sync_dataset_now(...)` to resume. The schedule itself lives in your domain's repository (`os/schedules.yml`, committed by the same call) and is executed by the Dagster `sovereign` code location — the OS provisions no CronJob, and `get_sync_status` reads the run history, the watermark and the next tick back from Dagster.
 
+## The four tools the steps above do not reach
+
+The numbered path covers creating, building, documenting and promoting a dataset. Four more data
+tools exist and are the same governed path (B4-review L-5):
+
+- **`list_exposed_tables`** (domain admin) — browse every connection → exposure set → table your
+  domain(s) may adopt. The read behind the UI's "From a connection" browser; it returns only
+  warehouse and operational exposures that were actually exposed to you.
+- **`adopt_exposed_table`** (domain admin) — adopt one of those tables as a Domain-tier dataset
+  with `origin: 'connected'`. LIVE exposures federate straight through the source FQN; SYNC
+  exposures land a governed copy, prefilled from the exposure's `syncDefaults`, which you then keep
+  fresh with `set_dataset_sync`.
+- **`retire_dataset`** (owner / domain admin) — retire or archive a dataset. It is a commit like any
+  other change: the dataset's models leave the domain's dbt project, so Dagster stops materialising
+  and testing them. Dependents are reported before the write, never silently broken.
+- **`reconcile_domain_tables`** (builder+) — probe each promoted dataset's governed domain table and
+  re-materialise any that is missing or stale, by re-running the stored publish CTAS. The repair
+  path for materialisation drift; it never invents a grain, it replays the recorded one.
+
 ## What to consider
 
 - **Reuse first.** Duplicate datasets fragment the single source of truth. Always run `list_datasets` before `create_dataset`.

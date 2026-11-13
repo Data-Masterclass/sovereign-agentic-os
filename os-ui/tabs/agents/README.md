@@ -150,11 +150,14 @@ identical events, so every test runs without a worker; `AGENTS_WORKER=worker` le
 `os-ui-worker` Deployment (`os-ui/worker/agent-runs.ts`), which claims with
 `FOR UPDATE SKIP LOCKED`, heartbeats its lease, and on SIGTERM finishes the current superstep and
 re-queues the run. `AGENTS_WORKER_LEASE_MS` bounds a lease; an abandoned one is re-queued once
-(keeping `kind='start'` when the run never reached a checkpoint), then failed. One start door for
-everything: `run-jobs-server.ts` `startQueuedRun` (the run route, `build/scheduled.ts`, MCP
-`run_agent_system`), `resumeQueuedRun` (owner Resume, MCP `resume_agent_run`) and
-`enqueueResumeAfterDecision` (the Governance `onDecided` hook — a decision FILES a resume rather
-than driving the graph inside the decider's request).
+(keeping `kind='start'` when the run never reached a checkpoint), then failed. One door for everything, and it is
+`run-jobs-server.ts` `enqueueRun` — the job row nothing executes without. Above it:
+`startQueuedRun` = file + follow until it settles (`build/scheduled.ts`, MCP `run_agent_system`);
+the SSE run route calls `enqueueRun` directly because it tails `run_events` itself;
+`resumeQueuedRun` (owner Resume, MCP `resume_agent_run`); and `enqueueResumeAfterDecision` (the
+Governance `onDecided` hook — a decision FILES a resume rather than driving the graph inside the
+decider's request). This paragraph used to call `startQueuedRun` the one start door, which the run
+route never used (B4-review E-4).
 
 SSE events of `POST …/run` (stream): `node-started`, `tool-step`, `node-completed`;
 `approval-required { approvalId, tool, node }` when a held write parks the run; `resumed

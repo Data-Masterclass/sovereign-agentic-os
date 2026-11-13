@@ -495,6 +495,10 @@ export const config = {
   // Durable mirror index for the per-domain push-mirror config (URL + token Secret
   // REFERENCE — never the token). See tabs/data/lib/dbt/mirror.ts.
   dataProjectMirrorsIndex: env('DATA_PROJECT_MIRRORS_INDEX', 'os-data-project-mirrors'),
+  // Durable index for "the owner has already been told about THIS quality failure" (one small doc
+  // per dataset). The DQ alert fires from a READ now that Dagster runs the tests, so the
+  // suppression key has to outlive the process and be shared across pods — B4-review L-2.
+  dqAlertsIndex: env('DQ_ALERTS_INDEX', 'os-dq-alerts'),
 
   // ---- Trino file-based access control (engine rebuild B3). When TRINO_ACCESS_RULES=true the OS
   // reconciles the `trino-access-rules` ConfigMap from real domain membership on THREE triggers

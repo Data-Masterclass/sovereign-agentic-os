@@ -52,6 +52,27 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   the CronJobs that used it, leaving zero callers; the branch is removed (the GET is untouched).
   B2-6's planned Kafka/API-batch Dagster asset is recorded as the thing that re-adds it, with its
   own test.
+- **A new quality failure notifies its owner again (L-2).** `/api/data/dq/run-all` was the only
+  caller of `deliverDqAlert`, and B4 deleted it — so since the flip, a dataset going red told
+  nobody (that regression was recorded as B4-9). The alert now fires from the Dagster
+  asset-check read-back: `alertOnNewFailure` applies the existing `isNewFailure` transition rule and
+  delivers one in-app notification to the dataset owner, suppressed by a durable per-dataset record
+  keyed on the check execution (`tabs/data/lib/dq-alert-state.ts`, index `os-dq-alerts`), so a read
+  that happens fifty times a minute still notifies once per incident. A recovery re-arms it; the
+  OS's own ad-hoc probe never alerts; a dataset with no resolvable owner is logged, not retried
+  forever. `deliverDqAlert` moved from `tabs/dashboards/lib/delivery.ts` to
+  `@core/notifications/dq-alert` (a tab may not import another tab) and is re-exported there.
+- **Documentation corrected where it was wrong, not just stale (L-1, L-3…L-8, L-10).** The
+  breaking-change note now says which path dbt owns (the SCHEDULED one — an interactive build still
+  runs the OS's TypeScript CTAS first, by decision B4-6/B4-7) and tells an operator to delete the
+  now-unused `dq-run-principal` Secret by hand. `ARCHITECTURE.md`, `tabs/agents/README.md` and
+  `run-jobs-server.ts` stop calling `startQueuedRun` "the one start door" — the door is
+  `enqueueRun`, and the SSE run route always called it directly. `tabs/data/README.md`'s MCP tool
+  id is `data-write`, not `dataset-write`. `tabs/data/guide.md` documents the four data tools the
+  numbered path never reaches (`list_exposed_tables`, `adopt_exposed_table`, `retire_dataset`,
+  `reconcile_domain_tables`). `docs/components/trino.md` lists the sync slice executor as the sixth
+  live `/execute` path. Six comments that still described the deleted `sync-cron.ts` world are
+  rewritten, and `gate.sh`'s B4 comment now sits above the tests it describes.
 - **Tests for the three divergences B4-3 fixed, and two more refusals (M-2, M-3, M-5).** The gold
   join's personal-partner FQN and the promoted dataset's `domainTable: refreshed` are now pinned by
   VALUE, not only by both doors agreeing; a domain member who is not the owner and a cross-lane
@@ -348,10 +369,20 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   A fresh install — and any
   `helm upgrade` that does not pin the old value — switches to the shipped architecture: every
   change to a dataset, composition, quality rule or schedule is a **git commit** in the domain's
-  repository (`/repos/<domain>.git` on the `os-repos` PVC, authored as the acting user), the
-  generated **dbt project** is what gets materialised, **Dagster** schedules and runs it from a
-  commit that passed `dbt parse`, **Trino** executes it as the acting principal, and run state,
-  asset checks and freshness are read back **from Dagster** instead of an OS-side ledger.
+  repository (`/repos/<domain>.git` on the `os-repos` PVC, authored as the acting user); the
+  generated **dbt project** is what **Dagster** schedules and materialises, from a commit that
+  passed `dbt parse`, with **Trino** executing it as the acting principal, and run state, asset
+  checks and freshness are read back **from Dagster** instead of an OS-side ledger.
+  **Precisely which path dbt owns (B4-review L-1):** the SCHEDULED one — syncs, and every
+  re-materialisation Dagster triggers from a commit. An INTERACTIVE build still runs the OS's own
+  TypeScript-compiled CTAS first, unconditionally (`tabs/data/lib/mutations-server.ts` —
+  `silverPlan` / the gold-join plan through `buildStage`), and only then commits and launches the
+  equivalent dbt assets. That is deliberate (deviations B4-6/B4-7): the honesty gate registers a
+  version only after a real apply+verify of the physical target, and waiting on a Dagster run plus
+  its asset check before registering anything is a redesign whose correctness cannot be shown
+  offline. So a "git-first" install still has two materialisers for a button press, one of which
+  is authoritative for the version record. The row-set parity run in `kind` (checklist D15) is the
+  gate for deleting the CTAS.
 - **Migration — what happens on the first boot with the flag on.** os-ui runs a **boot reconcile**
   (`tabs/data/lib/dbt/boot-reconcile.ts`): for every domain the OS knows (datasets in the registry
   ∪ repositories already on disk) it regenerates the project and commits the delta as the platform
@@ -369,7 +400,10 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   grant the os-ui Role now carries (B4-review H-2); without it the deletion is refused and LOGGED,
   and the CronJob has to be removed by hand (`kubectl -n <ns> delete cronjob -l app=data-sync` or
   by name, `data-sync-<dataset>`). (3) The Dagster image must be `0.3.0` or newer (it carries `git`, the
-  Postgres driver, `repo.py` and `os_projects.py`).
+  Postgres driver, `repo.py` and `os_projects.py`). (4) The OS's own DQ probe no longer runs, so
+  the `dq-run-principal` Secret it used is dead weight and should be removed by hand —
+  `kubectl -n <ns> delete secret dq-run-principal` (the chart no longer renders it; an upgrade
+  does not delete a Secret it stops templating).
 - **The flag remains an emergency opt-out for ONE release, then it goes.** `--set
   osUI.dataProjectGit.enabled=false` (plus the sidecar's `REPO_SYNC_ENABLED=false`) restores the
   OS's own CTAS execution, the `os-sync-runs` / `os-dq-results` ledger reads and the OS DQ probe —
