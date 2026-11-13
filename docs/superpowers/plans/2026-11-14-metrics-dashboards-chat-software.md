@@ -2053,3 +2053,105 @@ deviation is.
   additionally depends on D's `licenses.ts` rows (X-2) and on whatever each stream vendors. X12 is
   `stackit` and unreachable from a worktree. Scored `false` with the reason rather than ticked on a
   single branch.
+
+#### Stream X — review round (MERGE-SAFE-WITH-FIXES)
+
+- **X-review-H-1 The coin test was in `core/mcp/`, importing three `@tabs/agents/*` modules —
+  `check-structure` exit 1, CORE-INDEPENDENCE 203 against a baseline of 200.** Moved verbatim to
+  `os-ui/tabs/agents/lib/git/coin-test.test.ts`: a tab may import `@core/*`, so the same file is
+  legal there and **the baseline was not bumped** (re-run: `CORE-INDEPENDENCE: 200 (at baseline)`,
+  `check-structure: ok`, exit 0). Recorded in the file's own header, with the consequence for later:
+  when the `dataset` row goes live it needs `@tabs/data/*` too, and a tab importing a SECOND tab is
+  equally forbidden — so the kind table will then split into one file per tab sharing this harness
+  through a `@core`-only helper. (Also **X-review-M-3**: the earlier report claimed "no new
+  violations" on the strength of a `check-structure` run piped through `tail -1`, which prints the
+  trailing "Rules:" line and not the verdict — the check had in fact exited 1 and X did not see it.
+  The X10 row is restated accordingly.)
+- **X-review-H-2 The `OS-Objects` read-back would have been lost at merge, so the predicate moved
+  into core.** Stream G deletes `minesIn` and rewrites `systemGitInfo` over
+  `core/infra/git-objects.ts`, whose `trailerNames()` matches only `OS-Object` — X's whole-token
+  `OS-Objects` match lived in the function G removes. The predicate is now
+  `core/infra/git-trailers.ts` (new, pure, core-only, no tab imports, 7 tests in
+  `core/infra/git-trailers.test.ts`), and `tabs/agents/lib/git/history.ts` calls it instead of
+  matching inline. **The exact change the merger must apply to G's file** (read at
+  `public/night2/G`, `os-ui/core/infra/git-objects.ts` lines 321–324):
+  ```
+  -function trailerNames(message: string, id: string): boolean {
+  -  const object = parseTrailers(message)['OS-Object'] ?? '';
+  -  return object === id || object.startsWith(`${id} `);
+  -}
+  +function trailerNames(message: string, id: string): boolean {
+  +  return trailersNameObject(parseTrailers(message), id);
+  +}
+  ```
+  plus the import `import { trailersNameObject } from '@core/infra/git-trailers';`. Its one caller
+  (line 356, `window.filter((e) => trailerNames(e.message, trailerId))`) is unchanged. Without
+  this two-line change, G's generic `objectGitInfo` still works through its path-based fallback but
+  a pre-existing agent system's HEAD is resolved by path rather than by attribution, and X's
+  `reconcile.test.ts` whole-token cases would be the only thing still proving the list trailer.
+- **X-review-M-1 A real read-scope leak in X's own X-R4 fix, now closed.** `traceDomain` fell back
+  to `principalDomain(owner)` — a substring heuristic (`sales`/`finance`/`churn`) — so a run with
+  `metadata.domain === ''` owned by `sales-bot@acme` acquired `domain: 'sales'`, and `canSee` gates
+  a builder on `scope.domains.includes(it.domain)`: every builder and domain admin of `sales` could
+  see that run in the list AND drill into it. Worse than the empty string it replaced. `traceDomain`
+  now returns the declared domain or the sentinel `UNKNOWN_DOMAIN = '(unknown)'`, which no OS domain
+  id can equal, so visibility falls back to `it.owner === scope.principal`. `principalDomain` is
+  kept for DISPLAY on the in-process ring only, where it predates this stream, and is documented as
+  such. Test: the reviewer's exact scenario (owner `sales-bot@acme`, domain `''`, viewer builder of
+  `sales` → not visible, via `canSee` AND `filterScope`), plus the owner, the owning builder and the
+  admin still seeing it, and a run that DOES declare `sales` still being domain-visible.
+  *Pre-existing, not changed:* `collectRuns`'s ring mapping still sets `domain:
+  principalDomain(r.principal)` for governed-tool traces, which is the same heuristic on the gate's
+  left-hand side. It predates night 2 and is not X's to change tonight — **filed here as a finding
+  for whoever owns the monitoring ring next**, because it is the same leak class.
+- **X-review-M-2 The widened failure predicate had a quieter failure mode of its own.** With only
+  `isError`/`failed` recognised, an allowed tool returning its own outcome shape —
+  `{ ok: false, reason: '… failed …' }` — fell through to the string probe, which only inspected
+  genuine strings, and read GREEN. `flaggedFailure` now also reads `ok`/`success` (inverted) and a
+  non-empty `error` field, and the text probe walks a flagless object's string VALUES (never its
+  keys, which is the distinction the whole fix rests on), one level deep and bounded at 50 values.
+  Test: 13 cases including `{ isErrorCount: 0, failedRows: 0 }` staying green and
+  `{ reason: 'the dbt build failed' }` going red.
+- **X-review-L-1 The compile guard was the throw we had FOUND, not the class.** Any snapshot record
+  missing a field the renderers dereference threw with the same blast radius — `renderIndex` and the
+  README both read `s.schedule.kind`, and `placeSystems`'s comparator called
+  `a.id.localeCompare(b.id)`, which throws on a record with no id, before a single file is written.
+  All three are now contained per system: the index row becomes a `# <id>: unrenderable index row —
+  <reason>` comment, the README says what failed, the comparator compares ids as strings, and an
+  outer guard in `generateAgentFiles` writes the system's `system.yaml` plus an honest README
+  whatever else goes wrong. Three tests, including the reviewer's missing-`schedule` case and
+  idempotence with a malformed system in the snapshot.
+- **X-review-L-2 `OS-Objects` never named a system the commit REMOVED — the one commit its history
+  most needs.** Built from the live snapshot alone it listed only survivors. `commitAgentSystem` now
+  unions in the ids already in the repo's `agents/index.yml` (a line scan, not a YAML parse, so a
+  hand-edited index cannot fail a commit; anything unreadable yields no extra ids). Test: a system
+  deleted with the hook off, then reconciled — the removal commit carries its id and
+  `systemGitInfo` resolves that commit as its head. The reconcile tests now take a FRESH repo per
+  test, because the union reads the repo and a shared one leaked a previous test's ids.
+- **X-review-L-3 A whitespace id is now named, not silently dropped.** `renderObjectsTrailer`
+  returns what it had to skip and `commitAgentSystem` logs it with the ids quoted — a silently
+  missing attribution is exactly the X-R1 defect, reintroduced quietly. Test drives the commit path
+  with an injected snapshot (no store door can mint such an id today, which is the point) and
+  asserts the healthy neighbour is still attributed.
+- **X-review-L-4 ABSENT and BROKEN are now different answers in the coin test.** The `try/catch`
+  around the dynamic import swallowed a module that exists but throws, or that exists without the
+  export, and reported "not in the tree yet" — so a half-landed E ingest would have left the test
+  quietly `todo`. Now only the file's ABSENCE ON DISK (both candidate paths checked with
+  `existsSync`) yields `todo`; anything else fails. Verified by planting a module that exports the
+  wrong name: the test fails with "exists but exports no reconcileFromGit". Also, clause (2) now
+  refuses to compare a registry that is `null` or empty — two nulls compare equal and would have
+  satisfied it while proving nothing.
+- **X-review-L-5 `get_policy_view`'s corrected wording was still wrong.** `policySources()` emits a
+  third engine string, `'OPA/DLS'`, on the capability-profile rows, so "the only two `compiledTo`
+  values" was a new inaccuracy. The description now names `OPA` and `OpenSearch-DLS` per grant row
+  and `OPA/DLS` on the capability-profile rows, and keeps the point that nothing compiles to a
+  semantic-layer product.
+- **X-review-L-6 The lie can be a KEY.** `core/kernel/artifacts.ts:121` still carried
+  `spec: { cube: 'daily_revenue' }` — in the one field a client reads as structure — after the prose
+  around it was corrected. Renamed to `view:` (no consumer reads the key), and the tripwire gained a
+  bare `cube:` key pattern; reverting the file makes it report that line.
+- **X-13 The coin test's location constrains its growth, and the constraint is recorded rather than
+  worked around.** See X-review-H-1: the kind table cannot hold a second tab's kind in one file
+  without breaking TAB-ISOLATION, so `dataset` arrives as a sibling file over a `@core`-only shared
+  harness, not as another row here.
+

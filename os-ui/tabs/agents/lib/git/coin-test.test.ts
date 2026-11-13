@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
+ * TAB:        agents
  * FEATURE:    THE COIN TEST (plan X-R8 / checklist X8) — one change, two doors, one outcome
  * USER STORY: As the product owner I said "from one side it looks like an engineering coin, from
  *             the other a business-user coin, but at the end it's the same coin". This file is the
@@ -23,10 +24,17 @@
  *     When E lands, only `loadReceive()` resolves differently; no assertion changes.
  *   - The *fake receive* is the one E's brief specifies: a real bare repo, a synthetic commit
  *     authored as the pusher, the ingest called directly. No network, no http-backend.
+ *   - WHY IT LIVES UNDER `tabs/agents/` (review H-1). It drives the Agents store and the agents
+ *     git subtree, so in `core/mcp/` it was a `core → @tabs/*` import: three new
+ *     CORE-INDEPENDENCE violations and `check-structure` exit 1. A TAB may import `@core/*`, so
+ *     the same file is legal here and the ratchet baseline stays where it was. When the `dataset`
+ *     row goes live it will need `@tabs/data/*` too — a tab importing a second tab is also
+ *     forbidden, so the kind table will then have to split one file per tab, sharing this
+ *     harness through a `@core`-only helper. Recorded in the plan as deviation X-13.
  */
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -55,22 +63,38 @@ type ReceiveModule = {
   ) => Promise<unknown>;
 };
 
-/** Resolve E's ingest, or say precisely what is missing. */
+/** Where stream E's ingest may live. Both are checked, and both must be absent to report `todo`. */
+const RECEIVE_CANDIDATES = ['core/infra/git-receive.ts', 'core/infra/git-ingest.ts'] as const;
+const OS_UI_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
+
+/**
+ * Resolve E's ingest, or say precisely what is missing.
+ *
+ * Review L-4: ABSENT and BROKEN are different answers. A module that exists but throws on import,
+ * or that exists without the export, used to be swallowed by the `catch` and reported as "not in
+ * the tree yet" — so a merge that half-landed E's ingest would have turned the coin test green-ish
+ * and silent. Now: the file not existing on disk is the ONLY thing that yields `todo`; anything
+ * else — an import error, a missing export — is rethrown and FAILS the test.
+ */
 async function loadReceive(): Promise<{ mod: ReceiveModule } | { missing: string }> {
-  for (const spec of ['@core/infra/git-receive', '@core/infra/git-ingest']) {
-    try {
-      const mod = (await import(spec)) as Partial<ReceiveModule>;
-      if (typeof mod.reconcileFromGit === 'function') return { mod: mod as ReceiveModule };
-    } catch {
-      /* not in the tree yet */
-    }
+  const present = RECEIVE_CANDIDATES.filter((rel) => existsSync(join(OS_UI_ROOT, rel)));
+  if (present.length === 0) {
+    return {
+      missing:
+        "reconcileFromGit(domain, fromSha, toSha) is not in this tree — it is stream E's deliverable 3 " +
+        `(neither ${RECEIVE_CANDIDATES.join(' nor ')} exists; plan 2026-11-14 §Phase E). The comparison ` +
+        'below is written against that signature and runs unchanged once E merges.',
+    };
   }
-  return {
-    missing:
-      "reconcileFromGit(domain, fromSha, toSha) is not in this tree — it is stream E's deliverable 3 " +
-      '(core/infra/git-receive.ts, plan 2026-11-14 §Phase E). The comparison below is written against ' +
-      'that signature and runs unchanged once E merges.',
-  };
+  // From here on, a failure is a FAILURE. No catch.
+  const rel = present[0];
+  const mod = (await import(`@core/${rel.replace(/^core\//, '').replace(/\.ts$/, '')}`)) as Partial<ReceiveModule>;
+  assert.equal(
+    typeof mod.reconcileFromGit,
+    'function',
+    `${rel} exists but exports no reconcileFromGit — the coin test cannot be satisfied by a half-landed ingest`,
+  );
+  return { mod: mod as ReceiveModule };
 }
 
 /* ---------------------------------------------------------------- observations -- */
@@ -312,6 +336,10 @@ for (const k of KINDS) {
       return;
     }
     const mcp = await mcpSide(k);
+    // Review L-4: two nulls compare equal, so an empty registry on both sides would satisfy
+    // clause (2) while proving nothing. Refuse to compare a registry that is not there.
+    assert.notEqual(mcp.registry, null, 'the MCP side left a registry state to compare against');
+    assert.notDeepEqual(mcp.registry, [], 'and it is not empty');
     uninstall?.();
     uninstall = null;
     // Fresh repo + fresh store: the push starts from nothing, like a clone-and-push would.

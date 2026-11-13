@@ -22,11 +22,17 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   acceptance items in `docs/superpowers/plans/2026-11-14-engineering-checklist-night2.md` and the
   four read-only research reports beside them as the evidence base. No product code changes in this
   commit.
-- **The coin test (night run 2, X-R8).** `os-ui/core/mcp/coin-test.test.ts` asserts, per object
-  kind, that the same change made through the MCP and by a `git push` leaves byte-identical files,
-  an identical registry state and a history entry differing only in `OS-Surface`. The MCP side of
-  the agent system runs green against a real bare repository today; the push half is written
-  against stream E's `reconcileFromGit` contract and reports `todo` until it merges.
+- **The coin test (night run 2, X-R8).** `os-ui/tabs/agents/lib/git/coin-test.test.ts` asserts,
+  per object kind, that the same change made through the MCP and by a `git push` leaves
+  byte-identical files, an identical registry state and a history entry differing only in
+  `OS-Surface`. The MCP side of the agent system runs green against a real bare repository today;
+  the push half is written against stream E's `reconcileFromGit` contract and reports `todo` until
+  it merges — and only the absence of that module yields `todo`, so a half-landed ingest fails
+  rather than passing quietly.
+- **`core/infra/git-trailers.ts` — one object-attribution predicate for every git read-back.**
+  `OS-Object` (one object) and `OS-Objects` (a space-separated id list, for a whole-subtree commit)
+  are now answered by one pure, core-only `trailersNameObject`, so a tab's own history and the
+  generic object read-back cannot drift on whole-token matching.
 
 ### Fixed
 
@@ -42,18 +48,27 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   read only `metadata.principal`, which governed-tool traces set and the agent-run observer does
   not (it writes the acting user to the trace's `userId`); the owner now falls back through the
   delegated principal, then `userId`, and says `unknown` only when the trace records nobody, and the
-  domain can no longer be the empty string.
+  domain can no longer be the empty string — it is the sentinel `(unknown)`, deliberately a value
+  no domain id can equal, because `domain` is the builder visibility gate and deriving one from the
+  principal's name would make a domain-less run visible to every builder of a guessed domain. An
+  allowed tool that reports its own failure (`{ ok: false, reason: '… failed …' }`) is read as a
+  failure too, not just the two flags the observer writes.
 - **One empty agent-system draft no longer stops a whole domain being committed (X-R2).**
   `agents: []` — a system created and not yet populated — parses but does not compile, and the
   compile ran outside the guard that already protects an unparseable source. The exception left the
   whole-subtree generator, so every other system in that domain stopped being committed and the
   domain's boot reconcile failed with it. The uncompilable system now keeps its source and its
   prompt files, loses only its `graph.json`, and its README says why in the compiler's own words.
+  The same containment now covers every other way one system can be malformed — a record missing
+  `schedule` threw from the index row and the README, and a record missing `id` threw from the
+  placement comparator, each before a single file was written.
 - **A system built before git was switched on reports the commit it is at (X-R1).** The boot
   reconcile commits one commit for the whole `agents/` subtree, so no individual system's history
   matched it and the tab header and `get_agent_system` said `git.head: null` — "never committed" —
   about a system sitting in the repository. The reconcile commit now lists every system it carried
-  in an `OS-Objects` trailer, matched by whole token on read-back.
+  in an `OS-Objects` trailer — including the systems it REMOVES, so a deletion is attributed to the
+  system it deleted — matched by whole token on read-back, and an id that cannot be written to a
+  trailer is logged by name rather than dropped.
 - **The OS stopped telling agents that Cube secures the number (X-R7).** Metrics are served by one
   governed Trino SELECT run as the viewer (`exploreMetric`); Trino/OPA secure the number and Cube is
   on no read path. Seven agent-facing surfaces said otherwise, including `query_metric`'s own

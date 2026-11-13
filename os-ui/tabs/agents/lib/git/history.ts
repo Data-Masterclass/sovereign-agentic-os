@@ -19,6 +19,10 @@
  *     that too. Without it, a system whose only commit is the reconcile — which is every system
  *     that existed before git was switched on — reported `head: null`, i.e. "never committed",
  *     about a system that is sitting in the repository.
+ *   - The predicate itself is NOT local (review H-2): it is `core/infra/git-trailers.ts`
+ *     `trailersNameObject`, shared with the generic object read-back
+ *     (`core/infra/git-objects.ts`), so the two cannot drift and a merge that rewrites either one
+ *     keeps the whole-token `OS-Objects` behaviour.
  *   - There is NO second source of truth: `sha`, `author`, `at` come from the commit. When the
  *     flag is off, or the domain has no repo yet, the answer is an honest `null`.
  *   - Owner/scope gating is unchanged and happens BEFORE this is called (the caller has already
@@ -28,6 +32,7 @@
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { log, MAX_LOG_DEPTH, type GitStoreOptions } from '@core/infra/git-store';
+import { trailersNameObject } from '@core/infra/git-trailers';
 import { agentProjectGitEnabled } from '@tabs/agents/lib/git/commit';
 
 /** How many commits of a system's history are returned by default. */
@@ -97,12 +102,8 @@ export async function systemGitInfo(domain: string, systemId: string, opts: Hist
 function minesIn(entries: Awaited<ReturnType<typeof log>>, systemId: string, limit: number): SystemCommit[] {
   const mine: SystemCommit[] = [];
   for (const e of entries) {
-    const object = e.trailers['OS-Object'] ?? '';
-    const single = object === systemId || object.startsWith(`${systemId} `);
-    // X-R1: `OS-Objects` is a space-separated id list; compare whole tokens so `sys_a` never
-    // matches `sys_ab`.
-    const inMany = !single && (e.trailers['OS-Objects'] ?? '').split(' ').includes(systemId);
-    if (!single && !inMany) continue;
+    // ONE shared predicate (review H-2) — `OS-Object` plus whole-token `OS-Objects`.
+    if (!trailersNameObject(e.trailers, systemId)) continue;
     mine.push({
       sha: e.sha,
       subject: e.subject,

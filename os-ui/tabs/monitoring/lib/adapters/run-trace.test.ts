@@ -15,7 +15,8 @@
  */
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchTrace, outputFailed, traceOwner, traceDomain } from '@tabs/monitoring/lib/adapters/run-trace';
+import { fetchTrace, outputFailed, traceOwner, traceDomain, UNKNOWN_DOMAIN } from '@tabs/monitoring/lib/adapters/run-trace';
+import { canSee, deriveScope, filterScope } from '@tabs/monitoring/lib/scope-core';
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -61,11 +62,53 @@ test('X-R4: the owner comes from the trace userId when no delegated principal wa
   assert.equal(traceOwner({ userId: '  ' }, {}), 'unknown', 'blank is not an owner');
 });
 
-test('X-R4: the domain is never the empty string', () => {
-  assert.equal(traceDomain({ domain: 'sales' }, 'amir'), 'sales');
-  assert.equal(traceDomain({ domain: '' }, 'sales-bot'), 'sales', "an EMPTY declared domain falls back (`??` did not)");
-  assert.equal(traceDomain({ domain: '   ' }, 'finance-svc'), 'finance', 'nor does whitespace count as a domain');
-  assert.equal(traceDomain({}, 'unknown'), 'unknown');
+test('X-R4: the domain is never the empty string, and never a guess (review M-1)', () => {
+  assert.equal(traceDomain({ domain: 'sales' }), 'sales', 'a declared domain is used as declared');
+  assert.equal(traceDomain({ domain: '' }), UNKNOWN_DOMAIN, "an EMPTY declared domain no longer passes through (`??` guarded only undefined)");
+  assert.equal(traceDomain({ domain: '   ' }), UNKNOWN_DOMAIN, 'nor does whitespace count as a domain');
+  assert.equal(traceDomain({}), UNKNOWN_DOMAIN);
+  // The sentinel must be unusable as a real domain id, or it would be a gate bypass of its own.
+  assert.match(UNKNOWN_DOMAIN, /[()]/, 'it contains characters no OS domain id can contain');
+});
+
+test('M-1: a domain-less run is NOT visible to a builder whose domain name occurs in the principal', () => {
+  // The exact leak: `principalDomain('sales-bot@acme')` returns 'sales' by substring, so the
+  // first version of the X-R4 fix handed a domain-less run the domain 'sales' — and `canSee`
+  // gates a builder on `scope.domains.includes(it.domain)`.
+  const owner = 'sales-bot@acme';
+  const item = { id: 'run_x', owner, domain: traceDomain({ domain: '' }, owner) };
+  const builderOfSales = deriveScope('builder', 'ben', ['sales']);
+
+  assert.equal(canSee(builderOfSales, item), false, 'M-1: a guessed domain must not grant visibility');
+  assert.deepEqual(filterScope(builderOfSales, [item]), [], 'and the LIST is filtered too, not only the drill-in');
+  const domainAdminOfSales = deriveScope('domain_admin', 'dana', ['sales']);
+  assert.equal(canSee(domainAdminOfSales, item), false, 'a domain admin is gated the same way');
+
+  // Visibility rests where it should: on ownership, and on admin.
+  assert.equal(canSee(deriveScope('creator', owner, []), item), true, 'the owner still sees their own run');
+  assert.equal(canSee(deriveScope('builder', owner, ['sales']), item), true, 'and a builder who owns it does');
+  assert.equal(canSee(deriveScope('admin', 'ada', ['sales']), item), true, 'an admin sees everything, as before');
+  // A run that DOES declare its domain is still domain-visible — the fix narrows nothing real.
+  assert.equal(canSee(builderOfSales, { owner, domain: traceDomain({ domain: 'sales' }, owner) }), true);
+});
+
+test('M-2: an allowed tool that reports its own failure does not read green', () => {
+  // No `isError`, no `failed` — an allowed tool returning its own outcome shape. Under the
+  // narrow flag set this read GREEN, which is a quieter lie than the one X-R3 fixed.
+  assert.equal(outputFailed({ ok: false, reason: 'the upstream call failed' }), true, 'ok:false is a failure');
+  assert.equal(outputFailed({ ok: true, rows: 42 }), false, 'ok:true is not');
+  assert.equal(outputFailed({ success: false, detail: 'denied by policy' }), true);
+  assert.equal(outputFailed({ error: 'connection refused' }), true, 'a non-empty error field is a failure');
+  assert.equal(outputFailed({ error: null, rows: 1 }), false, 'an empty error field is not');
+  assert.equal(outputFailed({ error: false, rows: 1 }), false);
+  // A flagless object is probed by its string VALUES — never by its key names, which is the
+  // distinction the whole X-R3 fix rests on.
+  assert.equal(outputFailed({ reason: 'the dbt build failed' }), true, 'a failure word in a VALUE counts');
+  assert.equal(outputFailed({ isErrorCount: 0, failedRows: 0, note: 'all clear' }), false, 'key names never count');
+  assert.equal(outputFailed({ summary: 'timed out after 30s' }), true);
+  // And the flags still win over the text, in both directions.
+  assert.equal(outputFailed({ isError: false, reason: 'no error rows found' }), false, 'a present flag is authoritative');
+  assert.equal(outputFailed({ ok: false, reason: 'all good' }), true);
 });
 
 // --------------------------------------------------------- the read-back, end to end ---
@@ -132,9 +175,13 @@ test('X-R3: the derived log lines agree with the step statuses', async () => {
   assert.match(line('tool.write_file'), /\bERROR\b/, 'the real failure still is');
 });
 
-test('X-R4: a run that records nobody still says so, rather than inventing an owner', async () => {
-  serve({ id: 't_anon', name: 'run', output: { failed: false }, metadata: {}, observations: [] });
+test('X-R4/M-1: a run that records nobody says so, and is not visible on a guessed domain', async () => {
+  serve({ id: 't_anon', name: 'run', userId: 'sales-bot@acme', output: { failed: false }, metadata: {}, observations: [] });
   const trace = await fetchTrace('t_anon');
-  assert.equal(trace?.owner, 'unknown');
-  assert.equal(trace?.domain, 'unknown', 'never the empty string');
+  assert.equal(trace?.owner, 'sales-bot@acme', 'the owner comes from the trace, not from a guess');
+  assert.equal(trace?.domain, UNKNOWN_DOMAIN, 'never the empty string and never a derived domain');
+  assert.equal(canSee(deriveScope('builder', 'ben', ['sales']), trace!), false, 'so a sales builder cannot drill into it');
+
+  serve({ id: 't_none', name: 'run', output: { failed: false }, metadata: {}, observations: [] });
+  assert.equal((await fetchTrace('t_none'))?.owner, 'unknown', 'and with nothing recorded at all, honestly unknown');
 });

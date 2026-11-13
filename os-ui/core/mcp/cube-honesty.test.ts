@@ -86,7 +86,11 @@ const FORBIDDEN: { re: RegExp; why: string }[] = [
   { re: /\bCube\s+metric\b/i, why: 'a metric is a dbt metric (KPI), not a Cube metric' },
   { re: /\bon\s+Cube\b/i, why: 'nothing renders or serves "on Cube"' },
   { re: /\bCube\s+member\b/i, why: 'the member is a governed metric member resolved to Trino SQL; nothing about it is Cube\'s' },
-  { re: /compiles to \([^)]*Cube/i, why: '`compiledTo` is only OPA | OpenSearch-DLS — no grant compiles to Cube' },
+  { re: /compiles to \([^)]*\bCube\b/i, why: 'the policy view names OPA, OpenSearch-DLS and OPA/DLS — nothing compiles to Cube' },
+  // Review L-6: the LIE CAN BE A KEY, not only prose. `spec: { cube: 'daily_revenue' }` on a seed
+  // metric says the artefact is a Cube object in the one field a client reads as structure, and no
+  // amount of corrected prose around it helps.
+  { re: /(?:^|[\s{,'"])cube\s*:/i, why: 'a `cube:` field says the artefact is a Cube object — name the real shape (`view:`, `member:`)' },
 ];
 
 /**

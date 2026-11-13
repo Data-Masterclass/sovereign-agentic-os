@@ -348,3 +348,54 @@ test('X-R2: generation of an uncompilable system is still idempotent (byte-stabl
   };
   assert.deepEqual([...generateAgentFiles(snapshot)], [...generateAgentFiles(snapshot)]);
 });
+
+// --------------------------------------------------------------- review L-1 ---
+// The compile was only the throw we had FOUND. Any snapshot record missing a field the renderers
+// dereference throws from the index row, the README or the placement comparator instead — with
+// the same blast radius, the whole domain's subtree. These cases pin the containment.
+
+/** A record missing `schedule`, which `renderIndex` and the README both dereference. */
+function noSchedule(): SnapshotSystem {
+  const s = sys({ id: 'sys_broken1', name: 'No schedule', owner: 'amir', visibility: 'Shared', yaml: PERSONAL_YAML });
+  delete (s as Partial<SnapshotSystem>).schedule;
+  return s;
+}
+
+test('L-1: a system with no `schedule` costs its own detail, not the domain', () => {
+  const snapshot: AgentProjectSnapshot = {
+    domain: 'sales',
+    systems: [noSchedule(), sys({ id: 'sys_ok2', name: 'Support triage', owner: 'amir', visibility: 'Personal', yaml: PERSONAL_YAML })],
+  };
+  // Before the fix this threw out of `renderIndex` — before a single file was written.
+  const files = generateAgentFiles(snapshot);
+  const paths = [...files.keys()];
+
+  // The healthy system is COMPLETE: that is the whole point.
+  assert.ok(paths.includes(`agents/personal/${ownerToken('amir')}/support-triage/graph.json`), "the healthy system's graph is generated");
+  assert.ok(paths.includes(`agents/personal/${ownerToken('amir')}/support-triage/README.md`));
+  // The broken system keeps its source, and the index says what went wrong rather than omitting it.
+  assert.ok(paths.includes('agents/no-schedule/system.yaml'), 'the broken system\'s source is still committed verbatim');
+  const index = files.get('agents/index.yml') ?? '';
+  assert.match(index, /# sys_broken1: unrenderable index row — /, 'the index names the id and the reason');
+  assert.ok(index.includes('id: sys_ok2'), 'and the healthy row is intact');
+  // Its README says so too, instead of being absent or claiming a healthy system.
+  assert.match(files.get('agents/no-schedule/README.md') ?? '', /could not be rendered|could not be generated/);
+});
+
+test('L-1: a record with no id does not break the placement comparator', () => {
+  const broken = sys({ id: 'sys_zz', name: 'Nameless', owner: 'amir', visibility: 'Shared', yaml: PERSONAL_YAML });
+  delete (broken as Partial<SnapshotSystem>).id;
+  const snapshot: AgentProjectSnapshot = {
+    domain: 'sales',
+    systems: [broken, sys({ id: 'sys_ok3', name: 'Support triage', owner: 'amir', visibility: 'Personal', yaml: PERSONAL_YAML })],
+  };
+  // `a.id.localeCompare(b.id)` threw here, before any file existed.
+  const files = generateAgentFiles(snapshot);
+  assert.ok([...files.keys()].includes(`agents/personal/${ownerToken('amir')}/support-triage/graph.json`), 'the healthy system still generates');
+  assert.ok(files.has('agents/index.yml'));
+});
+
+test('L-1: generation stays idempotent with a malformed system in the snapshot', () => {
+  const snapshot: AgentProjectSnapshot = { domain: 'sales', systems: [noSchedule()] };
+  assert.deepEqual([...generateAgentFiles(snapshot)], [...generateAgentFiles(snapshot)]);
+});

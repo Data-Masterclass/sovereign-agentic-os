@@ -28,26 +28,47 @@ import type { Health, HealthItem, TraceDetail, TraceStep } from '@tabs/monitorin
  * probe survives only for a genuinely TEXTUAL output, where a word is a word.
  */
 
-/** The error-ish booleans the OS's own span payloads carry, read by name. */
+/** Words that mean "this went wrong" in a human-written status or result line. */
+const FAILURE_WORDS = /error|fail|aborted|denied|refused|timed out|timeout/i;
+
+/**
+ * The outcome booleans the OS's own span payloads carry, read BY NAME. A present boolean is
+ * authoritative in both directions — `false` means success and must not be overridden by a text
+ * probe that matched its own key name, which is the whole defect X-R3 fixed.
+ *
+ * Review M-2 widened the set beyond `isError`/`failed`: an ALLOWED tool is free to return its own
+ * outcome shape, and `{ ok: false, reason: 'the upstream call failed' }` read GREEN under the
+ * narrow version — a worse failure mode than the original, because it is silent. `ok` is inverted
+ * (`ok: false` is a failure); a non-empty `error` field is a failure whatever its type.
+ */
 function flaggedFailure(output: unknown): boolean | null {
   if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
   const o = output as Record<string, unknown>;
-  // `isError` is the tool-result flag; `failed` is `run.result`'s outcome flag. A present
-  // boolean is AUTHORITATIVE in both directions — `false` means success, and must not be
-  // overridden by a text probe that matched its own key name.
   if (typeof o.isError === 'boolean') return o.isError;
   if (typeof o.failed === 'boolean') return o.failed;
+  if (typeof o.ok === 'boolean') return !o.ok;
+  if (typeof o.success === 'boolean') return !o.success;
+  if (o.error != null && o.error !== '' && o.error !== false) return true;
   return null;
 }
 
-/** True when a TEXT output reads as a failure. Only applied to strings (see the header). */
+/**
+ * True when the output's TEXT reads as a failure. Review M-2: this now also walks a flagless
+ * object's string VALUES — never its keys, which is what the original grep over
+ * `JSON.stringify(output)` effectively did. One level deep and bounded: an outcome word lives in
+ * a `reason` / `message` / `detail` field, not six levels down, and an unbounded walk over a
+ * large payload is a cost on every row of the runs list.
+ */
 function textReadsAsFailure(output: unknown): boolean {
-  return typeof output === 'string' && /error|fail|aborted/i.test(output);
+  if (typeof output === 'string') return FAILURE_WORDS.test(output);
+  if (!output || typeof output !== 'object') return false;
+  const values = Array.isArray(output) ? output : Object.values(output as Record<string, unknown>);
+  return values.slice(0, 50).some((v) => typeof v === 'string' && FAILURE_WORDS.test(v));
 }
 
 /**
- * Did this observation/trace fail? Structured first (`level`, then the boolean flags), text last.
- * Exported for the X-R3 test, which drives the exact payloads the observer writes.
+ * Did this observation/trace fail? Structured first (`level`, then the outcome flags), text last.
+ * Exported for the X-R3/M-2 tests, which drive the exact payloads the observer writes.
  */
 export function outputFailed(output: unknown, level?: unknown): boolean {
   const lv = String(level ?? '').toUpperCase();
@@ -113,7 +134,7 @@ async function langfuseRuns(): Promise<HealthItem[]> {
         health: runHealth({ decision: meta.decision as string, output: t.output }),
         detail: preview(t.output),
         owner,
-        domain: traceDomain(meta, owner),
+        domain: traceDomain(meta),
         ts: (t.timestamp as string) ?? undefined,
         links: { runId: String(t.id ?? '') },
         source: 'live',
@@ -149,7 +170,7 @@ export async function fetchTrace(id: string): Promise<TraceDetail | null> {
         id: String(t.id ?? id),
         name: String(t.name ?? 'run'),
         owner,
-        domain: traceDomain(meta, owner),
+        domain: traceDomain(meta),
         health: outputFailed(t.output) ? 'red' : 'green',
         ts: (t.timestamp as string) ?? undefined,
         contextPack: contextPackFrom(t, obs),
@@ -263,19 +284,38 @@ export function traceOwner(t: Record<string, unknown>, meta: Record<string, unkn
 }
 
 /**
+ * The domain recorded for a trace that declares none. A SENTINEL, not a guess (review M-1).
+ *
+ * `domain` is not a label — it is the BUILDER GATE's left-hand side (`canSee`:
+ * `scope.domains.includes(it.domain)`). The first version of this fix fell back to
+ * {@link principalDomain}, a substring heuristic, so a domain-less run owned by `sales-bot@acme`
+ * acquired `domain: 'sales'` and became visible — in the list AND in the drill-in — to every
+ * builder and domain admin of a domain whose NAME merely occurred in the principal. That is a
+ * read-scope leak, and worse than the empty string it replaced.
+ *
+ * The parentheses are what make it safe: no OS domain id can contain them, so this value is in no
+ * viewer's `scope.domains` and visibility falls back to ownership (`it.owner === scope.principal`),
+ * which is the correct answer for a run whose domain nobody recorded. It is also honest to read.
+ */
+export const UNKNOWN_DOMAIN = '(unknown)';
+
+/**
  * Which domain owns this trace. X-R4: the header showed an EMPTY domain whenever the observer's
  * `metadata.domain` was present but blank (an unassigned system) — `??` only guards `undefined`,
- * so `''` passed straight through and the scope gate compared against nothing. Falls back to the
- * owner's domain, then to `unknown`; never returns an empty string.
+ * so `''` passed straight through. Returns the DECLARED domain, else {@link UNKNOWN_DOMAIN}.
+ * It never derives a domain from the principal: see the note above.
  */
-export function traceDomain(meta: Record<string, unknown>, owner: string): string {
-  const declared = String(meta.domain ?? '').trim();
-  if (declared) return declared;
-  const derived = principalDomain(owner).trim();
-  return derived || 'unknown';
+export function traceDomain(meta: Record<string, unknown>, _owner?: string): string {
+  return String(meta.domain ?? '').trim() || UNKNOWN_DOMAIN;
 }
 
-/** Map a principal to its domain. Sales-family principals → 'sales' (worked example). */
+/**
+ * Map a principal to its domain. Sales-family principals → 'sales' (worked example).
+ *
+ * DISPLAY ONLY, and only on the in-process ring, where it predates this stream (review M-1): it
+ * is a substring heuristic, so it must never decide the builder gate for a trace whose domain was
+ * not recorded. {@link traceDomain} does not call it.
+ */
 function principalDomain(principal: string): string {
   const p = principal.toLowerCase();
   if (p.includes('sales')) return 'sales';

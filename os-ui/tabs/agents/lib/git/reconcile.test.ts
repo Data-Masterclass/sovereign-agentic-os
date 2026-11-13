@@ -14,7 +14,7 @@
  *     The trailer is asserted too, because the complementary path-based fallback is stream G's and
  *     a reviewer needs to see which half this file proves.
  */
-import { test, before, after, beforeEach, afterEach } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,7 +23,8 @@ import * as store from '@tabs/agents/lib/store';
 import type { Principal } from '@tabs/agents/lib/store';
 import { __resetSystemListeners } from '@tabs/agents/lib/system-events';
 import { listTree, log, __clearReservedSubtrees } from '@core/infra/git-store';
-import { installAgentProjectCommitHook, awaitAgentProjectCommits, __setAgentProjectGitForTests } from '@tabs/agents/lib/git/commit';
+import { commitAgentSystem, installAgentProjectCommitHook, awaitAgentProjectCommits, __setAgentProjectGitForTests } from '@tabs/agents/lib/git/commit';
+import type { SnapshotSystem } from '@tabs/agents/lib/git/snapshot';
 import { reconcileAgentProjects, RECONCILE_REASON } from '@tabs/agents/lib/git/reconcile';
 import { systemGitInfo } from '@tabs/agents/lib/git/history';
 
@@ -50,14 +51,11 @@ grants:
 agents: []
 `;
 
-before(() => {
-  reposDir = mkdtempSync(join(tmpdir(), 'os-repos-reconcile-'));
-});
-after(() => {
-  rmSync(reposDir, { recursive: true, force: true });
-  __clearReservedSubtrees();
-});
+// A FRESH repository per test, deliberately: `OS-Objects` now unions the ids already in the
+// repo's own `agents/index.yml` (review L-2), so a shared repo would leak a previous test's
+// systems into this one's attribution — and the leak would look like a product bug.
 beforeEach(() => {
+  reposDir = mkdtempSync(join(tmpdir(), 'os-repos-reconcile-'));
   store.__resetStore();
   __resetSystemListeners();
   __clearReservedSubtrees();
@@ -67,6 +65,8 @@ afterEach(() => {
   uninstall?.();
   uninstall = null;
   __setAgentProjectGitForTests(null);
+  __clearReservedSubtrees();
+  rmSync(reposDir, { recursive: true, force: true });
 });
 
 /** Create systems with git OFF — what every system that predates the flag looks like. */
@@ -163,4 +163,103 @@ test('X-R2: one zero-agent system does not stop its domain being reconciled', as
   for (const id of [empty, healthy]) {
     assert.ok((await systemGitInfo('sales', id, { reposDir }))?.head, `${id} resolves a head`);
   }
+});
+
+// --------------------------------------------------------------- review L-2 ---
+
+test('L-2: the commit that REMOVES a system is attributed to it, so its history finds the removal', async () => {
+  let doomed = '';
+  createdBeforeGit(() => {
+    doomed = store.createSystem(amir, { name: 'Gone soon' }).id;
+    store.createSystem(amir, { name: 'Stays here' });
+  });
+  await awaitAgentProjectCommits();
+  // Reconcile once so the repo holds both systems.
+  await reconcileAgentProjects({ reposDir, mirror: false, hydration: () => 'hydrated' });
+  assert.ok((await systemGitInfo('sales', doomed, { reposDir }))?.head, 'it is in the repo to begin with');
+
+  // Delete it with the hook OFF — what a crash, or a window with the flag off, looks like.
+  uninstall?.();
+  uninstall = null;
+  __setAgentProjectGitForTests(false);
+  store.deleteSystem(doomed, amir);
+  __setAgentProjectGitForTests(true);
+
+  const [outcome] = await reconcileAgentProjects({ reposDir, mirror: false, hydration: () => 'hydrated' });
+  assert.equal(outcome.changed, true, 'the removal is committed');
+  const paths = (await listTree('sales', 'main', { reposDir })).map((p) => p.path);
+  assert.equal(paths.some((p) => p.includes('/gone-soon/')), false, 'and the directory is gone');
+
+  // Built from the live snapshot alone, `OS-Objects` would name only the SURVIVOR — so the one
+  // commit that matters most for a deleted system, the one that deleted it, would be the one its
+  // history could not find.
+  const [head] = await log('sales', { reposDir, limit: 1 });
+  assert.ok((head.trailers['OS-Objects'] ?? '').split(' ').includes(doomed), 'the removed id is in the attribution');
+  const info = await systemGitInfo('sales', doomed, { reposDir });
+  assert.equal(info?.head?.sha, head.sha, 'and the removed system resolves the removal commit as its head');
+  assert.equal(info?.head?.reason, RECONCILE_REASON);
+});
+
+// --------------------------------------------------------------- review L-3 ---
+
+test('L-3: an id that cannot be written to the trailer is NAMED in a warning, never dropped silently', async () => {
+  // Driven at the commit path with an injected snapshot, because no store door can mint such an
+  // id today — which is exactly why the warning matters: the day one appears, the attribution
+  // must not go missing in silence.
+  const planted = 'sys_with a space';
+  const captured: SnapshotSystem[] = [
+    {
+      id: planted,
+      name: 'Planted',
+      owner: 'amir',
+      visibility: 'Personal',
+      yaml: 'version: \'1\'\nsystem:\n  name: Planted\n  domain: sales\nagents: []\n',
+      origin: 'authored',
+      running: false,
+      schedule: { kind: 'manual' },
+      disabledAgents: [],
+      folder: '/',
+      version: 1,
+    },
+    {
+      id: 'sys_fine1',
+      name: 'Fine',
+      owner: 'amir',
+      visibility: 'Personal',
+      yaml: 'version: \'1\'\nsystem:\n  name: Fine\n  domain: sales\nagents: []\n',
+      origin: 'authored',
+      running: false,
+      schedule: { kind: 'manual' },
+      disabledAgents: [],
+      folder: '/',
+      version: 1,
+    },
+  ];
+
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...a: unknown[]) => void warnings.push(a.map(String).join(' '));
+  let result: Awaited<ReturnType<typeof commitAgentSystem>> = null;
+  try {
+    result = await commitAgentSystem(
+      'sales',
+      { id: 'sovereign-os', name: 'Sovereign OS', email: 'os@sovereign.local' },
+      { action: 'reconcile agent systems', object: 'sales', objectId: 'sales', surface: 'boot:reconcile', allObjects: true },
+      { reposDir, mirror: false, captured },
+    );
+  } finally {
+    console.warn = realWarn;
+  }
+
+  const hit = warnings.find((w) => w.includes('OS-Objects'));
+  assert.ok(hit, `a warning was emitted (saw: ${JSON.stringify(warnings)})`);
+  assert.match(hit, /whitespace/, 'it says what is wrong');
+  assert.ok(hit.includes(planted), 'and it names the offending id');
+
+  // The commit still happened, and the id that COULD be written is still attributed — a
+  // malformed neighbour does not cost the healthy system its history.
+  assert.equal(result?.changed, true);
+  const [head] = await log('sales', { reposDir, limit: 1 });
+  assert.deepEqual((head.trailers['OS-Objects'] ?? '').split(' '), ['sys_fine1']);
+  assert.equal((await systemGitInfo('sales', 'sys_fine1', { reposDir }))?.head?.sha, head.sha);
 });
