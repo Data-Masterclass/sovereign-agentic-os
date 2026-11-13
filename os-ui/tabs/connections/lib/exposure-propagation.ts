@@ -9,7 +9,7 @@ import { recompileExposures, exposureFqns, type ExposurePushResult } from '@tabs
 import { listAdoptions, revokeActionAdoption } from '@tabs/connections/lib/action-adoptions';
 import { removeLiveRegistration } from '@tabs/connections/lib/warehouse/k8s-registration';
 import { markDatasetsSourceRevoked } from '@tabs/data/lib/store';
-import { reconcileSyncCron } from '@tabs/data/lib/sync-cron';
+import { removeSyncCronJob } from '@tabs/data/lib/sync-cron-removal';
 import { addNotification } from '@core/notifications/store';
 import { trace } from '@core/infra/agent-governed';
 import { config } from '@core/kernel/config';
@@ -23,7 +23,7 @@ import type { PhysicalTarget } from '@tabs/connections/lib/connections-physical-
  * tear down their sync CronJobs, notify each owner, trace per dataset — lives HERE and is
  * called by both. Duplicating it in the route + the tool is exactly the drift this avoids.
  *
- * Server-only: it imports the sync-cron k8s reconciler + the notification store, which must
+ * Server-only: it imports the CronJob-removal k8s client + the notification store, which must
  * never reach a client bundle.
  */
 
@@ -53,7 +53,7 @@ export async function revokeExposureAndPropagate(exposureId: string, user: Curre
   for (const ds of affected) {
     if (ds.syncFrozen) {
       // Tear down the per-dataset sync CronJob (best-effort; the frozen copy is sovereign).
-      void reconcileSyncCron(ds.id, null).catch(() => {});
+      void removeSyncCronJob(ds.id).catch(() => {});
     }
     addNotification({
       userId: ds.owner,

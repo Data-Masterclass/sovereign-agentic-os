@@ -28,7 +28,7 @@ import { dataProjectGitEnabled, awaitDataProjectCommits } from '@tabs/data/lib/d
 import { projectSnapshot, type SnapshotDeps } from '@tabs/data/lib/dbt/snapshot';
 import { datasetAssetKeys, selectionForBuild, selectionForSync } from '@tabs/data/lib/dbt/asset-keys';
 import { syncLandingLayer } from '@tabs/data/lib/dbt/models';
-import { reconcileSyncCron, type SyncCronOutcome } from '@tabs/data/lib/sync-cron';
+import { removeSyncCronJob, type SyncCronOutcome } from '@tabs/data/lib/sync-cron-removal';
 import { runDatasetSync } from '@tabs/data/lib/sync-run-server';
 
 export type { SyncCronOutcome };
@@ -225,28 +225,52 @@ export function launchDatasetBuild(input: Omit<LaunchInput, 'kind'>, deps: Launc
 /* ------------------------------------------------- the scheduler hand-over -- */
 
 /**
- * Reconcile a dataset's sync SCHEDULE. Flag off ⇒ the `batch/v1` CronJob, exactly as before.
- * Flag on ⇒ Dagster owns the schedule: it is declared in the domain repo's `os/schedules.yml`
- * (committed by the same write) and turned into a `ScheduleDefinition` by the `sovereign` code
- * location, so the OS provisions NO CronJob — and removes any CronJob a pre-B2 save left behind,
- * so the sync cannot fire twice. The outcome keeps the shape the panel and the MCP already render.
+ * Reconcile a dataset's sync SCHEDULE.
+ *
+ * Flag ON (the default since B4): Dagster owns it — the schedule is declared in the domain repo's
+ * `os/schedules.yml` (committed by this same write) and turned into a `ScheduleDefinition` by the
+ * `sovereign` code location, so the OS provisions NO CronJob and REMOVES any CronJob a pre-B2 save
+ * left behind, so one slice cannot fire twice.
+ *
+ * Flag OFF (the one-release emergency opt-out): B4 deleted the CronJob provisioning
+ * (`sync-cron.ts`) and the fallback sweeps, so there is nothing left to schedule with — the config
+ * is saved and the outcome SAYS so rather than implying a trigger exists. A pre-B2 CronJob is
+ * removed in that state too: a stale object firing against the old executor is worse than none.
+ * The outcome keeps the shape the panel and the MCP already render.
  */
 export async function reconcileSyncSchedule(
   datasetId: string,
   sync: { enabled: boolean; schedule: { cron: string } } | null,
-  deps: { flag?: () => boolean; cron?: typeof reconcileSyncCron } = {},
+  deps: { flag?: () => boolean; cron?: typeof removeSyncCronJob } = {},
 ): Promise<SyncCronOutcome> {
-  const cron = deps.cron ?? reconcileSyncCron;
-  if (!(deps.flag ?? dataProjectGitEnabled)()) return cron(datasetId, sync);
-  const removed = await cron(datasetId, null); // idempotent cleanup of a pre-B2 CronJob
+  const remove = deps.cron ?? removeSyncCronJob;
+  const removed = await remove(datasetId); // idempotent cleanup of a pre-B2 CronJob
+  // Say what the cleanup did — including that nobody could check it (an unreachable API server
+  // must never read as "there is no CronJob").
+  const cleaned =
+    removed.action === 'deleted'
+      ? ` The pre-B2 CronJob ${removed.name} was removed.`
+      : removed.live
+        ? ''
+        : ` (${removed.detail})`;
+  if (!(deps.flag ?? dataProjectGitEnabled)()) {
+    return {
+      ok: true,
+      live: removed.live,
+      action: removed.action === 'deleted' ? 'deleted' : 'noop',
+      name: removed.name,
+      detail:
+        'DATA_PROJECT_GIT is off: the sync configuration is saved, but nothing schedules it — the OS no longer provisions CronJobs (engine rebuild B4). Turn the flag on so Dagster runs it, or trigger it with "Sync now".' +
+        cleaned,
+    };
+  }
   return {
     ok: true,
     live: removed.live,
     action: removed.action === 'deleted' ? 'deleted' : 'noop',
     name: removed.name,
     detail:
-      `Dagster schedules this sync from the domain repository (os/schedules.yml, UTC) — no CronJob is provisioned.` +
-      (removed.action === 'deleted' ? ` The pre-B2 CronJob ${removed.name} was removed.` : ''),
+      `Dagster schedules this sync from the domain repository (os/schedules.yml, UTC) — no CronJob is provisioned.` + cleaned,
   };
 }
 

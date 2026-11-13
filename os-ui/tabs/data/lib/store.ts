@@ -667,19 +667,6 @@ export function datasetForScheduler(id: string): Dataset | null {
   return parseDataset(rec.yaml);
 }
 
-/** UNSCOPED list of live datasets with a sync configured — the fallback sweep's
- *  worklist (`/api/data/sync-due`). Server-side callers only. */
-export function datasetsWithSync(): Dataset[] {
-  ensureSeeded();
-  const out: Dataset[] = [];
-  for (const rec of ds().store.values()) {
-    if (rec.archived) continue;
-    const d = parseDataset(rec.yaml);
-    if (d.sync) out.push(d);
-  }
-  return out;
-}
-
 /**
  * UNSCOPED, server-side: a domain's live datasets WITH their recorded native artifact bodies —
  * the input of the dbt project generator (tabs/data/lib/dbt/snapshot.ts). Archived records are

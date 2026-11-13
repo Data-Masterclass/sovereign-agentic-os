@@ -160,25 +160,44 @@ test('flag OFF: launchDatasetBuild is a no-op and nothing reaches Dagster', asyn
   assert.equal(recorded.length, 0);
 });
 
-test('reconcileSyncSchedule: the CronJob with the flag off, Dagster (and CronJob cleanup) with it on', async () => {
-  const cronCalls: (null | { enabled: boolean })[] = [];
-  const cron = (async (_id: string, sync: { enabled: boolean } | null) => {
-    cronCalls.push(sync);
+test('reconcileSyncSchedule: Dagster owns the schedule, and the only CronJob op left is a REMOVAL', async () => {
+  // Engine rebuild B4 deleted `sync-cron.ts`: there is no provisioning path any more, in EITHER
+  // flag state. `reconcileSyncSchedule` therefore only ever removes a pre-B2 CronJob, and the
+  // flag-off branch says plainly that nothing schedules the saved config.
+  const ids: string[] = [];
+  const cron = (async (id: string) => {
+    ids.push(id);
     return { ok: true as const, live: true, action: 'deleted' as const, name: 'data-sync-ds_1', detail: 'gone' };
   }) as never;
 
   __setDataProjectGitForTests(false);
   const off = await reconcileSyncSchedule('ds_1', { enabled: true, schedule: { cron: '0 6 * * *' } }, { cron });
-  assert.deepEqual(cronCalls, [{ enabled: true, schedule: { cron: '0 6 * * *' } }]);
-  assert.equal(off.detail, 'gone');
+  assert.deepEqual(ids, ['ds_1'], 'the removal takes an id — there is no sync to provision from');
+  assert.match(off.detail, /DATA_PROJECT_GIT is off/);
+  assert.match(off.detail, /nothing schedules it/);
+  assert.match(off.detail, /pre-B2 CronJob data-sync-ds_1 was removed/);
 
-  cronCalls.length = 0;
+  ids.length = 0;
   __setDataProjectGitForTests(true);
   const on = await reconcileSyncSchedule('ds_1', { enabled: true, schedule: { cron: '0 6 * * *' } }, { cron });
-  assert.deepEqual(cronCalls, [null], 'the flag-on path only REMOVES a pre-B2 CronJob');
+  assert.deepEqual(ids, ['ds_1'], 'the flag-on path only REMOVES a pre-B2 CronJob');
   assert.match(on.detail, /Dagster schedules this sync from the domain repository/);
   assert.match(on.detail, /pre-B2 CronJob data-sync-ds_1 was removed/);
   assert.equal(on.ok, true);
+});
+
+test('reconcileSyncSchedule: an unreachable API server is carried into the detail, never swallowed', async () => {
+  const cron = (async () => ({
+    ok: false as const,
+    live: false,
+    action: 'noop' as const,
+    name: 'data-sync-ds_1',
+    detail: 'Kubernetes API unreachable — a pre-B2 sync CronJob may still exist for this dataset.',
+  })) as never;
+  __setDataProjectGitForTests(true);
+  const out = await reconcileSyncSchedule('ds_1', { enabled: true, schedule: { cron: '0 6 * * *' } }, { cron });
+  assert.equal(out.live, false);
+  assert.match(out.detail, /unreachable/i, 'a cleanup nobody could check is reported, not implied away');
 });
 
 test('runSyncNow with the flag on launches Dagster as the OWNER and writes no ledger row', async () => {

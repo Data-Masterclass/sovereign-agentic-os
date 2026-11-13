@@ -11,7 +11,7 @@ import { resolveAdoptableExposure } from '@tabs/connections/lib/exposed-tables';
 import { cursorSupportForPlatform } from '@tabs/connections/lib/operational-cursor';
 import { parseSyncBlock, DATASET_SYNC_MODES, type DatasetSync } from '@tabs/data/lib/dataset-schema';
 import { reconcileSyncSchedule } from '@tabs/data/lib/dbt/launch';
-import type { reconcileSyncCron } from '@tabs/data/lib/sync-cron';
+import type { SyncCronOutcome } from '@tabs/data/lib/sync-cron-removal';
 import type { Dataset } from '@tabs/data/lib/dataset-schema';
 
 /**
@@ -54,7 +54,7 @@ export type AdoptExposedInput = {
 
 export type AdoptExposedResult = {
   dataset: Dataset;
-  cron?: Awaited<ReturnType<typeof reconcileSyncCron>>;
+  cron?: SyncCronOutcome;
 };
 
 /**

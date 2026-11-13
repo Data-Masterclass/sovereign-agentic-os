@@ -34,7 +34,7 @@ const READ_ONLY = new Set([
   'ensureHydrated', '__resetStore', '__seedDatasetForTest',
   'listDatasets', 'getDataset', 'peekDatasetMeta', 'peekDatasetTier', 'peekDatasetColumns', 'peekDatasetMeasureNames',
   'isDatasetArchived', 'requireDatasetEditable', 'builtLayerFqn', 'listGovernedDatasets', 'listAllDatasets',
-  'datasetForScheduler', 'datasetsWithSync', 'datasetsForProject', 'listJoinable', 'listAskable', 'listImported',
+  'datasetForScheduler', 'datasetsForProject', 'listJoinable', 'listAskable', 'listImported',
   'listDatasetVersions', 'listFiles', 'readFile', 'assetTarget', 'productTarget',
   'requestPromotion', 'validatePromotion', 'assertPromoteTargetFree', 'assertGrantsWithinAuthority',
   'requireDomainTableMaterialized', 'requestCertification',

@@ -1234,31 +1234,20 @@ metrics:
       osUiUrl: "http://os-ui:3000"
 
 # Data — the Data tab's scheduled surfaces.
-data:
-  quality:
-    cron:
-      enabled: false             # operator turns it on
-      schedule: "*/15 * * * *"   # every 15 minutes
-      # Secret holding the builder+ service principal's credentials (keys:
-      # username, password). Provision it before enabling.
-      principalSecret: dq-run-principal
-      # os-ui service DNS (in-cluster). Override only for non-default topologies.
-      osUiUrl: "http://os-ui:3000"
-
-# Data sync — the SCHEDULED INCREMENTAL SYNC fallback sweep (Data tab).
-dataSync:
-  sweep:
-    enabled: false               # operator turns it on
-    schedule: "*/15 * * * *"     # every 15 minutes
-    # The due-window the sweep passes to the route; keep >= the schedule cadence
-    # so no cron slot can fall between two sweeps.
-    windowMinutes: 15
-    # os-ui service DNS (in-cluster). Override only for non-default topologies.
-    osUiUrl: "http://os-ui:3000"
-    # Secret + key holding the shared agent-runtime bearer (the same one the
-    # os-ui Deployment mounts as AGENT_RUNTIME_TOKEN).
-    tokenSecret: os-ui
-    tokenSecretKey: agent-runtime-token
+#
+# REMOVED in engine rebuild B4: `data.quality.cron` (the DQ sweep CronJob → POST /api/data/dq/run-all)
+# and `dataSync.sweep` (the fallback sync sweep CronJob → POST /api/data/sync-due), together with
+# both routes. Quality rules ARE dbt tests now: every scheduled `dbt build` runs them inside the
+# Dagster run and the OS reads them back as asset checks, so a second OS-side sweep would write rows
+# Dagster does not know about; and sync schedules live in each domain's repository
+# (`os/schedules.yml`), executed by the Dagster `sovereign` code location, so a sweep that also
+# fired them would run every slice twice. Nothing in the OS provisions a `batch/v1` CronJob for data
+# any more (checklist D7).
+#
+# Known gap, recorded as a follow-up in the plan: the DQ sweep was also what delivered the
+# "new failure" e-mail to a dataset owner. The Dagster failure sensor quarantines a repeatedly
+# failing schedule, but nobody is notified yet; the smallest fix is to alert from the asset-check
+# read-back (`latestDqRun` + a persisted last-alerted badge + `deliverDqAlert`, all of which exist).
 
 # Admin Console — REMOVED.
 
