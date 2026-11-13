@@ -92,7 +92,7 @@ function seed(): void {
 
 test('first boot with the flag on: every existing dataset gets its initial commit, as the platform principal', async () => {
   seed();
-  const out = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, domains: async () => ['sales', 'finance'] });
+  const out = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });
   assert.equal(out.ran, true);
   assert.deepEqual(out.domains, ['finance', 'sales'], 'domains are examined in a deterministic order');
   assert.deepEqual(out.committed.map((c) => c.domain), ['finance', 'sales']);
@@ -113,9 +113,9 @@ test('first boot with the flag on: every existing dataset gets its initial commi
 
 test('a second boot that changed nothing commits nothing', async () => {
   seed();
-  await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, domains: async () => ['sales', 'finance'] });
+  await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });
   calls = [];
-  const again = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, domains: async () => ['sales', 'finance'] });
+  const again = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });
   assert.equal(calls.length, 0, 'the tree hash decides — an unchanged project is not re-committed');
   assert.deepEqual(again.committed, []);
   assert.deepEqual(again.failed, []);
@@ -123,12 +123,12 @@ test('a second boot that changed nothing commits nothing', async () => {
 
 test('the crash gap is repaired: a write whose commit never happened is committed at the next boot', async () => {
   seed();
-  await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, domains: async () => ['sales', 'finance'] });
+  await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });
   calls = [];
   // The store write lands, the process dies before the hook's commit (no listener is installed).
   store.addCheck('ds_orders', amir, { name: 'not_null(order_id)', rule: 'not_null', column: 'order_id' });
   assert.equal(calls.length, 0, 'no listener is installed — the write produced no commit');
-  const out = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, domains: async () => ['sales', 'finance'] });
+  const out = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });
   assert.deepEqual(out.committed.map((c) => c.domain), ['sales'], 'only the domain that moved is committed');
   assert.equal(calls.length, 1);
   const models = [...calls[0].files.keys()].filter((f) => f.endsWith('schema.yml') || f.endsWith('sources.yml'));
@@ -139,7 +139,7 @@ test('the crash gap is repaired: a write whose commit never happened is committe
 test('one broken domain neither stops the others nor the boot', async () => {
   seed();
   const out = await reconcileDataProjectsAtBoot({
-    hydrate: async () => {},
+    hydrate: async () => {}, hydration: () => 'hydrated' as const,
     domains: async () => ['sales', 'finance'],
     committer: async (domain, files, opts) => {
       if (domain === 'finance') throw new Error('repository is locked');
@@ -153,19 +153,19 @@ test('one broken domain neither stops the others nor the boot', async () => {
 test('with the flag off the reconcile does nothing and claims nothing', async () => {
   seed();
   __setDataProjectGitForTests(false);
-  const out = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, domains: async () => ['sales'] });
+  const out = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales'] });
   assert.deepEqual(out, { domains: [], committed: [], failed: [], ran: false });
   assert.equal(calls.length, 0);
 });
 
 test('a domain whose last dataset was deleted is reconciled too (the repository is emptied)', async () => {
   seed();
-  await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, domains: async () => ['sales', 'finance'] });
+  await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });
   calls = [];
   store.deleteDataset('ds_ledger', fatima);
   // The domain no longer appears in the store, but its repository is still on disk — discovery is
   // the UNION, so the empty project is committed.
-  const out = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, domains: async () => ['sales', 'finance'] });
+  const out = await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });
   assert.deepEqual(out.committed.map((c) => c.domain), ['finance']);
   assert.ok(calls[0].files.has('dbt_project.yml'), 'a domain with no datasets still has a parseable project');
 });
@@ -200,7 +200,7 @@ test('the data boot reconcile KEEPS a reserved `agents/` subtree in a domain tha
   await seedRepoWithBothHalves('sales');
   // This is exactly what `installAgentProjectCommitHook` does at boot, before the reconcile runs.
   reserveSubtree(AGENTS_PREFIX);
-  const out = await reconcileDataProjectsAtBoot({ hydrate: async () => {}, domains: async () => ['sales'], reposDir: realRepos });
+  const out = await reconcileDataProjectsAtBoot({ hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales'], reposDir: realRepos });
   assert.deepEqual(out.committed.map((c) => c.domain), ['sales'], 'the dbt project was missing, so the tree moved');
   const paths = (await listTree('sales', 'main', { reposDir: realRepos })).map((e) => e.path);
   assert.ok(paths.includes('dbt_project.yml'), 'the data half is committed');
@@ -215,8 +215,46 @@ test('without the reservation the same reconcile DELETES `agents/` — which is 
   __clearReservedSubtrees();
   seedDataset('ds_orders', 'Orders', nadia, 'sales2', 'orders');
   await seedRepoWithBothHalves('sales2');
-  const out = await reconcileDataProjectsAtBoot({ hydrate: async () => {}, domains: async () => ['sales2'], reposDir: realRepos });
+  const out = await reconcileDataProjectsAtBoot({ hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales2'], reposDir: realRepos });
   assert.deepEqual(out.committed.map((c) => c.domain), ['sales2']);
   const paths = (await listTree('sales2', 'main', { reposDir: realRepos })).map((e) => e.path);
   assert.equal(paths.filter((p) => p.startsWith(AGENTS_PREFIX)).length, 0, 'the reservation is the ONLY thing that protects the subtree');
+  // The destructive-delta guard does NOT cover this one, and must not be believed to: this
+  // reconcile is WRITING a whole dbt project while it deletes, so it is a replacement, not an
+  // empty read. The reservation (step 2 of `instrumentation.ts`'s ordered boot block) is the
+  // protection here; the guard's case is the one below.
+});
+
+test('an EMPTY registry does not get the models deleted — the reconcile is refused (review H-1)', async () => {
+  __clearReservedSubtrees();
+  // A domain whose project was committed while its datasets were readable…
+  // Enough datasets that the models outnumber the fixed project skeleton — the guard measures
+  // the SHARE of the tree a reconcile would remove, so a domain with one dataset and eight
+  // skeleton files is below the threshold by arithmetic (recorded as a deviation, not a surprise).
+  for (const slug of ['orders', 'customers', 'invoices', 'shipments', 'returns', 'leads', 'quotes', 'refunds', 'visits', 'carts']) {
+    seedDataset(`ds_${slug}`, slug, amir, 'sales3', slug);
+  }
+  const first = await reconcileDataProjectsAtBoot({ hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales3'], reposDir: realRepos });
+  assert.deepEqual(first.committed.map((c) => c.domain), ['sales3']);
+  const before = (await listTree('sales3', 'main', { reposDir: realRepos })).map((e) => e.path);
+  assert.ok(before.filter((p) => p.startsWith('models/')).length > before.length / 2, 'the models are the bulk of the repo');
+
+  // …and a LATER boot whose hydration said 'hydrated' but whose registry came back empty anyway
+  // (the mirror answered, with nothing). The generated project is then the bare skeleton: it
+  // deletes every model and adds not one path. Refused, loudly, with nothing committed.
+  store.__resetStore();
+  const second = await reconcileDataProjectsAtBoot({ hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales3'], reposDir: realRepos });
+  assert.deepEqual(second.committed, [], 'nothing was committed');
+  assert.deepEqual(second.failed.map((f) => f.domain), ['sales3']);
+  assert.match(second.failed[0].error, /refusing a boot-reconcile commit/);
+  assert.deepEqual((await listTree('sales3', 'main', { reposDir: realRepos })).map((e) => e.path), before, 'the project is byte-identical');
+});
+
+test('the boot reconcile does NOT run while the dataset registry is unverified (review H-1)', async () => {
+  seedDataset('ds_orders', 'Orders', amir, 'sales', 'orders');
+  for (const hydration of ['failed', 'pending'] as const) {
+    const out = await reconcileDataProjectsAtBoot({ hydrate: async () => {}, hydration: () => hydration, committer, reposDir: '/nope' });
+    assert.deepEqual(out, { domains: [], committed: [], failed: [], ran: false }, `'${hydration}' examines nothing and claims nothing`);
+  }
+  assert.deepEqual(calls, [], 'not one commit was attempted');
 });

@@ -277,13 +277,26 @@
 {{- $dpg := $u.dataProjectGit | default dict -}}
 {{- $ac := .Values.trino.accessControl | default dict -}}
 {{- if $dpg.enabled }}
-# Data products in git (engine rebuild B1): every dataset change regenerates the
-# domain's dbt project and commits it to /repos/<domain>.git (the os-repos PVC).
-# ADMIN-side on purpose (merge of A4-review-M-4 with B1): the only readers are
-# `instrumentation.ts`'s commit-hook install, `tabs/data/**` and `app/api/data/**`
-# — nothing under `tabs/agents/**`, `core/runtime/**` or `worker/` touches the git
-# store — and the worker pod mounts no `os-repos` PVC, so `/repos` would not exist
-# there. Keeping it out of `runEnv` means a run can neither read nor write a repo.
+# Data products AND agent systems in git (engine rebuild B1, Part D): every dataset
+# change regenerates the domain's dbt project, and every agent-system definition
+# change regenerates that domain's `agents/` subtree, each committed to
+# /repos/<domain>.git (the os-repos PVC).
+#
+# ADMIN-side on purpose (merge of A4-review-M-4 with B1, and the DECISION of Part D
+# review H-3): the readers are `instrumentation.ts`'s commit-hook install,
+# `tabs/data/**`, `tabs/agents/lib/git/**` and the routes above them. The
+# `os-ui-worker` pod mounts NO `os-repos` volume and gets neither variable, because
+# the PVC is ReadWriteOnce (templates/base/os-ui/os-repos.yaml): os-ui and the worker
+# are separate Deployments the scheduler may place on different nodes, and an RWO
+# volume attaches to one node at a time — mounting it in both would either fail to
+# start the worker or pin it to os-ui's node, and two processes writing one bare repo
+# is exactly what the git store's IN-PROCESS lock cannot protect.
+#
+# So the worker does not write repos, and it does not pretend to: `worker/agent-runs.ts`
+# marks the process, and an agent-system DEFINITION write there fails closed with a
+# typed `SystemWriteUnavailableError` instead of landing in the mirror uncommitted.
+# Run and build bookkeeping (the activity marker, the run checkpoint, the last-run
+# report) is unaffected — it is deliberately not a commit.
 - name: DATA_PROJECT_GIT
   value: "true"
 - name: OS_REPOS_DIR

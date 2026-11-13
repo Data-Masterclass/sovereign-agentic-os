@@ -109,9 +109,12 @@ import {
 import { stripThinking } from '@tabs/agents/lib/agent-chat-response';
 import {
   callToolGuarded,
+  isUnresolved,
+  unresolvedWriteRepeat,
   DEFAULT_TOOL_CALL_TIMEOUT_MS,
   DEFAULT_TOOL_RESULT_MAX_CHARS,
 } from '@tabs/agents/lib/engine/tool-result';
+import { isWriteTool } from '@tabs/agents/lib/build/hold';
 import {
   boundInput,
   curatePredecessor,
@@ -214,7 +217,13 @@ export type RouteDecision = {
 export type RunBudget = { stepsUsed: number; exhausted: boolean };
 
 /** A previously executed (tool, args) signature and its outcome — the dedup ledger of one agent visit. */
-type ExecutedSig = { sig: string; count: number; ok: boolean };
+/**
+ * One tool-call signature the node has already dispatched.
+ *   `ok`         — it answered without an error (an exact repeat is short-circuited).
+ *   `unresolved` — it did NOT answer before the deadline, so whether it took effect is unknown.
+ *                  A repeat of an unresolved WRITE is refused (review M-3), never re-dispatched.
+ */
+type ExecutedSig = { sig: string; count: number; ok: boolean; unresolved?: boolean };
 
 /** The agent visit in flight: everything `act_<id>` / `tools_<id>` need between supersteps. */
 export type AgentCursor = {
@@ -965,6 +974,18 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         obs.toolEvent(call, { decision: 'dedup', detail: note });
         record(note, false);
         feed(note);
+      } else if (prior && prior.unresolved && isWriteTool(call.name)) {
+        // EXACTLY-ONCE FOR A WRITE WE CANNOT ASK ABOUT (review M-3). The prior attempt timed out:
+        // the engine stopped waiting, so the write may have committed. Sending it again is how
+        // one `insert_rows` becomes two rows. The model gets a typed `unresolved_previous_call`
+        // and is told to READ first; a read with the same signature still re-dispatches, because
+        // re-reading is free and is exactly how it should resolve the uncertainty.
+        repeatedCalls += 1;
+        executed[priorIdx] = { ...prior, count: prior.count + 1 };
+        const out = unresolvedWriteRepeat(call.name);
+        obs.toolEvent(call, { decision: 'dedup', detail: 'repeat of an UNRESOLVED write — not re-dispatched' });
+        record(out.text, true);
+        feed(out.text);
       } else {
         const gate = cur.gate.decisions[call.id];
         let out: { text: string; isError: boolean };
@@ -1003,7 +1024,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           );
         }
         if (gate) held.push({ node: id, tool: call.name, callId: call.id, approvalId: gate.approvalId, decision: gate.decision });
-        const entry: ExecutedSig = { sig, count: (prior?.count ?? 0) + 1, ok: !out.isError };
+        const entry: ExecutedSig = { sig, count: (prior?.count ?? 0) + 1, ok: !out.isError, ...(isUnresolved(out.text) ? { unresolved: true } : {}) };
         if (priorIdx >= 0) executed[priorIdx] = entry;
         else executed.push(entry);
         record(out.text, out.isError);

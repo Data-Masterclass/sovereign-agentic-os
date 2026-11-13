@@ -16,6 +16,7 @@ import { type Effect } from '@tabs/agents/lib/gateway';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { trace as realTrace } from '@core/infra/agent-governed';
 import type { RunTraceContext } from '@core/infra/langfuse';
+import { runWithRunId } from '@core/infra/request-surface';
 import { enqueue as realEnqueue } from '@core/policy/approvals';
 import { holdDecision, writeTargetScope } from '@tabs/agents/lib/build/hold';
 import { resolveFolderGrant } from '@core/kernel/folders';
@@ -665,11 +666,18 @@ export function grantedToolExecutor(
     // Gate 2 — dispatch as the ACTING USER through the ONE governed MCP door. The
     // role floor is re-checked inside handleRpc and the governed lib (OPA/DLS/RLS)
     // is the real authority — never the service principal.
-    const res = await deps.handleRpc(
-      user,
-      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: mcpName, arguments: args } },
-      { tools: granted },
-    );
+    // The dispatch runs inside the RUN's scope (Part D review L-3): a granted write that commits
+    // to a domain repo — an agent system, a dbt project — then carries an `OS-Run-Id` trailer, so
+    // the git log distinguishes "a run did this" from "a person did this at the same moment".
+    // Nothing else changes: the identity, the grants and the policy are still the acting user's.
+    const dispatch = () =>
+      deps.handleRpc(
+        user,
+        { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: mcpName, arguments: args } },
+        { tools: granted },
+      );
+    const runId = opts.traceContext?.traceId;
+    const res = runId ? await runWithRunId(runId, dispatch) : await dispatch();
     // Honest decision note: a granted WRITE that reached gate 2 is a My-scope write that
     // ran DIRECTLY (the My-direct rule) — record it as such, not a bare 'allow', so the
     // trace tells the truth about WHY no approval was needed.

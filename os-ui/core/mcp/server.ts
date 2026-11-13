@@ -8,7 +8,7 @@ import { config } from '@core/kernel/config';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 import { listSystems, ensureHydrated as agentsHydrated } from '@tabs/agents/lib/store';
 import { getRegisteredTools, getBundleTools, hydrateAllBundles } from '@core/mcp/registry';
-import { runWithSurface } from '@core/infra/request-surface';
+import { runWithSurface, currentSurface } from '@core/infra/request-surface';
 import '@core/mcp/register-base';
 import '@core/mcp/register-experimental';
 import {
@@ -481,9 +481,15 @@ export async function handleRpc(
       try {
         // Part D: every tool call runs inside an `mcp:<tool>` request-surface scope, so a write it
         // causes is committed to the domain repo as `… — via mcp:<tool>` (the UI's counterpart is
-        // `ui:<route>`, set by `withRoute`). One place, so no tool surface can be forgotten; a
-        // tool that already wraps itself simply nests the same name.
-        const result = await runWithSurface(`mcp:${tool.name}`, () => tool.call(user, args));
+        // `ui:<route>`, set by `withRoute`). One place, so no tool surface can be forgotten.
+        //
+        // The ambient request id is CARRIED IN (review L-3): a nested call — the granted-tool
+        // executor dispatching through this same door inside an agent run, or a route that
+        // already opened a scope — belongs to the request that started it, and minting a second
+        // id would split one causal chain across two `OS-Request-Id`s in the git log. The run id
+        // (`runWithRunId`) rides along the same way, which is what produces `OS-Run-Id`.
+        const ambient = currentSurface();
+        const result = await runWithSurface(`mcp:${tool.name}`, () => tool.call(user, args), ambient?.requestId);
         return ok(id, { content: [{ type: 'text', text: safeText(result) }] });
       } catch (e) {
         // Governance denials + execution failures surface as a TYPED MCP tool error

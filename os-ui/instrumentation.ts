@@ -18,6 +18,27 @@ export async function register(): Promise<void> {
   // Guard 1: Node.js runtime only (edge has no Buffer / fetch-credential access).
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
 
+  // SUBTREE RESERVATION, FIRST (Part D review H-2). `agents/` belongs to the Agents tab, and the
+  // data side's generator writes the WHOLE tree: without the reservation ITS first commit deletes
+  // the subtree. The ordered boot block below installs the agents hook (which also reserves)
+  // before the data reconcile runs, and the data reconcile is skipped if that hook failed — but
+  // both of those are ORDERING arguments, and an ordering argument is one careless edit away from
+  // being wrong. The reservation itself is idempotent, costs nothing and depends on nothing, so it
+  // is taken HERE, before any other boot step, and the ordering becomes a second line of defence
+  // rather than the only one. The literal must stay equal to `AGENTS_PREFIX`
+  // (`tabs/agents/lib/git/generate.ts`); `tabs/agents/lib/git/commit.test.ts` asserts it does.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      const { config } = await import('./core/kernel/config.ts');
+      if (config.dataProjectGit) {
+        const { reserveSubtree } = await import('./core/infra/git-store.ts');
+        reserveSubtree('agents/');
+      }
+    } catch (err) {
+      console.error(`[os-ui] agent projects: could NOT reserve the 'agents/' subtree — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Boot-time SECURITY guard: refuse to serve in production with the insecure
   // dev-default session/MCP signing secret. This runs HERE (real server start) so it
   // NEVER fires during `next build` static prerender or on the edge — where a
@@ -147,6 +168,9 @@ export async function register(): Promise<void> {
   // no repo is touched. Fail-soft per step: a wiring error is logged, never a boot failure.
   //
   // THE ORDER IN THIS BLOCK IS LOAD-BEARING, and it is why the two halves share one block:
+  // (`reserveSubtree('agents/')` has ALREADY run, at the very top of `register()` — review H-2 —
+  // so the ordering below is now defence in depth rather than the only thing standing between a
+  // whole-tree commit and the agents subtree.)
   //   1. the data commit hook,
   //   2. the agents commit hook — which also calls `reserveSubtree('agents/')`,
   //   3. the DATA boot reconcile — a WHOLE-TREE commit, which keeps `agents/` only because step 2

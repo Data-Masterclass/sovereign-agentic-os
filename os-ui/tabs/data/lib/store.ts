@@ -123,6 +123,8 @@ type DataStoreState = {
   hydration: Promise<void> | null;
   /** Set when the last hydration found the mirror DOWN — gates the throttled retry. */
   hydrateFailedAt?: number;
+  /** Set when a hydration READ THE MIRROR SUCCESSFULLY — what `hydrationState` reports. */
+  hydratedAt?: number;
 };
 const DS_KEY = Symbol.for('soa.data.store');
 function ds(): DataStoreState {
@@ -210,6 +212,22 @@ export async function ensureHydrated(): Promise<void> {
   return s.hydration;
 }
 
+/**
+ * Did the registry in memory actually come from the durable mirror? (Part D review H-1 — the
+ * same probe, with the same contract, as `@tabs/agents/lib/store`'s.)
+ *
+ * {@link ensureHydrated} RESOLVES even when `mirror.hydrate()` returned null: a mirror-down
+ * hydration is recorded for the throttled retry, never thrown. A read path is right to degrade
+ * that way. A boot-time WRITER is not — an EMPTY registry and a registry that failed to load are
+ * indistinguishable by content, and the Sept-2026 login outage proved the race is real. Anything
+ * that would COMMIT or DELETE because the store looks empty must check this first.
+ */
+export function hydrationState(): 'hydrated' | 'failed' | 'pending' {
+  const s = ds();
+  if (s.hydratedAt !== undefined) return 'hydrated';
+  return s.hydrateFailedAt !== undefined ? 'failed' : 'pending';
+}
+
 async function hydrate(): Promise<void> {
   const s = ds();
   const docs = await mirror.hydrate(1000);
@@ -221,6 +239,7 @@ async function hydrate(): Promise<void> {
     return;
   }
   s.hydrateFailedAt = undefined;
+  s.hydratedAt = Date.now();
   for (const rec of docs as DatasetRecord[]) {
     // Don't clobber records created in-process before hydration completed.
     if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
@@ -261,6 +280,7 @@ export function __resetStore(): void {
   s.seeded = false;
   s.hydration = null;
   s.hydrateFailedAt = undefined;
+  s.hydratedAt = undefined;
   mirror.__reset();
   versions.__reset();
 }

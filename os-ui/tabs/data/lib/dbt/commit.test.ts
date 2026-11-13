@@ -32,6 +32,9 @@ const fatima: Principal = { id: 'fatima', domains: ['finance'], role: 'builder' 
 /** Exports that only READ (or are test seams). Anything else must be a classified mutator. */
 const READ_ONLY = new Set([
   'ensureHydrated', '__resetStore', '__seedDatasetForTest',
+  // Part D review H-1: a probe, not a writer — it reports whether the registry really loaded, and
+  // every boot-time writer must check it before committing (or deleting) anything.
+  'hydrationState',
   'listDatasets', 'getDataset', 'peekDatasetMeta', 'peekDatasetTier', 'peekDatasetColumns', 'peekDatasetMeasureNames',
   'isDatasetArchived', 'requireDatasetEditable', 'builtLayerFqn', 'listGovernedDatasets', 'listAllDatasets',
   'datasetForScheduler', 'datasetsForProject', 'listJoinable', 'listAskable', 'listImported',

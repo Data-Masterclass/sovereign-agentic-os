@@ -21,6 +21,11 @@
  *     replaces exactly one prefix and keeps the rest of the tree; `reserveSubtree` lets a subtree
  *     owner declare its prefix so a WHOLE-TREE writer (`commitTree`) cannot clobber it. Both are
  *     generic: the registry holds path prefixes, never a tab's vocabulary.
+ *   - DESTRUCTIVE-DELTA GUARD (Part D review H-1): a commit marked `OS-Reason: boot-reconcile`
+ *     that would delete more than half of the files it already tracks in its own scope is REFUSED
+ *     (`DestructiveReconcileError`) and logged. Boot-time generators read a store that can hydrate
+ *     EMPTY without throwing, and an empty generated tree committed by a reconcile is indisputably
+ *     a bad read, not a deletion. A human-initiated commit is never subject to it.
  *   - `push` to a mirror resolves the token through the secrets helper at call time and never
  *     logs, returns or persists it; errors are scrubbed before they leave this module.
  */
@@ -30,6 +35,7 @@ import * as git from 'isomorphic-git';
 import http from 'isomorphic-git/http/node';
 import { config } from '@core/kernel/config';
 import { tarArchive } from '@core/infra/tar';
+import { currentSurface } from '@core/infra/request-surface';
 
 export const MAIN = 'refs/heads/main';
 export const COMMITTER = { name: 'Sovereign OS', email: 'os@sovereign.local' } as const;
@@ -179,6 +185,13 @@ export type CommitMessageInput = {
   requestId: string;
   /** Optional stable id for the OS-Object trailer (`<id> (<name>)`); defaults to `object`. */
   objectId?: string;
+  /**
+   * The agent run this write happened inside, for the `OS-Run-Id` trailer. Omitted ⇒ taken from
+   * the ambient request scope (`core/infra/request-surface`), which is how a NESTED granted-tool
+   * call inside a run gets attributed without every writer threading a run id through its
+   * signature. Outside a run there is no trailer at all — never a fabricated one.
+   */
+  runId?: string;
 };
 
 const TRAILER_RE = /^([A-Za-z][A-Za-z0-9-]*): (.*)$/;
@@ -195,6 +208,9 @@ export function commitMessage(input: CommitMessageInput): string {
     'OS-Object': oneLine(input.objectId ?? input.object),
     'OS-Surface': oneLine(input.surface),
     'OS-Request-Id': oneLine(input.requestId),
+    // Part D review L-3: a granted tool called by an agent run commits inside the run's scope,
+    // so the commit says WHICH run caused it. Empty ⇒ `appendTrailers` drops the line.
+    'OS-Run-Id': oneLine(input.runId ?? currentSurface()?.runId ?? ''),
   });
 }
 
@@ -226,6 +242,18 @@ export function parseTrailers(message: string): Record<string, string> {
 }
 
 /**
+ * The local part of a synthesized address: the principal id reduced to a safe mailbox token.
+ * Part D review L-2: an id that is ALREADY e-mail-shaped (`amir@acme.com`) produced the malformed
+ * `amir@acme.com@os.local`, which git writes verbatim and every mail-aware tool mis-parses. Only
+ * the part before the first `@` is kept, and anything outside the safe set becomes `-`.
+ */
+function mailboxToken(id: string): string {
+  const local = String(id ?? '').split('@')[0];
+  const safe = local.replace(/[^A-Za-z0-9._+-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
+  return safe || 'unknown';
+}
+
+/**
  * The git author for an acting user. A user without an e-mail gets `<id>@os.local`, and the
  * caller must say so in the commit (`OS-Author-Email: synthesized`) — never a silent invention.
  */
@@ -233,7 +261,7 @@ export function authorFor(user: { id: string; name?: string | null; email?: stri
   const name = oneLine(user.name ?? '') || user.id;
   const email = oneLine(user.email ?? '');
   if (email) return { author: { name, email }, synthesized: false };
-  return { author: { name, email: `${user.id}@os.local` }, synthesized: true };
+  return { author: { name, email: `${mailboxToken(user.id)}@os.local` }, synthesized: true };
 }
 
 // ------------------------------------------------------- subtree ownership ---
@@ -345,6 +373,74 @@ async function entriesAt(gitdir: string, commitOid: string): Promise<Map<string,
   return out;
 }
 
+// ----------------------------------------------- destructive-delta guard ---
+
+/** The `OS-Reason` value that marks a commit as an automatic catch-up, not a person's action. */
+export const RECONCILE_REASON = 'boot-reconcile';
+/**
+ * A reconcile may remove at most this FRACTION of the files it already tracks in the part of the
+ * tree it owns — and even then only while it CREATES nothing (see {@link assertNotDestructive}).
+ * Above it, the commit is refused: a generator that wants to delete most of its own world and put
+ * nothing in its place is far more likely to be reading an EMPTY store (the Sept-2026 login outage
+ * shape: a mirror blip hydrates the registry to nothing WITHOUT throwing) than to be recording a
+ * real mass deletion. A real one is still recorded — by the write path, as the person who did it.
+ */
+export const RECONCILE_MAX_DELETE_RATIO = 0.5;
+
+/** The typed refusal of a reconcile commit that would delete most of its own tree. */
+export class DestructiveReconcileError extends GitStoreError {
+  readonly code = 'destructive_reconcile';
+  readonly domain: string;
+  readonly scope: string;
+  readonly deleted: number;
+  readonly tracked: number;
+  constructor(domain: string, scope: string, deleted: string[], tracked: number) {
+    super(
+      `refusing a ${RECONCILE_REASON} commit for '${domain}': it would delete ${deleted.length} of ${tracked} tracked file(s) under ${scope} ` +
+        `(more than ${Math.round(RECONCILE_MAX_DELETE_RATIO * 100)}%) and add none — e.g. ${deleted.slice(0, 3).join(', ')}. ` +
+        'A generator that empties its own tree is treated as a bad read (an unhydrated store), not as a deletion. ' +
+        'Nothing was committed and nothing was pushed.',
+      409,
+    );
+    this.name = 'DestructiveReconcileError';
+    this.domain = domain;
+    this.scope = scope;
+    this.deleted = deleted.length;
+    this.tracked = tracked;
+  }
+}
+
+/** Is this commit an automatic catch-up (`OS-Reason: boot-reconcile`), from either trailer source? */
+function isReconcileCommit(opts: CommitTreeOptions): boolean {
+  const explicit = opts.trailers?.['OS-Reason'];
+  if (typeof explicit === 'string' && explicit.trim() === RECONCILE_REASON) return true;
+  return parseTrailers(opts.message)['OS-Reason'] === RECONCILE_REASON;
+}
+
+/**
+ * Refuse a RECONCILE commit that would delete more than {@link RECONCILE_MAX_DELETE_RATIO} of the
+ * files already tracked in its own scope (`tracked`: the subtree for `commitSubtree`, everything
+ * outside the reserved subtrees for `commitTree`) AND would create nothing in their place.
+ *
+ * BOTH conditions matter. A reconcile that replaces one system's files with another's deletes a
+ * large share and is perfectly legitimate — the catch-up it exists for. A reconcile that deletes a
+ * large share and adds NOT ONE path is generating from an empty registry: every file it still
+ * writes is one it already had. That is the outage shape, and it is refused.
+ *
+ * A human-initiated commit is never subject to this — a person deleting their last system still
+ * gets the removal committed, as themselves.
+ */
+function assertNotDestructive(domain: string, scope: string, tracked: string[], files: Map<string, string>, opts: CommitTreeOptions): void {
+  if (!isReconcileCommit(opts) || tracked.length === 0) return;
+  const deleted = tracked.filter((p) => !files.has(p));
+  if (deleted.length <= tracked.length * RECONCILE_MAX_DELETE_RATIO) return;
+  const known = new Set(tracked);
+  if ([...files.keys()].some((p) => !known.has(p))) return; // it is REPLACING, not emptying
+  const err = new DestructiveReconcileError(domain, scope, deleted, tracked.length);
+  console.error(`[git-store] ${err.message}`);
+  throw err;
+}
+
 /** Write the merged tree and commit iff its hash differs from HEAD's. Call inside the repo lock. */
 async function commitLeaves(gitdir: string, head: string | null, files: Map<string, Leaf>, opts: CommitTreeOptions): Promise<CommitResult> {
   const tree = await writeDir(gitdir, buildDirTree(files));
@@ -383,11 +479,13 @@ export async function commitTree(domain: string, files: Map<string, string>, opt
     const head = await headSha(gitdir);
     const leaves = new Map<string, Leaf>();
     const prefixes = reservedSubtrees();
-    if (head && prefixes.length > 0) {
-      for (const [p, leaf] of await entriesAt(gitdir, head)) {
-        if (prefixes.some((pre) => p.startsWith(pre)) && !files.has(p)) leaves.set(p, leaf);
-      }
+    const existing = head ? await entriesAt(gitdir, head) : new Map<string, Leaf>();
+    for (const [p, leaf] of existing) {
+      if (prefixes.some((pre) => p.startsWith(pre)) && !files.has(p)) leaves.set(p, leaf);
     }
+    // A whole-tree writer owns everything EXCEPT another writer's reserved subtree, so that is
+    // the scope the destructive-delta guard measures.
+    assertNotDestructive(domain, 'the project tree', [...existing.keys()].filter((p) => !prefixes.some((pre) => p.startsWith(pre))), files, opts);
     for (const [p, content] of files) leaves.set(p, { content });
     return commitLeaves(gitdir, head, leaves, opts);
   });
@@ -407,11 +505,14 @@ export async function commitSubtree(domain: string, prefix: string, files: Map<s
   return withLock(gitdir, async () => {
     const head = await headSha(gitdir);
     const leaves = new Map<string, Leaf>();
+    const mine: string[] = [];
     if (head) {
       for (const [p, leaf] of await entriesAt(gitdir, head)) {
-        if (!p.startsWith(pre)) leaves.set(p, leaf);
+        if (p.startsWith(pre)) mine.push(p);
+        else leaves.set(p, leaf);
       }
     }
+    assertNotDestructive(domain, `'${pre}'`, mine, files, opts);
     for (const [p, content] of files) leaves.set(p, { content });
     return commitLeaves(gitdir, head, leaves, opts);
   });
@@ -419,12 +520,19 @@ export async function commitSubtree(domain: string, prefix: string, files: Map<s
 
 // -------------------------------------------------------------------- reads ---
 
+/**
+ * How deep ONE log read may walk. A domain repo mixes the dbt project's commits with every agent
+ * system's, so a per-object history has to scan more than it returns; 2000 bounds the walk while
+ * leaving room for a busy domain (Part D review L-1).
+ */
+export const MAX_LOG_DEPTH = 2000;
+
 /** Newest first. An empty repo (no commits yet) yields `[]`. */
 export async function log(domain: string, opts: GitStoreOptions & { limit?: number } = {}): Promise<LogEntry[]> {
   if (!repoExists(domain, opts)) return [];
   const gitdir = repoPath(domain, opts);
   if (!(await headSha(gitdir))) return [];
-  const entries = await git.log({ fs, gitdir, ref: MAIN, depth: Math.max(1, Math.min(opts.limit ?? 50, 500)) });
+  const entries = await git.log({ fs, gitdir, ref: MAIN, depth: Math.max(1, Math.min(opts.limit ?? 50, MAX_LOG_DEPTH)) });
   return entries.map((e) => ({
     sha: e.oid,
     subject: e.commit.message.split('\n')[0],

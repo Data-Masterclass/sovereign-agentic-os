@@ -28,11 +28,14 @@ import {
   __setAgentProjectGitForTests,
 } from '@tabs/agents/lib/git/commit';
 import { reconcileAgentProjects, PLATFORM_ACTOR, RECONCILE_REASON } from '@tabs/agents/lib/git/reconcile';
+import { ownerToken } from '@tabs/agents/lib/git/generate';
 import { systemGitInfo } from '@tabs/agents/lib/git/history';
 
 let reposDir = '';
 let uninstall: (() => void) | null = null;
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };
+/** A personal lane is keyed by the OPAQUE owner token, never the principal id (review M-1). */
+const AMIR_LANE = `agents/personal/${ownerToken('amir')}`;
 
 before(() => {
   reposDir = mkdtempSync(join(tmpdir(), 'os-repos-agents-'));
@@ -82,15 +85,15 @@ test('two saves are two commits, authored as the acting user and committed by So
   const paths = (await listTree('sales', 'main', { reposDir })).map((p) => p.path);
   assert.deepEqual(paths, [
     'agents/index.yml',
-    'agents/personal/amir/triage-two/README.md',
-    'agents/personal/amir/triage-two/agents/assistant.md',
-    'agents/personal/amir/triage-two/graph.json',
-    'agents/personal/amir/triage-two/system.yaml',
+    `${AMIR_LANE}/triage-two/README.md`,
+    `${AMIR_LANE}/triage-two/agents/assistant.md`,
+    `${AMIR_LANE}/triage-two/graph.json`,
+    `${AMIR_LANE}/triage-two/system.yaml`,
   ]);
   // The yaml's `system.name` is deliberately frozen by `renameAgentSystem` (the record's display
   // name is what changed), so the committed source still reads the original — and says so.
-  assert.match(await readBlob('sales', 'main', 'agents/personal/amir/triage-two/system.yaml', { reposDir }), /name: Triage one/);
-  assert.match(await readBlob('sales', 'main', 'agents/personal/amir/triage-two/README.md', { reposDir }), /^# Triage two/);
+  assert.match(await readBlob('sales', 'main', `${AMIR_LANE}/triage-two/system.yaml`, { reposDir }), /name: Triage one/);
+  assert.match(await readBlob('sales', 'main', `${AMIR_LANE}/triage-two/README.md`, { reposDir }), /^# Triage two/);
 });
 
 test('an identical regeneration commits nothing', async () => {
@@ -117,7 +120,7 @@ test('the agents subtree and the dbt project coexist: neither generator deletes 
   );
   const paths = (await listTree('sales', 'main', { reposDir })).map((p) => p.path);
   assert.ok(paths.includes('dbt_project.yml') && paths.includes('models/gold/mart.sql'));
-  assert.ok(paths.some((p) => p.startsWith('agents/personal/amir/coexist/')), 'the dbt commit kept the agents subtree');
+  assert.ok(paths.some((p) => p.startsWith(`${AMIR_LANE}/coexist/`)), 'the dbt commit kept the agents subtree');
   // …and the next agent change keeps the dbt project.
   store.renameAgentSystem(store.listSystems(amir).mine[0].id, amir, 'Coexist 2');
   await awaitAgentProjectCommits();
@@ -134,22 +137,23 @@ test('the boot reconcile commits what happened while git was off, as the platfor
   __setAgentProjectGitForTests(true);
   assert.deepEqual(await log('reconcile-domain', { reposDir }), [], 'nothing was committed with the flag off');
 
-  const first = await reconcileAgentProjects({ reposDir, mirror: false });
+  const first = await reconcileAgentProjects({ reposDir, mirror: false, hydration: () => 'hydrated' });
   assert.deepEqual(first, [{ domain: 'sales', changed: true, sha: first[0].sha }]);
   const entries = await log('sales', { reposDir });
   assert.match(entries[0].subject, /^agents\(sales\): reconcile agent systems sales — via boot:reconcile$/);
   assert.equal(entries[0].trailers['OS-Reason'], RECONCILE_REASON);
   assert.equal(entries[0].trailers['OS-Actor'], PLATFORM_ACTOR.id);
   assert.deepEqual(entries[0].author, { name: PLATFORM_ACTOR.name, email: PLATFORM_ACTOR.email });
-  assert.ok((await listTree('sales', 'main', { reposDir })).some((p) => p.path.startsWith('agents/personal/amir/offline-work/')));
+  assert.ok((await listTree('sales', 'main', { reposDir })).some((p) => p.path.startsWith(`${AMIR_LANE}/offline-work/`)));
 
   // Idempotent: a second reconcile with nothing changed commits nothing.
-  const second = await reconcileAgentProjects({ reposDir, mirror: false });
+  const second = await reconcileAgentProjects({ reposDir, mirror: false, hydration: () => 'hydrated' });
   assert.deepEqual(second, [{ domain: 'sales', changed: false, sha: entries[0].sha }]);
 });
 
-test('reconcile commits a REMOVAL for a domain whose systems went away, and skips a data-only repo', async () => {
+test('reconcile commits the REMOVAL of one system among several, and skips a data-only repo', async () => {
   install();
+  store.createSystem(amir, { name: 'Stays here' });
   store.createSystem(amir, { name: 'Gone soon' });
   await awaitAgentProjectCommits();
   // A data-only repo: no agent system ever lived here.
@@ -158,23 +162,61 @@ test('reconcile commits a REMOVAL for a domain whose systems went away, and skip
     message: 'data(dataonly): generate',
     reposDir,
   });
-  // Delete the system WITHOUT the hook, so the repo is now stale (what a crash looks like).
+  // Delete one system WITHOUT the hook, so the repo is now stale (what a crash looks like).
   uninstall?.();
   uninstall = null;
-  store.deleteSystem(store.listSystems(amir).mine[0].id, amir);
+  const doomed = store.listSystems(amir).mine.find((s) => s.name === 'Gone soon')!;
+  store.deleteSystem(doomed.id, amir);
 
-  const outcomes = await reconcileAgentProjects({ reposDir, mirror: false });
+  const outcomes = await reconcileAgentProjects({ reposDir, mirror: false, hydration: () => 'hydrated' });
   assert.deepEqual(
     outcomes.map((o) => [o.domain, o.changed]),
     [['sales', true]],
     'only the domain that HAS an agents subtree (or systems) is reconciled',
   );
+  const paths = (await listTree('sales', 'main', { reposDir })).map((p) => p.path).filter((p) => p.startsWith('agents/'));
+  assert.equal(paths.some((p) => p.includes('/gone-soon/')), false, 'the removal is committed');
+  assert.ok(paths.some((p) => p.includes('/stays-here/')), 'the system that remains is untouched');
+  assert.deepEqual((await listTree('dataonly', 'main', { reposDir })).map((p) => p.path), ['dbt_project.yml'], 'the data-only repo grew no agents/ directory');
+});
+
+test('a reconcile that would wipe most of the subtree is REFUSED (review H-1 destructive-delta guard)', async () => {
+  install();
+  store.createSystem(amir, { name: 'Alone here' });
+  store.createSystem(amir, { name: 'Also here' });
+  await awaitAgentProjectCommits();
+  const before = (await listTree('sales', 'main', { reposDir })).map((p) => p.path).filter((p) => p.startsWith('agents/'));
+  assert.ok(before.length >= 5);
+  // THE OUTAGE SHAPE: the store hydrated EMPTY (or every system vanished at once) while the repo
+  // still holds them. `ensureHydrated()` would not have thrown, which is why the git store refuses.
+  uninstall?.();
+  uninstall = null;
+  for (const s of store.listSystems(amir).mine) store.deleteSystem(s.id, amir);
+
+  const outcomes = await reconcileAgentProjects({ reposDir, mirror: false, hydration: () => 'hydrated' });
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].changed, false, 'nothing was committed');
+  assert.match(outcomes[0].error ?? '', /refusing a boot-reconcile commit/);
   assert.deepEqual(
     (await listTree('sales', 'main', { reposDir })).map((p) => p.path).filter((p) => p.startsWith('agents/')),
-    ['agents/index.yml'],
-    'the removal is committed; the dbt project in the same repo is untouched',
+    before,
+    'the subtree is byte-identical: an automatic catch-up never deletes most of a tree',
   );
-  assert.deepEqual((await listTree('dataonly', 'main', { reposDir })).map((p) => p.path), ['dbt_project.yml'], 'the data-only repo grew no agents/ directory');
+});
+
+test('the boot reconcile does NOT run while the registry is unverified (review H-1 hydration gate)', async () => {
+  install();
+  store.createSystem(amir, { name: 'Must survive' });
+  await awaitAgentProjectCommits();
+  const before = (await listTree('sales', 'main', { reposDir })).map((p) => p.path);
+  uninstall?.();
+  uninstall = null;
+  // A mirror-down hydration: `ensureHydrated()` RESOLVED, and the registry is empty anyway.
+  store.__resetStore();
+  for (const hydration of ['failed', 'pending'] as const) {
+    assert.deepEqual(await reconcileAgentProjects({ reposDir, mirror: false, hydration: () => hydration }), [], `'${hydration}' reconciles nothing`);
+  }
+  assert.deepEqual((await listTree('sales', 'main', { reposDir })).map((p) => p.path), before, 'no commit, no deletion');
 });
 
 test('read-back: the commit a system is at, its author and time, and its history — from the repo', async () => {
@@ -188,6 +230,7 @@ test('read-back: the commit a system is at, its author and time, and its history
   await awaitAgentProjectCommits();
 
   const info = (await systemGitInfo('sales', id, { reposDir }))!;
+  assert.equal(info.truncated, false, 'the whole history fitted in the scan window');
   assert.equal(info.domain, 'sales');
   assert.equal(info.history.length, 2);
   assert.equal(info.head!.sha, info.history[0].sha);
@@ -202,6 +245,28 @@ test('read-back: the commit a system is at, its author and time, and its history
   assert.equal(await systemGitInfo('sales', id, { reposDir }), null, 'off ⇒ an honest null, never a fabricated sha');
 });
 
+test('a history that does not fit the scan window is flagged, and the HEAD is still found (review L-1)', async () => {
+  install();
+  const id = await runWithSurface('ui:agents/systems', async () => store.createSystem(amir, { name: 'Busy domain' }).id);
+  await awaitAgentProjectCommits();
+  // Later, unrelated commits in the SAME repo (the dbt project's half) push the system's own
+  // commit out of a 1-commit scan window.
+  for (let i = 0; i < 3; i++) {
+    await commitTree('sales', new Map([['dbt_project.yml', `name: sales\n# rev ${i}\n`], ['models/gold/mart.sql', 'select 1\n']]), {
+      author: { name: 'x', email: 'x@os.local' },
+      message: `data(sales): generate rev ${i}`,
+      reposDir,
+    });
+  }
+  const narrow = (await systemGitInfo('sales', id, { reposDir, scan: 1, limit: 10 }))!;
+  assert.equal(narrow.truncated, true, 'the window ran out — history is not claimed to be complete');
+  assert.ok(narrow.head, 'the HEAD is resolved by the deeper bounded walk, never a false null');
+  assert.match(narrow.head!.subject, /Busy domain|busy-domain/);
+  const wide = (await systemGitInfo('sales', id, { reposDir }))!;
+  assert.equal(wide.truncated, false);
+  assert.equal(wide.head!.sha, narrow.head!.sha, 'both answers agree about which commit the system is at');
+});
+
 test('read-back of a system with no repo yet is an empty history, not an error', async () => {
-  assert.deepEqual(await systemGitInfo('never-seen', 'sys_nope', { reposDir }), { domain: 'never-seen', head: null, history: [] });
+  assert.deepEqual(await systemGitInfo('never-seen', 'sys_nope', { reposDir }), { domain: 'never-seen', head: null, history: [], truncated: false });
 });

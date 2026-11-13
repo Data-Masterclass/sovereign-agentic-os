@@ -18,6 +18,9 @@
  *     never imports a tab).
  *   - Run by `worker/start.mjs`, which registers the module resolver the `@core/*` / `@tabs/*`
  *     path aliases need and then imports this file under Node's type stripping.
+ *   - NOT A REPO WRITER (Part D review H-3): the `os-repos` PVC is ReadWriteOnce, so only os-ui
+ *     can mount it; this pod therefore marks itself and REFUSES agent-system definition writes
+ *     with a typed error rather than applying them with no commit. Run bookkeeping still writes.
  *   - LIVENESS (A4 review L-2): the pod serves no HTTP, so the probe reads the FRESHNESS of
  *     `AGENTS_WORKER_ALIVE_FILE`, which an unref'd 15-second interval here touches. An interval
  *     only fires while the event loop turns, so a stale file means a wedged process — which is
@@ -73,6 +76,17 @@ export function startAliveHeartbeat(path = (process.env.AGENTS_WORKER_ALIVE_FILE
 export async function bootWorker(): Promise<WorkerBoot> {
   const { config, assertNoDevDefaultSecretsInProd } = await import('@core/kernel/config');
   assertNoDevDefaultSecretsInProd(config);
+
+  // FAIL CLOSED ON AGENT-SYSTEM WRITES (Part D review H-3). This pod mounts no `os-repos` volume
+  // — the PVC is ReadWriteOnce and os-ui owns it — and carries no `DATA_PROJECT_GIT`, so a
+  // DEFINITION change made here could never be committed or mirrored: the repository would
+  // silently stop being true. Marking the process makes every committable store write throw a
+  // typed `SystemWriteUnavailableError` instead. Run and build BOOKKEEPING (the activity marker,
+  // the run checkpoint, the last-run report — `writeThrough(rec, null)`) is unaffected: it is
+  // deliberately not a commit, and it is this pod's whole job.
+  const { markRunWorkerProcess } = await import('@tabs/agents/lib/write-availability');
+  markRunWorkerProcess();
+  log('agent-system DEFINITION writes are refused in this process (no os-repos mount — RWO, os-ui only); run bookkeeping is unaffected');
 
   const boot: WorkerBoot = { checkpointer: 'memory', jobs: 'memory', resumeHook: false, approvals: false, langfuse: false };
 

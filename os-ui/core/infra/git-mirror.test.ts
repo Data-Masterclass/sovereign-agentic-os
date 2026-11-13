@@ -119,10 +119,13 @@ test('a non-http(s) mirror url is refused (no file:// side door)', async () => {
   assert.deepEqual(res, { ok: false, error: 'mirror url must be http(s)' });
 });
 
+/** The egress verdict a push asks for (Part D review L-4). Allowed, unless a test says otherwise. */
+const allowEgress = (host = 'git.example.com') => () => ({ allowed: true, host });
+
 test('a successful push records lastSha/lastPushedAt and clears a previous error', async () => {
   const rec = configure();
   rec.status = { lastError: 'boom', lastErrorAt: '2026-11-12T00:00:00.000Z' };
-  const out = await pushMirror('sales', { reposDir, pushFn: async () => ({ ok: true, sha: 'c'.repeat(40) }) });
+  const out = await pushMirror('sales', { reposDir, egressCheck: allowEgress(), pushFn: async () => ({ ok: true, sha: 'c'.repeat(40) }) });
   assert.deepEqual(out, { ok: true });
   const after = getMirror('sales')!;
   assert.equal(after.status.lastSha, 'c'.repeat(40));
@@ -132,10 +135,10 @@ test('a successful push records lastSha/lastPushedAt and clears a previous error
 
 test('a failed push records the scrubbed error and pushMirrorAfterCommit never throws', async () => {
   configure();
-  await pushMirrorAfterCommit('sales', 'd'.repeat(40), { reposDir, pushFn: async () => ({ ok: false, error: 'remote rejected (token ***)' }) });
+  await pushMirrorAfterCommit('sales', 'd'.repeat(40), { reposDir, egressCheck: allowEgress(), pushFn: async () => ({ ok: false, error: 'remote rejected (token ***)' }) });
   assert.equal(getMirror('sales')!.status.lastError, 'remote rejected (token ***)');
   // A throwing push is swallowed too — a save is never failed by a mirror.
-  await pushMirrorAfterCommit('sales', 'e'.repeat(40), { reposDir, pushFn: async () => { throw new Error('network down'); } });
+  await pushMirrorAfterCommit('sales', 'e'.repeat(40), { reposDir, egressCheck: allowEgress(), pushFn: async () => { throw new Error('network down'); } });
 });
 
 test('no mirror configured ⇒ null, and the after-commit hook is a silent no-op', async () => {
@@ -149,4 +152,42 @@ test('mirrorSignals exposes the record for the row without any token material', 
   assert.deepEqual(signals.map((s) => s.domain), ['finance']);
   assert.equal(JSON.stringify(signals).includes('tokenSecretRef'), false);
   assert.equal(JSON.stringify(signals).includes(TOKEN), false);
+});
+
+// ------------------------------------------- egress re-check (review L-4) ---
+
+test('a mirror host that has left the egress allowlist is NOT pushed to — and the record says why', async () => {
+  configure();
+  let pushed = false;
+  const out = await pushMirror('sales', {
+    reposDir,
+    egressCheck: () => ({ allowed: false, host: 'git.example.com' }),
+    pushFn: async () => {
+      pushed = true;
+      return { ok: true, sha: 'a'.repeat(40) };
+    },
+  });
+  assert.equal(pushed, false, 'the allowlist is re-checked BEFORE the repository leaves the cluster');
+  assert.equal(out?.ok, false);
+  assert.match(out?.error ?? '', /not on the egress allowlist/);
+  const rec = getMirror('sales')!;
+  assert.match(rec.status.lastError ?? '', /not on the egress allowlist/);
+  assert.ok(rec.status.lastErrorAt, 'a refusal is a reported failure, not a silent skip');
+});
+
+test('an unreadable egress allowlist fails CLOSED', async () => {
+  configure();
+  let pushed = false;
+  const out = await pushMirror('sales', {
+    reposDir,
+    egressCheck: () => {
+      throw new Error('allowlist index unreachable');
+    },
+    pushFn: async () => {
+      pushed = true;
+      return { ok: true, sha: 'b'.repeat(40) };
+    },
+  });
+  assert.equal(pushed, false);
+  assert.match(out?.error ?? '', /egress allowlist unavailable/);
 });

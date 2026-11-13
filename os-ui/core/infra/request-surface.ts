@@ -15,7 +15,16 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 
-export type RequestSurface = { surface: string; requestId: string };
+export type RequestSurface = {
+  surface: string;
+  requestId: string;
+  /**
+   * The agent run this scope is inside, when it is inside one. Set by the granted-tool executor
+   * around its governed dispatch, so a write a RUN caused can be told from one a person made at
+   * the same moment — it becomes the `OS-Run-Id` commit trailer (Part D review L-3).
+   */
+  runId?: string;
+};
 
 const KEY = Symbol.for('soa.request-surface');
 function als(): AsyncLocalStorage<RequestSurface> {
@@ -29,9 +38,27 @@ export function newRequestId(): string {
   return `req_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
 }
 
-/** Run `fn` with `surface` as the ambient request surface (and a minted request id unless given). */
+/**
+ * Run `fn` with `surface` as the ambient request surface (and a minted request id unless given).
+ * A nested scope KEEPS the outer scope's run id: the surface changes as a call moves from a route
+ * to an MCP tool, but the run it belongs to does not.
+ */
 export function runWithSurface<T>(surface: string, fn: () => T, requestId?: string): T {
-  return als().run({ surface, requestId: requestId ?? newRequestId() }, fn);
+  const outer = currentSurface();
+  const next: RequestSurface = { surface, requestId: requestId ?? newRequestId() };
+  if (outer?.runId) next.runId = outer.runId;
+  return als().run(next, fn);
+}
+
+/**
+ * Run `fn` inside the CURRENT surface with `runId` attached — what the granted-tool executor wraps
+ * its governed dispatch in, so everything the run causes (including the commit a nested MCP write
+ * produces) can name the run. Outside any surface it still establishes one, so the run id is never
+ * lost just because the caller had no route.
+ */
+export function runWithRunId<T>(runId: string, fn: () => T): T {
+  const outer = currentSurface();
+  return als().run({ surface: outer?.surface ?? 'system:agent-run', requestId: outer?.requestId ?? newRequestId(), runId }, fn);
 }
 
 /** The ambient surface, or null outside any `runWithSurface` scope. */

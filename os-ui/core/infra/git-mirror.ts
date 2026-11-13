@@ -77,12 +77,42 @@ export function listMirrors(): ProjectMirror[] {
 export type PushOutcome = { ok: boolean; error?: string };
 
 /** `GitStoreOptions` plus the test seams the git store's `push` itself takes. */
-export type MirrorPushOptions = PushDeps & { pushFn?: typeof push };
+export type MirrorPushOptions = PushDeps & {
+  pushFn?: typeof push;
+  /** Injected egress check (tests). Defaults to the admin allowlist in `core/infra/secrets`. */
+  egressCheck?: (url: string) => { allowed: boolean; host: string } | Promise<{ allowed: boolean; host: string }>;
+};
+
+/** The refusal message when the mirror host is no longer allowed to receive egress, else null. */
+async function assertEgressAllowed(url: string, opts: MirrorPushOptions): Promise<string | null> {
+  try {
+    const check = opts.egressCheck ?? (await import('@core/infra/secrets')).isEgressAllowed;
+    const verdict = await check(url);
+    if (verdict.allowed) return null;
+    return `mirror host '${verdict.host}' is not on the egress allowlist — push refused`;
+  } catch (e) {
+    // The allowlist itself could not be read. Fail CLOSED: pushing a whole domain repository to a
+    // host whose standing we cannot establish is the one outcome worse than not pushing.
+    return `egress allowlist unavailable (${e instanceof Error ? e.message : String(e)}) — push refused`;
+  }
+}
 
 /** Push `main` to the configured mirror and record the outcome. Null when none is configured. */
 export async function pushMirror(domain: string, opts: MirrorPushOptions = {}): Promise<PushOutcome | null> {
   const rec = state().byDomain.get(domain);
   if (!rec) return null;
+  // Part D review L-4: the admin route checked egress when the mirror was CONFIGURED; the
+  // allowlist is editable, so it is re-checked HERE, at the moment the OS would actually send a
+  // domain's whole repository to that host. A host taken off the allowlist stops being pushed to
+  // on the next commit, and the refusal is recorded on the record like any other failure —
+  // never a silent success and never an attempt.
+  const egress = await assertEgressAllowed(rec.url, opts);
+  if (egress) {
+    const at = new Date().toISOString();
+    rec.status = { ...rec.status, lastError: egress, lastErrorAt: at };
+    durable.writeThrough(domain, rec);
+    return { ok: false, error: egress };
+  }
   const res = await (opts.pushFn ?? push)(domain, { url: rec.url, tokenSecretRef: rec.tokenSecretRef }, opts);
   const at = new Date().toISOString();
   rec.status = res.ok

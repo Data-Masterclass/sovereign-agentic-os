@@ -45,6 +45,7 @@ node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/admin/lib/directory-events.test.ts \
   tabs/admin/lib/components-extra.test.ts \
   tabs/data/lib/dbt/parity.test.ts \
+  tabs/data/lib/dbt/boot-reconcile.test.ts \
   core/infra/git-store-subtree.test.ts \
   core/infra/git-mirror.test.ts \
   tabs/admin/lib/components-git-mirror.test.ts \

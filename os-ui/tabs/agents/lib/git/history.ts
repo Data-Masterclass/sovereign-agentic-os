@@ -7,6 +7,10 @@
  *             commit my system is at, who authored it and when, and to show its recent history —
  *             read from the REPOSITORY, not from a parallel OS ledger (checklist A2/A3).
  * ARCHITECTURE:
+ *   - BOUNDED, AND HONEST ABOUT IT (review L-1): one scan window (200 commits by default) is
+ *     shared with the dbt project's commits, so `history` can be incomplete — `truncated` says
+ *     when it is, and the HEAD is resolved with one deeper walk (`MAX_LOG_DEPTH`) rather than
+ *     reported as `null`.
  *   - Reads `core/infra/git-store.ts` `log` and filters by the `OS-Object` trailer, which carries
  *     `<systemId> (<name>)`: a rename, a move between lanes and even a delete therefore stay in
  *     one history, because the ID is the identity and the directory is only a slug.
@@ -18,11 +22,13 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
-import { log, type GitStoreOptions } from '@core/infra/git-store';
+import { log, MAX_LOG_DEPTH, type GitStoreOptions } from '@core/infra/git-store';
 import { agentProjectGitEnabled } from '@tabs/agents/lib/git/commit';
 
 /** How many commits of a system's history are returned by default. */
 export const DEFAULT_HISTORY = 10;
+/** How far back the repo log is read when looking for a system's commits. */
+export const DEFAULT_SCAN = 200;
 
 export type SystemCommit = {
   sha: string;
@@ -44,6 +50,14 @@ export type SystemGitInfo = {
   head: SystemCommit | null;
   /** Newest first, at most `limit` entries. */
   history: SystemCommit[];
+  /**
+   * True when the scan window ended before `limit` of this system's commits were found — so
+   * `history` is "what fits in the window", NOT "all there is". Review L-1: the 200-commit window
+   * is shared with the dbt project's commits, so a busy domain can push a system's history out of
+   * it entirely; `head` is then still correct (it is looked up with a deeper, bounded walk), and
+   * this flag is how a caller knows not to present `history` as complete.
+   */
+  truncated: boolean;
 };
 
 export type HistoryOptions = GitStoreOptions & { limit?: number; scan?: number };
@@ -55,8 +69,27 @@ export type HistoryOptions = GitStoreOptions & { limit?: number; scan?: number }
  */
 export async function systemGitInfo(domain: string, systemId: string, opts: HistoryOptions = {}): Promise<SystemGitInfo | null> {
   if (!agentProjectGitEnabled() || !domain || !systemId) return null;
+  const reposDir = opts.reposDir ?? config.reposDir;
   const limit = Math.max(1, Math.min(opts.limit ?? DEFAULT_HISTORY, 100));
-  const entries = await log(domain, { reposDir: opts.reposDir ?? config.reposDir, limit: Math.max(limit, opts.scan ?? 200) });
+  const scan = Math.max(limit, Math.min(opts.scan ?? DEFAULT_SCAN, MAX_LOG_DEPTH));
+  const entries = await log(domain, { reposDir, limit: scan });
+  const mine = minesIn(entries, systemId, limit);
+  // The window may simply have run out before `limit` of this system's commits appeared. Say so
+  // rather than implying the history is complete — and, when not even the HEAD was in the window,
+  // pay for ONE deeper (bounded) walk, because "which commit is this system at" is the answer the
+  // UI header and `get_agent_system` actually show, and a wrong `null` there reads as "never
+  // committed".
+  const exhausted = entries.length >= scan;
+  const truncated = mine.length < limit && exhausted;
+  if (mine.length === 0 && exhausted && scan < MAX_LOG_DEPTH) {
+    const deeper = minesIn(await log(domain, { reposDir, limit: MAX_LOG_DEPTH }), systemId, 1);
+    return { domain, head: deeper[0] ?? null, history: [], truncated: true };
+  }
+  return { domain, head: mine[0] ?? null, history: mine, truncated };
+}
+
+/** This system's commits, newest first, at most `limit` — filtered on the `OS-Object` trailer. */
+function minesIn(entries: Awaited<ReturnType<typeof log>>, systemId: string, limit: number): SystemCommit[] {
   const mine: SystemCommit[] = [];
   for (const e of entries) {
     const object = e.trailers['OS-Object'] ?? '';
@@ -75,5 +108,5 @@ export async function systemGitInfo(domain: string, systemId: string, opts: Hist
     });
     if (mine.length >= limit) break;
   }
-  return { domain, head: mine[0] ?? null, history: mine };
+  return mine;
 }

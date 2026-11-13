@@ -739,6 +739,26 @@ but not that two materialisations agree row for row. That needs `EXCEPT ALL` bot
 Hard-won, each from a real failure. Read before writing a route, a test, or an
 OAuth flow.
 
+**A store can hydrate EMPTY without throwing, and an empty store looks exactly
+like a tenant that owns nothing.** `ensureHydrated()` RESOLVES when the durable
+mirror was unreachable: the failure is recorded for a throttled retry and
+deliberately not raised, because every read path should degrade rather than 500.
+This is the shape of the September-2026 login outage — an os-ui/OpenSearch
+startup race hydrated the user store to nothing, and every user got "invalid
+password". A read path is right to shrug; a **boot-time WRITER is not**. The
+agents and data boot reconciles both generated an empty project from an
+unhydrated store and committed the DELETION of everything in the domain
+repository, then pushed it to the mirror.
+
+So: **anything that would commit, delete, or reconcile on the strength of what
+the store says must call `hydrationState()` first** (`tabs/agents/lib/store.ts`,
+`tabs/data/lib/store.ts`) and do nothing unless it says `'hydrated'`. "The store
+is empty" is only a fact when the mirror answered. The second line of defence is
+in `core/infra/git-store.ts`: a commit carrying `OS-Reason: boot-reconcile` that
+would delete more than half the files it tracks and add none is refused
+(`DestructiveReconcileError`). A person's commit is never subject to that — the
+rule is that an automatic process does not empty a tree, not that nothing may.
+
 **A Next.js `route.ts` may export only its HTTP handlers and a short list of
 config names.** Export a helper from one and the build fails type-checking with
 `Property 'x' is incompatible with index signature`. And a **test cannot import

@@ -19,6 +19,9 @@
  *     in the prompt, in the Run panel's `tool-step` and in the Langfuse span preview.
  *   - The deadline cannot CANCEL an in-flight HTTP call (fetch has no universal abort here), so it
  *     stops WAITING and returns a typed `timeout`. The superstep ends; a late answer is ignored.
+ *   - A TIMEOUT IS THEREFORE UNRESOLVED, NOT FAILED (review M-3): the write may have landed. The
+ *     engine records the signature as unresolved and answers a repeat of an unresolved WRITE with
+ *     {@link unresolvedWriteRepeat} rather than dispatching it again. Reads may always re-run.
  */
 
 /** Default prompt bound for one tool result, in characters (~5k tokens). */
@@ -27,7 +30,39 @@ export const DEFAULT_TOOL_RESULT_MAX_CHARS = 20_000;
 export const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000;
 
 /** The error codes the engine itself can produce for a tool call (the graph routes on these). */
-export type ToolErrorCode = 'timeout' | 'upstream_error';
+export type ToolErrorCode = 'timeout' | 'upstream_error' | 'unresolved_previous_call';
+
+/**
+ * A call whose outcome is UNKNOWN — today exactly the deadline (`timeout`): the engine stopped
+ * waiting, and whether the tool ran is not knowable from here.
+ */
+export function isUnresolved(text: string): boolean {
+  return toolErrorCode(text) === 'timeout';
+}
+
+/**
+ * The answer to a model re-issuing a WRITE whose previous attempt never resolved (review M-3).
+ *
+ * A timeout is not a failure: `insert_rows` that did not answer in 60 s may well have COMMITTED.
+ * Re-dispatching it is how one requested write becomes two rows, and the dedup memory did not
+ * stop it because it only short-circuits repeats of SUCCESSFUL calls. So an unresolved write
+ * signature is answered with this typed note instead — the model is told to verify by READING,
+ * which it may always re-dispatch, rather than writing again.
+ */
+export function unresolvedWriteRepeat(tool: string): ToolOutput {
+  return {
+    text: JSON.stringify({
+      error: {
+        code: 'unresolved_previous_call' satisfies ToolErrorCode,
+        reason:
+          `${tool} was already called with these exact arguments earlier in this run and it did NOT answer before the deadline, ` +
+          'so it may well have taken effect. It will NOT be sent again — a repeated write is how one change becomes two. ' +
+          'Verify the current state with a READ first, then act on what you find, or report that the outcome is unverified.',
+      },
+    }),
+    isError: true,
+  };
+}
 
 export type ToolOutput = { text: string; isError: boolean };
 

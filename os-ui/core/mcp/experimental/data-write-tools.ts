@@ -3,7 +3,6 @@
  */
 import 'server-only';
 import type { McpTool, JsonSchema } from '@core/mcp/server';
-import { runWithSurface } from '@core/infra/request-surface';
 import { roleAtLeast } from '@core/kernel/session';
 import {
   P, mcpToken, fail, str, num, bool, strArr, slug, rand, defaultGoLive,
@@ -750,11 +749,11 @@ const tools: McpTool[] = [
 ];
 
 /**
- * Every data write tool runs inside an `mcp:<tool>` request-surface scope, so a dataset change made
- * through the OS MCP is committed to the domain repo as `… — via mcp:<tool>` (engine rebuild B1),
- * exactly as a UI route is recorded `… — via ui:<route>`. Behaviour of the tools is unchanged.
+ * The data write tools, as written.
+ *
+ * The per-tool `runWithSurface('mcp:<tool>')` wrapper that used to live here is GONE (Part D
+ * review L-3): `core/mcp/server.ts` now opens that scope around EVERY `tools/call`, with the same
+ * `mcp:<name>` value, so this layer was a second identical scope — harmless but redundant, and
+ * redundant scoping is where a minted-second-request-id bug hides. One door, one scope.
  */
-export const dataWriteTools: McpTool[] = tools.map((t) => ({
-  ...t,
-  call: (user, args) => runWithSurface(`mcp:${t.name}`, () => t.call(user, args)),
-}));
+export const dataWriteTools: McpTool[] = tools;

@@ -22,6 +22,7 @@ import { createFolder, type FolderScope, type Principal as FolderPrincipal } fro
 // Part D: the pure event seam the git commit hook subscribes to (never git from here — this
 // module is reachable from the client bundle).
 import { emitSystemChange } from '@tabs/agents/lib/system-events';
+import { assertSystemWriteAvailable } from '@tabs/agents/lib/write-availability';
 
 /**
  * The agent-system store — the durable file-backed record behind the Agents tab (kind-only,
@@ -273,6 +274,8 @@ type AgentsState = {
   hydration: Promise<void> | null;
   /** Set when the last hydration found the mirror DOWN — gates the throttled retry. */
   hydrateFailedAt?: number;
+  /** Set when a hydration READ THE MIRROR SUCCESSFULLY — what `hydrationState` reports. */
+  hydratedAt?: number;
 };
 const STATE_KEY = Symbol.for('soa.agents.store');
 function state(): AgentsState {
@@ -324,6 +327,11 @@ const versions = versionLog('agent-system');
 type SystemChangeSpec = { action: string; actorId: string; previousDomain?: string };
 
 function writeThrough(rec: SystemRecord, change: SystemChangeSpec | null): void {
+  // Part D review H-3: a DEFINITION change (a non-null `change`) must become a commit. In the
+  // run-worker process it cannot — no `os-repos` mount, no commit hook — so it fails CLOSED with
+  // a typed error instead of reaching the durable mirror uncommitted. Run/build bookkeeping
+  // (`change === null`) is exactly what the worker is for and passes straight through.
+  if (change) assertSystemWriteAvailable(change.action);
   mirror.writeThrough(rec.id, rec);
   if (change) {
     emitSystemChange({
@@ -358,6 +366,28 @@ export async function ensureHydrated(): Promise<void> {
   return s.hydration;
 }
 
+/**
+ * Did the registry in memory actually come from the durable mirror?
+ *
+ * THE POINT (Part D review H-1): {@link ensureHydrated} RESOLVES when `mirror.hydrate()` returned
+ * null — a mirror-down hydration is recorded for the throttled retry and never thrown. Every read
+ * path is right to degrade that way; a boot-time WRITER is not. The Sept-2026 login outage was
+ * exactly this shape: an os-ui/OpenSearch startup race hydrated a store to EMPTY without any
+ * error, and an empty store looks identical to a tenant that owns nothing. Anything that would
+ * COMMIT or DELETE on the strength of the store being empty must check this first.
+ *
+ *   'hydrated' — a mirror read succeeded in this process; the registry is as complete as the
+ *                mirror is. (An empty answer here is a genuinely empty mirror.)
+ *   'failed'   — the last attempt found the mirror unreachable; the registry may be missing
+ *                everything, and nothing may be deleted on its authority.
+ *   'pending'  — no attempt has completed yet.
+ */
+export function hydrationState(): 'hydrated' | 'failed' | 'pending' {
+  const s = state();
+  if (s.hydratedAt !== undefined) return 'hydrated';
+  return s.hydrateFailedAt !== undefined ? 'failed' : 'pending';
+}
+
 async function hydrate(): Promise<void> {
   const s = state();
   const docs = await mirror.hydrate(2000);
@@ -369,6 +399,7 @@ async function hydrate(): Promise<void> {
     return;
   }
   s.hydrateFailedAt = undefined;
+  s.hydratedAt = Date.now();
   for (const rec of docs as SystemRecord[]) {
     if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
   }
@@ -525,6 +556,7 @@ export function __resetStore(): void {
   s.seeded = false;
   s.hydration = null;
   s.hydrateFailedAt = undefined;
+  s.hydratedAt = undefined;
   mirror.__reset();
   versions.__reset();
 }

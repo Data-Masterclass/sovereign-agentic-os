@@ -1251,3 +1251,95 @@ reason is here.
   isomorphic-git: it speaks only smart-HTTP, so a local bare repo is not a valid remote. The unit
   half is therefore a FAKE TRANSPORT at the isomorphic-git boundary (which is where the brief
   allowed it), and the `kind` half needs a real git server.
+
+#### Part D review round 3 deviations — `D-review-<id>`
+
+- **D-review-H-1 The hydration gate is on BOTH reconciles, and the destructive guard is ONE
+  place.** Two independent defences, because they fail differently. (1) Each store exports
+  `hydrationState(): 'hydrated'|'failed'|'pending'`, set from the mirror read's own outcome, and
+  both boot reconciles return early (loud `console.error`) unless it says `'hydrated'` — the data
+  one's swallowing `catch` around `ensureHydrated()` was never the bug, because `ensureHydrated()`
+  does not throw on a down mirror at all; it resolves. (2) The guard lives in
+  `core/infra/git-store.ts`, inside both `commitTree` and `commitSubtree`, so neither generator
+  can forget it and neither needed to learn about it.
+  **The rule, exactly:** a commit carrying `OS-Reason: boot-reconcile` (in `trailers` or already
+  in the message) is refused with `DestructiveReconcileError` (status 409, `code:
+  'destructive_reconcile'`) when it would delete **more than 50%** of the files already tracked in
+  its own scope **AND** adds **no new path** to that scope. Scope = the prefix for
+  `commitSubtree`, everything outside the reserved subtrees for `commitTree`. A human-initiated
+  commit is never subject to it.
+  **Why the second condition** (it is not in the brief, and the brief's rule alone broke a real
+  behaviour): a reconcile that replaces one system's files with another's legitimately deletes a
+  large share — that is the catch-up the reconcile exists for, and `repo.test.ts` had a test
+  proving it. A reconcile that deletes a large share and creates NOTHING is generating from an
+  empty registry: every file it still writes is one it already had. That is the outage shape, and
+  only that is refused.
+  **Known limit, recorded rather than hidden:** the guard measures a SHARE, so a domain whose
+  tracked files are mostly fixed skeleton (one dataset: 3 model files against 8 project files) is
+  below the threshold by arithmetic and is protected by the hydration gate alone. The more a
+  domain has to lose, the more certain the refusal — which is the right way round, but it is not
+  "every domain, always".
+- **D-review-H-2 The reservation moved to the top of `register()`, and a test pins the literal.**
+  `reserveSubtree('agents/')` now runs before any hook, reconcile or kernel init whenever
+  `config.dataProjectGit` is on, so no ordering mistake can reopen the hole; the round-2 ordered
+  block and its tests stay as defence in depth. `instrumentation.ts` uses the LITERAL `'agents/'`
+  rather than importing `AGENTS_PREFIX`, to avoid pulling the Agents tab's module graph into the
+  first milliseconds of boot — and `lib/git/commit.test.ts` now asserts the literal is present,
+  equals `AGENTS_PREFIX`, and appears before `installDataProjectCommitHook`.
+- **D-review-H-3 CHOSE (b): the worker fails closed. The PVC fact decided it.**
+  `charts/.../os-ui/os-repos.yaml` declares `accessModes: ["ReadWriteOnce"]`. os-ui and
+  `os-ui-worker` are separate Deployments the scheduler may place on different nodes, and an RWO
+  volume attaches to one node at a time, so (a) would either fail to start the worker or silently
+  pin it to os-ui's node — and two processes writing one bare repo is precisely what the git
+  store's IN-PROCESS mutex cannot protect. So the worker does not write repos, and no longer
+  pretends to: `worker/agent-runs.ts` calls `markRunWorkerProcess()` at boot
+  (`tabs/agents/lib/write-availability.ts`), and the store's `writeThrough(rec, change)` throws
+  `SystemWriteUnavailableError` (`code: 'run_worker_write_unavailable'`) for any non-null
+  `change`. That chokepoint was chosen because `change !== null` IS the set of writes that must
+  become a commit (`commit.test.ts` pins both lists), so the guard covers all 17 without
+  enumerating them, and covers none of the 7 run-bookkeeping writes the worker exists to perform.
+  **Honest limitation:** the throw happens after the in-memory record was mutated and before the
+  durable mirror write and the event, so the worker's own process-local map can hold a value the
+  mirror never sees, until its next hydration. Nothing durable, nothing committed and nothing
+  mirrored changes, and the caller gets the error — which is the property that matters.
+- **D-review-M-1 An opaque owner token, and `OS-Actor` deliberately unchanged.**
+  `ownerToken(id) = sha256(id).slice(0,12)` now stands for the owner in `index.yml`, in every
+  generated README and as the `agents/personal/<token>/` path segment. `commit.ts`'s `OS-Actor`
+  trailer and the git author still carry the principal id and its real e-mail, per the brief: a
+  commit is the one artefact where naming the person is the point. The three goldens were
+  regenerated; a new test asserts no generated path or index/README content contains an `@` even
+  when the owner id IS an address.
+- **D-review-M-2 The two-line paragraph D-3 promised is in the README** as "Who can read what",
+  with the consequence stated plainly: a Personal system's committed directory reaches every
+  domain member (project routes + mirror), so nothing in an instruction file should be a secret.
+- **D-review-M-3 `unresolved` is a third state, and the write catalog decides who is protected.**
+  `ExecutedSig` gained `unresolved?: boolean`, set when the result's typed code is `timeout`. A
+  repeat of an unresolved signature is refused only for a WRITE (`isWriteTool` — the static
+  `core/mcp/write-tool-meta` catalog), with `{"error":{"code":"unresolved_previous_call"}}`
+  telling the model to verify by reading; a read re-dispatches, because re-reading is how the
+  uncertainty should be resolved. The test uses `ingest_dataset`, not the brief's `insert_rows`:
+  this OS's write catalog has no `insert_rows` (that is the hosted DM OS MCP's name), and the test
+  deliberately uses a REAL catalog entry so the guard cannot be satisfied by a stub.
+- **D-review-L-1** `systemGitInfo` returns `truncated`, and resolves the HEAD with one deeper walk
+  bounded by the new `MAX_LOG_DEPTH` (2000) — which also raises `log()`'s own clamp from 500, the
+  only way a deeper walk was reachable at all.
+- **D-review-L-2** `authorFor` keeps only the mailbox token of the id (`amir@acme.com` →
+  `amir@os.local`), with everything outside `[A-Za-z0-9._+-]` collapsed to `-` and an empty result
+  becoming `unknown`.
+- **D-review-L-3 Three parts, and one scope extension.** The redundant per-tool wrapper is gone;
+  `server.ts` now passes the ambient request id into its `mcp:<tool>` scope so a nested call keeps
+  ONE `OS-Request-Id`; and the run id reaches the commit through the request scope rather than
+  through every writer's signature — `RequestSurface` gained an optional `runId`,
+  `runWithRunId(runId, fn)` sets it, `grantedToolExecutor` wraps its gate-2 dispatch in it, and
+  `commitMessage` emits `OS-Run-Id` from `currentSurface()` (or an explicit input). That last
+  choice makes `commitMessage` read ambient state, which is a real cost; it buys the trailer for
+  BOTH halves (agents and dbt) in one place instead of editing two commit modules, one of which
+  was outside this round's scope. Files touched beyond the stated scope, and why:
+  `core/infra/request-surface.ts` (the `runId` field — there is no other ambient carrier),
+  `tabs/data/lib/store.ts` (`hydrationState`, required by H-1 for the data reconcile),
+  `tabs/agents/lib/build/os-tools.ts` (the run scope), `os-ui/scripts/gate.sh` (added the data
+  boot-reconcile test, which now carries H-1 assertions).
+- **D-review-L-4** `pushMirror` re-checks `isEgressAllowed(rec.url)` before the push, records the
+  refusal on the mirror record (so Platform → Components & Health shows it like any failure), and
+  fails CLOSED if the allowlist itself cannot be read.
+

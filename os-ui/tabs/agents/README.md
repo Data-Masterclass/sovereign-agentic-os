@@ -244,29 +244,78 @@ agents/<slug>/system.yaml               # THE canonical definition (what you edi
 agents/<slug>/agents/<agent-id>.md      # each agent's instruction file (agent_md)
 agents/<slug>/graph.json                # the compiled LangGraph IR `buildGraph` runs
 agents/<slug>/README.md                 # purpose, members, grants, channels, edges, last build
-agents/personal/<uid>/<slug>/…          # a Personal system, in its owner's lane
+agents/personal/<owner-token>/<slug>/…  # a Personal system, in its owner's lane
 ```
 
-A Personal system lives in `agents/personal/<uid>/` — the lane split B1 chose for
-`models/personal/<uid>/`, so one repository keeps one convention. A promotion moves the directory
+A Personal system lives in `agents/personal/<owner-token>/` — the lane split B1 chose for
+`models/personal/<uid>/`, so one repository keeps one convention. The segment is an **opaque,
+stable token** (`sha256(<principal id>)`, first 12 hex characters — `lib/git/generate.ts`
+`ownerToken`), not the principal id, and the same token is what `index.yml` and each README record
+as `owner`. Ids in this OS are frequently e-mail addresses, and this tree is pushed to the
+configured mirror, cloned by Dagster and exported by any domain member: a directory name does not
+need to identify a person, it needs to be the same on every regeneration. The principal id itself
+stays in the COMMIT (the `OS-Actor` trailer and the git author), which is the one place a person is
+meant to be named. A promotion moves the directory
 in the same commit that changes the visibility; the frozen identity is the `id` in `index.yml` and
 in the `OS-Object` trailer, never the slug. Archive and delete are commits that REMOVE the
 directory, with the reason in the subject. No secrets are ever written: grants are names and ids,
 and the system's LiteLLM key is a Secret *reference* the generator never sees.
 
 **Read it back.** `get_agent_system` and `GET /api/agents/systems/<id>` return
-`git: { head: { sha, author, at, action, surface }, history[] }`, read from the repository by
+`git: { head: { sha, author, at, action, surface }, history[], truncated }`, read from the repository by
 `lib/git/history.ts` (filtered on the `OS-Object` trailer, so a rename or a lane move keeps ONE
 history). The Agents tab header shows `git <sha7> by <author> <time>`. With the flag off the
-answer is `null` — never a fabricated sha. The whole repo (dbt project + `agents/**`) is readable
+answer is `null` — never a fabricated sha. The log read is bounded (200 commits by default, shared
+with the dbt project's commits), so `truncated: true` says when `history` is "what fitted in the
+window" rather than everything; the HEAD is resolved with one deeper bounded walk, never reported
+as `null` because the window ran out. The whole repo (dbt project + `agents/**`) is readable
 and exportable through the Data tab's project routes (`GET /api/data/projects/<domain>`,
 `…/blob`, `…/export`), gated on domain membership.
 
 **At boot**, the OS reconciles: it regenerates each domain's subtree once and commits any delta as
 the platform principal with `OS-Reason: boot-reconcile`, so a window with the flag off is caught
-up without anyone re-saving. **After every changed commit** the configured mirror is pushed
-(`core/infra/git-mirror.ts`; one admin-configured remote per domain, token by Secret reference),
-reported on Platform → Components & Health and retried by the next commit.
+up without anyone re-saving. It does that **only when the registry provably loaded**
+(`hydrationState() === 'hydrated'`): `ensureHydrated()` resolves even when the durable mirror was
+unreachable, and an empty store is indistinguishable from a tenant that owns nothing — a reconcile
+that believed it would commit the deletion of every system in every domain. Unverified ⇒ skipped
+with a loud error, and the next save commits by itself. Independently, `core/infra/git-store.ts`
+REFUSES any `OS-Reason: boot-reconcile` commit that would delete more than half the files it
+tracks while adding none (`DestructiveReconcileError`); a person's commit is never subject to it,
+so deleting your last system is still recorded — as you.
+
+**After every changed commit** the configured mirror is pushed (`core/infra/git-mirror.ts`; one
+admin-configured remote per domain, token by Secret reference), reported on Platform → Components
+& Health and retried by the next commit. The egress allowlist is re-checked at push time, not only
+when the mirror was configured, so a host that has been removed stops receiving the repository.
+
+**A commit caused by a run says so.** A granted tool that writes during an agent run dispatches
+inside the run's scope, so its commit carries an `OS-Run-Id: <runId>` trailer beside `OS-Actor` —
+the git log distinguishes "a run did this" from "a person did this at the same moment". No run, no
+trailer.
+
+**The run worker cannot change a definition, and does not pretend to.** `os-ui-worker` mounts no
+`os-repos` volume: the PVC is `ReadWriteOnce`, os-ui and the worker are separate Deployments that
+may land on different nodes, and two processes writing one bare repo is exactly what the git
+store's in-process lock cannot protect. So a DEFINITION write attempted there fails closed with a
+typed `SystemWriteUnavailableError` ("agent-system mutations are not available from the run
+worker") rather than landing in the durable mirror with no commit. Run and build bookkeeping — the
+activity marker, the run checkpoint, the last-run report — is unaffected; it is deliberately not a
+commit, and it is the worker's whole job.
+
+### Who can read what
+
+**A system's `agents/**` directory is readable by every member of its domain, including a Personal
+one.** Scope controls who can see and run a system *in the OS*: a Personal system is listed only
+for its owner. The repository is a different surface — the whole domain repo (dbt project and
+`agents/**` together) is readable and exportable by any domain member through the Data tab's
+project routes, and it is pushed to the configured mirror. A Personal system's `system.yaml`,
+each agent's prompt markdown and its compiled `graph.json` therefore reach a WIDER audience than
+the Agents tab's own listing suggests.
+
+**So nothing in a system prompt should be a secret.** The generator writes grant names and ids
+only — never credentials, never the system's LiteLLM key (a Secret reference it never sees) and
+never a run artefact — but an instruction file is whatever its author typed. If a prompt must not
+be read by the rest of the domain, it does not belong in a committed agent system.
 
 ## Agents use the data as context, robustly (X9)
 
@@ -281,7 +330,11 @@ never a service principal. What the ENGINE adds around every tool call (`lib/eng
   silently shortened answer is how an agent reaches a confident wrong conclusion.
 - **A deadline per call** (`AGENT_TOOL_CALL_TIMEOUT_MS`, default 60 s) → a typed
   `{"error":{"code":"timeout"}}` tool-step the graph routes on, so a hung read ends the step, not
-  the run. An upstream failure is likewise typed (`upstream_error`). A THROWN dispatch is *not*
+  the run. A timeout is **unresolved, not failed**: the engine stopped waiting, so a write may
+  well have landed. The signature is recorded as unresolved, and a model re-issuing the same
+  WRITE gets a typed `{"error":{"code":"unresolved_previous_call"}}` telling it to verify by
+  READING instead — the call is not dispatched a second time. A read with the same signature is
+  re-dispatched, because re-reading is how the uncertainty is meant to be resolved. An upstream failure is likewise typed (`upstream_error`). A THROWN dispatch is *not*
   swallowed: it fails the superstep so the checkpoint keeps the exactly-once property of the calls
   that already ran, and a resume re-runs exactly the one in flight.
 - The call is a span of the run's ONE Langfuse trace, with the dataset in the span input and the

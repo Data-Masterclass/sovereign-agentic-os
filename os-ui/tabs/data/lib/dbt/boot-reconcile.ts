@@ -17,13 +17,17 @@
  *     catch-up from an action.
  *   - Fail-soft per domain and never throwing: one unreadable repository must not stop the others
  *     or the boot. The result is returned for the boot log.
+ *   - IT WILL NOT RUN ON AN UNVERIFIED REGISTRY (Part D review H-1): `hydrationState()` must say
+ *     `hydrated`. A store that hydrated empty because OpenSearch was not up yet looks exactly like
+ *     a domain with no datasets, and this writer's answer to "no datasets" is to delete the models.
+ *     The git store's destructive-delta guard is the second, independent line of defence.
  *   - It does NOT launch Dagster: the code location's repo-sync picks the new commit up on its own
  *     cadence, and a boot must not start work nobody asked for.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { COMMITTER, listRepos } from '@core/infra/git-store';
-import { ensureHydrated, listAllDatasets } from '@tabs/data/lib/store';
+import { ensureHydrated, hydrationState, listAllDatasets } from '@tabs/data/lib/store';
 import { commitDataProject, dataProjectGitEnabled, type ActorIdentity, type HookDeps } from '@tabs/data/lib/dbt/commit';
 
 /** The platform principal: author AND committer for a write no person performed. */
@@ -46,6 +50,8 @@ export type BootReconcileDeps = HookDeps & {
   /** Override the domain discovery (tests). */
   domains?: () => Promise<string[]>;
   hydrate?: () => Promise<unknown>;
+  /** Did the registry really load? (default: the store's own probe). Review H-1. */
+  hydration?: () => 'hydrated' | 'failed' | 'pending';
 };
 
 /** Datasets in the store ∪ repositories on disk, sorted — deterministic for the log and the tests. */
@@ -72,7 +78,21 @@ export async function reconcileDataProjectsAtBoot(deps: BootReconcileDeps = {}):
   try {
     await (deps.hydrate ?? ensureHydrated)();
   } catch {
-    /* an unreachable mirror is not a reason to skip the repositories we can see */
+    /* the throw is not the signal — `hydrationState()` below is (it resolves either way) */
+  }
+  // HYDRATION GATE (Part D review H-1). The reconcile is a WHOLE-TREE writer: with an empty
+  // registry it generates a bare project and commits the DELETION of every model in the domain,
+  // then pushes it to the mirror. `ensureHydrated()` resolves even when the mirror was
+  // unreachable, so "no datasets" and "we could not read the datasets" arrive identically — and
+  // the Sept-2026 login outage proved that race happens at boot. Only a verified read may delete.
+  const hydration = (deps.hydration ?? hydrationState)();
+  if (hydration !== 'hydrated') {
+    console.error(
+      `[data-projects] boot reconcile SKIPPED — the dataset registry is '${hydration}', not 'hydrated': the durable mirror ` +
+        'could not be read, so an empty store would be indistinguishable from a domain with no datasets. ' +
+        'Nothing was committed. It runs on the next boot, or the next dataset write commits by itself.',
+    );
+    return { domains: [], committed: [], failed: [], ran: false };
   }
   const domains = await discoverDomains(deps);
   const committed: { domain: string; sha: string }[] = [];

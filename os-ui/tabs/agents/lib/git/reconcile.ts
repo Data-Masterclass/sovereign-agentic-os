@@ -19,11 +19,15 @@
  *     `agents/` directory in a domain that has never had one.
  *   - Fail-soft per domain: one unreachable repo never stops the others, and nothing throws into
  *     boot. Deps are injected so the whole thing is unit-testable with a temp dir or a spy.
+ *   - IT WILL NOT RUN ON AN UNVERIFIED REGISTRY (review H-1): the store's `hydrationState()` must
+ *     say `hydrated`. A store that hydrated EMPTY because the mirror was down looks exactly like a
+ *     tenant that owns nothing, and reconcile's answer to "nothing" is to delete everything. The
+ *     git store's destructive-delta guard is the second, independent line of defence.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { listRepos, listTree } from '@core/infra/git-store';
-import { projectDomains } from '@tabs/agents/lib/store';
+import { projectDomains, hydrationState } from '@tabs/agents/lib/store';
 import { AGENTS_PREFIX } from '@tabs/agents/lib/git/generate';
 import { agentProjectGitEnabled, commitAgentSystem, type CommitDeps } from '@tabs/agents/lib/git/commit';
 
@@ -41,6 +45,8 @@ export type ReconcileDeps = CommitDeps & {
   repos?: () => Promise<{ name: string }[]>;
   /** Does this repo already carry an `agents/` subtree? (default: the git store's tree read). */
   hasAgentsSubtree?: (domain: string) => Promise<boolean>;
+  /** Did the registry really load? (default: the store's own probe). Review H-1. */
+  hydration?: () => 'hydrated' | 'failed' | 'pending';
 };
 
 /**
@@ -49,6 +55,20 @@ export type ReconcileDeps = CommitDeps & {
  */
 export async function reconcileAgentProjects(deps: ReconcileDeps = {}): Promise<ReconcileOutcome[]> {
   if (!agentProjectGitEnabled()) return [];
+  // HYDRATION GATE (review H-1). `ensureHydrated()` RESOLVES when the mirror was unreachable —
+  // it records the failure for the throttled retry and does not throw. A reconcile that trusted
+  // that would generate `systems: []` for every domain and `commitSubtree` an empty map, which
+  // DELETES every system directory in every domain that has one, and then pushes that to the
+  // mirror. An empty registry we could not verify is not a reason to delete anything.
+  const hydration = (deps.hydration ?? hydrationState)();
+  if (hydration !== 'hydrated') {
+    console.error(
+      `[agent-projects] boot reconcile SKIPPED — the system registry is '${hydration}', not 'hydrated': the durable mirror ` +
+        'could not be read, so an empty store would be indistinguishable from a tenant with no systems. ' +
+        'Nothing was committed. It runs on the next boot, or the next save commits by itself.',
+    );
+    return [];
+  }
   const reposDir = deps.reposDir ?? config.reposDir;
   const withSystems = (deps.domains ?? projectDomains)();
   const repos = await (deps.repos ?? (() => listRepos({ reposDir })))();

@@ -13,6 +13,64 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Fixed — Part D review round 3: a boot reconcile can no longer empty a repository
+
+- **An unverified registry no longer deletes anything (H-1).** `ensureHydrated()` RESOLVES when the
+  durable mirror was unreachable — the failure is recorded for a throttled retry and deliberately
+  not raised, so no read path 500s. That is the shape of the September-2026 login outage: an
+  os-ui/OpenSearch startup race hydrates a store to EMPTY, and an empty store is indistinguishable
+  from a tenant that owns nothing. Both boot reconciles believed it: the agents one generated
+  `systems: []` and `commitSubtree`'d an empty map, which DELETES every system directory in every
+  domain carrying an `agents/` subtree and pushes that to the mirror; the data one did the same to
+  every dbt model. Both now require `hydrationState() === 'hydrated'` (a new probe on each store)
+  and otherwise skip with a loud error. Independently, `core/infra/git-store.ts` REFUSES any
+  `OS-Reason: boot-reconcile` commit that would delete more than half the files it tracks in its
+  own scope while adding none (`DestructiveReconcileError`, logged with the counts). A person's
+  commit is never subject to it — deleting your last system is still recorded, as you.
+- **The `agents/` reservation no longer depends on boot ORDER (H-2).** `reserveSubtree('agents/')`
+  is taken at the very top of `instrumentation.ts`'s `register()` whenever `DATA_PROJECT_GIT` is
+  on, independently of whether the agents commit hook installs. The ordered boot block remains as
+  defence in depth rather than as the only thing between the data side's whole-tree commit and the
+  agents subtree.
+- **The run worker fails closed instead of dropping commits (H-3).** `os-ui-worker` mounts no
+  `os-repos` volume — the PVC is `ReadWriteOnce`, os-ui and the worker are separate Deployments
+  that may land on different nodes, and two writers to one bare repo is exactly what the git
+  store's in-process lock cannot protect — so a definition change made there could never be
+  committed or mirrored. It now throws a typed `SystemWriteUnavailableError` ("agent-system
+  mutations are not available from the run worker") at the store's `writeThrough(rec, change)`
+  chokepoint. Run and build bookkeeping (`change === null`) is unaffected.
+- **No principal ids in the repository (M-1).** An OS principal id is frequently an e-mail
+  address, and `agents/**` is pushed to the configured mirror, cloned by Dagster and exported by
+  any domain member. The owner is now a stable opaque token (`sha256(id)`, 12 hex chars) in
+  `index.yml`, in every generated README and as the personal lane's path segment
+  (`agents/personal/<owner-token>/`). The principal id stays in the commit (`OS-Actor`, git
+  author), which is the one place a person is meant to be named.
+- **The README says who can actually read a system prompt (M-2).** A Personal system's committed
+  directory is readable by every member of its domain through the project routes and the mirror —
+  wider than the Agents tab's own listing. `tabs/agents/README.md` now says so in two lines under
+  "Who can read what", with the consequence: nothing in an instruction file should be a secret.
+- **A timed-out WRITE is not executed twice (M-3).** The dedup memory only short-circuited repeats
+  of SUCCESSFUL calls, so a `timeout` — which means the engine stopped waiting, not that the tool
+  failed — let the model re-issue the same write and turn one requested change into two. A
+  timed-out signature is now recorded as `unresolved`, and a repeat of an unresolved WRITE returns
+  a typed `{"error":{"code":"unresolved_previous_call"}}` telling the model to verify by READING.
+  Reads with the same signature still re-dispatch.
+- **A bounded history that admits it is bounded (L-1).** `systemGitInfo` returns
+  `{ head, history, truncated }`: the 200-commit scan window is shared with the dbt project's
+  commits, so `truncated` says when `history` is only what fitted, and the HEAD is resolved with
+  one deeper bounded walk (`MAX_LOG_DEPTH` 2000) rather than reported as `null`.
+- **A synthesized git author is well-formed (L-2).** An e-mail-shaped principal id produced
+  `amir@acme.com@os.local`; only the mailbox token is kept now (`amir@os.local`).
+- **One MCP surface scope, and a run-aware commit (L-3).** The redundant per-tool
+  `runWithSurface` wrapper in `core/mcp/experimental/data-write-tools.ts` is gone — `server.ts`
+  wraps every `tools/call` with the same value — and the ambient request id is carried into the
+  nested scope instead of a second one being minted. A granted tool that writes during an agent
+  run dispatches inside the run's scope, so its commit carries `OS-Run-Id: <runId>`.
+- **The egress allowlist is re-checked at push time (L-4).** It was checked when a mirror was
+  configured; a host removed from the allowlist afterwards kept receiving the whole domain
+  repository. A refusal is recorded on the mirror record like any other failure, and an unreadable
+  allowlist fails closed.
+
 ### Added — Git-based working for agent systems, automatically (engine rebuild Part D)
 
 - **Every change to an agent system is a git commit**, in the UI and through the MCP alike, with

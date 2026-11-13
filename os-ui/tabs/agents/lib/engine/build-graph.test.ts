@@ -28,12 +28,16 @@ import {
   type SettableChannel,
 } from '@tabs/agents/lib/engine/build-graph';
 import { memoryCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
+import { toolErrorCode } from '@tabs/agents/lib/engine/tool-result';
 import { runGraphEngine, type EngineRunInput } from '@tabs/agents/lib/engine/run';
 
 const TASK = 'Do the task.';
 const SPECS: Record<string, ToolSpec> = {
   search_knowledge: { name: 'search_knowledge', description: 'search', inputSchema: { type: 'object', properties: {} } },
   query_data: { name: 'query_data', description: 'query', inputSchema: { type: 'object', properties: {} } },
+  // A real entry of the static write catalog (`core/mcp/write-tool-meta`), so `isWriteTool` is
+  // true for it without a test-only stub — the M-3 guard keys off exactly that catalog.
+  ingest_dataset: { name: 'ingest_dataset', description: 'ingest', inputSchema: { type: 'object', properties: {} } },
 };
 
 const ROLE = /--- YOUR ROLE IN THE TEAM: (\S+) ---/;
@@ -411,4 +415,76 @@ test('live events arrive in order through the stream writer: node-started → to
     'start:a:1/2', 'step:a:search_knowledge:1', 'done:a:ok',
     'start:b:2/2', 'step:b:query_data:1', 'done:b:ok',
   ]);
+});
+
+// ------------------------------------- M-3: an UNRESOLVED write is never re-sent ---
+
+const WRITER = `version: '1'
+system: { name: writer, domain: sales, visibility: Personal }
+entrypoint: w
+state: { channels: { messages: add_messages } }
+grants: { data: [], knowledge: [], metrics: [], tools: [ingest_dataset, query_data], connections: [] }
+agents:
+  - { id: w, role: writes, agent_md: '# w', memory_md: '# Memory', tools: [ingest_dataset, query_data] }
+edges: []
+`;
+
+/** A model that calls `tool` with the SAME arguments twice, then answers. */
+function repeatsCall(tool: string): LlmCall {
+  let acts = 0;
+  return async (req) => {
+    if (!req.tools) return { content: 'plan(w)', toolCalls: [] };
+    acts += 1;
+    if (acts <= 2) return { content: '', toolCalls: [{ id: `c-${acts}`, name: tool, args: { datasetId: 'ds_1', rows: 1 } }] };
+    return { content: 'FINAL(w)', toolCalls: [] };
+  };
+}
+
+test('M-3: a WRITE whose first attempt timed out is NOT dispatched again — the repeat is a typed note', async () => {
+  const dispatched: string[] = [];
+  const { result } = await run(WRITER, repeatsCall('ingest_dataset'), {
+    toolCallTimeoutMs: 20,
+    callTool: async (tool) => {
+      dispatched.push(tool);
+      return new Promise(() => {
+        /* never settles — the write is in flight and may well have landed */
+      });
+    },
+  });
+  assert.deepEqual(dispatched, ['ingest_dataset'], 'the identical write reached the executor ONCE');
+  const steps = result.runs[0].result.steps;
+  assert.equal(steps.length, 2, 'both attempts are visible in the run');
+  assert.equal(toolErrorCode(steps[0].result), 'timeout');
+  assert.equal(toolErrorCode(steps[1].result), 'unresolved_previous_call');
+  assert.match(steps[1].result, /may well have taken effect/);
+  assert.match(steps[1].result, /Verify the current state with a READ/);
+});
+
+test('M-3: a READ whose first attempt timed out MAY be retried — re-reading is how uncertainty is resolved', async () => {
+  const dispatched: string[] = [];
+  const { result } = await run(WRITER, repeatsCall('query_data'), {
+    toolCallTimeoutMs: 20,
+    callTool: async (tool) => {
+      dispatched.push(tool);
+      return new Promise(() => {});
+    },
+  });
+  assert.deepEqual(dispatched, ['query_data', 'query_data'], 'a read has no side effect to protect');
+  const steps = result.runs[0].result.steps;
+  assert.deepEqual(steps.map((st) => toolErrorCode(st.result)), ['timeout', 'timeout']);
+});
+
+test('M-3: a SUCCESSFUL write is still deduped by the original rule, not the unresolved one', async () => {
+  const dispatched: string[] = [];
+  const { result } = await run(WRITER, repeatsCall('ingest_dataset'), {
+    callTool: async (tool) => {
+      dispatched.push(tool);
+      return { text: JSON.stringify({ ok: true }), isError: false };
+    },
+  });
+  assert.deepEqual(dispatched, ['ingest_dataset']);
+  const steps = result.runs[0].result.steps;
+  assert.equal(steps[1].isError, false, 'the plain dedup note is not an error');
+  assert.equal(toolErrorCode(steps[1].result), null);
+  assert.match(steps[1].result, /already ran this exact call/);
 });

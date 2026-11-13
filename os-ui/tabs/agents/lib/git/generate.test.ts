@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
-import { generateAgentFiles, placeSystems, segment, AGENTS_PREFIX } from '@tabs/agents/lib/git/generate';
+import { generateAgentFiles, placeSystems, segment, AGENTS_PREFIX, ownerToken } from '@tabs/agents/lib/git/generate';
 import type { AgentProjectSnapshot, SnapshotSystem } from '@tabs/agents/lib/git/snapshot';
 
 const FIXTURES = join(import.meta.dirname, 'fixtures');
@@ -198,17 +198,43 @@ test('index.yml parses and maps every slug to its id, owner, scope and version',
     systems: { slug: string; id: string; path: string; owner: string; scope: string; version: number }[];
   };
   assert.equal(index.domain, 'sales');
+  const amirLane = `agents/personal/${ownerToken('amir')}`;
   assert.deepEqual(
     index.systems.map((s) => [s.id, s.path, s.scope]),
     [
-      ['sys_ccc333', 'agents/personal/amir/support-triage', 'personal'],
-      ['sys_ddd444', 'agents/personal/amir/support-triage-sys-ddd444', 'personal'],
+      ['sys_ccc333', `${amirLane}/support-triage`, 'personal'],
+      ['sys_ddd444', `${amirLane}/support-triage-sys-ddd444`, 'personal'],
       ['sys_eee555', 'agents/personal-sys-eee555', 'domain'],
       ['sys_fff666', 'agents/broken', 'domain'],
     ],
     'the first claimant keeps the bare slug; a domain system can never shadow agents/personal/',
   );
-  assert.deepEqual(index.systems.map((s) => s.owner), ['amir', 'amir', 'bea', 'bea']);
+  assert.deepEqual(index.systems.map((s) => s.owner), [ownerToken('amir'), ownerToken('amir'), ownerToken('bea'), ownerToken('bea')]);
+});
+
+// ------------------------------------------- no principal ids (review M-1) ---
+
+test('the generated tree never publishes a principal id — the owner is an opaque, stable token', () => {
+  // An id that IS an e-mail address: the shape the OS actually uses, and the reason the token
+  // exists. `index.yml`, every README and the personal lane's path must carry the hash, and the
+  // whole subtree must not contain an `@` anywhere.
+  const snapshot = {
+    ...SHAPES['personal-single-agent'],
+    systems: SHAPES['personal-single-agent'].systems.map((s) => ({ ...s, owner: 'amir@acme.example' })),
+  };
+  const files = generateAgentFiles(snapshot);
+  const token = ownerToken('amir@acme.example');
+  assert.match(token, /^[0-9a-f]{12}$/);
+  assert.ok([...files.keys()].some((p) => p.startsWith(`agents/personal/${token}/`)), 'the lane is the token');
+  for (const [path, content] of files) {
+    assert.equal(path.includes('@'), false, `${path} carries an address`);
+    assert.equal(content.includes('amir@acme.example'), false, `${path} carries the principal id`);
+    // `agents/<id>.md` is the agent's own prompt; nothing else may contain an `@` at all.
+    if (path.endsWith('index.yml') || path.endsWith('README.md')) assert.equal(content.includes('@'), false, `${path} carries an @`);
+  }
+  // Stable: the same owner always hashes to the same lane, so no directory moves on a re-save.
+  assert.equal(ownerToken('amir@acme.example'), token);
+  assert.notEqual(ownerToken('amir@acme.example'), ownerToken('bea@acme.example'));
 });
 
 test('placement is stable under a reordered snapshot (sorted by id, not arrival)', () => {
@@ -252,7 +278,7 @@ test('graph.json is the compiled IR the engine runs, and the README names every 
 
 test("each agent's prompt is its own markdown file", () => {
   const files = generateAgentFiles(SHAPES['personal-single-agent']);
-  assert.equal(files.get('agents/personal/amir/support-triage/agents/triage.md'), '# triage\nRead the granted gold data and classify the ticket.\n');
+  assert.equal(files.get(`agents/personal/${ownerToken('amir')}/support-triage/agents/triage.md`), '# triage\nRead the granted gold data and classify the ticket.\n');
 });
 
 test('segment refuses to produce an unsafe or empty path piece', () => {
