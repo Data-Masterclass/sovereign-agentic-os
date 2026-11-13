@@ -23,6 +23,13 @@ import {
 } from '@core/auth/access-tokens-store';
 import { AUTH_FAILED, authenticateGitRequest, parseGitPath } from '@core/auth/git-http-auth';
 
+/**
+ * The SECRET half of a token: everything after the second `_`. Base64url includes `_`, so
+ * `token.split('_')[2]` is only a FRAGMENT of the secret — and a short fragment can occur by
+ * chance inside the hex prefix, which made the first version of the redaction test flaky.
+ */
+const secretOf = (token: string) => token.split('_').slice(2).join('_');
+
 const alex = { id: 'alex', name: 'Alex', role: 'builder', domains: ['sales'] };
 const lookup = async (id: string) => (id === 'alex' ? alex : null);
 
@@ -46,7 +53,7 @@ test('two mints never collide and a hash leaks nothing about the secret', () => 
   const b = mintToken();
   assert.notEqual(a.token, b.token);
   assert.notEqual(a.prefix, b.prefix);
-  assert.equal(a.hash.includes(a.token.split('_')[2]), false);
+  assert.equal(a.hash.includes(secretOf(a.token)), false);
 });
 
 test('create shows the token ONCE; the record and every list carry prefix + metadata only', () => {
@@ -57,7 +64,7 @@ test('create shows the token ONCE; the record and every list carry prefix + meta
   assert.equal(listed.length, 1);
   assert.equal(Object.prototype.hasOwnProperty.call(listed[0], 'hash'), false);
   // Nothing anywhere in the serialised record is the token or any part of its secret.
-  const secret = token.split('_')[2];
+  const secret = secretOf(token);
   assert.equal(JSON.stringify(listed).includes(secret), false);
   assert.equal(JSON.stringify(listed).includes(token), false);
   assert.equal(listed[0].prefix.length, 12);
@@ -95,7 +102,7 @@ test('a ttl is clamped to MAX_TTL_DAYS and a token always has a name', () => {
 test('redact replaces the secret half of any token-shaped string, wherever it appears', () => {
   const { token, prefix } = mintToken();
   const msg = `could not push with ${token} to sales`;
-  assert.equal(redact(msg).includes(token.split('_')[2]), false);
+  assert.equal(redact(msg).includes(secretOf(token)), false);
   assert.equal(redact(msg).includes(`sos_${prefix}_***`), true);
 });
 
@@ -133,7 +140,7 @@ test('no token, an unknown token, a revoked token and a disabled user are all th
   assert.equal(revoked.ok === false && revoked.status, 401);
   assert.equal(revoked.ok === false && revoked.message, AUTH_FAILED);
   // The server-side reason names the PREFIX and never the token.
-  assert.equal(revoked.ok === false && revoked.logReason.includes(t.token.split('_')[2]), false);
+  assert.equal(revoked.ok === false && revoked.logReason.includes(secretOf(t.token)), false);
 });
 
 test('READ IS UNCONDITIONAL for a member, and a non-member is a 404 rather than a 403', async () => {

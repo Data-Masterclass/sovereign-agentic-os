@@ -448,6 +448,9 @@ test('a token pasted into a pushed path or file never comes back in the rejectio
   const { decision } = await fakePush('sales', builder, new Map([[`os/${token}.yml`, `token: ${token}\n`]]));
   assert.equal(decision.ok, false);
   const message = decision.ok === false ? decision.message : '';
-  assert.equal(message.includes(token.split('_')[2]), false, 'the secret half must never be echoed');
+  // Everything after the SECOND `_` is the secret (base64url includes `_`, so `split('_')[2]`
+  // would be only a fragment — and a short fragment can occur by chance inside the hex prefix).
+  const secret = token.split('_').slice(2).join('_');
+  assert.equal(message.includes(secret), false, 'the secret half must never be echoed');
   assert.match(message, /sos_[0-9a-f]{12}_\*\*\*/);
 });
