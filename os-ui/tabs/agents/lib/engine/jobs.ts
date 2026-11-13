@@ -139,7 +139,15 @@ export type RunJobStore = {
   eventsAfter(runId: string, afterSeq: number, limit?: number): Promise<RunEventRow[]>;
   /** The highest `seq` written for the run (0 when none). */
   lastSeq(runId: string): Promise<number>;
+  /** RETENTION (A13 follow-up). Run ids whose job SETTLED before `cutoff` and will not run again.
+   *  `parked` is NEVER included: a parked run is waiting for a human decision, however old. */
+  settledBefore(cutoff: number, limit: number): Promise<string[]>;
+  /** RETENTION. Drop these runs' `run_jobs` row and every `run_events` row. Returns what went. */
+  deleteRuns(runIds: readonly string[]): Promise<{ jobs: number; events: number }>;
 };
+
+/** The statuses retention may delete. `parked` is deliberately absent — see {@link RunJobStore.settledBefore}. */
+export const RETAINABLE_STATUSES: readonly RunJobStatus[] = ['done', 'failed'];
 
 /** Statuses after which a job will not run again without a new enqueue. */
 export function isSettled(status: RunJobStatus): boolean {
@@ -284,6 +292,26 @@ export function memoryRunJobStore(): MemoryRunJobStore {
     },
     async lastSeq(runId) {
       return st.events.get(runId)?.at(-1)?.seq ?? 0;
+    },
+    async settledBefore(cutoff, limit) {
+      const out: string[] = [];
+      for (const j of st.jobs.values()) {
+        if (!RETAINABLE_STATUSES.includes(j.status)) continue;
+        if (j.updatedAt >= cutoff) continue;
+        out.push(j.runId);
+        if (out.length >= limit) break;
+      }
+      return out;
+    },
+    async deleteRuns(runIds) {
+      let jobs = 0;
+      let events = 0;
+      for (const id of runIds) {
+        events += st.events.get(id)?.length ?? 0;
+        st.events.delete(id);
+        if (st.jobs.delete(id)) jobs += 1;
+      }
+      return { jobs, events };
     },
     all: () => [...st.jobs.values()].map(copy),
     events: (runId) => [...(st.events.get(runId) ?? [])],

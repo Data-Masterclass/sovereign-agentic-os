@@ -70,13 +70,23 @@ the TRACE. The run's own event log — `run_events` in the `agent_runs` database
 panel tails — is written unredacted by design: it IS the panel's stream, and a redacted
 `node-completed` would show the user less than the page they are looking at. So the same tool
 arguments and results a `strict` trace reduces to key names and character counts sit in full in
-`run_events.data`, next to the LangGraph `checkpoints` in the same database, under the same
-(absent) retention policy. Treat the two as one disclosure surface: anyone with read access to
-`agent_runs` sees raw run content regardless of `LANGFUSE_REDACTION`.
+`run_events.data`, next to the LangGraph `checkpoints` in the same database. Treat the two as one
+disclosure surface: anyone with read access to `agent_runs` sees raw run content regardless of
+`LANGFUSE_REDACTION`.
 
-PII in traces remains a checklist concern (A-section "PII handling"), together with the fact that
-LangGraph checkpoints **and `run_events`** in `agent_runs` keep raw tool results with no retention
-(plan item A13 — one follow-up covers both tables and the held approval arguments).
+**That exemption now has a retention answer.** `AGENT_RUNS_RETENTION_DAYS` (default 30, chart
+`osUI.agentRunsRetentionDays`) bounds how long it lasts: a run that settled outside the window
+loses its checkpoint thread, its `run_events` rows and its `run_jobs` row to a periodic sweep.
+So `LANGFUSE_REDACTION` still decides what the trace SHOWS and retention decides how long the
+unredacted copy EXISTS — they are different controls and both are needed. A `parked` run is
+exempt at any age (its checkpoint is the only thing that can resume the approval), which is the
+one place raw content is kept deliberately. See `docs/components/os-ui.md` →
+"Retention for `agent_runs`".
+
+PII in traces remains a checklist concern (A-section "PII handling"). The A13 follow-up — that
+LangGraph checkpoints **and `run_events`** kept raw tool results with NO retention — is closed by
+`AGENT_RUNS_RETENTION_DAYS` above; what remains open from it is the held approval ARGUMENTS, which
+live in the approvals queue rather than in `agent_runs` and are not swept by this window.
 
 ## What the OS does NOT use
 

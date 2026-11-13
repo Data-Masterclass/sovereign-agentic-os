@@ -58,6 +58,7 @@ import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 import type { Approval } from '@core/policy/approvals';
 import { getSystemForRun } from '@tabs/agents/lib/store';
 import { publishRunEvent } from '@tabs/agents/lib/engine/run-events';
+import { sweepRetention, RETENTION_EVERY_MS, type RetentionOutcome, type ThreadDeleter } from '@tabs/agents/lib/engine/retention';
 
 // ------------------------------------------------------------------ store --
 
@@ -96,10 +97,35 @@ export async function reapStaleOnce(store: RunJobStore, log: (m: string) => void
   }
 }
 
-/** Boot-time init: create `run_jobs` / `run_events` if needed, reap stale leases once. */
+/**
+ * One retention sweep with this process's real store and checkpointer (A13 follow-up). Never
+ * throws — `sweepRetention` already swallows per-run failures, and a checkpointer that cannot be
+ * resolved means "no checkpoints to clean", not "skip the tables".
+ */
+export async function sweepRetentionOnce(
+  store?: RunJobStore,
+  log: (m: string) => void = (m) => console.info(`[agent-runs] ${m}`),
+): Promise<RetentionOutcome> {
+  const s = store ?? (await runJobStore());
+  let checkpointer: ThreadDeleter | null = null;
+  try {
+    const { selectCheckpointer } = await import('@tabs/agents/lib/engine/checkpointer');
+    checkpointer = (await selectCheckpointer(config.agentRunsDatabaseUrl)).saver;
+  } catch (e) {
+    log(`retention: no checkpointer to clean (${(e as Error)?.message ?? String(e)}) — sweeping the tables only`);
+  }
+  return sweepRetention({ store: s, checkpointer, days: config.agentRunsRetentionDays, log });
+}
+
+/**
+ * Boot-time init: create `run_jobs` / `run_events` if needed, reap stale leases once, and — in
+ * `inline` mode, which has no worker loop to carry the periodic chore — run ONE retention sweep.
+ * In `worker` mode the loop owns the sweep, so booting os-ui does not duplicate it.
+ */
 export async function ensureRunJobsReady(): Promise<'postgres' | 'memory'> {
   const store = await runJobStore();
   await reapStaleOnce(store);
+  if (workerMode() === 'inline') await sweepRetentionOnce(store);
   return store.kind;
 }
 
@@ -325,6 +351,10 @@ export function startAgentRunsWorker(overrides: Partial<WorkerLoopDeps> = {}): W
       maxAttempts: MAX_ATTEMPTS,
       idleMs: 1_000,
       reapEveryMs: Math.max(30_000, Math.floor(lease / 2)),
+      // RETENTION rides the loop (A13 follow-up). `AGENT_RUNS_RETENTION_DAYS=0` leaves the sweep
+      // installed but makes every call a no-op, which keeps ONE code path rather than two.
+      retentionEveryMs: RETENTION_EVERY_MS,
+      sweepRetention: async () => { await sweepRetentionOnce(store, log); },
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       stopped: () => stopping,
       log,

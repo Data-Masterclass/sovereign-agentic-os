@@ -1798,3 +1798,31 @@ reason is here.
   change — it is derived from `ALL_MCP_TOOLS` (now 114; data tools 23 → 24). Docs: `tabs/data/guide.md`
   step 6 + the end-to-end sequence, `tabs/data/README.md`'s tool table and its B4-1 paragraph,
   which recorded this as a gap and now records it as closed. **D17 → `true`.**
+
+- **F2-4 Retention closes A13's follow-up, and the ORDER of the three deletes is the design.**
+  `AGENT_RUNS_RETENTION_DAYS` (default 30, `0` = keep forever, chart `osUI.agentRunsRetentionDays`
+  on the RUN-path env so os-ui and the worker both get it) bounds the one store
+  `LANGFUSE_REDACTION` never covered. Four decisions worth recording:
+  (1) **`parked` is exempt at any age, enforced twice.** `RETAINABLE_STATUSES` (`done`, `failed`)
+  is in `settledBefore`'s SQL, so a caller cannot ask for a parked run; and the sweep RE-READS each
+  row immediately before deleting it, so a run resumed between the listing and the delete is spared
+  too. A parked run's checkpoint IS the run — this is the one breach that is unrecoverable.
+  (2) **Checkpoint → `run_events` → `run_jobs`, per run, not per batch.** The job row goes LAST, so
+  a failure part way through leaves the run eligible and the next sweep retries it. The reverse
+  order would orphan a checkpoint with no row left to name it. The test proves it: one run whose
+  checkpoint delete throws is DEFERRED with its rows intact while its neighbour is still swept.
+  (3) **Where it runs.** The worker loop carries it every 6 h, before the claim (a backlog must not
+  sit between claiming a run and executing it) and inside a try/catch (disk is not worth a stalled
+  queue). `inline` has no loop, so `ensureRunJobsReady()` runs one sweep at boot — the same place
+  `reapStaleOnce` already lives for the same reason. The sweep is always INSTALLED; `days = 0`
+  makes it a no-op rather than branching the wiring, so there is one code path.
+  (4) **The window parser is in `core/kernel/agent-run-retention.ts`, not in the tab.**
+  `core/kernel/config.ts` reads the env var and the kernel must not import a tab — the identical
+  split `agents-worker.ts` uses for `AGENTS_WORKER`. An unparseable value falls back to 30 in BOTH
+  directions: a typo must not silently disable retention, and must not silently mean "delete
+  today's runs" (`0.5` floors to 1 day, never to 0).
+  `WorkerLoopState.lastRetentionAt` is optional so the pre-existing single-tick tests stay valid.
+  Tests: `engine/retention.test.ts` (10) + one cadence case in `engine/worker-loop.test.ts`.
+  **Still open from A13, named rather than quietly folded in:** the HELD APPROVAL ARGUMENTS. They
+  live in the approvals queue, not in `agent_runs`, so this window does not reach them; recorded in
+  `docs/components/langfuse.md`.

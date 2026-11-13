@@ -20,11 +20,15 @@
  *     column IS the cross-process in-flight lock (`queued`/`running` → `RunJobConflictError`).
  *   - `run_events` is append-only with a per-run `seq` (primary key `(run_id, seq)`), written only
  *     by the lease holder, so a tail is a PK range scan and `seq` is a resume cursor.
+ *   - RETENTION (A13 follow-up): `settledBefore` / `deleteRuns` are the two statements the sweep in
+ *     `engine/retention.ts` drives. `settledBefore` filters on `RETAINABLE_STATUSES` in SQL, so a
+ *     `parked` run cannot be swept by a caller that forgot the rule.
  */
 import { RunNotVisibleError } from '@tabs/agents/lib/engine/run-visibility';
 import {
   boundError,
   isRunEventName,
+  RETAINABLE_STATUSES,
   RunJobConflictError,
   RunJobNotFoundError,
   type NewRunJob,
@@ -296,6 +300,30 @@ export function postgresRunJobStore(sql: SqlClient): RunJobStore {
     async lastSeq(runId) {
       const res = await sql.query(`SELECT COALESCE(MAX(seq),0) AS seq FROM run_events WHERE run_id=$1`, [runId]);
       return Number(res.rows[0]?.seq ?? 0);
+    },
+
+    // ------------------------------------------------------------- retention --
+
+    async settledBefore(cutoff, limit) {
+      // `status = ANY($1)` is RETAINABLE_STATUSES — `done` and `failed`. A `parked` run is waiting
+      // for a human decision and is never swept, however old; that is the one rule this query
+      // enforces by construction rather than by a caller remembering it.
+      const res = await sql.query(
+        `SELECT run_id FROM run_jobs WHERE status = ANY($1) AND updated_at < $2 ORDER BY updated_at LIMIT $3`,
+        [[...RETAINABLE_STATUSES], new Date(cutoff).toISOString(), limit],
+      );
+      return res.rows.map((r) => String(r.run_id));
+    },
+
+    async deleteRuns(runIds) {
+      if (runIds.length === 0) return { jobs: 0, events: 0 };
+      const ids = [...runIds];
+      // Events first: a crash between the two statements must not leave events whose job row is
+      // gone (they would be unreachable and never swept again). The reverse is self-healing — the
+      // job row is picked up by the next sweep.
+      const ev = await sql.query(`DELETE FROM run_events WHERE run_id = ANY($1)`, [ids]);
+      const jb = await sql.query(`DELETE FROM run_jobs WHERE run_id = ANY($1)`, [ids]);
+      return { jobs: jb.rowCount ?? 0, events: ev.rowCount ?? 0 };
     },
   };
 }

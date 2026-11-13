@@ -225,6 +225,15 @@
 - name: AGENT_RUNS_DATABASE_URL
   value: postgresql://$(AGENT_RUNS_DB_USERNAME):$(AGENT_RUNS_DB_PASSWORD)@pg-rw/agent_runs
 {{- end }}
+{{- /* RETENTION for the `agent_runs` database (A13 follow-up). A settled run's checkpoint,
+     `run_events` and `run_jobs` row are removed this many days after it settled; `parked` runs
+     are never swept at any age. RUN-path, because the worker loop is what carries the periodic
+     sweep (os-ui runs one at boot in inline mode). Unset ⇒ the code default (30 days);
+     `"0"` ⇒ keep everything. */}}
+{{- if $u.agentRunsRetentionDays }}
+- name: AGENT_RUNS_RETENTION_DAYS
+  value: {{ $u.agentRunsRetentionDays | quote }}
+{{- end }}
 {{- /* X9 (engine rebuild Part D) — the agent engine's guardrails on EVERY tool call. Both are
      RUN-path, so the worker gets them too. Unset ⇒ the code defaults (20 000 chars / 60 s). */}}
 {{- with $u.agentToolResultMaxChars }}
