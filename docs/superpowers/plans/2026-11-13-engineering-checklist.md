@@ -339,3 +339,114 @@ Ordered, with estimates:
 Items 1–4 are the ones that change what is KNOWN rather than what is built; do them first. On the
 protocol's stopping rule: iteration 1 closed five items, so the "two consecutive iterations close
 nothing" condition is nowhere near met.
+
+### 2026-11-13 — end of Part F iteration 2 (local)
+
+Scored against `feat/engine-rebuild-b2`, **no cluster available** — this is the LOCAL half of
+iteration 2 only. The cluster half (the deploy and Part C) runs separately, so every row marked
+`(i)` in iteration 1 is untouched here and is NOT re-counted as closed.
+
+#### What this pass changed
+
+| # | Item | Outcome |
+|---|---|---|
+| 1 | F-3, the software existence leak | **done** (F2-1) — 8 write doors `forbidden` → `not_found` |
+| 2 | query-tool test isolation (F-4) | **done** (F2-2) — one discovery pass, 116 tests, plus a tripwire |
+| 3 | `get_dagster_run` | **done** (F2-3) — **D17 → `true`** |
+| 4 | Checkpoint + `run_events` retention | **done** (F2-4) — the A13 follow-up is closed |
+| 5 | A27 index attribution | **done** (F2-6) — A27's named gap is closed |
+| 6 | `relationships` dbt test | **done** (F2-7) — **D5's follow-up closed**, `relationships` back in the row |
+| 7 | Docs from the report writer | **done** (F2-8) — `trino.md` password + step 4 |
+| 8 | Type-check the tests | **partial, as the item's own fallback allows** — see below |
+| — | iCloud conflict copies (unplanned, from the failed image build) | **done** (F2-5) |
+
+#### Gates
+
+| Gate | Result |
+|---|---|
+| `cd os-ui && npx tsc --noEmit -p tsconfig.json` | **0 errors** |
+| `node scripts/check-structure.mjs` | ok — 419/419, 1/1, 200/200, 1235/1235 (no new violations; the ratchet never paid) |
+| `bash os-ui/scripts/gate.sh` | exit 0 — **430** tests, 426 pass, **0 fail**, 4 todo |
+| `CI=true bash scripts/gate.sh` (helm + tgz present) | exit 0 — all three chart checks `ok`/`PASS` |
+| `helm lint … -f values.local.yaml` (defaults, and `--set osUI.worker.enabled=true`) | 0 failed |
+| `helm template …` with `osUI.agentRunsRetentionDays=14` | the var renders in **both** os-ui and os-ui-worker |
+| `python3.11 -m unittest discover -s images/extensions/query-tool/tests` | **116 tests, OK in ONE pass** (was: 7 failures, per-file only) |
+| `python3 -m unittest discover -s images/extensions/dagster/tests` | 46 tests, OK |
+| `find . -name '* 2.*'` (new gate step) | 0 — and verified to exit 1 when one is planted |
+| `npm --prefix os-ui test` (full suite) | **queued** — see "What is not measured here" |
+| `npx tsc --noEmit -p tsconfig.test.json` | **queued** — same reason |
+
+#### Counts — 60 items
+
+**true 51 · partly true 4 · untestable here 4 · false 1**
+
+- Part 1 (A1–A33): true 30 · partly 1 (A4) · untestable here 2 (A18, A29)
+- Part 2 (D1–D18): true **14** · partly **3** (D8, D12, D15) · untestable here 1 (D10)
+- Part 3 (X1–X9): true 7 · untestable here 1 (X5) · false 1 (X6)
+
+One row moved: **D17 `partly true` → `true`**. A27, D5 and X7 were already `true`; what changed is
+that each carried a NAMED GAP inside a true row, and all three gaps are now closed — which is why
+the headline count moves by one while four findings were fixed. Counting conventions are unchanged
+from the A5 and iteration-1 reports.
+
+#### Every non-true item, one line each
+
+| # | Gap | Class |
+|---|---|---|
+| A4 | Needs a standalone `graph.ts` emitting LangGraph calls directly. **Explicitly out of scope for this pass** (deviation D-8 stands). | (ii) D-8 |
+| A18 | A run longer than the 300 s request cap, completing with no client attached. | (i) |
+| A29 | Gateway spend per domain and per agent, non-zero in the mirror. | (i) |
+| D8 | "Push a broken model, schedules keep running on the previous commit" — the unit half is proven. | (i) |
+| D10 | "Completes a run" — the image's drivers and the four-place tag agreement are already asserted offline. | (i) |
+| D12 | Two materialisers for a button press; retained by decision. | (ii) B4-6 / B4-7 |
+| D15 | The ROW half (`EXCEPT ALL` both ways = 0). Deliberately a translation gate. | (ii) B3-7 + (i) |
+| X5 | The whole deployed-version check — Part C, run separately. | (i) |
+| X6 | The final PDF. **Reported done elsewhere; NOT verified here** — no PDF exists on this branch, so it is scored `false` rather than taken on trust. | (iii) |
+
+#### What is not measured here, and why
+
+Two gates are **queued, not run**: the full `npm --prefix os-ui test` and
+`npx tsc --noEmit -p tsconfig.test.json`. A production image build was running from the main
+checkout on the same host, and the coordinator asked for both to be held until it finishes;
+per-file `node --test` and `tsc -p tsconfig.json` were used throughout instead. Every file touched
+in this pass was run per file and is green, and `gate.sh` (430 tests, which includes the registry
+conformance, the data conformance/parity, the git and engine suites) is exit 0 — but the number
+this report should carry for the whole suite is the one that was not taken, and it is named here
+rather than estimated. **The honest reading: this report's suite row is unverified, and the first
+action of the next session is to run both and append the two numbers.**
+
+#### Findings carried into the next pass
+
+- **Item 8 is PARTIAL, by its own fallback.** `tsconfig.test.json` and the `testUser` factory
+  (`core/testing/user.ts`) are landed and proven on three suites (14 tests green,
+  `tsc -p tsconfig.json` still 0). The remaining adoption was NOT done: a grep finds **104 typed
+  `const x: CurrentUser = {…}` declarations across 41 test files** without `allDomains`, plus the
+  **21 `readonly`-write sites** and the 2 real errors F-5 named. The codemod is mechanical but it
+  is **not behaviour-neutral** — `activeDomain` moves from `undefined` to `domains[0]`, which
+  changes the answer at `app-records.ts:62` for a MULTI-domain user — so it needs the per-file test
+  run and the tsc count that are queued above. Residual error count: **not measured this pass.**
+- **The cross-tab existence convention is still split, and now deliberately so.** F2-1 converged
+  the SOFTWARE tab (read and write doors both `not_found`) because its own tool descriptions
+  already promised that. Every other tab still answers `forbidden` for an object that exists and is
+  invisible (B4-11), and agent runs plus `get_dagster_run` answer `not_found`. That is three
+  conventions in one registry, each defensible and each pinned by a test. Whether the whole
+  registry should hide existence is a decision nobody has taken; it is named here so it is not
+  mistaken for drift.
+- **A13 has one piece left.** Retention bounds `agent_runs`. The HELD APPROVAL ARGUMENTS live in
+  the approvals queue, not in that database, and no window reaches them.
+- **`get_dagster_run`'s failure line is honest, not complete.** The step-level message is in
+  Dagster's event log behind a query whose shape cannot be verified without a cluster, so the tool
+  names the failed run and points at the log instead of shipping an unverifiable GraphQL field.
+  A cluster session can close this in minutes (F2-3).
+- **The image build broke on untracked files nobody could see** (F2-5). Worth repeating because it
+  is a class, not an incident: git-clean is not build-clean — `docker build` copies the working
+  tree. The new `gate.sh` step and the root `.dockerignore` rule cover `* 2.*`; the same reasoning
+  applies to anything else the tree can grow without git noticing.
+
+#### Recommendation
+
+**iteration 3: yes, but small.** The local backlog is now two things — the queued measurements plus
+item 8's tail, and A4's standalone `graph.ts` (D-8) — against a much larger cluster backlog that
+only a deploy can move. Four findings closed in this pass (F-3, F-4, A13's follow-up, A27's gap)
+plus D5's and D17's, so the protocol's "two consecutive iterations close nothing" stopping rule is
+still far off.

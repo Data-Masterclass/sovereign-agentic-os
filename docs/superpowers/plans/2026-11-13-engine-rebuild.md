@@ -658,7 +658,15 @@ After each full pass over Parts A, B and D: a read-only test agent scores `2026-
   dead rule-violating test under `app/`. Two gaps were found that no gate covered: the Python
   suites ran nowhere (now in CI) and the query-tool tests cross-contaminate under one discovery
   pass (open). Part E (X6) remains the only wholly unstarted item.
-- [ ] Iteration 2 — scoped in the gap report's recommendation.
+- [~] **Iteration 2 — the LOCAL half done 2026-11-13** (`feat/engine-rebuild-b2`). Seven of the
+  eight local items closed, plus one unplanned (F2-5, the iCloud conflict copies that broke a
+  production image build). Deviations `F2-1`…`F2-8`. Gap report in
+  `2026-11-13-engineering-checklist.md` → "2026-11-13 — end of Part F iteration 2 (local)".
+  **D17 → `true`** (`get_dagster_run`), and the named gaps inside A27, D5 and X7's rows are closed.
+  OPEN: the cluster half (the deploy + Part C), item 8's tail (the `testUser` adoption and the
+  residual type-error count), and two gates that were QUEUED rather than run — the full unit suite
+  and `tsc -p tsconfig.test.json` — because an image build held the host's memory.
+- [ ] Iteration 3 — the queued measurements first, then item 8's tail and A4's `graph.ts` (D-8).
 
 ## Decisions taken without the owner (autonomous mode) — review these
 1. `when` grammar: safe expression language, not model-judged predicates.
