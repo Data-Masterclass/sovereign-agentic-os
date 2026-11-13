@@ -27,6 +27,7 @@
 import { parseAppSpec, type AppSpec, type SpecIssue } from '@tabs/software/lib/appspec/schema';
 import { PATTERNS, PATTERN_IDS, isImplementedPattern } from '@tabs/software/lib/appspec/patterns';
 import { parseJsonReply } from '@core/runtime/json-reply';
+import { normaliseSpecShapes, type NormaliseNote } from '@tabs/software/lib/appspec/normalise';
 
 /** A granted dataset with its REAL columns (the route resolves columns via peekDatasetColumns). */
 export type GenerateDataset = { id: string; name: string; columns: string[] };
@@ -56,8 +57,14 @@ export type GenerateMaterial = {
 /** The prompt the route sends to the model: a system frame + the app-specific user brief. */
 export type GeneratePrompt = { system: string; user: string };
 
-/** The result of recovering + structurally-gating a model reply. */
-export type GenerateParse = { ok: true; spec: AppSpec } | { ok: false; issues: SpecIssue[] };
+/**
+ * The result of recovering + structurally-gating a model reply. `notes` lists every TOLERANT-PARSE
+ * rewrite applied before the gate (e.g. a bare metric id folded to `{ metricId }`) so the build can
+ * tell the user what it fixed instead of failing on it.
+ */
+export type GenerateParse =
+  | { ok: true; spec: AppSpec; notes: NormaliseNote[] }
+  | { ok: false; issues: SpecIssue[]; notes: NormaliseNote[] };
 
 /**
  * Enumerate the IMPLEMENTED cookbook patterns with a one-line description of what each renders and
@@ -152,7 +159,10 @@ export function buildGeneratePrompt(m: GenerateMaterial): GeneratePrompt {
     '4. Link each tab to the story it satisfies via "stories":[{ "epicId","storyId" }] using the',
     '   exact ids from the brief.',
     '5. Prefer 2–6 focused tabs. Give each a short "label" and, when natural, an emoji "icon".',
-    '6. WRITES — when a story asks the user to ADD, SAVE, SUBMIT, CREATE, RECORD, LOG, TRACK,',
+    '6. Reference slots are OBJECTS, never a bare id: write "metric": { "metricId": "m_123" } —',
+    '   likewise "function": { "functionId": "f_123" } and "source": { "datasetId": "ds_123" }. The',
+    '   ONE exception is the literal source:"records" (the app\'s own record store, rule 7).',
+    '7. WRITES — when a story asks the user to ADD, SAVE, SUBMIT, CREATE, RECORD, LOG, TRACK,',
     '   REQUEST, REGISTER or otherwise CAPTURE information that is NOT already in a granted dataset,',
     '   you MUST include a WRITE tab: the "form" pattern (or "intake-wizard" for multi-step) with',
     '   config target:"records". This persists into the app\'s OWN governed record store — that store',
@@ -193,19 +203,27 @@ export function buildGeneratePrompt(m: GenerateMaterial): GeneratePrompt {
 }
 
 /**
- * Recover the JSON from a (possibly prose-wrapped) model reply and run the STRUCTURAL gate.
- * Returns the typed spec on success, or the structural issues on failure — never throws.
+ * Recover the JSON from a (possibly prose-wrapped) model reply, NORMALISE its reference slots into
+ * the canonical grammar, then run the STRUCTURAL gate. Returns the typed spec on success, or the
+ * structural issues on failure — never throws.
+ *
+ * TOLERANT PARSE, STRICT OUTPUT: `normaliseSpecShapes` folds the unambiguous shapes the model keeps
+ * reaching for (`"metric": "m_1"`, `"metric": { "id": "m_1" }`) into the canonical
+ * `{ metricId }` BEFORE the gate; `parseAppSpec` itself stays strict, so the spec that persists is
+ * always canonical. Every rewrite rides back in `notes`.
  */
 export function parseGeneratedSpec(raw: string): GenerateParse {
   const obj = parseJsonReply(raw);
   if (obj === null || typeof obj !== 'object') {
     return {
       ok: false,
+      notes: [],
       issues: [{ path: '', reason: 'the model did not return a JSON app spec', fix: 'return one JSON AppSpec object and nothing else' }],
     };
   }
-  const parsed = parseAppSpec(obj);
-  return parsed.ok ? { ok: true, spec: parsed.spec } : { ok: false, issues: parsed.issues };
+  const { value, notes } = normaliseSpecShapes(obj);
+  const parsed = parseAppSpec(value);
+  return parsed.ok ? { ok: true, spec: parsed.spec, notes } : { ok: false, issues: parsed.issues, notes };
 }
 
 /**

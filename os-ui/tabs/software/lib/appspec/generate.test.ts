@@ -66,6 +66,14 @@ test('the prompt enumerates cookbook patterns including the 3.5d in-place-edit o
   assert.match(system, /action-detail/);
 });
 
+test('the prompt states the canonical reference shape with an example and the "never a bare id" rule', () => {
+  const { system } = buildGeneratePrompt(material());
+  assert.match(system, /"metric": \{ "metricId": "m_123" \}/);
+  assert.match(system, /never a bare id/);
+  // the ONE legitimate bare string stays documented, so the model keeps emitting it
+  assert.match(system, /source:"records"/);
+});
+
 test('parseGeneratedSpec accepts a good spec wired to granted data and real columns', () => {
   const good = JSON.stringify({
     version: 2,

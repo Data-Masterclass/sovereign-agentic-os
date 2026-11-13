@@ -35,9 +35,14 @@ import type { AppSpec, SpecIssue } from '@tabs/software/lib/appspec/schema';
  * It DOES NOT persist — it returns a validated (or failed) candidate. The caller persists it
  * through setAppSpec (the MCP author = publish door) or loads it as an editable draft (the UI).
  */
+/**
+ * `notes` carries the TOLERANT-PARSE rewrites the structural stage applied to the model's reply
+ * (e.g. "normalised metric id → { metricId }"). The build SUCCEEDS on those shapes now, and the
+ * note is what the user sees instead of a failure.
+ */
 export type GenerateResult =
-  | { ok: true; spec: AppSpec }
-  | { ok: false; error: string; issues?: SpecIssue[] };
+  | { ok: true; spec: AppSpec; notes?: string[] }
+  | { ok: false; error: string; issues?: SpecIssue[]; notes?: string[] };
 
 export async function generateAppSpecForApp(user: CurrentUser, appId: string): Promise<GenerateResult> {
   // VISIBILITY first: an app the caller cannot see is a not_found (no existence leak) — the SAME
@@ -76,6 +81,8 @@ export async function generateAppSpecForApp(user: CurrentUser, appId: string): P
   // reply + a fresh repair grounded in the latest issues.
   const ATTEMPTS = 3;
   let lastIssues: SpecIssue[] = [];
+  // Every shape rewrite across every attempt, de-duplicated at the end — the build notes.
+  const notes: string[] = [];
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     let content: string;
     try {
@@ -86,11 +93,12 @@ export async function generateAppSpecForApp(user: CurrentUser, appId: string): P
     }
 
     const structural = parseGeneratedSpec(content);
+    notes.push(...structural.notes);
     if (!structural.ok) {
       lastIssues = structural.issues;
     } else {
       const { issues } = await validateAppSpec(app, structural.spec, user);
-      if (issues.length === 0) return { ok: true, spec: structural.spec };
+      if (issues.length === 0) return { ok: true, spec: structural.spec, ...withNotes(notes) };
       lastIssues = issues;
     }
 
@@ -104,7 +112,14 @@ export async function generateAppSpecForApp(user: CurrentUser, appId: string): P
     ok: false,
     error: "The assistant couldn't produce a valid app from your design. Review the notes, then add or refine a tab yourself.",
     issues: lastIssues,
+    ...withNotes(notes),
   };
+}
+
+/** Spread-ready `{ notes }`, de-duplicated and omitted entirely when nothing was normalised. */
+function withNotes(notes: string[]): { notes?: string[] } {
+  const unique = [...new Set(notes)];
+  return unique.length > 0 ? { notes: unique } : {};
 }
 
 /**
