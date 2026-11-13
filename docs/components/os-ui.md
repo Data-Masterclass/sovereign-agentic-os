@@ -244,6 +244,47 @@ fallback's vectors (relevance over them is noise). A
 A resume after a decision is filed as a job (A4); with the worker off it
 still executes inside the decider's request, exactly as in A2.
 
+### Agent systems in git (Part D)
+
+With `DATA_PROJECT_GIT=true` (chart `osUI.dataProjectGit.enabled`) every change to an agent
+system is a commit in the owning domain's bare repository — **the same repository** the Data tab's
+dbt project lives in, under the `agents/` subtree:
+
+```
+agents/index.yml                      slug -> id, owner, scope, visibility, source version
+agents/<slug>/system.yaml             the canonical definition
+agents/<slug>/agents/<id>.md          each agent's instruction file
+agents/<slug>/graph.json              the compiled LangGraph IR the engine runs
+agents/<slug>/README.md               purpose, members, grants, channels, edges, last build
+agents/personal/<uid>/<slug>/…        a Personal system, in its owner's lane
+```
+
+`agents(<domain>): <action> <slug> — via ui:<route> | mcp:<tool>`, authored as the acting user,
+committed by `Sovereign OS`, trailers `OS-Action` / `OS-Object` / `OS-Surface` / `OS-Request-Id` /
+`OS-Actor`. Runs do not commit. Archive and delete REMOVE the directory. At boot the OS reconciles
+each domain (`OS-Reason: boot-reconcile`). `get_agent_system` and the Agents tab header report the
+commit the system is at, read from the repo.
+
+**Operator notes.**
+
+- One switch for both halves (`DATA_PROJECT_GIT`): the repository, the `os-repos` PVC and the
+  read-only `git daemon` sidecar are shared, so a second flag could only ever disagree with itself.
+- `AGENT_TOOL_RESULT_MAX_CHARS` (default 20 000) bounds every agent tool result before it enters
+  the prompt, with a visible `[truncated: showing N of M rows]` marker;
+  `AGENT_TOOL_CALL_TIMEOUT_MS` (default 60 000) is the per-tool-call deadline, surfacing as a
+  typed `timeout` tool step. Both are run-path, so the `os-ui-worker` pod gets them too.
+- **Mirror**: `PUT /api/platform-admin/data-projects/<domain>/mirror` `{url, tokenSecretRef}` is
+  the ONE config for both halves. The push happens after every changed commit, never blocks a
+  save, and its last outcome is the **`git-mirror`** row on Platform → Components & Health — red
+  when a mirror's last push failed, amber before its first. Verify in a cluster:
+
+  ```bash
+  kubectl -n agentic-os exec deploy/os-ui -- sh -lc 'git --git-dir=/repos/<domain>.git log --oneline -5'
+  kubectl -n agentic-os exec deploy/os-ui -- sh -lc 'git --git-dir=/repos/<domain>.git ls-tree -r --name-only main | grep ^agents/'
+  # save a system twice in the UI, then once through the MCP, and expect three commits whose
+  # authors are the acting users and whose subjects name `ui:agents/…` then `mcp:commit_agent_files`
+  ```
+
 ## Admin → Components — native stack operator
 
 Operates the whole stack from inside the OS UI. It reads the Kubernetes API **directly,

@@ -13,6 +13,63 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Git-based working for agent systems, automatically (engine rebuild Part D)
+
+- **Every change to an agent system is a git commit**, in the UI and through the MCP alike, with
+  no "export to git" step. It lands in the SAME per-domain bare repository the dbt project lives
+  in (`$OS_REPOS_DIR/<domain>.git`, PVC `os-repos`), under `agents/`: `system.yaml` (the canonical
+  definition), `agents/<agent-id>.md` (each agent's instruction file), `graph.json` (the compiled
+  LangGraph IR the engine actually runs) and a generated `README.md` (purpose, members, grants,
+  channels, edges, last build), plus `agents/index.yml` mapping slug → id, owner, scope and source
+  version. A Personal system sits in `agents/personal/<uid>/`, the lane split the data side
+  already uses. Author = the acting user, committer = `Sovereign OS`, subject
+  `agents(<domain>): <action> <slug> — via ui:<route> | mcp:<tool>`, trailers `OS-Action`,
+  `OS-Object`, `OS-Surface`, `OS-Request-Id`, `OS-Actor`. Behind the same single switch as the data
+  half (`DATA_PROJECT_GIT`, default off) because they share the repository and the PVC.
+- **One commit path, and the compiler enforces it.** The store's `writeThrough(rec, change)` takes
+  a required second parameter: a change descriptor (⇒ a commit) or an explicit `null` ("run
+  bookkeeping, deliberately not a commit"). 17 writers commit; 7 — the activity marker, the run
+  checkpoint, the last-run report and restart recovery — do not, because a run's artefacts are the
+  LangGraph checkpoint, the `run_events` rows and the Langfuse trace. Archive and delete are
+  commits that REMOVE the directory; a cross-domain move commits both repositories.
+- **Two generators in one tree, neither clobbering the other.** `commitSubtree` replaces exactly
+  one prefix and keeps the rest of the tree (an empty file map is how a deletion is recorded);
+  `reserveSubtree` lets a subtree owner protect its prefix from the whole-tree writer. Both are
+  generic path-prefix primitives in `core/infra/git-store.ts`.
+- **Boot reconcile**: at startup each domain's subtree is regenerated and any delta committed as
+  the platform principal with `OS-Reason: boot-reconcile`, so a window with the flag off is caught
+  up without anyone re-saving. A data-only repository never grows an `agents/` directory.
+- **Read-back from the repository, not a ledger**: `get_agent_system` and
+  `GET /api/agents/systems/<id>` return `git: { head: { sha, author, at, action, surface },
+  history[] }`, and the Agents tab header shows `git <sha7> by <author> <time>`. With git off the
+  answer is `null`, never a fabricated sha.
+- **The MCP records its surface everywhere**: every `tools/call` now runs inside an `mcp:<tool>`
+  request-surface scope, so a change made through the MCP is distinguishable from the same change
+  made in the UI — for the data half too.
+- **Mirror push** (`core/infra/git-mirror.ts`): after every changed commit, either generator, the
+  OS pushes `main` to the domain's admin-configured remote, resolving the token from its Secret
+  reference at call time and scrubbing it from every error. Fire-and-forget — it reports, never
+  blocks a save, and is retried by the next commit — with the last outcome as the new
+  **`git-mirror`** row on Platform → Components & Health (red when a push failed, amber before the
+  first). One config for both halves; no second credential path.
+
+### Added — Agents use the granted data as context, robustly (checklist X9)
+
+- Every agent tool result is **bounded before it enters the prompt**
+  (`AGENT_TOOL_RESULT_MAX_CHARS`, default 20 000 characters). A tabular answer is truncated BY
+  ROWS and keeps well-formed JSON plus a visible `[truncated: showing 243 of 50000 rows]`; anything
+  else is cut by characters with the counts named. A truncated result always carries the marker.
+- Every agent tool call has a **deadline** (`AGENT_TOOL_CALL_TIMEOUT_MS`, default 60 s) and
+  surfaces as a typed `{"error":{"code":"timeout"}}` tool step the graph can route on, so a hung
+  upstream ends the step rather than the run. An upstream dispatch failure is now a typed
+  `upstream_error` envelope instead of a prose `Error: <message>`. A thrown dispatch still fails
+  the superstep, so the checkpoint keeps the exactly-once property of the calls that already ran.
+- Both guardrails live in the engine's tool path, so they protect every tool — not only the data
+  ones — and the governed executor is unchanged: a data read still dispatches **as the runner**,
+  never a service principal, and appears as a span of the run's one Langfuse trace with the
+  dataset in the span input.
+
+
 ### Fixed — Agent engine rebuild, A5 review round: `when` guards can finally be true
 
 - **An agent can write a state channel.** The A5 engine evaluated every handoff guard but

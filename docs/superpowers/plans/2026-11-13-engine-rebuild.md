@@ -438,9 +438,26 @@ deviations` below. New: `core/kernel/events.ts`, `scripts/check-trino-rules-char
 
 - [x] One commit path. `core/infra/git-store.ts` (isomorphic-git, MIT): `openOrInit(repo)`, `commitTree(repo, files, {author, message, trailers})` committing **iff the tree hash changed**, `log`, `readBlob`, `archive`, `push(mirror)`. Author = acting `CurrentUser` (name + email); committer = `Sovereign OS`. Message `<area>(<domain>): <action> <object> — via <mcp:tool | ui:<route>>`, trailers `OS-Action`, `OS-Object`, `OS-Surface`, `OS-Request-Id`. *(B1; `listTree` added; `CurrentUser` has no e-mail field — resolved through the user directory at boot, synthesized + declared otherwise, deviation B1-4.)*
 - [x] Repos: one bare repo per domain on PVC `os-repos` (RWO; os-ui is single-replica). Layout: `agents/<system>/{system.yaml,graph.ts,README.md}`, `dbt_project.yml`, `models/…`, `os/schedules.yml`. Served read-only in-cluster by a `git daemon` sidecar; NetworkPolicy limits consumers to the Dagster user-code pod. *(B1 ships the data half of the layout; `agents/<system>/…` is A2/A5's write into the same repo through the same store. The NetworkPolicy also keeps port 3000 open — os-ui had no ingress policy before, deviation B1-6. Chart objects render only with `osUI.dataProjectGit.enabled`.)*
-- [ ] **Every writer commits.** Agent store saves (`tabs/agents/lib/store.ts`), data store mutations (dataset, composition, check, sync, publish), and their MCP tools all route through the one commit path. A unit test enumerates the store's mutating exports and asserts each calls the commit builder (checklist X1). *(Data side DONE in B1 — `commit.test.ts` enumerates 31 mutators, flag on/off; the agent store is A2's area and still open.)*
+- [x] **Every writer commits.** Agent store saves (`tabs/agents/lib/store.ts`), data store mutations (dataset, composition, check, sync, publish), and their MCP tools all route through the one commit path. A unit test enumerates the store's mutating exports and asserts each calls the commit builder (checklist X1). *(Data side in B1 — `commit.test.ts` enumerates 31 mutators, flag on/off. Agents side NOW DONE: `writeThrough(rec, change)` takes a REQUIRED change descriptor or an explicit `null`, so the compiler forces the decision; `tabs/agents/lib/git/commit.test.ts` pins 17 committing writers × flag on/off plus 7 deliberately-not-committing run writers.)*
 - [x] Read access: `GET /api/<tab>/projects/<domain>` tree/log/blob at a ref; export as an archive at a commit; admin-only mirror config (URL + token Secret) with push-after-commit that reports but never blocks. *(Data tab routes in B1; the push itself is `kind`-only — checklist X2 untestable here.)*
-- [ ] Gates: checklist A2, A3, D2, D3, X1, X2.
+- [x] Gates: checklist A2, A3, D2, D3, X1, X2. *(A2 `true`, A3 `true`, D2/D3 `true` from B1, X1 `true`, X2 `true (unit)` with the real-remote half `untestable here`. A4 and A33 stay `false`/partial — see the checklist rows and deviation D-8.)*
+- [x] **X9 — agents use the data as context robustly** (added at the owner's request): bounded tool results, a per-call deadline, typed `timeout`/`upstream_error` steps, the runner's identity on the dispatch and the dataset in the run trace.
+
+#### Part D — what landed (agents half; five commits on `feat/engine-rebuild`)
+
+| Piece | Where |
+|---|---|
+| Subtree ownership in the ONE git store | `core/infra/git-store.ts` — `commitSubtree(domain, prefix, files, opts)` (replaces one prefix, keeps the rest; empty map = delete), `reserveSubtree`/`reservedSubtrees` (a whole-tree writer keeps a declared prefix), tree builder generalised to keep existing blobs by oid; `core/infra/git-store-subtree.test.ts` (6) |
+| Generator (pure, byte-stable) | `tabs/agents/lib/git/{snapshot,generate}.ts` — `agents/index.yml`, `agents/<slug>/{system.yaml,agents/<id>.md,graph.json,README.md}`, `agents/personal/<uid>/<slug>/…`; goldens `lib/git/fixtures/*.golden.json` (3 shapes incl. slug collisions + an unparseable source); `generate.test.ts` (12) |
+| One commit path + the event seam | `tabs/agents/lib/system-events.ts` (pure), `store.ts` `writeThrough(rec, change \| null)` + `systemsForProject` / `projectDomains`, `tabs/agents/lib/git/commit.ts` (`commitAgentSystem`, `installAgentProjectCommitHook`, per-domain serialisation, synchronous capture, two-repo cross-domain move), `instrumentation.ts`; `commit.test.ts` (49) |
+| Surface everywhere | `core/mcp/server.ts` wraps EVERY `tools/call` in `mcp:<tool>` (one place, so no tool can be forgotten — the data half benefits too); `app/api/agents/systems/[id]/build/route.ts` sets its own `ui:…` scope |
+| Boot reconcile | `tabs/agents/lib/git/reconcile.ts` (`reconcileAgentProjects`, `PLATFORM_ACTOR`, `OS-Reason: boot-reconcile`, domains = live systems ∪ repos already carrying `agents/`), wired in `instrumentation.ts` |
+| Read-back from the repo | `tabs/agents/lib/git/history.ts` (`systemGitInfo`, filtered on `OS-Object`), `get_agent_system`, `GET /api/agents/systems/<id>`, `SystemView.tsx` header line; `repo.test.ts` (7, against a REAL bare repo) |
+| Mirror push (X2) | `core/infra/git-mirror.ts` over B1's ONE record (same map symbol, same index, no second setter/credential path), `push` gains an injectable `http` transport, `gitMirrorRow` in `tabs/admin/lib/components-extra.ts` + the components route; `core/infra/git-mirror.test.ts` (8), `tabs/admin/lib/components-git-mirror.test.ts` (1) |
+| X9 | `tabs/agents/lib/engine/tool-result.ts` (`boundToolResult`, `callToolGuarded`, typed codes), `build-graph.ts` tools node, `os-tools.ts` typed `upstream_error`, `config.agentTool{ResultMaxChars,CallTimeoutMs}`, chart `soa.osUI.runEnv` (so the worker gets them), harness shape `agent-reads-gold-dataset`; `engine/data-context.test.ts` (9) |
+| Docs | `tabs/agents/README.md` ("Every change is a commit", "Agents use the data as context, robustly"), `os-ui/ARCHITECTURE.md` ("Git-based working: one repo per domain, two generators, one commit path"), `docs/components/os-ui.md`, `CHANGELOG.md` |
+
+**Gates at Part D:** `tsc --noEmit` clean · `npm --prefix os-ui test` **5246 tests, 0 failures, 4 todo** (5162 → 5246) · `check-structure` no new violations (TAB-ISOLATION 420/421, CORE-INDEPENDENCE 206/207, FILE-HEADER 1237/1240 — all below baseline, NOT re-locked) · `bash os-ui/scripts/gate.sh` exit 0 (**356 tests**, 8 files added) · `helm lint` + `helm template` with defaults and with `osUI.worker.enabled=true`, the two new env vars rendered for BOTH os-ui and the worker and absent when unset.
 
 ## Part E — The final document
 
@@ -1011,3 +1028,103 @@ reason is here.
 
 - **B2-11 What still needs the live cluster:** that a scheduled sync materialises in kind under the owner principal (D7, D10); that `dagster-k8s/config` really propagates `OS_PRINCIPAL` / `OS_PINNED_COMMITS` into run pods; that the subchart honours `sidecarContainers` / `volumes` / `volumeMounts` and an `env` entry with `valueFrom`; that `reloadRepositoryLocation` succeeds against the webserver Service; that the webserver's GraphQL schema matches the documents in `core/infra/dagster.ts` (field names were taken from Dagster 1.13's schema, not probed); and that `Definitions`-based locations really report the repository name `__repository__`.
 
+
+#### Part D deviations (agents half, five commits on `feat/engine-rebuild`) — `D-n`
+
+- **D-1 One repository, two OWNED SUBTREES — and the git store learned the concept.** `commitTree`
+  writes the whole desired tree, so the data generator's next commit would have DELETED
+  `agents/**`, and an agents generator written the same way would have deleted the dbt project.
+  Rather than teach either generator about the other (they are in different tabs and may not
+  import each other), `core/infra/git-store.ts` gained two generic primitives: `commitSubtree`
+  (replace exactly one path prefix, keep every other path at its current blob — so an EMPTY file
+  map is how a deletion is recorded) and `reserveSubtree(prefix)` (a whole-tree writer keeps paths
+  under a declared prefix that its own map does not mention). The registry holds path prefixes and
+  nothing else, so the store still knows nothing about datasets or systems. The reservation is
+  deliberately NOT implicit: without it, `commitTree` behaves exactly as before, which is what the
+  B1 tests assert.
+- **D-2 ONE switch, keeping its historical name.** `DATA_PROJECT_GIT` gates both halves. The
+  repository, the `os-repos` PVC and the read-only `git daemon` sidecar it provisions are shared,
+  so a second flag could only ever disagree with itself (git on for agents, off for data = an
+  `agents/` subtree in a repo nothing else maintains). Renaming the variable would touch
+  `tabs/data/**`, the chart and four docs for no behaviour change; it is a follow-up, recorded
+  here so nobody mistakes the name for a scope.
+- **D-3 PERSONAL systems live in the DOMAIN repo, in the owner's lane — mirroring B1.** The brief
+  allowed "the user's personal repo if B1 has that concept". It does not: B1 puts an un-promoted
+  dataset in the domain repo under `models/personal/<uid>/` with `+schema: personal_<uid>`, and
+  documents (`tabs/data/README.md` → "Who can read what") that every domain member can therefore
+  read every member's dataset DEFINITIONS while the DATA stays governed. The agents half mirrors
+  that decision exactly — `agents/personal/<uid>/<slug>/` — so one repository keeps one
+  convention and the read gate stays one gate. The same caveat applies and is now stated in
+  `tabs/agents/README.md`: a Personal system's definition (its prompts and its grant NAMES, never
+  a credential) is readable by the domain, which is wider than the Agents tab's own listing.
+- **D-4 The slug follows the display name; the ID is the identity.** A directory is
+  `<slug(name)>`, so a rename MOVES the directory and a promotion moves it out of the personal
+  lane — which is what an engineer reading the tree expects, and what makes the path meaningful.
+  Identity is carried by `agents/index.yml` (slug → id, owner, scope, version) and by the
+  `OS-Object: <id> (<name>)` trailer, which is also what `systemGitInfo` filters on — so a
+  rename, a lane move and even a delete stay in ONE history. Collisions are resolved
+  deterministically in id order (`<slug>-<id suffix>` for the later claimant), and a domain-scope
+  system that would slug to `personal` is disambiguated so it can never shadow the personal lane.
+- **D-5 The mirror is ONE config read by two modules, not one module.** The brief said "reuse
+  B1's mirror config and credential handling exactly — do not add a second config", and the admin
+  write path with its validation (http(s) only, no embedded credentials, egress allowlist, the
+  Secret must exist) lives in `tabs/data/lib/dbt/mirror.ts` — which the agents tab may not import
+  and which this phase must not edit (Phase B4 is live in that tree). `core/infra/git-mirror.ts`
+  therefore reads and writes the SAME record: the same `globalThis` symbol
+  (`soa.data.project-mirrors`) and the same durable index (`config.dataProjectMirrorsIndex`), with
+  no setter and no second validation of its own. The consequence is two push wrappers over one
+  record and one credential path; the health row reads the record's status, so it tells the truth
+  about whichever side pushed last. **Follow-up:** collapse `tabs/data/lib/dbt/mirror.ts` onto
+  `core/infra/git-mirror.ts` (keeping its setter) once B4 has landed.
+- **D-6 `OS-Reason` is additive, not a rename of `OS-Action`.** Part D's prose said "`OS-Actor` +
+  `OS-Reason` trailers"; B1 shipped the per-write reason as `OS-Action` and the whole data history
+  uses it. Renaming it would have rewritten the convention for every existing commit's reader, so
+  `OS-Action` stays the action and `OS-Reason` is added only where the CAUSE differs from the
+  action — today exactly one case, `boot-reconcile`.
+- **D-7 A BUILD commits; a RUN does not.** `setLastBuild` is a definition-level fact (this
+  definition built, or failed to, at this time) and the generated README states it, so a build is
+  a commit. Every run writer (`setActivity`, `clearActivity`, `startRunCheckpoint`,
+  `checkpointNode`, `setLastRun`, `recordActivity`, `recoverInterrupted`) is
+  `writeThrough(rec, null)`: a run's artefacts are the LangGraph checkpoint, the `run_events` rows
+  and the Langfuse trace, and committing per node would bury every real change under run noise.
+  `setRunning` and `setSchedule` DO commit — enabling or scheduling a system is a configuration
+  act an engineer would commit, exactly like a dbt schedule.
+- **D-8 A4 (run the export outside the OS) is NOT closed, and `graph.json` is why.** The committed
+  IR is the compiled graph in a readable, diff-able form — which is checklist A3's requirement and
+  the brief's — but it is not a runnable artefact: executing it still needs `buildGraph`, the
+  governed executor and the LiteLLM credential, i.e. this repository. Emitting a standalone
+  `graph.ts` + a thin runner is a real piece of work (the node bodies, the hold decision and the
+  tool specs all have to be expressible without `@core`), so A4 stays `false` with the exact gap
+  named rather than being half-claimed. What IS true today: the whole repository, `agents/**`
+  included, is readable and exportable as a tar through the existing project routes.
+- **D-9 The MCP surface was fixed in ONE place, for every tool.** B1 wrapped each data MCP tool
+  individually (`runWithSurface('mcp:<tool>')`), which left every other tool — including the
+  generic `archive` / `delete` / promotion-ladder tools that mutate an agent system — recording the
+  default `ui:` surface. `core/mcp/server.ts` now wraps the single `tools/call` dispatch instead,
+  so no tool surface can be forgotten; the per-tool wrappers simply nest with the same name.
+- **D-10 X9's guardrails are the ENGINE's, and a thrown dispatch is still a crash.** The brief
+  asked for a typed `timeout` / `upstream_error` the graph routes on. The deadline produces
+  `timeout` as a typed result (there is no exception to propagate and nothing to resume onto).
+  A THROW out of the governed executor is deliberately NOT converted: it means the dispatch itself
+  broke, and A2's M5 property — the superstep fails, the checkpoint keeps every call that already
+  ran, and a resume re-runs exactly the one in flight — is worth more than a readable message that
+  invites the model to continue from an unverified state. What the model now gets instead is a
+  TYPED `upstream_error` from the executor's own JSON-RPC-error branch (previously the prose
+  `Error: <message>`), so an upstream failure is routable on a code.
+- **D-11 Follow-up in `tabs/data` (not done here, by instruction).** The real `query_data` handler
+  has no row cap, no `LIMIT` injection and no `request_timeout` of its own: it runs the SQL the
+  model wrote and returns every row. The engine-side bound and deadline protect the RUN (and every
+  other tool), but the Trino query itself still executes in full and the full result still crosses
+  the process boundary once. The handler should also (a) bound its own result set, (b) carry a
+  statement timeout, and (c) report the true row count beside the truncated rows. That belongs to
+  the next iteration in `tabs/data/mcp/data-query-tools.ts` + `core/infra/governed.ts`.
+- **D-12 What proved wrong in the plan.** (1) "Layout: `agents/<system>/{system.yaml,graph.ts,
+  README.md}`" — `graph.ts` cannot be generated honestly (D-8), so the compiled graph is
+  `graph.json`, and each agent's prompt is its own `agents/<id>.md` rather than being buried in
+  the yaml only. (2) Part D assumed the agent store could be hooked the way the data store was;
+  it could, but only after `writeThrough` was given a required change descriptor — the data side's
+  `persist()` + 11 bypassing writers pattern would have left 22 call sites silently deciding by
+  omission. (3) The plan's X2 wording ("`kind` with a local bare remote") is not achievable with
+  isomorphic-git: it speaks only smart-HTTP, so a local bare repo is not a valid remote. The unit
+  half is therefore a FAKE TRANSPORT at the isomorphic-git boundary (which is where the brief
+  allowed it), and the `kind` half needs a real git server.

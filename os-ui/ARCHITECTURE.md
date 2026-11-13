@@ -502,6 +502,80 @@ and `resume_agent_run`, and the Governance `onDecided` hook all go through
 In particular a decision no longer drives the graph inside the decider's request — it files a
 `resume` job, and the approval card says `queued` until the run reports back.
 
+## Git-based working: one repo per domain, two generators, one commit path
+
+(Engine rebuild, Part D — behind `DATA_PROJECT_GIT`, default off. The flag's name is historical:
+it is the ONE switch for both halves, because they share the repository, the PVC and the
+read-only `git daemon` sidecar it provisions.)
+
+Everything built in the OS — from the UI or through the MCP — lands in a real git repository, as a
+commit authored by the person who made the change. There is no "export to git" step and no second
+ledger: the Agents tab and `get_agent_system` read the commit back out of the repo.
+
+**One repository per domain, two owned subtrees.**
+
+```
+$OS_REPOS_DIR/<domain>.git          # bare, on the os-repos PVC (RWO; os-ui is single-replica)
+├── dbt_project.yml  profiles.yml  models/…  os/…     # the Data tab's generator (B1)
+└── agents/                                           # the Agents tab's generator (Part D)
+    ├── index.yml                                     # slug -> id, owner, scope, source version
+    ├── <slug>/                                       # a Shared / Marketplace system
+    │   ├── system.yaml                               # THE canonical definition
+    │   ├── agents/<agent-id>.md                      # each agent's instruction file
+    │   ├── graph.json                                # the compiled LangGraph IR the engine runs
+    │   └── README.md                                 # purpose, members, grants, channels, edges
+    └── personal/<uid>/<slug>/…                       # a Personal system, in its owner's lane
+```
+
+The personal lane mirrors the data side's `models/personal/<uid>/` deliberately: one repository,
+one convention. A promotion therefore MOVES the directory out of the lane in the same commit that
+changes the visibility — and the id in `index.yml` and in the `OS-Object` trailer is what stays
+frozen, because a directory name is a slug, not an identity.
+
+**Two generators, one tree, no clobbering.** The dbt generator writes the WHOLE tree
+(`commitTree`); the agents generator writes exactly its prefix (`commitSubtree`, which keeps every
+other path at its current blob — so an EMPTY file map is how an archive or a delete is recorded).
+For the other direction, `reserveSubtree('agents/')` (registered when the agents hook installs)
+tells the whole-tree writer to keep paths it does not itself mention. Both primitives are generic:
+`core/infra/git-store.ts` holds path prefixes and knows nothing about datasets or systems.
+
+**Every writer commits — and the compiler says so.** `tabs/agents/lib/store.ts` has one
+`writeThrough(rec, change)` whose second parameter is **required**: a `SystemChangeSpec` makes the
+write a commit, `null` says "run bookkeeping, deliberately not a commit". A new writer cannot be
+added without deciding, and `tabs/agents/lib/git/commit.test.ts` pins which decision each of the
+24 writers made (17 commit; 7 — the activity marker, the run checkpoint, the last-run report and
+restart recovery — do not, because a run's artefacts are the LangGraph checkpoint, the `run_events`
+rows and the Langfuse trace). The store is reachable from the client bundle, so it emits a pure
+`SystemChange` (`tabs/agents/lib/system-events.ts`) and the server-only
+`tabs/agents/lib/git/commit.ts` subscribes at boot — the same seam, for the same reason, as the
+data side's `project-events.ts`.
+
+**Where "via" comes from, for the MCP too.** `core/mcp/server.ts` now runs EVERY `tools/call`
+inside an `mcp:<tool>` request-surface scope, so no tool surface can be forgotten; `withRoute`
+supplies `ui:<route>` for the UI, and the hand-rolled build route sets its own scope. A writer
+outside any scope is recorded as `ui:agents` and logged once as a gap.
+
+**Boot reconcile.** At boot the OS regenerates each domain's `agents/**` once and lets the git
+store decide whether anything changed, so a window with the flag off (or a failed write) is caught
+up as the platform principal with `OS-Reason: boot-reconcile`. Domains walked: those holding a
+live system, plus any repo that already carries an `agents/` subtree — so a removal is committed
+too, and a data-only repo never grows an `agents/` directory.
+
+**Mirror.** One admin-configured remote per domain (`{url, tokenSecretRef}`; the URL may not embed
+credentials and its host must be on the egress allowlist). After every CHANGED commit —
+either generator — `core/infra/git-mirror.ts` pushes `main`, resolving the token from its Secret
+reference at call time, using it once and scrubbing it from any error. The push is
+fire-and-forget: it reports, never blocks a save, and is retried by the next commit. The last
+outcome is the `git-mirror` row on Platform → Components & Health (red when a mirror's last push
+failed, amber before its first), because a fire-and-forget failure that is only a log line is a
+remote silently falling behind.
+
+**What is NOT in the tree.** No secrets: grants are names and ids, the LiteLLM key is a Secret
+*reference* held on the record and excluded by the snapshot, and no run artefact (activity,
+checkpoint, last run, last activity) is committed — those belong to Langfuse, `run_events` and the
+checkpointer. A `system.yaml` that does not parse is still committed verbatim, with a README that
+says so: losing the source would be worse than an unreadable one.
+
 ## A data product is a dbt project in a git repo the OS owns
 
 (Engine rebuild, Phases B1–B2 — behind `DATA_PROJECT_GIT`, default off. Concept:

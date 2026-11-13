@@ -217,6 +217,79 @@ the engine equals itself, and `shape-guarded-handoff-held-write` exists precisel
 defect the engine must NOT reproduce (the walker ignored `when` and visited the guarded target).
 A new shape means a new fixture beside them.
 
+## Every change is a commit (Part D — flag `DATA_PROJECT_GIT`, default off)
+
+With the flag on (chart: `osUI.dataProjectGit.enabled`), every mutation of an agent system —
+created, edited, built, promoted, demoted, forked, renamed, moved, archived, unarchived, deleted,
+restored, scheduled, started, stopped, an agent toggled, a grant changed, an owner or a domain
+reassigned — regenerates this domain's `agents/**` subtree and commits it to the bare repository
+the OS owns (`$OS_REPOS_DIR/<domain>.git`, PVC `os-repos`, **the same repo** the Data tab's dbt
+project lives in). Author = the acting user, committer = `Sovereign OS`, message
+`agents(<domain>): <action> <slug> — via ui:<route> | mcp:<tool>` with trailers `OS-Action`,
+`OS-Object` (`<id> (<name>)`), `OS-Surface`, `OS-Request-Id`, `OS-Actor` (and
+`OS-Author-Email: synthesized` when the user has no e-mail). A regeneration that changes nothing
+commits nothing.
+
+**Runs do not commit.** A run's artefacts are the LangGraph checkpoint, the `run_events` rows and
+the Langfuse trace; committing per node would bury every real change under run noise. The activity
+marker, the run checkpoint, the last-run report and restart recovery are therefore
+`writeThrough(rec, null)` — the store's second parameter is required, so a new writer cannot be
+added without deciding, and `lib/git/commit.test.ts` pins both lists (17 commit, 7 do not).
+
+**Generated layout** (goldens: `lib/git/fixtures/*.golden.json`):
+
+```
+agents/index.yml                        # slug -> id, owner, scope, visibility, source version
+agents/<slug>/system.yaml               # THE canonical definition (what you edit in the OS)
+agents/<slug>/agents/<agent-id>.md      # each agent's instruction file (agent_md)
+agents/<slug>/graph.json                # the compiled LangGraph IR `buildGraph` runs
+agents/<slug>/README.md                 # purpose, members, grants, channels, edges, last build
+agents/personal/<uid>/<slug>/…          # a Personal system, in its owner's lane
+```
+
+A Personal system lives in `agents/personal/<uid>/` — the lane split B1 chose for
+`models/personal/<uid>/`, so one repository keeps one convention. A promotion moves the directory
+in the same commit that changes the visibility; the frozen identity is the `id` in `index.yml` and
+in the `OS-Object` trailer, never the slug. Archive and delete are commits that REMOVE the
+directory, with the reason in the subject. No secrets are ever written: grants are names and ids,
+and the system's LiteLLM key is a Secret *reference* the generator never sees.
+
+**Read it back.** `get_agent_system` and `GET /api/agents/systems/<id>` return
+`git: { head: { sha, author, at, action, surface }, history[] }`, read from the repository by
+`lib/git/history.ts` (filtered on the `OS-Object` trailer, so a rename or a lane move keeps ONE
+history). The Agents tab header shows `git <sha7> by <author> <time>`. With the flag off the
+answer is `null` — never a fabricated sha. The whole repo (dbt project + `agents/**`) is readable
+and exportable through the Data tab's project routes (`GET /api/data/projects/<domain>`,
+`…/blob`, `…/export`), gated on domain membership.
+
+**At boot**, the OS reconciles: it regenerates each domain's subtree once and commits any delta as
+the platform principal with `OS-Reason: boot-reconcile`, so a window with the flag off is caught
+up without anyone re-saving. **After every changed commit** the configured mirror is pushed
+(`core/infra/git-mirror.ts`; one admin-configured remote per domain, token by Secret reference),
+reported on Platform → Components & Health and retried by the next commit.
+
+## Agents use the data as context, robustly (X9)
+
+A granted data read is an ordinary governed tool call — `query_data` / `get_dataset` through
+`grantedToolExecutor` → `handleRpc` **as the runner**, so OPA and row-level security see the human,
+never a service principal. What the ENGINE adds around every tool call (`lib/engine/tool-result.ts`):
+
+- **A bound before the prompt** (`AGENT_TOOL_RESULT_MAX_CHARS`, default 20 000). A JSON answer
+  carrying `rows` / `data` / `items` / `results` (or a bare array) is truncated BY ROWS, so the
+  model still sees well-formed JSON plus `[truncated: showing 243 of 50000 rows]`; anything else is
+  cut by characters, with the counts named. A truncated result ALWAYS carries the marker — a
+  silently shortened answer is how an agent reaches a confident wrong conclusion.
+- **A deadline per call** (`AGENT_TOOL_CALL_TIMEOUT_MS`, default 60 s) → a typed
+  `{"error":{"code":"timeout"}}` tool-step the graph routes on, so a hung read ends the step, not
+  the run. An upstream failure is likewise typed (`upstream_error`). A THROWN dispatch is *not*
+  swallowed: it fails the superstep so the checkpoint keeps the exactly-once property of the calls
+  that already ran, and a resume re-runs exactly the one in flight.
+- The call is a span of the run's ONE Langfuse trace, with the dataset in the span input and the
+  result bounded there too (a 160-char preview plus the size).
+
+Both bounds protect EVERY tool, not just the data ones. Pinned by
+`lib/engine/data-context.test.ts` over the engine shape `agent-reads-gold-dataset`.
+
 ## Rules that apply here
 
 1. **Import only `@core/*` and this module.** A cross-tab need means the shared part belongs in `@core`.
