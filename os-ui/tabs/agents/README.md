@@ -61,10 +61,32 @@ Environment:
   (chart: `postgres.extraDatabases`; os-ui runs `PostgresSaver.setup()` at boot). Unset → an
   in-memory checkpointer, reported as `checkpointer: 'memory'` on every run.
 
-Resume: a `langgraph` run has a `runId` (= its LangGraph thread id, on the run report and
-`LastRun`). `POST /api/agents/systems/<id>/run { resume: true, runId }` continues it from its last
-checkpoint; the Run panel offers **Resume** on an interrupted run. `run_agent_system` returns the
-`runId` (resume over MCP arrives in A5).
+Resume: a `langgraph` run has a `runId` (= its LangGraph thread id, minted by
+`core/kernel/run-id.ts`, on the run report and `LastRun`). `POST /api/agents/systems/<id>/run
+{ resume: true, runId }` continues it from its last checkpoint — only for the run's own system and
+runner (404 otherwise; 409 once finished); the Run panel offers **Resume** on an interrupted run
+whose checkpoints are in Postgres.
+
+Approvals as interrupts (A2): a held write parks the run on `interrupt()` before any call of the
+batch executes (`lib/build/hold.ts` is the pure rule; `lib/engine/approval-port.ts` the queue port,
+`approvals-bridge.ts` its server implementation). The decision in Governance resumes the run as
+the runner (`lib/engine/resume.ts`, registered into `core/policy/approvals.ts` `onDecided` by
+`resume-boot.ts` at boot; `lib/build/run-service.ts` drives start/resume/finalise for every door).
+
+SSE events of `POST …/run` (stream): `node-started`, `tool-step`, `node-completed` (unchanged);
+`approval-required { approvalId, tool, node }` when a held write parks the run; `done` (body
+carries `parked`, `heldApprovals`, `warnings`, `checkpointer`) or `error`. The re-attach stream
+`GET …/run/stream?runId=` (owner-checked) replays a parked run's events and adds
+`resumed { approvalId, decision }` when a decision continues it. Events live on an in-process topic
+(`lib/engine/run-events.ts`, single replica until A4).
+
+MCP tools: `run_agent_system` and `resume_agent_run { runId }` (restart recovery; runner-only) in
+`core/mcp/agent-write-tools.ts` (bundle `agent-write`; both are in the static write catalog),
+`get_agent_run { runId }` (state summary, path, held approvals with who can decide; runner-only; a
+read) beside `get_agent_system` in `core/mcp/discovery-base-tools.ts`. `run_agent_system` returns
+`runId`, `parked`, `heldApprovals`.
+The Governance tool `decide_approval` resumes a parked run's thread through the same hook and
+returns the `resume` outcome.
 
 Parity: `lib/engine/parity-harness.ts` + `lib/engine/fixtures/*.json` are the golden recordings
 both engines must reproduce (`parity.test.ts`: P1 for both engines, HANDOFF-GUARD, P2 abort +

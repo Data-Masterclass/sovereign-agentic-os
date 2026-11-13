@@ -69,6 +69,10 @@ type LastRun = {
   resumeFromIndex?: number;
   /** The run id (= LangGraph thread id) under the langgraph engine — what Resume continues. */
   runId?: string;
+  /** Where the thread's checkpoints live — Resume is offered only for `postgres` (memory died with the pod). */
+  checkpointer?: 'postgres' | 'memory';
+  heldApprovals?: HeldApproval[];
+  warnings?: string[];
 };
 
 /** Grant ids per kind, mirroring ContextKind — for the Evaluate granted-vs-used strip. */
@@ -126,7 +130,16 @@ type RunReport = {
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;
   traceUrl?: string;
+  /** Engine rebuild A1/A2: the run id (= LangGraph thread), where its checkpoints live, compile warnings. */
+  runId?: string;
+  checkpointer?: 'postgres' | 'memory';
+  warnings?: string[];
+  interrupted?: boolean;
+  /** A2: the run is PARKED on these approvals; the decision in Governance resumes it. */
+  parked?: boolean;
+  heldApprovals?: HeldApproval[];
 };
+type HeldApproval = { approvalId: string; tool: string; node: string };
 
 // The run route returns TWO shapes: a single-agent report (output/steps/traces/held)
 // and a multi-agent "team" run (finalText/nodes, no steps/traces). Normalize both
@@ -183,6 +196,12 @@ function normalizeRun(body: RawRun): RunReport {
     mode: body.mode,
     traceStoreAvailable: body.traceStoreAvailable,
     traceUrl: body.traceUrl,
+    runId: body.runId,
+    checkpointer: body.checkpointer,
+    warnings: Array.isArray(body.warnings) ? body.warnings : undefined,
+    interrupted: body.interrupted,
+    parked: body.parked ?? ((body.heldApprovals?.length ?? 0) > 0),
+    heldApprovals: Array.isArray(body.heldApprovals) ? body.heldApprovals : undefined,
   };
 }
 
@@ -327,6 +346,10 @@ type LiveProgress = {
   /** Nodes that have started (active or done) and nodes that have completed. */
   started: string[];
   completed: string[];
+  /** A2: the held write the run is parked on right now (cleared by `resumed`). */
+  awaiting?: HeldApproval;
+  /** A2: the last decision that resumed the run. */
+  resumed?: { approvalId: string; decision: string };
 };
 
 // ── Context actually used (#177) ────────────────────────────────────────────
@@ -531,7 +554,8 @@ function GrantsVsUsage({ granted, usage }: { granted: GrantedIds; usage?: RunCon
 
 /** A calm one-line "what is happening right now" for the live banner. */
 function liveLine(p: LiveProgress): string {
-  if (!p.node) return 'Starting the team…';
+  if (p.awaiting) return `${p.awaiting.node} · ${p.awaiting.tool} — parked, awaiting approval in Governance → Inbox`;
+  if (!p.node) return p.resumed ? `Resumed after the ${p.resumed.decision === 'approve' ? 'approval' : 'rejection'}…` : 'Starting the team…';
   const where = p.index && p.total ? ` (agent ${p.index} of ${p.total})` : '';
   if (!p.tool) return `${p.node} — thinking${where}`;
   const verb = p.stepStatus === 'running' ? 'running' : p.stepStatus ?? 'done';
@@ -983,6 +1007,84 @@ export default function BuildRunPanel({
         ...(p ?? { started: [], completed: [] }),
         completed: p?.completed.includes(node) ? p.completed : [...(p?.completed ?? []), node],
       }));
+    } else if (event === 'approval-required') {
+      // A2: a held write parked the run — say so, and keep the banner until the decision resumes it.
+      setLive((p) => ({
+        ...(p ?? { started: [], completed: [] }),
+        awaiting: { approvalId: String(data.approvalId ?? ''), tool: String(data.tool ?? ''), node: String(data.node ?? '') },
+      }));
+    } else if (event === 'resumed') {
+      setLive((p) => ({
+        ...(p ?? { started: [], completed: [] }),
+        awaiting: undefined,
+        resumed: { approvalId: String(data.approvalId ?? ''), decision: String(data.decision ?? '') },
+      }));
+    }
+  };
+
+  /**
+   * Consume one SSE response frame-by-frame. `onFrame` returns true to stop reading (a terminal
+   * frame). Resolves `settled` = whether a terminal frame arrived (never a stuck spinner otherwise).
+   */
+  const readSse = async (res: Response, onFrame: (event: string, data: Record<string, unknown>) => boolean): Promise<boolean> => {
+    if (!res.body) return false;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let settled = false;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const frames = buf.split('\n\n');
+      buf = frames.pop() ?? '';
+      for (const frame of frames) {
+        const evLine = frame.split('\n').find((l) => l.startsWith('event:'));
+        const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
+        if (!evLine || !dataLine) continue;
+        const event = evLine.slice(6).trim();
+        let data: Record<string, unknown> = {};
+        try { data = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
+        if (onFrame(event, data)) settled = true;
+      }
+      if (settled) break;
+    }
+    return settled;
+  };
+
+  /**
+   * A2 — re-attach to a PARKED run: the Governance decision resumes it in another request; this
+   * stream replays what happened and follows it to the real end. Ends on a non-parked `done`.
+   */
+  const attachToRun = async (runId: string) => {
+    setRunningNow(true);
+    setRunErr('');
+    try {
+      const res = await fetch(`/api/agents/systems/${systemId}/run/stream?runId=${encodeURIComponent(runId)}`, { headers: { accept: 'text/event-stream' } });
+      if (!res.ok || !(res.headers.get('content-type') ?? '').includes('text/event-stream')) {
+        const body = await res.json().catch(() => ({}));
+        setRunErr(body.error ?? 'Could not attach to the parked run — it will finish on its own; refresh to see the result.');
+        return;
+      }
+      const settled = await readSse(res, (event, data) => {
+        if (event === 'done') {
+          const r = normalizeRun(data as RawRun);
+          setRun(r);
+          if (r.parked) return false; // the replayed parked `done` — keep listening
+          setLive(null);
+          return true;
+        }
+        if (event === 'error') { setRunErr(String(data.error ?? 'Run failed')); return true; }
+        applyEvent(event, data);
+        return false;
+      });
+      if (!settled) setRunErr('The run stream ended before the parked run finished — refresh to see its current state.');
+      onStateChange();
+    } catch (e) {
+      setRunErr((e as Error).message);
+    } finally {
+      setRunningNow(false);
+      setLive(null);
     }
   };
 
@@ -1012,38 +1114,28 @@ export default function BuildRunPanel({
         // Parse the SSE stream frame-by-frame: light up agents as they run and show
         // the current step live; `done` carries the SAME full result the non-stream
         // path returns, so the completed view is byte-for-byte unchanged.
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-        let settled = false;
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const frames = buf.split('\n\n');
-          buf = frames.pop() ?? '';
-          for (const frame of frames) {
-            const evLine = frame.split('\n').find((l) => l.startsWith('event:'));
-            const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
-            if (!evLine || !dataLine) continue;
-            const event = evLine.slice(6).trim();
-            let data: Record<string, unknown> = {};
-            try { data = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
-            if (event === 'done') {
-              settled = true;
-              setRun(normalizeRun(data as RawRun));
-              setLive(null);
-            } else if (event === 'error') {
-              settled = true;
-              setRunErr(String(data.error ?? 'Run failed'));
-            } else {
-              applyEvent(event, data);
-            }
+        let parkedRunId: string | undefined;
+        const settled = await readSse(res, (event, data) => {
+          if (event === 'done') {
+            const r = normalizeRun(data as RawRun);
+            setRun(r);
+            // A2: a PARKED run — the request is over, but the run is not: re-attach below.
+            if (r.parked && r.runId) parkedRunId = r.runId;
+            else setLive(null);
+            return true;
           }
-        }
+          if (event === 'error') { setRunErr(String(data.error ?? 'Run failed')); return true; }
+          applyEvent(event, data);
+          return false;
+        });
         // Stream ended without a terminal frame (disconnect): never leave a stuck
         // spinner — surface an honest message so the student can retry.
         if (!settled) setRunErr('The run stream ended before a result arrived — please run again.');
+        if (parkedRunId) {
+          onStateChange();
+          void attachToRun(parkedRunId);
+          return;
+        }
       } else {
         // Non-streaming (stop press, or a server without the stream): read JSON.
         const body = await res.json();
@@ -1168,9 +1260,26 @@ export default function BuildRunPanel({
       ) : null}
       {/* An interrupted run (recovered after a mid-run restart) is legible, not lost:
           the completed steps are preserved above; a re-run continues the work. */}
-      {lastRun?.interrupted && !runningNow ? (
+      {/* A2: a run PARKED on held writes — the decision in Governance resumes it; watch it finish here. */}
+      {run?.parked && run.heldApprovals && run.heldApprovals.length > 0 && !runningNow ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
-          {lastRun.runId ? (
+          Parked — awaiting approval of{' '}
+          {run.heldApprovals.map((h, i) => (
+            <span key={h.approvalId}>
+              {i > 0 ? ', ' : ''}<code>{h.tool}</code> ({h.node})
+            </span>
+          ))}{' '}
+          in <a href={`/governance?focus=${encodeURIComponent(run.heldApprovals[0].approvalId)}`}>Governance → Inbox</a>. The decision resumes the run as you;{' '}
+          {run.runId ? (
+            <button type="button" className="btn-ghost" onClick={() => void attachToRun(run.runId!)} disabled={runningNow}>
+              watch it finish
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {lastRun?.interrupted && !runningNow && !run?.parked ? (
+        <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
+          {lastRun.runId && lastRun.checkpointer === 'postgres' ? (
             <>
               Interrupted {timeAgo(lastRun.at)} — completed steps preserved below;{' '}
               <button type="button" className="btn-ghost" onClick={() => void doRun(false, lastRun.runId)} disabled={runningNow}>
@@ -1178,9 +1287,19 @@ export default function BuildRunPanel({
               </button>{' '}
               continues from the last checkpoint.
             </>
+          ) : lastRun.runId ? (
+            <>Interrupted {timeAgo(lastRun.at)} — completed steps preserved below. Its checkpoints were in memory and did not survive the restart; press ▶ Run to start again.</>
           ) : (
             <>Interrupted by a restart {timeAgo(lastRun.at)} — completed steps preserved below; press ▶ Run to continue.</>
           )}
+        </div>
+      ) : null}
+      {/* Engine notes (review M1): compile warnings (e.g. a guard over a channel nothing sets) and
+          where this run's checkpoints live — one calm amber line, never silent. */}
+      {run && !runningNow && ((run.warnings && run.warnings.length > 0) || run.checkpointer) ? (
+        <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
+          {run.checkpointer ? <>Checkpoints: {run.checkpointer === 'postgres' ? 'Postgres (durable)' : 'in memory (not durable across restarts)'}{run.warnings && run.warnings.length > 0 ? ' · ' : ''}</> : null}
+          {run.warnings && run.warnings.length > 0 ? <>{run.warnings.length} compile warning{run.warnings.length === 1 ? '' : 's'}: {run.warnings.join(' · ')}</> : null}
         </div>
       ) : null}
       {/* Seed timestamp for the persisted run result. */}

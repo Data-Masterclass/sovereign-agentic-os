@@ -21,8 +21,8 @@ import {
   writeFile as writeAgentFile,
   getSystemForEdit,
   getSystemForRun,
-  newRunId,
 } from '@tabs/agents/lib/store';
+import { newRunId } from '@core/kernel/run-id';
 import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { buildSystem } from '@tabs/agents/lib/build/server';
 
@@ -165,6 +165,9 @@ export const agentWriteTools: McpTool[] = [
         runId: team.runId ?? (engine === 'langgraph' ? runId : undefined),
         checkpointer: team.checkpointer,
         reachedEnd: team.reachedEnd,
+        // A2: a run PARKED on a held write — decide its approvals (decide_approval) to resume it.
+        parked: team.parked ?? false,
+        heldApprovals: team.heldApprovals ?? [],
         path: team.path,
         finalText: team.finalText,
         // Per-node summary: model + governed tool steps (no raw model text — tight).
@@ -173,6 +176,40 @@ export const agentWriteTools: McpTool[] = [
           model: r.model,
           steps: r.result.steps.map((s) => ({ tool: s.tool, isError: s.isError })),
         })),
+      };
+    },
+  },
+  {
+    name: 'resume_agent_run',
+    tab: 'agents',
+    minRole: 'creator',
+    description:
+      'RESUME an interrupted agent run (LangGraph engine) from its last checkpoint — restart recovery after a pod restart or a dropped request. NOT for a run parked on an approval: that one resumes by itself when the approval is decided (decide_approval). Governance: only the RUNNER can resume their run (typed not_found otherwise); a finished run is a typed conflict; the resumed run executes AS YOU through the same governed door. Returns the completed report (or the next parked state).',
+    inputSchema: {
+      type: 'object',
+      properties: { runId: { type: 'string', description: 'The run id to continue.' } },
+      required: ['runId'],
+      examples: [{ runId: 'run_1b4e28ba-2fa1-11d2-883f-0016d3cca427' }],
+    },
+    call: async (user, args) => {
+      const runId = str(args.runId).trim();
+      if (!runId) fail('resume_agent_run needs a `runId`', 400);
+      const { peekRunOwner } = await import('@tabs/agents/lib/build/agentic-graph-server');
+      const owner = await peekRunOwner(runId);
+      if (!owner || owner.userId !== user.id) fail('Run not found', 404);
+      const view = getSystemForRun(owner.systemId, P(user));
+      const { executeTeamRun, prepareRunYaml } = await import('@tabs/agents/lib/build/run-service');
+      const yaml = await prepareRunYaml(user, view, owner.systemId);
+      const body = await executeTeamRun({ user, systemId: owner.systemId, view, yaml, messages: [], engine: 'langgraph', runId, resume: true });
+      return {
+        runId,
+        systemId: owner.systemId,
+        engine: 'langgraph',
+        reachedEnd: body.reachedEnd,
+        parked: body.parked,
+        heldApprovals: body.heldApprovals,
+        path: body.path,
+        finalText: body.finalText,
       };
     },
   },
@@ -207,6 +244,8 @@ type RunTeamFn = (input: {
   runs: { node: string; model: string; result: { steps: { tool: string; isError: boolean }[] } }[];
   runId?: string;
   checkpointer?: 'postgres' | 'memory';
+  parked?: boolean;
+  heldApprovals?: { approvalId: string; tool: string; node: string }[];
 }>;
 
 // runOsTeam drives a LIVE LiteLLM call; tests inject a spy so the wrapper's

@@ -22,10 +22,15 @@ import type { AgentsEngine } from '@core/kernel/agents-engine';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engine/checkpointer';
 import type { HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
+import { inspectGraphRun, type PendingApproval, type RunInspection } from '@tabs/agents/lib/engine/run';
+import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
+import type { ApprovalDecision, ApprovalPort } from '@tabs/agents/lib/engine/approval-port';
+import { serverApprovalPort } from '@tabs/agents/lib/engine/approvals-bridge';
 import {
   grantedToolSpecs,
   grantedToolBrief,
   grantedToolExecutor,
+  resolveAlias,
   resolveGrantedTools,
   type OsToolDeps,
 } from '@tabs/agents/lib/build/os-tools';
@@ -246,8 +251,14 @@ export type RunOsTeamInput = {
   runId?: string;
   /** `langgraph` only: continue the thread `runId` from its last checkpoint instead of starting. */
   resume?: boolean;
+  /** `langgraph` only (A2): the Governance decision a resume carries, `{ [approvalId]: decision }`. */
+  resumeWith?: Record<string, ApprovalDecision>;
   /** `langgraph` only: abort the stream (a client disconnect); the thread stays resumable. */
   signal?: AbortSignal;
+  /** `langgraph` only (A2): fired when a held write PARKS the run (the route's `approval-required`). */
+  onInterrupt?: (ev: { approvalId: string; tool: string; node: string }) => void;
+  /** Injected in tests; defaults to the Governance queue (`approvals-bridge.ts`). */
+  approvalPort?: ApprovalPort;
 };
 
 /** The walker's result plus what the LangGraph engine adds (all optional on a walker run). */
@@ -258,6 +269,9 @@ export type RunOsTeamResult = AgenticGraphResult & {
   warnings?: string[];
   /** The stream was aborted or the recursion limit hit before END — resumable. */
   interrupted?: boolean;
+  /** A2: the run is waiting on `heldApprovals`; the decision in Governance resumes it. */
+  parked?: boolean;
+  heldApprovals?: PendingApproval[];
   held?: HeldCall[];
   routes?: RouteDecision[];
 };
@@ -287,10 +301,13 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   // every node) — the source for the Monitoring run-summary trace below.
   const tracked = trackUsage(input.llm ?? liteLlmCaller());
   // The ONE deps object both engines run on: the same gates, the same models, the same budgets.
+  const langgraph = input.engine === 'langgraph';
   const deps: AgenticGraphDeps = {
     llm: tracked.llm,
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
-    callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps),
+    // A2: under `langgraph` the tools NODE decides the hold (and parks the run); the executor then
+    // only sees non-held and approved calls, so its gate 1b steps aside. The walker keeps gate 1b.
+    callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps, { holdAt: langgraph ? 'node' : 'executor' }),
     embed: embedder.embed,
     embedSource: embedder.lastSource,
     preamble: osPreamble(input.user, sys),
@@ -324,13 +341,29 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     void _tb;
     const result = await runGraphEngine({
       ir,
-      deps: { ...graphDeps, unmappedTools: resolveGrantedTools(sys).unmapped },
+      deps: {
+        ...graphDeps,
+        unmappedTools: resolveGrantedTools(sys).unmapped,
+        // A2 — the hold, lifted into the node: the same rule the executor applied (`holdDecisionFor`
+        // over the system's preset), the Governance queue as the port, the runner's snapshot.
+        hold: {
+          decide: (tool) => holdDecisionFor(sys.safetyPreset, resolveAlias(tool)),
+          approvals: input.approvalPort ?? serverApprovalPort(),
+          systemId: input.systemId,
+          domain: sys.system.domain,
+          runner: { id: input.user.id, role: input.user.role, domains: input.user.allDomains ?? input.user.domains },
+          agent: principalFor(input.systemId),
+        },
+      },
       messages: input.messages,
       runId: input.runId,
+      // The owner stamp: this system + this user. Verified on every resume (review H1).
+      owner: { systemId: input.systemId, userId: input.user.id, domain: sys.system.domain },
       resume: input.resume,
+      resumeWith: input.resumeWith,
       signal: input.signal,
       checkpointer,
-      hooks: { onNodeStart, onStep, onNodeComplete },
+      hooks: { onNodeStart, onStep, onNodeComplete, onInterrupt: input.onInterrupt },
     });
     emitRunSummaryTrace(input, result, tracked, prices);
     return result;
@@ -339,6 +372,45 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   const result = await runAgenticGraph(ir, input.messages, deps);
   emitRunSummaryTrace(input, result, tracked, prices);
   return result;
+}
+
+/**
+ * Read a run's state without running it (MCP `get_agent_run`): the same deps as a run (so the graph
+ * compiles identically), a model that is never called, the caller as the owner gate.
+ */
+export async function inspectOsRun(input: { user: CurrentUser; yaml: string; systemId: string; runId: string }): Promise<RunInspection> {
+  const sys = parseSystem(input.yaml);
+  const ir = compile(sys);
+  const checkpointer = await selectCheckpointer(config.agentRunsDatabaseUrl);
+  return inspectGraphRun({
+    ir,
+    deps: {
+      llm: async () => { throw new Error('inspectOsRun never calls the model'); },
+      toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
+      callTool: async () => ({ text: 'inspect', isError: true }),
+      preamble: '',
+      reasoningModel: roleModel('reasoning'),
+      execModel: roleModel('tools'),
+      unmappedTools: resolveGrantedTools(sys).unmapped,
+    },
+    runId: input.runId,
+    owner: { systemId: input.systemId, userId: input.user.id, domain: sys.system.domain },
+    checkpointer,
+  });
+}
+
+/**
+ * The owner stamp of a checkpointed thread, read straight from the checkpointer (no system needed) —
+ * how the MCP tools map a bare `runId` to its system, then re-check it through `getSystemForRun`.
+ */
+export async function peekRunOwner(runId: string): Promise<{ systemId: string; userId: string; domain: string } | null> {
+  const checkpointer = await selectCheckpointer(config.agentRunsDatabaseUrl);
+  const tuple = await checkpointer.saver.getTuple({ configurable: { thread_id: runId } });
+  const owner = (tuple?.checkpoint?.channel_values as { owner?: unknown } | undefined)?.owner;
+  if (!owner || typeof owner !== 'object') return null;
+  const o = owner as { systemId?: unknown; userId?: unknown; domain?: unknown };
+  if (typeof o.systemId !== 'string' || typeof o.userId !== 'string') return null;
+  return { systemId: o.systemId, userId: o.userId, domain: typeof o.domain === 'string' ? o.domain : '' };
 }
 
 /** Upper bound on the prompt echoed into the run-summary trace input. */

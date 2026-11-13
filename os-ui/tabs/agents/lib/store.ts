@@ -98,6 +98,9 @@ export type RunCheckpoint = {
   currentNode?: string;
   /** The LangGraph thread id (= run id) when the `langgraph` engine ran it — what a Resume continues. */
   runId?: string;
+  /** Where that thread's checkpoints live. Only `postgres` survives a process restart, so recovery
+   *  offers Resume only then (review finding M3). */
+  checkpointer?: 'postgres' | 'memory';
 };
 
 /** The last interactive run report — persisted so navigating away and back does not wipe it. */
@@ -176,6 +179,10 @@ export type LastRun = {
   /** Which executor produced this run and where its checkpoints live (langgraph only). */
   engine?: 'walker' | 'langgraph';
   checkpointer?: 'postgres' | 'memory';
+  /** A2: the approvals a PARKED run is waiting on (LangGraph `interrupt()`); the decision resumes it. */
+  heldApprovals?: { approvalId: string; tool: string; node: string }[];
+  /** A2: `buildGraph` compile warnings reported with the run (e.g. a guard over a channel nothing sets). */
+  warnings?: string[];
 };
 
 export type SystemRecord = {
@@ -371,9 +378,11 @@ export function recoverInterrupted(rec: SystemRecord): boolean {
   const outputLines = [
     `Run interrupted by a restart after ${completed.length}${planned.length ? ` of ${planned.length}` : ''} step(s).`,
     cp?.currentNode ? `Was executing '${cp.currentNode}' when the process stopped.` : '',
-    cp?.runId
+    cp?.runId && cp.checkpointer === 'postgres'
       ? 'The steps below completed before the interruption. Resume to continue from the last checkpoint.'
-      : 'The steps below completed before the interruption. Re-run to continue.',
+      : cp?.runId
+        ? 'The steps below completed before the interruption. Its checkpoints were in memory and died with the process — re-run to continue.'
+        : 'The steps below completed before the interruption. Re-run to continue.',
   ].filter(Boolean);
   const lastRun: LastRun = {
     at: cp?.updatedAt ?? marker.startedAt,
@@ -390,6 +399,7 @@ export function recoverInterrupted(rec: SystemRecord): boolean {
     resumeFromIndex: reachedIdx,
     runId: cp?.runId,
     engine: cp?.runId ? 'langgraph' : undefined,
+    checkpointer: cp?.checkpointer,
   };
   rec.lastRun = lastRun;
   delete rec.activity; // clear the stale live spinner
@@ -410,10 +420,9 @@ function id(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
 }
 
-/** Mint a run id — the LangGraph thread id of one run (engine rebuild A1). Same shape as every store id. */
-export function newRunId(): string {
-  return id('run');
-}
+/** Mint a run id — the LangGraph thread id of one run. Lives in the kernel (`core/kernel/run-id.ts`,
+ *  `crypto.randomUUID`) since A2: the old store-shaped id was guessable (review finding H1). */
+export { newRunId } from '@core/kernel/run-id';
 
 /** Stable blob sha for optimistic concurrency. */
 function sha(content: string): string {
@@ -1073,7 +1082,7 @@ export function clearActivity(systemId: string): void {
  */
 export function startRunCheckpoint(
   systemId: string,
-  input: { prompt?: string; plannedNodes?: string[]; runId?: string },
+  input: { prompt?: string; plannedNodes?: string[]; runId?: string; checkpointer?: 'postgres' | 'memory' },
 ): void {
   const rec = state().store.get(systemId);
   if (!rec) return;
@@ -1086,6 +1095,7 @@ export function startRunCheckpoint(
     plannedNodes: input.plannedNodes,
     completedNodes: [],
     runId: input.runId,
+    checkpointer: input.checkpointer,
   };
   writeThrough(rec);
 }

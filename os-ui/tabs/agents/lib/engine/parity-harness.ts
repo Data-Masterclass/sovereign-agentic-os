@@ -44,6 +44,8 @@ import { runAgenticGraph, type AgenticGraphDeps } from '@tabs/agents/lib/build/a
 import type { GraphDeps } from '@tabs/agents/lib/engine/build-graph';
 import { memoryCheckpointer, type SelectedCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { runGraphEngine, type EngineHooks } from '@tabs/agents/lib/engine/run';
+import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
+import { memoryApprovalPort, type MemoryApprovalPort } from '@tabs/agents/lib/engine/approval-port';
 
 /** Bump when the scripted model's rules change — every fixture must then be regenerated.
  *  @2: adds the declared-order `route` rule for supervisors (the walker never triggers it, so
@@ -378,8 +380,8 @@ export function scriptedLlm(task: string): LlmCall {
 
 // ----------------------------------------------------------- fake dispatch --
 
-/** Records what the REAL hold gate enqueued. */
-export type HoldSink = { enqueued: string[] };
+/** Records what the REAL hold gate enqueued (executor gate 1b on the walker; the node's ApprovalPort under langgraph). */
+export type HoldSink = { enqueued: string[]; port?: MemoryApprovalPort };
 
 /**
  * Collaborators for `grantedToolExecutor`: the gates stay REAL; only the MCP dispatch is an
@@ -420,17 +422,30 @@ export function walkerDeps(
   };
 }
 
-/** The LangGraph engine's deps — the SAME gates and wiring as {@link walkerDeps}, minus the hooks (events stream). */
+/**
+ * The LangGraph engine's deps — the SAME gates and wiring as {@link walkerDeps}, minus the hooks
+ * (events stream). A2: the hold is decided in the tools NODE (`hold`, over a memory ApprovalPort
+ * recorded on the sink) and the executor runs with `holdAt: 'node'` — exactly as production wires it.
+ */
 export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: HoldSink): Omit<GraphDeps, 'checkpointer'> {
+  sink.port ??= memoryApprovalPort();
   return {
     llm,
     toolSpecsFor: (node) => grantedToolSpecs(FIXTURE_USER, sys, node.tools),
-    callTool: grantedToolExecutor(FIXTURE_USER, sys, systemId, fixtureToolDeps(sink)),
+    callTool: grantedToolExecutor(FIXTURE_USER, sys, systemId, fixtureToolDeps(sink), { holdAt: 'node' }),
     preamble: FIXTURE_PREAMBLE,
     reasoningModel: 'sovereign-reasoning',
     execModel: 'sovereign-default',
     maxIterations: 4,
     maxRunSteps: 40,
+    hold: {
+      decide: (tool) => holdDecisionFor(sys.safetyPreset, tool),
+      approvals: sink.port,
+      systemId,
+      domain: sys.system.domain,
+      runner: { id: FIXTURE_USER.id, role: FIXTURE_USER.role, domains: FIXTURE_USER.domains },
+      agent: `os-${systemId}`,
+    },
   };
 }
 
@@ -500,7 +515,7 @@ export async function runGraph(spec: Pick<EngineFixture, 'name' | 'yaml' | 'task
     toolCalls,
     finalText: result.finalText,
     reachedEnd: result.reachedEnd,
-    held: sink.enqueued.length,
+    held: sink.enqueued.length + (sink.port?.all().length ?? 0),
     warnings: result.warnings,
     interrupted: result.interrupted,
     runId,

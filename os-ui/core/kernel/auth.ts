@@ -35,6 +35,18 @@ export type CurrentUser = {
   role: Role;
 };
 
+/**
+ * The LIVE principal of a user id — role and domains as they are NOW, not as a session or a
+ * stored snapshot remembered them. `null` when the user does not exist or is disabled. The
+ * agent engine re-reads a parked run's runner through this before resuming (A2): a runner who
+ * was deactivated or lost the role since the run parked must not have the run execute as them.
+ */
+export async function principalById(id: string): Promise<{ id: string; name: string; role: Role; domains: string[] } | null> {
+  const u = await getPublicUser(id);
+  if (!u || u.disabled) return null;
+  return { id: u.id, name: u.name, role: u.role, domains: activeDomainIds(u.domains) };
+}
+
 export async function authenticate(username: string, password: string) {
   const u = await authUser(username, password);
   if (!u) return null;

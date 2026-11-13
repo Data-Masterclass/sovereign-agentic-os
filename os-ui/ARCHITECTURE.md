@@ -230,10 +230,15 @@ the node's advertised tools (`toOpenAiTools`); if the gateway rejects `tools` it
 a `react` flag and retries with the ReAct text protocol; a cap or loop-guard triggers
 the same one-shot synthesis the walker did. `tools_<id>` is the **node-level gate**:
 only tools this node is advertised reach `grantedToolExecutor` (an un-advertised call
-gets a typed `not_found` and never executes); the hold decision stays inside the
-executor, whose typed `held` result is recorded in `state.held`. `route_<id>` records
-the visit (`nodeRuns`, `handoffs`, `node-completed`), then routes. act → tools is a
-conditional edge on "the reply carried tool calls"; tools → act is a plain edge.
+gets a typed `not_found` and never executes). It runs in two phases: first the **hold
+decision for the whole batch** (`holdDecisionFor`, parking the run on `interrupt()` —
+see "Approvals are interrupts"), then **one executed call per superstep**, so every
+execution is checkpointed before the next one starts. `route_<id>` records the visit
+(`nodeRuns`, `handoffs`, `node-completed`), then routes. act → tools is a conditional
+edge on "the reply carried tool calls"; tools → tools while calls remain, else → act.
+Every agent visit costs one budget step in `plan_<id>` (plus one per tool round and per
+supervisor decision), so an unguarded handoff cycle ends at the budget — and is a
+compile warning.
 
 **Supervisor.** `route_<sup>` asks the model through a mandatory `route` tool
 (`{ next: <member>|'END', brief }`, text fallback `NEXT: <member>`) and
@@ -265,7 +270,66 @@ with `streamMode: ['custom','updates']`; nodes emit through `config.writer`, and
 route forwards the same SSE events as before (`node-started`, `tool-step`,
 `node-completed`, `done`, `error`). `POST …/run { resume: true, runId }` calls
 `stream(null, { configurable: { thread_id } })` and continues from the last checkpoint;
-the Run panel's "Resume" button does exactly that.
+the Run panel's "Resume" button does exactly that — offered only when the checkpointer is
+`postgres` (a memory thread died with the pod). The first superstep stamps
+`state.owner = { systemId, userId, domain }`; a resume must name the same system **and**
+user or it is a typed `ResumeNotFoundError` (404 — never confirming the thread exists), and a
+thread with nothing left to run is a `RunAlreadyFinishedError` (409), never a silent no-op.
+Run ids come from `core/kernel/run-id.ts` (`crypto.randomUUID`): a run id is a capability.
+Checkpoints hold the full state — raw tool results included — indefinitely; retention is an
+open item (plan A13 follow-up). The checkpointer and the in-process run-event topic assume a
+**single os-ui replica** until A4's worker.
+
+## Approvals are interrupts
+
+A write that needs a human **pauses the run**; the decision **resumes it**. Nothing executes
+in between — not the held call, and not the other calls of the same batch.
+
+```
+act_<id> ──tool calls──▶ tools_<id>  phase 1: holdDecisionFor(preset, tool) for EVERY call
+                            │          held → ApprovalPort.enqueueOnce(<threadId>:<callId>)   (idempotent)
+                            │          pending → interrupt({ approvalId, tool, node, args })  ── run PARKS
+                            │                                                                   SSE approval-required
+   Governance inbox / MCP decide_approval ── decide() ── onDecided hook ── resume.ts
+                            │          runner re-read LIVE (principalById): disabled / role lost / domain lost → refused
+                            │          Command({ resume: { [approvalId]: decision } }) as the RUNNER
+                            ▼          SSE resumed
+                         tools_<id>  phase 2: one call per superstep — approved → grantedToolExecutor(user = runner)
+                                              rejected → {"error":{"code":"rejected","approvalId"}} to the model
+```
+
+**Where the hold lives.** The rule is the pure module `tabs/agents/lib/build/hold.ts`
+(`writeTargetScope`, `holdDecision`, `holdDecisionFor`) — the same rule the executor's gate 1b
+applied in A1, lifted out so the graph builder (no `server-only`) can call it before anything
+executes. Under `langgraph` the executor runs with `holdAt: 'node'` and no longer re-holds; the
+walker keeps `holdAt: 'executor'` and the old out-of-band `held` result.
+
+**Idempotency.** LangGraph re-runs an interrupted node from its start on every resume, so the
+node enqueues through `enqueueOnce` keyed on `interruptKey = <threadId>:<callId>` — one approval
+per held call however many times the node re-runs. The **queue is the source of truth**: on every
+re-run the node reads each approval's state back; a decided one never interrupts again, a pending
+one parks again. A resume payload meant for another approval therefore cannot unblock the wrong
+call. Phase 2 executes one call per superstep so a crash between two executions re-executes only
+the call in flight.
+
+**Who executes.** The approval record carries `runId`, `threadId`, `interruptKey`, `systemId`,
+`node`, `tool`, `args` and the **runner's principal snapshot**. `core/policy/approvals.ts`
+`decide()` fires the registered `onDecided` handlers (a registration at boot from
+`tabs/agents/lib/engine/resume-boot.ts`, mirroring `core/folders/adapters.ts` — the kernel never
+imports the tab); `decisionSettled(id)` lets both decide doors await the outcome. The handler
+(`engine/resume.ts`) re-reads the runner live and refuses — typed, stamped on the record's
+`resume` field — when the runner is gone or no longer clears the tool's role floor; otherwise it
+rebuilds the run context **as the runner** (`run-service.ts`) and continues the thread. The
+approver authorises; the runner executes. `applyEffect` performs **no approver-side effect** for a
+run approval. A rejection also resumes: the agent receives the typed `rejected` result (a policy
+outcome in the UI) and continues. A parked approval has **no TTL** in v1 — an open policy
+question recorded in `docs/components/os-ui.md`.
+
+**Watching it finish.** The run route's `done` body carries `parked` and `heldApprovals`; the
+resume happens in the decider's request, so the panel re-attaches to the run's event topic
+(`GET …/run/stream?runId=`, owner-checked) and sees `resumed` → `node-started` … `done`. MCP:
+`get_agent_run { runId }` (state, path, held approvals), `resume_agent_run { runId }` (restart
+recovery), and `decide_approval` resumes through the same hook.
 
 ## Things this codebase will punish you for
 

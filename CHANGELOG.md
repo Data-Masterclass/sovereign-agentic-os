@@ -13,6 +13,53 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Added — Agent engine rebuild, Phase A2: approvals as interrupts
+
+- **A held write pauses the run; the decision resumes it.** `tools_<id>` now computes the hold
+  decision for the whole batch first (`tabs/agents/lib/build/hold.ts`, the pure rule lifted out of
+  the executor), enqueues each held call **once** (`enqueueOnce`, idempotent on
+  `<threadId>:<callId>`) and parks the run on LangGraph `interrupt()` — nothing in the batch
+  executes before the decision. Approving executes the call **exactly once as the runner** (never
+  the approver) through the unchanged `grantedToolExecutor`; denying returns a typed
+  `{"error":{"code":"rejected","approvalId"}}` to the model, which continues.
+- **Approvals carry the thread** (`core/policy/approvals.ts`): `runId`, `threadId`, `interruptKey`,
+  `systemId`, `node`, `tool`, `args`, the runner's principal snapshot and the `resume` outcome.
+  `decide()` fires registered `onDecided` handlers; `decisionSettled(id)` awaits them. The Agents
+  tab registers the resume at boot (`engine/resume-boot.ts`) — the kernel never imports a tab.
+  The resume (`engine/resume.ts`) re-reads the runner's role **live** and refuses, typed, when the
+  runner is disabled, lost the role or left the domain. `applyEffect` performs no approver-side
+  effect for a run approval.
+- **Run route**: additive SSE events `approval-required { approvalId, tool, node }` and (on the
+  re-attach stream) `resumed { approvalId, decision }`; the `done` body gains `parked` and
+  `heldApprovals`. New `GET …/run/stream?runId=` re-attaches to a parked run's events
+  (owner-checked). The Run panel shows the parked state, re-attaches automatically, and renders
+  compile `warnings` + the checkpointer kind.
+- **Governance inbox** card for an agent-run approval shows system · agent · tool · runner with
+  "Open run ↗" and the resume outcome; both decide doors (inbox route, MCP `decide_approval`)
+  await and return `resume`.
+- **MCP**: `get_agent_run { runId }` (state, path, held approvals, who can decide) and
+  `resume_agent_run { runId }` (restart recovery); `run_agent_system` returns `parked` /
+  `heldApprovals`; `decide_approval` resumes the thread.
+- **Tests (P3)**: `tabs/agents/lib/engine/approvals.test.ts` (a–e, H1, M4, M5),
+  `resume.test.ts` (f), `run-events.test.ts`, `core/policy/approvals-hook.test.ts`.
+
+### Fixed — A1 review (absorbed in A2)
+
+- **H1/L5 (security)**: run ids are `crypto.randomUUID()` from `core/kernel/run-id.ts` (the store
+  re-exports); the first superstep stamps `state.owner = { systemId, userId, domain }` and every
+  resume (`POST …/run { resume }`, `resume_agent_run`, the decision hook) verifies system **and**
+  user — a foreign thread is a 404, never confirming it exists.
+- **M4**: resuming a finished thread is a typed `RunAlreadyFinishedError` (409), not a silent
+  no-op that rewrote `LastRun`.
+- **M5**: `tools_<id>` executes **one call per superstep** (checkpointed between executions), so a
+  crash mid-batch re-executes at most the call in flight — tested.
+- **M2**: every agent visit costs one budget step; an unguarded handoff cycle is a compile warning.
+- **M1**: the Run panel renders `warnings` and the checkpointer kind. **M3**: `RunCheckpoint` /
+  `LastRun` record the checkpointer; Resume is offered only for `postgres`.
+- **L1**: `when` expressions are capped at 512 chars (typed syntax error). **L2**:
+  `node-started.total` never reads below `index`. **L3/L4**: single-replica assumption and
+  checkpoint retention documented.
+
 ### Added — Agent engine rebuild, Phase A1: real graph, in-request, checkpointed
 
 - **`buildGraph`** (`os-ui/tabs/agents/lib/engine/build-graph.ts`): the unchanged system.yaml IR

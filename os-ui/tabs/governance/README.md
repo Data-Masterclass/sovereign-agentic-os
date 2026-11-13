@@ -34,6 +34,18 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 
 - `context.md` — the system prompt context this tab gives an agent
 
+## Agent-run approvals (A2)
+
+A held write from a running agent system lands here as an approval that **carries its run**:
+`runId`, the system, the agent node, the tool and its arguments, and the runner's identity. The
+card shows them with an "Open run ↗" link. Approving or denying **resumes the parked run**: the
+approver authorises, the **runner executes** (their role is re-read live; a runner who was
+deactivated or lost the role makes the resume refuse, shown on the card as `resume refused`).
+A denied call reaches the agent as a typed rejection and the run continues. Parked approvals have
+no TTL in v1 (open policy question — see `docs/components/os-ui.md`). The resume itself is wired
+by the Agents tab (`tabs/agents/lib/engine/resume-boot.ts`) through `core/policy/approvals.ts`
+`onDecided` — this module stays unaware of the engine.
+
 ## Rules that apply here
 
 1. **Import only `@core/*` and this module.** A cross-tab need means the shared part belongs in `@core`.

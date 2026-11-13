@@ -16,6 +16,7 @@ import { type Effect } from '@tabs/agents/lib/gateway';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { trace as realTrace } from '@core/infra/agent-governed';
 import { enqueue as realEnqueue } from '@core/policy/approvals';
+import { holdDecision, writeTargetScope } from '@tabs/agents/lib/build/hold';
 import { resolveFolderGrant } from '@core/kernel/folders';
 import { config } from '@core/kernel/config';
 import { TAB_FEATURES } from '@core/kernel/tabs';
@@ -409,74 +410,12 @@ export function writeOutcomesLine(o: WriteOutcomes): string {
 }
 
 /**
- * The TARGET SCOPE of a write — the lane the artifact lands in. This is what makes
- * the hold SCOPE-AWARE: a `personal` (My) write is exactly what the runner could do
- * by hand with NO approval, so it is never held; a `domain` / `company` write is a
- * governance ESCALATION (My→Domain / Domain→Company) and IS held to the right admin.
+ * The hold rule lives in the pure `hold.ts` (no `server-only`) so the LangGraph engine's
+ * `tools_<id>` node can compute it BEFORE executing a batch and park the run on an
+ * `interrupt()`. Re-exported here unchanged for every existing caller.
  */
-export type WriteScope = 'personal' | 'domain' | 'company';
+export { holdDecision, holdDecisionFor, writeTargetScope, type HoldDecision, type WriteScope } from '@tabs/agents/lib/build/hold';
 
-/**
- * The ESCALATING write tools — the promotion / publish / certify / approve family
- * whose EFFECT crosses a governance boundary (My→Domain or Domain→Company). These
- * are the ONLY writes an agent (or its builder by hand) may not perform directly:
- * they are HELD to the correct admin. Everything else in {@link WRITE_APPROVAL_NAMES}
- * is a create/author/upload/build/document/update on a PERSONAL (My) artifact — the
- * runner's own work — and is NOT held.
- *
- *   - `publish_knowledge`  — flips a workflow My→Domain (domain_admin gate).
- *   - `request_promotion`  — files a My→Domain promotion request (domain_admin).
- *   - `approve_promotion`  — APPLIES a Domain promotion (domain_admin).
- */
-const ESCALATING_DOMAIN_TOOLS = new Set(['publish_knowledge', 'request_promotion', 'approve_promotion']);
-
-/**
- * The TARGET SCOPE of a granted write tool call. Conservative + fail-closed:
- *   - the escalation family (promote/publish/approve) -> Domain (the My->Domain gate);
- *   - everything else (create_/ingest_/author_/upload_/build_/transform_/document_/
- *     define_/attach_/wire_/update_/archive_ ... on a My artifact) -> Personal.
- * A write only crosses a governance boundary when THIS says Domain/Company, so a
- * personal create is never held.
- */
-export function writeTargetScope(mcpName: string): WriteScope {
-  if (ESCALATING_DOMAIN_TOOLS.has(mcpName)) return 'domain';
-
-  return 'personal';
-}
-
-/**
- * SCOPE-AWARE hold: does a granted WRITE tool call cross a governance boundary that
- * must be HELD for admin approval? The scope-aware replacement for the old blanket
- * preset hold — the personal-create path is NEVER held.
- *
- *   - `read-only`                -> ALL writes blocked + queued (held to admin).
- *   - any other preset, PERSONAL -> NOT held. Falls through to the run-as-user
- *                                   governed dispatch (gate 2 = the acting user's
- *                                   OPA/DLS/role/ownership is the real authority; a
- *                                   builder has FULL rights to their own My artifact,
- *                                   so their agent does too — never more).
- *   - any other preset, DOMAIN   -> held -> routed to `domain_admin` approval.
- *   - any other preset, COMPANY  -> held -> routed to `admin` (tenant) approval.
- *
- * The security invariant: an agent NEVER exceeds what its runner could do by hand.
- * A personal write needs no approval by hand, so it is not held; a Domain/Company
- * write is an escalation the runner could NOT do by hand (it needs an admin), so it
- * is held to that admin. Fail-closed: an unknown scope resolves to `personal` only
- * for non-escalating create tools (the runner's own work); the escalation family and
- * any Domain/Company target are always held.
- */
-export function holdDecision(
-  preset: SafetyPreset,
-  mcpName: string,
-): { held: false } | { held: true; approverRole: 'domain_admin' | 'admin' } {
-  // read-only blocks every write, regardless of target.
-  if (preset === 'read-only') return { held: true, approverRole: 'admin' };
-  const scope = writeTargetScope(mcpName);
-  if (scope === 'company') return { held: true, approverRole: 'admin' };
-  if (scope === 'domain') return { held: true, approverRole: 'domain_admin' };
-  // personal -> never held (the create default): gate 2 is the authority.
-  return { held: false };
-}
 
 /**
  * Resolve a system's `grants.tools` through the alias map, split into the MCP
@@ -628,12 +567,26 @@ function errorResult(code: string, reason: string): { text: string; isError: boo
  *
  * `systemId` is required for the enqueue attribution + trace attribution.
  */
+export type ExecutorOptions = {
+  /**
+   * WHERE the write-approval hold (gate 1b) is decided. `executor` (default — the walker path):
+   * this executor holds + enqueues and returns the typed `held` result. `node` (the LangGraph
+   * engine, A2): the `tools_<id>` node has ALREADY computed the hold for the whole batch with the
+   * same `holdDecisionFor` rule and parked the run on `interrupt()`; only non-held and APPROVED
+   * calls reach this executor, so gate 1b must not re-hold them. Gates 1 and 2 are identical
+   * either way — the identity of every side effect stays the acting user.
+   */
+  holdAt?: 'executor' | 'node';
+};
+
 export function grantedToolExecutor(
   user: CurrentUser,
   sys: System,
   systemId: string,
   deps: OsToolDeps = defaultDeps,
+  opts: ExecutorOptions = {},
 ): ToolExecutor {
+  const holdHere = (opts.holdAt ?? 'executor') === 'executor';
   const granted = grantedMcpTools(sys);
   const grantedNames = new Set(granted.map((t) => t.name));
   const sysPrincipal = principalFor(systemId);
@@ -679,7 +632,7 @@ export function grantedToolExecutor(
     //   • `read-only`   → every write blocked (held), regardless of target.
     // Ownership stays intact: a personal write dispatched at gate 2 runs under
     // `canManageArtifact` (personal → owner-only), so a non-owner is still refused.
-    if (WRITE_APPROVAL_NAMES.has(mcpName)) {
+    if (holdHere && WRITE_APPROVAL_NAMES.has(mcpName)) {
       const decision = holdDecision(sys.safetyPreset, mcpName);
       if (decision.held) {
         // A held write is NEVER executed — record the human-in-the-loop request,

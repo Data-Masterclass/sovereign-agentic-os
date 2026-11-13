@@ -57,10 +57,28 @@ safe expression language, node-level tool narrowing enforced at execution, bound
 step budget), `engine/run.ts` streams it with thread id = run id, and `engine/checkpointer.ts`
 checkpoints every superstep to the `agent_runs` Postgres database (`AGENT_RUNS_DATABASE_URL`) or,
 when unset, in memory — the run report says which. `POST …/run { resume: true, runId }` continues
-an interrupted run; the Run panel shows **Resume**. Still ahead: A2 approvals as `interrupt()`
-(today a held write returns the executor's typed `held` result to the model, as before); A3 one
-Langfuse trace per run; A4 a worker; A5 deletes the walker. How the graph is shaped is written up
-in `os-ui/ARCHITECTURE.md` → "How a system.yaml becomes a StateGraph".
+an interrupted run; the Run panel shows **Resume**. **Phase A2 (landed)** makes approvals
+interrupts: a write the system's safety preset holds (a Domain/Company escalation, or any write
+under `read-only`) PARKS the run on a LangGraph `interrupt()` before anything in that batch
+executes; the approval in Governance → Inbox carries the run (`runId`, system, agent node, tool,
+arguments, the runner's identity); approving or denying it — in the inbox or over MCP
+`decide_approval` — resumes the run **as the runner, whose role is re-read live** (a deactivated
+runner or one who lost the role refuses the resume, visibly on the card); an approved call then
+executes exactly once as the runner, a denied one reaches the agent as a typed `rejected` result
+and the run continues. The Run panel shows the parked state and re-attaches to the run's stream
+to watch it finish; `get_agent_run` / `resume_agent_run` cover the same over MCP. Still ahead:
+A3 one Langfuse trace per run; A4 a worker; A5 deletes the walker. How the graph is shaped is
+written up in `os-ui/ARCHITECTURE.md` → "How a system.yaml becomes a StateGraph" and "Approvals
+are interrupts".
+
+**Open policy question (A2): parked approvals have no TTL.** A run parked on a held write waits
+indefinitely for its decision; nothing expires it, reminds anyone, or fails it over to another
+approver. v1 chose this deliberately (an expiry that silently rejects would execute a decision no
+human took). Candidates for a later iteration: a visible age on the card, an admin "abandon run"
+action that resumes with a rejection, or a tenant policy for a default expiry. Also open:
+LangGraph checkpoints keep the full run state — raw tool results included — for as long as the
+`agent_runs` database keeps them (no retention yet; plan A13 follow-up), and both the checkpointer
+and the in-process run-event topic assume a **single os-ui replica** until A4's worker.
 
 **The flag.** `AGENTS_ENGINE=walker|langgraph` (env, default `walker`; `core/kernel/config.ts`
 `agentsEngine`). A system may pin itself to the walker with `runtime: walker` in its
@@ -73,11 +91,12 @@ and any compile `warnings` (e.g. a handoff guard over a channel nothing sets —
 Software Delivery Team's `plan_ready`/`committed`/… guards are exactly that today, so under
 `langgraph` its supervisor drives the order and each guard is reported).
 
-**Known limits of A1 (honest).** No node writes a system channel yet, so every `when` guard
-over a channel is a warning and evaluates false until a later phase adds a channel-setting
-mechanism. The Context Librarian handoff curation runs in the graph only when a live embedder is
-wired (same rule as the walker). A held write is not yet an `interrupt()`; the run continues with
-the typed `held` result (A2).
+**Known limits (honest).** No node writes a system channel yet, so every `when` guard over a
+channel is a warning and evaluates false until a later phase adds a channel-setting mechanism;
+the run report's `warnings` (rendered in the Run panel) say so. The Context Librarian handoff
+curation runs in the graph only when a live embedder is wired (same rule as the walker). A
+resume after a decision runs inside the decider's request (A4's worker moves it off-request).
+Under the `walker` engine a held write still returns the old out-of-band typed `held` result.
 
 ## Admin → Components — native stack operator
 

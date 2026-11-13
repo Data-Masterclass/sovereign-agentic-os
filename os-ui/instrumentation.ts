@@ -91,6 +91,18 @@ export async function register(): Promise<void> {
       });
   }
 
+  // APPROVAL → RESUME hook (engine rebuild A2): the Agents tab registers its graph-resume with the
+  // Governance queue's `onDecided` so approving a parked run's write (inbox route or MCP
+  // `decide_approval`) continues the run as its runner. A registration, never a core→tab import.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      const { registerResumeHook } = await import('./tabs/agents/lib/engine/resume-boot.ts');
+      registerResumeHook();
+    } catch (err) {
+      console.error(`[os-ui] agent runs: approval-resume hook NOT registered — parked runs will not resume on decision: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // AGENT-RUN CHECKPOINTER init (engine rebuild A1): when AGENT_RUNS_DATABASE_URL is set, run
   // `PostgresSaver.setup()` once at boot (idempotent CREATE TABLE IF NOT EXISTS + migrations) so
   // the first run never races the schema. Not awaited (boot must not wait on Postgres); a
