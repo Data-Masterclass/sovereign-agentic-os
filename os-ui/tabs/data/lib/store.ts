@@ -36,7 +36,6 @@ import { transparencyGate, gateReason } from '@tabs/data/lib/transparency';
 import { CUBE_ARTIFACT, scaffoldMetricYaml, metricSqlReady } from '@tabs/data/lib/metrics';
 import { SEMANTIC_ARTIFACT, scaffoldSemanticYaml } from '@tabs/data/lib/semantic';
 import { assetTarget, productTarget, reuseSourceFqn, composeSourceBlocker, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from '@tabs/data/lib/store-fqn';
-import { randomUUID } from 'node:crypto';
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
@@ -262,7 +261,9 @@ async function hydrate(): Promise<void> {
  * runs in; it throws rather than silently weakening if it ever is not.
  */
 function randomToken(): string {
-  return randomUUID().replace(/-/g, '');
+  // Web Crypto, not `node:crypto`: this module is reachable from client components (metrics
+  // builder → data index → store), and webpack cannot bundle a `node:` scheme for the browser.
+  return globalThis.crypto.randomUUID().replace(/-/g, '');
 }
 
 function newId(): string {
