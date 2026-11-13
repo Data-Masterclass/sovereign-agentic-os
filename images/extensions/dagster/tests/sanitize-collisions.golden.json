@@ -1,0 +1,25 @@
+{
+  "note": "Shared contract: os_projects.sanitize_all (Python) and core/infra/dagster.ts sanitizeAll (TypeScript) must agree byte for byte. Regenerate with images/extensions/dagster/tests/regen_sanitize_golden.py.",
+  "inputs": [
+    "sales",
+    "sales-eu",
+    "sales.eu",
+    "sales_eu",
+    "finance",
+    "2024",
+    "Ops Team",
+    "ops-team",
+    "ops.team"
+  ],
+  "expected": {
+    "2024": "_2024",
+    "Ops Team": "Ops_Team",
+    "finance": "finance",
+    "ops-team": "ops_team",
+    "ops.team": "ops_team_37943c",
+    "sales": "sales",
+    "sales-eu": "sales_eu",
+    "sales.eu": "sales_eu_d6cd8b",
+    "sales_eu": "sales_eu_0abb08"
+  }
+}

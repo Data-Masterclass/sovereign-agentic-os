@@ -7,6 +7,7 @@ import { roleAtLeast } from '@core/kernel/session';
 import { datasetsWithSync } from '@tabs/data/lib/store';
 import { runtimeTokenOk } from '@tabs/agents/lib/build/runtime-auth';
 import { runDatasetSync } from '@tabs/data/lib/sync-run-server';
+import { dataProjectGitEnabled } from '@tabs/data/lib/dbt/commit';
 import { cronDueInWindow } from '@tabs/data/lib/sync-cron';
 
 export const dynamic = 'force-dynamic';
@@ -39,6 +40,12 @@ export async function POST(req: Request) {
     } catch (e) {
       return errorResponse(e);
     }
+  }
+
+  // DATA_PROJECT_GIT on ⇒ Dagster owns every sync schedule (`os/schedules.yml` in the domain
+  // repo). This OS-side sweep must NOT also fire them, or every slice would run twice.
+  if (dataProjectGitEnabled()) {
+    return NextResponse.json({ skipped: true, reason: 'Dagster schedules the domain repositories — the OS sweep is off', due: 0, results: [] });
   }
 
   const body = (await req.json().catch(() => ({}))) as { windowMinutes?: number };

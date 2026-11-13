@@ -111,6 +111,141 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   status — directly instead of through a deleted walk. Suite: 4956 tests, 0 failures. Structure
   ratchet lowered (TAB-ISOLATION 422 → 421, FILE-HEADER 1245 → 1240).
 
+### Added — Data engine rebuild, Phase B3: Trino executes as the principal, lineage comes from dbt
+
+- **Trino's access control is now TWO chained system access controls.** `config.properties` gains
+  `access-control.config-files=<opa>,<file>` (values `trino.accessControl`, default on): the OPA
+  plugin keeps row filters, column masks and the foreign-`personal_*` deny, and a generated
+  `rules.json` adds the two things OPA cannot express — **impersonation** (the dbt service user may
+  act as an OS principal and as nothing else; nobody else may become another identity) and **schema
+  ownership** (a domain's Iceberg schema is writable only by that domain's principals, a
+  `personal_<uid>` lane only by its owner). Trino requires every access control to allow, so the
+  file can only narrow the policy. No secret goes in it — identifiers and regexes only.
+- **One shape, two renderers, one test that keeps them equal.** `core/infra/trino-rules.ts` is a
+  pure generator (golden `fixtures/trino-rules.golden.json`, plus a first-match-wins evaluator the
+  tests assert through); the chart renders a **bootstrap** ConfigMap (`trino-access-rules`) that
+  bounds impersonation by the shape of an OS id and leaves ownership untouched, so a fresh install
+  still works before the OS has spoken; `core/infra/trino-rules-server.ts` reconciles the same key
+  from real domain membership at boot (`TRINO_ACCESS_RULES=true`) and Trino re-reads it within
+  `security.refresh-period` — no roll. A directory mount, not a `subPath`, because only a
+  whole-ConfigMap volume is refreshed by the kubelet.
+- **Honest limit, documented not implied:** the chart does not set
+  `http-server.authentication.type`, so Trino does not authenticate clients and the impersonation
+  rules have no authenticated `original_user` to match. The schema-ownership rules bite immediately;
+  making impersonation load-bearing needs authentication plus a credential —
+  `docs/components/trino.md` says exactly what that takes.
+- **External sources are Dagster assets** (closes the open half of checklist D7).
+  `tabs/data/lib/dbt/source-assets.ts` writes `os/sources.yml`, one entry per **federated** sync
+  source, and the `sovereign` code location builds an `@observable_source_asset` per entry keyed
+  `[<domain>, <source>, <table>]` — the key dagster-dbt gives the dbt source — so the silver model
+  that reads it depends on that node and the graph has no dangling upstream. The probe is one
+  statement as the dataset's **owner** (`max("<cursor>")` + `count(*)` with a timestamp cursor, else
+  `count(*)`), and freshness is two schedule intervals derived from the sync's own cron; an
+  unfamiliar cron shape makes **no claim** rather than a wrong one. An entry whose identifiers are
+  not plain identifiers is **dropped**, never quoted-and-hoped.
+- **Lineage comes from the dbt manifest.** `get_lineage` (MCP) and the Data tab's lineage view read
+  Dagster's `assetNodes` — which dagster-dbt derives from `manifest.json`'s `parent_map` — folded
+  into the existing `LineageGraph` shape (`tabs/data/lib/dbt/lineage.ts`, pure;
+  `tabs/data/lib/lineage-server.ts`, one GraphQL call). The fallback to the OS registry is explicit
+  and **labelled** (`source: 'dbt' | 'registry'`, additive). Column-level lineage is not derived —
+  dbt Core's manifest does not carry it — and is recorded as a follow-up rather than implied.
+- **A parity harness the flag flip can be gated on.** `tabs/data/lib/dbt/parity.ts` compares, per
+  fixture (including the concept's worked example `gold_order_customer`), the SQL the OS runs today
+  with the SQL dbt will run: same projection and aliases in order, same FROM/JOIN sequence and ON
+  predicates, same WHERE conjuncts (as a set), same GROUP BY. A model with no recorded CTAS is
+  reported **skipped with its reason**, never as a pass; an unreadable shape is a mismatch, never a
+  pass. It is explicit about its reach: a model body IS the recorded CTAS after rewriting, so this
+  proves the translation is faithful and invertible, not that two materialisations agree row for
+  row.
+
+### Fixed — B3 review findings (engine rebuild)
+
+- **The reconciler never ran on a default install** (H-1). `TRINO_ACCESS_RULES` was rendered inside
+  the `osUI.dataProjectGit` block, which defaults `false`, while `trino.accessControl.enabled`
+  defaults `true` — so the stock install shipped the permissive bootstrap `rules.json` permanently
+  and os-ui never reconciled it. The env var now renders under exactly the gate the ConfigMap
+  renders under (`trino.enabled AND trino.accessControl.enabled AND trino.opa.enabled`), which
+  also stops os-ui logging "ConfigMap does not exist" every boot when the feature is off (L-5).
+  `scripts/check-trino-rules-chart.mjs` renders four value sets and fails the gate if the two gates
+  ever disagree again.
+- **Reconcile was boot-only** (H-2, H-3). It now has three triggers: boot; the kernel
+  `directory-changed` event (new `core/kernel/events.ts`) that the user and domain stores emit from
+  their single write-through, debounced 2 s and serialised so a bulk membership import is ONE
+  reconcile; and a jittered periodic repair pass (`trino.accessControl.reconcileIntervalMinutes`,
+  default 10) — because `helm upgrade` rewrites Helm's bootstrap value over the OS's enumerated
+  file and fires no OS event. A write path never imports the reconciler and `core/` never imports a
+  tab: the stores emit, `instrumentation.ts` subscribes. Two comments that claimed "and on a
+  directory change" before the path existed are now true.
+- **A failed reconcile was a silent warn** (H-4). Each pass retries 3× with exponential backoff
+  (capped 30 s), records a typed outcome (`ok`/`code`/`detail`/`at`), and publishes the last one on
+  **Platform → Components & Health** as a `Trino access rules` row — RED when the last attempt
+  failed, and RED when the last SUCCESS is older than twice the repair interval, because a stale
+  file means the permissive bootstrap is what Trino is enforcing.
+- **The Dagster run pod connected as a user the rules deny** (H-5). `TRINO_USER: dbt-sales` in the
+  code location's env against `trino.accessControl.serviceUser: dbt-runner` — invisible today
+  (nothing authenticates) and a hard denial the moment authentication is switched on. The literal
+  is now `dbt-runner` and the equality is asserted from `values.yaml` by the new chart check.
+- **A namespace-wide Secrets grant** (H-6). The os-ui Role granted `configmaps, secrets:
+  get,list,create,patch,update` under `externalConnectorsEnabled OR dataProjectGit.enabled`. The
+  Secrets half is back on `externalConnectorsEnabled` alone; the rules reconciler gets its own rule
+  — `resources: ["configmaps"], resourceNames: ["trino-access-rules"], verbs: ["get","patch"]`.
+  Asserted from the rendered Role.
+- **A domain named like a personal lane could re-open it** (M-8). `rules.json` now emits the
+  personal-lane rules BEFORE the domain rules and closes each lane explicitly
+  (`{schema: ^personal_x$, owner: false}`), so a domain whose sanitized schema collides with a lane
+  name can never answer for that lane under first-match-wins. The rules evaluator also anchors every
+  pattern (`^(?:…)$`) to match Trino's full-match semantics (L-1).
+- **Lineage was truncated, not labelled** (M-1). `graphLineage` requires ALL of a dataset's models
+  to be in the asset graph, else it falls back to the registry graph — a half-parsed project used to
+  yield a graph missing a layer while still labelled `source: 'dbt'`. And the `source` label
+  (`dbt` / `registry`) is now carried through `core/lineage/unified.ts`, so MCP `get_lineage` says
+  which graph it returned (M-2).
+- **Observable source assets were never observed** (M-3, M-4). They were in no job and no schedule,
+  so every freshness check measured a data version that never arrived. The code location now builds
+  one observation job + schedule per domain per distinct cron, at the source's own cron, named from
+  a digest of the cron so it is stable; `enabled: false` keeps the asset (lineage needs the node)
+  and drops it from the schedule. The probe is bounded by `request_timeout` **and** a
+  `query_max_run_time` session property (`OS_OBSERVE_TIMEOUT_SECONDS`, default 60 s) — only the
+  latter makes Trino itself abandon a query (M-5).
+- **The parity harness checked the plan against itself** (M-6). `substitutionsFor` derived its
+  `ref()` map from the same plan the rewriter used, so a wrong lane mapping was consistently wrong
+  on both sides and passed. `ref()` now resolves to the FQN the OS actually wrote (the target of
+  that model's own recorded CTAS), and a model reached through `source()` instead of `ref()` — the
+  exact symptom of a lane mapping that disagrees with the CTAS — is reported as a mismatch. A
+  deliberately wrong mapping now fails; the correct one still passes.
+- **`profiles.yml` had no password field.** It now emits
+  `password: "{{ env_var('TRINO_PASSWORD', '') }}"` inside a
+  `{% if env_var('TRINO_AUTH_METHOD', 'none') != 'none' %}` guard — absent under `method: none`
+  (which `TrinoNoneCredentials` requires), present the moment an operator switches. `env_var()`
+  only; never a literal. `docs/components/trino.md` gains **"Enable real impersonation"**, a
+  numbered deploy procedure (authenticator, TLS or `allow-insecure-over-http`, the two credentials,
+  where `TRINO_PASSWORD` is mounted, the user alignment above), and states plainly that
+  `readPrincipalFor` maps a governed read to the caller's **first domain**, not to the person —
+  pre-existing, recorded as a follow-up.
+- Smaller: the `principal` in `os/sources.yml` and `os/schedules.yml` is validated against the OS
+  principal shape and a malformed one DROPS the entry rather than becoming a different identity
+  (L-2); `_wire_project`'s dead `pinned_env` parameter removed (L-3); `repo-sync.sh` neutralises the
+  shipped placeholder token BEFORE it logs `auth: bearer` (L-4); `os-ui/scripts/gate.sh` now runs
+  the parity test, both trino-rules tests, the kernel-events test, the components-health test and
+  the new chart check (M-7).
+
+### Fixed — Data engine rebuild, Phase B3 (loose ends from the B2 review)
+
+- **A collided domain's schedule can be addressed again.** `core/infra/dagster.ts` `sanitizeAll` is
+  a transcription of `os_projects.sanitize_all`, and both assert the same golden
+  (`images/extensions/dagster/tests/sanitize-collisions.golden.json`), so
+  `scheduleNameFor(domain, datasetId, allDomains)` computes the digest form the code location really
+  used instead of a plain form that does not exist. `sync-status-server.ts` passes the domains that
+  have a repo; without a list the plain form is still returned, which is right whenever nothing
+  collides.
+- **Cold start no longer grows with the number of domains.** Every run tag a domain's jobs carry
+  pins **only that domain's** commit (`os_projects.pinned_one`), so a run pod clones and
+  `dbt parse`s exactly what its own job needs.
+- **The repo-sync status server is bound and authenticated.** It binds `POD_IP` (downward API;
+  `127.0.0.1` when unset — fail-closed) instead of `0.0.0.0`, and requires a bearer when
+  `REPO_SYNC_STATUS_TOKEN`/`AGENT_RUNTIME_TOKEN` is set, refusing the shipped dev placeholder as a
+  credential.
+
 
 ### Added — Agent engine rebuild, Phase A4: runs execute in a worker
 
@@ -321,6 +456,172 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 - **L1**: `when` expressions are capped at 512 chars (typed syntax error). **L2**:
   `node-started.total` never reads below `index`. **L3/L4**: single-replica assumption and
   checkpoint retention documented.
+
+### Added — Data products in git, Phase B2: Dagster is the scheduler, the OS reads Dagster (flag `DATA_PROJECT_GIT`, default off)
+
+- **The `sovereign` Dagster code location** (`images/extensions/dagster/repo.py` + the pure
+  `os_projects.py`): one location for every domain. Per validated checkout
+  `/repos-checkout/<domain>/current/` it builds `@dbt_assets` keyed `[<domain>, <node>]`
+  (`DagsterDbtTranslator` prefix, group = domain), a `<domain>__all` job the OS launches with an
+  explicit asset subset, one job + UTC `ScheduleDefinition` per `os/schedules.yml` entry
+  (`cron_schedule`, `execution_timezone="UTC"`, selection `<model>+`, `default_status` from
+  `enabled`, tags `os/dataset` · `os/principal` · `os/domain` · `os/schedule` · `os/commit` and
+  `dagster-k8s/config` setting `OS_PRINCIPAL`), and a weekly (Sun 03:00 UTC) Iceberg maintenance job
+  per schema running the generated `os_maintenance` macro (`optimize` + `expire_snapshots`) as the
+  schema's owning principal. `hello_sovereign` stays as the smoke asset. A run-failure sensor
+  (`os_quarantine`) pauses a schedule after `OS_QUARANTINE_THRESHOLD` (10 — the OS's own threshold)
+  consecutive failures, replacing `isQuarantined`; a second sensor (`os_principals`) pauses the
+  schedules of a principal the OS reports inactive. A domain that fails to load is logged and
+  skipped — one broken repository can never take the location down. A K8s run pod, whose
+  `/repos-checkout` starts empty, clones and `dbt parse`s the commits named in `OS_PINNED_COMMITS`.
+- **Repo index** `GET /api/data/projects` → `{domains:[{name, head, principals:[{id, active}]}]}`
+  (`tabs/data/lib/dbt/read.ts` `projectIndex`, `core/infra/git-store.ts` `listRepos`). The git
+  protocol cannot enumerate repositories (deviation B1-8): `repo-sync` and the inactive-principal
+  sensor poll this with the cluster-internal runtime bearer; a signed-in user sees only their domains.
+- **Dagster client** `os-ui/core/infra/dagster.ts` — the ONE typed GraphQL client, `Fetched<T>` result
+  style like `litellm-admin.ts`, hard timeout, injectable `fetch`, nothing thrown and nothing logged:
+  `launchRun`, `run`, `runsForDataset`, `recentOsRuns`, `assetChecks`, `allAssetChecks`,
+  `latestMaterialization`, `assetGraph`, `reloadLocation`, `nextTick`. Config `DAGSTER_LOCATION`
+  (`sovereign`), `DAGSTER_REPOSITORY` (`__repository__`), `DAGSTER_LAUNCH_WAIT_MS`.
+- **Launch after commit** (`tabs/data/lib/dbt/launch.ts`, `asset-keys.ts`): Build, `transform_silver`,
+  `build_gold_join` and `sync_dataset_now` commit, wait (bounded) for the location to expose the
+  dataset's assets, then `launchRun` for exactly that subset with the runner's principal as
+  `OS_PRINCIPAL` and `OS_PINNED_COMMITS` pinning the commit. `{commit, dagsterRunId}` — or an honest
+  `launchError` — is recorded on the version (`setVersionRun`). A sync **retry** re-uses the failed
+  run's `os/batch_id`, which `repo.py` passes as `--vars os_batch_id` so `delete+insert` re-covers
+  exactly that slice.
+- **The OS stops being its own ledger** (checklist D9). `tabs/data/lib/sync-status-server.ts`
+  (`syncStatusFor`, `latestSyncSignals`) reads `runsForDataset` + `nextTick`;
+  `tabs/data/lib/dq-status-server.ts` (`latestDqRun`, `dqTrend`, `latestDqRuns`) reads `assetChecks`
+  — one dbt test is one asset check, with `dagster_dbt/failed_row_count` as the violation count;
+  Monitoring's pipeline lens reads Dagster runs by their `os/*` tags. The Data tab's sync panel and
+  `get_sync_status` now call one shared function, so route and MCP cannot drift. `quarantined` means
+  the schedule is STOPPED in Dagster while the OS config says enabled. With the flag on no
+  `os-sync-runs` or `os-dq-results` row is written for a Dagster-executed run, `set_dataset_sync`
+  provisions no CronJob (and removes a pre-B2 one), and `/api/data/sync-due` + `/api/data/dq/run-all`
+  stand down so nothing fires twice. **The flag-off path is unchanged** (deletion is B3/B4).
+- **Image and chart:** `sovereign-os/dagster:0.3.0` (Postgres drivers and `git` confirmed present;
+  `os_projects.py` added). The Dagster user-code deployment is renamed `example-user-code` →
+  **`sovereign`**, because the deployment name *is* the code location name;
+  `DAGSTER_RELOAD_LOCATION=sovereign`, `REPO_SYNC_INDEX_URL`/`OS_INDEX_URL` → os-ui,
+  `OS_QUARANTINE_THRESHOLD=10`, and the runtime bearer injected from the `agent-runtime-token` Secret.
+  `repo-sync.sh` now discovers domains from the index, emits `target/manifest.json` via `dbt parse`
+  and calls `reloadRepositoryLocation` for real.
+
+### Fixed — B2 review findings (engine rebuild)
+
+- **Run pods can reach the git daemon.** Launched Dagster run pods carried no
+  `component: user-deployments` label, the only one the `os-repos` NetworkPolicy admits to port
+  9418 — so a scheduled run could not clone its pinned commit. The run launcher now stamps it on
+  every run pod (`dagster.runLauncher.config.k8sRunLauncher.runK8sConfig.podTemplateSpecMetadata`),
+  and a test asserts the values file and the NetworkPolicy template still name the same label.
+- **`accepted_values` can no longer carry SQL or Jinja.** dbt renders each value as `'{{ value }}'`
+  with no escaping, into a test executed as the dataset's owner. `addCheck` now refuses a value
+  that is empty, over 200 characters, or carries a quote, backslash, backtick, control character or
+  Jinja delimiter, and the generator records such a check as an intention — as a whole, never as a
+  test with the offending values quietly dropped.
+- **`dbt parse` no longer inherits the pod's environment, and authored text is no longer a
+  template.** The parse allowlist lives in one place (`os_projects.PARSE_ENV_*` / `dbt_parse`),
+  which both the run-pod bootstrap and `repo-sync.sh` use, so `AGENT_RUNTIME_TOKEN` and the
+  Postgres password are provably out of reach of a `{{ env_var(...) }}` in a repository. Authored
+  dataset names, descriptions and column names now pass through `stripJinja` before they are
+  emitted — dbt renders model SQL as Jinja too, so even a `--` header comment was template input.
+- **A run Job can complete.** The Dagster subchart copies the `repo-sync` sidecar into every run
+  pod, and a Job only finishes once every container exits. repo-sync now reads `POD_NAME` and exits
+  0 in a `dagster-run-*` pod; the inert (flag-off) branch idles only where it can prove it is the
+  code-server pod.
+- **One bad domain no longer takes the whole code location down.** `sanitize` mapped `-` and `.` to
+  `_`, so `sales-eu` and `sales.eu` collapsed onto one Dagster name and `Definitions(...)` raised
+  for every domain. Names are now collision-free by a deterministic digest, and the workspace is
+  built with per-domain gating (one call on the happy path, per-domain probing only on failure).
+- **`GET /api/data/projects` is fail-closed.** It refuses the shared runtime bearer when
+  `AGENT_RUNTIME_TOKEN` is unset or still the shipped dev default under `NODE_ENV=production`,
+  instead of handing the un-narrowed cross-domain repository index to anyone holding a value from
+  this repository. A signed-in user is still served, narrowed to their domains.
+- **"Last sync" is no longer under-reported.** The Monitoring lists asked for the newest 200 runs of
+  the whole instance and grouped them by tag, so a dataset outside that window read as "never
+  synced"; the read is now one tag-filtered query per dataset, and a Dagster outage is reported as
+  `unknown` rather than "never".
+- **A quality verdict says who produced it.** `DqRunRecord.source` now reaches the monitoring
+  overview and dataset-detail payloads and is rendered as a small "dbt test" / "OS probe" badge in
+  the Data and Monitoring tabs; a record from before the distinction claims nothing.
+- **Flag-off parity restored** for the ledger "last sync" value (`startedAt`, as before B2).
+- **Quarantine counts terminal runs only** (an in-flight run used to truncate the window and leave
+  a dead schedule firing), a repository's `timezone` is honoured when `zoneinfo` knows it and falls
+  back to UTC with a log when it does not, and the `agent-runtime-token` Secret now renders from its
+  own template whenever Dagster, the data-project git flag or the agent runtime is enabled — so
+  disabling the agent runtime no longer stops the Dagster user-code pod from starting.
+
+### Fixed — B1 review findings (engine rebuild)
+
+- **SQL injection into generated dbt tests.** A quality rule's column is interpolated **unquoted**
+  into the `schema.yml` test SQL that `dbt test` executes as the impersonated principal.
+  `store.addCheck` now refuses any column that is not `/^[A-Za-z_][A-Za-z0-9_]*$/`, and the
+  generator routes a non-matching column — plus an empty `accepted_values` and a bound-less `range` —
+  to `meta.os_intentions` instead of `data_tests`. Both ends are tested.
+- **Free-text model bodies are no longer Jinja.** `add_dataset_version`'s authored `body` used to
+  become a dbt model, so `{{ … }}` in it was rendered at `dbt parse`. The store now records
+  *provenance* (`compiled: true`, set only by the transform / gold-join routes and
+  `transform_silver` / `build_gold_join`); only compiled bodies become models, and a layer built out
+  of band is rendered as a dbt **source** (`meta.os_built: out-of-band`) that dbt reads, tests and
+  never rewrites.
+- **Commit attribution under concurrent writes.** The commit hook now captures
+  `datasetsForProject(domain)` and the object labels **synchronously** in the writer's turn and
+  serialises commits per domain with a promise chain, so two rapid writes produce two commits each
+  carrying its own author, action and state.
+- `core/infra/git-store.ts` accepts a `ref` only as `main`, `HEAD` or a hex sha; `mirror.ts` rejects
+  a URL with embedded credentials (the token must be a Secret reference); `repo-sync.sh` serves
+  `status.json` and nothing else; commits carry an `OS-Actor: <id>` trailer; the batch-idempotency
+  comment in the generated sync model now says what is true (a plain re-run duplicates the lookback
+  rows; only a retry passing the same `os_batch_id` is idempotent).
+- **Admin Console** reported Dagster `v1.9.1`; the image pins **1.13.11**.
+- **Files connector** fired `launchPipelineExecution` for a job no code location defines and reported
+  `live` from the HTTP status; it is now a logged no-op with a TODO for the B3/B4 external-source
+  asset. The in-process sync was and remains the real executor.
+
+
+### Added — Data products in git, Phase B1: generated dbt project per domain + the one commit path (flag `DATA_PROJECT_GIT`, default off)
+
+- **Git store** (`os-ui/core/infra/git-store.ts`, isomorphic-git 1.44.13, MIT): one bare repository
+  per domain under `OS_REPOS_DIR` (`/repos`, PVC `os-repos`). `commitTree` writes the whole desired
+  tree and commits **only when the tree hash changed**; `log`, `readBlob`, `listTree`, `archive`
+  (dependency-free ustar writer, `core/infra/tar.ts`), `push` to a mirror (token from a Secret
+  reference, never logged, scrubbed from errors). Author = acting user, committer `Sovereign OS`,
+  message `data(<domain>): <action> <object> — via ui:<route>|mcp:<tool>` with trailers
+  `OS-Action`, `OS-Object`, `OS-Surface`, `OS-Request-Id` (+ `OS-Author-Email: synthesized` when the
+  user has no e-mail). Per-repo in-process mutex.
+- **dbt project generator** (`os-ui/tabs/data/lib/dbt/`): `dbt_project.yml`, `profiles.yml`
+  (`env_var()` only, Trino target, `impersonation_user: env_var('OS_PRINCIPAL')`), the
+  `generate_schema_name` macro, generic tests `range` / `not_blank` (predicates from `dq.ts`),
+  `models/sources.yml` (Bronze + federated sources, `freshness` on `_loaded_at`), Silver/Gold models
+  whose bodies are the recorded `compileSilver`/`compileGoldJoin` SELECTs with FQNs → `ref()` /
+  `source()`, personal-lane models under `models/personal/<uid>/`, sync landings as incremental
+  models (`delete+insert` on `_batch_id` + lookback; `merge` on keys; `table` for full-refresh),
+  `schema.yml` tests from quality rules, `os/schedules.yml`, `os/external.yml` (Kafka / API-batch).
+  Byte-stable; golden tests for three shapes; a pure test asserts a composition's body equals
+  today's `compileGoldJoin` SELECT after FQN substitution.
+- **Every data writer commits** (behind the flag): `store.ts` emits a `ProjectChange` from its one
+  `persist()` and from every writer that bypasses it (`tabs/data/lib/project-events.ts`);
+  `tabs/data/lib/dbt/commit.ts` subscribes at boot (`instrumentation.ts`). `commit.test.ts`
+  enumerates the store's exports and asserts each of the 31 mutators reaches the commit path with the
+  flag on and none does with it off. Request surface via `core/infra/request-surface.ts`: `withRoute`
+  sets `ui:<route>`, the data MCP tools set `mcp:<tool>`.
+- **Read access:** `GET /api/data/projects/<domain>` (`{head, tree, log}`), `…/blob?ref&path`,
+  `…/export?ref` (tar) — domain members only; admin
+  `PUT /api/platform-admin/data-projects/<domain>/mirror` (URL + token Secret reference; push after
+  each changed commit reports, never blocks).
+- **Chart** (rendered only with `osUI.dataProjectGit.enabled`): PVC `os-repos` mounted at `/repos`
+  in os-ui, env `DATA_PROJECT_GIT=true` / `OS_REPOS_DIR=/repos`, `git-daemon` sidecar
+  (`alpine/git`, read-only, port 9418), Service `os-repos`, NetworkPolicy admitting only the Dagster
+  user-code pod to 9418 (port 3000 stays open as before). Dagster user-code Deployment gains the
+  `repo-sync` sidecar (`images/extensions/dagster/repo-sync.sh`; inert until `REPO_SYNC_ENABLED`),
+  the image gains `git`. `TRINO_SCHEMA` drift (`analytics` → `sales`) fixed.
+- **Config:** `DATA_PROJECT_GIT`, `OS_REPOS_DIR`, `DATA_PROJECT_MIRRORS_INDEX`.
+- **Docs:** `docs/components/dbt.md` and `dagster.md` rewritten honestly (demo project today;
+  generated project per domain with the flag; parsed by the sidecar, run in B2/B3);
+  `os-ui/tabs/data/README.md`; `os-ui/ARCHITECTURE.md` "A data product is a dbt project in a git repo
+  the OS owns"; licence rows for isomorphic-git (`THIRD-PARTY-LICENSES.md`, `licenses/components.tsv`,
+  `licenses/notices/os-ui-git-store-npm-NOTICE.txt`).
 
 ### Added — Agent engine rebuild, Phase A1: real graph, in-request, checkpointed
 

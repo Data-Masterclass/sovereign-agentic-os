@@ -23,15 +23,25 @@ RUN pip install --no-cache-dir \
       "dbt-core>=1.8,<1.10" \
       "dbt-trino>=1.8,<1.10"
 
-RUN mkdir -p /opt/dagster/app /opt/dagster/dagster_home /opt/dbt
+# git (GPL-2.0, a separate process from a distro package — not linked) for the repo-sync
+# sidecar (engine rebuild B1): fetch each domain's generated dbt project from the OS's
+# read-only git daemon and `dbt parse` it before Dagster loads it.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /opt/dagster/app /opt/dagster/dagster_home /opt/dbt /repos-checkout
 
 # The dbt project + a pre-parsed manifest (dbt parse needs no DB connection).
 COPY dbt/project /opt/dbt/project
 RUN cd /opt/dbt/project && dbt parse --profiles-dir /opt/dbt/project --target dev || \
     dbt parse --profiles-dir /opt/dbt/project
 
+# The `sovereign` code location (engine rebuild B2): repo.py wires Dagster; os_projects.py is the
+# pure loader (discovery, os/schedules.yml, tags, quarantine) unit-tested in dagster/tests/.
 COPY dagster/repo.py /opt/dagster/app/repo.py
-RUN chmod -R a+rX /opt/dagster /opt/dbt
+COPY dagster/os_projects.py /opt/dagster/app/os_projects.py
+COPY dagster/repo-sync.sh /opt/dagster/app/repo-sync.sh
+RUN chmod -R a+rX /opt/dagster /opt/dbt && chmod a+x /opt/dagster/app/repo-sync.sh && chmod a+rwX /repos-checkout
 
 ENV DAGSTER_HOME=/opt/dagster/dagster_home
 WORKDIR /opt/dagster/app

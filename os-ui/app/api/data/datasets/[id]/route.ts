@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
+import { runWithSurface, uiSurfaceFor } from '@core/infra/request-surface';
 import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset, renameDataset, listAllDatasets } from '@tabs/data/lib/store';
 import { dropPhysicalTables, sharedFootprintFqns } from '@tabs/data/lib/physical-delete';
 import { domainTableMissing } from '@tabs/data/lib/reconcile-server';
@@ -59,6 +60,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const principal = await requirePrincipal();
     const { id } = await ctx.params;
     const body = (await req.json().catch(() => ({}))) as { action?: string; name?: string };
+    // Hand-rolled (dispatches on body.action), so the ui:<route> surface the commit hook reads is set here.
+    return await runWithSurface(uiSurfaceFor(req.url), async () => {
     switch (body.action) {
       case 'rename': {
         // Display-name change only — the physical slug is frozen in the store, so no
@@ -77,6 +80,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       default:
         return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
     }
+    });
   } catch (e) {
     return errorResponse(e);
   }

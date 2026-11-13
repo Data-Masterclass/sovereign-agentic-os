@@ -18,6 +18,7 @@
  */
 
 import { config } from '@core/kernel/config';
+import { emitDirectoryChange } from '@core/kernel/events';
 import { osMirror } from '@core/infra/os-mirror';
 
 export type DomainLayers = { ml: boolean };
@@ -90,6 +91,10 @@ const mirror = osMirror({
 
 function writeThrough(d: Domain): void {
   mirror.writeThrough(d.id, d);
+  // Same chokepoint as the user store: create / rename / archive / transfer / layer change all
+  // land here, and a domain appearing or being archived changes who owns which Iceberg schema.
+  // B3-review-H-2.
+  emitDirectoryChange(`domain ${d.id}`);
 }
 
 /**

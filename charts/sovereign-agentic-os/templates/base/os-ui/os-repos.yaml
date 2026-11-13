@@ -1,0 +1,73 @@
+{{- /*
+  Data products in git (engine rebuild B1) — rendered ONLY when osUI.dataProjectGit.enabled.
+
+  The OS commits every domain's generated dbt project into a bare repository under /repos
+  (one RWO PVC; os-ui is single-replica, one writer). A read-only `git daemon` sidecar on the
+  os-ui pod exports them over the git protocol (port 9418) so the Dagster user-code pod's
+  repo-sync sidecar can fetch + `dbt parse` each commit. Nothing in a repo is a secret
+  (profiles.yml uses env_var() only) — read-only in-cluster exposure is acceptable; the
+  NetworkPolicy below still admits ONLY the Dagster user-code pod to 9418.
+
+  The NetworkPolicy also allows port 3000 from any peer: K8s ingress policies are additive and
+  os-ui had NO ingress policy before, so a 9418-only rule would isolate the UI itself.
+*/}}
+{{- $u := .Values.osUI }}
+{{- $dpg := $u.dataProjectGit | default dict }}
+{{- if and $u.enabled $dpg.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: os-repos
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- include "soa.storageClass" . | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ $dpg.reposSize | default "2Gi" | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: os-repos
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+  ports:
+    - name: git
+      port: 9418
+      targetPort: git
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: os-ui-git-daemon-dagster-only
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: os-ui
+  policyTypes:
+    - Ingress
+  ingress:
+    # The UI itself stays reachable exactly as before (no ingress policy selected os-ui until now).
+    - ports:
+        - { protocol: TCP, port: 3000 }
+    # The git protocol: ONLY the Dagster user-code pods (the subchart labels them
+    # `component: user-deployments`) — the repo-sync sidecar lives there.
+    - from:
+        - podSelector:
+            matchLabels:
+              component: user-deployments
+      ports:
+        - { protocol: TCP, port: 9418 }
+{{- end }}

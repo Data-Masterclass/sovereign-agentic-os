@@ -264,6 +264,43 @@
 */}}
 {{- define "soa.osUI.adminEnv" -}}
 {{- $u := .Values.osUI -}}
+{{- $dpg := $u.dataProjectGit | default dict -}}
+{{- $ac := .Values.trino.accessControl | default dict -}}
+{{- if $dpg.enabled }}
+# Data products in git (engine rebuild B1): every dataset change regenerates the
+# domain's dbt project and commits it to /repos/<domain>.git (the os-repos PVC).
+# ADMIN-side on purpose (merge of A4-review-M-4 with B1): the only readers are
+# `instrumentation.ts`'s commit-hook install, `tabs/data/**` and `app/api/data/**`
+# — nothing under `tabs/agents/**`, `core/runtime/**` or `worker/` touches the git
+# store — and the worker pod mounts no `os-repos` PVC, so `/repos` would not exist
+# there. Keeping it out of `runEnv` means a run can neither read nor write a repo.
+- name: DATA_PROJECT_GIT
+  value: "true"
+- name: OS_REPOS_DIR
+  value: /repos
+{{- end }}
+{{- /*
+  Trino FILE-BASED ACCESS CONTROL (engine rebuild B3, fixed in B3-review-H-1/L-5). With this on,
+  os-ui reconciles the `trino-access-rules` ConfigMap from real domain membership — at boot, on a
+  directory change, and every `reconcileIntervalMinutes` — deciding who the dbt service user may
+  act as and which principals own which Iceberg schema. Off ⇒ only the chart's bootstrap file
+  applies (impersonation bounded by the id shape, ownership unchanged).
+
+  The gate is EXACTLY the gate the ConfigMap renders under (`trino.yaml` `$acOn` =
+  `and $ac.enabled $t.opa.enabled`, inside `if .Values.trino.enabled`) — NOT `dataProjectGit`,
+  which defaults false while `trino.accessControl.enabled` defaults true: that combination used to
+  ship the permissive bootstrap permanently with nothing ever reconciling it. Aligning the two
+  gates also means os-ui never logs "ConfigMap does not exist" on a boot where the file is absent
+  by design.
+*/}}
+{{- if and .Values.trino.enabled $ac.enabled .Values.trino.opa.enabled }}
+- name: TRINO_ACCESS_RULES
+  value: "true"
+- name: TRINO_DBT_USER
+  value: {{ $ac.serviceUser | default "dbt-runner" | quote }}
+- name: TRINO_ACCESS_RULES_INTERVAL_MINUTES
+  value: {{ $ac.reconcileIntervalMinutes | default 10 | quote }}
+{{- end }}
 # Session-signing secret (HMAC-SHA256 for the auth cookie). Sourced
 # from the generated `os-ui-session` Secret — NEVER the in-code
 # dev fallback, which would let anyone forge an admin session.

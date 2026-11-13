@@ -136,4 +136,83 @@ export async function register(): Promise<void> {
       }
     })();
   }
+
+  // DATA PROJECTS IN GIT (engine rebuild B1): when DATA_PROJECT_GIT=true, subscribe the one commit
+  // path to the data store's project-change events so every dataset / composition / check / sync /
+  // publish / retire write regenerates the domain's dbt project and commits it as the acting user
+  // (name + e-mail from the user directory; a missing e-mail is synthesized and said so in the
+  // commit). OFF (the default) ⇒ nothing is installed and no repo is touched. Fail-soft: a wiring
+  // error is logged, never a boot failure.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { config } = await import('./core/kernel/config.ts');
+        if (!config.dataProjectGit) {
+          console.info('[os-ui] data projects: DATA_PROJECT_GIT off — dataset changes are not committed to git');
+          return;
+        }
+        const { installDataProjectCommitHook } = await import('./tabs/data/lib/dbt/commit.ts');
+        const { getPublicUser } = await import('./tabs/admin/lib/users.ts');
+        const { connectionCatalogForOwner } = await import('./tabs/data/lib/sync-run-server.ts');
+        installDataProjectCommitHook({
+          resolveActor: async (id) => {
+            const u = await getPublicUser(id).catch(() => null);
+            return { id, name: u?.name, email: u?.email };
+          },
+          connectionCatalog: connectionCatalogForOwner,
+        });
+        console.info(`[os-ui] data projects: committing every dataset change to ${config.reposDir}/<domain>.git`);
+      } catch (err) {
+        console.error(`[os-ui] data projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
+  // TRINO ACCESS RULES (engine rebuild B3; triggers fixed in B3-review-H-2/H-3/H-4): when
+  // TRINO_ACCESS_RULES=true, write the file-based access-control rules Trino chains after OPA —
+  // who the dbt service user may act as, and which principals own which Iceberg schema — from the
+  // OS's own directory. The chart ships a bootstrap file that bounds impersonation only; this
+  // replaces it with the enumerated form, and Trino re-reads it within `security.refresh-period`
+  // (no roll).
+  //
+  // THREE triggers, all owned by `startTrinoRulesReconciler`:
+  //   boot      — once, immediately;
+  //   event     — the kernel `directory-changed` event every user/domain write emits, debounced
+  //               and serialised (a bulk import is ONE reconcile);
+  //   periodic  — every `trinoAccessRulesIntervalMinutes`, because `helm upgrade` rewrites Helm's
+  //               bootstrap value over the OS's file and emits no OS event.
+  // The listener lives HERE rather than in the user store: a write path must not import a
+  // reconciler, and core must not import a tab.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { config } = await import('./core/kernel/config.ts');
+        if (!config.trinoAccessRules) return;
+        const { startTrinoRulesReconciler } = await import('./core/infra/trino-rules-server.ts');
+        const { rulesInputFromDirectory, OS_PRINCIPAL_PATTERN } = await import('./core/infra/trino-rules.ts');
+        const { onDirectoryChange } = await import('./core/kernel/events.ts');
+        const { listUsers, knownDomains } = await import('./tabs/admin/lib/users.ts');
+        const { sanitizeIdent } = await import('./tabs/data/lib/store-fqn.ts');
+        const handle = startTrinoRulesReconciler({
+          periodMs: Math.max(1, config.trinoAccessRulesIntervalMinutes) * 60_000,
+          resolve: async () => {
+            const [users, domains] = await Promise.all([listUsers(), knownDomains()]);
+            return rulesInputFromDirectory({
+              serviceUsers: [config.trinoServiceUser],
+              principalPattern: OS_PRINCIPAL_PATTERN,
+              domains,
+              users: users.map((u) => ({ id: u.id, domains: u.domains, disabled: u.disabled })),
+              sanitize: sanitizeIdent,
+            });
+          },
+        });
+        onDirectoryChange((reason) => handle.trigger(reason));
+        console.info(
+          `[os-ui] trino access rules: reconciling at boot, on every directory write, and every ${config.trinoAccessRulesIntervalMinutes} min`,
+        );
+      } catch (err) {
+        console.warn(`[os-ui] trino access rules: reconcile skipped — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
 }

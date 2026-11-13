@@ -11,6 +11,7 @@
   see os-ui/INTEGRATION.md. Without that block this file renders to nothing.
 */}}
 {{- $u := .Values.osUI }}
+{{- $dpg := $u.dataProjectGit | default dict }}
 {{- /*
   Scoped RBAC for the native Components surface. The OS UI server reads workload
   status + scales Deployments/StatefulSets 0<->1 and reads CNPG Clusters
@@ -46,12 +47,22 @@ rules:
   # One-click external-warehouse catalog registration (Connections tab): the os-ui
   # server merges the catalog `.properties` into the `trino-catalog` ConfigMap and
   # materializes a `trino-ext-<catalog>` Secret in-namespace, then rolls Trino
-  # (lib/connections/warehouse/k8s-registration.ts). Least-privilege: namespaced
-  # configmaps + secrets read/write only — gated on the same flag as the feature, so a
-  # deployment with external connectors OFF grants no secret access at all.
+  # (lib/connections/warehouse/k8s-registration.ts). Namespaced configmaps + secrets
+  # read/write, gated on the FEATURE's own flag — a deployment with external connectors
+  # OFF grants no Secret access at all. This is the ONLY rule that grants Secrets.
   - apiGroups: [""]
     resources: ["configmaps", "secrets"]
     verbs: ["get", "list", "create", "patch", "update"]
+  {{- end }}
+  {{- if and .Values.trino.enabled (.Values.trino.accessControl | default dict).enabled .Values.trino.opa.enabled }}
+  # Trino access rules (engine rebuild B3; narrowed in B3-review-H-6). The reconciler reads and
+  # PATCHes ONE ConfigMap and nothing else, so the grant names it: no `secrets`, no `create`, no
+  # `list`, no other ConfigMap. Previously this rode on the external-connector rule — a
+  # namespace-wide Secrets grant handed to every install with `dataProjectGit` on.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["trino-access-rules"]
+    verbs: ["get", "patch"]
   {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -171,6 +182,34 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml $u.resources | nindent 12 }}
+          {{- if $dpg.enabled }}
+          volumeMounts:
+            - name: os-repos
+              mountPath: /repos
+        # Read-only git daemon exporting every domain repo in-cluster (git://os-repos/<domain>.git)
+        # for the Dagster repo-sync sidecar. --export-all: bare repos written by isomorphic-git
+        # carry no git-daemon-export-ok marker. Nothing in a repo is a secret.
+        - name: git-daemon
+          image: "{{ $dpg.gitDaemon.image.repository }}:{{ $dpg.gitDaemon.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          command: ["git", "daemon", "--export-all", "--base-path=/repos", "--reuseaddr", "--verbose", "--port=9418", "--informative-errors"]
+          ports:
+            - { name: git, containerPort: 9418 }
+          volumeMounts:
+            - name: os-repos
+              mountPath: /repos
+              readOnly: true
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+      volumes:
+        - name: os-repos
+          persistentVolumeClaim:
+            claimName: os-repos
+          {{- end }}
 ---
 apiVersion: v1
 kind: Service

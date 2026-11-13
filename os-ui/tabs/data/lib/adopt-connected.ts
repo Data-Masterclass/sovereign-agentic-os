@@ -10,7 +10,8 @@ import { adoptConnectedDataset } from '@tabs/data/lib/store';
 import { resolveAdoptableExposure } from '@tabs/connections/lib/exposed-tables';
 import { cursorSupportForPlatform } from '@tabs/connections/lib/operational-cursor';
 import { parseSyncBlock, DATASET_SYNC_MODES, type DatasetSync } from '@tabs/data/lib/dataset-schema';
-import { reconcileSyncCron } from '@tabs/data/lib/sync-cron';
+import { reconcileSyncSchedule } from '@tabs/data/lib/dbt/launch';
+import type { reconcileSyncCron } from '@tabs/data/lib/sync-cron';
 import type { Dataset } from '@tabs/data/lib/dataset-schema';
 
 /**
@@ -150,7 +151,7 @@ export async function adoptExposedTable(user: CurrentUser, input: AdoptExposedIn
   // Provision the per-dataset CronJob for an enabled sync (honest best-effort — the dataset
   // is already created either way).
   let cron: AdoptExposedResult['cron'];
-  if (sync) cron = await reconcileSyncCron(dataset.id, sync);
+  if (sync) cron = await reconcileSyncSchedule(dataset.id, sync);
 
   void trace({
     principal: user.domains[0] ?? user.id,

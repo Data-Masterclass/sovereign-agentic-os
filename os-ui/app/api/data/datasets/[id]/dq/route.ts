@@ -7,7 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { getDataset, builtLayerFqn, setMonitor } from '@tabs/data/lib/store';
 import { queryRun } from '@core/infra/governed';
-import { ensureHydrated, healthTrend, latestRun } from '@tabs/data/lib/dq-results';
+import { dqTrend, latestDqRun } from '@tabs/data/lib/dq-status-server';
 import { suggestChecks } from '@tabs/data/lib/dq-suggest';
 import { MONITOR_KINDS, monitorEnabled, type MonitorConfig, type MonitorKind } from '@tabs/data/lib/dq-monitors';
 import { isNotMaterialized } from '@tabs/data/lib/materialized';
@@ -48,13 +48,13 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
   const dataset = getDataset(id, user); // 403 for a non-viewer (canView guard)
 
-  // The durable trend + latest run (best-effort — a mirror miss degrades to empty).
-  let trend: ReturnType<typeof healthTrend> = [];
-  let latest: ReturnType<typeof latestRun> = null;
+  // The trend + latest run: DAGSTER asset checks (each dbt test is one) when `DATA_PROJECT_GIT`
+  // is on, the durable `os-dq-results` series when it is off. Best-effort either way — a mirror
+  // miss or a Dagster outage degrades to empty, never to a fabricated green.
+  let trend: Awaited<ReturnType<typeof dqTrend>> = [];
+  let latest: Awaited<ReturnType<typeof latestDqRun>> = null;
   try {
-    await ensureHydrated();
-    trend = healthTrend(id);
-    latest = latestRun(id);
+    [trend, latest] = await Promise.all([dqTrend(dataset), latestDqRun(dataset)]);
   } catch { /* durable history is additive — suggestions still return */ }
 
   // The default-ON monitor toggles (freshness/volume/schema), reflecting stored config.

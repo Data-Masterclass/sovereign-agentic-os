@@ -7,6 +7,7 @@ import { osMirror } from '@core/infra/os-mirror';
 import { ROLES, roleAtLeast, type Role } from '@core/kernel/session';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { hashPassword, verifyPassword, isHashed } from '@core/kernel/password';
+import { emitDirectoryChange } from '@core/kernel/events';
 import { emailVerificationEnabled, sendVerificationEmail } from '@core/infra/mailer';
 
 /**
@@ -223,6 +224,11 @@ const mirror = osMirror({ index: 'os-users' });
 
 function writeThrough(u: StoredUser): void {
   mirror.writeThrough(u.id, u);
+  // Every durable user write — create, edit, role/domain change, archive, restore, verify — goes
+  // through here, so this is the one place the rest of the OS needs to learn that the identity
+  // directory moved. The listener (instrumentation.ts) reconciles Trino's access rules; this
+  // module stays unaware of it. B3-review-H-2.
+  emitDirectoryChange(`user ${u.id}`);
 }
 
 function persistMeta(): void {
@@ -557,6 +563,7 @@ export async function deleteUser(id: string): Promise<void> {
   }
   map.delete(id);
   mirror.deleteThrough(id);
+  emitDirectoryChange(`user ${id} deleted`);
 }
 
 /** Distinct domains across all users — drives domain pickers. */

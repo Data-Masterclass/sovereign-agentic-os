@@ -42,6 +42,12 @@ export type DqRunRecord = {
   rowCount?: number | null;
   /** Sorted "name:type" column set at this run — the schema monitor's baseline. */
   schemaFingerprint?: string | null;
+  /**
+   * Where the row came from (engine rebuild B2): `dagster` = the asset checks of a `dbt build`
+   * (authoritative when `DATA_PROJECT_GIT` is on), `os` = the OS's own ad-hoc probe recorded in
+   * this series. Absent on rows written before B2. A record is NEVER a mix of the two.
+   */
+  source?: 'dagster' | 'os';
 };
 
 /** How many recent runs per dataset we keep hydrated for the trend sparkline. */

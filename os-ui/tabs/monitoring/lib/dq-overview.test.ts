@@ -50,3 +50,22 @@ test('a never-run row carries badge unknown + null score (never a fake pass)', (
   assert.equal(row.healthScore, null);
   assert.equal(row.ranAt, null);
 });
+
+/**
+ * Review B2-review-M5: `DqRunRecord.source` existed since B2 but no surface read it, so a dbt test
+ * Dagster executed and the OS's own ad-hoc probe looked identical. They are not: only the former
+ * runs on every build and fails the pipeline.
+ */
+test('buildDqOverview carries WHO produced each verdict, and omits it when unknowable', () => {
+  const overview = buildDqOverview([
+    ds('dagster-row', { ranAt: 't', badge: 'passing', healthScore: 100, openFailures: 0, freshnessLate: false, source: 'dagster' }),
+    ds('os-row', { ranAt: 't', badge: 'passing', healthScore: 100, openFailures: 0, freshnessLate: false, source: 'os' }),
+    ds('legacy-row', { ranAt: 't', badge: 'passing', healthScore: 100, openFailures: 0, freshnessLate: false }),
+    ds('never-run', null),
+  ]);
+  const by = new Map(overview.rows.map((r) => [r.id, r]));
+  assert.equal(by.get('dagster-row')!.source, 'dagster');
+  assert.equal(by.get('os-row')!.source, 'os');
+  assert.equal(by.get('legacy-row')!.source, undefined, 'a pre-B2 record claims nothing');
+  assert.equal(by.get('never-run')!.source, undefined);
+});

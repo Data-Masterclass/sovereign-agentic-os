@@ -753,15 +753,33 @@ dagster:
     postgresqlHost: pg-rw
     postgresqlUsername: dagster
     postgresqlDatabase: dagster
+  # ── Launched RUN pods (engine rebuild B2, review B2-review-H1).
+  # The subchart derives each code location's container context from its deployment entry, but the
+  # ONLY label it puts on a run pod is none: `component: user-deployments` lives on the CODE-SERVER
+  # Deployment's pod template and nowhere else. Run pods must reach the read-only git daemon
+  # (`git://os-repos`, port 9418) to clone their pinned commit, and the one ingress rule that opens
+  # 9418 selects exactly that label (templates/base/os-ui/os-repos.yaml) — so the run launcher
+  # stamps it on every run pod. Keep the `component` value IN STEP with that NetworkPolicy;
+  # images/extensions/dagster/tests/test_os_projects.py (ChartContract) asserts they agree.
+  runLauncher:
+    config:
+      k8sRunLauncher:
+        runK8sConfig:
+          podTemplateSpecMetadata:
+            labels:
+              component: user-deployments
+              app.kubernetes.io/part-of: sovereign-os
   # Official dagster/* images are amd64-only; we use an arm64-native image we
   # build (sovereign-os/dagster)
   dagster-user-deployments:
     enabled: true
     deployments:
-      - name: example-user-code
+      # The code location NAME is this deployment's name: `sovereign` is what
+      # `reloadRepositoryLocation` and the OS's `DAGSTER_LOCATION` address (engine rebuild B2).
+      - name: sovereign
         image:
           repository: sovereign-os/dagster
-          tag: "0.2.0"
+          tag: "0.3.0"
           pullPolicy: IfNotPresent
         dagsterApiGrpcArgs:
           - "--python-file"
@@ -772,17 +790,104 @@ dagster:
         env:
           - { name: TRINO_HOST, value: trino }
           - { name: TRINO_PORT, value: "8080" }
-          - { name: TRINO_USER, value: dbt-sales }
+          # The Trino user dbt-trino CONNECTS as (profiles.yml `user`), before
+          # `impersonation_user: OS_PRINCIPAL` sets the governed session identity. It MUST equal
+          # `trino.accessControl.serviceUser` below, because that is the only `original_user` the
+          # generated `rules.json` lets become an OS principal — `dbt-sales` (the old value) is
+          # denied by its own impersonation rule the moment Trino authenticates clients.
+          # A subchart's values cannot be templated from here, so the equality is asserted by
+          # `scripts/check-trino-rules-chart.mjs` (run from os-ui/scripts/gate.sh). B3-review-H-5.
+          - { name: TRINO_USER, value: dbt-runner }
           - { name: TRINO_CATALOG, value: iceberg }
-          - { name: TRINO_SCHEMA, value: analytics }
+          # The domain schema the marts land in — the SAME value as dbt.trino.schema and
+          # marts.schema (`sales`); the old `analytics` literal here had drifted from them.
+          - { name: TRINO_SCHEMA, value: sales }
+          # repo-sync sidecar (engine rebuild B1 — data products in git). Inert until
+          # REPO_SYNC_ENABLED=true (flip together with osUI.dataProjectGit.enabled).
+          - { name: REPO_SYNC_ENABLED, value: "false" }
+          - { name: REPO_SYNC_DOMAINS, value: "" }          # extra domains; the index discovers the rest
+          - { name: REPO_SYNC_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
+          - { name: REPO_SYNC_GIT_BASE, value: "git://os-repos" }
+          - { name: REPO_SYNC_CHECKOUT, value: "/repos-checkout" }
+          - { name: REPO_SYNC_INTERVAL, value: "15" }
+          - { name: REPO_SYNC_STATUS_PORT, value: "8089" }
+          - { name: DAGSTER_RELOAD_LOCATION, value: "sovereign" }
+          - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
+          # The `os_principals` sensor reads the OS repo index to pause a deactivated owner's
+          # schedules (concept §6); unset ⇒ the sensor skips with that reason, never guesses.
+          - { name: OS_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
+          # Consecutive failures after which the failure sensor pauses a schedule — the OS's
+          # own QUARANTINE_THRESHOLD (tabs/data/lib/sync-runs.ts).
+          - { name: OS_QUARANTINE_THRESHOLD, value: "10" }
+          # The shared runtime bearer the OS index route accepts (cluster-internal, the same
+          # contract as the sync trigger). A Secret reference — never a literal, and never
+          # written into a repository or a dbt profile.
+          - name: AGENT_RUNTIME_TOKEN
+            valueFrom:
+              secretKeyRef: { name: agent-runtime-token, key: token }
         resources:
           requests: { cpu: 50m, memory: 384Mi }
           limits: { cpu: "1", memory: 1Gi }   # headroom for dbt materializations
+        # ── Data products in git (engine rebuild B1/B2): the validated-commit checkout the
+        # `sovereign` code location loads from. `repo-sync` (same image, `git` added) discovers
+        # domains from the OS index, fetches git://os-repos/<domain>.git, runs `dbt parse` in a
+        # worktree, repoints /repos-checkout/<domain>/current ONLY on success and then calls
+        # reloadRepositoryLocation (images/extensions/dagster/repo-sync.sh).
+        # NOTE (corrected — review B2-review-M1): includeConfigInLaunchedRuns propagates
+        # volumes/volumeMounts/env AND `sidecarContainers` into run pods — the subchart renders the
+        # latter as `run_k8s_config.pod_spec_config.containers`. A K8s Job only completes once EVERY
+        # container exits, so the repo-sync copy in a run pod MUST exit: it reads POD_NAME (downward
+        # API, below) and returns 0 in a `dagster-run-*` pod. The sidecar cannot be dropped here —
+        # the code-server pod is the only place it can maintain the shared `current` checkout.
+        # A run pod's emptyDir starts EMPTY and `os_projects.ensure_checkout` clones the commits
+        # named in the run's OS_PINNED_COMMITS env before building definitions.
+        volumes:
+          - name: repos-checkout
+            emptyDir: {}
+        volumeMounts:
+          - name: repos-checkout
+            mountPath: /repos-checkout
+        sidecarContainers:
+          - name: repo-sync
+            image: sovereign-os/dagster:0.3.0
+            imagePullPolicy: IfNotPresent
+            command: ["/bin/sh", "/opt/dagster/app/repo-sync.sh"]
+            env:
+              # Which pod am I in? A Dagster run pod is `dagster-run-<run id>-…`; repo-sync exits 0
+              # there so the run Job can complete (review B2-review-M1).
+              - name: POD_NAME
+                valueFrom:
+                  fieldRef: { fieldPath: metadata.name }
+              # The status server binds THIS address, not 0.0.0.0 (review B2-review-L5, closed in
+              # B3): reachable through the pod's own IP only. Unset would mean 127.0.0.1.
+              - name: POD_IP
+                valueFrom:
+                  fieldRef: { fieldPath: status.podIP }
+              - { name: REPO_SYNC_ENABLED, value: "false" }
+              - { name: REPO_SYNC_DOMAINS, value: "" }
+              - { name: REPO_SYNC_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
+              - { name: REPO_SYNC_GIT_BASE, value: "git://os-repos" }
+              - { name: REPO_SYNC_CHECKOUT, value: "/repos-checkout" }
+              - { name: REPO_SYNC_INTERVAL, value: "15" }
+              - { name: REPO_SYNC_STATUS_PORT, value: "8089" }
+              - { name: DAGSTER_RELOAD_LOCATION, value: "sovereign" }
+              - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
+              - name: AGENT_RUNTIME_TOKEN
+                valueFrom:
+                  secretKeyRef: { name: agent-runtime-token, key: token }
+            ports:
+              - { name: repo-status, containerPort: 8089 }
+            volumeMounts:
+              - name: repos-checkout
+                mountPath: /repos-checkout
+            resources:
+              requests: { cpu: 20m, memory: 128Mi }
+              limits: { cpu: 500m, memory: 512Mi }
         # ── dbt.projectSource: git — Dagster user-code from the repo (epic #146 Ph 4)
   dagsterWebserver:
     image:
       repository: sovereign-os/dagster
-      tag: "0.2.0"
+      tag: "0.3.0"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }
@@ -790,7 +895,7 @@ dagster:
   dagsterDaemon:
     image:
       repository: sovereign-os/dagster
-      tag: "0.2.0"
+      tag: "0.3.0"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }
@@ -1083,6 +1188,32 @@ trino:
     domains:
       - sales
       - marketing
+  # FILE-BASED ACCESS CONTROL, CHAINED AFTER OPA (engine rebuild B3). Trino accepts a
+  # LIST of system access controls (`access-control.config-files`) and every one of them
+  # must allow — so this file can only ever NARROW what policies/trino.rego permits. It
+  # expresses the two things the OPA plugin cannot: IMPERSONATION (dbt-trino in a Dagster
+  # run pod connects as `serviceUser` and acts as `OS_PRINCIPAL`) and SCHEMA OWNERSHIP
+  # (who may CTAS into a domain schema / a personal lane).
+  #   What ships here is the BOOTSTRAP file: impersonation bounded by the OS id SHAPE,
+  #   nothing ownable. os-ui then reconciles the same ConfigMap key from real domain
+  #   membership (core/infra/trino-rules-server.ts) and Trino re-reads it within
+  #   `refreshPeriod` — no roll. Enumerated principals replace the pattern at that point.
+  #   NO SECRET may ever go in this file: it is a ConfigMap, visible to anyone who can read it.
+  accessControl:
+    enabled: true
+    # The Trino user dbt-trino authenticates as (profiles.yml `user`), allowed to act as
+    # an OS principal and as nothing else.
+    serviceUser: dbt-runner
+    # The shape of an OS principal id (domain name or uid). MUST equal
+    # core/infra/trino-rules.ts OS_PRINCIPAL_PATTERN (os-ui/core/infra/trino-rules.test.ts
+    # asserts it, together with the whole bootstrap document below).
+    principalPattern: "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+    # How often Trino re-reads rules.json (so a membership change lands without a restart).
+    refreshPeriod: 30s
+    # How often os-ui re-reconciles the ConfigMap even when nothing changed (minutes, jittered,
+    # a no-op PATCH-wise when the bytes already match). This is what repairs a `helm upgrade`,
+    # which rewrites Helm's bootstrap value over the OS's enumerated one — B3-review-H-3.
+    reconcileIntervalMinutes: 10
   resources:
     requests: { cpu: "1", memory: 2Gi }
     limits: { cpu: "4", memory: 8Gi }
@@ -1204,6 +1335,18 @@ osUI:
   # each tool keeps its own auth).
   langfuseConsoleUrl: "http://localhost:3000"
   dagsterConsoleUrl:  "http://localhost:3070"  # internal on ingress (no public host)
+  # ---- Data products in git (engine rebuild B1). OFF by default: when enabled, os-ui gets
+  # DATA_PROJECT_GIT=true + the `os-repos` PVC at /repos (one bare repo per domain, every
+  # dataset change committed as the acting user), a read-only `git daemon` sidecar + Service
+  # `os-repos` (:9418) + a NetworkPolicy admitting only the Dagster user-code pod, which runs the
+  # repo-sync sidecar (see dagster.dagster-user-deployments above — set REPO_SYNC_ENABLED there).
+  dataProjectGit:
+    enabled: false
+    reposSize: 2Gi
+    gitDaemon:
+      image:
+        repository: alpine/git     # stock image; git (GPL-2.0) runs as a separate process, never linked
+        tag: "v2.47.2"
   # Secret-backed credentials — reuse the stack's existing Secrets so nothing
   # sensitive sits in plaintext (names/keys verified against the running cluster).
   langfuseSecret:

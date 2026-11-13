@@ -502,6 +502,136 @@ and `resume_agent_run`, and the Governance `onDecided` hook all go through
 In particular a decision no longer drives the graph inside the decider's request — it files a
 `resume` job, and the approval card says `queued` until the run reports back.
 
+## A data product is a dbt project in a git repo the OS owns
+
+(Engine rebuild, Phases B1–B2 — behind `DATA_PROJECT_GIT`, default off. Concept:
+`docs/superpowers/plans/2026-11-13-data-products-concept.md`.)
+
+A domain's data product is a **dbt project** an engineer could clone and run, and it lives in a
+**bare git repository per domain** that the OS writes: `$OS_REPOS_DIR/<domain>.git` on the
+`os-repos` PVC. Users never edit the repo from the UI; the OS is generator, committer and reader.
+
+**The one commit path.** `core/infra/git-store.ts` (isomorphic-git, MIT, in-process — no git
+binary in the os-ui image, no shell) exposes `openOrInit`, `commitTree` (writes the whole desired
+tree, commits **iff the root tree hash changed**), `log`, `readBlob`, `listTree`, `archive` (tar)
+and `push` (mirror; token resolved from a Secret reference at call time, scrubbed from errors).
+Author = the acting `CurrentUser`, committer = `Sovereign OS`, message
+`<area>(<domain>): <action> <object> — via ui:<route>|mcp:<tool>` plus `OS-*` trailers. It lives in
+`@core` because the Data and the Agents tab both commit through it; it knows nothing about either.
+
+**Every writer commits.** `tabs/data/lib/store.ts` has one `persist()`; it — and the few writers
+that bypass it (create, adopt, archive, delete, restore, propagation sweeps) — emit a
+`ProjectChange` through `tabs/data/lib/project-events.ts`. The store is reachable from the **client
+bundle** (`lib/index.ts` re-exports it), so it may not import `node:fs` or isomorphic-git even
+dynamically — hence the event seam. `tabs/data/lib/dbt/commit.ts` subscribes at boot
+(`instrumentation.ts`): snapshot the domain (`snapshot.ts`, the only impure read) → `generateProject`
+(`generate.ts`, pure, byte-stable: sorted keys, one newline, no timestamps) → `commitTree`.
+`commit.test.ts` enumerates the store's exports — a new mutator fails until it is classified.
+
+**Where "via" comes from.** `core/infra/request-surface.ts` (AsyncLocalStorage): `withRoute` wraps
+every handler in `ui:<route>`, the data MCP tools wrap each call in `mcp:<tool>`; the hook reads it
+synchronously at mutation time. A writer outside any scope is recorded as `ui:data` and logged.
+
+**What the project contains.** Bronze is a `source` (the data-runner writes it with PyIceberg, dbt
+never does). Silver and Gold are models whose body is the compiled SELECT the OS recorded at build
+(`compileSilver` / `compileGoldJoin` output) with `iceberg.<schema>.<table>` rewritten to
+`{{ ref() }}` for tables of this project and `{{ source() }}` otherwise — `source()` is exactly the
+governance boundary `reuseSourceFqn` enforces (a cross-domain product). Un-promoted datasets live
+under `models/personal/<uid>/` with `+schema: personal_<uid>`; promoted ones under
+`models/<layer>/` in the domain schema (model name == physical table name, so FQNs hold). Quality
+rules are `schema.yml` tests (`range` and `not_blank` are generator-shipped generic tests carrying
+the `dq.ts` predicates). Syncs are incremental models (`delete+insert` on `_batch_id` with the
+lookback predicate; `merge` on the keys); Kafka offsets and API-batch sources are listed in
+`os/external.yml`, not faked. `profiles.yml` is `env_var()` only with
+`impersonation_user: env_var('OS_PRINCIPAL')` — no default, so a run without a principal fails.
+
+**Commit first, validate second.** The Dagster user-code pod's `repo-sync` sidecar fetches each
+repo over the read-only `git daemon` on the os-ui pod (Service `os-repos:9418`, NetworkPolicy:
+Dagster user-code only), runs `dbt parse` in a worktree and repoints `current` only on success.
+A broken commit stays in history; the gate is deployment, as in any CI.
+
+**Provenance decides what is a model.** `buildVersion({compiled: true})` records that a body came
+from the OS's own compilers. Only those bodies become dbt models. An authored body — the free-text
+`body` of `add_dataset_version` or the version route — is stored and rendered as a dbt **source**:
+dbt reads that table and never rewrites it, so no user-authored text is ever handed to Jinja at
+`dbt parse` and a scheduled `<model>+` run cannot replace someone's table with a copy of the layer
+below. A quality rule's column must match `/^[A-Za-z_][A-Za-z0-9_]*$/` — it is interpolated
+**unquoted** into the generated test SQL — and anything else is refused at the store gate and
+recorded as `meta.os_intentions`, never emitted as a test.
+
+## Dagster schedules the repo
+
+(Phase B2, same flag.)
+
+The OS does not run data products and does not keep a run ledger for them. **One** Dagster code
+location, `sovereign` (`images/extensions/dagster/repo.py`, with the pure half in `os_projects.py`),
+loads every `/repos-checkout/<domain>/current/` that `repo-sync` validated and builds, per domain:
+`@dbt_assets` keyed `[<domain>, <node>]`, a `<domain>__all` job the OS launches with an explicit
+asset subset, one job + UTC `ScheduleDefinition` per `os/schedules.yml` entry, and a weekly Iceberg
+maintenance job per schema. A run-failure sensor pauses a schedule after the OS's own threshold of
+consecutive failures (this is what `isQuarantined` becomes); a second sensor pauses the schedules of
+a principal the OS reports inactive. A domain that fails to load is skipped, never fatal.
+
+**Identity still travels with the work.** The run pod's `OS_PRINCIPAL` — set through the
+`dagster-k8s/config` tag by the schedule, by the maintenance schema's owner, or by the OS on an
+explicit launch — is the Trino user `dbt-trino` impersonates, so Trino→OPA governs the same identity
+the UI does. `OS_PINNED_COMMITS` tells a run pod (whose `/repos-checkout` emptyDir starts empty)
+which commit to check out. Both are principals and shas; **no secret is ever a tag or a repo file**.
+
+**The OS reads Dagster, not itself.** `core/infra/dagster.ts` is the one typed GraphQL client —
+`Fetched<T>` like `litellm-admin.ts`, a hard timeout, an injectable `fetch`, nothing thrown and
+nothing logged: `launchRun`, `run`, `runsForDataset`, `recentOsRuns`, `assetChecks`,
+`allAssetChecks`, `latestMaterialization`, `assetGraph`, `reloadLocation`, `nextTick`. Run history
+and the next tick come from it (`tabs/data/lib/sync-status-server.ts`), quality results from asset
+checks — one dbt test is one check (`tabs/data/lib/dq-status-server.ts`) — and Monitoring's pipeline
+lens from runs filtered by the `os/*` tags. An outage is reported as an outage: empty rows and a
+reason, never a fabricated run and never a fake green.
+
+**The index exists because git cannot enumerate.** `GET /api/data/projects` lists every domain
+repository with its `main` head and the activity of each schedule principal; the `repo-sync` sidecar
+and the inactive-principal sensor poll it with the cluster-internal runtime bearer, a signed-in user
+sees only their own domains.
+
+## Data products execute as the principal
+
+(Phase B3, same flag.)
+
+**There is no service identity anywhere in the execution path.** A read through `query_data` or the
+Data tab runs on Trino as the caller's domain principal — or as their uid when the SQL touches their
+own `personal_<uid>` lane, because even the owner is denied their own personal table under a domain
+principal. A write runs as `user.domains[0] ?? user.id`. A dbt model in a Dagster run pod connects as
+`dbt-runner` and acts as `env_var('OS_PRINCIPAL')`, which the `dagster-k8s/config` tag sets per run
+from the schedule's principal, the maintenance schema's owner, or the principal the OS passed. A
+source observation connects as the dataset owner. The full table is
+`docs/components/trino.md` → "Who runs as whom", and it is a table because the answer must be one
+name per path, not a shrug.
+
+**What the engine enforces, and what it cannot yet.** Trino chains two system access controls and
+requires both to allow, so the second can only narrow: the OPA plugin keeps row filters, column masks
+and the foreign-`personal_*` deny; a generated `rules.json` adds impersonation and schema ownership.
+The file is one shape with two renderers — the chart's bootstrap (impersonation bounded by the id
+SHAPE, ownership untouched so a fresh install still works) and the OS's reconciled form (principals
+enumerated, ownership closed), written into the same ConfigMap and re-read within
+`security.refresh-period`. `core/infra/trino-rules.ts` is pure and golden-tested, including the
+property that matters: the service user can become an OS principal and nothing else — not `root`,
+not a deactivated user, not `admin; drop`. **The limit to know:** the chart does not set
+`http-server.authentication.type`, so Trino does not authenticate clients and the impersonation
+rules have no authenticated `original_user` to match. The schema-ownership rules bite immediately;
+making impersonation load-bearing needs authentication and a credential, which is a deploy decision
+and is written down rather than assumed.
+
+**Lineage is dbt's graph, not the OS's memory.** `datasetLineage` reads Dagster's `assetNodes` —
+which dagster-dbt derives from `manifest.json`'s `parent_map` — and folds it into the same
+`LineageGraph` the registry path returns, with one additive field saying which source answered.
+Reading `target/manifest.json` directly was rejected because it lives in a pod volume os-ui cannot
+mount. The fallback is explicit and labelled; an empty graph is never passed off as the truth.
+
+**Parity is a test the deletion will be gated on.** `tabs/data/lib/dbt/parity.ts` compares, per
+fixture, the SQL the OS runs today with the SQL dbt will run. It is honest about its reach: because
+a model body IS the recorded CTAS after rewriting, the test proves the translation is faithful and
+invertible — and catches any future change to the rewriter, the stripper or the lane/FQN mapping —
+but not that two materialisations agree row for row. That needs `EXCEPT ALL` both ways on a cluster.
+
 ## Things this codebase will punish you for
 
 Hard-won, each from a real failure. Read before writing a route, a test, or an

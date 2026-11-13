@@ -73,6 +73,13 @@ export function parseModelPrices(raw: string): Record<string, ModelPrice> {
  */
 export const DEV_DEFAULT_SECRET = 'dev-only-insecure-session-secret-change-me-in-prod';
 
+/**
+ * The insecure placeholder for the shared in-cluster runtime bearer, shipped so a clone-and-run
+ * install works without secrets. `runtimeBearerAuthAllowed` (below) refuses to honour it under a
+ * production runtime — the bearer grants un-narrowed, cross-domain reads.
+ */
+export const DEV_DEFAULT_AGENT_RUNTIME_TOKEN = 'dev-only-insecure-agent-runtime-token';
+
 export const config = {
   // sample-agent (LangGraph RAG): GET {SAMPLE_AGENT_URL}/ask?q=...
   sampleAgentUrl: base(env('SAMPLE_AGENT_URL', 'http://sample-agent:8000')),
@@ -83,7 +90,7 @@ export const config = {
   // paths its own CronJobs call: the agent scheduled-run receiver, the metrics data-sync
   // sweep and the connections catalog-refresh sweep (`build/runtime-auth.ts`
   // `runtimeTokenOk`). Renamed when the data side owns the Secret. Server-only.
-  agentRuntimeToken: env('AGENT_RUNTIME_TOKEN', 'dev-only-insecure-agent-runtime-token'),
+  agentRuntimeToken: env('AGENT_RUNTIME_TOKEN', DEV_DEFAULT_AGENT_RUNTIME_TOKEN),
   // Agent SCHEDULE CronJobs (Agents tab). Saving a `cron` schedule provisions a
   // batch/v1 CronJob in the platform namespace that curls the scheduled-run
   // receiver below with the shared runtime bearer. The bearer is read at run time
@@ -460,8 +467,43 @@ export const config = {
   // "" when ingress.hosts.workbench is unset — honour it, don't dial localhost).
   workbenchBrokerUrl: base(consoleEnv('WORKBENCH_BROKER_URL', 'http://localhost:8091')),
 
+  // ---- Data products in git (engine rebuild B1). GATED OFF by default: when
+  // DATA_PROJECT_GIT=true every dataset / composition / check / sync / publish /
+  // retire mutation regenerates the owning domain's dbt project and commits it to a
+  // bare repo `<OS_REPOS_DIR>/<domain>.git` (core/infra/git-store.ts, author = the
+  // acting user). OFF ⇒ no repo is touched and nothing else changes. `reposDir` is
+  // the PVC mount (`os-repos`) in the chart; tests point it at a temp dir.
+  dataProjectGit: env('DATA_PROJECT_GIT', '').toLowerCase() === 'true',
+  reposDir: env('OS_REPOS_DIR', '/repos'),
+  // Durable mirror index for the per-domain push-mirror config (URL + token Secret
+  // REFERENCE — never the token). See tabs/data/lib/dbt/mirror.ts.
+  dataProjectMirrorsIndex: env('DATA_PROJECT_MIRRORS_INDEX', 'os-data-project-mirrors'),
+
+  // ---- Trino file-based access control (engine rebuild B3). When TRINO_ACCESS_RULES=true the OS
+  // reconciles the `trino-access-rules` ConfigMap from real domain membership on THREE triggers
+  // (core/infra/trino-rules-server.ts `startTrinoRulesReconciler`): at boot, on every user/domain
+  // write (kernel `directory-changed` event, debounced), and every
+  // `trinoAccessRulesIntervalMinutes` as a repair pass — the periodic one exists because a
+  // `helm upgrade` rewrites Helm's bootstrap value over the OS's enumerated file and fires no OS
+  // event (B3-review-H-2/H-3). Trino re-reads the file on its own refresh-period.
+  // The chart's bootstrap file bounds IMPERSONATION only, so with this off the engine behaves
+  // exactly as before. `trinoServiceUser` must equal the chart's
+  // `trino.accessControl.serviceUser`, the Dagster code location's `TRINO_USER` and the generated
+  // `profiles.yml` user (asserted by scripts/check-trino-rules-chart.mjs).
+  trinoAccessRules: env('TRINO_ACCESS_RULES', '').toLowerCase() === 'true',
+  trinoServiceUser: env('TRINO_DBT_USER', 'dbt-runner'),
+  trinoAccessRulesIntervalMinutes: Number(env('TRINO_ACCESS_RULES_INTERVAL_MINUTES', '10')) || 10,
+
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
   dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),
+  // The `sovereign` code location (engine rebuild B2): one location for every domain's dbt
+  // project; a `Definitions`-based location has the repository name `__repository__`. The OS
+  // launches runs there and reads run / check / materialization state back (core/infra/dagster.ts).
+  dagsterLocation: env('DAGSTER_LOCATION', 'sovereign'),
+  dagsterRepository: env('DAGSTER_REPOSITORY', '__repository__'),
+  // How long a launch-after-commit waits for repo-sync + the location reload to expose a NEW
+  // asset before giving up (ms). Existing assets launch immediately.
+  dagsterLaunchWaitMs: Number(env('DAGSTER_LAUNCH_WAIT_MS', '90000')) || 90000,
 
   // ---- Layer-4 (ML) backends. Off by default; the OS pings these server-side
   // and degrades gracefully when a service is absent.
@@ -555,6 +597,27 @@ export const config = {
 } as const;
 
 export type AppConfig = typeof config;
+
+/**
+ * May a request authenticate as the in-cluster RUNTIME (bearer token) at all? (review B2-review-M3)
+ *
+ * The bearer is a single shared secret that grants UN-NARROWED, cross-domain reads — e.g.
+ * `GET /api/data/projects` returns every domain's repository. If the deployment never set
+ * `AGENT_RUNTIME_TOKEN`, the configured value is the SHIPPED placeholder, which anyone can read in
+ * this repository. Under a real production runtime that must be a closed door, not a known key.
+ *
+ * Keyed on `NODE_ENV`, deliberately NOT on `deploymentProfile` — exactly as
+ * `assertNoDevDefaultSecretsInProd` is, and for the same reason: the live deploy runs
+ * `OS_PROFILE=local` with `NODE_ENV=production`, so a profile-keyed guard would be inert precisely
+ * where it matters. (This CORRECTS the review's suggestion to exempt `profile: local`.)
+ */
+export function runtimeBearerAuthAllowed(
+  token: string = config.agentRuntimeToken,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
+): boolean {
+  if (token && token !== DEV_DEFAULT_AGENT_RUNTIME_TOKEN) return true;
+  return nodeEnv !== 'production';
+}
 
 /**
  * Boot-time FAIL-CLOSED guard: under a real production runtime the platform must

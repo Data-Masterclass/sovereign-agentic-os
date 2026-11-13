@@ -39,6 +39,12 @@ export type LineageGraph = {
   nodes: LineageNode[];
   edges: LineageEdge[];
   transparency: GateResult;
+  /**
+   * Where the edges came from (engine rebuild B3). `dbt` = dbt's own `ref()`/`source()` graph, read
+   * through Dagster's asset graph; `registry` = this module's version/upstream records. Optional, so
+   * a pre-B3 payload claims nothing — absent means "the registry, as always".
+   */
+  source?: 'dbt' | 'registry';
 };
 
 const LAYERS: Layer[] = ['bronze', 'silver', 'gold'];
@@ -105,6 +111,7 @@ export function lineageFor(d: Dataset): LineageGraph {
     nodes,
     edges,
     transparency: transparencyGate(d),
+    source: 'registry',
   };
 }
 

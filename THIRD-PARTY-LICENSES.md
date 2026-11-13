@@ -70,6 +70,12 @@ the os-ui image. Per-package copyright notices: `licenses/notices/os-ui-agent-en
 | pg (node-postgres) | 8.23.1 | MIT | `licenses/MIT.txt` | Postgres driver used by the checkpointer |
 | langfuse (JS SDK v3) | 3.39.2 | MIT | `licenses/MIT.txt` | One Langfuse trace per run (trace id = run id). The npm tarball ships no LICENSE file; `package.json` declares MIT and the upstream text is reproduced in the NOTICE file |
 
+#### os-ui git store — npm library (engine rebuild, Phase B1)
+
+| Component | Version | License (SPDX) | Full text | Notes |
+|---|---|---|---|---|
+| isomorphic-git | 1.44.13 | MIT | `licenses/MIT.txt` | In-process git for the per-domain data-product repositories (bare repos on the `os-repos` PVC; commit/log/read/archive/push). Notice: `licenses/notices/os-ui-git-store-npm-NOTICE.txt`. The `git` binary (GPL-2.0) is NOT bundled by os-ui; the chart runs it as a separate process from the stock `alpine/git` image (git daemon) and the Dagster image's distro package (repo-sync) |
+
 Deliberately **not** added: `langfuse-langchain@3` — its peer range is the legacy `langchain <0.4`
 (`@langchain/core` 0.x), incompatible with `@langchain/core@1` that LangGraph 1.x requires; its
 successor `@langfuse/langchain@6` (OTel-based) is the alternative if a LangChain callback

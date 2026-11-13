@@ -6,7 +6,7 @@ import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { listDatasets } from '@tabs/data/lib/store';
-import { ensureHydrated, latestRun } from '@tabs/data/lib/dq-results';
+import { latestDqRuns } from '@tabs/data/lib/dq-status-server';
 import { monitorId } from '@tabs/data/lib/dq-monitors';
 import { buildDqOverview, type DqDatasetInput } from '@tabs/monitoring/lib/dq-overview';
 
@@ -27,12 +27,6 @@ export const GET = withRoute(async ({ user, req }) => {
   const url = new URL(req.url);
   const scope = url.searchParams.get('scope'); // 'my' | 'domain' | 'company' | null
 
-  try {
-    await ensureHydrated();
-  } catch {
-    /* the rollup degrades to "never run" rows rather than 5xx */
-  }
-
   const groups = listDatasets(user);
   // My = personal · Domain = promoted assets · Company = certified products.
   let summaries = [...groups.mine, ...groups.domain, ...groups.marketplace];
@@ -40,8 +34,11 @@ export const GET = withRoute(async ({ user, req }) => {
   else if (scope === 'domain') summaries = groups.domain;
   else if (scope === 'company') summaries = groups.marketplace;
 
+  // Dagster asset checks (flag on) or the `os-dq-results` series (flag off) — ONE batch read; a
+  // dataset with no execution is an honest "never run" row, never a 5xx and never a fake green.
+  const latestByDataset = await latestDqRuns(summaries.map((d) => ({ id: d.id, domain: d.domain })));
   const inputs: DqDatasetInput[] = summaries.map((d) => {
-    const run = latestRun(d.id);
+    const run = latestByDataset.get(d.id) ?? null;
     if (!run) return { id: d.id, name: d.name, owner: d.owner, domain: d.domain, latest: null };
     const openFailures = run.results.filter((r) => r.status === 'fail').length;
     const freshness = run.results.find((r) => r.id === monitorId('freshness'));
@@ -56,6 +53,8 @@ export const GET = withRoute(async ({ user, req }) => {
         healthScore: run.healthScore,
         openFailures,
         freshnessLate: freshness?.status === 'fail',
+        // WHO ran it: a Dagster dbt test, or the OS's own ad-hoc probe (review B2-review-M5).
+        source: run.source,
       },
     };
   });

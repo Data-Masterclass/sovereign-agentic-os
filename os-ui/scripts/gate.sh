@@ -10,6 +10,11 @@ node ../scripts/check-litellm-allowlist.mjs
 # carry the LiteLLM master key, the session-signing secret or the mail secret. Skips when helm is
 # not installed — docs/components/os-ui.md carries the same check by hand.
 node ../scripts/check-worker-env.mjs
+# B3 review H-1/H-5/H-6: the reconciler must run on a DEFAULT install, the Dagster run pod must
+# connect as the user rules.json allows, and the os-ui Role must not grant namespace-wide Secrets.
+# These live in rendered YAML, so a unit test cannot see them. Skips when helm or the subchart
+# .tgz files are absent — docs/components/trino.md carries the commands by hand.
+node ../scripts/check-trino-rules-chart.mjs
 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/agents/lib/build/os-tools.test.ts \
   core/runtime/runtime.test.ts \
@@ -30,4 +35,10 @@ node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/agents/lib/engine/parity.test.ts \
   tabs/agents/lib/engine/fixtures.test.ts \
   tabs/agents/lib/engine/build-graph.test.ts \
-  core/mcp/agent-run-surface.test.ts
+  core/mcp/agent-run-surface.test.ts \
+  core/infra/trino-rules.test.ts \
+  core/infra/trino-rules-server.test.ts \
+  core/kernel/events.test.ts \
+  tabs/admin/lib/directory-events.test.ts \
+  tabs/admin/lib/components-extra.test.ts \
+  tabs/data/lib/dbt/parity.test.ts

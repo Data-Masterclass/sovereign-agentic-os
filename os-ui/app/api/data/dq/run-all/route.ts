@@ -9,6 +9,7 @@ import { roleAtLeast } from '@core/kernel/session';
 import { listGovernedDatasets, builtLayerFqn } from '@tabs/data/lib/store';
 import { queryRun } from '@core/infra/governed';
 import { ensureHydrated, latestRun } from '@tabs/data/lib/dq-results';
+import { dataProjectGitEnabled } from '@tabs/data/lib/dbt/commit';
 import { runAndRecord, isNewFailure } from '@tabs/data/lib/dq-run-server';
 import { deliverDqAlert } from '@tabs/dashboards/lib/delivery';
 import { getPublicUser } from '@tabs/admin/lib/users';
@@ -36,6 +37,12 @@ export const dynamic = 'force-dynamic';
 export const POST = withRoute(async ({ user }) => {
   if (!roleAtLeast(user.role, 'builder')) {
     return NextResponse.json({ error: 'not permitted to run the data-quality sweep' }, { status: 403 });
+  }
+  // DATA_PROJECT_GIT on ⇒ the quality rules ARE dbt tests, run by `dbt build` inside every Dagster
+  // run and read back as asset checks. Running them a second time here would write an `os-dq-results`
+  // row Dagster does not know about (checklist D9), so the sweep stands down.
+  if (dataProjectGitEnabled()) {
+    return NextResponse.json({ skipped: true, reason: 'quality rules run as dbt tests inside the Dagster runs — the OS sweep is off', ran: 0, failing: 0, alerted: 0, results: [] });
   }
 
   const datasets = listGovernedDatasets();
