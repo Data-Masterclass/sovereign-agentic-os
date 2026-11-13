@@ -498,6 +498,12 @@ function scrub(message: string, secret: string | null): string {
 export type PushDeps = GitStoreOptions & {
   /** Resolve the mirror token from its Secret reference. Defaults to the secrets helper. */
   resolveToken?: (ref: { name: string; key: string }) => Promise<string | null> | string | null;
+  /**
+   * The isomorphic-git HTTP transport. Defaults to `isomorphic-git/http/node`. Injected by the
+   * tests as a FAKE transport (a real remote needs a git smart-HTTP server — checklist X2's
+   * `kind` half), so the credential handling and the error scrubbing are still measured here.
+   */
+  http?: typeof http;
 };
 
 /**
@@ -519,7 +525,7 @@ export async function push(domain: string, mirror: MirrorConfig, deps: PushDeps 
   try {
     const res = await git.push({
       fs,
-      http,
+      http: deps.http ?? http,
       gitdir,
       url: mirror.url,
       ref: MAIN,

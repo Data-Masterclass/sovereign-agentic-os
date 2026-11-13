@@ -23,7 +23,7 @@
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
-import { push, type MirrorConfig, type GitStoreOptions } from '@core/infra/git-store';
+import { push, type MirrorConfig, type GitStoreOptions, type PushDeps } from '@core/infra/git-store';
 
 export type MirrorStatus = { lastSha?: string; lastPushedAt?: string; lastError?: string; lastErrorAt?: string };
 
@@ -76,11 +76,14 @@ export function listMirrors(): ProjectMirror[] {
 
 export type PushOutcome = { ok: boolean; error?: string };
 
+/** `GitStoreOptions` plus the test seams the git store's `push` itself takes. */
+export type MirrorPushOptions = PushDeps & { pushFn?: typeof push };
+
 /** Push `main` to the configured mirror and record the outcome. Null when none is configured. */
-export async function pushMirror(domain: string, opts: GitStoreOptions = {}): Promise<PushOutcome | null> {
+export async function pushMirror(domain: string, opts: MirrorPushOptions = {}): Promise<PushOutcome | null> {
   const rec = state().byDomain.get(domain);
   if (!rec) return null;
-  const res = await push(domain, { url: rec.url, tokenSecretRef: rec.tokenSecretRef }, opts);
+  const res = await (opts.pushFn ?? push)(domain, { url: rec.url, tokenSecretRef: rec.tokenSecretRef }, opts);
   const at = new Date().toISOString();
   rec.status = res.ok
     ? { ...rec.status, lastSha: res.sha, lastPushedAt: at, lastError: undefined, lastErrorAt: undefined }
@@ -94,7 +97,7 @@ export async function pushMirror(domain: string, opts: GitStoreOptions = {}): Pr
  * stays on the record, surfaces as the `git-mirror` row on Platform → Components & Health, and is
  * retried by the next commit's push — there is no separate retry loop to get stuck.
  */
-export async function pushMirrorAfterCommit(domain: string, sha: string, opts: GitStoreOptions = {}): Promise<void> {
+export async function pushMirrorAfterCommit(domain: string, sha: string, opts: MirrorPushOptions = {}): Promise<void> {
   try {
     await ensureMirrorsHydrated();
     const res = await pushMirror(domain, opts);
