@@ -154,6 +154,24 @@ export async function register(): Promise<void> {
           connectionCatalog: connectionCatalogForOwner,
         });
         console.info(`[os-ui] data projects: committing every dataset change to ${config.reposDir}/<domain>.git`);
+        // BOOT RECONCILE (engine rebuild B4): the hook only sees writes from NOW on, so the first
+        // boot with the flag on — and any boot after a crash between a store write and its commit —
+        // must commit the difference between the generated project and the repository HEAD, for
+        // every domain, as the platform principal (`OS-Reason: boot-reconcile`). Commits only where
+        // the tree actually moved; one unreadable domain never stops the others or the boot.
+        const { reconcileDataProjectsAtBoot } = await import('./tabs/data/lib/dbt/boot-reconcile.ts');
+        const reconciled = await reconcileDataProjectsAtBoot({
+          resolveActor: async (id) => ({ id }),
+          connectionCatalog: connectionCatalogForOwner,
+        });
+        if (reconciled.committed.length || reconciled.failed.length) {
+          console.info(
+            `[os-ui] data projects: boot reconcile over ${reconciled.domains.length} domain(s) — committed ${reconciled.committed.map((c) => `${c.domain}@${c.sha.slice(0, 7)}`).join(', ') || 'nothing'}` +
+              (reconciled.failed.length ? `; FAILED ${reconciled.failed.map((f) => `${f.domain} (${f.error})`).join(', ')}` : ''),
+          );
+        } else {
+          console.info(`[os-ui] data projects: boot reconcile — ${reconciled.domains.length} domain(s) already match their repository`);
+        }
       } catch (err) {
         console.error(`[os-ui] data projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
       }

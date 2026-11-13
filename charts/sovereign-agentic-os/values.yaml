@@ -800,9 +800,9 @@ dagster:
           # The domain schema the marts land in — the SAME value as dbt.trino.schema and
           # marts.schema (`sales`); the old `analytics` literal here had drifted from them.
           - { name: TRINO_SCHEMA, value: sales }
-          # repo-sync sidecar (engine rebuild B1 — data products in git). Inert until
-          # REPO_SYNC_ENABLED=true (flip together with osUI.dataProjectGit.enabled).
-          - { name: REPO_SYNC_ENABLED, value: "false" }
+          # repo-sync settings the USER-CODE container sees. The sidecar that actually runs the
+          # script carries its own copy under `sidecarContainers` below — flip BOTH to opt out.
+          - { name: REPO_SYNC_ENABLED, value: "true" }
           - { name: REPO_SYNC_DOMAINS, value: "" }          # extra domains; the index discovers the rest
           - { name: REPO_SYNC_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
           - { name: REPO_SYNC_GIT_BASE, value: "git://os-repos" }
@@ -861,7 +861,11 @@ dagster:
               - name: POD_IP
                 valueFrom:
                   fieldRef: { fieldPath: status.podIP }
-              - { name: REPO_SYNC_ENABLED, value: "false" }
+              # ON since B4, together with osUI.dataProjectGit.enabled. THIS is the copy the
+              # script reads (the deployment `env` list above belongs to the user-code container).
+              # In a Dagster RUN pod the same sidecar is inherited and exits 0 on POD_NAME, so a
+              # run Job still completes (review B2-review-M1).
+              - { name: REPO_SYNC_ENABLED, value: "true" }
               - { name: REPO_SYNC_DOMAINS, value: "" }
               - { name: REPO_SYNC_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
               - { name: REPO_SYNC_GIT_BASE, value: "git://os-repos" }
@@ -1333,13 +1337,23 @@ osUI:
   # each tool keeps its own auth).
   langfuseConsoleUrl: "http://localhost:3000"
   dagsterConsoleUrl:  "http://localhost:3070"  # internal on ingress (no public host)
-  # ---- Data products in git (engine rebuild B1). OFF by default: when enabled, os-ui gets
+  # ---- Data products in git (engine rebuild B1-B4). ON by default since B4: os-ui gets
   # DATA_PROJECT_GIT=true + the `os-repos` PVC at /repos (one bare repo per domain, every
   # dataset change committed as the acting user), a read-only `git daemon` sidecar + Service
   # `os-repos` (:9418) + a NetworkPolicy admitting only the Dagster user-code pod, which runs the
-  # repo-sync sidecar (see dagster.dagster-user-deployments above — set REPO_SYNC_ENABLED there).
+  # repo-sync sidecar (see dagster.dagster-user-deployments above — REPO_SYNC_ENABLED is on too).
+  #
+  # With it ON: a dataset/composition/quality-rule/schedule change is a git commit in the domain's
+  # repository, the generated dbt project is what Dagster materialises from a validated commit, and
+  # the OS reads run state back from Dagster instead of keeping its own ledger. The FIRST boot
+  # commits every existing dataset (`OS-Reason: boot-reconcile`).
+  #
+  # `enabled: false` remains the EMERGENCY OPT-OUT for one release (then the flag goes): the OS
+  # falls back to its own CTAS/ledger execution and the repositories stop being written. Read the
+  # CHANGELOG entry before flipping it off — scheduled syncs no longer run in that state, because
+  # B4 deleted the per-dataset CronJob provisioning and the fallback sweeps.
   dataProjectGit:
-    enabled: false
+    enabled: true
     reposSize: 2Gi
     gitDaemon:
       image:

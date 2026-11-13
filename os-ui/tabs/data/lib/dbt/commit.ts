@@ -56,6 +56,8 @@ export type CommitMeta = {
   /** `ui:<route>` | `mcp:<tool>`; defaults to {@link DEFAULT_SURFACE}. */
   surface?: string;
   requestId?: string;
+  /** Extra commit trailers (the boot reconcile's `OS-Reason`); never overwrite `OS-Actor`. */
+  extraTrailers?: Record<string, string>;
 };
 
 export type Committer = (domain: string, files: Map<string, string>, opts: CommitTreeOptions) => Promise<CommitResult>;
@@ -94,7 +96,11 @@ export async function commitDataProject(domain: string, actor: ActorIdentity, me
     author,
     message,
     // `OS-Actor` carries the principal id even when the author name is a display name (review L3).
-    trailers: { 'OS-Actor': actor.id, ...(synthesized ? { 'OS-Author-Email': 'synthesized' } : {}) },
+    trailers: {
+      ...(meta.extraTrailers ?? {}),
+      'OS-Actor': actor.id,
+      ...(synthesized ? { 'OS-Author-Email': 'synthesized' } : {}),
+    },
     reposDir,
   });
   if (result.changed && deps.mirror !== false && !deps.committer) {

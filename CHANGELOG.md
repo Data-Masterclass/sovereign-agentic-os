@@ -13,6 +13,37 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ## [Unreleased]
 
+### Changed — **BREAKING** — Data engine rebuild, Phase B4: data products in git are ON by default
+
+- **`osUI.dataProjectGit.enabled` now defaults to `true`** (and the Dagster `repo-sync` sidecar's
+  `REPO_SYNC_ENABLED` with it; `values.local.yaml` states it explicitly). A fresh install — and any
+  `helm upgrade` that does not pin the old value — switches to the shipped architecture: every
+  change to a dataset, composition, quality rule or schedule is a **git commit** in the domain's
+  repository (`/repos/<domain>.git` on the `os-repos` PVC, authored as the acting user), the
+  generated **dbt project** is what gets materialised, **Dagster** schedules and runs it from a
+  commit that passed `dbt parse`, **Trino** executes it as the acting principal, and run state,
+  asset checks and freshness are read back **from Dagster** instead of an OS-side ledger.
+- **Migration — what happens on the first boot with the flag on.** os-ui runs a **boot reconcile**
+  (`tabs/data/lib/dbt/boot-reconcile.ts`): for every domain the OS knows (datasets in the registry
+  ∪ repositories already on disk) it regenerates the project and commits the delta as the platform
+  principal, with the trailer `OS-Reason: boot-reconcile` — so every pre-existing dataset gets its
+  initial commit, and any crash between a store write and its commit (the gap the B2 review
+  recorded) is repaired at the next start. A boot that changes nothing commits nothing; one
+  unreadable domain is logged and never stops the others or the boot. Note the shape of the
+  guarantee: a dataset whose only layer is a raw Bronze landing contributes no dbt object, so its
+  "initial commit" is the domain's project, not a file of its own.
+- **What an operator must check before upgrading.** (1) The `os-repos` PVC is provisioned
+  (2 Gi default, RWO — os-ui is single-replica by design). (2) A pre-B2 install that had per-dataset
+  sync CronJobs: the first save of each sync removes its CronJob, and the schedule moves to the
+  domain repository's `os/schedules.yml`; until then nothing fires twice, because the OS-side sweeps
+  are gone (see Removed). (3) The Dagster image must be `0.3.0` or newer (it carries `git`, the
+  Postgres driver, `repo.py` and `os_projects.py`).
+- **The flag remains an emergency opt-out for ONE release, then it goes.** `--set
+  osUI.dataProjectGit.enabled=false` (plus the sidecar's `REPO_SYNC_ENABLED=false`) restores the
+  OS's own CTAS execution, the `os-sync-runs` / `os-dq-results` ledger reads and the OS DQ probe —
+  but it no longer **schedules** anything, because B4 deleted the CronJob provisioning and the
+  fallback sweeps. Follow-up recorded in the plan: remove the flag and the opt-out branches.
+
 ### Added — Data engine rebuild, Phase B3: Trino executes as the principal, lineage comes from dbt
 
 - **Trino's access control is now TWO chained system access controls.** `config.properties` gains
