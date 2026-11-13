@@ -57,6 +57,19 @@ export function compileCheck(check: DataCheck, fqn: string): CompiledCheck {
   const c = quoteIdent(col);
   const from = `from ${fqn}`;
 
+  if (check.rule === 'reference') {
+    // DBT-ONLY, by decision. A referential check needs the TARGET table's physical FQN, which the
+    // OS's ad-hoc probe does not resolve: the referenced dataset may live in another schema the
+    // owner's principal cannot read, and a probe that guessed one would report a pass or a fail
+    // about the wrong table. The authoritative verdict for this rule is the dbt `relationships`
+    // test Dagster runs on the generated project (read back as an asset check), so the probe says
+    // so instead of inventing a number.
+    throw new DqError(
+      'reference is enforced by the dbt `relationships` test on the scheduled build, not by the ad-hoc probe — ' +
+        'run the dataset\'s build (or read its asset checks) for this rule\'s verdict',
+    );
+  }
+
   if (check.rule === 'unique') {
     // Rows whose value repeats: count total rows in duplicate groups (non-null).
     // Aggregate-shaped (cross-row), so it has NO per-row violation predicate.
@@ -87,7 +100,9 @@ export function compileCheck(check: DataCheck, fqn: string): CompiledCheck {
  * contract as {@link compileCheck}).
  */
 export function violationPredicate(check: DataCheck, ref?: string): string | null {
-  if (!check.rule || check.rule === 'unique') return null;
+  // `reference` joins a SECOND table, so there is no single-table per-row predicate for it either
+  // — the remediation sampler and the fix-MERGE must leave it alone, exactly as they do `unique`.
+  if (!check.rule || check.rule === 'unique' || check.rule === 'reference') return null;
   const col = (check.column ?? '').trim();
   if (!col) throw new DqError(`${check.rule} needs a column`);
   const c = ref ?? quoteIdent(col);
@@ -127,6 +142,9 @@ export function violationPredicate(check: DataCheck, ref?: string): string | nul
  */
 export function failingRowsSql(check: DataCheck, fqn: string, limit: number): string {
   if (!check.rule) throw new DqError('this check is a free-text intention, not an executable rule');
+  if (check.rule === 'reference') {
+    throw new DqError('reference violations are reported by the dbt `relationships` test, which samples them in the build');
+  }
   const col = (check.column ?? '').trim();
   if (!col) throw new DqError(`${check.rule} needs a column`);
   const c = quoteIdent(col);
@@ -172,6 +190,8 @@ export function ruleLabel(check: DataCheck): string {
       const hi = typeof check.max === 'number' ? check.max : '';
       return `range(${col}, ${lo}, ${hi})`;
     }
+    case 'reference':
+      return `reference(${col} -> ${check.toDataset ?? '?'}.${check.toColumn ?? '?'})`;
     default:
       return check.name || 'check';
   }

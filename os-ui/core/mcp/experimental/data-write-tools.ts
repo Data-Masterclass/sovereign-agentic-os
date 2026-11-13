@@ -434,7 +434,7 @@ const tools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Add one or more data-quality RULES to a dataset you can edit — the Data tab’s "Data quality" editor. Each rule is executable: not_null(column), not_blank(column), unique(column), accepted_values(column, values[]), range(column, min?, max?). Rules are stored on the dataset.yaml spine (versioned + discoverable) and RUN via run_quality_checks. Before: get_dataset (to see the real column names). After: run_quality_checks to get a real pass/fail. Governance: Creator+ on a dataset you own (or domain Admin); each rule needs a column. Idempotent-ish: re-running appends rules.',
+      'Add one or more data-quality RULES to a dataset you can edit — the Data tab’s "Data quality" editor. Each rule is executable: not_null(column), not_blank(column), unique(column), accepted_values(column, values[]), range(column, min?, max?), reference(column, toDataset, toColumn). Rules are stored on the dataset.yaml spine (versioned + discoverable) and become dbt tests in your domain’s project, so the SCHEDULED build enforces them. `reference` is referential integrity — every value of `column` must exist in `toDataset`.`toColumn` — emitted as dbt’s `relationships` test; it is the one rule the ad-hoc `run_quality_checks` probe reports as `not_run` (it needs the target table, which the probe does not resolve), so read its verdict from the build’s asset checks. `toDataset` must be a dataset you can see, must not be the dataset itself, and `toColumn` must be a plain identifier. Before: get_dataset (to see the real column names, and the referenced dataset’s). After: run_quality_checks to get a real pass/fail for the other rules. Governance: Creator+ on a dataset you own (or domain Admin); each rule needs a column. Idempotent-ish: re-running appends rules.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -448,6 +448,8 @@ const tools: McpTool[] = [
               rule: { type: 'string', enum: [...DATA_CHECK_RULES], description: 'The rule kind.' },
               column: { type: 'string', description: 'The column the rule applies to.' },
               values: { type: 'array', items: { type: 'string' }, description: 'accepted_values: the allowed set.' },
+              toDataset: { type: 'string', description: 'reference: the dataset id whose `toColumn` every value must exist in (from list_datasets).' },
+              toColumn: { type: 'string', description: 'reference: the referenced column in `toDataset` (a plain identifier).' },
               min: { type: 'number', description: 'range: inclusive lower bound (optional).' },
               max: { type: 'number', description: 'range: inclusive upper bound (optional).' },
             },
@@ -457,7 +459,7 @@ const tools: McpTool[] = [
       },
       required: ['datasetId', 'rules'],
       examples: [
-        { datasetId: 'ds_ab12cd', rules: [{ rule: 'not_null', column: 'order_id' }, { rule: 'range', column: 'net_amount', min: 0 }, { rule: 'accepted_values', column: 'status', values: ['open', 'shipped', 'closed'] }] },
+        { datasetId: 'ds_ab12cd', rules: [{ rule: 'not_null', column: 'order_id' }, { rule: 'range', column: 'net_amount', min: 0 }, { rule: 'accepted_values', column: 'status', values: ['open', 'shipped', 'closed'] }, { rule: 'reference', column: 'customer_id', toDataset: 'ds_cust01', toColumn: 'customer_id' }] },
       ],
     },
     call: async (user, args) => {

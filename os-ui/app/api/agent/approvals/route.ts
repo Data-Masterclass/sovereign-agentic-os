@@ -94,7 +94,7 @@ export async function POST(req: Request) {
         id: user.id, domains: user.domains, role: user.role,
       });
       applied = `Shared “${asset.name}” with the ${asset.domain} domain (${asset.visibility} asset). It is now searchable for domain members only.`;
-      await reindexById(asset.id); // re-index so the hybrid index's DLS metadata follows the new tier/grants
+      await reindexById(asset.id, user.id); // A27 + re-index so the hybrid index's DLS metadata follows the new tier/grants
     } catch (e) {
       return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 400 });
     }

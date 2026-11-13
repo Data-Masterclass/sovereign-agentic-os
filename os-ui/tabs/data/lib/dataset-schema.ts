@@ -188,9 +188,12 @@ export type DataCheckRule =
   | 'not_blank'
   | 'unique'
   | 'accepted_values'
-  | 'range';
+  | 'range'
+  /** Referential integrity: every value of `column` exists in `toDataset`.`toColumn`.
+   *  Emitted as dbt's `relationships` test (checklist D5's follow-up). */
+  | 'reference';
 
-export const DATA_CHECK_RULES: DataCheckRule[] = ['not_null', 'not_blank', 'unique', 'accepted_values', 'range'];
+export const DATA_CHECK_RULES: DataCheckRule[] = ['not_null', 'not_blank', 'unique', 'accepted_values', 'range', 'reference'];
 
 /** Longest `accepted_values` entry the generator will put in a dbt test. */
 export const MAX_CHECK_VALUE_LEN = 200;
@@ -236,6 +239,10 @@ export type DataCheck = {
   /** `range`: inclusive numeric bounds (either may be omitted for a one-sided range). */
   min?: number;
   max?: number;
+  /** `reference`: the dataset id whose `toColumn` every value of `column` must exist in. */
+  toDataset?: string;
+  /** `reference`: the referenced column in `toDataset` (identifier-only, same gate as `column`). */
+  toColumn?: string;
 };
 
 /** Sync mode / cursor-kind literals — kept in LOCKSTEP with `sync-sql.ts` (this base
@@ -730,6 +737,8 @@ function parseCheck(raw: unknown, i: number): DataCheck {
     if (Array.isArray(raw.values)) base.values = raw.values.map((x) => String(x));
     if (typeof raw.min === 'number') base.min = raw.min;
     if (typeof raw.max === 'number') base.max = raw.max;
+    if (typeof raw.toDataset === 'string') base.toDataset = raw.toDataset;
+    if (typeof raw.toColumn === 'string') base.toColumn = raw.toColumn;
   }
   return base;
 }

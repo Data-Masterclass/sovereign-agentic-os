@@ -2,7 +2,7 @@
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 """Concurrency smoke test for the query-tool HTTP handlers. Stdlib only — run with:
 
-    python3 test_app_concurrency.py
+    python3 -m unittest discover -s images/extensions/query-tool/tests
 
 (needs Python >= 3.10 to import app.py's `str | None` annotations; the image
 pins python:3.12.)
@@ -10,72 +10,19 @@ pins python:3.12.)
 Proves the scalability fix: the blocking Trino execution is offloaded with
 `asyncio.to_thread`, so two in-flight statements OVERLAP instead of serializing
 on the event loop (the audit found effective concurrency of ~1). The runtime
-deps (mcp / starlette / trino) are stubbed in sys.modules before importing app.
+deps (mcp / starlette / trino) come from the SHARED `_stubs` module, so this file's
+monkeypatches of `app.run_query` / `app.run_execute` cannot leak into another module
+(setUp snapshots them, tearDown puts them back).
 """
 import asyncio
-import sys
 import time
-import types
 import unittest
 
+import _stubs
 
-# ---- Stub the runtime-only deps so `import app` works without the image env. ----
-def _install_stubs():
-    class _FastMCP:
-        def __init__(self, *a, **k):
-            pass
+STUB = _stubs.install()
 
-        def tool(self, *a, **k):
-            return lambda fn: fn
-
-        def custom_route(self, *a, **k):
-            return lambda fn: fn
-
-        def run(self, *a, **k):
-            pass
-
-    mcp_mod = types.ModuleType("mcp")
-    mcp_server = types.ModuleType("mcp.server")
-    mcp_fastmcp = types.ModuleType("mcp.server.fastmcp")
-    mcp_fastmcp.FastMCP = _FastMCP
-    mcp_mod.server = mcp_server
-    mcp_server.fastmcp = mcp_fastmcp
-    sys.modules.setdefault("mcp", mcp_mod)
-    sys.modules.setdefault("mcp.server", mcp_server)
-    sys.modules.setdefault("mcp.server.fastmcp", mcp_fastmcp)
-
-    class _JSONResponse:
-        def __init__(self, content, status_code=200):
-            self.content = content
-            self.status_code = status_code
-
-    st_mod = types.ModuleType("starlette")
-    st_req = types.ModuleType("starlette.requests")
-    st_req.Request = object
-    st_res = types.ModuleType("starlette.responses")
-    st_res.JSONResponse = _JSONResponse
-    sys.modules.setdefault("starlette", st_mod)
-    sys.modules.setdefault("starlette.requests", st_req)
-    sys.modules.setdefault("starlette.responses", st_res)
-
-    class _TrinoUserError(Exception):
-        pass
-
-    trino_mod = types.ModuleType("trino")
-    trino_exc = types.ModuleType("trino.exceptions")
-    trino_exc.TrinoUserError = _TrinoUserError
-    trino_dbapi = types.ModuleType("trino.dbapi")
-    trino_dbapi.connect = lambda **k: None
-    trino_mod.exceptions = trino_exc
-    trino_mod.dbapi = trino_dbapi
-    sys.modules.setdefault("trino", trino_mod)
-    sys.modules.setdefault("trino.exceptions", trino_exc)
-    sys.modules.setdefault("trino.dbapi", trino_dbapi)
-
-
-_install_stubs()
-
-import app  # noqa: E402  (imports cleanly against the stubs)
+import app  # noqa: E402  (imports against the shared stubs)
 
 
 class _Req:
@@ -102,6 +49,15 @@ def _slow_execute(sql, principal, schema):
 
 
 class ConcurrencyTests(unittest.TestCase):
+    def setUp(self):
+        # These tests REPLACE app.run_query / app.run_execute with slow fakes. Restoring them is
+        # what lets the budget suite — which calls the REAL run_query — share this process.
+        STUB.reset()
+        self._saved = _stubs.snapshot_app(app)
+
+    def tearDown(self):
+        _stubs.restore_app(app, self._saved)
+
     def test_two_queries_overlap(self):
         app.run_query = _slow_query
 

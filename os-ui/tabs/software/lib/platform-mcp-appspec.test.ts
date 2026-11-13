@@ -151,11 +151,33 @@ test('AUTHORIZATION: a stranger cannot get_app_spec or set_app_spec an app they 
   const { appId, dsId } = await specAppWithGrant();
   await callPlatformMcp(amir, 'set_app_spec', { appId, spec: specWithColumns(dsId, ['order_id', 'net_amount']) });
 
-  // The app is Personal to amir in `sales` — a builder in `ops` is denied both doors.
-  // get_app_spec applies the visibility gate first → not_found (no existence leak);
-  // set_app_spec's own owner/domain-builder gate denies the write → forbidden.
+  // The app is Personal to amir in `sales` — a builder in `ops` is denied both doors with the
+  // SAME code (F2-1). set_app_spec used to answer 403, which confirmed the app's existence to a
+  // caller get_app_spec refuses to tell: the write door now applies the visibility gate FIRST,
+  // so an app you cannot see is `not_found` from either door. (A 403 is still what you get for an
+  // app you CAN see but may not write — that is a permission answer, not an existence answer.)
   await expectStatus(callPlatformMcp(stranger, 'get_app_spec', { appId }), 404);
-  await expectStatus(callPlatformMcp(stranger, 'set_app_spec', { appId, spec: specWithColumns(dsId, ['order_id']) }), 403);
+  await expectStatus(callPlatformMcp(stranger, 'set_app_spec', { appId, spec: specWithColumns(dsId, ['order_id']) }), 404);
+});
+
+test('AUTHORIZATION: a colleague who CAN see the app but may not write it still gets forbidden (F2-1)', async () => {
+  __resetStore();
+  __resetAppsCache();
+  const { appId, dsId } = await specAppWithGrant();
+  await callPlatformMcp(amir, 'set_app_spec', { appId, spec: specWithColumns(dsId, ['order_id', 'net_amount']) });
+
+  // Share it inside `sales` so a colleague SEES it. The write gate (owner, or a builder+ in the
+  // owning domain) still denies a Creator colleague — and that denial must stay `forbidden`:
+  // converging the existence answer on `not_found` must NOT swallow genuine permission answers.
+  const shared = await getAppByIdInternal(appId);
+  shared!.visibility = 'Shared';
+  const colleague: CurrentUser = {
+    id: 'cara', name: 'Cara', domains: ['sales'], allDomains: ['sales'], activeDomain: 'sales', role: 'creator',
+  };
+  await expectStatus(callPlatformMcp(colleague, 'set_app_spec', { appId, spec: specWithColumns(dsId, ['order_id']) }), 403);
+  // …and the read door lets them through, which is what makes the 403 the honest answer.
+  const read = (await callPlatformMcp(colleague, 'get_app_spec', { appId })) as { appId: string };
+  assert.equal(read.appId, appId, 'a Shared app in your domain is readable');
 });
 
 test('generate_app_spec: with NO designed epics returns a calm { ok:false, error } (no LLM, nothing persisted)', async () => {

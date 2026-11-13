@@ -640,8 +640,23 @@ next os-ui boot) or both schedulers own the same slice.
 
 **Requirement (2026-11-13, product owner):** a PDF explaining, step by step, how each tool is really used after the refactor and where that manifests in the OS source; which tool functions are implemented at which step; and how it follows the same approach a data or AI engineer would follow — the OS as an abstraction layer, not a reinvention of "how".
 
-- [ ] Written **last, from the shipped code**, by a read-only agent, one chapter per tool (LangGraph, Langfuse, LiteLLM, git, dbt, Dagster, Trino): the engineer's workflow step by step → the OS source performing that step (`file:line`) → the tool functions used and deliberately not used → what the OS adds on top (identity, policy, approvals). A closing chapter lists every reinvention that remains, with the reason.
-- [ ] Rendered with headless Chrome like the audit PDF; stored next to it in `~/Documents/Claude/Projects/Data Masterclass Apps/stackit/`. Checklist X6.
+- [x] Written **last, from the shipped code**, by a read-only agent, one chapter per tool (LangGraph, Langfuse, LiteLLM, git, dbt, Dagster, Trino): the engineer's workflow step by step → the OS source performing that step (`file:line`) → the tool functions used and deliberately not used → what the OS adds on top (identity, policy, approvals). A closing chapter lists every reinvention that remains, with the reason.
+- [x] Rendered with headless Chrome like the audit PDF; stored next to it in `~/Documents/Claude/Projects/Data Masterclass Apps/stackit/`. Checklist X6.
+
+**Delivered 2026-11-13: `sovereign-os-engine-rebuild-2026-11-13.pdf`** (64 pp), with its `.html`
+source and a `.claims.json` beside it: **344 claims — 338 verified by `grep -n` / `sed -n` against
+the source, 5 gate numbers quoted with the commit that produced them, 1 cluster-only.** It found
+the two `docs/components/trino.md` inaccuracies that became iteration-2 item 7 (deviation F2-8).
+
+**It lives OUTSIDE the repo by design, and that is the point of the `.claims.json` next to it.**
+The report is a snapshot *of a SHA*: it cites `file:line` and quotes gate numbers, both of which
+go stale on the next commit. In-tree it would either be regenerated on every change (a 3.7 MB
+binary in every diff, for a document nobody reads per-commit) or silently drift into claiming
+things the code no longer does — the exact failure mode this programme's checklist exists to
+prevent. Outside the tree it carries its own provenance instead: `head`, `branch` and `method` in
+the claims file say which SHA it is true of (**`6d6c1391`** — the Part F scoring point, so it
+predates iteration 2 and does not describe F2-1…F2-8), and the checklist's X6 row points at the
+path. Re-render it when a reader needs it to be current; do not vendor it.
 
 ## Part F — Iterate against the checklist
 
@@ -658,7 +673,17 @@ After each full pass over Parts A, B and D: a read-only test agent scores `2026-
   dead rule-violating test under `app/`. Two gaps were found that no gate covered: the Python
   suites ran nowhere (now in CI) and the query-tool tests cross-contaminate under one discovery
   pass (open). Part E (X6) remains the only wholly unstarted item.
-- [ ] Iteration 2 — scoped in the gap report's recommendation.
+- [~] **Iteration 2 — the LOCAL half done 2026-11-13** (`feat/engine-rebuild-b2`). Seven of the
+  eight local items closed, plus one unplanned (F2-5, the iCloud conflict copies that broke a
+  production image build). Deviations `F2-1`…`F2-8`. Gap report in
+  `2026-11-13-engineering-checklist.md` → "2026-11-13 — end of Part F iteration 2 (local)".
+  **D17 → `true`** (`get_dagster_run`), and the named gaps inside A27, D5 and X7's rows are closed.
+  Both held gates were run afterwards at `30d434b4`: the **full suite is 5359 tests / 0 fail** and
+  the **test tree is 597 type errors** (520 of them the one `CurrentUser` shape; all 597 in
+  `.test.ts` files, production clean at 0). OPEN: the cluster half (the deploy + Part C) and item
+  8's tail — adopting `testUser()` across the remaining 117 files, then adding
+  `tsc -p tsconfig.test.json` to `gate.sh` once it reaches 0.
+- [ ] Iteration 3 — the queued measurements first, then item 8's tail and A4's `graph.ts` (D-8).
 
 ## Decisions taken without the owner (autonomous mode) — review these
 1. `when` grammar: safe expression language, not model-judged predicates.
@@ -1709,3 +1734,219 @@ reason is here.
   command: `CI=true bash scripts/gate.sh` from `os-ui/` is exit 0 with all three checks reporting
   `ok`/`PASS`; with the subcharts moved away, `CI=true` makes both scripts exit 1 with the
   actionable message while a plain laptop run still skips at exit 0.
+
+#### Part F iteration 2 deviations (local half, `feat/engine-rebuild-b2`) — `F2-n`
+
+- **F2-1 The software existence leak is closed towards `not_found`, and the tab's own tool
+  descriptions decided it.** F-3 measured the split without changing it because "which convention
+  wins repo-wide is a decision". It turned out not to need one for this tab: `start_preview`,
+  `use_connection`, `use_data`, `use_knowledge`, `use_as_data` and `archive` already DOCUMENT
+  "an unseeable app id → not_found; an app you can see but may not … → forbidden" in the strings
+  the MCP advertises, so the write doors were violating their own published contract, not an
+  unwritten one. Fixed by putting the visibility gate FIRST in the six functions behind the eight
+  doors — `startPreview`, `requestDeploy` (`tabs/software/lib/review.ts`), `archiveApp`,
+  `useAsData`, `consumeResource` (`tabs/software/lib/lifecycle.ts`) and `setAppSpec`
+  (`tabs/software/lib/apps.ts`) now open the app through the existing `getAppForUser` (the read
+  doors' own door, 404 on invisible) instead of the unscoped `getAppByIdInternal`, and keep their
+  owner/role check afterwards as the 403. **Tools whose refusal code changed for an invisible app
+  (8):** `request_deploy`, `start_preview`, `set_app_spec`, `use_connection`, `use_data`,
+  `use_knowledge`, `use_as_data`, `archive` — `forbidden` → `not_found`. Nothing that was ALLOWED
+  becomes denied, and one thing that was wrongly allowed is now denied: `consumeResource`'s Builder
+  arm carried no domain check at all, so any Builder could grant a resource to an app in a domain
+  they do not belong to; the visibility gate closes that.
+  `SOFTWARE_FOREIGN` in `core/mcp/mcp-conformance.test.ts` collapses to a single expectation and
+  gains a second test asserting (a) the tab answers with exactly ONE code and (b) every software
+  tool addressing an `appId` that a Creator can reach carries a pinned expectation — so a new door
+  cannot re-open the split on the `?? 'forbidden'` default. `platform-mcp-appspec.test.ts`'s pinned
+  403 becomes a 404, and a new case pins the other half: a colleague who CAN see a Shared app but
+  may not write it still gets `forbidden`, because converging the EXISTENCE answer must not swallow
+  genuine PERMISSION answers.
+  **Deliberately NOT changed:** the other tabs. The brief named the repo convention as "invisible =
+  `not_found`", but F-3 recorded the opposite for every non-software tab (`forbidden`, deviation
+  B4-11) and `mcp-conformance.test.ts` still pins that. So this converges the tab that was
+  internally inconsistent — software, where read and write doors disagreed with each other and the
+  write doors disagreed with their own descriptions — and leaves the cross-tab question
+  (software + agent runs hide existence; data/knowledge/files/agents/metrics/dashboards do not)
+  open for a decision, named here rather than changed under cover of a bug fix. `promote`,
+  `delete` and `commit` were also left alone: they floor at `builder`, so the dispatcher's role
+  gate answers before their object gate is ever reached.
+
+- **F2-2 The query-tool tests are hermetic, and CI now runs the one honest command.** F-4's defect
+  was not "shared module state" in general: it was `sys.modules.setdefault`. Each of the three
+  app-importing modules installed its OWN mcp/starlette/trino fakes with `setdefault` and then
+  `import app` — so under one discovery pass the FIRST module to import won every key, `app` was
+  bound to that module's fake `trino.dbapi.connect`, and every later module's recording list
+  stayed empty (`0 != 1`). A second, independent leak compounded it: `test_app_concurrency` and
+  `test_bearer` replaced `app.run_query` / `app.run_execute` / `app.SERVICE_BEARER_TOKEN` and never
+  restored them, so even one shared stub would not have been enough.
+  Fixed structurally: the four modules move into `images/extensions/query-tool/tests/` (the layout
+  `images/extensions/dagster/tests` already uses), the fakes live ONCE in `tests/_stubs.py` —
+  installed by whichever module imports first, ASSIGNED rather than `setdefault`-ed, returning a
+  shared handle whose `connects` / `rows` each `setUp` resets — and `snapshot_app`/`restore_app`
+  put every patched `app` knob back in `tearDown`. `tests/test_isolation.py` is the tripwire: it
+  scans its sibling sources for a per-module `setdefault`, asserts every module goes through the
+  installer, asserts `app`'s `trino.dbapi.connect` really records into the shared handle, and —
+  because alphabetical discovery places it after the three patching suites and before the budget
+  suite — fails BY NAME when a monkeypatch outlives its module. Verified by reintroducing the leak
+  in a scratch copy: the tripwire reports "app.run_query is still a test double" before the budget
+  suite's `0 != 1` ever appears.
+  `python3.11 -m unittest discover -s images/extensions/query-tool/tests` → **116 tests, OK**
+  (111 pre-existing + 5 new), and OK in four hand-picked module orders and per file.
+  CI's per-file loop is replaced by that single command, with the comment inverted: running them
+  per file would now HIDE an ordering bug rather than reveal one. The X9 row's and the CHANGELOG's
+  cited paths were repointed into `tests/`.
+
+- **F2-3 `get_dagster_run` is addressed by the RUN and governed by the dataset — and it hides
+  existence, which the rest of the data tab does not.** D17's gap was that a client which launched
+  a build got a `dagsterRunId` back and had nowhere to take it. The tool resolves that id through
+  the version record `setVersionRun` wrote (`{commit, dagsterRunId}` on `bronze|silver|gold`), which
+  is what makes the dataset guard apply to a run at all. Two deliberate choices:
+  (1) **`not_found`, not `forbidden`, for a run you cannot reach.** Every other data tool answers
+  `forbidden` for an object that exists and is invisible (B4-11). A run id is HANDED OUT by a
+  build, so `forbidden` would let a client sweep ids and learn which builds other domains are
+  running — the same reasoning that makes agent runs `not_found`. The lookup therefore scans only
+  the caller's VIEWABLE datasets and never calls `getDataset`, whose 403 would itself be the leak;
+  a foreign run and a ghost run produce byte-identical refusals, asserted as such.
+  (2) **The failure line is honest rather than complete.** `core/infra/dagster.ts`'s `run()` returns
+  `RUN_FIELDS` — no step error; the message lives in Dagster's event log behind a query whose exact
+  shape cannot be verified without a cluster. Rather than ship an unverifiable GraphQL field that
+  would silently return `null` against a different Dagster version, `failure` is the recorded
+  `launchError` when the OS itself refused to launch (the more specific truth), else a line naming
+  the failed run and SAYING the step error is in the event log. When Dagster cannot be read at all,
+  `status` is `null` and `dagsterError` carries the reason — never a fabricated status.
+  Only `os/*` tags are returned: `dagster-k8s/config` carries the run pod's ENV, and a test asserts
+  a fake secret in that blob does not reach the caller.
+  Home: `tabs/data/lib/sync-status-server.ts` (the module that already owns the Dagster read-back),
+  registered in `tabs/admin/mcp/discovery-read-tools.ts` beside `get_sync_status` and pulled in on
+  that file's EXISTING `@tabs/data/lib/sync-status-server` import, so the TAB-ISOLATION ratchet
+  stays at 419 rather than paying a new violation for a new specifier. `list_capabilities` needs no
+  change — it is derived from `ALL_MCP_TOOLS` (now 114; data tools 23 → 24). Docs: `tabs/data/guide.md`
+  step 6 + the end-to-end sequence, `tabs/data/README.md`'s tool table and its B4-1 paragraph,
+  which recorded this as a gap and now records it as closed. **D17 → `true`.**
+
+- **F2-4 Retention closes A13's follow-up, and the ORDER of the three deletes is the design.**
+  `AGENT_RUNS_RETENTION_DAYS` (default 30, `0` = keep forever, chart `osUI.agentRunsRetentionDays`
+  on the RUN-path env so os-ui and the worker both get it) bounds the one store
+  `LANGFUSE_REDACTION` never covered. Four decisions worth recording:
+  (1) **`parked` is exempt at any age, enforced twice.** `RETAINABLE_STATUSES` (`done`, `failed`)
+  is in `settledBefore`'s SQL, so a caller cannot ask for a parked run; and the sweep RE-READS each
+  row immediately before deleting it, so a run resumed between the listing and the delete is spared
+  too. A parked run's checkpoint IS the run — this is the one breach that is unrecoverable.
+  (2) **Checkpoint → `run_events` → `run_jobs`, per run, not per batch.** The job row goes LAST, so
+  a failure part way through leaves the run eligible and the next sweep retries it. The reverse
+  order would orphan a checkpoint with no row left to name it. The test proves it: one run whose
+  checkpoint delete throws is DEFERRED with its rows intact while its neighbour is still swept.
+  (3) **Where it runs.** The worker loop carries it every 6 h, before the claim (a backlog must not
+  sit between claiming a run and executing it) and inside a try/catch (disk is not worth a stalled
+  queue). `inline` has no loop, so `ensureRunJobsReady()` runs one sweep at boot — the same place
+  `reapStaleOnce` already lives for the same reason. The sweep is always INSTALLED; `days = 0`
+  makes it a no-op rather than branching the wiring, so there is one code path.
+  (4) **The window parser is in `core/kernel/agent-run-retention.ts`, not in the tab.**
+  `core/kernel/config.ts` reads the env var and the kernel must not import a tab — the identical
+  split `agents-worker.ts` uses for `AGENTS_WORKER`. An unparseable value falls back to 30 in BOTH
+  directions: a typo must not silently disable retention, and must not silently mean "delete
+  today's runs" (`0.5` floors to 1 day, never to 0).
+  `WorkerLoopState.lastRetentionAt` is optional so the pre-existing single-tick tests stay valid.
+  Tests: `engine/retention.test.ts` (10) + one cadence case in `engine/worker-loop.test.ts`.
+  **Still open from A13, named rather than quietly folded in:** the HELD APPROVAL ARGUMENTS. They
+  live in the approvals queue, not in `agent_runs`, so this window does not reach them; recorded in
+  `docs/components/langfuse.md`.
+
+- **F2-5 iCloud conflict copies broke a production image build, and nothing could have caught it.**
+  A deploy from the main checkout failed type-checking files nobody had edited: macOS/iCloud had
+  left ~30 " 2" duplicates (`approvals.test 2.ts`, `build-graph 2.ts`, `_os-ui-env 2.tpl`) of files
+  written that day. Three facts have to line up for that to happen, and all three did:
+  git never tracks them (so every `git status`, review and CI-on-push looked clean);
+  `docker build` copies the WORKING TREE, not the index; and `next build` type-checks
+  `*.test 2.ts` because `tsconfig.json` excludes only `**/*.test.ts` — the literal glob, which
+  `foo.test 2.ts` does not match. So an untracked file nobody could see failed the one build that
+  matters. Closed on both sides:
+  (1) `.dockerignore` **at the repo root** — verified as the right file: `scripts/deploy.sh` runs
+  `docker build … -f images/base/os-ui/Dockerfile .`, so the context is the repo root and
+  `os-ui/.dockerignore` is inert for this build — now excludes `**/* 2.*` and `**/__pycache__`.
+  (2) `os-ui/scripts/gate.sh` fails, first, before any other check, if any `* 2.*` file exists
+  anywhere in the tree (node_modules and .next pruned), printing each path and the delete command.
+  Verified by planting one: exit 1 naming the file; removed, exit 0 with `check-conflict-copies: ok`.
+  The gate is the better half of the two — `.dockerignore` keeps a stray out of the IMAGE, the gate
+  keeps it out of the TREE, which is also where `npm test`, `tsc` and the structure ratchet would
+  otherwise eventually trip over it.
+
+- **F2-6 A27's index sites are attributed, and the no-caller case is kept deliberately.**
+  `indexWorkflow`, `indexDomain` and `indexAsset` took no caller at all, so the embed calls they
+  made billed `user os-system` + `domain:platform`. All three now accept an `EmbedCaller`, built by
+  a new `actingCaller(userId, domain)` exported from each tab's `embed.ts`, and every door that has
+  an acting user passes it: `publish_knowledge` and `index_knowledge` (MCP), the three
+  `/api/knowledge/workflows/[id]/{index,publish,retrieve}` routes, `file_write`'s re-index, and the
+  six `/api/files/*` routes — `reindexFile(asset, text, actingUserId?)` and
+  `reindexById(id, actingUserId?)` thread it to `indexAsset`.
+  Two choices worth naming. **The tag carries the OBJECT's domain, not the actor's active one**:
+  an admin in `ops` re-indexing a `sales` workflow produces `domain:sales`, because the spend
+  belongs to the knowledge, not to whoever pressed the button — pinned by a test. And **a door with
+  no acting user still says `platform`**: `bootstrapFilesIndex` and a scheduled connector sync pass
+  nothing. That is not an unfixed remnant — attributing a boot sweep to some user would be a worse
+  lie than the per-surface attribution A27 complained about, and the test asserts the sweep passes
+  `undefined` rather than guessing. Tests assert the OUTGOING LiteLLM body (`user`,
+  `metadata.tags`), which is what A27's Test column asks for, not that a helper returned the right
+  shape: `tabs/knowledge/lib/index-attribution.test.ts` (4) + 2 cases in
+  `tabs/files/lib/index-pipeline.test.ts`. **A27 → `true`.**
+
+- **F2-7 The `reference` rule, and why it is dbt-only.** D5's follow-up (dropped from the row in
+  B4-review E-4 because no FK-style rule existed) is now `{type:'reference', column, toDataset,
+  toColumn}` → dbt's own `relationships: { to: ref('<model>'), field: <col> }`. Three gates, two of
+  them the SAME predicates `accepted_values` already uses and one new:
+  (1) the referenced COLUMN must be a plain identifier — `field` is interpolated unquoted into the
+  test's SQL, which runs as the dataset's owner;
+  (2) the MODEL NAME never comes from authored text. `to: ref('…')` is Jinja dbt evaluates at
+  parse, so the name is resolved from the PLAN by a new `modelRefResolver(models)`, and a hostile
+  name from any resolver is still refused by the identifier gate (tested);
+  (3) a target with NO model in this project becomes an intention, not a test — `ref()` on an
+  unknown name fails `dbt parse`, which takes the whole DOMAIN's project down, not just that test.
+  That third one is why the golden carries both cases.
+  `store.addCheck` gates the write end on top: the referenced dataset must exist, be visible
+  through `canView` (so a rule cannot probe which ids exist), and not be the dataset itself.
+  **Deliberately dbt-only.** The OS's ad-hoc `run_quality_checks` probe reports `reference` as
+  `not_run` with a reason naming the dbt test, because a referential check needs the TARGET
+  table's physical FQN: the referenced dataset may live in a schema the owner's principal cannot
+  read, and a probe that guessed one would report a pass or a fail about the wrong table. The
+  authoritative verdict for this rule is the scheduled build's asset check — which is already how
+  the architecture describes the dbt tests. `violationPredicate` and `failingRowsSql` refuse it for
+  the same reason they refuse `unique`: there is no single-table per-row predicate.
+  The editor's field matrix moved OUT of `DataBuilder.tsx` into `tabs/data/lib/dq-rule-form.ts`
+  (labels, which fields a rule shows, the add payload, the submit guard, the stored-rule label) so
+  it has a `.test.ts` — including one that fails if a rule is added to `DATA_CHECK_RULES` without a
+  form field. **D5 → `true`** for the generation half.
+
+- **F2-8 `docs/components/trino.md`: the password was documented as a Jinja guard that does not
+  exist, and step 4 named the wrong pod.** Two corrections, both checked against
+  `tabs/data/lib/dbt/project.ts`:
+  (1) The page described `password: "{{ env_var('TRINO_PASSWORD', '') }}"` inside a
+  `{% if env_var('TRINO_AUTH_METHOD', 'none') != 'none' %}` block. No such block is emitted, and
+  one could not be: `method:` must AGREE with whether `password:` exists at all, and dbt-trino's
+  `none` rejects a `password` key — so the decision cannot be deferred to the parsing pod. The
+  GENERATOR makes it: `method:` is a literal from `config.trinoAuthMethod` (B4-review E-3), `none`
+  returns the document untouched with no `password:` line anywhere, and any other method splices
+  exactly one line after `user:` — with **no `''` default**, so a missing secret fails loudly.
+  (2) Step 4 said to set `TRINO_AUTH_METHOD` "at the same time, in the same place" as
+  `TRINO_PASSWORD` — i.e. on the Dagster run pod and the query-tool. Both are wrong: it is read by
+  **os-ui** (and the worker), because os-ui is what generates `profiles.yml`; setting it on the run
+  pod changes nothing, since that pod reads a file already written. The chart has no value for it
+  today, which the step now says rather than implying one exists.
+  Step 4 also now carries what the page never said at all: **the change only lands on the next
+  REGENERATION, which is a commit.** `profiles.yml` is a committed file; the env var does not
+  rewrite it. Two triggers are named in order of preference — restarting os-ui (the boot reconcile
+  regenerates and commits EVERY domain, and the env change is a rollout anyway, so confirm the
+  `[data-projects] boot reconcile` line rather than assume it), or any dataset write (ONE domain
+  only, which is the trap) — plus the verification command
+  (`git -C <repo> show HEAD:profiles.yml | grep -E 'method:|password:'`) and what happens if you
+  skip it: the repositories still say `method: none` and every dbt run fails authentication the
+  moment step 1 goes live.
+
+- **F2-9 One of F-5's two "real" errors, fixed while measuring.**
+  `tabs/data/lib/model-view-collision.test.ts` imported `Dataset` from `@tabs/data/lib/types` — a
+  module that has not existed since the v2 layout. Because it is a TYPE-only import it erases at
+  runtime, so the test ran and passed for months while `Dataset` silently resolved to an error
+  type: the fixture was being checked against nothing. Repointed to
+  `@tabs/data/lib/dataset-schema`, which is where that type lives. The fixture needed no other
+  change (it was structurally valid all along), the file's 3 tests still pass, and the test-tree
+  error count went 598 → 597. The other "real" error F-5 named was the dead `route.test.ts`,
+  already deleted in F-1 — so both are now closed.

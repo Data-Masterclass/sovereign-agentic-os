@@ -12,6 +12,7 @@
  */
 import { parseEnabledTabs } from '@core/kernel/tabs';
 import { parseAgentsWorkerMode } from '@core/kernel/agents-worker';
+import { parseRetentionDays } from '@core/kernel/agent-run-retention';
 
 function env(name: string, fallback: string): string {
   const v = process.env[name];
@@ -382,6 +383,17 @@ export const config = {
   // this is re-queued once (the thread resumes from its checkpoint), then failed. Must exceed
   // the longest superstep (one model call + one tool call); default 10 minutes.
   agentsWorkerLeaseMs: Math.max(60_000, Number(env('AGENTS_WORKER_LEASE_MS', '600000')) || 600_000),
+  // RETENTION for the `agent_runs` database (A13 follow-up). A LangGraph checkpoint holds the
+  // run's RAW tool results — the exemption `docs/components/langfuse.md` records against the
+  // redaction rule — and `run_events` holds the same payloads as a stream; neither had a bound, so
+  // the database grew forever. A run that SETTLED (`done` / `failed`) longer ago than this many
+  // days has its checkpoint thread, its `run_events` rows and its `run_jobs` row deleted by a
+  // periodic sweep (the worker loop every 6 h; one sweep at boot in `inline` mode). `0` keeps
+  // everything, for an install whose own policy says so. A `parked` run is NEVER swept at any age:
+  // its checkpoint IS the run, and deleting it would make the pending approval unresumable.
+  // The number is NOT clamped upward — a long window is a legitimate choice; it is only floored at
+  // one whole day so "0.5" cannot silently mean "delete everything from today".
+  agentRunsRetentionDays: parseRetentionDays(process.env.AGENT_RUNS_RETENTION_DAYS),
   // X9 — the engine's guardrails on EVERY agent tool call (engine rebuild Part D).
   // `AGENT_TOOL_RESULT_MAX_CHARS`: a tool result longer than this is TRUNCATED before it enters
   // the prompt, with a visible marker naming the kept and total rows (or characters) — a silently

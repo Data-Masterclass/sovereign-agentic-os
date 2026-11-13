@@ -94,3 +94,64 @@ test('stripJinja removes every delimiter kind and leaves clean prose alone', () 
   assert.equal(stripJinja('Order events, 99% of them.'), 'Order events, 99% of them.');
   assert.equal(stripJinja(''), '');
 });
+
+// -------------------------------- D5 follow-up: `reference` → dbt `relationships` --
+
+/** A `reference` rule, by default pointing at a dataset the resolver below knows. */
+function ref(over: Partial<DataCheck> = {}): DataCheck {
+  return check({ name: 'Customer exists', rule: 'reference', column: 'customer_id', values: undefined, toDataset: 'ds_cust01', toColumn: 'customer_id', ...over });
+}
+
+/** The plan's dataset → model-name map, as `modelRefResolver` builds it. */
+const resolve = (id: string) => (id === 'ds_cust01' ? 'silver_customers' : null);
+
+test('reference: a resolvable target becomes dbt’s own relationships test, pointed at the MODEL', () => {
+  assert.deepEqual(checkToTest(ref(), resolve), {
+    relationships: { to: "ref('silver_customers')", field: 'customer_id' },
+  });
+});
+
+test('reference: a target with no model in THIS project is an intention, never a broken ref()', () => {
+  // `ref('…')` on an unknown name fails `dbt parse` — which takes the WHOLE domain's project down,
+  // not just this test. Degrading to an intention is the only safe answer.
+  const far = ref({ toDataset: 'ds_elsewhere' });
+  assert.equal(checkToTest(far, resolve), null);
+  const { tests, intentions } = checksToColumnTests([far], resolve);
+  assert.equal(tests.size, 0);
+  assert.deepEqual(intentions, ['Customer exists']);
+});
+
+test('reference: with NO resolver nothing is emitted — a caller that cannot name models gets intentions', () => {
+  assert.equal(checkToTest(ref()), null);
+});
+
+test('reference: the referenced COLUMN gets the same identifier gate as the checked one', () => {
+  // `field` is interpolated unquoted into the relationships test's SQL, so it is the same class of
+  // hole as `accepted_values`' values — and must fail the same way: no test at all.
+  for (const bad of ['customer_id; drop table x', "id' or '1'='1", '{{ env_var("X") }}', 'has space', '1leading']) {
+    assert.equal(checkToTest(ref({ toColumn: bad }), resolve), null, `toColumn '${bad}' must not become a test`);
+  }
+  // A missing target is equally inert.
+  assert.equal(checkToTest(ref({ toColumn: '' }), resolve), null);
+  assert.equal(checkToTest(ref({ toDataset: '' }), resolve), null);
+});
+
+test('reference: the model name comes from the PLAN, so authored text can never reach ref()', () => {
+  // Even if a resolver somehow returned a hostile name, the identifier gate refuses it rather
+  // than writing Jinja the parse pod would evaluate.
+  const hostile = () => "x') }}{{ env_var('OS_RUNTIME_BEARER";
+  assert.equal(checkToTest(ref(), hostile), null);
+});
+
+test('reference: a rendered schema.yml carries the relationships test and still parses as YAML', () => {
+  const d = dataset({
+    columns: [{ name: 'customer_id', description: 'FK' }],
+    checks: [ref()],
+  });
+  const customers = { ...plan(d), name: 'silver_customers', dataset: parseDataset(JSON.stringify({ id: 'ds_cust01', name: 'Customers', owner: 'bea', domain: 'sales', columns: [], versions: {} })) } as ModelPlan;
+  const files = renderSchemas([plan(d), customers]);
+  const yml = files.get('models/bronze/schema.yml')!;
+  assert.match(yml, /relationships:/);
+  assert.match(yml, /to: ref\('silver_customers'\)/);
+  assert.match(yml, /field: customer_id/);
+});

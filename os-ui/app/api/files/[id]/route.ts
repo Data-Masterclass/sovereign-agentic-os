@@ -56,7 +56,7 @@ export const PATCH = withRoute<{ id: string }, Patch>(async ({ user, params, bod
   }
   // Re-index: sensitivity/index-opt-out/tags/folder change the indexed metadata
   // (or remove the file from the index when it becomes stored-only).
-  await reindexById(id);
+  await reindexById(id, user.id); // A27: the editor pays for the re-embed
   return NextResponse.json({ asset });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
 

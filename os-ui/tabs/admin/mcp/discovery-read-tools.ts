@@ -39,7 +39,7 @@ import { getMetric } from '@tabs/metrics/lib/store';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
 import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { claimsFromUser, delegate } from '@tabs/data/lib/identity';
-import { syncStatusFor, latestSyncSignals } from '@tabs/data/lib/sync-status-server';
+import { syncStatusFor, latestSyncSignals, dagsterRunFor } from '@tabs/data/lib/sync-status-server';
 
 /**
  * The `connected` summary a get_dataset returns for a dataset adopted from a warehouse
@@ -223,6 +223,24 @@ export const readTools: McpTool[] = [
       // surfaces cannot drift (engine rebuild B2, checklist D9).
       const status = await syncStatusFor(d);
       return { datasetId: id, name: d.name, platform, ...status };
+    },
+  },
+  {
+    name: 'get_dagster_run',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'Read ONE Dagster run by the `dagsterRunId` a build or sync handed back (`ingest_dataset`, `transform_silver`, `build_gold_join`, `sync_dataset_now`, `run_quality_checks` — each returns `run.dagsterRunId` when DATA_PROJECT_GIT is on). Returns the run\u2019s `status` (Dagster\u2019s own QUEUED\u2026SUCCESS/FAILURE/CANCELED) plus `syncStatus` in the ok|error|running vocabulary the sync panel uses, `startedAt`/`endedAt`, the `jobName`, the `assetSelection` it materialised, the OS\u2019s own `os/*` tags (dataset, commit, principal, batch id, action \u2014 Dagster\u2019s internal tags are not returned), the `commit` the layer was launched from, and `failure` (a recorded `launchError` when no run could be launched, else a line naming the failed run and pointing at the Dagster event log for the step error \u2014 never an invented cause). `dagsterError` is non-null when Dagster itself could not be read, and then `status` is honestly null rather than guessed. Path: the POLL step of every Data build \u2014 launch returns a run id, this reads it; `get_sync_status(datasetId)` remains the whole-history read when you have the dataset id instead. Governance: read-only. The run is the addressed object and is hidden like an agent run \u2014 a run id that was never minted and a run launched for a dataset you cannot see are the SAME not_found, so polling cannot enumerate other people\u2019s builds.',
+    inputSchema: {
+      type: 'object',
+      properties: { runId: { type: 'string', description: 'The `dagsterRunId` a build/sync returned.' } },
+      required: ['runId'],
+      examples: [{ runId: '7f3c1a9e-2b44-4f0a-9f1c-0d2e5a6b7c8d' }],
+    },
+    call: async (user, args) => {
+      const id = str(args.runId).trim();
+      if (!id) fail('get_dagster_run needs a `runId`', 400);
+      return dagsterRunFor(id, P(user));
     },
   },
   {

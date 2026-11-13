@@ -19,6 +19,8 @@
  *   - GRACEFUL STOP: `stopped()` is checked before each claim, so a SIGTERM never starts a new run;
  *     the in-flight one is aborted at its next superstep boundary by the executor's signal and the
  *     job goes back to `queued` as a `resume`.
+ *   - RETENTION rides the same loop on a much slower cadence (`retentionEveryMs`), injected like
+ *     everything else; a loop built without it simply never sweeps.
  *   - A LOST LEASE IS AN ABORT, not a log line (A4-review-H-2): `leaseWatch` flips `lost()` the
  *     first time a heartbeat reports that the row is no longer `running` under this worker, and
  *     `settlementOf` then says `abandon` — the run belongs to whoever re-claimed it, so this pod
@@ -42,6 +44,12 @@ export type WorkerLoopDeps = {
   idleMs: number;
   /** How often the loop reaps stale leases (ms of wall clock between sweeps). */
   reapEveryMs: number;
+  /** RETENTION (A13 follow-up): drop the checkpoint + `run_events` + `run_jobs` row of runs that
+   *  settled outside the window. Injected so the loop stays pure; omit it and the loop never
+   *  sweeps (which is what `AGENT_RUNS_RETENTION_DAYS=0` and the tests that predate it rely on). */
+  sweepRetention?: () => Promise<void>;
+  /** How often that sweep runs (ms of wall clock). Ignored when `sweepRetention` is absent. */
+  retentionEveryMs?: number;
   sleep: (ms: number) => Promise<void>;
   /** True once SIGTERM arrived: no new claim is taken. */
   stopped: () => boolean;
@@ -50,6 +58,11 @@ export type WorkerLoopDeps = {
 };
 
 export type TickOutcome = 'ran' | 'idle' | 'stopped';
+
+/** The loop's own clock state: when each periodic chore last ran. `lastRetentionAt` is optional
+ *  so a caller that predates retention (and every single-tick test) stays valid — absent means
+ *  "never swept", i.e. due now, which is what a freshly started pod should do. */
+export type WorkerLoopState = { lastReapAt: number; lastRetentionAt?: number };
 
 // --------------------------------------------------------------- lease watch --
 
@@ -104,10 +117,23 @@ export function settlementOf(o: { leaseLost: boolean; stopping: boolean; failure
   return { kind: 'complete', status: o.parked ? 'parked' : 'done' };
 }
 
-/** One iteration: reap if due, claim one job, execute it under a heartbeat. */
-export async function workerTick(deps: WorkerLoopDeps, state: { lastReapAt: number }): Promise<TickOutcome> {
+/** One iteration: reap if due, sweep retention if due, claim one job, execute it under a heartbeat. */
+export async function workerTick(deps: WorkerLoopDeps, state: WorkerLoopState): Promise<TickOutcome> {
   const now = deps.now ?? (() => Date.now());
   if (deps.stopped()) return 'stopped';
+  // RETENTION is a CHORE: it runs on its own slow cadence, before the claim so a long backlog
+  // cannot wedge between claiming and executing, and it can never throw — `sweepRetention` is
+  // contracted not to, and this guard is the belt to that brace. A failed sweep costs disk, a
+  // failed claim costs runs; they must not be able to take each other down.
+  const retentionEvery = deps.retentionEveryMs ?? 0;
+  if (deps.sweepRetention && retentionEvery > 0 && now() - (state.lastRetentionAt ?? 0) >= retentionEvery) {
+    state.lastRetentionAt = now();
+    try {
+      await deps.sweepRetention();
+    } catch (e) {
+      deps.log?.(`retention sweep failed: ${(e as Error)?.message ?? String(e)}`);
+    }
+  }
   if (now() - state.lastReapAt >= deps.reapEveryMs) {
     state.lastReapAt = now();
     try {
@@ -144,7 +170,9 @@ export async function workerTick(deps: WorkerLoopDeps, state: { lastReapAt: numb
 /** Loop until `stopped()`. Returns when the current job has settled — never mid-superstep. */
 export async function workerLoop(deps: WorkerLoopDeps): Promise<void> {
   const now = deps.now ?? (() => Date.now());
-  const state = { lastReapAt: now() - deps.reapEveryMs };
+  // Both chores are due on the FIRST tick: a pod that has been down for a week should reap and
+  // sweep immediately, not after another 6 hours of uptime.
+  const state: WorkerLoopState = { lastReapAt: now() - deps.reapEveryMs, lastRetentionAt: now() - (deps.retentionEveryMs ?? 0) };
   for (;;) {
     const outcome = await workerTick(deps, state);
     if (outcome === 'stopped') return;

@@ -4,6 +4,18 @@
 **/node_modules
 **/.next
 
+# iCloud/Finder CONFLICT COPIES — `approvals.test 2.ts`, `build-graph 2.ts`,
+# `_os-ui-env 2.tpl`. They are never tracked by git, but `docker build` copies the
+# WORKING TREE, and `next build` type-checks `*.test 2.ts` because tsconfig only
+# excludes `**/*.test.ts` — so a stray duplicate fails the production image build with
+# errors in a file nobody edited. This is the build context's half of the fix;
+# `os-ui/scripts/gate.sh` fails locally and in CI if any such file exists at all.
+**/* 2.*
+
+# Python bytecode from running the images/ test suites locally. Nothing in any image
+# consumes it and a stale .pyc for a deleted module is worse than useless.
+**/__pycache__
+
 # Large directories not consumed by any Dockerfile — trim the build context.
 # The os-ui Dockerfile (images/os-ui/Dockerfile) COPYs os-ui/ and docs/components
 # so those are kept. Everything below is excluded.

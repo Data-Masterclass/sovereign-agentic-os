@@ -134,12 +134,27 @@ body. The schema-ownership rules DO bite immediately, because they match on the 
 ### Enable real impersonation — the procedure
 
 **This is a deploy decision with a new secret in it.** Nothing below is on by default and nothing
-below is done by the OS; an operator does it, in this order. The generated `profiles.yml` is
-already ready for it: it emits `password: "{{ env_var('TRINO_PASSWORD', '') }}"` inside a
-`{% if env_var('TRINO_AUTH_METHOD', 'none') != 'none' %}` guard, so the key is simply absent under
-`method: none` (which is what `TrinoNoneCredentials` requires) and present the moment you switch.
-Only `env_var()` ever appears — a literal password in a repo anyone in the domain can clone is not
-a path the generator offers.
+below is done by the OS; an operator does it, in this order.
+
+**How `profiles.yml` actually gets its `password:` key — this is NOT a Jinja guard.** An earlier
+version of this page described a `{% if env_var('TRINO_AUTH_METHOD', 'none') != 'none' %}` block
+inside the file. There is no such block, and there could not be: `method:` has to AGREE with
+whether `password:` is present at all, and dbt-trino's `none` method rejects a `password` key
+outright, so the decision cannot be deferred to the parsing pod. The generator makes it instead
+(`os-ui/tabs/data/lib/dbt/project.ts`, `renderProfiles`):
+
+- `method:` is written as a **literal** from `config.trinoAuthMethod` (`TRINO_AUTH_METHOD`,
+  default `none`) — deliberately not `{{ env_var(...) }}`, because only the generator knows what it
+  emitted (deviation B4-review E-3);
+- when that method is `none`, the function **returns the document unchanged** and there is no
+  `password:` line anywhere in the file;
+- otherwise it splices exactly one line after `user:`, at the same indentation:
+  `password: "{{ env_var('TRINO_PASSWORD') }}"` — with **no `''` default**, so a missing secret
+  fails loudly instead of connecting as nobody.
+
+Everything else (`host`, `port`, `user`, `impersonation_user`, `http_scheme`, `catalog`) stays an
+`env_var()` call, resolved in the pod. Only `env_var()` ever appears as a VALUE — a literal
+password in a repo anyone in the domain can clone is not a path the generator offers.
 
 1. **Pick an authenticator.** Add to the Trino coordinator's `config.properties`
    (`templates/extensions/lakehouse/trino.yaml`):
@@ -154,10 +169,34 @@ a path the generator offers.
 3. **Create exactly two credentials** in a Kubernetes Secret (never in values.yaml, never in the
    repo): one for `trino.accessControl.serviceUser` (`dbt-runner`) and one for the OS's query path
    (the query-tool's `TRINO_USER`). Hash them into the password file with `htpasswd -B -C 10`.
-4. **Mount them.** `TRINO_PASSWORD` from that Secret into (a) the Dagster **run pod** — add it to
-   the code location's `env` in `values.yaml` so `includeConfigInLaunchedRuns` propagates it — and
-   (b) the **query-tool** Deployment. Set `TRINO_AUTH_METHOD` from `none` to the matching
-   dbt-trino method at the same time, in the same place.
+4. **Mount them, then REGENERATE THE PROJECT.** `TRINO_PASSWORD` from that Secret into (a) the
+   Dagster **run pod** — add it to the code location's `env` in `values.yaml` so
+   `includeConfigInLaunchedRuns` propagates it — and (b) the **query-tool** Deployment.
+
+   `TRINO_AUTH_METHOD` goes somewhere else, and this is the step that is easy to get wrong: it is
+   read by **os-ui** (and `os-ui-worker`), not by the run pod or the query-tool, because os-ui is
+   what GENERATES `profiles.yml`. Setting it on the run pod changes nothing at all — the pod reads
+   a file that was already written. The chart has no value for it today, so set it as an
+   environment variable on the os-ui Deployment (and the worker, if enabled) the same way any other
+   os-ui env var is set.
+
+   **And it only takes effect on the next regeneration, which is a COMMIT.** `profiles.yml` is a
+   file in each domain's data-project repository, produced by `generateProject` and written by
+   `commitDataProject`. Changing the env var does not rewrite the committed file; the next
+   regeneration does, and it commits only because the tree hash moved. Two ways to trigger one,
+   in order of preference:
+
+   - **Restart os-ui.** The boot reconcile (`tabs/data/lib/dbt/boot-reconcile.ts`) regenerates and
+     commits every domain's project, which is exactly this. Since you are changing a Deployment's
+     env in this step anyway, the rollout IS the trigger — just confirm it in the log
+     (`[data-projects] boot reconcile`) rather than assuming.
+   - **Any dataset write** in a domain regenerates and commits that ONE domain's project. Use this
+     only to fix up a single domain; it leaves the others on the old `profiles.yml`.
+
+   Until a regeneration lands, the repositories still carry `method: none` with no `password:`,
+   and every dbt run will fail authentication the moment step 1 is live. Verify before moving on:
+   `git -C <repo> show HEAD:profiles.yml | grep -E 'method:|password:'` must show your method and
+   exactly one `password: "{{ env_var('TRINO_PASSWORD') }}"` line.
 5. **Check the user alignment first.** The run pod's `TRINO_USER` MUST equal
    `trino.accessControl.serviceUser`, because that is the only `original_user` the generated
    impersonation rule lets become an OS principal. A mismatch is invisible today (nothing

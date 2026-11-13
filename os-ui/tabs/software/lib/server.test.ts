@@ -4,12 +4,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
+import { testUser } from '@core/testing/user';
 import { createApp } from '@tabs/software/lib/apps';
 import { consumeResource } from './lifecycle.ts';
 import { renderAppYaml } from './metadata.ts';
 import { commitToApp, getSnapshot } from './server.ts';
 
-const dev: CurrentUser = { id: 'dan', name: 'Dan', domains: ['eng'], role: 'creator' };
+const dev: CurrentUser = testUser({ id: 'dan', name: 'Dan', domains: ['eng'], role: 'creator' });
 
 /**
  * A commit is a CHANGESET, not the whole tree. `commitToApp` must merge the

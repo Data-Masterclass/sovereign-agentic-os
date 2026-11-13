@@ -2,11 +2,15 @@
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 """Unit tests for the governed-write guard. Stdlib only — run with:
 
-    python3 test_execute_guard.py
+    python3 -m unittest discover -s images/extensions/query-tool/tests
 
 (no pytest dependency; matches the query-tool image, which pins no test tooling).
+Imports `_stubs` purely for its sys.path side effect — `execute_guard` lives one directory
+up — so this module resolves whether it runs first, last or alone.
 """
 import unittest
+
+import _stubs  # noqa: F401  (puts the package dir on sys.path)
 
 from execute_guard import (
     ExecuteError,

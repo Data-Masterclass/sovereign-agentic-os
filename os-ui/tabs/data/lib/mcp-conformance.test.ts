@@ -163,6 +163,27 @@ for (const flagOn of [false, true]) {
   });
 }
 
+test('X7 (data): `get_dagster_run` hides a RUN the way agent runs are hidden — foreign and ghost are the same not_found (D17)', async () => {
+  // The dataset convention above (`forbidden` for an existing invisible dataset) does NOT apply
+  // here, and deliberately: the addressed object is the RUN, not the dataset. A run id is handed
+  // out by a build, so a `forbidden` on a foreign one would let a client sweep run ids and learn
+  // which builds other domains are running. Both answers must be identical.
+  const tool = ALL_MCP_TOOLS.find((t) => t.name === 'get_dagster_run');
+  assert.ok(tool, 'get_dagster_run must be registered — D17 is the run-addressed read');
+  assert.equal(tool!.tab, 'data');
+  assert.equal(tool!.minRole, 'creator', 'reading your own build is not an elevated act');
+  assert.deepEqual(tool!.inputSchema.required, ['runId']);
+
+  // `FOREIGN` is another user's dataset in another domain; record a run on it, unscoped.
+  store.setVersionRun(FOREIGN, 'silver', { commit: 'a'.repeat(40), dagsterRunId: 'run_foreign' });
+  const foreign = await refusal(caller, 'get_dagster_run', { runId: 'run_foreign' });
+  const ghost = await refusal(caller, 'get_dagster_run', { runId: 'run_never_minted' });
+  assert.equal(foreign.code, 'not_found', `a run on a dataset you cannot see must be not_found, got ${foreign.code}`);
+  assert.equal(ghost.code, 'not_found');
+  assert.equal(foreign.reason, ghost.reason, 'the two refusals must be byte-identical or the id leaks');
+  assert.ok(!/orders|amir|sales|ds_foreign/i.test(foreign.reason), 'the refusal named the anchor dataset');
+});
+
 test('X7 (data): a FOREIGN connection is refused on the tool that actually takes one, and commits nothing (review M-5)', async () => {
   // The review asked for `create_dataset` with a foreign `connectionId`. `create_dataset` takes
   // NO connection (`{name, domain, columns}` — an extra argument is ignored), so there is no such

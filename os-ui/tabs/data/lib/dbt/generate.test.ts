@@ -115,6 +115,13 @@ function shapeComposition(): ProjectSnapshot {
       { id: 'chk_1', name: 'not_null(customer_id)', description: '', createdBy: 'amir', createdAt: '2026-11-13T00:00:00.000Z', rule: 'not_null', column: 'customer_id' },
       { id: 'chk_2', name: 'range(total_amount)', description: 'Never negative', createdBy: 'amir', createdAt: '2026-11-13T00:00:00.000Z', rule: 'range', column: 'total_amount', min: 0 },
       { id: 'chk_3', name: 'Reconcile monthly with finance', description: 'free text', createdBy: 'amir', createdAt: '2026-11-13T00:00:00.000Z' },
+      // D5's follow-up: referential integrity → dbt `relationships`. The referenced dataset HAS a
+      // tested model in this project (`silver_customers`), so this one becomes a real test.
+      { id: 'chk_4', name: 'reference(customer_id -> ds_cust0001.customer_id)', description: '', createdBy: 'amir', createdAt: '2026-11-13T00:00:00.000Z', rule: 'reference', column: 'customer_id', toDataset: 'ds_cust0001', toColumn: 'customer_id' },
+      // …and one that CANNOT be a test: the referenced dataset has no model in this project, so
+      // `ref()` would name nothing and `dbt parse` would fail for the whole domain. It must land
+      // in `meta.os_intentions`, exactly like an unsafe accepted_values.
+      { id: 'chk_5', name: 'reference(customer_id -> ds_elsewhere.customer_id)', description: '', createdBy: 'amir', createdAt: '2026-11-13T00:00:00.000Z', rule: 'reference', column: 'customer_id', toDataset: 'ds_elsewhere', toColumn: 'customer_id' },
     ],
   });
   return {
@@ -272,12 +279,23 @@ test('shape (b): the composition body equals today\'s compileGoldJoin SELECT aft
   // The promoted Customers dataset is a domain model; Orders (personal) refs its Bronze source.
   assert.ok(files.has('models/silver/silver_customers.sql'));
   assert.match(files.get('models/personal/amir/silver_orders.sql')!, /\{\{ source\('personal_amir', 'bronze_orders'\) \}\}/);
-  // Tests: not_null + range on the composition's gold; the free-text check is an intention, not a test.
+  // Tests: not_null + a resolvable `reference` on the composition's gold, and `range`; the
+  // free-text check AND the reference that cannot be resolved are intentions, not tests.
   const schema = yaml.load(files.get('models/personal/amir/schema.yml')!) as { models: { name: string; config: { meta: Record<string, unknown> }; columns: { name: string; data_tests?: unknown[] }[] }[] };
   const gold = schema.models.find((m) => m.name === 'gold_order_customer')!;
-  assert.deepEqual(gold.columns.find((c) => c.name === 'customer_id')!.data_tests, ['not_null']);
+  assert.deepEqual(gold.columns.find((c) => c.name === 'customer_id')!.data_tests, [
+    'not_null',
+    // D5's follow-up: dbt's own referential test, pointed at the referenced dataset's MODEL (never
+    // at authored text) — `ref()` is Jinja dbt evaluates at parse, so the name comes from the plan.
+    { relationships: { to: "ref('silver_customers')", field: 'customer_id' } },
+  ]);
   assert.deepEqual(gold.columns.find((c) => c.name === 'total_amount')!.data_tests, [{ range: { min: 0 } }]);
-  assert.deepEqual(gold.config.meta.os_intentions, ['Reconcile monthly with finance']);
+  assert.deepEqual(gold.config.meta.os_intentions, [
+    'Reconcile monthly with finance',
+    // A reference whose target has no model in THIS project: `ref('…')` on an unknown name fails
+    // `dbt parse` for the WHOLE domain, so it degrades to an intention rather than a broken test.
+    'reference(customer_id -> ds_elsewhere.customer_id)',
+  ]);
   assert.deepEqual(gold.config.meta.os_upstreams, ['ds_cust0001', 'ds_orders1']);
   assert.ok(files.has('tests/generic/range.sql') && files.has('tests/generic/not_blank.sql'));
 });

@@ -6,6 +6,7 @@ import { withRoute } from '@core/kernel/route-server';
 import { getWorkflow, getDomainKnowledge } from '@tabs/knowledge/lib/store';
 import { chunkWorkflow, chunkDomain } from '@tabs/knowledge/lib/chunk';
 import { indexWorkflow, indexDomain } from '@tabs/knowledge/lib/index-pipeline';
+import { actingCaller } from '@tabs/knowledge/lib/embed';
 import { hasWorkflowUnits } from '@tabs/knowledge/lib/index-store';
 import { retrieveKnowledge } from '@tabs/knowledge/lib/retrieve';
 import { buildContextPack } from '@tabs/knowledge/lib/context-pack';
@@ -34,8 +35,9 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
     // silently emptying their retrieved tail; gate per-workflow instead
     // (idempotent, incremental — upsert replaces the scope's units).
     if (!hasWorkflowUnits(id)) {
-      await indexWorkflow(view.workflow, { owner: view.owner, tacit: view.tacit, updatedAt: view.updatedAt });
-      await indexDomain(dk);
+      const caller = actingCaller(user.id, view.domain); // A27: the retriever pays for the lazy index
+      await indexWorkflow(view.workflow, { owner: view.owner, tacit: view.tacit, updatedAt: view.updatedAt, caller });
+      await indexDomain(dk, caller);
     }
 
     const principal = { id: user.id, domains: user.domains, role: user.role };

@@ -1294,6 +1294,16 @@ osUI:
   # (20 000 characters, 60 000 ms). Run-path: the os-ui-worker pod gets them as well.
   agentToolResultMaxChars: ""
   agentToolCallTimeoutMs: ""
+  # RETENTION for the `agent_runs` database (A13 follow-up). A LangGraph checkpoint holds the
+  # run's RAW tool results and `run_events` holds the same payloads as a stream, so without a
+  # bound the database grows forever — and it is the one store the Langfuse redaction setting
+  # does NOT cover. A run that SETTLED (`done` / `failed`) longer ago than this many days has its
+  # checkpoint thread, its `run_events` rows and its `run_jobs` row deleted by a periodic sweep
+  # (the worker loop every 6 h; one sweep at os-ui boot when `worker.enabled: false`).
+  # A `parked` run — one waiting on a Governance approval — is NEVER swept at any age: its
+  # checkpoint IS the run, and deleting it would make the pending decision unresumable.
+  # Empty ⇒ the code default of 30 days. `"0"` ⇒ keep everything (your own policy decides).
+  agentRunsRetentionDays: ""
 
   worker:
     enabled: false

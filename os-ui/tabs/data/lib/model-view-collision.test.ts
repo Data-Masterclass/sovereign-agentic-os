@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { modelName, viewName } from '@tabs/data/lib/metrics';
-import type { Dataset } from '@tabs/data/lib/types';
+import type { Dataset } from '@tabs/data/lib/dataset-schema';
 
 /**
  * Regression for the 2026-09-23 Data-tab outage: a dataset with a FROZEN slug produced a

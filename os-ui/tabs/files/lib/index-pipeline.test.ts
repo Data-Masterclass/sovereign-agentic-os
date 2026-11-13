@@ -80,3 +80,39 @@ test('hybrid query never returns a chunk the reader may not see (DLS)', async ()
   const hits = hybridQuery({ queryVector: mockEmbed('alpha omega'), queryText: 'alpha omega', filter });
   assert.equal(hits.length, 0, 'a non-member retrieves nothing');
 });
+
+// ------------------------------------------------- A27: index attribution --
+
+/**
+ * A27, closed in iteration 2. `indexAsset` took no caller at all, so every embed call it made
+ * billed `user os-system` + `domain:platform` — per-surface attribution, not per-user. These
+ * assert the CALLER that reaches the embedder, which is what decides the LiteLLM `user` and tags.
+ */
+test('A27: indexAsset passes the ACTING caller through to the embedder', async () => {
+  const seen: unknown[] = [];
+  const spy = async (texts: string[], caller?: unknown) => {
+    seen.push(caller);
+    return { vectors: texts.map((t) => mockEmbed(t)), model: 'sovereign-embed', dim: 384, mode: 'mock' as const };
+  };
+  const a = asset({ name: 'contract.pdf' });
+  await indexAsset(a, 'Auto renews after twelve months. Price capped at CPI.', {
+    adapter: mockAdapterFor('doc'),
+    embed: spy,
+    caller: { userId: 'cara', domain: a.domain, tab: 'files' },
+  });
+  assert.equal(seen.length, 1, 'one embed batch for the changed chunks');
+  assert.deepEqual(seen[0], { userId: 'cara', domain: 'sales', tab: 'files' });
+});
+
+test('A27: with no caller the embedder is called with none — the platform default stays honest', async () => {
+  const seen: unknown[] = [];
+  const spy = async (texts: string[], caller?: unknown) => {
+    seen.push(caller);
+    return { vectors: texts.map((t) => mockEmbed(t)), model: 'sovereign-embed', dim: 384, mode: 'mock' as const };
+  };
+  await indexAsset(asset({ name: 'bootstrapped.pdf' }), 'Indexed by the boot sweep, which has no acting user.', {
+    adapter: mockAdapterFor('doc'),
+    embed: spy,
+  });
+  assert.deepEqual(seen, [undefined], 'a platform sweep must not invent a user to bill');
+});

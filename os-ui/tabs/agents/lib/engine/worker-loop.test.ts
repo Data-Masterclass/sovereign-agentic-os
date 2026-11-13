@@ -171,3 +171,46 @@ test('A4 worker: the heartbeat runs for the duration of a claim and is stopped a
   assert.deepEqual(beats, ['r1']);
   assert.equal(live, false, 'and stopped the moment the run settles');
 });
+
+test('the loop sweeps retention on its own slow cadence, before the claim, and a failing sweep never stops it', async () => {
+  const store = memoryRunJobStore();
+  let t = 1_000_000;
+  const order: string[] = [];
+  const sweeps: number[] = [];
+  const d = {
+    ...deps(store),
+    now: () => t,
+    retentionEveryMs: 60_000,
+    sweepRetention: async () => { sweeps.push(t); order.push('sweep'); },
+    store: { ...store, claim: async (...a: Parameters<typeof store.claim>) => { order.push('claim'); return store.claim(...a); } },
+  };
+  const state = { lastReapAt: t };
+
+  // First tick: never swept ⇒ due now, and it happens BEFORE the claim (a backlog must not sit
+  // between claiming a run and executing it).
+  await workerTick(d, state);
+  assert.deepEqual(order, ['sweep', 'claim']);
+  assert.deepEqual(sweeps, [1_000_000]);
+
+  // Inside the cadence: not swept again.
+  t += 59_000;
+  await workerTick(d, state);
+  assert.equal(sweeps.length, 1, 'retention is a chore, not a per-tick cost');
+
+  // Past the cadence: swept again.
+  t += 2_000;
+  await workerTick(d, state);
+  assert.deepEqual(sweeps, [1_000_000, 1_061_000]);
+
+  // A throwing sweep is logged and the tick still claims — disk is not worth a stalled queue.
+  const logs: string[] = [];
+  t += 61_000;
+  await workerTick({ ...d, log: (m) => logs.push(m), sweepRetention: async () => { throw new Error('pg is down'); } }, state);
+  assert.match(logs.join('\n'), /retention sweep failed.*pg is down/);
+
+  // The throwing sweep recorded nothing, so the count is still 2 — and a loop built WITHOUT
+  // retention never sweeps at all, which is the pre-retention behaviour, unchanged.
+  assert.equal(sweeps.length, 2);
+  await workerTick(deps(store), { lastReapAt: 0 });
+  assert.equal(sweeps.length, 2);
+});

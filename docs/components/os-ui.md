@@ -211,12 +211,49 @@ kubectl -n agentic-os exec deploy/os-ui-worker -- stat -c '%Y %n' /tmp/worker-al
 indefinitely for its decision; nothing expires it, reminds anyone, or fails it over to another
 approver. v1 chose this deliberately (an expiry that silently rejects would execute a decision no
 human took). Candidates for a later iteration: a visible age on the card, an admin "abandon run"
-action that resumes with a rejection, or a tenant policy for a default expiry. Also open:
-LangGraph checkpoints keep the full run state — raw tool results included — for as long as the
-`agent_runs` database keeps them (no retention yet; plan A13 follow-up), and both the checkpointer
-assume a **single os-ui replica**. Since A4 the run EVENTS are durable rows (`run_events`), so a
+action that resumes with a rejection, or a tenant policy for a default expiry. Also open: both the
+checkpointer and the approvals-queue hydration Since A4 the run EVENTS are durable rows (`run_events`), so a
 tail survives a restart and works from any pod; the pieces still single-replica are the
 checkpointer connection and the approvals-queue hydration.
+
+### Retention for `agent_runs` (the A13 follow-up, closed)
+
+A LangGraph checkpoint holds the full run state — **raw tool results included** — and `run_events`
+holds the same payloads as a replayable stream. Neither is covered by `LANGFUSE_REDACTION`
+(see `langfuse.md`), and until iteration 2 neither had a bound, so the `agent_runs` database grew
+for the life of the install.
+
+**`AGENT_RUNS_RETENTION_DAYS`** (chart: `osUI.agentRunsRetentionDays`, default **30**) is the
+window. A run that **settled** — `done` or `failed` — longer ago than that has three things
+removed, in this order:
+
+1. its LangGraph checkpoint thread (`deleteThread(runId)`; thread id **is** the run id),
+2. its `run_events` rows,
+3. its `run_jobs` row.
+
+The order is the recovery story: the job row is deleted LAST, so a sweep that fails part way
+through leaves the run eligible and the next sweep retries it — nothing is ever half-deleted with
+no row left to name it.
+
+- **A `parked` run is never swept, at any age.** Its checkpoint *is* the run: delete it and the
+  pending Governance approval can never be resumed. `RETAINABLE_STATUSES` (`done`, `failed`) is in
+  the SQL `settledBefore` runs, and the sweep RE-READS each row immediately before deleting it, so
+  a run resumed between the listing and the delete is spared too.
+- **Where it runs.** `worker.enabled: true` → the worker loop sweeps every 6 hours, before the
+  claim, and a failing sweep is logged and never stops the queue. `worker.enabled: false`
+  (`inline`) → there is no loop, so `ensureRunJobsReady()` runs ONE sweep at os-ui boot.
+- **`AGENT_RUNS_RETENTION_DAYS=0` keeps everything** — for an install whose own policy says so.
+  An unparseable value falls back to 30 rather than to 0, in either direction: a typo must not
+  silently turn retention off, and must not silently delete today's runs.
+- **Bounded per sweep** (200 runs), so a long backlog drains over successive sweeps instead of
+  holding one long transaction.
+
+```bash
+# What a sweep would remove right now (read-only).
+kubectl -n agentic-os exec deploy/postgres -- psql -d agent_runs -c \
+  "select status, count(*) from run_jobs where updated_at < now() - interval '30 days' group by status"
+# Parked rows in that list are the ones retention will NOT touch.
+```
 
 **No flag.** There is one engine, so there is nothing to select: A5 deleted
 `AGENTS_ENGINE`, `core/kernel/config.ts` `agentsEngine`, `tabs/agents/lib/engine/select.ts` and

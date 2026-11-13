@@ -26,7 +26,7 @@ import type { Dataset, Layer, DatasetSync } from '@tabs/data/lib/dataset-schema'
 import { physicalSlug, personalSchema, domainSchema, sanitizeIdent } from '@tabs/data/lib/store-fqn';
 import { DEFAULT_LOOKBACK_MINUTES } from '@tabs/data/lib/sync-sql';
 import { qident, qlit, stripJinja } from '@tabs/data/lib/dbt/emit';
-import { columnDocs } from '@tabs/data/lib/dbt/schema';
+import { columnDocs, modelRefResolver } from '@tabs/data/lib/dbt/schema';
 import { freshnessMinutesFor } from '@tabs/data/lib/dbt/source-assets';
 import type { ProjectSnapshot, SnapshotDataset } from '@tabs/data/lib/dbt/snapshot';
 
@@ -432,6 +432,9 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
   // Out-of-band layers: declare the physical table as a source; the dataset's quality rules attach
   // to the furthest such layer as SOURCE tests (dbt build runs them) — never a model that would
   // rewrite a table the OS did not compile.
+  // Built from the models planned above, so a rule on an out-of-band SOURCE may still reference a
+  // model this project owns (`relationships: to: ref(...)` is valid on a source column too).
+  const resolveRef = modelRefResolver(models);
   for (const entry of datasets) {
     const d = entry.dataset;
     const layers = outOfBandByDataset.get(d.id);
@@ -442,7 +445,7 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
       const schema = schemaFor(d, layer, sync);
       const table = `${layer}_${physicalSlug(d)}`;
       const tested = layer === furthestBuilt;
-      const { columns, intentions } = columnDocs(d, tested);
+      const { columns, intentions } = columnDocs(d, tested, resolveRef);
       addSource({
         source: schema,
         database: 'iceberg',

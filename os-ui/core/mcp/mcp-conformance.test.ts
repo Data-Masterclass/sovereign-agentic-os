@@ -23,13 +23,12 @@
  *       · an object that does NOT exist            ⇒ `not_found`, from every object-addressed tool
  *       · an object that EXISTS and is invisible   ⇒ `forbidden` ("Not permitted to …"), which is
  *         the OS's convention on every surface (deviation B4-11) …
- *       · … EXCEPT the software READ/BUILD doors, which answer `not_found` for an app they cannot
- *         see. That asymmetry is pinned in {@link SOFTWARE_FOREIGN} so it cannot drift silently,
- *         and is recorded as a Part F finding: software's WRITE doors (`request_deploy`,
- *         `start_preview`, `use_*`, `archive`, `use_as_data`) answer `forbidden` for an app the
- *         caller cannot see at all, which tells the caller the app EXISTS while the read doors
- *         deny it. The convention to converge on is the owner's call, so this test measures the
- *         behaviour rather than changing it.
+ *       · … EXCEPT the whole software tab, which answers `not_found` for an app the caller cannot
+ *         see — from its READ/BUILD doors AND, since iteration 2 (F2-1), from its WRITE doors too.
+ *         Part F measured the split (eight write doors said `forbidden` where the read doors said
+ *         `not_found`, telling an enumerating caller the app EXISTS); the owner's call was
+ *         `not_found`, so {@link SOFTWARE_FOREIGN} is now ONE expectation for every software tool
+ *         and the leak cannot come back one door at a time.
  *       · an agent RUN                             ⇒ `not_found` DELIBERATELY, even when it
  *         exists and belongs to someone else (`assertRunVisible`): a run id you do not own must be
  *         indistinguishable from one that was never minted.
@@ -212,10 +211,17 @@ test('X7: a role gate answers `forbidden` and NAMES the role it needs, before an
 // ---- an object that EXISTS and belongs to someone else ------------------------------
 
 /**
- * The software tab's READ/BUILD doors hide an app they cannot see (`not_found`); its
- * grant/preview/deploy/archive doors answer `forbidden`, which tells the caller the app EXISTS.
- * Pinned here so neither side can drift unnoticed. Converging them is a Part F finding, not a
- * change this test makes.
+ * The software tab hides an app the caller cannot see: every one of its object-addressed tools
+ * answers `not_found`, read and write alike. Until iteration 2 the write half answered
+ * `forbidden`, which confirmed the app's EXISTENCE to a caller the read half refused to tell
+ * (finding F-3); converged in F2-1 by putting the visibility gate FIRST in `startPreview`,
+ * `requestDeploy`, `setAppSpec`, `consumeResource` (`use_connection` / `use_data` /
+ * `use_knowledge`), `useAsData` and `archiveApp`. A role or ownership gate on an app the caller
+ * CAN see is still `forbidden` — that is a permission answer, not an existence answer.
+ *
+ * Kept as an explicit per-tool map rather than a blanket `tab === 'software' ⇒ not_found` so a
+ * NEW software tool must be added here deliberately, and so a single door regressing to
+ * `forbidden` names itself in the failure.
  */
 const SOFTWARE_FOREIGN: Record<string, 'not_found' | 'forbidden'> = {
   design_software: 'not_found',
@@ -228,15 +234,34 @@ const SOFTWARE_FOREIGN: Record<string, 'not_found' | 'forbidden'> = {
   read_app_files: 'not_found',
   get_software_status: 'not_found',
   commit_software_files: 'not_found',
-  request_deploy: 'forbidden',
-  start_preview: 'forbidden',
-  set_app_spec: 'forbidden',
-  use_connection: 'forbidden',
-  use_data: 'forbidden',
-  use_knowledge: 'forbidden',
-  use_as_data: 'forbidden',
-  archive: 'forbidden',
+  request_deploy: 'not_found',
+  start_preview: 'not_found',
+  set_app_spec: 'not_found',
+  use_connection: 'not_found',
+  use_data: 'not_found',
+  use_knowledge: 'not_found',
+  use_as_data: 'not_found',
+  archive: 'not_found',
 };
+
+/** The convention is a SINGLE answer for the tab — pinned so no future entry re-opens the split. */
+test('X7: the software tab answers an invisible app with ONE code, read doors and write doors alike', () => {
+  const codes = [...new Set(Object.values(SOFTWARE_FOREIGN))];
+  assert.deepEqual(codes, ['not_found'], `the software tab must hide an invisible app uniformly, found ${codes.join(' + ')}`);
+  // Every software tool that ADDRESSES an app must carry an expectation — a new door cannot
+  // slip in on the `?? 'forbidden'` default and silently re-open the existence leak.
+  // Scoped to the doors a CREATOR reaches: `promote` / `delete` / `commit` floor at builder, so
+  // the dispatcher's role gate answers first and their object gate is never the code the client
+  // sees. Pinning an expectation the foreign-object test cannot exercise would be a claim, not a test.
+  const missing = ALL_MCP_TOOLS.filter(
+    (t) =>
+      t.tab === 'software' &&
+      objectArg(t) === 'appId' &&
+      roleCanUse('creator', t.minRole) &&
+      SOFTWARE_FOREIGN[t.name] === undefined,
+  ).map((t) => t.name);
+  assert.deepEqual(missing, [], `software tool(s) addressing an app with no pinned refusal code: ${missing.join(', ')}`);
+});
 
 test('X7: an object that EXISTS but is invisible is refused per the OS convention, and the refusal names no content of it', async () => {
   // Mint one object of each kind AS the stranger, through the dispatcher, as a client would.

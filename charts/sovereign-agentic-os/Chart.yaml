@@ -9,9 +9,14 @@ description: >-
 type: application
 
 # Chart SemVer (the product version). Bump additively per packaging.md.
-version: 0.2.12
+# 0.3.0 (minor, not patch): the engine rebuild changes what the chart DEPLOYS — the optional
+# `os-ui-worker` Deployment, the Dagster code location as the data scheduler in place of the
+# per-dataset CronJobs, and new values (osUI.worker.*, osUI.agentRunsRetentionDays, queryTool.budget).
+version: 0.3.0
 
-# Informational: the public pre-release this chart corresponds to.
+# Informational only, and DELIBERATELY NOT BUMPED: appVersion has not tracked the os-ui image line
+# since 0.6.x, so moving it to 0.8.0 now would imply a correspondence that has not existed for
+# twelve releases. The image tag is set per deploy (`deploy.sh <version>`, osUI.image.tag).
 appVersion: "0.2.0-alpha.11"
 
 home: https://github.com/datamasterclass/sovereign-agentic-os

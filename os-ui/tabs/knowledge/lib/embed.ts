@@ -32,6 +32,20 @@ export type EmbedResult = { vectors: number[][]; source: 'litellm' | 'offline-ha
 export type EmbedCaller = Pick<CallerContext, 'userId' | 'domain' | 'tab' | 'keyRef'>;
 const PLATFORM_CALLER: EmbedCaller = { userId: 'system', domain: 'platform', tab: 'knowledge' };
 
+/**
+ * The attribution for an index/embed triggered BY A USER (checklist A27). Pass it from any door
+ * that has the acting user — the MCP tools and the routes — so LiteLLM bills that principal with
+ * a `domain:` tag instead of `user os-system` + `domain:platform`. `domain` is the OBJECT's
+ * domain, not the user's active one: the spend belongs to the knowledge/file being indexed.
+ *
+ * A door with no acting user (boot sweeps, a connector sync on a schedule) must pass NOTHING and
+ * keep the platform attribution: that work really is the platform's, and inventing a user for it
+ * would be a worse lie than the per-surface attribution A27 complained about.
+ */
+export function actingCaller(userId: string, domain: string): EmbedCaller {
+  return { userId, domain, tab: 'knowledge' };
+}
+
 /** A transport-level outcome: a response, or `null` for a timeout / network failure. */
 async function postEmbeddings(body: unknown, apiKey: string, ms = 4000): Promise<Response | null> {
   const ctrl = new AbortController();

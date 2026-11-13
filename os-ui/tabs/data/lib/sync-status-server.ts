@@ -6,6 +6,9 @@
  *             show the runs Dagster actually executed, whether the schedule is paused (quarantine)
  *             and the next tick — read from Dagster, not from a parallel OS ledger (checklist D9).
  * ARCHITECTURE:
+ *   - `dagsterRunFor` is the run-ADDRESSED read behind `get_dagster_run` (D17): one run, resolved
+ *     through the dataset version record that carries its id, hidden as `not_found` when that
+ *     dataset is not one the caller can view.
  *   - ONE function both the route and the MCP tool call (`syncStatusFor`), so the two can never
  *     drift; `latestSyncSignals` is the batch form Monitoring's lists use (one TAG-FILTERED Dagster
  *     read per dataset, bounded concurrency — review B2-review-M4 explains why not one big read).
@@ -20,7 +23,8 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
-import type { Dataset, DatasetSyncMode } from '@tabs/data/lib/dataset-schema';
+import { LAYERS, type Dataset, type DatasetSyncMode, type Layer } from '@tabs/data/lib/dataset-schema';
+import { listAllDatasets, listDatasets, type Principal } from '@tabs/data/lib/store';
 import { dataProjectGitEnabled } from '@tabs/data/lib/dbt/commit';
 import * as dagster from '@core/infra/dagster';
 import { listRepos } from '@core/infra/git-store';
@@ -214,4 +218,129 @@ export async function latestSyncSignals(datasetIds: string[], deps: SyncStatusDe
     );
   }
   return out;
+}
+
+/* ------------------------------------------------- one run, by its run id -- */
+
+/**
+ * `get_dagster_run` (checklist D17). A build/sync MCP call hands back a `dagsterRunId`; until now
+ * the only way to read it was `get_sync_status(datasetId)`, which needs the dataset id the caller
+ * may not have kept and answers with the dataset's whole run history. This is the run-addressed
+ * read: ONE run, found through the dataset it was launched for.
+ *
+ * GOVERNANCE — the run is the addressed object, so it is hidden the way agent runs are hidden
+ * (the B4-11 exception the conformance test already pins for every `runId`-addressed tool): a run
+ * id that was never minted, and a run launched for a dataset the caller cannot see, are the SAME
+ * `not_found`. That is why the lookup runs over the caller's VIEWABLE datasets and never calls
+ * `getDataset`, whose 403 on an unviewable dataset would confirm the run exists.
+ */
+export type DagsterRunView = {
+  runId: string;
+  /** The dataset + layer whose version record carries this run id — the authorization anchor. */
+  dataset: { id: string; name: string; domain: string; layer: Layer };
+  /** The domain-repo commit the layer was launched from (`setVersionRun`), null when unrecorded. */
+  commit: string | null;
+  jobName: string | null;
+  /** Dagster's own status; null when Dagster could not be read (see `dagsterError`). */
+  status: dagster.RunStatus | null;
+  /** The same ok|error|running vocabulary the sync panel and `get_sync_status` use. */
+  syncStatus: SyncRunStatus | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  assetSelection: string[];
+  /** ONLY the OS's own `os/*` tags. Dagster's internal tags (including the `dagster-k8s/config`
+   *  env blob, which can name infrastructure) are NOT the caller's business. */
+  tags: Record<string, string>;
+  /** Why the run failed, or why it could not be launched. Null for a run that did not fail. */
+  failure: string | null;
+  /** Why Dagster could not be read at all — the read is reported, never faked as a status. */
+  dagsterError: string | null;
+};
+
+export type DagsterRunDeps = {
+  dagster?: Pick<typeof dagster, 'run'>;
+  /** Every non-archived dataset, parsed. Default: the store. */
+  datasets?: () => Dataset[];
+  /** The ids the caller may view. Default: the store's DLS-scoped list. */
+  viewable?: (viewer: Principal) => Set<string>;
+};
+
+class RunNotFound extends Error {
+  readonly status = 404;
+  constructor() {
+    // Deliberately says nothing about which datasets exist or who owns them.
+    super('Dagster run not found');
+  }
+}
+
+function viewableIds(viewer: Principal): Set<string> {
+  const g = listDatasets(viewer);
+  return new Set([...g.mine, ...g.domain, ...g.marketplace].map((s) => s.id));
+}
+
+/** The dataset + layer whose version record carries `runId`, among the caller's VIEWABLE datasets. */
+function anchorFor(runId: string, viewer: Principal, deps: DagsterRunDeps): { dataset: Dataset; layer: Layer } | null {
+  const viewable = (deps.viewable ?? viewableIds)(viewer);
+  for (const d of (deps.datasets ?? listAllDatasets)()) {
+    if (!viewable.has(d.id)) continue;
+    for (const layer of LAYERS) {
+      if (d.versions[layer]?.dagsterRunId === runId) return { dataset: d, layer };
+    }
+  }
+  return null;
+}
+
+export async function dagsterRunFor(runId: string, viewer: Principal, deps: DagsterRunDeps = {}): Promise<DagsterRunView> {
+  const id = (runId ?? '').trim();
+  const anchor = id ? anchorFor(id, viewer, deps) : null;
+  if (!anchor) throw new RunNotFound();
+  const { dataset: d, layer } = anchor;
+  const version = d.versions[layer];
+  const base = {
+    runId: id,
+    dataset: { id: d.id, name: d.name, domain: d.domain, layer },
+    commit: version?.commit ?? null,
+  };
+
+  const r = await (deps.dagster ?? dagster).run(id);
+  if (!r.ok) {
+    // Dagster unreachable, or it does not know this id. Either way the OS does not invent a
+    // status — it reports what it recorded at launch and why the live read failed.
+    return {
+      ...base,
+      jobName: null,
+      status: null,
+      syncStatus: null,
+      startedAt: null,
+      endedAt: null,
+      assetSelection: [],
+      tags: {},
+      failure: version?.launchError ?? null,
+      dagsterError: r.error,
+    };
+  }
+
+  const run = r.data;
+  const osTags: Record<string, string> = {};
+  for (const [k, v] of Object.entries(run.tags)) if (k.startsWith('os/')) osTags[k] = v;
+  const syncStatus = runStatusToSync(run.status);
+  return {
+    ...base,
+    jobName: run.jobName || null,
+    status: run.status,
+    syncStatus,
+    startedAt: run.startedAt,
+    endedAt: run.endedAt,
+    assetSelection: run.assetSelection,
+    tags: osTags,
+    // The step-level message lives in Dagster's event log, which this read does not fetch — so the
+    // failure line says WHAT failed and WHERE to look, and never invents a cause. A recorded
+    // `launchError` (no run was ever launched) wins, because it is the more specific truth.
+    failure:
+      version?.launchError ??
+      (syncStatus === 'error'
+        ? `Dagster run ${run.status.toLowerCase()}${run.jobName ? ` (${run.jobName})` : ''} — the step error is in the Dagster run's event log.`
+        : null),
+    dagsterError: null,
+  };
 }

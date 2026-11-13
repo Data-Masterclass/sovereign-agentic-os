@@ -6,6 +6,7 @@ import { withRoute } from '@core/kernel/route-server';
 import { roleAtLeast } from '@core/kernel/session';
 import { getWorkflow, getDomainKnowledge } from '@tabs/knowledge/lib/store';
 import { indexWorkflow, indexDomain } from '@tabs/knowledge/lib/index-pipeline';
+import { actingCaller } from '@tabs/knowledge/lib/embed';
 import { promoteThroughSeam, fileArtifactPromotion, fileArtifactCertification } from '@core/policy/ladder';
 
 export const dynamic = 'force-dynamic';
@@ -46,8 +47,9 @@ export const POST = withRoute<{ id: string }, { action?: 'publish' | 'certify' }
     // success that leaves the knowledge invisible to every agent.
     let indexing: { ok: true } | { ok: false; code: string; error: string } = { ok: true };
     try {
-      await indexWorkflow(rec.workflow, { owner: rec.owner, tacit: rec.tacit, updatedAt: rec.updatedAt });
-      await indexDomain(getDomainKnowledge(rec.domain));
+      const caller = actingCaller(user.id, rec.domain); // A27: the publisher pays for the embed
+      await indexWorkflow(rec.workflow, { owner: rec.owner, tacit: rec.tacit, updatedAt: rec.updatedAt, caller });
+      await indexDomain(getDomainKnowledge(rec.domain), caller);
     } catch (e) {
       const err = e as Error & { name?: string; code?: string };
       indexing = { ok: false, code: err?.code ?? err?.name ?? 'index_failed', error: err?.message ?? String(e) };

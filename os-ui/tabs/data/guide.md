@@ -43,11 +43,18 @@ A data product in the OS **is a dbt project in a git repository**, and the tools
    materialisations and the next tick; the DQ surfaces return Dagster **asset checks** (one per dbt
    test, labelled `dbt test`), while the ad-hoc "Run checks" / `run_quality_checks` probe is labelled
    `OS probe`; `get_lineage` returns the dbt graph's edges.
+6. **Poll the run you launched.** Every launching call returns `run.dagsterRunId`; `get_dagster_run
+   {runId}` reads that one run back — `status` (and the same ok|error|running `syncStatus` the panel
+   uses), `startedAt`/`endedAt`, the asset selection, the OS's own `os/*` tags, the `commit` it was
+   launched from, and `failure` (the recorded `launchError`, or a line naming the failed run and
+   pointing at Dagster's event log for the step error — never a guessed cause). Use it when you have
+   a run id; use `get_sync_status(datasetId)` when you have the dataset and want its whole history.
 
 **The real sequence, end to end:** connect (`create_connection` → `test_connection`) → ingest
 (`ingest_dataset`, or `set_dataset_sync` for a connector-backed table) → silver (`transform_silver`)
 → gold (`build_gold_join`) → quality (`define_quality_rules` → `run_quality_checks`) → schedule
-(`set_dataset_sync` → `sync_dataset_now` → `get_sync_status`) → lineage (`get_lineage`). Each step is
+(`set_dataset_sync` → `sync_dataset_now` → `get_sync_status`, or `get_dagster_run` on the run id a
+launch returned) → lineage (`get_lineage`). Each step is
 one commit in your domain's repository and, where it materialises something, one Dagster run.
 
 ## How to build it (ingested dataset)

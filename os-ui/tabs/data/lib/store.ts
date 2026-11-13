@@ -1237,6 +1237,8 @@ export function addCheck(
     values?: string[];
     min?: number;
     max?: number;
+    toDataset?: string;
+    toColumn?: string;
   },
 ): Dataset {
   const rec = get(id);
@@ -1262,6 +1264,21 @@ export function addCheck(
       );
     }
   }
+  // A `reference` rule carries a SECOND column, interpolated into the generated
+  // `relationships` test exactly like the first, and a dataset id the generator turns into a
+  // `ref()`. Gate both here, at the one write path, on the SAME predicates (checklist D5).
+  if (input.rule === 'reference') {
+    const toColumn = (input.toColumn ?? '').trim();
+    const toDataset = (input.toDataset ?? '').trim();
+    if (!toDataset) fail('reference needs a `toDataset` (the dataset id the column must exist in)', 400);
+    if (!toColumn || !SAFE_COLUMN_RE.test(toColumn)) {
+      fail(`reference column '${toColumn.slice(0, 60)}' is not a plain identifier (letters, digits, underscore)`, 400);
+    }
+    // The referenced dataset must EXIST and be one the caller can see — a rule pointing at an id
+    // the author cannot read is either a typo or an attempt to learn whether an id exists.
+    const target = viewOf(get(toDataset), user);
+    if (target.id === d.id) fail('a reference rule must point at a DIFFERENT dataset', 400);
+  }
   const check: DataCheck = {
     id: `chk_${randomToken().slice(0, 16)}`,
     name: (input.name ?? '').trim() || 'Untitled check',
@@ -1273,6 +1290,8 @@ export function addCheck(
     ...(input.values ? { values: input.values } : {}),
     ...(typeof input.min === 'number' ? { min: input.min } : {}),
     ...(typeof input.max === 'number' ? { max: input.max } : {}),
+    ...(input.toDataset ? { toDataset: input.toDataset.trim() } : {}),
+    ...(input.toColumn ? { toColumn: input.toColumn.trim() } : {}),
   };
   d.checks = [...(d.checks ?? []), check];
   persist(rec, d, { author: user.id, summary: 'add check' });

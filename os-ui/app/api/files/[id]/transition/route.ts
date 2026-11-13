@@ -29,6 +29,6 @@ export const POST = withRoute<{ id: string }, { transition?: Transition; visibil
   }
   const asset = transition(id, user, t, { visibility: body.visibility, grants: body.grants });
   // The tier/grants changed → re-index so the indexed DLS metadata follows.
-  await reindexById(id);
+  await reindexById(id, user.id); // A27
   return NextResponse.json({ asset });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

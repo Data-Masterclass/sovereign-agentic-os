@@ -26,6 +26,6 @@ export const POST = withRoute<{ id: string }, { folder?: string }>(async ({ user
   }
   const asset = moveFile(id, user, body.folder); // 403 → nothing written
   // The folder is part of the indexed DLS metadata → keep the index in step.
-  await reindexById(id);
+  await reindexById(id, user.id); // A27
   return NextResponse.json({ asset });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

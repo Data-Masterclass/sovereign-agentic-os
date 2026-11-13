@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { indexAsset } from '@tabs/files/lib/index-pipeline';
+import { actingCaller, type EmbedCaller } from '@tabs/files/lib/embed';
 import { listAllForIndex, bodyForIndex } from '@tabs/files/lib/store';
 import { recordLineage } from '@tabs/files/lib/lineage';
 import type { FileAsset } from '@tabs/files/lib/asset-schema';
@@ -17,8 +18,19 @@ import type { FileAsset } from '@tabs/files/lib/asset-schema';
 
 let bootstrapped = false;
 
+/**
+ * ATTRIBUTION (checklist A27). `reindexFile` / `reindexById` take the ACTING user's id and bill
+ * the embed calls to that principal with the ASSET's domain. A door that genuinely has no acting
+ * user — the boot sweep below, a scheduled connector sync — passes nothing and keeps the platform
+ * attribution, which is the truth for that work.
+ */
+function callerFor(asset: FileAsset, actingUserId?: string): EmbedCaller | undefined {
+  return actingUserId ? actingCaller(actingUserId, asset.domain) : undefined;
+}
+
 /** Index every stored file once, so seeds + anything uploaded before the index
- *  existed are retrievable. Idempotent (content-hash cache skips unchanged chunks). */
+ *  existed are retrievable. Idempotent (content-hash cache skips unchanged chunks).
+ *  NO acting user by design: this is a platform sweep and is billed as one. */
 export async function bootstrapFilesIndex(): Promise<void> {
   if (bootstrapped) return;
   bootstrapped = true;
@@ -29,15 +41,15 @@ export async function bootstrapFilesIndex(): Promise<void> {
 
 /** Re-index a single file after an edit. Records a `file_indexed` lineage edge when
  *  it becomes searchable (the file → index edge). */
-export async function reindexFile(asset: FileAsset, text: string): Promise<void> {
-  const report = await indexAsset(asset, text, { live: true }).catch(() => null);
+export async function reindexFile(asset: FileAsset, text: string, actingUserId?: string): Promise<void> {
+  const report = await indexAsset(asset, text, { live: true, caller: callerFor(asset, actingUserId) }).catch(() => null);
   if (report && report.status === 'searchable') {
     recordLineage({ kind: 'file_indexed', fileId: asset.id, fileName: asset.name, target: `${asset.id}#chunks(${report.indexed})`, by: asset.owner });
   }
 }
 
 /** Re-index by id (fetches the current body server-side). */
-export async function reindexById(id: string): Promise<void> {
+export async function reindexById(id: string, actingUserId?: string): Promise<void> {
   const body = bodyForIndex(id);
-  if (body) await reindexFile(body.asset, body.text);
+  if (body) await reindexFile(body.asset, body.text, actingUserId);
 }

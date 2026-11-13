@@ -5,6 +5,7 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import {
   getAppByIdInternal,
+  getAppForUser,
   persistApp,
   templateFiles,
   newId,
@@ -261,8 +262,8 @@ export type PreviewResult = {
 };
 
 export async function startPreview(appId: string, user: CurrentUser): Promise<PreviewResult> {
-  const app = await getAppByIdInternal(appId);
-  if (!app) throw withStatus(new Error('App not found'), 404);
+  // EXISTENCE FIRST (F2-1): invisible ⇒ `not_found`, the same answer the read doors give.
+  const app = await getAppForUser(appId, user);
   const ownerOrBuilder = app.owner === user.id || (isBuilder(user) && user.domains.includes(app.domain));
   if (!ownerOrBuilder) throw withStatus(new Error('Only the creator can preview this app'), 403);
   if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot run a preview'), 409);
@@ -316,8 +317,8 @@ export async function requestDeploy(
   user: CurrentUser,
   opts: { changedFiles?: DiffSummary['files']; scanMode?: 'live' | 'offline-mock' } = {},
 ): Promise<DeployRequestResult> {
-  const app = await getAppByIdInternal(appId);
-  if (!app) throw withStatus(new Error('App not found'), 404);
+  // EXISTENCE FIRST (F2-1) — see startPreview.
+  const app = await getAppForUser(appId, user);
   if (app.owner !== user.id && !isBuilder(user)) {
     throw withStatus(new Error('Only the creator or a Builder can request a deploy'), 403);
   }

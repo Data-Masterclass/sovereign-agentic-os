@@ -5,6 +5,7 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import {
   getAppByIdInternal,
+  getAppForUser,
   persistApp,
   listAllAppsInternal,
   removeAppInternal,
@@ -48,8 +49,10 @@ function isOwnerOrAdmin(app: App, user: CurrentUser): boolean {
 
 /** Archive: scale to zero + disable the MCP/connection; retain data (restorable). */
 export async function archiveApp(appId: string, user: CurrentUser): Promise<App> {
-  const app = await getAppByIdInternal(appId);
-  if (!app) throw withStatus(new Error('App not found'), 404);
+  // EXISTENCE FIRST (F2-1): an app the caller cannot SEE is `not_found`, exactly as the read
+  // doors answer it — a 403 here would confirm the id exists to an enumerating caller. The
+  // role/owner gate below then answers `forbidden` for an app that IS visible.
+  const app = await getAppForUser(appId, user);
   if (!isOwnerOrAdmin(app, user)) throw withStatus(new Error('Only the owner or an Admin can archive this app'), 403);
   if (app.status === 'archived') return app;
 
@@ -233,8 +236,8 @@ export async function demoteApp(appId: string, user: CurrentUser): Promise<App> 
  * flows into the Data golden path.
  */
 export async function useAsData(appId: string, user: CurrentUser): Promise<App> {
-  const app = await getAppByIdInternal(appId);
-  if (!app) throw withStatus(new Error('App not found'), 404);
+  // EXISTENCE FIRST (F2-1) — see archiveApp.
+  const app = await getAppForUser(appId, user);
   if (app.owner !== user.id) throw withStatus(new Error('Only the owner can snapshot this app as Data'), 403);
   app.usedAsData = true;
   await persistApp(app);
@@ -262,8 +265,10 @@ export async function consumeResource(
   user: CurrentUser,
   resource: ConsumedResource,
 ): Promise<App> {
-  const app = await getAppByIdInternal(appId);
-  if (!app) throw withStatus(new Error('App not found'), 404);
+  // EXISTENCE FIRST (F2-1) — see archiveApp. This also closes the wider hole the leak hid: the
+  // Builder arm below carries NO domain check, so without the visibility gate any Builder could
+  // grant a resource to an app in a domain they do not belong to.
+  const app = await getAppForUser(appId, user);
   if (app.owner !== user.id && !roleAtLeast(user.role, 'builder')) {
     throw withStatus(new Error('Only the owner or a Builder can grant the app a resource'), 403);
   }
