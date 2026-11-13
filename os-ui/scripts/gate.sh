@@ -29,4 +29,5 @@ node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test \
   tabs/agents/lib/build/worker-resolve-hook.test.ts \
   tabs/agents/lib/engine/parity.test.ts \
   tabs/agents/lib/engine/fixtures.test.ts \
-  tabs/agents/lib/engine/build-graph.test.ts
+  tabs/agents/lib/engine/build-graph.test.ts \
+  core/mcp/agent-run-surface.test.ts

@@ -67,12 +67,12 @@ export const MONITORING_TOOLS: McpTool[] = [
     tab: 'monitoring',
     minRole: 'creator',
     description:
-      'Drill into ONE run trace: its steps (LLM calls, tool calls, spans), context pack, inputs/outputs, tokens and logs. Purpose: the core promise of Monitoring — see exactly what a governed run did. Before: list_runs (take a runId). After: act on what you find. Governance: HARD gate — the trace is fetched, then `assertInScope` throws BEFORE any step/log is returned, so a creator CANNOT open another user’s trace by guessing its id: out-of-scope is a typed forbidden, a missing id a typed not_found (indistinguishable from denied). LIVE from Langfuse; offline-mock fallback carries `source: "mock"`.',
+      'Drill into ONE run trace: its steps (LLM calls, tool calls, spans), context pack, inputs/outputs, tokens and logs. Purpose: the core promise of Monitoring — see exactly what a governed run did. For an AGENT run the trace id IS the run id (`run_<uuid>` from run_agent_system): agents are spans, model calls are generations with token usage, tool calls are spans carrying the governance decision — one run, one trace. Before: list_runs, or the `runId` run_agent_system / get_agent_run returned. After: act on what you find. Governance: HARD gate — the trace is fetched, then `assertInScope` throws BEFORE any step/log is returned, so a creator CANNOT open another user’s trace by guessing its id: out-of-scope is a typed forbidden, a missing id a typed not_found (indistinguishable from denied). LIVE from Langfuse; offline-mock fallback carries `source: "mock"`.',
     inputSchema: {
       type: 'object',
-      properties: { runId: { type: 'string', description: 'Run/trace id from list_runs.' } },
+      properties: { runId: { type: 'string', description: 'Run/trace id — from list_runs, or an agent run id (run_<uuid>).' } },
       required: ['runId'],
-      examples: [{ runId: 'trace_ab12cd' }],
+      examples: [{ runId: 'trace_ab12cd' }, { runId: 'run_1b4e28ba-2fa1-11d2-883f-0016d3cca427' }],
     },
     call: async (user, args) => {
       const id = str(args.runId).trim();

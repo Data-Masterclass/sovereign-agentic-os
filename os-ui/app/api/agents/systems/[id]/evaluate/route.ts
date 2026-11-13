@@ -95,7 +95,8 @@ export const POST = withRoute<{ id: string }, {
 
   const result = await judgeRun({ output, description, tacitKnowledge }, complete);
   // A3 (checklist A22): the verdict is a Langfuse SCORE on the run's trace (id = run id). Only a
-  // langgraph run has one; a walker run keeps the verdict in the response alone.
+  // Every run has one since A5; a run recorded before the rebuild has none and keeps the verdict
+  // in the response alone.
   const runId = typeof body.runId === 'string' && body.runId.trim() ? body.runId.trim() : view.lastRun?.runId;
   const scored = isRunId(runId) && runId === view.lastRun?.runId
     ? scoreTrace({

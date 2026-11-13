@@ -139,7 +139,8 @@ spec:
 ---
 # 4) INGRESS lock on query-tool (in the PLATFORM namespace): only os-ui pods may reach
 # it. The governed query engine must not be callable by any other in-namespace pod
-# (agent-runtime reaches it INDIRECTLY via os-ui's /api/agents/tool, never directly).
+# (nothing else reaches it: agent graphs run INSIDE os-ui since A5, so there is no
+# second process and no callback door — `/api/agents/tool` is deleted).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

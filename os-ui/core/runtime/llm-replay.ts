@@ -4,7 +4,7 @@
  * AREA:       runtime
  * FEATURE:    Record / replay model caller — identical model outputs for two engines
  * USER STORY: As the engineer rebuilding the agent engine I want to record every model exchange
- *             a run makes once, then feed the SAME responses to the old walker and the new
+ *             a run makes once, then feed the SAME responses to the old walker (A0–A4) and the new
  *             LangGraph engine, so a difference in visited path, tool calls or final text can
  *             only come from the engine — never from the model.
  * ARCHITECTURE:
