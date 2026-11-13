@@ -9,6 +9,7 @@ import {
   citationArtifact,
   envelope,
   parseArtifacts,
+  rowLimitTruncation,
   tableArtifact,
   tableArtifactFromObjectRows,
   truncationBanner,
@@ -253,4 +254,139 @@ test('C7: the schema REJECTS a payload that is not the envelope, so a client can
   assert.notDeepEqual(validate(schema, { artifacts: [{}] }), []); // no kind
   assert.notDeepEqual(validate(schema, { artifacts: [{ kind: 'html' }] }), []); // not a kind
   assert.notDeepEqual(validate(schema, { artifacts: [{ kind: 'table', rowCount: 'many' }] }), []);
+});
+
+// ------------------- (d) H-1: a LIMIT the OS itself compiled is truncation too ----
+
+/**
+ * The semantic layer compiles `LIMIT n` into its serve SQL, so it can clip a grouped result
+ * exactly as raw SQL can — and `query_metric` used to sum the clipped rows into its scalar.
+ * `rowLimitTruncation` is the decision the handler makes; these are its cases.
+ */
+test('H-1: 400 groups at limit 100 → truncated, with a sentence that forbids a total', () => {
+  // The query returned the bound (100 of 400 groups exist). SQL cannot tell us 400; it can
+  // only tell us it stopped at 100 — which is exactly why no total may be computed.
+  const tr = rowLimitTruncation(100, 100);
+  assert.equal(tr.truncated, true);
+  assert.equal(tr.rowLimit, 100);
+  assert.match(tr.message ?? '', /FIRST 100 rows/);
+  assert.match(tr.message ?? '', /A total or average over them would be wrong/);
+  assert.match(tr.message ?? '', /cannot report what it did not return/);
+});
+
+test('H-1: a result UNDER the bound is not truncated — silence stays meaningful', () => {
+  assert.deepEqual(rowLimitTruncation(99, 100), {});
+  assert.deepEqual(rowLimitTruncation(0, 100), {});
+  assert.deepEqual(rowLimitTruncation(1, 100), {});
+});
+
+test('H-1: the ambiguous "exactly n rows" case is treated as POSSIBLY clipped', () => {
+  // A query returning exactly `limit` rows is indistinguishable from one clipped at
+  // `limit`. Erring toward "clipped" costs a caveat; erring the other way costs a wrong
+  // number presented as the governed one.
+  assert.equal(rowLimitTruncation(100, 100).truncated, true);
+  assert.equal(rowLimitTruncation(5, 5).truncated, true);
+});
+
+test('H-1: a nonsensical bound never fabricates a truncation claim', () => {
+  assert.deepEqual(rowLimitTruncation(10, 0), {});
+  assert.deepEqual(rowLimitTruncation(10, -1), {});
+  assert.deepEqual(rowLimitTruncation(10, Number.NaN), {});
+  assert.deepEqual(rowLimitTruncation(10, Number.POSITIVE_INFINITY), {});
+});
+
+test('H-1: tableArtifactFromObjectRows carries the compiled-LIMIT truncation through', () => {
+  const rows = Array.from({ length: 100 }, (_, i) => ({ 'V.region': `r${i}`, 'V.revenue': 1 }));
+  const a = tableArtifactFromObjectRows(rows, {
+    source: 'semantic-layer',
+    title: 'V.revenue',
+    mode: 'live (sql)',
+    sql: 'SELECT … LIMIT 100',
+    ...rowLimitTruncation(rows.length, 100),
+  });
+  assert.equal(a.truncated, true, 'the semantic-layer mapper had NO truncation parameters before this fix');
+  assert.equal(a.rowLimit, 100);
+  assert.match(a.message ?? '', /would be wrong/);
+  assert.ok(truncationBanner(a), 'a clipped semantic result must produce a banner');
+});
+
+test('M-4: a warning rides the semantic table and is NOT conflated with truncation', () => {
+  const a = tableArtifactFromObjectRows([{ x: 1 }], {
+    source: 'semantic-layer',
+    warning: 'Not sliced by “customer_id” — not exposed on the governed view.',
+  });
+  assert.match(a.warning ?? '', /Not sliced by/);
+  assert.equal('truncated' in a, false, 'a de-dimensioned result is not a clipped one');
+  assert.equal(truncationBanner(a), null);
+});
+
+// ----------------------------------------- (e) L-1: no field survives by accident ----
+
+test('L-1: parseArtifacts picks fields explicitly — a smuggled html/href/src is dropped', () => {
+  const parsed = parseArtifacts({
+    artifacts: [
+      {
+        kind: 'table',
+        columns: ['a'],
+        rows: [['1']],
+        rowCount: 1,
+        source: 'semantic-layer',
+        // None of these are in the protocol. A spread would have copied them straight
+        // through to the renderer's props.
+        html: '<img src=x onerror=alert(1)>',
+        href: 'javascript:alert(1)',
+        src: 'http://evil.test/x.png',
+        style: 'position:fixed;inset:0',
+        onClick: 'alert(1)',
+      },
+      {
+        kind: 'citation',
+        of: 'metric',
+        id: 'm',
+        href: 'https://evil.test',
+        html: '<script>x</script>',
+      },
+      { kind: 'chart', view: 'V', panel: {}, srcdoc: '<html>' },
+      { kind: 'metric_draft', datasetId: 'ds', form: {}, html: '<b>' },
+      { kind: 'dashboard_draft', name: 'n', view: 'V', charts: [], href: 'javascript:1' },
+    ],
+  });
+  assert.equal(parsed.length, 5);
+  for (const a of parsed) {
+    for (const forbidden of ['html', 'href', 'src', 'style', 'onClick', 'srcdoc']) {
+      assert.equal(forbidden in a, false, `${a.kind} let a \`${forbidden}\` field survive the parse`);
+    }
+  }
+});
+
+test('L-1: the protocol fields themselves still survive the explicit pick', () => {
+  const full = {
+    kind: 'table' as const,
+    columns: ['a'],
+    rows: [['1']],
+    rowCount: 9,
+    truncated: true as const,
+    rowLimit: 9,
+    message: 'clipped',
+    sql: 'SELECT 1',
+    semanticQuery: 'q',
+    source: 'semantic-layer' as const,
+    mode: 'live',
+    title: 't',
+    warning: 'w',
+  };
+  assert.deepEqual(parseArtifacts({ artifacts: [full] }), [full]);
+  const draft = {
+    kind: 'metric_draft' as const,
+    datasetId: 'ds',
+    form: { a: 1 },
+    previewColumns: ['c'],
+    previewRows: [['1']],
+    previewMode: 'live (sql)',
+    previewSql: 'SELECT 1',
+    definitionYaml: 'measures: []',
+  };
+  assert.deepEqual(parseArtifacts({ artifacts: [draft] }), [draft]);
+  const dash = { kind: 'dashboard_draft' as const, id: 'd1', name: 'n', view: 'V', charts: [{ x: 1 }], warnings: ['w'] };
+  assert.deepEqual(parseArtifacts({ artifacts: [dash] }), [dash]);
 });

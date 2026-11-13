@@ -528,7 +528,7 @@ export async function handleRpc(
         const artifacts = projectArtifacts(tool, result, args);
         return ok(id, {
           content: [{ type: 'text', text: safeText(result) }],
-          ...(artifacts ? { structuredContent: { artifacts } } : {}),
+          ...(artifacts === undefined ? {} : { structuredContent: { artifacts } }),
         });
       } catch (e) {
         // Governance denials + execution failures surface as a TYPED MCP tool error
@@ -600,21 +600,26 @@ export function structuredError(e: unknown): ToolError {
 }
 
 /**
- * Run a tool's artifact projection defensively. Returns undefined when the tool declares
- * none or when the projection produced nothing, so `structuredContent` is absent rather
- * than an empty envelope.
+ * Run a tool's artifact projection defensively.
+ *
+ * A tool that declares an `outputSchema` MUST return `structuredContent` conforming to it —
+ * the MCP spec is explicit, and a client that validates would otherwise treat the absent
+ * field as a protocol violation on exactly the quiet paths (an empty result, a projection
+ * bug). So a declaring tool always gets an array, empty if need be; `undefined` is reserved
+ * for a tool that declared nothing, which stays byte-identical to before.
  */
 function projectArtifacts(
   tool: McpTool,
   result: unknown,
   args: Record<string, unknown>,
 ): ChatArtifact[] | undefined {
-  if (!tool.artifacts) return undefined;
+  if (!tool.outputSchema && !tool.artifacts) return undefined;
+  if (!tool.artifacts) return [];
   try {
     const list = tool.artifacts(result, args);
-    return Array.isArray(list) && list.length > 0 ? list : undefined;
+    return Array.isArray(list) ? list : [];
   } catch {
-    return undefined;
+    return [];
   }
 }
 

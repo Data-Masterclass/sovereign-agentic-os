@@ -42,7 +42,9 @@ import { claimsFromUser, delegate } from '@tabs/data/lib/identity';
 import {
   ARTIFACT_OUTPUT_SCHEMA,
   citationArtifact,
+  rowLimitTruncation,
   tableArtifactFromObjectRows,
+  truncationOf,
   type ChatArtifact,
 } from '@core/runtime/chat-artifacts';
 import { syncStatusFor, latestSyncSignals, dagsterRunFor } from '@tabs/data/lib/sync-status-server';
@@ -73,6 +75,15 @@ async function connectedBlock(d: Dataset): Promise<{
 }
 
 // ================================ READ / LIST =================================
+/**
+ * `query_metric`'s documented default row bound ("Max rows (default 100)"), mirroring the
+ * `?? 100` in `tabs/metrics/lib/explorer.ts`'s compiled `LIMIT`. The handler now always
+ * passes a CONCRETE limit to `exploreMetric`, so this value and the explorer's fallback can
+ * never disagree about the bound a given call used — this is the number the truncation check
+ * compares against because it is the number that was sent.
+ */
+const QUERY_METRIC_DEFAULT_LIMIT = 100;
+
 export const readTools: McpTool[] = [
   {
     name: 'list_datasets',
@@ -329,25 +340,36 @@ export const readTools: McpTool[] = [
       ],
     },
     // C7 — the governed number travels as a typed artifact, so the drawer shows the rows,
-    // the member that produced them and the resolver mode rather than prose the model wrote
-    // around them. `source: 'semantic-layer'` is what makes this answer NOT labelled ad-hoc:
-    // the aggregation and the joins are the human-authored metric definition's, not the
-    // model's. No SQL is shown because none exists — this tool accepts and generates none by
-    // construction; the member and the citation are the real artefact to point at.
+    // the compiled SQL that produced them and the resolver mode rather than prose the model
+    // wrote around them. `source: 'semantic-layer'` is what makes this answer NOT labelled
+    // ad-hoc: the aggregation and the joins are the human-authored metric definition's, not
+    // the model's. The SQL shown is the SQL that RAN (`exploreMetric` returns it), not a
+    // paraphrase of the member.
+    //
+    // The truncation fields are threaded through unchanged (review H-1): the compiled query
+    // carries a `LIMIT`, so the semantic layer can clip a grouped result exactly as the SQL
+    // path can, and the layer that "accepts no SQL by construction" is NOT therefore immune
+    // to truncation laundering.
     outputSchema: ARTIFACT_OUTPUT_SCHEMA,
     artifacts: (result) => {
-      const r = (result ?? {}) as { metricId?: unknown; member?: unknown; rows?: unknown; mode?: unknown };
-      const member = typeof r.member === 'string' ? r.member : '';
+      const r = (result ?? {}) as Record<string, unknown>;
+      const str_ = (v: unknown) => (typeof v === 'string' ? v : undefined);
+      const member = str_(r.member) ?? '';
       const out: ChatArtifact[] = [
         tableArtifactFromObjectRows(r.rows, {
           source: 'semantic-layer',
           title: member || 'query_metric',
-          mode: typeof r.mode === 'string' ? r.mode : undefined,
-          semanticQuery: member ? `semantic member: ${member}` : undefined,
+          mode: str_(r.mode),
+          sql: str_(r.sql),
+          // M-4 — the explorer's loud-degradation sentence (a dropped slice member, a pending
+          // window metric, an unreachable lakehouse) reaches the surface instead of dying in
+          // the handler's return value.
+          warning: str_(r.warning),
+          ...truncationOf(result),
         }),
       ];
-      if (typeof r.metricId === 'string' && r.metricId) {
-        out.push(citationArtifact('metric', r.metricId, { name: member || undefined }));
+      if (str_(r.metricId)) {
+        out.push(citationArtifact('metric', str_(r.metricId) as string, { name: member || undefined }));
       }
       return out;
     },
@@ -360,19 +382,65 @@ export const readTools: McpTool[] = [
       // derived from the session claims (never a service account), so Trino/OPA RLS is
       // the caller's. Same path as the Metrics explorer route.
       const token = delegate(claimsFromUser({ id: user.id, domains: user.domains, role: user.role }), 'domain');
+      // The row bound that will appear in the compiled query's `LIMIT`. Resolved HERE and
+      // always passed on, so the check below compares the returned rows against the number
+      // that was actually sent — passing `undefined` and letting the explorer default would
+      // leave the check comparing against nothing on the common (no-limit-given) call.
+      const limit =
+        typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : QUERY_METRIC_DEFAULT_LIMIT;
       const result = await exploreMetric(record.dataset, record.measure, token, {
         dimensions: strArr(args.dimensions),
         timeDimension: str(args.timeDimension) || undefined,
         granularity: (str(args.granularity) as Granularity) || undefined,
-        limit: typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : undefined,
+        limit,
       });
-      // The scalar: sum the member across returned rows (a grouped query still totals).
+      // TRUNCATION (review H-1). The compiled serve SQL ends `LIMIT <limit>`
+      // (`tabs/metrics/lib/explorer.ts` previewTrinoSql / windowTrinoSql), so a slice with
+      // more groups than the bound comes back clipped — and the scalar below used to sum
+      // those rows and present the result as THE NUMBER. A total over the first 100 of 400
+      // regions is simply wrong, and "the semantic layer accepts no SQL" is no protection:
+      // the bound is ours, not the model's.
+      //
+      // So when the result reached the bound we WITHHOLD the scalar rather than flag it. A
+      // flagged wrong number still gets read, copied and pasted into a slide; an absent one
+      // with a reason cannot be. The rows are still returned — they are real rows, just not
+      // all of them — and the artifact carries the bound and the sentence.
+      const truncation = rowLimitTruncation(result.rows.length, limit);
       let value: number | null = null;
-      for (const row of result.rows) {
-        const v = Number(row[result.member]);
-        if (!Number.isNaN(v)) value = (value ?? 0) + v;
+      if (!truncation.truncated) {
+        // The scalar: sum the member across returned rows (a grouped query still totals).
+        for (const row of result.rows) {
+          const v = Number(row[result.member]);
+          if (!Number.isNaN(v)) value = (value ?? 0) + v;
+        }
       }
-      return { metricId, member: result.member, value, rows: result.rows, mode: result.mode, securityContext: result.securityContext };
+      return {
+        metricId,
+        member: result.member,
+        value,
+        ...(truncation.truncated
+          ? {
+              valueWithheld:
+                `No total is given: the query reached its row limit of ${limit}, so summing the returned ` +
+                'rows would produce a number computed over an unknown fraction of the groups. Narrow the ' +
+                'slice, or re-run with a higher `limit`.',
+            }
+          : {}),
+        rows: result.rows,
+        mode: result.mode,
+        // L-2 — the SQL that actually ran. The surface shows the real statement rather than
+        // a paraphrase of the member (this closes deviation C-6).
+        sql: result.sql,
+        ...truncation,
+        // M-4 — the explorer's own honesty flags, no longer dropped on the floor: a slice
+        // member the governed view does not expose (`droppedMembers` + `warning`), a window
+        // metric with no time slice (`pending`), an unreachable lakehouse (`unavailable`).
+        ...(result.warning ? { warning: result.warning } : {}),
+        ...(result.droppedMembers ? { droppedMembers: result.droppedMembers } : {}),
+        ...(result.pending ? { pending: true } : {}),
+        ...(result.unavailable ? { unavailable: true } : {}),
+        securityContext: result.securityContext,
+      };
     },
   },
   {

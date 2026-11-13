@@ -311,11 +311,23 @@ test('C7: a tool with NO projection is byte-identical to before (no empty envelo
   assert.deepEqual(Object.keys(result), ['content']);
 });
 
-test('C7: a THROWING projection degrades to no artifacts — the governed read still succeeds', async () => {
+test('C7: a THROWING projection degrades to an EMPTY envelope — the read still succeeds', async () => {
   const result = await callFixture(throwingProjection);
   assert.equal(result.isError, undefined, 'a renderer bug must never fail a governed read');
-  assert.equal('structuredContent' in result, false);
+  // M-2: the tool declared an outputSchema, so it MUST still return conforming
+  // structuredContent — a validating client would read an absent field as a protocol
+  // violation on exactly the quiet paths (an empty result, a projection bug).
+  assert.deepEqual(result.structuredContent, { artifacts: [] });
   assert.match(result.content?.[0]?.text ?? '', /"ok": true/);
+});
+
+test('C7/M-2: a tool declaring outputSchema ALWAYS returns structuredContent, even when empty', async () => {
+  const emptyProjection: McpTool = { ...withProjection, name: 'fixture_empty', artifacts: () => [] };
+  const result = await callFixture(emptyProjection);
+  assert.deepEqual(result.structuredContent, { artifacts: [] });
+  // And a tool that declares a schema but no projection at all still conforms.
+  const schemaOnly: McpTool = { ...withoutProjection, name: 'fixture_schema_only', outputSchema: ARTIFACT_OUTPUT_SCHEMA };
+  assert.deepEqual((await callFixture(schemaOnly)).structuredContent, { artifacts: [] });
 });
 
 test('C7: a governance DENIAL carries its typed error, never artifacts', async () => {
@@ -325,4 +337,98 @@ test('C7: a governance DENIAL carries its typed error, never artifacts', async (
   const err = (result.structuredContent as { error?: { code?: string } })?.error;
   assert.equal(err?.code, 'forbidden');
   assert.deepEqual(parseArtifacts(result.structuredContent), [], 'a denial must yield no artifacts');
+});
+
+// ------------------------------------- (d) H-1: the semantic layer can clip too ----
+
+/**
+ * The `query_metric` handler compiles `LIMIT <limit>` into the serve SQL
+ * (`tabs/metrics/lib/explorer.ts`), so a grouped slice with more groups than the bound comes
+ * back clipped — and the handler used to SUM those rows into `value` and return it as the
+ * number. "The semantic layer accepts no SQL by construction" is no protection: the bound is
+ * the OS's own.
+ *
+ * These tests drive the PROJECTION over the handler's return shape. The withholding itself
+ * lives in the handler and is pinned by the shape it returns (`value: null` +
+ * `valueWithheld`), asserted here against a result built exactly as the handler builds it.
+ */
+test('H-1: 400 groups at limit 100 → the metric table is flagged truncated, no confident total', () => {
+  // What the handler returns for a clipped grouped query: 100 rows back, bound 100.
+  const rows = Array.from({ length: 100 }, (_, i) => ({
+    'OrdersV1.region': `r${i}`,
+    'OrdersV1.revenue': 1000,
+  }));
+  const clipped = {
+    metricId: 'ds_ab12cd.revenue',
+    member: 'OrdersV1.revenue',
+    // The handler WITHHELD the scalar — summing the first 100 of 400 groups would be wrong.
+    value: null,
+    valueWithheld: 'No total is given: the query reached its row limit of 100, so summing the returned rows would produce a number computed over an unknown fraction of the groups. Narrow the slice, or re-run with a higher `limit`.',
+    rows,
+    mode: 'live (sql)',
+    sql: 'SELECT "region", sum("net_amount") AS "revenue"\nFROM iceberg.sales.gold_orders\nGROUP BY 1\nLIMIT 100',
+    truncated: true,
+    rowLimit: 100,
+    message:
+      'This query reached its row limit of 100. These are the FIRST 100 rows the compiled query returned, in its own order, and there may be more — SQL cannot report what it did not return. A total or average over them would be wrong. Narrow the slice, or re-run with a higher `limit`.',
+    securityContext: { sub: 'u-42' },
+  };
+  const artifacts = byName('query_metric').artifacts?.(clipped, { metricId: 'ds_ab12cd.revenue', dimensions: ['region'] }) ?? [];
+  const table = artifacts.find((a) => a.kind === 'table');
+  assert.ok(table && table.kind === 'table');
+  if (!table || table.kind !== 'table') return;
+  assert.equal(table.truncated, true, 'a clipped SEMANTIC result must be flagged, not just a clipped SQL one');
+  assert.equal(table.rowLimit, 100);
+  assert.match(table.message ?? '', /FIRST 100 rows/);
+  assert.match(table.message ?? '', /would be wrong/);
+  // The scalar must never appear as a row the surface could render as "the total".
+  assert.equal(table.rows.flat().includes('100000'), false, 'no fabricated total');
+  assert.equal(clipped.value, null, 'the handler must WITHHOLD the scalar, not merely flag it');
+  assert.match(clipped.valueWithheld, /unknown fraction of the groups/);
+});
+
+test('H-1: an UNCLIPPED metric result keeps its total and claims no truncation', () => {
+  const whole = {
+    metricId: 'ds_ab12cd.revenue',
+    member: 'OrdersV1.revenue',
+    value: 128450,
+    rows: [{ 'OrdersV1.region': 'DE', 'OrdersV1.revenue': 128450 }],
+    mode: 'live (sql)',
+    sql: 'SELECT 1',
+    securityContext: {},
+  };
+  const artifacts = byName('query_metric').artifacts?.(whole, { metricId: 'ds_ab12cd.revenue' }) ?? [];
+  const table = artifacts.find((a) => a.kind === 'table');
+  assert.ok(table && table.kind === 'table');
+  if (!table || table.kind !== 'table') return;
+  assert.equal('truncated' in table, false, 'an unclipped result must not carry the key at all');
+  assert.equal('rowLimit' in table, false);
+});
+
+test('L-2: query_metric shows the SQL that RAN, not a paraphrase of the member', () => {
+  const sql = 'SELECT "region", sum("net_amount") AS "revenue"\nFROM iceberg.sales.gold_orders\nGROUP BY 1\nLIMIT 100';
+  const artifacts = byName('query_metric').artifacts?.(
+    { metricId: 'm', member: 'OrdersV1.revenue', rows: [], mode: 'live (sql)', sql },
+    { metricId: 'm' },
+  ) ?? [];
+  const table = artifacts.find((a) => a.kind === 'table');
+  assert.ok(table && table.kind === 'table');
+  if (!table || table.kind !== 'table') return;
+  assert.equal(table.sql, sql);
+  assert.equal(table.semanticQuery, undefined, 'the invented "semantic member: …" label is gone');
+});
+
+test('M-4: query_metric surfaces the explorer warning (a dropped slice member) on the artifact', () => {
+  const warning =
+    'Not sliced by “OrdersV1.customer_id” — this member is not exposed on the governed view.';
+  const artifacts = byName('query_metric').artifacts?.(
+    { metricId: 'm', member: 'OrdersV1.revenue', rows: [], mode: 'live (sql)', sql: 'SELECT 1', warning, droppedMembers: ['OrdersV1.customer_id'] },
+    { metricId: 'm' },
+  ) ?? [];
+  const table = artifacts.find((a) => a.kind === 'table');
+  assert.ok(table && table.kind === 'table');
+  if (!table || table.kind !== 'table') return;
+  assert.equal(table.warning, warning, 'a de-dimensioned result must say so — never a silent slice drop');
+  // A warning is NOT truncation: the two must not be conflated.
+  assert.equal('truncated' in table, false);
 });

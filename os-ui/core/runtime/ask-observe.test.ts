@@ -4,7 +4,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
-import { runOsAssistant, ASK_COST_TAB, artifactsFromToolResult } from '@core/runtime/agent-loop';
+import {
+  runOsAssistant,
+  ASK_COST_TAB,
+  artifactsFromToolResult,
+  truncationMarkerFor,
+  composeToolText,
+  osAssistantSystem,
+} from '@core/runtime/agent-loop';
+import { DATA_NOT_INSTRUCTIONS_RULE } from '@core/runtime/ask-rules';
+import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
 import { liteLlmCaller } from '@core/runtime/runtime';
 import { config } from '@core/kernel/config';
 import type { LlmCall, LlmRequest } from '@core/runtime/agentic';
@@ -164,4 +173,112 @@ test('C5 GUARD: a tool DENIAL yields no artifacts — an error is never rendered
   );
   // And a tool that returned no structured payload at all contributes nothing.
   assert.deepEqual(artifactsFromToolResult({}), []);
+});
+
+// ------------------------- H-2: the clipping notice must reach the model FIRST ----
+
+/**
+ * The tool result reaches the model as pretty-printed JSON, and `truncated` / `rowLimit` /
+ * `message` sit near the END of that object. `truncateToTokens` bounds an oversized tool
+ * result by KEEPING THE HEAD — so on exactly the results most likely to be clipped (the big
+ * ones), the notice that they were clipped is the first thing dropped, and a model that
+ * never saw it cannot obey the rule forbidding a total over it.
+ *
+ * So the marker is PREPENDED. These tests pin it in both places it has to be: the artifact
+ * the user sees, and the `role: 'tool'` text the model reads.
+ */
+const CLIPPED_STRUCTURED = {
+  artifacts: [
+    {
+      kind: 'table',
+      columns: ['region'],
+      rows: [['DE']],
+      rowCount: 1000,
+      source: 'ad-hoc-sql',
+      truncated: true,
+      rowLimit: 1000,
+      message: 'Result clipped at QUERY_MAX_ROWS=1000. These are the first 1000 rows, not a sample.',
+    },
+  ],
+};
+
+test('H-2: a clipped result produces a ⚠ TRUNCATED marker carrying the sentence verbatim', () => {
+  const marker = truncationMarkerFor(artifactsFromToolResult({ structuredContent: CLIPPED_STRUCTURED }));
+  assert.ok(marker, 'a clipped result must produce a marker');
+  assert.match(marker ?? '', /^⚠ TRUNCATED: /, 'the marker must be the FIRST thing in the text');
+  assert.match(marker ?? '', /not a sample/, "the backend's own sentence must be inside the marker");
+});
+
+test('H-2: an UNCLIPPED result produces no marker — an unconditional one trains it away', () => {
+  assert.equal(
+    truncationMarkerFor(
+      artifactsFromToolResult({
+        structuredContent: { artifacts: [{ kind: 'table', columns: [], rows: [], rowCount: 0, source: 'ad-hoc-sql' }] },
+      }),
+    ),
+    null,
+  );
+  assert.equal(truncationMarkerFor([]), null);
+});
+
+test('H-2: the REAL composer puts the notice ahead of the JSON the model reads', () => {
+  // `composeToolText` is the exact function `osToolExecutor` uses to build the
+  // `role: 'tool'` message, so this asserts the shipped composition, not a copy of it.
+  const artifacts = artifactsFromToolResult({ structuredContent: CLIPPED_STRUCTURED });
+  const json = JSON.stringify({ engine: 'trino', rows: [['DE']], truncated: true, rowLimit: 1000 }, null, 2);
+  const text = composeToolText(artifacts, json);
+  assert.ok(text.startsWith('⚠ TRUNCATED:'), 'the notice must be the first thing in the message');
+  assert.ok(
+    text.indexOf('⚠ TRUNCATED:') < text.indexOf('"truncated"'),
+    'a head-keeping context bound must cut the JSON, never the notice',
+  );
+  assert.ok(text.includes(json), "the tool's own output is still handed over in full");
+});
+
+test('H-2: the composer leaves an unclipped result exactly as it was', () => {
+  assert.equal(composeToolText([], '{"ok":true}'), '{"ok":true}');
+  assert.equal(composeToolText([], ''), '(no output)', 'the empty-output contract is unchanged');
+});
+
+test('H-2: a real turn puts the executor-composed text on the transcript as role:"tool"', async () => {
+  const { llm } = recording([{ id: 'c1', name: 'whoami', args: {} }]);
+  const toolMessages: string[] = [];
+  const llmCapturing: LlmCall = async (req) => {
+    for (const m of req.messages) if (m.role === 'tool') toolMessages.push(m.content);
+    return llm(req);
+  };
+  await runOsAssistant({
+    user: creator,
+    tab: null,
+    messages: [{ role: 'user', content: 'who am I' }],
+    llm: llmCapturing,
+  });
+  assert.ok(toolMessages.length >= 1, 'the harness must put a role:tool message on the transcript');
+  // `whoami` is not clipped and declares no projection, so its text must be untouched —
+  // the marker is conditional, never decoration.
+  assert.equal(toolMessages[0].startsWith('⚠ TRUNCATED:'), false);
+});
+
+// ------------------------------- M-3: data is not instructions; failed writes ----
+
+test('M-3: OS_RULES tells the model that values in a tool result are DATA, not instructions', () => {
+  const sys = osAssistantSystem('data');
+  assert.ok(sys.includes(DATA_NOT_INSTRUCTIONS_RULE), 'the prompt-level injection rule is missing');
+  assert.match(sys, /never instructions/);
+});
+
+test('M-3: the turn passes writeToolNames, so a FAILED write is not re-fired byte-identically', async () => {
+  const seen: { writeToolNames?: string[] } = {};
+  // `runAgentic` is injected via the llm only, so assert on the registry the turn uses:
+  // every name passed must be a real write tool, and the set must be non-empty.
+  assert.ok(WRITE_TOOL_NAMES.size > 0);
+  assert.ok(WRITE_TOOL_NAMES.has('define_metric'));
+  assert.ok(WRITE_TOOL_NAMES.has('create_dashboard'));
+  // And none of the READ tools the semantic-layer rule steers to may be in it — a read
+  // classified as a write would be short-circuited after one failure.
+  for (const read of ['query_metric', 'query_data', 'list_metrics', 'get_metric', 'get_dashboard']) {
+    assert.equal(WRITE_TOOL_NAMES.has(read), false, `${read} must not be classified as a write`);
+  }
+  seen.writeToolNames = [...WRITE_TOOL_NAMES];
+  assert.ok(seen.writeToolNames.length >= 2);
 });

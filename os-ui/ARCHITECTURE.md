@@ -826,8 +826,19 @@ and never turns a successful governed read into an error.
 
 **Three rules this path exists to enforce.**
 
-1. **Truncation is never laundered.** `QUERY_MAX_ROWS` clips to the FIRST n rows, not a
-   sample (`core/infra/governed.ts`). The chat surface used to flatten the whole tool result
+1. **Truncation is never laundered — and the semantic layer is not exempt.** `QUERY_MAX_ROWS`
+   clips to the FIRST n rows, not a sample (`core/infra/governed.ts`), and `query_metric`'s
+   compiled serve SQL carries a `LIMIT n` of its own, so the layer that "accepts no SQL by
+   construction" can clip a grouped result exactly as raw SQL can — the bound is the OS's, not
+   the model's. When a metric query reaches its bound the scalar is **withheld**, not flagged
+   (`value: null` + `valueWithheld`): a flagged wrong number still gets pasted into a slide, an
+   absent one with a reason cannot be. `rowLimitTruncation()` is the shared decision, and it
+   treats "returned exactly n" as possibly-clipped, because SQL cannot report what it did not
+   return. The notice is also **prepended** to the text the model reads (`⚠ TRUNCATED: …`): the
+   truncation keys sit near the end of the pretty-printed JSON and `truncateToTokens` keeps the
+   HEAD, so on exactly the big results most likely to be clipped the notice was the first thing
+   dropped — and a model that never saw it cannot obey the rule forbidding a total over it.
+   The chat surface used to flatten the whole tool result
    into a markdown string, so whether the user learned the result was clipped depended on
    whether the model chose to mention it — and "total revenue was €4.2m" over the first
    1,000 rows is the worst thing this feature could do. Now `truncated` / `rowLimit` /
@@ -857,9 +868,23 @@ Ask turn on the Data tab used to be tagged `tab:data` and was indistinguishable 
 tab's own calls. The id is minted SERVER-SIDE — a client-chosen trace id would let one user
 write into another user's trace.
 
+**Three honesty lines, never merged.** A table can be clipped by the backend, *and* not sliced
+as asked (a dimension the governed view does not expose was dropped), *and* longer than the
+drawer shows. Those are three separate facts with three separate sentences — `message` (the
+backend's, verbatim), `warning` (the tool's own loud degradation, verbatim) and the view's own
+row-cap note. Merging any two loses one of them, and `rowCount` always stays the tool's count.
+
 **What is NOT true yet.** Threads are not durable: the drawer still holds messages in
 `useState` and the route still trusts the last 20 messages the client sent. The `chart`,
 `metric_draft` and `dashboard_draft` renderers are not built — the drawer counts what it
 cannot render and says so, rather than discarding it silently. There is no `os.analyst`
 LangGraph system and no write path from chat; the migration off `runAgentic` is staged behind
-a flag with a parity harness per decision D12 and has not been started.
+a flag with a parity harness per decision D12 and has not been started. The ask trace is FLAT —
+`observe` carries only `traceId`, so calls nest directly under the turn rather than under a
+per-step OS span, which needs the engine migration. `exploreMetric` still discards the
+query-tool's own `truncated`/`rowLimit`/`message` before `query_metric` can see them
+(`tabs/metrics/lib/build/explore-server.ts`), so a `QUERY_MAX_ROWS` clip landing *below* the
+metric's own `LIMIT` is not yet detected — a three-line fix in the metrics tab, filed for its
+owner. And the confirm before a write is **prompt-level only**: `writeToolNames` stops a failed
+write re-firing byte-identically, but it is not a confirmation gate; the structural one is the
+writer node's tool allowlist (C15, backlog).

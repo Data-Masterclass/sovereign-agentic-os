@@ -72,6 +72,13 @@ export type TableArtifact = {
   mode?: string;
   /** A short title for the table (the metric member, or the tool name). */
   title?: string;
+  /**
+   * The tool's OWN loud-degradation sentence, shown verbatim — a slice member the governed
+   * view does not expose and was dropped, a pending window metric, an unreachable
+   * lakehouse. Distinct from `message`, which is specifically about truncation: a result
+   * can be whole but not sliced as asked, and conflating the two loses one of them.
+   */
+  warning?: string;
 };
 
 /**
@@ -194,6 +201,7 @@ export const ARTIFACT_OUTPUT_SCHEMA: {
           source: { type: 'string', enum: ['semantic-layer', 'ad-hoc-sql'] },
           mode: { type: 'string' },
           title: { type: 'string' },
+          warning: { type: 'string', description: "The tool's own loud-degradation sentence, verbatim." },
           view: { type: 'string' },
           panel: { type: 'object' },
           datasetId: { type: 'string' },
@@ -302,7 +310,14 @@ export function tableArtifact(
  */
 export function tableArtifactFromObjectRows(
   rows: unknown,
-  opts: { source: TableArtifact['source']; title?: string; mode?: string; semanticQuery?: string; sql?: string },
+  opts: {
+    source: TableArtifact['source'];
+    title?: string;
+    mode?: string;
+    semanticQuery?: string;
+    sql?: string;
+    warning?: string;
+  } & TruncationFields,
 ): TableArtifact {
   const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r === 'object') : [];
   const columns: string[] = [];
@@ -318,12 +333,42 @@ export function tableArtifactFromObjectRows(
     rows: matrix,
     rowCount: matrix.length,
     source: opts.source,
+    // A semantic-layer result is clipped by the `LIMIT` the compiled query carried, so the
+    // caller MUST be able to pass the truncation through here too — without these the
+    // semantic layer could launder a clipped result exactly as the SQL path once did.
+    ...(opts.truncated === true ? { truncated: true } : {}),
+    ...(opts.rowLimit !== undefined ? { rowLimit: opts.rowLimit } : {}),
+    ...(opts.message ? { message: opts.message } : {}),
   };
   if (opts.title) artifact.title = opts.title;
   if (opts.mode) artifact.mode = opts.mode;
   if (opts.semanticQuery) artifact.semanticQuery = opts.semanticQuery;
   if (opts.sql) artifact.sql = opts.sql;
+  if (opts.warning) artifact.warning = opts.warning;
   return artifact;
+}
+
+/**
+ * The truncation fields for a result clipped by a `LIMIT n` the OS itself compiled — the
+ * semantic layer's case, where there is no backend `message` to quote because the bound was
+ * ours.
+ *
+ * `rowsReturned >= limit` is a LOWER BOUND and the sentence says so: a query returning
+ * exactly `limit` rows is indistinguishable from one clipped at `limit`, because SQL does
+ * not report what it did not return. Treating the ambiguous case as "possibly clipped" is
+ * the only safe direction — the alternative is a confident total over an unknown fraction
+ * of the groups.
+ */
+export function rowLimitTruncation(rowsReturned: number, limit: number): TruncationFields {
+  if (!Number.isFinite(limit) || limit <= 0 || rowsReturned < limit) return {};
+  return {
+    truncated: true,
+    rowLimit: limit,
+    message:
+      `This query reached its row limit of ${limit}. These are the FIRST ${limit} rows the compiled query ` +
+      'returned, in its own order, and there may be more — SQL cannot report what it did not return. ' +
+      'A total or average over them would be wrong. Narrow the slice, or re-run with a higher `limit`.',
+  };
 }
 
 /** A citation chip for the governed record an answer was grounded in. */
@@ -366,23 +411,41 @@ export function parseArtifacts(raw: unknown): ChatArtifact[] {
     if (!entry || typeof entry !== 'object') continue;
     const kind = (entry as { kind?: unknown }).kind;
     if (!isKind(kind)) continue;
+    // Every branch below PICKS its fields explicitly and never spreads the input. A spread
+    // would copy whatever else the payload carried — an `html`, `href`, `src` or `style`
+    // field smuggled in by a compromised or mistaken producer would survive into the object
+    // the renderer receives. An allowlist is the only shape that cannot be widened by
+    // accident, and it is why the protocol can promise "artifacts carry data, not markup".
     if (kind === 'table') {
       const t = entry as Partial<TableArtifact>;
-      out.push({
-        ...t,
+      const table: TableArtifact = {
         kind: 'table',
         columns: Array.isArray(t.columns) ? t.columns.map(cell) : [],
         rows: stringRows(t.rows),
         rowCount: n(t.rowCount) ?? (Array.isArray(t.rows) ? t.rows.length : 0),
         source: t.source === 'semantic-layer' ? 'semantic-layer' : 'ad-hoc-sql',
-      });
+      };
+      if (t.truncated === true) table.truncated = true;
+      if (n(t.rowLimit) !== undefined) table.rowLimit = n(t.rowLimit);
+      if (s(t.message)) table.message = s(t.message);
+      if (s(t.sql)) table.sql = s(t.sql);
+      if (s(t.semanticQuery)) table.semanticQuery = s(t.semanticQuery);
+      if (s(t.mode)) table.mode = s(t.mode);
+      if (s(t.title)) table.title = s(t.title);
+      if (s(t.warning)) table.warning = s(t.warning);
+      out.push(table);
       continue;
     }
     if (kind === 'citation') {
       const c = entry as Partial<CitationArtifact>;
       const of = c.of === 'dataset' || c.of === 'metric' || c.of === 'dashboard' ? c.of : undefined;
       if (!of || !s(c.id)) continue;
-      out.push({ ...c, kind: 'citation', of, id: s(c.id) });
+      const citation: CitationArtifact = { kind: 'citation', of, id: s(c.id) };
+      if (s(c.name)) citation.name = s(c.name);
+      if (s(c.tier)) citation.tier = s(c.tier);
+      if (s(c.owner)) citation.owner = s(c.owner);
+      if (s(c.freshness)) citation.freshness = s(c.freshness);
+      out.push(citation);
       continue;
     }
     if (kind === 'clarification') {
@@ -405,24 +468,38 @@ export function parseArtifacts(raw: unknown): ChatArtifact[] {
     if (kind === 'chart') {
       const c = entry as Partial<ChartArtifact>;
       if (!s(c.view) || !c.panel || typeof c.panel !== 'object') continue;
-      out.push({ ...c, kind: 'chart', view: s(c.view), panel: c.panel as Record<string, unknown> });
+      const chart: ChartArtifact = { kind: 'chart', view: s(c.view), panel: c.panel as Record<string, unknown> };
+      if (s(c.title)) chart.title = s(c.title);
+      out.push(chart);
       continue;
     }
     if (kind === 'metric_draft') {
       const d = entry as Partial<MetricDraftArtifact>;
       if (!s(d.datasetId) || !d.form || typeof d.form !== 'object') continue;
-      out.push({ ...d, kind: 'metric_draft', datasetId: s(d.datasetId), form: d.form as Record<string, unknown> });
+      const draft: MetricDraftArtifact = {
+        kind: 'metric_draft',
+        datasetId: s(d.datasetId),
+        form: d.form as Record<string, unknown>,
+      };
+      if (Array.isArray(d.previewColumns)) draft.previewColumns = d.previewColumns.map(cell);
+      if (Array.isArray(d.previewRows)) draft.previewRows = stringRows(d.previewRows);
+      if (s(d.previewMode)) draft.previewMode = s(d.previewMode);
+      if (s(d.previewSql)) draft.previewSql = s(d.previewSql);
+      if (s(d.definitionYaml)) draft.definitionYaml = s(d.definitionYaml);
+      out.push(draft);
       continue;
     }
     const d = entry as Partial<DashboardDraftArtifact>;
     if (!s(d.name) || !s(d.view)) continue;
-    out.push({
-      ...d,
+    const dash: DashboardDraftArtifact = {
       kind: 'dashboard_draft',
       name: s(d.name),
       view: s(d.view),
       charts: Array.isArray(d.charts) ? (d.charts.filter((c) => c && typeof c === 'object') as Record<string, unknown>[]) : [],
-    });
+    };
+    if (s(d.id)) dash.id = s(d.id);
+    if (Array.isArray(d.warnings)) dash.warnings = d.warnings.filter((w): w is string => typeof w === 'string');
+    out.push(dash);
   }
   return out;
 }

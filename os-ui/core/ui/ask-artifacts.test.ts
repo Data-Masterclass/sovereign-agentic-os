@@ -16,7 +16,13 @@ import {
   tableView,
 } from '@core/ui/ask-artifacts';
 import { askTurnResponse } from '@core/runtime/ask-response';
-import { citationArtifact, tableArtifact, type ChatArtifact } from '@core/runtime/chat-artifacts';
+import {
+  citationArtifact,
+  rowLimitTruncation,
+  tableArtifact,
+  tableArtifactFromObjectRows,
+  type ChatArtifact,
+} from '@core/runtime/chat-artifacts';
 
 /**
  * FEATURE:    The drawer's `table` + `citation` rendering decisions, and the turn payload (C9).
@@ -206,4 +212,32 @@ test('C9/C5: the route re-validates, and the truncation fields survive to the cl
 test('C9: a turn with no artifacts returns an empty array, never an absent field', () => {
   const res = askTurnResponse({ finalText: 'hi', plan: '', steps: [], artifacts: [], tab: null, traceId: 't', model: 'm' });
   assert.deepEqual(res.artifacts, []);
+});
+
+// ------------------------------ M-4: a warning is not a truncation, and vice versa ----
+
+test('M-4: the view surfaces the tool warning on its OWN line, separate from the banner', () => {
+  const warning = 'Not sliced by “customer_id” — this member is not exposed on the governed view.';
+  const v = tableView(
+    tableArtifactFromObjectRows([{ 'V.revenue': 1 }], { source: 'semantic-layer', warning, mode: 'live (sql)' }),
+  );
+  assert.equal(v.warning, warning, 'a de-dimensioned result must say so — never a silent slice drop');
+  assert.equal(v.banner, null, 'a warning is not a truncation');
+});
+
+test('M-4: a result that is BOTH clipped and de-dimensioned reports both, separately', () => {
+  const rows = Array.from({ length: 100 }, () => ({ 'V.region': 'DE', 'V.revenue': 1 }));
+  const v = tableView(
+    tableArtifactFromObjectRows(rows, {
+      source: 'semantic-layer',
+      warning: 'Not sliced by “customer_id”.',
+      ...rowLimitTruncation(rows.length, 100),
+    }),
+  );
+  assert.ok(v.banner && /would be wrong/.test(v.banner));
+  assert.ok(v.warning && /Not sliced by/.test(v.warning));
+  assert.notEqual(v.banner, v.warning);
+  // Three distinct honesty lines, none merged: backend clip, tool warning, view cap.
+  assert.ok(v.viewNote, 'the view cap is still its own line');
+  assert.equal(new Set([v.banner, v.warning, v.viewNote]).size, 3);
 });

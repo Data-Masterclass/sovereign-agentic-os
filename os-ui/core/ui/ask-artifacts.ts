@@ -47,6 +47,12 @@ export type TableView = {
   viewClipped: boolean;
   /** The backend's own truncation sentence, verbatim, or null when nothing was clipped. */
   banner: string | null;
+  /**
+   * The tool's OWN loud-degradation sentence, verbatim, or null. Kept SEPARATE from
+   * `banner`: a result can be whole but not sliced as asked (a dropped dimension member),
+   * or sliced correctly but clipped — and a surface that merges them loses one.
+   */
+  warning: string | null;
   /** The note about this view's own cap, or null. Never merged with `banner`. */
   viewNote: string | null;
   /** The honest label for where the number came from. */
@@ -74,6 +80,7 @@ export function tableView(a: TableArtifact, rowCap: number = VIEW_ROW_CAP): Tabl
     rowCount: a.rowCount,
     viewClipped,
     banner: truncationBanner(a),
+    warning: a.warning || null,
     viewNote: viewClipped
       ? `Showing the first ${rows.length} of the ${a.rows.length} rows returned (this view's own limit).`
       : null,

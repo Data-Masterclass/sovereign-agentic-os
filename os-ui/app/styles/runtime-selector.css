@@ -375,7 +375,8 @@
   color: #b23b3b;
   background: rgba(190, 60, 60, 0.08);
 }
-.osa-truncated {
+.osa-truncated,
+.osa-warning {
   margin: 0 0 8px;
   font-size: 11.5px;
 }

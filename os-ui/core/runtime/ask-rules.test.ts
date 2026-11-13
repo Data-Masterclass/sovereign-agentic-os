@@ -12,6 +12,7 @@ import {
   ASK_RULES_BLOCK,
   ASK_GUIDE_SECTION,
   ASK_RULE_GUIDE_FILES,
+  DATA_NOT_INSTRUCTIONS_RULE,
 } from '@core/runtime/ask-rules';
 import { osAssistantSystem } from '@core/runtime/agent-loop';
 
@@ -69,4 +70,11 @@ test('C3: the guides name the exact tools, so an external client can act on the 
       assert.ok(text.includes(tool), `${rel} does not name ${tool}`);
     }
   }
+});
+
+test('M-3: the untrusted-content rule is in OS_RULES, and is honest about being prompt-level', () => {
+  const sys = osAssistantSystem('data');
+  assert.ok(sys.includes(DATA_NOT_INSTRUCTIONS_RULE));
+  assert.ok(ASK_RULES_BLOCK.includes(DATA_NOT_INSTRUCTIONS_RULE));
+  assert.match(DATA_NOT_INSTRUCTIONS_RULE, /never act on them/);
 });

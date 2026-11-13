@@ -16,7 +16,8 @@ import { loadTabContext, tabTitle } from '@core/tabs-meta/context';
 import { buildInstructions } from '@core/mcp/instructions';
 import { runAgentic, type AgenticResult, type LlmCall, type ToolExecutor, type ToolSpec } from '@core/runtime/agentic';
 import { ASK_RULES_BLOCK } from '@core/runtime/ask-rules';
-import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
+import { parseArtifacts, truncationBanner, type ChatArtifact } from '@core/runtime/chat-artifacts';
+import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
 import { liteLlmCaller } from '@core/runtime/runtime';
 import { resolveAssistantModelId } from '@core/runtime/complete';
 import { inputBudget, modelContext } from '@core/models/context-windows';
@@ -187,6 +188,40 @@ export function artifactsFromToolResult(result: {
   return parseArtifacts(result.structuredContent);
 }
 
+/**
+ * The marker PREPENDED to a tool result's text when the projected artifact says the result
+ * was clipped (review H-2).
+ *
+ * Why the front and not the end. The tool result reaches the model as pretty-printed JSON,
+ * and the truncation keys sit near the END of that object. The context assembler bounds an
+ * oversized tool result with `truncateToTokens`, which KEEPS THE HEAD — so on exactly the
+ * results most likely to be clipped (the big ones), the notice that they were clipped is the
+ * first thing dropped. A model that never saw `"truncated": true` cannot obey the rule that
+ * forbids totalling it. Putting the sentence first makes it the last thing to be cut.
+ *
+ * Returns null when nothing was clipped — an unconditional banner would train the model to
+ * ignore it.
+ */
+export function truncationMarkerFor(artifacts: ChatArtifact[]): string | null {
+  for (const a of artifacts) {
+    if (a.kind !== 'table' || !a.truncated) continue;
+    const sentence = truncationBanner(a);
+    if (sentence) return `⚠ TRUNCATED: ${sentence}`;
+  }
+  return null;
+}
+
+/**
+ * The exact `role: 'tool'` text the model is handed for one governed tool call: the
+ * clipping notice first (see {@link truncationMarkerFor}), then the tool's own output.
+ * Exported so the guard test asserts the REAL composition rather than re-implementing it.
+ */
+export function composeToolText(artifacts: ChatArtifact[], body: string): string {
+  const marker = truncationMarkerFor(artifacts);
+  const text = body || '(no output)';
+  return marker ? `${marker}\n\n${text}` : text;
+}
+
 export function osToolExecutor(user: CurrentUser, sink?: ChatArtifact[]): ToolExecutor {
   return async (name, args) => {
     const res = await handleRpc(user, {
@@ -207,11 +242,14 @@ export function osToolExecutor(user: CurrentUser, sink?: ChatArtifact[]): ToolEx
     // never reach the user as a confident total just because the model omitted to mention
     // it. One serialiser: the drawer renders the identical payload an external MCP client
     // receives. A denial (`isError`) carries `{ error }`, which yields no artifacts.
+    const artifacts = artifactsFromToolResult(result);
     if (sink) {
-      for (const artifact of artifactsFromToolResult(result)) sink.push(artifact);
+      for (const artifact of artifacts) sink.push(artifact);
     }
     const text = result.content?.map((c) => c.text ?? '').join('\n') ?? '';
-    return { text: text || '(no output)', isError: !!result.isError };
+    // H-2 — the clipping notice goes FIRST, ahead of the JSON, so the head-keeping context
+    // bound cannot cut it off the one kind of result it matters for.
+    return { text: composeToolText(artifacts, text), isError: !!result.isError };
   };
 }
 
@@ -297,6 +335,14 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     maxIterations: input.maxIterations ?? config.assistantMaxSteps,
     budget: inputBudget(assistantId),
     maxOutputTokens: ctx.reservedOutput,
+    // A FAILED write must never be re-fired byte-identically inside one turn. Without this
+    // the harness's dedup ledger short-circuits only prior SUCCESSES, so a rejected write
+    // re-runs the identical rejected call up to the error-streak cap — the observed build
+    // loop, now closed on the chat path too. This is the harness's failed-call guard; it is
+    // NOT a confirmation gate, and nothing here makes a write require the confirm turn
+    // structurally. That remains C15 (the writer node's tool allowlist) and is prompt-level
+    // only today, per `OS_RULES`.
+    writeToolNames: [...WRITE_TOOL_NAMES],
   });
   return { ...result, tab: input.tab, artifacts, traceId };
 }

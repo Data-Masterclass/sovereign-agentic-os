@@ -65,6 +65,15 @@ export default function AskArtifacts({ artifacts }: { artifacts: ChatArtifact[] 
               </p>
             ) : null}
 
+            {/* The tool's own degradation sentence — a dropped slice member, a pending
+                window metric, an unreachable lakehouse. Its own line, never merged with
+                the truncation banner above. */}
+            {v.warning ? (
+              <p className="error osa-warning" role="status">
+                {v.warning}
+              </p>
+            ) : null}
+
             {v.sourceCaveat ? <p className="hint osa-caveat">{v.sourceCaveat}</p> : null}
 
             {v.columns.length === 0 && v.rows.length === 0 ? (

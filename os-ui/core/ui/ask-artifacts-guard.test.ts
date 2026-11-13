@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -27,8 +27,12 @@ import { join } from 'node:path';
  *     • an `href`/`src` taken from an artifact field, which is how a model-supplied URL
  *       becomes an open redirect or an exfiltration channel.
  *
- *   The FILE LIST is itself an assertion: every path must exist, so renaming a module
- *   silently out of the guard's scope fails here rather than passing by omission.
+ *   The FILE LIST is itself an assertion, in BOTH directions: every path on it must exist,
+ *   and — review M-1 — every `core/ui/Ask*.{ts,tsx}` file on disk must be ON it. A hardcoded
+ *   list is a guard that stops guarding the moment someone adds `AskCharts.tsx`, which is
+ *   precisely when it is needed; the glob closes that door. Modules outside the naming
+ *   convention are still listed explicitly, because a convention cannot cover the route or
+ *   the harness.
  */
 
 const UI = join(import.meta.dirname, '..', '..');
@@ -141,4 +145,22 @@ test('C10: the guard covers the whole surface — every path on the list is a re
   for (const rel of CHAT_PATH_FILES) assert.ok(existsSync(join(UI, rel)), `${rel} missing`);
   assert.ok(CHAT_PATH_FILES.includes('core/ui/AskArtifacts.tsx'), 'the artifact renderer must be in scope');
   assert.ok(CHAT_PATH_FILES.includes('app/api/assistant/chat/route.ts'), 'the chat route must be in scope');
+});
+
+test('C10 (M-1): every core/ui/Ask*.{ts,tsx} on disk is ON the guard list', () => {
+  // The other direction of the assertion: a NEW Ask-surface module (AskCharts.tsx, say) is
+  // exactly when this guard matters, and a hardcoded list would silently stop covering the
+  // surface the moment one is added. Test files are excluded — they are the guard, not the
+  // guarded.
+  const found = readdirSync(join(UI, 'core', 'ui'))
+    .filter((f) => /^Ask.*\.(ts|tsx)$/i.test(f) || /^ask-.*\.(ts|tsx)$/i.test(f))
+    .filter((f) => !/\.test\.tsx?$/.test(f))
+    .map((f) => `core/ui/${f}`);
+  assert.ok(found.length >= 2, `expected the Ask surface modules, found ${found.join(', ') || 'none'}`);
+  const missing = found.filter((f) => !CHAT_PATH_FILES.includes(f));
+  assert.deepEqual(
+    missing,
+    [],
+    `new Ask-surface module(s) not covered by the C10 guard — add them to CHAT_PATH_FILES: ${missing.join(', ')}`,
+  );
 });
