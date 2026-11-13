@@ -225,6 +225,16 @@
 - name: AGENT_RUNS_DATABASE_URL
   value: postgresql://$(AGENT_RUNS_DB_USERNAME):$(AGENT_RUNS_DB_PASSWORD)@pg-rw/agent_runs
 {{- end }}
+{{- /* X9 (engine rebuild Part D) — the agent engine's guardrails on EVERY tool call. Both are
+     RUN-path, so the worker gets them too. Unset ⇒ the code defaults (20 000 chars / 60 s). */}}
+{{- with $u.agentToolResultMaxChars }}
+- name: AGENT_TOOL_RESULT_MAX_CHARS
+  value: {{ . | quote }}
+{{- end }}
+{{- with $u.agentToolCallTimeoutMs }}
+- name: AGENT_TOOL_CALL_TIMEOUT_MS
+  value: {{ . | quote }}
+{{- end }}
 - name: LITELLM_URL
   value: {{ $u.litellmUrl | quote }}
 - name: OPA_URL

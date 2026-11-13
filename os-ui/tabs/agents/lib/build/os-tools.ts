@@ -677,7 +677,11 @@ export function grantedToolExecutor(
 
     await safeTrace(deps, sysPrincipal, mcpName, args, 'allow', wroteDirectly ? 'allow (own My scope)' : undefined, opts.traceContext);
 
-    if (res?.error) return { text: `Error: ${res.error.message}`, isError: true };
+    // X9: an upstream failure reaches the model as a TYPED envelope (`upstream_error`) like every
+    // other refusal, so the graph can route on a code instead of parsing prose. `handleRpc` turns
+    // a tool's own exception into a typed MCP tool error, which the `isError` branch below carries
+    // through unchanged; this branch is the transport/dispatch error.
+    if (res?.error) return errorResult('upstream_error', res.error.message);
     const result = (res?.result ?? {}) as { content?: { text?: string }[]; isError?: boolean };
     const text = result.content?.map((c) => c.text ?? '').join('\n') ?? '';
     return { text: text || '(no output)', isError: !!result.isError };

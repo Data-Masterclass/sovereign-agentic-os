@@ -322,6 +322,70 @@ edges:
     when: plan_ready
 `;
 
+/**
+ * Shape (e): AN AGENT READING GOLD DATA (checklist X9, `agent-reads-gold-dataset`). One agent,
+ * a Read grant on a GOLD dataset and the two governed data tools an engineer would reach for:
+ * `query_data` (SQL over the governed marts) and `get_dataset` (the dataset by id, layer-aware).
+ * Like shape (d) it is an ENGINE shape, not a frozen fixture: there is no walker golden for it
+ * (the walker is deleted), and what it proves is the behaviour of the engine's tool path — the
+ * runner's identity on the dispatch, the bound on a large result, the deadline, the typed error
+ * and the Langfuse span — which a golden path/text comparison could not express.
+ */
+export const SHAPE_GOLD_DATA_YAML = `version: '1'
+system:
+  name: Agent reads gold dataset
+  domain: sales
+  visibility: Personal
+  description: Answer questions from the granted gold dataset, and nothing else.
+entrypoint: analyst
+state:
+  channels:
+    messages: add_messages
+grants:
+  data:
+    - id: ds_gold_orders
+      capability: Read
+  knowledge: []
+  metrics: []
+  tools:
+    - query_data
+    - get_dataset
+  connections: []
+agents:
+  - id: analyst
+    role: Queries the granted gold dataset and explains what it says
+    agent_md: |
+      # analyst
+      Answer from the granted gold dataset only. Query it, then explain what the rows say.
+      If a result says it was truncated, say so instead of generalising from the sample.
+    memory_md: '# Memory'
+    tools:
+      - query_data
+      - get_dataset
+`;
+
+/** The gold dataset the shape grants, and the Iceberg table it serves. */
+export const GOLD_DATASET_ID = 'ds_gold_orders';
+export const GOLD_DATASET_FQN = 'iceberg.sales.gold_orders';
+
+/**
+ * A scripted model that issues GIVEN tool calls, in order, one per ACT turn, then answers
+ * `FINAL(<node>)`. Used by the X9 shape, where WHICH call is made (and with which arguments) is
+ * the point — unlike `scriptedLlm`, which calls whatever the first advertised tool happens to be.
+ */
+export function toolCallingLlm(calls: { name: string; args: Record<string, unknown> }[]): LlmCall {
+  const acts = new Map<string, number>();
+  return async (req) => {
+    const node = nodeOfRequest(req);
+    if (!req.tools) return { content: `plan(${node}): read the granted data, then answer.`, toolCalls: [] };
+    const n = (acts.get(node) ?? 0) + 1;
+    acts.set(node, n);
+    const next = calls[n - 1];
+    if (next) return { content: '', toolCalls: [{ id: `call-${node}-${n}`, name: next.name, args: next.args }] };
+    return { content: `FINAL(${node}): answered from the granted data.`, toolCalls: [] };
+  };
+}
+
 /** Every fixture spec: shipped templates, shipped per-agent templates, the software team, three shapes. */
 export function fixtureSpecs(): FixtureSpec[] {
   const specs: FixtureSpec[] = [];
@@ -466,16 +530,40 @@ export type HoldSink = { enqueued: string[]; port?: MemoryApprovalPort };
  * Collaborators for `grantedToolExecutor`: the gates stay REAL; only the MCP dispatch is an
  * echo (`{ mock, tool, args }`), `enqueue` records the held tool, `trace` is a no-op.
  */
-export function fixtureToolDeps(sink: HoldSink): OsToolDeps {
+export type FixtureDispatch = { user: CurrentUser; tool: string; args: Record<string, unknown> };
+
+/** Per-tool fake answers for the MCP dispatch, and a record of WHO dispatched what (X9). */
+export type FixtureToolOptions = {
+  /** `tool -> handler`. The handler's return value is JSON-stringified as the tool's text. */
+  handlers?: Record<string, (args: Record<string, unknown>, user: CurrentUser) => Promise<unknown> | unknown>;
+  /** Every dispatch, in order, with the ACTING USER the executor passed to `handleRpc`. */
+  dispatches?: FixtureDispatch[];
+};
+
+export function fixtureToolDeps(sink: HoldSink, opts: FixtureToolOptions = {}): OsToolDeps {
   const enqueue = ((req: { tool?: string }) => {
     sink.enqueued.push(req.tool ?? '?');
     return { id: `fixture-approval-${sink.enqueued.length}` };
   }) as unknown as OsToolDeps['enqueue'];
-  const handleRpc = (async (_user: CurrentUser, req: JsonRpcRequest): Promise<JsonRpcResponse> => ({
-    jsonrpc: '2.0',
-    id: req.id ?? 1,
-    result: { content: [{ type: 'text', text: JSON.stringify({ mock: true, tool: req.params?.name, args: req.params?.arguments ?? {} }) }] },
-  })) as unknown as OsToolDeps['handleRpc'];
+  const handleRpc = (async (user: CurrentUser, req: JsonRpcRequest): Promise<JsonRpcResponse> => {
+    const tool = String(req.params?.name ?? '');
+    const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
+    opts.dispatches?.push({ user, tool, args });
+    const handler = opts.handlers?.[tool];
+    let payload: unknown;
+    try {
+      payload = handler ? await handler(args, user) : { mock: true, tool, args };
+    } catch (e) {
+      // The real `handleRpc` never lets a tool's exception escape: it answers with a typed error.
+      // The fake must behave the same way, or a test would measure a crash the OS cannot produce.
+      return { jsonrpc: '2.0', id: req.id ?? 1, error: { code: -32603, message: e instanceof Error ? e.message : String(e) } };
+    }
+    return {
+      jsonrpc: '2.0',
+      id: req.id ?? 1,
+      result: { content: [{ type: 'text', text: typeof payload === 'string' ? payload : JSON.stringify(payload) }] },
+    };
+  }) as unknown as OsToolDeps['handleRpc'];
   const trace = (async () => undefined) as unknown as OsToolDeps['trace'];
   return { enqueue, handleRpc, trace };
 }
@@ -486,12 +574,23 @@ export function fixtureToolDeps(sink: HoldSink): OsToolDeps {
  * decided in the tools NODE (`hold`, over a memory ApprovalPort recorded on the sink) and the
  * executor runs with `holdAt: 'node'` — exactly as production wires it.
  */
-export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: HoldSink): Omit<GraphDeps, 'checkpointer'> {
+export type GraphDepsOptions = FixtureToolOptions & {
+  /** X9 — the engine's per-tool-call deadline and prompt bound (defaults apply when absent). */
+  toolCallTimeoutMs?: number;
+  toolResultMaxChars?: number;
+  /** The acting user the executor dispatches as (default {@link FIXTURE_USER}). */
+  user?: CurrentUser;
+};
+
+export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: HoldSink, opts: GraphDepsOptions = {}): Omit<GraphDeps, 'checkpointer'> {
   sink.port ??= memoryApprovalPort();
+  const user = opts.user ?? FIXTURE_USER;
   return {
     llm,
-    toolSpecsFor: (node) => grantedToolSpecs(FIXTURE_USER, sys, node.tools),
-    callTool: grantedToolExecutor(FIXTURE_USER, sys, systemId, fixtureToolDeps(sink), { holdAt: 'node' }),
+    toolSpecsFor: (node) => grantedToolSpecs(user, sys, node.tools),
+    callTool: grantedToolExecutor(user, sys, systemId, fixtureToolDeps(sink, opts), { holdAt: 'node' }),
+    ...(opts.toolCallTimeoutMs !== undefined ? { toolCallTimeoutMs: opts.toolCallTimeoutMs } : {}),
+    ...(opts.toolResultMaxChars !== undefined ? { toolResultMaxChars: opts.toolResultMaxChars } : {}),
     preamble: FIXTURE_PREAMBLE,
     reasoningModel: 'sovereign-reasoning',
     execModel: 'sovereign-default',
@@ -502,7 +601,7 @@ export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: Hol
       approvals: sink.port,
       systemId,
       domain: sys.system.domain,
-      runner: { id: FIXTURE_USER.id, role: FIXTURE_USER.role, domains: FIXTURE_USER.domains },
+      runner: { id: user.id, role: user.role, domains: user.domains },
       agent: `os-${systemId}`,
     },
   };

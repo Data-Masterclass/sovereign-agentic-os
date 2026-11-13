@@ -108,6 +108,11 @@ import {
 } from '@core/runtime/agentic';
 import { stripThinking } from '@tabs/agents/lib/agent-chat-response';
 import {
+  callToolGuarded,
+  DEFAULT_TOOL_CALL_TIMEOUT_MS,
+  DEFAULT_TOOL_RESULT_MAX_CHARS,
+} from '@tabs/agents/lib/engine/tool-result';
+import {
   boundInput,
   curatePredecessor,
   handoffBlock,
@@ -144,6 +149,18 @@ export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNod
    * call a generation, every tool call a span carrying the decision. Absent → the no-op observer.
    */
   observe?: RunObserver;
+  /**
+   * X9 — the engine's own guardrail on EVERY tool result: a result longer than this is truncated
+   * before it enters the prompt, with a visible marker and the real row count
+   * (`AGENT_TOOL_RESULT_MAX_CHARS`). Default {@link DEFAULT_TOOL_RESULT_MAX_CHARS}.
+   */
+  toolResultMaxChars?: number;
+  /**
+   * X9 — per-tool-call deadline (`AGENT_TOOL_CALL_TIMEOUT_MS`). A tool that does not answer in
+   * time becomes a typed `timeout` tool result, so the superstep ends instead of hanging.
+   * Default {@link DEFAULT_TOOL_CALL_TIMEOUT_MS}.
+   */
+  toolCallTimeoutMs?: number;
 };
 
 /** What the tools node needs to hold a call: the rule, the queue port and the attribution. */
@@ -974,7 +991,16 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         } else {
           // Approved or never held: the UNCHANGED governed executor, as the runner (gate 2 = handleRpc(user)).
           // A3: recorded as a span carrying the decision (`ok`, or `denied`/`error` from the result).
-          out = await obs.tool(call, { decision: 'ok', approvalId: gate?.approvalId }, () => deps.callTool(call.name, call.args));
+          // X9: the governed executor is UNCHANGED (identity, grants and policy are its job); what
+          // the engine adds around it is a DEADLINE (so a slow Trino query cannot hang the
+          // superstep) and a BOUND on the result (so a 50k-row answer cannot enter the prompt
+          // whole). Both protect every tool, not just the data ones.
+          out = await obs.tool(call, { decision: 'ok', approvalId: gate?.approvalId }, () =>
+            callToolGuarded(deps.callTool, call, {
+              timeoutMs: deps.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS,
+              maxChars: deps.toolResultMaxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS,
+            }),
+          );
         }
         if (gate) held.push({ node: id, tool: call.name, callId: call.id, approvalId: gate.approvalId, decision: gate.decision });
         const entry: ExecutedSig = { sig, count: (prior?.count ?? 0) + 1, ok: !out.isError };

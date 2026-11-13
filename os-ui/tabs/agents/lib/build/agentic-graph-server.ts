@@ -373,6 +373,12 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
         ...graphDeps,
         observe,
         unmappedTools: resolveGrantedTools(sys).unmapped,
+        // X9 — the engine's own guardrails on EVERY tool call: a per-call deadline so a slow
+        // upstream (Trino, a connector) cannot hang the superstep, and a bound on the result so a
+        // large answer is truncated — with a visible marker and the row count — before it enters
+        // the prompt. Operator-tunable; the defaults live in `engine/tool-result.ts`.
+        toolCallTimeoutMs: config.agentToolCallTimeoutMs,
+        toolResultMaxChars: config.agentToolResultMaxChars,
         // A2 — the hold, lifted into the node: the same rule the executor applied (`holdDecisionFor`
         // over the system's preset), the Governance queue as the port, the runner's snapshot.
         hold: {

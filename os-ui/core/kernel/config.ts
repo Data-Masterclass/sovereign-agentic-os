@@ -385,6 +385,16 @@ export const config = {
   // this is re-queued once (the thread resumes from its checkpoint), then failed. Must exceed
   // the longest superstep (one model call + one tool call); default 10 minutes.
   agentsWorkerLeaseMs: Math.max(60_000, Number(env('AGENTS_WORKER_LEASE_MS', '600000')) || 600_000),
+  // X9 — the engine's guardrails on EVERY agent tool call (engine rebuild Part D).
+  // `AGENT_TOOL_RESULT_MAX_CHARS`: a tool result longer than this is TRUNCATED before it enters
+  // the prompt, with a visible marker naming the kept and total rows (or characters) — a silently
+  // shortened answer is how an agent reaches a confident wrong conclusion. ~20k chars ≈ 5k tokens.
+  // `AGENT_TOOL_CALL_TIMEOUT_MS`: one tool call's deadline. Exceeded ⇒ a typed `timeout` tool
+  // result the graph routes on, so a slow Trino query ends the step instead of hanging the run.
+  // Both are read where the graph deps are wired (`build/agentic-graph-server.ts`) and apply to
+  // every tool, not just the data ones — see tabs/agents/lib/engine/tool-result.ts.
+  agentToolResultMaxChars: Math.max(500, Number(env('AGENT_TOOL_RESULT_MAX_CHARS', '20000')) || 20_000),
+  agentToolCallTimeoutMs: Math.max(1_000, Number(env('AGENT_TOOL_CALL_TIMEOUT_MS', '60000')) || 60_000),
   // How much of a model call the run observer records in Langfuse (A3 review M-2). `structure`
   // (default): roles + character counts for message content, the tool-call structure (names,
   // ids, arguments) and a 160-char result preview. `strict`: argument KEY NAMES + character

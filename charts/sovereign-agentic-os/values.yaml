@@ -1286,6 +1286,12 @@ osUI:
   # AGENTS_WORKER=worker so it only ENQUEUES and TAILS `run_events`. That is what makes a run
   # longer than the 300 s request cap finish, and an os-ui rolling restart lose no run.
   # Requires postgres.enabled (the `agent_runs` database holds the queue AND the checkpoints).
+  # X9 (engine rebuild Part D) — the agent engine's guardrails on EVERY tool call, so a large or
+  # slow data read can neither blow the prompt nor hang a superstep. Empty ⇒ the code defaults
+  # (20 000 characters, 60 000 ms). Run-path: the os-ui-worker pod gets them as well.
+  agentToolResultMaxChars: ""
+  agentToolCallTimeoutMs: ""
+
   worker:
     enabled: false
     replicas: 1
