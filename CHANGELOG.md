@@ -23,6 +23,18 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   four read-only research reports beside them as the evidence base. No product code changes in this
   commit.
 
+- **Metrics are dbt metrics (stream M).** A metric defined in the OS is now a real dbt `metrics:`
+  entry on a `semantic_models:` measure, committed into the owning domain's dbt project at
+  `models/semantic/<model>.yml` (a personal dataset's in `models/personal/<uid>/semantic/`), with a
+  daily time spine at `models/os/os_time_spine_day.sql` declared by the dbt >= 1.9 `time_spine`
+  property. The YAML is a typed document with an emitter, a **parser** and a spec validator
+  (`os-ui/tabs/data/lib/dbt/semantic/`) pinned to dbt-semantic-interfaces 0.8.5 / dbt-core 1.10 and
+  valid on the dbt 1.9 the images carry; `simple`, `ratio`, `derived` and `cumulative` are emitted,
+  `count_distinct_approx` emits `count_distinct` + `config.meta.os_agg`, and anything with no
+  faithful dbt form is a named refusal listed in the generated README rather than wrong YAML. The
+  predecessor (`tabs/data/lib/semantic.ts`, a 124-line string builder) never reached the project at
+  all and emitted `ref('mart_<slug>')` — a model no generated project contains.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a
@@ -72,6 +84,7 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 - Documented: the Dagster extension image (`images/extensions/dagster`) is NOT built by
   `deploy.sh`; it is built and pushed separately as `ghcr.io/aborek/sovereign-os/dagster:<tag>`
   (context `images/extensions`) before a deploy that bumps its tag.
+
 
 ## [os-ui 0.8.0] — 2026-11-13 — Engine rebuild: real LangGraph/Langfuse/LiteLLM, dbt/Dagster/Trino data products, git-based working, MCP parity
 

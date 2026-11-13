@@ -88,6 +88,55 @@ The data itself stays governed — a model reads only what Trino→OPA allows th
 principal — and no credential is ever in the tree. Definition-level privacy inside a domain would be
 a new per-path read gate, not a property of this design.
 
+## Metrics are dbt metrics (the semantic layer)
+
+A metric defined in the OS — in the form, from chat or over the MCP — is a real dbt
+`metrics:` entry on a `semantic_models:` measure, committed into the owning domain's dbt project:
+
+```
+models/semantic/<model>.yml              promoted (domain) datasets
+models/personal/<uid>/semantic/<model>.yml   a personal dataset's lane (promotion moves the file)
+models/os/os_time_spine_day.sql          the daily time spine (a view over Trino's sequence())
+models/os/schema.yml                     the spine's dbt >= 1.9 `time_spine` property
+```
+
+**One pinned spec version.** The emitter targets **dbt-semantic-interfaces 0.8.5 = dbt-core 1.10**
+field names, and every field it writes is *also* valid on **dbt-core 1.9** — which is what the
+images actually carry (`images/extensions/{dbt,dagster}/Dockerfile` pin `dbt-core>=1.8,<1.10`, so
+pip resolves 1.9.x). The pin is one constant, `DBT_SEMANTIC_SPEC` in
+`tabs/data/lib/dbt/semantic/spec.ts`, it is named in every generated project's README, and a test
+asserts it. Why a pin at all: `docs.getdbt.com` now serves the dbt 1.12 ("Fusion") spec by default
+and its `?version=` selector is client-side only, so the prose does not describe what dbt 1.8–1.10
+accepts; the authoritative source is the DSI pydantic spec at the version dbt-core pins. 1.12 is a
+breaking redesign of this exact spec, so it becomes a translation layer, not a rewrite.
+`cumulative_type_params` does **not** exist on dbt 1.8 — that is why the floor is 1.9.
+
+**What is emitted, and what is refused.** `simple`, `ratio`, `derived` and `cumulative` YAML are
+emitted from today's OS `Measure`. `count_distinct_approx` has no faithful dbt agg, so it emits
+`count_distinct` plus `config.meta.os_agg: count_distinct_approx`: dbt's own number stays exact, the
+OS compiler keeps `approx_distinct`, and a parity oracle must exclude it for a stated reason.
+Anything with no faithful form — a leading window, an unparseable trailing window, a ratio carrying
+its own filter (the OS compiler drops it), a formula over a metric that is not emitted, a filter
+outside the generated grammar — is a **named refusal**, listed in the project README under
+"Not emitted", and **nothing** is written for it. Emitting YAML the OS compiler cannot serve would
+put a wrong number in a tool an engineer trusts; and one unknown key fails `dbt parse` for the
+**whole** domain, so each document is validated against the pinned spec before it is written and a
+document with violations is dropped with the violations recorded.
+
+**Execution stays in the OS.** MetricFlow is never on the interactive request path — a metric read
+is `tabs/metrics/lib/explorer.ts` compiling one governed Trino `SELECT` run as the **viewer**
+(`queryRun(sql, identities.trino.user)`). MetricFlow would open one connection from its own
+profile and lose the per-viewer impersonation that is the point of the OS. Where MetricFlow is
+installed at all it is pinned `metricflow >= 0.209.0`: `<= 0.208.1` is BSL 1.1, whose Additional Use
+Grant excludes this product's use, and BSL does not relax retroactively (`0.209.0` is the first
+Apache-2.0 release). `scripts/license-check.sh` asserts that floor.
+
+**Not true yet.** `cumulative` and `derived` YAML is emitted but the OS compiler does not compile
+their SQL: a rolling window still returns an honest `pending` rather than a calendar-correct number
+(`explorer.ts` `windowFrame`), and the spine is generated but not yet joined to. `saved_queries:` /
+`exports:`, entity joins across semantic models, the dbt filter-syntax parser on the query path and
+the MetricFlow parity oracle are backlog.
+
 ## Code
 
 - Generator: `os-ui/tabs/data/lib/dbt/{generate,models,sources,schema,schedules,project}.ts`
@@ -101,6 +150,10 @@ a new per-path read gate, not a property of this design.
 - Lineage from the manifest: `tabs/data/lib/dbt/lineage.ts` (pure) +
   `tabs/data/lib/lineage-server.ts` (one `assetGraph()` call, registry fallback).
 - Parity harness: `tabs/data/lib/dbt/parity.ts` + `parity.test.ts`.
+- Semantic layer: `tabs/data/lib/dbt/semantic/{spec,model,validate,from-measures,time-spine,render}.ts`
+  (pure; the pinned spec, the typed document + emitter + parser, the spec validator, the
+  `Measure` → dbt bridge, the time spine and the project renderer). Preview artefact:
+  `tabs/data/lib/semantic.ts`. Golden: `fixtures/metrics-semantic-layer.golden.json`.
 - Trino access rules: `core/infra/trino-rules.ts` + `trino-rules-server.ts`.
 
 ## FAQ

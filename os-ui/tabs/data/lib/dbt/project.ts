@@ -17,6 +17,9 @@
 import { yml, textFile } from '@tabs/data/lib/dbt/emit';
 import { domainSchema } from '@tabs/data/lib/store-fqn';
 import type { ModelPlanSet } from '@tabs/data/lib/dbt/models';
+import { DBT_SEMANTIC_SPEC } from '@tabs/data/lib/dbt/semantic/spec';
+import type { SemanticRender } from '@tabs/data/lib/dbt/semantic/render';
+import { TIME_SPINE_MODEL } from '@tabs/data/lib/dbt/semantic/time-spine';
 
 export const PROFILE_NAME = 'sovereign';
 
@@ -187,8 +190,10 @@ export function renderGenericTests(): Map<string, string> {
   ]);
 }
 
-export function renderReadme(domain: string, plan: ModelPlanSet): string {
+export function renderReadme(domain: string, plan: ModelPlanSet, semantic?: SemanticRender): string {
   const models = plan.models.map((m) => `- \`${m.path}\` — ${m.kind}, schema \`${m.schema}\``);
+  const metrics = (semantic?.metrics ?? []).map((m) => `- \`${m.name}\` (${m.type}) — OS metric \`${m.osMetric}\`, in \`${m.path}\``);
+  const refused = (semantic?.refusals ?? []).map((r) => `- \`${r.measure}\` on OS dataset \`${r.dataset}\` — ${r.reason}`);
   return textFile([
     `# ${domain} — data product (dbt project)`,
     '',
@@ -217,10 +222,41 @@ export function renderReadme(domain: string, plan: ModelPlanSet): string {
     '- `macros/os_maintenance.sql` — weekly Iceberg `optimize` + `expire_snapshots`, run by Dagster per schema',
     '- `os/schedules.yml` — sync schedules (cron, UTC, principal) for the Dagster code location',
     '- `os/external.yml` — sources dbt cannot model (Kafka offsets, API batch); Dagster assets',
+    ...(semantic?.files.size
+      ? [
+          '- `models/semantic/<model>.yml` — the `semantic_models:` + `metrics:` of promoted datasets',
+          '  (a personal dataset\'s sit in `models/personal/<uid>/semantic/`; promotion moves the file)',
+          ...(semantic.timeSpine ? [`- \`models/os/${TIME_SPINE_MODEL}.sql\` — the daily time spine (a view over \`sequence(...)\`)`] : []),
+        ]
+      : []),
     '',
     '## Models',
     '',
     ...(models.length ? models : ['_(no built layers yet)_']),
+    // The semantic section only exists once a metric does — a project with no metric should not
+    // carry a page about the spec version of something it does not have.
+    ...(metrics.length || refused.length
+      ? [
+          '',
+          '## Metrics (dbt semantic layer)',
+          '',
+          `This project targets **one** semantic spec version: \`dbt-semantic-interfaces ${DBT_SEMANTIC_SPEC.dsiVersion}\``,
+          `(= dbt-core ${DBT_SEMANTIC_SPEC.dbtCore}); every field emitted is also valid on dbt-core ${DBT_SEMANTIC_SPEC.minDbtCore}, which is what`,
+          `the OS images carry today (\`${DBT_SEMANTIC_SPEC.imagePin}\`). The time spine uses the dbt >= 1.9`,
+          `\`${DBT_SEMANTIC_SPEC.timeSpineProperty}\` model property, never the legacy \`${DBT_SEMANTIC_SPEC.legacyTimeSpineModel}\` name.`,
+          '',
+          'Query them with MetricFlow from a clone:',
+          '',
+          '```sh',
+          'mf query --metrics <metric> --group-by metric_time__month',
+          '```',
+          '',
+          ...metrics,
+          ...(refused.length
+            ? ['', '### Not emitted', '', 'These OS metrics have no faithful form in this spec version, so nothing was written for them:', '', ...refused]
+            : []),
+        ]
+      : []),
   ]);
 }
 
