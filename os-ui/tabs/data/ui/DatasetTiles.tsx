@@ -13,6 +13,8 @@ import { visibilityForTier } from '@core/kernel/artifact-model';
 import { itemsUnderFolder, normaliseFolderPath, folderName, type FolderPathNode } from '@core/kernel/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@core/ui/core/FolderTree';
 import FolderLayout from '@core/ui/core/FolderLayout';
+import TileBadges from '@core/ui/lifecycle/TileBadges';
+import { useLifecycleTiles } from '@core/ui/lifecycle/useLifecycleView';
 import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
@@ -80,6 +82,9 @@ function Dots({ dots }: { dots: Tile['dots'] }) {
   );
 }
 
+/** Stable id accessor for the shared lifecycle hook (a new closure would re-fetch). */
+const tileId = (t: Tile) => t.id;
+
 function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomain }: { t: Tile; onOpen: (id: string) => void; onImport?: (id: string) => void; onMove?: (id: string) => void; canManage?: boolean; onChanged: () => void; showDomain?: boolean }) {
   // A role="button" DIV (not a <button>) so the optional Import / lifecycle controls
   // can be real nested <button>s without invalid button-in-button nesting. Every
@@ -97,6 +102,7 @@ function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomai
       <div className="tile-top">
         <span className="tile-name">{t.name}</span>
         <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+          <TileBadges kind="dataset" id={t.id} audience={false} />
           {t.archived ? <span className="badge muted">archived</span> : null}
           {t.curated ? <span className="badge muted" title="Composed from existing governed datasets (no own ingestion)">curated</span> : null}
           {t.connected ? (
@@ -464,9 +470,11 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
 
   // Grid filter: when a folder is selected, show the datasets under it (incl. subfolders,
   // via itemsUnderFolder) that live in the selected root. Else the whole scope list.
-  const shown = sel
+  const inFolder = sel
     ? itemsUnderFolder(sel.path, active.filter((t) => rootOf(t) === sel.root))
     : active;
+  // LIFECYCLE: the ONE shared hook — Studio shows everything, Run only what is live.
+  const { tiles: shown } = useLifecycleTiles('dataset', inFolder, tileId);
   const canBulkMove = shown.filter((t) => picked.has(t.id) && canManage(t)).map((t) => t.id);
 
   return (

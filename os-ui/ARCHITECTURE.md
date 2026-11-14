@@ -1233,3 +1233,48 @@ agent systems) — writing **through the governed services**, attributed to the 
 the MCP and by a push must leave identical files and identical registry state, differing only in the
 `OS-Surface` trailer.
 
+
+## Lifecycle: Studio → Test → Run (the second axis)
+
+Two orthogonal axes, and keeping them orthogonal is the whole design. **Audience** is
+`My → Domain → Company`: who may use an object as an official artefact, changed only by the
+promotion path. **Lifecycle** is `Draft → Testing → Live`, attached to a **version**: whether this
+version is being built, tried out, or run. A `My` object can be Live; a `Company` object can have
+a Draft. `core/kernel/object-lifecycle.test.ts` carries a tripwire that fails if any function ever
+derives one axis from the other.
+
+- `core/kernel/object-lifecycle.ts` — pure, import-free, **total over all seven kinds**:
+  `lifecycleOf(kind, id, head, index)` never throws. Also the ONE go-live dependency guard, the
+  two badges' words, the confirm copy, the migration and the `env:` mapping. It is re-exported
+  from `@core/kernel/lifecycle`, whose own contents are the unrelated archive/delete confirm copy.
+- `core/kernel/lifecycle-adapters.ts` — the per-kind registry. **The kernel must not import a
+  tab**, so each tab's adapter (`tabs/<tab>/lib/lifecycle-adapter.ts`, importing only `@core/*`
+  and itself) registers itself at boot in `instrumentation.ts`, which is the one place in os-ui
+  allowed to know both halves. A kind with no adapter is an honest typed refusal from `go_live`.
+- `core/infra/lifecycle-pins.ts` — **the pin**, where the complexity lives: a durable index plus
+  the committed, readable, not-pushable `os/lifecycle/pins.yml` in its own reserved subtree.
+- `core/kernel/go-live.ts` — the one service BOTH doors call (`core/mcp/lifecycle-tools.ts` and
+  `app/api/lifecycle/route.ts`), so a click and a tool call cannot drift. There is no setter that
+  takes a lifecycle word.
+- `core/mcp/list-args.ts` — the ONE optional `lifecycle` list filter. `withLifecycleArg` adds the
+  property without touching a tool's `required`; `lifecycleView` annotates and narrows both
+  payload shapes the stores return. `LIST_TOOLS_WITHOUT_LIFECYCLE` names every exception with a
+  reason, and `core/mcp/lifecycle-filter.test.ts` asserts that list and the registry agree in both
+  directions — so a new artifact list tool cannot quietly skip the filter.
+
+**The thing to remember:** *what operates reads the pin, not the head.* A scheduled agent run
+reads the pinned `system.yaml` out of the repository, and a dashboard's Run view resolves the
+pinned spec. Both **fail closed**: an unreadable pin refuses the run, and a pin whose version is
+no longer retained shows nothing and says why. Neither ever falls back to the draft — a different
+version running than the one that was signed off is the exact failure the pin exists to prevent.
+
+**And the two rules that cost the most to get right.** First: *a pin is never written on the
+strength of an index nobody could read.* `core/infra/lifecycle-pins.ts` records HOW it hydrated —
+the durable mirror, the committed `os/lifecycle/pins.yml` in the domain repos, or nothing — and
+every writer refuses with a 503 unless one of the first two answered. A mirror that answers but
+knows no pins is the dangerous shape (a rebuilt index looks exactly like a tenant that never went
+live), so in that case the committed files are read and adopted. This is the September-2026
+failure in a new place, and the guard is the same shape: an empty store is only a fact when the
+source answered. Second: *a new gate must not break what already works.* Before the one-time
+migration has established the index nothing has a pin, so a scheduled agent run falls open to the
+head — once, loudly, naming the fallback — and fails closed for ever after.

@@ -65,6 +65,9 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   adopt_exposed_table: 'data',
   list_adoptable_actions: 'connections',
   adopt_entity_actions: 'connections',
+  // Lifecycle (night 2) — change what RUNS, not who may use it.
+  go_live: 'governance',
+  retire: 'governance',
 };
 
 

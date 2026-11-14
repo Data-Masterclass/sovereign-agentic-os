@@ -7,6 +7,8 @@ import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { ensureHydrated, setDashboardArchived, deleteDashboard, getDashboard, renameDashboard } from '@tabs/dashboards/lib/store';
 import { normalizePanel } from '@tabs/dashboards/lib/model';
+import { dashboardForSurface } from '@tabs/dashboards/lib/lifecycle-adapter';
+import { isViewSurface } from '@core/kernel/object-lifecycle';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,19 +17,44 @@ export const dynamic = 'force-dynamic';
  * list to render each tile with Apache ECharts on the governed Cube layer. `getDashboard`
  * enforces the tier/ownership gate (403/404), so a viewer only reads a dashboard they may
  * see. Returns the normalized panels so a legacy `{metric}` panel renders natively too.
+ *
+ * LIFECYCLE (night 2, V-R2.3): `?surface=run` renders the PINNED spec — editing a live
+ * dashboard therefore does not change what Run shows until someone goes live again. Studio
+ * (the default, and what every existing caller gets) renders the draft, because that is what
+ * you are editing. A Run read of a dashboard with no pin, or with a pin whose version is no
+ * longer retained, returns `unavailable` with the reason and NO panels: it never substitutes
+ * the draft, which would be a wrong dashboard that looks right.
  */
-export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
+export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
   const { id } = params;
+  const requested = new URL(req.url).searchParams.get('surface');
+  const surface = isViewSurface(requested) ? requested : 'studio';
+  const read = await dashboardForSurface(id, user, surface);
   const dash = getDashboard(id, user);
+  if (!read.spec) {
+    return NextResponse.json({
+      id: dash.id,
+      name: dash.spec.name,
+      view: dash.spec.view,
+      tier: dash.tier,
+      surface,
+      live: read.live,
+      panels: [],
+      unavailable: read.unavailable,
+    });
+  }
   return NextResponse.json({
     id: dash.id,
-    name: dash.spec.name,
-    view: dash.spec.view,
+    name: read.spec.name,
+    view: read.spec.view,
     tier: dash.tier,
-    panels: dash.spec.charts.map(normalizePanel),
+    surface,
+    ref: read.ref,
+    live: read.live,
+    panels: read.spec.charts.map(normalizePanel),
     // Default cross-filter chips saved with the dashboard (P1-3) — View opens narrowed to
     // these. Absent on legacy specs, so the field is only present when defaults were saved.
-    ...(dash.spec.filters?.length ? { filters: dash.spec.filters } : {}),
+    ...(read.spec.filters?.length ? { filters: read.spec.filters } : {}),
   });
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, hydrate: ensureHydrated });
 

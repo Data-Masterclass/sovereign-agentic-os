@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { type Principal, getDataset, listDatasets, peekDatasetMeasureNames } from '@tabs/data/lib/store';
+import { type Principal, getDataset, listDatasets, peekDatasetMeasureNames, listAllDatasets, ensureHydrated as ensureDataHydrated } from '@tabs/data/lib/store';
 import { type MetricRecord, metricRecord } from '@tabs/metrics/lib/governance';
 import { measureMember, dbtMetricType, metricTimeGrain, type DbtMetricType } from '@tabs/metrics/lib/model';
 import { isMetricArchived, metricFolder } from '@tabs/metrics/lib/lifecycle';
@@ -171,4 +171,27 @@ export function peekMetricExists(metricId: string): boolean {
   const measureName = metricId.slice(lastDot + 1);
   const measures = peekDatasetMeasureNames(datasetId);
   return measures !== null && measures.includes(measureName);
+}
+
+// ---------------------------------------------------------------- lifecycle ---
+/**
+ * ADDITIVE (night 2, stream V). A metric has no store row of its own — it IS a measure on a
+ * governed dataset — so the lifecycle migration cannot enumerate metrics from a metrics table.
+ * These two exports let `tabs/metrics/lib/lifecycle-adapter.ts` enumerate and hydrate without
+ * importing the Data tab itself (a tab imports only `@core/*` and itself).
+ */
+export { ensureDataHydrated as ensureHydrated };
+export type { Principal };
+
+/** Every measure on every dataset, platform-wide — ids, members and the owning domain. */
+export function listAllMetricsInternal(): { id: string; member: string; domain: string }[] {
+  const out: { id: string; member: string; domain: string }[] = [];
+  for (const d of listAllDatasets()) {
+    for (const name of peekDatasetMeasureNames(d.id) ?? []) {
+      const measure = (d.measures ?? []).find((m) => m.name === name);
+      if (!measure) continue;
+      out.push({ id: `${d.id}.${name}`, member: measureMember(d, measure), domain: d.domain });
+    }
+  }
+  return out;
 }

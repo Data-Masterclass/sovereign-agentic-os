@@ -12,6 +12,7 @@ import { trace as gvTrace } from '@core/infra/agent-governed';
 import { langfuseClient, traceUrlFor } from '@core/infra/langfuse';
 import type { SecretRef } from '@core/infra/secrets';
 import { langfuseRunObserver } from '@tabs/agents/lib/engine/observe';
+import type { RunEnv } from '@core/kernel/object-lifecycle';
 import { tabToolExecutor, liteLlmCaller } from '@core/runtime/runtime';
 import type { CallerContext } from '@core/infra/litellm-credential';
 import { trackUsage, type ToolSpec, type AgenticStep, type LlmCall, type UsageTracker } from '@core/runtime/agentic';
@@ -248,6 +249,14 @@ export type RunOsTeamInput = {
   runId: string;
   /** Continue the thread `runId` from its last checkpoint instead of starting it. */
   resume?: boolean;
+  /**
+   * LIFECYCLE (night 2, V-R4.1/V-R4.2): which point of the system's life this run happens at —
+   * `studio` (running the head you are editing), `test` (trying the draft out) or `run` (the
+   * pinned definition a schedule executes). It becomes the LiteLLM `env:` tag and the Langfuse
+   * trace `environment`, so a draft's spend and traces are separable from what operates.
+   * Defaults to `studio`, which is what a run started by hand from the OS actually is.
+   */
+  env?: RunEnv;
   /** A2: the Governance decision a resume carries, `{ [approvalId]: decision }`. */
   resumeWith?: Record<string, ApprovalDecision>;
   /** Abort the stream (a client disconnect); the thread stays resumable. */
@@ -311,6 +320,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     tab: 'agents',
     runId: input.runId,
     keyRef: input.keyRef,
+    env: input.env ?? 'studio',
   };
   const tracked = trackUsage(input.llm ?? liteLlmCaller(caller));
   // A3 — the run's governance traces nest under the run trace (id = run id) instead of standing alone.
@@ -363,6 +373,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
       engine: 'langgraph',
       task: input.resume ? undefined : lastUserText(input.messages),
       resume: input.resume,
+      environment: input.env ?? 'studio',
       client: langfuseClient(),
       // A3 review M-2: how much of a call reaches the trace (LANGFUSE_REDACTION).
       redaction: config.langfuseRedaction,

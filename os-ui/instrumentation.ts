@@ -54,6 +54,42 @@ export async function register(): Promise<void> {
     }
   }
 
+  // LIFECYCLE (night 2, stream V): reserve the pin file's own subtree and register the per-kind
+  // adapters. The kernel must never import a tab, so each tab's adapter registers itself HERE —
+  // the one place in os-ui that is allowed to know both halves. Registration is pure (a Map
+  // write), never awaited on a request path, and a kind with no adapter is an honest refusal
+  // from go_live rather than a silent success, so a failure here cannot corrupt anything.
+  try {
+    const { reserveLifecycleSubtree } = await import('./core/infra/lifecycle-pins.ts');
+    reserveLifecycleSubtree();
+    const { registerLifecycleAdapter } = await import('./core/kernel/lifecycle-adapters.ts');
+    const { dashboardLifecycleAdapter } = await import('./tabs/dashboards/lib/lifecycle-adapter.ts');
+    const { agentLifecycleAdapter } = await import('./tabs/agents/lib/lifecycle-adapter.ts');
+    registerLifecycleAdapter(dashboardLifecycleAdapter);
+    registerLifecycleAdapter(agentLifecycleAdapter);
+    const { datasetLifecycleAdapter } = await import('./tabs/data/lib/lifecycle-adapter.ts');
+    const { metricLifecycleAdapter } = await import('./tabs/metrics/lib/lifecycle-adapter.ts');
+    const { knowledgeLifecycleAdapter } = await import('./tabs/knowledge/lib/lifecycle-adapter.ts');
+    const { connectionLifecycleAdapter } = await import('./tabs/connections/lib/lifecycle-adapter.ts');
+    const { appLifecycleAdapter } = await import('./tabs/software/lib/lifecycle-adapter.ts');
+    registerLifecycleAdapter(datasetLifecycleAdapter);
+    registerLifecycleAdapter(metricLifecycleAdapter);
+    registerLifecycleAdapter(knowledgeLifecycleAdapter);
+    registerLifecycleAdapter(connectionLifecycleAdapter);
+    registerLifecycleAdapter(appLifecycleAdapter);
+    // NIGHT-2 MERGE (V-13, D x V): D's `tabs/dashboards/lib/lifecycle-port.ts` is the seam the
+    // Dashboards tab reads a pin through, so that the tab can record "which version is live" in
+    // `dashboard.yaml` without importing a module that did not exist on its branch. This is the
+    // line that installs V's real reader into it. ASYNC (D's H-5): V's pins live in a durable
+    // mirror, so a synchronous port could only ever have been wired to a stale copy. `?? null`
+    // because V returns `undefined` for "no pin" and the port's contract is `null`.
+    const { setLifecycleReader } = await import('./tabs/dashboards/lib/lifecycle-port.ts');
+    const { livePin: livePinOf } = await import('./core/infra/lifecycle-pins.ts');
+    setLifecycleReader(async (kind, id) => (await livePinOf(kind, id)) ?? null);
+  } catch (err) {
+    console.error(`[os-ui] lifecycle: adapters NOT registered — go_live will refuse, naming the kind. ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // Boot-time SECURITY guard: refuse to serve in production with the insecure
   // dev-default session/MCP signing secret. This runs HERE (real server start) so it
   // NEVER fires during `next build` static prerender or on the edge — where a
@@ -315,6 +351,42 @@ export async function register(): Promise<void> {
       }
     })();
   }
+
+  // LIFECYCLE MIGRATION (stream V, review H-2)
+  //
+  // NIGHT-2 MERGE — this block MOVED. It used to sit beside the adapter registrations near the top
+  // of `register()`, which put it BEFORE the data / agents / dashboards boot reconciles. The
+  // migration pins every existing object to what is live NOW, so starting it first could pin a
+  // head that the dashboards reconcile was about to move — a dashboard pinned to a commit that
+  // does not contain its file. It therefore runs AFTER all three reconciles, which is the boot
+  // order the night-2 merge brief mandates: reservations -> git hooks/installers -> data reconcile
+  // -> agents reconcile -> dashboards reconcile -> lifecycle-migrate -> the E/G appends below.
+  // It is still fire-and-forget and still self-gating on the pin index having really been READ: every object that already exists becomes Live, ONCE, so
+  // the day this ships looks exactly like the day before — every dashboard, every schedule.
+  // (`not-hydrated` defers to the next boot), because an empty index from a dead mirror is
+  // indistinguishable from a tenant with nothing live. Never awaited, never fatal.
+  void (async () => {
+    try {
+      const { migrateEverythingLive } = await import('./core/kernel/lifecycle-migrate.ts');
+      const out = await migrateEverythingLive();
+      if (!out.ran) {
+        console.error(
+          out.reason === 'not-hydrated'
+            ? '[lifecycle] migration DEFERRED — the pin index could not be read, so nothing was written. It runs on the next boot; until then a pinned read falls back to the head and says so.'
+            : `[lifecycle] migration not needed (${out.reason}).`,
+        );
+        return;
+      }
+      console.error(
+        `[lifecycle] migration: ${out.pinned} object(s) are now Live across ${out.domains.length} domain(s) — ${JSON.stringify(out.perKind)}${
+          out.skipped.length ? ` · skipped: ${out.skipped.join('; ')}` : ''
+        }`,
+      );
+    } catch (err) {
+      console.error(`[lifecycle] migration FAILED — nothing was pinned, it retries on the next boot. ${err instanceof Error ? err.message : String(err)}`);
+    }
+  })();
+
 
   // TRINO ACCESS RULES (engine rebuild B3; triggers fixed in B3-review-H-2/H-3/H-4): when
   // TRINO_ACCESS_RULES=true, write the file-based access-control rules Trino chains after OPA —

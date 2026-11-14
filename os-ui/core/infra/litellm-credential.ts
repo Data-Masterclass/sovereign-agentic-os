@@ -43,6 +43,7 @@
  *   must stay in step, which is why the prefixes live in one exported constant.
  */
 import 'server-only';
+import type { RunEnv } from '@core/kernel/object-lifecycle';
 import { config } from '@core/kernel/config';
 import { getSecretServerSide, type SecretRef } from '@core/infra/secrets';
 
@@ -56,6 +57,14 @@ export type CallerContext = {
   tab?: string;
   /** The run (= Langfuse trace id = LangGraph thread id) the call belongs to. */
   runId?: string;
+  /**
+   * LIFECYCLE (night 2, V-R4.1): which point of an object's life this call happens at, in
+   * LiteLLM's own vocabulary — `studio` (editing the draft), `test` (trying the draft out) or
+   * `run` (the pinned version that operates). Becomes the `env:` tag, so the gateway can budget
+   * a draft separately from what is running: a draft must not drain the live key.
+   * Omitted ⇒ no tag, never a fabricated one.
+   */
+  env?: RunEnv;
   /** A per-agent virtual key minted by Build, by secret REFERENCE. Absent → the shared agent key. */
   keyRef?: SecretRef;
 };
@@ -76,6 +85,7 @@ export const TAG_DOMAIN = 'domain:';
 export const TAG_AGENT = 'agent:';
 export const TAG_TAB = 'tab:';
 export const TAG_RUN = 'run:';
+export const TAG_ENV = 'env:';
 
 /** LiteLLM end-user ids are namespaced so OS ids never collide with others'. */
 export function endUserId(userId: string): string {
@@ -94,6 +104,7 @@ export function callerCredential(ctx: CallerContext): CallerCredential {
   if (ctx.systemId) tags.push(`${TAG_AGENT}${ctx.systemId}`);
   if (ctx.tab) tags.push(`${TAG_TAB}${ctx.tab}`);
   if (ctx.runId) tags.push(`${TAG_RUN}${ctx.runId}`);
+  if (ctx.env) tags.push(`${TAG_ENV}${ctx.env}`);
   const own = ctx.keyRef ? getSecretServerSide(ctx.keyRef) : null;
   if (own && own.length > 0) return { apiKey: own, keySource: 'agent-key', user: endUserId(ctx.userId), tags };
   const shared = config.litellmAgentKey;

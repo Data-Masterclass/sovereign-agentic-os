@@ -36,6 +36,7 @@
  *     No `server-only`, no env: pure.
  */
 import type { Role } from '@core/kernel/session';
+import type { RunEnv } from '@core/kernel/object-lifecycle';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 import { RunNotVisibleError } from '@tabs/agents/lib/engine/run-visibility';
 
@@ -61,6 +62,13 @@ export type RunJobInput = {
   resumeWith?: Record<string, ApprovalDecision>;
   approvalId?: string;
   decision?: ApprovalDecision;
+  /**
+   * LIFECYCLE (night 2, review M-3): the point of the system's life this run is — `run` for a
+   * schedule executing the PINNED definition, `test` for a verify pass, `studio` by default.
+   * Recorded on the job so a worker-executed run is attributed exactly like an inline one, and
+   * so the LiteLLM `env:` tag and the Langfuse trace `environment` survive the queue.
+   */
+  env?: RunEnv;
 };
 
 export type NewRunJob = {

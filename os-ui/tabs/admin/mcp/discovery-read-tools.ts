@@ -4,6 +4,7 @@
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { McpTool, JsonSchema } from '@core/mcp/server';
+import { withLifecycleArg, lifecycleView } from '@core/mcp/list-args';
 import {
   P, fail, str, strArr, NO_ARGS, idArg, resolveQueryable,
   type Principal,
@@ -91,8 +92,8 @@ export const readTools: McpTool[] = [
     minRole: 'creator',
     description:
       'List the datasets you can see (My · Domain · Company), grouped by tier (also called: table, data product). Path: DISCOVERY for the Data golden path (guide: sovereign-os://guide/path/data). Before: whoami. After: reuse an id with get_dataset / define_metric, or create_dataset only if nothing fits. Governance: read-only, DLS-scoped to your identity — you never see rows you are not entitled to.',
-    inputSchema: NO_ARGS,
-    call: async (user) => listDatasets(P(user)),
+    inputSchema: withLifecycleArg(NO_ARGS),
+    call: async (user, args) => lifecycleView('dataset', args, listDatasets(P(user))),
   },
   {
     name: 'get_dataset',
@@ -266,8 +267,8 @@ export const readTools: McpTool[] = [
     minRole: 'creator',
     description:
       'List the knowledge business processes you can see (also called: workflows, process workflows, SOPs (Standard Operating Procedures)) — My · Domain · Company. Path: DISCOVERY for the Knowledge golden path (guide: sovereign-os://guide/path/knowledge). Before: whoami. After: get_knowledge, or search_knowledge for content. Governance: read-only, DLS-scoped.',
-    inputSchema: NO_ARGS,
-    call: async (user) => listWorkflows(P(user)),
+    inputSchema: withLifecycleArg(NO_ARGS),
+    call: async (user, args) => lifecycleView('knowledge', args, listWorkflows(P(user))),
   },
   {
     name: 'get_knowledge',
@@ -314,9 +315,11 @@ export const readTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
+      // NIGHT-2 MERGE (M x V): M's richer description (every row's `metricType` + `grain`, so a
+      // caller can pick a valid slice without a round trip) AND V's lifecycle argument/view.
       'List the governed metric members you can see (also called: KPIs, measures, indicators) — the one definition of every number. Each row carries its `metricType` (the dbt semantic-layer type it is emitted as: simple · ratio · derived · cumulative) and its `grain` (the finest time bucket it can be sliced at, absent when the dataset exposes no time dimension), so you can pick a valid slice for query_metric without a round trip. Path: DISCOVERY for the Metrics + Dashboards golden paths (guide: sovereign-os://guide/path/metrics). Before: whoami. After: reuse a member on a dashboard, or define_metric only if missing. Governance: read-only, DLS-scoped.',
-    inputSchema: NO_ARGS,
-    call: async (user) => listMetrics(P(user)),
+    inputSchema: withLifecycleArg(NO_ARGS),
+    call: async (user, args) => lifecycleView('metric', args, listMetrics(P(user))),
   },
   {
     name: 'query_metric',
@@ -458,8 +461,8 @@ export const readTools: McpTool[] = [
     minRole: 'creator',
     description:
       'List the dashboards you can see (also called: reports, business intelligence (BI), data visualizations) — My · Domain · Company. Path: DISCOVERY for the Dashboards golden path (guide: sovereign-os://guide/path/dashboards). Before: whoami. After: create_dashboard. Governance: read-only, DLS-scoped.',
-    inputSchema: NO_ARGS,
-    call: async (user) => listDashboards(P(user)),
+    inputSchema: withLifecycleArg(NO_ARGS),
+    call: async (user, args) => lifecycleView('dashboard', args, listDashboards(P(user))),
   },
   // get_agent_system moved to discovery-base-tools.ts (tab: 'agents' is base).
   {
@@ -468,10 +471,10 @@ export const readTools: McpTool[] = [
     minRole: 'creator',
     description:
       'List the apps you can see (My · Domain · Company). Each app includes `purpose` (Define stage intent), `epics` (Design epics + stories), and `grants` (capability metadata — kind/level only, never raw credentials). Path: DISCOVERY for the Software golden path (guide: sovereign-os://guide/path/software). Before: whoami. After: get_software, or create_software only if nothing fits. Governance: read-only, same visibility rule as the Software tab.',
-    inputSchema: NO_ARGS,
-    call: async (user) => {
+    inputSchema: withLifecycleArg(NO_ARGS),
+    call: async (user, args) => {
       const apps = await listAppsForUser(user);
-      return apps.map((a) => ({
+      return lifecycleView('app', args, apps.map((a) => ({
         id: a.id,
         slug: a.slug,
         name: a.name,
@@ -488,7 +491,7 @@ export const readTools: McpTool[] = [
         deploy: a.deploy,
         updatedAt: a.updatedAt,
         createdAt: a.createdAt,
-      }));
+      })));
     },
   },
   {

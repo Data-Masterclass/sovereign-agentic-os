@@ -1982,6 +1982,107 @@ deviation is.
 
 ### Stream G — git everywhere and the git UI
 
+### Stream V — lifecycle
+
+- **V-1 — the pure model is `core/kernel/object-lifecycle.ts`, not `core/kernel/lifecycle.ts`.**
+  That filename was already taken, by the archive/restore/delete CONFIRM COPY module. Rather than
+  mix two unrelated meanings of the word in one file, the Studio → Test → Run model is a sibling
+  and `@core/kernel/lifecycle` re-exports it, so the import path the plan names resolves and the
+  existing module is untouched.
+- **V-2 — the pin file is `os/lifecycle/pins.yml`, in its own reserved subtree, not a flat
+  `os/lifecycle.yml`.** `commitSubtree` replaces a whole prefix, so a single file under `os/`
+  would delete the dbt generator's `os/schedules.yml`; and `commitTree` would delete the pin file
+  unless all of `os/` were reserved, which changes another stream's delete semantics. The third
+  option — read `os/*` and pass it through — races the generator between the read and the commit.
+  **Exact change needed:** one additive export in `core/infra/git-store.ts` (owned by S and G
+  tonight), `commitPaths(domain, files, opts)` — replace only the named paths, keep every other
+  path at its current blob. With that, the file moves to `os/lifecycle.yml` and nothing above it
+  changes, because the pin treats its location as a detail of the store.
+- **V-3 — no git tag.** The pin needs `annotatedTag` from S's tag API in `core/infra/git-store.ts`,
+  which is not in this branch. `go_live` returns `tag: { name: 'live/<kind>/<id>', written: false }`
+  — the name the tag will have, and an honest statement that it does not exist yet — rather than
+  claiming a tag. `liveTagName` is already the one place the name is computed.
+- **V-4 — the go-live service is `core/kernel/go-live.ts`, not `tabs/governance/lib/**`.** The MCP
+  tool module must reach the service, and a `core/mcp/*` file may not import a tab
+  (CORE-INDEPENDENCE is a hard structural ratchet, not a style preference). The per-kind knowledge
+  lives in each tab's own adapter instead, registered at boot in `instrumentation.ts` — so the
+  kernel still never imports a tab. The promotion tools and the audience ladder are untouched.
+- **V-5 — the pin is honoured for TWO kinds, as the MVP cut line says: agent systems and
+  dashboards.** All SEVEN can now hold a pin (review H-1 — pin-only adapters landed for dataset,
+  metric, knowledge, connection and app, because a guard that names a dependency nobody can pin is
+  a refusal with no way out). For the five, going live means "it appears in Run and the guard
+  counts it as ready"; nothing reads their pin to decide what to execute yet.
+  `docs/components/lifecycle.md` states this per kind in a table rather than implying coverage.
+- **V-6 — "consumers default to Run" is not expressible.** The role ladder is
+  creator / builder / domain_admin / admin; every one of them can author, so every one defaults to
+  Studio. `defaultViewSurface` already answers `run` for any role outside that set, so a future
+  viewer role needs no code change.
+- **V-7 — the agent adapter derives the repo path itself (stream G hand-off).** G landed
+  `core/infra/git-objects.ts` with `objectGitInfo(kind, id)` and ONE kind+layout table on
+  `night2/G`, which is not in this branch, so `systemYamlPath` uses the agents generator's own
+  `placeSystems`. **Exact change needed:** once G merges, replace `systemYamlPath` and the
+  `systemGitInfo` call in `agentLifecycleAdapter.resolve` with `objectGitInfo('agent', id)`.
+  Nothing else changes — the pin already treats ref and path as opaque. (The pin will still
+  RECORD the path at go-live time: placement depends on the current set of systems, so resolving
+  it again later could land on a directory that has since moved.)
+- **V-8 — CLOSED by review M-3.** `env` now rides the persisted run-queue record
+  (`RunJobInput.env` → `StartRunInput.env` → `ExecuteTeamRunInput.env` → `runOsTeam`), so a
+  SCHEDULED run declares `env: 'run'` and a worker-executed one is attributed exactly like an
+  inline one. A run started by hand stays `studio`. Remaining: the Studio run route and the verify
+  paths do not pass `'studio'`/`'test'` explicitly — they take the `studio` default, which is true
+  of a hand-started run and understates a verify pass. One line each when their streams touch
+  those doors.
+- **V-9 — CLOSED.** All seven tile surfaces now go through the one shared hook: Data
+  (`tabs/data/ui/DatasetTiles.tsx`), KPIs (`tabs/metrics/ui/MetricsRegistry.tsx`), Dashboards
+  (`tabs/dashboards/ui/Tiles.tsx`), Agents (`tabs/agents/ui/SystemsList.tsx`), Connections
+  (`tabs/connections/ui/GovernedConnections.tsx`, via the `useLifecycleFilter` predicate variant
+  because that grid is assembled inside a render prop where a hook may not be called), Software
+  (`app/(experimental)/software/page.tsx`) and Knowledge (`app/(plan)/workflows/page.tsx`). One
+  import, one hook call, one badge line each; the Studio|Run rule stays in the hook and a test
+  asserts no list re-implements it. A shared batched lookup
+  (`core/ui/lifecycle/lifecycle-cache.ts` + `POST /api/lifecycle/index`) means a tab of forty
+  tiles costs ONE request, and a tile renders its own badge with no prop threaded down.
+- **V-10 — the dashboard pin is a spec CONTENT DIGEST, not a commit sha.** Dashboards are not
+  git-backed yet (D is landing dashboard-as-code tonight), so `specRef(spec)` is
+  `spec:<12 hex of sha256 of canonical JSON>` and the pinned spec is whichever retained version
+  hashes to it. This is byte-exact and needs no new file. **Exact change needed:** when D's
+  `dashboards/` subtree lands, `specRef` becomes the commit sha and `dashboardForSurface` reads
+  the blob at that sha; the pin, the service, the UI and the MCP tools are unaffected.
+- **V-11 — a Run read whose pinned version is gone shows NOTHING and says why.** Not in the plan,
+  but the alternative was to serve the draft, which is a wrong dashboard that looks right. The
+  same rule makes an unreadable agent pin refuse the scheduled run instead of running the head.
+- **V-12 — Software and Knowledge tiles show no lifecycle BADGE, on purpose.** Each already
+  renders its own `Draft` badge — an app's deploy state, a knowledge process's publish state — and
+  a second badge carrying the same word would be exactly the vocabulary collision the simplicity
+  contract forbids. Both lists DO apply the Studio|Run filter. **Exact change needed:** inside
+  each tab, make that existing badge read from the lifecycle instead of from its own field —
+  `tabs/knowledge/ui/WorkflowTile.tsx`'s `STATUS_LABEL` and the `isDraftOnly(a)` branch in
+  `app/(experimental)/software/page.tsx` — which is a change to those tabs' semantics, not a
+  one-line mount, and belongs to whoever owns that vocabulary.
+- **V-13 — stream D's `lifecycle-port.ts` reader (hand-off).** D's module is not in this branch,
+  so the wiring could not be made. **Exact one-liner for the merger**, in `instrumentation.ts`
+  immediately after `registerLifecycleAdapter(dashboardLifecycleAdapter);`:
+  ```ts
+  (await import('./tabs/dashboards/lib/lifecycle-port.ts')).setLifecycleReader(
+    (await import('./core/infra/lifecycle-pins.ts')).livePin,
+  );
+  ```
+  `livePin(kind, id): Promise<Pin | undefined>` is already exported from
+  `core/infra/lifecycle-pins.ts` and matches D's async `(kind, id) => Promise<LifecyclePin | null>`
+  apart from `undefined` vs `null`; if D's type is strict, wrap it:
+  `async (k, i) => (await livePin(k, i)) ?? null`.
+- **V-14 — a pin-only kind's ref is a record CONTENT DIGEST** (`rev:<12 hex>` from
+  `core/infra/content-ref.ts`), not a commit sha, for dataset, metric, connection and app (an app
+  prefers its SemVer release tag when it has one; knowledge uses its real content sha). It is
+  byte-exact and needs no new file. **Exact change needed:** when a kind becomes git-backed, its
+  adapter returns the commit sha and nothing above it changes — the pin treats the ref as opaque.
+- **V-15 — the write gate can block a laptop with neither OpenSearch nor a repos directory.**
+  `go_live` refuses with a 503 unless the pin index was actually read, and on a fresh laptop with
+  no durable mirror AND no `reposDir` yet, neither source answers. That is deliberate (it is the
+  September-2026 guard), but it means a brand-new local install cannot go live until it has
+  written one data project or has OpenSearch. Stated in `docs/components/lifecycle.md`.
+
+
 ### Stream C — chat to the data
 
 **C-1 — `runAgentic` gained an `observe` parameter; the brief said the plumbing already existed.**
