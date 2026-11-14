@@ -168,3 +168,88 @@ test('G1: the kinds that are NOT in git yet say so, and the two that are name a 
   assert.deepEqual(backlog, ['knowledge-workflow', 'connection-config'], 'these are the honest backlog, with reasons');
   assert.equal(committed.length + landing.length + backlog.length, GIT_OBJECT_KINDS.length, 'every kind is classified exactly once');
 });
+
+// ------------------------------------------------ the documentation tripwire ---
+
+/**
+ * `docs/components/git.md` carries the SAME layout table as `GIT_OBJECT_LAYOUT`, and an engineer
+ * is told to trust the page. Before this test it had drifted into naming a module that does not
+ * exist (`tabs/software/lib/git/commit.ts`) and the wrong file for lifecycle pins
+ * (`os/lifecycle.yml` instead of `os/lifecycle/pins.yml`) — a wrong path on the page you are sent
+ * to is worse than no page. So the page is parsed and compared, row by row.
+ *
+ * What is compared: the kind token, the path selectors, the personal lane, and the writer's module
+ * and state. What is NOT compared: the prose after the kind token and the `since` field — a human
+ * label may read differently from the code's `label`, and `since` is a changelog, not a contract.
+ */
+type DocRow = { kind: string; paths: string[]; lane: string | null; writerVia: string | null; writerState: string };
+
+const DOCS_TABLE = join(UI, '..', 'docs', 'components', 'git.md');
+const TABLE_HEADER = '| Object kind | Path in the domain repo | Personal lane | Writer |';
+/** The one row that is deliberately NOT an object kind: OS-owned governance metadata. */
+const NON_KIND_MARKER = '*(not an object kind)*';
+
+function code(cell: string): string[] {
+  return [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+}
+
+function parseDocsTable(): { rows: DocRow[]; nonKind: string[] } {
+  assert.ok(existsSync(DOCS_TABLE), `the authoritative layout table must exist at ${DOCS_TABLE}`);
+  const lines = readFileSync(DOCS_TABLE, 'utf8').split('\n');
+  const start = lines.indexOf(TABLE_HEADER);
+  assert.ok(start >= 0, `docs/components/git.md must still carry the layout table, header exactly: ${TABLE_HEADER}`);
+  const rows: DocRow[] = [];
+  const nonKind: string[] = [];
+  for (const line of lines.slice(start + 2)) {
+    if (!line.startsWith('|')) break; // the table ends at the first non-table line
+    const cells = line.split('|').slice(1, -1).map((c) => c.trim());
+    assert.equal(cells.length, 4, `every table row needs four cells: ${line}`);
+    const [kindCell, pathsCell, laneCell, writerCell] = cells;
+    if (kindCell.startsWith(NON_KIND_MARKER)) {
+      nonKind.push(code(pathsCell).join(', '));
+      continue;
+    }
+    const kind = code(kindCell)[0];
+    assert.ok(kind, `row 1 must start with the GitObjectKind in backticks (or "${NON_KIND_MARKER}"): ${line}`);
+    const laneCodes = code(laneCell);
+    const backlog = /\*\*backlog\*\*/.test(writerCell);
+    const state = backlog ? 'backlog' : (writerCell.match(/\*\*(committed)\*\*|\b(landing)\b/)?.slice(1).find(Boolean) ?? '');
+    rows.push({
+      kind,
+      paths: code(pathsCell),
+      lane: laneCell === '—' ? null : (laneCodes[0] ?? null),
+      writerVia: backlog ? null : (code(writerCell)[0] ?? null),
+      writerState: state,
+    });
+  }
+  return { rows, nonKind };
+}
+
+test('G2: docs/components/git.md’s layout table equals GIT_OBJECT_LAYOUT, row by row', () => {
+  const { rows, nonKind } = parseDocsTable();
+
+  assert.deepEqual(
+    rows.map((r) => r.kind),
+    [...GIT_OBJECT_KINDS],
+    'the documented table must list every object kind, in the code’s order, and nothing else',
+  );
+  assert.deepEqual(nonKind, ['os/promotion.yml, os/grants.yml'], 'exactly one documented row is not an object kind: the OS-owned governance metadata');
+
+  for (const row of rows) {
+    const layout = GIT_OBJECT_LAYOUT[row.kind as GitObjectKind];
+    assert.deepEqual(row.paths, layout.paths, `${row.kind}: the documented path selectors must be the code’s, exactly`);
+    assert.equal(row.lane, layout.personalLane, `${row.kind}: the documented personal lane must be the code’s (— means none)`);
+    assert.equal(row.writerState, layout.writer.state, `${row.kind}: the documented writer state must be the code’s`);
+    const via = layout.writer.state === 'backlog' ? null : layout.writer.via;
+    assert.equal(row.writerVia, via, `${row.kind}: the documented writer module must be the code’s`);
+  }
+});
+
+test('G2: a writer module the table names is a module that exists', () => {
+  const { rows } = parseDocsTable();
+  const named = rows.filter((r) => r.writerVia).map((r) => r.writerVia as string);
+  assert.ok(named.length >= 6, 'the committed kinds each name a writer module');
+  for (const module of named) {
+    assert.ok(existsSync(join(UI, module)), `docs/components/git.md names ${module}, which does not exist in os-ui/`);
+  }
+});

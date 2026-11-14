@@ -35,15 +35,27 @@ object kind appears without being classified.
 
 | Object kind | Path in the domain repo | Personal lane | Writer |
 |---|---|---|---|
-| dbt project (datasets, compositions, quality rules, schedules) | `dbt_project.yml`, `profiles.yml`, `models/**`, `os/schedules.yml`, `os/sources.yml`, `os/external.yml` | `models/personal/<uid>/**` | `tabs/data/lib/dbt/commit.ts` — **committed** |
-| metric (dbt `semantic_models` + `metrics`) | `models/semantic/<model>.yml` | `models/personal/<uid>/semantic/<model>.yml` | the dbt commit path; the semantic **emitter** lands with the metrics work |
-| dashboard | `dashboards/index.yml`, `dashboards/<slug>/dashboard.yaml`, `dashboards/<slug>/README.md` | `dashboards/personal/<uid>/<slug>/…` | `tabs/dashboards/lib/git/commit.ts` — landing |
-| agent system | `agents/index.yml`, `agents/<slug>/{system.yaml,agents/<id>.md,graph.json,README.md}` | `agents/personal/<uid>/<slug>/…` | `tabs/agents/lib/git/commit.ts` — **committed** |
-| software app | `apps/<slug>/**` + `apps/<slug>/.app/release.json`; releases as tags `app/<slug>/v<x.y.z>` | n/a (an app is owned, not laned) | `tabs/software/lib/git/commit.ts` — landing |
-| lifecycle pins | `os/lifecycle.yml` + tags `live/<kind>/<id>` | — | `core/kernel/lifecycle.ts` — landing |
-| promotion / governance metadata | `os/promotion.yml`, `os/grants.yml` | — | OS-owned, **never pushable** |
-| knowledge workflow | `knowledge/<slug>/**` | `knowledge/personal/<uid>/<slug>/…` | **backlog** — no git writer yet |
-| connection configuration (**never a credential**) | `connections/<slug>.yml` | — | **backlog** — no git writer yet |
+| `dataset` — dbt project (datasets, compositions, quality rules, schedules) | `dbt_project.yml`, `profiles.yml`, `models/`, `os/schedules.yml`, `os/sources.yml`, `os/external.yml` | `models/personal/<uid>/` | `tabs/data/lib/dbt/commit.ts` — **committed** |
+| `metric` — dbt `semantic_models` + `metrics` | `models/semantic/<model>.yml` | `models/personal/<uid>/semantic/<model>.yml` | `tabs/data/lib/dbt/commit.ts` — **committed** |
+| `dashboard` — dashboard-as-code | `dashboards/index.yml`, `dashboards/<slug>/` | `dashboards/personal/<uid>/<slug>/` | `tabs/dashboards/lib/git/commit.ts` — **committed** |
+| `agent-system` — LangGraph system | `agents/index.yml`, `agents/<slug>/` | `agents/personal/<uid>/<slug>/` | `tabs/agents/lib/git/commit.ts` — **committed** |
+| `software` — app source tree | `apps/<slug>/` | — | `tabs/software/lib/git-commit.ts` — **committed** |
+| `lifecycle-pin` — lifecycle pins | `os/lifecycle/pins.yml` | — | `core/infra/lifecycle-pins.ts` — **committed** |
+| `knowledge-workflow` — knowledge workflow | `knowledge/<slug>/` | `knowledge/personal/<uid>/<slug>/` | **backlog** — no git writer yet |
+| `connection-config` — connection configuration (**never a credential**) | `connections/<slug>.yml` | — | **backlog** — no git writer yet |
+| *(not an object kind)* promotion / governance metadata | `os/promotion.yml`, `os/grants.yml` | — | OS-owned, **never pushable** |
+
+The paths are **selectors**, exactly as the code states them: `a/b/` means everything under that
+directory, `a/b.yml` one file. What a selector contains is the owning writer's business — a
+dashboard directory holds `dashboard.yaml` and `README.md`, an agent-system directory holds
+`system.yaml`, `agents/<id>.md`, `graph.json` and `README.md`, an app directory holds the app's
+whole source tree. The first column's backticked token is the `GitObjectKind`, and
+`core/infra/git-objects-kinds.test.ts` parses this table and deep-equals it against
+`GIT_OBJECT_LAYOUT`, so a row here cannot drift from the code.
+
+**No tags.** Neither a release tag (`app/<slug>/v<x.y.z>`) nor a live tag (`live/<kind>/<id>`) is
+written by anything today — `annotatedTag` landed in `core/infra/git-store.ts` with no caller, and
+`core/kernel/go-live.test.ts` asserts `tag.written === false`. The paths above are the whole truth.
 
 A personal lane is one repository convention, not a second repository: a promotion **moves** the
 directory out of the lane in the same commit that changes the visibility, and the id in
@@ -175,11 +187,12 @@ and no kind claims it, so a new writer cannot be added without classifying it.
   previous paths recorded in `index.yml`). Until then `via` reports how the answer was found and
   `truncated` never claims completeness.
 - **The kinds test pins today's classification on purpose.**
-  `core/infra/git-objects-kinds.test.ts` asserts that exactly `dataset` and `agent-system` are
-  `committed`. When a stream lands a writer for `metric`, `dashboard`, `software` or
-  `lifecycle-pin`, flip that kind's row in `GIT_OBJECT_LAYOUT` from `landing` to `committed`
-  (naming the module and `since`), move its name in the test's `committed` / `landing` lists, and
-  update the table above. The test failing is the reminder, not a defect.
+  `core/infra/git-objects-kinds.test.ts` asserts that exactly `dataset`, `metric`, `dashboard`,
+  `agent-system`, `software` and `lifecycle-pin` are `committed`, that nothing is `landing`, and
+  that `knowledge-workflow` and `connection-config` are the honest backlog. The same file parses
+  the layout table above and deep-equals it against `GIT_OBJECT_LAYOUT`, so when a stream lands a
+  writer, flip the kind's row in the code table, move its name in the test's lists, and correct
+  the row above — in whichever order; the test failing is the reminder, not a defect.
 
 ## The surfaces
 
