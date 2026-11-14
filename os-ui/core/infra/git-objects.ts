@@ -156,9 +156,14 @@ export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
   'lifecycle-pin': {
     kind: 'lifecycle-pin',
     label: 'lifecycle pin',
-    paths: ['os/lifecycle.yml'],
+    // Night-2 merge: V landed the writer, and the PATH is not what this row guessed. A single
+    // `os/lifecycle.yml` is not representable with today's git-store exports, so V commits
+    // `os/lifecycle/pins.yml` inside its own reserved subtree (`LIFECYCLE_PIN_PATH`), and the
+    // writer is `core/infra/lifecycle-pins.ts` — `core/kernel/lifecycle.ts` reaches no commit
+    // primitive. Both corrected here rather than left describing a file nothing writes.
+    paths: ['os/lifecycle/pins.yml'],
     personalLane: null,
-    writer: { state: 'landing', via: 'core/kernel/lifecycle.ts', stream: 'V (os/lifecycle.yml + the live/<kind>/<id> tags)' },
+    writer: { state: 'committed', via: 'core/infra/lifecycle-pins.ts', since: 'night 2, stream V' },
   },
   'knowledge-workflow': {
     kind: 'knowledge-workflow',

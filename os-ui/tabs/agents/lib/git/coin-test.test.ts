@@ -47,6 +47,8 @@ import {
   awaitAgentProjectCommits,
   __setAgentProjectGitForTests,
 } from '@tabs/agents/lib/git/commit';
+// NIGHT-2 MERGE: the tab's own receive-gate registration, called here exactly as boot calls it.
+import { registerAgentSystemIngest } from '@tabs/agents/lib/git/ingest';
 
 /* ------------------------------------------------------------------ the contract -- */
 
@@ -200,6 +202,15 @@ type Kind = {
   viaMcp: (user: CurrentUser) => Promise<void>;
   /** The registry state, normalised — the cache the files are authoritative over. */
   registry: () => unknown;
+  /**
+   * NIGHT-2 MERGE (X x E). Register this kind's validator + ingest with E's receive gate, exactly
+   * as `instrumentation.ts` does at boot. It is REQUIRED, not optional: `reconcileFromGit` routes
+   * by registered kind (`registeredRepoKinds()`), so with nothing registered it reconciles nothing
+   * and returns an empty report — which is what this test saw as "the push left no registry".
+   * X wrote the harness against E's signature while E was on another branch, so this step could
+   * not be exercised until the merge.
+   */
+  registerIngest: () => void;
   /** Why this kind is not in the table yet (absent ⇒ it is). */
   blocked?: string;
 };
@@ -222,6 +233,7 @@ const KINDS: Kind[] = [
       __resetSystemListeners();
     },
     install: (reposDir) => installAgentProjectCommitHook({ reposDir, mirror: false, resolveActor: async (id) => ({ id, name: 'Amir Example', email: 'amir@example.com' }) }),
+    registerIngest: registerAgentSystemIngest,
     drain: awaitAgentProjectCommits,
     viaMcp: async (user) => {
       const created = await rpc(user, 'create_agent_system', { name: 'Coin check', domain: DOMAIN });
@@ -284,7 +296,26 @@ async function mcpSide(k: Kind): Promise<Side> {
  * brief specifies. The OS must not rewrite the human's bytes and must derive the same registry.
  */
 async function pushSide(k: Kind, mod: ReceiveModule, files: Map<string, string>): Promise<Side> {
-  k.reset();
+  // NIGHT-2 MERGE (X x E), two corrections to what this harness simulates. X wrote it against E's
+  // signature while E was on another branch, so neither could be exercised until the merge.
+  //
+  //  1. REGISTER THE KIND. Boot (`instrumentation.ts`) registers every kind's validator + ingest
+  //     before any push can arrive, and `reconcileFromGit` routes by registered kind
+  //     (`registeredRepoKinds()`). With nothing registered it reconciles nothing and reports
+  //     nothing — which is what this test first saw as "the push left no registry".
+  //
+  //  2. DO NOT WIPE THE REGISTRY. This used to call `k.reset()` here, which modelled "the
+  //     repository is fresh AND the registry is empty". The repository being fresh is right (a
+  //     clone-and-push), but the registry being empty is NOT what a push arrives at — and E's
+  //     ingest is deliberately strict about that case: when `agents/index.yml` names a frozen id
+  //     the registry does not hold, it SKIPS with a note instead of creating a row. That strictness
+  //     is correct and must not be relaxed to make this test pass: a registry that hydrated EMPTY
+  //     from an unreachable mirror is indistinguishable from a tenant that owns nothing (the
+  //     September-2026 outage shape, ARCHITECTURE.md "a store can hydrate EMPTY without throwing"),
+  //     and re-creating every system from the index would DUPLICATE a whole domain with new ids.
+  //     So the push now lands on the registry as it stands, which is what the coin test is about:
+  //     the same bytes in through either door leave the same registry state.
+  k.registerIngest();
   const before = await log(DOMAIN, { reposDir, limit: 1 });
   // What an engineer's `git push` from VS Code actually looks like: the human's own subject, and
   // only the two trailers the RECEIVE GATE is specified to record (the resolved principal and the
