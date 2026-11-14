@@ -133,33 +133,90 @@ test('a pinned dashboard drops the no-lifecycle caveat', () => {
 
 // -------------------------------------------- the lifecycle port (V's contract) ---
 
-test('with no lifecycle reader wired, the port reports nothing — never an invented pin', () => {
+test('with no lifecycle reader wired, the port reports nothing — never an invented pin', async () => {
   assert.equal(lifecycleWired(), false);
-  assert.equal(dashboardLifecycle('dash_1'), null);
-  assert.equal(livePin('dash_1'), null);
+  assert.equal(await dashboardLifecycle('dash_1'), null);
+  assert.equal(await livePin('dash_1'), null);
 });
 
-test('once a reader is wired, the port returns ITS answer and nothing of its own', () => {
-  const off = setLifecycleReader((kind, id) => (kind === 'dashboard' && id === 'dash_1' ? { draft: 'head', live: 'v1.0.0' } : null));
+test('H-5 — the port is ASYNC and maps stream V’s own `{ref, at, by}` pin record', async () => {
+  // V's `core/infra/lifecycle-pins.ts` `livePin(kind, id)` returns `Promise<Pin | undefined>` —
+  // the pins live in a durable mirror — so a synchronous port could only have read a stale copy.
+  const off = setLifecycleReader(async (kind, id) =>
+    kind === 'dashboard' && id === 'dash_1'
+      ? { ref: '9f2c1ab0c4e5d6f70819a2b3c4d5e6f708192a3b', at: '2026-11-14T02:10:04.118Z', by: 'u_alex', domain: 'analytics' }
+      : undefined,
+  );
   try {
     assert.equal(lifecycleWired(), true);
-    assert.deepEqual(dashboardLifecycle('dash_1'), { draft: 'head', live: 'v1.0.0' });
-    assert.equal(livePin('dash_1'), 'v1.0.0');
-    assert.equal(livePin('dash_other'), null, 'an unpinned dashboard is null, not a guess');
+    assert.deepEqual(await dashboardLifecycle('dash_1'), {
+      live: '9f2c1ab0c4e5d6f70819a2b3c4d5e6f708192a3b',
+      liveAt: '2026-11-14T02:10:04.118Z',
+      liveBy: 'u_alex',
+    });
+    assert.equal(await livePin('dash_1'), '9f2c1ab0c4e5d6f70819a2b3c4d5e6f708192a3b');
+    // V's record describes exactly ONE thing — the live version — so draft/testing stay ABSENT
+    // rather than being invented from it.
+    const pin = await dashboardLifecycle('dash_1');
+    assert.equal(pin!.draft, undefined);
+    assert.equal(pin!.testing, undefined);
+    assert.equal(await livePin('dash_other'), null, 'an unpinned dashboard is null, not a guess');
   } finally {
     off();
   }
   assert.equal(lifecycleWired(), false, 'the uninstall restores the previous state');
 });
 
-test('a throwing lifecycle reader degrades to “no pin”, never breaking the dashboard', () => {
-  const off = setLifecycleReader(() => {
-    throw new Error('lifecycle is down');
-  });
+test('H-5 — a reader may also return the already-mapped shape (what a test usually does)', async () => {
+  const off = setLifecycleReader(() => ({ draft: 'head', live: 'v1.0.0' }));
   try {
-    assert.equal(dashboardLifecycle('dash_1'), null);
-    assert.equal(livePin('dash_1'), null);
+    assert.deepEqual(await dashboardLifecycle('dash_1'), { draft: 'head', live: 'v1.0.0' });
   } finally {
     off();
   }
+});
+
+test('H-5 — an empty pin record is “no pin”, not an empty lifecycle block in the file', async () => {
+  const off = setLifecycleReader(() => ({}));
+  try {
+    assert.equal(await dashboardLifecycle('dash_1'), null);
+  } finally {
+    off();
+  }
+});
+
+test('a throwing or rejecting lifecycle reader degrades to “no pin”, never breaking the dashboard', async () => {
+  for (const reader of [
+    () => {
+      throw new Error('lifecycle is down');
+    },
+    async () => {
+      throw new Error('the mirror is unreachable');
+    },
+  ]) {
+    const off = setLifecycleReader(reader);
+    try {
+      assert.equal(await dashboardLifecycle('dash_1'), null);
+      assert.equal(await livePin('dash_1'), null);
+    } finally {
+      off();
+    }
+  }
+});
+
+test('H-5 — `toLifecyclePin` is the one mapping, and it never fabricates', async () => {
+  const { toLifecyclePin } = await import('@tabs/dashboards/lib/lifecycle-port');
+  assert.equal(toLifecyclePin(null), null);
+  assert.equal(toLifecyclePin(undefined), null);
+  assert.equal(toLifecyclePin({ ref: '', at: 'x', by: 'y' }), null, 'an empty ref is not a pin');
+  assert.deepEqual(toLifecyclePin({ ref: 'abc', at: '', by: '' }), { live: 'abc' }, 'absent at/by are omitted, not guessed');
+});
+
+test('H-2/H-3 — the pin reads as a fact with its provenance, or as an honest absence', async () => {
+  const { pinSummary } = await import('@tabs/dashboards/lib/git/facts');
+  assert.match(pinSummary(null).value, /no version pinned/);
+  assert.match(pinSummary(null).note!, /Lifecycle is owned by the OS kernel, not by this tab/);
+  const s = pinSummary({ live: 'abc1234', liveAt: '2026-11-14T02:10:04.118Z', liveBy: 'u_alex' });
+  assert.equal(s.value, 'abc1234');
+  assert.match(s.note!, /at 2026-11-14T02:10:04\.118Z by u_alex/);
 });

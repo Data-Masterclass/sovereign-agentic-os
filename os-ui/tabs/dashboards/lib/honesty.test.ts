@@ -15,12 +15,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  PANEL_TIME_GRAINS,
   SERVABLE_FILTER_OPERATORS,
   VIZ_TYPES,
   assertServableFilters,
   isServableOperator,
+  isServableTimeGrain,
   unservableFilterError,
   unservableFilters,
+  unservableTimeGrainError,
   type Panel,
   type VizType,
 } from '@tabs/dashboards/lib/model';
@@ -33,7 +36,7 @@ import { dashboardWriteTools } from '@tabs/dashboards/mcp/dashboard-write-tools'
 function advertisedVizEnum(): string[] {
   const tool = dashboardWriteTools.find((t) => t.name === 'create_dashboard');
   assert.ok(tool, 'create_dashboard must exist');
-  const schema = tool!.inputSchema as {
+  const schema = tool!.inputSchema as unknown as {
     properties: { charts: { items: { properties: { vizType: { enum?: string[] } } } } };
   };
   const e = schema.properties.charts.items.properties.vizType.enum;
@@ -103,5 +106,40 @@ test('D13 — a panel carries no SQL field at all; the only inputs are governed 
   } satisfies Required<Panel>));
   for (const forbidden of ['sql', 'query', 'expression', 'rawSql', 'adhoc']) {
     assert.equal(keys.has(forbidden), false, `Panel must never grow a \`${forbidden}\` field`);
+  }
+});
+
+// -------------------------------------------- H-1: the time grain is allow-listed ---
+
+/** The payload that closes `date_trunc('<grain>'` and appends a statement. */
+const INJECTION = "month'), (SELECT password FROM users) --";
+
+test('H-1 — the servable grains are the metrics `Granularity` set, as a RUNTIME list', () => {
+  assert.deepEqual([...PANEL_TIME_GRAINS], ['day', 'week', 'month', 'quarter', 'year']);
+  for (const g of PANEL_TIME_GRAINS) assert.equal(isServableTimeGrain(g), true, g);
+});
+
+test('H-1 — the injection payload is NOT a servable grain', () => {
+  assert.equal(isServableTimeGrain(INJECTION), false);
+  for (const bad of ["month'", 'MONTH', 'month ', 'hour', '', 'day;drop', null, undefined, 7, {}]) {
+    assert.equal(isServableTimeGrain(bad), false, String(bad));
+  }
+});
+
+test('H-1 — an unservable grain is a typed bad_request that does not echo the whole payload', () => {
+  const panel: Panel = { name: 'Trend', vizType: 'line', metrics: ['Orders.revenue'], timeDimension: 'Orders.d', timeGrain: INJECTION as never };
+  const e = unservableTimeGrainError(panel);
+  assert.ok(e, 'an unservable grain must be refused');
+  assert.equal(e!.status, 400);
+  assert.match(e!.message, /is not one the governed query path can serve/);
+  assert.match(e!.message, /`day`, `week`, `month`, `quarter`, `year`/);
+  assert.ok(e!.message.length < 400, 'the refusal must not splice an unbounded payload into a log line');
+  // One assertion covers both gates, so a new door cannot remember one and forget the other.
+  assert.throws(() => assertServableFilters(panel), /not one the governed query path can serve/);
+});
+
+test('H-1 — an absent or empty grain is fine (a panel need not trend over time)', () => {
+  for (const g of [undefined, null, '']) {
+    assert.equal(unservableTimeGrainError({ name: 'p', vizType: 'bar', metrics: ['Orders.revenue'], timeGrain: g as never }), null, String(g));
   }
 });

@@ -19,8 +19,9 @@
 /*
  * Modified from apache/superset superset-frontend/plugins/plugin-chart-echarts/src/constants.ts,
  *   src/defaults.ts, src/types.ts, src/Timeseries/types.ts,
- *   superset-frontend/packages/superset-ui-core/src/chart/types/Base.ts and
- *   superset-frontend/packages/superset-ui-chart-controls/src/types.ts
+ *   superset-frontend/packages/superset-ui-core/src/chart/types/Base.ts (AxisType),
+ *   superset-frontend/packages/superset-core/src/common/index.ts (GenericDataType) and
+ *   superset-frontend/packages/superset-ui-chart-controls/src/types.ts (SortSeriesType)
  *   @ c83fb2bb1dcfac41ac51bcebd82471f4a7180d18, by Borek Data Ventures UG
  *   (haftungsbeschränkt), 2026.
  * Changes:
@@ -31,8 +32,14 @@
  *     name, so `AxisType.Category` and `AxisType` both still read as upstream wrote them. Node's
  *     type-stripping loader (which runs this repo's test suite) refuses a TypeScript `enum`, and
  *     `const enum` is worse: it would inline across the vendor boundary. The VALUES are verbatim.
- *   - `GenericDataType` is reduced to the three members the OS's governed model can produce
- *     (string / numeric / temporal); `BOOLEAN` is dropped because the metric layer never serves it.
+ *   - `GenericDataType` (upstream `packages/superset-core/src/common/index.ts`) is reduced to the
+ *     three members the OS's governed model can produce (string / numeric / temporal); `BOOLEAN`
+ *     is dropped because the metric layer never serves it. **Its values are changed:** upstream
+ *     they are NUMERIC enum members (0, 1, 2, 3), here they are the strings 'STRING' / 'NUMERIC' /
+ *     'TEMPORAL', because the enum became an `as const` object (below) and a numeric union would
+ *     make `0` falsy in a `dataType === GenericDataType.String` check — the exact bug class the
+ *     string form cannot have. Nothing crosses the vendor boundary as a number, so no upstream
+ *     comparison changes meaning.
  *   - The ECharts option/series types are declared STRUCTURALLY here instead of importing
  *     `echarts`, so `os-ui/vendor/**` stays dependency-free and the OS's single-registration
  *     ratchet (`core/ui/charts/register.ts` is the only module allowed to name that package) holds.

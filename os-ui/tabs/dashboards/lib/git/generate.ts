@@ -90,11 +90,19 @@ export function placeDashboards(snapshot: DashboardProjectSnapshot): PlacedDashb
 
 // ------------------------------------------------------------------------- yaml ---
 
-/** A YAML scalar that cannot be mis-read: plain when obviously safe, else single-quoted. */
+/**
+ * A YAML scalar that cannot be mis-read: plain when obviously safe, else single-quoted.
+ *
+ * L-1: a value with leading or trailing whitespace is ALWAYS quoted. A plain YAML scalar is
+ * stripped on read, so `name: 'Sales  '` written plain would come back as `Sales` and the
+ * generate → read → generate round trip would not be byte-stable — the one property every other
+ * guarantee here rests on.
+ */
 export function y(v: string | number | boolean): string {
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   const s = String(v ?? '');
-  if (/^[A-Za-z0-9][A-Za-z0-9 ._/:-]*$/.test(s) && !/^(true|false|null|yes|no|on|off|~)$/i.test(s)) return s;
+  const safe = /^[A-Za-z0-9][A-Za-z0-9 ._/:-]*$/.test(s) && s === s.trim() && !/ {2}/.test(s);
+  if (safe && !/^(true|false|null|yes|no|on|off|~)$/i.test(s)) return s;
   return `'${s.replace(/'/g, "''")}'`;
 }
 
@@ -201,21 +209,14 @@ export function renderDashboardYaml(placed: PlacedDashboard, domain: string): st
   } else {
     for (const p of d.panels) lines.push(...panelBlock(p));
   }
-  // The layout is written ONLY when the panels actually carry grid positions. The OS renders a
-  // flow layout otherwise, and emitting an invented layout would be a claim the product cannot keep.
-  const positioned = d.panels.filter((p) => p.gridPos);
-  if (positioned.length > 0) {
-    lines.push(
-      '  layout:',
-      '    # One row per panel position. Tabs and drag/resize are not built yet; a dashboard with',
-      '    # no layout renders in panel order, which is what an absent `layout` means.',
-      '    items:',
-    );
-    for (const p of positioned) {
-      const g = p.gridPos!;
-      lines.push(`      - { panel: ${y(p.id)}, x: ${g.x}, y: ${g.y}, w: ${g.w}, h: ${g.h} }`);
-    }
-  }
+  // H-6: `spec.layout` is NOT emitted. It was a second copy of each panel's `gridPos`, and the
+  // file invites hand editing — so an engineer who re-ordered the layout block and not the panels
+  // would have had their change silently lost, which is the worst outcome of the two doors. One
+  // fact, written once: a panel's position is its `gridPos`. (`lib/git/parse.ts` still READS a
+  // `layout` block, so a file written by an older OS, or by hand, is accepted — and a block that
+  // disagrees with the panels is refused by name rather than ignored. Tabs and drag/resize are
+  // backlog item D14; when a real layout TREE exists it will carry something `gridPos` cannot,
+  // and then it earns its place in the file.)
   return `${lines.join('\n')}\n`;
 }
 

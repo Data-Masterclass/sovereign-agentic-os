@@ -16,19 +16,27 @@
  *   • When the plotted rows are a capped subset, the caption says "first N of M rows".
  *
  * Rendering goes through the OS's ONE chart surface (`@core/ui/charts` — the single ECharts
- * registration, the shared theme bridge and the shared `<Chart>` canvas shell), so this view and
- * a dashboard panel cannot drift apart. This is the minimal shared leaf: `PanelChart` stays coupled to Cube panels
+ * registration, the shared theme bridge, the shared palette and the shared `<Chart>` canvas
+ * shell), so this view and a dashboard panel cannot drift apart.
+ *
+ * DOCUMENTED EXCEPTION (review M-4): the option BUILDER below is still this view's own, rather
+ * than `buildChartOption`. The reason is the honesty rule in the header: a blank or non-numeric
+ * cell here must stay a GAP (`connectNulls: false`), because a raw query result genuinely does not
+ * have a number for that cell — plotting it as 0 would be a fabricated value. A governed metric
+ * panel has no such cells (an aggregate always has a number), so the shared builder coerces. The
+ * shared builder now takes `nullable` for exactly this case, and converging the two is a tracked
+ * follow-up; what mattered first was that the two could not disagree on COLOUR, which they now
+ * cannot. This is the minimal shared leaf: `PanelChart` stays coupled to Cube panels
  * (metrics, drill-downs, big-number KPIs), while this one is a plain `{columns, rows}` view.
  */
 import { useMemo, useState } from 'react';
 import Chart from '@core/ui/charts/Chart';
 import type { EChartsOption } from '@core/ui/charts/register';
-import { cssVar } from '@core/ui/charts/theme';
+import { chartColors, type ChartColors } from '@core/ui/charts/theme';
 import { parseNumber, type ChartHint, type ChartType } from '@tabs/data/lib/ask-chart';
 
 
 
-type Colors = { gold: string; teal: string; ink: string; line: string; panel: string };
 
 /** Build the ECharts option for the chosen chart type over the plotted rows. Pure given
  *  the rows + hint + theme colors. Non-numeric/blank cells become `null` (a gap). */
@@ -37,9 +45,11 @@ function buildOption(
   columns: string[],
   rows: string[][],
   hint: ChartHint,
-  colors: Colors,
+  colors: ChartColors,
 ): EChartsOption {
-  const palette = [colors.gold, colors.teal, '#7c6cc4', '#c46c8a', '#6ca3c4', '#b58b3a'];
+  // M-4: the ONE OS palette, in the one OS order. This used to be a sixth-colour variant that
+  // put gold first, so the same two series were teal/gold on a dashboard and gold/teal here.
+  const palette = colors.palette;
   const axisText = { color: colors.ink, fontSize: 11 };
   const splitLine = { lineStyle: { color: colors.line } };
   const cats = rows.map((r) => String(r[hint.dimension] ?? ''));
@@ -121,16 +131,7 @@ export default function ResultChart({
   height?: number;
 }) {
   const [type, setType] = useState<ChartType>(hint.defaultType);
-  const colors = useMemo<Colors>(
-    () => ({
-      gold: cssVar('--gold', '#c8a24a'),
-      teal: cssVar('--teal', '#1f8f88'),
-      ink: cssVar('--text', '#2b2b2b'),
-      line: cssVar('--border', 'rgba(0,0,0,0.08)'),
-      panel: cssVar('--panel', '#fff'),
-    }),
-    [],
-  );
+  const colors = useMemo(() => chartColors(), []);
   // Plot ONLY the capped subset the hint chose (the same real rows the caption counts).
   const plotted = useMemo(() => rows.slice(0, hint.plottedRows), [rows, hint.plottedRows]);
   const option = useMemo(

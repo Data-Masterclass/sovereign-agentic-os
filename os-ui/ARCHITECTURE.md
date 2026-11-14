@@ -851,3 +851,32 @@ sha**. Things this codebase will punish you for:
 - **Letting upstream reorder a user's series.** Superset's default branch sorts series
   reverse-alphabetically. The OS passes `seriesOrder` so the measure order the panel author declared
   is the order on screen.
+
+## A typed union is not a runtime check
+
+The dashboards review found a live SQL injection, and the shape of it is worth remembering because
+nothing in the code looked wrong.
+
+`tabs/metrics/lib/explorer.ts` declares `export type Granularity = 'day' | 'week' | …` and
+interpolates it straight into the compiled SQL — `date_trunc('${spec.granularity}', "col")` — which
+is correct for every caller that *has* a `Granularity`. The dashboards panel query had
+`timeGrain: Granularity | undefined` on its type and wrote `p.timeGrain as Granularity`. But the
+panel is parsed out of an HTTP request body, a `type` has no runtime existence, and `as` is erased
+at compile time, so the cast asserted something nobody had checked: a panel carrying
+`timeGrain: "month'), (SELECT password FROM users) --"` type-checked, cast cleanly, and closed the
+quote.
+
+Three rules come out of it:
+
+- **A string that reaches SQL as an IDENTIFIER or a KEYWORD must be checked against a closed
+  runtime allow-list, at the boundary where it enters.** Not escaped, not sanitised, not cast.
+  Values can be quoted and bound; grains, column names, aggregate names and sort directions cannot.
+- **A union type with no value form is a trap.** If a set is small and closed, declare the ARRAY and
+  derive the type (`const X = [...] as const; type X = (typeof X)[number]`), so there is something
+  to check at runtime and so a new member cannot be added to one and not the other.
+  `tabs/dashboards/lib/model.ts` does this for `VIZ_TYPES`, `SERVABLE_FILTER_OPERATORS` and
+  `PANEL_TIME_GRAINS`, the last of which carries a compile-time assertion that it still equals the
+  metrics `Granularity`.
+- **One assertion per door, not one per field.** `assertServableFilters` checks the operators AND
+  the grain, and the store calls it, so a new entry point cannot remember one check and forget the
+  other. A gate that lives in three call sites is a gate that is missing from the fourth.

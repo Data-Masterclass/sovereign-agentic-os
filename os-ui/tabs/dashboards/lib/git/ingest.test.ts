@@ -54,8 +54,9 @@ test('a good push yields one dashboard to apply, with every id resolved', () => 
   assert.ok(ingestAccepted(plan));
   assert.equal(plan.dashboards.length, 1);
   assert.equal(plan.dashboards[0].id, 'dash_1');
-  assert.equal(plan.dashboards[0].tier, 'domain');
   assert.equal(plan.dashboards[0].file, 'dashboards/sales-overview/dashboard.yaml');
+  assert.equal(plan.files, 1);
+  assert.equal(plan.emptied, false);
   assert.deepEqual(plan.dashboards[0].spec, {
     name: 'Sales Overview',
     view: 'Orders',
@@ -96,7 +97,7 @@ test('one bad file does not hide the others — every refusal is reported', () =
 
 test('a push with no dashboard files is an empty, accepted plan', () => {
   const plan = ingestFromRepo(INGEST_KIND, new Map([['models/orders.sql', 'select 1']]), resolveAll);
-  assert.deepEqual(plan, { kind: 'dashboard', dashboards: [], rejected: [], ignored: [] });
+  assert.deepEqual(plan, { kind: 'dashboard', dashboards: [], rejected: [], ignored: [], files: 0, emptied: false });
   assert.equal(ingestAccepted(plan), true);
 });
 
@@ -166,5 +167,91 @@ test('G5 — an invisible or missing dashboard resolves to null, indistinguishab
       spec: { name: 'X', view: 'Orders', charts: [] },
     })),
     null,
+  );
+});
+
+// --------------------------------------- H-8: the audience ladder is never pushable ---
+
+test('H-8 — the plan carries NO tier: a push can never change a dashboard’s audience', () => {
+  const marketplace = GOOD.replace('tier: domain', 'tier: marketplace');
+  const plan = ingestFromRepo(INGEST_KIND, new Map([['dashboards/a/dashboard.yaml', marketplace]]), resolveAll);
+  assert.ok(ingestAccepted(plan), 'the file is still VALID — the tier is read and shape-checked');
+  const applied = plan.dashboards[0] as Record<string, unknown>;
+  assert.ok(!('tier' in applied), 'a `tier` on the plan would let a creator publish company-wide with no approver');
+  // The parsed doc still carries it, for the record and for the round trip — it is just not
+  // authority, and nothing downstream may read it as such.
+  assert.equal(plan.dashboards[0].doc.tier, 'marketplace');
+  // A nonsense tier is still refused, so a typo is caught rather than imported.
+  const bogus = GOOD.replace('tier: domain', 'tier: company-wide');
+  const refused = ingestFromRepo(INGEST_KIND, new Map([['dashboards/a/dashboard.yaml', bogus]]), resolveAll);
+  assert.equal(ingestAccepted(refused), false);
+  assert.match(refused.rejected[0].reason, /metadata\.tier` must be one of/);
+});
+
+// ------------------------- H-7: a push that would empty the subtree is refused ---
+
+test('H-7 — a push that removes every dashboard.yaml is reported as `emptied` and REFUSED', () => {
+  // The tree still touches `dashboards/` (the index is there) but carries no dashboard.yaml, so
+  // applying it would delete every dashboard in the domain. Almost always a forgotten path.
+  const plan = ingestFromRepo(INGEST_KIND, new Map([['dashboards/index.yml', 'version: 1\ndashboards: []\n']]), resolveAll);
+  assert.equal(plan.files, 0);
+  assert.equal(plan.emptied, true);
+  assert.equal(ingestAccepted(plan), false, 'E must be able to refuse this');
+  assert.match(ingestRefusalMessage(plan), /would delete every dashboard in this domain/);
+  assert.match(ingestRefusalMessage(plan), /Nothing was applied/);
+  // A caller that really means it, after its own confirmation, can still proceed.
+  assert.equal(ingestAccepted(plan, { allowEmptying: true }), true);
+});
+
+test('H-7 — a push that does not touch `dashboards/` at all is NOT an emptying', () => {
+  const plan = ingestFromRepo(INGEST_KIND, new Map([['models/orders.sql', 'select 1']]), resolveAll);
+  assert.equal(plan.emptied, false, 'a dbt-only push must not look like a dashboard deletion');
+  assert.equal(ingestAccepted(plan), true);
+});
+
+test('H-1 — an injected time grain is refused at the PUSH door too', () => {
+  const injected = GOOD.replace(
+    'panels: [{ id: p_rev, name: Revenue, viz: big_number, metrics: [Orders.revenue] }]',
+    "panels: [{ id: p_rev, name: Revenue, viz: line, metrics: [Orders.revenue], timeDimension: Orders.d, timeGrain: \"month'), (SELECT password FROM users) --\" }]",
+  );
+  const plan = ingestFromRepo(INGEST_KIND, new Map([['dashboards/a/dashboard.yaml', injected]]), resolveAll);
+  assert.equal(ingestAccepted(plan), false);
+  assert.match(plan.rejected[0].reason, /timeGrain/);
+  assert.match(plan.rejected[0].reason, /not a grain the governed query path can serve/);
+  assert.match(plan.rejected[0].reason, /allow-listed rather than escaped/);
+});
+
+// ------------------------------- H-3: slug is not id, and facts.ts knows it ---
+
+test('H-3 — pathsForDashboard resolves the slug through the committed index, not from the id', async () => {
+  const { pathsForDashboard, parseDashboardIndex, indexEntryFor, yamlPathForDashboard } = await import('@tabs/dashboards/lib/git/facts');
+  const indexYaml = [
+    'version: 1',
+    'domain: analytics',
+    'dashboards:',
+    '  - slug: sales-overview',
+    '    id: dash_sales_overview_ab12cd',
+    '    path: dashboards/sales-overview',
+    '    name: Sales Overview',
+  ].join('\n');
+  assert.equal(parseDashboardIndex(indexYaml).length, 1);
+  assert.equal(indexEntryFor(parseDashboardIndex(indexYaml), 'dash_sales_overview_ab12cd')!.slug, 'sales-overview');
+  // The id is NOT the directory name — a caller that guessed `dashboards/<id>/` would be wrong.
+  assert.deepEqual(pathsForDashboard('dash_sales_overview_ab12cd', { indexYaml }), [
+    'dashboards/sales-overview/',
+    'dashboards/index.yml',
+  ]);
+  assert.equal(yamlPathForDashboard('dash_sales_overview_ab12cd', { indexYaml }), 'dashboards/sales-overview/dashboard.yaml');
+  // No index and no record ⇒ null, which is honest; a guessed path would make `git log` empty.
+  assert.equal(pathsForDashboard('dash_x', { indexYaml }), null);
+  assert.equal(pathsForDashboard('dash_x', {}), null);
+  // A malformed index degrades to the record, never to an error (it is a generated convenience).
+  assert.deepEqual(parseDashboardIndex('not: [valid'), []);
+  assert.deepEqual(
+    pathsForDashboard('dash_1', {
+      indexYaml: 'garbage',
+      record: { id: 'dash_1', owner: 'u', tier: 'domain', domain: 'analytics', spec: { name: 'Sales Overview', view: 'Orders', charts: [] } },
+    }),
+    ['dashboards/sales-overview/', 'dashboards/index.yml'],
   );
 });

@@ -26,7 +26,16 @@
  */
 import { load } from 'js-yaml';
 import type { DashTier } from '@tabs/dashboards/lib/governance';
-import { VIZ_TYPES, type DashboardSpec, type Panel, type PanelFilter, type VizType, isServableOperator } from '@tabs/dashboards/lib/model';
+import {
+  PANEL_TIME_GRAINS,
+  VIZ_TYPES,
+  type DashboardSpec,
+  type Panel,
+  type PanelFilter,
+  type VizType,
+  isServableOperator,
+  isServableTimeGrain,
+} from '@tabs/dashboards/lib/model';
 import { API_VERSION, UNRESOLVED_REF } from '@tabs/dashboards/lib/git/generate';
 import type { SnapshotDashboard, SnapshotPanel } from '@tabs/dashboards/lib/git/snapshot';
 
@@ -147,6 +156,11 @@ export function parseDashboardFile(text: string, file?: string): SnapshotDashboa
   if (!spec || typeof spec !== 'object') bad('`spec` must be a mapping', file);
   assertNoQueryKeys(spec, 'spec', file);
 
+  // The tier is READ so the file round-trips, and is checked for membership so a typo is caught —
+  // but it is NEVER authority. H-8: `metadata.tier` is the AUDIENCE ladder, which moves only
+  // through the governed promotion path with its roles, requests and approvals. A push that
+  // claimed `tier: marketplace` would otherwise let a creator publish to the whole company with
+  // no approver, so `lib/git/ingest.ts` deliberately does not carry it into its plan.
   const tier = str(meta.tier, 'metadata.tier', file) as DashTier;
   if (!TIERS.includes(tier)) bad(`\`metadata.tier\` must be one of ${TIERS.join(' | ')}`, file);
 
@@ -185,6 +199,17 @@ export function parseDashboardFile(text: string, file?: string): SnapshotDashboa
     if (members.length === 0) bad(`\`spec.panels[${i}].metrics\` must name at least one governed member`, file);
     const timeDimension = p.timeDimension === undefined || p.timeDimension === null ? undefined : str(p.timeDimension, `spec.panels[${i}].timeDimension`, file);
     const timeGrain = p.timeGrain === undefined || p.timeGrain === null ? undefined : str(p.timeGrain, `spec.panels[${i}].timeGrain`, file);
+    // H-1: the grain is interpolated into `date_trunc('<grain>', …)` by the governed compiler, so
+    // it is checked against a CLOSED allow-list at this door exactly as at the query door. A
+    // pushed `month'), (SELECT …` is refused here, before the file ever reaches the registry.
+    if (timeGrain !== undefined && !isServableTimeGrain(timeGrain)) {
+      bad(
+        `\`spec.panels[${i}].timeGrain\` is “${timeGrain.slice(0, 40)}”, which is not a grain the ` +
+          `governed query path can serve. It must be one of ${PANEL_TIME_GRAINS.map((g) => `\`${g}\``).join(', ')}. ` +
+          'The grain becomes part of the compiled SQL, so it is allow-listed rather than escaped.',
+        file,
+      );
+    }
     return {
       id: str(p.id, `spec.panels[${i}].id`, file),
       name: str(p.name, `spec.panels[${i}].name`, file),
@@ -208,6 +233,38 @@ export function parseDashboardFile(text: string, file?: string): SnapshotDashboa
     const pick = (k: 'draft' | 'testing' | 'live') => (typeof l[k] === 'string' && (l[k] as string).trim() ? { [k]: (l[k] as string).trim() } : {});
     const merged = { ...pick('draft'), ...pick('testing'), ...pick('live') };
     if (Object.keys(merged).length > 0) lifecycle = merged;
+  }
+
+  // H-6: `spec.layout` duplicates each panel's `gridPos`, and a reader that ignored it would lose
+  // a hand-edited re-order silently — the worst of both doors. It is parsed and must AGREE with
+  // the panels, so an engineer who edits one and not the other is told rather than overruled.
+  const layout = spec.layout;
+  if (layout !== undefined && layout !== null) {
+    if (typeof layout !== 'object' || Array.isArray(layout)) bad('`spec.layout` must be a mapping', file);
+    const items = (layout as Record<string, unknown>).items;
+    if (items !== undefined && items !== null) {
+      if (!Array.isArray(items)) bad('`spec.layout.items` must be a list', file);
+      const byId = new Map(panels.map((p) => [p.id, p.gridPos]));
+      for (const [i, raw] of (items as unknown[]).entries()) {
+        if (!raw || typeof raw !== 'object') bad(`\`spec.layout.items[${i}]\` must be a mapping`, file);
+        const it = raw as Record<string, unknown>;
+        const panelId = str(it.panel, `spec.layout.items[${i}].panel`, file);
+        if (!byId.has(panelId)) {
+          bad(`\`spec.layout.items[${i}].panel\` names “${panelId}”, which is not a panel in \`spec.panels\``, file);
+        }
+        const pos = gridPos({ x: it.x, y: it.y, w: it.w, h: it.h }, `spec.layout.items[${i}]`, file);
+        const declared = byId.get(panelId);
+        const same = declared && pos && declared.x === pos.x && declared.y === pos.y && declared.w === pos.w && declared.h === pos.h;
+        if (!same) {
+          bad(
+            `\`spec.layout.items[${i}]\` and panel “${panelId}”'s \`gridPos\` disagree. The two are the ` +
+              'same fact written twice; the OS generates them together, so edit `gridPos` on the panel ' +
+              'and let the layout be regenerated — a layout that silently loses your re-order would be worse.',
+            file,
+          );
+        }
+      }
+    }
   }
 
   const view = str(spec.view, 'spec.view', file);

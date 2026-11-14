@@ -31,15 +31,24 @@ export default function Chart({
   onPointClick?: (name: string) => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  // M-5: the click handler is read through a REF, not listed as an effect dependency. A caller
+  // almost always passes an inline arrow (`onPointClick={(n) => drill(n)}`), which is a new
+  // identity on every render — with it in the deps the effect tore down and re-initialised the
+  // whole ECharts instance on every parent render, losing the canvas, the animation and any
+  // in-flight interaction. The ref keeps the LATEST handler callable without re-initialising.
+  const clickRef = useRef(onPointClick);
+  clickRef.current = onPointClick;
+  // Whether the chart is clickable at all is a real structural difference, so it stays a dep.
+  const clickable = Boolean(onPointClick);
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
     const chart = initChart(node);
     chart.setOption(option);
-    if (onPointClick) {
+    if (clickable) {
       chart.on('click', (params) => {
         const name = String((params as { name?: unknown }).name ?? '');
-        if (name) onPointClick(name);
+        if (name) clickRef.current?.(name);
       });
     }
     const ro = new ResizeObserver(() => chart.resize());
@@ -48,6 +57,6 @@ export default function Chart({
       ro.disconnect();
       chart.dispose();
     };
-  }, [option, onPointClick]);
+  }, [option, clickable]);
   return <div ref={ref} style={{ width: '100%', height, cursor: onPointClick ? 'pointer' : undefined }} />;
 }

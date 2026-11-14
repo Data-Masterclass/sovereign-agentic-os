@@ -165,8 +165,11 @@ export async function commitDashboards(
 export type HookDeps = CommitDeps & {
   /** Resolve the acting user's display name + e-mail (the admin directory). Absent ⇒ id only. */
   resolveActor?: (id: string) => Promise<ActorIdentity>;
-  /** Read the domain's dashboards synchronously, in the writer's turn. Injected for tests. */
-  capture?: (domain: string) => SnapshotDashboard[];
+  /**
+   * Read the domain's dashboards. The store's own read is ASYNC because it resolves stream V's
+   * lifecycle pins from a durable mirror (H-5); a test may inject a synchronous one.
+   */
+  capture?: (domain: string) => SnapshotDashboard[] | Promise<SnapshotDashboard[]>;
 };
 
 const inFlight = new Set<Promise<void>>();
@@ -235,17 +238,18 @@ export function installDashboardCommitHook(deps: HookDeps = {}): () => void {
     // A cross-domain move changes two repos: the OLD one loses the dashboard, the NEW one gains it.
     // Both are committed, each from its own captured state, with the same action and actor.
     const domains = [change.previousDomain, change.domain].filter((d): d is string => Boolean(d));
-    const captures = new Map<string, SnapshotDashboard[]>();
+    const captures = new Map<string, SnapshotDashboard[] | Promise<SnapshotDashboard[]>>();
     for (const domain of domains) {
-      // Captured SYNCHRONOUSLY here when a capture function is injected, so the commit records the
-      // state THIS write produced rather than whatever the store holds when the queue drains.
+      // Started HERE, in the writer's turn, so the commit records the state THIS write produced
+      // rather than whatever the store holds when the queue drains. The read itself may be async
+      // (it resolves lifecycle pins), but it is STARTED synchronously, which is what matters.
       if (deps.capture) captures.set(domain, deps.capture(domain));
     }
     for (const domain of domains) {
       queue(
         domain,
         async () => {
-          const captured = captures.get(domain) ?? (await defaultCapture(domain));
+          const captured = await (captures.get(domain) ?? defaultCapture(domain));
           const labels = objectLabels(change, captured);
           await commitDashboards(
             domain,

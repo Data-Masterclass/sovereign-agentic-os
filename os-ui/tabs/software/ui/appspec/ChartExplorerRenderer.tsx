@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 // Tree-shaken ECharts (same registration surface the dashboards use — no new dependency).
 import Chart from '@core/ui/charts/Chart';
 import type { EChartsOption } from '@core/ui/charts/register';
-import { cssVar } from '@core/ui/charts/theme';
+import { APP_SHELL_CSS_VARS, chartColors } from '@core/ui/charts/theme';
 import { Alert, Select, Spinner } from '@core/app-ui/index';
 import type { OsClient, QueryResult } from '@core/app-sdk/index';
 import type { ChartExplorerConfig } from '@tabs/software/lib/appspec/patterns';
@@ -64,15 +64,10 @@ export function ChartExplorerRenderer({ view, os }: { view: ChartExplorerConfig;
     };
   }, [os, view.metric.metricId, view.dimensions, view.timeDimension, grain]);
 
-  const colors = useMemo(
-    () => ({
-      teal: cssVar('--sb-teal', '#1f8f88'),
-      gold: cssVar('--sb-gold', '#c8a24a'),
-      ink: cssVar('--sb-text', '#2b2b2b'),
-      line: cssVar('--sb-border', 'rgba(0,0,0,0.08)'),
-    }),
-    [],
-  );
+  // M-4: the ONE OS palette, resolved through the app shell's own `--sb-*` token namespace — an
+  // app can never read the OS chrome's variables, so the NAMES differ while the palette order and
+  // the fallbacks are shared. One palette, two namespaces, instead of two palettes.
+  const colors = useMemo(() => chartColors(APP_SHELL_CSS_VARS), []);
 
   const option: EChartsOption | null = useMemo(() => {
     const result = state.result;
@@ -91,7 +86,7 @@ export function ChartExplorerRenderer({ view, os }: { view: ChartExplorerConfig;
     const type = view.chart === 'bar' ? 'bar' : 'line';
     return {
       tooltip: { trigger: 'axis' },
-      color: [colors.teal, colors.gold],
+      color: colors.palette,
       grid: { left: 8, right: 12, top: 24, bottom: 8, containLabel: true },
       xAxis: {
         type: 'category',

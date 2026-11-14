@@ -33,8 +33,15 @@ import { transformTimeseries, type TimeseriesOption } from '../../../vendor/supe
 /** The chart families this surface draws. A KPI and a table are HTML, not an ECharts option. */
 export type ChartKind = 'line' | 'area' | 'bar' | 'pie';
 
-/** One series: its governed member name (used verbatim as the legend/series id) and its values. */
-export type ChartSeries = { name: string; values: number[] };
+/**
+ * One series: its governed member name (used verbatim as the legend/series id) and its values.
+ *
+ * `null` is a GAP, not a zero (M-4). A blank or non-numeric cell must never be plotted as 0 — that
+ * is a fabricated number, and the chart would read as "we sold nothing" rather than "we do not
+ * know". Governed metric panels coerce to a number because an aggregate always has one; a raw
+ * query result does not, and says so by passing `nullable`.
+ */
+export type ChartSeries = { name: string; values: (number | null)[] };
 
 /**
  * A host-independent chart spec. Everything a chart needs and nothing a host owns: no title, no
@@ -70,6 +77,12 @@ export type FromRowsInput = {
   valueKeys: string[];
   temporal?: boolean;
   height?: number;
+  /**
+   * Keep a blank or non-numeric cell as `null` (a GAP in the line) instead of coercing it to 0.
+   * A raw query result needs this; a governed metric aggregate does not, because it always has a
+   * number. Plotting a blank as 0 would be a fabricated value, which this product may not do.
+   */
+  nullable?: boolean;
 };
 
 /**
@@ -78,12 +91,18 @@ export type FromRowsInput = {
  * can never be handed `NaN` (ECharts drops it silently, which would be a hidden hole in a line).
  */
 export function fromRows(input: FromRowsInput): ChartSpec {
-  const { kind, rows, categoryKey, valueKeys, temporal, height } = input;
+  const { kind, rows, categoryKey, valueKeys, temporal, height, nullable } = input;
   const categories = rows.map((r) => String((categoryKey ? r[categoryKey] : '') ?? ''));
+  const cell = (v: unknown): number | null => {
+    if (!nullable) return num(v);
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
   return {
     kind,
     categories,
-    series: valueKeys.map((k) => ({ name: k, values: rows.map((r) => num(r[k])) })),
+    series: valueKeys.map((k) => ({ name: k, values: rows.map((r) => cell(r[k])) })),
     ...(temporal ? { temporal: true } : {}),
     ...(height !== undefined ? { height } : {}),
   };
@@ -129,7 +148,7 @@ export function buildChartOption(spec: ChartSpec, colors: ChartColors): OsChartO
           labelLine: { length: 8, length2: 6 },
           // Colliding slice labels HIDE instead of overlapping (the tooltip still names them).
           labelLayout: { hideOverlap: true },
-          data: spec.categories.map((name, i) => ({ name, value: measure.values[i] ?? 0 })),
+          data: spec.categories.map((name, i) => ({ name, value: measure.values[i] })),
         },
       ],
     };

@@ -15,6 +15,16 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ### Added
 
+- **Fixed a SQL-injection hole in dashboard panels.** A panel's `timeGrain` arrived raw from the
+  request body and was cast, not checked, before the governed compiler interpolated it into
+  `date_trunc('<grain>', …)` — so a panel carrying `month'), (SELECT … --` could have appended SQL.
+  The five servable grains are now a runtime allow-list, asserted equal to the metrics
+  `Granularity` union at compile time, and checked at BOTH doors (the query path and the `git push`
+  reader) with the payload under test. A dashboard's audience tier is also no longer pushable, a
+  push that would empty `dashboards/` is refused rather than applied, and the dashboards subtree
+  gained a boot reconcile with the same hydration and destructive-delta guards as the data and
+  agent ones.
+
 - **A dashboard is code in git.** Every save — from the Dashboards tab or from `create_dashboard` —
   now commits `dashboards/<slug>/dashboard.yaml` plus a generated `README.md` and
   `dashboards/index.yml` to the owning domain's repository, authored as the acting user with the

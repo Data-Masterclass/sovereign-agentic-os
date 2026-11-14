@@ -3,7 +3,7 @@
  */
 import type { Role } from '@core/kernel/session';
 import { type DashTier, type DashboardRecord, dashboardRecord, governDashboard } from '@tabs/dashboards/lib/governance';
-import { type DashboardSpec } from '@tabs/dashboards/lib/model';
+import { assertServableFilters, type DashboardSpec } from '@tabs/dashboards/lib/model';
 import { osMirror } from '@core/infra/os-mirror';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
@@ -41,7 +41,7 @@ function manageArg(d: Stored): { owner: string; domain: string; scope: ArtifactS
 // platform's own governed flows (e.g. the Northpeak e-commerce seed).
 const SEED: Stored[] = [];
 
-type DashState = { dashboards: Stored[]; hydration: Promise<void> | null };
+type DashState = { dashboards: Stored[]; hydration: Promise<void> | null; hydratedAt?: number; hydrateFailedAt?: number };
 const DASH_KEY = Symbol.for('soa.dashboards.store');
 function dashState(): DashState {
   const g = globalThis as unknown as Record<symbol, DashState | undefined>;
@@ -87,18 +87,28 @@ export async function ensureHydrated(): Promise<void> {
 
 async function hydrate(): Promise<void> {
   const s = dashState();
-  const docs = (await mirror.hydrate(1000)) ?? [];
+  const docs = await mirror.hydrate(1000);
+  if (docs === null) {
+    // The mirror was unreachable. Stay UN-hydrated and record the failure, so a later read
+    // retries and so `hydrationState()` can tell the boot reconcile not to run. A FAILED
+    // hydration must never be cached as done — the data store's rule, for the same reason.
+    s.hydrateFailedAt = Date.now();
+    return;
+  }
   for (const rec of docs as Stored[]) {
     if (rec && rec.id && !s.dashboards.find((d) => d.id === rec.id)) {
       s.dashboards.push(rec);
     }
   }
+  s.hydratedAt = Date.now();
 }
 
 export function __resetDashboards(): void {
   const s = dashState();
   s.dashboards = SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } }));
   s.hydration = null;
+  delete s.hydratedAt;
+  delete s.hydrateFailedAt;
   mirror.__reset();
   versions.__reset();
 }
@@ -109,7 +119,21 @@ export function __resetDashboards(): void {
  * the durable mirror. `sel.id` moves one; `sel.onlyUnassigned` sweeps only
  * empty-domain records. Returns the ids moved.
  */
-export function moveDashboardsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): string[] {
+export function moveDashboardsDomain(
+  sel: { id?: string; onlyUnassigned?: boolean },
+  target: string,
+  // M-8: the acting admin's principal id. It used to be hard-coded `system` in the emitted event,
+  // so a cross-domain move — which rewrites TWO repositories — was authored by nobody. The
+  // parameter is optional ONLY so the pre-existing callers keep compiling; an absent actor is
+  // recorded as `system` AND logged as the attribution gap it is, never silently.
+  actorId?: string,
+): string[] {
+  if (!actorId) {
+    console.warn(
+      '[dashboards] moveDashboardsDomain called with no actorId — the commit will be authored `system`. ' +
+        'Pass the acting admin\'s principal id so a cross-domain move names its author.',
+    );
+  }
   const moved: string[] = [];
   for (const d of dashState().dashboards) {
     if (sel.id !== undefined && d.id !== sel.id) continue;
@@ -120,7 +144,7 @@ export function moveDashboardsDomain(sel: { id?: string; onlyUnassigned?: boolea
     writeThrough(d);
     // A cross-domain move changes TWO repositories: the old one loses the dashboard, the new one
     // gains it. The hook commits both, each from its own captured state.
-    announce(d, 'system', 'move dashboard between domains', previousDomain);
+    announce(d, actorId ?? 'system', 'move dashboard between domains', previousDomain);
     moved.push(d.id);
   }
   return moved;
@@ -163,16 +187,45 @@ function announce(rec: Stored, actorId: string, action: string, previousDomain?:
  * regardless of who happened to trigger the write. No secrets and no principal ids leave: the
  * snapshot hashes the owner (see `lib/git/snapshot.ts`).
  */
-export function dashboardsForProject(domain: string, resolvers: SnapshotResolvers = {}): SnapshotDashboard[] {
+export async function dashboardsForProject(domain: string, resolvers: SnapshotResolvers = {}): Promise<SnapshotDashboard[]> {
   if (!domain) return [];
+  const rows = dashState().dashboards.filter((d) => d.domain === domain && !d.archived);
+  // Stream V owns lifecycle; this tab only RECORDS the pin it is given. H-5: V's `livePin` is
+  // ASYNC (the pins live in a durable mirror), so the pins are resolved HERE, before the pure
+  // generator runs — `lib/git/generate.ts` must stay synchronous and store-free.
+  const pins = new Map<string, NonNullable<SnapshotDashboard['lifecycle']>>();
+  if (!resolvers.lifecycle) {
+    await Promise.all(
+      rows.map(async (d) => {
+        const pin = await dashboardLifecycle(d.id);
+        if (pin) pins.set(d.id, pin);
+      }),
+    );
+  }
   const withLifecycle: SnapshotResolvers = {
     ...resolvers,
-    // Stream V owns lifecycle; this tab only RECORDS the pin it is given (lib/lifecycle-port.ts).
-    lifecycle: resolvers.lifecycle ?? ((id: string) => dashboardLifecycle(id)),
+    lifecycle: resolvers.lifecycle ?? ((id: string) => pins.get(id) ?? null),
   };
-  return dashState()
-    .dashboards.filter((d) => d.domain === domain && !d.archived)
-    .map((d) => snapshotDashboard(d, withLifecycle));
+  return rows.map((d) => snapshotDashboard(d, withLifecycle));
+}
+
+/**
+ * Did the registry really LOAD? The boot reconcile must never run on an unverified store: an
+ * empty registry whose mirror was unreachable is indistinguishable from a tenant that owns no
+ * dashboards, and committing the former would DELETE every dashboard directory in every domain
+ * and push that to the mirror. Mirrors `tabs/agents/lib/store.ts` `hydrationState` exactly.
+ */
+export function hydrationState(): 'hydrated' | 'failed' | 'pending' {
+  const s = dashState();
+  if (s.hydratedAt !== undefined) return 'hydrated';
+  return s.hydrateFailedAt !== undefined ? 'failed' : 'pending';
+}
+
+/** Every domain that currently holds a live dashboard — the reconcile's target set. */
+export function dashboardDomains(): string[] {
+  const out = new Set<string>();
+  for (const d of dashState().dashboards) if (d.domain && !d.archived) out.add(d.domain);
+  return [...out].sort();
 }
 
 export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number; folder: string; archived?: boolean };
@@ -229,6 +282,11 @@ export function getDashboard(id: string, user: Principal): Stored {
 
 /** Create (or replace) a dashboard the user owns — both build modes land here. */
 export function saveDashboard(user: Principal, id: string, spec: DashboardSpec): Stored {
+  // M-7: the STORE is the boundary, so the servability gate lives here and not only in the MCP
+  // tool. Every door — the tab's save route, `create_dashboard`, a `git push` ingest — lands in
+  // this function, and a panel whose filter operator or time grain the governed path cannot serve
+  // is refused once, here, rather than three times unevenly.
+  for (const chart of spec.charts) assertServableFilters(chart);
   const existing = dashState().dashboards.find((x) => x.id === id);
   if (existing) {
     // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.

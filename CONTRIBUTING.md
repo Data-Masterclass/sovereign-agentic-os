@@ -86,6 +86,17 @@ subcharts**. Adding or upgrading one requires, in the same pull request: a row i
 Must modify upstream? Use `components/<name>/patches/*.patch`, applied at image build, and
 prefer an upstream pull request.
 
+**The one carve-out: `os-ui/vendor/`.** A small, attributed, licence-clean slice of permissively
+licensed third-party SOURCE may be compiled into `os-ui` — today Apache Superset's pure ECharts
+transformers, Apache-2.0 into Apache-2.0. That is a different thing from a bundled component: it is
+not an image, not a subchart, and not separately redistributed. The rule above still governs
+everything in `components/`. A vendored file must keep its upstream licence header **verbatim**
+(never rewritten), carry a `Modified from <repo> <path> @ <40-char sha>` notice with a `Changes:`
+list and an SPDX line, be recorded in `licenses/components.tsv`, `THIRD-PARTY-LICENSES.md`,
+`NOTICE`, `sbom.cdx.json` and `os-ui/core/kernel/licenses.ts`, and import nothing. The hard
+`VENDOR-LICENCE-HEADER` rule in `scripts/check-structure.mjs` enforces the header half; read
+`os-ui/vendor/superset/README.md` before adding to it.
+
 ## Running the checks
 
 ```bash

@@ -16,6 +16,12 @@
  *     {@link setLifecycleReader}; until it does, {@link livePin} returns `null` and every surface
  *     behaves exactly as it does today — no pin, no lifecycle block in the file, no Run filter.
  *     That is the honest degradation: absent, not invented.
+ *   - V HAS SINCE LANDED `tabs/dashboards/lib/lifecycle-adapter.ts` in this tab, which reads
+ *     `livePin` from `core/infra/lifecycle-pins.ts` directly and is what the Studio|Run surfaces
+ *     use. This port survives for the ONE thing the adapter cannot do: the git GENERATOR needs the
+ *     pin while it is composing the committed bytes, and the generator must not import a module
+ *     that may not exist. At merge, V's boot step calls `setLifecycleReader(livePin)` and the two
+ *     agree by construction. Recorded as deviation D-5.
  *   - FAIL-OPEN BY DESIGN, and only for a READ. A missing lifecycle reader must never make a
  *     dashboard unopenable; it also must never be taken as "this is live". A caller that needs to
  *     know whether lifecycle is wired at all asks {@link lifecycleWired}.
@@ -23,7 +29,23 @@
  *     records the pin as it was when the write happened.
  */
 
-/** V's per-version lifecycle record, verbatim in shape (plan D30). */
+/**
+ * Stream V's own pin record, as `core/infra/lifecycle-pins.ts` `livePin` returns it: the pinned
+ * ref plus who pinned it and when. The OS records `ref`, not a role name — `at`/`by` are what make
+ * "what is running, and who decided that" answerable, which is the first question in an incident.
+ */
+export type VPin = {
+  /** The pinned ref: a commit sha, or a tag name. Opaque to this module. */
+  ref: string;
+  /** ISO timestamp of the pin. */
+  at: string;
+  /** The principal who pinned it. */
+  by: string;
+  domain?: string;
+  path?: string;
+};
+
+/** The per-version lifecycle record this tab RECORDS in `dashboard.yaml` (plan D30). */
 export type LifecyclePin = {
   /** The head being edited in Studio. */
   draft?: string;
@@ -31,10 +53,39 @@ export type LifecyclePin = {
   testing?: string;
   /** The pinned commit or tag the OS RUNS. Absent ⇒ nothing of this object is live. */
   live?: string;
+  /** When the live version was pinned, and by whom — carried through from V's own record. */
+  liveAt?: string;
+  liveBy?: string;
 };
 
-/** The reader stream V installs: `(kind, id) → pin | null`. */
-export type LifecycleReader = (kind: string, id: string) => LifecyclePin | null;
+/**
+ * The reader stream V installs. **ASYNC** (H-5): V's `livePin(kind, id)` in
+ * `core/infra/lifecycle-pins.ts` is `Promise<Pin | undefined>` — the pins live in a durable
+ * mirror, not in memory — so a synchronous port could only ever have been wired to a stale copy.
+ * It returns V's own `{ref, at, by}` shape and {@link toLifecyclePin} maps it; a reader may also
+ * return the mapped shape directly, which is what a test usually does.
+ */
+export type LifecycleReader = (kind: string, id: string) => Promise<VPin | LifecyclePin | null | undefined> | VPin | LifecyclePin | null | undefined;
+
+/** Is this V's own pin record (rather than the already-mapped shape)? */
+function isVPin(x: VPin | LifecyclePin): x is VPin {
+  return typeof (x as VPin).ref === 'string';
+}
+
+/**
+ * Map V's `{ref, at, by}` onto the `{live, liveAt, liveBy}` this tab records. V's record describes
+ * exactly one thing — the version that is LIVE — so `draft` and `testing` stay absent rather than
+ * being invented from it.
+ */
+export function toLifecyclePin(pin: VPin | LifecyclePin | null | undefined): LifecyclePin | null {
+  if (!pin) return null;
+  if (!isVPin(pin)) {
+    const has = pin.draft || pin.testing || pin.live;
+    return has ? pin : null;
+  }
+  if (!pin.ref) return null;
+  return { live: pin.ref, ...(pin.at ? { liveAt: pin.at } : {}), ...(pin.by ? { liveBy: pin.by } : {}) };
+}
 
 const KEY = Symbol.for('soa.dashboards.lifecycle-port');
 
@@ -65,14 +116,14 @@ export function lifecycleWired(): boolean {
 
 /**
  * The lifecycle pin of one dashboard, or `null` when lifecycle is not wired or this dashboard has
- * no pin. NEVER throws — a reader that throws is logged and treated as "no pin", because a
+ * no pin. NEVER rejects — a reader that throws is logged and treated as "no pin", because a
  * lifecycle hiccup may not stop a dashboard being read or committed.
  */
-export function dashboardLifecycle(id: string): LifecyclePin | null {
+export async function dashboardLifecycle(id: string): Promise<LifecyclePin | null> {
   const reader = port().reader;
   if (!reader) return null;
   try {
-    return reader('dashboard', id) ?? null;
+    return toLifecyclePin(await reader('dashboard', id));
   } catch (e) {
     console.warn(`[dashboards] lifecycle reader failed for ${id}: ${e instanceof Error ? e.message : String(e)}`);
     return null;
@@ -85,6 +136,6 @@ export function dashboardLifecycle(id: string): LifecyclePin | null {
  * that wants today's behaviour (everything visible) must say so explicitly rather than read
  * `null` as live.
  */
-export function livePin(id: string): string | null {
-  return dashboardLifecycle(id)?.live ?? null;
+export async function livePin(id: string): Promise<string | null> {
+  return (await dashboardLifecycle(id))?.live ?? null;
 }

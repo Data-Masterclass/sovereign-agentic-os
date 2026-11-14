@@ -152,7 +152,7 @@ test('D10 — an unservable filter operator is a typed bad_request BEFORE any qu
     explored += 1;
     void args;
     return { rows: [{ 'Sales.revenue': 999 }], mode: 'live' as const, sql: 'SELECT 1' };
-  }) as unknown as Parameters<typeof runPanelQuery>[4]['explore'];
+  }) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
   await assert.rejects(
     () => runPanelQuery('Sales', panel, viewerToken('DE'), asUser('DE'), { resolve, explore }),
     (e: unknown) => {
@@ -170,7 +170,7 @@ test('D10 — a servable `in` filter still reaches the governed WHERE, and an em
   const explore = (async (_d: unknown, _m: unknown, _t: unknown, slice: { filters?: { column: string; values: string[] }[] }) => {
     seen.push(slice);
     return { rows: [{ 'Sales.revenue': 1 }], mode: 'live' as const, sql: 'SELECT 1' };
-  }) as unknown as Parameters<typeof runPanelQuery>[4]['explore'];
+  }) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
   const panel: Panel = {
     name: 'Channels',
     vizType: 'bar',
@@ -182,4 +182,67 @@ test('D10 — a servable `in` filter still reaches the governed WHERE, and an em
   };
   await runPanelQuery('Sales', panel, viewerToken('DE'), asUser('DE'), { resolve, explore });
   assert.deepEqual(seen[0].filters, [{ column: 'channel', values: ['web', 'retail'] }]);
+});
+
+test('H-1 — an injected time grain is REFUSED at the query door, before any SQL is built', async () => {
+  // `tabs/metrics/lib/explorer.ts` interpolates the grain into `date_trunc('<grain>', "col")`, and
+  // the panel arrives raw from the request body, so an unchecked cast was a live injection.
+  const panel: Panel = {
+    name: 'Trend',
+    vizType: 'line',
+    metrics: ['Sales.revenue'],
+    timeDimension: 'Sales.order_date',
+    timeGrain: "month'), (SELECT password FROM users) --" as never,
+  };
+  let explored = 0;
+  const explore = (async () => {
+    explored += 1;
+    return { rows: [], mode: 'live' as const, sql: '' };
+  }) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
+  await assert.rejects(
+    () => runPanelQuery('Sales', panel, viewerToken('DE'), asUser('DE'), { resolve, explore }),
+    (e: unknown) => {
+      assert.equal((e as { status?: number }).status, 400);
+      assert.match((e as Error).message, /not one the governed query path can serve/);
+      return true;
+    },
+  );
+  assert.equal(explored, 0, 'no SQL may be compiled for an unservable grain');
+});
+
+test('H-1 — every servable grain still reaches the compiler unchanged', async () => {
+  const seen: (string | undefined)[] = [];
+  const explore = (async (_d: unknown, _m: unknown, _t: unknown, slice: { granularity?: string }) => {
+    seen.push(slice.granularity);
+    return { rows: [], mode: 'live' as const, sql: '' };
+  }) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
+  for (const grain of ['day', 'week', 'month', 'quarter', 'year'] as const) {
+    await runPanelQuery(
+      'Sales',
+      { name: 'T', vizType: 'line', metrics: ['Sales.revenue'], timeDimension: 'Sales.order_date', timeGrain: grain },
+      viewerToken('DE'),
+      asUser('DE'),
+      { resolve, explore },
+    );
+  }
+  assert.deepEqual(seen, ['day', 'week', 'month', 'quarter', 'year']);
+});
+
+test('M-9 — a filter value carrying a SQL comment marker is NAMED, not silently stripped', async () => {
+  const seen: { filters?: { column: string; values: string[] }[] }[] = [];
+  const explore = (async (_d: unknown, _m: unknown, _t: unknown, slice: { filters?: { column: string; values: string[] }[] }) => {
+    seen.push(slice);
+    return { rows: [{ 'Sales.revenue': 1 }], mode: 'live' as const, sql: 'SELECT 1' };
+  }) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
+  const res = await runPanelQuery(
+    'Sales',
+    { name: 'F', vizType: 'bar', metrics: ['Sales.revenue'], filters: [{ member: 'Sales.region', operator: 'equals', values: ['DE-- drop'] }] },
+    viewerToken('DE'),
+    asUser('DE'),
+    { resolve, explore },
+  );
+  assert.match(res.warning ?? '', /SQL comment marker/);
+  assert.match(res.warning ?? '', /NOT silently stripped/);
+  // The value reached the compiler VERBATIM — stripping it would change the author's filter.
+  assert.deepEqual(seen[0].filters, [{ column: 'region', values: ['DE-- drop'] }]);
 });

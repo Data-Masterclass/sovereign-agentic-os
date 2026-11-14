@@ -32,6 +32,16 @@
  *     helpers below, because os-ui does not depend on lodash and will not start for a vendored
  *     slice. `orderBy` is reimplemented as a STABLE multi-key sort with lodash's own
  *     null-last/undefined-last ordering, which is the behaviour the upstream call sites rely on.
+ *     TWO BEHAVIOUR DELTAS follow from it, both deliberate and both narrower than upstream:
+ *       (a) `sortAndFilterSeries` returns `[]` for an empty `rows` array. Upstream reads
+ *           `Object.keys(rows[0])` and would throw on `undefined`; it is only ever called from
+ *           `extractSeries`, which already returns early for empty data, so upstream cannot reach
+ *           the case. The guard makes the function safe to call directly, which this tree does.
+ *       (b) the min/max/avg/sum aggregators consider only FINITE NUMBERS in the column, where
+ *           lodash's `minBy`/`maxBy` compare whatever is there and can therefore return a row
+ *           whose value is `null` or a string. For a governed measure column the two agree; where
+ *           they differ, the finite-number form is the one that cannot produce `NaN` in a chart
+ *           axis. `meanBy` returns `NaN` for an all-null column exactly as lodash does.
  *   - `@superset-ui/core` imports (DTTM_ALIAS, ensureIsArray, normalizeTimestamp, the formatter
  *     classes) are replaced by local equivalents or by narrowed parameters; types come from
  *     `./types.ts` rather than from `echarts` / `@apache-superset/core`.

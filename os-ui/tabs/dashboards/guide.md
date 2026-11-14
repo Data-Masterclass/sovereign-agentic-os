@@ -54,7 +54,7 @@ create_dashboard({
   name: "Sales Overview",
   view: "Orders",
   charts: [
-    { name: "Total revenue", vizType: "big_number_total", metric: "Orders.revenue" },
+    { name: "Total revenue", vizType: "big_number", metric: "Orders.revenue" },
     { name: "Orders by region", vizType: "bar", metric: "Orders.order_count",
       dimensions: ["Orders.region"] }
   ]
@@ -62,7 +62,11 @@ create_dashboard({
 → { id: "dash_sales_overview_ab12cd", tier: "personal", build: { native: true } }
 ```
 
-The dashboard renders natively at View time (ECharts on the governed Cube layer). A domain admin then promotes it to Domain; each panel re-queries as its viewer, scoped to that viewer's own DLS.
+The dashboard renders natively at View time (Apache ECharts on the governed metric layer). A domain admin then promotes it to Domain; each panel re-queries as its viewer, scoped to that viewer's own DLS.
+
+The `vizType` field accepts the full set the UI offers — "big number" (and its legacy alias),
+line, area, bar, pie and table — seven names in one enum, asserted equal to the type by
+`lib/honesty.test.ts`, so the MCP door is never narrower than the UI door.
 
 ## The dashboard is code — and the second door is `git push`
 

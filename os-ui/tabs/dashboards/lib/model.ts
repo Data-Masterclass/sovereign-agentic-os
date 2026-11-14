@@ -43,6 +43,60 @@ export type VizType = (typeof VIZ_TYPES)[number];
 export type PanelFilter = { member: string; operator: string; values: string[] };
 
 /**
+ * The time grains the governed query path can serve — the RUNTIME list behind
+ * `@tabs/metrics/lib/explorer`'s `Granularity`, which is a bare type union with no value form.
+ *
+ * H-1 (SQL INJECTION, live): a panel arrives from the wire at
+ * `app/api/dashboards/panel-query/route.ts` and `lib/build/panel-query.ts` used to cast
+ * `p.timeGrain as Granularity` with NO runtime check. `tabs/metrics/lib/explorer.ts` then
+ * interpolates it directly — `date_trunc('${spec.granularity}', "col")` — so a panel carrying
+ * `timeGrain: "month'), (SELECT …"` would have closed the quote and appended SQL. The values are
+ * a closed five-member set, so the fix is an allow-list check at EVERY door into the panel: the
+ * query path and the `git push` reader. Never a sanitiser, never an escape — an allow-list.
+ *
+ * The union below is asserted equal to `Granularity` at compile time by {@link TimeGrain}.
+ */
+export const PANEL_TIME_GRAINS = ['day', 'week', 'month', 'quarter', 'year'] as const;
+
+/** A servable time grain. Structurally identical to `@tabs/metrics/lib/explorer`'s `Granularity`. */
+export type TimeGrain = (typeof PANEL_TIME_GRAINS)[number];
+
+/** Compile-time proof that the runtime list and the metrics `Granularity` union are the same set.
+ *  If `Granularity` grows a member, this stops compiling until the list grows with it. */
+const _grainsCoverGranularity: Granularity extends TimeGrain ? (TimeGrain extends Granularity ? true : never) : never = true;
+void _grainsCoverGranularity;
+
+/** Is this a time grain the governed query path can serve? */
+export function isServableTimeGrain(grain: unknown): grain is TimeGrain {
+  return typeof grain === 'string' && (PANEL_TIME_GRAINS as readonly string[]).includes(grain);
+}
+
+/**
+ * The typed refusal for a time grain the governed path cannot serve. `status: 400`, and the
+ * message does NOT echo the offending value back verbatim beyond quoting it, so a refusal can
+ * never itself carry a payload into a log line that something else parses.
+ */
+export function unservableTimeGrainError(panel: Panel): (Error & { status: number }) | null {
+  const grain = panel.timeGrain as unknown;
+  if (grain === undefined || grain === null || grain === '') return null;
+  if (isServableTimeGrain(grain)) return null;
+  const e = new Error(
+    `Panel “${panel.name}”: time grain “${String(grain).slice(0, 40)}” is not one the governed query ` +
+      `path can serve. It must be one of ${PANEL_TIME_GRAINS.map((g) => `\`${g}\``).join(', ')}. ` +
+      'The grain becomes part of the compiled SQL, so it is checked against a closed allow-list ' +
+      'rather than escaped, and an unknown value is REFUSED.',
+  ) as Error & { status: number };
+  e.status = 400;
+  return e;
+}
+
+/** Throw {@link unservableTimeGrainError} when the panel carries an unservable time grain. */
+export function assertServableTimeGrain(panel: Panel): void {
+  const e = unservableTimeGrainError(panel);
+  if (e) throw e;
+}
+
+/**
  * The filter operators the GOVERNED query path can actually serve. The explorer compiles a
  * panel filter to `column IN (<parameterised values>)`, so an equality — of one value or many —
  * is servable and nothing else is.
@@ -87,8 +141,14 @@ export function unservableFilterError(panel: Panel): (Error & { status: number }
   return e;
 }
 
-/** Throw {@link unservableFilterError} when the panel carries an unservable filter. */
+/**
+ * Throw when the panel carries anything the governed path cannot serve: an unservable filter
+ * operator (D10) or an unservable time grain (H-1). ONE call per door, so a new door cannot
+ * remember one check and forget the other.
+ */
 export function assertServableFilters(panel: Panel): void {
+  const grain = unservableTimeGrainError(panel);
+  if (grain) throw grain;
   const e = unservableFilterError(panel);
   if (e) throw e;
 }

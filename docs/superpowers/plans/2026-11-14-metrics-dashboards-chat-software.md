@@ -2058,3 +2058,112 @@ deviation is.
   rather than re-pointed at `lib/model.ts` mid-stream; `lib/honesty.test.ts` asserts the UI list and
   the MCP enum agree, so the duplication cannot drift silently. Collapsing the two is a one-line
   follow-up.
+
+#### Stream D — review round (`D-review-*`)
+
+- **D-review-H1 (the one that mattered): a live SQL injection through `timeGrain`.** The panel
+  arrives raw from the request body, `panel-query.ts` cast it `as Granularity` — erased at runtime —
+  and `tabs/metrics/lib/explorer.ts` interpolates it into `date_trunc('${grain}', "col")`. A panel
+  carrying `month'), (SELECT … --` would have closed the quote. `Granularity` is a bare type union
+  with NO value form, so there was nothing to check against; `PANEL_TIME_GRAINS` in
+  `tabs/dashboards/lib/model.ts` is now that runtime allow-list, asserted equal to `Granularity` at
+  compile time, and `assertServableFilters` checks the grain AND the filter operators in one call so
+  a new door cannot remember one and forget the other. Both doors are tested with the payload.
+  **For stream M, who owns the metrics tab:** the right long-term home for the list is beside
+  `Granularity` in `tabs/metrics/lib/explorer.ts`, exported as a value — this stream could not put
+  it there without editing another stream's file.
+- **D-review-H6: `spec.layout` is no longer emitted.** It was a second copy of each panel's
+  `gridPos` in a file the OS invites people to hand-edit, so an engineer who re-ordered the layout
+  block and not the panels would have had their change silently lost. One fact, written once. The
+  reader still ACCEPTS a `layout` block (an older file, or a hand-written one) and refuses one that
+  disagrees with the panels, naming the panel. When D14 builds a real layout tree it will carry
+  something `gridPos` cannot, and then it earns its place in the file.
+- **D-review-H8: the audience ladder is not pushable.** `metadata.tier` is read and shape-checked so
+  the file round-trips and a typo is caught, and then DISCARDED: `IngestPlan` carries no `tier` at
+  all. Without that, a creator's `git push` could have flipped their own dashboard to
+  `marketplace` — company-wide — with no approver, which is a governance bypass wearing a green
+  tick. **For stream E:** on ingest, keep whatever tier the registry holds; a new dashboard starts
+  where every new dashboard starts.
+- **D-review-H7: an emptying push is refused by default.** `IngestPlan` now carries `files` (the
+  denominator) and `emptied`, and `ingestAccepted` returns `false` for a tree that touches
+  `dashboards/` while carrying no `dashboard.yaml` — which would delete every dashboard in the
+  domain and is almost always a push that forgot a path. A caller that really means it passes
+  `{ allowEmptying: true }` after its own confirmation, the same shape as the git store's
+  `DestructiveReconcileError` guard.
+- **D-review-H4: the dashboards boot reconcile landed.** `tabs/dashboards/lib/git/reconcile.ts`,
+  the same contract as the data and agents ones: the hydration gate first (an empty registry whose
+  mirror was unreachable is indistinguishable from a tenant with no dashboards, and committing the
+  former would delete every dashboard directory in every domain), the git store's
+  `DestructiveReconcileError` left in force and reported rather than worked around, platform
+  attribution with `OS-Reason: boot-reconcile`, and a target set that includes repositories which
+  already carry the subtree so a deletion made while the flag was off still gets committed. Added
+  as step 5, appended at the END of the existing block.
+- **D-review-H5: the lifecycle port is now ASYNC and speaks V's shape.** V's
+  `core/infra/lifecycle-pins.ts` `livePin(kind, id)` returns `Promise<Pin | undefined>` with
+  `{ref, at, by, domain}`, so the original synchronous port could only ever have read a stale copy.
+  `toLifecyclePin` maps it to `{live, liveAt, liveBy}` — V's record describes exactly one thing, the
+  live version, so `draft`/`testing` stay absent rather than being invented. `dashboardsForProject`
+  became async to resolve the pins BEFORE the pure generator runs, which must stay synchronous.
+  **V must call `setLifecycleReader(livePin)` at boot** (the coordinator is routing this); until it
+  does, every surface behaves exactly as today. Note that V has since landed its own
+  `tabs/dashboards/lib/lifecycle-adapter.ts` in this tab, which the Studio|Run surfaces use — the
+  port survives only for the generator, which cannot import a module that may not exist.
+- **D-review-H2/H3: the facts moved out of this stream's engineering view.** T has landed its own
+  `tabs/dashboards/lib/engineering.ts` against the real `core/engineering` types, so at merge T's
+  wins and this stream's is deleted. Everything worth keeping is now in
+  `tabs/dashboards/lib/git/facts.ts` — pure, no view shape of its own: `pathsForDashboard(id, …)`,
+  `yamlPathForDashboard`, `parseDashboardIndex` / `indexEntryFor`, `governedRefs`,
+  `unresolvedMembers`, `gitCommands`, `pinSummary`. **T must call `pathsForDashboard`, never a
+  guessed `dashboards/<id>/`:** the directory is slugged from the dashboard's NAME, so **slug ≠ id**,
+  it is not stable across a rename, and two dashboards that slug alike are disambiguated by id
+  suffix. The function resolves through the committed `dashboards/index.yml` first (which exists to
+  be exactly that mapping) and recomputes the placement only as a fallback.
+- **D-review-M4: one palette, two namespaces.** Three different palettes existed, including a
+  gold-first variant in the query-result view, so the same two series were teal/gold on a dashboard
+  and gold/teal in the Data tab. All three now resolve through `chartColors()`. The app-shell
+  renderer reads its own `--sb-*` tokens — an app may never read the OS chrome's variables — so the
+  theme bridge takes a variable map (`APP_SHELL_CSS_VARS`) and the palette ORDER and fallbacks are
+  shared while the names differ. **The option builders are deliberately NOT yet converged, and the
+  reason is an honesty rule, not laziness:** a raw query result has genuinely blank cells, which
+  must stay GAPS (`connectNulls: false`) — the shared `fromRows` coerced them to 0, which is a
+  fabricated number. `fromRows` now takes `nullable` for exactly that case; converging the builders
+  on top of it is the tracked follow-up.
+- **D-review-M1: three corrections to the vendored `Changes:` lists.** `GenericDataType` comes from
+  `packages/superset-core/src/common/index.ts` (not `superset-ui-core`), its upstream values are
+  NUMERIC and are deliberately changed to strings here (a numeric union would make `0` falsy in a
+  `dataType === GenericDataType.String` check), and `series.ts` carries two declared behaviour
+  deltas: `sortAndFilterSeries` returns `[]` for empty rows where upstream would throw on
+  `rows[0]`, and the aggregators consider only finite numbers where lodash's `minBy`/`maxBy` can
+  return a row whose value is `null`.
+- **D-review-M8: a cross-domain move was authored by nobody.** `moveDashboardsDomain` hard-coded
+  `system` in the emitted event, so a move that rewrites TWO repositories named no author. It now
+  takes an optional `actorId` and WARNS when it is absent rather than silently attributing to the
+  platform. **Cross-stream need:** the only caller is `tabs/admin/lib/domain-move.ts`, which this
+  stream does not own — it calls every kind through one uniform `move(sel, target)` shape, so
+  threading the acting admin through needs a one-line change there (and in the sibling data/agents
+  movers) to make the attribution real rather than merely possible.
+- **D-review-M9: the "parameterised" comment was wrong and is corrected.** The explorer QUOTES
+  filter values rather than binding them as host parameters; what actually makes a comment-bearing
+  value safe is that the governed executor refuses any statement containing a SQL comment. That is
+  safe but opaque — the panel would just come back empty — so such a value is now a NAMED warning
+  at the bottom of the existing precedence chain, and the value still reaches the compiler
+  verbatim: stripping it would quietly change the filter the author wrote.
+- **D-review-M2 — MORNING STEP, NOT RUN HERE.** `sbom.cdx.json` must be regenerated once from a
+  **pristine clone**, not from a worktree: `scripts/license-check.sh --update-sbom` scans the
+  repository root, which contains `.claude/worktrees/`, so a run from any worktree rewrites the
+  single-line file with eight sibling worktrees' paths. The committed SBOM already carried one such
+  path before tonight. The fix is to add `--exclude './.claude/**'` to **both** `syft scan` lines in
+  `scripts/license-check.sh` and then regenerate from a clean checkout. This stream restored the
+  committed file and appended one CycloneDX component by hand for the vendored source, which syft
+  would never emit anyway (a vendored source slice is not an npm package).
+- **D-review-M5/M6/M7, L-1/L-4/L-10/L-11, all applied.** `Chart.tsx` reads the click handler
+  through a ref so an inline arrow no longer tears down and re-initialises the whole ECharts
+  instance on every parent render; the single-registration ratchet regex now catches a dynamic
+  `import('echarts')`, which is precisely the form a reviewer would not spot by reading;
+  `assertServableFilters` moved into `saveDashboard`, so the STORE is the boundary and every door —
+  route, MCP tool, push ingest — is gated once rather than three times unevenly; `y()` quotes a
+  scalar with leading/trailing or doubled whitespace, without which the round trip is not
+  byte-stable; `guide.md`'s `vizType` list is the full seven; `CONTRIBUTING.md` states the
+  `os-ui/vendor/` carve-out where the "never copy upstream source" rule is stated; and my two
+  test-tree type errors are fixed (the `model.test.ts` / `governance.test.ts` ones are pre-existing
+  legacy-alias fixtures, untouched).

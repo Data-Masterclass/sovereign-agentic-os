@@ -35,8 +35,13 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** `from 'echarts…'` / `import 'echarts…'` / `require('echarts…')` — any way in. */
-const ECHARTS_IMPORT = /(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*)['"]echarts(?:\/[^'"]*)?['"]/;
+/**
+ * Any way in: `from 'echarts…'`, a bare `import 'echarts…'`, `require('echarts…')` and — M-6 —
+ * a DYNAMIC `import('echarts…')`, which the first form missed because `import` is followed by `(`
+ * rather than by the quote. A lazily-imported second registration is exactly the one a reviewer
+ * would not spot by reading, so it is the one the ratchet most needs to catch.
+ */
+const ECHARTS_IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"]echarts(?:\/[^'"]*)?['"]/;
 
 test('only core/ui/charts/register.ts imports the echarts package', () => {
   const offenders: string[] = [];
@@ -73,5 +78,22 @@ test('the vendored Superset tree imports no package at all', () => {
         `${relative(UI, file)} imports '${spec}' — os-ui/vendor/** must stay dependency-free (relative imports only)`,
       );
     }
+  }
+});
+
+test('M-6 — the ratchet regex catches every import form, dynamic ones included', () => {
+  for (const form of [
+    "import * as echarts from 'echarts/core';",
+    "import 'echarts';",
+    "const e = require('echarts/core');",
+    "const e = await import('echarts');",
+    "void import( 'echarts/charts' );",
+    'const e = await import("echarts/renderers");',
+  ]) {
+    assert.match(form, ECHARTS_IMPORT, form);
+  }
+  // …and does not fire on prose or on an unrelated package.
+  for (const innocent of ["// echarts needs concrete colors", "import x from 'echarts-wordcloudish'", "const s = 'echarts';"]) {
+    assert.doesNotMatch(innocent, ECHARTS_IMPORT, innocent);
   }
 });

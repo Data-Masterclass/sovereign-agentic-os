@@ -172,16 +172,34 @@ spec:
         - member: Orders.channel
           operator: in
           values: [web, retail]
-  layout:
-    # One row per panel position. Tabs and drag/resize are not built yet; a dashboard with
-    # no layout renders in panel order, which is what an absent \`layout\` means.
-    items:
-      - { panel: p_revenue-over-time, x: 0, y: 0, w: 8, h: 2 }
 `;
 
 test('golden — the committed dashboard.yaml bytes', () => {
   const [placed] = placeDashboards(projectSnapshot('analytics', [snapshot()]));
   assert.equal(renderDashboardYaml(placed, 'analytics'), GOLDEN_YAML);
+});
+
+test('H-6 — `spec.layout` is NOT emitted; a panel’s position is its gridPos, written once', () => {
+  const [placed] = placeDashboards(projectSnapshot('analytics', [snapshot()]));
+  const yaml = renderDashboardYaml(placed, 'analytics');
+  assert.ok(!yaml.includes('layout:'), 'a second copy of gridPos would silently lose a hand edit');
+  assert.match(yaml, /gridPos: \{ x: 0, y: 0, w: 8, h: 2 \}/, 'the position is still there, once');
+});
+
+test('H-6 — a file that still carries a layout block is ACCEPTED when it agrees', () => {
+  const [placed] = placeDashboards(projectSnapshot('analytics', [snapshot()]));
+  const withLayout = `${renderDashboardYaml(placed, 'analytics')}  layout:\n    items:\n      - { panel: p_revenue-over-time, x: 0, y: 0, w: 8, h: 2 }\n`;
+  const parsed = parseDashboardFile(withLayout, 'dashboards/sales-overview/dashboard.yaml');
+  assert.equal(parsed.panels[1].gridPos!.w, 8);
+  // …and REFUSED when it disagrees, naming the panel, rather than being ignored.
+  const conflicting = `${renderDashboardYaml(placed, 'analytics')}  layout:\n    items:\n      - { panel: p_revenue-over-time, x: 4, y: 0, w: 8, h: 2 }\n`;
+  assert.throws(
+    () => parseDashboardFile(conflicting, 'dashboards/sales-overview/dashboard.yaml'),
+    /disagree|same fact written twice/,
+  );
+  // A layout naming a panel that does not exist is refused too.
+  const orphan = `${renderDashboardYaml(placed, 'analytics')}  layout:\n    items:\n      - { panel: p_nope, x: 0, y: 0, w: 1, h: 1 }\n`;
+  assert.throws(() => parseDashboardFile(orphan, 'dashboards/x/dashboard.yaml'), /not a panel in/);
 });
 
 test('the generated tree is exactly an index, one yaml and one README per dashboard', () => {

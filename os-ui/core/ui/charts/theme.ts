@@ -32,6 +32,9 @@ export type ChartColors = {
   palette: string[];
 };
 
+/** The shape of a CSS-variable map: one `[name, fallback]` pair per themed colour. */
+export type ChartCssVars = Record<keyof typeof CHART_CSS_VARS, readonly [string, string]>;
+
 /** The CSS custom properties the bridge reads, with the OS's own brand fallbacks. */
 export const CHART_CSS_VARS = {
   teal: ['--teal', '#1f8f88'],
@@ -40,6 +43,20 @@ export const CHART_CSS_VARS = {
   line: ['--border', 'rgba(0,0,0,0.08)'],
   panel: ['--panel', '#ffffff'],
 } as const satisfies Record<string, readonly [string, string]>;
+
+/**
+ * The SANDBOXED APP SHELL's variable names (M-4). A vibe-engineered app renders inside its own
+ * shell, which namespaces its design tokens `--sb-*` so an app can never read or be affected by the
+ * OS chrome's variables. Same resolver, same palette ORDER, same fallbacks — different names. That
+ * is the honest unification: one palette, two namespaces, rather than two palettes.
+ */
+export const APP_SHELL_CSS_VARS = {
+  teal: ['--sb-teal', '#1f8f88'],
+  gold: ['--sb-gold', '#c8a24a'],
+  ink: ['--sb-text', '#2b2b2b'],
+  line: ['--sb-border', 'rgba(0,0,0,0.08)'],
+  panel: ['--sb-panel', '#ffffff'],
+} as const satisfies ChartCssVars;
 
 /** Series 3..n — fixed, so a five-series chart is the same five colours everywhere. */
 export const CHART_EXTRA_PALETTE = ['#7c6cc4', '#c46c8a', '#6ca3c4'] as const;
@@ -51,9 +68,9 @@ export type CssVarReader = (name: string) => string | undefined;
  * The OS palette, resolved through `read`. Pure: the same reader always yields the same colours,
  * and an empty/absent value falls back to the brand default rather than to nothing.
  */
-export function resolveChartColors(read: CssVarReader): ChartColors {
+export function resolveChartColors(read: CssVarReader, vars: ChartCssVars = CHART_CSS_VARS): ChartColors {
   const pick = (key: keyof typeof CHART_CSS_VARS): string => {
-    const [name, fallback] = CHART_CSS_VARS[key];
+    const [name, fallback] = vars[key];
     const v = (read(name) ?? '').trim();
     return v || fallback;
   };
@@ -76,7 +93,13 @@ export function cssVar(name: string, fallback: string): string {
   return v || fallback;
 }
 
-/** The live OS palette. Call inside a `useMemo` — it reads computed style. */
-export function chartColors(): ChartColors {
-  return resolveChartColors((name) => (typeof window === 'undefined' ? '' : getComputedStyle(document.documentElement).getPropertyValue(name)));
+/**
+ * The live OS palette. Call inside a `useMemo` — it reads computed style. Pass
+ * {@link APP_SHELL_CSS_VARS} from inside a sandboxed app shell, which namespaces its tokens.
+ */
+export function chartColors(vars: ChartCssVars = CHART_CSS_VARS): ChartColors {
+  return resolveChartColors(
+    (name) => (typeof window === 'undefined' ? '' : getComputedStyle(document.documentElement).getPropertyValue(name)),
+    vars,
+  );
 }

@@ -24,8 +24,8 @@
  */
 import type { Role } from '@core/kernel/session';
 import { getDashboard } from '@tabs/dashboards/lib/store';
-import { DASHBOARDS_PREFIX, placeDashboards } from '@tabs/dashboards/lib/git/generate';
-import { snapshotDashboard, type StoredDashboard } from '@tabs/dashboards/lib/git/snapshot';
+import { pathsForDashboard } from '@tabs/dashboards/lib/git/facts';
+import type { StoredDashboard } from '@tabs/dashboards/lib/git/snapshot';
 
 /** G's `GitObjectLocation`, copied verbatim in shape (see ARCHITECTURE). */
 export type GitObjectLocation = {
@@ -48,9 +48,15 @@ export const GIT_OBJECT_KIND = 'dashboard';
 /**
  * The repo paths that make up one dashboard: its own directory, plus the shared index, which is
  * regenerated on every change and is therefore part of this object's history.
+ *
+ * H-3: the directory is slugged from the dashboard's NAME, so **slug ≠ id** and a caller that
+ * guessed `dashboards/<id>/` would be wrong for essentially every dashboard. `lib/git/facts.ts`
+ * `pathsForDashboard` resolves it through the committed `dashboards/index.yml` when it can be read
+ * and recomputes the placement otherwise — this is the thin wrapper over it, kept for the two
+ * callers that already have the record in hand.
  */
 export function dashboardPaths(dir: string): string[] {
-  return [`${dir}/`, `${DASHBOARDS_PREFIX}index.yml`];
+  return [`${dir.replace(/\/+$/, '')}/`, 'dashboards/index.yml'];
 }
 
 /**
@@ -65,6 +71,8 @@ export function resolveDashboardGitObject(
   user: GitObjectUser,
   id: string,
   read: (id: string, user: GitObjectUser) => StoredDashboard | null,
+  /** The committed `dashboards/index.yml`, when the caller has read it. Preferred over the record. */
+  indexYaml?: string | null,
 ): GitObjectLocation | null {
   let rec: StoredDashboard | null = null;
   try {
@@ -75,12 +83,14 @@ export function resolveDashboardGitObject(
     return null;
   }
   if (!rec || !rec.domain) return null;
-  const snapshot = snapshotDashboard(rec);
-  const [placed] = placeDashboards({ domain: rec.domain, dashboards: [snapshot] });
-  if (!placed) return null;
+  // Resolved through facts.ts, which prefers the committed index (slug ≠ id — H-3) and falls back
+  // to recomputing the placement from the record. `indexYaml` is absent here because this resolver
+  // is called without a repository read; G passes one when it has it.
+  const paths = pathsForDashboard(id, { record: rec, indexYaml: indexYaml ?? null });
+  if (!paths) return null;
   return {
     domain: rec.domain,
-    paths: dashboardPaths(placed.dir),
+    paths,
     // The commit path writes `OS-Object: <id> (<name>)`, and G matches on the id prefix.
     trailerId: rec.id,
     name: rec.spec.name,

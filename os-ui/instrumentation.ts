@@ -230,7 +230,6 @@ export async function register(): Promise<void> {
       } catch (err) {
         console.error(`[os-ui] dashboard projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
       }
-      void dashboardsHookInstalled;
       // 3. DATA boot reconcile (engine rebuild B4): the hook only sees writes from NOW on, so the
       // first boot with the flag on — and any boot after a crash between a store write and its
       // commit — must commit the difference between the generated project and the repository HEAD,
@@ -271,6 +270,24 @@ export async function register(): Promise<void> {
           await reconcileAgentProjectsAtBoot();
         } catch (err) {
           console.error(`[os-ui] agent projects: boot reconcile FAILED — ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      // 5. DASHBOARDS boot reconcile (night 2 / stream D, review H-4): same contract as 3 and 4 —
+      // whatever changed while the flag was off, or while a write failed between the store and the
+      // commit, is committed now as the platform principal with `OS-Reason: boot-reconcile`. It
+      // runs LAST because it is the newest and least load-bearing of the three, and it refuses to
+      // run at all unless the dashboard registry says `'hydrated'`: an empty store whose mirror was
+      // unreachable is indistinguishable from a tenant with no dashboards, and committing the
+      // former would delete every dashboard directory in every domain. The store must be hydrated
+      // first, exactly as the agents reconcile requires.
+      if (dashboardsHookInstalled) {
+        try {
+          const { ensureHydrated } = await import('./tabs/dashboards/lib/store.ts');
+          await ensureHydrated();
+          const { reconcileDashboardsAtBoot } = await import('./tabs/dashboards/lib/git/reconcile.ts');
+          await reconcileDashboardsAtBoot();
+        } catch (err) {
+          console.error(`[os-ui] dashboard projects: boot reconcile FAILED — ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     })();
