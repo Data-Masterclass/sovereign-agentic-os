@@ -21,11 +21,11 @@
  *   - A file we cannot map and cannot create is SKIPPED with a note, never silently dropped.
  */
 import { load } from 'js-yaml';
-import { registerRepoKind, type ChangedFile, type IngestReport, type Pusher } from '@core/infra/git-receive';
+import { AUDIENCE_MANAGED, registerRepoKind, type ChangedFile, type IngestReport, type Pusher } from '@core/infra/git-receive';
 import { runWithSurface } from '@core/infra/request-surface';
 import { readBlob } from '@core/infra/git-store';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
-import { createSystem, writeFile, type Principal } from '@tabs/agents/lib/store';
+import { createSystem, getSystem, writeFile, type Principal } from '@tabs/agents/lib/store';
 
 /** The `ingestFromRepo` key for this kind. */
 export const AGENT_SYSTEM_KIND = 'agent-system';
@@ -105,6 +105,21 @@ export async function ingestAgentSystems(
     try {
       runWithSurface('git:push', () => {
         if (existingId) {
+          // AUDIENCE IS NOT PUSHABLE. `system.yaml` carries `visibility` because the file has to be
+          // self-describing, but the registry owns it: Personal -> Shared -> Marketplace is
+          // `promoteSystem`, with its role ladder and its approvals. A pushed value that disagrees
+          // is refused for this path — never applied, and never quietly ignored either, because a
+          // file that says Shared while the OS says Personal is a lie in the repository.
+          const current = getSystem(existingId, principal);
+          const pushed = parseSystem(file.content!);
+          if (pushed.system.visibility !== current.visibility) {
+            throw new Error(
+              `${AUDIENCE_MANAGED} — this file says '${pushed.system.visibility}' and the OS says '${current.visibility}'`,
+            );
+          }
+          if (pushed.system.domain !== current.domain) {
+            throw new Error(`${AUDIENCE_MANAGED} — this file moves the system to '${pushed.system.domain}'`);
+          }
           writeFile(existingId, principal, { path: 'system.yaml', content: file.content!, sha: '' });
           report.updated += 1;
         } else {

@@ -200,6 +200,36 @@ test('a file the STORE refuses (a grant above the pusher\'s role) is SKIPPED wit
   assert.match(report.notes.join(' '), /agents\/triage\/system\.yaml/);
 });
 
+test('AUDIENCE IS NOT PUSHABLE: a pushed visibility or domain that disagrees is REFUSED', async () => {
+  const id = store.createSystem(amir, { name: 'Triage' }).id;
+  const sha = await writeIndex([{ dir: 'agents/triage', id }]);
+  const before = store.getSystem(id, amir).yaml;
+
+  const promoted = parseSystem(before);
+  promoted.system.visibility = 'Shared';
+  const a = await ingestAgentSystems(
+    { domain: 'sales', files: [changed('agents/triage/system.yaml', serializeSystem(promoted))], pusher, sha },
+    { reposDir },
+  );
+  assert.equal(a.updated, 0);
+  assert.equal(a.skipped, 1);
+  assert.match(a.notes.join(' '), /audience is managed by the OS; use promotion/);
+
+  const moved = parseSystem(before);
+  moved.system.domain = 'finance';
+  const b = await ingestAgentSystems(
+    { domain: 'sales', files: [changed('agents/triage/system.yaml', serializeSystem(moved))], pusher, sha },
+    { reposDir },
+  );
+  assert.equal(b.skipped, 1);
+  assert.match(b.notes.join(' '), /audience is managed by the OS; use promotion/);
+
+  // Neither attempt changed anything, and the audience is still what the OS says.
+  assert.equal(store.getSystem(id, amir).yaml, before);
+  assert.equal(store.__recordFor(id)?.visibility, 'Personal');
+  assert.equal(store.__recordFor(id)?.domain, 'sales');
+});
+
 // ------------------------------------------------------------------------------ the coin ---
 
 test('THE COIN: the same system.yaml over the MCP and by a push leaves identical files, differing only in OS-Surface', async () => {

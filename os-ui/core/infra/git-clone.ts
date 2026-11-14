@@ -22,12 +22,22 @@
 /** The path segment the chart's ingress routes to the git sidecar. */
 export const GIT_HTTP_PATH = 'git';
 
-/** `https://os.example.com/git/sales.git`, or null when there is no base to build it from. */
+/**
+ * `https://os.example.com/git/sales.git`, or null when there is no base to build it from.
+ *
+ * HTTPS ONLY (review M-6). The credential travels in the request, so a `http://` remote would
+ * publish an OS access token on the wire; the git Ingress carries `force-ssl-redirect` for the
+ * same reason. The single exception is LOOPBACK (`http://localhost`, `http://127.0.0.1`), where
+ * there is no wire — that is `npm run dev`, and refusing it would just make the panel lie.
+ */
 export function cloneUrl(domain: string, base: string | null | undefined): string | null {
   const d = String(domain ?? '').trim();
   if (!d || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(d) || d.includes('..')) return null;
   const b = String(base ?? '').trim().replace(/\/+$/, '');
-  if (!b || !/^https?:\/\//i.test(b)) return null;
+  if (!b) return null;
+  const https = /^https:\/\//i.test(b);
+  const loopback = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(b);
+  if (!https && !loopback) return null;
   return `${b}/${GIT_HTTP_PATH}/${d}.git`;
 }
 

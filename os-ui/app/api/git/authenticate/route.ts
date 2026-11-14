@@ -8,6 +8,7 @@
  * public prefix does.
  */
 import { NextResponse } from 'next/server';
+import { clientIp, rateLimit } from '@core/kernel/ratelimit';
 import { principalById } from '@core/kernel/auth';
 import { AUTH_FAILED, authenticateGitRequest } from '@core/auth/git-http-auth';
 import { ensureHydrated } from '@core/auth/access-tokens-store';
@@ -15,7 +16,19 @@ import { ensureReceiveHooks } from '@core/infra/git-receive';
 
 export const dynamic = 'force-dynamic';
 
+/** Per-IP ceiling on token GUESSES. A git clone makes a handful of requests; a cracker makes
+ *  thousands (review L-1). Generous enough that a busy CI job never notices. */
+const AUTH_LIMIT = 120;
+const AUTH_WINDOW_MS = 60_000;
+
 async function decide(req: Request): Promise<NextResponse> {
+  const limited = rateLimit(`git-auth:${clientIp(req)}`, AUTH_LIMIT, AUTH_WINDOW_MS);
+  if (!limited.ok) {
+    return new NextResponse('too many authentication attempts — try again shortly\n', {
+      status: 429,
+      headers: { 'retry-after': String(limited.retryAfter), 'content-type': 'text/plain; charset=utf-8' },
+    });
+  }
   await ensureHydrated();
   const uri = req.headers.get('x-original-uri') || new URL(req.url).searchParams.get('uri') || '';
   const outcome = await authenticateGitRequest(

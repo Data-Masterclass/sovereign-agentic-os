@@ -2055,3 +2055,76 @@ deviation is.
   `os-ui/app/(govern)/platform/page.tsx` (the import and the `{current === 'tokens' && …}` branch).
   The brief allots "a new file plus one nav line" in `tabs/admin/**`; the section cannot render
   without the page knowing about it, and no other stream claims that file tonight.
+
+#### Stream E — review round (`night2/E` review, fixes in `E-review-*`)
+
+- **E-review-H2 — the door was closed, and the fake receive could not see it.** `git-receive.ts`
+  read the bare repo from the os-ui process during `pre-receive`. Git keeps incoming objects in a
+  QUARANTINE (`GIT_QUARANTINE_PATH` / `GIT_OBJECT_DIRECTORY=…/tmp_objdir-incoming-*`) visible only
+  to the hook's own process tree, so `isDescendent` threw, `fastForward` fell to `false`, and every
+  push was a 409; a first push into an empty repo was a 500. **Fix:** the HOOK computes the
+  fast-forward verdict (`git merge-base --is-ancestor`), the change list
+  (`git diff-tree -r --no-commit-id --name-status`, `--root` for a first push, no rename detection)
+  and each blob (`git cat-file blob`, base64), enforces the size caps, and posts them; the OS reads
+  NOTHING from the repository during `pre`. At `post` the refs are updated, so the OS re-derives the
+  change list FROM THE REPOSITORY and ingests that — the hook gates, the repository is the record,
+  and a path the gate never saw is reported in the message. **Verified with a real local `git push`**
+  (`core/infra/git-receive-push.test.ts`, 6 cases, real hooks, real quarantine, the real endpoint
+  over `node:http`). That test also caught two things no unit test would have: the post-receive hook
+  was a shell syntax error (an interpolated `exit 0   # comment` swallowed the `;` closing `die()`)
+  and the hook double-prefixed `remote:`. The old harness's docstring claimed it reproduced what
+  pre-receive sees; it is corrected to say exactly what it does and to point at the real-push test.
+- **E-review-H1 — `post` and `abort` were unauthenticated.** They were gated on
+  `config.serviceBearerToken`, which is `''` by default, and had no other check. **Fix:** the
+  endpoint logic moved to `core/infra/git-receive-server.ts` (`handleReceive`; the route is a
+  shell), and a valid OS access token for a member of the domain is required on **every** phase.
+  The service bearer is an ADDITIONAL requirement when configured, never a substitute. `post` and
+  `abort` additionally require the authenticated principal to be the lease holder.
+  `core/infra/git-receive-server.test.ts` covers all of it, including the empty-bearer case.
+- **E-review-M2 — `dbt_project.yml`, `profiles.yml`, `packages.yml` and `macros/**` are now
+  OS-owned.** dbt EXECUTES them as the OS's dbt principal on every build (`on-run-start:`, every
+  macro a model calls); a model selects, these run. Refused with the managed-by-the-OS sentence.
+  `tests/generic/**` stays pushable — it runs only when a test references it.
+- **E-review-M4 — ONE lock, exported.** `git-store.ts` gained a delimited `=== E LOCK BLOCK ===`
+  exporting `acquireRepoLock` / `withRepoLock` / `RepoLockTimeoutError`, and `git-receive.ts` uses
+  it; the global-symbol reach-in (deviation E-1) is gone. TWO exports, not one: the lease spans two
+  hook processes, so the gate needs the release handle rather than a callback — `withRepoLock` is
+  the ordinary form and is built on `acquireRepoLock`. The latent `withLock` quirk (its `finally`
+  compares a fresh promise, so the map entry is never deleted) is UNCHANGED and still only costs an
+  entry per domain — the new block does not depend on it. If S or G have appended their own blocks
+  by merge time, the delimiter is where to resolve it.
+- **E-review-M7 — a shared personal lane is WITHHELD, not granted.** `a.b`, `a-b` and `A_B` all
+  sanitise to `a_b`, so two principals share one lane. `personalLanes(id, allIds)` drops the dbt
+  data lane when another active id collides, and the route passes the directory in. **The bigger
+  finding is not stream E's to fix:** the collision is the dbt generator's and Trino's —
+  `models/personal/<uid>` AND the Trino schema `personal_<uid>` collapse the same way, so two such
+  users would today share a personal SCHEMA. That is a data-isolation bug independent of git; it
+  needs an owner (filed for X / the owner).
+- **E-review-M1/M5/M6/L7** — one merged Ingress annotation map (the duplicate `proxy-body-size`
+  is gone; this route's value wins over the shared one), `force-ssl-redirect: "true"`,
+  `proxy-body-size: 512m` with lighttpd's `max-request-size = 524288` (KiB) under the 2Gi emptyDir,
+  and `gitHttp.{ingressNamespace,maxPushSize}` declared in `values.yaml`. `cloneUrl` now refuses a
+  plain-`http` base (loopback excepted — there is no wire, and that is `npm run dev`).
+- **E-review-M3** — the dbt gate's docstring no longer implies `dbt parse`. It checks YAML,
+  `version: 2`, a `models:` list and resolvable identifiers; an unresolvable `ref()` is Dagster's
+  `dbt parse` to find, and `docs/components/git.md` says so.
+- **E-review-L1/L2/L3/L6** — `/api/git/authenticate` is rate-limited per IP (120/min);
+  `ensureReceiveHooks` is memoised per domain per process, keyed on the script's hash;
+  the token reaches curl through a config file on STDIN (never argv, where it would be in the
+  process table) and curl's stderr is redacted before the developer sees it; the accept message
+  names the files that map to no OS object.
+- **E-review-L8** — `docs/components/git.md` now says plainly that `kubectl port-forward` bypasses
+  the NetworkPolicy (so `pods/portforward` in the OS namespace is equivalent to read access to
+  every domain's files) and what `ingress.enabled=false` means for the read path.
+- **E-review-D1 (from D's review) — a push may not EMPTY an object tree.** `emptiedDirs` (pure) +
+  a gate refusal with `DESTRUCTIVE_PUSH`, grouped at the top level and the object level, so
+  removing every file under `dashboards/<id>/` or all of `dashboards/` is a 409 while removing one
+  of two files is an ordinary change. The OLD head's tree is readable during `pre` (only the
+  INCOMING objects are quarantined), so this needs nothing from the hook.
+- **E-review-D2 (from D's review) — audience is never applied from a file.** `AUDIENCE_MANAGED`
+  is part of the `ingestFromRepo` contract and is documented on `RepoKind.ingest`: a pushed
+  `visibility`/`domain` (agent systems) or `config.meta.os_tier` (datasets) that disagrees with the
+  registry refuses that path. Not applied, and not silently ignored either — a file that says
+  Shared while the OS says Personal is a lie in the repository. Both kinds tested.
+- **E-review-E10 — kept honest.** `CloneRepository` is tested but mounted on NO page: the detail
+  pages belong to G and T. The docs and the checklist row both say so.

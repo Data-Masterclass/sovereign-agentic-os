@@ -8,6 +8,10 @@
 
   Rendered ONLY when osUI.dataProjectGit.enabled AND its gitHttp.enabled.
 
+  TLS IS NOT OPTIONAL on this path: an OS access token travels in every request, so the Ingress
+  carries `force-ssl-redirect` and `core/infra/git-clone.ts` only ever prints an `https://` remote
+  (loopback excepted, where there is no wire).
+
   AUTHENTICATION is the OS's, not the transport's: the Ingress below sends every `/git/**` request
   to os-ui's `/api/git/authenticate` as a sub-request (ingress-nginx `auth-url`), which resolves an
   OS personal access token to a live principal and checks domain membership. Only then does nginx
@@ -56,21 +60,23 @@ metadata:
     {{- include "soa.labels" . | nindent 4 }}
     app.kubernetes.io/name: os-git-http
     app.kubernetes.io/component: ingress
+  {{- /*
+    ONE merged annotation map (review M-1): the shared `ingress.annotations` already sets
+    `proxy-body-size: 200m` for the Files tab, and emitting a second key of the same name produced
+    a DUPLICATE YAML key whose winner depended on the parser. `merge` takes this route's values
+    over the shared ones, so the git path's own body cap is the one that applies.
+  */}}
+  {{- $gitAnno := dict
+        "cert-manager.io/cluster-issuer" ($ing.tlsIssuer | toString)
+        "nginx.ingress.kubernetes.io/auth-url" (printf "http://os-ui.%s.svc.cluster.local:3000/api/git/authenticate" .Release.Namespace)
+        "nginx.ingress.kubernetes.io/auth-response-headers" "X-Os-Principal, X-Os-Principal-Role, X-Os-Token-Prefix"
+        "nginx.ingress.kubernetes.io/auth-snippet" "proxy_set_header X-Original-URI $request_uri;\n"
+        "nginx.ingress.kubernetes.io/proxy-request-buffering" "off"
+        "nginx.ingress.kubernetes.io/force-ssl-redirect" "true"
+        "nginx.ingress.kubernetes.io/proxy-body-size" ($gh.maxPushSize | default "512m" | toString)
+  }}
   annotations:
-    cert-manager.io/cluster-issuer: {{ $ing.tlsIssuer | quote }}
-    {{- with $ing.annotations }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
-    # The OS authenticates every request. A 401 from this sub-request is returned to git verbatim,
-    # with the WWW-Authenticate header that makes a git client ask for credentials.
-    nginx.ingress.kubernetes.io/auth-url: "http://os-ui.{{ .Release.Namespace }}.svc.cluster.local:3000/api/git/authenticate"
-    nginx.ingress.kubernetes.io/auth-response-headers: "X-Os-Principal, X-Os-Principal-Role, X-Os-Token-Prefix"
-    # git sends the token in the Authorization header; the sub-request needs to see it.
-    nginx.ingress.kubernetes.io/auth-snippet: |
-      proxy_set_header X-Original-URI $request_uri;
-    # A `git push` of a large repository is one big POST and a `git clone` one long response.
-    nginx.ingress.kubernetes.io/proxy-body-size: "0"
-    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    {{- toYaml (merge $gitAnno ($ing.annotations | default dict)) | nindent 4 }}
 spec:
   ingressClassName: {{ $ing.className }}
   tls:

@@ -1401,6 +1401,12 @@ osUI:
       image:
         repository: ghcr.io/aborek/sovereign-os/git-http
         tag: "1.0.0"
+      # The namespace of the ingress controller that is allowed to reach port 9419. It is the ONLY
+      # peer admitted, because the Ingress is where the OS's auth-url sub-request runs.
+      ingressNamespace: ingress-nginx
+      # Largest push body accepted, on the Ingress AND in lighttpd (which is configured in KiB:
+      # 512m => server.max-request-size = 524288). Must stay below the pod's /tmp emptyDir (2Gi).
+      maxPushSize: 512m
   # Secret-backed credentials — reuse the stack's existing Secrets so nothing
   # sensitive sits in plaintext (names/keys verified against the running cluster).
   langfuseSecret:

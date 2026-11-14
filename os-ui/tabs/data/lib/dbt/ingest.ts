@@ -26,7 +26,7 @@
  */
 import 'server-only';
 import { load } from 'js-yaml';
-import { registerRepoKind, type ChangedFile, type IngestReport, type Pusher } from '@core/infra/git-receive';
+import { AUDIENCE_MANAGED, registerRepoKind, type ChangedFile, type IngestReport, type Pusher } from '@core/infra/git-receive';
 import { runWithSurface } from '@core/infra/request-surface';
 import { createDatasetService, defineQualityRulesService, type QualityRuleInput } from '@tabs/data/lib/mutations-server';
 import { getDataset, setDocs, type Principal } from '@tabs/data/lib/store';
@@ -56,6 +56,8 @@ export type IngestedModel = {
   datasetId: string | null;
   /** The display name for a dataset that has to be created. */
   name: string;
+  /** `config.meta.os_tier` as the file claims it. Compared, never applied. */
+  declaredTier: string | null;
   layer: Layer;
   /** The Trino/Iceberg schema the model materialises into. */
   schema: string;
@@ -115,10 +117,14 @@ export function readSchemaYml(content: string): { models: RawModel[] } | { error
 }
 
 /**
- * The SAME gate the UI's write path applies — `readSchemaYml` plus the one invariant that makes a
- * dbt project parseable at all: every model has a plain-identifier name, and so does every column.
- * A name dbt cannot resolve takes the WHOLE domain's project down at `dbt parse`, not just one
- * model, which is why it is refused at the door rather than discovered by Dagster.
+ * The dbt gate. It is NOT `dbt parse` (review M-3): there is no dbt in the os-ui process, and a
+ * real parse needs the whole project plus a profile. What it checks is what can be checked per
+ * file and is the same shape `tabs/data/lib/dbt/schema.ts` emits and this module reads back —
+ * valid YAML, `version: 2`, a `models:` list, and a plain-identifier name on every model and
+ * column, which is the invariant whose violation takes the WHOLE domain's project down at
+ * `dbt parse` rather than failing one model. A reference that cannot resolve (`ref('…')` on an
+ * unknown name) is NOT caught here; Dagster's own `dbt parse` on the pushed commit is what finds
+ * it, and `docs/components/git.md` says so.
  */
 export function validateDbtFile(file: { path: string; content: string }): string | null {
   if (MODEL_SQL_RE.test(file.path) && !SCHEMA_YML_RE.test(file.path)) {
@@ -207,6 +213,9 @@ export function datasetsFromSchemaYml(filePath: string, content: string, domain:
       // own file has whatever they wrote. Either way the DISPLAY name defaults to the model name —
       // never a scraped fragment of a sentence.
       name: model,
+      // What the FILE claims the audience is. It is never applied — it is compared, and a
+      // disagreement refuses the path (`AUDIENCE_MANAGED`). See `ingestDbtModels`.
+      declaredTier: typeof meta.os_tier === 'string' && meta.os_tier ? meta.os_tier : null,
       layer: layerOf(filePath, model, meta),
       schema: schemaOf(filePath, domain),
       description: typeof raw.description === 'string' ? raw.description : '',
@@ -255,7 +264,13 @@ export async function ingestDbtModels(input: {
           if (datasetId) {
             // Throws 404/403 when the id names nothing this pusher may edit — the same guard the
             // UI route gets, so a crafted `os_dataset` cannot reach a foreign dataset.
-            getDataset(datasetId, principal);
+            const current = getDataset(datasetId, principal);
+            // AUDIENCE IS NOT PUSHABLE. `config.meta.os_tier` is written so the file is
+            // self-describing; dataset -> shared -> certified is a governed promotion. A pushed
+            // value that disagrees refuses this path rather than being applied or ignored.
+            if (m.declaredTier && m.declaredTier !== current.tier) {
+              throw new Error(`${AUDIENCE_MANAGED} — this file says '${m.declaredTier}' and the OS says '${current.tier}'`);
+            }
             setDocs(datasetId, principal, { description: m.description, columns: m.columns });
             report.updated += 1;
           } else {

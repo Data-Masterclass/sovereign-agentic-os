@@ -325,6 +325,42 @@ test('a .sql change on its own is a BUILD input — the registry is untouched', 
   assert.equal(store.listAllDatasets().length, 0);
 });
 
+test('AUDIENCE IS NOT PUSHABLE: a pushed os_tier that disagrees with the registry is REFUSED', async () => {
+  const d = createDatasetService(amir, { name: 'silver_orders', domain: 'sales' });
+  assert.equal(d.tier, 'dataset');
+  const yaml = [
+    'version: 2',
+    'models:',
+    '  - name: silver_orders',
+    '    config:',
+    '      meta:',
+    `        os_dataset: ${d.id}`,
+    '        os_tier: certified',
+    '',
+  ].join('\n');
+  const report = await ingestDbtModels({
+    domain: 'sales',
+    files: [changed('models/silver/schema.yml', yaml)],
+    pusher,
+    sha: 'a'.repeat(40),
+  });
+  assert.equal(report.updated, 0);
+  assert.equal(report.skipped, 1);
+  assert.match(report.notes.join(' '), /audience is managed by the OS; use promotion/);
+  assert.equal(store.getDataset(d.id, amir).tier, 'dataset', 'the tier the OS holds is unchanged');
+
+  // The SAME file with the tier the OS already holds is an ordinary update.
+  const agreeing = yaml.replace('os_tier: certified', `os_tier: ${d.tier}`);
+  const ok = await ingestDbtModels({
+    domain: 'sales',
+    files: [changed('models/silver/schema.yml', agreeing)],
+    pusher,
+    sha: 'b'.repeat(40),
+  });
+  assert.equal(ok.updated, 1);
+  assert.equal(ok.skipped, 0);
+});
+
 // ------------------------------------------------------------------------------ the coin ---
 
 test('THE COIN: the same dataset over the MCP and by a push leaves identical files and an identical row', async () => {

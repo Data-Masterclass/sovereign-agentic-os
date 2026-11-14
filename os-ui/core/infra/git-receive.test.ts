@@ -7,9 +7,14 @@
  *             validators, no history rewrites, and a push and an OS commit that cannot interleave
  *             (checklist E3 · E4 · E5 · E6 · E7 · E8).
  * ARCHITECTURE:
- *   - The fake receive is the real thing minus the network: `synthesize` writes a commit into a
- *     temp-dir bare repo WITHOUT moving the ref — exactly the state `pre-receive` sees — then the
- *     endpoint's own functions are called, then the ref is moved, then `post-receive` runs.
+ *   - These are GATE tests: `synthesize` writes a commit into a temp-dir bare repo without moving
+ *     the ref, then feeds `beginReceive` the SAME `{updates, changed}` the pre-receive hook posts
+ *     (the hook computes it with git's own plumbing; see `git-receive.ts`'s header). They do NOT
+ *     reproduce git's quarantine — a commit written by this harness IS readable from this process,
+ *     and a pushed one is NOT. That difference is exactly the bug review H-2 found, so the REAL
+ *     push, with the real hooks and git's real quarantine, is covered by
+ *     `core/infra/git-receive-push.test.ts`. Both are needed: this file enumerates the decisions,
+ *     that one proves the wiring.
  *   - The object kind registered here is a SPY, not a tab: a core test may not import a tab
  *     (check-structure rule 3), and the two real kinds are covered by their own tab tests.
  */
@@ -22,6 +27,7 @@ import { join } from 'node:path';
 import * as git from 'isomorphic-git';
 import { commitTree, listTree, log, MAIN, openOrInit, repoPath } from '@core/infra/git-store';
 import {
+  diffCommits,
   __clearRepoKinds,
   __openLeases,
   abortReceive,
@@ -29,11 +35,16 @@ import {
   completeReceive,
   decidePath,
   DEFAULT_LOCK_TIMEOUT_MS,
+  DESTRUCTIVE_PUSH,
+  emptiedDirs,
   ensureReceiveHooks,
+  laneCollides,
   looksSecretShaped,
+  __resetHookMemo,
   MANAGED_BY_OS,
   personalAgentLane,
   personalDataLane,
+  personalLanes as personalLanesFor,
   receiveHookScript,
   reconcileFromGit,
   registerRepoKind,
@@ -144,6 +155,15 @@ async function writeDir(gitdir: string, files: Map<string, string>, prefix: stri
   return git.writeTree({ fs, gitdir, tree: here });
 }
 
+/**
+ * What the pre-receive hook posts: the changed paths with their new content. Here it is derived
+ * from the repository (the harness's commit is visible); in production the HOOK derives it with
+ * `git diff-tree` + `git cat-file`, because the pushed objects are quarantined.
+ */
+async function hookChangeList(domain: string, oldSha: string | null, newSha: string): Promise<ChangedFile[]> {
+  return diffCommits(repoPath(domain, { reposDir }), oldSha, newSha, domain, { reposDir });
+}
+
 /** The whole receive, as the two hooks drive it. */
 async function fakePush(
   domain: string,
@@ -152,8 +172,9 @@ async function fakePush(
   deps: { lockTimeoutMs?: number } = {},
 ) {
   const { oldSha, newSha } = await synthesize(domain, changes);
+  const changed = await hookChangeList(domain, oldSha, newSha);
   const decision = await beginReceive(
-    { domain, pusher, updates: [{ ref: MAIN, oldSha, newSha }] },
+    { domain, pusher, updates: [{ ref: MAIN, oldSha, newSha, fastForward: true }], changed },
     { reposDir, ...deps },
   );
   if (!decision.ok) return { decision, post: null };
@@ -201,7 +222,8 @@ test("nobody may push into somebody ELSE's personal lane, whatever their role", 
 
 test('a builder may push shared domain paths, and a traversal is never a path', () => {
   assert.deepEqual(decidePath('models/gold/gold_orders.sql', builder), { allowed: true });
-  assert.deepEqual(decidePath('dbt_project.yml', builder), { allowed: true });
+  assert.deepEqual(decidePath('models/gold/schema.yml', builder), { allowed: true });
+  assert.deepEqual(decidePath('tests/generic/range.sql', builder), { allowed: true });
   assert.equal(decidePath('../../etc/passwd', builder).allowed, false);
   assert.equal(decidePath('models//x.sql', builder).allowed, false);
 });
@@ -212,6 +234,107 @@ test('anything credential-shaped is refused by NAME or by CONTENT', () => {
   assert.match(String(looksSecretShaped('tls/server.pem', null)), /credential-shaped/);
   assert.match(String(looksSecretShaped('models/gold/x.sql', 'api_key = "AKIA0123456789abcd"')), /carries a credential/);
   assert.equal(looksSecretShaped('models/gold/x.sql', 'select 1\n'), null);
+});
+
+
+test('the dbt project\'s EXECUTABLE configuration is the OS\'s, not a pushable file (review M-2)', () => {
+  // dbt RUNS these as the OS's dbt principal on every build — `on-run-start:` SQL, every macro a
+  // model calls, the connection itself, and a package fetch. A model selects; these execute.
+  for (const p of ['dbt_project.yml', 'profiles.yml', 'packages.yml', 'macros/os_maintenance.sql', 'macros']) {
+    const v = decidePath(p, { ...builder, role: 'admin' });
+    assert.equal(v.allowed, false, `${p} must not be pushable`);
+    assert.equal(v.allowed === false && v.reason, `'${p}' is ${MANAGED_BY_OS}`);
+  }
+});
+
+test('a personal lane two principals share is WITHHELD, not granted to either (review M-7)', () => {
+  // `a.b` and `a-b` both sanitise to `a_b`, so the generator puts them in ONE directory. The gate
+  // must not hand that directory to either of them.
+  assert.equal(personalDataLane('a.b'), personalDataLane('a-b'));
+  assert.equal(laneCollides('a.b', ['a.b', 'a-b']), true);
+  assert.equal(laneCollides('a.b', ['a.b', 'carol']), false);
+
+  const lanes = personalLanesFor('a.b', ['a.b', 'a-b']);
+  assert.equal(lanes.some((l) => l.startsWith('models/personal/')), false, 'the ambiguous data lane is withheld');
+  assert.equal(lanes.some((l) => l.startsWith('agents/personal/')), true, 'the opaque agents lane is unaffected');
+
+  const collided = decidePath('models/personal/a_b/x.sql', { ...creator, id: 'a.b', lanes });
+  assert.equal(collided.allowed, false);
+  // With no collision the same path is theirs.
+  const clean = personalLanesFor('a.b', ['a.b', 'carol']);
+  assert.deepEqual(decidePath('models/personal/a_b/x.sql', { ...creator, id: 'a.b', lanes: clean }), { allowed: true });
+});
+
+test('emptiedDirs finds a tree a push would leave with nothing in it, at object granularity', () => {
+  const tracked = [
+    'dashboards/d1/dashboard.yaml',
+    'dashboards/d1/panels.yaml',
+    'dashboards/d2/dashboard.yaml',
+    'models/gold/a.sql',
+    'models/gold/schema.yml',
+  ];
+  const del = (p: string) => ({ path: p, status: 'deleted' as const, content: null });
+  const add = (p: string) => ({ path: p, status: 'added' as const, content: 'x' });
+
+  // One whole object's directory.
+  assert.deepEqual(emptiedDirs([del('dashboards/d1/dashboard.yaml'), del('dashboards/d1/panels.yaml')], tracked), ['dashboards/d1']);
+  // The whole kind.
+  assert.deepEqual(
+    emptiedDirs(tracked.filter((p) => p.startsWith('dashboards/')).map(del), tracked),
+    ['dashboards/d1', 'dashboards/d2'],
+  );
+  // A partial removal is NOT emptying — an engineer may delete a panel file.
+  assert.deepEqual(emptiedDirs([del('dashboards/d1/panels.yaml')], tracked), []);
+  // A removal with a replacement under the same directory is a rewrite, not a removal.
+  assert.deepEqual(
+    emptiedDirs([del('dashboards/d1/dashboard.yaml'), del('dashboards/d1/panels.yaml'), add('dashboards/d1/dashboard.yml')], tracked),
+    [],
+  );
+  // No removals at all, nothing to say.
+  assert.deepEqual(emptiedDirs([add('models/gold/b.sql')], tracked), []);
+});
+
+test('a push that would EMPTY an object tree is refused, like the boot reconcile refuses one', async () => {
+  // Seed a second domain with two dashboards so the push can remove one wholesale.
+  await openOrInit('destructive', { reposDir });
+  await commitTree(
+    'destructive',
+    new Map([
+      ['dashboards/d1/dashboard.yaml', 'name: one\n'],
+      ['dashboards/d1/panels.yaml', 'panels: []\n'],
+      ['dashboards/d2/dashboard.yaml', 'name: two\n'],
+      ['models/gold/keep.sql', 'select 1\n'],
+    ]),
+    {
+      reposDir,
+      author: { name: 'Sovereign OS', email: 'os@sovereign.local' },
+      message: 'dashboards(destructive): generate — via boot:reconcile',
+    },
+  );
+  const pusherHere: Pusher = { ...builder, domains: ['destructive'] };
+  const { decision } = await fakePush(
+    'destructive',
+    pusherHere,
+    new Map([
+      ['dashboards/d1/dashboard.yaml', null],
+      ['dashboards/d1/panels.yaml', null],
+    ]),
+  );
+  assert.equal(decision.ok, false);
+  assert.equal(decision.ok === false && decision.status, 409);
+  assert.match(decision.ok === false ? decision.message : '', /'dashboards\/d1\/' would be emptied/);
+  assert.match(decision.ok === false ? decision.message : '', new RegExp(DESTRUCTIVE_PUSH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.equal(__openLeases(), 0);
+
+  // …while removing ONE of the two files is an ordinary change.
+  const ok = await fakePush('destructive', pusherHere, new Map([['dashboards/d1/panels.yaml', null]]));
+  assert.equal(ok.decision.ok, true);
+});
+
+test('the accept message NAMES the files that map to no OS object (review L-6)', async () => {
+  const { decision } = await fakePush('sales', builder, new Map([['models/gold/notes.md', '# notes\n']]));
+  assert.equal(decision.ok, true);
+  assert.deepEqual(decision.ok === true ? decision.unmatched : [], ['models/gold/notes.md']);
 });
 
 // ---------------------------------------------------------------- the whole receive ---
@@ -278,8 +401,9 @@ test('a non-fast-forward push to main is REFUSED — no history rewrites (E6)', 
   const { commit } = await git.readCommit({ fs, gitdir, oid: head });
   const parent = commit.parent[0] ?? head;
   // Claim the head is `head` and the new value is an ANCESTOR of it: a rewind.
+  // The hook's verdict (`git merge-base --is-ancestor`) is `false` for a rewind; the gate refuses.
   const decision = await beginReceive(
-    { domain: 'sales', pusher: builder, updates: [{ ref: MAIN, oldSha: head, newSha: parent }] },
+    { domain: 'sales', pusher: builder, updates: [{ ref: MAIN, oldSha: head, newSha: parent, fastForward: false }], changed: [] },
     { reposDir },
   );
   assert.equal(decision.ok, false);
@@ -291,14 +415,14 @@ test('a non-fast-forward push to main is REFUSED — no history rewrites (E6)', 
 test('deleting main, and any ref that is not main, are both refused (E6)', async () => {
   const head = await git.resolveRef({ fs, gitdir: repoPath('sales', { reposDir }), ref: MAIN });
   const del = await beginReceive(
-    { domain: 'sales', pusher: builder, updates: [{ ref: MAIN, oldSha: head, newSha: '0'.repeat(40) }] },
+    { domain: 'sales', pusher: builder, updates: [{ ref: MAIN, oldSha: head, newSha: '0'.repeat(40) }], changed: [] },
     { reposDir },
   );
   assert.equal(del.ok === false && del.status, 400);
   assert.match(del.ok === false ? del.message : '', /main cannot be deleted/);
 
   const branch = await beginReceive(
-    { domain: 'sales', pusher: builder, updates: [{ ref: 'refs/heads/proposal/x', oldSha: '0'.repeat(40), newSha: head }] },
+    { domain: 'sales', pusher: builder, updates: [{ ref: 'refs/heads/proposal/x', oldSha: '0'.repeat(40), newSha: head }], changed: [] },
     { reposDir },
   );
   assert.equal(branch.ok === false && branch.status, 400);
@@ -307,10 +431,10 @@ test('deleting main, and any ref that is not main, are both refused (E6)', async
 });
 
 test('a repository that does not exist is a 404, and a non-member is a 403', async () => {
-  const missing = await beginReceive({ domain: 'nowhere', pusher: builder, updates: [] }, { reposDir });
+  const missing = await beginReceive({ domain: 'nowhere', pusher: builder, updates: [], changed: [] }, { reposDir });
   assert.equal(missing.ok === false && missing.status, 404);
   const foreign = await beginReceive(
-    { domain: 'sales', pusher: { ...builder, domains: ['finance'] }, updates: [] },
+    { domain: 'sales', pusher: { ...builder, domains: ['finance'] }, updates: [], changed: [] },
     { reposDir },
   );
   assert.equal(foreign.ok === false && foreign.status, 403);
@@ -321,7 +445,7 @@ test('a repository that does not exist is a 404, and a non-member is a 403', asy
 test('an OS commit and a push cannot interleave: the gate holds the SAME lock (E7)', async () => {
   const { oldSha, newSha } = await synthesize('sales', new Map([['models/gold/gold_orders.sql', 'select 4 as id\n']]));
   const decision = await beginReceive(
-    { domain: 'sales', pusher: builder, updates: [{ ref: MAIN, oldSha, newSha }] },
+    { domain: 'sales', pusher: builder, updates: [{ ref: MAIN, oldSha, newSha, fastForward: true }], changed: await hookChangeList('sales', oldSha, newSha) },
     { reposDir },
   );
   assert.equal(decision.ok, true);
@@ -367,7 +491,7 @@ test('a lock the OS holds too long FAILS the push with a readable message, never
   const started = Date.now();
   const { oldSha, newSha } = await synthesize('sales', new Map([['models/gold/gold_orders.sql', 'select 6\n']]));
   const decision = await beginReceive(
-    { domain: 'sales', pusher: builder, updates: [{ ref: MAIN, oldSha, newSha }] },
+    { domain: 'sales', pusher: builder, updates: [{ ref: MAIN, oldSha, newSha, fastForward: true }], changed: [] },
     { reposDir, lockTimeoutMs: 40 },
   );
   const waited = Date.now() - started;
@@ -382,7 +506,10 @@ test('a lock the OS holds too long FAILS the push with a readable message, never
 
 test('abortReceive releases the lock when receive-pack fails after the gate said yes', async () => {
   const { oldSha, newSha } = await synthesize('sales', new Map([['models/gold/gold_orders.sql', 'select 7\n']]));
-  const decision = await beginReceive({ domain: 'sales', pusher: builder, updates: [{ ref: MAIN, oldSha, newSha }] }, { reposDir });
+  const decision = await beginReceive(
+    { domain: 'sales', pusher: builder, updates: [{ ref: MAIN, oldSha, newSha, fastForward: true }], changed: [] },
+    { reposDir },
+  );
   assert.equal(decision.ok, true);
   assert.equal(__openLeases(), 1);
   assert.equal(abortReceive('sales'), true);
@@ -416,8 +543,9 @@ test('reconcileFromGit dispatches every registered kind that owns a changed path
 });
 
 test('the hooks are installed executable, receivepack is on, and the script carries no secret', () => {
+  __resetHookMemo();
   ensureReceiveHooks('sales', { reposDir });
-  ensureReceiveHooks('sales', { reposDir }); // idempotent
+  ensureReceiveHooks('sales', { reposDir }); // idempotent (and memoised — review L-2)
   const gitdir = repoPath('sales', { reposDir });
   for (const phase of ['pre', 'post']) {
     const file = join(gitdir, 'hooks', `${phase}-receive`);
@@ -435,12 +563,24 @@ test('the hooks are installed executable, receivepack is on, and the script carr
   assert.match(script, /HTTP_AUTHORIZATION/);
   // …calls exactly ONE endpoint…
   assert.equal(script.match(/\/api\/git\/receive/g)?.length, 1);
-  // …and embeds no credential of its own: every secret is read from the environment.
+  // …and embeds no credential of its own: every secret is read from the environment, and it is
+  // handed to curl through a config file on STDIN rather than the command line (review L-3).
   assert.equal(/sos_[0-9a-f]{12}_/.test(script), false);
-  assert.match(script, /\$\{OS_SERVICE_BEARER:\+/);
-  // pre-receive refuses; post-receive never fails a push that has already landed.
+  assert.match(script, /curl .*--config -/);
+  assert.equal(/-H ["']?authorization/i.test(script), false, 'a token must never be an argv word');
+  // It computes the change list with git's OWN plumbing, where the quarantine is visible (H-2).
+  assert.match(script, /git merge-base --is-ancestor/);
+  assert.match(script, /git diff-tree -r --no-commit-id --name-status/);
+  assert.match(script, /git cat-file blob/);
+  // …and redacts curl's diagnostics before they reach the terminal.
+  assert.match(script, /sos_\[0-9a-f\]\{12\}_\[A-Za-z0-9_-\]\+\/sos_\*\*\*\/g/);
+  // pre-receive refuses; post-receive never fails a push that has already landed. The exit code is
+  // interpolated BARE — appending a `# comment` to it swallowed the `;` that closes `die()` and
+  // made every post-receive a shell syntax error, which only the real-push test could see.
   assert.match(script, /^exit 1$/m);
-  assert.match(receiveHookScript('post'), /^exit 0 {3}# post-receive/m);
+  assert.match(script, /^die\(\) \{.*exit 1; \}$/m);
+  assert.match(receiveHookScript('post'), /^exit 0$/m);
+  assert.match(receiveHookScript('post'), /^die\(\) \{.*exit 0; \}$/m);
 });
 
 test('a token pasted into a pushed path or file never comes back in the rejection (E2 no-leak)', async () => {

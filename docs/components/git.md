@@ -53,8 +53,10 @@ git clone https://<os-host>/git/<domain>.git
 # username: anything (it is ignored)   password: your OS access token
 ```
 
-Every detail page in the OS shows this command for the domain that owns the artefact, next to
-"Access tokens" and (where the engineering panel knows the file) a link straight to the file's bytes.
+The remote is always **HTTPS** (the OS will not print a plain-`http` remote except on loopback: the
+token travels in the request). The component that shows this command on a detail page —
+`core/ui/git-clone/CloneRepository.tsx` — exists and is tested, but is **not mounted on any page
+yet**: the detail pages belong to the engineering-view and git-UI streams, and they mount it.
 
 You get the whole tree, including:
 
@@ -139,9 +141,20 @@ Things the OS deliberately will **not** infer from a push:
 | Read-only | Why |
 |---|---|
 | `os/*.yml` | the OS's own record of schedules, grants and promotion state. It is committed so you can *audit* it; editing it in git would mean two writers for one fact. Change it in Governance or over the MCP. |
+| `dbt_project.yml`, `macros/**`, `profiles.yml`, `packages.yml` | dbt **executes** these as the OS's dbt principal on every build — `on-run-start:` SQL, every macro a model calls, the connection, a package fetch. A model *selects*; these *run*. Changing them is a change to what the OS runs, so it goes through the OS. |
 | `agents/index.yml` | the slug → identity map. A directory name is not an identity, and rewriting identities is not something a push may do. |
 | anything credential-shaped | a credential has no business arriving by push. Connections hold secrets by reference; `profiles.yml` reads environment variables only. |
 | someone else's `models/personal/…` or `agents/personal/…` | a personal lane is the one place the OS promises is yours. |
+
+Two more refusals, for the same reason — the registry is derived from the files, so a file must
+never be able to say something only a governed action may say:
+
+| Refused | Why |
+|---|---|
+| a push that **empties an object's directory** (every file under `dashboards/<id>/`, `agents/<slug>/`, or a whole kind) | retiring an object is a governed action with a dependents check. `git rm -r` is not it. This is the same rule the boot reconcile applies to itself. |
+| a pushed **`tier` / `visibility`** that disagrees with the registry | `My → Domain → Company` changes only through promotion, with its roles and approvals. The field is in the file so the file is self-describing; the OS owns the value. Make the value agree, or promote in the OS. |
+
+Each is one sentence on your terminal naming the file.
 
 ### Troubleshooting
 
@@ -152,6 +165,9 @@ Things the OS deliberately will **not** infer from a push:
 | `remote: this push is not a fast-forward of main` | rebase onto the current `main` and push again. The OS never accepts a rewrite. |
 | `remote: the OS is writing to '<domain>' right now…` | an OS write held the lock longer than the bounded wait. Nothing changed; push again. |
 | `remote: dataset: 0 created, 0 updated` | the push landed but nothing in it maps to an OS object (for example a `.sql` change with no `schema.yml`). The files are stored; the registry is unchanged by design. |
+| `remote: '…/' would be emptied by this push` | you removed every file of an object. Retire it in the OS instead, or keep at least the file that defines it. |
+| `remote: audience is managed by the OS; use promotion` | the file's `tier`/`visibility` disagrees with the OS. Set it back to what the OS holds and promote there. |
+| `remote: '…' is …; this door accepts files up to 1048576 bytes` | a large (usually binary) file. A domain repository holds definitions, not artefacts. |
 
 ### How it is served
 
@@ -173,6 +189,30 @@ The build **fails** if `git-http-backend` or lighttpd's `mod_cgi` is missing fro
 packages — the same guard `images/base/git-daemon` carries, for the same reason: the first rollout
 of the read-only git daemon crash-looped because a stock image silently omitted the binary.
 
+**Who reads the pushed objects.** During `pre-receive`, git keeps the incoming objects in a
+**quarantine** directory (`GIT_QUARANTINE_PATH`) that only the hook's own process tree can see. So
+the hook — not the OS — computes the fast-forward verdict and the change list, with git's own
+plumbing (`git merge-base --is-ancestor`, `git diff-tree -r --name-status`, `git cat-file blob`),
+and posts them. The OS reads nothing from the repository until `post-receive`, when the refs are
+updated and the objects are real; then it re-derives the change list **from the repository** and
+reconciles from that. The hook gates; the repository is the record.
+
+### Two operational caveats, said plainly
+
+- **`kubectl port-forward` goes around the NetworkPolicy.** The policy admits port 9419 from the
+  ingress controller only, and the Ingress is where the OS's authentication sub-request runs — so a
+  port-forward to the pod reaches `git-http-backend` with **no authentication in front of it** and
+  can read every domain repository. That is a cluster-admin capability (`pods/portforward`), and
+  anyone who has it can read the PVC anyway; but it means repository read access is **not** limited
+  to token holders for operators. Treat `pods/portforward` in the OS namespace as equivalent to
+  read access to every domain's files.
+- **With `ingress.enabled=false` (the bundled / local profile) there is no authentication at all in
+  front of the sidecar.** Nothing outside the cluster can reach it, and the NetworkPolicy admits
+  only the ingress namespace — which does not exist on that profile — so in practice the port is
+  reachable only from inside the pod. The push path authenticates itself either way (the hook
+  forwards the token and the OS re-resolves it), but the **read** path on that profile is protected
+  by the network, not by a credential.
+
 ### What is NOT true yet
 
 - **Branches are not proposals.** `main` is the only ref this server accepts. A `proposal/*` branch
@@ -180,7 +220,14 @@ of the read-only git daemon crash-looped because a stock image silently omitted 
 - **Only two kinds map back.** Datasets (via `schema.yml`) and agent systems (via `system.yaml`).
   Metrics, dashboards and software apps are written *to* git by the OS but a push of them changes
   the files only — the registry is not yet derived from them. Each kind joins through the same
-  `ingestFromRepo(kind, files)` contract.
+  `ingestFromRepo(kind, files)` contract, and that contract has two obligations every kind owes:
+  **never apply audience** (a disagreeing `tier`/`visibility` refuses the path) and **never
+  retire** (a removed file is reported; a wholesale removal is refused by the gate before the
+  ingest runs).
+- **The dbt gate is not `dbt parse`.** There is no dbt in the os-ui process. The gate checks what
+  can be checked per file — valid YAML, `version: 2`, a `models:` list, and a model or column name
+  dbt can resolve (the invariant whose violation breaks the *whole* project). A `ref()` to a name
+  that does not exist is found by Dagster's own `dbt parse` on the pushed commit, not at the door.
 - **A push does not build.** It updates the definition. The physical build is Dagster's, from the
   same commit.
 - **The live clone and push are verified in the cluster, not in CI.** Everything above is covered

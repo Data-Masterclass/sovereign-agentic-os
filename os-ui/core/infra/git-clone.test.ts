@@ -15,7 +15,16 @@ test('the clone URL is always <base>/git/<domain>.git', () => {
   assert.equal(GIT_HTTP_PATH, 'git');
   assert.equal(cloneUrl('sales', 'https://os.example.com'), 'https://os.example.com/git/sales.git');
   assert.equal(cloneUrl('sales', 'https://os.example.com/'), 'https://os.example.com/git/sales.git');
-  assert.equal(cloneCommand('sales', 'http://localhost:3000'), 'git clone http://localhost:3000/git/sales.git');
+  assert.equal(cloneCommand('sales', 'https://os.example.com'), 'git clone https://os.example.com/git/sales.git');
+});
+
+test('HTTPS ONLY — a plain-http remote would publish the token on the wire (review M-6)', () => {
+  assert.equal(cloneUrl('sales', 'http://os.example.com'), null);
+  assert.equal(cloneUrl('sales', 'http://10.0.0.5:3000'), null);
+  // Loopback is the one exception: there is no wire, and that is `npm run dev`.
+  assert.equal(cloneUrl('sales', 'http://localhost:3000'), 'http://localhost:3000/git/sales.git');
+  assert.equal(cloneUrl('sales', 'http://127.0.0.1:3000'), 'http://127.0.0.1:3000/git/sales.git');
+  assert.equal(cloneUrl('sales', 'http://localhost.evil.com'), null);
 });
 
 test('no base, no scheme or an unsafe domain yields NOTHING — never half a command', () => {

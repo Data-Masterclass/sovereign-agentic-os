@@ -98,6 +98,68 @@ function locks(): Map<string, Promise<unknown>> {
   return g[LOCK_KEY]!;
 }
 
+/* === E LOCK BLOCK (stream E, night 2 — additive; do not reorder) =========================
+ * The receive gate must be mutually exclusive with the OS's own writers, which means taking
+ * THIS module's per-repository mutex and nothing else. Two writers, one lock, one place.
+ *
+ * `withRepoLock` is the ordinary form. `acquireRepoLock` exists because a `git push` holds the
+ * lock across TWO processes (`pre-receive` … `post-receive`), so the gate needs the release
+ * handle rather than a callback — see `core/infra/git-receive.ts`.
+ *
+ * Both install their map entry SYNCHRONOUSLY, before waiting, so concurrent callers queue
+ * instead of all believing they hold it; the bounded wait applies only to the predecessor, and a
+ * caller that times out releases immediately so it never blocks the queue behind it.
+ */
+export class RepoLockTimeoutError extends GitStoreError {
+  constructor(domain: string, ms: number) {
+    super(
+      `the OS is writing to '${domain}' right now and did not finish within ${Math.round(ms / 1000)}s — ` +
+        'nothing was changed; try again in a moment',
+      503,
+    );
+    this.name = 'RepoLockTimeoutError';
+  }
+}
+
+export const DEFAULT_REPO_LOCK_TIMEOUT_MS = 20_000;
+
+export type RepoLockOptions = GitStoreOptions & { timeoutMs?: number };
+
+/** Take the repository's lock and hold it until the returned function is called. */
+export async function acquireRepoLock(domain: string, opts: RepoLockOptions = {}): Promise<() => void> {
+  const key = repoPath(domain, opts);
+  const timeoutMs = Math.max(1, opts.timeoutMs ?? DEFAULT_REPO_LOCK_TIMEOUT_MS);
+  const prev = locks().get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  locks().set(key, prev.then(() => mine, () => mine));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bounded = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+  });
+  (timer as unknown as { unref?: () => void })?.unref?.();
+  const outcome = await Promise.race([prev.then(() => 'ready' as const, () => 'ready' as const), bounded]);
+  if (timer) clearTimeout(timer);
+  if (outcome === 'timeout') {
+    release();
+    throw new RepoLockTimeoutError(domain, timeoutMs);
+  }
+  return release;
+}
+
+/** Run `fn` holding the repository's lock. Throws `RepoLockTimeoutError` on a bounded wait. */
+export async function withRepoLock<T>(domain: string, fn: () => Promise<T>, opts: RepoLockOptions = {}): Promise<T> {
+  const release = await acquireRepoLock(domain, opts);
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+/* === end E LOCK BLOCK =================================================================== */
+
 /** Serialise writers per repository path (in-process). */
 async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = locks().get(key) ?? Promise.resolve();
