@@ -44,7 +44,7 @@ async function decide(req: Request): Promise<NextResponse> {
       status: outcome.status,
       headers:
         outcome.status === 401
-          ? { 'www-authenticate': 'Basic realm="Sovereign OS — use a personal access token"', 'content-type': 'text/plain; charset=utf-8' }
+          ? { 'www-authenticate': 'Basic realm="Sovereign OS - use a personal access token"' /* ASCII only: header values are ByteStrings; an em-dash threw and turned every 401 into a 500 (0.9.1) */, 'content-type': 'text/plain; charset=utf-8' }
           : { 'content-type': 'text/plain; charset=utf-8' },
     });
   }
