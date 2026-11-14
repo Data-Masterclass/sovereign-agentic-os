@@ -246,3 +246,81 @@ test('M-9 — a filter value carrying a SQL comment marker is NAMED, not silentl
   // The value reached the compiler VERBATIM — stripping it would change the author's filter.
   assert.deepEqual(seen[0].filters, [{ column: 'region', values: ['DE-- drop'] }]);
 });
+
+// ── D12: the PRECEDENCE of the degradation notices ────────────────────────────
+// Each degradation had its own case; nothing asserted which one WINS when two happen at once.
+// The `??` chain in `runPanelQuery` is the contract — outage, then unresolved members, then a
+// dropped slice dimension, then a filter value carrying a SQL comment marker — and an unpinned
+// order is how the loudest notice ("there is no number at all") gets hidden behind a quieter one
+// ("one dimension was dropped") in exactly the situation where it matters most.
+
+const OUTAGE_WARNING = 'The lakehouse is unreachable, so this panel has no number.';
+const DROP_WARNING = 'The group-by “order_id” is not on the governed view, so it was dropped.';
+
+/** An explore that degrades in the two ways the explorer itself can: an outage, a dropped slice. */
+function degradingExplore(opts: { outage?: boolean; drop?: boolean }) {
+  return (async () => ({
+    member: 'Sales.revenue',
+    rows: opts.outage ? [] : [{ region: 'DE', 'Sales.revenue': 100 }],
+    securityContext: {},
+    sql: 'SELECT 1',
+    mode: 'live (sql)' as const,
+    ...(opts.outage ? { unavailable: true } : {}),
+    ...(opts.drop ? { droppedMembers: ['order_id'] } : {}),
+    ...(opts.outage || opts.drop ? { warning: opts.outage ? OUTAGE_WARNING : DROP_WARNING } : {}),
+  })) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
+}
+
+/** A panel that triggers every degradation at once; the callers peel conditions off one by one. */
+function degradingPanel(over: Partial<Panel> = {}): Panel {
+  return {
+    name: 'Everything at once',
+    vizType: 'bar',
+    metrics: ['Sales.revenue', 'Sales.ghost'],
+    dimensions: ['Sales.order_id'],
+    filters: [{ member: 'Sales.channel', operator: 'in', values: ['web--retail'] }],
+    ...over,
+  };
+}
+
+const run = (panel: Panel, explore: NonNullable<Parameters<typeof runPanelQuery>[4]>['explore']) =>
+  runPanelQuery('Sales', panel, viewerToken('DE'), asUser('DE'), { resolve, explore });
+
+test('D12 — all four degradations at once: the OUTAGE sentence wins, and there are no rows', async () => {
+  const res = await run(degradingPanel(), degradingExplore({ outage: true, drop: true }));
+  assert.equal(res.warning, OUTAGE_WARNING, 'an outage is the loudest: there is no number at all');
+  assert.deepEqual(res.rows, [], 'a panel with no number shows none — never a partial one');
+  // The missing-member LIST is still reported, so the quieter facts are not lost with the notice.
+  assert.deepEqual(res.missingMembers, ['Sales.ghost']);
+});
+
+test('D12 — no outage: the UNRESOLVED MEMBER wins over a dropped dimension and a comment value', async () => {
+  const res = await run(degradingPanel(), degradingExplore({ drop: true }));
+  assert.match(res.warning ?? '', /Sales\.ghost/, 'a member no visible metric owns is named');
+  assert.notEqual(res.warning, DROP_WARNING);
+  assert.deepEqual(res.missingMembers, ['Sales.ghost'], 'the missing member wins the LIST too, over the dropped one');
+});
+
+test('D12 — every member resolves: the DROPPED DIMENSION wins over the comment value', async () => {
+  const res = await run(degradingPanel({ metrics: ['Sales.revenue'] }), degradingExplore({ drop: true }));
+  assert.equal(res.warning, DROP_WARNING);
+  assert.deepEqual(res.missingMembers, ['order_id'], 'with nothing missing, the dropped slice member is the list');
+});
+
+test('D12 — nothing dropped: the COMMENT VALUE is the last notice, and it still fires', async () => {
+  const res = await run(degradingPanel({ metrics: ['Sales.revenue'] }), degradingExplore({}));
+  assert.match(res.warning ?? '', /SQL comment marker/);
+  assert.match(res.warning ?? '', /Sales\.channel/, 'the refusal names the filter, not just the panel');
+  assert.match(res.warning ?? '', /NOT silently stripped/);
+  assert.equal(res.missingMembers, undefined);
+});
+
+test('D12 — a clean panel carries no notice at all (the chain is not a default)', async () => {
+  const res = await run(
+    degradingPanel({ metrics: ['Sales.revenue'], dimensions: ['Sales.region'], filters: [] }),
+    degradingExplore({}),
+  );
+  assert.equal(res.warning, undefined);
+  assert.equal(res.missingMembers, undefined);
+  assert.equal(res.rows.length, 1);
+});

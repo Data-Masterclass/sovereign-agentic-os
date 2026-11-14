@@ -205,12 +205,12 @@ export async function runPanelQuery(
   }
 
   const rows = [...byKey.values()];
-  // Honesty precedence: an outage (no number at all) is the loudest; then unresolved members;
-  // then a dropped slice dimension. Any of these makes the degradation LOUD, never silent.
-  // Honesty precedence, unchanged in order: an outage (no number at all) is the loudest; then
-  // unresolved members; then a dropped slice dimension; then (M-9) a filter value carrying a SQL
-  // comment marker, which the governed executor refuses outright — named here so the user sees
-  // WHY rather than an unexplained empty panel.
+  // HONESTY PRECEDENCE — the order is the contract, and it is pinned by the D12 co-occurrence
+  // cases in `panel-query.test.ts`: an outage (no number at all) is the loudest; then unresolved
+  // members; then a dropped slice dimension; then (M-9) a filter value carrying a SQL comment
+  // marker, which the governed executor refuses outright — named here so the user sees WHY rather
+  // than an unexplained empty panel. Any of these makes the degradation LOUD, never silent, and
+  // an unpinned order is how the loudest notice ends up hidden behind the quietest one.
   const warning =
     unavailableWarning ??
     (missing.length > 0 ? missingMembersWarning(missing) : undefined) ??
