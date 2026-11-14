@@ -46,6 +46,24 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 
 ### Fixed
 
+- **Git versioning review fixes (night 2, stream G).** The repositories overview now awaits the
+  mirror store's hydration before reading it (a cold pod reported "no push-mirror configured" for
+  every configured mirror); `?action=repos` and `?action=repolog` are **admin-only** and the
+  commit log additionally lists only commits whose `OS-Object` resolves for the caller, counting
+  and reporting the rest; version reads and diffs **redact secret-shaped content** and say which
+  files were altered (a restore still re-applies the raw bytes); binary blobs are reported as
+  binary instead of being decoded as UTF-8, and a version containing one cannot be restored;
+  version reads are bounded in bytes as well as in files; a trailing-newline-only change now
+  emits `\ No newline at end of file` so the patch is one `git apply` accepts; an added empty
+  file is no longer dropped from its own diff; `getVersion` reads one commit by sha instead of
+  walking 2000; the badge keeps the server's real message for a non-404 instead of showing "not
+  in git"; the restore refusal for an unregistered kind happens before any version is read; the
+  mirror link is `https:`-only; the per-object history reuses the log window it already read; and
+  the history lookup also matches the `OS-Objects` list a whole-subtree commit carries, on a
+  whole token.
+
+### Fixed
+
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a
   reference slot as a bare id (`"metric": "m_revenue"`) where the AppSpec grammar wants
   `{ "metricId": "m_revenue" }`, so the structural gate failed all three attempts and the stage

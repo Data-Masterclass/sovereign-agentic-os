@@ -729,6 +729,12 @@ export type PathLogOptions = GitStoreOptions & {
   limit?: number;
   /** How far back the repo log is walked while looking for them (default 200, capped MAX_LOG_DEPTH). */
   scan?: number;
+  /**
+   * An ALREADY-READ newest-first window (review L-4). A caller that has just read the log for its
+   * own trailer filter passes it here, so the path fallback costs tree reads only instead of a
+   * second 200-commit walk. It must come from `log(domain, …)` on the same repo.
+   */
+  window?: LogEntry[];
 };
 
 export type PathLogResult = {
@@ -755,7 +761,7 @@ export async function logPaths(domain: string, selectors: PathSelector[], opts: 
   if (!(await headSha(gitdir))) return { entries: [], truncated: false, scanned: 0 };
   const limit = Math.max(1, Math.min(opts.limit ?? 10, 100));
   const scan = Math.max(limit, Math.min(opts.scan ?? DEFAULT_PATH_SCAN, MAX_LOG_DEPTH));
-  const all = await log(domain, { ...opts, limit: scan });
+  const all = opts.window ?? (await log(domain, { ...opts, limit: scan }));
   const cache = new Map<string, string | null>();
   const out: LogEntry[] = [];
   for (const entry of all) {
@@ -769,17 +775,39 @@ export async function logPaths(domain: string, selectors: PathSelector[], opts: 
   return { entries: out, truncated: out.length < limit && all.length >= scan, scanned: all.length };
 }
 
-export type FileAtCommit = { path: string; content: string };
+/**
+ * One file of one version. A BINARY blob is reported as binary with its size and an EMPTY
+ * `content` (review M-3) — decoding a PNG as UTF-8 produced replacement characters that looked
+ * like real content and would have been written back by a restore.
+ */
+export type FileAtCommit = { path: string; content: string; bytes: number; binary: boolean };
 export type FilesAtResult = {
   sha: string;
   files: FileAtCommit[];
-  /** True when more than {@link MAX_VERSION_FILES} files matched and the list was cut. */
+  /** True when the version holds more files or bytes than one read returns (see `truncatedBy`). */
   truncated: boolean;
+  /** Why it was cut: the file count, the byte budget, or not at all. */
+  truncatedBy: 'files' | 'bytes' | null;
+  /** Total bytes of the files actually returned. */
+  bytes: number;
 };
+
+/** Is this blob binary? A NUL byte, or bytes that are not valid UTF-8, mean yes. */
+export function isBinaryBlob(bytes: Uint8Array): boolean {
+  const probe = bytes.subarray(0, Math.min(bytes.length, 8000));
+  if (probe.includes(0)) return true;
+  const buf = Buffer.from(probe);
+  // A lossless round-trip is the cheapest correct UTF-8 validity check in node.
+  return Buffer.compare(Buffer.from(buf.toString('utf8'), 'utf8'), buf) !== 0;
+}
 
 /**
  * Read every file under `selectors` AT one commit (read-at-commit). `[]` is the honest answer for
  * a commit in which the object had no files — never an error and never substituted content.
+ *
+ * RAW BY DESIGN: this is the primitive a RESTORE re-applies from, so it never redacts. The
+ * governed read-out layer (`core/infra/git-objects.ts` `getVersion`) scrubs before returning bytes
+ * to a caller; see {@link scrubSecrets}.
  */
 export async function readFilesAt(domain: string, ref: string | undefined, selectors: PathSelector[], opts: GitStoreOptions = {}): Promise<FilesAtResult> {
   if (!repoExists(domain, opts)) throw new GitStoreError(`no repository for '${domain}'`, 404);
@@ -787,13 +815,102 @@ export async function readFilesAt(domain: string, ref: string | undefined, selec
   const sha = await resolveCommit(gitdir, ref);
   const clean = selectors.map((s) => String(s ?? '').replace(/^\/+/, '')).filter((s) => s.length > 0);
   const entries = (await listTree(domain, sha, opts)).filter((e) => pathMatchesAny(e.path, clean));
-  const truncated = entries.length > MAX_VERSION_FILES;
+  let truncatedBy: 'files' | 'bytes' | null = entries.length > MAX_VERSION_FILES ? 'files' : null;
   const files: FileAtCommit[] = [];
+  let bytes = 0;
   for (const e of entries.slice(0, MAX_VERSION_FILES)) {
     const { blob } = await git.readBlob({ fs, gitdir, oid: e.oid });
-    files.push({ path: e.path, content: Buffer.from(blob).toString('utf8') });
+    // Review M-4: a version is bounded in BYTES as well as in files — one 40 MB blob would
+    // otherwise be read into memory and serialised to a browser.
+    if (bytes + blob.length > MAX_VERSION_BYTES) {
+      truncatedBy = 'bytes';
+      break;
+    }
+    bytes += blob.length;
+    const binary = isBinaryBlob(blob);
+    files.push({ path: e.path, content: binary ? '' : Buffer.from(blob).toString('utf8'), bytes: blob.length, binary });
   }
-  return { sha, files, truncated };
+  return { sha, files, truncated: truncatedBy !== null, truncatedBy, bytes };
+}
+
+/** How many bytes of blob content ONE version read returns before it reports itself truncated. */
+export const MAX_VERSION_BYTES = 4 * 1024 * 1024;
+
+// ------------------------------------------------------------ secret scrub ---
+
+/**
+ * The patterns a version read redacts before bytes leave the OS (review M-1). The repositories
+ * hold generated project files, not credential stores — `profiles.yml` carries a Trino auth
+ * METHOD, and connection secrets live in Kubernetes Secrets, never in a tree. But a `git push`
+ * from a developer's checkout (the engineer's door) can put anything in there, and a version read
+ * is the one path that hands raw repository bytes to a browser or an AI client, so it fails safe.
+ *
+ * Deliberately NOT a high-entropy heuristic: a commit sha, a blob oid and a UUID are all
+ * high-entropy, and redacting those would corrupt every diff the drawer renders.
+ */
+export const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
+  { name: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
+  // The whitespace after the separator is `[ \t]*`, NEVER `\s*`: `\s*` crossed a newline, so
+  // `password:` with an empty value swallowed the NEXT line's value and redacted the wrong thing.
+  { name: 'keyed-value', re: /((?:password|passwd|secret|secret_key|api_key|apikey|access_key|access_token|client_secret|private_key|token)[ \t]*[:=][ \t]*)(?!null\b)(?!~)("[^"\n]+"|'[^'\n]+'|[^\s#,}\]]+)/gi },
+  { name: 'url-credential', re: /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+):([^\s@/]+)@/gi },
+  { name: 'github-token', re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/g },
+  { name: 'github-pat', re: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g },
+  { name: 'openai-key', re: /\bsk-[A-Za-z0-9_-]{20,}\b/g },
+  { name: 'slack-token', re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
+  { name: 'aws-access-key-id', re: /\bAKIA[0-9A-Z]{16}\b/g },
+  { name: 'google-api-key', re: /\bAIza[0-9A-Za-z_-]{35}\b/g },
+  { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
+];
+
+/** The marker a redacted value is replaced with — greppable, and never a plausible value. */
+export const REDACTED = '***REDACTED-BY-OS***';
+
+export type ScrubResult = { text: string; redactions: number; kinds: string[] };
+
+/**
+ * Redact anything secret-shaped. Returns the count and the pattern names, so a caller can TELL
+ * the user the bytes were altered instead of quietly handing over a changed file.
+ */
+export function scrubSecrets(text: string): ScrubResult {
+  let out = String(text ?? '');
+  let redactions = 0;
+  const kinds: string[] = [];
+  for (const { name, re } of SECRET_PATTERNS) {
+    const before = redactions;
+    out = out.replace(new RegExp(re.source, re.flags), (match, ...groups) => {
+      redactions++;
+      // `keyed-value` and `url-credential` keep their key / scheme+user and redact only the value.
+      if (name === 'keyed-value') return `${groups[0]}${REDACTED}`;
+      if (name === 'url-credential') return `${groups[0]}:${REDACTED}@`;
+      return REDACTED;
+    });
+    if (redactions > before) kinds.push(name);
+  }
+  return { text: out, redactions, kinds };
+}
+
+/** ONE commit by sha, without walking the log (review M-5). Null when it is not a commit. */
+export async function commitAt(domain: string, ref: string | undefined, opts: GitStoreOptions = {}): Promise<LogEntry | null> {
+  if (!repoExists(domain, opts)) return null;
+  const gitdir = repoPath(domain, opts);
+  try {
+    const oid = await resolveCommit(gitdir, ref);
+    const { commit } = await git.readCommit({ fs, gitdir, oid });
+    return {
+      sha: oid,
+      subject: commit.message.split('\n')[0],
+      message: commit.message,
+      author: { name: commit.author.name, email: commit.author.email },
+      committer: { name: commit.committer.name, email: commit.committer.email },
+      timestamp: commit.author.timestamp,
+      parents: commit.parent,
+      tree: commit.tree,
+      trailers: parseTrailers(commit.message),
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ------------------------------------------------------------ unified diff ---
@@ -801,13 +918,30 @@ export async function readFilesAt(domain: string, ref: string | undefined, selec
 /** Beyond this many line-pairs the LCS is skipped and the file is reported as one replacement. */
 export const MAX_DIFF_CELLS = 400_000;
 
-function splitLines(text: string): { lines: string[]; noEol: boolean } {
+/**
+ * The tag a line carries when it is the LAST line of a side that does not end in a newline
+ * (review M-2). It has to travel with the line through the LCS, or `'x\n'` → `'x'` compares as
+ * two identical line arrays and the patch comes out header-only — which `git apply` rejects.
+ * A NUL can never occur here: binary blobs never reach the differ.
+ */
+const NO_EOL = '\u0000NO-EOL';
+/** git's own wording for the marker line. */
+const NO_EOL_LINE = '\\ No newline at end of file';
+
+function splitLines(text: string): string[] {
   const s = String(text ?? '');
-  if (s === '') return { lines: [], noEol: false };
+  if (s === '') return [];
   const noEol = !s.endsWith('\n');
   const lines = s.split('\n');
   if (!noEol) lines.pop();
-  return { lines, noEol };
+  if (noEol && lines.length > 0) lines[lines.length - 1] = `${lines[lines.length - 1]}${NO_EOL}`;
+  return lines;
+}
+
+/** Render one op as its patch line(s) — two of them when the line ends without a newline. */
+function renderOp(op: DiffOp): string {
+  if (op.line.endsWith(NO_EOL)) return `${op.t}${op.line.slice(0, -NO_EOL.length)}\n${NO_EOL_LINE}`;
+  return `${op.t}${op.line}`;
 }
 
 type DiffOp = { t: ' ' | '-' | '+'; line: string };
@@ -860,14 +994,14 @@ export type UnifiedDiffOptions = {
  */
 export function unifiedDiff(aText: string, bText: string, opts: UnifiedDiffOptions = {}): string {
   if (aText === bText) return '';
-  const a = splitLines(aText);
-  const b = splitLines(bText);
+  const aLines = splitLines(aText);
+  const bLines = splitLines(bText);
   const context = Math.max(0, Math.min(opts.context ?? 3, 20));
   const header = `--- a/${opts.aLabel ?? 'a'}\n+++ b/${opts.bLabel ?? 'b'}\n`;
-  const ops = editScript(a.lines, b.lines);
+  const ops = editScript(aLines, bLines);
   if (!ops) {
     // Too large to diff line-by-line. Say so rather than returning a wrong or empty patch.
-    return header + `@@ -1,${a.lines.length} +1,${b.lines.length} @@ file too large to diff line-by-line (${a.lines.length} x ${b.lines.length} lines)\n`;
+    return header + `@@ -1,${aLines.length} +1,${bLines.length} @@ file too large to diff line-by-line (${aLines.length} x ${bLines.length} lines)\n`;
   }
   const changed = ops.map((o) => o.t !== ' ');
   const hunks: string[] = [];
@@ -911,7 +1045,7 @@ export function unifiedDiff(aText: string, bText: string, opts: UnifiedDiffOptio
     const aCount = body.filter((o) => o.t !== '+').length;
     const bCount = body.filter((o) => o.t !== '-').length;
     hunks.push(
-      `@@ -${aCount === 0 ? 0 : backA},${aCount} +${bCount === 0 ? 0 : backB},${bCount} @@\n` + body.map((o) => `${o.t}${o.line}`).join('\n'),
+      `@@ -${aCount === 0 ? 0 : backA},${aCount} +${bCount === 0 ? 0 : backB},${bCount} @@\n` + body.map(renderOp).join('\n'),
     );
     for (let x = k; x < end; x++) advance(ops[x]);
     k = end;
@@ -924,6 +1058,10 @@ export type FileDiff = {
   status: 'added' | 'modified' | 'removed';
   /** The unified patch for this file (never empty — an unchanged file is not listed). */
   patch: string;
+  /** True when either side is a binary blob: the patch says so instead of showing bytes. */
+  binary?: boolean;
+  /** True when a redaction changed what the patch shows (review M-1). */
+  redacted?: boolean;
 };
 
 export type DiffResult = {
@@ -932,34 +1070,65 @@ export type DiffResult = {
   files: FileDiff[];
   /** Every file patch concatenated — what an engineer would pipe into `git apply`. */
   patch: string;
+  /** True when any patch above was altered by the secret scrub. */
+  redacted: boolean;
 };
+
+/** `Binary files a/x and b/x differ` — git's own line, and all a UI should ever show for one. */
+function binaryPatch(path: string, before: FileAtCommit | undefined, after: FileAtCommit | undefined): string {
+  const left = before ? `a/${path}` : '/dev/null';
+  const right = after ? `b/${path}` : '/dev/null';
+  return `--- ${left}\n+++ ${right}\nBinary files ${left} and ${right} differ\n`;
+}
 
 /**
  * The unified diff of everything under `selectors` between two commits. Unchanged files are
  * omitted; `files: []` means the object is byte-identical at both commits, which is a real answer.
+ *
+ * Three cases a naive differ gets wrong, each covered here: a BINARY blob is named, never
+ * rendered (review M-3); an ADDED or REMOVED file is always listed even when it is empty, so a
+ * created file does not vanish from its own diff (review L-2); and with `redact` the compare
+ * still runs on the RAW bytes, so a change that is entirely inside redacted content is reported
+ * as a redacted change rather than as "no change" (review M-1).
  */
 export async function diffPaths(
   domain: string,
   refA: string,
   refB: string,
   selectors: PathSelector[],
-  opts: GitStoreOptions & { context?: number } = {},
+  opts: GitStoreOptions & { context?: number; redact?: boolean } = {},
 ): Promise<DiffResult> {
   const a = await readFilesAt(domain, refA, selectors, opts);
   const b = await readFilesAt(domain, refB, selectors, opts);
-  const left = new Map(a.files.map((f) => [f.path, f.content]));
-  const right = new Map(b.files.map((f) => [f.path, f.content]));
+  const left = new Map(a.files.map((f) => [f.path, f]));
+  const right = new Map(b.files.map((f) => [f.path, f]));
   const paths = [...new Set([...left.keys(), ...right.keys()])].sort();
   const files: FileDiff[] = [];
   for (const p of paths) {
     const before = left.get(p);
     const after = right.get(p);
-    if (before === after) continue;
-    const patch = unifiedDiff(before ?? '', after ?? '', { aLabel: p, bLabel: p, context: opts.context });
-    if (!patch) continue;
-    files.push({ path: p, status: before === undefined ? 'added' : after === undefined ? 'removed' : 'modified', patch });
+    const status: FileDiff['status'] = before === undefined ? 'added' : after === undefined ? 'removed' : 'modified';
+    // The compare is always on the RAW content, never on the redacted text.
+    if (before && after && before.content === after.content && before.binary === after.binary && before.bytes === after.bytes) continue;
+    if (before?.binary || after?.binary) {
+      files.push({ path: p, status, patch: binaryPatch(p, before, after), binary: true });
+      continue;
+    }
+    const rawA = before?.content ?? '';
+    const rawB = after?.content ?? '';
+    const scrubA = opts.redact ? scrubSecrets(rawA) : { text: rawA, redactions: 0, kinds: [] };
+    const scrubB = opts.redact ? scrubSecrets(rawB) : { text: rawB, redactions: 0, kinds: [] };
+    const redacted = scrubA.redactions + scrubB.redactions > 0;
+    let patch = unifiedDiff(scrubA.text, scrubB.text, { aLabel: p, bLabel: p, context: opts.context });
+    if (!patch) {
+      // Reached when the two sides differ ONLY inside redacted content, or when an empty file was
+      // added or removed. Both are real changes and must appear in the diff.
+      const note = redacted ? 'the change is entirely inside redacted content' : `${status} (empty file)`;
+      patch = `--- ${before ? `a/${p}` : '/dev/null'}\n+++ ${after ? `b/${p}` : '/dev/null'}\n@@ -0,0 +0,0 @@ ${note}\n`;
+    }
+    files.push({ path: p, status, patch, ...(redacted ? { redacted: true } : {}) });
   }
-  return { a: a.sha, b: b.sha, files, patch: files.map((f) => f.patch).join('') };
+  return { a: a.sha, b: b.sha, files, patch: files.map((f) => f.patch).join(''), redacted: files.some((f) => f.redacted) };
 }
 
 /** One repository's summary for an operator view: head commit, commit count, last author. */

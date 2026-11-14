@@ -33,6 +33,8 @@ const ROW_COLOUR: Record<string, string> = {
   hunk: 'var(--muted, #6b7280)',
   file: 'var(--muted, #6b7280)',
   note: 'var(--muted, #6b7280)',
+  // A binary file and a redaction are STATEMENTS about the diff, not content — shown as such.
+  binary: 'var(--muted, #6b7280)',
   context: 'inherit',
 };
 
@@ -52,7 +54,7 @@ export default function HistoryDrawer({
   onRestored?: () => void;
 }) {
   const [selected, setSelected] = useState<string>('');
-  const [diff, setDiff] = useState<{ files: FileDiffView[]; identical: boolean } | null>(null);
+  const [diff, setDiff] = useState<{ files: FileDiffView[]; identical: boolean; redacted?: boolean } | null>(null);
   const [diffError, setDiffError] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -75,7 +77,7 @@ export default function HistoryDrawer({
         const res = await fetch(`/api/git?${params.toString()}`, { cache: 'no-store' });
         const body = await res.json();
         if (!res.ok) setDiffError(body.error ?? `Could not read the diff (${res.status})`);
-        else setDiff(body as { files: FileDiffView[]; identical: boolean });
+        else setDiff(body as { files: FileDiffView[]; identical: boolean; redacted?: boolean });
       } catch (e) {
         setDiffError((e as Error).message);
       }

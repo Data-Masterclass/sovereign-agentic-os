@@ -26,6 +26,15 @@
  *     invariant, validation, approval and trailer on the normal path still applies. A kind with
  *     no registered writer is refused with a typed `restore_unsupported` — never half-applied.
  *   - Server-only: reaches node:fs through `core/infra/git-store.ts`.
+ *
+ * KNOWN BLIND SPOT (review L-5, backlog). A resolver derives its path selectors from the object's
+ * CURRENT placement, so the path fallback only finds commits under where the object lives NOW. A
+ * rename or a lane move (Personal → Shared) changes the directory, so commits made under the OLD
+ * path are invisible to the fallback — they are still found by the `OS-Object` trailer, which is
+ * the identity, so a user's own history is complete; what can be missing is the OLD-path portion
+ * of a PLATFORM-attributed history (a boot reconcile before a rename). The fix is a path history
+ * (`--follow`-style, or recording previous paths in `index.yml`); until then `via` reports how the
+ * answer was found and `truncated` never claims completeness.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
@@ -35,13 +44,17 @@ import {
   readFilesAt,
   diffPaths,
   log,
+  commitAt,
   parseTrailers,
+  scrubSecrets,
   MAX_LOG_DEPTH,
   type LogEntry,
   type FileAtCommit,
   type FileDiff,
   type GitStoreOptions,
+  type RepoSummary,
 } from '@core/infra/git-store';
+import type { MirrorSignal } from '@core/infra/git-mirror';
 
 // ------------------------------------------------------------- kind table ---
 
@@ -317,10 +330,17 @@ function toCommit(e: LogEntry): ObjectCommit {
   };
 }
 
-/** Does this commit's `OS-Object` trailer name `id`? (The trailer is `<id>` or `<id> (<name>)`.) */
+/**
+ * Does this commit's trailer block name `id`? `OS-Object` is `<id>` or `<id> (<name>)`; a
+ * WHOLE-SUBTREE commit additionally lists every id it carried in `OS-Objects` (space-separated,
+ * stream X's R1), and the match there is on a whole token — `sys_abc` must never match
+ * `sys_abcd`.
+ */
 function trailerNames(message: string, id: string): boolean {
-  const object = parseTrailers(message)['OS-Object'] ?? '';
-  return object === id || object.startsWith(`${id} `);
+  const t = parseTrailers(message);
+  const object = t['OS-Object'] ?? '';
+  if (object === id || object.startsWith(`${id} `)) return true;
+  return (t['OS-Objects'] ?? '').split(' ').includes(id);
 }
 
 /**
@@ -362,7 +382,8 @@ export async function gitInfoForPaths(
   // with files in the tree can have NO commit whose trailer names it. Merge the path-scoped log in
   // whenever the trailer did not already fill the page, so `head` is never a wrong `null`.
   if (byTrailer.length < limit) {
-    const byPath = await logPaths(location.domain, location.paths, { reposDir, limit, scan });
+    // Review L-4: the window is already in memory — the fallback must not pay for a second walk.
+    const byPath = await logPaths(location.domain, location.paths, { reposDir, limit, scan, window });
     if (byPath.entries.length > 0) {
       const seen = new Set(entries.map((e) => e.sha));
       const merged = [...entries, ...byPath.entries.filter((e) => !seen.has(e.sha))];
@@ -440,8 +461,16 @@ export type ObjectVersion = {
   files: FileAtCommit[];
   /** False when the object had NO files at that commit — an honest answer, not an error. */
   present: boolean;
-  /** True when the version holds more files than one read returns. */
+  /** True when the version holds more files or bytes than one read returns. */
   truncated: boolean;
+  /** Why it was cut: the file count, the byte budget, or not at all. */
+  truncatedBy: 'files' | 'bytes' | null;
+  /** Bytes of the files returned. */
+  bytes: number;
+  /** True when the secret scrub altered any file below (see `redactedPaths`). */
+  redacted: boolean;
+  /** Which files were altered, and by which pattern — so the change is never silent. */
+  redactedPaths: { path: string; kinds: string[] }[];
 };
 
 /** An object whose domain has no repository cannot have a version — say so, do not invent one. */
@@ -460,23 +489,42 @@ function assertSha(sha: string): string {
   return s;
 }
 
-/** `getVersion(kind, id, sha)` — the object's files exactly as they were at that commit. */
+/**
+ * `getVersion(kind, id, sha)` — the object's files exactly as they were at that commit, with
+ * anything secret-shaped REDACTED (review M-1) and binary blobs named rather than decoded.
+ *
+ * The scrub is at this boundary on purpose: this is the governed read-out that hands repository
+ * bytes to a browser or an AI client, while `restoreVersion` re-applies the RAW bytes through the
+ * object's writer, so a redaction can never be written back into the tree.
+ */
 export async function getVersion(user: CurrentUser, kind: GitObjectKind, id: string, sha: string, opts: GitStoreOptions = {}): Promise<ObjectVersion> {
   const location = await locate(user, kind, id);
   assertHasRepo(kind, id, location);
   const ref = assertSha(sha);
   const reposDir = opts.reposDir ?? config.reposDir;
   const at = await readFilesAt(location.domain, ref, location.paths, { reposDir });
-  const entry = (await log(location.domain, { reposDir, limit: MAX_LOG_DEPTH })).find((e) => e.sha === at.sha) ?? null;
+  // Review M-5: ONE commit read by sha, instead of walking up to 2000 commits to find it.
+  const entry = await commitAt(location.domain, at.sha, { reposDir });
+  const redactedPaths: { path: string; kinds: string[] }[] = [];
+  const files = at.files.map((f) => {
+    if (f.binary) return f;
+    const scrubbed = scrubSecrets(f.content);
+    if (scrubbed.redactions > 0) redactedPaths.push({ path: f.path, kinds: scrubbed.kinds });
+    return { ...f, content: scrubbed.text };
+  });
   return {
     kind,
     id,
     domain: location.domain,
     sha: at.sha,
     commit: entry ? toCommit(entry) : null,
-    files: at.files,
+    files,
     present: at.files.length > 0,
     truncated: at.truncated,
+    truncatedBy: at.truncatedBy,
+    bytes: at.bytes,
+    redacted: redactedPaths.length > 0,
+    redactedPaths,
   };
 }
 
@@ -491,6 +539,8 @@ export type ObjectDiff = {
   patch: string;
   /** True when the two commits are byte-identical for this object. */
   identical: boolean;
+  /** True when the secret scrub altered any patch above (review M-1). */
+  redacted: boolean;
 };
 
 /** `diffVersions(kind, id, a, b)` — a unified diff of the object between two commits. */
@@ -507,8 +557,22 @@ export async function diffVersions(
   const a = assertSha(shaA);
   const b = assertSha(shaB);
   const reposDir = opts.reposDir ?? config.reposDir;
-  const result = await diffPaths(location.domain, a, b, location.paths, { reposDir, ...(opts.context !== undefined ? { context: opts.context } : {}) });
-  return { kind, id, domain: location.domain, a: result.a, b: result.b, files: result.files, patch: result.patch, identical: result.files.length === 0 };
+  const result = await diffPaths(location.domain, a, b, location.paths, {
+    reposDir,
+    redact: true, // the governed read-out never emits secret-shaped bytes (review M-1)
+    ...(opts.context !== undefined ? { context: opts.context } : {}),
+  });
+  return {
+    kind,
+    id,
+    domain: location.domain,
+    a: result.a,
+    b: result.b,
+    files: result.files,
+    patch: result.patch,
+    identical: result.files.length === 0,
+    redacted: result.redacted,
+  };
 }
 
 export type RestoreResult = {
@@ -536,6 +600,15 @@ export async function restoreVersion(user: CurrentUser, kind: GitObjectKind, id:
   const location = await locate(user, kind, id);
   assertHasRepo(kind, id, location);
   const reg = registrationFor(kind);
+  // Review L-1: the UNSUPPORTED refusal comes FIRST. Reading a whole version off the disk only to
+  // refuse it afterwards was work (and a failure surface) for an answer already known.
+  if (!reg.restore) {
+    throw new GitObjectError(
+      `restoring a ${kind} is not available yet: its tab has not registered a writer for restore, and the OS will not re-apply a version except through the object's normal write path`,
+      501,
+      'restore_unsupported',
+    );
+  }
   const ref = assertSha(sha);
   const reposDir = opts.reposDir ?? config.reposDir;
   const at = await readFilesAt(location.domain, ref, location.paths, { reposDir });
@@ -549,11 +622,15 @@ export async function restoreVersion(user: CurrentUser, kind: GitObjectKind, id:
       'version_too_large',
     );
   }
-  if (!reg.restore) {
+  // A binary blob reads back with an EMPTY content (review M-3), so re-applying it would WRITE a
+  // zero-byte file over an image or a wheel. Refuse: a restore that silently truncates a file is
+  // worse than no restore.
+  const binary = at.files.filter((f) => f.binary).map((f) => f.path);
+  if (binary.length > 0) {
     throw new GitObjectError(
-      `restoring a ${kind} is not available yet: its tab has not registered a writer for restore, and the OS will not re-apply a version except through the object's normal write path`,
-      501,
-      'restore_unsupported',
+      `${kind} '${id}' at ${at.sha.slice(0, 7)} contains binary file(s) the OS cannot re-apply without truncating them (${binary.slice(0, 3).join(', ')})`,
+      409,
+      'binary_in_version',
     );
   }
   const result = await reg.restore(user, id, { sha: at.sha, files: at.files, location });
@@ -614,4 +691,151 @@ export async function objectReleases(user: CurrentUser, kind: GitObjectKind, id:
   const reposDir = opts.reposDir ?? config.reposDir;
   const tags = await listTags(location.domain, location.tagPrefix, { reposDir });
   return { ...base, available: true, reason: '', releases: tags.map(normaliseTag).filter((r) => r.tag.length > 0) };
+}
+
+
+// --------------------------------------------- operator surfaces (H-2) ---
+
+/** The object id inside an `OS-Object` trailer (`<id> (<name>)` → `<id>`). */
+export function trailerObjectId(trailer: string): string {
+  return String(trailer ?? '').trim().split(' ')[0] ?? '';
+}
+
+/**
+ * Which object, if any, this commit trailer names THAT THIS CALLER MAY SEE. Used by the operator
+ * commit log so it cannot become a way to enumerate other people's Personal object names: every
+ * registered kind's resolver is asked (each running the tab's own governed read as the caller),
+ * and an id nothing resolves is NOT shown.
+ *
+ * FAILS CLOSED, and says so to its caller rather than quietly dropping rows: a kind whose
+ * resolver is not registered yet cannot be checked, so its commits are counted as hidden.
+ */
+export async function resolveTrailerForUser(user: CurrentUser, trailer: string): Promise<{ kind: GitObjectKind; id: string } | null> {
+  const id = trailerObjectId(trailer);
+  if (!id) return null;
+  for (const kind of registeredGitObjectKinds()) {
+    const reg = registry().get(kind);
+    if (!reg) continue;
+    try {
+      const location = await reg.resolve(user, id);
+      if (location) return { kind, id };
+    } catch {
+      /* a tab's read throws for an object the caller may not see — that is a "no" */
+    }
+  }
+  return null;
+}
+
+
+// ----------------------------------------- the operator payloads (H-1/H-2) ---
+
+/** One repository row for the operator view: the git summary plus its mirror health record. */
+export type RepositoryOverviewRow = RepoSummary & { mirror: MirrorSignal | null };
+
+export type RepositoriesOverview = {
+  repos: RepositoryOverviewRow[];
+  layout: (Omit<GitObjectLayout, 'kind'> & { kind: GitObjectKind })[];
+};
+
+export type OverviewDeps = GitStoreOptions & {
+  /** Injected for tests; defaults to the mirror store's lazy hydration. */
+  hydrate?: () => Promise<void>;
+  /** Injected for tests; defaults to the mirror store's health records. */
+  signals?: () => MirrorSignal[];
+  /** Injected for tests; defaults to the git store's own summaries. */
+  summaries?: () => Promise<RepoSummary[]>;
+};
+
+/**
+ * Every domain repository with its head, its commit count and its mirror verdict.
+ *
+ * HYDRATE FIRST (review H-1). The mirror records load lazily from the durable index, so reading
+ * them on a cold pod without awaiting that returned NOTHING — and "nothing" renders as "no
+ * push-mirror configured", a false all-clear on the one surface that exists to show push
+ * failures. The await is the whole point of this function, which is why it is here and tested
+ * rather than inline in a route.
+ */
+export async function repositoriesOverview(deps: OverviewDeps = {}): Promise<RepositoriesOverview> {
+  const mirror = deps.hydrate && deps.signals ? null : await import('@core/infra/git-mirror');
+  // THE ORDER IS THE FIX: hydrate, THEN read. Never the other way round.
+  await (deps.hydrate ?? mirror!.ensureMirrorsHydrated)();
+  const rows = await (deps.summaries ?? (async () => {
+    const { repoSummaries } = await import('@core/infra/git-store');
+    return repoSummaries(deps);
+  }))();
+  const mirrors = new Map((deps.signals ?? mirror!.mirrorSignals)().map((m) => [m.domain, m]));
+  return {
+    repos: rows.map((r) => ({ ...r, mirror: mirrors.get(r.domain) ?? null })),
+    layout: GIT_OBJECT_KINDS.map((k) => GIT_OBJECT_LAYOUT[k]),
+  };
+}
+
+export type RepositoryCommitRow = {
+  sha: string;
+  subject: string;
+  author: string;
+  at: string;
+  action: string;
+  surface: string;
+  object: string;
+  kind: GitObjectKind;
+  reason: string;
+};
+
+export type RepositoryCommitLog = {
+  domain: string;
+  commits: RepositoryCommitRow[];
+  /** How many commits in the window were NOT listed because their object did not resolve. */
+  hidden: number;
+  /** Why, when any were — never a quietly shorter list. */
+  note: string;
+};
+
+/**
+ * One repository's commit log, filtered to the commits whose object THIS CALLER can resolve
+ * (review H-2).
+ *
+ * The role gate (admin) is the route's; this is the second, independent gate: `domain` arrives
+ * from a query string and a commit subject carries the object's slug, which for a Personal object
+ * is somebody's own artefact name. A commit whose `OS-Object` resolves to nothing the caller may
+ * see is counted, not silently dropped.
+ */
+export async function repositoryCommitLog(
+  user: CurrentUser,
+  domain: string,
+  opts: GitStoreOptions & { limit?: number } = {},
+): Promise<RepositoryCommitLog> {
+  const reposDir = opts.reposDir ?? config.reposDir;
+  const limit = Math.max(1, Math.min(opts.limit ?? 25, 100));
+  const entries = await log(domain, { reposDir, limit });
+  const commits: RepositoryCommitRow[] = [];
+  let hidden = 0;
+  for (const e of entries) {
+    const trailer = e.trailers['OS-Object'] ?? '';
+    const resolved = trailer ? await resolveTrailerForUser(user, trailer) : null;
+    if (!resolved) {
+      hidden++;
+      continue;
+    }
+    commits.push({
+      sha: e.sha,
+      subject: e.subject,
+      author: e.author.name,
+      at: new Date(e.timestamp * 1000).toISOString(),
+      action: e.trailers['OS-Action'] ?? '',
+      surface: e.trailers['OS-Surface'] ?? '',
+      object: trailer,
+      kind: resolved.kind,
+      reason: e.trailers['OS-Reason'] ?? '',
+    });
+  }
+  return {
+    domain,
+    commits,
+    hidden,
+    note:
+      hidden > 0
+        ? `${hidden} of ${entries.length} commits are not listed: their object could not be resolved for you — either you cannot see it, or its object kind has no resolver registered yet (see docs/components/git.md).`
+        : '',
+  };
 }

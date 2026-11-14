@@ -138,6 +138,18 @@ test('G1: no module commits to a domain repo without a kind claiming it', () => 
   assert.ok(modules.includes('tabs/agents/lib/git/commit.ts'), 'the agent-system writer must be discovered by the scan');
 });
 
+/**
+ * THE FLIP STEP — read this when this test fails after a merge.
+ *
+ * The two lists below pin TODAY'S classification on purpose: they are the reminder that a newly
+ * landed writer must be declared. When a stream lands the writer for `metric`, `dashboard`,
+ * `software` or `lifecycle-pin`:
+ *   1. flip that kind's row in `GIT_OBJECT_LAYOUT` from `{state:'landing', …}` to
+ *      `{state:'committed', via:'<module>', since:'<when>'}`;
+ *   2. move its name from `landing` to `committed` in the assertions below;
+ *   3. update the layout table in `docs/components/git.md`.
+ * Nothing else needs to change — and a writer that lands WITHOUT step 1 fails the test above.
+ */
 test('G1: the kinds that are NOT in git yet say so, and the two that are name a real writer', () => {
   const committed = GIT_OBJECT_KINDS.filter((k) => GIT_OBJECT_LAYOUT[k].writer.state === 'committed');
   const landing = GIT_OBJECT_KINDS.filter((k) => GIT_OBJECT_LAYOUT[k].writer.state === 'landing');

@@ -11,13 +11,12 @@ import {
   diffVersions,
   restoreVersion,
   restorableGitObjectKinds,
+  repositoriesOverview,
+  repositoryCommitLog,
   isGitObjectKind,
   GIT_OBJECT_KINDS,
-  GIT_OBJECT_LAYOUT,
   type GitObjectKind,
 } from '@core/infra/git-objects';
-import { repoSummaries, log as repoLog } from '@core/infra/git-store';
-import { mirrorSignals } from '@core/infra/git-mirror';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,8 +27,8 @@ export const dynamic = 'force-dynamic';
  * summaries plus the existing mirror health record. No logic lives here — a route is a shell.
  *
  * GET ?action=history|version|diff|releases&kind=&id=[&sha=|&shaA=&shaB=] → one object's versioning
- * GET ?action=repos                                              → every domain repo (builder+)
- * GET ?action=repolog&domain=                                    → one repo's commit log (builder+)
+ * GET ?action=repos                                              → every domain repo (ADMIN)
+ * GET ?action=repolog&domain=                                    → one repo's commit log (ADMIN)
  * POST {kind, id, sha}                                           → restore, through the writer
  */
 function kindOf(value: string | null): GitObjectKind {
@@ -46,48 +45,25 @@ export const GET = withRoute(async ({ user, req }) => {
   const action = url.searchParams.get('action') ?? 'history';
 
   if (action === 'repos') {
-    // The operator view: which repositories exist, where their head is, and whether the mirror
-    // is healthy. Builder+ because it spans the tenant's domains, and it carries no file content.
-    if (!roleAtLeast(user.role, 'builder')) {
-      return NextResponse.json({ error: 'Repositories needs the builder role or higher' }, { status: 403 });
+    // THE OPERATOR-SURFACE RULE (review H-2): this listing is TENANT-WIDE and unscoped by domain,
+    // and it carries mirror URLs and push errors — the same material Platform → Components shows
+    // only to an admin. So it is ADMIN, exactly like that route, rather than builder+.
+    if (!roleAtLeast(user.role, 'admin')) {
+      return NextResponse.json({ error: 'Repositories is admin-only: it spans every domain and carries mirror URLs and push errors' }, { status: 403 });
     }
-    const mirrors = new Map(mirrorSignals().map((m) => [m.domain, m]));
-    const repos = (await repoSummaries()).map((r) => ({ ...r, mirror: mirrors.get(r.domain) ?? null }));
-    return NextResponse.json({
-      repos,
-      layout: GIT_OBJECT_KINDS.map((k) => ({
-        kind: k,
-        label: GIT_OBJECT_LAYOUT[k].label,
-        paths: GIT_OBJECT_LAYOUT[k].paths,
-        personalLane: GIT_OBJECT_LAYOUT[k].personalLane,
-        writer: GIT_OBJECT_LAYOUT[k].writer,
-      })),
-    });
+    return NextResponse.json(await repositoriesOverview());
   }
 
   if (action === 'repolog') {
-    // The commit log of ONE domain repository, for the operator view. Builder+ like `repos`;
-    // subjects and authors only — never file contents, so this cannot become a data read.
-    if (!roleAtLeast(user.role, 'builder')) {
-      return NextResponse.json({ error: 'Repositories needs the builder role or higher' }, { status: 403 });
+    // ADMIN for the same reason, and the module applies the SECOND gate: a row appears only when
+    // its `OS-Object` resolves to an object this caller may see.
+    if (!roleAtLeast(user.role, 'admin')) {
+      return NextResponse.json({ error: "The repository commit log is admin-only: it spans every domain and names each commit's object" }, { status: 403 });
     }
     const domain = (url.searchParams.get('domain') ?? '').trim();
     if (!domain) return NextResponse.json({ error: 'domain is required' }, { status: 400 });
     const limit = Number(url.searchParams.get('limit') ?? '');
-    const entries = await repoLog(domain, { limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : 25 });
-    return NextResponse.json({
-      domain,
-      commits: entries.map((e) => ({
-        sha: e.sha,
-        subject: e.subject,
-        author: e.author.name,
-        at: new Date(e.timestamp * 1000).toISOString(),
-        action: e.trailers['OS-Action'] ?? '',
-        surface: e.trailers['OS-Surface'] ?? '',
-        object: e.trailers['OS-Object'] ?? '',
-        reason: e.trailers['OS-Reason'] ?? '',
-      })),
-    });
+    return NextResponse.json(await repositoryCommitLog(user, domain, Number.isFinite(limit) && limit > 0 ? { limit } : {}));
   }
 
   const kind = kindOf(url.searchParams.get('kind'));

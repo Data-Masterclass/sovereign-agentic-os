@@ -79,8 +79,15 @@ export type BadgeView = {
   empty?: string;
 };
 
-export function badgeView(info: GitInfoView | null, now: number = Date.now()): BadgeView {
+/**
+ * `serverNote` is the server's OWN refusal message for a non-404 read (review M-6): a kind no tab
+ * has wired, a role gate, an unreadable repository. "not in git" is reserved for the one case it
+ * is true for — a 404 — because collapsing every failure into it hid the gaps this badge exists
+ * to expose.
+ */
+export function badgeView(info: GitInfoView | null, now: number = Date.now(), serverNote?: string): BadgeView {
   if (!info) {
+    if (serverNote) return { label: null, title: serverNote, platform: false, empty: 'git unavailable' };
     return { label: null, title: 'The OS is not committing this object to git (or the repository could not be read).', platform: false, empty: 'not in git' };
   }
   if (!info.head) {
@@ -166,11 +173,19 @@ export function drawerFooter(info: GitInfoView | null): string {
 
 // ----------------------------------------------------------------- the diff ---
 
-export type DiffRowKind = 'file' | 'hunk' | 'add' | 'remove' | 'context' | 'note';
+export type DiffRowKind = 'file' | 'hunk' | 'add' | 'remove' | 'context' | 'note' | 'binary';
 export type DiffRow = { kind: DiffRowKind; text: string };
 
 /** One changed file of a version diff, as `/api/git?action=diff` returns it. */
-export type FileDiffView = { path: string; status: 'added' | 'modified' | 'removed'; patch: string };
+export type FileDiffView = {
+  path: string;
+  status: 'added' | 'modified' | 'removed';
+  patch: string;
+  /** Either side is a binary blob: the patch names it instead of showing bytes (review M-3). */
+  binary?: boolean;
+  /** The secret scrub altered what this patch shows (review M-1). */
+  redacted?: boolean;
+};
 
 /**
  * Turn a unified patch into typed display rows. The rows ARE the patch's lines — this classifies
@@ -185,6 +200,8 @@ export function diffRows(patch: string): DiffRow[] {
     else if (line.startsWith('+')) out.push({ kind: 'add', text: line });
     else if (line.startsWith('-')) out.push({ kind: 'remove', text: line });
     else if (line.startsWith('\\')) out.push({ kind: 'note', text: line });
+    // git's own binary line — rendered as a statement, never as content.
+    else if (/^Binary files .* differ$/.test(line)) out.push({ kind: 'binary', text: line });
     else out.push({ kind: 'context', text: line });
   }
   return out;
@@ -196,13 +213,18 @@ export function diffSummary(files: FileDiffView[]): string {
   let added = 0;
   let removed = 0;
   for (const f of files) {
+    if (f.binary) continue; // a binary file has no line counts to report
     for (const row of diffRows(f.patch)) {
       if (row.kind === 'add' && !row.text.startsWith('+++')) added++;
       if (row.kind === 'remove' && !row.text.startsWith('---')) removed++;
     }
   }
   const plural = files.length === 1 ? 'file' : 'files';
-  return `${files.length} ${plural} changed, ${added} insertion${added === 1 ? '' : 's'}(+), ${removed} deletion${removed === 1 ? '' : 's'}(-)`;
+  const binary = files.filter((f) => f.binary).length;
+  const parts = [`${files.length} ${plural} changed`, `${added} insertion${added === 1 ? '' : 's'}(+)`, `${removed} deletion${removed === 1 ? '' : 's'}(-)`];
+  if (binary > 0) parts.push(`${binary} binary file${binary === 1 ? '' : 's'} not shown`);
+  if (files.some((f) => f.redacted)) parts.push('some content REDACTED by the OS before it left the server');
+  return parts.join(', ');
 }
 
 // -------------------------------------------------------------- the restore ---

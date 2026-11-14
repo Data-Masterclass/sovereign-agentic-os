@@ -31,8 +31,9 @@ const SECTIONS: { id: Section; label: string; minRole?: Role }[] = [
   { id: 'audit', label: 'Audit' },
   { id: 'cost', label: 'Cost & limits' },
   // Git is the system of record, so "which repositories exist and are they mirrored" is a
-  // governance question. The tab's own 'builder' floor applies; the API re-checks it.
-  { id: 'repos', label: 'Repositories' },
+  // governance question — but the listing is TENANT-WIDE and carries mirror URLs and push
+  // errors, so it is admin-only (review H-2) and `/api/git` re-checks the same floor.
+  { id: 'repos', label: 'Repositories', minRole: 'admin' },
 ];
 
 export default function GovernancePage() {

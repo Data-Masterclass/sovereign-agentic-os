@@ -24,6 +24,7 @@ import {
   mirrorBadgeClass,
   layoutViews,
   repoCommitViews,
+  mirrorLink,
   type RepoRow,
   type LayoutRow,
   type RepoCommit,
@@ -34,6 +35,7 @@ export default function RepositoriesView() {
   const { data, loading, error } = useApi<{ repos: RepoRow[]; layout: LayoutRow[] }>('/api/git?action=repos');
   const [openLog, setOpenLog] = useState<string>('');
   const [commits, setCommits] = useState<Record<string, RepoCommitView[]>>({});
+  const [logNote, setLogNote] = useState<Record<string, string>>({});
   const [logError, setLogError] = useState('');
 
   // The commit log of ONE repository, loaded on demand: subjects, authors and trailers only.
@@ -50,7 +52,12 @@ export default function RepositoriesView() {
         const res = await fetch(`/api/git?action=repolog&domain=${encodeURIComponent(domain)}`, { cache: 'no-store' });
         const body = await res.json();
         if (!res.ok) setLogError(body.error ?? `Could not read the log (${res.status})`);
-        else setCommits((prev) => ({ ...prev, [domain]: repoCommitViews((body.commits ?? []) as RepoCommit[]) }));
+        else {
+          setCommits((prev) => ({ ...prev, [domain]: repoCommitViews((body.commits ?? []) as RepoCommit[]) }));
+          // The server says how many rows it withheld and why (review H-2) — show that, never a
+          // quietly shorter list.
+          setLogNote((prev) => ({ ...prev, [domain]: String(body.note ?? '') }));
+        }
       } catch (e) {
         setLogError((e as Error).message);
       }
@@ -102,9 +109,9 @@ export default function RepositoriesView() {
                 <td>
                   <span className={`badge ${mirrorBadgeClass(r.mirror)}`}>{r.mirror}</span>
                   <div className="muted" style={{ fontSize: 11, maxWidth: 420 }}>{r.mirrorDetail}</div>
-                  {repos.find((x) => x.domain === r.domain)?.mirror?.url ? (
+                  {mirrorLink(repos.find((x) => x.domain === r.domain)?.mirror?.url) ? (
                     <a
-                      href={repos.find((x) => x.domain === r.domain)!.mirror!.url}
+                      href={mirrorLink(repos.find((x) => x.domain === r.domain)!.mirror!.url)!}
                       target="_blank"
                       rel="noreferrer noopener"
                       style={{ fontSize: 11 }}
@@ -125,6 +132,7 @@ export default function RepositoriesView() {
                 <td colSpan={5}>
                   <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
                     {openLog}: the last {commits[openLog].length} commits, newest first — the repository&apos;s own log.
+                    {logNote[openLog] ? <> {logNote[openLog]}</> : null}
                   </div>
                   <table className="tbl" style={{ fontSize: 11 }}>
                     <thead>

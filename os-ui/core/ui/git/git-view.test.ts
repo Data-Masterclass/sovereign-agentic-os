@@ -109,6 +109,17 @@ test('the badge is honest when there is nothing: not in git, no commit, no repos
   assert.equal(noRepo.empty, 'no repository yet');
 });
 
+test('M-6: a non-404 refusal keeps the SERVER message instead of claiming "not in git"', () => {
+  const wired = badgeView(null, NOW, "versioning is not wired for 'dashboard' yet — its writer lands with stream D");
+  assert.equal(wired.label, null);
+  assert.equal(wired.empty, 'git unavailable', 'a real gap must not read as "this object is not in git"');
+  assert.match(wired.title, /not wired for 'dashboard'/);
+  // Only an absent server note falls back to the "not in git" wording.
+  assert.equal(badgeView(null, NOW).empty, 'not in git');
+  // And a successful read is unaffected by the parameter.
+  assert.equal(badgeView(info, NOW, 'ignored because there IS an answer').label, '9c1f2ab · Amir Example · 3 h ago');
+});
+
 test('the drawer rows carry action, surface, actor and the OS-catch-up flag', () => {
   const rows = historyRows(info, NOW);
   assert.equal(rows.length, 2);
@@ -140,6 +151,18 @@ test('diffRows classifies the patch lines without rewriting them', () => {
     ['file', 'file', 'hunk', 'context', 'remove', 'add', 'context', 'note'],
   );
   assert.deepEqual(diffRows(patch).map((r) => r.text).filter((t) => t.startsWith('+') && !t.startsWith('+++')), ['+B']);
+});
+
+test('M-3/M-1: a binary file and a redaction are rendered as statements, never as content', () => {
+  const binary = ['--- a/logo.png', '+++ b/logo.png', 'Binary files a/logo.png and b/logo.png differ', ''].join('\n');
+  assert.deepEqual(diffRows(binary).map((r) => r.kind), ['file', 'file', 'binary']);
+  const summary = diffSummary([
+    { path: 'logo.png', status: 'modified', patch: binary, binary: true },
+    { path: 'system.yaml', status: 'modified', patch: ['--- a/system.yaml', '+++ b/system.yaml', '@@ -1,1 +1,1 @@', '-a', '+b', ''].join('\n'), redacted: true },
+  ]);
+  assert.match(summary, /2 files changed, 1 insertion\(\+\), 1 deletion\(-\)/, 'the binary file contributes no line counts');
+  assert.match(summary, /1 binary file not shown/);
+  assert.match(summary, /REDACTED by the OS/);
 });
 
 test('diffSummary counts only real insertions and deletions, and names "no change" as such', () => {

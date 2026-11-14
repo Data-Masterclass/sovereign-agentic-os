@@ -18,6 +18,7 @@ import {
   repoSummaryLine,
   layoutViews,
   repoCommitViews,
+  mirrorLink,
   type RepoRow,
 } from '@tabs/governance/lib/repositories';
 
@@ -144,4 +145,15 @@ test('the commit log rows name the action, the object and the surface, and flag 
       ['3f81d0c', 'agents(sales): reconcile agent systems sales — via boot:reconcile', '—', '—', true],
     ],
   );
+});
+
+test('L-6: only an https mirror URL becomes a clickable link', () => {
+  assert.equal(mirrorLink('https://git.example/sales.git'), 'https://git.example/sales.git');
+  assert.equal(mirrorLink('HTTPS://git.example/sales.git'), 'https://git.example/sales.git');
+  assert.equal(mirrorLink('http://git.example/sales.git'), null, 'a plaintext mirror is shown but never linked');
+  assert.equal(mirrorLink('javascript:alert(1)'), null);
+  assert.equal(mirrorLink('data:text/html,<script>'), null);
+  assert.equal(mirrorLink('  not a url  '), null);
+  assert.equal(mirrorLink(undefined), null);
+  assert.equal(mirrorLink(null), null);
 });

@@ -869,3 +869,22 @@ egress refusal, an auth failure) rather than "push failed"; no configuration at 
 and says the repository lives only on the OS volume. A boolean would have made the most common
 real state — configured, working, one commit behind until the next write — look identical to
 either health or failure.
+
+### Why a version read redacts and a restore does not
+
+`core/infra/git-store.ts` `readFilesAt` is RAW on purpose and `core/infra/git-objects.ts`
+`getVersion` scrubs. That asymmetry is the whole design: `getVersion` and `diffVersions` are the
+only paths that hand repository bytes to a browser or an AI client, while `restoreVersion`
+re-applies bytes through the object's writer — so a redaction performed in the primitive would be
+WRITTEN BACK into the tree, replacing a real value with `***REDACTED-BY-OS***`. Scrub at the
+read-out boundary; never in the thing a writer consumes.
+
+Two consequences worth keeping: the diff COMPARES raw content and only then redacts, so a change
+entirely inside a redacted value is reported as a redacted change instead of as "no change"; and
+the patterns are shape-based, never entropy-based, because a commit sha, a blob oid and a UUID are
+all high-entropy and redacting them would corrupt every diff the drawer renders.
+
+Binary blobs follow the same honesty rule from the other direction: decoding one as UTF-8 produced
+replacement characters that looked like content, so a binary file is reported with `binary: true`
+and its size and an EMPTY content — and a version containing one is refused for restore, because
+re-applying that empty content would truncate the file.

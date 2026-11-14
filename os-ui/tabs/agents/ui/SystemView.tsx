@@ -84,16 +84,8 @@ type SystemViewData = {
   canRun: boolean;
   role: Role;
   hermesEnabled: boolean;
-  /**
-   * Part D: the commit this system is AT in its domain repository, and the last commits that
-   * touched it. `null` when the OS is not committing to git (or the repo cannot be read) — the
-   * line is simply absent then, never a fabricated sha.
-   */
-  git?: {
-    domain: string;
-    head: { sha: string; author: string; at: string; action?: string; surface?: string } | null;
-    history: { sha: string; subject: string; author: string; at: string }[];
-  } | null;
+  // Night 2 (stream G, review L-4): the git head is no longer part of this payload — the header
+  // mounts `<GitHeadBadge/>`, which reads `/api/git` and opens the history drawer.
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
 };

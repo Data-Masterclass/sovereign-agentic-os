@@ -104,6 +104,40 @@ Four properties worth stating plainly, because each is a decision:
    is a new commit, and a reconcile that would empty a tree is refused
    (`DestructiveReconcileError`).
 
+### The operator-surface rule
+
+Two surfaces in `/api/git` are **tenant-wide and unscoped by domain**: `?action=repos` (every
+repository, with its mirror URL and its push errors) and `?action=repolog&domain=…` (one
+repository's commit log, whose subjects carry each object's slug — which for a Personal object is
+somebody's own artefact name). Both are therefore **admin-only**, the same floor Platform →
+Components applies to the same material, and Governance → Repositories is an admin-only section.
+
+The commit log carries a **second, independent gate** on top of the role: a row appears only when
+its `OS-Object` trailer resolves — through the owning tab's own governed read, as the caller — to
+an object that caller may see. Rows that do not resolve are **counted and reported**
+(`hidden`, with a reason), never silently dropped, and a kind whose resolver is not registered yet
+counts as not resolvable: this surface fails closed.
+
+### Secrets, binary blobs and size
+
+A version read is the one path that hands raw repository bytes to a browser or an AI client, so:
+
+- **Secret-shaped content is redacted** before it leaves the server — `password:`/`token:`/
+  `api_key:`-style values, PEM private keys, credentials inside URLs, and provider key formats
+  become `***REDACTED-BY-OS***`. `redacted` / `redactedPaths` say which files were altered and by
+  which pattern. The scrub is deliberately **not** an entropy heuristic: a commit sha, a blob oid
+  and a UUID are all high-entropy and must survive untouched. A **restore re-applies the raw
+  bytes**, never the redacted ones — the scrub lives at the read-out boundary, not in the
+  primitive.
+- **A diff compares the raw bytes** and only then redacts, so a change that is entirely inside
+  redacted content is reported as a redacted change rather than as "no change".
+- **Binary blobs are named, never decoded.** A binary file comes back with `binary: true`, its
+  size, and an empty `content`; a diff shows git's own `Binary files … differ`. A version
+  containing one **cannot be restored** (`binary_in_version`): re-applying an empty content would
+  truncate the file.
+- **A version read is bounded in files and in bytes** (`MAX_VERSION_FILES`, `MAX_VERSION_BYTES`),
+  and `truncated` / `truncatedBy` say which limit was hit.
+
 ### Adding a kind
 
 Four edits, in this order, and the test tells you if you miss one:
@@ -133,6 +167,19 @@ and no kind claims it, so a new writer cannot be added without classifying it.
 - **Releases** (`app/<slug>/v<x.y.z>` tags) are read by `ReleaseList` only once the tag API in
   `core/infra/git-store.ts` lands; until then the release panel is hidden rather than empty.
 - **Conflicts resolve at the git level** — last writer wins. There is no OS-level merge.
+- **A rename or a lane move hides the OLD path from the path fallback** (backlog). A resolver
+  derives its selectors from where the object lives *now*, so commits made under a previous
+  directory are found only by the `OS-Object` trailer — which is the identity, so a user's own
+  history stays complete; what can be missing is the old-path part of a *platform-attributed*
+  history (a boot reconcile made before a rename). The fix is a path history (`--follow`-style, or
+  previous paths recorded in `index.yml`). Until then `via` reports how the answer was found and
+  `truncated` never claims completeness.
+- **The kinds test pins today's classification on purpose.**
+  `core/infra/git-objects-kinds.test.ts` asserts that exactly `dataset` and `agent-system` are
+  `committed`. When a stream lands a writer for `metric`, `dashboard`, `software` or
+  `lifecycle-pin`, flip that kind's row in `GIT_OBJECT_LAYOUT` from `landing` to `committed`
+  (naming the module and `since`), move its name in the test's `committed` / `landing` lists, and
+  update the table above. The test failing is the reminder, not a defect.
 
 ## The surfaces
 

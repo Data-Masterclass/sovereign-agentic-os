@@ -91,6 +91,22 @@ export function repoViews(rows: RepoRow[], gitDaemonHost = 'os-ui.agentic-os.svc
     });
 }
 
+/**
+ * The mirror URL as a LINK, or null. Review L-6: an admin-configured string is rendered into an
+ * `href`, so only `https:` is allowed — `javascript:`, `data:` and a bare `http:` mirror never
+ * become a clickable link (the URL itself is still shown in the detail line).
+ */
+export function mirrorLink(url: string | undefined | null): string | null {
+  const raw = String(url ?? '').trim();
+  if (!raw.toLowerCase().startsWith('https://')) return null;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The badge class the table uses for a mirror state (the OS's existing badge vocabulary). */
 export function mirrorBadgeClass(state: MirrorState): string {
   return state === 'ok' ? 'ok' : state === 'failed' ? 'err' : state === 'behind' ? 'warn' : '';

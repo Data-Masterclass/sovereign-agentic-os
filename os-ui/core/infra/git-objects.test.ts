@@ -21,7 +21,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CurrentUser } from '@core/kernel/auth';
-import { commitTree, commitMessage, appendTrailers, log } from '@core/infra/git-store';
+import { commitTree, commitMessage, appendTrailers, log, REDACTED } from '@core/infra/git-store';
 import {
   GIT_OBJECT_KINDS,
   GIT_OBJECT_LAYOUT,
@@ -33,6 +33,10 @@ import {
   restoreVersion,
   registerGitObject,
   registerGitObjectRestorer,
+  resolveTrailerForUser,
+  repositoriesOverview,
+  repositoryCommitLog,
+  trailerObjectId,
   registeredGitObjectKinds,
   restorableGitObjectKinds,
   notFoundMessage,
@@ -237,10 +241,18 @@ test('getVersion returns the object files AT that commit, and says so when it ha
   const now = await getVersion(amir, 'agent-system', 'sys_1', shas.system, { reposDir });
   assert.equal(now.present, true);
   assert.equal(now.truncated, false);
-  assert.deepEqual(now.files, [{ path: 'agents/support/system.yaml', content: 'name: Support\nversion: 2\nnodes: 3\n' }]);
+  assert.deepEqual(now.files, [
+    { path: 'agents/support/system.yaml', content: 'name: Support\nversion: 2\nnodes: 3\n', bytes: 34, binary: false },
+  ]);
+  assert.equal(now.redacted, false, 'nothing secret-shaped in this version');
+  assert.deepEqual(now.redactedPaths, []);
+  assert.equal(now.truncatedBy, null);
+  assert.equal(now.bytes, 34);
   assert.equal(now.commit!.action, 'set schedule cron');
   const before = await getVersion(amir, 'agent-system', 'sys_1', shas.boot, { reposDir });
-  assert.deepEqual(before.files, [{ path: 'agents/support/system.yaml', content: 'name: Support\nversion: 1\n' }]);
+  assert.deepEqual(before.files, [
+    { path: 'agents/support/system.yaml', content: 'name: Support\nversion: 1\n', bytes: 25, binary: false },
+  ]);
   assert.equal(before.commit!.reason, 'boot-reconcile');
   // An abbreviated sha resolves; a non-sha is a typed bad_request, not a 404 that leaks nothing.
   const short = await getVersion(amir, 'agent-system', 'sys_1', shas.system.slice(0, 8), { reposDir });
@@ -331,7 +343,9 @@ test('restoreVersion re-applies a version THROUGH the writer and produces ONE NE
   assert.equal(result.changed, true);
   assert.equal(result.files, 1);
   assert.deepEqual(seen.map((s) => s.id), ['sys_1']);
-  assert.deepEqual(seen[0].files, [{ path: 'agents/support/system.yaml', content: 'name: Support\nversion: 1\n' }]);
+  assert.deepEqual(seen[0].files, [
+    { path: 'agents/support/system.yaml', content: 'name: Support\nversion: 1\n', bytes: 25, binary: false },
+  ]);
   const after = await log('sales', { reposDir, limit: 50 });
   assert.equal(after.length, before.length + 1, 'exactly ONE new commit');
   assert.equal(after[0].sha, result.sha);
@@ -361,4 +375,176 @@ test('objectReleases is HIDDEN-with-a-reason rather than empty when there are no
   // And it is gated like every other read.
   const hidden = await objectReleases(amir, 'dataset', 'ds_nope', { reposDir }).catch((e) => e);
   assert.equal((hidden as Error).message, notFoundMessage('dataset', 'ds_nope'));
+});
+
+
+// ---- the review fixes -------------------------------------------------------
+
+test('X: a whole-subtree commit is found through its OS-Objects list, whole-token only', async () => {
+  // Stream X's R1 shape: ONE commit carrying several objects, listed space-separated.
+  const many = await commitTree(
+    'batch',
+    new Map([
+      ['agents/a/system.yaml', 'name: A\n'],
+      ['agents/b/system.yaml', 'name: B\n'],
+    ]),
+    {
+      reposDir,
+      author: platform,
+      message: appendTrailers('agents(batch): reconcile agent systems batch — via boot:reconcile', {
+        'OS-Action': 'reconcile agent systems',
+        'OS-Object': 'batch',
+        'OS-Objects': 'sys_abcd sys_b',
+        'OS-Surface': 'boot:reconcile',
+        'OS-Reason': 'boot-reconcile',
+      }),
+      timestamp: 1_700_000_000,
+    },
+  );
+  __clearGitObjectRegistry();
+  registerGitObject('agent-system', (_user, id) =>
+    ['sys_abc', 'sys_abcd', 'sys_b'].includes(id) ? { domain: 'batch', paths: [`agents/none-${id}/`], trailerId: id } : null,
+  );
+  assert.equal(trailerObjectId('sys_abcd (A)'), 'sys_abcd');
+  assert.equal(trailerObjectId(''), '');
+  const listed = await objectGitInfo(amir, 'agent-system', 'sys_abcd', { reposDir });
+  assert.equal(listed.head!.sha, many.sha, 'the id is in OS-Objects, so the commit is its history');
+  assert.equal(listed.via, 'trailer');
+  // WHOLE TOKEN: `sys_abc` is a prefix of `sys_abcd` and must NOT match it.
+  const prefix = await objectGitInfo(amir, 'agent-system', 'sys_abc', { reposDir });
+  assert.equal(prefix.head, null, 'a prefix of a listed id is not that id');
+  registerKinds();
+});
+
+test('L-1: an unregistered kind is refused BEFORE any version is read', async () => {
+  // A sha that does not exist in the repo at all: if the read ran first it would throw something
+  // else (or 500), so this pins the ORDER as well as the answer.
+  const e = await restoreVersion(amir, 'agent-system', 'sys_1', 'deadbeef', { reposDir }).catch((x) => x);
+  assert.equal(e.code, 'restore_unsupported');
+  assert.equal(e.status, 501);
+});
+
+test('M-3: a version containing a BINARY file cannot be restored — it would truncate the file', async () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]).toString('latin1');
+  const commit = await commitTree('bin2', new Map([['apps/x/logo.png', png], ['apps/x/app.ts', 'export const a = 1;\n']]), {
+    reposDir,
+    author,
+    message: commitMessage({ area: 'data', domain: 'bin2', action: 'push app files', object: 'x', objectId: 'app_1 (X)', surface: 'mcp:push_app_files', requestId: 'r' }),
+    timestamp: 1_700_000_000,
+  });
+  __clearGitObjectRegistry();
+  registerGitObject('software', () => ({ domain: 'bin2', paths: ['apps/x/'], trailerId: 'app_1' }));
+  let called = 0;
+  registerGitObjectRestorer('software', async () => {
+    called++;
+    return { sha: 'x', changed: true };
+  });
+  const e = await restoreVersion(amir, 'software', 'app_1', commit.sha, { reposDir }).catch((x) => x);
+  assert.equal(e.code, 'binary_in_version');
+  assert.equal(e.status, 409);
+  assert.match(e.message, /logo\.png/);
+  assert.equal(called, 0, 'the writer must never be handed an empty binary file');
+  // The version READ still works and names the binary file rather than decoding it.
+  const version = await getVersion(amir, 'software', 'app_1', commit.sha, { reposDir });
+  const blob = version.files.find((f) => f.path === 'apps/x/logo.png')!;
+  assert.equal(blob.binary, true);
+  assert.equal(blob.content, '');
+  registerKinds();
+});
+
+test('M-1: getVersion and diffVersions REDACT secret-shaped bytes, and say that they did', async () => {
+  const one = await commitTree('secret-obj', new Map([['agents/s/system.yaml', 'name: S\napi_key: abcdef1234567890\n']]), {
+    reposDir,
+    author,
+    message: commitMessage({ area: 'agents', domain: 'secret-obj', action: 'create system', object: 's', objectId: 'sys_s (S)', surface: 'ui:agents', requestId: 'r1' }),
+    timestamp: 1_700_000_000,
+  });
+  const two = await commitTree('secret-obj', new Map([['agents/s/system.yaml', 'name: S2\napi_key: 0987654321fedcba\n']]), {
+    reposDir,
+    author,
+    message: commitMessage({ area: 'agents', domain: 'secret-obj', action: 'edit system', object: 's', objectId: 'sys_s (S)', surface: 'ui:agents', requestId: 'r2' }),
+    timestamp: 1_700_000_100,
+  });
+  __clearGitObjectRegistry();
+  registerGitObject('agent-system', () => ({ domain: 'secret-obj', paths: ['agents/s/'], trailerId: 'sys_s' }));
+  const version = await getVersion(amir, 'agent-system', 'sys_s', two.sha, { reposDir });
+  assert.equal(version.redacted, true);
+  assert.deepEqual(version.redactedPaths, [{ path: 'agents/s/system.yaml', kinds: ['keyed-value'] }]);
+  assert.ok(!version.files[0].content.includes('0987654321fedcba'), 'the secret never leaves the OS');
+  assert.ok(version.files[0].content.includes(REDACTED));
+  assert.ok(version.files[0].content.includes('name: S2'), 'the rest of the file is untouched');
+  const diff = await diffVersions(amir, 'agent-system', 'sys_s', one.sha, two.sha, { reposDir });
+  assert.equal(diff.redacted, true);
+  assert.ok(!diff.patch.includes('abcdef1234567890') && !diff.patch.includes('0987654321fedcba'));
+  assert.match(diff.patch, /-name: S\n\+name: S2/, 'the real change is still visible');
+  registerKinds();
+});
+
+test('H-2: resolveTrailerForUser answers only for an object the caller may actually see', async () => {
+  assert.deepEqual(await resolveTrailerForUser(amir, 'sys_1 (Support)'), { kind: 'agent-system', id: 'sys_1' });
+  assert.deepEqual(await resolveTrailerForUser(amir, 'ds_1 (Orders)'), { kind: 'dataset', id: 'ds_1' });
+  assert.equal(await resolveTrailerForUser(amir, 'sys_hidden (Someone else)'), null, 'an invisible object is not resolvable');
+  assert.equal(await resolveTrailerForUser(amir, 'sales'), null, 'a DOMAIN-attributed reconcile trailer names no object');
+  assert.equal(await resolveTrailerForUser(amir, ''), null);
+  // A kind with NO registered resolver cannot be checked, so it must answer null (fail closed).
+  __clearGitObjectRegistry();
+  assert.equal(await resolveTrailerForUser(amir, 'dash_1 (Sales)'), null);
+  registerKinds();
+});
+
+test('H-1: the repositories overview HYDRATES the mirror records before reading them', async () => {
+  // The cold-pod hazard, reproduced: `signals()` answers nothing until `hydrate()` has resolved.
+  let hydrated = false;
+  const order: string[] = [];
+  const overview = await repositoriesOverview({
+    reposDir,
+    hydrate: async () => {
+      order.push('hydrate');
+      await new Promise((r) => setTimeout(r, 5));
+      hydrated = true;
+    },
+    signals: () => {
+      order.push('signals');
+      return hydrated
+        ? [{ domain: 'sales', url: 'https://git.example/sales.git', lastSha: 'abc', lastPushedAt: '2026-11-14T09:00:00.000Z' }]
+        : [];
+    },
+    summaries: async () => [
+      { domain: 'sales', head: 'abc', commits: 3, countTruncated: false, lastAuthor: 'Amir', lastSubject: 'c', lastAt: '2026-11-14T09:00:00.000Z' },
+    ],
+  });
+  assert.deepEqual(order, ['hydrate', 'signals'], 'the await must come FIRST, or a cold pod reports no mirror at all');
+  assert.ok(overview.repos[0].mirror, 'the configured mirror is found — not a false "no push-mirror configured"');
+  assert.equal(overview.repos[0].mirror!.url, 'https://git.example/sales.git');
+  // The layout table travels with it, so the section cannot drift from the kernel's own table.
+  assert.deepEqual(overview.layout.map((l) => l.kind), [...GIT_OBJECT_KINDS]);
+});
+
+test('H-2: the repository commit log lists ONLY commits whose object the caller can resolve', async () => {
+  const visible = await repositoryCommitLog(amir, 'sales', { reposDir, limit: 50 });
+  // The seeded repo holds a boot reconcile attributed to the DOMAIN plus per-object commits. The
+  // reconcile names no object, so it cannot be shown; every listed row resolves to a real kind.
+  assert.ok(visible.commits.length >= 2);
+  assert.deepEqual(
+    [...new Set(visible.commits.map((c) => `${c.kind}:${c.object}`))].sort(),
+    ['agent-system:sys_1 (Support)', 'dataset:ds_1 (Orders)'],
+  );
+  assert.ok(
+    visible.commits.every((c) => c.object && c.kind),
+    'a listed row always names the object it was about',
+  );
+  assert.ok(visible.hidden >= 1, 'the domain-attributed reconcile is withheld');
+  assert.match(visible.note, /could not be resolved for you/);
+  // With NOTHING registered, nothing resolves — and the count says so instead of looking empty.
+  __clearGitObjectRegistry();
+  const blind = await repositoryCommitLog(amir, 'sales', { reposDir, limit: 50 });
+  assert.deepEqual(blind.commits, []);
+  assert.ok(blind.hidden >= 3);
+  assert.match(blind.note, /no resolver registered yet/);
+  registerKinds();
+  // A domain with no repository is an empty log, not an error.
+  const none = await repositoryCommitLog(amir, 'never-seen', { reposDir });
+  assert.deepEqual(none.commits, []);
+  assert.equal(none.hidden, 0);
+  assert.equal(none.note, '');
 });

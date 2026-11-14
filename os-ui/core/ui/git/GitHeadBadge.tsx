@@ -30,19 +30,31 @@ type Loaded = GitInfoView & { restorable?: boolean };
 
 export default function GitHeadBadge({ kind, id, limit }: GitHeadBadgeProps) {
   const [info, setInfo] = useState<Loaded | null>(null);
+  const [serverNote, setServerNote] = useState('');
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+    setServerNote('');
     try {
       const params = new URLSearchParams({ action: 'history', kind, id, ...(limit ? { limit: String(limit) } : {}) });
       const res = await fetch(`/api/git?${params.toString()}`, { cache: 'no-store' });
-      setInfo(res.ok ? ((await res.json()) as Loaded) : null);
-    } catch {
-      // A read that cannot reach the repository is an honest "not in git", never a guess.
+      if (res.ok) {
+        setInfo((await res.json()) as Loaded);
+        return;
+      }
       setInfo(null);
+      // Review M-6: only a 404 means "there is nothing here". Every other refusal carries a REAL
+      // reason from the server — a kind nobody has wired, a role gate, a broken repository — and
+      // collapsing those into "not in git" hid exactly the gaps this badge should expose.
+      const body = await res.json().catch(() => ({}));
+      if (res.status !== 404) setServerNote(String((body as { error?: string }).error ?? `git read failed (${res.status})`));
+    } catch (e) {
+      // A read that cannot reach the server at all says so, rather than claiming "not in git".
+      setInfo(null);
+      setServerNote((e as Error).message);
     } finally {
       setLoading(false);
     }
@@ -53,7 +65,7 @@ export default function GitHeadBadge({ kind, id, limit }: GitHeadBadgeProps) {
   }, [load]);
 
   if (loading) return <span className="muted" style={{ fontSize: 11 }}>git …</span>;
-  const view = badgeView(info);
+  const view = badgeView(info, Date.now(), serverNote || undefined);
   return (
     <>
       <button
