@@ -5,6 +5,11 @@
 FROM python:3.12-slim@sha256:6c4dd321d176d61ea848dc8c73a4f7dbae8f70e0ee48bb411ea2f045b599fa8e
 
 # Dagster core 1.13.11; integration libs follow the 0.x scheme (0.29.11).
+# dbt FLOOR 1.9, not 1.8 (night-2 review M-1): the OS's generated semantic layer emits
+# `cumulative_type_params`, dimension `type_params.time_granularity` and the `time_spine` model
+# property, none of which exist in dbt-semantic-interfaces 0.5.x (dbt 1.8) — there the generated
+# project fails `dbt parse` for the WHOLE domain, taking every dataset's models with it.
+# Asserted by scripts/metricflow-floor.mjs, which the licence gate runs.
 RUN pip install --no-cache-dir \
       "dagster==1.13.11" \
       "dagster-webserver==1.13.11" \
@@ -22,8 +27,8 @@ RUN pip install --no-cache-dir \
       "SQLAlchemy>=2.0,<2.1" \
       "dagster-k8s==0.29.11" \
       "dagster-dbt==0.29.11" \
-      "dbt-core>=1.8,<1.10" \
-      "dbt-trino>=1.8,<1.10"
+      "dbt-core>=1.9,<1.10" \
+      "dbt-trino>=1.9,<1.10"
 
 # git (GPL-2.0, a separate process from a distro package — not linked) for the repo-sync
 # sidecar (engine rebuild B1): fetch each domain's generated dbt project from the OS's

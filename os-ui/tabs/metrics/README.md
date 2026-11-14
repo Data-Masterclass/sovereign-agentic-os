@@ -23,8 +23,11 @@ installed at all it is pinned `>= 0.209.0` (`<= 0.208.1` is BSL 1.1).
 **Nothing unservable is emitted.** A leading window, a ratio carrying its own filter, a formula
 over a metric that is not emitted, a filter outside the generated grammar: each is a named refusal
 listed in the generated project's README under "Not emitted". A rolling window whose unit does not
-match the slice grain still returns an honest `pending`, never a wrong number — the time spine is
-generated (`models/os/os_time_spine_day.sql`) but the compiler does not yet join to it.
+match the slice grain returns a typed refusal (`window_grain_mismatch`), never a wrong number; one
+that DOES match is served with a `warning` that the frame counts time buckets rather than calendar
+units — the spine is generated (`models/os/os_time_spine_day.sql`) but not joined to yet. A dataset
+with measures and no time column emits no semantic YAML at all: dbt requires an
+`agg_time_dimension` for every measure, so each of those metrics is refused by name.
 
 ## What this module owns
 

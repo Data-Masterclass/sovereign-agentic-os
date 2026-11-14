@@ -10,7 +10,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { engineeringView, type MetricEngineeringInput } from '@tabs/metrics/lib/engineering';
+import { engineeringView, shellSingleQuote, type MetricEngineeringInput } from '@tabs/metrics/lib/engineering';
 
 const full: MetricEngineeringInput = {
   title: 'Revenue',
@@ -95,4 +95,24 @@ test('the view is JSON-serialisable, so the MCP twin returns the identical struc
   assert.equal(v.kind, 'metric');
   assert.equal(v.id, 'ds_orders1.revenue');
   assert.equal(v.title, 'Revenue');
+});
+
+test('REVIEW L-3: the trino command is shell-safe — a SQL literal with an apostrophe cannot break out', () => {
+  const sql = "SELECT SUM(x) FROM t WHERE region = 'côte d''ivoire'";
+  const v = engineeringView('metric', 'ds_1.m', { ...full, trinoSql: sql });
+  const command = v.sections[1].command!;
+  // Naively wrapping in single quotes ended the quote at the first apostrophe, so the command
+  // pasted into a terminal either failed or ran something other than the statement shown.
+  assert.equal(command, `trino --execute ${shellSingleQuote(sql)}`);
+  assert.match(command, /'\\''/, 'every embedded quote is rendered as the POSIX escape');
+  // The quoting is balanced: an even number of quote characters, and the word starts and ends with one.
+  const quoted = command.slice('trino --execute '.length);
+  assert.ok(quoted.startsWith("'") && quoted.endsWith("'"));
+  assert.equal(shellSingleQuote("a'b"), "'a'\\''b'");
+  assert.equal(shellSingleQuote('plain'), "'plain'");
+});
+
+test('REVIEW L-3: the SQL is collapsed to one line, so the command is one shell word', () => {
+  const v = engineeringView('metric', 'ds_1.m', { ...full, trinoSql: 'SELECT 1\nFROM t\n  WHERE a = 1' });
+  assert.match(v.sections[1].command!, /^trino --execute 'SELECT 1 FROM t WHERE a = 1'$/);
 });

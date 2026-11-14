@@ -37,6 +37,23 @@ const PREDICATE_RE =
   /^\{\{ (?:Dimension\('[a-z_][a-z0-9_]*__[a-z_][a-z0-9_]*'\)|TimeDimension\('[a-z_][a-z0-9_]*__[a-z_][a-z0-9_]*', '[a-z]+'\)) \}\}(?: (?:=|<>|>=|<=|>|<) (?:-?\d+(?:\.\d+)?|true|false|'[^'{}%#]*')| IS (?:NOT )?NULL)$/;
 
 /**
+ * The grammar an `expr` may use (review M-2). `expr` reaches dbt as SQL *and* through Jinja, and it
+ * is the one emitted field whose content comes from authored input — an OS measure's column, or a
+ * formula over metric names. So it is held to: identifiers, digits, decimal points, the four
+ * arithmetic operators, parentheses, commas, spaces and underscores. No quotes, no semicolons, no
+ * comment markers, and no Jinja delimiter of any kind.
+ */
+export const SAFE_EXPR_RE = /^[A-Za-z_][A-Za-z0-9_]*$|^[A-Za-z0-9_ ().,+\-*/]+$/;
+
+/** Is this `expr` one the emitter is allowed to write? */
+export function isSafeSemanticExpr(expr: string): boolean {
+  if (typeof expr !== 'string' || !expr.trim()) return false;
+  if (/\{\{|\}\}|\{%|%\}|\{#|#\}/.test(expr)) return false;
+  if (/--|\/\*|\*\//.test(expr)) return false;
+  return SAFE_EXPR_RE.test(expr);
+}
+
+/**
  * Is this predicate one the emitter is allowed to write into a dbt `filter:`? A conjunction of
  * closed-grammar predicates, nothing else: no OR, no parentheses, no bare SQL, and no Jinja
  * delimiter inside a literal (dbt renders the YAML through Jinja before reading it).
@@ -138,11 +155,24 @@ export function validateSemanticDoc(doc: SemanticDoc): string[] {
       name(`${w}.name`, s.name, out);
       if (!isAggregationType(s.agg)) out.push(`${w}.agg: '${String(s.agg)}' is not one of the nine DSI AggregationTypes`);
       if (s.agg !== 'count' && !s.expr) out.push(`${w}: agg '${String(s.agg)}' needs an expr`);
+      if (s.expr !== undefined && !isSafeSemanticExpr(String(s.expr))) {
+        out.push(`${w}.expr: '${String(s.expr)}' is not in the emitter's closed expr grammar (review M-2)`);
+      }
       if (s.config !== undefined) keys(`${w}.config`, s.config as Plain, ALLOWED_KEYS.config, out);
       if (measureNames.has(String(s.name))) out.push(`${w}: duplicate measure name — measure names are project-global in dbt`);
       measureNames.add(String(s.name));
       if (localDims.size && s.agg_time_dimension && !localDims.has(String(s.agg_time_dimension))) {
         out.push(`${w}.agg_time_dimension: '${String(s.agg_time_dimension)}' is not a dimension of this semantic model`);
+      }
+      // REVIEW H-1. DSI requires an aggregation time dimension for EVERY measure — on the measure
+      // or as the semantic model's `defaults.agg_time_dimension` — because `metric_time` is
+      // derived from it. A dataset with measures and no time column was emitting a model with
+      // neither, which fails validation for the WHOLE domain's `dbt parse`, not just that metric.
+      const modelDefault = (sm.defaults as Plain | undefined)?.agg_time_dimension;
+      if (!s.agg_time_dimension && !modelDefault) {
+        out.push(
+          `${w}: no agg_time_dimension, and the semantic model declares no defaults.agg_time_dimension — DSI requires one for every measure (metric_time is derived from it)`,
+        );
       }
     }
     if (sm.config !== undefined) keys(`${where}.config`, sm.config as Plain, ALLOWED_KEYS.config, out);
@@ -178,6 +208,9 @@ export function validateSemanticDoc(doc: SemanticDoc): string[] {
         break;
       case 'derived':
         if (!tp.expr) out.push(`${where}: type derived needs type_params.expr`);
+        if (tp.expr !== undefined && !isSafeSemanticExpr(String(tp.expr))) {
+          out.push(`${where}.type_params.expr: '${String(tp.expr)}' is not in the emitter's closed expr grammar (review M-2)`);
+        }
         if (!Array.isArray(tp.metrics) || tp.metrics.length === 0) out.push(`${where}: type derived needs type_params.metrics`);
         break;
       case 'cumulative': {

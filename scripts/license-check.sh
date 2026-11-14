@@ -152,7 +152,7 @@ echo
 # <= 0.208.1 is Business Source License 1.1 whose Additional Use Grant excludes this product's
 # use, and BSL does not relax retroactively: the Apache-2.0 relicensing at v0.209.0 is not
 # backdated. Enforced wherever metricflow could enter a build (checklist M14).
-echo "Checking version floors (metricflow >= 0.209.0) ..."
+echo "Checking version floors (metricflow >= 0.209.0, dbt-core >= 1.9) ..."
 if command -v node >/dev/null 2>&1; then
   if (cd "$ROOT" && node scripts/metricflow-floor.mjs); then :; else fail=1; fi
 else

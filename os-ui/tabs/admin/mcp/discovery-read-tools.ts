@@ -343,7 +343,31 @@ export const readTools: McpTool[] = [
         const v = Number(row[result.member]);
         if (!Number.isNaN(v)) value = (value ?? 0) + v;
       }
-      return { metricId, member: result.member, value, rows: result.rows, mode: result.mode, securityContext: result.securityContext };
+      // REVIEW H-2. These were dropped on the floor, so a refused or degraded read came back as
+      // `value: null, rows: []` with NOTHING to say why — indistinguishable from "the number is
+      // genuinely zero rows". Every honesty field `exploreMetric` produces is passed through:
+      // the typed refusal and its reason (M6), the loud-degradation sentence and the dropped
+      // slice members, the outage flag, and the query tool's OWN row ceiling (C-10) — which is
+      // lower than the slice's LIMIT and clips the rows a consumer would otherwise total.
+      //
+      // MERGE NOTE: stream C rewrote this handler on `night2/C` (a35b7e1b) to withhold `value`
+      // when the result reached its row bound, and already threads `warning` / `droppedMembers` /
+      // `pending` / `unavailable` / `sql` / the truncation triple. Take C's version and ADD the
+      // `refusal` key below — it is the only field C's version does not carry.
+      return {
+        metricId,
+        member: result.member,
+        value,
+        rows: result.rows,
+        mode: result.mode,
+        sql: result.sql,
+        ...(result.pending ? { pending: true, refusal: result.refusal, warning: result.warning } : {}),
+        ...(result.unavailable ? { unavailable: true, warning: result.warning } : {}),
+        ...(!result.pending && !result.unavailable && result.warning ? { warning: result.warning } : {}),
+        ...(result.droppedMembers ? { droppedMembers: result.droppedMembers } : {}),
+        ...(result.truncated ? { truncated: true, rowLimit: result.rowLimit, message: result.message } : {}),
+        securityContext: result.securityContext,
+      };
     },
   },
   {

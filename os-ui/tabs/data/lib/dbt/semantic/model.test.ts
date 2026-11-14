@@ -221,7 +221,8 @@ test('the pinned spec version is one constant, and the key whitelists carry no f
   // `cumulative_type_params` does NOT exist in DSI 0.5.x (dbt 1.8); the floor must therefore be
   // >= 1.9, and the OS images' pin must allow it. If the images move, this is the tripwire.
   assert.equal(DBT_SEMANTIC_SPEC.minDbtCore, '1.9');
-  assert.equal(DBT_SEMANTIC_SPEC.imagePin, 'dbt-core>=1.8,<1.10');
+  // Raised from `>=1.8` by review M-1: the emitted fields below do not exist on 1.8 at all.
+  assert.equal(DBT_SEMANTIC_SPEC.imagePin, 'dbt-core>=1.9,<1.10');
   assert.ok(ALLOWED_KEYS.metricTypeParams.includes('cumulative_type_params'));
   // 1.12 ("Fusion") renames these; none of the 1.12-only spellings may leak into the whitelist.
   for (const list of Object.values(ALLOWED_KEYS)) {

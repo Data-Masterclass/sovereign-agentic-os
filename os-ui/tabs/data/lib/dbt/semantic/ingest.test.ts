@@ -104,11 +104,17 @@ test('a hand-authored metric with no OS identity is reported UNLINKED, never gue
         'semantic_models:',
         '  - name: handwritten',
         "    model: ref('gold_orders')",
+        '    defaults:',
+        '      agg_time_dimension: order_date',
         '    entities:',
         '      - name: handwritten',
         '        type: primary',
         '        expr: order_id',
-        '    dimensions: []',
+        '    dimensions:',
+        '      - name: order_date',
+        '        type: time',
+        '        type_params:',
+        '          time_granularity: day',
         '    measures:',
         '      - name: hand_revenue',
         '        agg: sum',
@@ -183,4 +189,108 @@ test('a deleted semantic file is returned as deleted, so its rows can be retired
   const { deleted, metrics } = ingestFromRepo('metric', new Map<string, string | null>([['models/semantic/orders.yml', null]]));
   assert.deepEqual(deleted, ['models/semantic/orders.yml']);
   assert.deepEqual(metrics, []);
+});
+
+test('REVIEW L-6: a file with SEVERAL semantic models attributes each metric to the model that declares its measure', () => {
+  const two = [
+    'semantic_models:',
+    '  - name: a',
+    "    model: ref('gold_a')",
+    '    defaults:',
+    '      agg_time_dimension: d',
+    '    entities:',
+    '      - name: a',
+    '        type: primary',
+    '        expr: id',
+    '    dimensions:',
+    '      - name: d',
+    '        type: time',
+    '        type_params:',
+    '          time_granularity: day',
+    '    measures:',
+    '      - name: m_a',
+    '        agg: sum',
+    '        expr: amount',
+    '  - name: b',
+    "    model: ref('gold_b')",
+    '    defaults:',
+    '      agg_time_dimension: e',
+    '    entities:',
+    '      - name: b',
+    '        type: primary',
+    '        expr: id',
+    '    dimensions:',
+    '      - name: e',
+    '        type: time',
+    '        type_params:',
+    '          time_granularity: day',
+    '    measures:',
+    '      - name: m_b',
+    '        agg: sum',
+    '        expr: amount',
+    'metrics:',
+    '  - name: met_a',
+    '    type: simple',
+    '    type_params:',
+    '      measure: m_a',
+    '  - name: met_b',
+    '    type: simple',
+    '    type_params:',
+    '      measure: m_b',
+    '',
+  ].join('\n');
+  const { metrics, problems } = ingestFromRepo('metric', new Map<string, string | null>([['models/semantic/two.yml', two]]));
+  assert.deepEqual(problems, []);
+  // Reading `semantic_models[0]` only put BOTH metrics on model `a`/`gold_a` — a silently wrong
+  // registry row for `met_b`.
+  assert.deepEqual(
+    metrics.map((m) => [m.name, m.semanticModel, m.model]),
+    [
+      ['met_a', 'a', 'gold_a'],
+      ['met_b', 'b', 'gold_b'],
+    ],
+  );
+});
+
+test('REVIEW L-6: a metric naming no measure in a multi-model file is a PROBLEM, not a guess', () => {
+  const ambiguous = [
+    'semantic_models:',
+    '  - name: a',
+    "    model: ref('gold_a')",
+    '    defaults: {agg_time_dimension: d}',
+    '    entities: [{name: a, type: primary, expr: id}]',
+    '    dimensions: [{name: d, type: time, type_params: {time_granularity: day}}]',
+    '    measures: [{name: m_a, agg: sum, expr: amount}]',
+    '  - name: b',
+    "    model: ref('gold_b')",
+    '    defaults: {agg_time_dimension: e}',
+    '    entities: [{name: b, type: primary, expr: id}]',
+    '    dimensions: [{name: e, type: time, type_params: {time_granularity: day}}]',
+    '    measures: [{name: m_b, agg: sum, expr: amount}]',
+    'metrics:',
+    '  - name: met_a',
+    '    type: simple',
+    '    type_params: {measure: m_a}',
+    '  - name: met_b',
+    '    type: simple',
+    '    type_params: {measure: m_b}',
+    '  - name: ratio_ab',
+    '    type: ratio',
+    '    type_params: {numerator: met_a, denominator: met_b}',
+    '',
+  ].join('\n');
+  const { metrics, problems } = ingestFromRepo('metric', new Map<string, string | null>([['models/semantic/two.yml', ambiguous]]));
+  assert.deepEqual(metrics.map((m) => m.name), ['met_a', 'met_b']);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0].reason, /ratio_ab/);
+  assert.match(problems[0].reason, /2 semantic models/);
+});
+
+test('REVIEW L-6: a SINGLE-model file still attributes a derived metric to that one model', () => {
+  const files = generated();
+  const { metrics, problems } = ingestFromRepo('metric', files);
+  assert.deepEqual(problems, []);
+  const aov = metrics.find((m) => m.name === 'aov')!;
+  assert.equal(aov.type, 'ratio');
+  assert.equal(aov.semanticModel, 'orders', 'it names no measure, but the file has exactly one model');
 });

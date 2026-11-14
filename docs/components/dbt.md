@@ -131,11 +131,21 @@ installed at all it is pinned `metricflow >= 0.209.0`: `<= 0.208.1` is BSL 1.1, 
 Grant excludes this product's use, and BSL does not relax retroactively (`0.209.0` is the first
 Apache-2.0 release). `scripts/license-check.sh` asserts that floor.
 
-**Not true yet.** `cumulative` and `derived` YAML is emitted but the OS compiler does not compile
-their SQL: a rolling window still returns an honest `pending` rather than a calendar-correct number
-(`explorer.ts` `windowFrame`), and the spine is generated but not yet joined to. `saved_queries:` /
-`exports:`, entity joins across semantic models, the dbt filter-syntax parser on the query path and
-the MetricFlow parity oracle are backlog.
+**What the OS compiler serves, exactly.** `simple` and `ratio` always. `derived` **one level deep**
+— a formula over sibling metrics, each substituted for its own aggregate; a ratio of ratios is
+refused. `cumulative` **only at a matching grain** — the frame is `ROWS BETWEEN n PRECEDING AND
+CURRENT ROW` over the bucketed series, so the window's unit must equal the slice's granularity;
+every other grain is refused with a typed `window_grain_mismatch`. And because the frame counts
+BUCKETS rather than calendar units, a served cumulative result carries a `warning` saying so: the
+time spine is generated but **not joined to yet**, so a sparse series trails the last n *present*
+buckets, not the last n days. A refusal is `{ code, metricType, reason }`
+(`tabs/metrics/lib/explorer.ts` `serveRefusal`), never a number.
+
+**Not true yet.** The spine join (which is what makes a trailing window calendar-correct at any
+grain), `saved_queries:` / `exports:`, entity joins across semantic models, the dbt filter-syntax
+parser on the query path, and the MetricFlow parity oracle. Also: a dataset with measures and **no
+time column** emits no semantic YAML at all — dbt requires an `agg_time_dimension` for every
+measure, so those metrics are refused by name in the project README and served by the OS only.
 
 ## Code
 

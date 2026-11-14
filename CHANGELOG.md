@@ -47,6 +47,19 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   `<= 0.208.1` is Business Source License 1.1, whose Additional Use Grant excludes this product's
   use, and BSL does not relax retroactively.
 
+- **Metrics: the review round (stream M).** A dataset with measures and no date column emitted
+  semantic YAML with no `agg_time_dimension`, which fails `dbt parse` for the whole domain — those
+  measures are now refused by name and the validator enforces the rule. `expr` is stripped of Jinja
+  on emit and held to a closed grammar. `query_metric` no longer drops the read path's `pending` /
+  `refusal` / `warning` / `droppedMembers` / `unavailable`, and `exploreMetric` no longer discards
+  the query tool's own `truncated` / `rowLimit` / `message`, so a clip below the metric's own LIMIT
+  is visible. A served cumulative metric warns that its frame counts time buckets, not calendar
+  units. A metric on a dataset you cannot see now answers the same `not_found` as one that does not
+  exist, closing an existence leak. The dbt images are pinned `dbt-core>=1.9,<1.10` and the licence
+  gate enforces that floor alongside the MetricFlow one. Smaller: a numeric fact column is no longer
+  offered as a slice dimension, the `trino --execute` command is POSIX-quoted, and the push ingest
+  reads every `semantic_models` entry rather than the first.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a

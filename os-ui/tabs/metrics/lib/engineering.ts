@@ -23,7 +23,8 @@
  */
 import type { DbtMetricType } from '@tabs/metrics/lib/model';
 
-/** One tab of the Under-the-hood panel: a tool, its artefact, the command, the deep link. */
+/** MERGE NOTE: deleted at merge and imported from `@core/engineering` — stream T owns that type.
+ *  One tab of the Under-the-hood panel: a tool, its artefact, the command, the deep link. */
 export type EngineeringSection = {
   /** The TOOL's name, as its own users say it. */
   tool: 'dbt' | 'Trino' | 'git' | 'Dagster';
@@ -39,6 +40,7 @@ export type EngineeringSection = {
   link?: { label: string; href: string };
 };
 
+/** MERGE NOTE: deleted at merge and imported from `@core/engineering` — stream T owns that type. */
 export type MetricEngineeringView = {
   kind: 'metric';
   /** `<datasetId>.<measure>` — the OS id. */
@@ -86,6 +88,24 @@ export type MetricEngineeringInput = {
   spec: { dsiVersion: string; dbtCore: string };
 };
 
+/** One line, collapsed whitespace — a SQL statement for a shell argument. */
+function oneLine(sql: string): string {
+  return sql.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Wrap a string as a POSIX single-quoted shell word (review L-3).
+ *
+ * The command is offered for an engineer to COPY, so it has to be correct when pasted. A SQL
+ * literal containing an apostrophe — `WHERE region = 'côte d''ivoire'` — ended the quote early and
+ * produced a command that either fails or, worse, runs something other than the statement shown.
+ * `'…'` with every embedded quote rendered as `'\''` is the only form that needs no escaping rules
+ * of its own.
+ */
+export function shellSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 /** `{ name, value }` for every defined fact, in declaration order. */
 function facts(pairs: [string, string | undefined][]): { name: string; value: string }[] {
   return pairs.filter((p): p is [string, string] => typeof p[1] === 'string' && p[1].length > 0).map(([name, value]) => ({ name, value }));
@@ -127,7 +147,7 @@ export function engineeringView(kind: 'metric', id: string, input: MetricEnginee
       ['access control', 'Trino → OPA, per viewer (row and column filters)'],
     ]),
     ...(input.trinoSql ? { artifact: { filename: 'metric.sql', language: 'sql' as const, body: input.trinoSql } } : {}),
-    ...(input.trinoSql ? { command: `trino --execute '${input.trinoSql.replace(/\s+/g, ' ').trim()}'` } : {}),
+    ...(input.trinoSql ? { command: `trino --execute ${shellSingleQuote(oneLine(input.trinoSql))}` } : {}),
   });
   if (!input.trinoSql) notTrueYet.push('No SQL is shown because this metric has not been read in this session yet — open it in the explorer and the exact statement appears here.');
 

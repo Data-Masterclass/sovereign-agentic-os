@@ -147,6 +147,21 @@ function prose(s: string | undefined): string | undefined {
   return s === undefined ? undefined : stripJinja(s).replace(/\s+/g, ' ').trim() || undefined;
 }
 
+/**
+ * An `expr` made inert (review M-2).
+ *
+ * `expr` is the one emitted field whose content comes from authored input — a measure's column,
+ * a dimension's column, a derived metric's formula — and dbt renders it through Jinja BEFORE
+ * using it as SQL. So `{{ env_var('…') }}` in a column name would be evaluated in the parsing pod
+ * and land in `target/manifest.json`, which the OS reads back (the same defect `emit.stripJinja`
+ * exists for). Stripping, not escaping: an expression has no business being a template, so nothing
+ * real is lost. `validate.ts` `isSafeSemanticExpr` is the second half — it REFUSES anything
+ * outside the closed grammar rather than trusting this to have cleaned it.
+ */
+function sqlExpr(s: string | undefined): string | undefined {
+  return s === undefined ? undefined : stripJinja(s).replace(/\s+/g, ' ').trim() || undefined;
+}
+
 function configOut(c: ElementConfig | undefined): Plain | undefined {
   if (!c) return undefined;
   const out: Plain = {};
@@ -190,7 +205,7 @@ function semanticModelOut(m: SemanticModel): Plain {
       const o: Plain = { name: e.name, type: e.type };
       put(o, 'description', prose(e.description));
       put(o, 'role', e.role);
-      put(o, 'expr', e.expr);
+      put(o, 'expr', sqlExpr(e.expr));
       put(o, 'label', prose(e.label));
       return o;
     }),
@@ -203,7 +218,7 @@ function semanticModelOut(m: SemanticModel): Plain {
       put(o, 'description', prose(d.description));
       if (d.is_partition !== undefined) o.is_partition = d.is_partition;
       if (d.type_params) o.type_params = { time_granularity: d.type_params.time_granularity };
-      put(o, 'expr', d.expr);
+      put(o, 'expr', sqlExpr(d.expr));
       put(o, 'label', prose(d.label));
       return o;
     }),
@@ -214,7 +229,7 @@ function semanticModelOut(m: SemanticModel): Plain {
     m.measures.map((s) => {
       const o: Plain = { name: s.name, agg: s.agg };
       put(o, 'description', prose(s.description));
-      put(o, 'expr', s.expr);
+      put(o, 'expr', sqlExpr(s.expr));
       put(o, 'agg_time_dimension', s.agg_time_dimension);
       put(o, 'label', prose(s.label));
       put(o, 'config', configOut(s.config));
@@ -233,7 +248,7 @@ function metricOut(m: SemanticMetric): Plain {
   put(tp, 'measure', inputOut(m.type_params.measure));
   put(tp, 'numerator', inputOut(m.type_params.numerator));
   put(tp, 'denominator', inputOut(m.type_params.denominator));
-  put(tp, 'expr', m.type_params.expr);
+  put(tp, 'expr', sqlExpr(m.type_params.expr));
   put(tp, 'metrics', (m.type_params.metrics ?? []).map((i) => inputOut(i)));
   if (m.type_params.cumulative_type_params) {
     const c: Plain = {};

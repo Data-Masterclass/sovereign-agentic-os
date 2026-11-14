@@ -120,18 +120,42 @@ export function listMetrics(user: Principal, opts: { includeArchived?: boolean }
   return out;
 }
 
-/** Resolve a metric id (`datasetId.measure`) into the full record for explore/govern. */
+/** The ONE "no such metric" error — byte-identical whether it does not exist or you cannot see it. */
+function metricNotFound(metricId: string): Error & { status: number } {
+  const e = new Error(`metric '${metricId}' not found`) as Error & { status: number };
+  e.status = 404;
+  return e;
+}
+
+/**
+ * Resolve a metric id (`datasetId.measure`) into the full record for explore/govern.
+ *
+ * REVIEW M-6 — EXISTENCE DOES NOT LEAK. A metric on a dataset the caller cannot see used to
+ * surface `getDataset`'s 403, so `forbidden` meant "this metric exists and belongs to someone
+ * else" while `not_found` meant "no such id" — an id could be probed for existence one call at a
+ * time. Both now answer the same 404 with the same message, which is the rule the metric MCP
+ * surface already documented (`query_metric`: "a metric on a dataset you cannot see → not_found")
+ * and the rule stream G's `notFoundMessage` implements for every other kind. The DATASET tools
+ * keep their own 403 — that is their surface's decision (B4-11), and a dataset id is already
+ * discoverable through `list_datasets`; a metric id is not.
+ */
 export function getMetric(metricId: string, user: Principal): MetricRecord {
   const lastDot = metricId.lastIndexOf('.');
   const datasetId = metricId.slice(0, lastDot);
   const measureName = metricId.slice(lastDot + 1);
-  const d = getDataset(datasetId, user);
-  const measure = d.measures.find((m) => m.name === measureName);
-  if (!measure) {
-    const e = new Error(`metric '${metricId}' not found`) as Error & { status: number };
-    e.status = 404;
+  let d;
+  try {
+    d = getDataset(datasetId, user);
+  } catch (e) {
+    // A 403 ("you may not see this dataset") and a 404 ("no such dataset") collapse into one
+    // answer. Anything else — a store that failed to hydrate, say — is a real fault and is
+    // re-thrown: swallowing it would turn an outage into a confident "not found".
+    const status = (e as { status?: number }).status;
+    if (status === 403 || status === 404) throw metricNotFound(metricId);
     throw e;
   }
+  const measure = d.measures.find((m) => m.name === measureName);
+  if (!measure) throw metricNotFound(metricId);
   return metricRecord(d, measure, d.owner, TIER_OF[d.tier]);
 }
 

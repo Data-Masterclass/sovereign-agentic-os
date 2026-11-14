@@ -46,6 +46,8 @@ function build(measures: Measure[], extra: Partial<Dataset> = {}) {
   return semanticDocFor({ dataset: ds(measures, extra), model: 'gold_orders' });
 }
 
+export {}; // the file is a module; the helpers above are shared by the review-round cases below.
+
 test('a simple metric is `type: simple` over a measure with the right dbt agg and an expr', () => {
   const { doc, refusals } = build([{ name: 'revenue', type: 'sum', sql: 'net_amount', label: 'Revenue' }]);
   assert.deepEqual(refusals, []);
@@ -218,8 +220,8 @@ test('a time dimension gives the model its agg_time_dimension default; dimension
   assert.deepEqual(sm.entities, [{ name: 'orders', type: 'primary', expr: 'order_id' }]);
   assert.deepEqual(
     sm.dimensions.map((d) => d.name),
-    ['net_amount', 'order_date', 'region'],
-    'the pk (order_id) is excluded; the aggregated COLUMN stays a dimension (only measure NAMES collide)',
+    ['order_date', 'region'],
+    'the pk (order_id) is excluded, and so is the numeric fact column net_amount (review L-1)',
   );
   assert.equal(sm.dimensions.find((d) => d.name === 'order_date')!.type, 'time');
   assert.deepEqual(sm.dimensions.find((d) => d.name === 'order_date')!.type_params, { time_granularity: 'day' });
@@ -229,4 +231,78 @@ test('a dataset with no measure yields no metric, so no file is written for it',
   const { doc, refusals } = build([]);
   assert.deepEqual(doc.metrics, []);
   assert.deepEqual(refusals, []);
+});
+
+// ------------------------------------------------- the review round (H-1, M-3, L-1) ---
+
+test('REVIEW H-1: a dataset with measures and NO time column emits nothing, refusing each by name', () => {
+  const noDate = [
+    { name: 'order_id', description: 'Key' },
+    { name: 'region', description: 'Region' },
+    { name: 'net_amount', description: 'Amount' },
+  ];
+  const { doc, refusals } = build(
+    [
+      { name: 'revenue', type: 'sum', sql: 'net_amount' },
+      { name: 'orders', type: 'count', sql: '' },
+    ],
+    { columns: noDate },
+  );
+  // dbt requires an agg_time_dimension for EVERY measure. With no time column there is neither a
+  // measure-level one nor a model default, so the YAML that used to be emitted failed validation
+  // for the whole domain's `dbt parse`.
+  assert.deepEqual(doc, { semantic_models: [], metrics: [] });
+  assert.deepEqual(
+    refusals.map((r) => r.measure),
+    ['orders', 'revenue'],
+  );
+  for (const r of refusals) {
+    assert.match(r.reason, /no time dimension/);
+    assert.match(r.reason, /agg_time_dimension/);
+    assert.match(r.reason, /document a date\/timestamp column/, 'the reason must be actionable');
+  }
+});
+
+test('REVIEW H-1: the validator refuses a measure with no agg_time_dimension and no model default', () => {
+  const { doc } = build([{ name: 'revenue', type: 'sum', sql: 'net_amount' }]);
+  assert.deepEqual(validateSemanticDoc(doc), [], 'the happy path still validates');
+  // Strip the default the emitter set: this is the document shape the bug produced.
+  const stripped = structuredClone(doc);
+  delete stripped.semantic_models[0].defaults;
+  assert.match(validateSemanticDoc(stripped).join('\n'), /no agg_time_dimension, and the semantic model declares no defaults\.agg_time_dimension/);
+});
+
+test('REVIEW M-3: a THIRD collision on a non-identifier name still yields a dbt identifier', () => {
+  const alloc = semanticNames();
+  const names = ['a', 'b', 'c'].map((suffix) =>
+    semanticDocFor(
+      { dataset: ds([{ name: 'Revenue %', type: 'sum', sql: 'net_amount' }], { id: `ds_${suffix}`, name: `D${suffix}` }), model: `gold_d${suffix}` },
+      alloc,
+    ),
+  );
+  const emitted = names.flatMap((n) => n.doc.metrics.map((m) => m.name));
+  assert.equal(emitted.length, 3);
+  for (const n of emitted) {
+    assert.match(n, /^[a-z_][a-z0-9_]*$/, `'${n}' must be a dbt identifier — the numbered fallback used to rebuild from the raw name`);
+    assert.doesNotMatch(n, /%|\s/);
+  }
+  assert.equal(new Set(emitted).size, 3, 'and all three must be distinct');
+});
+
+test('REVIEW L-1: a numeric fact column is NOT offered as a categorical dimension; a key-shaped one is', () => {
+  const { doc } = build([{ name: 'revenue', type: 'sum', sql: 'net_amount' }], {
+    columns: [
+      { name: 'order_id', description: 'Key' },
+      { name: 'order_date', description: 'Date' },
+      { name: 'region', description: 'Region' },
+      { name: 'net_amount', description: 'Amount' },
+      { name: 'quantity', description: 'Units' },
+      { name: 'customer_id', description: 'Customer key' },
+    ],
+  });
+  const dims = doc.semantic_models[0].dimensions.map((d) => d.name);
+  assert.deepEqual(dims, ['customer_id', 'order_date', 'region']);
+  assert.equal(dims.includes('net_amount'), false, 'grouping by an amount yields one row per amount');
+  assert.equal(dims.includes('quantity'), false);
+  assert.deepEqual(validateSemanticDoc(doc), []);
 });

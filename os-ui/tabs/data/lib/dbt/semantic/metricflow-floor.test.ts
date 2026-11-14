@@ -16,10 +16,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DBT_SEMANTIC_SPEC } from '@tabs/data/lib/dbt/semantic/spec';
 import {
   METRICFLOW_FLOOR,
+  DBT_CORE_FLOOR,
   FLOOR_ROOTS,
   checkMetricflowFloor,
+  checkDbtCoreFloor,
+  checkVersionFloors,
   collectEntries,
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore — a repo-tooling .mjs with no type declarations; the shapes are asserted below.
@@ -85,4 +89,48 @@ test('M14: the licence gate still invokes the floor check (a dropped check is wo
   const gate = readFileSync(join(REPO, 'scripts', 'license-check.sh'), 'utf8');
   assert.match(gate, /scripts\/metricflow-floor\.mjs/);
   assert.match(gate, /fail=1/);
+});
+
+// ------------------------------------------------------- the dbt-core floor (M-1) ---
+
+const checkDbt = checkDbtCoreFloor as (entries: { path: string; text: string }[]) => Violation[];
+
+test('M-1: the dbt-core floor matches the emitter`s own declared minimum — one number, two homes', () => {
+  assert.equal(DBT_CORE_FLOOR, '1.9');
+  assert.equal(DBT_SEMANTIC_SPEC.minDbtCore, DBT_CORE_FLOOR, 'the gate and the emitter must agree');
+  assert.equal(DBT_SEMANTIC_SPEC.imagePin, `dbt-core>=${DBT_CORE_FLOOR},<1.10`);
+});
+
+test('M-1: a dbt-core pin that lets 1.8 in is DENIED with the reason the emitter needs 1.9', () => {
+  for (const text of ['RUN pip install "dbt-core>=1.8,<1.10"', 'RUN pip install dbt-core', 'RUN pip install "dbt-core<1.10"', 'dbt-core==1.8.9']) {
+    const v = checkDbt([{ path: 'images/x/Dockerfile', text }]);
+    assert.ok(v.length >= 1, `should be denied: ${text}`);
+    assert.match(v[0].reason, /cumulative_type_params/);
+    assert.match(v[0].reason, /time_spine/);
+  }
+});
+
+test('M-1: a correct dbt-core pin passes, and dbt-trino is not confused for it', () => {
+  for (const text of ['RUN pip install "dbt-core>=1.9,<1.10" "dbt-trino>=1.9,<1.10"', 'dbt-core == 1.10.0', '"dbt-core>=1.9"']) {
+    assert.deepEqual(checkDbt([{ path: 'images/x/Dockerfile', text }]), [], text);
+  }
+  assert.deepEqual(checkDbt([{ path: 'images/x/Dockerfile', text: 'RUN pip install "dbt-trino>=1.8"' }]), [], 'dbt-trino is a different package');
+});
+
+test('M-1: the gate denies NEITHER floor on its own filename (the regex must not self-match)', () => {
+  // `scripts/metricflow-floor.mjs` written in a comment used to read as an unpinned dependency,
+  // so documenting the gate in a Dockerfile made the gate fail.
+  const text = '# Asserted by scripts/metricflow-floor.mjs, which the licence gate runs.\nRUN pip install "dbt-core>=1.9,<1.10"';
+  assert.deepEqual(check([{ path: 'images/x/Dockerfile', text }]), []);
+  assert.deepEqual(checkDbt([{ path: 'images/x/Dockerfile', text }]), []);
+});
+
+test('M-1: both floors hold across the repository right now', () => {
+  const entries = (collectEntries as (roots: string[], base: string) => { path: string; text: string }[])(FLOOR_ROOTS as string[], REPO);
+  assert.deepEqual((checkVersionFloors as (e: { path: string; text: string }[]) => Violation[])(entries), []);
+});
+
+test('M-1: the licence gate invokes the combined check', () => {
+  const gate = readFileSync(join(REPO, 'scripts', 'license-check.sh'), 'utf8');
+  assert.match(gate, /dbt-core >= 1\.9/);
 });

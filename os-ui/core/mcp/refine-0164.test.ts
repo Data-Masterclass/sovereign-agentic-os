@@ -157,10 +157,13 @@ test('build_gold_join: an invalid adapt cast type is a typed bad_request (server
 async function goldOrders(): Promise<string> {
   const ds = payload<{ id: string }>(await call(builder, 'create_dataset', {
     name: 'Orders',
-    columns: [{ name: 'order_id', description: 'PK' }, { name: 'net_amount', description: 'EUR' }, { name: 'customer_id', description: 'FK' }, { name: 'status', description: 'lifecycle' }],
+    // `order_date` is load-bearing: dbt requires an `agg_time_dimension` for every measure, so a
+    // dataset with NO time column has no valid dbt semantic artefact at all (review H-1). The
+    // no-date case is asserted separately below.
+    columns: [{ name: 'order_id', description: 'PK' }, { name: 'order_date', description: 'when' }, { name: 'net_amount', description: 'EUR' }, { name: 'customer_id', description: 'FK' }, { name: 'status', description: 'lifecycle' }],
   }));
   payload(await call(builder, 'add_dataset_version', { datasetId: ds.id, layer: 'bronze' }));
-  payload(await call(builder, 'add_dataset_version', { datasetId: ds.id, layer: 'silver', body: 'select order_id, net_amount, customer_id, status from bronze' }));
+  payload(await call(builder, 'add_dataset_version', { datasetId: ds.id, layer: 'silver', body: 'select order_id, order_date, net_amount, customer_id, status from bronze' }));
   payload(await call(builder, 'add_dataset_version', { datasetId: ds.id, layer: 'gold', passThrough: true }));
   payload(await call(builder, 'document_dataset', { datasetId: ds.id, description: 'One row per order.' }));
   const req = payload<{ approvalId: string }>(await call(builder, 'request_promotion', { kind: 'dataset', id: ds.id }));
@@ -300,4 +303,27 @@ test('define_metric: a plain measure yields {name,label,type,sql} — label auto
   assert.deepEqual(Object.keys(m.measure).sort(), ['label', 'name', 'sql', 'type']);
   assert.equal(m.measure.label, 'Revenue');
   assert.equal(m.measure.name, 'revenue');
+});
+
+test('REVIEW H-1: a dataset with no time column still DEFINES the metric, but has no dbt artefact', async () => {
+  resetAll();
+  const ds = payload<{ id: string }>(await call(builder, 'create_dataset', {
+    name: 'Tallies',
+    columns: [{ name: 'tally_id', description: 'PK' }, { name: 'amount', description: 'EUR' }],
+  }));
+  payload(await call(builder, 'add_dataset_version', { datasetId: ds.id, layer: 'bronze' }));
+  payload(await call(builder, 'add_dataset_version', { datasetId: ds.id, layer: 'silver', body: 'select tally_id, amount from bronze' }));
+  payload(await call(builder, 'add_dataset_version', { datasetId: ds.id, layer: 'gold', passThrough: true }));
+  payload(await call(builder, 'document_dataset', { datasetId: ds.id, description: 'One row per tally.' }));
+
+  const m = payload<{ measure: { type: string }; metricType: string; dbt: string; member: string }>(
+    await call(builder, 'define_metric', { datasetId: ds.id, name: 'Total', aggregation: 'sum', column: 'amount' }),
+  );
+  // The OS metric is real and queryable — the compiler needs no time dimension.
+  assert.equal(m.measure.type, 'sum');
+  assert.equal(m.metricType, 'simple');
+  assert.ok(m.member.endsWith('.total'));
+  // But dbt requires an agg_time_dimension per measure, so emitting YAML here would fail
+  // `dbt parse` for the WHOLE domain. The artefact is absent, not wrong.
+  assert.equal(m.dbt, '');
 });

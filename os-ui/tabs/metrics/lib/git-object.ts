@@ -26,7 +26,8 @@
  *     before that merge. The shape is G's `GitObjectLocation` field for field.
  */
 
-/** G's `GitObjectLocation`, structurally. Replaced by the import at merge (deviation M-11). */
+/** MERGE NOTE: deleted at merge and imported from `@core/infra/git-objects` as `GitObjectLocation`
+ *  — stream G owns that type; this is it field for field (deviation M-11). */
 export type MetricGitLocation = {
   domain: string;
   paths: string[];

@@ -93,6 +93,21 @@ test('list_capabilities (0.6.114): every advertised name is a REGISTERED, callab
   assert.match(caps.note ?? '', /reconnect the MCP server/i, 'list_capabilities carries the reconnect-to-refresh note');
 });
 
+test('REVIEW H-2: query_metric forwards the read path`s honesty fields instead of dropping them', async () => {
+  resetAll();
+  const metricId = await definedMetric();
+  // A slice member the governed view does not expose. The read path records it LOUDLY
+  // (`droppedMembers` + a `warning`); the handler used to return only
+  // `{ value, rows, mode, securityContext }`, so the caller saw an un-sliced number with no hint
+  // that it was not sliced as asked.
+  const r = payload<{ value: number | null; warning?: string; droppedMembers?: string[]; mode: string }>(
+    await call(builder, 'query_metric', { metricId, dimensions: ['not_a_column'] }),
+  );
+  assert.deepEqual(r.droppedMembers?.map((m) => m.split('.').pop()), ['not_a_column']);
+  assert.match(r.warning ?? '', /Not sliced by/);
+  assert.ok(r.mode, 'the resolver mode is still stated');
+});
+
 test('WAVE A: query_metric accepts NO SQL by construction (semantic layer only)', () => {
   const t = ALL_MCP_TOOLS.find((x) => x.name === 'query_metric')!;
   assert.ok(!('sql' in t.inputSchema.properties), 'query_metric has no sql parameter — a raw statement is impossible by construction');
@@ -273,13 +288,23 @@ test('query_metric: resolves the governed Cube member under the CALLER’s deleg
   assert.ok(r.securityContext, 'the per-viewer securityContext is stated (R3)');
 });
 
-test('query_metric: a metric on a dataset the caller cannot see → typed forbidden; garbage id → typed not_found', async () => {
+test('query_metric: an unseeable metric and a non-existent one answer the SAME not_found (review M-6)', async () => {
   resetAll();
   const metricId = await definedMetric(); // owned by ben, tier asset in `sales`
-  const e = errorOf(await call(outsider, 'query_metric', { metricId })); // dan is in `ops`
-  assert.equal(e.code, 'forbidden');
+  // This used to assert `forbidden`, which told the caller the id EXISTS and belongs to someone
+  // else — an id could be probed for existence one call at a time, and it contradicted the tool's
+  // own description ("a metric on a dataset you cannot see → not_found"). Both answers are now
+  // byte-identical, which is also the rule every other object kind follows.
+  const hidden = errorOf(await call(outsider, 'query_metric', { metricId })); // dan is in `ops`
   const missing = errorOf(await call(builder, 'query_metric', { metricId: 'ds_nope.revenue' }));
+  assert.equal(hidden.code, 'not_found');
   assert.equal(missing.code, 'not_found');
+  // Byte-identical, not merely the same code: a differing reason leaks the same bit.
+  assert.equal(
+    hidden.reason.replace(metricId, '<ID>'),
+    missing.reason.replace('ds_nope.revenue', '<ID>'),
+    'the two reasons must not differ — a reason that names a different cause leaks existence',
+  );
 });
 
 // ---- RUN_AGENT_SYSTEM ----------------------------------------------------------

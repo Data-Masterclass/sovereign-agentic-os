@@ -101,14 +101,33 @@ export function ingestFromRepo(kind: 'metric', files: Map<string, string | null>
       problems.push({ path, reason: `not valid for the pinned dbt semantic spec: ${violations.join('; ')}` });
       continue;
     }
-    const sm = doc.semantic_models[0];
-    if (!sm) {
+    if (!doc.semantic_models.length) {
       problems.push({ path, reason: 'no semantic_models: block — a metric file must declare the model its measures sit on' });
       continue;
     }
+    // REVIEW L-6: a hand-authored file may declare SEVERAL semantic models, which dbt allows and
+    // the OS's own emitter will once a metric spans datasets. Reading only `semantic_models[0]`
+    // attributed every metric in such a file to the first model — a silently wrong `model` /
+    // `semanticModel` on the registry row, which is exactly the kind of near-miss nobody notices.
+    // Each metric is attributed to the model that declares the MEASURE it aggregates; a metric
+    // whose measure is in no model (a `derived` over other metrics) falls back to the file's only
+    // model, and to none when the file has more than one.
+    const modelOfMeasure = new Map<string, (typeof doc.semantic_models)[number]>();
+    for (const sm of doc.semantic_models) for (const mea of sm.measures) modelOfMeasure.set(mea.name, sm);
+    const sole = doc.semantic_models.length === 1 ? doc.semantic_models[0] : null;
+
     for (const m of doc.metrics) {
       const meta = m.config?.meta ?? {};
       const osMetric = meta.os_metric ?? null;
+      const measureName = m.type_params.measure?.name;
+      const sm = (measureName ? modelOfMeasure.get(measureName) : undefined) ?? sole;
+      if (!sm) {
+        problems.push({
+          path,
+          reason: `metric '${m.name}': the file declares ${doc.semantic_models.length} semantic models and this metric names no measure in any of them, so the model it belongs to cannot be determined`,
+        });
+        continue;
+      }
       metrics.push({
         osMetric,
         datasetId: meta.os_dataset ?? null,

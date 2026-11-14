@@ -13,8 +13,11 @@
  *   - TARGET is DSI 0.8.5 (= dbt-core 1.10) field names. FLOOR is dbt-core 1.9 / DSI 0.7.x,
  *     because `images/extensions/{dbt,dagster}/Dockerfile` pin `dbt-core>=1.8,<1.10` and therefore
  *     resolve to 1.9.x today. Every field this module permits exists in BOTH 0.7.x and 0.8.5, so
- *     the emitted YAML parses on the shipped image and on the target. The one field that does not
- *     exist on dbt 1.8 — `cumulative_type_params` — is therefore gated on the floor, not the target.
+ *     the emitted YAML parses on the shipped image and on the target. The images were raised to
+ *     `dbt-core>=1.9,<1.10` for exactly this reason (night-2 review M-1): `cumulative_type_params`,
+ *     dimension `type_params.time_granularity` and the `time_spine` model property do not exist on
+ *     dbt 1.8 (DSI 0.5.x), so there the generated project fails `dbt parse` for the WHOLE domain.
+ *     `scripts/metricflow-floor.mjs` asserts both this floor and the MetricFlow licence floor.
  *   - Pure, dependency-free, no I/O. The enums are CLOSED sets copied from the DSI type_enums, and
  *     the validator is deliberately a key/enum whitelist: anything not named here is a violation,
  *     because an unknown key is exactly how a generator takes a whole domain's `dbt parse` down.
@@ -29,7 +32,7 @@ export const DBT_SEMANTIC_SPEC = {
   /** The lowest dbt-core every emitted field is valid on (what the OS images ship today). */
   minDbtCore: '1.9',
   /** The pip specifier the OS images carry, recorded so a drift is visible in one place. */
-  imagePin: 'dbt-core>=1.8,<1.10',
+  imagePin: 'dbt-core>=1.9,<1.10',
   /** The dbt >= 1.9 model property that declares a time spine (NOT the legacy name). */
   timeSpineProperty: 'time_spine',
   /** The legacy, by-name spine model of dbt <= 1.8 — never emitted; named so nobody adds it back. */

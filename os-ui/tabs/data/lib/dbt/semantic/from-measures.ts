@@ -38,7 +38,7 @@ import type {
   SemanticModel,
 } from '@tabs/data/lib/dbt/semantic/model';
 import { METRIC_TIME_WINDOW_RE, SEMANTIC_NAME_RE, type AggregationType, type TimeGranularity } from '@tabs/data/lib/dbt/semantic/spec';
-import { isSafeSemanticFilter } from '@tabs/data/lib/dbt/semantic/validate';
+import { isSafeSemanticExpr, isSafeSemanticFilter } from '@tabs/data/lib/dbt/semantic/validate';
 
 /** OS measure type → DSI `AggregationType`. `number` is absent on purpose (it is a metric). */
 const AGG_OF: Record<string, AggregationType> = {
@@ -73,10 +73,16 @@ export type SemanticNames = { measure: NameAllocator; metric: NameAllocator };
 function allocator(): NameAllocator {
   const taken = new Set<string>();
   return (preferred, qualifier) => {
-    let candidate = SEMANTIC_NAME_RE.test(preferred) ? preferred : `m_${preferred.replace(/[^a-z0-9_]/gi, '_').toLowerCase()}`;
-    if (taken.has(candidate)) candidate = `${qualifier}__${candidate}`;
+    // The sanitised base. REVIEW M-3: every later attempt must be built from THIS, not from the
+    // raw `preferred` — a non-identifier name (`Revenue %`) colliding twice used to fall back to
+    // `<qualifier>__Revenue %__2`, which is not a dbt identifier and fails `dbt parse` for the
+    // whole domain. The numbered fallback is the only path that reaches that case, so it was the
+    // one place the sanitising was lost.
+    const base = SEMANTIC_NAME_RE.test(preferred) ? preferred : `m_${preferred.replace(/[^a-z0-9_]/gi, '_').toLowerCase()}`;
+    let candidate = base;
+    if (taken.has(candidate)) candidate = `${qualifier}__${base}`;
     let n = 2;
-    while (taken.has(candidate)) candidate = `${qualifier}__${preferred}__${n++}`;
+    while (taken.has(candidate)) candidate = `${qualifier}__${base}__${n++}`;
     taken.add(candidate);
     return candidate;
   };
@@ -172,8 +178,14 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
   const dimensions: SemanticDimension[] = [];
   const timeColumns = new Set<string>();
   for (const c of dimCols) {
-    const isTime = inferDimType(c.name) === 'time';
+    const inferred = inferDimType(c.name);
+    const isTime = inferred === 'time';
     if (!SEMANTIC_NAME_RE.test(c.name)) continue; // never interpolate a non-identifier into dbt YAML
+    // REVIEW L-1: a numeric FACT column (`net_amount`, `quantity`) is not something anyone groups
+    // by, and emitting it as `type: categorical` offers an agent a slice that would produce one
+    // row per distinct amount. A key-shaped numeric column (`*_id`) IS a legitimate grouping, so
+    // `inferDimType`'s `number` bucket is split on that test rather than dropped wholesale.
+    if (inferred === 'number' && !/(^|_)id$/i.test(c.name)) continue;
     const dim: SemanticDimension = { name: c.name, type: isTime ? 'time' : 'categorical' };
     if (c.description) dim.description = c.description;
     if (isTime) {
@@ -198,6 +210,24 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
   if (aggTime) model.defaults = { agg_time_dimension: aggTime };
 
   const ordered = [...d.measures].sort((a, b) => a.name.localeCompare(b.name));
+
+  // REVIEW H-1. DSI requires an aggregation time dimension for EVERY measure (`metric_time` is
+  // derived from it), on the measure or as the model's `defaults.agg_time_dimension`. A dataset
+  // with measures and NO time column can supply neither, and the YAML that resulted failed
+  // validation for the WHOLE domain's `dbt parse` — every other dataset's models with it. So each
+  // measure is refused BY NAME, with the actionable reason, and nothing is emitted. (The OS still
+  // serves those metrics: this is a limit of the dbt artefact, not of the compiler.)
+  if (!aggTime) {
+    for (const m of ordered) {
+      refusals.push({
+        measure: m.name,
+        reason:
+          "the dataset exposes no time dimension, and dbt requires an agg_time_dimension for every measure (metric_time is derived from it) — document a date/timestamp column on the Gold version and the metric becomes a dbt metric",
+      });
+    }
+    refusals.sort((a, b) => a.measure.localeCompare(b.measure));
+    return { doc: { semantic_models: [], metrics: [] }, refusals };
+  }
   /** OS measure name → the allocated dbt measure name. */
   const measureName = new Map<string, string>();
   /** OS measure name → the allocated dbt METRIC name (every emitted measure gets a metric). */
@@ -214,6 +244,17 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
     }
     if (agg !== 'count' && !m.sql.trim()) {
       refusals.push({ measure: m.name, reason: `aggregation '${m.type}' needs a column expression` });
+      continue;
+    }
+    // REVIEW M-2. Refuse an unsafe `expr` HERE, per measure, rather than letting it reach the
+    // validator — a document that fails validation is dropped whole in `render.ts`, so one
+    // smuggled column would take every other metric on the dataset with it. One bad measure
+    // should cost one measure.
+    if (agg !== 'count' && !isSafeSemanticExpr(m.sql)) {
+      refusals.push({
+        measure: m.name,
+        reason: `the column expression '${m.sql}' is not in the emitter's closed expr grammar (dbt renders it through Jinja AND as SQL, so quotes, comment markers and template delimiters are refused)`,
+      });
       continue;
     }
     let filter: string | undefined;
@@ -287,9 +328,19 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
       refusals.push({ measure: m.name, reason: `references metric(s) not emitted in this document: ${[...new Set(unknown)].sort().join(', ')}` });
       continue;
     }
+    const ratio = RATIO_RE.exec(m.sql);
+    // The derived form's `expr` is the authored formula with each `{ref}` replaced by its metric
+    // name — authored input again, so held to the same closed grammar (review M-2).
+    const derivedExpr = m.sql.replace(/\{([a-z0-9_]+)\}/g, (_w, r: string) => metricName.get(r) ?? r);
+    if (!ratio && !isSafeSemanticExpr(derivedExpr)) {
+      refusals.push({
+        measure: m.name,
+        reason: `the formula '${m.sql}' compiles to an expression outside the emitter's closed expr grammar`,
+      });
+      continue;
+    }
     const dbtMetric = alloc.metric(m.name, smName);
     metricName.set(m.name, dbtMetric);
-    const ratio = RATIO_RE.exec(m.sql);
     const metric: SemanticMetric = ratio
       ? {
           name: dbtMetric,
@@ -302,7 +353,7 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
           type_params: {
             // dbt `derived` references its input metrics BY NAME in `expr` (not `{{ metric('x') }}`,
             // which the predecessor emitted and dbt does not accept here).
-            expr: m.sql.replace(/\{([a-z0-9_]+)\}/g, (_w, r: string) => metricName.get(r)!),
+            expr: derivedExpr,
             metrics: [...new Set(refs)].sort().map((r): MetricInput => ({ name: metricName.get(r)! })),
           },
         };

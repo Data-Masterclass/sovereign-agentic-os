@@ -2095,3 +2095,103 @@ deviation is.
   OS-Object: metric:<datasetId>.<measure>"), **with the caveat in finding M-3** that archive /
   unarchive / folder-move still write only an in-memory overlay. G's `paths` and `personalLane`
   rows already match what the generator writes, byte for byte.
+- **M-review-H-1 (BLOCKING, fixed) A dataset with measures and no time column emitted YAML that
+  failed `dbt parse` for the whole domain.** DSI requires an `agg_time_dimension` for every
+  measure — on the measure or as the model's `defaults.agg_time_dimension` — because `metric_time`
+  is derived from it, and `from-measures.ts` set the default only when a time dimension existed
+  while `validate.ts` never required one. So the one shape the emitter is most likely to meet
+  (a three-column dataset with a sum and no date) produced the one output that takes every OTHER
+  dataset's models down with it. Fixed on both sides, as the review asked: the emitter refuses each
+  such measure BY NAME with an actionable reason ("document a date/timestamp column on the Gold
+  version and the metric becomes a dbt metric") and emits nothing; the validator gained the rule so
+  a hand-authored push is rejected the same way. Tested with the exact 3-column no-date fixture.
+- **M-review-H-2 (BLOCKING, fixed) `query_metric` dropped every honesty field.** The handler
+  returned `{metricId, member, value, rows, mode, securityContext}`, so a refusal, a dropped slice
+  member, an outage and a row clip all arrived as `value: null, rows: []` with nothing to
+  distinguish them from a genuine empty result. Now forwards `pending` + the typed `refusal`,
+  `warning`, `droppedMembers`, `unavailable`, `sql` and the truncation triple. **Merge note in the
+  code:** stream C rewrote this same handler on `night2/C` (`a35b7e1b`) to withhold `value` at the
+  row bound and already forwards everything except `refusal` — take C's version and add that one
+  key; the comment at the return says so.
+- **M-review-C-10 (filed by C, fixed) `exploreMetric` discarded the query tool's own
+  `truncated`/`rowLimit`/`message`.** The serve SQL carries the slice's `LIMIT`, but the query tool
+  has a SECOND, lower `QUERY_MAX_ROWS` ceiling; a clip below the metric's own bound was invisible to
+  every consumer, including the one that sums the rows into a scalar. The three fields now pass
+  through verbatim so a surface shows the query tool's sentence rather than inventing one.
+- **M-review-M-1 (fixed) The image pins are raised to `dbt-core>=1.9,<1.10` and the gate now
+  enforces a dbt floor too.** Deviation M-2 recorded that the images allowed 1.8 and declined to
+  change them unattended; the review overruled that, correctly — `cumulative_type_params`,
+  dimension `type_params.time_granularity` and the `time_spine` property do not exist on 1.8, so
+  1.8 is not a version this emitter has a working story on. `scripts/metricflow-floor.mjs` gained
+  `checkDbtCoreFloor` + `checkVersionFloors`, the licence gate runs both, and a test asserts
+  `DBT_CORE_FLOOR === DBT_SEMANTIC_SPEC.minDbtCore` so the two homes of that number cannot drift.
+  **Found while doing it:** the MetricFlow regex matched its own filename, so documenting the gate
+  in a Dockerfile comment (`Asserted by scripts/metricflow-floor.mjs`) made the gate deny itself.
+  A `(?![\w-])` lookahead on both package names fixes it, with a test.
+- **M-review-M-2 (fixed) `expr` was emitted raw.** It is the one emitted field whose content comes
+  from authored input (a column name, a formula) and dbt renders it through Jinja AND uses it as
+  SQL. Now `stripJinja` on emit for every `expr` (entity, dimension, measure, metric) plus a closed
+  `isSafeSemanticExpr` grammar in the validator — identifiers, digits, arithmetic, parentheses and
+  commas, nothing else. **Deviation inside the fix:** the review asked for the validator rule, but a
+  failing document is DROPPED WHOLE by `render.ts`, so one smuggled column would have cost every
+  other metric on the dataset. The refusal is therefore ALSO raised per measure in
+  `from-measures.ts`, where one bad measure costs one measure and is named in the project README.
+- **M-review-M-3 (fixed) The third-collision fallback rebuilt from the raw name.** `candidate` was
+  sanitised, then the numbered fallback interpolated `preferred` again, so `Revenue %` colliding
+  twice yielded `<qualifier>__Revenue %__2` — not a dbt identifier, and a parse failure for the
+  domain. Builds from the sanitised base throughout; tested with a third collision.
+- **M-review-M-4 (fixed) A served `cumulative` result now carries the bucket caveat.** The frame is
+  `ROWS BETWEEN n PRECEDING AND CURRENT ROW` over the bucketed series, so a sparse series trails the
+  last n PRESENT buckets. The existing warning keeps its place at the front — the loud-degradation
+  precedence (outage > unresolved member > dropped dimension) is still the authority — and the
+  caveat is appended, never a replacement.
+- **M-review-M-5 (fixed) `docs/components/dbt.md` "Not true yet" reworded** to state what IS served
+  and when: `simple`/`ratio` always, `derived` one level deep, `cumulative` only at a matching
+  grain and with the bucket warning, everything else a typed `{code, metricType, reason}`.
+- **M-review-M-6 (fixed, CROSS-CUTTING) The existence leak is closed for metrics, and only for
+  metrics.** `getMetric` collapsed `getDataset`'s 403 and 404 into one byte-identical `not_found`,
+  which is what `query_metric`'s own description and stream G's `notFoundMessage` already promised
+  and what `core/mcp/wave-a.test.ts:276` pinned the opposite of. The test is updated to assert BOTH
+  answers and that their reasons are byte-identical once the id is substituted — a differing reason
+  leaks the same bit. **Scope, deliberately narrow:** the DATASET tools keep their 403 (B4-11 is
+  theirs), and a real fault — a store that failed to hydrate — is re-thrown rather than presented as
+  "not found", because swallowing it would turn an outage into a confident absence.
+- **M-review-L-1 (fixed) A numeric fact column is no longer offered as a categorical dimension.**
+  `inferDimType`'s `number` bucket is split on `*_id`: a key-shaped numeric column stays a
+  dimension (grouping by `customer_id` is legitimate), an amount or a quantity does not (grouping by
+  it yields one row per distinct value, which is an invitation to a meaningless slice).
+- **M-review-L-3 (fixed) `trino --execute` is now POSIX-quoted.** A SQL literal containing an
+  apostrophe ended the quote early, so the command offered for copy-paste either failed or ran
+  something other than the statement shown. `shellSingleQuote` renders every embedded quote as
+  `'\''`; the SQL is collapsed to one line first so the command is one shell word.
+- **M-review-L-6 (fixed) The push ingest read `semantic_models[0]` only.** A file declaring several
+  semantic models attributed every metric to the first one — a silently wrong `model` /
+  `semanticModel` on the registry row. Each metric is now attributed to the model declaring the
+  MEASURE it aggregates; a metric naming no measure falls back to the file's sole model, and to a
+  PROBLEM when the file has more than one, because a guess there is a wrong row rather than a
+  missing one.
+- **M-review-L-4 (recorded, for M15) The `NULLIF` divisor is an asymmetry against MetricFlow.** The
+  OS compiler returns `NULL` for a zero denominator; MetricFlow's `ratio` does not wrap its
+  denominator, so on the same data and the same YAML the two disagree for exactly the empty-slice
+  rows — MetricFlow errors or returns `inf`/`NaN` depending on the adapter, the OS returns `NULL`.
+  When the parity oracle lands (M15), ratio metrics must either be compared with zero-denominator
+  rows excluded, or the asymmetry stated as a known, deliberate difference with the OS's behaviour
+  named as the correct one. It is NOT a bug to fix by removing the `NULLIF`: a panel that fails the
+  whole query on one empty slice is worse than a cell that reads "—".
+- **M-review-M-6b (found while fixing M-6) A SECOND test pinned the leak, under a name that
+  claimed the opposite.** `core/mcp/wave-b.test.ts:119` was called *"get_metric: unseeable dataset →
+  typed forbidden; garbage id → typed not_found (no leak)"* — the parenthesis says "no leak" while
+  the assertion is the leak. Both that test and `wave-a.test.ts`'s now assert one `not_found` and
+  that the two reasons are byte-identical once the id is substituted.
+- **M-review-H-1b (found while fixing H-1) The MCP suite's own `goldOrders` fixture had no date
+  column**, so H-1 refused every metric in it and four `define_metric` tests went red — which is
+  the fix working on a realistic shape, not a regression. The fixture gained `order_date`, and a new
+  test covers the no-date case explicitly: `define_metric` still persists the metric and returns its
+  member (the OS compiler needs no time dimension), and `dbt` comes back EMPTY rather than invalid.
+  That split — the OS metric is real, the dbt artefact is absent — is the honest answer and is now
+  the documented one (`tabs/metrics/README.md`, `docs/components/dbt.md`).
+- **M-review-L-2 / L-5 / L-7 (NOT actioned — the review named them without their text).** The
+  hand-off listed "(L-2/L-5/L-7) record" with no finding attached, and I will not invent three
+  findings to look thorough. They need the reviewer's own sentences before anything can be recorded
+  honestly, let alone fixed. Everything else in the review round is either fixed above or recorded
+  with its reason.
