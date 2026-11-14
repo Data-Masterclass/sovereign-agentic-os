@@ -447,7 +447,13 @@ function persist(
  * discipline, not a partial poke. `sel.id` moves one; `sel.onlyUnassigned`
  * sweeps only empty-domain records. Returns the ids moved.
  */
-export function moveDatasetsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): string[] {
+export function moveDatasetsDomain(
+  sel: { id?: string; onlyUnassigned?: boolean },
+  target: string,
+  /** NIGHT-2 MERGE: the acting admin's principal id (D's M-8, applied to this sibling mover).
+   *  Optional only so pre-existing callers keep compiling; absent is recorded as `system`. */
+  actorId?: string,
+): string[] {
   const moved: string[] = [];
   for (const rec of ds().store.values()) {
     if (sel.id !== undefined && rec.id !== sel.id) continue;
@@ -456,9 +462,9 @@ export function moveDatasetsDomain(sel: { id?: string; onlyUnassigned?: boolean 
     const d = parseDataset(rec.yaml);
     const from = d.domain;
     d.domain = target;
-    persist(rec, d, undefined, { actor: 'system', action: 'move domain' });
+    persist(rec, d, undefined, { actor: actorId ?? 'system', action: 'move domain' });
     // The dataset LEFT `from` as well — that repo's project shrinks by one dataset.
-    if (from) emitProjectChange({ domain: from, datasetId: d.id, action: 'move domain', actorId: 'system' });
+    if (from) emitProjectChange({ domain: from, datasetId: d.id, action: 'move domain', actorId: actorId ?? 'system' });
     moved.push(rec.id);
   }
   return moved;
