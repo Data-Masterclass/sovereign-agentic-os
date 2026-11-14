@@ -54,6 +54,7 @@ import {
   type GitStoreOptions,
   type RepoSummary,
 } from '@core/infra/git-store';
+import { trailersNameObject } from '@core/infra/git-trailers';
 import type { MirrorSignal } from '@core/infra/git-mirror';
 
 // ------------------------------------------------------------- kind table ---
@@ -345,12 +346,15 @@ function toCommit(e: LogEntry): ObjectCommit {
  * WHOLE-SUBTREE commit additionally lists every id it carried in `OS-Objects` (space-separated,
  * stream X's R1), and the match there is on a whole token — `sys_abc` must never match
  * `sys_abcd`.
+ *
+ * NIGHT-2 MERGE (G x X): the rule itself is NOT here. `core/infra/git-trailers.ts`
+ * `trailersNameObject` is the single trailer predicate every read-back uses — this function is the
+ * message-to-trailers adapter in front of it, and nothing else. It previously carried its own copy
+ * of the rule, which split on a single space where X's splits on any whitespace run; one of the
+ * two would have drifted.
  */
 function trailerNames(message: string, id: string): boolean {
-  const t = parseTrailers(message);
-  const object = t['OS-Object'] ?? '';
-  if (object === id || object.startsWith(`${id} `)) return true;
-  return (t['OS-Objects'] ?? '').split(' ').includes(id);
+  return trailersNameObject(parseTrailers(message), id);
 }
 
 /**

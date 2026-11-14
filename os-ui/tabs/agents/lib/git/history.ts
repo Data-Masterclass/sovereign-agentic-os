@@ -22,6 +22,13 @@
  *     missing one both become the generic, byte-identical `not_found`.
  *   - Owner/scope gating for `systemGitInfo` itself is unchanged and happens BEFORE it is called
  *     (the caller has already passed `getSystem`), so this function performs no authorisation.
+ *   - X-R1 / review H-2 (night 2, stream X), AND IT STILL HOLDS THROUGH THE ADAPTER: a
+ *     WHOLE-SUBTREE commit (the boot reconcile) cannot name one system in `OS-Object`, so it lists
+ *     every system it carried in `OS-Objects` (space-separated ids) and the read-back matches that
+ *     too, on a WHOLE token — `sys_abc` must never match `sys_abcd`. The predicate is NOT local
+ *     and not duplicated: it is `core/infra/git-trailers.ts` `trailersNameObject`, which
+ *     `core/infra/git-objects.ts` now calls as well, so there is exactly ONE trailer parser and a
+ *     rewrite of either side cannot lose the whole-token behaviour.
  *   - Server-only: reaches node:fs through the git store.
  */
 import 'server-only';

@@ -261,7 +261,7 @@ export const governanceTools: McpTool[] = [
     tab: 'governance',
     minRole: 'builder',
     description:
-      'Read the consolidated, READ-ONLY policy plane — who-can-do-what end-to-end: role-derived grants + dynamic access grants + egress allowlist + standing policies, each labelled with the engine it compiles to (OPA / Trino access-control rules / OpenSearch-DLS), PLUS the capability-profile catalogue. Purpose: understand the governance posture before you act. Governance: gated on the `policy.view` right (re-checked in-lib, NOT just the Builder floor) — a creator is refused; a Builder/Domain-admin sees ONLY their own domain(s); an Admin sees tenant-wide. Read-only: editing lives in each tab, overrides are Admin-only.',
+      'Read the consolidated, READ-ONLY policy plane — who-can-do-what end-to-end: role-derived grants + dynamic access grants + egress allowlist + standing policies, each labelled with the engine it compiles to (`OPA` or `OpenSearch-DLS` per grant row, and `OPA/DLS` on the capability-profile rows — those are the only engines this view names; nothing here compiles to a semantic-layer product), PLUS the capability-profile catalogue. Purpose: understand the governance posture before you act. Governance: gated on the `policy.view` right (re-checked in-lib, NOT just the Builder floor) — a creator is refused; a Builder/Domain-admin sees ONLY their own domain(s); an Admin sees tenant-wide. Read-only: editing lives in each tab, overrides are Admin-only.',
     inputSchema: { type: 'object', properties: {}, examples: [{}] },
     call: async (user) => {
       // Re-gate authoritatively on the policy.view right (the real control).

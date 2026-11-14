@@ -14,7 +14,7 @@ The Sovereign Agentic OS is a single governed operating system for your data, kn
 | **Agents** | Agent systems grounded in knowledge, built and run here |
 | **Software** | Apps and services wired to governed deps |
 | **Metrics** | Canonical metric definitions backed by gold data |
-| **Dashboards** | Per-viewer charts bound to governed metrics, rendered natively (ECharts on Cube) |
+| **Dashboards** | Per-viewer charts bound to governed metrics, rendered natively (ECharts over governed Trino SQL) |
 | **Big Bets** | Strategic initiatives referencing real OS components |
 | **Files** | Binary and document assets, promotable to shared |
 | **Science** | Governed predict door into ML models |

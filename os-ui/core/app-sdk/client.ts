@@ -381,7 +381,9 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
     // ── metrics ───────────────────────────────────────────────────────────────
     metrics: {
       list: () => request('/api/metrics'),
-      /** Slice a metric via the governed explorer (per-viewer Cube RLS applies).
+      /** Slice a metric via the governed explorer — ONE governed Trino SELECT run as the
+       *  signed-in viewer, so Trino/OPA apply per-viewer row security (NOT Cube, which is off
+       *  the metric read path).
        *  The explorer's member-keyed row objects are normalized into a QueryResult
        *  table (columns derived from the row keys) — see normalizeMetricResult. */
       async query(id: string, q: MetricQuery = {}): Promise<QueryResult> {
