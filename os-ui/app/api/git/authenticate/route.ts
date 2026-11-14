@@ -13,6 +13,7 @@ import { principalById } from '@core/kernel/auth';
 import { AUTH_FAILED, authenticateGitRequest } from '@core/auth/git-http-auth';
 import { ensureHydrated } from '@core/auth/access-tokens-store';
 import { ensureReceiveHooks } from '@core/infra/git-receive';
+import { originalRequestUri } from '@core/infra/git-original-uri';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,9 @@ async function decide(req: Request): Promise<NextResponse> {
     });
   }
   await ensureHydrated();
-  const uri = req.headers.get('x-original-uri') || new URL(req.url).searchParams.get('uri') || '';
+  // ingress-nginx sends X-Original-URL by default; X-Original-URI needed a snippet the STACKIT
+  // controller forbids (allow-snippet-annotations=false). See core/infra/git-original-uri.ts.
+  const uri = originalRequestUri(req.headers, req.url);
   const outcome = await authenticateGitRequest(
     { authorization: req.headers.get('authorization'), uri },
     { lookup: principalById },

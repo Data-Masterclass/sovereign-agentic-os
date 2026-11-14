@@ -65,12 +65,16 @@ metadata:
     `proxy-body-size: 200m` for the Files tab, and emitting a second key of the same name produced
     a DUPLICATE YAML key whose winner depended on the parser. `merge` takes this route's values
     over the shared ones, so the git path's own body cap is the one that applies.
+
+    NO auth-snippet (2026-11-14): snippet directives are disabled on the STACKIT ingress controller
+    (allow-snippet-annotations=false) and its admission webhook refuses the annotation — the first
+    0.9.0 upgrade failed on exactly that. ingress-nginx sends X-Original-URL + X-Original-Method on
+    the auth sub-request by default; /api/git/authenticate reads those (core/infra/git-original-uri.ts).
   */}}
   {{- $gitAnno := dict
         "cert-manager.io/cluster-issuer" ($ing.tlsIssuer | toString)
         "nginx.ingress.kubernetes.io/auth-url" (printf "http://os-ui.%s.svc.cluster.local:3000/api/git/authenticate" .Release.Namespace)
         "nginx.ingress.kubernetes.io/auth-response-headers" "X-Os-Principal, X-Os-Principal-Role, X-Os-Token-Prefix"
-        "nginx.ingress.kubernetes.io/auth-snippet" "proxy_set_header X-Original-URI $request_uri;\n"
         "nginx.ingress.kubernetes.io/proxy-request-buffering" "off"
         "nginx.ingress.kubernetes.io/force-ssl-redirect" "true"
         "nginx.ingress.kubernetes.io/proxy-body-size" ($gh.maxPushSize | default "512m" | toString)
