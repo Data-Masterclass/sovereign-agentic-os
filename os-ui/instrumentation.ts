@@ -387,4 +387,27 @@ export async function registerGitObjectKindsAtBoot(): Promise<void> {
   } catch (err) {
     console.warn(`[os-ui] git versioning: agent-system NOT registered — ${err instanceof Error ? err.message : String(err)}`);
   }
+  // Night-2 merge (G x S): S's resolver takes `registerGitObject` as a PARAMETER precisely so the
+  // Software tab never imports the kernel registry it could not compile against on its own branch.
+  // This is the one line that joins them. Registered independently of the one above: a failure in
+  // either leaves only ITS kind answering the typed `kind_not_wired`.
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { installSoftwareGitObject } = await import('./tabs/software/lib/git-object.ts');
+    installSoftwareGitObject(registerGitObject);
+    console.info('[os-ui] git versioning: software registered (history, version, diff, releases)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: software NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // Night-2 merge (G x D): the three-line patch stream D's `lib/git/git-object.ts` documents as
+  // deviation D-4. The resolver reads through the dashboards store's own visibility gate, so an
+  // invisible dashboard is indistinguishable from a missing one (G5).
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { dashboardGitObjectResolver } = await import('./tabs/dashboards/lib/git/git-object.ts');
+    registerGitObject('dashboard', dashboardGitObjectResolver);
+    console.info('[os-ui] git versioning: dashboard registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: dashboard NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
 }

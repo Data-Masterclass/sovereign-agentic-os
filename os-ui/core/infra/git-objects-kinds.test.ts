@@ -154,8 +154,11 @@ test('G1: the kinds that are NOT in git yet say so, and the two that are name a 
   const committed = GIT_OBJECT_KINDS.filter((k) => GIT_OBJECT_LAYOUT[k].writer.state === 'committed');
   const landing = GIT_OBJECT_KINDS.filter((k) => GIT_OBJECT_LAYOUT[k].writer.state === 'landing');
   const backlog = GIT_OBJECT_KINDS.filter((k) => GIT_OBJECT_LAYOUT[k].writer.state === 'backlog');
-  assert.deepEqual(committed, ['dataset', 'agent-system'], 'tonight exactly these two kinds have a landed git writer');
-  assert.deepEqual(landing, ['metric', 'dashboard', 'software', 'lifecycle-pin'], 'these land with M, D, S and V tonight');
+  // Night-2 merge: D's `tabs/dashboards/lib/git/commit.ts` and S's `tabs/software/lib/git-commit.ts`
+  // landed, so `dashboard` and `software` moved from `landing` to `committed` (step 2 of the FLIP
+  // STEP above). `metric` and `lifecycle-pin` are still landing with M and V.
+  assert.deepEqual(committed, ['dataset', 'dashboard', 'agent-system', 'software'], 'these kinds have a landed git writer');
+  assert.deepEqual(landing, ['metric', 'lifecycle-pin'], 'these land with M and V tonight');
   assert.deepEqual(backlog, ['knowledge-workflow', 'connection-config'], 'these are the honest backlog, with reasons');
   assert.equal(committed.length + landing.length + backlog.length, GIT_OBJECT_KINDS.length, 'every kind is classified exactly once');
 });

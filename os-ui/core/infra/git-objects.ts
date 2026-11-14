@@ -126,7 +126,9 @@ export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
     label: 'dashboard-as-code',
     paths: ['dashboards/index.yml', 'dashboards/<slug>/'],
     personalLane: 'dashboards/personal/<uid>/<slug>/',
-    writer: { state: 'landing', via: 'tabs/dashboards/lib/git/commit.ts', stream: 'D (dashboard-as-code + reserveSubtree("dashboards/"))' },
+    // Night-2 merge: stream D landed the writer, so the row is flipped. The resolver resolves the
+    // slug through the committed `dashboards/index.yml` (`pathsForDashboard`) — slug != id.
+    writer: { state: 'committed', via: 'tabs/dashboards/lib/git/commit.ts', since: 'night 2, stream D' },
   },
   'agent-system': {
     kind: 'agent-system',
@@ -138,9 +140,11 @@ export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
   software: {
     kind: 'software',
     label: 'app source tree',
-    paths: ['apps/<slug>/', 'apps/<slug>/.app/release.json'],
+    // Night-2 merge: `apps/<slug>/.app/release.json` is NOT a path tonight — `release_software`
+    // did not land, so declaring it would describe a file nothing writes.
+    paths: ['apps/<slug>/'],
     personalLane: null,
-    writer: { state: 'landing', via: 'tabs/software/lib/git/commit.ts', stream: 'S (app source trees through commitSubtree("apps/<slug>"))' },
+    writer: { state: 'committed', via: 'tabs/software/lib/git-commit.ts', since: 'night 2, stream S' },
   },
   'lifecycle-pin': {
     kind: 'lifecycle-pin',

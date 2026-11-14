@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import CodePanel from '@tabs/software/ui/CodePanel';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
+import GitHeadBadge from '@core/ui/git/GitHeadBadge';
 import ReviewCard, { type ReviewCardData } from '@tabs/governance/ui/ReviewCard';
 import DomainTag from '@core/ui/DomainTag';
 import { useApprovalNotifier } from '@core/ui/lifecycle/useApprovalNotifier';
@@ -582,6 +583,12 @@ export default function SoftwareBuilder({
           ) : null}
           <span className={dep.cls}>{dep.label}</span>
           <span className="badge muted">{version}</span>
+          {/* Night-2 merge (G x S): the one-line mount stream S refused under its "mount nothing in
+              another stream's file" contract and stream G listed as deviation G-4. The badge reads
+              `/api/git?action=history&kind=software`, which resolves through S's
+              `resolveSoftwareGitObject` — so an app with no committed tree shows the SERVER'S
+              reason, never a silent "not in git". */}
+          {' '}· <GitHeadBadge kind="software" id={app.id} />
         </div>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           {/* The top-level Simple⇄Developer toggle drives the RAW CODE-FILES view

@@ -10,10 +10,10 @@
  *     `objectGitInfo` / `getVersion` / `diffVersions` reads and the `<GitHeadBadge/>` component);
  *     each tab registers how to LOCATE its own object. This is the dashboards registration.
  *   - The resolver is declared against G's `GitObjectLocation` shape rather than importing it:
- *     `core/infra/git-objects.ts` is not in this stream's worktree, and a tab may not import a
- *     module that does not compile. The local type is a copy of G's, kept deliberately minimal;
- *     the merge deletes it and imports the real one (see the stream's deviation D-4 for the exact
- *     three-line patch, which is `import { registerGitObject } …` + the call + the kinds-row flip).
+ *     DONE AT MERGE TIME (deviation D-4): the local copy of G's `GitObjectLocation` is deleted and
+ *     the real type imported from `@core/infra/git-objects`; `instrumentation.ts` calls
+ *     `registerGitObject('dashboard', dashboardGitObjectResolver)`, and the kinds row is flipped
+ *     to `committed`.
  *   - VISIBILITY IS THE STORE'S, NOT OURS: it resolves through `getDashboard(id, user)`, so a
  *     dashboard the caller cannot see is indistinguishable from one that does not exist — the OS's
  *     `not_found` convention (G5). This module adds no second visibility rule.
@@ -27,17 +27,13 @@ import { getDashboard } from '@tabs/dashboards/lib/store';
 import { pathsForDashboard } from '@tabs/dashboards/lib/git/facts';
 import type { StoredDashboard } from '@tabs/dashboards/lib/git/snapshot';
 
-/** G's `GitObjectLocation`, copied verbatim in shape (see ARCHITECTURE). */
-export type GitObjectLocation = {
-  /** The domain whose repo holds it. */
-  domain: string;
-  /** Repo path selectors: `a/b/` for everything under, `a/b.yml` for one file. */
-  paths: string[];
-  /** The id as the `OS-Object` trailer carries it (defaults to the object id). */
-  trailerId?: string;
-  /** A display name for the drawer header. */
-  name?: string;
-};
+/**
+ * Night-2 merge: the local copy of G's shape is GONE — this is G's own type, re-exported for the
+ * two callers in this tab that already name it. Deviation D-4's "the merge deletes it and imports
+ * the real one" is done; a drift between the two shapes is now impossible.
+ */
+export type { GitObjectLocation } from '@core/infra/git-objects';
+import type { GitObjectLocation } from '@core/infra/git-objects';
 
 /** The caller, narrowed to what the lookup needs (G passes its `CurrentUser`). */
 export type GitObjectUser = { id: string; domains: string[]; role: Role };
