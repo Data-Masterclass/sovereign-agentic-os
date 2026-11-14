@@ -27,6 +27,19 @@ export type MetricTier = 'personal' | 'domain' | 'marketplace';
 const TIER_OF: Record<MetricTier, Tier> = { personal: 'dataset', domain: 'asset', marketplace: 'product' };
 const METRIC_TIER: Record<Tier, MetricTier> = { dataset: 'personal', asset: 'domain', product: 'marketplace' };
 
+/**
+ * THE DATASET CEILING (checklist M12). The ladder is ordered, so a tier can be compared.
+ *
+ * A metric IS a measure on a dataset: every number it serves is read from that dataset's table
+ * through that dataset's grants. So a metric published WIDER than the data underneath it promises
+ * an audience a number they cannot be shown — the promotion would succeed and every read by a
+ * new viewer would then be refused by row-level security, or (worse, if the data were ever
+ * widened by mistake) served. The audience of a metric can therefore never exceed the audience of
+ * its dataset, and the refusal names the dataset so the fix is obvious: promote the dataset first.
+ */
+const TIER_RANK: Record<Tier, number> = { dataset: 0, asset: 1, product: 2 };
+const TIER_WORD: Record<Tier, string> = { dataset: 'Personal', asset: 'Domain', product: 'Company' };
+
 export type MetricRecord = {
   id: string;
   dataset: Dataset;
@@ -76,6 +89,20 @@ export async function governMetric(
     return { ok: false, record, consistency, reason: `consistency gate: ${bad?.detail ?? 'not consistent'}` };
   }
   const toTier = tierAfter(fromTier, transition);
+  // 3. the DATASET CEILING: a metric may not be promoted above the tier of the data it reads.
+  //    Checked here, after the role and consistency gates, so one refusal is reported at a time
+  //    and the audit trail still carries the consistency result for this attempt.
+  const datasetTier = record.dataset.tier;
+  if (TIER_RANK[toTier] > TIER_RANK[datasetTier]) {
+    return {
+      ok: false,
+      record,
+      consistency,
+      reason:
+        `dataset tier ceiling: '${record.dataset.name}' is ${TIER_WORD[datasetTier]}, so this metric cannot be ` +
+        `${transition === 'certify' ? 'certified to' : 'promoted to'} ${TIER_WORD[toTier]} — promote the dataset first`,
+    };
+  }
   return { ok: true, record: { ...record, tier: METRIC_TIER[toTier] }, consistency };
 }
 

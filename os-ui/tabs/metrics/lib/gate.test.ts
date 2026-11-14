@@ -93,7 +93,9 @@ test('GATE 3 — explore by region: two viewers see DIFFERENT rows (per-viewer R
 });
 
 test('GATE 4 — govern: Builder promotes, Admin certifies, a non-Builder cannot', async () => {
-  const d = goldSales();
+  // A CERTIFIED data product: a metric may not be promoted above the tier of the dataset it reads
+  // (M12), and this gate walks the metric all the way to Company.
+  const d = goldSales({ tier: 'product' });
   const rec = metricRecord(d, d.measures[0], 'amir', 'personal');
   const resolve = async () => 42000;
   assert.equal((await governMetric(rec, 'promote', { id: 'amir', role: 'creator' }, resolve)).ok, false);
