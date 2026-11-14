@@ -59,6 +59,13 @@ export async function register(): Promise<void> {
   // the one place in os-ui that is allowed to know both halves. Registration is pure (a Map
   // write), never awaited on a request path, and a kind with no adapter is an honest refusal
   // from go_live rather than a silent success, so a failure here cannot corrupt anything.
+  // EDGE-COMPILE GUARD (PR #48 CI `build`): `middleware.ts` makes Next compile this file for the
+  // edge runtime too. webpack skips the dependencies inside an `if (process.env.NEXT_RUNTIME ===
+  // 'nodejs') { ... }` BLOCK (constant-folded per compiler), but NOT code that merely follows the
+  // early `return` above — so a dynamic import outside such a block is bundled for edge and fails
+  // on `node:`/`crypto`/`http`. Every `await import(` in this file must sit inside one of these
+  // blocks; `core/kernel/instrumentation-edge-guard.test.ts` asserts it.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
   try {
     const { reserveLifecycleSubtree } = await import('./core/infra/lifecycle-pins.ts');
     reserveLifecycleSubtree();
@@ -89,6 +96,7 @@ export async function register(): Promise<void> {
   } catch (err) {
     console.error(`[os-ui] lifecycle: adapters NOT registered — go_live will refuse, naming the kind. ${err instanceof Error ? err.message : String(err)}`);
   }
+  }
 
   // Boot-time SECURITY guard: refuse to serve in production with the insecure
   // dev-default session/MCP signing secret. This runs HERE (real server start) so it
@@ -96,6 +104,7 @@ export async function register(): Promise<void> {
   // module-load assertion would bake the error into a prerendered page (unclearable by
   // a runtime secret rotation). Fail-closed: exit the process so the pod crash-loops
   // and the bad deploy is loud, rather than silently signing forgeable sessions.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
   try {
     const { config, assertNoDevDefaultSecretsInProd } = await import('./core/kernel/config.ts');
     assertNoDevDefaultSecretsInProd(config);
@@ -103,15 +112,18 @@ export async function register(): Promise<void> {
     console.error(`[os-ui] boot secret guard: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
+  }
 
   // TAB GATING warnings (telemetry only): surface typo'd keys and omissions that would
   // 404 the landing page / admin UI. Never fails boot.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
   try {
     const { config } = await import('./core/kernel/config.ts');
     const { enabledTabsWarnings } = await import('./core/kernel/tabs.ts');
     for (const w of enabledTabsWarnings(config.enabledTabs)) console.warn(`[os-ui] OS_ENABLED_TABS: ${w}`);
   } catch {
     /* telemetry must never break boot */
+  }
   }
 
   // CROSS-ORIGIN SESSION guard (telemetry only, 0.6.115): deployed apps carry the OS
@@ -120,6 +132,7 @@ export async function register(): Promise<void> {
   // `sessionCookieDomain` returns null → a host-only cookie → deployed apps get NO session
   // → silent 401 → "builds but shows no data". Warn LOUDLY so it is diagnosable. This does
   // NOT change the cookie logic — it only surfaces the misconfiguration. Never fails boot.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
   try {
     const { config } = await import('./core/kernel/config.ts');
     const { sessionCookieDomain } = await import('./core/kernel/session.ts');
@@ -143,6 +156,7 @@ export async function register(): Promise<void> {
   } catch (err) {
     // Telemetry must never break boot — a slip here is silently downgraded to a note.
     console.warn(`[os-ui] session-scope check skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
   }
 
   // Boot-time DECLARATIVE DEMO-APP seed (fire-and-forget, guarded, idempotent): stand up
@@ -365,6 +379,7 @@ export async function register(): Promise<void> {
   // the day this ships looks exactly like the day before — every dashboard, every schedule.
   // (`not-hydrated` defers to the next boot), because an empty index from a dead mirror is
   // indistinguishable from a tenant with nothing live. Never awaited, never fatal.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
   void (async () => {
     try {
       const { migrateEverythingLive } = await import('./core/kernel/lifecycle-migrate.ts');
@@ -386,7 +401,7 @@ export async function register(): Promise<void> {
       console.error(`[lifecycle] migration FAILED — nothing was pinned, it retries on the next boot. ${err instanceof Error ? err.message : String(err)}`);
     }
   })();
-
+  }
 
   // TRINO ACCESS RULES (engine rebuild B3; triggers fixed in B3-review-H-2/H-3/H-4): when
   // TRINO_ACCESS_RULES=true, write the file-based access-control rules Trino chains after OPA —
@@ -491,7 +506,8 @@ export async function register(): Promise<void> {
  * `kind_not_wired`, which is visible and honest, rather than breaking boot.
  */
 export async function registerGitObjectKindsAtBoot(): Promise<void> {
-  if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+  // Block guard, not an early return — see EDGE-COMPILE GUARD in `register()`.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
   try {
     const { registerAgentSystemGitObject } = await import('./tabs/agents/lib/git/history.ts');
     registerAgentSystemGitObject();
@@ -552,5 +568,6 @@ export async function registerGitObjectKindsAtBoot(): Promise<void> {
     console.info('[os-ui] git versioning: lifecycle-pin registered (history, version, diff)');
   } catch (err) {
     console.warn(`[os-ui] git versioning: lifecycle-pin NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
   }
 }
