@@ -808,3 +808,75 @@ result, and the UI must surface that label.
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,
 taking its prose from the file headers, the tab manifests and the component pins, so
 it cannot drift. CI fails if the committed page is stale.
+
+## Charts: one surface, and vendored third-party source
+
+**`core/ui/charts/` is the only place the OS registers Apache ECharts.** Before night run 2 there
+were three independent `echarts.use([…])` call sites — `tabs/dashboards/ui/PanelChart.tsx`,
+`tabs/data/ui/ResultChart.tsx` and `tabs/software/ui/appspec/ChartExplorerRenderer.tsx` — each with
+its own tree-shaken bundle, its own `cssVar` theme bridge, its own compact-number formatter and its
+own canvas lifecycle. That is how the same number came to be drawn three slightly different ways.
+The surface is now:
+
+| File | What it owns |
+|---|---|
+| `register.ts` | the single `echarts.use([…])` and `initChart` — the ONLY module allowed to name the `echarts` package |
+| `theme.ts` | the CSS-custom-property → concrete-colour bridge (`resolveChartColors` is pure, so it is tested without a DOM) |
+| `format.ts` | `leaf` · `num` · `fmtCompact` · `fileSlug` · `toCsv` — one formatting rule for the whole product |
+| `spec.ts` | the pure `ChartSpec → EChartsOption` builder and `fromRows`, the one row→spec adapter |
+| `Chart.tsx` | a shell: canvas lifecycle, resize, dispose, point click. No option building |
+
+`core/ui/charts/echarts-surface.test.ts` greps the whole tree and fails on a second registration.
+A host maps its own model onto `fromRows` (`tabs/dashboards/lib/chart-spec.ts` is the worked
+example) and gets an option identical to every other host's for the same rows.
+
+**`os-ui/vendor/superset/` is attributed third-party source, and it has its own rules.** The
+line/area/bar families are built by a vendored slice of Apache Superset's pure ECharts
+transformers (`extractSeries`, `getAxisType`, `getChartPadding`, `getMinAndMaxFromBounds`,
+`transformProps`, `transformSeries`), Apache-2.0 into Apache-2.0, pinned to an upstream **commit
+sha**. Things this codebase will punish you for:
+
+- **Rewriting an upstream licence header.** Apache-2.0 §4(a)/(c) forbids it, so `os-ui/vendor/**`
+  is excluded from the `FEATURE:`/`USER STORY:`/`ARCHITECTURE:` ratchet and covered by
+  `check-structure.mjs`'s **hard** `VENDOR-LICENCE-HEADER` rule instead: the upstream header
+  verbatim, a `Modified from <repo> <path> @ <40-char sha>` notice, a `Changes:` list, an SPDX id.
+- **`npm i`-ing an `@superset-ui/*` package.** Every one was last published 2024-12-10 and peers on
+  React `^16.13.1`; npm would install a second React tree against this repo's React 19 with no
+  warning. Vendor pure functions, never components.
+- **Adding a dependency to the vendored tree.** It imports nothing — not `echarts`, not `lodash`.
+  `lodash`'s `orderBy`/`sumBy` are reimplemented locally with lodash's own null-last ordering.
+- **A TypeScript `enum` in `os-ui/vendor/**` (or anywhere a test reaches).** Node's type-stripping
+  loader, which runs the suite, refuses one: `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`. Upstream enums
+  become `as const` objects plus a union type of the same name.
+- **Letting upstream reorder a user's series.** Superset's default branch sorts series
+  reverse-alphabetically. The OS passes `seriesOrder` so the measure order the panel author declared
+  is the order on screen.
+
+## A typed union is not a runtime check
+
+The dashboards review found a live SQL injection, and the shape of it is worth remembering because
+nothing in the code looked wrong.
+
+`tabs/metrics/lib/explorer.ts` declares `export type Granularity = 'day' | 'week' | …` and
+interpolates it straight into the compiled SQL — `date_trunc('${spec.granularity}', "col")` — which
+is correct for every caller that *has* a `Granularity`. The dashboards panel query had
+`timeGrain: Granularity | undefined` on its type and wrote `p.timeGrain as Granularity`. But the
+panel is parsed out of an HTTP request body, a `type` has no runtime existence, and `as` is erased
+at compile time, so the cast asserted something nobody had checked: a panel carrying
+`timeGrain: "month'), (SELECT password FROM users) --"` type-checked, cast cleanly, and closed the
+quote.
+
+Three rules come out of it:
+
+- **A string that reaches SQL as an IDENTIFIER or a KEYWORD must be checked against a closed
+  runtime allow-list, at the boundary where it enters.** Not escaped, not sanitised, not cast.
+  Values can be quoted and bound; grains, column names, aggregate names and sort directions cannot.
+- **A union type with no value form is a trap.** If a set is small and closed, declare the ARRAY and
+  derive the type (`const X = [...] as const; type X = (typeof X)[number]`), so there is something
+  to check at runtime and so a new member cannot be added to one and not the other.
+  `tabs/dashboards/lib/model.ts` does this for `VIZ_TYPES`, `SERVABLE_FILTER_OPERATORS` and
+  `PANEL_TIME_GRAINS`, the last of which carries a compile-time assertion that it still equals the
+  metrics `Granularity`.
+- **One assertion per door, not one per field.** `assertServableFilters` checks the operators AND
+  the grain, and the store calls it, so a new entry point cannot remember one check and forget the
+  other. A gate that lives in three call sites is a gate that is missing from the fourth.

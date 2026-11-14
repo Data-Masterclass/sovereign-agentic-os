@@ -24,6 +24,14 @@ Copyright 2016-2024 The Apache Software Foundation
 This product includes software developed at The Apache Software
 Foundation (http://www.apache.org/).
 
+Portions of this product are derived from Apache Superset SOURCE: pure chart
+transformers and series algebra, vendored under os-ui/vendor/superset/ from
+apache/superset @ c83fb2bb1dcfac41ac51bcebd82471f4a7180d18. Each vendored file retains
+the Apache Software Foundation licence header verbatim and carries a prominent
+"Modified from apache/superset <path> @ <sha>" notice listing the changes made,
+as Apache License 2.0 section 4 requires. This product is not Apache Superset
+and is not endorsed by the Apache Software Foundation.
+
 --------------------------------------------------------------------------------
 Apache Polaris  (licenses/notices/Apache-Polaris-NOTICE.txt)
 --------------------------------------------------------------------------------

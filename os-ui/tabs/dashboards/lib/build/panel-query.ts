@@ -8,7 +8,7 @@ import { type Principal } from '@tabs/data/lib/store';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
 import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { getMetric, listMetrics } from '@tabs/metrics/lib/store';
-import { type Panel, normalizePanel, panelMetrics } from '@tabs/dashboards/lib/model';
+import { type Panel, assertServableFilters, normalizePanel, panelMetrics } from '@tabs/dashboards/lib/model';
 
 /**
  * Server boundary for a NATIVE dashboard panel (Tier 1). A panel resolves its numbers
@@ -123,18 +123,44 @@ export async function runPanelQuery(
   }
 
   // The slice the panel asks for, shared across every measure (bare leaf names — the explorer
-  // re-qualifies them against each measure's view and drops non-members loudly). Panel filters
-  // thread through as equality filters (the drill-down shape) — only `equals` is servable on
-  // the governed-SQL path; any other operator would silently under-filter, so it is dropped
-  // via the explorer's loud reconciliation by mapping ONLY the equals ones here.
+  // re-qualifies them against each measure's view and drops non-members loudly).
+  //
+  // D10/D-R4.1 — NO SILENT UNDER-FILTER. The governed path compiles a panel filter to
+  // `column IN (<parameterised values>)`, so `equals`/`in` are servable and nothing else is. This
+  // used to be `.filter((f) => f.operator === 'equals')`: a panel authored with `amount >= 1000`
+  // rendered the UNFILTERED number with no warning anywhere. It is now a typed `bad_request`
+  // (`status: 400`) naming the member and the operator, raised BEFORE any query runs.
+  //
+  // H-1 — THE TIME GRAIN IS ALLOW-LISTED, NOT CAST. `p.timeGrain` arrives raw from the wire
+  // (`app/api/dashboards/panel-query/route.ts` parses the panel out of the request body) and the
+  // governed compiler interpolates it into `date_trunc('<grain>', "col")`
+  // (`tabs/metrics/lib/explorer.ts`). A bare `as Granularity` cast is erased at runtime, so a
+  // panel carrying `month'), (SELECT …` would have closed the quote. `assertServableFilters`
+  // checks it against the closed five-member list and REFUSES anything else.
+  assertServableFilters(p);
   const slice = {
     dimensions: (p.dimensions ?? []).map(leaf),
     timeDimension: p.timeDimension ? leaf(p.timeDimension) : undefined,
+    // Safe by the assertion above, which narrows it to the servable set.
     granularity: p.timeGrain as Granularity | undefined,
+    // An empty value list is not a filter at all (`IN ()` is not valid SQL) — it is dropped, which
+    // is faithful: the author expressed no restriction.
+    //
+    // M-9 — WHAT IS AND IS NOT GUARANTEED HERE. The COLUMN is validated by the explorer against
+    // the served model (`assertColumn`), so an identifier can never reach the SQL unchecked. The
+    // VALUES are quoted by the explorer, not bound as host parameters — Trino's HTTP protocol in
+    // this path takes a statement string — and the governed executor additionally REFUSES any
+    // statement containing `--` or `/* */`. So a value carrying a SQL comment does not inject; it
+    // makes the whole query fail closed at the executor. That is safe but opaque, so the values
+    // are checked here and a comment marker becomes a NAMED warning rather than an unexplained
+    // query failure further down.
     filters: (p.filters ?? [])
-      .filter((f) => f.operator === 'equals' && (f.values ?? []).length > 0)
+      .filter((f) => (f.values ?? []).length > 0)
       .map((f) => ({ column: leaf(f.member), values: f.values })),
   };
+  const commentValues = (p.filters ?? [])
+    .flatMap((f) => (f.values ?? []).map((v) => ({ member: f.member, value: String(v) })))
+    .filter(({ value }) => value.includes('--') || value.includes('/*') || value.includes('*/'));
 
   const missing: string[] = [];
   const droppedMembers = new Set<string>();
@@ -181,10 +207,15 @@ export async function runPanelQuery(
   const rows = [...byKey.values()];
   // Honesty precedence: an outage (no number at all) is the loudest; then unresolved members;
   // then a dropped slice dimension. Any of these makes the degradation LOUD, never silent.
+  // Honesty precedence, unchanged in order: an outage (no number at all) is the loudest; then
+  // unresolved members; then a dropped slice dimension; then (M-9) a filter value carrying a SQL
+  // comment marker, which the governed executor refuses outright — named here so the user sees
+  // WHY rather than an unexplained empty panel.
   const warning =
     unavailableWarning ??
     (missing.length > 0 ? missingMembersWarning(missing) : undefined) ??
-    (droppedMembers.size > 0 ? dropWarnings[0] : undefined);
+    (droppedMembers.size > 0 ? dropWarnings[0] : undefined) ??
+    (commentValues.length > 0 ? commentValueWarning(commentValues) : undefined);
 
   const missingMembers = missing.length > 0 ? missing : droppedMembers.size > 0 ? [...droppedMembers] : undefined;
 
@@ -208,5 +239,21 @@ export function missingMembersWarning(missing: string[]): string {
     'dataset’s domain table may be missing/stale. ' +
     'Open the dataset in the Data tab and use “Re-materialize domain table” (Builder+) to serve it. ' +
     'The chart is NOT silently un-grouped; fix the model to render it as designed.'
+  );
+}
+
+/**
+ * M-9: a filter value containing a SQL comment marker (a double dash, or a slash-star pair). The
+ * governed executor refuses any statement containing one, so such a panel returns nothing;
+ * without this the user would see an empty chart and no reason. Named, not silently stripped —
+ * stripping would change the filter the author wrote.
+ */
+export function commentValueWarning(hits: { member: string; value: string }[]): string {
+  const list = hits.map((h) => `\u201c${h.member}\u201d`).join(', ');
+  return (
+    `Filter ${hits.length === 1 ? 'value' : 'values'} on ${list} ${hits.length === 1 ? 'contains' : 'contain'} a SQL ` +
+    'comment marker. The governed query executor refuses any statement containing one, so this ' +
+    'panel cannot be served with that value. The value is NOT silently stripped, because that ' +
+    'would quietly change the filter you asked for — edit the filter instead.'
   );
 }
