@@ -123,9 +123,9 @@ export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
     // Night-2 merge: stream M landed the semantic emitter, which writes
     // `models/semantic/<model>.yml` (personal lane `models/personal/<uid>/semantic/`) through the
     // SAME dbt commit module as a dataset, stamping `OS-Object: metric:<datasetId>.<measure>`
-    // (`metricObjectId`). NOTE: no tab has called `registerGitObject('metric', …)` yet, so the
-    // generic reads still answer the typed `kind_not_wired` for this kind — committed writer,
-    // unwired reader, and both facts are visible rather than averaged into one.
+    // (`metricObjectId`). ITERATION 2: the reader is wired too —
+    // `tabs/metrics/lib/git-object-server.ts` resolves `{domain, semanticModel, ownerUid}` through
+    // the tab's own governed `getMetric` read, so this kind no longer answers `kind_not_wired`.
     writer: { state: 'committed', via: 'tabs/data/lib/dbt/commit.ts', since: 'night 2, stream M' },
   },
   dashboard: {

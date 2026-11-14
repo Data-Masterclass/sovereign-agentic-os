@@ -551,3 +551,39 @@ async function commitPinFile(
 
 /** The empty index, for a caller that wants the shape without touching the store. */
 export const EMPTY_INDEX: LifecycleIndex = EMPTY_LIFECYCLE_INDEX;
+
+// ============================================ the pin as a VERSIONED OBJECT ===
+/**
+ * `registerGitObject('lifecycle-pin', …)` — the reader half of this writer (checklist G3/G7).
+ *
+ * The pin file is the one git object whose writer lives in @core rather than a tab, so the
+ * resolver lives beside the writer: there is no tab to register it, and inventing one would put
+ * knowledge of `os/lifecycle/pins.yml` somewhere that does not own it. `instrumentation.ts` still
+ * does the registering, so every kind is wired in one visible place.
+ *
+ * THE OBJECT ID IS THE PIN KEY (`<kind>:<id>`) — exactly what `setLivePin` stamps into
+ * `OS-Object`, so the trailer lookup finds the pin's own commits and the path fallback finds the
+ * domain's other pin commits. Gating: the pin file is readable by any member of its domain (an
+ * admin sees every domain), and a pin the caller may not see answers `null`, which the generic
+ * read turns into the same `not_found` as a pin that does not exist (G5).
+ */
+export type PinGitObjectUser = { id: string; domains: string[]; role: string };
+
+export async function lifecyclePinGitObjectResolver(
+  user: PinGitObjectUser,
+  id: string,
+): Promise<{ domain: string; paths: string[]; trailerId: string; name: string } | null> {
+  const parsed = parsePinKey(id);
+  if (!parsed) return null;
+  let pin: Pin | undefined;
+  try {
+    pin = await livePin(parsed.kind, parsed.id);
+  } catch {
+    // An index that could not be read is not evidence that the pin is absent — but it is also not
+    // evidence that it exists, and the caller gets the same `not_found` either way.
+    return null;
+  }
+  if (!pin || !pin.domain) return null;
+  if (user.role !== 'admin' && !(user.domains ?? []).includes(pin.domain)) return null;
+  return { domain: pin.domain, paths: [LIFECYCLE_PIN_PATH], trailerId: pinKey(parsed.kind, parsed.id), name: `${parsed.kind}:${parsed.id}` };
+}

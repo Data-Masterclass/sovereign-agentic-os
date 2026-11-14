@@ -3,7 +3,7 @@
  */
 import yaml from 'js-yaml';
 import type { Dataset, Measure, MeasureFilter, RollingWindow } from '@tabs/data/lib/index';
-import { MEASURE_TYPES, type MeasureType, viewName, slug, inferDimType } from '@tabs/data/lib/index';
+import { MEASURE_TYPES, type MeasureType, viewName, modelName, sanitizeIdent, slug, inferDimType } from '@tabs/data/lib/index';
 import { assertFormulaRefs, compileFormula } from '@tabs/metrics/lib/formula';
 
 /**
@@ -122,6 +122,26 @@ export function measureName(name: string): string {
  */
 export function measureMember(dataset: Dataset, measure: Measure): string {
   return `${viewName(dataset).replace(/\s+/g, '')}.${measure.name}`;
+}
+
+/**
+ * The dbt SEMANTIC MODEL name for a dataset — the basename of `models/semantic/<model>.yml`, and
+ * therefore half of a metric's repo path (`tabs/metrics/lib/git-object.ts`). It is `modelName(d)`,
+ * the dataset's frozen physical identity, and it is reached through this one accessor so the
+ * path and the generated file can never be derived two different ways (the emitter uses the same
+ * function: `tabs/data/lib/dbt/semantic/from-measures.ts`).
+ */
+export function semanticModelName(dataset: Dataset): string {
+  return modelName(dataset);
+}
+
+/**
+ * The owner's segment of a personal lane (`models/personal/<uid>/…`). The SAME normalisation the
+ * Iceberg namespace and the generated model directory use, imported rather than reimplemented —
+ * two spellings of a lane is how a user ends up reading someone else's.
+ */
+export function laneUid(owner: string): string {
+  return sanitizeIdent(owner);
 }
 
 /** A dimension member on the same view (for slicing in the explorer / charts). */

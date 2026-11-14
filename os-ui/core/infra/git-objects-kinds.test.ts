@@ -253,3 +253,46 @@ test('G2: a writer module the table names is a module that exists', () => {
     assert.ok(existsSync(join(UI, module)), `docs/components/git.md names ${module}, which does not exist in os-ui/`);
   }
 });
+
+// -------------------------------------------- the reader half, wired at boot ---
+
+/**
+ * A COMMITTED WRITER WITH NO REGISTERED READER is the gap this pins (checklist G3/G7). Before
+ * iteration 2, `dataset`, `metric` and `lifecycle-pin` all wrote real files into every domain
+ * repository and answered the typed 501 `kind_not_wired` on every read, so there was no history,
+ * no diff and no git badge for a dbt model, a KPI or a lifecycle pin — honest, and useless.
+ *
+ * `instrumentation.ts` is read as TEXT: it is a Next entrypoint, so importing it would run the
+ * whole boot sequence (the dashboards boot test reads it the same way). Two kinds register through
+ * an installer that takes the registry as a parameter rather than naming the kind, so those are
+ * matched by their installer.
+ */
+test('G3: every kind whose writer COMMITS has a reader registered at boot', () => {
+  const text = readFileSync(join(UI, 'instrumentation.ts'), 'utf8');
+  const wired = new Set([...text.matchAll(/registerGitObject\('([^']+)'/g)].map((m) => m[1]));
+  const byInstaller: [GitObjectKind, RegExp][] = [
+    ['agent-system', /registerAgentSystemGitObject\(/],
+    ['software', /installSoftwareGitObject\(registerGitObject\)/],
+  ];
+  for (const [kind, re] of byInstaller) if (re.test(text)) wired.add(kind);
+
+  const committed = GIT_OBJECT_KINDS.filter((k) => GIT_OBJECT_LAYOUT[k].writer.state === 'committed');
+  assert.deepEqual(
+    [...wired].sort(),
+    [...committed].sort(),
+    'a kind that commits files must also be READABLE: register its resolver in instrumentation.ts, or the generic reads answer kind_not_wired for an object that plainly has files',
+  );
+  for (const kind of GIT_OBJECT_KINDS.filter((k) => GIT_OBJECT_LAYOUT[k].writer.state === 'backlog')) {
+    assert.ok(!wired.has(kind), `${kind} has no writer, so registering a reader for it would promise a history of nothing`);
+  }
+});
+
+test('G3: each registration stands alone — one failing kind cannot unwire another', () => {
+  const text = readFileSync(join(UI, 'instrumentation.ts'), 'utf8');
+  const step = text.slice(text.indexOf('export async function registerGitObjectKindsAtBoot'));
+  const tries = (step.match(/\n  try \{/g) ?? []).length;
+  const catches = (step.match(/\n  \} catch \(err\) \{/g) ?? []).length;
+  assert.equal(tries, 6, 'one try/catch per registered kind — a resolver that throws must not take the others with it');
+  assert.equal(catches, tries, 'every try has its own catch');
+  assert.ok(!/await registerGitObjectKindsAtBoot/.test(text.slice(0, text.indexOf('export async function registerGitObjectKindsAtBoot'))), 'the boot step is fire-and-forget: it may never fail boot');
+});

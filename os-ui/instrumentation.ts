@@ -522,4 +522,35 @@ export async function registerGitObjectKindsAtBoot(): Promise<void> {
   } catch (err) {
     console.warn(`[os-ui] git versioning: dashboard NOT registered — ${err instanceof Error ? err.message : String(err)}`);
   }
+  // Iteration 2 (checklist G3/G7): the three kinds with a COMMITTED writer and no reader. Each had
+  // real files in every domain repo and answered the typed `kind_not_wired`, which is honest but
+  // means no history, no diff and no git badge for a dataset, a KPI or a lifecycle pin. Each
+  // resolver runs its owner's own governed read AS THE CALLER, and each registration stands alone:
+  // a failure in one leaves only ITS kind unwired.
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { datasetGitObjectResolver } = await import('./tabs/data/lib/git-object.ts');
+    registerGitObject('dataset', datasetGitObjectResolver);
+    console.info('[os-ui] git versioning: dataset registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: dataset NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { metricGitObjectResolver } = await import('./tabs/metrics/lib/git-object-server.ts');
+    registerGitObject('metric', metricGitObjectResolver);
+    console.info('[os-ui] git versioning: metric registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: metric NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // The one kind whose writer lives in @core rather than a tab, so its resolver lives beside the
+  // writer; the registration still happens HERE, with every other kind.
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { lifecyclePinGitObjectResolver } = await import('./core/infra/lifecycle-pins.ts');
+    registerGitObject('lifecycle-pin', lifecyclePinGitObjectResolver);
+    console.info('[os-ui] git versioning: lifecycle-pin registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: lifecycle-pin NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
 }

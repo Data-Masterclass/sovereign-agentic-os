@@ -40,6 +40,12 @@ export {
 } from '@tabs/data/lib/metrics';
 export type { MeasureType, DimensionType } from '@tabs/data/lib/metrics';
 
+// The FROZEN physical identities (data/store-fqn.ts) the Metrics tab needs to name a repo PATH:
+// `sanitizeIdent` is the one normalisation every personal lane is built from (the Iceberg
+// namespace, the object-storage prefix and `models/personal/<uid>/`), so a consumer that needs
+// the lane must use THIS function rather than reimplementing the transform.
+export { sanitizeIdent } from '@tabs/data/lib/store-fqn';
+
 // Delegated-identity primitives (data/identity.ts) — the governed token the
 // Metrics/Dashboards query path delegates + propagates to Cube/Trino.
 export { claimsFromUser, delegate, propagate } from '@tabs/data/lib/identity';
