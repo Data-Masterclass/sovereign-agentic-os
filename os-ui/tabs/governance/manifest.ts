@@ -15,7 +15,9 @@ export const manifest: TabManifest = {
   key: 'governance',
   nav: { label: 'Governance', icon: '⚖', href: '/governance', group: 'Manage', minRole: 'builder' },
   routes: ["/governance"],
-  api: ["/api/governance", "/api/policy"],
+  // `/api/git` is the generic versioning surface (stream G): the Repositories section reads
+  // `?action=repos` from it, and the shared git badge reads the per-object actions.
+  api: ["/api/governance", "/api/policy", "/api/git"],
   mcpTools: ["governance"],
   policies: [],
   services: ["opa", "opensearch", "postgres"],

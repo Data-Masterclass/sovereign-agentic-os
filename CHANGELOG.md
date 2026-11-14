@@ -68,6 +68,45 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   four read-only research reports beside them as the evidence base. No product code changes in this
   commit.
 
+- **Git everywhere — generic versioning over the domain repos (night 2, stream G).**
+  `os-ui/core/infra/git-objects.ts` adds `objectGitInfo(kind, id)`, `getVersion`, `diffVersions`
+  and `restoreVersion` for every object kind, keyed on the `OS-Object` trailer **with a
+  path-scoped `git log -- <paths>` fallback**, so an object whose only commits are platform boot
+  reconciles no longer reports a null head. `core/infra/git-store.ts` grows the read half it
+  needs (read-at-commit, path-scoped log, unified diff, repo summaries); `core/ui/git/` provides
+  the shared `GitHeadBadge` + `HistoryDrawer` (and `ReleaseList`, hidden until the tag API
+  lands); `core/mcp/git-tools.ts` exposes `get_history`, `get_version`, `diff_versions` and
+  `restore_version`; Governance gains a **Repositories** section; and
+  `core/infra/git-objects-kinds.test.ts` is the all-kinds enumeration that fails when a writer
+  commits to a domain repo without a classified object kind. The repo layout table is documented
+  in `docs/components/git.md`. Restore is gated and refuses with a typed `restore_unsupported`
+  until a tab registers its writer — the OS never rewrites a human's history.
+
+- **Governance → Repositories (night 2, stream G).** One row per domain repository: head,
+  commit count, last author and subject, an on-demand commit log, and the push-mirror verdict
+  judged against the repository's CURRENT head — `ok` only when the last successful push was AT
+  that head, `behind` when it was older, `failed` with the real error, `none` when no mirror is
+  configured — plus the authoritative layout table saying which object kinds are in git today
+  and which are not. Reads the existing `git-mirror` health record; adds no second health source.
+
+### Fixed
+
+- **Git versioning review fixes (night 2, stream G).** The repositories overview now awaits the
+  mirror store's hydration before reading it (a cold pod reported "no push-mirror configured" for
+  every configured mirror); `?action=repos` and `?action=repolog` are **admin-only** and the
+  commit log additionally lists only commits whose `OS-Object` resolves for the caller, counting
+  and reporting the rest; version reads and diffs **redact secret-shaped content** and say which
+  files were altered (a restore still re-applies the raw bytes); binary blobs are reported as
+  binary instead of being decoded as UTF-8, and a version containing one cannot be restored;
+  version reads are bounded in bytes as well as in files; a trailing-newline-only change now
+  emits `\ No newline at end of file` so the patch is one `git apply` accepts; an added empty
+  file is no longer dropped from its own diff; `getVersion` reads one commit by sha instead of
+  walking 2000; the badge keeps the server's real message for a non-404 instead of showing "not
+  in git"; the restore refusal for an unregistered kind happens before any version is read; the
+  mirror link is `https:`-only; the per-object history reuses the log window it already read; and
+  the history lookup also matches the `OS-Objects` list a whole-subtree commit carries, on a
+  whole token.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a

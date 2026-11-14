@@ -268,5 +268,15 @@ test('a history that does not fit the scan window is flagged, and the HEAD is st
 });
 
 test('read-back of a system with no repo yet is an empty history, not an error', async () => {
-  assert.deepEqual(await systemGitInfo('never-seen', 'sys_nope', { reposDir }), { domain: 'never-seen', head: null, history: [], truncated: false });
+  // Night 2 (stream G): the reader is now the generic `objectGitInfo`, so the answer also carries
+  // WHICH source resolved it (`via`) and WHICH repo paths were looked at — an honest 'none'/[] for
+  // a domain with no repository, never a fabricated head.
+  assert.deepEqual(await systemGitInfo('never-seen', 'sys_nope', { reposDir }), {
+    domain: 'never-seen',
+    head: null,
+    history: [],
+    truncated: false,
+    via: 'none',
+    paths: [],
+  });
 });

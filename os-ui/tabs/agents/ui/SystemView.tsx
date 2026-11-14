@@ -24,6 +24,10 @@ import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
 import type { Visibility } from '@core/kernel/lifecycle';
 import DomainTag from '@core/ui/DomainTag';
+// Night 2 (stream G): the ONE shared git line. The header used to render its own sha/author
+// string from the route's `git` field; the badge is the same read plus the history drawer, so the
+// five detail headers cannot drift apart.
+import GitHeadBadge from '@core/ui/git/GitHeadBadge';
 
 // React Flow + Monaco are heavy, client-only, and SSR-tolerant only when lazy —
 // load the canvas ssr:false (same pattern as MonacoFile) so the standalone build
@@ -80,16 +84,8 @@ type SystemViewData = {
   canRun: boolean;
   role: Role;
   hermesEnabled: boolean;
-  /**
-   * Part D: the commit this system is AT in its domain repository, and the last commits that
-   * touched it. `null` when the OS is not committing to git (or the repo cannot be read) — the
-   * line is simply absent then, never a fabricated sha.
-   */
-  git?: {
-    domain: string;
-    head: { sha: string; author: string; at: string; action?: string; surface?: string } | null;
-    history: { sha: string; subject: string; author: string; at: string }[];
-  } | null;
+  // Night 2 (stream G, review L-4): the git head is no longer part of this payload — the header
+  // mounts `<GitHeadBadge/>`, which reads `/api/git` and opens the history drawer.
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
 };
@@ -491,13 +487,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
         domain <span className="mono">{data.domain}</span> · owner <span className="mono">{data.owner}</span>
         {data.lastActivity ? <> · last activity {new Date(data.lastActivity).toLocaleString()}</> : null}
-        {data.git?.head ? (
-          <>
-            {' '}· git <span className="mono" title={`${data.git.head.sha}${data.git.head.surface ? ` — via ${data.git.head.surface}` : ''}`}>{data.git.head.sha.slice(0, 7)}</span>
-            {' '}by <span className="mono">{data.git.head.author}</span> {new Date(data.git.head.at).toLocaleString()}
-            {data.git.history.length > 1 ? <> · {data.git.history.length} recent commits</> : null}
-          </>
-        ) : null}
+        {' '}· <GitHeadBadge kind="agent-system" id={data.id} />
       </div>
 
       {actErr ? <div className="error" style={{ marginBottom: 12 }}>{actErr}</div> : null}

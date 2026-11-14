@@ -954,3 +954,82 @@ exactly what it does:
 is a null-origin frame with a postMessage RPC for every OS call — a deliberate redesign of the
 identity bridge, recorded as deviation S-9 rather than assumed.
 
+## Versioning every object kind: one generic read over the domain repos
+
+(Night 2, stream G — `core/infra/git-objects.ts`, `core/ui/git/`, `core/mcp/git-tools.ts`.
+`docs/components/git.md` carries the authoritative repo-layout table and the commands.)
+
+Every builder artefact lives in its domain's repository (see "Git-based working" above), so
+"which version is this, what did it look like, what changed, put that back" is the same question
+for a dbt model, a dbt metric, a dashboard, an agent system and an app. It is answered once:
+
+```
+objectGitInfo(user, kind, id)         -> { head, history[], truncated, via, paths }
+getVersion(user, kind, id, sha)       -> the object's files AT that commit
+diffVersions(user, kind, id, a, b)    -> a unified diff (no diff dependency; 40 lines of LCS)
+restoreVersion(user, kind, id, sha)   -> ONE NEW COMMIT through the object's normal writer
+```
+
+**The kernel may not import a tab, so the tabs register themselves.** `GIT_OBJECT_LAYOUT` is the
+static layout table in @core; each tab calls `registerGitObject(kind, resolver)` at boot
+(`instrumentation.ts`), and the resolver runs **the tab's own governed read as the caller**. A
+resolver answers `null` — or throws, as a tab's read does for a forbidden object — and both
+become ONE byte-identical `not_found`, so an id cannot be probed for existence.
+
+**Why the path fallback exists, and why it is not optional.** The per-object read-back used to
+filter the domain log by the `OS-Object` trailer alone. A boot reconcile commits as the PLATFORM
+with `OS-Object: <domain>`, so every object whose only commits were reconciles answered
+`head: null` — the UI then said "never committed" about a system sitting in the tree. The
+generic reader merges a path-scoped `git log -- agents/<lane>/<slug>/` in whenever the trailer
+did not fill the page, and reports `via: 'trailer' | 'path' | 'trailer+path' | 'none'` so the
+answer never hides which source produced it. `tabs/agents/lib/git/history.ts` is now a thin
+adapter over this module rather than a second implementation.
+
+**Restore is a new commit or it is a refusal.** `restoreVersion` reads the old files and hands
+them to the kind's registered writer; nothing in @core knows how to write a dataset or a system,
+by design. A kind with no registered writer gets a typed `restore_unsupported` (501) — after the
+`not_found` gate, so a refusal never confirms that an object exists. A version too large for one
+read, or with no files at that commit, is refused too: a partially applied restore is worse than
+none.
+
+**The enumeration test is the gate that makes "everything lives in git" non-optional.**
+`core/infra/git-objects-kinds.test.ts` fails when a kind is added without a layout row, when a
+kind claims a `committed` writer whose module does not reach `commitTree`/`commitSubtree`, and —
+the direction that catches drift — when a module imports those primitives and **no object kind
+claims it**. A new writer therefore cannot land without classifying its artefact kind as
+committed, landing (naming the stream) or backlog (with a reason).
+
+### Governance → Repositories, and why the mirror verdict is not a boolean
+
+The Repositories section (`tabs/governance/ui/RepositoriesView.tsx` over
+`tabs/governance/lib/repositories.ts`) exists so "everything built in the OS lives in git" is
+checkable rather than asserted: every domain repository with its head, its commit count, its last
+author, its commit log on demand, and the layout table straight out of `GIT_OBJECT_LAYOUT`.
+
+The mirror verdict has **four** states for one reason: `pushMirror` records the sha it last
+pushed, and a push that SUCCEEDED two commits ago is not the same thing as a healthy mirror. So
+`ok` requires the last successful push to be AT the repository's current head; an older one reads
+`behind` and names both shas; a failed attempt reads `failed` and carries the real error (an
+egress refusal, an auth failure) rather than "push failed"; no configuration at all reads `none`
+and says the repository lives only on the OS volume. A boolean would have made the most common
+real state — configured, working, one commit behind until the next write — look identical to
+either health or failure.
+
+### Why a version read redacts and a restore does not
+
+`core/infra/git-store.ts` `readFilesAt` is RAW on purpose and `core/infra/git-objects.ts`
+`getVersion` scrubs. That asymmetry is the whole design: `getVersion` and `diffVersions` are the
+only paths that hand repository bytes to a browser or an AI client, while `restoreVersion`
+re-applies bytes through the object's writer — so a redaction performed in the primitive would be
+WRITTEN BACK into the tree, replacing a real value with `***REDACTED-BY-OS***`. Scrub at the
+read-out boundary; never in the thing a writer consumes.
+
+Two consequences worth keeping: the diff COMPARES raw content and only then redacts, so a change
+entirely inside a redacted value is reported as a redacted change instead of as "no change"; and
+the patterns are shape-based, never entropy-based, because a commit sha, a blob oid and a UUID are
+all high-entropy and redacting them would corrupt every diff the drawer renders.
+
+Binary blobs follow the same honesty rule from the other direction: decoding one as UTF-8 produced
+replacement characters that looked like content, so a binary file is reported with `binary: true`
+and its size and an EMPTY content — and a version containing one is refused for restore, because
+re-applying that empty content would truncate the file.
