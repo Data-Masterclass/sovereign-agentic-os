@@ -119,7 +119,13 @@ export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
     label: 'dbt metric',
     paths: ['models/semantic/<model>.yml'],
     personalLane: 'models/personal/<uid>/semantic/<model>.yml',
-    writer: { state: 'landing', via: 'tabs/data/lib/dbt/commit.ts', stream: 'M (the semantic emitter writes models/semantic/<model>.yml through the dbt commit path)' },
+    // Night-2 merge: stream M landed the semantic emitter, which writes
+    // `models/semantic/<model>.yml` (personal lane `models/personal/<uid>/semantic/`) through the
+    // SAME dbt commit module as a dataset, stamping `OS-Object: metric:<datasetId>.<measure>`
+    // (`metricObjectId`). NOTE: no tab has called `registerGitObject('metric', …)` yet, so the
+    // generic reads still answer the typed `kind_not_wired` for this kind — committed writer,
+    // unwired reader, and both facts are visible rather than averaged into one.
+    writer: { state: 'committed', via: 'tabs/data/lib/dbt/commit.ts', since: 'night 2, stream M' },
   },
   dashboard: {
     kind: 'dashboard',

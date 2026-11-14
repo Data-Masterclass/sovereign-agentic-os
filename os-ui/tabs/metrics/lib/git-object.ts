@@ -22,18 +22,18 @@
  *     before the lane move.
  *   - `null` means "no such metric OR you may not see it" — G turns both into one byte-identical
  *     `not_found`, so an id cannot be probed for existence (checklist G5).
- *   - Typed locally: `@core/infra/git-objects.ts` lands with stream G, and this file must compile
- *     before that merge. The shape is G's `GitObjectLocation` field for field.
+ *   - DONE AT MERGE: the locally-typed shape is deleted and G's own `GitObjectLocation` is
+ *     imported from `@core/infra/git-objects` (re-exported here as `MetricGitLocation` for this
+ *     tab's existing callers).
  */
 
-/** MERGE NOTE: deleted at merge and imported from `@core/infra/git-objects` as `GitObjectLocation`
- *  — stream G owns that type; this is it field for field (deviation M-11). */
-export type MetricGitLocation = {
-  domain: string;
-  paths: string[];
-  trailerId?: string;
-  name?: string;
-};
+/**
+ * DONE AT MERGE (deviation M-11): the local copy is gone and this is stream G's own
+ * `GitObjectLocation`, re-exported under the name this tab's callers already use. The two shapes
+ * can no longer drift.
+ */
+export type { GitObjectLocation as MetricGitLocation } from '@core/infra/git-objects';
+import type { GitObjectLocation as MetricGitLocation } from '@core/infra/git-objects';
 
 /** What the tab's own governed read must have resolved before a location can be built. */
 export type MetricGitFacts = {
