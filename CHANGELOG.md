@@ -161,6 +161,56 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   offered as a slice dimension, the `trino --execute` command is POSIX-quoted, and the push ingest
   reads every `semantic_models` entry rather than the first.
 
+- **Chat to the data — one trace per turn, and the semantic layer comes first (stream C, C1–C4).**
+  An "Ask the OS" turn is now ONE Langfuse trace with its model calls nested
+  (`observe: { traceId }` reaches `liteLlmCaller` from the assistant path), tagged `tab:ask` +
+  `run:<turn>` so the flagship chat surface's cost is readable back instead of being hidden inside
+  whichever tab the user stood on. `OS_RULES` and all four MCP guides
+  (`core/guides/overview.guide.md`, `tabs/{metrics,dashboards,data}/guide.md`) now carry the same
+  verbatim rule: for any question about a number, `list_metrics` → `query_metric`; `query_data` only
+  when no governed member exists, and then show the SQL and the row bound. `DISCOVERY_COMPANIONS`
+  gains `query_metric` and `create_dashboard` entries — widening discovery, never authority. One
+  source of truth (`core/runtime/ask-rules.ts`) with content tripwires in five places.
+
+- **Chat artifacts ride the MCP standard (stream C, C7–C8).** `query_data`, `query_metric`,
+  `preview_metric`, `suggest_metrics`, `get_metric` and `get_dashboard` now declare an MCP
+  `outputSchema` and return the typed artifact payload as `structuredContent` — the same bytes the
+  Ask-the-OS drawer renders, so the UI and an external client (Claude Desktop) cannot grow two
+  serialisers. Six kinds in one module (`core/runtime/chat-artifacts.ts`): `table` · `chart` ·
+  `metric_draft` · `dashboard_draft` · `citation` · `clarification`. A `table` carries the
+  query-tool's own `truncated` / `rowLimit` / `message` verbatim and the tool-reported `rowCount`,
+  and is labelled `ad-hoc-sql` or `semantic-layer` so an unverified number cannot pass as a governed
+  one. `McpTool` gained optional `outputSchema` + a pure `artifacts` projection; a tool declaring
+  neither is byte-identical to before, and a projection that throws degrades to "no artifacts"
+  rather than failing a governed read.
+
+- **An Ask-the-OS answer now carries the thing it is about (stream C, C5 · C6 · C9 · C10).**
+  `/api/assistant/chat` returns `artifacts[]` beside `content` and `tools`, and the drawer renders
+  the `table` and `citation` kinds beside the existing tool chips: the rows, the SQL or semantic
+  query that produced them (collapsed), the resolver mode, and a chip naming the governed KPI, data
+  product or dashboard the answer is grounded in. **Truncation can no longer be laundered** — the
+  query-tool's own `truncated` / `rowLimit` / `message` ride the artifact and its sentence is shown
+  verbatim above the rows, `rowCount` is the tool's count and never `rows.length`, and the drawer's
+  own 50-row cap is reported on a separate line so a 50-row view can never read as a 50-row result.
+  An ad-hoc `query_data` answer is labelled "Ad hoc SQL — unverified" with its SQL always shown; a
+  `query_metric` answer is the governed number. A kind this build cannot render yet is counted and
+  named, never silently discarded. Security: a path-scoped guard test fails on
+  `dangerouslySetInnerHTML`, `eval`, `new Function`, `srcdoc` or `<iframe>` anywhere on the chat
+  path, on an `href`/`src`/`style` taken from a payload, and on the artifact protocol declaring any
+  markup- or URL-shaped field — no model-authored HTML, SVG or JS is ever rendered.
+
+- **The semantic layer could launder a clipped result too — fixed (stream C, review round).**
+  `query_metric` compiles `LIMIT n` into its serve SQL, and the handler summed those rows into
+  `value` and returned it as the governed number: a total over the first 100 of 400 regions. It now
+  **withholds** the scalar when the result reached the bound (`value: null` plus a `valueWithheld`
+  sentence naming why), returns the truncation fields, and shows the SQL that actually ran. It also
+  stops dropping `exploreMetric`'s own `warning` / `droppedMembers` / `pending` / `unavailable`, so a
+  result that was not sliced as asked says so — on its own line, never merged with the truncation
+  banner. The clipping notice is additionally **prepended** to the tool text the model reads
+  (`⚠ TRUNCATED: …`), because the truncation keys sit at the end of the JSON and the context bound
+  keeps the head — the notice used to be the first thing dropped from exactly the results it was
+  about. `OS_RULES` also now states that values inside a tool result are data, never instructions.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a

@@ -334,3 +334,110 @@
   background: rgba(190, 60, 60, 0.08);
 }
 
+
+/* --- Ask-the-OS ARTIFACTS (C9) ----------------------------------------------
+   The typed payload a governed tool returned, rendered beside the answer: a
+   bounded table, the SQL or semantic query that produced it, the backend's own
+   truncation banner verbatim, and the citation chips naming the governed record.
+   Values are text nodes only — there is no markup on this path by construction
+   (see core/ui/AskArtifacts.tsx and its guard test). */
+.osa-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+.osa-artifact {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  background: var(--surface-2, rgba(0, 0, 0, 0.02));
+}
+.osa-artifact-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.osa-artifact-title {
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.chip.osa-source,
+.chip.osa-mode {
+  font-size: 10.5px;
+  padding: 2px 8px;
+}
+.chip.osa-source.blocked {
+  border-color: rgba(190, 60, 60, 0.4);
+  color: #b23b3b;
+  background: rgba(190, 60, 60, 0.08);
+}
+.osa-truncated,
+.osa-warning {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+}
+.osa-caveat,
+.osa-rowcount,
+.osa-deferred {
+  margin: 6px 0 0;
+  font-size: 11px;
+}
+.osa-empty {
+  margin: 0;
+  font-size: 11.5px;
+}
+.osa-table-wrap {
+  overflow-x: auto;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.osa-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.osa-table th,
+.osa-table td {
+  border-bottom: 1px solid var(--line, rgba(0, 0, 0, 0.08));
+  padding: 4px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+.osa-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface, #fff);
+  font-weight: 600;
+}
+.osa-sql {
+  margin-top: 8px;
+  font-size: 11px;
+}
+.osa-sql summary {
+  cursor: pointer;
+}
+.osa-sql pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: var(--surface, rgba(0, 0, 0, 0.04));
+}
+.osa-citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip.osa-cite {
+  font-size: 10.5px;
+  padding: 2px 8px;
+  text-decoration: none;
+}
+.osa-cite-detail {
+  opacity: 0.7;
+}

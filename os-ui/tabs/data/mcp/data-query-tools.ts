@@ -5,6 +5,7 @@ import 'server-only';
 import type { McpTool } from '@core/mcp/server';
 import { fail, str } from '@core/mcp/write-common';
 import { authorize, queryRun, trace } from '@core/infra/governed';
+import { ARTIFACT_OUTPUT_SCHEMA, tableArtifact } from '@core/runtime/chat-artifacts';
 import { readPrincipalFor } from '@tabs/data/lib/store-fqn';
 import { sanitizeSingleStatement } from '@tabs/data/lib/sql-guard';
 
@@ -22,6 +23,20 @@ export const dataQueryTools: McpTool[] = [
       properties: { sql: { type: 'string', description: 'A read-only SQL statement.' } },
       required: ['sql'],
     },
+    // C7 — the typed payload the Ask-the-OS drawer renders and an external MCP client
+    // validates. C5 is the point of it: the query-tool's `truncated` / `rowLimit` /
+    // `message` travel STRUCTURALLY to the surface, so a clipped result cannot reach the
+    // user as a confident total merely because the model forgot to mention the clipping.
+    outputSchema: ARTIFACT_OUTPUT_SCHEMA,
+    artifacts: (result, args) => [
+      tableArtifact(result, {
+        // C6 — labelled ad-hoc: the aggregation and the joins here were chosen by whoever
+        // wrote the SQL, not by the governed metric definition everyone else reads.
+        source: 'ad-hoc-sql',
+        sql: typeof args.sql === 'string' ? args.sql : undefined,
+        title: 'query_data (ad-hoc SQL)',
+      }),
+    ],
     call: async (user, args) => {
       const rawSql = str(args.sql).trim();
       if (!rawSql) fail('query_data needs a `sql` string', 400);

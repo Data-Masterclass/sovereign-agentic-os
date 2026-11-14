@@ -449,6 +449,14 @@ export async function runAgentic(opts: {
    * n=1. Unset ⇒ no such guard (the exact prior behaviour for every non-build assistant).
    */
   writeToolNames?: string[];
+  /**
+   * C1 — ONE Langfuse trace per TURN. When set, every model call this loop makes (plan,
+   * each act iteration, the cap synthesis) forwards it as `LlmRequest.observe`, so the
+   * gateway's own Langfuse callback logs INTO that trace instead of creating a fresh,
+   * unlinked trace per call. Unset ⇒ exactly the prior behaviour (N orphan traces), which
+   * is what every caller got before the assistant path started passing one.
+   */
+  observe?: { traceId: string; parentObservationId?: string };
 }): Promise<AgenticResult> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const budget = opts.budget ?? DEFAULT_MESSAGE_BUDGET;
@@ -460,6 +468,7 @@ export async function runAgentic(opts: {
     messages: budgetMessages([{ role: 'system', content: planPrompt(opts.system) }, ...user], budget),
     temperature: 0.2,
     maxTokens: opts.maxOutputTokens,
+    ...(opts.observe ? { observe: opts.observe } : {}),
   });
   const plan = stripThinking(planCompletion.content) || '(no plan produced)';
   opts.onPlan?.(plan);
@@ -525,6 +534,7 @@ export async function runAgentic(opts: {
         tools: react ? undefined : wire,
         temperature: 0.2,
         maxTokens: opts.maxOutputTokens,
+        ...(opts.observe ? { observe: opts.observe } : {}),
       });
     } catch (e) {
       // Native tool-calling unsupported → rebuild the system prompt with the ReAct
@@ -735,6 +745,7 @@ export async function runAgentic(opts: {
         ),
         temperature: 0.2,
         maxTokens: opts.maxOutputTokens,
+        ...(opts.observe ? { observe: opts.observe } : {}),
       });
       finalText = stripThinking(synth.content);
     } catch {
