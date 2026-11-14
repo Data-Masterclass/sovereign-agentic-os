@@ -17,6 +17,12 @@ type Props = {
   onClick: (id: string) => void;
 };
 
+// NOTE (night 2, stream V): this tile already renders its OWN Draft/Live badge, from the
+// workflow's `status` (published to the search index or not). That is a DIFFERENT fact from the
+// lifecycle pin, and showing two badges with the same two words would be exactly the vocabulary
+// collision the simplicity contract forbids — so the lifecycle badge is deliberately NOT mounted
+// here. The Studio|Run FILTER is applied to the grid (app/(plan)/workflows/page.tsx). Reconciling
+// the two — making `status` BE the lifecycle — is a Knowledge-tab change; see deviation V-12.
 const STATUS_LABEL: Record<string, string> = { draft: 'Draft', live: 'Live' };
 const VIS_CLASS: Record<string, string> = {
   Personal: 'vis-personal',

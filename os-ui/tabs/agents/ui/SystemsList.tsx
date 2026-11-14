@@ -13,6 +13,8 @@ import { SCOPE_GROUPS, groupByScope, scopeCounts, visibilityLabel, rootsForScope
 import { itemsUnderFolder, normaliseFolderPath, folderName, type FolderPathNode } from '@core/kernel/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@core/ui/core/FolderTree';
 import FolderLayout from '@core/ui/core/FolderLayout';
+import TileBadges from '@core/ui/lifecycle/TileBadges';
+import { useLifecycleTiles } from '@core/ui/lifecycle/useLifecycleView';
 import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
 import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
@@ -46,6 +48,9 @@ type Summary = {
   archived?: boolean;
 };
 type Groups = { mine: Summary[]; domain: Summary[]; marketplace: Summary[] };
+
+/** Stable id accessor for the shared lifecycle hook (a new closure would re-fetch). */
+const systemId = (s: { id: string }) => s.id;
 
 const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketplace' ? 'vis-certified' : 'vis-personal');
 // Display label from the OS-wide scope vocabulary: Shared→Domain, Marketplace→Company, Personal→My.
@@ -199,6 +204,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         <div className="row" style={{ gap: 6, alignItems: 'center' }}>
           {(s.visibility === 'Shared' || s.visibility === 'Marketplace') ? <DomainTag domain={s.domain} /> : null}
           {s.archived ? <span className="badge muted">archived</span> : null}
+          <TileBadges kind="agent" id={s.id} audience={false} />
           <span className={`badge ${visClass(s.visibility)}`}>{visLabel(s.visibility)}</span>
         </div>
       </div>
@@ -284,9 +290,11 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
 
   // Grid filter: when a folder is selected, show the systems under it (incl. subfolders)
   // that live in the selected root. Else the whole scope list.
-  const shown = sel
+  const inFolder = sel
     ? itemsUnderFolder(sel.path, visible.filter((s) => rootOf(s) === sel.root)).map((i) => visible.find((s) => s.id === i.id)!).filter(Boolean)
     : visible;
+  // LIFECYCLE: the ONE shared hook — Studio shows everything, Run only what is live.
+  const { tiles: shown } = useLifecycleTiles('agent', inFolder, systemId);
 
   return (
     <div className="systems-list">

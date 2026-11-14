@@ -15,6 +15,7 @@ import { SCOPE_GROUPS, groupsFromVisibility, tilesForScope, activeScopeCounts, r
 import { itemsUnderFolder, normaliseFolderPath, folderName, type FolderPathNode } from '@core/kernel/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@core/ui/core/FolderTree';
 import FolderLayout from '@core/ui/core/FolderLayout';
+import { useLifecycleTiles } from '@core/ui/lifecycle/useLifecycleView';
 import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
 import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
@@ -70,6 +71,9 @@ function isOpenable(a: AppItem): boolean {
 function rootOf(a: AppItem): FolderRoot {
   return a.visibility === 'Personal' ? 'personal' : 'domain';
 }
+
+/** Stable id accessor for the shared lifecycle hook (a new closure would re-fetch). */
+const appId = (a: { id: string }) => a.id;
 
 /** App visibility → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (v: Visibility): LcVisibility =>
@@ -318,9 +322,14 @@ function SoftwareInner() {
 
   // Grid filter: a selected folder shows the apps under it (incl. subfolders) in that
   // root; else the whole scope list.
-  const shown = sel
+  const inFolder = sel
     ? (itemsUnderFolder(sel.path, active.filter((a) => rootOf(a) === sel.root)) as AppItem[])
     : active;
+  // LIFECYCLE: the ONE shared hook — Studio shows everything, Run only what is live.
+  // No lifecycle BADGE here: this tile already renders its own Draft / deploy-state badge, and
+  // two badges with the word "Draft" would be the vocabulary collision the simplicity contract
+  // forbids. Reconciling the two is a Software-tab change — see deviation V-12.
+  const { tiles: shown } = useLifecycleTiles('app', inFolder, appId);
 
   // ONE tile renderer used by both the active grid and the archived section.
   const appTile = (a: AppItem & { archived: boolean }) => {

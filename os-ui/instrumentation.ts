@@ -52,9 +52,46 @@ export async function register(): Promise<void> {
     const { agentLifecycleAdapter } = await import('./tabs/agents/lib/lifecycle-adapter.ts');
     registerLifecycleAdapter(dashboardLifecycleAdapter);
     registerLifecycleAdapter(agentLifecycleAdapter);
+    const { datasetLifecycleAdapter } = await import('./tabs/data/lib/lifecycle-adapter.ts');
+    const { metricLifecycleAdapter } = await import('./tabs/metrics/lib/lifecycle-adapter.ts');
+    const { knowledgeLifecycleAdapter } = await import('./tabs/knowledge/lib/lifecycle-adapter.ts');
+    const { connectionLifecycleAdapter } = await import('./tabs/connections/lib/lifecycle-adapter.ts');
+    const { appLifecycleAdapter } = await import('./tabs/software/lib/lifecycle-adapter.ts');
+    registerLifecycleAdapter(datasetLifecycleAdapter);
+    registerLifecycleAdapter(metricLifecycleAdapter);
+    registerLifecycleAdapter(knowledgeLifecycleAdapter);
+    registerLifecycleAdapter(connectionLifecycleAdapter);
+    registerLifecycleAdapter(appLifecycleAdapter);
   } catch (err) {
     console.error(`[os-ui] lifecycle: adapters NOT registered — go_live will refuse, naming the kind. ${err instanceof Error ? err.message : String(err)}`);
   }
+
+  // LIFECYCLE MIGRATION (review H-2): every object that already exists becomes Live, ONCE, so
+  // the day this ships looks exactly like the day before — every dashboard, every schedule.
+  // Never awaited on a request path and never fatal; it does nothing unless the pin index was
+  // actually READ (a source answered), and retries on the next boot otherwise, because an empty
+  // index from a dead mirror is indistinguishable from a tenant with nothing live.
+  void (async () => {
+    try {
+      const { migrateEverythingLive } = await import('./core/kernel/lifecycle-migrate.ts');
+      const out = await migrateEverythingLive();
+      if (!out.ran) {
+        console.error(
+          out.reason === 'not-hydrated'
+            ? '[lifecycle] migration DEFERRED — the pin index could not be read, so nothing was written. It runs on the next boot; until then a pinned read falls back to the head and says so.'
+            : `[lifecycle] migration not needed (${out.reason}).`,
+        );
+        return;
+      }
+      console.error(
+        `[lifecycle] migration: ${out.pinned} object(s) are now Live across ${out.domains.length} domain(s) — ${JSON.stringify(out.perKind)}${
+          out.skipped.length ? ` · skipped: ${out.skipped.join('; ')}` : ''
+        }`,
+      );
+    } catch (err) {
+      console.error(`[lifecycle] migration FAILED — nothing was pinned, it retries on the next boot. ${err instanceof Error ? err.message : String(err)}`);
+    }
+  })();
 
   // Boot-time SECURITY guard: refuse to serve in production with the insecure
   // dev-default session/MCP signing secret. This runs HERE (real server start) so it

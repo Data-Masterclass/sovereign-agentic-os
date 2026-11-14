@@ -96,21 +96,44 @@ export async function lifecycleStatus(
   return { object, lifecycle, word: lifecycleWordOf(lifecycle), tier: object.tier };
 }
 
-/** The resolved dependency list with each dependency's OWN lifecycle attached. */
+/**
+ * The resolved dependency list with each dependency's OWN lifecycle attached, plus any warnings.
+ *
+ * A dependency whose KIND has no registered adapter is treated as SATISFIED and reported as a
+ * warning. Otherwise an object would be refused forever for a dependency nobody can pin — a
+ * refusal with no way out, which is worse than going live with a stated unknown. Review H-1.
+ */
 export async function goLiveDependencies(
   actor: LifecycleActor,
   object: LifecycleObject,
-): Promise<LifecycleDependency[]> {
+): Promise<{ dependencies: LifecycleDependency[]; warnings: string[] }> {
   const adapter = lifecycleAdapterFor(object.kind);
   const refs = (await adapter?.dependencies?.(actor, object)) ?? [];
   const index = await lifecycleIndex();
-  return refs.map((r) => ({
-    kind: r.kind,
-    id: r.id,
-    name: r.name,
-    // A dependency's draft ref is irrelevant to the guard — only whether it has a pin is.
-    lifecycle: lifecycleOf(r.kind, r.id, 'unversioned', index),
-  }));
+  const dependencies: LifecycleDependency[] = [];
+  const warnings: string[] = [];
+  for (const r of refs) {
+    if (!lifecycleAdapterFor(r.kind)) {
+      warnings.push(
+        `${r.kind} “${r.name}” cannot hold a pin yet, so its lifecycle was not checked — it is assumed ready`,
+      );
+      dependencies.push({
+        kind: r.kind,
+        id: r.id,
+        name: r.name,
+        lifecycle: { draft: 'unversioned', live: 'unverified' },
+      });
+      continue;
+    }
+    dependencies.push({
+      kind: r.kind,
+      id: r.id,
+      name: r.name,
+      // A dependency's draft ref is irrelevant to the guard — only whether it has a pin is.
+      lifecycle: lifecycleOf(r.kind, r.id, 'unversioned', index),
+    });
+  }
+  return { dependencies, warnings };
 }
 
 export type GoLivePreview = {
@@ -122,6 +145,8 @@ export type GoLivePreview = {
   confirm: { title: string; body: string; confirmLabel: string };
   /** Why it would be refused, already naming the offending dependency. */
   blocked: string | null;
+  /** Dependencies whose lifecycle could not be checked — stated, never hidden. */
+  warnings: string[];
 };
 
 /**
@@ -137,15 +162,16 @@ export async function previewGoLive(
   const adapter = requireAdapter(kind, id);
   const object = await adapter.resolve(actor, id);
   const target = (ref ?? '').trim() || object.head;
-  const dependencies = await goLiveDependencies(actor, object);
+  const { dependencies, warnings } = await goLiveDependencies(actor, object);
   const decision = goLiveGuard(dependencies);
   const consequences = (await adapter.consequences?.(actor, object)) ?? [];
   return {
     object,
     ref: target,
     dependencies,
-    confirm: goLiveConfirmCopy(object.kind, object.name, target, consequences),
+    confirm: goLiveConfirmCopy(object.kind, object.name, target, [...consequences, ...warnings]),
     blocked: decision.ok ? null : decision.reason,
+    warnings,
   };
 }
 
@@ -163,6 +189,8 @@ export type GoLiveResult = {
   commit: { sha: string; changed: boolean } | null;
   /** What now runs, in the tools' own words. */
   starts: string[];
+  /** Dependencies whose lifecycle could not be checked — stated, never hidden. */
+  warnings: string[];
 };
 
 /**
@@ -190,7 +218,7 @@ export async function goLive(
     );
   }
 
-  const dependencies = await goLiveDependencies(actor, object);
+  const { dependencies, warnings } = await goLiveDependencies(actor, object);
   const decision = goLiveGuard(dependencies);
   if (!decision.ok) throw lifecycleError(decision.reason, 409);
 
@@ -207,6 +235,7 @@ export async function goLive(
     tag: written.tag,
     commit: written.commit ? { sha: written.commit.sha, changed: written.commit.changed } : null,
     starts,
+    warnings,
   };
 }
 

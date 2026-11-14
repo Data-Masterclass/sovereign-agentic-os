@@ -32,6 +32,7 @@
  *     (`engine/jobs.ts`, `engine/worker-loop.ts`) are what the tests exercise.
  */
 import 'server-only';
+import type { RunEnv } from '@core/kernel/object-lifecycle';
 import { hostname } from 'node:os';
 import type { CurrentUser } from '@core/kernel/auth';
 import { principalById } from '@core/kernel/auth';
@@ -291,6 +292,9 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
       resume: job.kind === 'resume',
       resumeWith: job.input.resumeWith,
       prompt: job.input.prompt,
+      // LIFECYCLE (review M-3): the job carries the lifecycle its door established, so a
+      // worker-executed scheduled run is attributed env:run exactly like an inline one.
+      env: job.input.env,
       signal: opts.signal,
       emit,
     });
@@ -402,6 +406,12 @@ export type StartRunInput = {
   /** How long to follow the run before returning without a report (worker mode). */
   waitMs?: number;
   signal?: AbortSignal;
+  /**
+   * LIFECYCLE (review M-3): `run` when a SCHEDULE is executing the pinned definition, `test` for
+   * a verify pass, else `studio`. Recorded on the job so a worker-executed run is attributed the
+   * same as an inline one.
+   */
+  env?: RunEnv;
 };
 
 export type StartedRunReport = {
@@ -432,7 +442,7 @@ export async function startQueuedRun(input: StartRunInput): Promise<StartedRunRe
     requestedBy: input.user.id,
     user: input.user,
     kind: 'start',
-    input: { messages: input.messages, prompt: input.prompt },
+    input: { messages: input.messages, prompt: input.prompt, ...(input.env ? { env: input.env } : {}) },
   });
   return followRun(queued, { waitMs: input.waitMs, signal: input.signal });
 }

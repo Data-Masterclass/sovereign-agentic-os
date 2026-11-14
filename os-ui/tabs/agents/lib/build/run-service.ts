@@ -27,6 +27,7 @@
  *     (`engine/run.ts`, `engine/resume.ts`, `run-lock.ts`) is what the tests exercise.
  */
 import 'server-only';
+import type { RunEnv } from '@core/kernel/object-lifecycle';
 import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import { runOsTeam, type RunOsTeamResult } from '@tabs/agents/lib/build/agentic-graph-server';
@@ -228,6 +229,13 @@ export type ExecuteTeamRunInput = {
   emit?: (event: string, data: unknown) => void;
   /** For a fresh run: the prompt recorded on the durable store checkpoint. */
   prompt?: string;
+  /**
+   * LIFECYCLE (review M-3): which point of the system's life this run is — `run` for a schedule
+   * executing the PINNED definition, `test` for a verify pass, `studio` (the default) for a run
+   * started by hand. It becomes the LiteLLM `env:` tag and the Langfuse trace `environment`, so
+   * a draft's spend and traces never look like production's.
+   */
+  env?: RunEnv;
 };
 
 /**
@@ -261,6 +269,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
       user,
       yaml,
       systemId: id,
+      env: input.env,
       messages: input.messages,
       disabledAgents: view.disabledAgents,
       runId,

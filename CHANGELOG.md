@@ -29,6 +29,13 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   no tool anywhere gained a required argument. Runs carry the LiteLLM `env:studio|test|run` tag
   and set the Langfuse trace `environment`, with a smaller budget share off Run. The pin is
   committed to `os/lifecycle/pins.yml` so an engineer's clone can read exactly what is live.
+  Every tile list — Data, KPIs, Dashboards, Agents, Connections, Software, Knowledge — applies
+  the toggle through that one hook, with a shared batched lookup so a tab of forty tiles costs
+  one request. All seven kinds can hold a pin, a dependency whose kind cannot is a stated warning
+  rather than a refusal nobody could clear, the migration runs once at boot and only on an index
+  that could actually be READ, a scheduled run falls open to the head exactly once (before that
+  migration) and fails closed for ever after, and the committed pin file is read BACK when the
+  durable index is unreachable or answers empty — git is the system of record.
   See `docs/components/lifecycle.md`, including what is physically versus only logically
   separated.
 

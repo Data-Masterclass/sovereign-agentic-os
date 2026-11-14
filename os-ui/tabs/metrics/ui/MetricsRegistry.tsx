@@ -16,6 +16,8 @@ import {
 } from '@core/kernel/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@core/ui/core/FolderTree';
 import FolderLayout from '@core/ui/core/FolderLayout';
+import TileBadges from '@core/ui/lifecycle/TileBadges';
+import { useLifecycleTiles } from '@core/ui/lifecycle/useLifecycleView';
 import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
@@ -47,6 +49,9 @@ import {
 function rootOf(m: MetricSummary): FolderRoot {
   return m.tier === 'personal' ? 'personal' : 'domain';
 }
+
+/** Stable id accessor for the shared lifecycle hook (a new closure would re-fetch). */
+const metricId = (m: { id: string }) => m.id;
 
 function MetricCard({
   m, onOpen, scope, canManage, onMove, picked, onPick, visibleDatasetIds,
@@ -118,6 +123,7 @@ function MetricCard({
         </div>
         <div className="row" style={{ gap: 4, alignItems: 'center', flex: 'none' }}>
           {showDomain ? <DomainTag domain={m.domain} /> : null}
+          <TileBadges kind="metric" id={m.id} audience={false} />
           <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_WORD[m.tier]}</span>
         </div>
       </div>
@@ -240,9 +246,11 @@ function MetricsRegistryInner({
   );
 
   // Grid filter: a selected folder shows metrics under it (incl. subfolders) in that root.
-  const shown = sel
+  const inFolder = sel
     ? itemsUnderFolder(sel.path, active.filter((m) => rootOf(m) === sel.root))
     : active;
+  // LIFECYCLE: the ONE shared hook — Studio shows everything, Run only what is live.
+  const { tiles: shown } = useLifecycleTiles('metric', inFolder, metricId);
 
   // Bulk selection helpers: the ticked metrics (resolved from the visible set) and
   // whether the whole current view is already selected — drives the select-all toggle.

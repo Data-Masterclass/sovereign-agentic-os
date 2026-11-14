@@ -14,8 +14,11 @@
  *   - `fetch` is stubbed before the pin store loads, so the mirror is offline and the index is
  *     the in-process one — the same path a laptop install takes.
  */
-import { test, beforeEach } from 'node:test';
+import { test, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
@@ -33,7 +36,17 @@ const { LIFECYCLE_WORDS } = await import('@core/kernel/object-lifecycle');
 const ACTOR = { id: 'u1', name: 'Alex', role: 'creator', domains: ['sales'] };
 const SHA = 'c'.repeat(40);
 
-beforeEach(() => pins.__resetLifecyclePins());
+let tempRepos = '';
+const temps: string[] = [];
+
+beforeEach(async () => {
+  pins.__resetLifecyclePins();
+  // The pin WRITE gate (review H-3) refuses unless a source answered; the mirror is stubbed
+  // dead here, so the index hydrates from a real (empty) repo root in a temp dir.
+  tempRepos = mkdtempSync(join(tmpdir(), 'lifecycle-t-'));
+  temps.push(tempRepos);
+  await pins.hydrateForTests({ reposDir: tempRepos });
+});
 
 // ------------------------------------------------- V9: every artifact list tool ---
 
@@ -253,4 +266,8 @@ test('V9: a bad filter value is rejected BEFORE the payload is touched', async (
   // from the argument check and the caller gets a 400, not a filtered-to-nothing list.
   await payload;
   assert.equal(evaluated, true);
+});
+
+after(() => {
+  for (const d of temps) rmSync(d, { recursive: true, force: true });
 });

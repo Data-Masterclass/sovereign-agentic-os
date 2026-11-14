@@ -15,6 +15,8 @@ import ConnectionBuilder from '@tabs/connections/ui/ConnectionBuilder';
 import { itemsUnderFolder, normaliseFolderPath, folderName } from '@core/kernel/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@core/ui/core/FolderTree';
 import FolderLayout from '@core/ui/core/FolderLayout';
+import TileBadges from '@core/ui/lifecycle/TileBadges';
+import { useLifecycleFilter } from '@core/ui/lifecycle/useLifecycleView';
 import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
 import {
@@ -55,6 +57,9 @@ function GovernedConnectionsInner() {
   const [pickerId, setPickerId] = useState<string | null>(null);
   const { personalNodes, domainNodes, loadFolders } = useFolders('connections', showArchived);
   useEffect(() => { loadFolders(); }, [loadFolders]);
+  // LIFECYCLE: the ONE shared hook. The grid is assembled inside a render prop, where a hook may
+  // not be called, so this is the predicate variant — Studio keeps everything, Run only the live.
+  const { keep: keepLive } = useLifecycleFilter('connection', (data?.connections ?? []).map((c) => c.id));
 
   const load = useCallback(async () => {
     setError('');
@@ -246,10 +251,11 @@ function GovernedConnectionsInner() {
         const treeDomain = visibleRoots.includes('domain') ? synth(domainNodes, dPaths) : [];
         const treeItems = scopedConns.map((c) => ({ id: c.id, folder: normaliseFolderPath(c.folder ?? '/'), name: c.name, scope: connRoot(c.visibility) }));
 
-        const shownConns = sel
+        const shownConns = (sel
           ? scopedConns.filter((c) => connRoot(c.visibility) === sel.root)
               .filter((c) => itemsUnderFolder(sel.path, [{ id: c.id, folder: normaliseFolderPath(c.folder ?? '/') }]).length > 0)
-          : scopedConns;
+          : scopedConns
+        ).filter((c) => keepLive(c.id));
         const shownApps = sel ? [] : scopedApps;
 
         return (
@@ -362,6 +368,7 @@ function ConnectionTile({ c, onOpen, onMove, canMove }: { c: Conn; onOpen: () =>
           <span style={{ minWidth: 0 }}>
             <h3 style={{ margin: 0 }}>
               {c.name}
+              <span style={{ marginLeft: 6 }}><TileBadges kind="connection" id={c.id} audience={false} /></span>
               <span className="badge muted" style={{ marginLeft: 6 }}>{c.type}</span>
               {c.health === 'healthy' ? <span className="badge ok" style={{ marginLeft: 4 }}>healthy</span> : null}
               {c.health === 'needs-reconnect' ? <span className="badge err" style={{ marginLeft: 4 }}>needs reconnect</span> : null}

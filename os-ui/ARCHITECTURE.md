@@ -842,3 +842,14 @@ reads the pinned `system.yaml` out of the repository, and a dashboard's Run view
 pinned spec. Both **fail closed**: an unreadable pin refuses the run, and a pin whose version is
 no longer retained shows nothing and says why. Neither ever falls back to the draft — a different
 version running than the one that was signed off is the exact failure the pin exists to prevent.
+
+**And the two rules that cost the most to get right.** First: *a pin is never written on the
+strength of an index nobody could read.* `core/infra/lifecycle-pins.ts` records HOW it hydrated —
+the durable mirror, the committed `os/lifecycle/pins.yml` in the domain repos, or nothing — and
+every writer refuses with a 503 unless one of the first two answered. A mirror that answers but
+knows no pins is the dangerous shape (a rebuilt index looks exactly like a tenant that never went
+live), so in that case the committed files are read and adopted. This is the September-2026
+failure in a new place, and the guard is the same shape: an empty store is only a fact when the
+source answered. Second: *a new gate must not break what already works.* Before the one-time
+migration has established the index nothing has a pin, so a scheduled agent run falls open to the
+head — once, loudly, naming the fallback — and fails closed for ever after.

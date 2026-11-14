@@ -13,8 +13,11 @@
  *     its ref is unchanged, THEN go_live, THEN it differs. No route is imported (a test cannot),
  *     so the seam under test is `dashboardForSurface`, which is the one function the route calls.
  */
-import { test, beforeEach } from 'node:test';
+import { test, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
@@ -22,7 +25,24 @@ const store = await import('./store.ts');
 const { specRef, dashboardForSurface, dashboardLifecycleAdapter } = await import('./lifecycle-adapter.ts');
 const pins = await import('@core/infra/lifecycle-pins');
 const { registerLifecycleAdapter, __clearLifecycleAdapters } = await import('@core/kernel/lifecycle-adapters');
-const { goLive, retire } = await import('@core/kernel/go-live');
+const SHA40 = 'a'.repeat(40);
+
+/**
+ * The metric and dataset kinds, stood in for. Their REAL adapters live in their own tabs (a test
+ * here may not import another tab), and what this file must prove is the CHAIN: a dashboard whose
+ * dependencies can hold a pin goes live once they do.
+ */
+function registerDependencyKinds() {
+  for (const kind of ['metric', 'dataset'] as const) {
+    registerLifecycleAdapter({
+      kind,
+      resolve: async (_a, id) => ({ kind, id, name: id, domain: 'sales', head: SHA40, tier: 'personal' }),
+      canGoLive: async () => ({ ok: true }),
+    });
+  }
+}
+const { goLive, retire, previewGoLive } = await import('@core/kernel/go-live');
+const { lifecycleWordOf } = await import('@core/kernel/object-lifecycle');
 
 const ACTOR = { id: 'u1', name: 'Alex', role: 'creator' as const, domains: ['sales'] };
 const VIEWER = { id: 'u2', name: 'Bo', role: 'creator' as const, domains: ['sales'] };
@@ -38,11 +58,21 @@ const spec = (name: string, panels: number) => ({
   })),
 });
 
-beforeEach(() => {
+let tempRepos = '';
+const temps: string[] = [];
+
+beforeEach(async () => {
   store.__resetDashboards();
   pins.__resetLifecyclePins();
   __clearLifecycleAdapters();
   registerLifecycleAdapter(dashboardLifecycleAdapter);
+  registerDependencyKinds();
+
+  // The pin WRITE gate (review H-3) refuses unless a source answered; the mirror is stubbed
+  // dead here, so the index hydrates from a real (empty) repo root in a temp dir.
+  tempRepos = mkdtempSync(join(tmpdir(), 'lifecycle-t-'));
+  temps.push(tempRepos);
+  await pins.hydrateForTests({ reposDir: tempRepos });
 });
 
 // ----------------------------------------------------- V4: the headline test ---
@@ -194,4 +224,48 @@ test('a colleague may READ a shared dashboard in Run but may NOT change what it 
       return true;
     },
   );
+});
+
+// --------------------------- review H-1: the chain can actually be taken live ---
+
+test('H-1: a REAL dashboard with one metric panel goes live once its metric and dataset do', async () => {
+  store.saveDashboard(ACTOR, 'dash_chain', spec('Revenue by region', 1));
+
+  // It is refused first — the guard is real.
+  await assert.rejects(
+    () => goLive(ACTOR, 'dashboard', 'dash_chain', undefined, { commit: false }),
+    /Orders\.revenue/,
+  );
+
+  // Now take the dependencies live THROUGH THE SERVICE — the path a user actually has. Before
+  // the pin-only adapters existed this was impossible, which made the refusal permanent.
+  const metric = await goLive(ACTOR, 'metric', 'Orders.revenue', undefined, { commit: false });
+  assert.equal(metric.live, SHA40);
+  await goLive(ACTOR, 'dataset', 'Orders', undefined, { commit: false });
+
+  // And the dashboard follows.
+  const dash = await goLive(ACTOR, 'dashboard', 'dash_chain', undefined, { commit: false });
+  assert.equal(lifecycleWordOf(dash.lifecycle), 'live');
+  assert.deepEqual(dash.warnings, [], 'every dependency was genuinely checked');
+  assert.ok((await dashboardForSurface('dash_chain', ACTOR, 'run')).spec, 'and Run serves it');
+});
+
+test('H-1: a dependency whose KIND cannot hold a pin is a WARNING, never a permanent refusal', async () => {
+  __clearLifecycleAdapters();
+  registerLifecycleAdapter(dashboardLifecycleAdapter); // dashboards only: metric/dataset unwired
+  store.saveDashboard(ACTOR, 'dash_warn', spec('Revenue', 1));
+
+  const preview = await previewGoLive(ACTOR, 'dashboard', 'dash_warn');
+  assert.equal(preview.blocked, null, 'not blocked — a refusal with no way out is worse');
+  assert.equal(preview.warnings.length, 2, 'one per unwired dependency (the metric and the view)');
+  assert.match(preview.warnings.join(' '), /cannot hold a pin yet/);
+  assert.match(preview.confirm.body, /cannot hold a pin yet/, 'and the dialog SAYS so before you confirm');
+
+  const res = await goLive(ACTOR, 'dashboard', 'dash_warn', undefined, { commit: false });
+  assert.equal(lifecycleWordOf(res.lifecycle), 'live');
+  assert.equal(res.warnings.length, 2, 'the result repeats the unknowns rather than hiding them');
+});
+
+after(() => {
+  for (const d of temps) rmSync(d, { recursive: true, force: true });
 });

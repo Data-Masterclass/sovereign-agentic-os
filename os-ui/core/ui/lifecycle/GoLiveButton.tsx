@@ -97,7 +97,7 @@ export default function GoLiveButton({
     <span className="lifecycle-actions">
       {word === 'live' && !unpublished ? (
         <button type="button" className="btn ghost" disabled={busy} onClick={retireClick}>
-          Retire
+          {label}
         </button>
       ) : (
         <button type="button" className="btn" disabled={busy} onClick={goLiveClick}>

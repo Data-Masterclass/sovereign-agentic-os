@@ -120,8 +120,15 @@ test('V1.4: Studio shows everything; Run shows ONLY what is live — one rule, o
 test('V8: one button, two states — Go live, or Retire once it is live and unedited', () => {
   assert.equal(goLiveButtonLabel('draft', false), 'Go live');
   assert.equal(goLiveButtonLabel('testing', false), 'Go live');
-  assert.equal(goLiveButtonLabel('live', false), 'Live');
+  // Review L-1: there is no third, dead 'Live' label. A live object with nothing new to publish
+  // has nothing to go live WITH, so the one control reads Retire; the BADGE states "Live".
+  assert.equal(goLiveButtonLabel('live', false), 'Retire');
   assert.equal(goLiveButtonLabel('live', true), 'Go live with this draft');
+  assert.equal(
+    new Set(['draft', 'testing', 'live'].flatMap((w) => [false, true].map((u) => goLiveButtonLabel(w as never, u)))).size,
+    3,
+    'exactly three labels across every state — Go live, Go live with this draft, Retire',
+  );
 });
 
 test('V8: the dialog repeats the SERVER’s sentence about what starts running', () => {

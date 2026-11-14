@@ -104,8 +104,14 @@ export function retireDialogCopy(name: string, kind: string): ConfirmCopy {
   };
 }
 
-/** The button's own label, which is the only new control the lifecycle puts on screen. */
+/**
+ * The button's own label — the only new control the lifecycle puts on screen, in its two states.
+ *
+ * Review L-1: there is no third 'Live' label. A live object with no unpublished edits has nothing
+ * to go live WITH, so the control is `Retire`; a live object whose draft has moved on offers
+ * `Go live with this draft`. The badge, not the button, is where "this is Live" is stated.
+ */
 export function goLiveButtonLabel(word: LifecycleWord, hasUnpublished: boolean): string {
-  if (word !== 'live') return 'Go live';
-  return hasUnpublished ? 'Go live with this draft' : 'Live';
+  if (word === 'live') return hasUnpublished ? 'Go live with this draft' : 'Retire';
+  return 'Go live';
 }

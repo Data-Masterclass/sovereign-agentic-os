@@ -24,6 +24,7 @@
  *     rather than claiming a tag exists (deviation V-3).
  */
 import 'server-only';
+import { existsSync } from 'node:fs';
 import yaml from 'js-yaml';
 
 import { osMirror } from '@core/infra/os-mirror';
@@ -33,6 +34,8 @@ import {
   appendTrailers,
   authorFor,
   reserveSubtree,
+  listRepos,
+  readBlob,
   type CommitResult,
   type CommitTreeOptions,
 } from '@core/infra/git-store';
@@ -72,11 +75,17 @@ type PinDoc = {
   test?: boolean;
 };
 
-type PinState = { cache: LifecycleIndex | null; migrated: boolean };
+/**
+ * `source` records HOW the index was hydrated, which is the difference between "nothing is live"
+ * and "we could not find out" — the September-2026 lesson. A WRITER refuses unless it is
+ * `mirror` or `git`; a read degrades to an empty index, as every read path should.
+ */
+type PinSource = 'cold' | 'mirror' | 'git' | 'none';
+type PinState = { cache: LifecycleIndex | null; migrated: boolean; source: PinSource };
 const STATE_KEY = Symbol.for('soa.lifecycle.pins');
 function state(): PinState {
   const g = globalThis as unknown as Record<symbol, PinState | undefined>;
-  if (!g[STATE_KEY]) g[STATE_KEY] = { cache: null, migrated: false };
+  if (!g[STATE_KEY]) g[STATE_KEY] = { cache: null, migrated: false, source: 'cold' };
   return g[STATE_KEY]!;
 }
 
@@ -102,26 +111,138 @@ function docId(key: string, test: boolean): string {
   return `${test ? 'test' : 'pin'}-${key.replace(/[^A-Za-z0-9_.:-]/g, '_')}`;
 }
 
-/** The whole index, hydrated once. A dead mirror yields an EMPTY index, never a throw. */
+/** The sentinel document that records that the one-time migration has run. */
+const MIGRATION_DOC = 'meta-migration';
+
+/**
+ * The whole index, hydrated once.
+ *
+ * TWO sources, in order, because **git is the system of record and the mirror is a cache**:
+ *   1. the durable mirror (`os-lifecycle-pins`);
+ *   2. failing that, the committed `os/lifecycle/pins.yml` in every domain repo — the same bytes
+ *      an engineer reads in a clone.
+ * If neither answers, the index is EMPTY and `source` is `none`, so a reader degrades (as every
+ * read path should) while every WRITER refuses (`assertPinsWritable`). An empty index from a
+ * source that DID answer is a fact; an empty index from a dead source is not.
+ */
 export async function lifecycleIndex(): Promise<LifecycleIndex> {
   const s = state();
   if (s.cache) return s.cache;
   const pins: Record<string, Pin> = {};
   const tests: Record<string, TestMarker> = {};
-  const docs = (await mirror.hydrate(2000)) ?? [];
-  for (const d of docs as PinDoc[]) {
-    if (!d?.key || !d.ref) continue;
-    if (d.test) tests[d.key] = { ref: d.ref, at: d.at };
-    else pins[d.key] = { ref: d.ref, at: d.at, by: d.by, domain: d.domain, ...(d.path ? { path: d.path } : {}) };
+  const docs = await mirror.hydrate(2000);
+  if (docs) {
+    for (const d of docs as PinDoc[]) {
+      if (d && (d as { key?: string }).key === MIGRATION_DOC) {
+        s.migrated = true;
+        continue;
+      }
+      if (!d?.key || !d.ref) continue;
+      if (d.test) tests[d.key] = { ref: d.ref, at: d.at };
+      else pins[d.key] = { ref: d.ref, at: d.at, by: d.by, domain: d.domain, ...(d.path ? { path: d.path } : {}) };
+    }
+    s.source = 'mirror';
+    // GIT IS THE SYSTEM OF RECORD. A mirror that answers but knows no pins is the dangerous
+    // shape — an index rebuilt after data loss looks exactly like a tenant that never went live,
+    // and the next pin write would render `live: []` and commit away every row the domain had.
+    // So when the mirror has nothing, the committed pin files are read and adopted.
+    if (Object.keys(pins).length === 0) {
+      const fromGit = await hydrateFromRepos();
+      const recovered = Object.entries(fromGit ?? {});
+      if (recovered.length > 0) {
+        for (const [key, pin] of recovered) pins[key] = pin;
+        s.migrated = true;
+        console.error(
+          `[lifecycle] the pin mirror answered EMPTY but ${recovered.length} pin(s) are committed in the domain repos — adopted from os/lifecycle/pins.yml, because git is the system of record`,
+        );
+      }
+    }
+  } else {
+    const fromGit = await hydrateFromRepos();
+    if (fromGit) {
+      for (const [key, pin] of Object.entries(fromGit)) pins[key] = pin;
+      s.source = 'git';
+      s.migrated = Object.keys(fromGit).length > 0;
+      console.error(
+        `[lifecycle] the pin mirror is unreachable — hydrated ${Object.keys(fromGit).length} pin(s) from the committed os/lifecycle/pins.yml instead (git is the system of record)`,
+      );
+    } else {
+      s.source = 'none';
+      console.error('[lifecycle] NEITHER the pin mirror NOR the domain repos answered — the index is empty and every pin WRITE is refused until one does');
+    }
   }
   s.cache = { pins, tests };
   return s.cache;
 }
 
-/** Whether the durable mirror actually answered — the gate a one-time migration must check. */
+/**
+ * Read every domain's committed pin file. `null` when the repos could not be listed AT ALL —
+ * which is the distinction the whole gate rests on.
+ *
+ * `listRepos` answers `[]` both for "a readable root with no repos" (a fresh tenant — a FACT)
+ * and for "the directory is not there" (an unmounted volume on a fresh pod — NOT a fact). Only
+ * the first may unlock a write, so the root's existence is checked explicitly: otherwise a pod
+ * whose repo volume had not attached yet would render a pin file from an empty index and commit
+ * away every row the domain had. That is the September-2026 shape, in a new place.
+ */
+async function hydrateFromRepos(deps: { reposDir?: string } = {}): Promise<Record<string, Pin> | null> {
+  const reposDir = deps.reposDir ?? config.reposDir;
+  if (!reposDir || !existsSync(reposDir)) return null;
+  let repos: { name: string }[];
+  try {
+    repos = await listRepos({ reposDir });
+  } catch {
+    return null; // the repo root itself is unreadable — "we could not find out"
+  }
+  const out: Record<string, Pin> = {};
+  for (const r of repos) {
+    let text: string;
+    try {
+      text = await readBlob(r.name, undefined, LIFECYCLE_PIN_PATH, { reposDir });
+    } catch {
+      continue; // this domain has nothing live — a fact, not a failure
+    }
+    for (const row of parsePinFile(text)) {
+      out[pinKey(row.kind, row.id)] = { ref: row.ref, at: row.at, by: row.by, domain: r.name, ...(row.path ? { path: row.path } : {}) };
+    }
+  }
+  return out;
+}
+
+/**
+ * Hydration state. `hydrated` means a source ANSWERED (the mirror, or the repos) — not that it
+ * returned rows. Everything that WRITES must check this first, because an empty index from a
+ * dead mirror is indistinguishable from a tenant that has nothing live, and committing a pin
+ * file rendered from it would silently un-live everything.
+ */
 export function pinsHydrationState(): 'cold' | 'hydrated' | 'offline' {
-  if (!state().cache) return 'cold';
-  return mirror.healthy() ? 'hydrated' : 'offline';
+  const s = state();
+  if (!s.cache) return 'cold';
+  return s.source === 'mirror' || s.source === 'git' ? 'hydrated' : 'offline';
+}
+
+/** Whether the one-time "everything existing is Live" migration has run for this tenant. */
+export function pinsMigrated(): boolean {
+  return state().migrated;
+}
+
+/** Record that the migration has run, durably, so a restart does not re-run or re-decide. */
+function markMigrated(): void {
+  state().migrated = true;
+  mirror.writeThrough(MIGRATION_DOC, { key: MIGRATION_DOC, at: new Date().toISOString() });
+}
+
+/** The 503 every pin WRITE is gated on. */
+function assertPinsWritable(): void {
+  const st = pinsHydrationState();
+  if (st === 'hydrated') return;
+  const e = new Error(
+    st === 'cold'
+      ? 'the lifecycle pin index has not been read yet — try again in a moment'
+      : 'the lifecycle pin index could not be read (neither the durable mirror nor the domain repos answered), so the OS will not write a pin it cannot reconcile',
+  ) as Error & { status: number };
+  e.status = 503;
+  throw e;
 }
 
 /** The pin for one object, or undefined. */
@@ -180,6 +301,7 @@ export async function setLivePin(
   path?: string,
 ): Promise<SetPinResult> {
   const index = await lifecycleIndex();
+  assertPinsWritable();
   const key = pinKey(kind, id);
   const pin: Pin = { ref, at: new Date().toISOString(), by: by.id, domain, ...(path ? { path } : {}) };
   index.pins[key] = pin;
@@ -197,6 +319,7 @@ export async function clearLivePin(
   deps: PinWriteDeps = {},
 ): Promise<{ removed: boolean; commit: CommitResult | null }> {
   const index = await lifecycleIndex();
+  assertPinsWritable();
   const key = pinKey(kind, id);
   const had = Boolean(index.pins[key]);
   delete index.pins[key];
@@ -232,6 +355,7 @@ export async function applyMigratedIndex(
   deps: PinWriteDeps = {},
 ): Promise<{ pinned: number; domains: string[] }> {
   const index = await lifecycleIndex();
+  assertPinsWritable();
   const domains = new Set<string>();
   let pinned = 0;
   for (const [key, pin] of Object.entries(next.pins)) {
@@ -257,7 +381,34 @@ export async function applyMigratedIndex(
       await commitPinFile(domain, index, by, 'migrate', 'lifecycle', deps);
     }
   }
+  markMigrated();
   return { pinned, domains: [...domains].sort() };
+}
+
+/**
+ * Test seam: hydrate with the git fallback pointed at a temp `reposDir`. Production always reads
+ * `config.reposDir`; a test cannot set an env var after the module has loaded, so the override is
+ * explicit and used only here.
+ */
+export async function hydrateForTests(deps: { reposDir?: string } = {}): Promise<LifecycleIndex> {
+  const s = state();
+  if (s.cache) return s.cache;
+  const pins: Record<string, Pin> = {};
+  const docs = await mirror.hydrate(2000);
+  if (docs) {
+    s.source = 'mirror';
+  } else {
+    const fromGit = await hydrateFromRepos(deps);
+    if (fromGit) {
+      for (const [key, pin] of Object.entries(fromGit)) pins[key] = pin;
+      s.source = 'git';
+      s.migrated = Object.keys(fromGit).length > 0;
+    } else {
+      s.source = 'none';
+    }
+  }
+  s.cache = { pins, tests: {} };
+  return s.cache;
 }
 
 /** Test seam: drop the in-process index so a test starts from nothing. */
@@ -265,6 +416,7 @@ export function __resetLifecyclePins(): void {
   const s = state();
   s.cache = null;
   s.migrated = false;
+  s.source = 'cold';
   mirror.__reset();
 }
 
@@ -277,7 +429,47 @@ export type PinRow = {
   tag: string;
   at: string;
   by: string;
+  /** The repo path of the pinned definition, for a git-backed kind (review L-2). */
+  path?: string;
 };
+
+/**
+ * Read a committed pin file back. This is the half that makes `os/lifecycle/pins.yml`
+ * authoritative rather than decorative: when the durable mirror is unreachable the OS hydrates
+ * from these bytes, so git stays the system of record and the mirror stays a cache.
+ *
+ * Tolerant by design — an unparseable or hand-mangled file yields the rows it can read and drops
+ * the rest, because refusing to boot over one bad row would be worse than running with fewer.
+ */
+export function parsePinFile(text: string): PinRow[] {
+  let doc: unknown;
+  try {
+    doc = yaml.load(String(text ?? ''));
+  } catch {
+    return [];
+  }
+  const live = (doc as { live?: unknown })?.live;
+  if (!Array.isArray(live)) return [];
+  const out: PinRow[] = [];
+  for (const row of live) {
+    if (!row || typeof row !== 'object') continue;
+    const r = row as Record<string, unknown>;
+    const kind = typeof r.kind === 'string' ? r.kind : '';
+    const id = typeof r.id === 'string' ? r.id : '';
+    const ref = typeof r.ref === 'string' ? r.ref : '';
+    if (!kind || !id || !ref) continue;
+    out.push({
+      kind,
+      id,
+      ref,
+      tag: typeof r.tag === 'string' ? r.tag : liveTagName(kind, id),
+      at: typeof r.at === 'string' ? r.at : '',
+      by: typeof r.by === 'string' ? r.by : '',
+      ...(typeof r.path === 'string' && r.path ? { path: r.path } : {}),
+    });
+  }
+  return out;
+}
 
 /** The rows one domain's pin file carries, sorted so the bytes are stable. */
 export function pinRowsFor(domain: string, index: LifecycleIndex): PinRow[] {

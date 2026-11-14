@@ -14,6 +14,11 @@ export const dynamic = 'force-dynamic';
  *
  * GET  /api/lifecycle?kind=&id=[&action=preview|retire-preview]  → status, or the confirm copy
  * POST /api/lifecycle  { action: 'go_live' | 'retire', kind, id, sha? }
+ *
+ * Review M-2: this route passes no `hydrate:` because it is POLYMORPHIC — it serves seven kinds
+ * and cannot know which store to warm. Each adapter's own `resolve` awaits its tab's
+ * `ensureHydrated()` instead, which is both correct on a cold pod and the only place that knows
+ * what "hydrated" means for that kind.
  */
 export const GET = withRoute(async ({ user, req }) => {
   const q = new URL(req.url).searchParams;

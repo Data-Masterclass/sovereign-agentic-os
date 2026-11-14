@@ -29,7 +29,8 @@ import type { ViewSurface } from '@core/kernel/object-lifecycle';
 import {
   getDashboard,
   listDashboardVersions,
-  listAllDashboardsInternal,
+  listDashboards,
+  ensureHydrated,
   type Principal,
 } from '@tabs/dashboards/lib/store';
 import { panelMetrics, type DashboardSpec } from '@tabs/dashboards/lib/model';
@@ -74,6 +75,7 @@ export async function dashboardForSurface(
   actor: LifecycleActor,
   surface: ViewSurface,
 ): Promise<SurfaceRead> {
+  await ensureHydrated(); // a cold pod must not answer not_found for a dashboard that exists
   const user = P(actor);
   const rec = getDashboard(id, user); // throws 403/404 as the caller, never widened
   const draftRef = specRef(rec.spec);
@@ -138,6 +140,7 @@ function dependenciesOf(spec: DashboardSpec): DependencyRef[] {
 export const dashboardLifecycleAdapter: LifecycleAdapter = {
   kind: 'dashboard',
   resolve: async (actor, id) => {
+    await ensureHydrated();
     const rec = getDashboard(id, P(actor));
     return {
       kind: 'dashboard',
@@ -149,18 +152,25 @@ export const dashboardLifecycleAdapter: LifecycleAdapter = {
     };
   },
   canGoLive: async (actor, obj) => {
+    await ensureHydrated();
     const rec = getDashboard(obj.id, P(actor));
     if (rec.owner === actor.id) return { ok: true };
-    if (rec.tier !== 'personal' && (actor.role === 'domain_admin' || actor.role === 'admin')) {
+    // A domain admin may operate a SHARED dashboard IN THEIR OWN DOMAIN — never another's.
+    const sameDomain = actor.domains.includes(rec.domain);
+    if (rec.tier !== 'personal' && sameDomain && (actor.role === 'domain_admin' || actor.role === 'admin')) {
       return { ok: true };
     }
     return {
       ok: false,
-      reason: `only ${rec.owner} (or a domain admin on a shared dashboard) may change what Run serves for “${rec.spec.name}”`,
+      reason: `only ${rec.owner} (or a domain admin in ${rec.domain}) may change what Run serves for “${rec.spec.name}”`,
     };
   },
-  dependencies: async (actor, obj) => dependenciesOf(getDashboard(obj.id, P(actor)).spec),
+  dependencies: async (actor, obj) => {
+    await ensureHydrated();
+    return dependenciesOf(getDashboard(obj.id, P(actor)).spec);
+  },
   consequences: async (actor, obj) => {
+    await ensureHydrated();
     const rec = getDashboard(obj.id, P(actor));
     const panels = rec.spec.charts?.length ?? 0;
     return [
@@ -168,12 +178,17 @@ export const dashboardLifecycleAdapter: LifecycleAdapter = {
       'each panel queries as the person looking at it, so the numbers stay row-level scoped',
     ];
   },
-  existing: async () =>
-    listAllDashboardsInternal().map((d) => ({
-      id: d.id,
-      head: specRef(d.spec),
-      // The internal listing is domain-less by design; the store's own record carries it, and the
-      // migration only needs a domain to write the pin file, so it falls back to the OS default.
-      domain: (d as { domain?: string }).domain ?? '',
-    })),
+  existing: async () => {
+    await ensureHydrated();
+    // Review M-1: the internal listing carries no domain, and an empty domain would filter the
+    // migrated pin out of every clone's pin file. The scope-grouped listing DOES carry it, so the
+    // platform enumeration goes through a platform principal and reads each record's own domain.
+    const groups = listDashboards({ id: 'migration', domains: [], role: 'admin' }, { includeArchived: true });
+    const out: { id: string; head: string; domain: string }[] = [];
+    for (const d of [...groups.mine, ...groups.domain, ...groups.marketplace]) {
+      const rec = getDashboard(d.id, { id: 'migration', domains: [], role: 'admin' });
+      out.push({ id: rec.id, head: specRef(rec.spec), domain: rec.domain });
+    }
+    return out;
+  },
 };

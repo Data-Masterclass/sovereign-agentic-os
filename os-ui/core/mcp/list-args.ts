@@ -83,14 +83,27 @@ function isRow(v: unknown): v is Row {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-/** The tier a row carries, falling back to the group it was listed under. */
+/**
+ * The tier a row carries, falling back to the group it was listed under.
+ *
+ * Review L-4: `status` is NOT a tier on any store — an app's `status` is its deploy state and a
+ * knowledge process's is its publish state — so reading it here would have mapped `archived` or
+ * `draft` onto the audience axis. Only the two real tier fields are consulted, and the group key
+ * (which is always correct for a grouped payload) is the fallback.
+ */
 function tierOf(row: Row, groupTier: string): string {
-  const t = row.tier ?? row.visibility ?? row.status;
+  const t = row.tier ?? row.visibility;
   return typeof t === 'string' && t ? t : groupTier;
 }
 
+/**
+ * Review L-5: a row's id is `id`, or the one alternative key each store genuinely uses as its
+ * identity (`metricId`/`member` for a metric member, `slug` for an app). `name` is deliberately
+ * NOT in the list: a display name is not an identity, and falling back to it would have looked up
+ * a pin under a string that can change and collide.
+ */
 function idOf(row: Row): string {
-  for (const k of ['id', 'metricId', 'member', 'slug', 'name']) {
+  for (const k of ['id', 'metricId', 'member', 'slug']) {
     const v = row[k];
     if (typeof v === 'string' && v) return v;
   }

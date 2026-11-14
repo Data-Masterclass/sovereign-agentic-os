@@ -27,7 +27,7 @@
 import 'server-only';
 
 import type { LifecycleAdapter, LifecycleActor, DependencyRef } from '@core/kernel/lifecycle-adapters';
-import { livePin } from '@core/infra/lifecycle-pins';
+import { livePin, lifecycleIndex, pinsHydrationState, pinsMigrated } from '@core/infra/lifecycle-pins';
 import { readBlob } from '@core/infra/git-store';
 import { config } from '@core/kernel/config';
 import { getSystem, listAllSystemsInternal, systemForScheduler, type Principal } from '@tabs/agents/lib/store';
@@ -72,6 +72,8 @@ export function grantedDependencies(grants: Grants): DependencyRef[] {
 
 export type ScheduledYaml =
   | { ok: true; yaml: string; source: 'pin'; ref: string }
+  /** Fail-OPEN: the pin index does not exist yet, so the head runs and the reason is logged. */
+  | { ok: true; yaml: string; source: 'head'; ref: null; warning: string }
   | { ok: false; error: string; status: number };
 
 /**
@@ -87,7 +89,23 @@ export async function scheduledSystemYaml(
 ): Promise<ScheduledYaml> {
   const rec = systemForScheduler(systemId);
   if (!rec) return { ok: false, error: 'system not found', status: 404 };
+
+  // FAIL OPEN, ONCE (review H-2). Before the one-time migration has established the pin index,
+  // NOTHING has a pin — so failing closed here would 409 every cron run that works today, which
+  // is a worse outage than the archaeology problem the pin solves. So: while the index has never
+  // been populated, the schedule runs the HEAD and says so loudly. The moment the index exists,
+  // the rule flips to fail-closed and stays there.
+  await lifecycleIndex();
+  const established = pinsMigrated() && pinsHydrationState() === 'hydrated';
   const pin = await livePin('agent', systemId);
+  if (!pin && !established) {
+    const warning =
+      `[lifecycle] “${systemId}” ran its schedule from the HEAD: the pin index is not established yet ` +
+      `(${pinsHydrationState()}, migrated=${pinsMigrated()}). This is the one-time pre-migration fallback — ` +
+      `once the migration has run, an unpinned schedule is refused instead.`;
+    console.error(warning);
+    return { ok: true, yaml: rec.yaml, source: 'head', ref: null, warning };
+  }
   if (!pin) {
     return {
       ok: false,
@@ -136,12 +154,14 @@ export const agentLifecycleAdapter: LifecycleAdapter = {
   canGoLive: async (actor, obj) => {
     const view = getSystem(obj.id, P(actor));
     if (view.owner === actor.id) return { ok: true };
-    if (view.visibility !== 'Personal' && (actor.role === 'domain_admin' || actor.role === 'admin')) {
+    // A domain admin may operate a SHARED system IN THEIR OWN DOMAIN — never another's.
+    const sameDomain = actor.domains.includes(view.domain);
+    if (view.visibility !== 'Personal' && sameDomain && (actor.role === 'domain_admin' || actor.role === 'admin')) {
       return { ok: true };
     }
     return {
       ok: false,
-      reason: `only ${view.owner} (or a domain admin on a shared agent system) may change what runs for “${view.name}”`,
+      reason: `only ${view.owner} (or a domain admin in ${view.domain}) may change what runs for “${view.name}”`,
     };
   },
   dependencies: async (actor, obj) => grantedDependencies(getSystem(obj.id, P(actor)).system.grants),

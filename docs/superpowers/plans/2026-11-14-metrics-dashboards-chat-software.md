@@ -2006,9 +2006,11 @@ deviation is.
   lives in each tab's own adapter instead, registered at boot in `instrumentation.ts` — so the
   kernel still never imports a tab. The promotion tools and the audience ladder are untouched.
 - **V-5 — the pin is honoured for TWO kinds, as the MVP cut line says: agent systems and
-  dashboards.** The other five carry the lifecycle, show the badges, filter, go live and retire,
-  but no surface reads their pin to decide what to operate yet. `docs/components/lifecycle.md`
-  states this per kind rather than implying coverage.
+  dashboards.** All SEVEN can now hold a pin (review H-1 — pin-only adapters landed for dataset,
+  metric, knowledge, connection and app, because a guard that names a dependency nobody can pin is
+  a refusal with no way out). For the five, going live means "it appears in Run and the guard
+  counts it as ready"; nothing reads their pin to decide what to execute yet.
+  `docs/components/lifecycle.md` states this per kind in a table rather than implying coverage.
 - **V-6 — "consumers default to Run" is not expressible.** The role ladder is
   creator / builder / domain_admin / admin; every one of them can author, so every one defaults to
   Studio. `defaultViewSurface` already answers `run` for any role outside that set, so a future
@@ -2021,20 +2023,23 @@ deviation is.
   Nothing else changes — the pin already treats ref and path as opaque. (The pin will still
   RECORD the path at go-live time: placement depends on the current set of systems, so resolving
   it again later could land on a directory that has since moved.)
-- **V-8 — a scheduled run does not yet pass `env: 'run'` end to end.** The `env:` tag and the
-  Langfuse `environment` field are implemented, threaded through `runOsTeam` and tested on the
-  outgoing request body and the trace payload, but the scheduled door cannot set them: the value
-  would have to travel through the persisted run-queue record. **Exact change needed:** add
-  `env?: RunEnv` to `StartRunInput` and to `enqueueRun`'s `input` payload
-  (`tabs/agents/lib/build/run-jobs-server.ts`), read it in `run-service.ts` and pass it to
-  `runOsTeam`; the scheduled-run route then sends `env: 'run'` and the Studio run route `'studio'`.
-  Until then every run is attributed `studio`, which is true of a run started by hand and
-  understated for a scheduled one — understated, never overstated.
-- **V-9 — the shared tile hook is not yet mounted in each tab's tile list.** `useLifecycleView`
-  and the one filter rule are in place, tested, and the header toggle broadcasts to every mounted
-  list; wiring each of the thirteen tile lists is one line per tab in files other streams own
-  tonight. The Studio|Run toggle therefore shows and persists, and filters any list that calls the
-  hook, but the existing lists still render everything until those lines land.
+- **V-8 — CLOSED by review M-3.** `env` now rides the persisted run-queue record
+  (`RunJobInput.env` → `StartRunInput.env` → `ExecuteTeamRunInput.env` → `runOsTeam`), so a
+  SCHEDULED run declares `env: 'run'` and a worker-executed one is attributed exactly like an
+  inline one. A run started by hand stays `studio`. Remaining: the Studio run route and the verify
+  paths do not pass `'studio'`/`'test'` explicitly — they take the `studio` default, which is true
+  of a hand-started run and understates a verify pass. One line each when their streams touch
+  those doors.
+- **V-9 — CLOSED.** All seven tile surfaces now go through the one shared hook: Data
+  (`tabs/data/ui/DatasetTiles.tsx`), KPIs (`tabs/metrics/ui/MetricsRegistry.tsx`), Dashboards
+  (`tabs/dashboards/ui/Tiles.tsx`), Agents (`tabs/agents/ui/SystemsList.tsx`), Connections
+  (`tabs/connections/ui/GovernedConnections.tsx`, via the `useLifecycleFilter` predicate variant
+  because that grid is assembled inside a render prop where a hook may not be called), Software
+  (`app/(experimental)/software/page.tsx`) and Knowledge (`app/(plan)/workflows/page.tsx`). One
+  import, one hook call, one badge line each; the Studio|Run rule stays in the hook and a test
+  asserts no list re-implements it. A shared batched lookup
+  (`core/ui/lifecycle/lifecycle-cache.ts` + `POST /api/lifecycle/index`) means a tab of forty
+  tiles costs ONE request, and a tile renders its own badge with no prop threaded down.
 - **V-10 — the dashboard pin is a spec CONTENT DIGEST, not a commit sha.** Dashboards are not
   git-backed yet (D is landing dashboard-as-code tonight), so `specRef(spec)` is
   `spec:<12 hex of sha256 of canonical JSON>` and the pinned spec is whichever retained version
@@ -2044,5 +2049,35 @@ deviation is.
 - **V-11 — a Run read whose pinned version is gone shows NOTHING and says why.** Not in the plan,
   but the alternative was to serve the draft, which is a wrong dashboard that looks right. The
   same rule makes an unreadable agent pin refuse the scheduled run instead of running the head.
+- **V-12 — Software and Knowledge tiles show no lifecycle BADGE, on purpose.** Each already
+  renders its own `Draft` badge — an app's deploy state, a knowledge process's publish state — and
+  a second badge carrying the same word would be exactly the vocabulary collision the simplicity
+  contract forbids. Both lists DO apply the Studio|Run filter. **Exact change needed:** inside
+  each tab, make that existing badge read from the lifecycle instead of from its own field —
+  `tabs/knowledge/ui/WorkflowTile.tsx`'s `STATUS_LABEL` and the `isDraftOnly(a)` branch in
+  `app/(experimental)/software/page.tsx` — which is a change to those tabs' semantics, not a
+  one-line mount, and belongs to whoever owns that vocabulary.
+- **V-13 — stream D's `lifecycle-port.ts` reader (hand-off).** D's module is not in this branch,
+  so the wiring could not be made. **Exact one-liner for the merger**, in `instrumentation.ts`
+  immediately after `registerLifecycleAdapter(dashboardLifecycleAdapter);`:
+  ```ts
+  (await import('./tabs/dashboards/lib/lifecycle-port.ts')).setLifecycleReader(
+    (await import('./core/infra/lifecycle-pins.ts')).livePin,
+  );
+  ```
+  `livePin(kind, id): Promise<Pin | undefined>` is already exported from
+  `core/infra/lifecycle-pins.ts` and matches D's async `(kind, id) => Promise<LifecyclePin | null>`
+  apart from `undefined` vs `null`; if D's type is strict, wrap it:
+  `async (k, i) => (await livePin(k, i)) ?? null`.
+- **V-14 — a pin-only kind's ref is a record CONTENT DIGEST** (`rev:<12 hex>` from
+  `core/infra/content-ref.ts`), not a commit sha, for dataset, metric, connection and app (an app
+  prefers its SemVer release tag when it has one; knowledge uses its real content sha). It is
+  byte-exact and needs no new file. **Exact change needed:** when a kind becomes git-backed, its
+  adapter returns the commit sha and nothing above it changes — the pin treats the ref as opaque.
+- **V-15 — the write gate can block a laptop with neither OpenSearch nor a repos directory.**
+  `go_live` refuses with a 503 unless the pin index was actually read, and on a fresh laptop with
+  no durable mirror AND no `reposDir` yet, neither source answers. That is deliberate (it is the
+  September-2026 guard), but it means a brand-new local install cannot go live until it has
+  written one data project or has OpenSearch. Stated in `docs/components/lifecycle.md`.
 
 

@@ -79,12 +79,29 @@ function fakeAdapter(opts: {
   return stateRef;
 }
 
-beforeEach(() => {
+/**
+ * Review H-1: a dependency whose KIND has no adapter is now treated as satisfied-with-a-warning,
+ * because otherwise an object is refused forever for something nobody can pin. So a test that
+ * wants the GUARD to bite must register the dependency's kind too.
+ */
+function registerPinOnly(kind: 'metric' | 'dataset' | 'knowledge' | 'connection') {
+  registerLifecycleAdapter({
+    kind,
+    resolve: async (_a, id) => ({ kind, id, name: id, domain: 'sales', head: SHA_B, tier: 'personal' }),
+    canGoLive: async () => ({ ok: true }),
+  });
+}
+
+beforeEach(async () => {
   __clearLifecycleAdapters();
   __clearReservedSubtrees();
   pins.__resetLifecyclePins();
   repos = mkdtempSync(join(tmpdir(), 'lifecycle-pins-'));
   temps.push(repos);
+
+  // The pin WRITE gate (review H-3) refuses unless a source answered; the mirror is stubbed
+  // dead here, so the index hydrates from a real (empty) repo root in a temp dir.
+  await pins.hydrateForTests({ reposDir: repos });
 });
 
 after(() => {
@@ -160,6 +177,7 @@ test('V3: the pin file lives in its OWN subtree, so it cannot collide with the d
 
 test('V6: go_live is REFUSED, naming the dependency, when a dependency is not live', async () => {
   fakeAdapter({ kind: 'dashboard', deps: [{ kind: 'metric', id: 'sales.revenue', name: 'Revenue' }] });
+  registerPinOnly('metric');
 
   await assert.rejects(
     () => goLive(ACTOR, 'dashboard', 'obj_1', undefined, { reposDir: repos }),
@@ -175,6 +193,7 @@ test('V6: go_live is REFUSED, naming the dependency, when a dependency is not li
 
 test('V6: once the dependency is live, the same go_live succeeds', async () => {
   fakeAdapter({ kind: 'dashboard', deps: [{ kind: 'metric', id: 'sales.revenue', name: 'Revenue' }] });
+  registerPinOnly('metric');
   await pins.setLivePin('metric', 'sales.revenue', SHA_B, ACTOR, 'sales', { commit: false });
   const res = await goLive(ACTOR, 'dashboard', 'obj_1', undefined, { reposDir: repos });
   assert.equal(res.live, SHA_A);
@@ -186,9 +205,11 @@ test('V6: the dependency list carries each dependency’s OWN lifecycle, never a
     tier: 'marketplace',
     deps: [{ kind: 'dataset', id: 'ds_1', name: 'Orders' }],
   });
+  registerPinOnly('dataset');
   await pins.setLivePin('dataset', 'ds_1', SHA_B, ACTOR, 'sales', { commit: false });
   const status = await lifecycleStatus(ACTOR, 'dashboard', 'obj_1');
-  const deps = await goLiveDependencies(ACTOR, status.object);
+  const { dependencies: deps, warnings } = await goLiveDependencies(ACTOR, status.object);
+  assert.deepEqual(warnings, [], 'every dependency kind was wired, so nothing was assumed');
   assert.equal(deps.length, 1);
   assert.equal(lifecycleWordOf(deps[0].lifecycle), 'live');
   assert.equal('tier' in deps[0], false, 'a dependency carries no audience at all');
@@ -274,6 +295,7 @@ test('V8: previewGoLive has no side effect and states what starts running', asyn
 
 test('V8: previewGoLive reports the block BEFORE the user commits, naming the dependency', async () => {
   fakeAdapter({ kind: 'dashboard', deps: [{ kind: 'metric', id: 'm1', name: 'Revenue' }] });
+  registerPinOnly('metric');
   const p = await previewGoLive(ACTOR, 'dashboard', 'obj_1');
   assert.match(String(p.blocked), /Revenue/);
 });
@@ -348,4 +370,15 @@ test('Testing is a marker, not a state: it is set, read and cleared, and nothing
 
   // No repo was ever created for a test marker.
   assert.rejects(() => readBlob('sales', undefined, pins.LIFECYCLE_PIN_PATH, { reposDir: repos }));
+});
+
+test('H-1: a dependency kind with NO adapter is satisfied with a WARNING, never a dead end', async () => {
+  fakeAdapter({ kind: 'dashboard', deps: [{ kind: 'metric', id: 'm_unwired', name: 'Revenue' }] });
+  // deliberately no metric adapter
+  const p = await previewGoLive(ACTOR, 'dashboard', 'obj_1');
+  assert.equal(p.blocked, null, 'not blocked — a refusal nobody can clear is worse than a stated unknown');
+  assert.equal(p.warnings.length, 1);
+  assert.match(p.warnings[0], /metric “Revenue” cannot hold a pin yet/);
+  const res = await goLive(ACTOR, 'dashboard', 'obj_1', undefined, { reposDir: repos });
+  assert.equal(res.warnings.length, 1, 'and the result repeats the unknown rather than hiding it');
 });
