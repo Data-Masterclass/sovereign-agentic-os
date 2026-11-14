@@ -20,7 +20,9 @@
 # `/api/git/authenticate` (an OS personal access token) before it reaches this container, and the
 # receive hooks re-resolve the same token server-side. This image is a transport, not a gate.
 FROM alpine:3.21
-RUN apk add --no-cache git lighttpd curl \
+# `git-http-backend` ships in Alpine's `git-daemon` package, not in `git` (the build guard
+# below caught this on the first real build, 2026-11-14).
+RUN apk add --no-cache git git-daemon lighttpd curl \
  && test -x /usr/libexec/git-core/git-http-backend \
  && test -x "$(git --exec-path)/git-http-backend" \
  && test -f /usr/lib/lighttpd/mod_cgi.so \
