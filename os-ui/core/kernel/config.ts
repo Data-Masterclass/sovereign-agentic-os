@@ -254,11 +254,6 @@ export const config = {
   // OS_EMAIL_VERIFICATION=false force-disables verification even with a mailer.
   // OS_PUBLIC_URL sets the absolute base used in emailed links. See lib/mailer.ts.
 
-  // Forgejo (Software / Delivery): GET {FORGEJO_URL}/api/v1/...  (HTTP basic auth)
-
-  // Software golden path: per-app live subdomain suffix + image registry. Harbor
-  // is a default-off heavy workload (chart `harbor.enabled`); locally CI uses
-  // Forgejo's built-in OCI registry, so HARBOR_REGISTRY defaults to it.
   // The OS's own public base URL (e.g. https://agentic.datamasterclass.com). Baked
   // into governed apps at build time as VITE_OS_API so a deployed app's os.whoami()
   // reaches the OS across subdomains (not its own origin). '' locally → apps derive
@@ -266,32 +261,29 @@ export const config = {
   osPublicUrl: base(env('OS_PUBLIC_URL', '')),
   appsBaseDomain: env('OS_APPS_DOMAIN', 'apps.local'),
 
-  // Software golden path — Phase 2 in-cluster app RUNNER (lib/software/runner.ts).
-  // A go-live provisions a real Deployment+Service+Ingress for the built app into
-  // a dedicated runner namespace, on the app's per-app host (App.subdomain). The
-  // image is the app's CI-published registry artifact by default; set
-  // SOFTWARE_RUNNER_IMAGE to a known-good prebuilt image (e.g. traefik/whoami) to
-  // serve every app from a teaching placeholder until its own image is published.
-  // Ingress class + TLS issuer MATCH the chart's tool ingress (ingress.className /
-  // ingress.tlsIssuer) so per-app hosts get a cert-manager cert exactly like the
-  // consoles. When the k8s API is unreachable the runner degrades honestly (no URL).
+  // Software — the OPTIONAL in-cluster app RUNNER (tabs/software/lib/runner.ts), for
+  // `serveMode: 'image'` apps only. Tier-1 ('spec') and Tier-2 ('runtime') apps are
+  // served by the OS itself, same-origin, with no pod and no registry: the runner is
+  // not on their path. There is NO OS image builder, so an 'image' app's image is one
+  // the OPERATOR built and published; `appImageRef` FAILS CLOSED when neither the app's
+  // `runImage` nor SOFTWARE_RUNNER_IMAGE is set, rather than serving someone else's
+  // placeholder container on a customer domain (night-2 S2 trap fix).
+  // SOFTWARE_RUNNER_IMAGE is therefore a deliberate, operator-set shared image and is
+  // EMPTY by default. Ingress class + TLS issuer MATCH the chart's tool ingress
+  // (ingress.className / ingress.tlsIssuer) so per-app hosts get a cert-manager cert
+  // exactly like the consoles. When the k8s API is unreachable the runner degrades
+  // honestly (no URL).
   softwareRunnerNamespace: env('SOFTWARE_RUNNER_NAMESPACE', 'agentic-apps'),
   softwareRunnerImage: env('SOFTWARE_RUNNER_IMAGE', ''),
   appsIngressClass: env('OS_APPS_INGRESS_CLASS', 'nginx'),
   appsTlsIssuer: env('OS_APPS_TLS_ISSUER', 'letsencrypt-prod'),
 
-  // Software golden path — Phase B DIRECT BUILD SERVICE (lib/software/build-service.ts).
-  // Instead of the Forgejo Actions DIND runner producing the serving image off-thread,
-  // os-ui submits an in-cluster KANIKO batch/v1 Job that builds the app's Dockerfile
-  // from its Forgejo git tree at the committed SHA and pushes a DIGEST-tagged image to
-  // the in-cluster registry — which the runner then serves digest-pinned (no `:latest`
-  // roll dance). Gated ON only when the chart grants the build-Job RBAC + namespace
-  // (softwareBuild.enabled → SOFTWARE_BUILD_SERVICE=true); OFF everywhere else, where
-  // the pipeline says so specifically and the Forgejo Actions path still serves. The
-  // kaniko executor image is pinned (no daemon, runs under the apps-namespace PSS).
-  softwareBuildEnabled: env('SOFTWARE_BUILD_SERVICE', '') === 'true',
-  softwareBuildNamespace: env('SOFTWARE_BUILD_NAMESPACE', 'agentic-apps'),
-  kanikoImage: env('KANIKO_IMAGE', 'gcr.io/kaniko-project/executor:v1.23.2'),
+  // (The Phase-B "DIRECT BUILD SERVICE" config lived here — `softwareBuildEnabled`,
+  // `softwareBuildNamespace` and `kanikoImage`. Its implementation was deleted with the
+  // v2-lean cut and the keys had ZERO call sites, so they are gone (night-2 S1). There is
+  // no OS image builder. If Tier-3 per-app containers are ever built, the preference is
+  // kpack/CNB — Kaniko is archived upstream (read-only since June 2025, no CVE fixes) and
+  // is NOT to be revived.
   // Software BUILD chat: max PLAN→ACT tool-call rounds for a build turn (only). A
   // build legitimately needs many steps (orient → get_dataset → several commits, each
   // re-parsed + compile-checked), yet the chat route passed no cap, so runAgentic used
@@ -583,20 +575,14 @@ export const config = {
   // the action toggles never render. Nil-safe (an unset/empty value ⇒ OFF).
   operationalActionsEnabled: env('OPERATIONAL_ACTIONS_ENABLED', '').toLowerCase() === 'true',
 
-  // ---- Per-user git token mint (#146 Phase 2, Option B — ADR 0006). GATED OFF by
-  // default: mints a SHORT-TTL, repo-scoped Forgejo access token for the caller's
-  // OS-mirrored Forgejo user so `sos git` can clone/push AS the real user (real git
-  // attribution + Forgejo branch protection mapped to the OS ladder). When OFF,
-  // `POST /api/git/token` reports it honestly and mints nothing. The Forgejo ADMIN
-  // credential used to provision users + mint tokens is the EXISTING `forgejo*`
-  // secret above (referenced, never inlined/logged); the minted token is returned
-  // ONCE over the governed channel and NEVER logged, stored, or echoed. Live-verify
-  // pending: real Forgejo user-create + scoped-token mint + a raw `git push`.
+  // ---- Per-user git access token. NOT WIRED TO ANYTHING TODAY: these two keys have
+  // zero call sites and no endpoint mints a token (the forge they once described is
+  // gone). They are kept, honestly labelled, because the engineer's-door work owns the
+  // real OS personal-access-token path (hashed at rest, shown once, revocable) that
+  // authenticates `git push` to `https://<os>/git/<domain>.git`. Until that lands,
+  // nothing reads them.
   gitTokenMintEnabled: env('GIT_TOKEN_MINT_ENABLED', '').toLowerCase() === 'true',
-  // The minted token's lifetime, in seconds (default 1h). Forgejo access tokens have
-  // no server-enforced TTL, so the OS treats this as the token's REVOKE-BY horizon:
-  // it names each token with its mint epoch, returns `expiresAt`, and the central
-  // revoke path (`sos login` refresh / deactivation hook) deletes expired/old tokens.
+  /** Token lifetime in seconds (default 1h) — the REVOKE-BY horizon, once minting exists. */
   gitTokenTtlSeconds: Number(env('GIT_TOKEN_TTL_SECONDS', '')) || 3600,
 
   // ---- Folder grants (Wave 3 agent-grant kernel). The MAX number of folder
@@ -635,6 +621,25 @@ export const config = {
   jupyterhubConsoleUrl: base(consoleEnv('JUPYTERHUB_CONSOLE_URL', 'http://localhost:8000')),
   mlflowConsoleUrl: base(consoleEnv('MLFLOW_CONSOLE_URL', 'http://localhost:5000')),
   featureformConsoleUrl: base(consoleEnv('FEATUREFORM_CONSOLE_URL', 'http://localhost:7878')),
+
+  // ---------------------------------------------------------------------------
+  // THE APP-BUILDING HARNESS (stream H). Appended as one block at the end of the
+  // object so it merges cleanly with edits elsewhere in this file.
+  //
+  // WHICH BUILDER the Software Build stage uses:
+  //   • 'spec'    (DEFAULT) — today's behaviour, byte-identical: one reasoning-model
+  //     turn fills an AppSpec, with up to two validator-seeded repair turns.
+  //   • 'agentic' — the bounded planner → coder → build → reviewer loop
+  //     (`tabs/software/lib/builder/`): a grounding pack extracted from source, real
+  //     compile diagnostics fed back each iteration, and acceptance checks derived
+  //     from the user stories. Opt-in only; anything but the exact string 'agentic'
+  //     resolves to 'spec', so a typo can never silently switch the builder.
+  softwareBuilder: env('SOFTWARE_BUILDER', 'spec') === 'agentic' ? 'agentic' : 'spec',
+  // The CODER model role (`core/models/roles.ts` role `coder`) — the tier that writes
+  // the app's code in the agentic builder. EMPTY by default, which means the `coder`
+  // role falls back to the REASONING tier, so no deployment needs a new env var to
+  // keep working. Pin a code-specialised LiteLLM model_name here to use one.
+  litellmCoderModel: env('LITELLM_CODER_MODEL', ''),
 } as const;
 
 export type AppConfig = typeof config;

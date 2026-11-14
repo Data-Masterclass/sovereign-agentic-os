@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '@core/ui/PageHeader';
 import WorkflowTile from '@tabs/knowledge/ui/WorkflowTile';
+import { useLifecycleTiles } from '@core/ui/lifecycle/useLifecycleView';
 import WorkflowView from '@tabs/knowledge/ui/WorkflowView';
 import type { WorkflowSummary } from '@tabs/knowledge/lib/store';
 import { roleAtLeast, type Role } from '@core/kernel/session';
@@ -34,6 +35,9 @@ type WorkflowGroups = {
 };
 
 type UserInfo = { id: string; role: Role; domains: string[] };
+
+/** Stable id accessor for the shared lifecycle hook (a new closure would re-fetch). */
+const workflowId = (w: { id: string }) => w.id;
 
 export default function WorkflowsPage() {
   const [view, setView] = useState<'list' | 'new' | 'detail'>('list');
@@ -162,9 +166,11 @@ export default function WorkflowsPage() {
   const treeItems = scopedWorkflows.map((w) => ({ id: w.id, folder: w.folder ?? '/', name: w.title }));
   // Grid filter: a folder selection narrows to processes under it (incl. subfolders) in
   // the selected root; else the whole scoped list.
-  const shownWorkflows = sel
+  const inFolder = sel
     ? itemsUnderFolder(sel.path, scopedWorkflows.filter((w) => rootOf(w) === sel.root).map((w) => ({ ...w, folder: w.folder ?? '/' })))
     : scopedWorkflows;
+  // LIFECYCLE: the ONE shared hook — Studio shows everything, Run only what is live.
+  const { tiles: shownWorkflows } = useLifecycleTiles('knowledge', inFolder, workflowId);
   const moveScope: FolderRoot = groups && moveId
     ? rootOf(allWorkflows.find((w) => w.id === moveId) ?? scopedWorkflows[0] ?? { visibility: 'Personal' } as WorkflowSummary)
     : 'personal';

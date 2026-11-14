@@ -150,6 +150,7 @@ test('context.md and guide.md files reference only real MCP tool names (drift tr
     'gross_revenue', 'order_count',                       // example metric names in guide worked examples
     'big_number_total',                                   // dashboard vizType enum value (create_dashboard charts[].vizType)
     'exposure_action_enable',                             // approval kind (operational action enablement), not a tool
+    'window_grain_mismatch',                              // metric serve-refusal code (explorer.ts ServeRefusal), not a tool
   ]);
 
   // Guides and contexts moved to the tabs: tabs/<tab>/{guide,context}.md, with the

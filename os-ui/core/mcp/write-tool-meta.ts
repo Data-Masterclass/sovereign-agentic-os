@@ -53,6 +53,23 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   request_promotion: 'data',
   approve_promotion: 'data',
   set_app_design: 'software',
+  // `commit` writes an app's SOURCE FILES. It is a PLATFORM-MCP tool (declared `write: true` in
+  // `tabs/software/lib/platform-mcp.ts` and registered as the `platform` bundle), so it is NOT in
+  // `ALL_WRITE_TOOLS` — and this table is what the agent hold gate reads (`hold.ts` `isWriteTool`).
+  // While it was missing here, `holdDecisionFor(preset,'commit')` answered "not a write" for EVERY
+  // preset, so a `read-only` agent granted `commit` could write app files unheld. Added by the
+  // night-2 app-builder stream (review H-1). See `write-tool-meta.test.ts` for why the equality
+  // assertion now has two sources, and `tabs/agents/lib/builtin/appsmith.test.ts` for the posture
+  // this produces (read-only: HELD; other presets: a My-scope write, so not held — gate 2 rules).
+  commit: 'software',
+  // NIGHT-2 MERGE (S x H): `push_app_files` is the OTHER door onto the same bytes — it writes an
+  // app's SOURCE TREE through `commitSubtree('apps/<slug>')`. Stream S added it to the platform-MCP
+  // surface with `write: true`; H's H-1 tripwire in `tabs/software/lib/builder/dispatch.test.ts`
+  // caught that it was not classified here, which is EXACTLY the gap H-1 closed for `commit`: the
+  // hold gate reads this table, so an unclassified platform write answers "not a write" for every
+  // preset and a `read-only` agent granted it could write app files unheld. Classified rather than
+  // excused. The shipped Software Delivery Team grants `commit`, not this, so no golden moves.
+  push_app_files: 'software',
   list_exposure_sets: 'connections',
   create_exposure_set: 'connections',
   update_exposure_set: 'connections',
@@ -65,6 +82,9 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   adopt_exposed_table: 'data',
   list_adoptable_actions: 'connections',
   adopt_entity_actions: 'connections',
+  // Lifecycle (night 2) — change what RUNS, not who may use it.
+  go_live: 'governance',
+  retire: 'governance',
 };
 
 

@@ -51,7 +51,7 @@ type Cockpit = {
   recentAudit: { id: string; ts: string; actor: string; action: string; detail: string }[];
 };
 
-type SelfHeal = { restarts: number; argoSelfHealed: boolean; state: 'healthy' | 'healing' | 'degraded'; note: string };
+type SelfHeal = { restarts: number; driftReverted?: boolean; state: 'healthy' | 'healing' | 'degraded'; note: string };
 type Comp = { id: string; name: string; layer: string; status: string; version: string; toggle: boolean; summary: string; selfHeal: SelfHeal };
 type Node = { name: string; ready: boolean; role: string; cpu: string; mem: string; pods: number };
 type Pool = { name: string; min: number; max: number; current: number; autoRepair: boolean };
@@ -254,8 +254,9 @@ function AdminOverviewHealth() {
           The single home for the stack&apos;s infrastructure: component <strong>up/down + versions</strong>,
           optional-layer enable/disable, <strong>self-heal</strong>, the <strong>platform services</strong> the
           control plane is wired to, and <strong>system &amp; cluster health</strong> with the dependency/impact
-          chain. Kubernetes restarts crashed pods and Argo CD reverts drift automatically; you act only when
-          something can&apos;t self-heal. Your agents&apos; runs, spend and traces are in{' '}
+          chain. Kubernetes restarts crashed pods; there is <strong>no GitOps controller in this
+          stack</strong>, so configuration drift is <strong>not</strong> reverted automatically — a manual
+          edit stays until someone re-runs the chart. Your agents&apos; runs, spend and traces are in{' '}
           <Link href="/monitoring">Monitoring</Link>.
         </p>
         {error ? <div className="error">{error}</div> : null}
@@ -314,7 +315,7 @@ function AdminOverviewHealth() {
         {/* ---- System & cluster health (moved from Monitoring) ---- */}
         <div className="section-title" style={{ marginTop: 18 }}>System &amp; cluster health</div>
         <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-          Node/pod/service signals + self-heal (Kubernetes restarts, Argo CD drift revert, node auto-repair).
+          Node/pod/service signals + self-heal (Kubernetes restarts and node auto-repair only — no GitOps drift revert).
         </p>
         {systemHealth.length === 0 ? (
           <div className="stub-page">No system signals — not reachable in this release.</div>
@@ -381,7 +382,7 @@ function AdminOverviewHealth() {
                         <td>
                           <span className={`badge ${c.selfHeal.state === 'healthy' ? 'ok' : c.selfHeal.state === 'healing' ? 'muted' : 'err'}`}>{c.selfHeal.state}</span>
                           <div className="muted" style={{ fontSize: 11 }}>
-                            {c.selfHeal.restarts > 0 ? `${c.selfHeal.restarts} restart(s)` : 'no restarts'}{c.selfHeal.argoSelfHealed ? ' · Argo reverted drift' : ''}
+                            {c.selfHeal.restarts > 0 ? `${c.selfHeal.restarts} restart(s)` : 'no restarts'}
                           </div>
                         </td>
                         <td style={{ textAlign: 'right' }}>

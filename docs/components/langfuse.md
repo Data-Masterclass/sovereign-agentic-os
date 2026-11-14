@@ -120,6 +120,23 @@ kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000
 These are injected into os-ui (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_URL`)
 and into LiteLLM (`success_callback` + `failure_callback: ["langfuse"]`).
 
+## Engineering view ("Under the hood")
+
+An agent system's **Langfuse** tab carries the `Langfuse trace` of its last run: the trace id **is**
+the OS run id (which is also the LangGraph `thread_id`), with the deep link to
+`<console>/trace/<runId>`. When the console is not exposed, the panel says the trace exists but has
+no address here, rather than hiding the row.
+
+It also states, on every surface that shows a trace, **what is redacted and why**:
+
+- tool arguments and results are recorded; **secret values are not** — a connection secret, a token
+  or a model key never leaves the OS, and a LiteLLM key is referenced by its **alias** only;
+- every Langfuse READ the OS performs is filtered by run, user or scope, so no surface can list
+  another user's observations (`observationsQuery` refuses an unfiltered query).
+
+Kinds with no model call say so: a dbt build is traced by Dagster, and a KPI or dashboard read is a
+Trino query, so neither has a Langfuse trace of its own.
+
 ## FAQ
 **Q: I don't see traces.** Ingestion is buffered in os-ui (≤ 2 s) and async in Langfuse (the
 `agentic-os-langfuse-worker` pod). Monitoring's in-process ring (`recentTraces`) shows governance

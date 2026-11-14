@@ -174,11 +174,15 @@ password in a repo anyone in the domain can clone is not a path the generator of
    `includeConfigInLaunchedRuns` propagates it — and (b) the **query-tool** Deployment.
 
    `TRINO_AUTH_METHOD` goes somewhere else, and this is the step that is easy to get wrong: it is
-   read by **os-ui** (and `os-ui-worker`), not by the run pod or the query-tool, because os-ui is
-   what GENERATES `profiles.yml`. Setting it on the run pod changes nothing at all — the pod reads
-   a file that was already written. The chart has no value for it today, so set it as an
-   environment variable on the os-ui Deployment (and the worker, if enabled) the same way any other
-   os-ui env var is set.
+   read by **os-ui and os-ui only**, not by the run pod, not by the query-tool and **not by
+   `os-ui-worker`**, because os-ui is the only process that GENERATES `profiles.yml`. Setting it on
+   the run pod changes nothing at all — the pod reads a file that was already written. Setting it on
+   the worker changes nothing either, and for a sturdier reason: the worker mounts **no `os-repos`
+   volume** and is not even given `DATA_PROJECT_GIT`
+   (`templates/base/os-ui/_os-ui-env.tpl` — the PVC is ReadWriteOnce, so it can only be attached to
+   one Deployment), so it cannot regenerate or commit anything. The chart has no value for
+   `TRINO_AUTH_METHOD` today, so set it as an environment variable on the **os-ui** Deployment the
+   same way any other os-ui env var is set.
 
    **And it only takes effect on the next regeneration, which is a COMMIT.** `profiles.yml` is a
    file in each domain's data-project repository, produced by `generateProject` and written by
@@ -187,9 +191,15 @@ password in a repo anyone in the domain can clone is not a path the generator of
    in order of preference:
 
    - **Restart os-ui.** The boot reconcile (`tabs/data/lib/dbt/boot-reconcile.ts`) regenerates and
-     commits every domain's project, which is exactly this. Since you are changing a Deployment's
-     env in this step anyway, the rollout IS the trigger — just confirm it in the log
-     (`[data-projects] boot reconcile`) rather than assuming.
+     commits every discovered domain's project, which is exactly this. Since you are changing a
+     Deployment's env in this step anyway, the rollout IS the trigger — but **it can legitimately
+     do nothing**, so confirm it in the log (`[data-projects] boot reconcile`) rather than
+     assuming. Two outcomes are not a regeneration:
+     `boot reconcile SKIPPED — the dataset registry is 'failed'|'pending', not 'hydrated'` (the
+     durable mirror was not readable, so the reconcile refuses to act on a registry it could not
+     verify — restart again once the mirror is up), and a per-domain `failed` line. A domain that
+     appears in neither `committed` nor `failed` had nothing to change — which, right after this
+     step, means its `profiles.yml` did **not** get the new method and something is wrong.
    - **Any dataset write** in a domain regenerates and commits that ONE domain's project. Use this
      only to fix up a single domain; it leaves the others on the old `profiles.yml`.
 
@@ -206,6 +216,15 @@ password in a repo anyone in the domain can clone is not a path the generator of
 6. **Verify.** `dbt-runner` must be able to become `sales` and must NOT be able to become `root`
    (see "Verify it in a cluster", step 4). Until step 1 is done, both succeed, because there is no
    `original_user` to match.
+
+### What is NOT true yet (the engineering view's Trino tab)
+
+The "Under the hood" panel has **no Trino tab yet**. The compiled SQL the OS runs, the catalog and
+schema, the principal it impersonates and a bounded "preview as me" are specified (checklist T10)
+and deliberately not built: a preview button that forgets the query budget is a live incident. Until
+it lands, a KPI's and a dashboard's panel say in their own words that the number is produced by
+compiling the measure to SQL and running it **as you** on Trino, and the SQL itself is visible in
+the Metrics explorer rather than in the panel.
 
 ## Verify it in a cluster
 

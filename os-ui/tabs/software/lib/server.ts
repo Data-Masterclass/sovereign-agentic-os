@@ -20,10 +20,19 @@ import type { AdapterStep, ScaffoldFile } from '@tabs/software/lib/model';
 import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard';
 
 /**
- * Software commit server boundary. A commit writes the app's source tree to the
- * durable file mirror (`snapshot.ts` — the one home of a coded app's files; there is
- * no git backend) and then runs the GOVERNED logic every front door shares: compile
- * gate, metadata parse, auto-MCP→OPA, the dataset guard.
+ * Software commit server boundary. A commit runs the GOVERNED logic every front door
+ * shares — compile gate (BEFORE any write), **git commit**, metadata parse,
+ * auto-MCP→OPA, the dataset guard.
+ *
+ * HOME OF RECORD (night-2 S5, decision D16): the app's source tree is committed into the
+ * DOMAIN GIT REPOSITORY under `apps/<slug>/` through the one commit path
+ * (`git-commit.ts` → `core/infra/git-store.ts` `commitSubtree`), authored as the acting
+ * user with the `OS-Action` / `OS-Object` / `OS-Surface` / `OS-Request-Id` trailers. The
+ * OpenSearch `os-app-files` mirror (`snapshot.ts` / `file-mirror.ts`) is DEMOTED to a
+ * CACHE of that committed tree: it stays the fast synchronous read for the scan, the diff
+ * and the renderer, but it is no longer the only place the source exists. When git does not
+ * record the commit (flag off, no domain, or a git error) the step SAYS so — it is never a
+ * silent success.
  *
  * This module also hosts the THREE front-door adapters (chat · platform-mcp ·
  * git-import). They author content differently but all converge on `commitToApp`,
@@ -37,6 +46,7 @@ import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard'
 // path in apps.ts can update it too, without an import cycle). Re-exported here
 // for existing importers.
 import { snapshotFiles, getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
+import { commitAppTree, gitCommitNote, type AppCommitOutcome } from '@tabs/software/lib/git-commit';
 import { ensureSectionsRegistered, unregisteredPageHints } from '@tabs/software/lib/sections-registry';
 import { compileGate, formatGateError, gateActivityNote } from '@tabs/software/lib/compile-gate';
 export { snapshotFiles, getSnapshot, hydrateSnapshot };
@@ -64,10 +74,12 @@ function mergeTree(prior: ScaffoldFile[], incoming: ScaffoldFile[]): ScaffoldFil
  */
 export async function commitToApp(
   appId: string,
-  user: { id: string },
+  user: { id: string; name?: string | null; email?: string | null },
   files: ScaffoldFile[],
   message: string,
-): Promise<{ app: App; step: AdapterStep }> {
+  /** The action + surface recorded on the git commit (defaults to a plain `commit` from the UI). */
+  gitMeta?: { action?: string; surface?: string; requestId?: string },
+): Promise<{ app: App; step: AdapterStep; git?: AppCommitOutcome }> {
   const app = await getAppByIdInternal(appId);
   if (!app) throw withStatus(new Error('App not found'), 404);
   // Auto-wire epic story pages into the section registry BEFORE committing, so a
@@ -97,10 +109,37 @@ export async function commitToApp(
   // records the gate outcome (audited surface) + a human line, so the activity feed /
   // MCP result / audit all see "compile check ✓" or the honest "skipped (ungated
   // shape)" — never silence.
+  // GIT IS THE HOME OF RECORD (night-2 S5). The whole merged tree is committed into
+  // `apps/<slug>/` of the app's domain repository, as the acting user, BEFORE the mirror
+  // cache is written — so the sha on the step is the sha that holds the bytes. A skipped or
+  // failed git write is reported on the audited detail, never swallowed.
+  const git = await commitAppTree(
+    { id: app.id, slug: app.slug, name: app.name, domain: app.domain },
+    user,
+    tree,
+    { action: gitMeta?.action ?? 'commit', surface: gitMeta?.surface, requestId: gitMeta?.requestId, note: message },
+  );
+  // REVIEW M-2: if git REFUSED the write, nothing is written anywhere. Previously the catch in
+  // `commitAppTree` returned an outcome, the mirror cache was still written and the call answered
+  // 200 with `commit: null` — so a tree git had rejected came back from `read_app_files` as
+  // though it had been accepted. Git is the home of record, so a failed commit is a failed
+  // commit: 503, with the reason, and the app is byte-unchanged. (A DISABLED repo or an app with
+  // no domain is `recorded: false` and NOT an error — those are stated on the step instead.)
+  if (!git.ok) {
+    throw withStatus(
+      new Error(
+        `The commit could not be recorded in git (${git.reason}). Nothing was written — your files were not saved. ` +
+          'Retry; if it persists, the domain repository volume needs attention.',
+      ),
+      503,
+    );
+  }
   let step: AdapterStep = {
     ok: true,
     mode: 'live',
-    detail: `${gateActivityNote(gate)}; committed ${toCommit.length} file${toCommit.length === 1 ? '' : 's'} to ${app.slug} — "${message}"`,
+    detail:
+      `${gateActivityNote(gate)}; committed ${toCommit.length} file${toCommit.length === 1 ? '' : 's'} to ${app.slug} — "${message}"` +
+      ` [${gitCommitNote(git)}]`,
     gate: gate.gated ? { gated: true, ok: true } : { gated: false, reason: gate.reason },
   };
 
@@ -147,9 +186,10 @@ export async function commitToApp(
     app.mcpProfileCompiled = true;
   }
   app.chat.push({ role: 'assistant', content: `Committed: ${message}`, at: new Date().toISOString() });
+  // The mirror is now a CACHE of the committed tree (git above is the home of record).
   snapshotFiles(app.id, tree);
   await persistApp(app);
-  return { app, step };
+  return { app, step, git };
 }
 
 /**

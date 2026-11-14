@@ -16,6 +16,7 @@ import { renderSources } from '@tabs/data/lib/dbt/sources';
 import { renderSchemas } from '@tabs/data/lib/dbt/schema';
 import { renderSchedules, renderExternal } from '@tabs/data/lib/dbt/schedules';
 import { renderSourceAssets } from '@tabs/data/lib/dbt/source-assets';
+import { renderSemantic } from '@tabs/data/lib/dbt/semantic/render';
 import { renderDbtProject, renderProfiles, renderMacros, renderGenericTests, renderReadme, renderGitignore } from '@tabs/data/lib/dbt/project';
 
 /** What the generator must be TOLD about the deployment (it reads no env of its own). */
@@ -32,7 +33,8 @@ export function generateProject(domain: string, snapshot: ProjectSnapshot, opts:
   const files = new Map<string, string>();
   files.set('dbt_project.yml', renderDbtProject(domain, plan));
   files.set('profiles.yml', renderProfiles(domain, opts.trinoAuthMethod ?? 'none'));
-  files.set('README.md', renderReadme(domain, plan));
+  const semantic = renderSemantic(plan);
+  files.set('README.md', renderReadme(domain, plan, semantic));
   files.set('.gitignore', renderGitignore());
   for (const [p, c] of renderMacros()) files.set(p, c);
   for (const [p, c] of renderGenericTests()) files.set(p, c);
@@ -46,5 +48,8 @@ export function generateProject(domain: string, snapshot: ProjectSnapshot, opts:
   if (external) files.set('os/external.yml', external);
   const sourceAssets = renderSourceAssets(plan.sourceAssets);
   if (sourceAssets) files.set('os/sources.yml', sourceAssets);
+  // The semantic layer: `models/semantic/<model>.yml` (or the owner's personal lane) plus the time
+  // spine. Metrics are dbt artefacts in this project, not an OS-private record (D1, M1).
+  for (const [p, c] of semantic.files) files.set(p, c);
   return new Map([...files.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }

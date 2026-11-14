@@ -31,7 +31,7 @@ import { queryRun } from '@core/infra/governed';
 import { publishPromotionLive } from '@tabs/data/lib/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@core/policy/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@tabs/data/lib/panels';
-import { scaffoldMetricYaml } from '@tabs/data/lib/metrics';
+import { scaffoldSemanticYaml } from '@tabs/data/lib/semantic';
 import { ingestAndRegisterBronze } from '@tabs/data/lib/ingest';
 import { buildStage, commitLayerVersion } from '@tabs/data/lib/build/server';
 import {
@@ -48,10 +48,16 @@ import {
 import { assetTarget } from '@tabs/data/lib/store-fqn';
 import type { ExecuteIdentity } from '@core/infra/governed';
 import type { Layer, Quality, DataVisibility, Grant, ColumnDoc, DatasetUpstream } from '@tabs/data/lib/index';
-import { measureFromForm, measureMember, sameMeasure, type MetricForm, type GuidedFilter, type GuidedWindow } from '@tabs/metrics/lib/model';
+import { measureFromForm, measureMember, sameMeasure, dbtMetricType, type MetricForm, type GuidedFilter, type GuidedWindow } from '@tabs/metrics/lib/model';
 import type { MeasureType } from '@tabs/data/lib/metrics';
 import { buildMetric } from '@tabs/metrics/lib/build/server';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
+import {
+  ARTIFACT_OUTPUT_SCHEMA,
+  citationArtifact,
+  tableArtifactFromObjectRows,
+  type ChatArtifact,
+} from '@core/runtime/chat-artifacts';
 import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { getMetric } from '@tabs/metrics/lib/store';
 import { governMetric, canPromote as canPromoteMetric } from '@tabs/metrics/lib/governance';
@@ -128,6 +134,28 @@ export const metricWriteTools: McpTool[] = [
       required: [],
       examples: [{}, { goal: 'metrics that show whether our onboarding is working' }],
     },
+    // C7 — each candidate travels as a `metric_draft`: the ready-to-define form, the real
+    // dataset it grounds on, and the rationale. A draft is NOT a metric — nothing is
+    // persisted here, and the write only happens when a human presses Save (C15, backlog),
+    // never as a side effect of this read.
+    outputSchema: ARTIFACT_OUTPUT_SCHEMA,
+    artifacts: (result) => {
+      const candidates = (result as { candidates?: unknown })?.candidates;
+      if (!Array.isArray(candidates)) return [];
+      const out: ChatArtifact[] = [];
+      for (const c of candidates) {
+        if (!c || typeof c !== 'object') continue;
+        const cand = c as Record<string, unknown>;
+        if (typeof cand.datasetId !== 'string' || !cand.form || typeof cand.form !== 'object') continue;
+        out.push({
+          kind: 'metric_draft',
+          datasetId: cand.datasetId,
+          form: cand.form as Record<string, unknown>,
+        });
+        out.push(citationArtifact('dataset', cand.datasetId));
+      }
+      return out;
+    },
     call: async (user, args) => {
       const goal = str(args.goal).trim() || undefined;
       return await runSuggest(user, goal);
@@ -138,7 +166,7 @@ export const metricWriteTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'Define a governed metric (also called: KPI, measure, indicator) on a dataset’s built GOLD version — the one definition of a number (its `View.measure` member). The dataset must already be a governed asset/product (promote it in Data first). Returns the canonical member + the generated Cube YAML. THE FULL MEASURE MODEL (same as the Metrics tab form — all optional, a plain call yields exactly {name,type,sql}): `aggregation` — count · count_distinct · count_distinct_approx (fast approximate distinct) · sum · avg · min · max · number (a DERIVED/ratio measure). `filter` — a FILTERED measure: aggregate only rows where {column op value} (op: equals|notEquals|gt|gte|lt|lte|set|notSet). `runningTotal` — a cumulative running total from the beginning of time. `rollingWindow` — a trailing time window (last N day|week|month|quarter|year), mutually exclusive with runningTotal. `ratio` — for aggregation "number", a derived measure numerator/denominator over two OTHER measures on the same cube. `format` — display format (currency|percent|number…). `drillMembers` — drill-down members exposed for exploration. `dimensions` — the slice-by columns this metric is meant to be explored by (a curation hint, persisted on the measure and rehydrated on edit). `timeDimension`+`granularity` are query-time (query_metric), not part of the definition. UPSERT: define is keyed by the metric name — re-defining a metric of the SAME name on the same dataset UPDATES it in place (no false "already defined"), a new name adds one.',
+      'Define a governed metric (also called: KPI, measure, indicator) on a dataset’s built GOLD version — the one definition of a number (its `View.measure` member). The dataset must already be a governed asset/product (promote it in Data first). Returns the canonical member, the dbt metric type it is emitted as, and the dbt `semantic_models:` + `metrics:` YAML the OS committed into your domain’s dbt project (`models/semantic/<model>.yml`). THE FULL MEASURE MODEL (same as the Metrics tab form — all optional, a plain call yields exactly {name,type,sql}): `aggregation` — count · count_distinct · count_distinct_approx (fast approximate distinct) · sum · avg · min · max · number (a DERIVED/ratio measure). `filter` — a FILTERED measure: aggregate only rows where {column op value} (op: equals|notEquals|gt|gte|lt|lte|set|notSet). `runningTotal` — a cumulative running total from the beginning of time. `rollingWindow` — a trailing time window (last N day|week|month|quarter|year), mutually exclusive with runningTotal. `ratio` — for aggregation "number", a numerator/denominator over two OTHER metrics on the same dataset (emitted as a dbt `type: ratio` metric). `format` — display format (currency|percent|number…). `drillMembers` — drill-down members exposed for exploration. `dimensions` — the slice-by columns this metric is meant to be explored by (a curation hint, persisted on the measure and rehydrated on edit). `timeDimension`+`granularity` are query-time (query_metric), not part of the definition. UPSERT: define is keyed by the metric name — re-defining a metric of the SAME name on the same dataset UPDATES it in place (no false "already defined"), a new name adds one.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -224,7 +252,10 @@ export const metricWriteTools: McpTool[] = [
         datasetId,
         measure,
         member: build.member,
-        cube: scaffoldMetricYaml(dataset),
+        metricType: dbtMetricType(measure),
+        // The dbt artefact, which is what actually lands in git. The cube YAML stays available on
+        // the dataset's files surface; it is not what an agent should be told the metric IS.
+        dbt: scaffoldSemanticYaml(dataset),
         ...(build.pending ? { pending: true, note: 'Metric saved — add a time dimension to the slice to compute this window metric.' } : {}),
       };
     },
@@ -234,7 +265,7 @@ export const metricWriteTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'Preview the number a metric definition will produce, without persisting anything. Use this BEFORE define_metric to validate the number. An unsaved draft is computed via governed SQL (Trino, same row security) and labelled mode "live (sql)"; a saved+delivered measure resolves via governed Cube (mode "live"); offline degrades to "offline-mock". Returns rows + mode + the SQL. pending: true only when the shape (rolling window) is computable solely by the query engine after define_metric.',
+      'Preview the number a metric definition will produce, without persisting anything. Use this BEFORE define_metric to validate the number. Every number here comes from ONE governed Trino SELECT run as YOU (Trino + OPA apply your row/column security) — an unsaved draft is labelled mode "live (sql)" and a saved metric "live"; offline degrades to the honestly-labelled "offline-mock". Returns rows + mode + the exact SQL that ran. pending: true only for a shape the OS compiler cannot yet serve (a rolling window at a grain it cannot express) — an honest refusal, never a number.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -249,6 +280,43 @@ export const metricWriteTools: McpTool[] = [
       },
       required: ['datasetId', 'name', 'aggregation'],
       examples: [{ datasetId: 'ds_ab12cd', name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: ['region'] }],
+    },
+    // C7 — the preview returns the number AND the SQL that produced it, under the caller's
+    // own row security, with nothing persisted. `source: 'semantic-layer'` because the shape
+    // being previewed IS a metric definition; the SQL is shown because for an unsaved draft
+    // the governed SQL path is what actually ran (mode `live (sql)`), and a reader must be
+    // able to see it before pressing Save.
+    outputSchema: ARTIFACT_OUTPUT_SCHEMA,
+    artifacts: (result, args) => {
+      const r = (result ?? {}) as Record<string, unknown>;
+      const s = (v: unknown) => (typeof v === 'string' ? v : undefined);
+      const measure = (r.measure ?? {}) as Record<string, unknown>;
+      const table = tableArtifactFromObjectRows(r.rows, {
+        source: 'semantic-layer',
+        title: s(measure.name) ?? s(args.name) ?? 'preview_metric',
+        mode: s(r.mode),
+        sql: s(r.sql),
+      });
+      const out: ChatArtifact[] = [table];
+      const datasetId = s(r.datasetId);
+      if (datasetId) {
+        out.push({
+          kind: 'metric_draft',
+          datasetId,
+          form: {
+            name: s(args.name) ?? s(measure.name) ?? '',
+            aggregation: s(args.aggregation) ?? '',
+            column: s(args.column) ?? '',
+            dimensions: Array.isArray(args.dimensions) ? args.dimensions.filter((d) => typeof d === 'string') : [],
+          },
+          previewColumns: table.columns,
+          previewRows: table.rows,
+          ...(s(r.mode) ? { previewMode: s(r.mode) as string } : {}),
+          ...(s(r.sql) ? { previewSql: s(r.sql) as string } : {}),
+        });
+        out.push(citationArtifact('dataset', datasetId));
+      }
+      return out;
     },
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();

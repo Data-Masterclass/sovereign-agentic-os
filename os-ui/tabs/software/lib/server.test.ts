@@ -1,8 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { config } from '@core/kernel/config';
 import type { CurrentUser } from '@core/kernel/auth';
 import { testUser } from '@core/testing/user';
 import { createApp } from '@tabs/software/lib/apps';
@@ -11,6 +15,21 @@ import { renderAppYaml } from './metadata.ts';
 import { commitToApp, getSnapshot } from './server.ts';
 
 const dev: CurrentUser = testUser({ id: 'dan', name: 'Dan', domains: ['eng'], role: 'creator' });
+
+// Night-2 S5 + review M-2: git is the home of record, so a commit that git REFUSES is a 503 and
+// writes nothing — including the mirror cache. These tests therefore need a real repos dir; a
+// test that depended on git being broken would be asserting the old, silently-degrading path.
+let reposDir = '';
+let priorReposDir = '';
+before(() => {
+  reposDir = mkdtempSync(join(tmpdir(), 'os-repos-server-'));
+  priorReposDir = config.reposDir;
+  (config as { reposDir: string }).reposDir = reposDir;
+});
+after(() => {
+  (config as { reposDir: string }).reposDir = priorReposDir;
+  rmSync(reposDir, { recursive: true, force: true });
+});
 
 /**
  * A commit is a CHANGESET, not the whole tree. `commitToApp` must merge the

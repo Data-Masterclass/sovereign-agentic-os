@@ -4,6 +4,7 @@
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { McpTool, JsonSchema } from '@core/mcp/server';
+import { withLifecycleArg, lifecycleView } from '@core/mcp/list-args';
 import {
   P, fail, str, strArr, NO_ARGS, idArg, resolveQueryable,
   type Principal,
@@ -39,6 +40,14 @@ import { getMetric } from '@tabs/metrics/lib/store';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
 import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { claimsFromUser, delegate } from '@tabs/data/lib/identity';
+import {
+  ARTIFACT_OUTPUT_SCHEMA,
+  citationArtifact,
+  rowLimitTruncation,
+  tableArtifactFromObjectRows,
+  truncationOf,
+  type ChatArtifact,
+} from '@core/runtime/chat-artifacts';
 import { syncStatusFor, latestSyncSignals, dagsterRunFor } from '@tabs/data/lib/sync-status-server';
 
 /**
@@ -67,6 +76,15 @@ async function connectedBlock(d: Dataset): Promise<{
 }
 
 // ================================ READ / LIST =================================
+/**
+ * `query_metric`'s documented default row bound ("Max rows (default 100)"), mirroring the
+ * `?? 100` in `tabs/metrics/lib/explorer.ts`'s compiled `LIMIT`. The handler now always
+ * passes a CONCRETE limit to `exploreMetric`, so this value and the explorer's fallback can
+ * never disagree about the bound a given call used — this is the number the truncation check
+ * compares against because it is the number that was sent.
+ */
+const QUERY_METRIC_DEFAULT_LIMIT = 100;
+
 export const readTools: McpTool[] = [
   {
     name: 'list_datasets',
@@ -74,8 +92,8 @@ export const readTools: McpTool[] = [
     minRole: 'creator',
     description:
       'List the datasets you can see (My · Domain · Company), grouped by tier (also called: table, data product). Path: DISCOVERY for the Data golden path (guide: sovereign-os://guide/path/data). Before: whoami. After: reuse an id with get_dataset / define_metric, or create_dataset only if nothing fits. Governance: read-only, DLS-scoped to your identity — you never see rows you are not entitled to.',
-    inputSchema: NO_ARGS,
-    call: async (user) => listDatasets(P(user)),
+    inputSchema: withLifecycleArg(NO_ARGS),
+    call: async (user, args) => lifecycleView('dataset', args, listDatasets(P(user))),
   },
   {
     name: 'get_dataset',
@@ -249,8 +267,8 @@ export const readTools: McpTool[] = [
     minRole: 'creator',
     description:
       'List the knowledge business processes you can see (also called: workflows, process workflows, SOPs (Standard Operating Procedures)) — My · Domain · Company. Path: DISCOVERY for the Knowledge golden path (guide: sovereign-os://guide/path/knowledge). Before: whoami. After: get_knowledge, or search_knowledge for content. Governance: read-only, DLS-scoped.',
-    inputSchema: NO_ARGS,
-    call: async (user) => listWorkflows(P(user)),
+    inputSchema: withLifecycleArg(NO_ARGS),
+    call: async (user, args) => lifecycleView('knowledge', args, listWorkflows(P(user))),
   },
   {
     name: 'get_knowledge',
@@ -297,16 +315,21 @@ export const readTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'List the governed metric members you can see (also called: KPIs, measures, indicators) — the one definition of every number. Path: DISCOVERY for the Metrics + Dashboards golden paths (guide: sovereign-os://guide/path/metrics). Before: whoami. After: reuse a member on a dashboard, or define_metric only if missing. Governance: read-only, DLS-scoped.',
-    inputSchema: NO_ARGS,
-    call: async (user) => listMetrics(P(user)),
+      // NIGHT-2 MERGE (M x V): M's richer description (every row's `metricType` + `grain`, so a
+      // caller can pick a valid slice without a round trip) AND V's lifecycle argument/view.
+      'List the governed metric members you can see (also called: KPIs, measures, indicators) — the one definition of every number. Each row carries its `metricType` (the dbt semantic-layer type it is emitted as: simple · ratio · derived · cumulative) and its `grain` (the finest time bucket it can be sliced at, absent when the dataset exposes no time dimension), so you can pick a valid slice for query_metric without a round trip. Path: DISCOVERY for the Metrics + Dashboards golden paths (guide: sovereign-os://guide/path/metrics). Before: whoami. After: reuse a member on a dashboard, or define_metric only if missing. Governance: read-only, DLS-scoped.',
+    inputSchema: withLifecycleArg(NO_ARGS),
+    call: async (user, args) => lifecycleView('metric', args, listMetrics(P(user))),
   },
   {
     name: 'query_metric',
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'EVALUATE a governed metric (also called: KPI, measure, indicator) — resolve its canonical member and return the number(s), optionally sliced by dimensions/time. This is how "what is revenue this month" resolves through the SEMANTIC LAYER, not raw SQL: no SQL is accepted or generated here BY CONSTRUCTION — the tool builds a Cube load query from the member, and Cube applies per-viewer row-level security from YOUR delegated identity (securityContext), exactly like the Metrics explorer and every dashboard. Two viewers get two different row sets; the number can never drift from the charts. Path: the read half of the Metrics golden path. Before: list_metrics (take a metric `id`, shaped `<datasetId>.<measure>`). After: chart the same member with create_dashboard, or wire it into an agent. Governance: read-only; a metric on a dataset you cannot see → not_found; offline the OS answers with the honestly-labelled offline-mock resolver (mode is always stated).',
+      // NIGHT-2 MERGE (M x X): M's dbt-`metrics:` sentence (Cube is purged, so naming Cube even to
+      // deny it is stale) WITH X's precision about the read path — `exploreMetric`, the delegated
+      // identity, and row/column security applied to the number itself.
+      'EVALUATE a governed metric (also called: KPI, measure, indicator) — resolve its canonical member and return the number(s), optionally sliced by dimensions/time. This is how "what is revenue this month" resolves through the SEMANTIC LAYER, not raw SQL: no SQL is accepted or generated here BY CONSTRUCTION — the tool compiles the member into ONE governed Trino SELECT over the gold mart and runs it under YOUR delegated Trino identity, so Trino + OPA apply row- and column-level security to the number itself (the same `exploreMetric` path the Metrics explorer and every dashboard panel use). The metric itself is a dbt `metrics:` entry in the owning domain\u2019s dbt project. Two viewers get two different row sets; the number can never drift from the charts. Path: the read half of the Metrics golden path. Before: list_metrics (take a metric `id`, shaped `<datasetId>.<measure>`). After: chart the same member with create_dashboard, or wire it into an agent. Governance: read-only; a metric on a dataset you cannot see \u2192 not_found; offline the OS answers with the honestly-labelled offline-mock resolver (mode is always stated).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -322,6 +345,40 @@ export const readTools: McpTool[] = [
         { metricId: 'ds_ab12cd.revenue', dimensions: ['region'], timeDimension: 'order_date', granularity: 'month' },
       ],
     },
+    // C7 — the governed number travels as a typed artifact, so the drawer shows the rows,
+    // the compiled SQL that produced them and the resolver mode rather than prose the model
+    // wrote around them. `source: 'semantic-layer'` is what makes this answer NOT labelled
+    // ad-hoc: the aggregation and the joins are the human-authored metric definition's, not
+    // the model's. The SQL shown is the SQL that RAN (`exploreMetric` returns it), not a
+    // paraphrase of the member.
+    //
+    // The truncation fields are threaded through unchanged (review H-1): the compiled query
+    // carries a `LIMIT`, so the semantic layer can clip a grouped result exactly as the SQL
+    // path can, and the layer that "accepts no SQL by construction" is NOT therefore immune
+    // to truncation laundering.
+    outputSchema: ARTIFACT_OUTPUT_SCHEMA,
+    artifacts: (result) => {
+      const r = (result ?? {}) as Record<string, unknown>;
+      const str_ = (v: unknown) => (typeof v === 'string' ? v : undefined);
+      const member = str_(r.member) ?? '';
+      const out: ChatArtifact[] = [
+        tableArtifactFromObjectRows(r.rows, {
+          source: 'semantic-layer',
+          title: member || 'query_metric',
+          mode: str_(r.mode),
+          sql: str_(r.sql),
+          // M-4 — the explorer's loud-degradation sentence (a dropped slice member, a pending
+          // window metric, an unreachable lakehouse) reaches the surface instead of dying in
+          // the handler's return value.
+          warning: str_(r.warning),
+          ...truncationOf(result),
+        }),
+      ];
+      if (str_(r.metricId)) {
+        out.push(citationArtifact('metric', str_(r.metricId) as string, { name: member || undefined }));
+      }
+      return out;
+    },
     call: async (user, args) => {
       const metricId = str(args.metricId).trim();
       if (!metricId) fail('query_metric needs a `metricId` (from list_metrics, shaped `<datasetId>.<measure>`)', 400);
@@ -331,19 +388,74 @@ export const readTools: McpTool[] = [
       // derived from the session claims (never a service account), so Trino/OPA RLS is
       // the caller's. Same path as the Metrics explorer route.
       const token = delegate(claimsFromUser({ id: user.id, domains: user.domains, role: user.role }), 'domain');
+      // The row bound that will appear in the compiled query's `LIMIT`. Resolved HERE and
+      // always passed on, so the check below compares the returned rows against the number
+      // that was actually sent — passing `undefined` and letting the explorer default would
+      // leave the check comparing against nothing on the common (no-limit-given) call.
+      const limit =
+        typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : QUERY_METRIC_DEFAULT_LIMIT;
       const result = await exploreMetric(record.dataset, record.measure, token, {
         dimensions: strArr(args.dimensions),
         timeDimension: str(args.timeDimension) || undefined,
         granularity: (str(args.granularity) as Granularity) || undefined,
-        limit: typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : undefined,
+        limit,
       });
-      // The scalar: sum the member across returned rows (a grouped query still totals).
+      // TRUNCATION (review H-1). The compiled serve SQL ends `LIMIT <limit>`
+      // (`tabs/metrics/lib/explorer.ts` previewTrinoSql / windowTrinoSql), so a slice with
+      // more groups than the bound comes back clipped — and the scalar below used to sum
+      // those rows and present the result as THE NUMBER. A total over the first 100 of 400
+      // regions is simply wrong, and "the semantic layer accepts no SQL" is no protection:
+      // the bound is ours, not the model's.
+      //
+      // So when the result reached the bound we WITHHOLD the scalar rather than flag it. A
+      // flagged wrong number still gets read, copied and pasted into a slide; an absent one
+      // with a reason cannot be. The rows are still returned — they are real rows, just not
+      // all of them — and the artifact carries the bound and the sentence.
+      const truncation = rowLimitTruncation(result.rows.length, limit);
       let value: number | null = null;
-      for (const row of result.rows) {
-        const v = Number(row[result.member]);
-        if (!Number.isNaN(v)) value = (value ?? 0) + v;
+      if (!truncation.truncated) {
+        // The scalar: sum the member across returned rows (a grouped query still totals).
+        for (const row of result.rows) {
+          const v = Number(row[result.member]);
+          if (!Number.isNaN(v)) value = (value ?? 0) + v;
+        }
       }
-      return { metricId, member: result.member, value, rows: result.rows, mode: result.mode, securityContext: result.securityContext };
+      // MERGE NOTE (night-2, M x C): this is stream C's handler, which already threads every
+      // honesty field `exploreMetric` produces — `warning` / `droppedMembers` / `pending` /
+      // `unavailable` / `sql` and the query tool's OWN truncation triple (C-10), plus C's
+      // `valueWithheld` sentence when the row bound clipped the result so no total is given over
+      // an unknown fraction of the groups. M's only addition is the `refusal` key: the TYPED,
+      // NAMED reason the OS compiler served no number (M6). It is set WITH `pending`, so that is
+      // where it is forwarded.
+      return {
+        metricId,
+        member: result.member,
+        value,
+        ...(truncation.truncated
+          ? {
+              valueWithheld:
+                `No total is given: the query reached its row limit of ${limit}, so summing the returned ` +
+                'rows would produce a number computed over an unknown fraction of the groups. Narrow the ' +
+                'slice, or re-run with a higher `limit`.',
+            }
+          : {}),
+        rows: result.rows,
+        mode: result.mode,
+        // L-2 — the SQL that actually ran. The surface shows the real statement rather than
+        // a paraphrase of the member (this closes deviation C-6).
+        sql: result.sql,
+        ...truncation,
+        // M-4 — the explorer's own honesty flags, no longer dropped on the floor: a slice
+        // member the governed view does not expose (`droppedMembers` + `warning`), a window
+        // metric with no time slice (`pending`), an unreachable lakehouse (`unavailable`).
+        ...(result.warning ? { warning: result.warning } : {}),
+        ...(result.droppedMembers ? { droppedMembers: result.droppedMembers } : {}),
+        // M6 (merged in from stream M): the typed, named refusal travels with `pending`, so a
+        // caller sees WHY no number was served instead of only that none was.
+        ...(result.pending ? { pending: true, ...(result.refusal ? { refusal: result.refusal } : {}) } : {}),
+        ...(result.unavailable ? { unavailable: true } : {}),
+        securityContext: result.securityContext,
+      };
     },
   },
   {
@@ -352,8 +464,8 @@ export const readTools: McpTool[] = [
     minRole: 'creator',
     description:
       'List the dashboards you can see (also called: reports, business intelligence (BI), data visualizations) — My · Domain · Company. Path: DISCOVERY for the Dashboards golden path (guide: sovereign-os://guide/path/dashboards). Before: whoami. After: create_dashboard. Governance: read-only, DLS-scoped.',
-    inputSchema: NO_ARGS,
-    call: async (user) => listDashboards(P(user)),
+    inputSchema: withLifecycleArg(NO_ARGS),
+    call: async (user, args) => lifecycleView('dashboard', args, listDashboards(P(user))),
   },
   // get_agent_system moved to discovery-base-tools.ts (tab: 'agents' is base).
   {
@@ -362,10 +474,10 @@ export const readTools: McpTool[] = [
     minRole: 'creator',
     description:
       'List the apps you can see (My · Domain · Company). Each app includes `purpose` (Define stage intent), `epics` (Design epics + stories), and `grants` (capability metadata — kind/level only, never raw credentials). Path: DISCOVERY for the Software golden path (guide: sovereign-os://guide/path/software). Before: whoami. After: get_software, or create_software only if nothing fits. Governance: read-only, same visibility rule as the Software tab.',
-    inputSchema: NO_ARGS,
-    call: async (user) => {
+    inputSchema: withLifecycleArg(NO_ARGS),
+    call: async (user, args) => {
       const apps = await listAppsForUser(user);
-      return apps.map((a) => ({
+      return lifecycleView('app', args, apps.map((a) => ({
         id: a.id,
         slug: a.slug,
         name: a.name,
@@ -382,7 +494,7 @@ export const readTools: McpTool[] = [
         deploy: a.deploy,
         updatedAt: a.updatedAt,
         createdAt: a.createdAt,
-      }));
+      })));
     },
   },
   {

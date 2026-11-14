@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset, Measure, RollingWindow } from '@tabs/data/lib/index';
-import { dimensionMember, measureMember } from '@tabs/metrics/lib/model';
+import { dimensionMember, measureMember, dbtMetricType, type DbtMetricType } from '@tabs/metrics/lib/model';
 import { goldMartFqn, viewMembers } from '@tabs/data/lib/index';
 
 /**
@@ -127,7 +127,12 @@ function baseAggExpr(m: Measure, siblings: Measure[]): string | null {
       // aggregate expression (one level deep — a ratio of ratios has no SQL preview).
       const refs = [...m.sql.matchAll(/\{([a-z0-9_]+)\}/g)].map((x) => x[1]);
       if (refs.length === 0) return null;
-      let sql = m.sql;
+      // DIVISION BY ZERO (M-R2.4): a denominator that aggregates to 0 made Trino fail the whole
+      // query ("Division by zero"), so one empty slice took out the panel. Every reference used
+      // directly as a divisor is wrapped in NULLIF(…, 0), so that cell is NULL — which the UI
+      // renders as "—" — and the rest of the series still resolves. Null-safe, not zero-safe: a
+      // substituted 0 would read as a real answer.
+      let sql = m.sql.replace(/\/\s*\{([a-z0-9_]+)\}/g, (_w, r: string) => `/ NULLIF({${r}}, 0)`);
       for (const r of refs) {
         const sib = siblings.find((s) => s.name === r && s.type !== 'number');
         const expr = sib ? baseAggExpr(sib, siblings) : null;
@@ -265,6 +270,60 @@ export function previewTrinoSql(dataset: Dataset, measure: Measure, spec: Explor
   // which rejects any statement containing `--` or `/* */`. Explanatory comments live
   // only on the display-side dropToSql above, which is never executed.
   return `SELECT ${select}\nFROM ${from}${filterWhereSql(spec)}${groupBy}\nLIMIT ${spec.limit ?? 100}`;
+}
+
+/**
+ * A TYPED, NAMED refusal (checklist M6): the OS compiler cannot serve this metric for this slice,
+ * so the caller must return NO NUMBER and say why.
+ *
+ * The OS compiler is not MetricFlow and does not pretend to be. It serves `simple` and `ratio`
+ * metrics and a `derived` formula one level deep; for a `cumulative` metric it serves only a frame
+ * it can express faithfully — the window's unit must equal the slice grain, because the frame
+ * counts BUCKETS, and the generated time spine is not joined to yet. Every other shape refuses
+ * here rather than returning a number that is wrong in a way nobody would notice.
+ */
+export type ServeRefusal = {
+  code: 'window_needs_time_dimension' | 'window_grain_mismatch' | 'unservable_shape';
+  /** The dbt metric type this metric is emitted as — the vocabulary an engineer recognises. */
+  metricType: DbtMetricType;
+  reason: string;
+};
+
+export function serveRefusal(dataset: Dataset, measure: Measure, spec: ExploreSpec): ServeRefusal | null {
+  if (previewTrinoSql(dataset, measure, spec, 'x') !== null) return null;
+  const metricType = dbtMetricType(measure);
+  if (measure.rollingWindow) {
+    const trailing = (measure.rollingWindow.trailing ?? '').trim();
+    const parsed = /^(\d+)\s+(day|week|month|quarter|year)s?$/.exec(trailing);
+    if (!spec.timeDimension || !spec.granularity) {
+      return {
+        code: 'window_needs_time_dimension',
+        metricType,
+        reason:
+          'This is a rolling-window / running-total metric (a dbt `cumulative` metric) — add a time dimension and a matching granularity (e.g. day) to the slice so the trailing series can be computed.',
+      };
+    }
+    if (parsed && parsed[2] !== spec.granularity) {
+      return {
+        code: 'window_grain_mismatch',
+        metricType,
+        reason: `This metric trails ${parsed[1]} ${parsed[2]}, and the OS compiler expresses a trailing window in BUCKETS — so the slice granularity must be '${parsed[2]}', not '${spec.granularity}'. Change the granularity; the OS will not return a number computed over the wrong unit.`,
+      };
+    }
+    return {
+      code: 'unservable_shape',
+      metricType,
+      reason: `The OS compiler cannot express this window ('${trailing || 'none'}') as a faithful frame, so it returns no number rather than a wrong one.`,
+    };
+  }
+  return {
+    code: 'unservable_shape',
+    metricType,
+    reason:
+      metricType === 'ratio' || metricType === 'derived'
+        ? 'This metric references another metric the OS compiler cannot resolve to SQL (a ratio of ratios, or a reference that no longer exists). Re-check its inputs.'
+        : 'The OS compiler has no SQL form for this metric shape, so it returns no number rather than a wrong one.',
+  };
 }
 
 /** Map a governed-SQL result (column names + string rows) onto the SAME row shape the

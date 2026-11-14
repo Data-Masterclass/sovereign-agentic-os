@@ -12,8 +12,307 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 `alpha`/`beta` pre-releases without notice.
 
 ## [Unreleased]
+- **The engineer's door, review round (stream E).** The pre-receive gate now takes its change list from the HOOK (`git diff-tree` + `git cat-file`), because git's object quarantine makes the pushed objects invisible to the OS process during `pre-receive` — the first version therefore refused every push; verified now by a REAL local `git push` through the real hooks. `/api/git/receive` requires the pusher's OS access token on every phase (`post` and `abort` were gated on a service bearer that is empty by default). `dbt_project.yml`, `profiles.yml`, `packages.yml` and `macros/**` are OS-owned (dbt executes them). A push may not empty an object's tree, and may not change `tier`/`visibility`. One exported repository lock (`git-store.ts` `withRepoLock`). HTTPS-only clone URLs, `force-ssl-redirect`, a 512m body cap, a per-IP limit on the auth endpoint, and a personal lane withheld when two principals' ids collide.
+- **The engineer's door (stream E).** Authenticated git over HTTP at `/git/<domain>.git` served by git's own `git-http-backend` (`images/base/git-http`, a non-root sidecar on the os-ui pod); OS personal access tokens (Platform → Access tokens — hashed at rest, shown once, revocable, one identity); a `Clone this repository` affordance for every detail page; the receive gate (`core/infra/git-receive.ts` + `app/api/git/receive`) holding the same per-domain git-store lock for the whole receive, refusing non-fast-forward `main`, enforcing path ownership and running the UI's own validators; and post-receive ingest reconciling datasets and agent systems **from the files**, attributed to the pusher with `OS-Surface: git:push`. See `docs/components/git.md` → "Work from VS Code".
+
+- **MIGRATION — read before upgrading (night-2 S2 + review L-1/L-2).** Two deliberate behaviour changes:
+  1. **`serveMode` now defaults to `'spec'`.** Every legacy or nil app record used to normalise to `'image'`. A **deployed legacy app that relied on that default loses its live link**: `/apps/<slug>` now renders the honest "nothing to render yet" page instead of a container, because the OS will no longer serve a placeholder on your domain. Set the app's serve mode explicitly (`PATCH /api/software/<id>` → `serveMode: 'image'`) **and** give it a real image, or author an AppSpec. **An operator who was relying on the chart's `traefik/whoami:latest` teaching default must now set `softwareRunner.runnerImage` deliberately** — the chart default is empty, and `appImageRef` fails closed with a typed `MissingAppImageError` (409). That 409 is **library-internal**: `deployApp` catches it and returns an honest failed outcome with the reason (no Deployment, no Service, no Ingress, no URL), so no HTTP caller ever sees a bare 409 from it.
+  2. **A git commit that fails now fails the write (review M-2).** `commitToApp` used to write the OpenSearch mirror even when the git commit threw, and answer 200 with `commit: null` — so a tree git had rejected came back from `read_app_files` as if it had been accepted. Git is the home of record, so a refused commit is now a **503 and nothing is written**. Practical consequence: with `DATA_PROJECT_GIT` on, the `os-repos` volume must be writable — if `/repos` is missing, commits fail loudly instead of silently saving to the cache. A **disabled** repository (`DATA_PROJECT_GIT=false`) or an app with no domain is not an error: those are stated on the commit step as "not recorded in git", with the reason.
+
+- **Software: apps call agents, agents call apps, both read data as the end user (night-2 S7–S10).** The app SDK gains `os.agents.run(systemId, message)`, `os.agents.get(systemId, runId)` and `os.agents.decide(approvalId, decision)`, and all three post to the **same routes the OS UI posts to** — the agents run route (which files through `enqueueRun`), that run's durable event stream, and the one Governance inbox — same-origin with the ambient session, so an app acts **as the signed-in user** with no token exchange, no app principal and no key of its own. A run held on a write comes back as `state: 'parked'` with its approval id. The other direction: an app **declares** its agent-callable actions in `actions.yml` and an agent may call one only through the four-layer fail-closed intersection **capability ∩ declaration ∩ adoption ∩ grant**, with a domain-administrator consent step and a writing action **held** under the reads-on/writes-off preset. The whole triangle — app calls agent → agent writes a row through a governed tool → the app reads it back, with the record owner, the read-back row and the git commit's `OS-Actor` all naming the SAME user, plus two sessions of one app seeing different rows and both negative cases — is `tabs/software/lib/triangle.test.ts`. `ingestFromRepo('app', files)` re-derives the app registry from a push (and never creates an app from one), and `tabs/software/lib/engineering.ts` is the Software tab's "Under the hood" adapter, including an explicit statement of what the OS does **not** do.
+
+- **Software: honest docs, two live traps closed, and apps in git (night-2 S1–S6).** Deleted every shipped claim of a component this stack does not have — the scaffolded README/Dockerfile "built by Sovereign Agentic OS CI → Harbor → Argo CD", the `.forgejo/workflows/ci.yml` every scaffold seeded, `tabs/software/lib/README.md`'s Forgejo/Harbor/Argo CD description of two modules that are not in the tree, the `config.ts` Forgejo/Harbor/Kaniko blocks and the dead `kanikoImage`/`softwareBuildEnabled`/`softwareBuildNamespace`, `forgejoConsoleUrl`/`argocdUrl`, the dangling `values.yaml` comment, and the Admin UI's "Argo CD reverts drift automatically" — with a tripwire test so none of it can come back. **Trap 1:** `serveMode` now defaults to `'spec'` and `appImageRef` fails closed with a typed 409 — a legacy record used to normalise to `'image'` and serve the chart's `traefik/whoami:latest` on the customer's own domain. **Trap 2:** a `demo-seed` result is now structurally unusable in any gate, review card or `verify_software` verdict (`seeded-evidence.ts`). **Git:** an app's source tree lives in the domain repository under `apps/<slug>/` via `commitSubtree` + `reserveSubtree('apps/')`, authored as the acting user with the four `OS-*` trailers (the OpenSearch mirror is demoted to a cache), the editor save commits too, and `push_app_files` — the one documented verb for "code in Claude, push to the OS" — returns `{commit, changed, gate, previewUrl}` with the compile gate running before any write and two identical pushes yielding one commit. `core/infra/git-store.ts` gains, additively, `annotatedTag` / `listTags(prefix)` / `resolveTag` / `logPath`.
+
+### Added
+
+- **Fixed a SQL-injection hole in dashboard panels.** A panel's `timeGrain` arrived raw from the
+  request body and was cast, not checked, before the governed compiler interpolated it into
+  `date_trunc('<grain>', …)` — so a panel carrying `month'), (SELECT … --` could have appended SQL.
+  The five servable grains are now a runtime allow-list, asserted equal to the metrics
+  `Granularity` union at compile time, and checked at BOTH doors (the query path and the `git push`
+  reader) with the payload under test. A dashboard's audience tier is also no longer pushable, a
+  push that would empty `dashboards/` is refused rather than applied, and the dashboards subtree
+  gained a boot reconcile with the same hydration and destructive-delta guards as the data and
+  agent ones.
+
+- **A dashboard is code in git.** Every save — from the Dashboards tab or from `create_dashboard` —
+  now commits `dashboards/<slug>/dashboard.yaml` plus a generated `README.md` and
+  `dashboards/index.yml` to the owning domain's repository, authored as the acting user with the
+  `OS-Action` / `OS-Object` / `OS-Surface` / `OS-Request-Id` trailers, through
+  `reserveSubtree('dashboards/')` + `commitSubtree`. The format references **stable OS ids**
+  (`metric:<id>` / `dataset:<id>`) and has no SQL field; generate → read → generate is byte-stable;
+  a hand-edited file imports, and a reference the domain does not have is refused by name.
+  `ingestFromRepo('dashboard', files)` is the contract for the `git push` door and
+  `engineeringView('dashboard', id)` for the Under-the-hood panel.
+- **Two dashboard honesty fixes.** A filter operator the governed path cannot serve (`>=`,
+  `between`, …) is now a typed `bad_request` naming the member and the operator, at write time and
+  before any query runs — it used to be dropped silently, rendering an UNFILTERED number as though
+  it were filtered. And `create_dashboard`'s `vizType` enum now equals the full `VizType` union
+  (it advertised four of seven, refusing `big_number`, `area` and `pie` to an agent while offering
+  them in the UI), with a drift tripwire.
+
+- **One chart surface, and the first vendored Apache Superset source.** `os-ui/core/ui/charts/`
+  now owns the OS's single Apache-ECharts registration, theme bridge, formatters and `<Chart>`
+  shell; the Dashboards, Data and Software-appspec call sites consume it and register nothing of
+  their own (a grep ratchet fails on a second registration). Line, area and bar panels are built by
+  a vendored slice of Superset's pure ECharts transformers under `os-ui/vendor/superset/`,
+  Apache-2.0, pinned to upstream commit `c83fb2bb` — each file keeping its ASF header verbatim plus
+  a `Modified from … @ <sha>` notice, recorded in `licenses/components.tsv`,
+  `THIRD-PARTY-LICENSES.md`, `NOTICE`, `sbom.cdx.json` and the in-product licence list (which also
+  gains the **Apache ECharts** row it had been missing). `scripts/check-structure.mjs` gains a hard
+  `VENDOR-LICENCE-HEADER` rule.
+
+- **The engineering view — "Under the hood" on five object kinds, and `get_engineering_view` over
+  the MCP** (night-2 stream T). `os-ui/core/engineering/` holds the serialisable `EngineeringView`,
+  the adapter registry (filled by dynamic import, so the kernel still imports no tab), the shared
+  dbt / Dagster / LangGraph / git / Langfuse section builders and the data-driven vocabulary rule.
+  One adapter per tab (`tabs/{data,metrics,dashboards,agents,software}/lib/engineering.ts`) calls
+  that tab's own visibility gate and shows the REAL artefact: the dbt model SQL and `schema.yml` as
+  committed with `dbt build --select <node>`, the Dagster asset key / job / schedule / last run with
+  `dagster asset materialize --select …` and an "Open in Dagster" link to Dagster's own console
+  (role-gated by the tool's `minRole`; the `/tools` proxy renders Dagster blank, which is why it
+  declares `ownTab`), the
+  compiled LangGraph graph (plan/act/tools/route nodes, conditional edges, `when` guards, channels,
+  `interrupt()` points, checkpointer, `thread_id` = run id) as JSON **and** as an `@xyflow/react`
+  diagram, the git file list with the head commit, and the Langfuse trace with what is redacted and
+  why. `core/ui/engineering/UnderTheHood.tsx` renders it; `GET /api/engineering/<kind>/<id>` and the
+  MCP tool call the same function, asserted by a parity test. The dbt project export is documented
+  with a tar round-trip + offline parse-gate test.
+
+- **Lifecycle — Studio → Test → Run, a second axis beside audience (night 2, stream V).** Every
+  object now carries `{ draft, testing?, live? }` beside its unchanged `My · Domain · Company`,
+  and the two never interact: a `My` object can be Live and a `Company` object can have a Draft.
+  `go_live(kind, id, sha?)` pins a version and `retire(kind, id)` unpins — the only two new MCP
+  tools — with one guard refusing a go-live whose dependency is not itself live, naming it.
+  What OPERATES reads the pin: a scheduled agent run executes the pinned `system.yaml` from the
+  repo (and is refused, loudly, if it cannot be read), and a dashboard's Run view renders the
+  pinned spec, so **editing a live dashboard changes nothing for its viewers until someone goes
+  live again**. One `Studio | Run` header toggle, remembered per user, two small badges per tile,
+  one Go-live button on the existing confirm dialog. Every list tool takes an **optional**
+  `lifecycle` filter through one central helper and every row carries `lifecycle` + `audience`;
+  no tool anywhere gained a required argument. Runs carry the LiteLLM `env:studio|test|run` tag
+  and set the Langfuse trace `environment`, with a smaller budget share off Run. The pin is
+  committed to `os/lifecycle/pins.yml` so an engineer's clone can read exactly what is live.
+  Every tile list — Data, KPIs, Dashboards, Agents, Connections, Software, Knowledge — applies
+  the toggle through that one hook, with a shared batched lookup so a tab of forty tiles costs
+  one request. All seven kinds can hold a pin, a dependency whose kind cannot is a stated warning
+  rather than a refusal nobody could clear, the migration runs once at boot and only on an index
+  that could actually be READ, a scheduled run falls open to the head exactly once (before that
+  migration) and fails closed for ever after, and the committed pin file is read BACK when the
+  durable index is unreachable or answers empty — git is the system of record.
+  See `docs/components/lifecycle.md`, including what is physically versus only logically
+  separated.
+
+
+- **The app-building harness (night run 2, stream H).** A second, flag-gated builder for the
+  Software tab (`SOFTWARE_BUILDER=agentic`; default `spec` is byte-identical to today): a bounded
+  planner → coder → build → reviewer loop over a grounding pack extracted from the shipped source
+  (dataset real columns and real sample rows read as the signed-in user, metric definitions, the
+  `@sovereign-os/app-sdk` and `@sovereign-os/ui` API surfaces parsed out of `core/app-sdk` /
+  `core/app-ui`, the design tokens, one exemplar, the Tier-2 constraints), with acceptance checks
+  **derived from the app's user stories**, the existing in-process compile gate run every iteration
+  and its diagnostics fed back verbatim, and the `os.appsmith` built-in LangGraph system
+  (`tabs/agents/lib/builtin/appsmith.ts`). New additive `coder` model role, env-only, falling back
+  to the reasoning tier when unset. Review round: the build tool `commit` is now visible to the
+  agent hold gate (`core/mcp/write-tool-meta.ts` — it was absent, so NO safety preset held it and a
+  read-only agent could write app files); the route/render acceptance checks are scored off the
+  TypeScript AST so a comment or a string naming a governed surface cannot pass; the coder may not
+  write `package.json` or any dotfile; tenant content is fenced as DATA and sensitive sample values
+  are masked; the sample SQL validates the table name before interpolating it; no builder stage can
+  throw out of the loop; and the acceptance scorecard is committed as `.app/acceptance.json` beside
+  the code it describes.
+- **Night run 2 — the plan of record for metrics, dashboards, chat-to-data, vibe-engineered software,
+  git everywhere, the engineering view, the engineer's door and lifecycle.** Nine parallel streams
+  (M · D · C · S · G · T · E · V · X) are specified in
+  `docs/superpowers/plans/2026-11-14-metrics-dashboards-chat-software.md`, with 129 testable
+  acceptance items in `docs/superpowers/plans/2026-11-14-engineering-checklist-night2.md` and the
+  four read-only research reports beside them as the evidence base. No product code changes in this
+  commit.
+- **The coin test (night run 2, X-R8).** `os-ui/tabs/agents/lib/git/coin-test.test.ts` asserts,
+  per object kind, that the same change made through the MCP and by a `git push` leaves
+  byte-identical files, an identical registry state and a history entry differing only in
+  `OS-Surface`. The MCP side of the agent system runs green against a real bare repository today;
+  the push half is written against stream E's `reconcileFromGit` contract and reports `todo` until
+  it merges — and only the absence of that module yields `todo`, so a half-landed ingest fails
+  rather than passing quietly.
+- **`core/infra/git-trailers.ts` — one object-attribution predicate for every git read-back.**
+  `OS-Object` (one object) and `OS-Objects` (a space-separated id list, for a whole-subtree commit)
+  are now answered by one pure, core-only `trailersNameObject`, so a tab's own history and the
+  generic object read-back cannot drift on whole-token matching.
+
+- **Git everywhere — generic versioning over the domain repos (night 2, stream G).**
+  `os-ui/core/infra/git-objects.ts` adds `objectGitInfo(kind, id)`, `getVersion`, `diffVersions`
+  and `restoreVersion` for every object kind, keyed on the `OS-Object` trailer **with a
+  path-scoped `git log -- <paths>` fallback**, so an object whose only commits are platform boot
+  reconciles no longer reports a null head. `core/infra/git-store.ts` grows the read half it
+  needs (read-at-commit, path-scoped log, unified diff, repo summaries); `core/ui/git/` provides
+  the shared `GitHeadBadge` + `HistoryDrawer` (and `ReleaseList`, hidden until the tag API
+  lands); `core/mcp/git-tools.ts` exposes `get_history`, `get_version`, `diff_versions` and
+  `restore_version`; Governance gains a **Repositories** section; and
+  `core/infra/git-objects-kinds.test.ts` is the all-kinds enumeration that fails when a writer
+  commits to a domain repo without a classified object kind. The repo layout table is documented
+  in `docs/components/git.md`. Restore is gated and refuses with a typed `restore_unsupported`
+  until a tab registers its writer — the OS never rewrites a human's history.
+
+- **Governance → Repositories (night 2, stream G).** One row per domain repository: head,
+  commit count, last author and subject, an on-demand commit log, and the push-mirror verdict
+  judged against the repository's CURRENT head — `ok` only when the last successful push was AT
+  that head, `behind` when it was older, `failed` with the real error, `none` when no mirror is
+  configured — plus the authoritative layout table saying which object kinds are in git today
+  and which are not. Reads the existing `git-mirror` health record; adds no second health source.
 
 ### Fixed
+
+- **Git versioning review fixes (night 2, stream G).** The repositories overview now awaits the
+  mirror store's hydration before reading it (a cold pod reported "no push-mirror configured" for
+  every configured mirror); `?action=repos` and `?action=repolog` are **admin-only** and the
+  commit log additionally lists only commits whose `OS-Object` resolves for the caller, counting
+  and reporting the rest; version reads and diffs **redact secret-shaped content** and say which
+  files were altered (a restore still re-applies the raw bytes); binary blobs are reported as
+  binary instead of being decoded as UTF-8, and a version containing one cannot be restored;
+  version reads are bounded in bytes as well as in files; a trailing-newline-only change now
+  emits `\ No newline at end of file` so the patch is one `git apply` accepts; an added empty
+  file is no longer dropped from its own diff; `getVersion` reads one commit by sha instead of
+  walking 2000; the badge keeps the server's real message for a non-404 instead of showing "not
+  in git"; the restore refusal for an unregistered kind happens before any version is read; the
+  mirror link is `https:`-only; the per-object history reuses the log window it already read; and
+  the history lookup also matches the `OS-Objects` list a whole-subtree commit carries, on a
+  whole token.
+
+- **Metrics are dbt metrics (stream M).** A metric defined in the OS is now a real dbt `metrics:`
+  entry on a `semantic_models:` measure, committed into the owning domain's dbt project at
+  `models/semantic/<model>.yml` (a personal dataset's in `models/personal/<uid>/semantic/`), with a
+  daily time spine at `models/os/os_time_spine_day.sql` declared by the dbt >= 1.9 `time_spine`
+  property. The YAML is a typed document with an emitter, a **parser** and a spec validator
+  (`os-ui/tabs/data/lib/dbt/semantic/`) pinned to dbt-semantic-interfaces 0.8.5 / dbt-core 1.10 and
+  valid on the dbt 1.9 the images carry; `simple`, `ratio`, `derived` and `cumulative` are emitted,
+  `count_distinct_approx` emits `count_distinct` + `config.meta.os_agg`, and anything with no
+  faithful dbt form is a named refusal listed in the generated README rather than wrong YAML. The
+  predecessor (`tabs/data/lib/semantic.ts`, a 124-line string builder) never reached the project at
+  all and emitted `ref('mart_<slug>')` — a model no generated project contains.
+
+- **Metrics: the honest text, the typed refusal and the licence floor (stream M).** No tool
+  description, `context.md`, `guide.md` or UI string under `tabs/metrics` or `core/mcp` claims Cube
+  serves or secures a number any more — a number is one governed Trino `SELECT` run as the viewer,
+  with Trino + OPA applying row/column security — and a tripwire test keeps it that way.
+  `list_metrics` now returns each metric's dbt `metricType` and its `grain`. A slice the OS compiler
+  cannot serve returns a **typed, named refusal** (`{ code, metricType, reason }`) instead of a bare
+  "pending", and a ratio's divisor is wrapped in `NULLIF(…, 0)` so a zero denominator shows "—"
+  rather than failing the whole panel with a Trino "Division by zero". `scripts/license-check.sh`
+  gained a version-floor pass asserting `metricflow >= 0.209.0` wherever it could enter a build:
+  `<= 0.208.1` is Business Source License 1.1, whose Additional Use Grant excludes this product's
+  use, and BSL does not relax retroactively.
+
+- **Metrics: the review round (stream M).** A dataset with measures and no date column emitted
+  semantic YAML with no `agg_time_dimension`, which fails `dbt parse` for the whole domain — those
+  measures are now refused by name and the validator enforces the rule. `expr` is stripped of Jinja
+  on emit and held to a closed grammar. `query_metric` no longer drops the read path's `pending` /
+  `refusal` / `warning` / `droppedMembers` / `unavailable`, and `exploreMetric` no longer discards
+  the query tool's own `truncated` / `rowLimit` / `message`, so a clip below the metric's own LIMIT
+  is visible. A served cumulative metric warns that its frame counts time buckets, not calendar
+  units. A metric on a dataset you cannot see now answers the same `not_found` as one that does not
+  exist, closing an existence leak. The dbt images are pinned `dbt-core>=1.9,<1.10` and the licence
+  gate enforces that floor alongside the MetricFlow one. Smaller: a numeric fact column is no longer
+  offered as a slice dimension, the `trino --execute` command is POSIX-quoted, and the push ingest
+  reads every `semantic_models` entry rather than the first.
+
+- **Chat to the data — one trace per turn, and the semantic layer comes first (stream C, C1–C4).**
+  An "Ask the OS" turn is now ONE Langfuse trace with its model calls nested
+  (`observe: { traceId }` reaches `liteLlmCaller` from the assistant path), tagged `tab:ask` +
+  `run:<turn>` so the flagship chat surface's cost is readable back instead of being hidden inside
+  whichever tab the user stood on. `OS_RULES` and all four MCP guides
+  (`core/guides/overview.guide.md`, `tabs/{metrics,dashboards,data}/guide.md`) now carry the same
+  verbatim rule: for any question about a number, `list_metrics` → `query_metric`; `query_data` only
+  when no governed member exists, and then show the SQL and the row bound. `DISCOVERY_COMPANIONS`
+  gains `query_metric` and `create_dashboard` entries — widening discovery, never authority. One
+  source of truth (`core/runtime/ask-rules.ts`) with content tripwires in five places.
+
+- **Chat artifacts ride the MCP standard (stream C, C7–C8).** `query_data`, `query_metric`,
+  `preview_metric`, `suggest_metrics`, `get_metric` and `get_dashboard` now declare an MCP
+  `outputSchema` and return the typed artifact payload as `structuredContent` — the same bytes the
+  Ask-the-OS drawer renders, so the UI and an external client (Claude Desktop) cannot grow two
+  serialisers. Six kinds in one module (`core/runtime/chat-artifacts.ts`): `table` · `chart` ·
+  `metric_draft` · `dashboard_draft` · `citation` · `clarification`. A `table` carries the
+  query-tool's own `truncated` / `rowLimit` / `message` verbatim and the tool-reported `rowCount`,
+  and is labelled `ad-hoc-sql` or `semantic-layer` so an unverified number cannot pass as a governed
+  one. `McpTool` gained optional `outputSchema` + a pure `artifacts` projection; a tool declaring
+  neither is byte-identical to before, and a projection that throws degrades to "no artifacts"
+  rather than failing a governed read.
+
+- **An Ask-the-OS answer now carries the thing it is about (stream C, C5 · C6 · C9 · C10).**
+  `/api/assistant/chat` returns `artifacts[]` beside `content` and `tools`, and the drawer renders
+  the `table` and `citation` kinds beside the existing tool chips: the rows, the SQL or semantic
+  query that produced them (collapsed), the resolver mode, and a chip naming the governed KPI, data
+  product or dashboard the answer is grounded in. **Truncation can no longer be laundered** — the
+  query-tool's own `truncated` / `rowLimit` / `message` ride the artifact and its sentence is shown
+  verbatim above the rows, `rowCount` is the tool's count and never `rows.length`, and the drawer's
+  own 50-row cap is reported on a separate line so a 50-row view can never read as a 50-row result.
+  An ad-hoc `query_data` answer is labelled "Ad hoc SQL — unverified" with its SQL always shown; a
+  `query_metric` answer is the governed number. A kind this build cannot render yet is counted and
+  named, never silently discarded. Security: a path-scoped guard test fails on
+  `dangerouslySetInnerHTML`, `eval`, `new Function`, `srcdoc` or `<iframe>` anywhere on the chat
+  path, on an `href`/`src`/`style` taken from a payload, and on the artifact protocol declaring any
+  markup- or URL-shaped field — no model-authored HTML, SVG or JS is ever rendered.
+
+- **The semantic layer could launder a clipped result too — fixed (stream C, review round).**
+  `query_metric` compiles `LIMIT n` into its serve SQL, and the handler summed those rows into
+  `value` and returned it as the governed number: a total over the first 100 of 400 regions. It now
+  **withholds** the scalar when the result reached the bound (`value: null` plus a `valueWithheld`
+  sentence naming why), returns the truncation fields, and shows the SQL that actually ran. It also
+  stops dropping `exploreMetric`'s own `warning` / `droppedMembers` / `pending` / `unavailable`, so a
+  result that was not sliced as asked says so — on its own line, never merged with the truncation
+  banner. The clipping notice is additionally **prepended** to the tool text the model reads
+  (`⚠ TRUNCATED: …`), because the truncation keys sit at the end of the JSON and the context bound
+  keeps the head — the notice used to be the first thing dropped from exactly the results it was
+  about. `OS_RULES` also now states that values inside a tool result are data, never instructions.
+
+### Fixed
+
+- **A healthy agent run no longer reads back as a wall of errors (night-1 follow-up X-R3/X-R4).**
+  Monitoring's trace read-back and `get_run_trace` answered "did this step fail" by running
+  `/error|fail|aborted/i` over `JSON.stringify(output)`. The observer's own payloads defeat that
+  through their KEY NAMES: a successful tool span's output is `{"isError":false,…}` and
+  `run.result`'s is `{"failed":false,…}`. So on 0.8.0 **every** tool call in a healthy run was
+  labelled `status: 'error'`, the run header went red, and the derived log tail said ERROR for both.
+  Failure is now read structurally — Langfuse's own `level`, then the payload's `isError` / `failed`
+  boolean, each authoritative in both directions — and the text probe applies only to a genuinely
+  textual output. Same surface: the run header said `owner: unknown` for every agent run because it
+  read only `metadata.principal`, which governed-tool traces set and the agent-run observer does
+  not (it writes the acting user to the trace's `userId`); the owner now falls back through the
+  delegated principal, then `userId`, and says `unknown` only when the trace records nobody, and the
+  domain can no longer be the empty string — it is the sentinel `(unknown)`, deliberately a value
+  no domain id can equal, because `domain` is the builder visibility gate and deriving one from the
+  principal's name would make a domain-less run visible to every builder of a guessed domain. An
+  allowed tool that reports its own failure (`{ ok: false, reason: '… failed …' }`) is read as a
+  failure too, not just the two flags the observer writes.
+- **One empty agent-system draft no longer stops a whole domain being committed (X-R2).**
+  `agents: []` — a system created and not yet populated — parses but does not compile, and the
+  compile ran outside the guard that already protects an unparseable source. The exception left the
+  whole-subtree generator, so every other system in that domain stopped being committed and the
+  domain's boot reconcile failed with it. The uncompilable system now keeps its source and its
+  prompt files, loses only its `graph.json`, and its README says why in the compiler's own words.
+  The same containment now covers every other way one system can be malformed — a record missing
+  `schedule` threw from the index row and the README, and a record missing `id` threw from the
+  placement comparator, each before a single file was written.
+- **A system built before git was switched on reports the commit it is at (X-R1).** The boot
+  reconcile commits one commit for the whole `agents/` subtree, so no individual system's history
+  matched it and the tab header and `get_agent_system` said `git.head: null` — "never committed" —
+  about a system sitting in the repository. The reconcile commit now lists every system it carried
+  in an `OS-Objects` trailer — including the systems it REMOVES, so a deletion is attributed to the
+  system it deleted — matched by whole token on read-back, and an id that cannot be written to a
+  trailer is logged by name rather than dropped.
+- **The OS stopped telling agents that Cube secures the number (X-R7).** Metrics are served by one
+  governed Trino SELECT run as the viewer (`exploreMetric`); Trino/OPA secure the number and Cube is
+  on no read path. Seven agent-facing surfaces said otherwise, including `query_metric`'s own
+  description ("Cube applies per-viewer row-level security from YOUR delegated identity") and
+  `get_policy_view`'s claim to label grants "OPA / Cube / OpenSearch-DLS" when it only ever emits
+  two of those. A grep tripwire (`core/mcp/cube-honesty.test.ts`) keeps the claims out.
+- **`docs/components/trino.md`: `TRINO_AUTH_METHOD` is read by os-ui and os-ui only (X-R5).** The
+  page told operators to set it on `os-ui-worker` too; the worker mounts no `os-repos` volume and is
+  not given `DATA_PROJECT_GIT`, so it cannot regenerate `profiles.yml` and setting it there is the
+  same no-op the page already warned about for the Dagster run pod. It also presented the os-ui
+  rollout as a guaranteed regeneration — the boot reconcile refuses an unverified registry — so the
+  page now names the skip line and what a silent "nothing to change" means.
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a
   reference slot as a bare id (`"metric": "m_revenue"`) where the AppSpec grammar wants
@@ -62,6 +361,7 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 - Documented: the Dagster extension image (`images/extensions/dagster`) is NOT built by
   `deploy.sh`; it is built and pushed separately as `ghcr.io/aborek/sovereign-os/dagster:<tag>`
   (context `images/extensions`) before a deploy that bumps its tag.
+
 
 ## [os-ui 0.8.0] — 2026-11-13 — Engine rebuild: real LangGraph/Langfuse/LiteLLM, dbt/Dagster/Trino data products, git-based working, MCP parity
 

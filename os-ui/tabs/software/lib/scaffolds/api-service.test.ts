@@ -52,8 +52,8 @@ test('api-service scaffold: openapi declares the starter endpoints (feeds auto-M
   assert.match(spec, /\/api\/hello/);
 });
 
-test('api-service scaffold: ships through the same sovereign CI as every app', () => {
-  assert.match(byPath('.forgejo/workflows/ci.yml'), /docker push/);
+test('api-service scaffold: ships NO forge CI workflow (there is no OS build service)', () => {
+  assert.equal(apiServiceFiles('Api', 'api').find((f) => f.path.startsWith('.forgejo/')), undefined);
 });
 
 test('api-service scaffold: README is the endpoint contract and doubles as docs', () => {

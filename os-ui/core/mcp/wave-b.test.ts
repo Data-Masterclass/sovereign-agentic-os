@@ -116,13 +116,21 @@ test('get_metric: reads back the definition, canonical member and the metric YAM
   assert.match(m.definitionYaml, /name: revenue\n\s+type: sum/, 'the generated metric YAML carries the measure');
 });
 
-test('get_metric: unseeable dataset → typed forbidden; garbage id → typed not_found (no leak)', async () => {
+test('get_metric: an unseeable metric and a non-existent one answer the SAME not_found (review M-6)', async () => {
   resetAll();
   const metricId = await definedMetric(); // tier asset in `sales`
-  const e = errorOf(await call(outsider, 'get_metric', { metricId })); // dan is in `ops`
-  assert.equal(e.code, 'forbidden');
+  // The test name said "no leak" while asserting `forbidden`, which IS the leak: it told the
+  // caller the id exists and belongs to someone else. `getMetric` now collapses both to one
+  // byte-identical 404 — the rule `query_metric`'s own description already promised.
+  const hidden = errorOf(await call(outsider, 'get_metric', { metricId })); // dan is in `ops`
   const missing = errorOf(await call(builder, 'get_metric', { metricId: 'ds_nope.revenue' }));
+  assert.equal(hidden.code, 'not_found');
   assert.equal(missing.code, 'not_found');
+  assert.equal(
+    hidden.reason.replace(metricId, '<ID>'),
+    missing.reason.replace('ds_nope.revenue', '<ID>'),
+    'a differing reason leaks the same bit the differing code did',
+  );
 });
 
 // ---- GET_DASHBOARD -------------------------------------------------------------
@@ -194,14 +202,18 @@ test('get_file: a restricted file returns metadata but NEVER the text; an unenti
 
 // ---- READ_APP_FILES + GET_SOFTWARE_STATUS ----------------------------------------
 
-test('read_app_files: the committed tree + one file’s content, honestly labelled offline-mock without a cluster', async () => {
+// NIGHT-2 S1: the label is `source`, not `mode: 'offline-mock'`. There is no git forge to be
+// "unreachable" — the tree is either what the governed commit door committed into
+// `apps/<slug>/` of the domain repository, or (for an app with no commit yet) the template seed.
+test('read_app_files: the committed tree + one file’s content, labelled `template-seed` before any commit', async () => {
   resetAll();
   const app = payload<{ id: string }>(await call(builder, 'create_software', { name: 'Renewals', template: 'nextjs-supabase' }));
 
-  const tree = payload<{ mode: string; files: string[]; note: string }>(await call(builder, 'read_app_files', { appId: app.id }));
-  assert.equal(tree.mode, 'offline-mock', 'no live tree in tests — the mode is honestly labelled');
+  const tree = payload<{ source: string; files: string[]; note: string }>(await call(builder, 'read_app_files', { appId: app.id }));
+  assert.equal(tree.source, 'template-seed', 'a fresh app has no commit — say so, do not call it a forge outage');
+  assert.ok(!('mode' in (tree as Record<string, unknown>)), 'no `offline-mock` mode label any more');
+  assert.match(tree.note, /no commit yet/i, 'the honest reason is stated');
   assert.ok(tree.files.includes('app.yaml') && tree.files.includes('Dockerfile'), 'the template seed tree is visible');
-  assert.ok(tree.note.length > 0, 'the offline source is stated');
 
   const file = payload<{ path: string; content: string; contentNote: string | null }>(
     await call(builder, 'read_app_files', { appId: app.id, path: 'app.yaml' }),

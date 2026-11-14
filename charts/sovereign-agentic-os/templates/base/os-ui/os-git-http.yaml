@@ -1,0 +1,98 @@
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  The engineer's door (decision D27): authenticated git over HTTP at
+  `https://<os>/git/<domain>.git`, served by git's OWN `git-http-backend` CGI in the `git-http`
+  sidecar on the os-ui pod (see os-ui.yaml). We write no git protocol.
+
+  Rendered ONLY when osUI.dataProjectGit.enabled AND its gitHttp.enabled.
+
+  TLS IS NOT OPTIONAL on this path: an OS access token travels in every request, so the Ingress
+  carries `force-ssl-redirect` and `core/infra/git-clone.ts` only ever prints an `https://` remote
+  (loopback excepted, where there is no wire).
+
+  AUTHENTICATION is the OS's, not the transport's: the Ingress below sends every `/git/**` request
+  to os-ui's `/api/git/authenticate` as a sub-request (ingress-nginx `auth-url`), which resolves an
+  OS personal access token to a live principal and checks domain membership. Only then does nginx
+  forward the request to the sidecar, with the resolved principal copied onto it.
+  The sidecar is NEVER reachable from outside the cluster by any other path: the NetworkPolicy in
+  os-repos.yaml admits port 9419 from the ingress controller's namespace only.
+
+  WRITE is gated a second time, server-side: the repo's pre-receive hook calls
+  `/api/git/receive`, which authenticates the SAME token itself, holds the per-domain git-store
+  lock for the whole receive, decides path ownership and runs the UI's own validators (D28).
+*/}}
+{{- $u := .Values.osUI }}
+{{- $dpg := $u.dataProjectGit | default dict }}
+{{- $gh := $dpg.gitHttp | default dict }}
+{{- if and $u.enabled $dpg.enabled $gh.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: os-git-http
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+  ports:
+    - name: git-http
+      port: 9419
+      targetPort: git-http
+{{- $ing := .Values.ingress }}
+{{- $host := index ($ing.hosts | default dict) "osUI" }}
+{{- if and $ing.enabled $host }}
+---
+{{- /*
+  A SECOND Ingress on the SAME host, for the `/git` prefix only. ingress-nginx merges rules per
+  host across Ingress objects, so this adds one path beside os-ui's `/` without touching
+  templates/base/ingress.yaml (which stream E does not own).
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: os-git-http-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/name: os-git-http
+    app.kubernetes.io/component: ingress
+  {{- /*
+    ONE merged annotation map (review M-1): the shared `ingress.annotations` already sets
+    `proxy-body-size: 200m` for the Files tab, and emitting a second key of the same name produced
+    a DUPLICATE YAML key whose winner depended on the parser. `merge` takes this route's values
+    over the shared ones, so the git path's own body cap is the one that applies.
+  */}}
+  {{- $gitAnno := dict
+        "cert-manager.io/cluster-issuer" ($ing.tlsIssuer | toString)
+        "nginx.ingress.kubernetes.io/auth-url" (printf "http://os-ui.%s.svc.cluster.local:3000/api/git/authenticate" .Release.Namespace)
+        "nginx.ingress.kubernetes.io/auth-response-headers" "X-Os-Principal, X-Os-Principal-Role, X-Os-Token-Prefix"
+        "nginx.ingress.kubernetes.io/auth-snippet" "proxy_set_header X-Original-URI $request_uri;\n"
+        "nginx.ingress.kubernetes.io/proxy-request-buffering" "off"
+        "nginx.ingress.kubernetes.io/force-ssl-redirect" "true"
+        "nginx.ingress.kubernetes.io/proxy-body-size" ($gh.maxPushSize | default "512m" | toString)
+  }}
+  annotations:
+    {{- toYaml (merge $gitAnno ($ing.annotations | default dict)) | nindent 4 }}
+spec:
+  ingressClassName: {{ $ing.className }}
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: {{ printf "%s-tls" $host | quote }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /git
+            pathType: Prefix
+            backend:
+              service:
+                name: os-git-http
+                port:
+                  number: 9419
+{{- end }}
+{{- end }}

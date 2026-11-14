@@ -20,7 +20,7 @@ export function metricAgentMessages(columns: string[], goal: string): AssistantM
   const system = [
     'You are the Metric Agent for the Sovereign Agentic OS semantic layer. Given a',
     "dataset's real columns and a business goal, propose ONE measure the platform can",
-    'build in Cube. You may ONLY use the listed columns — never invent a name.',
+    'build as a dbt metric on this dataset. You may ONLY use the listed columns — never invent a name.',
     '',
     `Allowed aggregations: ${MEASURE_TYPES.join(', ')}.`,
     'Rules: for "count" leave column empty; for every other aggregation pick exactly',

@@ -27,10 +27,13 @@ import {
   type MetricGroups, type MetricSummary, type Panel, type PanelFilter,
   TIER_BADGE, TIER_LABEL,
 } from '@tabs/dashboards/ui/shared';
+import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
+import GitHeadBadge from '@core/ui/git/GitHeadBadge';
+import CloneRepository from '@core/ui/git-clone/CloneRepository';
 
 const leaf = (member: string) => (member.includes('.') ? member.slice(member.lastIndexOf('.') + 1) : member);
 
-/** The Cube view a chart's member belongs to (member = `View.measure`). */
+/** The governed view a chart's member belongs to (member = `View.measure`). */
 const viewOfMetric = (m: string) => (m.includes('.') ? m.slice(0, m.indexOf('.')) : m);
 
 /** Dashboard tier → the OS-wide lifecycle visibility (drives the delete gate). */
@@ -62,7 +65,7 @@ export default function DashboardBuilder({
   /** Open an already-built dashboard (lands at View), or null to create a new one (Edit). */
   existing: DashboardSummary | null;
   /** When creating, pre-filter the metric palette to this dataset's metrics (Data tab
-   *  → "＋ New dashboard" deep-link). A dashboard binds to one Cube view, so scoping the
+   *  → "＋ New dashboard" deep-link). A dashboard binds to one governed view, so scoping the
    *  palette to one dataset keeps every chart on that dataset's view. */
   initialDatasetId?: string;
   /** When creating, pre-select this metric MEMBER in the panel builder (Metric View →
@@ -119,7 +122,7 @@ export default function DashboardBuilder({
   // panel re-seeds the builder. null = adding a new panel.
   const [editIdx, setEditIdx] = useState<number | null>(null);
   const [editKey, setEditKey] = useState(0);
-  // Inline rename (display name only — the Cube view is frozen). `nameOverride` lets the
+  // Inline rename (display name only — the bound view is frozen). `nameOverride` lets the
   // header reflect the new name immediately without a full re-open of the builder.
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -175,7 +178,7 @@ export default function DashboardBuilder({
     return null;
   }, [existing, build, user?.name]);
 
-  // The single Cube view the charts bind to (a dashboard binds to exactly one).
+  // The single governed view the charts bind to (a dashboard binds to exactly one).
   const views = useMemo(
     () => Array.from(new Set(charts.flatMap((c) => panelMetrics(c).map(viewOfMetric)).filter(Boolean))),
     [charts],
@@ -234,7 +237,7 @@ export default function DashboardBuilder({
   // The name shown in the header — the local override (post-rename) wins over the record.
   const displayName = nameOverride ?? built?.name ?? '';
 
-  // Rename the dashboard (display name only). The store freezes the Cube view before the
+  // Rename the dashboard (display name only). The store freezes the bound view before the
   // name changes, so every panel binding stays pinned to the real view.
   const rename = async () => {
     if (!built) return;
@@ -300,6 +303,7 @@ export default function DashboardBuilder({
           {(built.tier === 'domain' || built.tier === 'marketplace') ? <DomainTag domain={built.domain} /> : null}
           <span className={`badge ${TIER_BADGE[built.tier]}`}>{TIER_LABEL[built.tier]}</span>
           <span className="muted mono" style={{ fontSize: 12 }}>{built.view}</span>
+          {' '}· <GitHeadBadge kind="dashboard" id={built.id} />
           {/* Lifecycle + Promote live in the persistent detail header — reachable from View or
               Edit (there is no Govern stage). Governance unchanged (canManage / canApprove). */}
           {canManage ? (
@@ -391,6 +395,9 @@ export default function DashboardBuilder({
             {/* Connected tools (Power BI / Tableau) is REMOVED from View for now —
                 the connections are unverified; restore <ConnectTools /> once each is proven live. */}
           </div>
+          {/* night-2 stream T: the tool-native artefacts of this dashboard. */}
+          <UnderTheHood kind="dashboard" id={built.id} />
+          <CloneRepository domain={built.domain} />
         </div>
       ) : (
         <div className="chat-empty">Save the dashboard first — there is nothing to view yet.</div>

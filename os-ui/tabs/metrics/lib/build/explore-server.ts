@@ -13,6 +13,8 @@ import {
   dropToSql,
   exploreSpec,
   previewTrinoSql,
+  serveRefusal,
+  type ServeRefusal,
   sqlRowsToExploreRows,
 } from '@tabs/metrics/lib/explorer';
 import { liveMetricsReachable } from '@tabs/metrics/lib/build/live-clients';
@@ -81,6 +83,31 @@ function mockRows(spec: ExploreSpec, ctx: Record<string, unknown>): Record<strin
   return [{ [member]: total }];
 }
 
+/**
+ * REVIEW M-4. A SERVED cumulative metric still counts BUCKETS, not calendar units.
+ *
+ * `windowFrame` emits a `ROWS BETWEEN n PRECEDING AND CURRENT ROW` frame over the bucketed series,
+ * so a day with no rows produces no bucket and the window silently trails the last n PRESENT days
+ * instead of the last n calendar days. The time spine is generated
+ * (`models/os/os_time_spine_day.sql`) but the compiler does not join to it yet, so the honest thing
+ * is to say so ON the number — a refusal would remove a number people use today, and silence would
+ * let a gap-bearing series read as a calendar window.
+ *
+ * The existing warning keeps its place at the FRONT: the loud-degradation precedence (outage >
+ * unresolved member > dropped slice dimension) is the warning authority, and this caveat is
+ * additive to it, never a replacement.
+ */
+function windowWarning(measure: Measure, spec: ExploreSpec, existing?: string): { warning?: string } {
+  if (!measure.rollingWindow) return existing ? { warning: existing } : {};
+  const trailing = (measure.rollingWindow.trailing ?? '').trim();
+  const caveat =
+    trailing === 'unbounded'
+      ? 'Running total: this accumulates every time bucket present in the series. A period with no rows produces no bucket, so the series has no zero-filled gaps — the generated time spine (models/os/os_time_spine_day.sql) is not joined to yet.'
+      : `Trailing window: the frame counts time BUCKETS, not calendar units, so a period with no rows does not contribute a zero and the window trails the last ${trailing.split(' ')[0] || 'n'} buckets PRESENT in the data. For a dense series these are the same; for a sparse one they are not. The generated time spine (models/os/os_time_spine_day.sql) is not joined to yet.`;
+  void spec;
+  return { warning: existing ? `${existing}\n${caveat}` : caveat };
+}
+
 export type ExploreServerResult = {
   member: string;
   rows: Record<string, unknown>[];
@@ -90,6 +117,8 @@ export type ExploreServerResult = {
   /** True when the metric compiles but has no number for this slice yet (a window metric
    *  needs a time dimension) — a soft "pending", never a fabricated value. */
   pending?: boolean;
+  /** Set WITH `pending` — the TYPED, NAMED reason the OS compiler served no number (M6). */
+  refusal?: ServeRefusal;
   /** True on a real deployment when the semantic layer is unreachable — no number is
    *  returned (rows: []) rather than a fabricated one. The UI shows an honest outage. */
   unavailable?: boolean;
@@ -97,6 +126,19 @@ export type ExploreServerResult = {
    *  expose were dropped from the query — the result is NOT sliced as asked. */
   warning?: string;
   droppedMembers?: string[];
+  /**
+   * The QUERY-TOOL's own truncation, passed straight through (review C-10, filed by stream C).
+   *
+   * The serve SQL carries the slice's `LIMIT`, but the query tool has a SECOND, lower ceiling of
+   * its own (`QUERY_MAX_ROWS`). When that one clips the result, the rows are the FIRST n and not a
+   * sample — and this layer used to drop the fact on the floor, so a consumer that summed the rows
+   * presented a total over an unknown fraction of the groups with nothing to warn it. The three
+   * fields are the query tool's, verbatim, so a surface can show its sentence rather than invent
+   * one.
+   */
+  truncated?: boolean;
+  rowLimit?: number;
+  message?: string;
 };
 
 export async function exploreMetric(
@@ -156,15 +198,16 @@ export async function exploreMetric(
       // as governed SQL but REQUIRES a time dimension + granularity — a window with
       // no series, or an inexpressible trailing frame, has no honest number, so we return an
       // explicit pending with a clear reason rather than a fabricated value.
-      const reason = measure.rollingWindow
-        ? 'This is a rolling-window / running-total metric — add a time dimension and a matching granularity (e.g. day) to the slice so the trailing series can be computed.'
-        : undefined;
+      // A TYPED, NAMED refusal (M6) — the code, the dbt metric type and the reason, so the UI and
+      // an MCP client can both say WHY there is no number instead of showing a blank tile.
+      const refusal = serveRefusal(dataset, measure, spec)!;
       return {
         ...base,
         rows: [],
         securityContext: identities.securityContext,
         pending: true,
-        ...(reason ? { warning: reason } : {}),
+        refusal,
+        warning: refusal.reason,
       };
     }
     // Run AS the delegated token's SUBJECT (R3 — the viewer's uid). For a personal dataset the
@@ -177,10 +220,16 @@ export async function exploreMetric(
       mode: 'live (sql)',
       rows: sqlRowsToExploreRows(result.columns, result.rows, spec),
       securityContext: identities.securityContext,
+      // Review C-10: the query tool's OWN ceiling, not the slice's LIMIT. Dropping these made a
+      // clip below the metric's own bound invisible to every consumer.
+      ...(result.truncated ? { truncated: true } : {}),
+      ...(result.rowLimit !== undefined ? { rowLimit: result.rowLimit } : {}),
+      ...(result.message ? { message: result.message } : {}),
+      ...windowWarning(measure, spec, base.warning),
     };
   }
   // Not live: the honest offline-MOCK (local/teaching only — the honesty gate above already
   // returned 'unavailable' on a real deployment). The in-memory rows enforce the same RLS.
   const { securityContext } = propagate(token); // throws if the token isn't user-delegated (R2/R3)
-  return { ...base, rows: mockRows(spec, securityContext), securityContext };
+  return { ...base, rows: mockRows(spec, securityContext), securityContext, ...windowWarning(measure, spec, base.warning) };
 }

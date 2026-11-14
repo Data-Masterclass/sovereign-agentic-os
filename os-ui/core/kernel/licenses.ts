@@ -63,6 +63,9 @@ export const COMPONENTS: Component[] = [
   { name: 'KServe', license: 'Apache-2.0', layer: 'Science', note: 'Model inference serving.' },
 
   // ---- OS UI tier ----
+  { name: 'Apache ECharts', license: 'Apache-2.0', layer: 'OS UI', note: 'The chart renderer behind every dashboard panel, query result and app chart (os-ui; one registration surface in core/ui/charts).' },
+  { name: 'Apache Superset (vendored chart transformers)', license: 'Apache-2.0', layer: 'OS UI', note: 'Pure chart transformers and series algebra derived from Apache Superset source, vendored under os-ui/vendor/superset/ @ c83fb2bb1dcf. Includes code derived from Apache Superset; this product is not Apache Superset.' },
+  { name: 'js-yaml', license: 'MIT', layer: 'OS UI', note: 'YAML reader for dashboard-as-code and agent system.yaml (os-ui).' },
   { name: 'Next.js', license: 'MIT', layer: 'OS UI', note: 'App-router front door framework.' },
   { name: 'React', license: 'MIT', layer: 'OS UI', note: 'UI runtime.' },
   { name: 'TypeScript', license: 'Apache-2.0', layer: 'OS UI', note: 'Typed superset of JavaScript.' },

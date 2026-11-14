@@ -13,6 +13,13 @@
  *   - The actor is the PLATFORM principal (author = committer = `Sovereign OS`), with
  *     `OS-Reason: boot-reconcile` and `OS-Surface: boot:reconcile`, so a reconcile commit is never
  *     mistaken for a user's save.
+ *   - PER-OBJECT ATTRIBUTION (X-R1). The commit is one commit for the whole subtree, so its
+ *     `OS-Object` is the DOMAIN and no system's history used to find it: every system that existed
+ *     before git was switched on reported `git.head: null` — "never committed" — about a system
+ *     that is in the repository. `allObjects: true` makes the commit list every system it carried
+ *     in an `OS-Objects` trailer, which `systemGitInfo` now reads. (The generic path-based
+ *     fallback is stream G's, G-R2.1; either alone fixes the symptom, and this one also makes the
+ *     reconcile commit honest about what it touched.)
  *   - WHICH domains: every domain that holds a live system, plus every existing repo that already
  *     carries an `agents/` subtree (so a domain whose last system was deleted while git was off
  *     gets the REMOVAL committed). A data-only repo is left untouched — reconcile never creates an
@@ -90,7 +97,14 @@ export async function reconcileAgentProjects(deps: ReconcileDeps = {}): Promise<
       const result = await commitAgentSystem(
         domain,
         PLATFORM_ACTOR,
-        { action: 'reconcile agent systems', object: domain, objectId: domain, surface: RECONCILE_SURFACE, reason: RECONCILE_REASON },
+        {
+          action: 'reconcile agent systems',
+          object: domain,
+          objectId: domain,
+          surface: RECONCILE_SURFACE,
+          reason: RECONCILE_REASON,
+          allObjects: true, // X-R1
+        },
         { ...deps, reposDir },
       );
       out.push({ domain, changed: !!result?.changed, ...(result?.sha ? { sha: result.sha } : {}) });

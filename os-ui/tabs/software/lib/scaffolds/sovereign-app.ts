@@ -4,7 +4,7 @@
 /**
  * The SOVEREIGN STANDARD APP template — the "base app" every new Software-tab
  * app scaffolds from. Like vite-os.ts this module is PURE DATA (`{path,content}[]`)
- * written into the per-app Forgejo repo by the seeder; it is never compiled as
+ * written into the app's source tree under `apps/<slug>/` by the seeder; it is never compiled as
  * live os-ui source.
  *
  * A fresh app already IS a Sovereign OS app before the first epic is built:
@@ -891,7 +891,7 @@ function appYaml(name: string, slug: string): ScaffoldFile {
       'apiVersion: software.sovereign-os/v1',
       'kind: App',
       `name: '${name}'`,
-      'owner: gitea_admin',
+      '# owner: filled in by the OS from the app record (the app’s real owner).',
       `description: '${name} — a Sovereign standard app built in the Software tab.'`,
       '# Declare the surface so the monitor shows the UI link from day one.',
       'surface: ui',
@@ -1024,8 +1024,9 @@ export function sovereignAppGuide(name: string, slug: string): string {
     'npm run dev',
     '```',
     '',
-    'CI (`.forgejo/workflows/ci.yml`) builds the multi-stage Docker image (Vite build →',
-    `nginx on 8080); the OS runner serves it at \`${slug}.<domain>.<apps-domain>\`.`,
+    'The OS serves this app itself from the committed tree (no OS build service, no image',
+    'registry, no GitOps controller). The `Dockerfile` is for the OPTIONAL per-app container',
+    `path: build and publish that image yourself, then point the app at it (\`${slug}.<domain>.<apps-domain>\`).`,
     '',
   ].join('\n');
 }
@@ -1041,7 +1042,6 @@ export const SOVEREIGN_APP_EXPECTED_PATHS = [
   'src/index.css',
   'Dockerfile',
   'nginx.conf',
-  '.forgejo/workflows/ci.yml',
   'openapi.yaml',
   'src/os.ts',
   'src/vite-env.d.ts',

@@ -156,3 +156,45 @@ export interface MetricQuery {
   timeDimension?: string;
   granularity?: string;
 }
+
+// --------------------------------------------- Agents (night-2 S7, decision D21) ---
+//
+// An app calls an OS agent through the SAME doors the user does, under the ambient session.
+// These shapes are deliberately shallow and HONEST: a run that parks on a held write is
+// `parked` WITH its approval id, so the app renders that state instead of pretending the run
+// finished; a run the OS is still executing is `running` + `pending`, never a fabricated answer.
+
+/** Where a run is. There is no fifth state and no "probably finished". */
+export type AgentRunState = 'running' | 'parked' | 'done' | 'error';
+
+/** One frame of a run's durable event log (`node-started`, `tool-step`, `done`, …). */
+export interface AgentRunEvent {
+  event: string;
+  data?: unknown;
+}
+
+/** An agent run as an app sees it. */
+export interface AgentRun {
+  systemId: string;
+  /** The OS run id — also the LangGraph thread id. Empty only when the OS did not return one. */
+  runId: string;
+  state: AgentRunState;
+  /** Present when `state === 'parked'`: the Governance approval holding the run. */
+  approvalId?: string;
+  /** The run's own terminal payload (the report), forwarded as-is. */
+  output?: unknown;
+  /** The honest failure reason when `state === 'error'`. */
+  error?: string;
+  /** True when the OS answered "still executing" — re-read with `os.agents.get`. */
+  pending?: boolean;
+  /** How many events the state was derived from (0 for a direct run answer). */
+  events?: number;
+}
+
+/** The result of deciding the approval that is holding a run. */
+export interface AgentDecisionResult {
+  approvalId: string;
+  /** `approved` | `rejected` | `pending` | `unknown` — the inbox's own word. */
+  status: string;
+  decidedBy?: string;
+}

@@ -2,7 +2,19 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { Forbidden, NotAuthenticated, OsError, UnsupportedQuery } from './errors';
+import {
+  agentRunPath,
+  agentRunStreamPath,
+  APP_DECIDE_REQUEST,
+  appIntentHeaders,
+  readAppIntent,
+  normalizeAgentRun,
+  parseRunEvents,
+  reduceRunEvents,
+} from './agents';
 import type {
+  AgentDecisionResult,
+  AgentRun,
   AppRecord,
   ContextItem,
   DatasetQuery,
@@ -158,6 +170,32 @@ export interface OsClient {
     remove(id: string): Promise<RecordResult>;
     export(): Promise<RecordResult>;
   };
+  /**
+   * OS AGENTS — the app → agent half of the triangle (night-2 S7, decision D21).
+   *
+   * All three calls go to the SAME governed doors the OS UI posts to, as the SIGNED-IN USER over
+   * the ambient session: `run` files through the agents run route (which mints the run id, gates
+   * the caller and calls `enqueueRun`), `get` tails that run's durable event log through the
+   * route the OS Run panel itself attaches to, and `decide` posts the ONE Governance inbox route.
+   *
+   * There is NO app principal, NO service identity and NO key of the app's own anywhere on this
+   * path — so an app can never reach an agent, a run or an approval that its viewer could not
+   * reach in the UI, and `decide` simply 403s (→ `Forbidden`) when the viewer may not approve.
+   *
+   * A run that parks on a held write comes back as `state: 'parked'` WITH its `approvalId`:
+   * render that, never a finished-looking answer.
+   */
+  agents: {
+    /** Start a run of `systemId` with `message`. Resolves when the OS answers (see `AgentRun`). */
+    run(systemId: string, message: string, opts?: { signal?: AbortSignal }): Promise<AgentRun>;
+    /**
+     * Read a run's current state from its durable event log. `systemId` is required because the
+     * governed read door is scoped by system — the same scoping the UI's Run panel uses.
+     */
+    get(systemId: string, runId: string, opts?: { afterSeq?: number; timeoutMs?: number }): Promise<AgentRun>;
+    /** Decide the approval holding a run — only where the VIEWER's own role permits. */
+    decide(approvalId: string, decision: 'approve' | 'reject', opts?: { remember?: boolean }): Promise<AgentDecisionResult>;
+  };
 }
 
 /** The five context kinds the governed available-context feed exposes. */
@@ -187,10 +225,10 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
    *  typed errors, and returns parsed JSON on success. */
   async function request<T>(
     path: string,
-    init?: { method?: string; body?: unknown },
+    init?: { method?: string; body?: unknown; signal?: AbortSignal; headers?: Record<string, string> },
   ): Promise<T> {
     const url = joinUrl(baseUrl, path);
-    const headers: Record<string, string> = { accept: 'application/json' };
+    const headers: Record<string, string> = { accept: 'application/json', ...(init?.headers ?? {}) };
     let body: string | undefined;
     if (init?.body !== undefined) {
       headers['content-type'] = 'application/json';
@@ -207,6 +245,7 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
         // cross-origin when the remote OS opts the app's origin into credentialed CORS).
         credentials: 'include',
         cache: 'no-store',
+        signal: init?.signal,
       });
     } catch (e) {
       // Network/transport failure — honest, not a fabricated empty result.
@@ -342,7 +381,9 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
     // ── metrics ───────────────────────────────────────────────────────────────
     metrics: {
       list: () => request('/api/metrics'),
-      /** Slice a metric via the governed explorer (per-viewer Cube RLS applies).
+      /** Slice a metric via the governed explorer — ONE governed Trino SELECT run as the
+       *  signed-in viewer, so Trino/OPA apply per-viewer row security (NOT Cube, which is off
+       *  the metric read path).
        *  The explorer's member-keyed row objects are normalized into a QueryResult
        *  table (columns derived from the row keys) — see normalizeMetricResult. */
       async query(id: string, q: MetricQuery = {}): Promise<QueryResult> {
@@ -440,6 +481,100 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
           body: {},
         });
         return r.result;
+      },
+    },
+
+    // ── OS agents: the app → agent door, as the signed-in user ────────────────
+    agents: {
+      async run(systemId: string, message: string, runOpts: { signal?: AbortSignal } = {}): Promise<AgentRun> {
+        const id = String(systemId ?? '').trim();
+        if (!id) throw new OsError('os.agents.run needs a systemId (the agent system to run).', 0);
+        const prompt = String(message ?? '').trim();
+        if (!prompt) throw new OsError('os.agents.run needs a message (what the agent should do).', 0);
+        // The UI's own door. `stream: false` asks for the JSON answer rather than the SSE tail.
+        // REVIEW H-1: inside an OS-rendered app frame the call carries the per-render, signed,
+        // `agent-run`-scoped intent the OS injected, and says it is an app. Outside one there is
+        // no intent to send and this is the OS UI's own call.
+        const raw = await request<unknown>(agentRunPath(id), {
+          method: 'POST',
+          body: { prompt, stream: false },
+          signal: runOpts.signal,
+          headers: appIntentHeaders(readAppIntent()),
+        });
+        return normalizeAgentRun(id, raw);
+      },
+
+      async get(systemId: string, runId: string, getOpts: { afterSeq?: number; timeoutMs?: number } = {}): Promise<AgentRun> {
+        const sys = String(systemId ?? '').trim();
+        const run = String(runId ?? '').trim();
+        if (!sys || !run) throw new OsError('os.agents.get needs the systemId and the runId.', 0);
+        // The run READ door is the durable event tail the OS Run panel attaches to. It stays open
+        // while the run is live, so we read what has arrived and then stop — a status read must
+        // never hang an app's render. Whatever arrived is reduced HONESTLY: still `running` when
+        // no terminal event has been seen, never a guessed completion.
+        const url = joinUrl(baseUrl, agentRunStreamPath(sys, run, getOpts.afterSeq ?? 0));
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const timeoutMs = Math.max(250, Math.min(getOpts.timeoutMs ?? 4000, 30_000));
+        const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+        let text = '';
+        try {
+          const res = await doFetch(url, {
+            method: 'GET',
+            headers: { accept: 'text/event-stream', ...appIntentHeaders(readAppIntent()) },
+            credentials: 'include',
+            cache: 'no-store',
+            signal: controller?.signal,
+          });
+          if (!res.ok) {
+            const reason = await readError(res);
+            if (res.status === 401) throw new NotAuthenticated(reason || undefined, url);
+            if (res.status === 403) throw new Forbidden(reason || 'access denied by policy', url);
+            if (res.status === 404) throw new OsError(reason || 'No run stream for this run', 404, url);
+            throw new OsError(reason || `OS request failed (${res.status})`, res.status, url);
+          }
+          text = await res.text();
+        } catch (e) {
+          const aborted = (e as { name?: string }).name === 'AbortError';
+          if (!aborted) {
+            if (e instanceof OsError) throw e;
+            throw new OsError(`Request to ${url} failed: ${(e as Error).message}`, 0, url);
+          }
+          // Aborted on our own timeout: whatever text arrived before the abort is lost, so the
+          // honest answer is "still running" — not an error and not a completion.
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+        return reduceRunEvents(sys, run, parseRunEvents(text));
+      },
+
+      async decide(approvalId: string, decision: 'approve' | 'reject', decideOpts: { remember?: boolean } = {}): Promise<AgentDecisionResult> {
+        const id = String(approvalId ?? '').trim();
+        if (!id) throw new OsError('os.agents.decide needs the approvalId.', 0);
+        // REVIEW H-1: an app does NOT decide an approval. It used to POST the governance inbox
+        // directly with the ambient session, which meant app code could approve the very write
+        // its own run was held on, silently, with no human in the loop. Now the app ASKS: it
+        // posts a message to the OS host shell, the SHELL renders the confirmation (OS chrome,
+        // outside the app's frame, showing what is being approved) and the shell performs the
+        // POST with its own, separately scoped intent. The app's injected intent carries
+        // `agent-run` only, so even a forged direct POST is refused server-side; the app frame's
+        // CSP keeps app JavaScript off the route in the first place.
+        const intent = readAppIntent();
+        if (!intent) {
+          throw new Forbidden(
+            'os.agents.decide is only available inside an OS-rendered app, where the OS can show you the confirmation.',
+          );
+        }
+        const host = typeof window !== 'undefined' ? (window as unknown as { parent?: { postMessage: (m: unknown, o: string) => void } }).parent : undefined;
+        if (!host || typeof host.postMessage !== 'function') {
+          throw new OsError('No OS host shell to ask — os.agents.decide needs the OS app frame.', 0);
+        }
+        host.postMessage(
+          { type: APP_DECIDE_REQUEST, approvalId: id, decision: decision === 'reject' ? 'reject' : 'approve', remember: !!decideOpts.remember },
+          '*',
+        );
+        // HONEST STATE: nothing is decided yet. The OS will show the confirmation and the user
+        // decides. Render this as "waiting for your confirmation in the OS" — never as done.
+        return { approvalId: id, status: 'awaiting-user-confirmation' };
       },
     },
   };

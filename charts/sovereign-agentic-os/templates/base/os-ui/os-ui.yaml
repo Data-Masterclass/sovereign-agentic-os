@@ -12,6 +12,7 @@
 */}}
 {{- $u := .Values.osUI }}
 {{- $dpg := $u.dataProjectGit | default dict }}
+{{- $gh := $dpg.gitHttp | default dict }}
 {{- /*
   Scoped RBAC for the native Components surface. The OS UI server reads workload
   status + scales Deployments/StatefulSets 0<->1 and reads CNPG Clusters
@@ -206,6 +207,45 @@ spec:
           volumeMounts:
             - name: os-repos
               mountPath: /repos
+        {{- if $gh.enabled }}
+        # THE ENGINEER'S DOOR (stream E, decision D27): git's own `git-http-backend` CGI behind
+        # lighttpd, so `git clone https://<os>/git/<domain>.git` works from VS Code. A SEPARATE
+        # process, non-root, read-only root filesystem; the OS authenticates every request through
+        # the ingress sub-request to /api/git/authenticate (see os-git-http.yaml), and the repo's
+        # pre-receive hook calls /api/git/receive, which holds the per-domain lock and validates.
+        # /repos is mounted WRITABLE here (unlike the read-only git-daemon beside it) because
+        # `receive-pack` is the whole point of this container.
+        - name: git-http
+          image: "{{ $dpg.gitHttp.image.repository }}:{{ $dpg.gitHttp.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            # The ONE endpoint the receive hooks call, on this pod's own loopback.
+            - name: OS_RECEIVE_URL
+              value: "http://127.0.0.1:3000/api/git/receive"
+            {{- if ($.Values.serviceBearer).enabled }}
+            # The hook proves it IS the OS's own hook when a service bearer is configured — the
+            # same shared token and the same posture as the data-plane calls (`soa.serviceBearerEnv`).
+            - name: OS_SERVICE_BEARER
+              valueFrom:
+                secretKeyRef:
+                  name: service-bearer-token
+                  key: SERVICE_BEARER_TOKEN
+            {{- end }}
+          ports:
+            - { name: git-http, containerPort: 9419 }
+          volumeMounts:
+            - name: os-repos
+              mountPath: /repos
+            # lighttpd buffers a push's request body here, and the hooks write one temp file.
+            - name: git-http-tmp
+              mountPath: /tmp
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+        {{- end }}
         # Read-only git daemon exporting every domain repo in-cluster (git://os-repos/<domain>.git)
         # for the Dagster repo-sync sidecar. --export-all: bare repos written by isomorphic-git
         # carry no git-daemon-export-ok marker. Nothing in a repo is a secret.
@@ -229,6 +269,10 @@ spec:
         - name: os-repos
           persistentVolumeClaim:
             claimName: os-repos
+        {{- if $gh.enabled }}
+        - name: git-http-tmp
+          emptyDir: { sizeLimit: 2Gi }
+        {{- end }}
           {{- end }}
 ---
 apiVersion: v1

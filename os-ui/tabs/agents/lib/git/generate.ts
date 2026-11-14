@@ -28,6 +28,22 @@
  *     where it belongs — git authorship is the one place a person is meant to be named.
  *   - A system whose stored yaml does not parse still gets its `system.yaml` committed verbatim
  *     plus a README that says so — losing the source would be worse than an unreadable one.
+ *   - THE SAME FOR A SYSTEM THAT PARSES BUT DOES NOT COMPILE (X-R2). `parseSystem` accepts
+ *     `agents: []` — a system someone created and has not populated yet — but `compile` refuses it
+ *     ("at least one agent is required"), and `compile` used to run OUTSIDE the guard. One such
+ *     system therefore threw out of `generateAgentFiles`, which is the WHOLE domain's subtree, so
+ *     a single empty draft took down every other system's commit in that domain and failed the
+ *     boot reconcile for the domain with it. The compile is now guarded exactly like the parse:
+ *     the source and the prompts are still committed, `graph.json` is omitted, and the README
+ *     names the reason. The failure is scoped to the one system, which is what X-R2 asks for.
+ *   - AND THE SAME FOR EVERY OTHER WAY ONE SYSTEM CAN BE MALFORMED (review L-1). The compile was
+ *     only the throw we had FOUND. A snapshot record missing a field the renderers read —
+ *     `schedule` is the easy one, since `renderIndex` and the README both dereference
+ *     `s.schedule.kind` — threw from the index row or the README instead, with the same blast
+ *     radius: the whole domain's subtree. So BOTH per-system renderers are wrapped, each falling
+ *     back to the smallest honest artefact (a `# <id>: unrenderable` index comment; a README that
+ *     names the error) with the system's own `system.yaml` still committed verbatim. The rule is
+ *     one bad system costs its own directory's detail and nothing else, ever.
  */
 import { createHash } from 'node:crypto';
 import { parseSystem, type System, type ArtifactGrant, type AgentSpec } from '@tabs/agents/lib/system-schema';
@@ -84,7 +100,15 @@ export function placeSystems(snapshot: AgentProjectSnapshot): PlacedSystem[] {
   const out: PlacedSystem[] = [];
   // Sorted HERE, not only in the snapshot: placement must depend on the set of systems, never on
   // the order they happened to arrive in, or a directory would move when nothing changed.
-  for (const system of [...snapshot.systems].sort((a, b) => a.id.localeCompare(b.id))) {
+  // Review L-1, the PLACEMENT half: `a.id.localeCompare(b.id)` throws on a record with no id, and
+  // a throw from the comparator takes the whole domain down before any file is written. Compare
+  // the ids as strings, which is total, and keep the same ordering for every well-formed record.
+  const ordered = [...(snapshot.systems ?? [])].sort((a, b) => {
+    const x = String(a?.id ?? '');
+    const z = String(b?.id ?? '');
+    return x < z ? -1 : x > z ? 1 : 0;
+  });
+  for (const system of ordered) {
     const scope: 'personal' | 'domain' = system.visibility === 'Personal' ? 'personal' : 'domain';
     const parent = scope === 'personal' ? `${AGENTS_PREFIX}${PERSONAL_DIR}/${ownerToken(system.owner)}` : AGENTS_PREFIX.slice(0, -1);
     const base = segment(system.name, 'system');
@@ -107,6 +131,34 @@ function y(v: string | number | boolean): string {
   return `'${s.replace(/'/g, "''")}'`;
 }
 
+/** An error as one safe line — never a newline, never unbounded (it lands in a generated file). */
+function oneLine(e: unknown): string {
+  return (e instanceof Error ? e.message : String(e)).replace(/\s+/g, ' ').trim().slice(0, 200) || 'unknown error';
+}
+
+/** One system's `index.yml` entry. Throws if the record is malformed; the caller contains it. */
+function indexRow(p: PlacedSystem): string[] {
+  const s = p.system;
+  const lines = [
+    `  - slug: ${y(p.slug)}`,
+    `    id: ${y(s.id)}`,
+    `    path: ${y(p.dir)}`,
+    `    name: ${y(s.name)}`,
+    `    owner: ${y(ownerToken(s.owner))}`,
+    `    scope: ${y(p.scope)}`,
+    `    visibility: ${y(s.visibility)}`,
+    `    version: ${s.version}`,
+    `    origin: ${y(s.origin)}`,
+  ];
+  if (s.sourceId) lines.push(`    source_id: ${y(s.sourceId)}`);
+  lines.push(`    running: ${s.running}`);
+  lines.push(`    schedule: ${y(s.schedule.kind)}`);
+  if (s.schedule.cron) lines.push(`    cron: ${y(s.schedule.cron)}`);
+  if (s.schedule.event) lines.push(`    event: ${y(s.schedule.event)}`);
+  lines.push(`    folder: ${y(s.folder || '/')}`);
+  return lines;
+}
+
 /** `agents/index.yml` — the slug → identity map. A directory name is not an identity. */
 export function renderIndex(snapshot: AgentProjectSnapshot, placed: PlacedSystem[]): string {
   const lines = [
@@ -123,22 +175,14 @@ export function renderIndex(snapshot: AgentProjectSnapshot, placed: PlacedSystem
   }
   lines.push('systems:');
   for (const p of placed) {
-    const s = p.system;
-    lines.push(`  - slug: ${y(p.slug)}`);
-    lines.push(`    id: ${y(s.id)}`);
-    lines.push(`    path: ${y(p.dir)}`);
-    lines.push(`    name: ${y(s.name)}`);
-    lines.push(`    owner: ${y(ownerToken(s.owner))}`);
-    lines.push(`    scope: ${y(p.scope)}`);
-    lines.push(`    visibility: ${y(s.visibility)}`);
-    lines.push(`    version: ${s.version}`);
-    lines.push(`    origin: ${y(s.origin)}`);
-    if (s.sourceId) lines.push(`    source_id: ${y(s.sourceId)}`);
-    lines.push(`    running: ${s.running}`);
-    lines.push(`    schedule: ${y(s.schedule.kind)}`);
-    if (s.schedule.cron) lines.push(`    cron: ${y(s.schedule.cron)}`);
-    if (s.schedule.event) lines.push(`    event: ${y(s.schedule.event)}`);
-    lines.push(`    folder: ${y(s.folder || '/')}`);
+    // Review L-1: one malformed record must not cost the DOMAIN its index. A row that cannot be
+    // rendered becomes a comment naming the id and the reason — the system is still visible in
+    // the file, and every other row is intact.
+    try {
+      lines.push(...indexRow(p));
+    } catch (e) {
+      lines.push(`  # ${p.system?.id ?? 'unknown'}: unrenderable index row — ${oneLine(e)}`);
+    }
   }
   return `${lines.join('\n')}\n`;
 }
@@ -163,8 +207,14 @@ function memberRow(a: AgentSpec, disabled: Set<string>): string {
   return `| \`${a.id}\` | ${a.role || '—'} | ${a.model ? `\`${a.model}\`` : 'auto'} | ${tools} | ${supervises} | ${disabled.has(a.id) ? 'disabled' : 'yes'} |`;
 }
 
-/** The generated README — purpose, members, grants, channels, handoffs, last build. */
-export function renderReadme(s: SnapshotSystem, placed: PlacedSystem, sys: System | null): string {
+/**
+ * The generated README — purpose, members, grants, channels, handoffs, last build.
+ *
+ * `graphError` is the reason `graph.json` is absent for a system that DID parse (X-R2): the
+ * compiler refused it, most often because it has no agents yet. Stated here rather than swallowed,
+ * and deterministic, so the subtree stays byte-stable.
+ */
+export function renderReadme(s: SnapshotSystem, placed: PlacedSystem, sys: System | null, graphError?: string | null): string {
   const out: string[] = [`# ${s.name}`, ''];
   if (!sys) {
     out.push(
@@ -184,6 +234,15 @@ export function renderReadme(s: SnapshotSystem, placed: PlacedSystem, sys: Syste
     return out.join('\n');
   }
   if (sys.system.description) out.push(sys.system.description.trim(), '');
+  if (graphError) {
+    out.push(
+      '> **This system does not compile yet, so `graph.json` is not in this directory.** The',
+      '> compiler said: ' + `\`${graphError}\`` + '. The source and the prompt files are committed',
+      '> as the OS holds them; the compiled graph appears on the first regeneration after it',
+      '> compiles. Nothing else in this domain is affected.',
+      '',
+    );
+  }
   out.push(
     `- **Id** \`${s.id}\` · **Source version** ${s.version}`,
     `- **Scope** ${placed.scope} — visibility \`${s.visibility}\`, owner \`${ownerToken(s.owner)}\` (opaque token), domain \`${sys.system.domain}\``,
@@ -261,14 +320,38 @@ export function generateSystemFiles(placed: PlacedSystem): Map<string, string> {
   } catch {
     sys = null; // recorded in the README; the source is still committed above
   }
+  let graphError: string | null = null;
   if (sys) {
     for (const a of sys.agents) {
       const body = (a.agent_md ?? '').replace(/\s+$/, '');
       files.set(`${placed.dir}/agents/${segment(a.id, 'agent')}.md`, `${body}\n`);
     }
-    files.set(`${placed.dir}/graph.json`, `${JSON.stringify(compile(sys), null, 2)}\n`);
+    try {
+      files.set(`${placed.dir}/graph.json`, `${JSON.stringify(compile(sys), null, 2)}\n`);
+    } catch (e) {
+      // X-R2: a parseable-but-uncompilable system (`agents: []` is the common one) must cost ITS
+      // OWN graph file and nothing else. Throwing here aborted the whole domain's subtree.
+      graphError = e instanceof Error ? e.message : String(e);
+    }
   }
-  files.set(`${placed.dir}/README.md`, renderReadme(s, placed, sys));
+  // Review L-1: the README dereferences the snapshot record too (`s.schedule.kind`, `s.lastBuild`),
+  // so it is the other way one malformed system used to take a whole domain down. A README that
+  // cannot be rendered becomes a README that says so — the source above is already committed.
+  try {
+    files.set(`${placed.dir}/README.md`, renderReadme(s, placed, sys, graphError));
+  } catch (e) {
+    files.set(
+      `${placed.dir}/README.md`,
+      [
+        `# ${String(s?.name ?? s?.id ?? 'Unreadable system')}`,
+        '',
+        '> **This system\'s record could not be rendered.** `system.yaml` beside this file is the',
+        '> source exactly as the OS holds it, so nothing is lost. The renderer said:',
+        `> \`${oneLine(e)}\`. Nothing else in this domain is affected.`,
+        '',
+      ].join('\n'),
+    );
+  }
   return files;
 }
 
@@ -282,7 +365,28 @@ export function generateAgentFiles(snapshot: AgentProjectSnapshot): Map<string, 
   const files = new Map<string, string>();
   files.set(`${AGENTS_PREFIX}index.yml`, renderIndex(snapshot, placed));
   for (const p of placed) {
-    for (const [path, content] of generateSystemFiles(p)) files.set(path, content);
+    // Review L-1: the OUTER containment. The inner guards cover the throws we know about; this
+    // one is the invariant — whatever a single malformed system does, it costs that system's
+    // directory and never the domain's subtree. Its source is still written, because losing a
+    // user's bytes is the one outcome worse than an unreadable directory.
+    try {
+      for (const [path, content] of generateSystemFiles(p)) files.set(path, content);
+    } catch (e) {
+      const dir = typeof p?.dir === 'string' && p.dir ? p.dir : `${AGENTS_PREFIX}unrenderable`;
+      const yaml = typeof p?.system?.yaml === 'string' ? p.system.yaml : '';
+      files.set(`${dir}/system.yaml`, yaml.endsWith('\n') || yaml === '' ? yaml : `${yaml}\n`);
+      files.set(
+        `${dir}/README.md`,
+        [
+          `# ${String(p?.system?.name ?? p?.system?.id ?? 'Unrenderable system')}`,
+          '',
+          '> **This system could not be generated.** `system.yaml` beside this file is whatever the',
+          '> OS holds as its source. The generator said:',
+          `> \`${oneLine(e)}\`. Nothing else in this domain is affected.`,
+          '',
+        ].join('\n'),
+      );
+    }
   }
   return new Map([...files.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }

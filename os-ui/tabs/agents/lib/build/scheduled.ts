@@ -117,6 +117,10 @@ export async function runScheduledSystem(
   const out = await start({
     user: owner,
     systemId,
+    // LIFECYCLE (review M-3): a SCHEDULE runs the pinned definition, so its model calls carry
+    // env:run and its Langfuse trace environment is `run` — never `studio`, which would attribute
+    // production spend to a draft and cap it at the draft's smaller budget share.
+    env: 'run',
     domain: sys.system.domain,
     messages: [{ role: 'user', content: prompt }],
     prompt,

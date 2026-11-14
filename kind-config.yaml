@@ -1,9 +1,9 @@
 # kind cluster config for the Sovereign Agentic OS.
-# Enables containerd's registry certs.d so the deployed CI-built images can be
-# pulled from Forgejo's in-cluster registry (plain HTTP). install.sh creates the
-# cluster with `--config kind-config.yaml`; scripts/configure-registry.sh then
-# drops the per-registry hosts.toml + node /etc/hosts entry (after the Service IP
-# exists). See docs/components/ci-build.md.
+# Enables containerd's registry certs.d so an image from a plain-HTTP registry can be
+# pulled by the nodes. NOTE (night-2 S1): there is NO in-cluster registry and NO CI build
+# in this stack — the OS does not build images. This patch is kept because an OPERATOR
+# who publishes app images to their own plain-HTTP registry needs it; by default nothing
+# uses it. install.sh creates the cluster with `--config kind-config.yaml`.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 containerdConfigPatches:

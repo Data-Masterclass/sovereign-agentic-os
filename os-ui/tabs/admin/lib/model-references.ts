@@ -30,7 +30,7 @@
  */
 
 import { getSettings } from '@tabs/admin/lib/settings';
-import { roleModel, type ModelRole } from '@core/models/roles';
+import { roleModel, type AdminModelRole, type ModelRole } from '@core/models/roles';
 import { getAssistantModelId, isAssistantExplicit } from '@tabs/admin/lib/models';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
 
@@ -41,8 +41,12 @@ const ROLE_LABELS: Record<ModelRole, string> = {
   reasoning: 'Reasoning',
   tools: 'Tools',
   embeddings: 'Embeddings',
+  // Additive (stream H): the agentic builder's code tier. NOT in `ROLES` below, so it stays out
+  // of the admin-editable list — it is env-only and falls back to the reasoning tier.
+  coder: 'Coder',
 };
-const ROLES: ModelRole[] = ['standard', 'reasoning', 'tools', 'embeddings'];
+// Only the ADMIN-EDITABLE roles have a settings pin to read (`coder` is env-only — stream H).
+const ROLES: AdminModelRole[] = ['standard', 'reasoning', 'tools', 'embeddings'];
 
 type AgentRecordLike = { id?: string; name?: string; yaml?: string; archived?: boolean };
 

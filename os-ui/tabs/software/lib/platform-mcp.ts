@@ -28,9 +28,13 @@ import type { ConsumedResource, SurfaceDeclaration } from '@tabs/software/lib/mo
 import { asBuildTarget, buildGate, stageDirective, targetProgress, resolveTarget } from '@tabs/software/lib/mcp-stages';
 import { resolveGrantedContext } from '@tabs/software/lib/grants-context';
 import { normalizeImprovement, type Improvement } from '@tabs/software/lib/improvements';
+import { assertNotSeeded } from '@tabs/software/lib/seeded-evidence';
+import { pushAppFiles } from '@tabs/software/lib/push-app-files';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 import { PATTERNS, PATTERN_IDS, isImplementedPattern } from '@tabs/software/lib/appspec/patterns';
 import { generateAppSpecForApp } from '@tabs/software/lib/appspec/generate-server';
+import { agenticBuilderEnabled } from '@tabs/software/lib/builder/dispatch';
+import { agenticBuild } from '@tabs/software/lib/builder/loop-server';
 
 /**
  * The IMPLEMENTED cookbook patterns, sourced from the authoritative registry
@@ -159,6 +163,13 @@ export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boo
     write: true,
   },
   { name: 'delete', description: 'Delete the app (lineage-aware; blocked if depended on).', write: true },
+  // ---- Code in Claude, push to the OS (night-2 S6) ----
+  {
+    name: 'push_app_files',
+    description:
+      "PUSH FILES to an app's source tree — the ONE documented verb for \"code in Claude, deploy to the OS\". Writes `files` into `apps/<slug>/` of the app's DOMAIN GIT REPOSITORY through the same governed commit path the UI uses, authored as YOU, with the OS-Action / OS-Object / OS-Surface / OS-Request-Id trailers. Returns `{ commit, changed, gate, previewUrl }`: `commit` is the real sha (null + a reason when the domain repository is off or the app has no domain), `changed` is FALSE when the bytes are identical — pushing the same files twice yields ONE commit, never two — and `gate` is the compile gate's verdict. THE GATE RUNS BEFORE THE WRITE: a red gate is a 422 carrying the diagnostics and NOTHING is committed, so fix them and push again in the same turn. A push is a CHANGESET merged over the app's current tree, so a partial push never makes the untouched files disappear. Declared agent-callable actions in `actions.yml` are parsed on every push and any malformed entry comes back in `actionIssues` rather than being silently dropped. Role: owner or an owning-domain admin (the same gate as design_software). Before: list_software / read_app_files. After: start_preview, request_deploy.",
+    write: true,
+  },
   // ---- Developer mode (the escape hatch — NOT the default path) ----
   { name: 'commit', description: 'DEVELOPER MODE — writes files DIRECTLY to the app folders, BYPASSING the staged Design→Build→Test governance and the design-before-build gate. Role-gated to builder/admin; a Creator cannot use it. Use the governed stage tools (design_software → build_software → verify_software) for the normal flow; reach for commit only as a deliberate exception.', write: true },
 ];
@@ -258,6 +269,10 @@ export async function callPlatformMcp(
       if (resolved.notFound) throw withStatus(new Error(`No epic/story matches that target on ${app.name}.`), 404);
       const gate = buildGate(app, target);
       if (!gate.ok) throw withStatus(new Error(gate.reason), 409);
+      // THE ONE GUARDED LINE (stream H). `SOFTWARE_BUILDER=agentic` routes Build to the bounded
+      // planner → coder → build → reviewer loop; the default 'spec' falls through to the
+      // byte-identical directive below. Nothing else in this case changes.
+      if (agenticBuilderEnabled()) { result = await agenticBuild(user, app, target); break; }
       const buildGrants = await resolveGrantedContext(app.grants, user);
       result = {
         stage: 'build',
@@ -302,6 +317,10 @@ export async function callPlatformMcp(
         refinementsNote:
           'Report PASS/FAIL per dimension. Each shortfall → one refinement { storyId, note, dimension }: a missed-spec item is a rebuild (buildable now); a requirement change is kind:"design" and must go to design_software first.',
       };
+      // NIGHT-2 S3: a verify VERDICT may never be computed over demo-seed placeholder data.
+      // The directive, the code and the grants that go back to the verifier are checked
+      // structurally, so a seeded value cannot become the basis of a PASS.
+      assertNotSeeded('a verify_software verdict', result);
       break;
     }
 
@@ -394,6 +413,22 @@ export async function callPlatformMcp(
         files,
       });
       result = await commitToApp(appId, user, authored.files, authored.message);
+      break;
+    }
+
+    case 'push_app_files': {
+      // ONE SERVICE, TWO DOORS (night-2 S6). This is a thin delegate over `pushAppFiles`, the
+      // exact function the UI route calls — so the MCP/UI parity test compares two invocations
+      // of the SAME code rather than two paths that happen to agree. Its own edit-scope gate,
+      // compile gate (before any write) and git commit all run inside, as the CALLER.
+      if (!appId) {
+        throw withStatus(new Error('push_app_files needs an `appId` (from list_software).'), 400);
+      }
+      const pushed = Array.isArray(args.files) ? (args.files as { path: string; content: string }[]) : [];
+      result = await pushAppFiles(
+        { appId, files: pushed, message: str(args.message), surface: 'mcp:push_app_files' },
+        user,
+      );
       break;
     }
 

@@ -41,8 +41,17 @@ type Adapter = {
   kind: string;
   /** Ensure the store's in-process cache is populated before the sweep/move. */
   ensure: () => Promise<void>;
-  /** Apply the move to matching records; returns the ids actually moved. */
-  move: (sel: MoveSel, target: string) => string[] | Promise<string[]>;
+  /**
+   * Apply the move to matching records; returns the ids actually moved.
+   *
+   * NIGHT-2 MERGE (D's M-8, the plan's step 7). The third argument is the ACTING ADMIN's
+   * principal id. A cross-domain move rewrites TWO repositories, and every mover used to attribute
+   * those commits to `system` — so the one action in the OS that touches two domains' history was
+   * authored by nobody. It is optional in the signature only because several movers do not take it
+   * yet; the three that commit to a repository (dashboards, datasets, agent systems) now do, and
+   * each logs the gap rather than silently writing `system` when it is absent.
+   */
+  move: (sel: MoveSel, target: string, actorId?: string) => string[] | Promise<string[]>;
 };
 
 const NOOP = async (): Promise<void> => {};
@@ -104,7 +113,7 @@ export async function moveArtifactDomain(
     throw err;
   }
   await adapter.ensure();
-  const moved = await adapter.move({ id: input.id }, target);
+  const moved = await adapter.move({ id: input.id }, target, user.id);
   if (moved.length === 0) {
     // Either the id doesn't exist or it was already in the target domain — the
     // caller asked to move a specific record, so surface a 404 for honesty.
@@ -142,7 +151,7 @@ export async function moveUnassignedToDomain(user: CurrentUser, targetDomain: st
   let total = 0;
   for (const adapter of ADAPTERS) {
     await adapter.ensure();
-    const moved = await adapter.move({ onlyUnassigned: true }, target);
+    const moved = await adapter.move({ onlyUnassigned: true }, target, user.id);
     counts[adapter.kind] = moved.length;
     total += moved.length;
   }

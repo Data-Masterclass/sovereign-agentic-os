@@ -340,6 +340,46 @@ secondary, the gold lotus logo/favicon (`app/icon.svg`), and **Oswald** (heading
 runtime CDN. Light mode is the default; the sidebar and top bar stay black in both modes.
 Dark mode is opt-in via Admin → Appearance and persists per device.
 
+## The engineering view — one panel, one adapter per kind
+
+`core/engineering/` holds the `EngineeringView` type (serialisable; no React, no I/O) and the
+adapter registry. Each tab exposes its own `lib/engineering.ts` — `tabs/data`, `tabs/metrics`,
+`tabs/dashboards`, `tabs/agents`, `tabs/software` — which calls **that tab's own visibility gate**
+first (`getDataset`, `getMetric`, `getDashboard`, `getSystem`, `getAppForUser`) and then maps the
+record onto the shared section builders in `core/engineering/sections.ts`. The kernel never imports
+a tab: `core/engineering/register.ts` loads the adapters with dynamic `import()`, exactly as
+`core/mcp/register-experimental.ts` loads its tool bundles.
+
+`core/ui/engineering/UnderTheHood.tsx` renders it with one tab per tool and is mounted with a single
+line on the five detail surfaces. `GET /api/engineering/<kind>/<id>` and the MCP tool
+`get_engineering_view({kind, id})` call the **same** function (`engineeringViewFor`), so the two
+doors cannot drift — `core/mcp/engineering-view.test.ts` asserts both the structural and the
+behavioural parity.
+
+Three rules make the panel trustworthy, and each is a test:
+
+1. **The tool's noun first.** `core/engineering/vocabulary.ts` is a table of the tools' own nouns;
+   a label that uses only an OS-invented noun fails `vocabularyViolations`, and the OS term may
+   appear in parentheses at most once.
+2. **Never a paraphrase.** The SQL and YAML are read from the repository at `main`; the LangGraph
+   graph is derived from the same IR the engine compiles, and `tabs/agents/lib/engineering.test.ts`
+   compares its node names against a real `buildGraph`, so a rename in the engine fails the test
+   rather than quietly changing the picture.
+3. **Say why, never nothing.** `sealView` refuses a section with no artefact and no reason, an
+   artefact with no body and no note, and a link that does not resolve and does not say why.
+4. **Never present an uncommitted path as committed.** Every adapter passes the repository's
+   tracked-path set to `gitSection` (which intersects its file list with it) and to `sealView`
+   (which throws on any artefact `repoPath` outside it), so the rule is structural rather than one
+   adapter remembering to filter.
+5. **The panel never shows what the caller could not fetch.** Each adapter re-applies the
+   repository's own membership rule: a data product visible outside its domain still shows only its
+   own model file to a non-member, and the export is offered as unavailable with the reason. The
+   Dagster link is gated by the tool's own `minRole` for the same reason.
+
+`UnderTheHood` loads `GraphDiagram` through `next/dynamic` with `ssr: false` — the panel is mounted
+on five surfaces and only one kind has a graph, so `@xyflow/react` and its stylesheet must not ride
+along in the other four bundles.
+
 ## FAQ
 
 **Where are the keys?** Server-side only. Langfuse, LiteLLM and the Kubernetes token are
@@ -383,3 +423,40 @@ provider's code as `drive_detail`; `AADSTS7000215` means a bad secret.
 `supportsAllDrives`/`includeItemsFromAllDrives`. A **SharePoint or Teams**
 library is not reachable at all — the OneDrive connector calls `/me/drive`.
 Folder scope needs a Graph **item id**, not a path, despite the field label.
+
+## The app-building harness (`SOFTWARE_BUILDER`) — added by night-2 stream H
+
+The Software tab ships **two** builders. The default is unchanged; the second is opt-in.
+
+| | `spec` (default) | `agentic` |
+|---|---|---|
+| What it does | one reasoning-model turn fills a declarative `AppSpec`, plus up to two validator-seeded repair turns | a bounded **planner → coder → build → reviewer** loop that writes a real Vite/React tree |
+| Compile loop | none | the existing in-process gate every iteration, diagnostics fed back verbatim |
+| Grounding | the app's grants and story titles | a grounding pack: story specs, dataset **real columns + up to 5 real sample rows**, metric definitions, the SDK and UI API surfaces **extracted from `core/app-sdk` / `core/app-ui` source**, design tokens, one exemplar, the Tier-2 constraints |
+| Definition of done | the validator accepted the spec | acceptance checks **derived from the user stories**, scored with evidence |
+| Bound | 3 attempts | 4 iterations, plus a no-progress and a coder-error stop |
+| Writes | `setAppSpec` | the normal governed commit door (`commitToApp`), as the signed-in user, compile-gated before any write |
+
+**Environment.** `SOFTWARE_BUILDER` = `spec` (default) or `agentic`; anything else resolves to
+`spec`. `LITELLM_CODER_MODEL` optionally pins the new `coder` model role — empty means `coder` falls
+back to the reasoning tier, so enabling the loop needs no model change. Chart keys:
+`softwareBuilder.mode` and `softwareBuilder.coderModel`.
+
+**Where it lives.** `os-ui/tabs/software/lib/builder/**` (grounding, acceptance, build tool, loop,
+prompts, dispatch) and `os-ui/tabs/agents/lib/builtin/appsmith.ts` — the `os.appsmith` built-in
+system as a real `system.yaml` (planner → coder → reviewer, three guarded handoffs on declared
+boolean channels, `commit` as the build tool, `decide_deploy` deliberately not granted). The Build
+dispatch consults the flag in **exactly one** guarded line, in
+`tabs/software/lib/platform-mcp.ts` `case 'build_software'`.
+
+**What is NOT true yet.** The route and render acceptance checks are **static inspection of the
+TypeScript AST** — strong enough that a comment or a string naming `os.records.add` fails, but not
+rendering: the evidence string says `static check (AST)` on every line, and jsdom/screenshot
+rendering inside the loop is backlog. There are no story-derived **runtime** tests, and no
+model-quality evals — so the "harness vs model" split that motivated this work is measured on the
+harness side only. Three governance limits are recorded rather than implied: the rest of the
+platform-MCP write surface is still invisible to the agent hold gate (`commit` is fixed; the other
+thirteen are pinned by a test and handed to the software stream); sample-value masking is a column-
+NAME heuristic because the OS has no column-classification facility, and there is no trace redaction
+on that path; and builder model calls are still tagged `tab:assistant` because `assistantComplete`
+has no tab/run option.

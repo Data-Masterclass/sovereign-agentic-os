@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { systemForScheduler, recordActivity } from '@tabs/agents/lib/store';
 import { runScheduledSystem } from '@tabs/agents/lib/build/scheduled';
 import { runtimeTokenOk } from '@tabs/agents/lib/build/runtime-auth';
+import { scheduledSystemYaml } from '@tabs/agents/lib/lifecycle-adapter';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +22,11 @@ export const dynamic = 'force-dynamic';
  * Python runtime with it, so a system whose grants map to no governed tool is a 400
  * NAMING those grants (`unmappedGrantNames`, deviation A5-4) — it is never quietly
  * routed to a weaker executor.
+ *
+ * LIFECYCLE (night 2, V-R2.2): a SCHEDULE runs the PINNED definition, read from the repo at
+ * the live sha — not whatever the head happens to be when the CronJob fires. A system with no
+ * pin, or a pin whose blob cannot be read, is REFUSED with the reason (`scheduledSystemYaml`);
+ * it is never silently run from the head. Studio runs the head, through the run route.
  */
 export async function POST(req: Request) {
   if (!runtimeTokenOk(req.headers.get('authorization'))) {
@@ -33,8 +39,11 @@ export async function POST(req: Request) {
   const rec = systemForScheduler(systemId);
   if (!rec) return NextResponse.json({ error: 'system not found' }, { status: 404 });
 
+  const pinned = await scheduledSystemYaml(systemId);
+  if (!pinned.ok) return NextResponse.json({ error: pinned.error }, { status: pinned.status });
+
   const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : 'Scheduled run';
-  const outcome = await runScheduledSystem(systemId, rec, prompt);
+  const outcome = await runScheduledSystem(systemId, { ...rec, yaml: pinned.yaml }, prompt);
   if (!outcome.ok) return NextResponse.json({ error: outcome.error }, { status: outcome.status });
 
   recordActivity(systemId);

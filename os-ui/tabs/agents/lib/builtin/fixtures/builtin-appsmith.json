@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "name": "builtin-appsmith",
+  "source": "tabs/agents/lib/builtin/appsmith.ts",
+  "description": "The built-in os.appsmith builder (planner -> coder -> reviewer, guarded on declared channels). The scenario is the stream's claim: the coder's FIRST commit is rejected by the compile gate (typed 422, nothing written) and the SECOND lands.",
+  "task": "Build the Invoices app from its user stories.",
+  "script": "appsmith-reject-then-recover@1",
+  "yaml": "version: '1'\nsystem:\n  name: App Smith\n  domain: platform\n  visibility: Shared\n  description: Builds a governed OS app from its user stories — plan, code, compile, review, loop.\nruntime: langgraph\nsafety_preset: read-propose\nentrypoint: planner\nstate:\n  channels:\n    messages: add_messages\n    # The four phase gates the handoffs below route on. Each is written by the agent whose turn\n    # it follows, with the engine's built-in os_set_state tool. Declared type = what the tool\n    # accepts; the default is false until that agent sets it.\n    plan_ready: boolean      # planner: the build plan is complete and the coder can start\n    build_ok: boolean        # coder: the tree COMPILED and the files are committed\n    build_failed: boolean    # coder: the compile gate rejected the tree (nothing was written)\n    stories_passed: boolean  # reviewer: every acceptance check derived from the stories passed\n    stories_failed: boolean  # reviewer: at least one acceptance check is unmet — back to the coder\ngrants:\n  data: []\n  knowledge: []\n  metrics: []\n  tools:\n    - get_software\n    - read_app_files\n    - get_dataset\n    - commit\n    - verify_software\n  connections: []\nrouting:\n  overrides: {}\nagents:\n  - id: planner\n    role: Turns the user stories into a concrete file-by-file build plan\n    model: sovereign-reasoning\n    tools: [get_software, read_app_files, get_dataset]\n    agent_md: |\n      # Planner — App Smith\n      You are given the app's USER STORIES and its GRANTED context: the datasets with their REAL\n      columns and real sample rows, the metric definitions, the OS SDK and UI API surfaces\n      extracted from source, the design tokens, and one exemplar app.\n\n      Produce a SHORT, concrete plan and nothing else:\n        1. the files to write, with their exact paths under src/;\n        2. for each file, the story it satisfies and the granted dataset or metric it reads;\n        3. where os.records is used, for any story that CAPTURES data;\n        4. the smallest design that satisfies every acceptance check you were given.\n\n      Do NOT write code. NEVER invent a dataset id, a metric id or a column name — a reference\n      outside the grants fails the governed gate and wastes the whole build. When the plan is\n      complete, set plan_ready — that is what hands control to the coder.\n    memory_md: '# Memory'\n  - id: coder\n    role: Writes the code and commits it through the governed, compile-gated door\n    model: sovereign-default\n    tools: [commit, read_app_files, get_dataset]\n    agent_md: |\n      # Coder — App Smith\n      Execute the plan with `commit`. The commit door runs the COMPILE GATE (tsc plus a bundle\n      pass over the merged tree) BEFORE it writes anything: a red gate returns the exact\n      diagnostics and writes NOTHING. That is your feedback loop — read the file, line and code,\n      fix exactly those errors against the API surface you were given, and commit again.\n\n      Rules: complete, runnable files only (never a placeholder or a TODO); import the SDK as\n      '@sovereign-os/app-sdk' and the UI as '@sovereign-os/ui', using only the exports and props\n      listed in your brief; reference only the granted ids and real columns; give every fetch an\n      honest loading, empty and error state; never embed a secret — the signed-in session IS the\n      credential.\n\n      When a commit SUCCEEDS, set build_ok — that hands control to the reviewer. If you cannot\n      make the tree compile, set build_failed and say precisely which diagnostics defeated you.\n      Never end your turn with known-red diagnostics and never claim a build that did not land.\n    memory_md: '# Memory'\n  - id: reviewer\n    role: Scores the committed app against the acceptance checks derived from the stories\n    model: sovereign-reasoning\n    tools: [verify_software, read_app_files]\n    agent_md: |\n      # Reviewer — App Smith\n      You are shown the acceptance checks DERIVED FROM THE USER STORIES and how they scored:\n      one compile check, a route and a render check per story, and one manual check per\n      non-functional requirement and per business rule.\n\n      Decide: PASS only when every machine-decidable check passed. A MANUAL check is for a human\n      and is not yours to pass or fail. A build that merely compiles is NOT done.\n\n      On a PASS set stories_passed and report what landed: the app, the files, the preview and\n      exactly which checks remain for the human. On a FAIL set stories_failed and give the coder a\n      numbered list of the unmet checks with the evidence — that routes control back to the coder.\n    memory_md: '# Memory'\nedges:\n  - { from: planner, to: coder, type: handoff, when: plan_ready }\n  - { from: coder, to: reviewer, type: handoff, when: build_ok }\n  - { from: reviewer, to: coder, type: handoff, when: stories_failed }\nschedule:\n  kind: manual\n",
+  "scenario": {
+    "commitAttempts": 2,
+    "firstCommitRejection": "TS2305: Module '\"@sovereign-os/ui\"' has no exported member 'Modal'."
+  },
+  "golden": {
+    "path": [
+      "planner",
+      "coder",
+      "reviewer"
+    ],
+    "toolCalls": [
+      {
+        "node": "planner",
+        "tool": "os_set_state",
+        "args": {
+          "channel": "plan_ready",
+          "value": true
+        },
+        "outcome": "ok"
+      },
+      {
+        "node": "coder",
+        "tool": "commit",
+        "args": {
+          "appId": "app_1",
+          "files": [
+            {
+              "path": "src/epics/e1/s1/Page.tsx",
+              "content": "…"
+            }
+          ],
+          "message": "build e1/s1"
+        },
+        "outcome": "error"
+      },
+      {
+        "node": "coder",
+        "tool": "commit",
+        "args": {
+          "appId": "app_1",
+          "files": [
+            {
+              "path": "src/epics/e1/s1/Page.tsx",
+              "content": "…"
+            }
+          ],
+          "message": "build e1/s1"
+        },
+        "outcome": "ok"
+      },
+      {
+        "node": "coder",
+        "tool": "os_set_state",
+        "args": {
+          "channel": "build_ok",
+          "value": true
+        },
+        "outcome": "ok"
+      },
+      {
+        "node": "reviewer",
+        "tool": "os_set_state",
+        "args": {
+          "channel": "stories_passed",
+          "value": true
+        },
+        "outcome": "ok"
+      }
+    ],
+    "reachedEnd": true,
+    "held": 0
+  }
+}

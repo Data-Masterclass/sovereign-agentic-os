@@ -567,7 +567,13 @@ export function __resetStore(): void {
  * we set the field and write through. `sel.id` moves one; `sel.onlyUnassigned`
  * sweeps only empty-domain records. Returns the ids moved.
  */
-export function moveSystemsDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): string[] {
+export function moveSystemsDomain(
+  sel: { id?: string; onlyUnassigned?: boolean },
+  target: string,
+  /** NIGHT-2 MERGE: the acting admin's principal id (D's M-8, applied to this sibling mover).
+   *  Optional only so pre-existing callers keep compiling; absent is recorded as `system`. */
+  actorId?: string,
+): string[] {
   const moved: string[] = [];
   for (const rec of state().store.values()) {
     if (sel.id !== undefined && rec.id !== sel.id) continue;
@@ -577,7 +583,7 @@ export function moveSystemsDomain(sel: { id?: string; onlyUnassigned?: boolean }
     rec.domain = target;
     // Part D: a cross-domain move changes TWO repos — the old one loses the system, the new one
     // gains it. `previousDomain` is what tells the commit hook to regenerate both.
-    writeThrough(rec, { action: `move domain from ${previousDomain || '(unassigned)'} to ${target}`, actorId: 'system', previousDomain });
+    writeThrough(rec, { action: `move domain from ${previousDomain || '(unassigned)'} to ${target}`, actorId: actorId ?? 'system', previousDomain });
     moved.push(rec.id);
   }
   return moved;

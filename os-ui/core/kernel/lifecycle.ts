@@ -149,3 +149,13 @@ export function phraseSatisfied(confirmPhrase: string | undefined, typed: string
   if (!confirmPhrase) return true;
   return typed.trim() === confirmPhrase.trim();
 }
+
+// ------------------------------------------------- the OTHER lifecycle axis ---
+/**
+ * LIFECYCLE: Studio → Test → Run (D30–D32) lives in `@core/kernel/object-lifecycle` and is
+ * re-exported here so `@core/kernel/lifecycle` is the ONE import path for both halves of the
+ * word, as the night-2 plan names it. The two are deliberately separate modules: this file is
+ * the archive/restore/delete CONFIRM COPY, that one is the Draft · Testing · Live model and its
+ * pin. Nothing here reads anything there, or the other way round.
+ */
+export * from '@core/kernel/object-lifecycle';

@@ -26,12 +26,13 @@ import { promoteSystem } from '@tabs/agents/lib/store';
 /**
  * The approval-IS-an-action executor (governance-golden-path.md key principle).
  * On Approve, the platform doesn't just flip a flag — it EXECUTES the governed
- * effect behind the card: deploy the app (Argo), grant access (policy compiler →
+ * effect behind the card: deploy the app (the OS's own app runner — there is no GitOps
+ * controller and no image builder in this stack), grant access (policy compiler →
  * OPA/DLS), allowlist the endpoint (egress proxy), promote/certify, or run the
  * queued action. The route then writes audit + (optionally) a standing policy.
  *
  * Each effect is a per-source ADAPTER with a live path and an offline-mock path.
- * Unwired backends (Argo, the egress proxy) are mocked for `kind` and clearly
+ * Unwired backends (the egress proxy) are mocked for `kind` and clearly
  * marked `live:false`; the policy/access/egress effects mutate the authoritative
  * in-process plane (policy-view) AND best-effort push to OPA, so the consumer
  * truly can query / the endpoint truly is allowlisted in the teaching flow.

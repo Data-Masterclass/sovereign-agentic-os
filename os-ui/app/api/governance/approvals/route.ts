@@ -10,6 +10,7 @@ import { applyEffect } from '@core/policy/effects';
 import { buildEffectDeps } from '@core/policy/ladder';
 import { record as audit } from '@core/policy/audit';
 import { remember } from '@core/policy/standing';
+import { guardAppIntent } from '@core/kernel/app-intent';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,6 +46,14 @@ export async function POST(req: Request) {
   } catch (e) {
     return errorResponse(e);
   }
+
+  // REVIEW H-1: deciding an approval is a HUMAN act. An app's injected intent carries
+  // `agent-run` only, so a call that announces itself as an app — or presents an app intent — is
+  // refused here with the reason, and the app frame's CSP keeps app JavaScript off this route in
+  // the first place. An app asks the OS host shell to render the confirmation instead; the shell
+  // is what posts, and it is the user who decides. A cross-site POST is refused outright.
+  const intent = guardAppIntent(req.headers, user, 'approval-decide');
+  if (!intent.ok) return NextResponse.json({ error: intent.reason }, { status: intent.status });
 
   let body: { id?: string; decision?: 'approve' | 'reject'; remember?: boolean };
   try {

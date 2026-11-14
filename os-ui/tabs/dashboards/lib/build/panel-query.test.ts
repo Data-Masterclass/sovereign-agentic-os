@@ -3,7 +3,7 @@
  */
 /**
  * runPanelQuery RLS proof (Tier 1, Phase 2): a panel resolves its numbers through the SAME
- * compiled-SQL metrics path the explorer uses (exploreMetric) — Cube is off the dashboards
+ * compiled-SQL metrics path the explorer uses (exploreMetric) — nothing sits between a panel
  * read path. The query runs UNDER the viewer's delegated identity, so two viewers with
  * different region entitlements see DIFFERENT rows. We force the OFFLINE-MOCK path (Trino
  * unreachable) whose executor itself filters by the security-context region, so the RLS
@@ -135,4 +135,192 @@ test('the panel number IS the exploreMetric number (one-number-everywhere by con
   assert.equal(res.rows[0]?.['Sales.revenue'], 4242, 'the panel returns exactly the exploreMetric row');
   assert.equal(res.mode, 'live', "live (sql) is surfaced as the panel's stable 'live' mode");
   assert.ok(seen, 'exploreMetric was called under the viewer token with the panel slice');
+});
+
+test('D10 — an unservable filter operator is a typed bad_request BEFORE any query runs', async () => {
+  // The old code did `.filter((f) => f.operator === 'equals')` and dropped the rest unreported, so
+  // a panel authored with `amount >= 1000` rendered the UNFILTERED number as though it were
+  // filtered. It is now refused, and refused before the governed query is even attempted.
+  const panel: Panel = {
+    name: 'Big orders',
+    vizType: 'bar',
+    metrics: ['Sales.revenue'],
+    filters: [{ member: 'Sales.amount', operator: '>=', values: ['1000'] }],
+  };
+  let explored = 0;
+  const explore = (async (...args: unknown[]) => {
+    explored += 1;
+    void args;
+    return { rows: [{ 'Sales.revenue': 999 }], mode: 'live' as const, sql: 'SELECT 1' };
+  }) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
+  await assert.rejects(
+    () => runPanelQuery('Sales', panel, viewerToken('DE'), asUser('DE'), { resolve, explore }),
+    (e: unknown) => {
+      assert.equal((e as { status?: number }).status, 400, 'a typed bad_request, never a 500');
+      assert.match((e as Error).message, /cannot be served by the governed query path/);
+      assert.match((e as Error).message, /Sales\.amount >=/);
+      return true;
+    },
+  );
+  assert.equal(explored, 0, 'no governed query may run for a panel that cannot be served');
+});
+
+test('D10 — a servable `in` filter still reaches the governed WHERE, and an empty one is dropped', async () => {
+  const seen: { filters?: { column: string; values: string[] }[] }[] = [];
+  const explore = (async (_d: unknown, _m: unknown, _t: unknown, slice: { filters?: { column: string; values: string[] }[] }) => {
+    seen.push(slice);
+    return { rows: [{ 'Sales.revenue': 1 }], mode: 'live' as const, sql: 'SELECT 1' };
+  }) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
+  const panel: Panel = {
+    name: 'Channels',
+    vizType: 'bar',
+    metrics: ['Sales.revenue'],
+    filters: [
+      { member: 'Sales.channel', operator: 'in', values: ['web', 'retail'] },
+      { member: 'Sales.region', operator: 'equals', values: [] },
+    ],
+  };
+  await runPanelQuery('Sales', panel, viewerToken('DE'), asUser('DE'), { resolve, explore });
+  assert.deepEqual(seen[0].filters, [{ column: 'channel', values: ['web', 'retail'] }]);
+});
+
+test('H-1 — an injected time grain is REFUSED at the query door, before any SQL is built', async () => {
+  // `tabs/metrics/lib/explorer.ts` interpolates the grain into `date_trunc('<grain>', "col")`, and
+  // the panel arrives raw from the request body, so an unchecked cast was a live injection.
+  const panel: Panel = {
+    name: 'Trend',
+    vizType: 'line',
+    metrics: ['Sales.revenue'],
+    timeDimension: 'Sales.order_date',
+    timeGrain: "month'), (SELECT password FROM users) --" as never,
+  };
+  let explored = 0;
+  const explore = (async () => {
+    explored += 1;
+    return { rows: [], mode: 'live' as const, sql: '' };
+  }) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
+  await assert.rejects(
+    () => runPanelQuery('Sales', panel, viewerToken('DE'), asUser('DE'), { resolve, explore }),
+    (e: unknown) => {
+      assert.equal((e as { status?: number }).status, 400);
+      assert.match((e as Error).message, /not one the governed query path can serve/);
+      return true;
+    },
+  );
+  assert.equal(explored, 0, 'no SQL may be compiled for an unservable grain');
+});
+
+test('H-1 — every servable grain still reaches the compiler unchanged', async () => {
+  const seen: (string | undefined)[] = [];
+  const explore = (async (_d: unknown, _m: unknown, _t: unknown, slice: { granularity?: string }) => {
+    seen.push(slice.granularity);
+    return { rows: [], mode: 'live' as const, sql: '' };
+  }) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
+  for (const grain of ['day', 'week', 'month', 'quarter', 'year'] as const) {
+    await runPanelQuery(
+      'Sales',
+      { name: 'T', vizType: 'line', metrics: ['Sales.revenue'], timeDimension: 'Sales.order_date', timeGrain: grain },
+      viewerToken('DE'),
+      asUser('DE'),
+      { resolve, explore },
+    );
+  }
+  assert.deepEqual(seen, ['day', 'week', 'month', 'quarter', 'year']);
+});
+
+test('M-9 — a filter value carrying a SQL comment marker is NAMED, not silently stripped', async () => {
+  const seen: { filters?: { column: string; values: string[] }[] }[] = [];
+  const explore = (async (_d: unknown, _m: unknown, _t: unknown, slice: { filters?: { column: string; values: string[] }[] }) => {
+    seen.push(slice);
+    return { rows: [{ 'Sales.revenue': 1 }], mode: 'live' as const, sql: 'SELECT 1' };
+  }) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
+  const res = await runPanelQuery(
+    'Sales',
+    { name: 'F', vizType: 'bar', metrics: ['Sales.revenue'], filters: [{ member: 'Sales.region', operator: 'equals', values: ['DE-- drop'] }] },
+    viewerToken('DE'),
+    asUser('DE'),
+    { resolve, explore },
+  );
+  assert.match(res.warning ?? '', /SQL comment marker/);
+  assert.match(res.warning ?? '', /NOT silently stripped/);
+  // The value reached the compiler VERBATIM — stripping it would change the author's filter.
+  assert.deepEqual(seen[0].filters, [{ column: 'region', values: ['DE-- drop'] }]);
+});
+
+// ── D12: the PRECEDENCE of the degradation notices ────────────────────────────
+// Each degradation had its own case; nothing asserted which one WINS when two happen at once.
+// The `??` chain in `runPanelQuery` is the contract — outage, then unresolved members, then a
+// dropped slice dimension, then a filter value carrying a SQL comment marker — and an unpinned
+// order is how the loudest notice ("there is no number at all") gets hidden behind a quieter one
+// ("one dimension was dropped") in exactly the situation where it matters most.
+
+const OUTAGE_WARNING = 'The lakehouse is unreachable, so this panel has no number.';
+const DROP_WARNING = 'The group-by “order_id” is not on the governed view, so it was dropped.';
+
+/** An explore that degrades in the two ways the explorer itself can: an outage, a dropped slice. */
+function degradingExplore(opts: { outage?: boolean; drop?: boolean }) {
+  return (async () => ({
+    member: 'Sales.revenue',
+    rows: opts.outage ? [] : [{ region: 'DE', 'Sales.revenue': 100 }],
+    securityContext: {},
+    sql: 'SELECT 1',
+    mode: 'live (sql)' as const,
+    ...(opts.outage ? { unavailable: true } : {}),
+    ...(opts.drop ? { droppedMembers: ['order_id'] } : {}),
+    ...(opts.outage || opts.drop ? { warning: opts.outage ? OUTAGE_WARNING : DROP_WARNING } : {}),
+  })) as unknown as NonNullable<Parameters<typeof runPanelQuery>[4]>['explore'];
+}
+
+/** A panel that triggers every degradation at once; the callers peel conditions off one by one. */
+function degradingPanel(over: Partial<Panel> = {}): Panel {
+  return {
+    name: 'Everything at once',
+    vizType: 'bar',
+    metrics: ['Sales.revenue', 'Sales.ghost'],
+    dimensions: ['Sales.order_id'],
+    filters: [{ member: 'Sales.channel', operator: 'in', values: ['web--retail'] }],
+    ...over,
+  };
+}
+
+const run = (panel: Panel, explore: NonNullable<Parameters<typeof runPanelQuery>[4]>['explore']) =>
+  runPanelQuery('Sales', panel, viewerToken('DE'), asUser('DE'), { resolve, explore });
+
+test('D12 — all four degradations at once: the OUTAGE sentence wins, and there are no rows', async () => {
+  const res = await run(degradingPanel(), degradingExplore({ outage: true, drop: true }));
+  assert.equal(res.warning, OUTAGE_WARNING, 'an outage is the loudest: there is no number at all');
+  assert.deepEqual(res.rows, [], 'a panel with no number shows none — never a partial one');
+  // The missing-member LIST is still reported, so the quieter facts are not lost with the notice.
+  assert.deepEqual(res.missingMembers, ['Sales.ghost']);
+});
+
+test('D12 — no outage: the UNRESOLVED MEMBER wins over a dropped dimension and a comment value', async () => {
+  const res = await run(degradingPanel(), degradingExplore({ drop: true }));
+  assert.match(res.warning ?? '', /Sales\.ghost/, 'a member no visible metric owns is named');
+  assert.notEqual(res.warning, DROP_WARNING);
+  assert.deepEqual(res.missingMembers, ['Sales.ghost'], 'the missing member wins the LIST too, over the dropped one');
+});
+
+test('D12 — every member resolves: the DROPPED DIMENSION wins over the comment value', async () => {
+  const res = await run(degradingPanel({ metrics: ['Sales.revenue'] }), degradingExplore({ drop: true }));
+  assert.equal(res.warning, DROP_WARNING);
+  assert.deepEqual(res.missingMembers, ['order_id'], 'with nothing missing, the dropped slice member is the list');
+});
+
+test('D12 — nothing dropped: the COMMENT VALUE is the last notice, and it still fires', async () => {
+  const res = await run(degradingPanel({ metrics: ['Sales.revenue'] }), degradingExplore({}));
+  assert.match(res.warning ?? '', /SQL comment marker/);
+  assert.match(res.warning ?? '', /Sales\.channel/, 'the refusal names the filter, not just the panel');
+  assert.match(res.warning ?? '', /NOT silently stripped/);
+  assert.equal(res.missingMembers, undefined);
+});
+
+test('D12 — a clean panel carries no notice at all (the chain is not a default)', async () => {
+  const res = await run(
+    degradingPanel({ metrics: ['Sales.revenue'], dimensions: ['Sales.region'], filters: [] }),
+    degradingExplore({}),
+  );
+  assert.equal(res.warning, undefined);
+  assert.equal(res.missingMembers, undefined);
+  assert.equal(res.rows.length, 1);
 });

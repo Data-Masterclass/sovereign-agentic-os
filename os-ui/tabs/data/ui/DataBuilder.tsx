@@ -76,6 +76,9 @@ type RowPreview =
 // The rule matrix (labels, which extra fields a rule needs, the add payload, the stored label)
 // lives in `lib/dq-rule-form.ts` so it can be unit-tested — a test may not import a `.tsx`.
 import { RULE_LABELS, fieldsFor, addPayload, canSubmit as canSubmitRule, ruleText } from '@tabs/data/lib/dq-rule-form';
+import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
+import GitHeadBadge from '@core/ui/git/GitHeadBadge';
+import CloneRepository from '@core/ui/git-clone/CloneRepository';
 const RULE_KINDS = new Set<DataCheckRule>(Object.keys(RULE_LABELS) as DataCheckRule[]);
 
 /** A human, exception-first label for a suggested check (Apple-simple, no jargon). */
@@ -1961,6 +1964,7 @@ export default function DataBuilder({
           {dataset.tier !== 'dataset' ? <DomainTag domain={dataset.domain} /> : null}
           <span className="mono muted" style={{ fontSize: 11 }} title="Dataset ID">{dataset.id}</span>
           <span className="mono muted" style={{ fontSize: 11 }} title="Physical table name (frozen — unaffected by rename)">table: {physicalSlug(dataset)}</span>
+          {' '}· <GitHeadBadge kind="dataset" id={dataset.id} />
         </div>
       {/* Domain-table drift (#96): a PROMOTED dataset whose governed domain gold table is
           missing/stale — the detail route probes this physically, so we surface the honest
@@ -2007,6 +2011,9 @@ export default function DataBuilder({
           <span className="status-chip s-stored" title="Not yet a CERTIFIED data product — an admin certifies a promoted dataset to the Company tier with a trust badge. Says nothing about whether the data is built or shared." style={{ cursor: 'default' }}>not certified</span>
         )}
       </div>
+      {/* night-2 stream T: the tool-native artefacts of this data product. */}
+      <UnderTheHood kind="dataset" id={dataset.id} />
+      <CloneRepository domain={dataset.domain} />
       </div>
     </ConfirmProvider>
   );

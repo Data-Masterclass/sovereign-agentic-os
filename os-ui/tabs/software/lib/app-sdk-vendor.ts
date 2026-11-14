@@ -24,7 +24,7 @@ import { join } from 'node:path';
 export type SdkFile = { path: string; content: string };
 
 /** The SDK source files, in dependency order (leaves first). */
-const SDK_SOURCE_FILES = ['errors.ts', 'types.ts', 'client.ts', 'index.ts'] as const;
+const SDK_SOURCE_FILES = ['errors.ts', 'types.ts', 'agents.ts', 'client.ts', 'index.ts'] as const;
 
 /** Absolute path to the on-disk SDK source dir (resolved from the os-ui root). */
 function sdkDir(): string {

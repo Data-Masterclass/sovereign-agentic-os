@@ -15,6 +15,9 @@ import {
 import { loadTabContext, tabTitle } from '@core/tabs-meta/context';
 import { buildInstructions } from '@core/mcp/instructions';
 import { runAgentic, type AgenticResult, type LlmCall, type ToolExecutor, type ToolSpec } from '@core/runtime/agentic';
+import { ASK_RULES_BLOCK } from '@core/runtime/ask-rules';
+import { parseArtifacts, truncationBanner, type ChatArtifact } from '@core/runtime/chat-artifacts';
+import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
 import { liteLlmCaller } from '@core/runtime/runtime';
 import { resolveAssistantModelId } from '@core/runtime/complete';
 import { inputBudget, modelContext } from '@core/models/context-windows';
@@ -106,6 +109,11 @@ const OS_RULES = [
   '   3. Only AFTER the user confirms do you execute the plan with the mutating tools.',
   '   4. Keep it lightweight: one obvious, low-risk step needs only a one-line',
   '      heads-up, not a ceremony. Bigger or irreversible work gets the full plan.',
+  '',
+  // C2 / C5 / C6 — the semantic-layer-first, truncation-honesty and ad-hoc-labelling
+  // rules, imported from the ONE module the four MCP guides also carry verbatim so the
+  // in-app assistant and an external MCP client are told the same thing.
+  ASK_RULES_BLOCK,
 ].join('\n');
 
 /**
@@ -162,7 +170,59 @@ export function osToolSpecs(user: CurrentUser, tab: McpTab | null): ToolSpec[] {
  * function (OPA + Langfuse) is the real authority, so this never bypasses
  * governance. A denial comes back as an honest `isError` result, not a throw.
  */
-export function osToolExecutor(user: CurrentUser): ToolExecutor {
+/**
+ * The ONE hop that carries a governed tool's typed payload from the MCP dispatcher onto the
+ * chat turn (C5/C9). Exported so the guard test can pin it directly: the model still sees
+ * the flattened text, but the truncation fields, the SQL and the citation travel
+ * STRUCTURALLY to the surface, so a clipped result can never reach the user as a confident
+ * total merely because the model omitted to mention the clipping.
+ *
+ * An `isError` result yields NOTHING: a denial carries `{ error }` as its structuredContent
+ * and must never be rendered as if it were data.
+ */
+export function artifactsFromToolResult(result: {
+  structuredContent?: unknown;
+  isError?: boolean;
+}): ChatArtifact[] {
+  if (result.isError) return [];
+  return parseArtifacts(result.structuredContent);
+}
+
+/**
+ * The marker PREPENDED to a tool result's text when the projected artifact says the result
+ * was clipped (review H-2).
+ *
+ * Why the front and not the end. The tool result reaches the model as pretty-printed JSON,
+ * and the truncation keys sit near the END of that object. The context assembler bounds an
+ * oversized tool result with `truncateToTokens`, which KEEPS THE HEAD — so on exactly the
+ * results most likely to be clipped (the big ones), the notice that they were clipped is the
+ * first thing dropped. A model that never saw `"truncated": true` cannot obey the rule that
+ * forbids totalling it. Putting the sentence first makes it the last thing to be cut.
+ *
+ * Returns null when nothing was clipped — an unconditional banner would train the model to
+ * ignore it.
+ */
+export function truncationMarkerFor(artifacts: ChatArtifact[]): string | null {
+  for (const a of artifacts) {
+    if (a.kind !== 'table' || !a.truncated) continue;
+    const sentence = truncationBanner(a);
+    if (sentence) return `⚠ TRUNCATED: ${sentence}`;
+  }
+  return null;
+}
+
+/**
+ * The exact `role: 'tool'` text the model is handed for one governed tool call: the
+ * clipping notice first (see {@link truncationMarkerFor}), then the tool's own output.
+ * Exported so the guard test asserts the REAL composition rather than re-implementing it.
+ */
+export function composeToolText(artifacts: ChatArtifact[], body: string): string {
+  const marker = truncationMarkerFor(artifacts);
+  const text = body || '(no output)';
+  return marker ? `${marker}\n\n${text}` : text;
+}
+
+export function osToolExecutor(user: CurrentUser, sink?: ChatArtifact[]): ToolExecutor {
   return async (name, args) => {
     const res = await handleRpc(user, {
       jsonrpc: '2.0',
@@ -171,9 +231,25 @@ export function osToolExecutor(user: CurrentUser): ToolExecutor {
       params: { name, arguments: args },
     });
     if (res?.error) return { text: `Error: ${res.error.message}`, isError: true };
-    const result = (res?.result ?? {}) as { content?: { text?: string }[]; isError?: boolean };
+    const result = (res?.result ?? {}) as {
+      content?: { text?: string }[];
+      structuredContent?: unknown;
+      isError?: boolean;
+    };
+    // C5 / C9 — the tool's OWN `structuredContent` is the artifact payload (D14). The
+    // model still sees the flattened text, but the TRUNCATION fields, the SQL and the
+    // citation travel structurally to the surface alongside it, so a clipped result can
+    // never reach the user as a confident total just because the model omitted to mention
+    // it. One serialiser: the drawer renders the identical payload an external MCP client
+    // receives. A denial (`isError`) carries `{ error }`, which yields no artifacts.
+    const artifacts = artifactsFromToolResult(result);
+    if (sink) {
+      for (const artifact of artifacts) sink.push(artifact);
+    }
     const text = result.content?.map((c) => c.text ?? '').join('\n') ?? '';
-    return { text: text || '(no output)', isError: !!result.isError };
+    // H-2 — the clipping notice goes FIRST, ahead of the JSON, so the head-keeping context
+    // bound cannot cut it off the one kind of result it matters for.
+    return { text: composeToolText(artifacts, text), isError: !!result.isError };
   };
 }
 
@@ -187,11 +263,42 @@ export type RunOsAssistantInput = {
   page?: PageContext | null;
   messages: { role: 'user' | 'assistant'; content: string }[];
   maxIterations?: number;
+  /**
+   * C1 — the id this TURN is traced under. Every model call the turn makes nests inside
+   * it, so one turn is ONE Langfuse trace instead of N orphans, and it is also the run
+   * dimension on the LiteLLM tags (`run:<id>`). Server-minted per turn; a caller may
+   * inject one (tests, and the durable-thread work that comes later) but the browser
+   * never supplies it — a client-chosen trace id would let one user write into another
+   * user's trace.
+   */
+  traceId?: string;
   /** Injected in tests; defaults to the live governed LiteLLM caller. */
   llm?: LlmCall;
 };
 
-export type OsAssistantResult = AgenticResult & { tab: McpTab | null };
+export type OsAssistantResult = AgenticResult & {
+  tab: McpTab | null;
+  /** The typed artifacts the governed tools produced this turn, in call order. */
+  artifacts: ChatArtifact[];
+  /** The Langfuse trace (= turn) id every model call on this turn was logged under. */
+  traceId: string;
+};
+
+/**
+ * The LiteLLM `tab:` dimension for the Ask-the-OS surface. Deliberately NOT the tab lens
+ * the user happens to be standing on: before this, an Ask-the-OS turn on the Data tab was
+ * tagged `tab:data` and was indistinguishable from the Data tab's own model calls, so the
+ * cost of the flagship chat surface could not be read back at all. The tab lens is still
+ * in the system prompt and in the response's `tab` field.
+ */
+export const ASK_COST_TAB = 'ask';
+
+/** A fresh turn id. `randomUUID` where available, else a timestamped random fallback. */
+function mintTraceId(): string {
+  const c = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (c?.randomUUID) return `ask-${c.randomUUID()}`;
+  return `ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 /**
  * Run one PLAN→ACT turn for the overarching OS assistant and return the full
@@ -201,6 +308,8 @@ export type OsAssistantResult = AgenticResult & { tab: McpTab | null };
  */
 export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssistantResult> {
   const injected = input.llm;
+  const traceId = input.traceId || mintTraceId();
+  const artifacts: ChatArtifact[] = [];
   // Production: the ONE assistant model for both plan + act. Tests inject `llm`
   // and own model selection, so the config tier ids are opaque placeholders.
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
@@ -209,18 +318,31 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     system: osAssistantSystem(input.tab, input.page),
     userMessages: input.messages,
     tools: osToolSpecs(input.user, input.tab),
-    callTool: osToolExecutor(input.user),
-    // A3: attributed — the user, their active domain and the tab lens (never the master key).
+    callTool: osToolExecutor(input.user, artifacts),
+    // C1 — ONE trace per turn: the plan call, every act iteration and the cap synthesis all
+    // nest under this turn's id instead of each creating its own unlinked Langfuse trace.
+    observe: { traceId },
+    // A3: attributed — the user, their active domain, the Ask surface and this turn
+    // (never the master key).
     llm: injected ?? liteLlmCaller({
       userId: input.user.id,
       domain: input.user.activeDomain ?? input.user.domains[0] ?? 'none',
-      tab: input.tab ?? 'assistant',
+      tab: ASK_COST_TAB,
+      runId: traceId,
     }),
     planModel: injected ? config.litellmReasoningModel : assistantId,
     actModel: assistantId,
     maxIterations: input.maxIterations ?? config.assistantMaxSteps,
     budget: inputBudget(assistantId),
     maxOutputTokens: ctx.reservedOutput,
+    // A FAILED write must never be re-fired byte-identically inside one turn. Without this
+    // the harness's dedup ledger short-circuits only prior SUCCESSES, so a rejected write
+    // re-runs the identical rejected call up to the error-streak cap — the observed build
+    // loop, now closed on the chat path too. This is the harness's failed-call guard; it is
+    // NOT a confirmation gate, and nothing here makes a write require the confirm turn
+    // structurally. That remains C15 (the writer node's tool allowlist) and is prompt-level
+    // only today, per `OS_RULES`.
+    writeToolNames: [...WRITE_TOOL_NAMES],
   });
-  return { ...result, tab: input.tab };
+  return { ...result, tab: input.tab, artifacts, traceId };
 }

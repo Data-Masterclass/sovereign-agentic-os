@@ -12,7 +12,7 @@ import type { Health, HealthItem } from '@tabs/monitoring/lib/types';
  *   • workload status — REUSE `lib/platform.listComponentsWithStatus()` (the k8s
  *     API read the OS UI pod's ServiceAccount already grants). off/starting → amber,
  *     unknown/disabled → handled; running → green.
- * Mock (not in the bundle on kind): Prometheus/Alertmanager + Argo sync/health +
+ * Mock (not in the bundle on kind): Prometheus/Alertmanager +
  * SKE node auto-repair + the OOMKilled→auto-restart self-heal story + OpenSearch
  * green/yellow/red. Marked `source:'mock'` so the dual pattern stays honest.
  *
@@ -74,7 +74,7 @@ export async function collectSystem(): Promise<HealthItem[]> {
         lens: 'system',
         title: 'Platform services',
         health: 'green',
-        detail: `${greens} workloads Ready. Probes + Argo self-heal + SKE node auto-repair active.`,
+        detail: `${greens} workloads Ready. Probes + SKE node auto-repair active; there is no GitOps controller, so configuration drift is not reverted automatically.`,
         owner: 'platform',
         domain: 'platform',
         cluster: true,

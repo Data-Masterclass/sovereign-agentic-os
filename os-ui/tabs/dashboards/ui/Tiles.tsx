@@ -18,6 +18,8 @@ import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
 import { TIER_BADGE, TIER_LABEL } from '@tabs/dashboards/ui/shared';
 import type { DashboardGroups, DashboardSummary } from '@tabs/dashboards/ui/shared';
 import DomainTag from '@core/ui/DomainTag';
+import TileBadges from '@core/ui/lifecycle/TileBadges';
+import { useLifecycleTiles } from '@core/ui/lifecycle/useLifecycleView';
 
 /**
  * The dashboards LIST surface — every dashboard the user can see, grouped All · My · Shared ·
@@ -31,6 +33,9 @@ import DomainTag from '@core/ui/DomainTag';
  */
 
 /** Which folder ROOT a dashboard's folders live in — personal (mine) or domain (shared/mkt). */
+/** Stable id accessor for the shared lifecycle hook (a new closure would re-fetch). */
+const dashId = (d: DashboardSummary) => d.id;
+
 function rootOf(d: DashboardSummary): FolderRoot {
   return d.tier === 'personal' ? 'personal' : 'domain';
 }
@@ -102,9 +107,11 @@ function DashboardsInner({
   );
 
   // Grid filter: a selected folder shows dashboards under it (incl. subfolders) in that root.
-  const shown = sel
+  const inFolder = sel
     ? itemsUnderFolder(sel.path, active.filter((d) => rootOf(d) === sel.root))
     : active;
+  // LIFECYCLE: the ONE shared hook — Studio shows everything, Run only what is live.
+  const { tiles: shown } = useLifecycleTiles('dashboard', inFolder, dashId);
 
   const reload = useCallback(() => { onReload?.(); void loadFolders(); }, [onReload, loadFolders]);
 
@@ -177,6 +184,7 @@ function DashboardsInner({
           <span className="tile-name">{d.name}</span>
           <div className="row" style={{ gap: 4, alignItems: 'center' }}>
             {showDomainForScope(scope) ? <DomainTag domain={d.domain} /> : null}
+            <TileBadges kind="dashboard" id={d.id} audience={false} />
             <span className={`badge ${TIER_BADGE[d.tier]}`}>{TIER_LABEL[d.tier]}</span>
           </div>
         </div>

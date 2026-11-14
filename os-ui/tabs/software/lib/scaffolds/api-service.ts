@@ -14,7 +14,7 @@
  * server.mjs + a matching path in openapi.yaml (which feeds the auto-MCP tools).
  * Shares the SAME sovereign CI workflow as every other scaffold.
  */
-import { ciWorkflowFile, type ScaffoldFile } from './vite-os.ts';
+import { type ScaffoldFile } from './vite-os.ts';
 
 export type { ScaffoldFile };
 
@@ -24,7 +24,6 @@ export function apiServiceFiles(name: string, slug: string): ScaffoldFile[] {
     packageJson(slug),
     serverMjs(name, slug),
     dockerfile(),
-    ciWorkflowFile(slug),
     openApiYaml(slug),
     appYaml(name),
     decisionsMd(name),
@@ -146,7 +145,7 @@ function appYaml(name: string): ScaffoldFile {
       'apiVersion: software.sovereign-os/v1',
       'kind: App',
       `name: '${name}'`,
-      'owner: gitea_admin',
+      '# owner: filled in by the OS from the app record (the app’s real owner).',
       `description: '${name} — an APIs-only service built in the Software tab.'`,
       '# DECLARED headless: this app has no user interface, only endpoints.',
       'surface: api',
@@ -209,7 +208,6 @@ export const API_SERVICE_EXPECTED_PATHS = [
   'package.json',
   'server.mjs',
   'Dockerfile',
-  '.forgejo/workflows/ci.yml',
   'openapi.yaml',
   'app.yaml',
   '.app/decisions.md',

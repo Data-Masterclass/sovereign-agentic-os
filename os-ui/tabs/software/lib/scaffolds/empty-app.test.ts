@@ -39,7 +39,6 @@ test('empty-app scaffold: a Vite entry that renders one page with the app name',
 test('empty-app scaffold: still builds/previews/deploys like every governed SPA', () => {
   assert.match(byPath('Dockerfile'), /EXPOSE 8080/);
   assert.match(byPath('nginx.conf'), /listen 8080/);
-  assert.match(byPath('.forgejo/workflows/ci.yml'), /docker push/);
   assert.match(byPath('app.yaml'), /surface: ui/);
 });
 

@@ -9,6 +9,8 @@ import { useUser } from '@core/ui/useUser';
 import { parseAgentChatResponse } from '@tabs/agents/lib/agent-chat-response';
 import { usePageContext } from '@core/ui/core/PageContext';
 import Markdown from '@core/ui/Markdown';
+import AskArtifacts from '@core/ui/AskArtifacts';
+import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
 
 /**
  * THE SOVEREIGN OS ASSISTANT — one overarching, globally-available assistant.
@@ -20,8 +22,15 @@ import Markdown from '@core/ui/Markdown';
  * /api/assistant/chat, which runs the PLAN→ACT harness and dispatches every
  * action through the OS's own governed MCP (same guardrails as external clients).
  *
- * The panel is transparent: each answer shows which governed tools were invoked
- * and flags any the governance layer blocked — it never hides what it did.
+ * The panel is transparent: each answer shows which governed tools were invoked,
+ * flags any the governance layer blocked, and renders the typed ARTIFACTS those
+ * tools returned (C9) — the rows, the SQL or metric member behind them, the
+ * backend's own truncation banner verbatim, and a chip naming the governed record
+ * the answer is grounded in. It never hides what it did.
+ *
+ * The artifact payload is the tools' own MCP `structuredContent`, so the drawer and
+ * an external MCP client render the identical bytes. No model-authored markup is
+ * ever rendered: see `core/ui/AskArtifacts.tsx` and its guard test.
  */
 
 // Friendly label for the tab in focus (mirrors the server's path→tab map). Used
@@ -46,7 +55,7 @@ function tabLabel(pathname: string): string {
 }
 
 type ToolTrace = { name: string; isError: boolean };
-type Msg = { role: 'user' | 'assistant'; content: string; tools?: ToolTrace[] };
+type Msg = { role: 'user' | 'assistant'; content: string; tools?: ToolTrace[]; artifacts?: ChatArtifact[] };
 
 export default function OsAssistant() {
   const pathname = usePathname() || '/';
@@ -100,13 +109,18 @@ export default function OsAssistant() {
           setError(parsed.error);
         } else {
           let tools: ToolTrace[] | undefined;
+          let artifacts: ChatArtifact[] | undefined;
           try {
             const j = JSON.parse(raw);
             if (Array.isArray(j.tools)) tools = j.tools as ToolTrace[];
+            // Validated client-side too: the last place that can refuse to render a kind
+            // this build does not understand. An absent/malformed field degrades to none.
+            const list = parseArtifacts(j);
+            if (list.length > 0) artifacts = list;
           } catch {
-            /* content already parsed; tools are optional */
+            /* content already parsed; tools and artifacts are optional */
           }
-          setMessages((m) => [...m, { role: 'assistant', content: parsed.content, tools }]);
+          setMessages((m) => [...m, { role: 'assistant', content: parsed.content, tools, artifacts }]);
         }
       } catch (e) {
         if ((e as Error).name !== 'AbortError') setError((e as Error).message);
@@ -191,6 +205,7 @@ export default function OsAssistant() {
                             ? m.content
                             : <Markdown>{m.content}</Markdown>}
                         </div>
+                        {m.role === 'assistant' && m.artifacts ? <AskArtifacts artifacts={m.artifacts} /> : null}
                         {m.tools && m.tools.length > 0 ? (
                           <div className="osa-tools" aria-label="Governed tools invoked">
                             {m.tools.map((t, j) => (

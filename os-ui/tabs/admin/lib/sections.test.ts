@@ -52,8 +52,10 @@ test('ADMIN-SECTIONS: section ids are unique', () => {
 
 test('PLATFORM: holds only tenant administration', () => {
   const ids = ADMIN_SECTIONS.map((s) => s.id).sort();
+  // `tokens` is the one PERSONAL section (stream E): a user's own git access tokens. It lives here
+  // because Platform is where account-level settings are, not because it is administration.
   assert.deepEqual(ids, [
-    'access', 'backups', 'domains', 'models', 'overview', 'settings',
+    'access', 'backups', 'domains', 'models', 'overview', 'settings', 'tokens',
   ]);
 });
 
@@ -85,7 +87,7 @@ test('PLATFORM: every section is reachable as a tab on one route', () => {
 
 test('PLATFORM: the strip runs in group order, so related tabs sit together', () => {
   assert.deepEqual(visibleSections('admin').map((s) => s.id), [
-    'overview', 'domains', 'settings', 'access', 'models', 'backups',
+    'overview', 'domains', 'settings', 'access', 'tokens', 'models', 'backups',
   ]);
   const groups = visibleSections('admin').map((s) => ADMIN_GROUP_ORDER.indexOf(s.group));
   assert.deepEqual(groups, [...groups].sort((a, b) => a - b), 'groups are interleaved');
@@ -97,23 +99,27 @@ test('PLATFORM: Overview & Health is builder-READABLE — the merge did not take
   assert.equal(overview.minRole, 'builder');
   assert.equal(overview.label, 'Overview & Health', 'the merged tab is labelled for both halves');
   assert.equal(DEFAULT_SECTION, 'overview');
-  assert.deepEqual(visibleSections('builder').map((s) => s.id), ['overview']);
+  // …and a builder also sees `tokens`, which is their OWN access tokens, not administration.
+  assert.deepEqual(visibleSections('builder').map((s) => s.id), ['overview', 'tokens']);
 });
 
 test('PLATFORM: …with admin-only ACTIONS — enable/disable a component is administration', () => {
   assert.equal(OVERVIEW_ACTION_MIN_ROLE, 'admin');
 });
 
-test('PLATFORM: every tab except the overview is admin-only', () => {
+test('PLATFORM: every ADMINISTRATION tab is admin-only; the two non-admin tabs are named', () => {
+  // Exactly two sections are not administration: the builder-readable overview, and `tokens`,
+  // which is the caller's own git access tokens. Everything else is admin-only.
+  const NOT_ADMIN_ONLY = new Set(['overview', 'tokens']);
   for (const s of ADMIN_SECTIONS) {
-    assert.equal(s.minRole, s.id === 'overview' ? 'builder' : 'admin', `${s.id} has the wrong floor`);
+    assert.equal(s.minRole, NOT_ADMIN_ONLY.has(s.id) ? 'builder' : 'admin', `${s.id} has the wrong floor`);
   }
 });
 
 test('PLATFORM: the strip is fail-closed — no role, no tabs', () => {
   assert.deepEqual(visibleSections(null).map((s) => s.id), [], 'an unresolved role must see nothing');
   assert.deepEqual(visibleSections('creator').map((s) => s.id), [], 'a creator has no platform surface');
-  assert.deepEqual(visibleSections('domain_admin').map((s) => s.id), ['overview']);
+  assert.deepEqual(visibleSections('domain_admin').map((s) => s.id), ['overview', 'tokens']);
   assert.equal(resolveSection(null, null), null, 'nothing renders while the role is unresolved');
 });
 

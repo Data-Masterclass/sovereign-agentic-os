@@ -19,7 +19,7 @@ test('deregisterPlan: one member per metric (its canonical member + model)', () 
   assert.equal(plan.length, 1);
   assert.equal(plan[0].member, 'Orders.revenue');
   assert.equal(plan[0].measure, 'revenue');
-  assert.equal(plan[0].cube, 'orders');
+  assert.equal(plan[0].model, 'orders');
 });
 
 test('deregisterViewMembers: DELETE physically removes the measure — reports ok', () => {

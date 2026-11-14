@@ -88,6 +88,65 @@ The data itself stays governed — a model reads only what Trino→OPA allows th
 principal — and no credential is ever in the tree. Definition-level privacy inside a domain would be
 a new per-path read gate, not a property of this design.
 
+## Metrics are dbt metrics (the semantic layer)
+
+A metric defined in the OS — in the form, from chat or over the MCP — is a real dbt
+`metrics:` entry on a `semantic_models:` measure, committed into the owning domain's dbt project:
+
+```
+models/semantic/<model>.yml              promoted (domain) datasets
+models/personal/<uid>/semantic/<model>.yml   a personal dataset's lane (promotion moves the file)
+models/os/os_time_spine_day.sql          the daily time spine (a view over Trino's sequence())
+models/os/schema.yml                     the spine's dbt >= 1.9 `time_spine` property
+```
+
+**One pinned spec version.** The emitter targets **dbt-semantic-interfaces 0.8.5 = dbt-core 1.10**
+field names, and every field it writes is *also* valid on **dbt-core 1.9** — which is what the
+images actually carry (`images/extensions/{dbt,dagster}/Dockerfile` pin `dbt-core>=1.8,<1.10`, so
+pip resolves 1.9.x). The pin is one constant, `DBT_SEMANTIC_SPEC` in
+`tabs/data/lib/dbt/semantic/spec.ts`, it is named in every generated project's README, and a test
+asserts it. Why a pin at all: `docs.getdbt.com` now serves the dbt 1.12 ("Fusion") spec by default
+and its `?version=` selector is client-side only, so the prose does not describe what dbt 1.8–1.10
+accepts; the authoritative source is the DSI pydantic spec at the version dbt-core pins. 1.12 is a
+breaking redesign of this exact spec, so it becomes a translation layer, not a rewrite.
+`cumulative_type_params` does **not** exist on dbt 1.8 — that is why the floor is 1.9.
+
+**What is emitted, and what is refused.** `simple`, `ratio`, `derived` and `cumulative` YAML are
+emitted from today's OS `Measure`. `count_distinct_approx` has no faithful dbt agg, so it emits
+`count_distinct` plus `config.meta.os_agg: count_distinct_approx`: dbt's own number stays exact, the
+OS compiler keeps `approx_distinct`, and a parity oracle must exclude it for a stated reason.
+Anything with no faithful form — a leading window, an unparseable trailing window, a ratio carrying
+its own filter (the OS compiler drops it), a formula over a metric that is not emitted, a filter
+outside the generated grammar — is a **named refusal**, listed in the project README under
+"Not emitted", and **nothing** is written for it. Emitting YAML the OS compiler cannot serve would
+put a wrong number in a tool an engineer trusts; and one unknown key fails `dbt parse` for the
+**whole** domain, so each document is validated against the pinned spec before it is written and a
+document with violations is dropped with the violations recorded.
+
+**Execution stays in the OS.** MetricFlow is never on the interactive request path — a metric read
+is `tabs/metrics/lib/explorer.ts` compiling one governed Trino `SELECT` run as the **viewer**
+(`queryRun(sql, identities.trino.user)`). MetricFlow would open one connection from its own
+profile and lose the per-viewer impersonation that is the point of the OS. Where MetricFlow is
+installed at all it is pinned `metricflow >= 0.209.0`: `<= 0.208.1` is BSL 1.1, whose Additional Use
+Grant excludes this product's use, and BSL does not relax retroactively (`0.209.0` is the first
+Apache-2.0 release). `scripts/license-check.sh` asserts that floor.
+
+**What the OS compiler serves, exactly.** `simple` and `ratio` always. `derived` **one level deep**
+— a formula over sibling metrics, each substituted for its own aggregate; a ratio of ratios is
+refused. `cumulative` **only at a matching grain** — the frame is `ROWS BETWEEN n PRECEDING AND
+CURRENT ROW` over the bucketed series, so the window's unit must equal the slice's granularity;
+every other grain is refused with a typed `window_grain_mismatch`. And because the frame counts
+BUCKETS rather than calendar units, a served cumulative result carries a `warning` saying so: the
+time spine is generated but **not joined to yet**, so a sparse series trails the last n *present*
+buckets, not the last n days. A refusal is `{ code, metricType, reason }`
+(`tabs/metrics/lib/explorer.ts` `serveRefusal`), never a number.
+
+**Not true yet.** The spine join (which is what makes a trailing window calendar-correct at any
+grain), `saved_queries:` / `exports:`, entity joins across semantic models, the dbt filter-syntax
+parser on the query path, and the MetricFlow parity oracle. Also: a dataset with measures and **no
+time column** emits no semantic YAML at all — dbt requires an `agg_time_dimension` for every
+measure, so those metrics are refused by name in the project README and served by the OS only.
+
 ## Code
 
 - Generator: `os-ui/tabs/data/lib/dbt/{generate,models,sources,schema,schedules,project}.ts`
@@ -101,7 +160,57 @@ a new per-path read gate, not a property of this design.
 - Lineage from the manifest: `tabs/data/lib/dbt/lineage.ts` (pure) +
   `tabs/data/lib/lineage-server.ts` (one `assetGraph()` call, registry fallback).
 - Parity harness: `tabs/data/lib/dbt/parity.ts` + `parity.test.ts`.
+- Semantic layer: `tabs/data/lib/dbt/semantic/{spec,model,validate,from-measures,time-spine,render}.ts`
+  (pure; the pinned spec, the typed document + emitter + parser, the spec validator, the
+  `Measure` → dbt bridge, the time spine and the project renderer). Preview artefact:
+  `tabs/data/lib/semantic.ts`. Golden: `fixtures/metrics-semantic-layer.golden.json`.
 - Trino access rules: `core/infra/trino-rules.ts` + `trino-rules-server.ts`.
+
+## Engineering view ("Under the hood")
+
+Every data product and every KPI carries an **Under the hood** panel (and the MCP twin
+`get_engineering_view({kind, id})`) whose **dbt** tab shows the artefacts of THIS project, read out
+of the domain repository at `main` — not re-rendered from the generator:
+
+- the `dbt model` SQL (`models/<layer>/<layer>_<slug>.sql`, or `models/personal/<uid>/…` in the
+  personal lane), with its repo path;
+- the `models/**/schema.yml` properties and the dbt tests attached to it;
+- `models/sources.yml` where the product reads a source;
+- `models/semantic/<model>.yml` — the `semantic_models:` and `metrics:` blocks — **once the
+  semantic emitter has written it**. Until then the KPI's dbt tab says so in its own words and
+  states that `mf query --metrics <name>` would not resolve yet; it does not pretend otherwise.
+
+**Membership decides how much of the project you see.** A Company-tier data product is visible to
+a caller outside its domain, but the domain *repository* is members-only (`requireMember` in
+`tabs/data/lib/dbt/read.ts`, which every project route goes through). So a non-member's panel shows
+that product's own model file and says why it shows nothing else, and the tarball is offered as
+unavailable with the reason — rather than printing bytes, or a download, that the project API would
+answer 403 to.
+
+The commands the panel prints are the ones you would type in a checkout:
+
+```sh
+dbt build --select <node>     # the model and the tests attached to it
+dbt test --select <node>      # only its tests
+dbt ls --select metric:<name> # the dbt metric node, when the semantic file exists
+mf query --metrics <name> --group-by metric_time__month
+```
+
+**Take it elsewhere.** The panel's export is the project tarball
+(`GET /api/data/projects/<domain>/export`, built by `core/infra/git-store.ts` `archive()`):
+
+```sh
+curl -fsSLO <os>/api/data/projects/<domain>/export   # <domain>-<sha>.tar
+tar -xf <domain>-<sha>.tar -C <domain> && cd <domain>
+export TRINO_HOST=trino TRINO_PORT=8080 TRINO_USER=dbt-runner OS_PRINCIPAL=<your-principal>
+dbt parse --profiles-dir .
+dbt build --profiles-dir . --select <model>+
+```
+
+`os-ui/tabs/data/lib/engineering-export.test.ts` asserts the round trip offline: the tarball
+carries every file byte for byte, `dbt_project.yml` and `profiles.yml` are present, every `.yml`
+still parses, every `ref()` names a model that is in the tarball, and no credential rode along.
+The cluster step (Part C) runs a real `dbt parse` on a downloaded tarball.
 
 ## FAQ
 **Q: Can I run the generated project myself?** Yes — export it (`GET …/export?ref=<sha>`), set the

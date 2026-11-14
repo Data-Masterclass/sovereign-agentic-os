@@ -13,6 +13,7 @@ import { dashboardWriteTools } from '@tabs/dashboards/mcp/dashboard-write-tools'
 import { agentWriteTools } from '@core/mcp/agent-write-tools';
 import { softwareWriteTools } from '@tabs/software/mcp/software-write-tools';
 import { exposureWriteTools } from '@core/mcp/experimental/exposure-write-tools';
+import { lifecycleTools } from '@core/mcp/lifecycle-tools';
 
 /**
  * The GOVERNED WRITE tools of the OS MCP — one per authoring action a case study
@@ -42,6 +43,7 @@ export { dashboardWriteTools } from '@tabs/dashboards/mcp/dashboard-write-tools'
 export { agentWriteTools, __setStartQueuedRunForTests } from '@core/mcp/agent-write-tools';
 export { softwareWriteTools } from '@tabs/software/mcp/software-write-tools';
 export { exposureWriteTools } from '@core/mcp/experimental/exposure-write-tools';
+export { lifecycleTools } from '@core/mcp/lifecycle-tools';
 
 export const ALL_WRITE_TOOLS: McpTool[] = [
   ...dataWriteTools,
@@ -56,6 +58,10 @@ export const ALL_WRITE_TOOLS: McpTool[] = [
   // Lakehouse expose/adopt parity (Phase 4): exposure CRUD + catalog snapshot/classify
   // (connections) + list_exposed_tables/adopt_exposed_table (data) — same libs as the UI.
   ...exposureWriteTools,
+  // Lifecycle (night 2): go_live + retire — the only two verbs that change WHAT RUNS. They are
+  // writes, so they belong in this barrel and therefore in WRITE_TOOL_TABS, which is what holds
+  // an agent's call for approval. They are NOT promotion: the audience ladder is untouched.
+  ...lifecycleTools,
 ];
 
 

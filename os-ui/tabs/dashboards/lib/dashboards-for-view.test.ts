@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { __resetDashboards, saveDashboard, getDashboardsForView, type Principal } from '@tabs/dashboards/lib/store';
 import type { DashboardSpec } from '@tabs/dashboards/lib/model';
 
-// Reverse lookup: which of the user's visible dashboards bind to a given Cube view.
+// Reverse lookup: which of the user's visible dashboards bind to a given governed view.
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };
 

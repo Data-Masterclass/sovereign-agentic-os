@@ -191,6 +191,31 @@ kubectl -n agentic-os port-forward svc/agentic-os-dagster-webserver 3070:80
 kubectl -n agentic-os exec deploy/agentic-os-dagster-sovereign -c repo-sync -- cat /repos-checkout/status.json
 ```
 
+## Engineering view ("Under the hood")
+
+A data product's **Dagster** tab shows, in Dagster's own vocabulary: the `Dagster asset` key
+(`["<domain>","<model>"]`), the `Dagster job` (`<domain>__all`), the `Dagster schedule`
+(`<domain>__<datasetId>`), and the last `Dagster run` with its run id and status — read over the
+GraphQL API, as the signed-in user's view of a shared scheduler.
+
+- "Open in Dagster" goes to **Dagster's own console** (`dagsterConsoleUrl`), *not* through
+  `/tools/dagster`: `core/infra/tool-proxy.ts` declares `ownTab` for Dagster precisely because its
+  Next.js chunks load from the site root and render blank behind the proxy prefix. Linking into the
+  proxy would have handed every engineer a blank page, so the panel links the address that works
+  and the proxy keeps the embedded-tool job it can actually do.
+- The tool's own `minRole` (**builder**) gates the link. A creator is not handed a link the ingress
+  would refuse: the panel says the role it needs, and the asset key and the `dagster asset
+  materialize` command are shown to them regardless.
+- When this deployment exposes no console (`DAGSTER_CONSOLE_URL` empty) or Dagster is not
+  configured at all, the link is **not** hidden: it says which of the two it is.
+- When Dagster is unreachable, the last run is reported as *unknown with the transport error* —
+  never as "no runs".
+- The command is the real one: `dagster asset materialize --select <domain>/<model>`.
+
+Kinds other than a data product say plainly that Dagster does not schedule them: an agent system is
+scheduled by the OS (a CronJob per schedule), a dashboard and a KPI are read on demand, and an app
+is served rather than materialised.
+
 ## FAQ
 
 **Q: Does it run the OS's datasets?** Yes, with the flag on — a dataset's models are assets of the

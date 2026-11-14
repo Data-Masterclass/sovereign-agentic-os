@@ -227,6 +227,29 @@ function seedSynced(): void {
   store.setDatasetSync(BASE, amir, SYNC);
 }
 
+/**
+ * A dataset with a BUILT Gold and documented columns — what `define_metric` needs (M8).
+ *
+ * The UI half is `store.defineMeasure` with the literal `Measure`, not `measureFromForm`: a
+ * `tabs/data` test may not import `@tabs/metrics` (the tab-isolation rule), and the form →
+ * `Measure` conversion has its own convergence tests in the Metrics tab. What is compared here is
+ * exactly what must not drift — the committed tree, the author and the trailers.
+ */
+function seedGold(): void {
+  seedSilver();
+  store.setDocs(BASE, amir, {
+    description: 'Orders',
+    columns: [
+      { name: 'order_id', description: 'key' },
+      { name: 'order_date', description: 'when' },
+      { name: 'net_amount', description: 'value' },
+    ],
+  });
+  store.buildVersion(BASE, amir, 'gold', { quality: 'unknown', artifact: 'gold/mart_orders.sql', passThrough: true });
+}
+
+const REVENUE = { name: 'revenue', type: 'sum', sql: 'net_amount' } as const;
+
 /* ------------------------------------------------------------- the 9 cases -- */
 
 type Case = {
@@ -310,6 +333,14 @@ const CASES: Case[] = [
     seed: seedSilver,
     mcpArgs: { datasetId: BASE },
     ui: async () => runQualityChecksService(amir, BASE),
+  },
+  {
+    // Stream M (checklist M8): a metric definition is a commit in the domain's dbt project, and
+    // both doors must produce the SAME `models/semantic/<model>.yml`.
+    tool: 'define_metric',
+    seed: seedGold,
+    mcpArgs: { datasetId: BASE, name: 'revenue', aggregation: 'sum', column: 'net_amount' },
+    ui: async () => store.defineMeasure(BASE, amir, { ...REVENUE }),
   },
   {
     // The 9th case (review M-1): CLEARING a sync. The UI route passes `null`; the MCP tool had no

@@ -33,10 +33,69 @@ export async function register(): Promise<void> {
       if (config.dataProjectGit) {
         const { reserveSubtree } = await import('./core/infra/git-store.ts');
         reserveSubtree('agents/');
+        // Night 2 / stream D: the Dashboards tab owns `dashboards/` in the same domain repo, so it
+        // needs the same reservation for the same reason — the dbt generator writes the WHOLE tree
+        // and its next commit would otherwise delete the subtree. Reserved HERE rather than only in
+        // the commit hook because the data boot reconcile (step 3 below) runs a whole-tree commit.
+        // The literal must stay equal to `DASHBOARDS_PREFIX`
+        // (`tabs/dashboards/lib/git/generate.ts`); `tabs/dashboards/lib/git/boot.test.ts` asserts it.
+        reserveSubtree('dashboards/');
+        // Night 2 / stream S, review H-3: `apps/` is reserved HERE for exactly the same reason, and
+        // for the same second-line-of-defence argument. It was previously registered in a floating
+        // IIFE at the END of `register()`, which meant the data boot reconcile below could run
+        // FIRST and delete every app's source tree — the D-1 defect repeated. The literal must stay
+        // equal to `APPS_PREFIX` (`tabs/software/lib/git-commit.ts`); `git-commit.test.ts` asserts
+        // it does, and `tabs/software/lib/apps-reservation.test.ts` asserts the ORDER, not merely
+        // the existence.
+        reserveSubtree('apps/');
       }
     } catch (err) {
-      console.error(`[os-ui] agent projects: could NOT reserve the 'agents/' subtree — ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[os-ui] projects: could NOT reserve the 'agents/' + 'dashboards/' + 'apps/' subtrees — ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  // LIFECYCLE (night 2, stream V): reserve the pin file's own subtree and register the per-kind
+  // adapters. The kernel must never import a tab, so each tab's adapter registers itself HERE —
+  // the one place in os-ui that is allowed to know both halves. Registration is pure (a Map
+  // write), never awaited on a request path, and a kind with no adapter is an honest refusal
+  // from go_live rather than a silent success, so a failure here cannot corrupt anything.
+  // EDGE-COMPILE GUARD (PR #48 CI `build`): `middleware.ts` makes Next compile this file for the
+  // edge runtime too. webpack skips the dependencies inside an `if (process.env.NEXT_RUNTIME ===
+  // 'nodejs') { ... }` BLOCK (constant-folded per compiler), but NOT code that merely follows the
+  // early `return` above — so a dynamic import outside such a block is bundled for edge and fails
+  // on `node:`/`crypto`/`http`. Every `await import(` in this file must sit inside one of these
+  // blocks; `core/kernel/instrumentation-edge-guard.test.ts` asserts it.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+  try {
+    const { reserveLifecycleSubtree } = await import('./core/infra/lifecycle-pins.ts');
+    reserveLifecycleSubtree();
+    const { registerLifecycleAdapter } = await import('./core/kernel/lifecycle-adapters.ts');
+    const { dashboardLifecycleAdapter } = await import('./tabs/dashboards/lib/lifecycle-adapter.ts');
+    const { agentLifecycleAdapter } = await import('./tabs/agents/lib/lifecycle-adapter.ts');
+    registerLifecycleAdapter(dashboardLifecycleAdapter);
+    registerLifecycleAdapter(agentLifecycleAdapter);
+    const { datasetLifecycleAdapter } = await import('./tabs/data/lib/lifecycle-adapter.ts');
+    const { metricLifecycleAdapter } = await import('./tabs/metrics/lib/lifecycle-adapter.ts');
+    const { knowledgeLifecycleAdapter } = await import('./tabs/knowledge/lib/lifecycle-adapter.ts');
+    const { connectionLifecycleAdapter } = await import('./tabs/connections/lib/lifecycle-adapter.ts');
+    const { appLifecycleAdapter } = await import('./tabs/software/lib/lifecycle-adapter.ts');
+    registerLifecycleAdapter(datasetLifecycleAdapter);
+    registerLifecycleAdapter(metricLifecycleAdapter);
+    registerLifecycleAdapter(knowledgeLifecycleAdapter);
+    registerLifecycleAdapter(connectionLifecycleAdapter);
+    registerLifecycleAdapter(appLifecycleAdapter);
+    // NIGHT-2 MERGE (V-13, D x V): D's `tabs/dashboards/lib/lifecycle-port.ts` is the seam the
+    // Dashboards tab reads a pin through, so that the tab can record "which version is live" in
+    // `dashboard.yaml` without importing a module that did not exist on its branch. This is the
+    // line that installs V's real reader into it. ASYNC (D's H-5): V's pins live in a durable
+    // mirror, so a synchronous port could only ever have been wired to a stale copy. `?? null`
+    // because V returns `undefined` for "no pin" and the port's contract is `null`.
+    const { setLifecycleReader } = await import('./tabs/dashboards/lib/lifecycle-port.ts');
+    const { livePin: livePinOf } = await import('./core/infra/lifecycle-pins.ts');
+    setLifecycleReader(async (kind, id) => (await livePinOf(kind, id)) ?? null);
+  } catch (err) {
+    console.error(`[os-ui] lifecycle: adapters NOT registered — go_live will refuse, naming the kind. ${err instanceof Error ? err.message : String(err)}`);
+  }
   }
 
   // Boot-time SECURITY guard: refuse to serve in production with the insecure
@@ -45,6 +104,7 @@ export async function register(): Promise<void> {
   // module-load assertion would bake the error into a prerendered page (unclearable by
   // a runtime secret rotation). Fail-closed: exit the process so the pod crash-loops
   // and the bad deploy is loud, rather than silently signing forgeable sessions.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
   try {
     const { config, assertNoDevDefaultSecretsInProd } = await import('./core/kernel/config.ts');
     assertNoDevDefaultSecretsInProd(config);
@@ -52,15 +112,18 @@ export async function register(): Promise<void> {
     console.error(`[os-ui] boot secret guard: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
+  }
 
   // TAB GATING warnings (telemetry only): surface typo'd keys and omissions that would
   // 404 the landing page / admin UI. Never fails boot.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
   try {
     const { config } = await import('./core/kernel/config.ts');
     const { enabledTabsWarnings } = await import('./core/kernel/tabs.ts');
     for (const w of enabledTabsWarnings(config.enabledTabs)) console.warn(`[os-ui] OS_ENABLED_TABS: ${w}`);
   } catch {
     /* telemetry must never break boot */
+  }
   }
 
   // CROSS-ORIGIN SESSION guard (telemetry only, 0.6.115): deployed apps carry the OS
@@ -69,6 +132,7 @@ export async function register(): Promise<void> {
   // `sessionCookieDomain` returns null → a host-only cookie → deployed apps get NO session
   // → silent 401 → "builds but shows no data". Warn LOUDLY so it is diagnosable. This does
   // NOT change the cookie logic — it only surfaces the misconfiguration. Never fails boot.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
   try {
     const { config } = await import('./core/kernel/config.ts');
     const { sessionCookieDomain } = await import('./core/kernel/session.ts');
@@ -92,6 +156,7 @@ export async function register(): Promise<void> {
   } catch (err) {
     // Telemetry must never break boot — a slip here is silently downgraded to a note.
     console.warn(`[os-ui] session-scope check skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
   }
 
   // Boot-time DECLARATIVE DEMO-APP seed (fire-and-forget, guarded, idempotent): stand up
@@ -210,14 +275,42 @@ export async function register(): Promise<void> {
       } catch (err) {
         console.error(`[os-ui] agent projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
       }
+      // 2b. DASHBOARDS commit hook (night 2 / stream D) — every dashboard write becomes a commit
+      // under `dashboards/**`. Installed after the agents hook and BEFORE the data boot reconcile,
+      // for the same ordering reason: the reconcile is a whole-tree commit and the subtree must
+      // already be reserved (it is, at the top of `register()`, and again by this hook).
+      let dashboardsHookInstalled = false;
+      try {
+        const { installDashboardCommitHook } = await import('./tabs/dashboards/lib/git/commit.ts');
+        installDashboardCommitHook({ resolveActor });
+        dashboardsHookInstalled = true;
+        console.info(`[os-ui] dashboard projects: committing every dashboard change to ${config.reposDir}/<domain>.git (dashboards/)`);
+      } catch (err) {
+        console.error(`[os-ui] dashboard projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
+      }
       // 3. DATA boot reconcile (engine rebuild B4): the hook only sees writes from NOW on, so the
       // first boot with the flag on — and any boot after a crash between a store write and its
       // commit — must commit the difference between the generated project and the repository HEAD,
       // for every domain, as the platform principal (`OS-Reason: boot-reconcile`). Commits only
       // where the tree actually moved; one unreadable domain never stops the others or the boot.
       // It runs AFTER step 2 so the reserved `agents/` subtree survives the whole-tree commit; if
-      // step 2 failed, the reconcile is SKIPPED rather than allowed to delete the subtree.
-      if (dataHookInstalled && agentsHookInstalled) {
+      // step 2 failed, the reconcile is SKIPPED rather than allowed to delete the subtree. Review
+      // H-3: the same condition now covers `apps/` — a whole-tree reconcile with `apps/`
+      // unreserved would delete every app's source tree, so the reconcile is skipped unless the
+      // reservation is demonstrably in place (checked against the registry, not assumed).
+      const reserved = await (async () => {
+        try {
+          const { reservedSubtrees } = await import('./core/infra/git-store.ts');
+          return reservedSubtrees();
+        } catch {
+          return [] as string[];
+        }
+      })();
+      const appsReserved = reserved.includes('apps/');
+      if (!appsReserved) {
+        console.error("[os-ui] software: 'apps/' is NOT reserved — the data boot reconcile is SKIPPED, because a whole-tree commit would delete every app's source tree");
+      }
+      if (dataHookInstalled && agentsHookInstalled && appsReserved) {
         try {
           const { reconcileDataProjectsAtBoot } = await import('./tabs/data/lib/dbt/boot-reconcile.ts');
           const reconciled = await reconcileDataProjectsAtBoot({
@@ -252,7 +345,62 @@ export async function register(): Promise<void> {
           console.error(`[os-ui] agent projects: boot reconcile FAILED — ${err instanceof Error ? err.message : String(err)}`);
         }
       }
+      // 5. DASHBOARDS boot reconcile (night 2 / stream D, review H-4): same contract as 3 and 4 —
+      // whatever changed while the flag was off, or while a write failed between the store and the
+      // commit, is committed now as the platform principal with `OS-Reason: boot-reconcile`. It
+      // runs LAST because it is the newest and least load-bearing of the three, and it refuses to
+      // run at all unless the dashboard registry says `'hydrated'`: an empty store whose mirror was
+      // unreachable is indistinguishable from a tenant with no dashboards, and committing the
+      // former would delete every dashboard directory in every domain. The store must be hydrated
+      // first, exactly as the agents reconcile requires.
+      if (dashboardsHookInstalled) {
+        try {
+          const { ensureHydrated } = await import('./tabs/dashboards/lib/store.ts');
+          await ensureHydrated();
+          const { reconcileDashboardsAtBoot } = await import('./tabs/dashboards/lib/git/reconcile.ts');
+          await reconcileDashboardsAtBoot();
+        } catch (err) {
+          console.error(`[os-ui] dashboard projects: boot reconcile FAILED — ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
     })();
+  }
+
+  // LIFECYCLE MIGRATION (stream V, review H-2)
+  //
+  // NIGHT-2 MERGE — this block MOVED. It used to sit beside the adapter registrations near the top
+  // of `register()`, which put it BEFORE the data / agents / dashboards boot reconciles. The
+  // migration pins every existing object to what is live NOW, so starting it first could pin a
+  // head that the dashboards reconcile was about to move — a dashboard pinned to a commit that
+  // does not contain its file. It therefore runs AFTER all three reconciles, which is the boot
+  // order the night-2 merge brief mandates: reservations -> git hooks/installers -> data reconcile
+  // -> agents reconcile -> dashboards reconcile -> lifecycle-migrate -> the E/G appends below.
+  // It is still fire-and-forget and still self-gating on the pin index having really been READ: every object that already exists becomes Live, ONCE, so
+  // the day this ships looks exactly like the day before — every dashboard, every schedule.
+  // (`not-hydrated` defers to the next boot), because an empty index from a dead mirror is
+  // indistinguishable from a tenant with nothing live. Never awaited, never fatal.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+  void (async () => {
+    try {
+      const { migrateEverythingLive } = await import('./core/kernel/lifecycle-migrate.ts');
+      const out = await migrateEverythingLive();
+      if (!out.ran) {
+        console.error(
+          out.reason === 'not-hydrated'
+            ? '[lifecycle] migration DEFERRED — the pin index could not be read, so nothing was written. It runs on the next boot; until then a pinned read falls back to the head and says so.'
+            : `[lifecycle] migration not needed (${out.reason}).`,
+        );
+        return;
+      }
+      console.error(
+        `[lifecycle] migration: ${out.pinned} object(s) are now Live across ${out.domains.length} domain(s) — ${JSON.stringify(out.perKind)}${
+          out.skipped.length ? ` · skipped: ${out.skipped.join('; ')}` : ''
+        }`,
+      );
+    } catch (err) {
+      console.error(`[lifecycle] migration FAILED — nothing was pinned, it retries on the next boot. ${err instanceof Error ? err.message : String(err)}`);
+    }
+  })();
   }
 
   // TRINO ACCESS RULES (engine rebuild B3; triggers fixed in B3-review-H-2/H-3/H-4): when
@@ -301,5 +449,125 @@ export async function register(): Promise<void> {
         console.warn(`[os-ui] trino access rules: reconcile skipped — ${err instanceof Error ? err.message : String(err)}`);
       }
     })();
+  }
+
+  // ---- stream E: the engineer's door (git → OS) ------------------------------------------
+  // APPENDED boot step (shared file; nothing above is reordered). Two jobs, both idempotent:
+  //   1. register each object kind's validator + ingest with the receive gate, because a core
+  //      module may not import a tab (`registerRepoKind` is the seam — decision D29);
+  //   2. make every existing bare repo pushable AND gated (`http.receivepack`, the pre-receive and
+  //      post-receive hooks). A repo created later is covered by /api/git/authenticate, which
+  //      calls the same function per request.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { config } = await import('./core/kernel/config.ts');
+        if (!config.dataProjectGit) return;
+        const { registerDbtIngest } = await import('./tabs/data/lib/dbt/ingest.ts');
+        const { registerAgentSystemIngest } = await import('./tabs/agents/lib/git/ingest.ts');
+        registerDbtIngest();
+        registerAgentSystemIngest();
+        // NIGHT-2 MERGE (E x M x D): the other two kinds the night landed writers for. The METRIC
+        // resolver must be installed BEFORE the dashboard kind, because a dashboard push resolves
+        // every panel's `metric:<id>` through it and an unwired resolver makes the dashboard ingest
+        // refuse the whole push (loudly, with that reason — never by rebinding a panel).
+        const { installGovernedRefResolver } = await import('./tabs/metrics/lib/ref-resolver.ts');
+        installGovernedRefResolver();
+        const { registerSemanticMetricIngest } = await import('./tabs/data/lib/dbt/semantic/receive.ts');
+        const { registerDashboardIngest } = await import('./tabs/dashboards/lib/git/receive.ts');
+        registerSemanticMetricIngest();
+        registerDashboardIngest();
+        const { ensureReceiveHooks, registeredRepoKinds } = await import('./core/infra/git-receive.ts');
+        const { listRepos } = await import('./core/infra/git-store.ts');
+        const repos = await listRepos();
+        for (const repo of repos) ensureReceiveHooks(repo.name);
+        console.info(
+          `[os-ui] git receive gate: ${registeredRepoKinds().length} kinds registered (${registeredRepoKinds().map((k) => k.kind).join(', ')}), ` +
+            `hooks installed in ${repos.length} repositor${repos.length === 1 ? 'y' : 'ies'}`,
+        );
+      } catch (err) {
+        console.warn(`[os-ui] git receive gate: not armed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
+  // Night 2 (stream G), appended LAST so no existing boot step moves: the generic versioning
+  // reads need each tab's object-kind resolver. Never awaited in a way that can fail boot.
+  void registerGitObjectKindsAtBoot();
+}
+
+/**
+ * Night 2 (stream G): register the OBJECT-KIND resolvers the generic versioning reads use.
+ *
+ * `core/infra/git-objects.ts` holds the kind/layout table and the gate, but the kernel may not
+ * import a tab — so each tab hands it a resolver that runs the TAB'S OWN governed read as the
+ * calling user. Appended as its own boot step (the shared-file rule: never reorder an existing
+ * one), fail-soft: a resolver that cannot be installed leaves its kind answering the typed
+ * `kind_not_wired`, which is visible and honest, rather than breaking boot.
+ */
+export async function registerGitObjectKindsAtBoot(): Promise<void> {
+  // Block guard, not an early return — see EDGE-COMPILE GUARD in `register()`.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+  try {
+    const { registerAgentSystemGitObject } = await import('./tabs/agents/lib/git/history.ts');
+    registerAgentSystemGitObject();
+    console.info('[os-ui] git versioning: agent-system registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: agent-system NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // Night-2 merge (G x S): S's resolver takes `registerGitObject` as a PARAMETER precisely so the
+  // Software tab never imports the kernel registry it could not compile against on its own branch.
+  // This is the one line that joins them. Registered independently of the one above: a failure in
+  // either leaves only ITS kind answering the typed `kind_not_wired`.
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { installSoftwareGitObject } = await import('./tabs/software/lib/git-object.ts');
+    installSoftwareGitObject(registerGitObject);
+    console.info('[os-ui] git versioning: software registered (history, version, diff, releases)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: software NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // Night-2 merge (G x D): the three-line patch stream D's `lib/git/git-object.ts` documents as
+  // deviation D-4. The resolver reads through the dashboards store's own visibility gate, so an
+  // invisible dashboard is indistinguishable from a missing one (G5).
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { dashboardGitObjectResolver } = await import('./tabs/dashboards/lib/git/git-object.ts');
+    registerGitObject('dashboard', dashboardGitObjectResolver);
+    console.info('[os-ui] git versioning: dashboard registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: dashboard NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // Iteration 2 (checklist G3/G7): the three kinds with a COMMITTED writer and no reader. Each had
+  // real files in every domain repo and answered the typed `kind_not_wired`, which is honest but
+  // means no history, no diff and no git badge for a dataset, a KPI or a lifecycle pin. Each
+  // resolver runs its owner's own governed read AS THE CALLER, and each registration stands alone:
+  // a failure in one leaves only ITS kind unwired.
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { datasetGitObjectResolver } = await import('./tabs/data/lib/git-object.ts');
+    registerGitObject('dataset', datasetGitObjectResolver);
+    console.info('[os-ui] git versioning: dataset registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: dataset NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { metricGitObjectResolver } = await import('./tabs/metrics/lib/git-object-server.ts');
+    registerGitObject('metric', metricGitObjectResolver);
+    console.info('[os-ui] git versioning: metric registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: metric NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // The one kind whose writer lives in @core rather than a tab, so its resolver lives beside the
+  // writer; the registration still happens HERE, with every other kind.
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { lifecyclePinGitObjectResolver } = await import('./core/infra/lifecycle-pins.ts');
+    registerGitObject('lifecycle-pin', lifecyclePinGitObjectResolver);
+    console.info('[os-ui] git versioning: lifecycle-pin registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: lifecycle-pin NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
   }
 }

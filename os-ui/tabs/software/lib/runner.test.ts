@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   runnerName,
   appImageRef,
+  MissingAppImageError,
   isDigestRef,
   pullPolicyFor,
   runnerSpec,
@@ -23,9 +24,12 @@ import { config } from '@core/kernel/config';
 
 const OPTS = { namespace: 'agentic-apps', ingressClass: 'nginx', tlsIssuer: 'letsencrypt-prod' };
 
+// An 'image' app MUST carry an image now: with none, `appImageRef` fails closed (night-2 S2),
+// so the manifest/deploy fixtures declare the published image the operator built.
 const APP: RunnerApp = {
   slug: 'shop',
   host: 'shop.ops.apps.example.com',
+  runImage: 'registry.example.com/apps/shop:latest',
   footprint: { cpu: '250m', memory: '256Mi', estMonthlyUsd: 12 },
 };
 
@@ -54,13 +58,35 @@ test('runnerName is deterministic + RFC1123-safe', () => {
   assert.match(runnerName('shop'), /^[a-z0-9-]+$/);
 });
 
-test('appImageRef: the app\u2019s explicit runImage wins; else the shared runner image', () => {
+test('appImageRef: the app\u2019s explicit runImage wins; a MISSING image FAILS CLOSED (S2)', () => {
   assert.equal(appImageRef({ slug: 'shop', runImage: 'ghcr.io/acme/shop:v2' }), 'ghcr.io/acme/shop:v2');
-  // There is no per-app CI registry any more: with no declared image the app is served
-  // by the platform's shared SOFTWARE_RUNNER_IMAGE — never a fabricated per-app tag.
-  assert.equal(appImageRef({ slug: 'shop' }), config.softwareRunnerImage);
-  // Whitespace-only is treated as "not declared".
-  assert.equal(appImageRef({ slug: 'shop', runImage: '  ' }), config.softwareRunnerImage);
+  // NIGHT-2 S2: there is no OS image builder and `SOFTWARE_RUNNER_IMAGE` is EMPTY by default,
+  // so a missing image is a typed, loud refusal — it used to fall back to the chart's
+  // `traefik/whoami:latest`, serving a STRANGER'S placeholder container on a customer domain.
+  assert.equal(config.softwareRunnerImage, '', 'the shared runner image is unset by default');
+  assert.throws(() => appImageRef({ slug: 'shop' }), MissingAppImageError);
+  assert.throws(() => appImageRef({ slug: 'shop', runImage: '  ' }), MissingAppImageError, 'whitespace is not an image');
+  try {
+    appImageRef({ slug: 'shop' });
+    assert.fail('expected a refusal');
+  } catch (e) {
+    const err = e as MissingAppImageError;
+    assert.equal(err.status, 409);
+    assert.equal(err.code, 'missing_app_image');
+    assert.match(err.message, /shop/, 'names the app');
+    assert.match(err.message, /does not build images/i, 'says why, honestly');
+    assert.match(err.message, /Nothing was provisioned/, 'says nothing was provisioned');
+  }
+});
+
+test('deployApp FAILS CLOSED for an image app with no image — no objects, no URL (S2)', async () => {
+  const { client, calls } = mockK8s({});
+  const out = await deployApp({ ...APP, runImage: undefined }, { k8s: client, namespace: NS });
+  assert.equal(out.ok, false);
+  assert.equal(out.url, null, 'never a URL');
+  assert.equal(out.phase, 'failed');
+  assert.match(out.detail, /no image reference is set/);
+  assert.equal(calls.length, 0, 'not one Kubernetes call — nothing was provisioned');
 });
 
 // ------------------------------------------------------------- Manifests -------

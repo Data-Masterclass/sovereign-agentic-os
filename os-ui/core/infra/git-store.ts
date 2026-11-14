@@ -98,6 +98,71 @@ function locks(): Map<string, Promise<unknown>> {
   return g[LOCK_KEY]!;
 }
 
+/* === E LOCK BLOCK (stream E, night 2 — additive; do not reorder) =========================
+ * The receive gate must be mutually exclusive with the OS's own writers, which means taking
+ * THIS module's per-repository mutex and nothing else. Two writers, one lock, one place.
+ *
+ * `withRepoLock` is the ordinary form. `acquireRepoLock` exists because a `git push` holds the
+ * lock across TWO processes (`pre-receive` … `post-receive`), so the gate needs the release
+ * handle rather than a callback — see `core/infra/git-receive.ts`.
+ *
+ * Both install their map entry SYNCHRONOUSLY, before waiting, so concurrent callers queue
+ * instead of all believing they hold it; the bounded wait applies only to the predecessor, and a
+ * caller that times out releases immediately so it never blocks the queue behind it.
+ */
+export class RepoLockTimeoutError extends GitStoreError {
+  constructor(domain: string, ms: number) {
+    super(
+      `the OS is writing to '${domain}' right now and did not finish within ${Math.round(ms / 1000)}s — ` +
+        'nothing was changed; try again in a moment',
+      503,
+    );
+    this.name = 'RepoLockTimeoutError';
+  }
+}
+
+export const DEFAULT_REPO_LOCK_TIMEOUT_MS = 20_000;
+
+export type RepoLockOptions = GitStoreOptions & { timeoutMs?: number };
+
+/** Take the repository's lock and hold it until the returned function is called. */
+export async function acquireRepoLock(domain: string, opts: RepoLockOptions = {}): Promise<() => void> {
+  const key = repoPath(domain, opts);
+  const timeoutMs = Math.max(1, opts.timeoutMs ?? DEFAULT_REPO_LOCK_TIMEOUT_MS);
+  const prev = locks().get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  locks().set(key, prev.then(() => mine, () => mine));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bounded = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+  });
+  // Deliberately NOT unref'd: this timer IS the bounded wait. With nothing else keeping the
+  // event loop alive (a CI runner executing this file alone) an unref'd timer lets Node drain the
+  // loop before it fires, and the caller's promise is abandoned mid-wait. It is cleared below on
+  // either outcome, so it never holds the process open longer than `timeoutMs`.
+  const outcome = await Promise.race([prev.then(() => 'ready' as const, () => 'ready' as const), bounded]);
+  if (timer) clearTimeout(timer);
+  if (outcome === 'timeout') {
+    release();
+    throw new RepoLockTimeoutError(domain, timeoutMs);
+  }
+  return release;
+}
+
+/** Run `fn` holding the repository's lock. Throws `RepoLockTimeoutError` on a bounded wait. */
+export async function withRepoLock<T>(domain: string, fn: () => Promise<T>, opts: RepoLockOptions = {}): Promise<T> {
+  const release = await acquireRepoLock(domain, opts);
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+/* === end E LOCK BLOCK =================================================================== */
+
 /** Serialise writers per repository path (in-process). */
 async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = locks().get(key) ?? Promise.resolve();
@@ -648,3 +713,791 @@ export async function push(domain: string, mirror: MirrorConfig, deps: PushDeps 
     return { ok: false, error: scrub(e instanceof Error ? e.message : String(e), token) };
   }
 }
+
+// =============================================================================
+// === G READ BLOCK (night 2) — read-at-commit · path-scoped log · unified diff
+// =============================================================================
+// Appended as ONE delimited section (plan: stream G owns the read/diff half of this
+// file, stream S owns the tag half). Everything above is untouched and no existing
+// export's signature changed. These are the primitives `core/infra/git-objects.ts`
+// needs to answer "what is this object's history, what did it look like at that
+// commit, and what changed between two of them" — generic over paths, knowing
+// nothing about datasets, metrics, dashboards, systems or apps.
+//
+// WHY A PATH-SCOPED LOG AT ALL: the per-object history was keyed on the `OS-Object`
+// trailer only, and boot-reconcile commits carry PLATFORM attribution
+// (`OS-Object: <domain>`), so a trailer-only lookup answers `null` for an object
+// whose files are plainly in the tree (night-1 follow-up F3-1). `logPaths` is the
+// fallback that makes `git.head` non-null for anything with files.
+
+/** How deep a path-scoped log walks by default (bounded like {@link MAX_LOG_DEPTH}). */
+export const DEFAULT_PATH_SCAN = 200;
+/** Most files one object-version read returns before it reports itself truncated. */
+export const MAX_VERSION_FILES = 500;
+
+/** A repo path selector: `a/b/` (a directory prefix) or `a/b.yml` (one exact file). */
+export type PathSelector = string;
+
+/** Does `filepath` fall under this selector? A trailing `/` means "everything under". */
+export function pathMatches(filepath: string, selector: PathSelector): boolean {
+  const s = String(selector ?? '').replace(/^\/+/, '');
+  if (!s) return false;
+  if (s.endsWith('/')) return filepath.startsWith(s);
+  return filepath === s || filepath.startsWith(`${s}/`);
+}
+
+/** Does `filepath` fall under ANY of the selectors? */
+export function pathMatchesAny(filepath: string, selectors: PathSelector[]): boolean {
+  return selectors.some((s) => pathMatches(filepath, s));
+}
+
+/** The oid a path resolves to inside one commit's tree — a blob or a subtree. Null when absent. */
+async function oidAtPath(gitdir: string, commitOid: string, selector: PathSelector, cache: Map<string, string | null>): Promise<string | null> {
+  const key = `${commitOid} ${selector}`;
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+  const segments = String(selector ?? '')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .split('/')
+    .filter((s) => s.length > 0);
+  let result: string | null = null;
+  try {
+    const { commit } = await git.readCommit({ fs, gitdir, oid: commitOid });
+    let oid: string = commit.tree;
+    for (const segment of segments) {
+      const { tree } = await git.readTree({ fs, gitdir, oid });
+      const entry = tree.find((e) => e.path === segment);
+      if (!entry) {
+        oid = '';
+        break;
+      }
+      oid = entry.oid;
+    }
+    result = oid === '' ? null : oid;
+  } catch {
+    result = null;
+  }
+  cache.set(key, result);
+  return result;
+}
+
+/** The content signature of a set of selectors inside one commit (`-` per absent selector). */
+async function signatureAt(gitdir: string, commitOid: string, selectors: PathSelector[], cache: Map<string, string | null>): Promise<string> {
+  const parts: string[] = [];
+  for (const s of selectors) parts.push(`${s}=${(await oidAtPath(gitdir, commitOid, s, cache)) ?? '-'}`);
+  return parts.join('|');
+}
+
+export type PathLogOptions = GitStoreOptions & {
+  /** Most entries returned (default 10, capped 100). */
+  limit?: number;
+  /** How far back the repo log is walked while looking for them (default 200, capped MAX_LOG_DEPTH). */
+  scan?: number;
+  /**
+   * An ALREADY-READ newest-first window (review L-4). A caller that has just read the log for its
+   * own trailer filter passes it here, so the path fallback costs tree reads only instead of a
+   * second 200-commit walk. It must come from `log(domain, …)` on the same repo.
+   */
+  window?: LogEntry[];
+};
+
+export type PathLogResult = {
+  entries: LogEntry[];
+  /** True when the scan window ran out before `limit` matching commits were found. */
+  truncated: boolean;
+  /** How many commits were actually examined. */
+  scanned: number;
+};
+
+/**
+ * `git log -- <paths>`: the commits in which the content under ANY of `selectors` differs from
+ * the first parent's (a root commit counts when the path exists in it). Newest first, bounded.
+ *
+ * HONEST ABOUT ITS WINDOW: one domain repo mixes the dbt project, the agent systems, the
+ * dashboards and every app, so a per-object log has to scan far more than it returns. `truncated`
+ * says when the window ended before `limit` matches appeared — it never implies completeness.
+ */
+export async function logPaths(domain: string, selectors: PathSelector[], opts: PathLogOptions = {}): Promise<PathLogResult> {
+  const clean = selectors.map((s) => String(s ?? '').replace(/^\/+/, '')).filter((s) => s.length > 0);
+  if (clean.length === 0) return { entries: [], truncated: false, scanned: 0 };
+  if (!repoExists(domain, opts)) return { entries: [], truncated: false, scanned: 0 };
+  const gitdir = repoPath(domain, opts);
+  if (!(await headSha(gitdir))) return { entries: [], truncated: false, scanned: 0 };
+  const limit = Math.max(1, Math.min(opts.limit ?? 10, 100));
+  const scan = Math.max(limit, Math.min(opts.scan ?? DEFAULT_PATH_SCAN, MAX_LOG_DEPTH));
+  const all = opts.window ?? (await log(domain, { ...opts, limit: scan }));
+  const cache = new Map<string, string | null>();
+  const out: LogEntry[] = [];
+  for (const entry of all) {
+    const mine = await signatureAt(gitdir, entry.sha, clean, cache);
+    const parent = entry.parents[0];
+    const theirs = parent ? await signatureAt(gitdir, parent, clean, cache) : null;
+    const present = mine.split('|').some((p) => !p.endsWith('=-'));
+    if (parent ? mine !== theirs : present) out.push(entry);
+    if (out.length >= limit) break;
+  }
+  return { entries: out, truncated: out.length < limit && all.length >= scan, scanned: all.length };
+}
+
+/**
+ * One file of one version. A BINARY blob is reported as binary with its size and an EMPTY
+ * `content` (review M-3) — decoding a PNG as UTF-8 produced replacement characters that looked
+ * like real content and would have been written back by a restore.
+ */
+export type FileAtCommit = { path: string; content: string; bytes: number; binary: boolean };
+export type FilesAtResult = {
+  sha: string;
+  files: FileAtCommit[];
+  /** True when the version holds more files or bytes than one read returns (see `truncatedBy`). */
+  truncated: boolean;
+  /** Why it was cut: the file count, the byte budget, or not at all. */
+  truncatedBy: 'files' | 'bytes' | null;
+  /** Total bytes of the files actually returned. */
+  bytes: number;
+};
+
+/** Is this blob binary? A NUL byte, or bytes that are not valid UTF-8, mean yes. */
+export function isBinaryBlob(bytes: Uint8Array): boolean {
+  const probe = bytes.subarray(0, Math.min(bytes.length, 8000));
+  if (probe.includes(0)) return true;
+  const buf = Buffer.from(probe);
+  // A lossless round-trip is the cheapest correct UTF-8 validity check in node.
+  return Buffer.compare(Buffer.from(buf.toString('utf8'), 'utf8'), buf) !== 0;
+}
+
+/**
+ * Read every file under `selectors` AT one commit (read-at-commit). `[]` is the honest answer for
+ * a commit in which the object had no files — never an error and never substituted content.
+ *
+ * RAW BY DESIGN: this is the primitive a RESTORE re-applies from, so it never redacts. The
+ * governed read-out layer (`core/infra/git-objects.ts` `getVersion`) scrubs before returning bytes
+ * to a caller; see {@link scrubSecrets}.
+ */
+export async function readFilesAt(domain: string, ref: string | undefined, selectors: PathSelector[], opts: GitStoreOptions = {}): Promise<FilesAtResult> {
+  if (!repoExists(domain, opts)) throw new GitStoreError(`no repository for '${domain}'`, 404);
+  const gitdir = repoPath(domain, opts);
+  const sha = await resolveCommit(gitdir, ref);
+  const clean = selectors.map((s) => String(s ?? '').replace(/^\/+/, '')).filter((s) => s.length > 0);
+  const entries = (await listTree(domain, sha, opts)).filter((e) => pathMatchesAny(e.path, clean));
+  let truncatedBy: 'files' | 'bytes' | null = entries.length > MAX_VERSION_FILES ? 'files' : null;
+  const files: FileAtCommit[] = [];
+  let bytes = 0;
+  for (const e of entries.slice(0, MAX_VERSION_FILES)) {
+    const { blob } = await git.readBlob({ fs, gitdir, oid: e.oid });
+    // Review M-4: a version is bounded in BYTES as well as in files — one 40 MB blob would
+    // otherwise be read into memory and serialised to a browser.
+    if (bytes + blob.length > MAX_VERSION_BYTES) {
+      truncatedBy = 'bytes';
+      break;
+    }
+    bytes += blob.length;
+    const binary = isBinaryBlob(blob);
+    files.push({ path: e.path, content: binary ? '' : Buffer.from(blob).toString('utf8'), bytes: blob.length, binary });
+  }
+  return { sha, files, truncated: truncatedBy !== null, truncatedBy, bytes };
+}
+
+/** How many bytes of blob content ONE version read returns before it reports itself truncated. */
+export const MAX_VERSION_BYTES = 4 * 1024 * 1024;
+
+// ------------------------------------------------------------ secret scrub ---
+
+/**
+ * The patterns a version read redacts before bytes leave the OS (review M-1). The repositories
+ * hold generated project files, not credential stores — `profiles.yml` carries a Trino auth
+ * METHOD, and connection secrets live in Kubernetes Secrets, never in a tree. But a `git push`
+ * from a developer's checkout (the engineer's door) can put anything in there, and a version read
+ * is the one path that hands raw repository bytes to a browser or an AI client, so it fails safe.
+ *
+ * Deliberately NOT a high-entropy heuristic: a commit sha, a blob oid and a UUID are all
+ * high-entropy, and redacting those would corrupt every diff the drawer renders.
+ */
+export const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
+  { name: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
+  // The whitespace after the separator is `[ \t]*`, NEVER `\s*`: `\s*` crossed a newline, so
+  // `password:` with an empty value swallowed the NEXT line's value and redacted the wrong thing.
+  { name: 'keyed-value', re: /((?:password|passwd|secret|secret_key|api_key|apikey|access_key|access_token|client_secret|private_key|token)[ \t]*[:=][ \t]*)(?!null\b)(?!~)("[^"\n]+"|'[^'\n]+'|[^\s#,}\]]+)/gi },
+  { name: 'url-credential', re: /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+):([^\s@/]+)@/gi },
+  { name: 'github-token', re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/g },
+  { name: 'github-pat', re: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g },
+  { name: 'openai-key', re: /\bsk-[A-Za-z0-9_-]{20,}\b/g },
+  { name: 'slack-token', re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
+  { name: 'aws-access-key-id', re: /\bAKIA[0-9A-Z]{16}\b/g },
+  { name: 'google-api-key', re: /\bAIza[0-9A-Za-z_-]{35}\b/g },
+  { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
+];
+
+/** The marker a redacted value is replaced with — greppable, and never a plausible value. */
+export const REDACTED = '***REDACTED-BY-OS***';
+
+export type ScrubResult = { text: string; redactions: number; kinds: string[] };
+
+/**
+ * Redact anything secret-shaped. Returns the count and the pattern names, so a caller can TELL
+ * the user the bytes were altered instead of quietly handing over a changed file.
+ */
+export function scrubSecrets(text: string): ScrubResult {
+  let out = String(text ?? '');
+  let redactions = 0;
+  const kinds: string[] = [];
+  for (const { name, re } of SECRET_PATTERNS) {
+    const before = redactions;
+    out = out.replace(new RegExp(re.source, re.flags), (match, ...groups) => {
+      redactions++;
+      // `keyed-value` and `url-credential` keep their key / scheme+user and redact only the value.
+      if (name === 'keyed-value') return `${groups[0]}${REDACTED}`;
+      if (name === 'url-credential') return `${groups[0]}:${REDACTED}@`;
+      return REDACTED;
+    });
+    if (redactions > before) kinds.push(name);
+  }
+  return { text: out, redactions, kinds };
+}
+
+/** ONE commit by sha, without walking the log (review M-5). Null when it is not a commit. */
+export async function commitAt(domain: string, ref: string | undefined, opts: GitStoreOptions = {}): Promise<LogEntry | null> {
+  if (!repoExists(domain, opts)) return null;
+  const gitdir = repoPath(domain, opts);
+  try {
+    const oid = await resolveCommit(gitdir, ref);
+    const { commit } = await git.readCommit({ fs, gitdir, oid });
+    return {
+      sha: oid,
+      subject: commit.message.split('\n')[0],
+      message: commit.message,
+      author: { name: commit.author.name, email: commit.author.email },
+      committer: { name: commit.committer.name, email: commit.committer.email },
+      timestamp: commit.author.timestamp,
+      parents: commit.parent,
+      tree: commit.tree,
+      trailers: parseTrailers(commit.message),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ------------------------------------------------------------ unified diff ---
+
+/** Beyond this many line-pairs the LCS is skipped and the file is reported as one replacement. */
+export const MAX_DIFF_CELLS = 400_000;
+
+/**
+ * The tag a line carries when it is the LAST line of a side that does not end in a newline
+ * (review M-2). It has to travel with the line through the LCS, or `'x\n'` → `'x'` compares as
+ * two identical line arrays and the patch comes out header-only — which `git apply` rejects.
+ * A NUL can never occur here: binary blobs never reach the differ.
+ */
+const NO_EOL = '\u0000NO-EOL';
+/** git's own wording for the marker line. */
+const NO_EOL_LINE = '\\ No newline at end of file';
+
+function splitLines(text: string): string[] {
+  const s = String(text ?? '');
+  if (s === '') return [];
+  const noEol = !s.endsWith('\n');
+  const lines = s.split('\n');
+  if (!noEol) lines.pop();
+  if (noEol && lines.length > 0) lines[lines.length - 1] = `${lines[lines.length - 1]}${NO_EOL}`;
+  return lines;
+}
+
+/** Render one op as its patch line(s) — two of them when the line ends without a newline. */
+function renderOp(op: DiffOp): string {
+  if (op.line.endsWith(NO_EOL)) return `${op.t}${op.line.slice(0, -NO_EOL.length)}\n${NO_EOL_LINE}`;
+  return `${op.t}${op.line}`;
+}
+
+type DiffOp = { t: ' ' | '-' | '+'; line: string };
+
+/** The edit script between two line arrays (LCS backtrack), or null when it is too large. */
+function editScript(a: string[], b: string[]): DiffOp[] | null {
+  if (a.length * b.length > MAX_DIFF_CELLS) return null;
+  const n = a.length;
+  const m = b.length;
+  const width = m + 1;
+  const dp = new Int32Array((n + 1) * width);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i * width + j] = a[i] === b[j] ? dp[(i + 1) * width + j + 1] + 1 : Math.max(dp[(i + 1) * width + j], dp[i * width + j + 1]);
+    }
+  }
+  const ops: DiffOp[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      ops.push({ t: ' ', line: a[i] });
+      i++;
+      j++;
+    } else if (dp[(i + 1) * width + j] >= dp[i * width + j + 1]) {
+      ops.push({ t: '-', line: a[i] });
+      i++;
+    } else {
+      ops.push({ t: '+', line: b[j] });
+      j++;
+    }
+  }
+  for (; i < n; i++) ops.push({ t: '-', line: a[i] });
+  for (; j < m; j++) ops.push({ t: '+', line: b[j] });
+  return ops;
+}
+
+export type UnifiedDiffOptions = {
+  /** `--- a/<aLabel>` (default `a`). */
+  aLabel?: string;
+  /** `+++ b/<bLabel>` (default `b`). */
+  bLabel?: string;
+  /** Context lines around each hunk (default 3). */
+  context?: number;
+};
+
+/**
+ * A unified diff of two texts. `''` when they are identical, so a caller can test for "no change"
+ * without parsing. No new dependency: the OS vendors no diff library for forty lines of LCS.
+ */
+export function unifiedDiff(aText: string, bText: string, opts: UnifiedDiffOptions = {}): string {
+  if (aText === bText) return '';
+  const aLines = splitLines(aText);
+  const bLines = splitLines(bText);
+  const context = Math.max(0, Math.min(opts.context ?? 3, 20));
+  const header = `--- a/${opts.aLabel ?? 'a'}\n+++ b/${opts.bLabel ?? 'b'}\n`;
+  const ops = editScript(aLines, bLines);
+  if (!ops) {
+    // Too large to diff line-by-line. Say so rather than returning a wrong or empty patch.
+    return header + `@@ -1,${aLines.length} +1,${bLines.length} @@ file too large to diff line-by-line (${aLines.length} x ${bLines.length} lines)\n`;
+  }
+  const changed = ops.map((o) => o.t !== ' ');
+  const hunks: string[] = [];
+  let k = 0;
+  let aLine = 1;
+  let bLine = 1;
+  const advance = (op: DiffOp): void => {
+    if (op.t !== '+') aLine++;
+    if (op.t !== '-') bLine++;
+  };
+  // Lines already inside a hunk: a later hunk's leading context may never repeat them, or the
+  // patch would carry the same line twice and `git apply` would reject it.
+  let emitted = 0;
+  while (k < ops.length) {
+    if (!changed[k]) {
+      advance(ops[k]);
+      k++;
+      continue;
+    }
+    // Walk back over the leading context, then forward until more than `context` quiet lines.
+    let start = k;
+    let backA = aLine;
+    let backB = bLine;
+    for (let c = 0; c < context && start > emitted && !changed[start - 1]; c++) {
+      start--;
+      backA--;
+      backB--;
+    }
+    let end = k;
+    let quiet = 0;
+    while (end < ops.length && quiet <= context) {
+      quiet = changed[end] ? 0 : quiet + 1;
+      end++;
+    }
+    // Keep EXACTLY `context` lines after the last change in this hunk (git's own shape).
+    let lastChange = k;
+    for (let x = k; x < end; x++) if (changed[x]) lastChange = x;
+    end = Math.min(ops.length, lastChange + 1 + context);
+    emitted = end;
+    const body = ops.slice(start, end);
+    const aCount = body.filter((o) => o.t !== '+').length;
+    const bCount = body.filter((o) => o.t !== '-').length;
+    hunks.push(
+      `@@ -${aCount === 0 ? 0 : backA},${aCount} +${bCount === 0 ? 0 : backB},${bCount} @@\n` + body.map(renderOp).join('\n'),
+    );
+    for (let x = k; x < end; x++) advance(ops[x]);
+    k = end;
+  }
+  return header + hunks.join('\n') + '\n';
+}
+
+export type FileDiff = {
+  path: string;
+  status: 'added' | 'modified' | 'removed';
+  /** The unified patch for this file (never empty — an unchanged file is not listed). */
+  patch: string;
+  /** True when either side is a binary blob: the patch says so instead of showing bytes. */
+  binary?: boolean;
+  /** True when a redaction changed what the patch shows (review M-1). */
+  redacted?: boolean;
+};
+
+export type DiffResult = {
+  a: string;
+  b: string;
+  files: FileDiff[];
+  /** Every file patch concatenated — what an engineer would pipe into `git apply`. */
+  patch: string;
+  /** True when any patch above was altered by the secret scrub. */
+  redacted: boolean;
+};
+
+/** `Binary files a/x and b/x differ` — git's own line, and all a UI should ever show for one. */
+function binaryPatch(path: string, before: FileAtCommit | undefined, after: FileAtCommit | undefined): string {
+  const left = before ? `a/${path}` : '/dev/null';
+  const right = after ? `b/${path}` : '/dev/null';
+  return `--- ${left}\n+++ ${right}\nBinary files ${left} and ${right} differ\n`;
+}
+
+/**
+ * The unified diff of everything under `selectors` between two commits. Unchanged files are
+ * omitted; `files: []` means the object is byte-identical at both commits, which is a real answer.
+ *
+ * Three cases a naive differ gets wrong, each covered here: a BINARY blob is named, never
+ * rendered (review M-3); an ADDED or REMOVED file is always listed even when it is empty, so a
+ * created file does not vanish from its own diff (review L-2); and with `redact` the compare
+ * still runs on the RAW bytes, so a change that is entirely inside redacted content is reported
+ * as a redacted change rather than as "no change" (review M-1).
+ */
+export async function diffPaths(
+  domain: string,
+  refA: string,
+  refB: string,
+  selectors: PathSelector[],
+  opts: GitStoreOptions & { context?: number; redact?: boolean } = {},
+): Promise<DiffResult> {
+  const a = await readFilesAt(domain, refA, selectors, opts);
+  const b = await readFilesAt(domain, refB, selectors, opts);
+  const left = new Map(a.files.map((f) => [f.path, f]));
+  const right = new Map(b.files.map((f) => [f.path, f]));
+  const paths = [...new Set([...left.keys(), ...right.keys()])].sort();
+  const files: FileDiff[] = [];
+  for (const p of paths) {
+    const before = left.get(p);
+    const after = right.get(p);
+    const status: FileDiff['status'] = before === undefined ? 'added' : after === undefined ? 'removed' : 'modified';
+    // The compare is always on the RAW content, never on the redacted text.
+    if (before && after && before.content === after.content && before.binary === after.binary && before.bytes === after.bytes) continue;
+    if (before?.binary || after?.binary) {
+      files.push({ path: p, status, patch: binaryPatch(p, before, after), binary: true });
+      continue;
+    }
+    const rawA = before?.content ?? '';
+    const rawB = after?.content ?? '';
+    const scrubA = opts.redact ? scrubSecrets(rawA) : { text: rawA, redactions: 0, kinds: [] };
+    const scrubB = opts.redact ? scrubSecrets(rawB) : { text: rawB, redactions: 0, kinds: [] };
+    const redacted = scrubA.redactions + scrubB.redactions > 0;
+    let patch = unifiedDiff(scrubA.text, scrubB.text, { aLabel: p, bLabel: p, context: opts.context });
+    if (!patch) {
+      // Reached when the two sides differ ONLY inside redacted content, or when an empty file was
+      // added or removed. Both are real changes and must appear in the diff.
+      const note = redacted ? 'the change is entirely inside redacted content' : `${status} (empty file)`;
+      patch = `--- ${before ? `a/${p}` : '/dev/null'}\n+++ ${after ? `b/${p}` : '/dev/null'}\n@@ -0,0 +0,0 @@ ${note}\n`;
+    }
+    files.push({ path: p, status, patch, ...(redacted ? { redacted: true } : {}) });
+  }
+  return { a: a.sha, b: b.sha, files, patch: files.map((f) => f.patch).join(''), redacted: files.some((f) => f.redacted) };
+}
+
+/** One repository's summary for an operator view: head commit, commit count, last author. */
+export type RepoSummary = {
+  domain: string;
+  head: string | null;
+  /** Commits on `main`, counted up to {@link MAX_LOG_DEPTH} (`countTruncated` says when capped). */
+  commits: number;
+  countTruncated: boolean;
+  lastAuthor: string | null;
+  lastSubject: string | null;
+  /** ISO-8601 of the head commit's author time. */
+  lastAt: string | null;
+};
+
+/** Summarise every repository on the PVC (operator read; no file contents, no credentials). */
+export async function repoSummaries(opts: GitStoreOptions = {}): Promise<RepoSummary[]> {
+  const out: RepoSummary[] = [];
+  for (const repo of await listRepos(opts)) {
+    const entries = await log(repo.name, { ...opts, limit: MAX_LOG_DEPTH });
+    const head = entries[0] ?? null;
+    out.push({
+      domain: repo.name,
+      head: repo.head,
+      commits: entries.length,
+      countTruncated: entries.length >= MAX_LOG_DEPTH,
+      lastAuthor: head ? head.author.name : null,
+      lastSubject: head ? head.subject : null,
+      lastAt: head ? new Date(head.timestamp * 1000).toISOString() : null,
+    });
+  }
+  return out;
+}
+
+
+// ======================= === S TAG BLOCK === (stream S, night-2) ===========================
+// Delimited for a textual merge: stream G appends its read/diff block as `=== G READ BLOCK ===`
+// ABOVE this one. Neither block changes an existing export's signature. Do not interleave them.
+// ===========================================================================================
+// TAGS AND RELEASES — stream S's additive block (night-2, D17/S-R2.1).
+//
+// Appended at the end of the file ON PURPOSE: stream G owns the read/diff block and this one
+// changes NO existing export's signature. Everything below is new.
+//
+// WHY: `main` is the only long-lived ref, and a RELEASE is an annotated tag
+// `app/<slug>/v<MAJOR>.<MINOR>.<PATCH>` pointing at the reviewed commit. Tag namespacing by
+// slug is what makes one-repo-per-domain work — `listTags(domain, 'app/invoices/v')` IS that
+// app's release history. A tag is IMMUTABLE here: re-tagging the same name is a typed 409,
+// because "the release that is running" must not be re-pointable (12-factor V / OpenGitOps
+// "versioned and immutable"). Nothing in this block rewrites history.
+// ===========================================================================================
+
+/** `refs/tags/<name>`. */
+export function tagRef(name: string): string {
+  return `refs/tags/${name}`;
+}
+
+/**
+ * A tag name the OS will write: path-ish segments of `[A-Za-z0-9._-]`, no `..`, no leading or
+ * trailing `/`, no `@{`, not ending in `.lock` — the subset of git's `check-ref-format` rules
+ * that matters here, applied BEFORE anything reaches the ref store.
+ */
+const TAG_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export function assertTagName(name: string): string {
+  const n = String(name ?? '').trim();
+  const segments = n.split('/');
+  const ok =
+    n.length > 0 &&
+    n.length <= 200 &&
+    !n.includes('..') &&
+    !n.includes('@{') &&
+    segments.length <= 8 &&
+    segments.every((s) => TAG_SEGMENT_RE.test(s) && !s.endsWith('.lock'));
+  if (!ok) throw new GitStoreError(`invalid tag name '${n.slice(0, 60)}'`);
+  return n;
+}
+
+export type TagEntry = {
+  name: string;
+  /** The commit the tag resolves to. */
+  commit: string;
+  /** The tag object's own oid (annotated tags only). */
+  oid: string;
+  message: string;
+  tagger: GitAuthor;
+  /** Unix seconds. */
+  timestamp: number;
+};
+
+export type AnnotatedTagOptions = GitStoreOptions & {
+  /** The release's author — the acting user, exactly like a commit. */
+  tagger: GitAuthor;
+  /** The release manifest / notes. Trailers may already be included. */
+  message: string;
+  /** Extra trailers appended to the message's trailer block. */
+  trailers?: Record<string, string>;
+  /** `main`, `HEAD` or a sha (default: `main`). */
+  ref?: string;
+  /** Unix seconds (default: now). */
+  timestamp?: number;
+};
+
+/**
+ * Create an ANNOTATED tag at `ref`. Returns the tag object's oid and the commit it names.
+ * A tag that already exists is a 409 — an immutable release id is the whole point, so this
+ * never moves a tag and never force-writes a ref.
+ */
+export async function annotatedTag(domain: string, name: string, opts: AnnotatedTagOptions): Promise<TagEntry> {
+  const tag = assertTagName(name);
+  if (!repoExists(domain, opts)) throw new GitStoreError(`no repository for '${domain}'`, 404);
+  const gitdir = repoPath(domain, opts);
+  return withLock(gitdir, async () => {
+    const existing = await tagOid(gitdir, tag);
+    if (existing) throw new GitStoreError(`tag '${tag}' already exists — a release is immutable`, 409);
+    const commit = await resolveCommit(gitdir, opts.ref);
+    const timestamp = opts.timestamp ?? Math.floor(Date.now() / 1000);
+    const message = appendTrailers(opts.message, opts.trailers ?? {});
+    await git.annotatedTag({
+      fs,
+      gitdir,
+      ref: tag,
+      object: commit,
+      message,
+      tagger: { ...opts.tagger, timestamp, timezoneOffset: 0 },
+    });
+    // `annotatedTag` returns void, so read the ref back for the tag object's own oid.
+    const oid = (await tagOid(gitdir, tag)) ?? '';
+    if (!oid) throw new GitStoreError(`tag '${tag}' was not written`, 500);
+    return { name: tag, commit, oid, message, tagger: opts.tagger, timestamp };
+  });
+}
+
+async function tagOid(gitdir: string, tag: string): Promise<string | null> {
+  try {
+    return await git.resolveRef({ fs, gitdir, ref: tagRef(tag) });
+  } catch {
+    return null;
+  }
+}
+
+/** Read one tag. `null` when it does not exist. A lightweight tag reports the commit as its oid. */
+export async function resolveTag(domain: string, name: string, opts: GitStoreOptions = {}): Promise<TagEntry | null> {
+  const tag = assertTagName(name);
+  if (!repoExists(domain, opts)) return null;
+  const gitdir = repoPath(domain, opts);
+  const oid = await tagOid(gitdir, tag);
+  if (!oid) return null;
+  try {
+    const { tag: t } = await git.readTag({ fs, gitdir, oid });
+    return {
+      name: tag,
+      commit: t.object,
+      oid,
+      message: t.message ?? '',
+      tagger: { name: t.tagger?.name ?? '', email: t.tagger?.email ?? '' },
+      timestamp: t.tagger?.timestamp ?? 0,
+    };
+  } catch {
+    // A lightweight tag points straight at the commit: report it honestly rather than throwing.
+    const { commit } = await git.readCommit({ fs, gitdir, oid });
+    return {
+      name: tag,
+      commit: oid,
+      oid,
+      message: commit.message.split('\n')[0],
+      tagger: { name: commit.author.name, email: commit.author.email },
+      timestamp: commit.author.timestamp,
+    };
+  }
+}
+
+/**
+ * Every tag whose name starts with `prefix` (omit it for all), NEWEST FIRST by tagger time and
+ * then by name descending, so `listTags(d, 'app/invoices/v')` reads as a release history.
+ * An unreadable tag is skipped, never faked.
+ */
+export async function listTags(domain: string, prefix = '', opts: GitStoreOptions & { limit?: number } = {}): Promise<TagEntry[]> {
+  if (!repoExists(domain, opts)) return [];
+  const gitdir = repoPath(domain, opts);
+  let names: string[] = [];
+  try {
+    names = await git.listTags({ fs, gitdir });
+  } catch {
+    return [];
+  }
+  const out: TagEntry[] = [];
+  for (const n of names) {
+    if (prefix && !n.startsWith(prefix)) continue;
+    try {
+      const t = await resolveTag(domain, n, opts);
+      if (t) out.push(t);
+    } catch {
+      /* an unreadable tag is omitted — never reported as a release */
+    }
+  }
+  out.sort((a, b) => b.timestamp - a.timestamp || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+  const limit = Math.max(1, Math.min(opts.limit ?? 100, MAX_LOG_DEPTH));
+  return out.slice(0, limit);
+}
+
+/** MERGE NOTE (night-2 integration): renamed from `oidAtPath` so it cannot collide with the
+ * G READ BLOCK's selector-based `oidAtPath` above. The oid of `path` (a blob OR a subtree) in a commit's tree — `null` when it is absent. */
+async function oidAtFilePath(gitdir: string, commitOid: string, filepath: string): Promise<string | null> {
+  try {
+    const { commit } = await git.readCommit({ fs, gitdir, oid: commitOid });
+    let treeOid = commit.tree;
+    const parts = filepath.split('/');
+    for (let i = 0; i < parts.length; i++) {
+      const { tree } = await git.readTree({ fs, gitdir, oid: treeOid });
+      const entry = tree.find((e) => e.path === parts[i]);
+      if (!entry) return null;
+      if (i === parts.length - 1) return entry.oid;
+      if (entry.type !== 'tree') return null;
+      treeOid = entry.oid;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PATH-SCOPED log: the commits that CHANGED `path` (a file or a directory prefix), newest
+ * first. Computed by comparing the oid of `path` against the first parent's — which is exactly
+ * `git log -- <path>` for this repo shape (one branch, no merges) and needs no rename
+ * detection. The walk is bounded by {@link MAX_LOG_DEPTH} like every other read here; when the
+ * bound is hit the result says so rather than pretending to be complete.
+ */
+export async function logPath(
+  domain: string,
+  filepath: string,
+  opts: GitStoreOptions & { limit?: number; depth?: number } = {},
+): Promise<{ entries: LogEntry[]; truncated: boolean }> {
+  const want = Math.max(1, opts.limit ?? 50);
+  const all = await log(domain, { ...opts, limit: Math.max(want, Math.min(opts.depth ?? MAX_LOG_DEPTH, MAX_LOG_DEPTH)) });
+  if (all.length === 0) return { entries: [], truncated: false };
+  const path = assertRepoPath(String(filepath ?? '').replace(/\/+$/, ''));
+  const gitdir = repoPath(domain, opts);
+  const entries: LogEntry[] = [];
+  let scanned = 0;
+  for (const e of all) {
+    scanned++;
+    const mine = await oidAtFilePath(gitdir, e.sha, path);
+    const parent = e.parents[0] ? await oidAtFilePath(gitdir, e.parents[0], path) : null;
+    if (mine !== parent) entries.push(e);
+    if (entries.length >= want) break;
+  }
+  return { entries, truncated: scanned >= all.length && all.length >= MAX_LOG_DEPTH };
+}
+// ======================= === END S TAG BLOCK === ==========================================
+
+// ======================= === S READ-BACK BLOCK === (stream S, night-2 review M-5) ==========
+// A BOUNDED read of one subtree at a ref, in `@core` so a tab (or the admin tab's MCP module)
+// can read another tab's committed files WITHOUT importing that tab — the import
+// `tabs/admin/mcp` → `tabs/software/lib` was a tab→tab edge the structure ratchet cannot see,
+// because it was a dynamic `import()`. Generic: paths and strings in, no tab vocabulary.
+// ===========================================================================================
+
+/** Caps for {@link readSubtree}, so one read can never pull an unbounded tree into memory. */
+export const MAX_SUBTREE_FILES = 500;
+export const MAX_SUBTREE_BYTES = 8 * 1024 * 1024;
+
+export type SubtreeRead = {
+  /** Paths RELATIVE to the prefix, sorted. */
+  files: { path: string; content: string }[];
+  /** The commit that last changed this prefix (`''` when the prefix has no history). */
+  sha: string;
+  /** True when a cap stopped the read — the caller must SAY so rather than imply completeness. */
+  truncated: boolean;
+};
+
+/**
+ * Read every file under `prefix` at `ref`, with the prefix stripped, plus the sha of the commit
+ * that last CHANGED that prefix. `null` when the repository or the prefix does not exist — never
+ * an empty result that reads like an empty tree.
+ *
+ * Bounded by {@link MAX_SUBTREE_FILES} and {@link MAX_SUBTREE_BYTES}: one `listTree` walk plus
+ * at most that many blob reads, and `truncated: true` when a cap bit.
+ */
+export async function readSubtree(
+  domain: string,
+  prefix: string,
+  opts: GitStoreOptions & { ref?: string } = {},
+): Promise<SubtreeRead | null> {
+  if (!repoExists(domain, opts)) return null;
+  const pre = normalizePrefix(prefix);
+  const gitdir = repoPath(domain, opts);
+  if (!(await headSha(gitdir))) return null;
+  const ref = opts.ref ?? 'main';
+  const entries = (await listTree(domain, ref, opts)).filter((e) => e.path.startsWith(pre));
+  if (entries.length === 0) return null;
+  const files: SubtreeRead['files'] = [];
+  let bytes = 0;
+  let truncated = false;
+  for (const e of entries) {
+    if (files.length >= MAX_SUBTREE_FILES || bytes >= MAX_SUBTREE_BYTES) {
+      truncated = true;
+      break;
+    }
+    const content = await readBlob(domain, ref, e.path, opts);
+    bytes += Buffer.byteLength(content, 'utf8');
+    files.push({ path: e.path.slice(pre.length), content });
+  }
+  const mine = await logPath(domain, pre.replace(/\/$/, ''), { ...opts, limit: 1 });
+  return { files, sha: mine.entries[0]?.sha ?? '', truncated };
+}
+// ======================= === END S READ-BACK BLOCK === ====================================

@@ -808,3 +808,515 @@ result, and the UI must surface that label.
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,
 taking its prose from the file headers, the tab manifests and the component pins, so
 it cannot drift. CI fails if the committed page is stale.
+
+## Charts: one surface, and vendored third-party source
+
+**`core/ui/charts/` is the only place the OS registers Apache ECharts.** Before night run 2 there
+were three independent `echarts.use([…])` call sites — `tabs/dashboards/ui/PanelChart.tsx`,
+`tabs/data/ui/ResultChart.tsx` and `tabs/software/ui/appspec/ChartExplorerRenderer.tsx` — each with
+its own tree-shaken bundle, its own `cssVar` theme bridge, its own compact-number formatter and its
+own canvas lifecycle. That is how the same number came to be drawn three slightly different ways.
+The surface is now:
+
+| File | What it owns |
+|---|---|
+| `register.ts` | the single `echarts.use([…])` and `initChart` — the ONLY module allowed to name the `echarts` package |
+| `theme.ts` | the CSS-custom-property → concrete-colour bridge (`resolveChartColors` is pure, so it is tested without a DOM) |
+| `format.ts` | `leaf` · `num` · `fmtCompact` · `fileSlug` · `toCsv` — one formatting rule for the whole product |
+| `spec.ts` | the pure `ChartSpec → EChartsOption` builder and `fromRows`, the one row→spec adapter |
+| `Chart.tsx` | a shell: canvas lifecycle, resize, dispose, point click. No option building |
+
+`core/ui/charts/echarts-surface.test.ts` greps the whole tree and fails on a second registration.
+A host maps its own model onto `fromRows` (`tabs/dashboards/lib/chart-spec.ts` is the worked
+example) and gets an option identical to every other host's for the same rows.
+
+**`os-ui/vendor/superset/` is attributed third-party source, and it has its own rules.** The
+line/area/bar families are built by a vendored slice of Apache Superset's pure ECharts
+transformers (`extractSeries`, `getAxisType`, `getChartPadding`, `getMinAndMaxFromBounds`,
+`transformProps`, `transformSeries`), Apache-2.0 into Apache-2.0, pinned to an upstream **commit
+sha**. Things this codebase will punish you for:
+
+- **Rewriting an upstream licence header.** Apache-2.0 §4(a)/(c) forbids it, so `os-ui/vendor/**`
+  is excluded from the `FEATURE:`/`USER STORY:`/`ARCHITECTURE:` ratchet and covered by
+  `check-structure.mjs`'s **hard** `VENDOR-LICENCE-HEADER` rule instead: the upstream header
+  verbatim, a `Modified from <repo> <path> @ <40-char sha>` notice, a `Changes:` list, an SPDX id.
+- **`npm i`-ing an `@superset-ui/*` package.** Every one was last published 2024-12-10 and peers on
+  React `^16.13.1`; npm would install a second React tree against this repo's React 19 with no
+  warning. Vendor pure functions, never components.
+- **Adding a dependency to the vendored tree.** It imports nothing — not `echarts`, not `lodash`.
+  `lodash`'s `orderBy`/`sumBy` are reimplemented locally with lodash's own null-last ordering.
+- **A TypeScript `enum` in `os-ui/vendor/**` (or anywhere a test reaches).** Node's type-stripping
+  loader, which runs the suite, refuses one: `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`. Upstream enums
+  become `as const` objects plus a union type of the same name.
+- **Letting upstream reorder a user's series.** Superset's default branch sorts series
+  reverse-alphabetically. The OS passes `seriesOrder` so the measure order the panel author declared
+  is the order on screen.
+
+## A typed union is not a runtime check
+
+The dashboards review found a live SQL injection, and the shape of it is worth remembering because
+nothing in the code looked wrong.
+
+`tabs/metrics/lib/explorer.ts` declares `export type Granularity = 'day' | 'week' | …` and
+interpolates it straight into the compiled SQL — `date_trunc('${spec.granularity}', "col")` — which
+is correct for every caller that *has* a `Granularity`. The dashboards panel query had
+`timeGrain: Granularity | undefined` on its type and wrote `p.timeGrain as Granularity`. But the
+panel is parsed out of an HTTP request body, a `type` has no runtime existence, and `as` is erased
+at compile time, so the cast asserted something nobody had checked: a panel carrying
+`timeGrain: "month'), (SELECT password FROM users) --"` type-checked, cast cleanly, and closed the
+quote.
+
+Three rules come out of it:
+
+- **A string that reaches SQL as an IDENTIFIER or a KEYWORD must be checked against a closed
+  runtime allow-list, at the boundary where it enters.** Not escaped, not sanitised, not cast.
+  Values can be quoted and bound; grains, column names, aggregate names and sort directions cannot.
+- **A union type with no value form is a trap.** If a set is small and closed, declare the ARRAY and
+  derive the type (`const X = [...] as const; type X = (typeof X)[number]`), so there is something
+  to check at runtime and so a new member cannot be added to one and not the other.
+  `tabs/dashboards/lib/model.ts` does this for `VIZ_TYPES`, `SERVABLE_FILTER_OPERATORS` and
+  `PANEL_TIME_GRAINS`, the last of which carries a compile-time assertion that it still equals the
+  metrics `Granularity`.
+- **One assertion per door, not one per field.** `assertServableFilters` checks the operators AND
+  the grain, and the store calls it, so a new entry point cannot remember one check and forget the
+  other. A gate that lives in three call sites is a gate that is missing from the fourth.
+
+## Software: an app's source tree is a git subtree (night-2, stream S)
+
+An app is not an OpenSearch document any more. Its source tree lives in **the domain's bare git
+repository** at `apps/<slug>/` — one repo per domain on the `os-repos` PVC — written through the
+one commit path (`core/infra/git-store.ts` `commitSubtree`) by `tabs/software/lib/git-commit.ts`,
+with a boot-time `reserveSubtree('apps/')` registered from `instrumentation.ts` so the dbt
+generator's whole-tree commit keeps every app. Author = the acting user, committer =
+`Sovereign OS`, trailers `OS-Action` / `OS-Object: app:<id> (<name>)` / `OS-Surface` /
+`OS-Request-Id` (+ `OS-Actor`, + `OS-Run-Id` inside a run). The OpenSearch `os-app-files` mirror
+is **a cache of the committed tree**, not the home of record; `readAppTreeFromGit` is the read
+half both doors use, and every answer is labelled `governed-commit` | `mirror-cache` |
+`template-seed`.
+
+`push_app_files` is the one documented verb for "code in Claude, push to the OS"
+(`tabs/software/lib/push-app-files.ts`). One service, two doors: the MCP tool and
+`POST /api/software/<id>/files`. The compile gate runs **before** any write — a red gate is a 422
+with the diagnostics and nothing is committed — and `commitSubtree` commits only when the tree
+hash changed, so two identical pushes are one commit.
+
+`core/infra/git-store.ts` gained an **additive** tag block (delimited `=== S TAG BLOCK ===`):
+`annotatedTag` (immutable — re-releasing a version is 409), `listTags(prefix)` (one app's release
+history: `app/<slug>/v<MAJOR>.<MINOR>.<PATCH>`), `resolveTag`, and the path-scoped `logPath`. No
+existing export's signature changed.
+
+**Two traps closed.** `normalizeServeMode` now defaults to `'spec'`, and `appImageRef` throws
+`MissingAppImageError` (409) when no image is set — the old `'image'` default plus the chart's
+`traefik/whoami:latest` meant any legacy record going live served a stranger's placeholder
+container on the customer's own domain, and reported success. And a `demo-seed` result is now
+**structurally** unusable as evidence: `tabs/software/lib/seeded-evidence.ts` `assertNotSeeded`
+refuses it at `requestDeploy`, on the review card, at `decideDeploy` and in the
+`verify_software` verdict, because a label in a response field is one a caller can drop.
+
+**The app ↔ agent ↔ data triangle.** `core/app-sdk/agents.ts` gives a governed app
+`os.agents.run/get/decide`, and all three post to the **same routes the OS UI posts to**
+(`/api/agents/systems/<id>/run` → `enqueueRun`, that run's `run_events` stream, and the one
+`/api/governance/approvals` inbox), same-origin with the ambient session — no token exchange, no
+app principal, no key of the app's own. A held write surfaces as `state: 'parked'` with its
+approval id. The other direction: an app **declares** its actions in `actions.yml`
+(`tabs/software/lib/app-actions.ts`) and an agent may call one only through the four-layer
+fail-closed intersection **capability ∩ declaration ∩ adoption ∩ grant**, with a `domain_admin`
+consent step and a write **held** under the reads-on/writes-off preset. Data goes only through
+the governed paths as the end user, so two sessions of the same app see different rows. The
+whole triangle, plus both negative cases, is `tabs/software/lib/triangle.test.ts`.
+
+### App intent: what an app may ask the OS for (night-2 review H-1)
+
+A governed app runs in a same-origin sandboxed iframe and calls the OS with the ambient
+`soa_session` cookie — which is the cheapest correct answer to "as the signed-in user", and was
+also, until this landed, enough for app code to start agent runs and approve held writes
+silently. Three layers now stand between an app and those two actions, and each is claimed for
+exactly what it does:
+
+1. **A scoped, signed intent.** When the OS renders an app it mints an HMAC intent
+   (`core/kernel/app-intent.ts`) for THAT user and THAT app, carrying `agent-run` **only**, and
+   injects it into the app document. The SDK sends it back as `x-os-app-intent` with
+   `x-os-app-origin: app`. `guardAppIntent` runs on `POST /api/agents/systems/[id]/run` and
+   `POST /api/governance/approvals`: a request that announces itself as an app, or presents a
+   token at all, must present a valid one — minted for the session's user, unexpired, scoped —
+   or it is a 403 with the reason. A cross-site `Sec-Fetch-Site` is refused outright. No code
+   path mints `approval-decide` for an app, so approving is refused by construction.
+2. **The app does not post the approval.** `os.agents.decide` sends `os:app-decide-request` to
+   the host shell; the shell renders the ask in OS chrome and links the user into the top-level
+   Governance inbox, where the user decides. The app cannot drive the top level —
+   `allow-top-navigation` and `allow-popups` are both omitted from the sandbox — and the shell
+   holds no token in its DOM, because an `allow-same-origin` child could read it.
+3. **The app frame's `connect-src` is an allowlist.** This is the layer that binds a HOSTILE app,
+   which could otherwise simply omit the headers: a header guard cannot tell such an app from the
+   OS UI on our own origin.
+
+**Not claimed:** a same-origin `allow-same-origin` frame is not fully isolated. The complete fix
+is a null-origin frame with a postMessage RPC for every OS call — a deliberate redesign of the
+identity bridge, recorded as deviation S-9 rather than assumed.
+
+## Versioning every object kind: one generic read over the domain repos
+
+(Night 2, stream G — `core/infra/git-objects.ts`, `core/ui/git/`, `core/mcp/git-tools.ts`.
+`docs/components/git.md` carries the authoritative repo-layout table and the commands.)
+
+Every builder artefact lives in its domain's repository (see "Git-based working" above), so
+"which version is this, what did it look like, what changed, put that back" is the same question
+for a dbt model, a dbt metric, a dashboard, an agent system and an app. It is answered once:
+
+```
+objectGitInfo(user, kind, id)         -> { head, history[], truncated, via, paths }
+getVersion(user, kind, id, sha)       -> the object's files AT that commit
+diffVersions(user, kind, id, a, b)    -> a unified diff (no diff dependency; 40 lines of LCS)
+restoreVersion(user, kind, id, sha)   -> ONE NEW COMMIT through the object's normal writer
+```
+
+**The kernel may not import a tab, so the tabs register themselves.** `GIT_OBJECT_LAYOUT` is the
+static layout table in @core; each tab calls `registerGitObject(kind, resolver)` at boot
+(`instrumentation.ts`), and the resolver runs **the tab's own governed read as the caller**. A
+resolver answers `null` — or throws, as a tab's read does for a forbidden object — and both
+become ONE byte-identical `not_found`, so an id cannot be probed for existence.
+
+**Why the path fallback exists, and why it is not optional.** The per-object read-back used to
+filter the domain log by the `OS-Object` trailer alone. A boot reconcile commits as the PLATFORM
+with `OS-Object: <domain>`, so every object whose only commits were reconciles answered
+`head: null` — the UI then said "never committed" about a system sitting in the tree. The
+generic reader merges a path-scoped `git log -- agents/<lane>/<slug>/` in whenever the trailer
+did not fill the page, and reports `via: 'trailer' | 'path' | 'trailer+path' | 'none'` so the
+answer never hides which source produced it. `tabs/agents/lib/git/history.ts` is now a thin
+adapter over this module rather than a second implementation.
+
+**Restore is a new commit or it is a refusal.** `restoreVersion` reads the old files and hands
+them to the kind's registered writer; nothing in @core knows how to write a dataset or a system,
+by design. A kind with no registered writer gets a typed `restore_unsupported` (501) — after the
+`not_found` gate, so a refusal never confirms that an object exists. A version too large for one
+read, or with no files at that commit, is refused too: a partially applied restore is worse than
+none.
+
+**The enumeration test is the gate that makes "everything lives in git" non-optional.**
+`core/infra/git-objects-kinds.test.ts` fails when a kind is added without a layout row, when a
+kind claims a `committed` writer whose module does not reach `commitTree`/`commitSubtree`, and —
+the direction that catches drift — when a module imports those primitives and **no object kind
+claims it**. A new writer therefore cannot land without classifying its artefact kind as
+committed, landing (naming the stream) or backlog (with a reason).
+
+### Governance → Repositories, and why the mirror verdict is not a boolean
+
+The Repositories section (`tabs/governance/ui/RepositoriesView.tsx` over
+`tabs/governance/lib/repositories.ts`) exists so "everything built in the OS lives in git" is
+checkable rather than asserted: every domain repository with its head, its commit count, its last
+author, its commit log on demand, and the layout table straight out of `GIT_OBJECT_LAYOUT`.
+
+The mirror verdict has **four** states for one reason: `pushMirror` records the sha it last
+pushed, and a push that SUCCEEDED two commits ago is not the same thing as a healthy mirror. So
+`ok` requires the last successful push to be AT the repository's current head; an older one reads
+`behind` and names both shas; a failed attempt reads `failed` and carries the real error (an
+egress refusal, an auth failure) rather than "push failed"; no configuration at all reads `none`
+and says the repository lives only on the OS volume. A boolean would have made the most common
+real state — configured, working, one commit behind until the next write — look identical to
+either health or failure.
+
+### Why a version read redacts and a restore does not
+
+`core/infra/git-store.ts` `readFilesAt` is RAW on purpose and `core/infra/git-objects.ts`
+`getVersion` scrubs. That asymmetry is the whole design: `getVersion` and `diffVersions` are the
+only paths that hand repository bytes to a browser or an AI client, while `restoreVersion`
+re-applies bytes through the object's writer — so a redaction performed in the primitive would be
+WRITTEN BACK into the tree, replacing a real value with `***REDACTED-BY-OS***`. Scrub at the
+read-out boundary; never in the thing a writer consumes.
+
+Two consequences worth keeping: the diff COMPARES raw content and only then redacts, so a change
+entirely inside a redacted value is reported as a redacted change instead of as "no change"; and
+the patterns are shape-based, never entropy-based, because a commit sha, a blob oid and a UUID are
+all high-entropy and redacting them would corrupt every diff the drawer renders.
+
+Binary blobs follow the same honesty rule from the other direction: decoding one as UTF-8 produced
+replacement characters that looked like content, so a binary file is reported with `binary: true`
+and its size and an EMPTY content — and a version containing one is refused for restore, because
+re-applying that empty content would truncate the file.
+
+## The dbt semantic layer — a metric is a dbt metric (stream M)
+
+`tabs/data/lib/dbt/semantic/` is the OS's metric artefact. Six pure modules: `spec.ts` (the ONE
+pinned spec version plus the closed DSI enums), `model.ts` (the typed `semantic_models:` +
+`metrics:` document, its emitter and its **parser**), `validate.ts` (a key/enum whitelist against
+the pinned spec, plus the closed `filter:` grammar), `from-measures.ts` (the OS `Measure` → dbt
+bridge, with a named refusal for anything that has no faithful form), `time-spine.ts` and
+`render.ts` (the project renderer `generateProject` calls).
+
+Four things here have each cost someone real debugging time, in this product or in dbt's:
+
+- **`docs.getdbt.com` lies about your dbt version.** It serves the 1.12 ("Fusion") spec by default
+  and its `?version=` selector is client-side only, so a fetch always returns 1.12 — a breaking
+  redesign of this exact spec. The authoritative source for 1.8–1.10 is the `dbt-semantic-interfaces`
+  pydantic spec at the version dbt-core pins. Hence one constant, `DBT_SEMANTIC_SPEC`, named in
+  every generated README and asserted by a test. **Read the dbt version off the images before
+  changing it**: they pin `dbt-core>=1.8,<1.10`, so they run 1.9.x, and `cumulative_type_params`
+  does not exist at all on 1.8.
+- **dbt names are project-global.** Two datasets each with a `revenue` measure, or a metric name
+  used twice, fails `dbt parse` for the **whole domain** — every other dataset included. So every
+  measure and metric name goes through one allocator per namespace, shared across the domain, and
+  the OS identity is carried in `config.meta.os_metric` / `os_member` rather than in the name.
+  Measures and metrics are *separate* namespaces: a measure and its `type: simple` metric sharing a
+  name is the canonical dbt shape, not a collision.
+- **One unknown key takes the domain down, so validate before writing.** `validateSemanticDoc` runs
+  on the plain object the emitter produces (not a parallel model that could drift), and `render.ts`
+  DROPS a document with violations and records them as refusals. The same reflex as
+  `dbt/schema.ts`: never emit a weaker version of what the author wrote, and never emit something
+  that fails the parse.
+- **dbt renders YAML through Jinja before reading it.** Authored prose goes through `stripJinja`;
+  the one field that must keep its Jinja is `filter:`, so it is held to a closed grammar
+  (`{{ Dimension('e__d') }} <op> <literal>`, conjunctions only, no Jinja delimiter in the literal).
+  A predicate outside that grammar refuses the whole metric rather than emitting a weaker filter.
+
+Execution does **not** move: a metric read is still `tabs/metrics/lib/explorer.ts` compiling one
+governed Trino `SELECT` run as the viewer. MetricFlow is never on the request path (it would open
+one connection from its own profile and lose per-viewer impersonation), and where it is installed
+at all it is pinned `>= 0.209.0` — `<= 0.208.1` is BSL 1.1 and BSL does not relax retroactively.
+
+## The engineering view: the OS orchestrates, the tools own the artefacts
+
+One panel, one adapter per object kind, one structure over both doors.
+
+`core/engineering/types.ts` defines `EngineeringView` — per-tool sections, each with the tool's own
+noun, the artefact (the real bytes), the repo path, a deep link and **the command an engineer would
+run** — plus `sealView`, which refuses a view that is not honest: a section with no artefact and no
+reason, an artefact with no body and no note, a link that does not resolve and does not say why.
+
+`core/engineering/registry.ts` maps `kind` → adapter; `core/engineering/register.ts` fills it with
+dynamic `import()` so **the kernel still never imports a tab**. Each tab owns
+`lib/engineering.ts`: it calls its own visibility gate first (so the refusal a client sees is the
+tab's own `not_found` / `forbidden`, with no new visibility rule anywhere) and then maps its record
+onto the shared builders in `core/engineering/sections.ts`.
+
+`core/ui/engineering/UnderTheHood.tsx` is the only renderer — mounted with one line on the five
+detail surfaces — and `GET /api/engineering/<kind>/<id>` and the MCP tool `get_engineering_view`
+both call `engineeringViewFor`. One function, so the panel and an engineer's client cannot drift.
+
+Three things to know before you add a kind or a tool:
+
+- **The vocabulary rule is data.** `core/engineering/vocabulary.ts` lists the tools' nouns; a label
+  that uses only an OS-invented noun fails the test, and the bridge ("dbt metric (KPI)") is allowed
+  once. Add a noun to the table, not a string to a component.
+- **Show the real thing.** The YAML and SQL come from the repository at `main` through
+  `core/engineering/repo.ts`; the LangGraph graph is derived from the SAME IR
+  (`langgraph-compile.ts`) and the SAME node naming (`safeNodeName`) the engine compiles with, and
+  `tabs/agents/lib/engineering.test.ts` pins the derivation against a real `buildGraph`.
+- **The panel may never show what the caller could not have fetched.** An adapter re-applies the
+  repository's own membership rule (`requireMember`) before it shows a byte or offers an export,
+  and a tool link is gated by that tool's `minRole` — a Company-tier data product is visible
+  outside its domain, its domain repository is not. And every adapter hands its tracked-path set to
+  `gitSection` and `sealView`, so a path the repository does not track cannot reach the screen.
+- **Where the OS still does it its own way, say so on the panel.** The app's git section states
+  that app source is in the OS file mirror and not yet an `apps/<slug>/` subtree; a KPI with no
+  `models/semantic/<model>.yml` states that `mf query` would not resolve yet. That is the
+  `docs/components/trino.md` honesty pattern, applied to our own surfaces.
+
+## Chat to the data — the artifact protocol (stream C, night 2)
+
+An "Ask the OS" turn returns `{ content, plan, tools[], artifacts[], traceId }`. The
+`artifacts[]` are the governed tools' OWN MCP `structuredContent`, carried to the browser
+unchanged, so the drawer and an external MCP client (Claude Desktop) render the identical
+bytes. There is one serialiser, in `core/runtime/chat-artifacts.ts`, and six kinds:
+`table` · `chart` · `metric_draft` · `dashboard_draft` · `citation` · `clarification`.
+
+Six read tools declare it: `query_data`, `query_metric`, `preview_metric`,
+`suggest_metrics`, `get_metric`, `get_dashboard`. Each sets `outputSchema` to
+`ARTIFACT_OUTPUT_SCHEMA` and an `artifacts` projection — a PURE function of the result its
+own governed `call` already produced. A projection may not read, may not compute and may
+not throw usefully: the dispatcher guards it, so a renderer bug degrades to "no artifacts"
+and never turns a successful governed read into an error.
+
+**Three rules this path exists to enforce.**
+
+1. **Truncation is never laundered — and the semantic layer is not exempt.** `QUERY_MAX_ROWS`
+   clips to the FIRST n rows, not a sample (`core/infra/governed.ts`), and `query_metric`'s
+   compiled serve SQL carries a `LIMIT n` of its own, so the layer that "accepts no SQL by
+   construction" can clip a grouped result exactly as raw SQL can — the bound is the OS's, not
+   the model's. When a metric query reaches its bound the scalar is **withheld**, not flagged
+   (`value: null` + `valueWithheld`): a flagged wrong number still gets pasted into a slide, an
+   absent one with a reason cannot be. `rowLimitTruncation()` is the shared decision, and it
+   treats "returned exactly n" as possibly-clipped, because SQL cannot report what it did not
+   return. The notice is also **prepended** to the text the model reads (`⚠ TRUNCATED: …`): the
+   truncation keys sit near the end of the pretty-printed JSON and `truncateToTokens` keeps the
+   HEAD, so on exactly the big results most likely to be clipped the notice was the first thing
+   dropped — and a model that never saw it cannot obey the rule forbidding a total over it.
+   The chat surface used to flatten the whole tool result
+   into a markdown string, so whether the user learned the result was clipped depended on
+   whether the model chose to mention it — and "total revenue was €4.2m" over the first
+   1,000 rows is the worst thing this feature could do. Now `truncated` / `rowLimit` /
+   `message` ride the artifact, the backend's own sentence is shown VERBATIM above the rows,
+   and `rowCount` is the tool's count and never `rows.length`. The drawer's own 50-row cap is
+   reported on a SEPARATE line: merging the two would let a 50-row view read as a 50-row
+   result. Guard tests at every hop — mapper, dispatcher, chat path, view.
+2. **An ad-hoc number says so.** A `query_data` answer is labelled *"Ad hoc SQL —
+   unverified"* with the SQL shown, because its aggregation and joins were chosen for that
+   question and reviewed by nobody. A `query_metric` answer is the governed number and
+   carries no caveat. The label is a field on the artifact (`source`), not a sentence we
+   hope the model wrote.
+3. **No model-authored markup, ever.** An artifact carries DATA. The protocol declares no
+   `html`, `markup`, `svg`, `href`, `src`, `style` or `url` field — asserted by a test — and
+   `core/ui/ask-artifacts-guard.test.ts` scans the whole chat path for
+   `dangerouslySetInnerHTML`, `eval`, `new Function`, `srcdoc` and `<iframe>`. A citation's
+   link comes from a fixed in-app route map, never from the payload. For data charts the
+   right answer is to not have the problem: typed rows plus a vetted component, values
+   rendered as text nodes.
+
+**One trace per turn.** `runOsAssistant` mints a per-turn id and passes
+`observe: { traceId }` into `runAgentic`, which forwards it to every model call — the plan,
+each act iteration and the cap synthesis — so LiteLLM's own Langfuse callback logs INTO that
+trace (`existing_trace_id`) instead of starting a fresh one per call. The turn is also tagged
+`tab:ask` + `run:<turnId>`: the tab lens no longer doubles as the cost dimension, because an
+Ask turn on the Data tab used to be tagged `tab:data` and was indistinguishable from the Data
+tab's own calls. The id is minted SERVER-SIDE — a client-chosen trace id would let one user
+write into another user's trace.
+
+**Three honesty lines, never merged.** A table can be clipped by the backend, *and* not sliced
+as asked (a dimension the governed view does not expose was dropped), *and* longer than the
+drawer shows. Those are three separate facts with three separate sentences — `message` (the
+backend's, verbatim), `warning` (the tool's own loud degradation, verbatim) and the view's own
+row-cap note. Merging any two loses one of them, and `rowCount` always stays the tool's count.
+
+**What is NOT true yet.** Threads are not durable: the drawer still holds messages in
+`useState` and the route still trusts the last 20 messages the client sent. The `chart`,
+`metric_draft` and `dashboard_draft` renderers are not built — the drawer counts what it
+cannot render and says so, rather than discarding it silently. There is no `os.analyst`
+LangGraph system and no write path from chat; the migration off `runAgentic` is staged behind
+a flag with a parity harness per decision D12 and has not been started. The ask trace is FLAT —
+`observe` carries only `traceId`, so calls nest directly under the turn rather than under a
+per-step OS span, which needs the engine migration. `exploreMetric` still discards the
+query-tool's own `truncated`/`rowLimit`/`message` before `query_metric` can see them
+(`tabs/metrics/lib/build/explore-server.ts`), so a `QUERY_MAX_ROWS` clip landing *below* the
+metric's own `LIMIT` is not yet detected — a three-line fix in the metrics tab, filed for its
+owner. And the confirm before a write is **prompt-level only**: `writeToolNames` stops a failed
+write re-firing byte-identically, but it is not a confirmation gate; the structural one is the
+writer node's tool allowlist (C15, backlog).
+
+## The coin — git is the system of record, and both doors write the same files
+
+*(stream E, night 2; decisions D27–D29. `docs/components/git.md` is the user-facing half.)*
+
+Git is where everything the OS builds lives: one bare repository per domain under
+`config.reposDir`, written by `core/infra/git-store.ts`. The registry (the tab stores) is a
+**derived index plus governance metadata** — ownership, tier, approvals, audit. Where a file and a
+row disagree, **the file wins and the row is re-derived**.
+
+There are exactly **two doors into those files**, and they meet at the same functions:
+
+| Door | Enters at | Identity | Commit surface |
+|---|---|---|---|
+| UI | `app/**/route.ts` → the tab's governed service (`tabs/data/lib/mutations-server.ts`, `tabs/agents/lib/store.ts`) | the signed-in `CurrentUser` | `ui:<route>` |
+| MCP / Ask the OS | `core/mcp/server.ts` `handleRpc` → the SAME governed service | the signed-in `CurrentUser` | `mcp:<tool>` |
+| `git push` | the repo's `pre-receive` hook → `app/api/git/receive` → `core/infra/git-receive.ts` → the SAME governed service | an OS **personal access token** resolved to a live principal (`core/auth/access-tokens*.ts`, `core/auth/git-http-auth.ts`) | `git:push` |
+
+Three rules keep the two sides of the coin from drifting, and each one is structural rather than a
+convention someone has to remember:
+
+1. **Read is unconditional; write is gated.** `/api/git/authenticate` gates reading on domain
+   membership and nothing else — the whole tree, `os/*.yml` included. Path ownership, validation
+   and serialisation apply only to a push.
+2. **One validator, not a second copy.** `core/` may not import a tab, so `git-receive.ts` holds no
+   validator at all: each kind **registers** the validator the UI already calls
+   (`registerRepoKind({ kind, matches, validate, ingest })` — `parseSystem` for an agent system, the
+   dbt gate for `schema.yml`). A second copy is not something a reviewer has to notice; there is
+   nowhere to put one.
+3. **One lock.** A push and an OS commit are mutually exclusive because `git-receive.ts` chains on
+   the **same** per-repo mutex `git-store.ts` serialises its writers on (the global
+   `Symbol.for('soa.git-store.locks')` map), held from `pre-receive` to `post-receive`. The wait is
+   bounded: a lock the OS holds too long fails the push with a readable message rather than hanging
+   a developer's terminal.
+
+After a push, `reconcileFromGit(domain, from, to, pusher)` dispatches to each kind's
+`ingestFromRepo`-shaped `ingest` — `tabs/data/lib/dbt/ingest.ts` (dbt models + `schema.yml` →
+dataset records, quality rules from the tests) and `tabs/agents/lib/git/ingest.ts` (`system.yaml` →
+agent systems) — writing **through the governed services**, attributed to the pusher, inside
+`runWithSurface('git:push')`. The test that keeps this honest is literal: the same change made over
+the MCP and by a push must leave identical files and identical registry state, differing only in the
+`OS-Surface` trailer.
+
+
+## Lifecycle: Studio → Test → Run (the second axis)
+
+Two orthogonal axes, and keeping them orthogonal is the whole design. **Audience** is
+`My → Domain → Company`: who may use an object as an official artefact, changed only by the
+promotion path. **Lifecycle** is `Draft → Testing → Live`, attached to a **version**: whether this
+version is being built, tried out, or run. A `My` object can be Live; a `Company` object can have
+a Draft. `core/kernel/object-lifecycle.test.ts` carries a tripwire that fails if any function ever
+derives one axis from the other.
+
+- `core/kernel/object-lifecycle.ts` — pure, import-free, **total over all seven kinds**:
+  `lifecycleOf(kind, id, head, index)` never throws. Also the ONE go-live dependency guard, the
+  two badges' words, the confirm copy, the migration and the `env:` mapping. It is re-exported
+  from `@core/kernel/lifecycle`, whose own contents are the unrelated archive/delete confirm copy.
+- `core/kernel/lifecycle-adapters.ts` — the per-kind registry. **The kernel must not import a
+  tab**, so each tab's adapter (`tabs/<tab>/lib/lifecycle-adapter.ts`, importing only `@core/*`
+  and itself) registers itself at boot in `instrumentation.ts`, which is the one place in os-ui
+  allowed to know both halves. A kind with no adapter is an honest typed refusal from `go_live`.
+- `core/infra/lifecycle-pins.ts` — **the pin**, where the complexity lives: a durable index plus
+  the committed, readable, not-pushable `os/lifecycle/pins.yml` in its own reserved subtree.
+- `core/kernel/go-live.ts` — the one service BOTH doors call (`core/mcp/lifecycle-tools.ts` and
+  `app/api/lifecycle/route.ts`), so a click and a tool call cannot drift. There is no setter that
+  takes a lifecycle word.
+- `core/mcp/list-args.ts` — the ONE optional `lifecycle` list filter. `withLifecycleArg` adds the
+  property without touching a tool's `required`; `lifecycleView` annotates and narrows both
+  payload shapes the stores return. `LIST_TOOLS_WITHOUT_LIFECYCLE` names every exception with a
+  reason, and `core/mcp/lifecycle-filter.test.ts` asserts that list and the registry agree in both
+  directions — so a new artifact list tool cannot quietly skip the filter.
+
+**The thing to remember:** *what operates reads the pin, not the head.* A scheduled agent run
+reads the pinned `system.yaml` out of the repository, and a dashboard's Run view resolves the
+pinned spec. Both **fail closed**: an unreadable pin refuses the run, and a pin whose version is
+no longer retained shows nothing and says why. Neither ever falls back to the draft — a different
+version running than the one that was signed off is the exact failure the pin exists to prevent.
+
+**And the two rules that cost the most to get right.** First: *a pin is never written on the
+strength of an index nobody could read.* `core/infra/lifecycle-pins.ts` records HOW it hydrated —
+the durable mirror, the committed `os/lifecycle/pins.yml` in the domain repos, or nothing — and
+every writer refuses with a 503 unless one of the first two answered. A mirror that answers but
+knows no pins is the dangerous shape (a rebuilt index looks exactly like a tenant that never went
+live), so in that case the committed files are read and adopted. This is the September-2026
+failure in a new place, and the guard is the same shape: an empty store is only a fact when the
+source answered. Second: *a new gate must not break what already works.* Before the one-time
+migration has established the index nothing has a pin, so a scheduled agent run falls open to the
+head — once, loudly, naming the fallback — and fails closed for ever after.
+
+## The agentic app builder (stream H)
+
+`tabs/software/lib/builder/**` is a second, flag-gated builder for the Software tab: a bounded
+**planner → coder → build → reviewer** loop. Three things about its shape are load-bearing, and
+breaking any of them is how it would rot.
+
+1. **Pure core, injected edges.** `grounding.ts`, `acceptance.ts`, `prompts.ts`, `loop.ts` and
+   `dispatch.ts` have no model client, no store, no `fs` and no `fetch`. That is why the loop's
+   headline property — *the first coder output fails to compile and the loop recovers on iteration
+   2* — is a deterministic unit test with a scripted coder rather than a live-model hope. The real
+   world lives in `grounding-server.ts`, `tools.ts` and `loop-server.ts` only.
+2. **The API surfaces are EXTRACTED FROM SOURCE, never written down.** The pack reads the shipped
+   `core/app-sdk` / `core/app-ui` source through the existing vendor readers and parses the
+   `OsClient` interface and each `*Props` type out of it. Hand-writing that list is the failure mode
+   it exists to prevent: the prompt would drift from what `compile-gate.ts` actually checks, and the
+   model would be blamed for the harness's stale brief.
+3. **Compile IS the write gate.** The loop never writes anything itself; it calls `commitToApp`,
+   which runs the compile gate before any write and throws the exact diagnostics as a typed 422. Do
+   not add a second write path "just for the builder" — a red tree would then be able to land.
+
+A fourth property was added by the review round, and it generalises beyond this builder:
+
+4. **A machine check over model-authored content must read the AST, not the text.** Scoring "this
+   file reaches governed data" with `String.includes('os.records.add')` is forgeable by a comment, a
+   string literal or a JSX text node — and the thing being scored is output the model chose. Any
+   future check over generated code belongs on `ts.createSourceFile` (`builder/symbols.ts` is the
+   pattern: parse-only, no program, no checker, cheap enough for every iteration).
+
+And one trap this stream fell into, recorded because the next person will too: **anything the Build
+dispatch can reach must not take a static import edge back to `@core/mcp/server`.** That module
+top-level-awaits its experimental bundle registration, one of those bundles is `platform-tools`,
+and `platform-tools` imports `tabs/software/lib/platform-mcp` — so a static edge from anything
+downstream of the dispatch closes a cycle on a pending top-level await and **every test file that
+touches the MCP server hangs** (28 of them, reported only as "unsettled top-level await"). Import it
+lazily at the call site. `builder/dispatch.test.ts` pins the property with a hard-timeout import.
+
+The honesty rules this codebase already punishes you for breaking apply with extra force here,
+because a builder is judged by its own report: an ungated shape is `unknown`, never a pass; a
+`manual` acceptance check is never machine-passed; a tree that compiles but satisfies no story is
+committed (on budget exhaustion) with `ok: false` and the unmet checks named; and a reviewer that
+says PASS over a scorecard with a FAIL is **overridden** and told so.
