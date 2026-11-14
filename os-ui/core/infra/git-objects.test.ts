@@ -366,12 +366,16 @@ test('objectReleases is HIDDEN-with-a-reason rather than empty when there are no
   const noRepo = await objectReleases(amir, 'agent-system', 'sys_3', { reposDir });
   assert.equal(noRepo.available, false);
   assert.match(noRepo.reason, /no domain repository/);
-  // A kind that DOES declare a tag prefix, while the annotated-tag API is not in the build yet:
-  // unavailable WITH the reason — never an empty list that reads as "never released".
+  // A kind that DOES declare a tag prefix. NIGHT-2 MERGE: stream S's annotated-tag API
+  // (`listTags`) is now in the build, so the run-time lookup finds it and the answer is
+  // `available: true` with the tags that exist — here none, which now honestly means "this app
+  // has not been released", not "releases cannot be read". The unavailable-with-a-reason branch
+  // is still exercised by the two cases above (no tag prefix, no repository).
   registerGitObject('software', () => ({ domain: 'sales', paths: ['apps/orders/'], tagPrefix: 'app/orders/' }));
   const pending = await objectReleases(amir, 'software', 'app_1', { reposDir });
-  assert.equal(pending.available, false);
-  assert.match(pending.reason, /annotated-tag API is not in this build yet/);
+  assert.equal(pending.available, true, "S's listTags landed — the tag API is readable");
+  assert.equal(pending.reason, '');
+  assert.deepEqual(pending.releases, [], 'no tag under app/orders/ yet — an honest empty list');
   // And it is gated like every other read.
   const hidden = await objectReleases(amir, 'dataset', 'ds_nope', { reposDir }).catch((e) => e);
   assert.equal((hidden as Error).message, notFoundMessage('dataset', 'ds_nope'));

@@ -52,8 +52,19 @@ test('ORDER: the boot file reserves `apps/` in the TOP block, before the data bo
     reserveApps < reconcile,
     "reserveSubtree('apps/') must come BEFORE reconcileDataProjectsAtBoot — a whole-tree reconcile with apps/ unreserved deletes every app's source",
   );
-  // It belongs in the SAME block as the agents reservation, not in a trailing IIFE.
-  assert.ok(Math.abs(reserveApps - reserveAgents) < 1200, 'it sits beside the agents reservation in the top block');
+  // It belongs in the SAME block as the agents reservation, not in a trailing IIFE. NIGHT-2
+  // MERGE: this was a character-distance heuristic (`< 1200`), which every later stream's comment
+  // in that block pushed closer to failing for no behavioural reason. Pinned STRUCTURALLY
+  // instead — strictly stronger, and immune to the block growing: both reservations must sit
+  // after `if (config.dataProjectGit)` and before the NEXT boot step (the fail-closed secret
+  // guard), with `agents/` first.
+  const topBlock = src.indexOf('if (config.dataProjectGit)');
+  const nextBootStep = src.indexOf('assertNoDevDefaultSecretsInProd');
+  assert.ok(topBlock > 0 && nextBootStep > topBlock, 'the boot file still has a top reservation block followed by the secret guard');
+  assert.ok(
+    topBlock < reserveAgents && reserveAgents < reserveApps && reserveApps < nextBootStep,
+    'it sits beside the agents reservation in the TOP block, before any other boot step — not in a trailing IIFE',
+  );
   assert.ok(
     !/installAppTreeReservation\(\)/.test(src),
     'the floating late IIFE is gone — the reservation is not registered after the reconcile',
