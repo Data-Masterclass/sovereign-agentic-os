@@ -297,7 +297,7 @@ export const readTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'List the governed metric members you can see (also called: KPIs, measures, indicators) — the one definition of every number. Path: DISCOVERY for the Metrics + Dashboards golden paths (guide: sovereign-os://guide/path/metrics). Before: whoami. After: reuse a member on a dashboard, or define_metric only if missing. Governance: read-only, DLS-scoped.',
+      'List the governed metric members you can see (also called: KPIs, measures, indicators) — the one definition of every number. Each row carries its `metricType` (the dbt semantic-layer type it is emitted as: simple · ratio · derived · cumulative) and its `grain` (the finest time bucket it can be sliced at, absent when the dataset exposes no time dimension), so you can pick a valid slice for query_metric without a round trip. Path: DISCOVERY for the Metrics + Dashboards golden paths (guide: sovereign-os://guide/path/metrics). Before: whoami. After: reuse a member on a dashboard, or define_metric only if missing. Governance: read-only, DLS-scoped.',
     inputSchema: NO_ARGS,
     call: async (user) => listMetrics(P(user)),
   },
@@ -306,7 +306,7 @@ export const readTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'EVALUATE a governed metric (also called: KPI, measure, indicator) — resolve its canonical member and return the number(s), optionally sliced by dimensions/time. This is how "what is revenue this month" resolves through the SEMANTIC LAYER, not raw SQL: no SQL is accepted or generated here BY CONSTRUCTION — the tool builds a Cube load query from the member, and Cube applies per-viewer row-level security from YOUR delegated identity (securityContext), exactly like the Metrics explorer and every dashboard. Two viewers get two different row sets; the number can never drift from the charts. Path: the read half of the Metrics golden path. Before: list_metrics (take a metric `id`, shaped `<datasetId>.<measure>`). After: chart the same member with create_dashboard, or wire it into an agent. Governance: read-only; a metric on a dataset you cannot see → not_found; offline the OS answers with the honestly-labelled offline-mock resolver (mode is always stated).',
+      'EVALUATE a governed metric (also called: KPI, measure, indicator) — resolve its canonical member and return the number(s), optionally sliced by dimensions/time. This is how "what is revenue this month" resolves through the SEMANTIC LAYER, not raw SQL: no SQL is accepted or generated here BY CONSTRUCTION — the tool compiles the member into ONE governed Trino SELECT and runs it as YOUR delegated Trino principal, so Trino + OPA apply your row/column security, exactly like the Metrics explorer and every dashboard. The metric itself is a dbt `metrics:` entry in the owning domain’s dbt project. Two viewers get two different row sets; the number can never drift from the charts. Path: the read half of the Metrics golden path. Before: list_metrics (take a metric `id`, shaped `<datasetId>.<measure>`). After: chart the same member with create_dashboard, or wire it into an agent. Governance: read-only; a metric on a dataset you cannot see → not_found; offline the OS answers with the honestly-labelled offline-mock resolver (mode is always stated).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -343,7 +343,31 @@ export const readTools: McpTool[] = [
         const v = Number(row[result.member]);
         if (!Number.isNaN(v)) value = (value ?? 0) + v;
       }
-      return { metricId, member: result.member, value, rows: result.rows, mode: result.mode, securityContext: result.securityContext };
+      // REVIEW H-2. These were dropped on the floor, so a refused or degraded read came back as
+      // `value: null, rows: []` with NOTHING to say why — indistinguishable from "the number is
+      // genuinely zero rows". Every honesty field `exploreMetric` produces is passed through:
+      // the typed refusal and its reason (M6), the loud-degradation sentence and the dropped
+      // slice members, the outage flag, and the query tool's OWN row ceiling (C-10) — which is
+      // lower than the slice's LIMIT and clips the rows a consumer would otherwise total.
+      //
+      // MERGE NOTE: stream C rewrote this handler on `night2/C` (a35b7e1b) to withhold `value`
+      // when the result reached its row bound, and already threads `warning` / `droppedMembers` /
+      // `pending` / `unavailable` / `sql` / the truncation triple. Take C's version and ADD the
+      // `refusal` key below — it is the only field C's version does not carry.
+      return {
+        metricId,
+        member: result.member,
+        value,
+        rows: result.rows,
+        mode: result.mode,
+        sql: result.sql,
+        ...(result.pending ? { pending: true, refusal: result.refusal, warning: result.warning } : {}),
+        ...(result.unavailable ? { unavailable: true, warning: result.warning } : {}),
+        ...(!result.pending && !result.unavailable && result.warning ? { warning: result.warning } : {}),
+        ...(result.droppedMembers ? { droppedMembers: result.droppedMembers } : {}),
+        ...(result.truncated ? { truncated: true, rowLimit: result.rowLimit, message: result.message } : {}),
+        securityContext: result.securityContext,
+      };
     },
   },
   {

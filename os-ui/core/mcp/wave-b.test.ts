@@ -116,13 +116,21 @@ test('get_metric: reads back the definition, canonical member and the metric YAM
   assert.match(m.definitionYaml, /name: revenue\n\s+type: sum/, 'the generated metric YAML carries the measure');
 });
 
-test('get_metric: unseeable dataset → typed forbidden; garbage id → typed not_found (no leak)', async () => {
+test('get_metric: an unseeable metric and a non-existent one answer the SAME not_found (review M-6)', async () => {
   resetAll();
   const metricId = await definedMetric(); // tier asset in `sales`
-  const e = errorOf(await call(outsider, 'get_metric', { metricId })); // dan is in `ops`
-  assert.equal(e.code, 'forbidden');
+  // The test name said "no leak" while asserting `forbidden`, which IS the leak: it told the
+  // caller the id exists and belongs to someone else. `getMetric` now collapses both to one
+  // byte-identical 404 — the rule `query_metric`'s own description already promised.
+  const hidden = errorOf(await call(outsider, 'get_metric', { metricId })); // dan is in `ops`
   const missing = errorOf(await call(builder, 'get_metric', { metricId: 'ds_nope.revenue' }));
+  assert.equal(hidden.code, 'not_found');
   assert.equal(missing.code, 'not_found');
+  assert.equal(
+    hidden.reason.replace(metricId, '<ID>'),
+    missing.reason.replace('ds_nope.revenue', '<ID>'),
+    'a differing reason leaks the same bit the differing code did',
+  );
 });
 
 // ---- GET_DASHBOARD -------------------------------------------------------------

@@ -124,9 +124,26 @@ export async function awaitDataProjectCommits(): Promise<void> {
   while (inFlight.size) await Promise.allSettled([...inFlight]);
 }
 
+/**
+ * A metric write, named by the store's own change summary (`define|update|remove|rename metric
+ * <name>` — `store.defineMeasure` / `removeMeasure` / `setMeasureLabel`). Metrics are the second
+ * object KIND living in this repo, so their commits carry `OS-Object: metric:<datasetId>.<measure>`
+ * rather than the dataset's label: `objectGitInfo('metric', id)` and the engineering view look an
+ * object up BY that trailer, and a dataset-shaped trailer would make every metric's history empty
+ * (checklist M7, D23/D24).
+ */
+const METRIC_ACTION = /^(?:define|update|remove|rename) metric (\S+)/;
+
+export function metricObjectId(change: ProjectChange): string | null {
+  const m = METRIC_ACTION.exec(change.action);
+  return m ? `metric:${change.datasetId}.${m[1]}` : null;
+}
+
 function objectLabels(change: ProjectChange): { object: string; objectId: string } {
   const meta = peekDatasetMeta(change.datasetId);
   const name = meta?.name?.trim();
+  const metric = metricObjectId(change);
+  if (metric) return { object: name ? slug(name) : change.datasetId, objectId: metric };
   return name
     ? { object: slug(name), objectId: `${change.datasetId} (${name})` }
     : { object: change.datasetId, objectId: change.datasetId };

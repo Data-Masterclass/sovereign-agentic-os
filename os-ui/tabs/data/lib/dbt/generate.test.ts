@@ -167,10 +167,63 @@ function shapeAppendSync(): ProjectSnapshot {
   return { domain: 'sales', datasets: [{ dataset: events, artifacts: {} }, { dataset: accounts, artifacts: {} }], catalogs: { conn_wh: 'wh' } };
 }
 
+// ---- Shape (d): metrics as dbt metrics — a promoted dataset carrying every emittable metric type
+// plus a personal-lane dataset whose semantic file sits in the owner's lane (checklist M1, M5, M9,
+// M12). One refused metric (a leading window) proves nothing unservable is emitted (M6).
+function shapeMetrics(): ProjectSnapshot {
+  const orders = ds({
+    id: 'ds_orders1',
+    name: 'Orders',
+    owner: 'amir',
+    domain: 'sales',
+    tier: 'asset',
+    visibility: 'domain',
+    description: 'Web-shop orders, one row per order.',
+    columns: [
+      { name: 'order_id', description: 'Order key' },
+      { name: 'order_date', description: 'Order date' },
+      { name: 'region', description: 'Billing region' },
+      { name: 'net_amount', description: 'Net amount (EUR)' },
+      { name: 'customer_id', description: 'Customer key' },
+    ],
+    versions: { bronze: built('bronze/orders.dlt.yml'), silver: built('silver/stg_orders.sql', true), gold: built('gold/mart_orders.sql', true) },
+    measures: [
+      { name: 'revenue', type: 'sum', sql: 'net_amount', label: 'Revenue', description: 'Net revenue booked.' },
+      { name: 'orders', type: 'count', sql: '' },
+      { name: 'revenue_eu', type: 'sum', sql: 'net_amount', filters: [{ sql: "{CUBE}.region = 'eu'" }] },
+      { name: 'customers', type: 'count_distinct_approx', sql: 'customer_id' },
+      { name: 'aov', type: 'number', sql: '1.0 * {revenue} / {orders}', label: 'Average Order Value' },
+      { name: 'revenue_per_customer', type: 'number', sql: '{revenue} / {customers}', formula: '[revenue]/[customers]' },
+      { name: 'revenue_t7d', type: 'sum', sql: 'net_amount', rollingWindow: { trailing: '7 day', offset: 'end' } },
+      { name: 'revenue_rt', type: 'sum', sql: 'net_amount', rollingWindow: { trailing: 'unbounded' } },
+      // No dbt form: a leading window. Refused, named in the README's "Not emitted", nothing emitted.
+      { name: 'revenue_next7', type: 'sum', sql: 'net_amount', rollingWindow: { leading: '7 day' } },
+    ],
+  });
+  const drafts = ds({
+    id: 'ds_draft001',
+    name: 'Draft Signups',
+    owner: 'bea',
+    domain: 'sales',
+    description: 'A personal dataset still in the owner\'s lane.',
+    columns: [
+      { name: 'signup_id', description: 'Signup key' },
+      { name: 'signup_date', description: 'Signup date' },
+      { name: 'net_amount', description: 'Net amount' },
+    ],
+    versions: { bronze: built('bronze/signups.dlt.yml'), silver: unbuilt, gold: built('gold/mart_signups.sql', true) },
+    // Same measure NAME as the promoted dataset: dbt names are project-global, so the generator
+    // must qualify one of them or `dbt parse` fails for the WHOLE domain.
+    measures: [{ name: 'revenue', type: 'sum', sql: 'net_amount' }],
+  });
+  return { domain: 'sales', datasets: [{ dataset: orders, artifacts: {} }, { dataset: drafts, artifacts: {} }], catalogs: {} };
+}
+
 const SHAPES: Record<string, () => ProjectSnapshot> = {
   'ingested-pass-through': shapeIngested,
   'composition-with-tests': shapeComposition,
   'append-sync-with-cursor': shapeAppendSync,
+  'metrics-semantic-layer': shapeMetrics,
 };
 
 function toObject(files: Map<string, string>): Record<string, string> {

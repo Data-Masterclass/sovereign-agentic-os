@@ -107,6 +107,43 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   the history lookup also matches the `OS-Objects` list a whole-subtree commit carries, on a
   whole token.
 
+- **Metrics are dbt metrics (stream M).** A metric defined in the OS is now a real dbt `metrics:`
+  entry on a `semantic_models:` measure, committed into the owning domain's dbt project at
+  `models/semantic/<model>.yml` (a personal dataset's in `models/personal/<uid>/semantic/`), with a
+  daily time spine at `models/os/os_time_spine_day.sql` declared by the dbt >= 1.9 `time_spine`
+  property. The YAML is a typed document with an emitter, a **parser** and a spec validator
+  (`os-ui/tabs/data/lib/dbt/semantic/`) pinned to dbt-semantic-interfaces 0.8.5 / dbt-core 1.10 and
+  valid on the dbt 1.9 the images carry; `simple`, `ratio`, `derived` and `cumulative` are emitted,
+  `count_distinct_approx` emits `count_distinct` + `config.meta.os_agg`, and anything with no
+  faithful dbt form is a named refusal listed in the generated README rather than wrong YAML. The
+  predecessor (`tabs/data/lib/semantic.ts`, a 124-line string builder) never reached the project at
+  all and emitted `ref('mart_<slug>')` — a model no generated project contains.
+
+- **Metrics: the honest text, the typed refusal and the licence floor (stream M).** No tool
+  description, `context.md`, `guide.md` or UI string under `tabs/metrics` or `core/mcp` claims Cube
+  serves or secures a number any more — a number is one governed Trino `SELECT` run as the viewer,
+  with Trino + OPA applying row/column security — and a tripwire test keeps it that way.
+  `list_metrics` now returns each metric's dbt `metricType` and its `grain`. A slice the OS compiler
+  cannot serve returns a **typed, named refusal** (`{ code, metricType, reason }`) instead of a bare
+  "pending", and a ratio's divisor is wrapped in `NULLIF(…, 0)` so a zero denominator shows "—"
+  rather than failing the whole panel with a Trino "Division by zero". `scripts/license-check.sh`
+  gained a version-floor pass asserting `metricflow >= 0.209.0` wherever it could enter a build:
+  `<= 0.208.1` is Business Source License 1.1, whose Additional Use Grant excludes this product's
+  use, and BSL does not relax retroactively.
+
+- **Metrics: the review round (stream M).** A dataset with measures and no date column emitted
+  semantic YAML with no `agg_time_dimension`, which fails `dbt parse` for the whole domain — those
+  measures are now refused by name and the validator enforces the rule. `expr` is stripped of Jinja
+  on emit and held to a closed grammar. `query_metric` no longer drops the read path's `pending` /
+  `refusal` / `warning` / `droppedMembers` / `unavailable`, and `exploreMetric` no longer discards
+  the query tool's own `truncated` / `rowLimit` / `message`, so a clip below the metric's own LIMIT
+  is visible. A served cumulative metric warns that its frame counts time buckets, not calendar
+  units. A metric on a dataset you cannot see now answers the same `not_found` as one that does not
+  exist, closing an existence leak. The dbt images are pinned `dbt-core>=1.9,<1.10` and the licence
+  gate enforces that floor alongside the MetricFlow one. Smaller: a numeric fact column is no longer
+  offered as a slice dimension, the `trino --execute` command is POSIX-quoted, and the push ingest
+  reads every `semantic_models` entry rather than the first.
+
 ### Fixed
 
 - **Software → Build app rejected the assistant's own shorthand.** The build assistant returned a
@@ -156,6 +193,7 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
 - Documented: the Dagster extension image (`images/extensions/dagster`) is NOT built by
   `deploy.sh`; it is built and pushed separately as `ghcr.io/aborek/sovereign-os/dagster:<tag>`
   (context `images/extensions`) before a deploy that bumps its tag.
+
 
 ## [os-ui 0.8.0] — 2026-11-13 — Engine rebuild: real LangGraph/Langfuse/LiteLLM, dbt/Dagster/Trino data products, git-based working, MCP parity
 

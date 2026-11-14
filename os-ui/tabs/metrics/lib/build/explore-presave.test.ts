@@ -133,7 +133,9 @@ test('previewTrinoSql: a ratio expands its sibling measures; window shapes retur
   });
   const aov = d.measures[2];
   const sql = previewTrinoSql(d, aov, exploreSpec(d, aov))!;
-  assert.match(sql, /1\.0 \* \(SUM\(CAST\(net_amount AS double\)\)\) \/ \(COUNT\(\*\)\) AS "aov"/);
+  // The denominator is NULLIF-wrapped (M-R2.4): an empty slice yields NULL ("—" in the UI), never
+  // a Trino "Division by zero" that would fail the whole query.
+  assert.match(sql, /1\.0 \* \(SUM\(CAST\(net_amount AS double\)\)\) \/ NULLIF\(\(COUNT\(\*\)\), 0\) AS "aov"/);
 
   // A window measure with NO time slice has no series → still null (honest pending).
   const rolling = { name: 'r7', type: 'sum' as const, sql: 'net_amount', rollingWindow: { trailing: '7 day' } };

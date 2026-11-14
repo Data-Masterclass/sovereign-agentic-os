@@ -21,8 +21,8 @@ type AgentSystemSummary = { id: string; name: string };
  * in-app AND, if a governed agent is wired, triggers a Langfuse-traced agent run
  * (event → LangGraph).
  *
- * The live metric value is resolved by the server (via Cube) — no hand-typed demo
- * value. Rules are persisted and can be batch-evaluated via /api/metrics/alerts/run
+ * The live metric value is resolved by the server (one governed Trino SELECT, as you) — no
+ * hand-typed demo value. Rules are persisted and can be batch-evaluated via /api/metrics/alerts/run
  * (wire to a CronJob for continuous monitoring).
  *
  * Two ways in: the Metrics surface renders this over the whole `metrics` palette; a metric's
@@ -85,7 +85,7 @@ export default function Alerts({
         notify: ['in_app'],
         triggerAgent: agentOn ? { systemId, agent, preset } : undefined,
       };
-      // No `value` — the route resolves the live Cube number
+      // No `value` — the route resolves the live number through the governed metric read path
       const res = await postJson<AlertResponse & { pending?: boolean; saved?: boolean }>('/api/metrics/alerts', { rule });
       if ((res as { pending?: boolean }).pending) {
         setError('Could not resolve live value — metric may still be syncing (~30 s). Try again shortly.');

@@ -1033,3 +1033,42 @@ Binary blobs follow the same honesty rule from the other direction: decoding one
 replacement characters that looked like content, so a binary file is reported with `binary: true`
 and its size and an EMPTY content — and a version containing one is refused for restore, because
 re-applying that empty content would truncate the file.
+
+## The dbt semantic layer — a metric is a dbt metric (stream M)
+
+`tabs/data/lib/dbt/semantic/` is the OS's metric artefact. Six pure modules: `spec.ts` (the ONE
+pinned spec version plus the closed DSI enums), `model.ts` (the typed `semantic_models:` +
+`metrics:` document, its emitter and its **parser**), `validate.ts` (a key/enum whitelist against
+the pinned spec, plus the closed `filter:` grammar), `from-measures.ts` (the OS `Measure` → dbt
+bridge, with a named refusal for anything that has no faithful form), `time-spine.ts` and
+`render.ts` (the project renderer `generateProject` calls).
+
+Four things here have each cost someone real debugging time, in this product or in dbt's:
+
+- **`docs.getdbt.com` lies about your dbt version.** It serves the 1.12 ("Fusion") spec by default
+  and its `?version=` selector is client-side only, so a fetch always returns 1.12 — a breaking
+  redesign of this exact spec. The authoritative source for 1.8–1.10 is the `dbt-semantic-interfaces`
+  pydantic spec at the version dbt-core pins. Hence one constant, `DBT_SEMANTIC_SPEC`, named in
+  every generated README and asserted by a test. **Read the dbt version off the images before
+  changing it**: they pin `dbt-core>=1.8,<1.10`, so they run 1.9.x, and `cumulative_type_params`
+  does not exist at all on 1.8.
+- **dbt names are project-global.** Two datasets each with a `revenue` measure, or a metric name
+  used twice, fails `dbt parse` for the **whole domain** — every other dataset included. So every
+  measure and metric name goes through one allocator per namespace, shared across the domain, and
+  the OS identity is carried in `config.meta.os_metric` / `os_member` rather than in the name.
+  Measures and metrics are *separate* namespaces: a measure and its `type: simple` metric sharing a
+  name is the canonical dbt shape, not a collision.
+- **One unknown key takes the domain down, so validate before writing.** `validateSemanticDoc` runs
+  on the plain object the emitter produces (not a parallel model that could drift), and `render.ts`
+  DROPS a document with violations and records them as refusals. The same reflex as
+  `dbt/schema.ts`: never emit a weaker version of what the author wrote, and never emit something
+  that fails the parse.
+- **dbt renders YAML through Jinja before reading it.** Authored prose goes through `stripJinja`;
+  the one field that must keep its Jinja is `filter:`, so it is held to a closed grammar
+  (`{{ Dimension('e__d') }} <op> <literal>`, conjunctions only, no Jinja delimiter in the literal).
+  A predicate outside that grammar refuses the whole metric rather than emitting a weaker filter.
+
+Execution does **not** move: a metric read is still `tabs/metrics/lib/explorer.ts` compiling one
+governed Trino `SELECT` run as the viewer. MetricFlow is never on the request path (it would open
+one connection from its own profile and lose per-viewer impersonation), and where it is installed
+at all it is pinned `>= 0.209.0` — `<= 0.208.1` is BSL 1.1 and BSL does not relax retroactively.
