@@ -11,7 +11,16 @@
  *     (`core/mcp/server.ts` `handleRpc(user, …)`) as the SIGNED-IN USER. No service principal, no
  *     store reached around the gate, no cross-tab import of another tab's internals.
  *   - BOUNDED: `GROUNDING_SAMPLE_ROWS` rows and `GROUNDING_SAMPLE_COLUMNS` columns per dataset,
- *     one `SELECT * … LIMIT n` per granted dataset, nothing else.
+ *     one `SELECT * … LIMIT n` per granted dataset, nothing else. The table name is VALIDATED
+ *     against `SAFE_FQN` before it reaches the SQL string (review M-1): the fqn comes back from a
+ *     governed read, but it is not ours, and a governed read is not a reason to interpolate.
+ *   - SAMPLE VALUES of heuristically-sensitive columns are MASKED (`maskSensitiveSample`, review
+ *     M-2) and the masked columns are named in `gaps[]`. Honest limits, recorded rather than
+ *     implied: the OS has NO column-classification facility to consult (`ColumnDoc` is
+ *     `{ name, description }`; `get_catalog_classification` places warehouse TABLES into folders
+ *     by connection and says nothing about column sensitivity), and there is NO trace-redaction
+ *     facility on this path — the prompt text is what the model and Langfuse see. So the sample is
+ *     deliberately tiny, name-masked, and rendered under an explicit DATA fence.
  *   - HONEST: a dataset whose schema or sample could not be read gets a NOTE and a line in
  *     `pack.gaps`. There is no fabricated row anywhere in this file.
  *   - EXTRACTED, NOT WRITTEN: the SDK and UI surfaces and the design tokens come from the shipped
@@ -38,6 +47,7 @@ import {
   GROUNDING_SAMPLE_ROWS,
   TIER2_CONSTRAINTS,
   clipDefinition,
+  maskSensitiveSample,
   extractDesignTokens,
   extractSdkSurface,
   extractUiSurface,
@@ -47,6 +57,15 @@ import {
   type GroundingPack,
   type GroundingStory,
 } from '@tabs/software/lib/builder/grounding';
+
+/**
+ * The ONLY table-name shape this harness will interpolate into SQL (review M-1): one to three
+ * `[A-Za-z0-9_]` segments (`catalog.schema.table`). The fqn arrives from a governed read, not from
+ * the caller — but "it came from a governed read" is not a reason to build a SQL string from it,
+ * and a quote, a space, a semicolon or a comment marker in a table name must never reach Trino.
+ * A name that does not match is refused and recorded as a gap; no sample is taken.
+ */
+export const SAFE_FQN = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+){0,2}$/;
 
 /** One governed tool call as the signed-in user. Returns the parsed payload, or an honest error. */
 async function callGoverned(
@@ -175,6 +194,12 @@ async function gatherDatasets(user: CurrentUser, app: App, gaps: string[]): Prom
       out.push({ id: grant.id, name, columns: catalogueColumns, sampleColumns: [], sampleRows: [], note });
       continue;
     }
+    if (!SAFE_FQN.test(fqn)) {
+      const note = `the governed read returned a table name this harness will not interpolate into SQL ("${fqn}") — no sample rows`;
+      gaps.push(`dataset ${grant.id}: ${note}`);
+      out.push({ id: grant.id, name, columns: catalogueColumns, sampleColumns: [], sampleRows: [], note });
+      continue;
+    }
     const q = await callGoverned(user, 'query_data', { sql: `SELECT * FROM ${fqn} LIMIT ${GROUNDING_SAMPLE_ROWS}` });
     if (!q.ok) {
       const note = `schema from the catalogue; no sample rows (${q.reason})`;
@@ -186,14 +211,21 @@ async function gatherDatasets(user: CurrentUser, app: App, gaps: string[]): Prom
     const queried = columnNames(r.columns);
     const columns = queried.length > 0 ? queried : catalogueColumns;
     const sampleColumns = columns.slice(0, GROUNDING_SAMPLE_COLUMNS);
-    const rows = sampleRows(r.rows, sampleColumns);
-    const clipped = columns.length > sampleColumns.length;
-    const note = clipped
-      ? `sample clipped to the first ${sampleColumns.length} of ${columns.length} columns (the column list above is complete)`
-      : rows.length === 0
-        ? 'the governed read returned no rows — the table is empty for you'
-        : undefined;
-    if (note && rows.length === 0) gaps.push(`dataset ${grant.id}: ${note}`);
+    const raw = sampleRows(r.rows, sampleColumns);
+    const { rows, masked } = maskSensitiveSample(sampleColumns, raw);
+    const notes: string[] = [];
+    if (columns.length > sampleColumns.length) {
+      notes.push(`sample clipped to the first ${sampleColumns.length} of ${columns.length} columns (the column list above is complete)`);
+    }
+    if (masked.length > 0) {
+      notes.push(`sample VALUES masked for ${masked.join(', ')} (name heuristic, not a classification — the column names are real and usable)`);
+      gaps.push(`dataset ${grant.id}: sample values masked for ${masked.join(', ')} — the OS has no column-classification facility, so this is a conservative name heuristic`);
+    }
+    if (rows.length === 0) {
+      notes.push('the governed read returned no rows — the table is empty for you');
+      gaps.push(`dataset ${grant.id}: the governed read returned no rows — the table is empty for you`);
+    }
+    const note = notes.length > 0 ? notes.join('; ') : undefined;
     out.push({ id: grant.id, name, columns, sampleColumns, sampleRows: rows, ...(note ? { note } : {}) });
   }
   return out;

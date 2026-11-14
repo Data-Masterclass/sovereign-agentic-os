@@ -18,6 +18,11 @@
  *     committed on budget exhaustion but reported `ok: false` with the unmet checks named — a
  *     build is never called a success because it merely compiled.
  *   - EVERY step is reported through `onStep` so the caller traces it (Langfuse) and shows it.
+ *   - NOTHING THROWS OUT. All four model/tool deps are wrapped (review M-4): a planner outage, an
+ *     esbuild or OOM slip in the build tool, and a reviewer failure each end the loop with their
+ *     own typed stop reason and an honest summary, exactly as a coder error already did. A raw
+ *     exception escaping `agenticBuild` would reach the MCP boundary as an untyped 500 and lose
+ *     the step trail that says how far the build got.
  */
 
 import {
@@ -100,7 +105,12 @@ export type BuilderStopReason =
   | 'passed'
   | 'budget'
   | 'no-progress'
+  /** The planner, coder, build tool or reviewer THREW — a model outage, an esbuild/OOM slip, a
+   *  bad reply. Each gets its own reason so the caller can say which stage failed (review M-4). */
+  | 'plan-error'
   | 'coder-error'
+  | 'build-error'
+  | 'review-error'
   | 'commit-error'
   | 'no-stories';
 
@@ -179,7 +189,42 @@ export async function runBuilderLoop(input: BuilderLoopInput, deps: BuilderLoopD
     });
   }
 
-  const plan = await deps.plan({ grounding: input.grounding, checks: input.checks });
+  /** Run a dep, or end the loop with its own typed stop reason. `null` means "already finished". */
+  const guard = async <T>(
+    kind: BuilderStepKind,
+    iteration: number,
+    stopped: BuilderStopReason,
+    fn: () => Promise<T>,
+    partial: () => Omit<BuilderLoopResult, 'steps' | 'feedback' | 'ok' | 'stopped' | 'summary'>,
+  ): Promise<{ ok: true; value: T } | { ok: false; result: BuilderLoopResult }> => {
+    try {
+      return { ok: true, value: await fn() };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      await record({ iteration, kind, ok: false, summary: `${kind} failed: ${message}` });
+      return {
+        ok: false,
+        result: done({
+          ...partial(),
+          ok: false,
+          stopped,
+          summary: `The build stopped in the ${kind} stage at iteration ${iteration}: ${message}. Nothing was committed.`,
+        }),
+      };
+    }
+  };
+
+  const planned = await guard('plan', 0, 'plan-error', () => deps.plan({ grounding: input.grounding, checks: input.checks }), () => ({
+    iterations: 0,
+    plan: '',
+    files: [],
+    compile: EMPTY_COMPILE,
+    scores: [],
+    report: '',
+    committed: null,
+  }));
+  if (!planned.ok) return planned.result;
+  const plan = planned.value;
   await record({ iteration: 0, kind: 'plan', ok: true, summary: firstLine(plan) });
 
   let feedback: string | null = null;
@@ -190,32 +235,11 @@ export async function runBuilderLoop(input: BuilderLoopInput, deps: BuilderLoopD
   let report = '';
 
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
-    let out: CoderOutput;
-    try {
-      out = await deps.code({
-        iteration,
-        grounding: input.grounding,
-        plan,
-        checks: input.checks,
-        prior: input.prior,
-        feedback,
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      await record({ iteration, kind: 'code', ok: false, summary: `coder failed: ${message}` });
-      return done({
-        ok: false,
-        stopped: 'coder-error',
-        iterations: iteration,
-        plan,
-        files: lastFiles,
-        compile,
-        scores,
-        report,
-        committed: null,
-        summary: `The build stopped at iteration ${iteration}: ${message}. Nothing was committed.`,
-      });
-    }
+    const partial = () => ({ iterations: iteration, plan, files: lastFiles, compile, scores, report, committed: null });
+    const coded = await guard('code', iteration, 'coder-error', () =>
+      deps.code({ iteration, grounding: input.grounding, plan, checks: input.checks, prior: input.prior, feedback }), partial);
+    if (!coded.ok) return coded.result;
+    const out: CoderOutput = coded.value;
     await record({
       iteration,
       kind: 'code',
@@ -242,7 +266,9 @@ export async function runBuilderLoop(input: BuilderLoopInput, deps: BuilderLoopD
     lastFiles = out.files;
     lastPrint = print;
 
-    compile = await deps.build(out.files);
+    const built = await guard('build', iteration, 'build-error', () => deps.build(out.files), partial);
+    if (!built.ok) return built.result;
+    compile = built.value;
     await record({
       iteration,
       kind: 'build',
@@ -264,7 +290,10 @@ export async function runBuilderLoop(input: BuilderLoopInput, deps: BuilderLoopD
     scores = scoreAcceptanceChecks(input.checks, input.stories, out.files, compile);
     report = formatAcceptanceReport(input.checks, scores);
     const summary = acceptanceSummary(scores);
-    const review = await deps.review({ iteration, checks: input.checks, scores, report, compile });
+    const reviewed = await guard('review', iteration, 'review-error', () =>
+      deps.review({ iteration, checks: input.checks, scores, report, compile }), partial);
+    if (!reviewed.ok) return reviewed.result;
+    const review = reviewed.value;
     await record({
       iteration,
       kind: 'review',
@@ -273,7 +302,9 @@ export async function runBuilderLoop(input: BuilderLoopInput, deps: BuilderLoopD
     });
 
     if (review.verdict === 'pass' && summary.ok) {
-      const commit = await deps.commit(out.files, input.message);
+      const committed = await guard('commit', iteration, 'commit-error', () => deps.commit(out.files, input.message), partial);
+      if (!committed.ok) return committed.result;
+      const commit = committed.value;
       await record({ iteration, kind: 'commit', ok: commit.ok, summary: commit.detail });
       return done({
         ok: commit.ok,
@@ -307,7 +338,18 @@ export async function runBuilderLoop(input: BuilderLoopInput, deps: BuilderLoopD
   // does not satisfy its stories is never reported as done.
   const summary = acceptanceSummary(scores);
   if (compile.gated && compile.ok && lastFiles.length > 0) {
-    const commit = await deps.commit(lastFiles, `${input.message} (acceptance incomplete)`);
+    const committed = await guard('commit', maxIterations, 'commit-error', () =>
+      deps.commit(lastFiles, `${input.message} (acceptance incomplete)`), () => ({
+      iterations: maxIterations,
+      plan,
+      files: lastFiles,
+      compile,
+      scores,
+      report,
+      committed: null,
+    }));
+    if (!committed.ok) return committed.result;
+    const commit = committed.value;
     await record({ iteration: maxIterations, kind: 'commit', ok: commit.ok, summary: commit.detail });
     return done({
       ok: false,
@@ -332,6 +374,9 @@ export async function runBuilderLoop(input: BuilderLoopInput, deps: BuilderLoopD
     scores,
     report,
     committed: null,
-    summary: `Ran out of the ${maxIterations}-iteration budget with a tree that does not compile. NOTHING was committed. Last diagnostics: ${compile.errors.slice(0, 3).join(' | ') || compile.note || 'none recorded'}`,
+    summary:
+      `Ran out of the ${maxIterations}-iteration budget with a tree that does not compile. NOTHING was committed, ` +
+      `and the ${input.checks.length} acceptance check(s) derived from your stories were NEVER SCORED. ` +
+      `Last diagnostics: ${compile.errors.slice(0, 3).join(' | ') || compile.note || 'none recorded'}`,
   });
 }

@@ -10,14 +10,19 @@
  *   - PURE. Derivation (`deriveAcceptanceChecks`) and scoring (`scoreAcceptanceChecks`) are
  *     functions of the stories, the generated files and the compile outcome. No store, no fs.
  *   - FOUR kinds, deliberately: `compile` (the real in-process gate), `route` and `render`
- *     (CHEAP STATIC checks over the generated files — tonight's honest level: the evidence string
- *     always says "static", and jsdom/preview rendering is named backlog, not faked), and `manual`
+ *     (STATIC checks over the generated files — tonight's honest level: the evidence string always
+ *     says "static", and jsdom/preview rendering is named backlog, not faked), and `manual`
  *     (listed for the human; never scored pass by a machine).
+ *   - `render` is scored off the TYPESCRIPT AST (`symbols.ts`), never off `String.includes`: a
+ *     model that writes `// os.records.add` in a comment, or the same text in a string literal or
+ *     a JSX text node, must FAIL the check. `route` matches on the file PATH first and on a parsed
+ *     IDENTIFIER second, for the same reason.
  *   - HONESTY: a check the harness cannot decide is `unknown` with the reason, never `pass`.
  *     `acceptanceSummary().ok` is true only when every machine-decidable check passed.
  */
 
 import type { GroundingStory, SourceFile } from '@tabs/software/lib/builder/grounding';
+import { fileSymbols, importsModule, usesSymbol, type FileSymbols } from '@tabs/software/lib/builder/symbols';
 
 /** How a check is decided. `manual` is for the human; the other three the harness decides. */
 export type AcceptanceKind = 'compile' | 'route' | 'render' | 'manual';
@@ -149,17 +154,31 @@ export function matchStoryFile(story: GroundingStory, files: SourceFile[]): { fi
     const hit = tokens.find((t) => path.includes(t));
     if (hit) return { file: f, why: `path token "${hit}"` };
   }
+  // LAST RESORT: a parsed IDENTIFIER (an import specifier, a call callee or a property read) that
+  // carries a distinctive word of the title. Deliberately NOT a text search — a comment or a
+  // string literal naming the story must not satisfy its route check.
   for (const f of sources) {
-    const text = f.content.toLowerCase();
-    const hit = tokens.find((t) => text.includes(t));
-    if (hit) return { file: f, why: `content token "${hit}"` };
+    const ids = identifierText(fileSymbols(f.path, f.content));
+    const hit = tokens.find((t) => ids.includes(t));
+    if (hit) return { file: f, why: `parsed identifier containing "${hit}"` };
   }
   return null;
 }
 
-/** The governed SDK data surfaces a render check looks for. */
+/** Every identifier the AST reported for a file, lowercased and joined — never its raw text. */
+function identifierText(symbols: FileSymbols): string {
+  return [...symbols.imports, ...symbols.calls, ...symbols.reads].join(' ').toLowerCase();
+}
+
+/**
+ * The governed SDK surfaces a render check looks for, as DOTTED SYMBOL PATHS matched against the
+ * AST. `os` is the conventional name the SDK's own README, the scaffold and every prompt use for
+ * `createOsClient()`'s result; the bare `datasets.query` forms catch a destructured client.
+ */
 const READ_SURFACES = ['os.datasets', 'os.metrics', 'os.records', 'datasets.query', 'metrics.query'];
 const WRITE_SURFACES = ['os.records.add', 'os.records.update', 'os.records.remove', 'records.add'];
+/** The SDK module itself — importing it is corroborating evidence, never sufficient on its own. */
+const SDK_MODULE = '@sovereign-os/app-sdk';
 
 /**
  * Score the checks. `compile` from the gate's own verdict; `route`/`render` by CHEAP STATIC
@@ -203,25 +222,36 @@ export function scoreAcceptanceChecks(
       return { id: c.id, kind: c.kind, status: 'unknown', evidence: `static check: not decidable — no file was matched for story ${key} (the route check failed first)` };
     }
     const want = impliesWrite(story) ? WRITE_SURFACES : READ_SURFACES;
-    const found = want.find((s) => match.file.content.includes(s));
-    return found
-      ? { id: c.id, kind: c.kind, status: 'pass', evidence: `static check: ${match.file.path} references ${found}` }
-      : {
-          id: c.id,
-          kind: c.kind,
-          status: 'fail',
-          evidence: `static check: ${match.file.path} references none of ${want.join(', ')} — it does not reach governed ${impliesWrite(story) ? 'writes' : 'data'}`,
-        };
+    const symbols = fileSymbols(match.file.path, match.file.content);
+    if (symbols.note) {
+      return { id: c.id, kind: c.kind, status: 'unknown', evidence: `static check (AST): ${match.file.path} ${symbols.note}` };
+    }
+    const found = want.find((w) => usesSymbol(symbols, w));
+    if (found) {
+      const imported = importsModule(symbols, SDK_MODULE) ? `, importing ${SDK_MODULE}` : '';
+      return { id: c.id, kind: c.kind, status: 'pass', evidence: `static check (AST): ${match.file.path} calls ${found}${imported}` };
+    }
+    return {
+      id: c.id,
+      kind: c.kind,
+      status: 'fail',
+      evidence: `static check (AST): ${match.file.path} CALLS none of ${want.join(', ')} — it does not reach governed ${impliesWrite(story) ? 'writes' : 'data'} (a comment or a string naming one does not count)`,
+    };
   });
 }
 
 export type AcceptanceSummary = {
+  /**
+   * FALSE when the scorecard was never produced — an all-red build whose tree never compiled, so
+   * nothing was scored. Without this, `total: 0 · failed: 0` reads like a clean run (review L-3).
+   */
+  scored: boolean;
   total: number;
   passed: number;
   failed: number;
   manual: number;
   unknown: number;
-  /** True only when NOTHING the harness can decide failed or is unknown. */
+  /** True only when the scorecard EXISTS and nothing the harness can decide failed or is unknown. */
   ok: boolean;
 };
 
@@ -229,13 +259,15 @@ export function acceptanceSummary(scores: CheckScore[]): AcceptanceSummary {
   const count = (s: CheckStatus): number => scores.filter((x) => x.status === s).length;
   const failed = count('fail');
   const unknown = count('unknown');
+  const scored = scores.length > 0;
   return {
+    scored,
     total: scores.length,
     passed: count('pass'),
     failed,
     manual: count('manual'),
     unknown,
-    ok: failed === 0 && unknown === 0,
+    ok: scored && failed === 0 && unknown === 0,
   };
 }
 
@@ -246,6 +278,9 @@ export function acceptanceSummary(scores: CheckScore[]): AcceptanceSummary {
 export function formatAcceptanceReport(checks: AcceptanceCheck[], scores: CheckScore[]): string {
   const byId = new Map(scores.map((s) => [s.id, s]));
   const sum = acceptanceSummary(scores);
+  if (!sum.scored) {
+    return `Acceptance: NOT SCORED — the build never produced a tree the harness could score against its ${checks.length} derived check(s).`;
+  }
   const lines = checks.map((c) => {
     const s = byId.get(c.id);
     const mark = s?.status === 'pass' ? 'PASS' : s?.status === 'fail' ? 'FAIL' : s?.status === 'manual' ? 'MANUAL' : 'UNKNOWN';

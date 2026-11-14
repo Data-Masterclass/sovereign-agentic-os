@@ -2134,3 +2134,48 @@ deviation is.
   nodes, the same gates, the same bound — and the seed is the named next item. Recorded rather than
   implied: nothing in the UI will show "App Smith" until that seed lands.
 
+**Review round (findings H-1…L-4 from the read-only reviewer; the branch was merge-ready with the
+flag OFF, not ready to flip).**
+
+- **H-review-1 — `usedSymbols` lives in the builder, not in the compile gate.** The reviewer asked
+  for the AST symbols to be exposed from `compile-gate.ts`, which already builds a program over the
+  merged tree. That file is stream S's, so instead `builder/symbols.ts` parses the same files with
+  the same compiler (`ts.createSourceFile`, parse-only — no program, no checker, no disk) for the
+  same answer. If S later exposes one, this module should be deleted in favour of it.
+- **H-review-2 — the hold-gate fix is ONE tool, and the rest of the gap is PINNED, not closed.**
+  `commit` is now in `core/mcp/write-tool-meta.ts`, so `read-only` finally holds it (before, the
+  gate answered "not a write" under EVERY preset and a read-only agent could write app files). The
+  rest of the platform-MCP write surface — `create_software`, `request_deploy`, `start_preview`,
+  `promote`, `archive`, `delete`, `set_app_spec`, `design_software`, `decide_deploy`, `use_*` — is
+  *still* unheld. Closing it changes the shipped Software Delivery Team's posture and touches the
+  frozen engine goldens, so it is pinned by a test that fails when a NEW platform write appears and
+  handed to the software stream rather than changed unilaterally overnight.
+- **H-review-3 — `held: 0` in the appsmith golden is DELIBERATE and now asserted.** With `commit`
+  in the table, `read-only` holds it, but `read-propose` does not: `writeTargetScope('commit')` is
+  `personal`, and the OS's invariant is that an agent never exceeds what its runner could do by
+  hand. So the golden did not need re-freezing; the posture is asserted in both directions instead.
+- **M-review-2 — the column-masking ask could not be met as specified.** The reviewer suggested
+  consulting `get_catalog_classification`; that tool places warehouse TABLES into folders by
+  CONNECTION id and says nothing about a column's sensitivity, and `ColumnDoc` is
+  `{ name, description }` — **the OS has no column-classification facility at all.** So the sample
+  masks VALUES by a conservative, clearly-labelled column-NAME heuristic, keeps every column name
+  (the coder needs it), names the masked columns in `gaps[]`, and the file records that there is
+  also **no trace-redaction facility on this path**. When a real classification facility exists this
+  heuristic should be replaced by it, not extended.
+- **M-review-5 — the acceptance result is persisted in the COMMITTED TREE, not on the `App`.** The
+  narrowest additive path that does not touch S's `apps.ts` is `.app/acceptance.json`, written by
+  the same governed `commitToApp` call as the code, in the same commit. It is versioned with the
+  tree it describes, needs no schema field, is readable by `read_app_files` with no new tool, and a
+  rollback carries the matching scorecard. **For the merger:** if S later adds an `App` field, this
+  file stays the source of truth and the field becomes its cache.
+- **L-review-1 — the LiteLLM tab/run TAGS could not be passed, and are recorded.**
+  `assistantComplete` has no `tab`/`runId` option and `complete.ts` hardcodes `tab:'assistant'`;
+  `core/runtime/complete.ts` is not this stream's file, so builder calls are still tagged
+  `tab:assistant`. The reviewer's own instruction was "pass it through the existing option if one
+  exists; else record" — there is none. The budget half of L-1 DID land:
+  `builderIterationBudget` lowers the loop's bound to the domain cap's headroom.
+- **L-review-2 — the run trace nests WITHOUT touching the guarded line.** Rather than add an
+  argument in `platform-mcp.ts`, `agenticBuild` reads the ambient run id from the governed request
+  surface (`currentSurface().runId`, which the granted-tool executor already sets), so the dispatch
+  stays exactly one line and a build inside an agent run nests under that run's trace.
+

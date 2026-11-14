@@ -24,7 +24,14 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   **derived from the app's user stories**, the existing in-process compile gate run every iteration
   and its diagnostics fed back verbatim, and the `os.appsmith` built-in LangGraph system
   (`tabs/agents/lib/builtin/appsmith.ts`). New additive `coder` model role, env-only, falling back
-  to the reasoning tier when unset.
+  to the reasoning tier when unset. Review round: the build tool `commit` is now visible to the
+  agent hold gate (`core/mcp/write-tool-meta.ts` — it was absent, so NO safety preset held it and a
+  read-only agent could write app files); the route/render acceptance checks are scored off the
+  TypeScript AST so a comment or a string naming a governed surface cannot pass; the coder may not
+  write `package.json` or any dotfile; tenant content is fenced as DATA and sensitive sample values
+  are masked; the sample SQL validates the table name before interpolating it; no builder stage can
+  throw out of the loop; and the acceptance scorecard is committed as `.app/acceptance.json` beside
+  the code it describes.
 - **Night run 2 — the plan of record for metrics, dashboards, chat-to-data, vibe-engineered software,
   git everywhere, the engineering view, the engineer's door and lifecycle.** Nine parallel streams
   (M · D · C · S · G · T · E · V · X) are specified in

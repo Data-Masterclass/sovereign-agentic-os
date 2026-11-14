@@ -409,7 +409,14 @@ boolean channels, `commit` as the build tool, `decide_deploy` deliberately not g
 dispatch consults the flag in **exactly one** guarded line, in
 `tabs/software/lib/platform-mcp.ts` `case 'build_software'`.
 
-**What is NOT true yet.** The route and render acceptance checks are **static file inspection**, not
-rendering: the evidence string says so on every line, and jsdom/screenshot rendering inside the loop
-is backlog. There are no story-derived **runtime** tests, and no model-quality evals — so the
-"harness vs model" split that motivated this work is measured on the harness side only.
+**What is NOT true yet.** The route and render acceptance checks are **static inspection of the
+TypeScript AST** — strong enough that a comment or a string naming `os.records.add` fails, but not
+rendering: the evidence string says `static check (AST)` on every line, and jsdom/screenshot
+rendering inside the loop is backlog. There are no story-derived **runtime** tests, and no
+model-quality evals — so the "harness vs model" split that motivated this work is measured on the
+harness side only. Three governance limits are recorded rather than implied: the rest of the
+platform-MCP write surface is still invisible to the agent hold gate (`commit` is fixed; the other
+thirteen are pinned by a test and handed to the software stream); sample-value masking is a column-
+NAME heuristic because the OS has no column-classification facility, and there is no trace redaction
+on that path; and builder model calls are still tagged `tab:assistant` because `assistantComplete`
+has no tab/run option.

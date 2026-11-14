@@ -53,6 +53,15 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   request_promotion: 'data',
   approve_promotion: 'data',
   set_app_design: 'software',
+  // `commit` writes an app's SOURCE FILES. It is a PLATFORM-MCP tool (declared `write: true` in
+  // `tabs/software/lib/platform-mcp.ts` and registered as the `platform` bundle), so it is NOT in
+  // `ALL_WRITE_TOOLS` — and this table is what the agent hold gate reads (`hold.ts` `isWriteTool`).
+  // While it was missing here, `holdDecisionFor(preset,'commit')` answered "not a write" for EVERY
+  // preset, so a `read-only` agent granted `commit` could write app files unheld. Added by the
+  // night-2 app-builder stream (review H-1). See `write-tool-meta.test.ts` for why the equality
+  // assertion now has two sources, and `tabs/agents/lib/builtin/appsmith.test.ts` for the posture
+  // this produces (read-only: HELD; other presets: a My-scope write, so not held — gate 2 rules).
+  commit: 'software',
   list_exposure_sets: 'connections',
   create_exposure_set: 'connections',
   update_exposure_set: 'connections',

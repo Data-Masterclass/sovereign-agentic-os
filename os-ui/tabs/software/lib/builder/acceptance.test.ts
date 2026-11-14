@@ -102,9 +102,58 @@ test('H6 route/render are scored by STATIC checks and the evidence says so', () 
   assert.equal(byId.get('c2')?.status, 'pass');
   assert.ok(byId.get('c2')?.evidence.startsWith('static check:'), 'a route pass must say it was static');
   assert.equal(byId.get('c3')?.status, 'pass');
-  assert.ok(byId.get('c3')?.evidence.includes('references os.datasets'));
+  assert.ok(byId.get('c3')?.evidence.includes('calls os.datasets'));
+  assert.ok(byId.get('c3')?.evidence.startsWith('static check (AST):'), 'a render pass must name the AST');
   // Every non-manual evidence string says HOW it was decided — never "rendered".
   for (const s of scores) assert.ok(!/\brendered\b/i.test(s.evidence), s.evidence);
+});
+
+test('H2/H6 a COMMENT or a STRING naming the governed surface does NOT pass the render check', () => {
+  const stories = [readStory];
+  const checks = deriveAcceptanceChecks(stories);
+  for (const forgery of [
+    '// os.datasets.query("ds_1")',
+    '/* we will call os.datasets.query here later */',
+    "const hint = 'os.datasets.query';\nexport const H = hint;",
+    'export const Doc = () => <p>os.datasets.query</p>;',
+    "import type { QueryResult } from '@sovereign-os/app-sdk';\nexport type R = QueryResult;",
+  ]) {
+    const files: SourceFile[] = [{ path: 'src/epics/e1/s1/Page.tsx', content: forgery }];
+    const scores = scoreAcceptanceChecks(checks, stories, files, GREEN);
+    const render = scores.find((s) => s.kind === 'render');
+    assert.equal(render?.status, 'fail', `forgery passed: ${forgery}`);
+    assert.ok(render?.evidence.includes('CALLS none of'), render?.evidence);
+    assert.ok(render?.evidence.includes('a comment or a string naming one does not count'));
+  }
+});
+
+test('H2 the write check is satisfied only by a real CALL to the write surface', () => {
+  const stories = [writeStory];
+  const checks = deriveAcceptanceChecks(stories);
+  const real: SourceFile[] = [
+    {
+      path: 'src/epics/e1/s2/Claim.tsx',
+      content:
+        "import { createOsClient } from '@sovereign-os/app-sdk';\n" +
+        'const os = createOsClient();\n' +
+        'export const save = (r: Record<string, unknown>) => os.records.add(r);\n',
+    },
+  ];
+  const render = scoreAcceptanceChecks(checks, stories, real, GREEN).find((s) => s.kind === 'render');
+  assert.equal(render?.status, 'pass');
+  assert.ok(render?.evidence.includes('calls os.records.add'));
+  assert.ok(render?.evidence.includes('importing @sovereign-os/app-sdk'));
+});
+
+test('L-3 an unscored build reports `scored: false`, never a clean-looking total of 0', () => {
+  const sum = acceptanceSummary([]);
+  assert.equal(sum.scored, false);
+  assert.equal(sum.ok, false, 'nothing scored can never be ok');
+  assert.equal(sum.total, 0);
+  assert.equal(sum.failed, 0);
+  const report = formatAcceptanceReport(deriveAcceptanceChecks([readStory]), []);
+  assert.ok(report.includes('NOT SCORED'), report);
+  assert.ok(report.includes('5 derived check(s)'), report);
 });
 
 test('a story with no file FAILS its route check and leaves render UNDECIDABLE, not passed', () => {

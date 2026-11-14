@@ -31,6 +31,8 @@ import { SET_STATE_TOOL_NAME } from '../engine/build-graph.ts';
 import { memoryCheckpointer } from '../engine/checkpointer.ts';
 import { runGraphEngine } from '../engine/run.ts';
 import { graphDeps, nodeOfRequest, stepOutcome, type GoldenToolCall, type HoldSink } from '../engine/parity-harness.ts';
+import { holdDecisionFor, isWriteTool, writeTargetScope } from '../build/hold.ts';
+import { WRITE_TOOL_TABS } from '@core/mcp/write-tool-meta';
 import { APPSMITH_CHANNELS, APPSMITH_MAX_ITERATIONS, APPSMITH_SYSTEM_ID, APPSMITH_YAML } from './appsmith.ts';
 
 const FIXTURE_PATH = join(process.cwd(), 'tabs', 'agents', 'lib', 'builtin', 'fixtures', 'builtin-appsmith.json');
@@ -185,4 +187,36 @@ test('the run matches the frozen golden tool-call sequence', async () => {
     fixture.golden.toolCalls.map((c) => `${c.node}:${c.tool}:${c.outcome}`),
   );
   assert.equal(r.held, fixture.golden.held);
+});
+
+// -------------------------------- H-1: the hold posture of the build tool ----------
+//
+// `commit` writes an app's SOURCE FILES and is a PLATFORM-MCP write tool, so it lives outside
+// `ALL_WRITE_TOOLS`. It was MISSING from `core/mcp/write-tool-meta.ts`, which is the table the
+// agent hold gate reads — so `holdDecisionFor(preset,'commit')` answered "not a write" under
+// EVERY preset and a `read-only` agent granted `commit` could write app files unheld. This pins
+// the fix AND the resulting posture, so `held: 0` in the golden above is a stated decision rather
+// than an accident. It must hold before `os.appsmith` is ever seeded.
+
+test('H-1 `commit` is a WRITE tool the hold gate can see', () => {
+  assert.ok(isWriteTool('commit'), 'commit must be in WRITE_TOOL_TABS or no preset can hold it');
+  assert.equal(WRITE_TOOL_TABS.commit, 'software');
+});
+
+test('H-1 posture: read-only HOLDS the build tool; the other presets do not, by design', () => {
+  // read-only: every write is blocked and queued to an admin. This is the bug that is now fixed —
+  // before `commit` was in the table this returned `{ held: false }`.
+  assert.deepEqual(holdDecisionFor('read-only', 'commit'), { held: true, approverRole: 'admin' });
+
+  // read-propose / full: `commit` writes the RUNNER'S OWN app (a My-scope artifact), and
+  // `writeTargetScope` classifies it `personal`. The OS's security invariant is that an agent never
+  // exceeds what its runner could do BY HAND, and a builder has full rights over their own app — so
+  // gate 2 (the run-as-user governed dispatch: OPA, DLS, role, ownership) is the authority, not a
+  // hold. THIS is why the fixture's golden records `held: 0` under `read-propose`: the commits were
+  // executed as the signed-in user, and the compile gate — not an approval queue — is what rejected
+  // the first one. A go-live still needs a human: `decide_deploy` is not granted at all.
+  assert.deepEqual(holdDecisionFor('read-propose', 'commit'), { held: false });
+  assert.equal(writeTargetScope('commit'), 'personal');
+  assert.equal(parseSystem(APPSMITH_YAML).safetyPreset, 'read-propose');
+  assert.equal(fixture.golden.held, 0, 'deliberate: a personal-scope write is not held — see above');
 });

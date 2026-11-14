@@ -17,7 +17,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sovereignAppFiles } from '../scaffolds/sovereign-app.ts';
 import { buildBuilderTree, mergeBuilderTree } from './tools.ts';
-import { deriveAcceptanceChecks, type CompileOutcome } from './acceptance.ts';
+import { acceptanceSummary, deriveAcceptanceChecks, type CompileOutcome } from './acceptance.ts';
 import { MAX_BUILDER_ITERATIONS, runBuilderLoop, type BuilderLoopDeps, type BuilderStep } from './loop.ts';
 import type { GroundingStory, SourceFile } from './grounding.ts';
 
@@ -257,4 +257,55 @@ test('mergeBuilderTree keeps the prior tree and lets the changeset win per path'
     { path: 'src/b.ts', content: 'keep' },
     { path: 'src/c.ts', content: 'added' },
   ]);
+});
+
+// ------------------------------------------- M-4: no dep may throw out of the loop ---
+
+test('M-4 a THROWING plan/build/review each end the loop with their OWN typed reason', async () => {
+  const cases: { dep: keyof BuilderLoopDeps; stopped: string; stage: string }[] = [
+    { dep: 'plan', stopped: 'plan-error', stage: 'plan' },
+    { dep: 'build', stopped: 'build-error', stage: 'build' },
+    { dep: 'review', stopped: 'review-error', stage: 'review' },
+    { dep: 'commit', stopped: 'commit-error', stage: 'commit' },
+  ];
+  for (const c of cases) {
+    const h = harness([GOOD], () => GREEN, {
+      [c.dep]: async () => {
+        throw new Error(`${c.stage} blew up (esbuild OOM)`);
+      },
+    } as Partial<BuilderLoopDeps>);
+    const r = await runBuilderLoop(input(), h.deps);
+    assert.equal(r.ok, false, c.stage);
+    assert.equal(r.stopped, c.stopped, c.stage);
+    assert.ok(r.summary.includes(`in the ${c.stage} stage`), r.summary);
+    assert.ok(r.summary.includes('esbuild OOM'));
+    assert.ok(r.summary.includes('Nothing was committed'));
+    // The failing stage is recorded as a step, so the trace shows how far the build got.
+    const last = h.steps[h.steps.length - 1];
+    assert.equal(last.kind, c.stage);
+    assert.equal(last.ok, false);
+    if (c.dep !== 'commit') assert.equal(h.commits.length, 0, c.stage);
+  }
+});
+
+test('M-4 runBuilderLoop NEVER throws, whatever a dep does', async () => {
+  for (const dep of ['plan', 'code', 'build', 'review', 'commit'] as (keyof BuilderLoopDeps)[]) {
+    const h = harness([GOOD], () => GREEN, {
+      [dep]: () => {
+        throw new Error('synchronous explosion');
+      },
+    } as Partial<BuilderLoopDeps>);
+    const r = await runBuilderLoop(input(), h.deps);
+    assert.equal(r.ok, false, dep);
+    assert.ok(r.stopped.endsWith('-error'), `${dep} -> ${r.stopped}`);
+  }
+});
+
+test('L-3 an all-red build says the checks were NEVER SCORED', async () => {
+  const attempts = [1, 2, 3, 4].map((n): SourceFile[] => [{ path: `src/try${n}.tsx`, content: `export const n = ${n};\n` }]);
+  const h = harness(attempts, () => RED);
+  const r = await runBuilderLoop(input(), h.deps);
+  assert.deepEqual(r.scores, []);
+  assert.ok(r.summary.includes('NEVER SCORED'), r.summary);
+  assert.equal(acceptanceSummary(r.scores).scored, false);
 });

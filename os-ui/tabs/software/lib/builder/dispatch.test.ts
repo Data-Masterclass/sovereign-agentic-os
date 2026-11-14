@@ -17,6 +17,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
+import { PLATFORM_MCP_TOOLS } from '../platform-mcp.ts';
 import { agenticBuilderEnabled, softwareBuilderMode } from './dispatch.ts';
 
 const DISPATCH_FILE = join(process.cwd(), 'tabs', 'software', 'lib', 'platform-mcp.ts');
@@ -82,7 +84,9 @@ const LOOP_SERVER = readFileSync(join(process.cwd(), 'tabs', 'software', 'lib', 
 test('H10 the loop writes ONLY through the governed commit door, as the signed-in user', () => {
   // One write call site, and the acting user is passed through to it.
   assert.equal(LOOP_SERVER.split('await commitToApp(').length - 1, 1);
-  assert.ok(LOOP_SERVER.includes('await commitToApp(app.id, user, files, message)'));
+  assert.ok(LOOP_SERVER.includes('await commitToApp(app.id, user, withRecord, message)'));
+  // M-5: the ONE write carries the code AND the scorecard that describes it, in one commit.
+  assert.ok(LOOP_SERVER.includes('const withRecord = [...files, { path: ACCEPTANCE_FILE'));
   // No second write path: no direct mirror/snapshot write, no store import, no service principal.
   for (const forbidden of ['snapshotFiles(', 'persistApp(', 'setAppSpec(', 'authorThroughFrontDoor(']) {
     assert.ok(!LOOP_SERVER.includes(forbidden), `the builder must not write via ${forbidden}`);
@@ -99,9 +103,13 @@ test('H12 every loop step becomes a governed trace span under the run', () => {
   assert.ok(LOOP_SERVER.includes('tool: `appsmith.${step.kind}`'), 'the span is named for the step');
   assert.ok(LOOP_SERVER.includes('principal: user.id'), 'the span is attributed to the acting user');
   assert.ok(
-    LOOP_SERVER.includes('...(overrides.traceContext ? { run: overrides.traceContext } : {})'),
+    LOOP_SERVER.includes('...(traceContext ? { run: traceContext } : {})'),
     'under a run the span nests in the run trace instead of standing alone',
   );
+  // L-2: inside an agent run the governed surface already carries the run id, so the build nests
+  // under the run's trace without a new argument at the dispatch call site.
+  assert.ok(LOOP_SERVER.includes("import { currentSurface } from '@core/infra/request-surface';"));
+  assert.ok(LOOP_SERVER.includes('currentSurface()?.runId ? { traceId: currentSurface()!.runId! } : undefined'));
 });
 
 test('H14 the coder model role is additive and falls back to the reasoning tier', () => {
@@ -112,4 +120,61 @@ test('H14 the coder model role is additive and falls back to the reasoning tier'
   assert.ok(LOOP_SERVER.includes("roleModel(role)"));
   assert.ok(LOOP_SERVER.includes("completeAs(user, 'coder')"));
   assert.ok(LOOP_SERVER.includes("completeAs(user, 'reasoning')"));
+});
+
+// ---------------------- H-1: the platform write surface the hold gate can see ------
+//
+// `core/mcp/write-tool-meta.test.ts` lists the platform-MCP write tools as a LITERAL, because a
+// core test must not import a tab. This is the other half of that assertion — it runs INSIDE the
+// software tab, where `PLATFORM_MCP_TOOLS` is its own module, so the literal and the real surface
+// cannot drift apart silently.
+
+test('H-1 `commit` is visible to the agent hold gate; the rest of the platform surface is NAMED', () => {
+  const declared = PLATFORM_MCP_TOOLS.filter((t) => t.write).map((t) => t.name);
+  assert.ok(declared.includes('commit'), 'commit must still be a declared platform write');
+  // The fix: the build tool is held-eligible. Before this, `holdDecisionFor(preset,'commit')`
+  // answered "not a write" for EVERY preset, so even a read-only agent could write app files.
+  assert.ok(WRITE_TOOL_NAMES.has('commit'));
+  // The pre-existing gap, pinned rather than tolerated: a NEW platform write tool fails this test
+  // until someone classifies it in `core/mcp/write-tool-meta.ts` or adds it here deliberately.
+  // Closing the rest changes the shipped Software Delivery Team's posture and the frozen engine
+  // goldens, so it belongs to the software stream — see the report's cross-stream findings.
+  assert.deepEqual(
+    declared.filter((n) => !WRITE_TOOL_NAMES.has(n)).sort(),
+    [
+      'archive',
+      'create_software',
+      'decide_deploy',
+      'delete',
+      'design_software',
+      'promote',
+      'request_deploy',
+      'set_app_spec',
+      'start_preview',
+      'use_as_data',
+      'use_connection',
+      'use_data',
+      'use_knowledge',
+    ],
+  );
+});
+
+// ------------------------------- M-6: the deadlock tripwire ------------------------
+//
+// This stream shipped, then fixed, a module cycle: a static `handleRpc` import in
+// `grounding-server.ts` closed `core/mcp/server` -> register-experimental -> platform-tools ->
+// platform-mcp -> loop-server -> grounding-server -> core/mcp/server on a PENDING top-level await,
+// and 28 test files hung. A grep for the lazy import pins that one file; this pins the PROPERTY,
+// wherever a future edge reappears.
+
+test('M-6 importing @core/mcp/server through the Build dispatch terminates', async () => {
+  const guard = new Promise<never>((_, reject) => {
+    const t = setTimeout(() => reject(new Error('import did not settle in 20s — a module cycle is back: something the Build dispatch reaches now takes a STATIC edge to @core/mcp/server, whose top-level await then never resolves')), 20_000);
+    t.unref?.();
+  });
+  const mod = await Promise.race([import('@core/mcp/server'), guard]);
+  assert.ok(typeof (mod as { handleRpc?: unknown }).handleRpc === 'function');
+  // And the dispatch's own module graph loads too — this is the edge that closed the cycle.
+  const builder = await Promise.race([import('./loop-server.ts'), guard]);
+  assert.ok(typeof (builder as { agenticBuild?: unknown }).agenticBuild === 'function');
 });

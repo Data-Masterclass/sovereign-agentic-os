@@ -26,11 +26,12 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { assistantComplete } from '@core/runtime/complete';
 import { roleModel } from '@core/models/roles';
 import { trace } from '@core/infra/agent-governed';
+import { currentSurface } from '@core/infra/request-surface';
 import type { RunTraceContext } from '@core/infra/langfuse';
 import { commitToApp, getSnapshot, hydrateSnapshot } from '@tabs/software/lib/server';
 import { templateFiles, type App } from '@tabs/software/lib/apps';
 import type { BuildTarget } from '@tabs/software/lib/build-target';
-import { deriveAcceptanceChecks, acceptanceSummary } from '@tabs/software/lib/builder/acceptance';
+import { deriveAcceptanceChecks, acceptanceSummary, type AcceptanceCheck, type CheckScore } from '@tabs/software/lib/builder/acceptance';
 import {
   groundingSummary,
   renderGroundingPack,
@@ -41,6 +42,113 @@ import { assembleGroundingPack, targetLabelFor } from '@tabs/software/lib/builde
 import { buildBuilderTree } from '@tabs/software/lib/builder/tools';
 import { runBuilderLoop, type BuilderLoopDeps, type BuilderLoopResult, type BuilderStep } from '@tabs/software/lib/builder/loop';
 import { coderPrompt, parseCoderReply, parseReviewReply, plannerPrompt, reviewerPrompt } from '@tabs/software/lib/builder/prompts';
+import { checkCap } from '@core/policy/cost';
+import { MAX_BUILDER_ITERATIONS } from '@tabs/software/lib/builder/loop';
+
+/**
+ * ROUGH per-iteration cost of a builder turn in USD — a planner/coder/reviewer round on the
+ * reasoning tier. Deliberately coarse: it exists to stop the loop from starting four iterations it
+ * cannot pay for, not to bill anything. Over-estimating is the safe direction.
+ */
+export const BUILDER_ITERATION_COST_USD = 0.5;
+
+/**
+ * BUDGET-AWARE ITERATION BOUND (review L-1). The loop's ceiling is `MAX_BUILDER_ITERATIONS`; this
+ * lowers it to what the caller's domain cap can still pay for, so a build near its cap does two
+ * honest iterations instead of failing mid-way through the fourth with a `CostCapExceededError`
+ * that loses the trail. No cap configured means no lowering. Never raises the ceiling.
+ */
+export function builderIterationBudget(user: CurrentUser, perIterationUsd = BUILDER_ITERATION_COST_USD): number | undefined {
+  const domain = user.activeDomain ?? user.domains[0];
+  if (!domain) return undefined;
+  const probe = checkCap({ scope: 'domain', subject: domain, amount: 0 });
+  if (!probe.cap) return undefined; // no cap set -> the loop's own bound is the only bound
+  const headroom = probe.cap.limit - probe.projected;
+  if (headroom <= 0) return 1; // over cap already: one iteration, which will fail honestly and say so
+  return Math.max(1, Math.min(MAX_BUILDER_ITERATIONS, Math.floor(headroom / perIterationUsd)));
+}
+
+/**
+ * WHERE THE ACCEPTANCE RESULT IS PERSISTED (review M-5). The deploy review card needs to show
+ * whether the build satisfied its stories. The narrowest additive path that does NOT touch stream
+ * S's files is the COMMITTED TREE itself: one `.app/acceptance.json` written by the SAME governed
+ * `commitToApp` call that writes the code, in the same commit. So it is versioned with the code it
+ * describes, it needs no `App` schema field, it is readable by `read_app_files` / the review card /
+ * the MCP with no new tool, and a rollback to an earlier commit carries the matching scorecard.
+ * See deviation H-review-5 for the merger: if S later adds an `App` field, this file stays the
+ * source of truth and the field becomes its cache.
+ */
+export const ACCEPTANCE_FILE = '.app/acceptance.json';
+
+/** The persisted record. Deliberately small, and `scored:false` is a first-class state. */
+export type AcceptanceRecord = {
+  version: 1;
+  appId: string;
+  target: string;
+  builder: 'agentic';
+  at: string;
+  by: string;
+  /**
+   * WHY this scorecard was written, as it was true AT WRITE TIME: `acceptance-passed` (the reviewer
+   * passed a clean scorecard) or `acceptance-incomplete` (the tree compiled but the budget ran out
+   * with checks unmet — the commit message says so too). Never a running state: this file is only
+   * ever written by a commit, so "in progress" would be a lie an approver could misread.
+   */
+  reason: 'acceptance-passed' | 'acceptance-incomplete';
+  iterations: number;
+  scored: boolean;
+  ok: boolean;
+  total: number;
+  passed: number;
+  failed: number;
+  manual: number;
+  unknown: number;
+  /** The derived checks and their scores, so the card can show WHICH story is unmet. */
+  checks: { id: string; kind: AcceptanceCheck['kind']; story: string; check: string; status: string; evidence: string }[];
+  /** What the grounding pack could not supply — an approver should see a thin brief. */
+  groundingGaps: string[];
+};
+
+/** Build the acceptance record a build commits beside its code. Pure. */
+export function acceptanceRecord(input: {
+  appId: string;
+  target: string;
+  userId: string;
+  iterations: number;
+  checks: AcceptanceCheck[];
+  scores: CheckScore[];
+  groundingGaps: string[];
+  at?: string;
+}): AcceptanceRecord {
+  const sum = acceptanceSummary(input.scores);
+  const byId = new Map(input.scores.map((s) => [s.id, s]));
+  return {
+    version: 1,
+    appId: input.appId,
+    target: input.target,
+    builder: 'agentic',
+    at: input.at ?? new Date().toISOString(),
+    by: input.userId,
+    reason: sum.ok ? 'acceptance-passed' : 'acceptance-incomplete',
+    iterations: input.iterations,
+    scored: sum.scored,
+    ok: sum.ok,
+    total: sum.total,
+    passed: sum.passed,
+    failed: sum.failed,
+    manual: sum.manual,
+    unknown: sum.unknown,
+    checks: input.checks.map((c) => ({
+      id: c.id,
+      kind: c.kind,
+      story: c.storyId ? `${c.epicId}/${c.storyId}` : 'build',
+      check: c.check,
+      status: byId.get(c.id)?.status ?? 'not-scored',
+      evidence: byId.get(c.id)?.evidence ?? 'not scored',
+    })),
+    groundingGaps: [...input.groundingGaps],
+  };
+}
 
 /** What the Build dispatch returns when the agentic builder ran. */
 export type AgenticBuildResult = {
@@ -55,6 +163,8 @@ export type AgenticBuildResult = {
   grounding: { summary: string; gaps: string[] };
   /** The acceptance checks derived from the stories, and how they scored. */
   acceptance: {
+    /** FALSE when the build never produced a scoreable tree — `total: 0` alone reads clean (L-3). */
+    scored: boolean;
     total: number;
     passed: number;
     failed: number;
@@ -65,6 +175,8 @@ export type AgenticBuildResult = {
   compile: { gated: boolean; ok: boolean; errors: string[]; note?: string };
   files: string[];
   committed: { files: number; detail: string } | null;
+  /** The committed path of the acceptance scorecard, or null when nothing was written (M-5). */
+  acceptanceFile: string | null;
   steps: BuilderStep[];
   summary: string;
   next: string;
@@ -107,6 +219,11 @@ export async function agenticBuild(
   target: BuildTarget,
   overrides: AgenticBuildOverrides = {},
 ): Promise<AgenticBuildResult> {
+  // L-2: when the Build dispatch runs INSIDE an agent run, the governed surface already carries the
+  // run id (set by the granted-tool executor), so the builder's spans nest under the run's trace
+  // with no new argument at the call site — the one guarded line in `platform-mcp.ts` stays one line.
+  const traceContext: RunTraceContext | undefined =
+    overrides.traceContext ?? (currentSurface()?.runId ? { traceId: currentSurface()!.runId! } : undefined);
   const pack = overrides.pack ?? (await assembleGroundingPack(user, app, target));
   const grounding = renderGroundingPack(pack);
   const checks = deriveAcceptanceChecks(pack.stories);
@@ -115,6 +232,12 @@ export async function agenticBuild(
 
   const reason = completeAs(user, 'reasoning');
   const coder = completeAs(user, 'coder');
+
+  // The loop hands the commit dep only (files, message), so the scorecard it should carry is
+  // captured here as the loop reports it. A commit happens BEFORE the loop returns, so the record
+  // states what was true at WRITE time — which is exactly what an approver needs.
+  let lastScores: CheckScore[] = [];
+  let lastIteration = 0;
 
   const deps: BuilderLoopDeps = {
     plan: async ({ grounding: g, checks: c }) => {
@@ -130,14 +253,28 @@ export async function agenticBuild(
       return { files: parsed.files, text };
     },
     build: async (files) => buildBuilderTree(prior, files),
-    review: async ({ report, compile }) => {
+    review: async ({ iteration, scores, report, compile }) => {
+      lastScores = scores;
+      lastIteration = iteration;
       const p = reviewerPrompt({ report, compileText: compile.ok ? 'compile check passed' : `compile: ${compile.errors.join(' | ')}` });
       const raw = await reason(p.system, p.user);
       return parseReviewReply(raw);
     },
     commit: async (files, message) => {
+      // M-5: the scorecard rides in the SAME governed commit as the code it describes, so the
+      // deploy card and an auditor read one commit, never a result that outlived its tree.
+      const record = acceptanceRecord({
+        appId: app.id,
+        target: label,
+        userId: user.id,
+        iterations: lastIteration,
+        checks,
+        scores: lastScores,
+        groundingGaps: pack.gaps,
+      });
+      const withRecord = [...files, { path: ACCEPTANCE_FILE, content: `${JSON.stringify(record, null, 2)}\n` }];
       try {
-        const { step } = await commitToApp(app.id, user, files, message);
+        const { step } = await commitToApp(app.id, user, withRecord, message);
         return { ok: step.ok !== false, detail: step.detail };
       } catch (e) {
         return { ok: false, detail: e instanceof Error ? e.message : String(e) };
@@ -149,12 +286,13 @@ export async function agenticBuild(
         tool: `appsmith.${step.kind}`,
         input: { appId: app.id, target: label, iteration: step.iteration },
         output: { ok: step.ok, summary: step.summary },
-        ...(overrides.traceContext ? { run: overrides.traceContext } : {}),
+        ...(traceContext ? { run: traceContext } : {}),
       });
     },
     ...overrides.deps,
   };
 
+  const budgeted = builderIterationBudget(user);
   const result = await runBuilderLoop(
     {
       appName: app.name,
@@ -164,7 +302,7 @@ export async function agenticBuild(
       prior,
       message: `build ${label} with the agentic builder`,
     },
-    deps,
+    { ...deps, ...(budgeted !== undefined ? { maxIterations: budgeted } : {}) },
   );
 
   const sum = acceptanceSummary(result.scores);
@@ -178,6 +316,7 @@ export async function agenticBuild(
     iterations: result.iterations,
     grounding: { summary: groundingSummary(pack), gaps: pack.gaps },
     acceptance: {
+      scored: sum.scored,
       total: sum.total,
       passed: sum.passed,
       failed: sum.failed,
@@ -193,6 +332,8 @@ export async function agenticBuild(
     },
     files: result.files.map((f) => f.path),
     committed: result.committed,
+    /** Where the scorecard landed, when a commit happened (review M-5). */
+    acceptanceFile: result.committed ? ACCEPTANCE_FILE : null,
     steps: result.steps,
     summary: result.summary,
     next: result.ok

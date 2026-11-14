@@ -829,6 +829,22 @@ breaking any of them is how it would rot.
    which runs the compile gate before any write and throws the exact diagnostics as a typed 422. Do
    not add a second write path "just for the builder" — a red tree would then be able to land.
 
+A fourth property was added by the review round, and it generalises beyond this builder:
+
+4. **A machine check over model-authored content must read the AST, not the text.** Scoring "this
+   file reaches governed data" with `String.includes('os.records.add')` is forgeable by a comment, a
+   string literal or a JSX text node — and the thing being scored is output the model chose. Any
+   future check over generated code belongs on `ts.createSourceFile` (`builder/symbols.ts` is the
+   pattern: parse-only, no program, no checker, cheap enough for every iteration).
+
+And one trap this stream fell into, recorded because the next person will too: **anything the Build
+dispatch can reach must not take a static import edge back to `@core/mcp/server`.** That module
+top-level-awaits its experimental bundle registration, one of those bundles is `platform-tools`,
+and `platform-tools` imports `tabs/software/lib/platform-mcp` — so a static edge from anything
+downstream of the dispatch closes a cycle on a pending top-level await and **every test file that
+touches the MCP server hangs** (28 of them, reported only as "unsettled top-level await"). Import it
+lazily at the call site. `builder/dispatch.test.ts` pins the property with a hard-timeout import.
+
 The honesty rules this codebase already punishes you for breaking apply with extra force here,
 because a builder is judged by its own report: an ungated shape is `unknown`, never a pass; a
 `manual` acceptance check is never machine-passed; a tree that compiles but satisfies no story is
