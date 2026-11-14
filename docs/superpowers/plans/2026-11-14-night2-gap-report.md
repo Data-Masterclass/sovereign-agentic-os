@@ -241,3 +241,120 @@ drives the MCP dispatcher **in-process with a signed-in principal**, which the b
 how `S6` (`callPlatformMcp`), `X8` (`handleRpc`), `C7` (`tools/call` through the dispatcher), `T8`,
 `G7` and `V7`/`V9` (registry-wide) were scored. Every other `mcp` half is folded into the
 `untestable here` reasons above.
+
+---
+
+# Iteration 2 — the 2–3 hour round, executed
+
+**Implementer:** iteration-2 agent, branch `feat/night-2`, worktree
+`.claude/worktrees/agent-acb1f71a644df51f5`, from `967d8a1b` (clean tree). Seven items, one commit
+each, in §6's order. Nothing on this list touches a read or write path that serves a number, with
+one deliberate exception named below (M12 adds a REFUSAL to the promote path).
+
+## What changed
+
+| # | Item | Rows | Commit | Test |
+|---|---|---|---|---|
+| 1 | The `docs/components/git.md` layout table corrected and pinned to `GIT_OBJECT_LAYOUT` | **G2** | `edcbe46a` | `os-ui/core/infra/git-objects-kinds.test.ts` (2 new tests) |
+| 2 | `dataset`, `metric` and `lifecycle-pin` git-object readers registered at boot | **G3 + G7** | `500c63a8` | `git-objects-kinds.test.ts` (boot wiring), `tabs/data/lib/git-object.test.ts`, `tabs/metrics/lib/git-object-server.test.ts`, `core/infra/lifecycle-pin-git-object.test.ts` |
+| 3 | The 27 Cube claims in `tabs/dashboards/**` deleted; the tab added to the tripwire | **M13 + X9** | `ca6bdb3a` | `tabs/metrics/lib/honest-text.test.ts` (`TREES` + `PROSE` extended) |
+| 4 | `<CloneRepository/>` and `<GitHeadBadge/>` mounted on the five detail surfaces | **G6**, half of **E10** | `f285bfc8` | `core/ui/git/mounts.test.ts` (4 tests) |
+| 5 | The dataset-tier ceiling in `governMetric` | **M12** | `a8ef8229` | `tabs/metrics/lib/governance.test.ts` (4 new cases) |
+| 6 | The degradation-precedence co-occurrence cases | **D12** | `ba8fece2` | `tabs/dashboards/lib/build/panel-query.test.ts` (5 new cases) |
+| 7 | Free: the `SAFE_EXPR_RE` lookahead · the coin-test placeholder row · the acting admin on a domain move | — (closes open items 8 and 16) | `222fa824`, `75180096` | `semantic/render.test.ts`, `agents/lib/git/coin-test.test.ts`, `dashboards/lib/git/commit.test.ts` |
+
+## The new counts
+
+| Stream | true | false | untestable here | rows | change |
+|---|---|---|---|---|---|
+| M — metrics as dbt metrics | 8 | 6 | 2 | 16 | +2 (M12, M13) |
+| D — Superset-class dashboards | 13 | 8 | 0 | 21 | +1 (D12) |
+| C — chat to the data | 10 | 6 | 0 | 16 | — |
+| S — software, hosted properly | 8 | 9 | 0 | 17 | — |
+| G — git everywhere, made visible | 8 | 2 | 0 | 10 | +4 (G2, G3, G6, G7) |
+| T — the engineering view | 8 | 2 | 1 | 11 | — |
+| E — the engineer's door | 8 | 2 | 2 | 12 | — (E10 half) |
+| V — lifecycle Studio→Test→Run | 11 | 2 | 1 | 14 | — |
+| X — cross-cutting | 10 | 1 | 1 | 12 | +1 (X9) |
+| H — the app-building harness | 22 | 0 | 0 | 22 | — |
+| **Total** | **106** | **38** | **7** | **151** | **+8 true, −8 false** |
+
+29 of the 38 remaining `false` rows are `[later]`/backlog rows that were never started. Of the **122
+rows the programme actually aimed at: 106 true, 9 false, 7 untestable here** (was 98/17/7).
+
+The nine remaining aimed-at `false` rows, unchanged in substance from §2: **M6** (rewrite the row or
+regress the dashboards), **M7** (the lifecycle overlay is not a committed file), **M8**
+(`promote_metric` has no parity case), **M11** (the explorer SQL boundary — §4/§5), **S8** (app
+actions do not reach `list_adoptable_actions`), **S9** (an ungranted dataset reference is a warning,
+not a refusal), **E10** (half: no surface passes `filePath`), **V3** (`goLive` does not call
+`annotatedTag`), **X11** (the SBOM carries a worktree path and lists no `echarts`).
+
+## Gates on this head
+
+| Check | Result |
+|---|---|
+| `npm --prefix os-ui test` | **exit 0** — 6263 tests, 6259 pass, **0 fail**, **4 todo** (was 6), 85 s |
+| `bash os-ui/scripts/gate.sh` | **exit 0** — 436 tests, 432 pass, 0 fail, 4 todo |
+| `node scripts/check-structure.mjs` | **exit 0** — "ok (no new violations)" |
+| ratchet | `TAB-ISOLATION 419` · `LEGACY-IMPORT 1` · `CORE-INDEPENDENCE 200` · `FILE-HEADER 1233` — all unmoved (1233 still 2 below its 1235 baseline, still not relocked) |
+| `bash scripts/license-check.sh` | **exit 0** — PASS, 47 bundled components, 1 pre-existing informational warning, both version floors hold |
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | clean |
+| stray `* 2.*` files | none |
+
+The 4 remaining `todo`s are the pre-existing Phase-1/2 markers: 3 in
+`tabs/agents/lib/build/os-tools.test.ts` (resource narrowing ×2, held-action args) and 1 in
+`core/infra/os-mirror.test.ts` (mirror durability). The 2 coin-test `dataset` todos are gone.
+
+## Decisions taken inside the round, with the reasoning
+
+1. **The layout table is now the code's table, selector for selector.** `models/**` became
+   `models/`, and the per-directory file detail (`dashboard.yaml`, `system.yaml`, `graph.json`, …)
+   moved into prose beneath it. A prettier glob that does not equal the code cannot be pinned, and a
+   page that cannot be pinned drifts — which is how it came to name a module that does not exist.
+   The first column now carries the `GitObjectKind` itself, so the parse is exact rather than
+   heuristic; the one row that is not an object kind (OS governance metadata) is marked as such and
+   asserted to be the only one.
+2. **The `metric` reader took the governed read, not a shortcut.** The brief allowed registering
+   only `dataset` and `lifecycle-pin` if no governed one-call read existed. One does:
+   `getMetric(id, caller)` resolves the owning dataset through `getDataset`, so the `{domain,
+   semanticModel, ownerUid}` the path needs come off the record the gate already approved — no
+   second round trip, no second visibility rule, and the refusal path collapses 403 and 404 into one
+   `null` exactly as the dashboards resolver does.
+3. **No new tab→tab import.** The metric lane needs `modelName` and `sanitizeIdent`, both owned by
+   the Data tab. `modelName` was already on that tab's documented cross-tab barrel; `sanitizeIdent`
+   was added to it (it is the one normalisation every personal lane is built from, and the
+   alternative — reimplementing the transform in the Metrics tab — is how two spellings of a lane
+   get created). `tabs/metrics/lib/model.ts` then exposes `semanticModelName` / `laneUid` through
+   its EXISTING import line, so `TAB-ISOLATION` stayed at 419. One slip was caught by the ratchet
+   mid-round and fixed in `75180096`: the M12 test had imported `Dataset` from `@tabs/data` for a
+   type annotation, which is `Parameters<typeof goldSales>[0]` off the tab's own fixture.
+4. **The `lifecycle-pin` resolver lives beside its writer, in @core.** It is the only kind whose
+   writer is not a tab's, so there is no tab to register it; putting it anywhere else would move
+   knowledge of `os/lifecycle/pins.yml` away from the module that owns the file. The registration
+   line is still in `instrumentation.ts` with every other kind.
+5. **Backlog kinds must NOT gain a reader.** The new enumeration test fails in both directions: a
+   kind whose writer commits and has no reader fails (the gap this round closed), and a kind with no
+   writer that gains a reader fails too — a history of nothing is not an improvement on a typed 501.
+6. **M12 moved two existing tests, and that is the honest consequence.** `governance.test.ts` and
+   `gate.test.ts` both walked a metric to Company on a Domain-tier fixture, which the ceiling now
+   refuses. Both now use a certified data product; every role assertion they were written for is
+   unchanged, and the ceiling has its own four cases including "AT the ceiling is allowed".
+7. **E10 is reported as half flipped, not flipped.** The clone command is mounted on all five
+   surfaces and tested; `repoFileHref` still has no caller, so no artefact links to its own file in
+   the repo. Threading a path per kind is not a one-line mount (a dashboard's directory is slugged
+   from its NAME, so slug ≠ id), and the brief's instruction was one import and one line per header.
+8. **The coin-test `dataset` row was deleted, not wired.** Wiring it needs `@tabs/data/*` from
+   inside `tabs/agents/` — the one import a tab may not make, which the file's own header already
+   records as deviation X-13. The real dataset coin test is green in `tabs/data/lib/dbt/ingest.test.ts`,
+   and the enumeration test now asserts that test exists BY FILE AND BY TITLE. A checked pointer is
+   worth more than a `todo` nobody reads.
+
+## Carried forward, unchanged
+
+Every item in §3 that was open stays open except **8** (the domain-move attribution now has its
+end-to-end assertion: both repositories' commits are checked for the acting admin's authorship, the
+`OS-Actor` trailer, no `system` attribution and no synthesized e-mail) and **16** (2 of the 6 todos
+are gone; 4 pre-existing markers remain). §4's `sanitizeIdent` collision is untouched and is still
+the first item of the morning, above every checklist row. §5's MEDIUM finding (the explorer's
+identifier gate living one layer out from its boundary) is untouched: it is M11, and it wants
+daylight. §6's morning list stands as written, minus the seven items this round closed.
