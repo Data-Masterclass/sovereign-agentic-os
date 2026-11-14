@@ -222,24 +222,21 @@ export function gitCommitNote(outcome: AppCommitOutcome): string {
 export async function readAppTreeFromGit(
   app: Pick<AppIdentity, 'slug' | 'domain'>,
   opts: { reposDir?: string; ref?: string } = {},
-): Promise<{ files: ScaffoldFile[]; sha: string } | null> {
+): Promise<{ files: ScaffoldFile[]; sha: string; truncated: boolean } | null> {
   if (!appProjectGitEnabled()) return null;
   const domain = String(app.domain ?? '').trim();
   if (!domain) return null;
   try {
-    const { listTree, readBlob, repoExists, log } = await import('@core/infra/git-store');
-    const reposDir = opts.reposDir ?? config.reposDir;
-    if (!repoExists(domain, { reposDir })) return null;
-    const prefix = `${appSubtreePrefix(app.slug)}/`;
-    const ref = opts.ref ?? 'main';
-    const entries = (await listTree(domain, ref, { reposDir })).filter((e) => e.path.startsWith(prefix));
-    if (entries.length === 0) return null;
-    const files: ScaffoldFile[] = [];
-    for (const e of entries) {
-      files.push({ path: e.path.slice(prefix.length), content: await readBlob(domain, ref, e.path, { reposDir }) });
-    }
-    const head = (await log(domain, { reposDir, limit: 1 }))[0];
-    return { files, sha: head?.sha ?? '' };
+    // REVIEW M-1 + M-5: ONE bounded `@core` read (`readSubtree`) — one tree walk, capped blob
+    // reads, and the sha of the commit that last changed THIS APP's prefix (not the repository
+    // head, which a dbt or agents commit would otherwise supply as the app's version).
+    const { readSubtree } = await import('@core/infra/git-store');
+    const read = await readSubtree(domain, appSubtreePrefix(app.slug), {
+      reposDir: opts.reposDir ?? config.reposDir,
+      ref: opts.ref,
+    });
+    if (!read) return null;
+    return { files: read.files as ScaffoldFile[], sha: read.sha, truncated: read.truncated };
   } catch (e) {
     console.warn(`[app-git] read-back of apps/${app.slug} in '${domain}' failed: ${e instanceof Error ? e.message : String(e)}`);
     return null;

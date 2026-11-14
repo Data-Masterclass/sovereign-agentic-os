@@ -24,6 +24,8 @@ import {
   listTags,
   resolveTag,
   logPath,
+  readSubtree,
+  MAX_SUBTREE_FILES,
   assertTagName,
   tagRef,
   GitStoreError,
@@ -128,4 +130,28 @@ test('additive: commitTree and log still behave exactly as before the tag block'
   assert.equal(r2.changed, false, 'unchanged tree ⇒ no commit');
   assert.equal(r2.sha, r1.sha);
   assert.deepEqual(await listTags('plain', '', { reposDir }), [], 'a repo with no tags has no releases');
+});
+
+
+test('readSubtree: a BOUNDED read of one subtree — prefix stripped, the prefix’s own sha (M-5)', async () => {
+  await commitSubtree('eng', 'apps/reader', new Map([
+    ['apps/reader/app.yaml', 'name: Reader\n'],
+    ['apps/reader/src/App.tsx', 'export default () => null;\n'],
+  ]), { ...opts(), message: 'software(eng): push reader — via mcp:push_app_files' });
+  // A LATER commit elsewhere in the repo must NOT become this subtree's sha.
+  await commitSubtree('eng', 'apps/other2', new Map([['apps/other2/app.yaml', 'name: Other2\n']]), opts());
+
+  const read = await readSubtree('eng', 'apps/reader', { reposDir });
+  assert.ok(read);
+  assert.deepEqual(read!.files.map((f) => f.path).sort(), ['app.yaml', 'src/App.tsx'], 'the prefix is stripped');
+  assert.equal(read!.files.find((f) => f.path === 'app.yaml')?.content, 'name: Reader\n');
+  assert.equal(read!.truncated, false, 'the honest completeness flag');
+  const mine = await logPath('eng', 'apps/reader', { reposDir, limit: 1 });
+  assert.equal(read!.sha, mine.entries[0].sha, 'the sha is the commit that last changed THIS prefix');
+  assert.ok(read!.sha !== (await log('eng', { reposDir, limit: 1 }))[0].sha, 'and NOT the repository head');
+
+  // An absent prefix or repository is null — never an empty tree that reads as "no files".
+  assert.equal(await readSubtree('eng', 'apps/not-there', { reposDir }), null);
+  assert.equal(await readSubtree('no-such-domain', 'apps/x', { reposDir }), null);
+  assert.ok(MAX_SUBTREE_FILES > 0 && MAX_SUBTREE_FILES <= 1000, 'the file cap is a real bound');
 });

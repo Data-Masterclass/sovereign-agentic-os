@@ -6,7 +6,7 @@ Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 
 `lib/infra` is the **governed spine and the sole gateway to every external
 system**. It is the only layer permitted to call OPA, Trino, Cube, OpenSearch,
-LiteLLM, MinIO, Forgejo, Kubernetes, the OS-mirror, Secrets Manager, and the
+LiteLLM, MinIO, Kubernetes, the OS-mirror, Secrets Manager, and the
 transactional mailer. All data-tool calls and agent tool calls flow through the
 two `governed*.ts` spines here — the rest of the codebase may not bypass them.
 
@@ -71,7 +71,7 @@ must pass on every PR that touches `governed.ts`.
 | Imports from | — |
 |---|---|
 | Internal `lib/` | `lib/core` only |
-| External | OPA, Cube, Trino, OpenSearch, LiteLLM, MinIO, Forgejo, k8s API |
+| External | OPA, Trino, OpenSearch, LiteLLM, MinIO, k8s API |
 
 `lib/core` must **not** import `lib/infra`. Tab stores import `lib/infra` and
 `lib/core`; they do not call external services directly.

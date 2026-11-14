@@ -853,3 +853,32 @@ consent step and a write **held** under the reads-on/writes-off preset. Data goe
 the governed paths as the end user, so two sessions of the same app see different rows. The
 whole triangle, plus both negative cases, is `tabs/software/lib/triangle.test.ts`.
 
+### App intent: what an app may ask the OS for (night-2 review H-1)
+
+A governed app runs in a same-origin sandboxed iframe and calls the OS with the ambient
+`soa_session` cookie — which is the cheapest correct answer to "as the signed-in user", and was
+also, until this landed, enough for app code to start agent runs and approve held writes
+silently. Three layers now stand between an app and those two actions, and each is claimed for
+exactly what it does:
+
+1. **A scoped, signed intent.** When the OS renders an app it mints an HMAC intent
+   (`core/kernel/app-intent.ts`) for THAT user and THAT app, carrying `agent-run` **only**, and
+   injects it into the app document. The SDK sends it back as `x-os-app-intent` with
+   `x-os-app-origin: app`. `guardAppIntent` runs on `POST /api/agents/systems/[id]/run` and
+   `POST /api/governance/approvals`: a request that announces itself as an app, or presents a
+   token at all, must present a valid one — minted for the session's user, unexpired, scoped —
+   or it is a 403 with the reason. A cross-site `Sec-Fetch-Site` is refused outright. No code
+   path mints `approval-decide` for an app, so approving is refused by construction.
+2. **The app does not post the approval.** `os.agents.decide` sends `os:app-decide-request` to
+   the host shell; the shell renders the ask in OS chrome and links the user into the top-level
+   Governance inbox, where the user decides. The app cannot drive the top level —
+   `allow-top-navigation` and `allow-popups` are both omitted from the sandbox — and the shell
+   holds no token in its DOM, because an `allow-same-origin` child could read it.
+3. **The app frame's `connect-src` is an allowlist.** This is the layer that binds a HOSTILE app,
+   which could otherwise simply omit the headers: a header guard cannot tell such an app from the
+   OS UI on our own origin.
+
+**Not claimed:** a same-origin `allow-same-origin` frame is not fully isolated. The complete fix
+is a null-origin frame with a postMessage RPC for every OS call — a deliberate redesign of the
+identity bridge, recorded as deviation S-9 rather than assumed.
+

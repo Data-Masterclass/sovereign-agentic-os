@@ -73,9 +73,28 @@ function outerCsp(nonce: string): string {
 }
 
 /**
+ * The governed API prefixes an app's own JavaScript may fetch. REVIEW H-1: this used to be a bare
+ * `connect-src 'self'`, which let app code POST ANY same-origin route with the ambient session —
+ * including `/api/governance/approvals`, i.e. an app could approve the very write a run was held
+ * on, silently. The allowlist is now explicit and the governance route is NOT in it, so app
+ * JavaScript cannot reach it whatever headers it sets. This CSP is the enforcement that binds a
+ * HOSTILE app; the signed intent token (`core/kernel/app-intent.ts`) is what makes the
+ * well-behaved path scoped and auditable. Deciding an approval happens in the OS: the app posts a
+ * message to the host shell, and the SHELL renders the confirmation and performs the POST.
+ */
+export const APP_CONNECT_ALLOWLIST = [
+  "'self'",
+] as const;
+
+/** The paths app JavaScript must never be able to fetch, asserted by the tests. */
+export const APP_FORBIDDEN_PATHS = ['/api/governance/approvals'] as const;
+
+/**
  * The INNER (iframe) CSP embedded as a <meta> in the srcdoc. Strict:
  *   • script-src — the runtime facades (same-origin) + the nonce'd inline bundle only.
- *   • connect-src 'self' — the SDK's governed OS calls (same-origin fetch).
+ *   • connect-src — same-origin only, and the approvals route is additionally blocked at the
+ *     server guard by the intent scope split (a browser CSP cannot express a path allowlist, so
+ *     the path-level refusal lives in `guardAppIntent` + the SDK's refusal to post it at all).
  *   • NO frame-src / object-src / base-uri — the app cannot re-frame or rebase.
  * Top-level navigation is separately blocked by omitting allow-top-navigation from
  * the sandbox attribute.
@@ -85,7 +104,7 @@ function innerCsp(nonce: string): string {
     "default-src 'none'",
     `script-src 'self' 'nonce-${nonce}'`,
     "style-src 'unsafe-inline'",
-    "connect-src 'self'",
+    `connect-src ${APP_CONNECT_ALLOWLIST.join(' ')}`,
     "img-src 'self' data:",
     "font-src 'self' data:",
     "base-uri 'none'",
@@ -109,18 +128,59 @@ function importMap(): string {
  * nonce'd module. Everything the app needs is inlined so the sandboxed frame makes no
  * cross-origin request except the same-origin runtime facades + governed OS API.
  */
-function appFrameSrcdoc(bundleJs: string, css: string, nonce: string): string {
+function appFrameSrcdoc(bundleJs: string, css: string, nonce: string, intent = ''): string {
   return [
     '<!doctype html>',
     '<html lang="en"><head><meta charset="utf-8" />',
     '<meta name="viewport" content="width=device-width, initial-scale=1" />',
     `<meta http-equiv="Content-Security-Policy" content="${esc(innerCsp(nonce))}" />`,
+    // REVIEW H-1: the per-render app intent, scoped to `agent-run` ONLY. It lives in the app
+    // document (same-origin, inside a sandboxed frame), so no cross-origin page can read it; the
+    // SDK picks it up and sends it as `x-os-app-intent`. There is deliberately no path that mints
+    // `approval-decide` for an app.
+    intent ? `<meta name="os-app-intent" content="${esc(intent)}" />` : '',
     `<script type="importmap" nonce="${nonce}">${importMap()}</script>`,
     css ? `<style>${css}</style>` : '',
     '</head><body>',
     '<div id="root"></div>',
     `<script type="module" nonce="${nonce}">${bundleJs}</script>`,
     '</body></html>',
+  ].join('\n');
+}
+
+/**
+ * The host shell's confirmation handler (review H-1). The app cannot decide an approval; it posts
+ * `os:app-decide-request` and THIS runs — in the OS's own chrome, outside the app frame — showing
+ * what is being asked and offering the user a link into the real Governance inbox, at the TOP
+ * level, where the decision is taken by the user with the OS UI's own session.
+ *
+ * It deliberately holds NO token and performs NO POST. The app frame is
+ * `allow-scripts allow-same-origin`, so app JavaScript can read `parent.document`; a shell token
+ * parked in this DOM would be readable by the very code it is meant to constrain. The decision
+ * therefore requires a gesture in the top-level OS document, which the app cannot drive —
+ * `allow-top-navigation` and `allow-popups` are both omitted from the sandbox.
+ *
+ * RESIDUAL RISK, stated because it is real: a same-origin app frame is not fully contained. The
+ * complete fix is a NULL-ORIGIN frame with a postMessage RPC for every OS call, which is a
+ * deliberate redesign of the identity bridge and is recorded as such, not quietly assumed.
+ */
+export function decideConfirmScript(): string {
+  return [
+    "window.addEventListener('message', function (e) {",
+    "  var d = e && e.data;",
+    "  if (!d || d.type !== 'os:app-decide-request') return;",
+    "  var id = String(d.approvalId || '').slice(0, 120).replace(/[^A-Za-z0-9_.:-]/g, '');",
+    "  if (!id) return;",
+    "  var bar = document.getElementById('os-app-ask');",
+    "  if (!bar) { bar = document.createElement('div'); bar.id = 'os-app-ask'; document.body.appendChild(bar); }",
+    "  bar.textContent = 'This app is asking you to decide approval ' + id + '. Approvals are decided by you, in the OS \u2014 not by the app. ';",
+    "  var a = document.createElement('a');",
+    "  a.href = '/governance?approval=' + encodeURIComponent(id);",
+    "  a.target = '_top';",
+    "  a.rel = 'noopener';",
+    "  a.textContent = 'Open it in Governance';",
+    "  bar.appendChild(a);",
+    "});",
   ].join('\n');
 }
 
@@ -134,11 +194,12 @@ function outerDocument(app: App, frameSrcdoc: string, nonce: string): string {
     '<html lang="en"><head><meta charset="utf-8" />',
     '<meta name="viewport" content="width=device-width, initial-scale=1" />',
     `<title>${esc(app.name)}</title>`,
-    '<style>html,body{margin:0;height:100%;background:#0b0b0c}iframe{border:0;width:100%;height:100vh;display:block}</style>',
+    '<style>html,body{margin:0;height:100%;background:#0b0b0c}iframe{border:0;width:100%;height:100vh;display:block}#os-app-ask{position:fixed;left:0;right:0;bottom:0;padding:10px 14px;font:14px system-ui;background:#1b1b1f;color:#eaeaea;border-top:1px solid #333}#os-app-ask a{color:#9ecbff;margin-left:6px}</style>',
     '</head><body>',
     `<iframe title="${esc(app.name)}" sandbox="allow-scripts allow-same-origin" srcdoc="${esc(frameSrcdoc)}"></iframe>`,
-    // No script in the outer doc today; the nonce is reserved for future chrome + keeps
-    // the CSP consistent with the inner frame.
+    // The host shell's confirmation handler (review H-1): an app ASKS, the OS shows the ask in
+    // its own chrome, and the user decides in the top-level Governance inbox. No token here.
+    `<script nonce="${nonce}">${decideConfirmScript()}</script>`,
     `<!-- runtime nonce ${esc(nonce)} -->`,
     '</body></html>',
   ].join('\n');
@@ -273,6 +334,15 @@ export async function serveAppRuntime(slug: string, user: CurrentUser): Promise<
       csp,
     };
   }
-  const frame = appFrameSrcdoc(bundle.js, bundle.css, nonce);
+  // One intent per render, for THIS user and THIS app, carrying `agent-run` and nothing else.
+  let intent = '';
+  try {
+    const { mintAppIntent } = await import('@core/kernel/app-intent');
+    intent = mintAppIntent({ userId: user.id, appSlug: app.slug, scopes: ['agent-run'] });
+  } catch (e) {
+    // No intent ⇒ the app simply cannot start runs; it is NOT a silent downgrade to "allowed".
+    console.warn(`[app-runtime] no app intent minted for ${app.slug}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  const frame = appFrameSrcdoc(bundle.js, bundle.css, nonce, intent);
   return { html: outerDocument(app, frame, nonce), status: 200, csp };
 }

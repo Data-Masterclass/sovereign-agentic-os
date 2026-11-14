@@ -135,19 +135,58 @@ test('LEG 1 — a run HELD on a write surfaces as `parked` WITH its approval id,
   assert.equal(run.events, 2);
 });
 
-test('LEG 1 — os.agents.decide posts the ONE governance inbox route; a role that may not decide gets Forbidden', async () => {
+test('LEG 1 — os.agents.decide NEVER posts: it ASKS the OS host shell to show the confirmation (H-1)', async () => {
   const { calls, fetchImpl } = fakeOs({
-    '/api/governance/approvals': { body: { approval: { id: 'apr_7', status: 'approved', decidedBy: 'amir' } } },
+    '/api/governance/approvals': { body: { approval: { id: 'apr_7', status: 'approved' } } },
   });
-  const os = createOsClient({ fetch: fetchImpl });
-  const out = await os.agents.decide('apr_7', 'approve');
-  assert.equal(calls[0].url, '/api/governance/approvals');
-  assert.deepEqual(JSON.parse(String(calls[0].init.body)), { id: 'apr_7', decision: 'approve' });
-  assert.deepEqual(out, { approvalId: 'apr_7', status: 'approved', decidedBy: 'amir' });
+  // Inside an OS-rendered app frame: the intent is in the document, and `parent` is the shell.
+  const posted: { msg: unknown; origin: string }[] = [];
+  const g = globalThis as unknown as Record<string, unknown>;
+  const priorDoc = g.document;
+  const priorWin = g.window;
+  g.document = { querySelector: () => ({ getAttribute: () => 'intent-token' }) };
+  g.window = { parent: { postMessage: (msg: unknown, origin: string) => posted.push({ msg, origin }) } };
+  try {
+    const os = createOsClient({ fetch: fetchImpl });
+    const out = await os.agents.decide('apr_7', 'approve');
+    assert.equal(calls.length, 0, 'the app made NO request to the governance inbox');
+    assert.equal(posted.length, 1, 'it asked the host shell instead');
+    assert.deepEqual(posted[0].msg, {
+      type: 'os:app-decide-request',
+      approvalId: 'apr_7',
+      decision: 'approve',
+      remember: false,
+    });
+    // HONEST STATE: nothing is decided until the user confirms in the OS.
+    assert.deepEqual(out, { approvalId: 'apr_7', status: 'awaiting-user-confirmation' });
 
-  const denied = fakeOs({ '/api/governance/approvals': { status: 403, body: { error: 'This item needs an Administrator' } } });
-  const os2 = createOsClient({ fetch: denied.fetchImpl });
-  await assert.rejects(() => os2.agents.decide('apr_7', 'approve'), /This item needs an Administrator/);
+    // Outside an OS-rendered app (no injected intent) it is refused, not silently attempted.
+    g.document = { querySelector: () => null };
+    const os2 = createOsClient({ fetch: fetchImpl });
+    await assert.rejects(() => os2.agents.decide('apr_7', 'approve'), /only available inside an OS-rendered app/);
+    assert.equal(calls.length, 0, 'still no request');
+  } finally {
+    g.document = priorDoc;
+    g.window = priorWin;
+  }
+});
+
+test('LEG 1 — os.agents.run carries the OS-injected app intent, and nothing else of its own (H-1)', async () => {
+  const { calls, fetchImpl } = fakeOs({ '/api/agents/systems/sys_1/run': { body: { runId: 'run_9' } } });
+  const g = globalThis as unknown as Record<string, unknown>;
+  const priorDoc = g.document;
+  g.document = { querySelector: () => ({ getAttribute: () => 'intent-token' }) };
+  try {
+    const os = createOsClient({ fetch: fetchImpl });
+    await os.agents.run('sys_1', 'do the thing');
+    const h = (calls[0].init.headers ?? {}) as Record<string, string>;
+    assert.equal(h['x-os-app-origin'], 'app', 'it says it is an app');
+    assert.equal(h['x-os-app-intent'], 'intent-token', 'and presents the intent the OS injected');
+    // The intent is the OS's, not the app's: there is no app key, bearer or secret anywhere.
+    assert.equal(carriesOwnCredential({ headers: h, body: JSON.parse(String(calls[0].init.body)) }), false);
+  } finally {
+    g.document = priorDoc;
+  }
 });
 
 // ──────────────────── legs 2 + 3: agent → data, then the app reads it back ────────────────────

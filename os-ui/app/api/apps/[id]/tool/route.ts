@@ -6,6 +6,7 @@ import { requireUser } from '@core/kernel/auth';
 import { getAppForUser } from '@tabs/software/lib/apps';
 import { callAppTool } from '@tabs/software/lib/app-tool-call';
 import { recordActor } from '@tabs/software/lib/app-records';
+import { allActiveAdoptions, adoptionCovers } from '@tabs/connections/lib/action-adoptions';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,8 +50,24 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const tool = String(body?.tool ?? '');
 
+  // REVIEW H-2: the DOMAIN-ADOPTION layer is injected HERE, at the composition layer, because a
+  // tab may not import another tab and the adoption store is the connections tab's
+  // (`adoptActions` / `adoptionCovers` — the same four-layer primitive connection exposures use,
+  // not a parallel one). The port is read fresh per call, so a revoked adoption bites
+  // immediately; an unreachable store yields NO adoptions, which is fail-closed.
+  let adoptions: Awaited<ReturnType<typeof allActiveAdoptions>> = [];
+  try {
+    adoptions = await allActiveAdoptions();
+  } catch {
+    adoptions = [];
+  }
+  const adoption = {
+    adopted: (appExposureId: string, domain: string, actionName: string) =>
+      adoptionCovers(adoptions, appExposureId, domain, actionName),
+  };
+
   // The full governed spine (authorize → hold/deny → execute → trace) lives in
   // lib/software/app-tool-call.ts; the route only maps its result to HTTP.
-  const { status, body: payload } = await callAppTool(app, tool, body.args, user.id, body, recordActor(user));
+  const { status, body: payload } = await callAppTool(app, tool, body.args, user.id, body, recordActor(user), adoption);
   return NextResponse.json(payload, { status });
 }

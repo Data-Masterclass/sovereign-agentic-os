@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { runAgentic, type LlmCall } from '@core/runtime/agentic';
@@ -21,6 +21,27 @@ import { esbuildWasmReady } from './preview-runtime.ts';
 import { gateLineFromStep } from './build-activity.ts';
 import { ensureSectionsRegistered } from './sections-registry.ts';
 import type { ScaffoldFile } from './model.ts';
+
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir as __tmpdir } from 'node:os';
+import { join as __join } from 'node:path';
+import { config as __cfg } from '@core/kernel/config';
+
+// Night-2 S5 + review M-2: `commitToApp` COMMITS to the domain repository, and a commit git
+// refuses is a 503 that writes nothing (not a 200 with `commit: null` plus a mirror write). The
+// tests here commit real trees, so they need a real repos directory.
+let __reposDir = '';
+let __priorRepos = '';
+before(() => {
+  __reposDir = mkdtempSync(__join(__tmpdir(), 'os-repos-cg-'));
+  __priorRepos = __cfg.reposDir;
+  (__cfg as { reposDir: string }).reposDir = __reposDir;
+});
+after(() => {
+  (__cfg as { reposDir: string }).reposDir = __priorRepos;
+  rmSync(__reposDir, { recursive: true, force: true });
+});
+
 
 const dev: CurrentUser = { id: 'dan', name: 'Dan', domains: ['eng'], role: 'creator' };
 

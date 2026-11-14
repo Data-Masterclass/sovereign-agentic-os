@@ -2035,6 +2035,37 @@ deviation is.
   second door for the same read. The SDK therefore mirrors the UI's door exactly:
   `os.agents.get(systemId, runId)`. *Next:* if a system-less read is wanted, it belongs in the
   agents tab as one route, and the SDK's signature narrows to the plan's.
+- **S-9 — review H-1: the same-origin app frame is HARDENED, not yet fully isolated.** The app
+  iframe is `allow-scripts allow-same-origin`, so app JavaScript can read `parent.document` — a
+  host-shell token parked in that DOM would be readable by the code it constrains. So the fix is
+  layered and each layer is claimed for exactly what it does: (1) the app's OS-minted intent
+  carries `agent-run` ONLY, and the guard on both POSTs refuses a missing, forged, expired,
+  other-user or wrong-scope token with a 403; (2) `os.agents.decide` no longer posts — it asks the
+  host shell, which renders the ask in OS chrome and sends the user to the top-level Governance
+  inbox (the app cannot drive the top level: `allow-top-navigation` and `allow-popups` are
+  omitted); (3) the app frame's `connect-src` is an explicit allowlist. What is NOT claimed: a
+  header guard cannot distinguish a hostile same-origin app that simply omits the headers from
+  the OS UI itself. The complete fix is a NULL-ORIGIN app frame with a postMessage RPC for every
+  OS call — a deliberate redesign of the identity bridge, recorded here rather than assumed.
+- **S-10 — review M-4: the provenance rule is positive, on ONE axis.** `assertNotSeeded` now
+  requires `source`/`provenance` to say `live-app` and refuses any other claim by default. It
+  deliberately does NOT police `mode`: a review card legitimately carries
+  `scan.mode: 'offline-mock'` — a real deterministic scan over the real committed files by the
+  offline engine — and refusing that would block every offline gate, which is both wrong and the
+  fastest way to get a guard switched off. `mode: 'demo-seed'` is still caught by the negative
+  backstop.
+- **S-11 — review M-2: a failed git commit now FAILS the write (503).** `commitToApp` used to
+  write the mirror cache even when git threw and answer 200 with `commit: null`. Consequence for
+  operators: with the flag on, `/repos` must be writable — and three existing test files
+  (`server`, `review`, `platform-mcp`) now provision a temp repos dir, because they had been
+  passing while git was broken.
+- **S-12 — review M-3: the rename half of M-3 was already true.** `renameApp` never touches
+  `slug` (it is the frozen physical identity: the host, the runner object, and now the tree path),
+  so there is no old prefix to delete on rename — pinned by a test rather than implemented as
+  dead code. The real gap was CREATION: `slugify(name)` gave two apps called "Invoices" in one
+  domain the same `apps/invoices/` tree, and the second one's commit would have replaced the
+  first one's files. `uniqueAppSlug` fixes it for new apps; PRE-EXISTING duplicates in a live
+  tenant are not migrated and remain a backlog item.
 - **S-8 — the editor save now commits.** `saveAppFile` wrote only the OpenSearch mirror, which is
   exactly the "a writer that does not commit" hole the global constraint forbids. It now commits
   through `commitAppTree`. The compile gate is deliberately NOT added to that path: an editor save

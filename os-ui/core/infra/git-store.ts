@@ -863,3 +863,60 @@ export async function logPath(
   return { entries, truncated: scanned >= all.length && all.length >= MAX_LOG_DEPTH };
 }
 // ======================= === END S TAG BLOCK === ==========================================
+
+// ======================= === S READ-BACK BLOCK === (stream S, night-2 review M-5) ==========
+// A BOUNDED read of one subtree at a ref, in `@core` so a tab (or the admin tab's MCP module)
+// can read another tab's committed files WITHOUT importing that tab — the import
+// `tabs/admin/mcp` → `tabs/software/lib` was a tab→tab edge the structure ratchet cannot see,
+// because it was a dynamic `import()`. Generic: paths and strings in, no tab vocabulary.
+// ===========================================================================================
+
+/** Caps for {@link readSubtree}, so one read can never pull an unbounded tree into memory. */
+export const MAX_SUBTREE_FILES = 500;
+export const MAX_SUBTREE_BYTES = 8 * 1024 * 1024;
+
+export type SubtreeRead = {
+  /** Paths RELATIVE to the prefix, sorted. */
+  files: { path: string; content: string }[];
+  /** The commit that last changed this prefix (`''` when the prefix has no history). */
+  sha: string;
+  /** True when a cap stopped the read — the caller must SAY so rather than imply completeness. */
+  truncated: boolean;
+};
+
+/**
+ * Read every file under `prefix` at `ref`, with the prefix stripped, plus the sha of the commit
+ * that last CHANGED that prefix. `null` when the repository or the prefix does not exist — never
+ * an empty result that reads like an empty tree.
+ *
+ * Bounded by {@link MAX_SUBTREE_FILES} and {@link MAX_SUBTREE_BYTES}: one `listTree` walk plus
+ * at most that many blob reads, and `truncated: true` when a cap bit.
+ */
+export async function readSubtree(
+  domain: string,
+  prefix: string,
+  opts: GitStoreOptions & { ref?: string } = {},
+): Promise<SubtreeRead | null> {
+  if (!repoExists(domain, opts)) return null;
+  const pre = normalizePrefix(prefix);
+  const gitdir = repoPath(domain, opts);
+  if (!(await headSha(gitdir))) return null;
+  const ref = opts.ref ?? 'main';
+  const entries = (await listTree(domain, ref, opts)).filter((e) => e.path.startsWith(pre));
+  if (entries.length === 0) return null;
+  const files: SubtreeRead['files'] = [];
+  let bytes = 0;
+  let truncated = false;
+  for (const e of entries) {
+    if (files.length >= MAX_SUBTREE_FILES || bytes >= MAX_SUBTREE_BYTES) {
+      truncated = true;
+      break;
+    }
+    const content = await readBlob(domain, ref, e.path, opts);
+    bytes += Buffer.byteLength(content, 'utf8');
+    files.push({ path: e.path.slice(pre.length), content });
+  }
+  const mine = await logPath(domain, pre.replace(/\/$/, ''), { ...opts, limit: 1 });
+  return { files, sha: mine.entries[0]?.sha ?? '', truncated };
+}
+// ======================= === END S READ-BACK BLOCK === ====================================

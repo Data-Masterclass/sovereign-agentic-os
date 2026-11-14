@@ -28,8 +28,6 @@ directly. The files below are the stable surface:
   Archived`) plus the allowed-transition table.
 - **`versioning.ts`** — semantic version parse/compare/bump utilities; used by
   stores that track `semver`-versioned artifacts.
-- **`git-versioning.ts`** — Forgejo Git-commit versioning helpers (Phase E). Do
-  **not** modify without consulting the Phase E spec.
 - **`artifact-model.ts`** — the shared `Artifact` base type. Every governed
   artifact (dataset, metric, agent, …) extends this shape.
 - **`artifacts.ts`** — in-process artifact registry and OS-mirror client for

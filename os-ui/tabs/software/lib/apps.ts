@@ -789,6 +789,32 @@ function slugify(s: string): string {
       .slice(0, 48) || 'app'
   );
 }
+
+/**
+ * A slug that is UNIQUE among `taken` (review M-3).
+ *
+ * The slug is the app's frozen physical identity — the per-app host, the runner object name, and
+ * since night-2 the path of its SOURCE TREE in the domain repository (`apps/<slug>/`). Two apps
+ * in one domain sharing a slug would therefore share a tree, and the second one's commit would
+ * replace the first one's files. `slugify('Invoices')` is the same string for every app called
+ * "Invoices", so uniqueness has to be established at creation, once, and then never re-derived.
+ *
+ * Pure, so the collision rule is testable without a store: `invoices`, `invoices-2`, `invoices-3`…
+ * capped at 48 characters (the repo path segment limit the git store enforces) and at a bounded
+ * number of attempts, after which it falls back to a random suffix rather than looping.
+ */
+export function uniqueAppSlug(base: string, taken: Iterable<string>): string {
+  const used = new Set([...taken].map((s) => String(s ?? '').toLowerCase()));
+  const root = slugify(base);
+  if (!used.has(root)) return root;
+  for (let n = 2; n <= 99; n++) {
+    const suffix = `-${n}`;
+    const candidate = `${root.slice(0, 48 - suffix.length).replace(/-+$/, '')}${suffix}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  const rand = Math.random().toString(36).slice(2, 6);
+  return `${root.slice(0, 48 - rand.length - 1).replace(/-+$/, '')}-${rand}`;
+}
 function withStatus(err: Error, status: number): Error {
   (err as Error & { status?: number }).status = status;
   return err;
@@ -1545,8 +1571,17 @@ export async function createApp(
   const declaredSurface: SurfaceDeclaration | undefined =
     input.surface === 'ui' || input.surface === 'api' || input.surface === 'both' ? input.surface : undefined;
   const name = (input.name ?? '').trim() || 'Untitled app';
-  const slug = slugify(name);
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0];
+  // REVIEW M-3: the slug is UNIQUE WITHIN THE DOMAIN, decided here and frozen for the app's
+  // life. It is the path of the app's source tree (`apps/<slug>/`) in the domain repository, so a
+  // second app called "Invoices" in the same domain would otherwise share — and overwrite — the
+  // first one's tree. `renameApp` never touches `slug`, so there is no later collision and no
+  // old prefix to clean up: the tree does not move when the display name changes.
+  const existing = await getCache();
+  const slug = uniqueAppSlug(
+    name,
+    [...existing.values()].filter((a) => a.domain === domain).map((a) => a.slug),
+  );
   const description = (input.description ?? '').trim().slice(0, 280);
   const t = now();
   const subdomain = `${slug}.${domain}.${config.appsBaseDomain}`;

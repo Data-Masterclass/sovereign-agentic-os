@@ -119,6 +119,21 @@ export async function commitToApp(
     tree,
     { action: gitMeta?.action ?? 'commit', surface: gitMeta?.surface, requestId: gitMeta?.requestId, note: message },
   );
+  // REVIEW M-2: if git REFUSED the write, nothing is written anywhere. Previously the catch in
+  // `commitAppTree` returned an outcome, the mirror cache was still written and the call answered
+  // 200 with `commit: null` — so a tree git had rejected came back from `read_app_files` as
+  // though it had been accepted. Git is the home of record, so a failed commit is a failed
+  // commit: 503, with the reason, and the app is byte-unchanged. (A DISABLED repo or an app with
+  // no domain is `recorded: false` and NOT an error — those are stated on the step instead.)
+  if (!git.ok) {
+    throw withStatus(
+      new Error(
+        `The commit could not be recorded in git (${git.reason}). Nothing was written — your files were not saved. ` +
+          'Retry; if it persists, the domain repository volume needs attention.',
+      ),
+      503,
+    );
+  }
   let step: AdapterStep = {
     ok: true,
     mode: 'live',

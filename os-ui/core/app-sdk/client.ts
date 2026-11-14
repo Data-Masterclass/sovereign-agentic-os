@@ -5,9 +5,10 @@ import { Forbidden, NotAuthenticated, OsError, UnsupportedQuery } from './errors
 import {
   agentRunPath,
   agentRunStreamPath,
-  AGENT_DECIDE_PATH,
+  APP_DECIDE_REQUEST,
+  appIntentHeaders,
+  readAppIntent,
   normalizeAgentRun,
-  normalizeDecision,
   parseRunEvents,
   reduceRunEvents,
 } from './agents';
@@ -224,10 +225,10 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
    *  typed errors, and returns parsed JSON on success. */
   async function request<T>(
     path: string,
-    init?: { method?: string; body?: unknown; signal?: AbortSignal },
+    init?: { method?: string; body?: unknown; signal?: AbortSignal; headers?: Record<string, string> },
   ): Promise<T> {
     const url = joinUrl(baseUrl, path);
-    const headers: Record<string, string> = { accept: 'application/json' };
+    const headers: Record<string, string> = { accept: 'application/json', ...(init?.headers ?? {}) };
     let body: string | undefined;
     if (init?.body !== undefined) {
       headers['content-type'] = 'application/json';
@@ -489,10 +490,14 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
         const prompt = String(message ?? '').trim();
         if (!prompt) throw new OsError('os.agents.run needs a message (what the agent should do).', 0);
         // The UI's own door. `stream: false` asks for the JSON answer rather than the SSE tail.
+        // REVIEW H-1: inside an OS-rendered app frame the call carries the per-render, signed,
+        // `agent-run`-scoped intent the OS injected, and says it is an app. Outside one there is
+        // no intent to send and this is the OS UI's own call.
         const raw = await request<unknown>(agentRunPath(id), {
           method: 'POST',
           body: { prompt, stream: false },
           signal: runOpts.signal,
+          headers: appIntentHeaders(readAppIntent()),
         });
         return normalizeAgentRun(id, raw);
       },
@@ -513,7 +518,7 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
         try {
           const res = await doFetch(url, {
             method: 'GET',
-            headers: { accept: 'text/event-stream' },
+            headers: { accept: 'text/event-stream', ...appIntentHeaders(readAppIntent()) },
             credentials: 'include',
             cache: 'no-store',
             signal: controller?.signal,
@@ -543,11 +548,31 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
       async decide(approvalId: string, decision: 'approve' | 'reject', decideOpts: { remember?: boolean } = {}): Promise<AgentDecisionResult> {
         const id = String(approvalId ?? '').trim();
         if (!id) throw new OsError('os.agents.decide needs the approvalId.', 0);
-        const raw = await request<unknown>(AGENT_DECIDE_PATH, {
-          method: 'POST',
-          body: { id, decision: decision === 'reject' ? 'reject' : 'approve', ...(decideOpts.remember ? { remember: true } : {}) },
-        });
-        return normalizeDecision(id, raw);
+        // REVIEW H-1: an app does NOT decide an approval. It used to POST the governance inbox
+        // directly with the ambient session, which meant app code could approve the very write
+        // its own run was held on, silently, with no human in the loop. Now the app ASKS: it
+        // posts a message to the OS host shell, the SHELL renders the confirmation (OS chrome,
+        // outside the app's frame, showing what is being approved) and the shell performs the
+        // POST with its own, separately scoped intent. The app's injected intent carries
+        // `agent-run` only, so even a forged direct POST is refused server-side; the app frame's
+        // CSP keeps app JavaScript off the route in the first place.
+        const intent = readAppIntent();
+        if (!intent) {
+          throw new Forbidden(
+            'os.agents.decide is only available inside an OS-rendered app, where the OS can show you the confirmation.',
+          );
+        }
+        const host = typeof window !== 'undefined' ? (window as unknown as { parent?: { postMessage: (m: unknown, o: string) => void } }).parent : undefined;
+        if (!host || typeof host.postMessage !== 'function') {
+          throw new OsError('No OS host shell to ask — os.agents.decide needs the OS app frame.', 0);
+        }
+        host.postMessage(
+          { type: APP_DECIDE_REQUEST, approvalId: id, decision: decision === 'reject' ? 'reject' : 'approve', remember: !!decideOpts.remember },
+          '*',
+        );
+        // HONEST STATE: nothing is decided yet. The OS will show the confirmation and the user
+        // decides. Render this as "waiting for your confirmation in the OS" — never as done.
+        return { approvalId: id, status: 'awaiting-user-confirmation' };
       },
     },
   };

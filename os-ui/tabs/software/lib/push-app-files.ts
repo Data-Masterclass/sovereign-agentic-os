@@ -40,6 +40,98 @@ export type PushAppFilesInput = {
   requestId?: string;
 };
 
+/** A single file may not exceed this. An app tree is text source; this is generous for one file. */
+export const MAX_FILE_BYTES = 512 * 1024;
+/** The whole changeset may not exceed this. */
+export const MAX_PUSH_BYTES = 4 * 1024 * 1024;
+/** How many files one push may carry. */
+export const MAX_PUSH_FILES = 400;
+
+/**
+ * Dotfiles an app may NOT push. `.app/` is the OS's own metadata lane inside the app tree, and a
+ * CI/forge directory is a claim about infrastructure that does not exist (the night-2 S1 purge
+ * removed exactly these from the scaffolds — a push must not put them back).
+ */
+const FORBIDDEN_PREFIXES = ['.app/', '.forgejo/', '.github/', '.git/', '.gitea/', 'node_modules/'] as const;
+
+/** A path that is a plain dotfile at the root (`.env`, `.npmrc`) — a secret or a registry config. */
+const FORBIDDEN_ROOT_DOTFILES = ['.env', '.env.local', '.env.production', '.npmrc', '.netrc', '.gitconfig'] as const;
+
+function bad(message: string): never {
+  const err = new Error(message) as Error & { status?: number };
+  err.status = 400;
+  throw err;
+}
+
+/**
+ * PATH DISCIPLINE + CAPS, enforced before anything is written (review M-2).
+ *
+ * A path must be repo-relative and stay inside the app's own subtree: no leading `/`, no `..`,
+ * no empty or `.` segment, no backslash (a Windows-shaped path that `split('/')` would wave
+ * through), no NUL, no absolute Windows drive. `package.json` may not introduce lifecycle
+ * SCRIPTS, because a scaffold's `npm ci` would run them — an app pushes source, not build hooks.
+ */
+export function assertPushable(files: ScaffoldFile[]): void {
+  if (files.length === 0) bad('push_app_files needs at least one file ({ path, content }).');
+  if (files.length > MAX_PUSH_FILES) bad(`A push may carry at most ${MAX_PUSH_FILES} files; this one has ${files.length}.`);
+  let total = 0;
+  const seen = new Set<string>();
+  for (const f of files) {
+    if (!f || typeof f.path !== 'string' || !f.path.trim() || typeof f.content !== 'string') {
+      bad('Every file needs a non-empty `path` and a string `content`.');
+    }
+    const p = f.path.trim();
+    if (p.startsWith('/') || /^[A-Za-z]:/.test(p)) bad(`'${p}' must be a path relative to the app root, not an absolute path.`);
+    if (p.includes('\\')) bad(`'${p}' uses a backslash; app paths are '/'-separated.`);
+    if (p.includes('\u0000')) bad('A file path may not contain a NUL byte.');
+    const segments = p.split('/');
+    if (segments.some((sg) => sg === '' || sg === '.' || sg === '..')) {
+      bad(`'${p}' escapes the app's own tree (no '..', no empty or '.' segment). A push may only write under apps/<slug>/.`);
+    }
+    if (p.length > 400) bad(`'${p.slice(0, 60)}…' is too long for a repository path.`);
+    if (seen.has(p)) bad(`'${p}' appears twice in this push; send each file once.`);
+    seen.add(p);
+    const lower = p.toLowerCase();
+    const forbidden = FORBIDDEN_PREFIXES.find((pre) => lower === pre.slice(0, -1) || lower.startsWith(pre));
+    if (forbidden) {
+      bad(
+        `'${p}' is not pushable: '${forbidden}' is reserved. ` +
+          (forbidden === '.app/'
+            ? "The `.app/` lane is the OS's own metadata inside the app tree."
+            : 'There is no CI runner, image builder or registry in the OS, so a forge or CI directory would describe infrastructure that does not exist.'),
+      );
+    }
+    if ((FORBIDDEN_ROOT_DOTFILES as readonly string[]).includes(lower)) {
+      bad(`'${p}' is not pushable: it is a credential or registry file. Secrets never live in an app's source tree.`);
+    }
+    const bytes = Buffer.byteLength(f.content, 'utf8');
+    if (bytes > MAX_FILE_BYTES) bad(`'${p}' is ${Math.round(bytes / 1024)} KiB; a single file may be at most ${MAX_FILE_BYTES / 1024} KiB.`);
+    total += bytes;
+    if (total > MAX_PUSH_BYTES) bad(`This push is over ${MAX_PUSH_BYTES / (1024 * 1024)} MiB in total; split it.`);
+    if (lower === 'package.json') assertNoLifecycleScripts(p, f.content);
+  }
+}
+
+/** `npm ci` runs lifecycle scripts, so a pushed `package.json` may not introduce them. */
+const LIFECYCLE_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare', 'prepublish', 'prepublishOnly'] as const;
+
+export function assertNoLifecycleScripts(path: string, content: string): void {
+  let pkg: { scripts?: Record<string, unknown> };
+  try {
+    pkg = JSON.parse(content) as { scripts?: Record<string, unknown> };
+  } catch {
+    bad(`'${path}' is not valid JSON.`);
+  }
+  const scripts = pkg.scripts ?? {};
+  const offending = LIFECYCLE_SCRIPTS.filter((k) => typeof scripts[k] === 'string' && String(scripts[k]).trim().length > 0);
+  if (offending.length > 0) {
+    bad(
+      `'${path}' declares the install lifecycle script(s) ${offending.join(', ')}. ` +
+        'A dependency install would execute them, so they are refused: an app pushes source, not build hooks.',
+    );
+  }
+}
+
 export type PushAppFilesResult = {
   appId: string;
   slug: string;
@@ -93,18 +185,11 @@ export async function pushAppFiles(input: PushAppFilesInput, user: CurrentUser):
   const app = await getEditableAppForUser(input.appId, user);
 
   const files = Array.isArray(input.files) ? input.files : [];
-  if (files.length === 0) {
-    const err = new Error('push_app_files needs at least one file ({ path, content }).') as Error & { status?: number };
-    err.status = 400;
-    throw err;
-  }
-  for (const f of files) {
-    if (!f || typeof f.path !== 'string' || !f.path.trim() || typeof f.content !== 'string') {
-      const err = new Error('Every file needs a non-empty `path` and a string `content`.') as Error & { status?: number };
-      err.status = 400;
-      throw err;
-    }
-  }
+  // REVIEW M-2: EVERY input rule is checked HERE, before `commitToApp` — because `commitToApp`
+  // writes the mirror cache even when the git commit throws, so a tree refused downstream would
+  // otherwise still land in the cache and come back from `read_app_files` as if it had been
+  // accepted. Refuse first, write nothing.
+  assertPushable(files);
   const message = String(input.message ?? '').trim() || `push ${files.length} file${files.length === 1 ? '' : 's'}`;
 
   const { app: after, step, git } = await commitToApp(app.id, user, files, message, {

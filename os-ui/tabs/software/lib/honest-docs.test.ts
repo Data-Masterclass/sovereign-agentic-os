@@ -44,6 +44,12 @@ const FORBIDDEN = [
 /** Files whose every line is scanned. */
 const SCAN_ROOTS = [
   join(OS_UI, 'tabs', 'software'),
+  // REVIEW M-6: the kernel and the shared infra describe the stack too, and they carried live
+  // false claims (`core/policy/effects.ts`, `core/policy/README.md`, `core/infra/README.md`,
+  // `core/kernel/README.md`), as did a USER-VISIBLE monitoring string and the kind cluster config.
+  join(OS_UI, 'core'),
+  join(OS_UI, 'tabs', 'monitoring', 'lib', 'adapters', 'system-health.ts'),
+  join(REPO, 'kind-config.yaml'),
   join(OS_UI, 'tabs', 'admin', 'ui', 'OverviewHealth.tsx'),
   join(OS_UI, 'tabs', 'admin', 'lib', 'components-extra.ts'),
   join(OS_UI, 'tabs', 'admin', 'mcp', 'discovery-waveb-tools.ts'),
@@ -71,9 +77,16 @@ const ALLOWED_LINE_FRAGMENTS = [
   // DESIGN.md records WHY the image/pod bet was abandoned — a post-mortem, not a claim.
   'Most Software-build fragility is accidental, downstream of two bets:',
   // This test file itself names them in order to forbid them.
-  // The chart DENIES the component in the same line that names its (disabled) key.
+  // The chart DENIES the component in the same line that names its (disabled) key. The bare
+  // `argocd:` fragment used to be allowlisted on its own, which would have waved through ANY
+  // line containing it; it is now the full line (review M-6).
   'enabled: false   # Argo CD is not part of the stack',
-  'argocd:',
+  // `.forgejo/` named in order to REFUSE a push of it.
+  "const FORBIDDEN_PREFIXES = ['.app/', '.forgejo/', '.github/', '.git/', '.gitea/', 'node_modules/'] as const;",
+  // Denials added by the night-2 purge.
+  'controller and no image builder in this stack), grant access (policy compiler →',
+  'no GitOps controller, so configuration drift is not reverted automatically.`,',
+  '# uses it. install.sh creates the cluster with `--config kind-config.yaml`.',
   // A factual pointer at files that really are in `deploy/` (out of scope, historical).
   '# Secrets from Secrets Manager — see deploy/argocd/secrets/externalsecrets.yaml).',
 ];
@@ -89,9 +102,17 @@ function filesUnder(path: string): string[] {
   return out;
 }
 
+/**
+ * Whole lines that are allowed, matched by EXACT equality on the trimmed line (review M-6). A
+ * bare substring like `argocd:` would have waved through any line containing it; the chart's
+ * disabled-key line is exactly that string and nothing more, so equality is the right test.
+ */
+const ALLOWED_EXACT_LINES = ['argocd:'];
+
 function allowed(line: string, file: string): boolean {
   const t = line.trim();
   if (file.endsWith(`lib${sep}honest-docs.test.ts`)) return true;
+  if (ALLOWED_EXACT_LINES.includes(t)) return true;
   return ALLOWED_LINE_FRAGMENTS.some((f) => t.includes(f));
 }
 

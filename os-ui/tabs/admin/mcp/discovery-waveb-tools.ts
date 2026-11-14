@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
+import { readSubtree } from '@core/infra/git-store';
 import type { McpTool, JsonSchema } from '@core/mcp/server';
 import {
   P, fail, str, strArr, NO_ARGS, idArg, resolveQueryable,
@@ -210,12 +211,13 @@ export const waveBReadTools: McpTool[] = [
       // there is no external git forge. Hydrate the durable mirror first so this
       // survives a pod restart (the tree is not lost when the committing process is gone).
       // GIT FIRST (night-2 S5/S6): the home of record is `apps/<slug>/` in the domain
-      // repository, read through the SAME service the UI's file list uses. The OpenSearch
-      // mirror is the fast fallback, and the template seed is the last resort — the answer
-      // SAYS which one you got, because a substituted source that reads as the real thing is
-      // exactly the failure this label exists to prevent.
-      const { readAppTreeFromGit } = await import('@tabs/software/lib/git-commit');
-      const fromGit = await readAppTreeFromGit(app);
+      // repository. REVIEW M-5: read it through the GENERIC `@core` reader — `readSubtree`,
+      // which is bounded (one tree walk, capped blob reads, an honest `truncated`) — and NOT
+      // through a dynamic `import('@tabs/software/…')`, which was an admin→software tab edge
+      // the structure ratchet cannot see. The OpenSearch mirror is the fast fallback and the
+      // template seed is the last resort; the answer SAYS which one you got, because a
+      // substituted source that reads as the real thing is the failure this label prevents.
+      const fromGit = app.domain ? await readSubtree(app.domain, `apps/${app.slug}`) : null;
       await hydrateSnapshot(app.id);
       const tree = fromGit?.files ?? getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
       // HONEST LABEL (night-2 S1): there is no git forge to be “unreachable”. This is the tree
@@ -228,7 +230,7 @@ export const waveBReadTools: McpTool[] = [
           : ('template-seed' as const);
       const note =
         source === 'governed-commit'
-          ? 'The app’s tree at commit ' + (fromGit?.sha ?? '').slice(0, 12) + ' in `apps/' + app.slug + '/` of the domain repository — the home of record.'
+          ? 'The app’s tree at commit ' + (fromGit?.sha ?? '').slice(0, 12) + ' in `apps/' + app.slug + '/` of the domain repository — the home of record.' + (fromGit?.truncated ? ' TRUNCATED: the tree is larger than one read returns, so this listing is incomplete.' : '')
           : source === 'mirror-cache'
             ? 'The app’s tree from the OS read cache (the domain repository had no tree for this app — the cache is what the governed commit door last wrote).'
             : 'This app has no commit yet — these are the template seed files, not committed source.';

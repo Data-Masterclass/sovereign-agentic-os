@@ -34,8 +34,35 @@ export function agentRunStreamPath(systemId: string, runId: string, afterSeq = 0
   return `${agentRunPath(systemId)}/stream?runId=${encodeURIComponent(runId)}&afterSeq=${Math.max(0, afterSeq)}`;
 }
 
-/** The ONE governance inbox door. A role that may not decide gets the UI's own 403. */
+/** The ONE governance inbox door. The OS HOST SHELL posts it — never app code (review H-1). */
 export const AGENT_DECIDE_PATH = '/api/governance/approvals';
+
+/** The headers that carry a governed app's scoped, signed intent (review H-1). */
+export const APP_INTENT_HEADER = 'x-os-app-intent';
+export const APP_ORIGIN_HEADER = 'x-os-app-origin';
+
+/** The `postMessage` type the app sends the host shell to ASK for an OS-rendered confirmation. */
+export const APP_DECIDE_REQUEST = 'os:app-decide-request';
+
+/**
+ * Read the per-render intent the OS injected into this app's document
+ * (`<meta name="os-app-intent">`). Absent outside an OS-rendered app frame — in which case the
+ * SDK sends no app headers at all and the OS treats the call as its own UI's.
+ */
+export function readAppIntent(doc?: { querySelector: (s: string) => { getAttribute: (a: string) => string | null } | null }): string {
+  const d = doc ?? (typeof document !== 'undefined' ? (document as unknown as NonNullable<typeof doc>) : undefined);
+  if (!d) return '';
+  try {
+    return d.querySelector('meta[name="os-app-intent"]')?.getAttribute('content')?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/** The app headers for a governed call: present only inside an OS-rendered app frame. */
+export function appIntentHeaders(intent: string): Record<string, string> {
+  return intent ? { [APP_ORIGIN_HEADER]: 'app', [APP_INTENT_HEADER]: intent } : {};
+}
 
 /** Parse an `text/event-stream` body into `{event, data}` frames. Tolerant of partial input. */
 export function parseRunEvents(text: string): AgentRunEvent[] {

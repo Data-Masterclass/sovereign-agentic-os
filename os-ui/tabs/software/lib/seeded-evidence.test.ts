@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isSeededEvidence, assertNotSeeded, SeededEvidenceError, SEEDED_SOURCE } from './seeded-evidence.ts';
+import { isSeededEvidence, assertNotSeeded, provenanceClaims, SeededEvidenceError, SEEDED_SOURCE, LIVE_SOURCE } from './seeded-evidence.ts';
 import { seedToolResult, DEMO_SEED_NOTE } from './tool-exec.ts';
 
 test('every shape the real seed producer emits is detected as seeded', () => {
@@ -53,7 +53,7 @@ test('a cycle and an over-deep object terminate instead of hanging', () => {
 });
 
 test('assertNotSeeded throws a typed 409 naming the context, and passes real evidence', () => {
-  assert.doesNotThrow(() => assertNotSeeded('a deploy request', { source: 'live-app' }));
+  assert.doesNotThrow(() => assertNotSeeded('a deploy request', { source: LIVE_SOURCE }));
   try {
     assertNotSeeded('the approval of review card rev_1', seedToolResult('list_renewals'));
     assert.fail('expected a refusal');
@@ -66,4 +66,55 @@ test('assertNotSeeded throws a typed 409 naming the context, and passes real evi
     assert.match(err.message, /not a response from the app/);
     assert.match(err.message, /Nothing was approved, recorded or changed/);
   }
+});
+
+// ───────────────── POSITIVE PROVENANCE: the rule is "says live-app", not "is not seeded" (M-4) ──
+
+test('provenanceClaims: every source/mode/provenance claim inside the value, however nested', () => {
+  assert.deepEqual(provenanceClaims({ source: 'live-app' }), ['live-app']);
+  assert.deepEqual(provenanceClaims({ a: [{ provenance: 'cached' }], b: { source: 'live-app' } }).sort(), ['cached', 'live-app']);
+  // `mode` is the ENGINE axis, not the app-answer axis: a real offline SCAN is still evidence.
+  assert.deepEqual(provenanceClaims({ scan: { mode: 'offline-mock', passed: true } }), []);
+  assert.deepEqual(provenanceClaims({ path: 'src/App.tsx', content: 'x' }), [], 'a file is not a provenance-bearing result');
+  const cyclic: Record<string, unknown> = { source: 'live-app' };
+  cyclic.self = cyclic;
+  assert.deepEqual(provenanceClaims(cyclic), ['live-app'], 'cycle-safe');
+});
+
+test('an UNRECOGNISED provenance is refused BY DEFAULT — not by enumerating the bad ones', () => {
+  for (const claim of ['offline-mock', 'cached', 'simulated', 'stub', 'fixture', 'whatever-ships-next']) {
+    try {
+      assertNotSeeded('a deploy request', { result: { source: claim, rows: [] } });
+      assert.fail(`'${claim}' should be refused`);
+    } catch (e) {
+      assert.ok(e instanceof SeededEvidenceError, claim);
+      assert.match((e as Error).message, new RegExp(`claims the provenance '${claim}'`), claim);
+      assert.match((e as Error).message, /only 'live-app'/, claim);
+    }
+  }
+});
+
+test('a result that DROPPED its label is still refused — the note is the backstop', () => {
+  // `source` stripped, note kept: the negative backstop catches it.
+  const stripped = { ...seedToolResult('list_renewals') } as Record<string, unknown>;
+  delete stripped.source;
+  assert.throws(() => assertNotSeeded('a review card', stripped), SeededEvidenceError);
+});
+
+test('a real OFFLINE SCAN is evidence — `mode` is the engine, not the app answer (M-4 scope)', () => {
+  // This is the shape every review card carries on a laptop: a deterministic scan over the real
+  // committed files, by the offline engine. Refusing it would block every offline gate.
+  assert.doesNotThrow(() =>
+    assertNotSeeded('a deploy review card', { scan: { mode: 'offline-mock', passed: true, findings: [] }, diff: { files: [] } }),
+  );
+  // But a `mode: 'demo-seed'` is still refused, by the negative backstop.
+  assert.throws(() => assertNotSeeded('a deploy review card', { result: { mode: 'demo-seed' } }), SeededEvidenceError);
+});
+
+test('positive provenance PASSES, and a claimless value is not what the guard is about', () => {
+  assert.doesNotThrow(() => assertNotSeeded('a verify verdict', { source: LIVE_SOURCE, items: [{ id: 'r1' }] }));
+  assert.doesNotThrow(() => assertNotSeeded('a deploy request', [{ path: 'src/App.tsx', content: 'export default () => null;' }]));
+  assert.doesNotThrow(() => assertNotSeeded('a deploy request', { scan: { passed: true, findings: [] } }));
+  assert.equal(SEEDED_SOURCE, 'demo-seed');
+  assert.equal(LIVE_SOURCE, 'live-app');
 });

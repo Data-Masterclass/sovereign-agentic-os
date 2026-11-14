@@ -3,7 +3,8 @@
  *
  * FEATURE:    Push-mirror for a domain repo — the ONE push path, for data and agent commits alike
  * USER STORY: As a platform admin I want the domain repository the OS writes (dbt project AND
- *             agent systems) pushed to our GitHub / Forgejo remote after every commit, with the
+ *             agent systems) pushed to the git remote an operator configured — GitHub, GitLab,
+ *             a self-hosted forge, anything that speaks smart-HTTP — after every commit, with the
  *             token held as a Secret reference the OS never shows, and a failed push REPORTED on
  *             Platform → Components & Health and retried on the next commit — never blocking a
  *             save (checklist X2).
