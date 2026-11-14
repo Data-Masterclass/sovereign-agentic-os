@@ -166,6 +166,52 @@ measure, so those metrics are refused by name in the project README and served b
   `tabs/data/lib/semantic.ts`. Golden: `fixtures/metrics-semantic-layer.golden.json`.
 - Trino access rules: `core/infra/trino-rules.ts` + `trino-rules-server.ts`.
 
+## Engineering view ("Under the hood")
+
+Every data product and every KPI carries an **Under the hood** panel (and the MCP twin
+`get_engineering_view({kind, id})`) whose **dbt** tab shows the artefacts of THIS project, read out
+of the domain repository at `main` — not re-rendered from the generator:
+
+- the `dbt model` SQL (`models/<layer>/<layer>_<slug>.sql`, or `models/personal/<uid>/…` in the
+  personal lane), with its repo path;
+- the `models/**/schema.yml` properties and the dbt tests attached to it;
+- `models/sources.yml` where the product reads a source;
+- `models/semantic/<model>.yml` — the `semantic_models:` and `metrics:` blocks — **once the
+  semantic emitter has written it**. Until then the KPI's dbt tab says so in its own words and
+  states that `mf query --metrics <name>` would not resolve yet; it does not pretend otherwise.
+
+**Membership decides how much of the project you see.** A Company-tier data product is visible to
+a caller outside its domain, but the domain *repository* is members-only (`requireMember` in
+`tabs/data/lib/dbt/read.ts`, which every project route goes through). So a non-member's panel shows
+that product's own model file and says why it shows nothing else, and the tarball is offered as
+unavailable with the reason — rather than printing bytes, or a download, that the project API would
+answer 403 to.
+
+The commands the panel prints are the ones you would type in a checkout:
+
+```sh
+dbt build --select <node>     # the model and the tests attached to it
+dbt test --select <node>      # only its tests
+dbt ls --select metric:<name> # the dbt metric node, when the semantic file exists
+mf query --metrics <name> --group-by metric_time__month
+```
+
+**Take it elsewhere.** The panel's export is the project tarball
+(`GET /api/data/projects/<domain>/export`, built by `core/infra/git-store.ts` `archive()`):
+
+```sh
+curl -fsSLO <os>/api/data/projects/<domain>/export   # <domain>-<sha>.tar
+tar -xf <domain>-<sha>.tar -C <domain> && cd <domain>
+export TRINO_HOST=trino TRINO_PORT=8080 TRINO_USER=dbt-runner OS_PRINCIPAL=<your-principal>
+dbt parse --profiles-dir .
+dbt build --profiles-dir . --select <model>+
+```
+
+`os-ui/tabs/data/lib/engineering-export.test.ts` asserts the round trip offline: the tarball
+carries every file byte for byte, `dbt_project.yml` and `profiles.yml` are present, every `.yml`
+still parses, every `ref()` names a model that is in the tarball, and no credential rode along.
+The cluster step (Part C) runs a real `dbt parse` on a downloaded tarball.
+
 ## FAQ
 **Q: Can I run the generated project myself?** Yes — export it (`GET …/export?ref=<sha>`), set the
 `TRINO_*` env vars and `OS_PRINCIPAL`, `dbt parse --profiles-dir .`. Inside the cluster only the

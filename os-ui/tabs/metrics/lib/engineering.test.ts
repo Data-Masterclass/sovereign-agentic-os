@@ -1,118 +1,110 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * FEATURE:    The metric's engineering view speaks dbt's and Trino's vocabulary, and is honest
- * USER STORY: As a data engineer I want the Under-the-hood panel to name the tools' own objects and
- *             the commands I would run, and to SAY what the OS still does its own way — never a
- *             confident blank where a fact could not be resolved (checklist T1, T2).
+ * TAB:        metrics
+ * FEATURE:    The KPI engineering view — the dbt metric YAML as committed, and `mf query`
+ * USER STORY: As a reviewer I want the dbt section of a KPI to show the `models/semantic/*.yml`
+ *             that actually names this measure, and — while the semantic emitter has not landed —
+ *             to say plainly that `mf query` would not resolve yet (checklist T1, T3, T7).
  * ARCHITECTURE:
- *   - Pure. The adapter takes resolved facts, so this tests the structure and the words.
+ *   - Pure: the store and the repository reader are module-mocked; the real section builders and
+ *     the real vocabulary rule run.
  */
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { engineeringView, shellSingleQuote, type MetricEngineeringInput } from '@tabs/metrics/lib/engineering';
+import { vocabularyViolations } from '@core/engineering/vocabulary';
+import type { EngineeringPrincipal } from '@core/engineering/types';
 
-const full: MetricEngineeringInput = {
-  title: 'Revenue',
+const SEMANTIC = `semantic_models:
+  - name: gold_orders
+    measures:
+      - name: revenue
+        agg: sum
+metrics:
+  - name: revenue
+    type: simple
+    type_params: { measure: revenue }
+`;
+
+const RECORD = {
+  id: 'ds_1.revenue',
+  dataset: { id: 'ds_1', name: 'Orders', domain: 'ops' },
+  measure: { name: 'revenue', label: 'Revenue', type: 'sum', sql: 'amount' },
+  tier: 'domain',
+  owner: 'amir',
   member: 'Orders.revenue',
-  metricType: 'simple',
-  dbtMetricName: 'revenue',
-  dbtSemanticModel: 'orders',
-  dbtModel: 'gold_orders',
-  yamlPath: 'models/semantic/orders.yml',
-  yaml: "semantic_models:\n  - name: orders\n    model: ref('gold_orders')\n",
-  domain: 'sales',
-  headSha: 'a'.repeat(40),
-  trinoSql: 'SELECT SUM(CAST(net_amount AS double)) AS "revenue"\nFROM iceberg.sales.gold_orders\nLIMIT 100',
-  trinoPrincipal: 'amir',
-  goldFqn: 'iceberg.sales.gold_orders',
-  grain: 'day',
-  spec: { dsiVersion: '0.8.5', dbtCore: '1.10' },
 };
 
-test('T2 vocabulary: every section is named for its TOOL, with the OS term in parentheses once', () => {
-  const v = engineeringView('metric', 'ds_orders1.revenue', full);
-  assert.deepEqual(v.sections.map((s) => s.tool), ['dbt', 'Trino', 'git']);
-  assert.match(v.sections[0].label, /^dbt metric \(KPI\) — type: simple$/);
-  assert.match(v.sections[1].label, /^Trino query/);
-  for (const s of v.sections) {
-    assert.doesNotMatch(s.label, /\bCube\b/);
-    for (const f of s.facts) assert.ok(f.value.length > 0, `${s.tool}/${f.name} must not be an empty fact`);
-  }
+let paths: string[] = ['models/semantic/gold_orders.yml'];
+let files: { path: string; content: string }[] = [{ path: 'models/semantic/gold_orders.yml', content: SEMANTIC }];
+
+mock.module('@tabs/metrics/lib/store', {
+  namedExports: {
+    getMetric: (id: string) => {
+      if (id !== RECORD.id) { const e = new Error('Metric not found') as Error & { status?: number }; e.status = 404; throw e; }
+      return RECORD;
+    },
+  },
+});
+mock.module('@core/engineering/repo', {
+  namedExports: {
+    repoPaths: async () => ({ repo: 'ops', head: 'cafe', paths, reason: null }),
+    readRepoFiles: async () => ({ repo: 'ops', head: 'cafe', files, unreadable: [], reason: null }),
+  },
 });
 
-test('T1: the real artefact, the real SQL and the engineer`s commands are all present', () => {
-  const v = engineeringView('metric', 'ds_orders1.revenue', full);
-  const dbt = v.sections[0];
-  assert.equal(dbt.artifact?.filename, 'models/semantic/orders.yml');
-  assert.equal(dbt.artifact?.language, 'yaml');
-  assert.equal(dbt.artifact?.body, full.yaml);
-  assert.equal(dbt.command, 'mf query --metrics revenue --group-by metric_time__day');
-  assert.deepEqual(
-    dbt.facts.find((f) => f.name === 'spec'),
-    { name: 'spec', value: 'dbt-semantic-interfaces 0.8.5 (dbt-core 1.10)' },
-  );
-  const trino = v.sections[1];
-  assert.equal(trino.artifact?.body, full.trinoSql);
-  assert.match(trino.command!, /^trino --execute 'SELECT /);
-  assert.deepEqual(trino.facts.find((f) => f.name === 'principal'), { name: 'principal', value: 'amir' });
-  const git = v.sections[2];
-  assert.equal(git.command, 'git log --follow -p -- models/semantic/orders.yml');
-  assert.deepEqual(git.facts.find((f) => f.name === 'commit trailer'), { name: 'commit trailer', value: 'OS-Object: metric:ds_orders1.revenue' });
+const { metricEngineeringView, namesMeasure, SEMANTIC_DIR } = await import('@tabs/metrics/lib/engineering');
+const USER = { id: 'amir', name: 'Amir', domains: ['ops'], allDomains: ['ops'], activeDomain: 'ops', role: 'admin' } as unknown as EngineeringPrincipal;
+const OUTSIDER = { id: 'fiona', name: 'Fiona', domains: ['finance'], allDomains: ['finance'], activeDomain: 'finance', role: 'admin' } as unknown as EngineeringPrincipal;
+
+test('a semantic file is claimed only when it really names the measure', () => {
+  assert.ok(namesMeasure(SEMANTIC, 'revenue'));
+  assert.ok(!namesMeasure(SEMANTIC, 'margin'));
+  assert.equal(SEMANTIC_DIR, 'models/semantic/');
 });
 
-test('honesty: a fact that could not be resolved is ABSENT and SAID, never a confident blank', () => {
-  const v = engineeringView('metric', 'ds_orders1.revenue', { ...full, yaml: undefined, trinoSql: undefined, headSha: undefined });
-  assert.equal(v.sections[0].artifact, undefined);
-  assert.equal(v.sections[1].artifact, undefined);
-  assert.equal(v.sections[1].command, undefined, 'no command is offered for SQL that was never run');
-  assert.equal(v.sections[2].facts.some((f) => f.name === 'head'), false);
-  const said = v.notTrueYet.join('\n');
-  assert.match(said, /could not be read from the repository/);
-  assert.match(said, /has not been read in this session yet/);
-  assert.match(said, /head commit is not shown/);
+test('T3: the dbt section shows the committed metrics YAML, the path and the MetricFlow query', async () => {
+  const view = await metricEngineeringView(USER, RECORD.id);
+  assert.deepEqual(vocabularyViolations(view), []);
+  const dbt = view.sections.find((s) => s.tool === 'dbt');
+  assert.equal(dbt?.artefacts[0].repoPath, 'models/semantic/gold_orders.yml');
+  assert.equal(dbt?.artefacts[0].noun, 'dbt semantic model');
+  assert.equal(dbt?.artefacts[0].body, SEMANTIC);
+  assert.deepEqual(dbt?.commands.map((c) => c.command), [
+    'dbt ls --select metric:revenue',
+    'dbt build',
+    'mf query --metrics revenue --group-by metric_time__month',
+  ]);
+  assert.equal(view.export?.href, '/api/data/projects/ops/export');
 });
 
-test('honesty: the panel states that MetricFlow does not serve the number, and names the spine gap for a cumulative metric', () => {
-  const simple = engineeringView('metric', 'ds_orders1.revenue', full);
-  assert.match(simple.notTrueYet.join('\n'), /MetricFlow does not serve this number/);
-  assert.equal(simple.notTrueYet.some((l) => /time spine/.test(l)), false);
-
-  const cumulative = engineeringView('metric', 'ds_orders1.revenue_t7d', {
-    ...full,
-    metricType: 'cumulative',
-    refusal: { code: 'window_grain_mismatch', reason: 'the slice granularity must be day' },
-  });
-  const said = cumulative.notTrueYet.join('\n');
-  assert.match(said, /time spine .* is generated but the OS compiler does not join to it yet/);
-  assert.match(said, /window_grain_mismatch/);
-  assert.match(said, /the slice granularity must be day/);
+test('T7: with no semantic file committed, the section names the missing file and refuses to claim `mf query` works', async () => {
+  paths = [];
+  files = [];
+  const view = await metricEngineeringView(USER, RECORD.id);
+  const dbt = view.sections.find((s) => s.tool === 'dbt');
+  assert.equal(dbt?.artefacts.length, 0);
+  assert.match(dbt?.unavailable ?? '', /models\/semantic\/<model>\.yml/);
+  assert.ok((dbt?.caveats ?? []).some((c) => /would not resolve/.test(c)));
+  assert.deepEqual(vocabularyViolations(view), []);
+  paths = ['models/semantic/gold_orders.yml'];
+  files = [{ path: 'models/semantic/gold_orders.yml', content: SEMANTIC }];
 });
 
-test('the view is JSON-serialisable, so the MCP twin returns the identical structure', () => {
-  const v = engineeringView('metric', 'ds_orders1.revenue', full);
-  assert.deepEqual(JSON.parse(JSON.stringify(v)), v);
-  assert.equal(v.kind, 'metric');
-  assert.equal(v.id, 'ds_orders1.revenue');
-  assert.equal(v.title, 'Revenue');
+test('T7: a KPI that does not exist is the tab\'s own 404', async () => {
+  await assert.rejects(() => metricEngineeringView(USER, 'ds_1.missing'), (e: Error & { status?: number }) => e.status === 404);
 });
 
-test('REVIEW L-3: the trino command is shell-safe — a SQL literal with an apostrophe cannot break out', () => {
-  const sql = "SELECT SUM(x) FROM t WHERE region = 'côte d''ivoire'";
-  const v = engineeringView('metric', 'ds_1.m', { ...full, trinoSql: sql });
-  const command = v.sections[1].command!;
-  // Naively wrapping in single quotes ended the quote at the first apostrophe, so the command
-  // pasted into a terminal either failed or ran something other than the statement shown.
-  assert.equal(command, `trino --execute ${shellSingleQuote(sql)}`);
-  assert.match(command, /'\\''/, 'every embedded quote is rendered as the POSIX escape');
-  // The quoting is balanced: an even number of quote characters, and the word starts and ends with one.
-  const quoted = command.slice('trino --execute '.length);
-  assert.ok(quoted.startsWith("'") && quoted.endsWith("'"));
-  assert.equal(shellSingleQuote("a'b"), "'a'\\''b'");
-  assert.equal(shellSingleQuote('plain'), "'plain'");
-});
-
-test('REVIEW L-3: the SQL is collapsed to one line, so the command is one shell word', () => {
-  const v = engineeringView('metric', 'ds_1.m', { ...full, trinoSql: 'SELECT 1\nFROM t\n  WHERE a = 1' });
-  assert.match(v.sections[1].command!, /^trino --execute 'SELECT 1 FROM t WHERE a = 1'$/);
+test('H-1/M-1: a KPI on a data product in a domain the caller is not in shows no repository bytes and no export', async () => {
+  const view = await metricEngineeringView(OUTSIDER, RECORD.id);
+  assert.deepEqual(vocabularyViolations(view), []);
+  const dbt = view.sections.find((s) => s.tool === 'dbt');
+  assert.equal(dbt?.artefacts.length, 0);
+  assert.match(dbt?.unavailable ?? '', /members-only/);
+  assert.equal(view.export?.href, null);
+  assert.match(view.export?.unresolvedReason ?? '', /members-only/);
+  // The member keeps everything.
+  const inside = await metricEngineeringView(USER, RECORD.id);
+  assert.equal(inside.export?.href, '/api/data/projects/ops/export');
+  assert.equal(inside.export?.tool, 'dbt');
 });

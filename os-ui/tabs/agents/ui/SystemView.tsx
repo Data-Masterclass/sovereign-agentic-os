@@ -28,6 +28,9 @@ import DomainTag from '@core/ui/DomainTag';
 // string from the route's `git` field; the badge is the same read plus the history drawer, so the
 // five detail headers cannot drift apart.
 import GitHeadBadge from '@core/ui/git/GitHeadBadge';
+// Night 2 (stream T): the engineering view's panel. Both mounts coexist — the badge is the
+// one-line git answer in the header, `UnderTheHood` is the tool-native panel below it.
+import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
 
 // React Flow + Monaco are heavy, client-only, and SSR-tolerant only when lazy —
 // load the canvas ssr:false (same pattern as MonacoFile) so the standalone build
@@ -631,6 +634,8 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       ) : null}
       </>
       )}
+      {/* night-2 stream T: the compiled LangGraph graph and the rest of the real artefacts. */}
+      <UnderTheHood kind="agent_system" id={systemId} />
     </div>
     </ConfirmProvider>
   );

@@ -1072,3 +1072,41 @@ Execution does **not** move: a metric read is still `tabs/metrics/lib/explorer.t
 governed Trino `SELECT` run as the viewer. MetricFlow is never on the request path (it would open
 one connection from its own profile and lose per-viewer impersonation), and where it is installed
 at all it is pinned `>= 0.209.0` — `<= 0.208.1` is BSL 1.1 and BSL does not relax retroactively.
+
+## The engineering view: the OS orchestrates, the tools own the artefacts
+
+One panel, one adapter per object kind, one structure over both doors.
+
+`core/engineering/types.ts` defines `EngineeringView` — per-tool sections, each with the tool's own
+noun, the artefact (the real bytes), the repo path, a deep link and **the command an engineer would
+run** — plus `sealView`, which refuses a view that is not honest: a section with no artefact and no
+reason, an artefact with no body and no note, a link that does not resolve and does not say why.
+
+`core/engineering/registry.ts` maps `kind` → adapter; `core/engineering/register.ts` fills it with
+dynamic `import()` so **the kernel still never imports a tab**. Each tab owns
+`lib/engineering.ts`: it calls its own visibility gate first (so the refusal a client sees is the
+tab's own `not_found` / `forbidden`, with no new visibility rule anywhere) and then maps its record
+onto the shared builders in `core/engineering/sections.ts`.
+
+`core/ui/engineering/UnderTheHood.tsx` is the only renderer — mounted with one line on the five
+detail surfaces — and `GET /api/engineering/<kind>/<id>` and the MCP tool `get_engineering_view`
+both call `engineeringViewFor`. One function, so the panel and an engineer's client cannot drift.
+
+Three things to know before you add a kind or a tool:
+
+- **The vocabulary rule is data.** `core/engineering/vocabulary.ts` lists the tools' nouns; a label
+  that uses only an OS-invented noun fails the test, and the bridge ("dbt metric (KPI)") is allowed
+  once. Add a noun to the table, not a string to a component.
+- **Show the real thing.** The YAML and SQL come from the repository at `main` through
+  `core/engineering/repo.ts`; the LangGraph graph is derived from the SAME IR
+  (`langgraph-compile.ts`) and the SAME node naming (`safeNodeName`) the engine compiles with, and
+  `tabs/agents/lib/engineering.test.ts` pins the derivation against a real `buildGraph`.
+- **The panel may never show what the caller could not have fetched.** An adapter re-applies the
+  repository's own membership rule (`requireMember`) before it shows a byte or offers an export,
+  and a tool link is gated by that tool's `minRole` — a Company-tier data product is visible
+  outside its domain, its domain repository is not. And every adapter hands its tracked-path set to
+  `gitSection` and `sealView`, so a path the repository does not track cannot reach the screen.
+- **Where the OS still does it its own way, say so on the panel.** The app's git section states
+  that app source is in the OS file mirror and not yet an `apps/<slug>/` subtree; a KPI with no
+  `models/semantic/<model>.yml` states that `mf query` would not resolve yet. That is the
+  `docs/components/trino.md` honesty pattern, applied to our own surfaces.

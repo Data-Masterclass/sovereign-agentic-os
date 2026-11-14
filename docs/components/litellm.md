@@ -63,6 +63,13 @@ kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000
 - **MCP tools:** registered tool servers appear at `/v1/mcp/tools`; agents call them through
   LiteLLM's `/mcp` endpoint (see the governed Trino query-tool doc).
 
+## Engineering view ("Under the hood") — not yet
+
+The panel has **no LiteLLM tab yet** (checklist T10, backlog): the routes per role, the key
+**alias** (never the key), the `domain:` / `agent:` / `tab:` / `run:` tags and the budget are
+specified and not built. What already holds, and what the tab will have to keep holding: the panel
+never shows a key — only an alias — and nothing on that surface may widen what a reader can see.
+
 ## FAQ
 **Q: "Not connected to DB" at login?** The UI needs Postgres — it's DB-backed here (CNPG
 `litellm`). If you see this, the litellm pod isn't connected; check it's running.

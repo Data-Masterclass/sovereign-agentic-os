@@ -207,6 +207,15 @@ password in a repo anyone in the domain can clone is not a path the generator of
    (see "Verify it in a cluster", step 4). Until step 1 is done, both succeed, because there is no
    `original_user` to match.
 
+### What is NOT true yet (the engineering view's Trino tab)
+
+The "Under the hood" panel has **no Trino tab yet**. The compiled SQL the OS runs, the catalog and
+schema, the principal it impersonates and a bounded "preview as me" are specified (checklist T10)
+and deliberately not built: a preview button that forgets the query budget is a live incident. Until
+it lands, a KPI's and a dashboard's panel say in their own words that the number is produced by
+compiling the measure to SQL and running it **as you** on Trino, and the SQL itself is visible in
+the Metrics explorer rather than in the panel.
+
 ## Verify it in a cluster
 
 ```sh

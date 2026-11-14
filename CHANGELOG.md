@@ -60,6 +60,23 @@ This is **pre-beta** software: APIs, values, and surfaces may change between
   gains the **Apache ECharts** row it had been missing). `scripts/check-structure.mjs` gains a hard
   `VENDOR-LICENCE-HEADER` rule.
 
+- **The engineering view — "Under the hood" on five object kinds, and `get_engineering_view` over
+  the MCP** (night-2 stream T). `os-ui/core/engineering/` holds the serialisable `EngineeringView`,
+  the adapter registry (filled by dynamic import, so the kernel still imports no tab), the shared
+  dbt / Dagster / LangGraph / git / Langfuse section builders and the data-driven vocabulary rule.
+  One adapter per tab (`tabs/{data,metrics,dashboards,agents,software}/lib/engineering.ts`) calls
+  that tab's own visibility gate and shows the REAL artefact: the dbt model SQL and `schema.yml` as
+  committed with `dbt build --select <node>`, the Dagster asset key / job / schedule / last run with
+  `dagster asset materialize --select …` and an "Open in Dagster" link to Dagster's own console
+  (role-gated by the tool's `minRole`; the `/tools` proxy renders Dagster blank, which is why it
+  declares `ownTab`), the
+  compiled LangGraph graph (plan/act/tools/route nodes, conditional edges, `when` guards, channels,
+  `interrupt()` points, checkpointer, `thread_id` = run id) as JSON **and** as an `@xyflow/react`
+  diagram, the git file list with the head commit, and the Langfuse trace with what is redacted and
+  why. `core/ui/engineering/UnderTheHood.tsx` renders it; `GET /api/engineering/<kind>/<id>` and the
+  MCP tool call the same function, asserted by a parity test. The dbt project export is documented
+  with a tar round-trip + offline parse-gate test.
+
 - **Night run 2 — the plan of record for metrics, dashboards, chat-to-data, vibe-engineered software,
   git everywhere, the engineering view, the engineer's door and lifecycle.** Nine parallel streams
   (M · D · C · S · G · T · E · V · X) are specified in

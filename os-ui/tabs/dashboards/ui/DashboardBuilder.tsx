@@ -27,6 +27,7 @@ import {
   type MetricGroups, type MetricSummary, type Panel, type PanelFilter,
   TIER_BADGE, TIER_LABEL,
 } from '@tabs/dashboards/ui/shared';
+import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
 
 const leaf = (member: string) => (member.includes('.') ? member.slice(member.lastIndexOf('.') + 1) : member);
 
@@ -391,6 +392,8 @@ export default function DashboardBuilder({
             {/* Connected tools (Power BI / Tableau) is REMOVED from View for now —
                 the connections are unverified; restore <ConnectTools /> once each is proven live. */}
           </div>
+          {/* night-2 stream T: the tool-native artefacts of this dashboard. */}
+          <UnderTheHood kind="dashboard" id={built.id} />
         </div>
       ) : (
         <div className="chat-empty">Save the dashboard first — there is nothing to view yet.</div>

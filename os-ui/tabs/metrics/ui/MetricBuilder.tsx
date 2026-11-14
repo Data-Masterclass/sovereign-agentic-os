@@ -35,6 +35,7 @@ import {
   TIER_WORD,
   datasetLayerLabel,
 } from '@tabs/metrics/ui/shared';
+import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
 
 const METRIC_MODE_KEY = 'metrics.viewMode';
 
@@ -1060,6 +1061,8 @@ export default function MetricBuilder({
 
           {/* Connect Power BI is REMOVED from View for now — the connection is unverified;
               restore <ConnectPowerBI domain={saved.domain} /> once it is proven working. */}
+          {/* night-2 stream T: the tool-native artefacts of this KPI. */}
+          <UnderTheHood kind="metric" id={saved.id} />
         </div>
       ) : (
         <div className="chat-empty">Nothing to view yet — define the metric first.</div>

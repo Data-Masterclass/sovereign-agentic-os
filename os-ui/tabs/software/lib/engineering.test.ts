@@ -1,91 +1,75 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * FEATURE:    `engineeringView('app', id)` — the Software tab's Under-the-hood adapter (D25)
- * USER STORY: As an engineer I want the real git facts, the engineer's own command, and an HONEST
- *             statement of what the OS does not do — in the tools' vocabulary, not the OS's.
- * ARCHITECTURE: Pure unit test over `appEngineeringView` — no repo, no cluster.
+ * TAB:        software
+ * FEATURE:    The app engineering view — and the honest statement that app source is not in git yet
+ * USER STORY: As a reviewer I want the app's panel to refuse to imply a git story that does not
+ *             exist: no head commit, no history, and a reason naming the mirror it really lives in
+ *             and the subtree that will replace it (checklist T6, T7).
+ * ARCHITECTURE:
+ *   - Pure: the app read and the repository reader are module-mocked.
  */
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { appEngineeringView, type AppEngineeringInput } from './engineering.ts';
+import { vocabularyViolations } from '@core/engineering/vocabulary';
+import type { EngineeringPrincipal } from '@core/engineering/types';
 
-const base: AppEngineeringInput = {
-  id: 'app_1',
-  slug: 'invoices',
-  name: 'Invoices',
-  domain: 'eng',
-  serveMode: 'spec',
-  files: ['app.yaml', 'src/App.tsx'],
-  history: [{ sha: 'a'.repeat(40), subject: 'software(eng): push_app_files invoices — via mcp:push_app_files', author: { name: 'Amir', email: 'amir@os.local' }, timestamp: 1_000 }],
-  releases: [{ name: 'app/invoices/v1.0.0', commit: 'a'.repeat(40), timestamp: 900 }],
-  mcpPrincipal: 'app-invoices',
-  gitEnabled: true,
-};
+const APP = { id: 'app_1', slug: 'orders-cockpit', name: 'Orders cockpit', domain: 'ops', consumes: [{ kind: 'data', id: 'ds_1' }] };
 
-test('the view is MCP-serialisable: structured clone round-trips it unchanged', () => {
-  const view = appEngineeringView(base);
-  assert.deepEqual(JSON.parse(JSON.stringify(view)), view, 'no functions, no classes, no cycles');
+mock.module('@tabs/software/lib/apps', {
+  namedExports: {
+    getAppForUser: async (id: string) => {
+      if (id !== APP.id) { const e = new Error('App not found') as Error & { status?: number }; e.status = 404; throw e; }
+      return APP;
+    },
+    listAppFilesForViewer: async () => ({ files: ['app.yaml', 'src/epics/orders/list/page.tsx'] }),
+  },
+});
+/** Flipped by the second test: the state after the app writer commits `apps/<slug>/`. */
+let paths: string[] = ['models/gold/gold_orders.sql'];
+
+mock.module('@core/engineering/repo', {
+  namedExports: {
+    repoPaths: async () => ({ repo: 'ops', head: 'face', paths, reason: null }),
+    readRepoFiles: async () => ({ repo: 'ops', head: 'face', files: [], unreadable: [], reason: 'no matching file' }),
+  },
 });
 
-test('the git tab shows the REAL repository, path, head and author — with the engineer’s command', () => {
-  const git = appEngineeringView(base).tools.find((t) => t.tool === 'git')!;
-  const fact = (label: string) => git.facts.find((f) => f.label === label)?.value;
-  assert.equal(fact('repository'), '/repos/eng.git');
-  assert.equal(fact('tree path'), 'apps/invoices/');
-  assert.equal(fact('head commit'), 'a'.repeat(40));
-  assert.equal(fact('head author'), 'Amir <amir@os.local>');
-  assert.equal(fact('tracked files'), '2');
-  assert.ok(git.commands.some((c) => c === 'git --git-dir=/repos/eng.git log --oneline -- apps/invoices/'));
-  assert.ok(git.commands.some((c) => c.startsWith('git clone https://<os>/git/eng.git')));
-  // A link that cannot resolve is ABSENT with a reason — never a dead URL.
-  assert.equal(git.link, null);
-  assert.match(String(git.linkUnavailableReason), /clone it instead/);
+const { appEngineeringView, APPS_PREFIX } = await import('@tabs/software/lib/engineering');
+const USER = { id: 'amir', name: 'Amir', domains: ['ops'], allDomains: ['ops'], activeDomain: 'ops', role: 'admin' } as unknown as EngineeringPrincipal;
+
+test('T6/T7: with nothing committed the git section says so, and names the mirror and the subtree', async () => {
+  const view = await appEngineeringView(USER, 'app_1');
+  assert.deepEqual(vocabularyViolations(view), []);
+  const git = view.sections.find((s) => s.tool === 'git');
+  assert.equal(git?.artefacts.length, 0, 'no artefact may claim to be a git file when nothing is committed');
+  assert.match(git?.unavailable ?? '', /is not committed in 'ops'/);
+  assert.match(git?.unavailable ?? '', /os-app-files/);
+  assert.match(git?.unavailable ?? '', new RegExp(`${APPS_PREFIX}orders-cockpit`));
+  assert.ok((git?.caveats ?? []).some((c) => /app\.yaml/.test(c)), 'the files it does hold are listed as a caveat, not as git files');
+  assert.equal(view.export?.href, null);
+  assert.match(view.export?.unresolvedReason ?? '', /not in git yet/);
 });
 
-test('releases are annotated tags, in the tool’s own vocabulary', () => {
-  const rel = appEngineeringView(base).tools.find((t) => t.tool === 'git (annotated tags)')!;
-  assert.deepEqual(rel.facts, [{ label: 'app/invoices/v1.0.0', value: 'a'.repeat(12) }]);
-  assert.ok(rel.commands[0].includes("tag --list 'app/invoices/v*'"));
-  const none = appEngineeringView({ ...base, releases: [] }).tools.find((t) => t.tool === 'git (annotated tags)')!;
-  assert.deepEqual(none.facts, [{ label: 'releases', value: '(none — this app has no release tag yet)' }]);
+test('T7: an app the caller cannot see is `not found` — the software tab\'s uniform refusal', async () => {
+  await assert.rejects(() => appEngineeringView(USER, 'app_other'), (e: Error & { status?: number }) => e.status === 404);
 });
 
-test('the serving tab tells the truth per serve mode, and only links where something is served', () => {
-  const spec = appEngineeringView(base).tools.find((t) => t.tool === 'Kubernetes')!;
-  assert.deepEqual(spec.link, { url: '/apps/invoices', label: '/apps/invoices' });
-  assert.match(spec.summary, /no container, no registry, no pod/);
-  assert.equal(spec.facts.find((f) => f.label === 'objects')?.value, '(none — the OS serves this app itself, same-origin)');
-
-  const image = appEngineeringView({ ...base, serveMode: 'image' }).tools.find((t) => t.tool === 'Kubernetes')!;
-  assert.equal(image.link, null);
-  assert.match(image.summary, /The OS does not build it/);
-  assert.ok(image.commands[0].startsWith('kubectl -n agentic-apps get deploy,svc,ing app-invoices'));
-});
-
-test('HONESTY: the view says what the OS does NOT do, in its own words', () => {
-  const view = appEngineeringView(base);
-  assert.ok(view.notTrueYet.some((s) => /does NOT build container images/.test(s)));
-  assert.ok(view.notTrueYet.some((s) => /no GitOps controller/.test(s)));
-  assert.ok(view.notTrueYet.some((s) => /release_software/.test(s)), 'the missing verb is named');
-  assert.ok(!view.notTrueYet.some((s) => /DATA_PROJECT_GIT=false/.test(s)), 'not claimed when git is on');
-
-  const off = appEngineeringView({ ...base, gitEnabled: false, history: [], releases: [] });
-  assert.ok(off.notTrueYet.some((s) => /DATA_PROJECT_GIT=false/.test(s)), 'a disabled repo is SAID, not an empty history');
-  const git = off.tools.find((t) => t.tool === 'git')!;
-  assert.equal(git.facts.find((f) => f.label === 'head commit')?.value, '(the domain repository is disabled)');
-});
-
-test('an app with no domain says so instead of inventing a repository', () => {
-  const view = appEngineeringView({ ...base, domain: '', history: [], releases: [] });
-  const git = view.tools.find((t) => t.tool === 'git')!;
-  assert.match(git.summary, /not assigned to a domain/);
-  assert.equal(git.facts.find((f) => f.label === 'repository')?.value, '(none — the app has no domain)');
-  assert.ok(git.commands.every((c) => c.includes('<domain>')), 'the command is a template, not a lie');
-});
-
-test('the native export names what it is and the command to use it elsewhere', () => {
-  const view = appEngineeringView(base);
-  assert.match(String(view.export?.what), /apps\/invoices\//);
-  assert.match(String(view.export?.how), /^git --git-dir=\/repos\/eng\.git archive/);
+test('the same adapter tells the truth AFTER the app writer commits apps/<slug>/ — no code change needed', async () => {
+  paths = ['apps/orders-cockpit/app.yaml', 'apps/orders-cockpit/src/epics/orders/list/page.tsx'];
+  try {
+    const view = await appEngineeringView(USER, 'app_1');
+    assert.deepEqual(vocabularyViolations(view), []);
+    const git = view.sections.find((s) => s.tool === 'git');
+    assert.equal(git?.unavailable, undefined, 'nothing to explain once the subtree is committed');
+    assert.deepEqual(
+      (git?.artefacts ?? []).filter((a) => a.repoPath).map((a) => a.repoPath),
+      ['apps/orders-cockpit/app.yaml', 'apps/orders-cockpit/src/epics/orders/list/page.tsx'],
+    );
+    assert.ok(!(git?.caveats ?? []).some((c) => /in the mirror rather than in git/.test(c)));
+    assert.match(view.export?.unresolvedReason ?? '', /one-click archive/);
+    assert.equal(view.export?.tool, 'git');
+  } finally {
+    paths = ['models/gold/gold_orders.sql'];
+  }
 });

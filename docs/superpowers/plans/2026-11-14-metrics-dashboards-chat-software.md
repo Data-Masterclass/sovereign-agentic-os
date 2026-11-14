@@ -1982,6 +1982,71 @@ deviation is.
 
 ### Stream G — git everywhere and the git UI
 
+### Stream T — the engineering view
+
+- **T-1 — the Git section composes G's badge by SLOT, not by import.** `core/ui/git/` does not
+  exist in this worktree (stream G is building it tonight), so importing `GitHeadBadge` would not
+  type-check. `UnderTheHood` therefore takes an optional `gitBadge?: ReactNode` and renders it in
+  the git section's header; the detail page passes G's component once it lands. No badge is drawn
+  here, so T6's "compose, never duplicate" holds — the wiring is one prop away.
+- **T-2 — the LangGraph diagram shipped tonight**, against the plan's "`[later]` the diagram" and
+  with the implementer brief's own MVP line, which lists it. It is a thin read-only
+  `@xyflow/react` shell over a pure layout function (`core/ui/engineering/graph-layout.ts`); the
+  JSON remains the artefact of record and the diagram re-draws it, never a second model.
+- **T-3 — the graph is derived from the IR, not captured from a compiled `StateGraph`.** Compiling
+  a runnable graph needs the engine's deps (model gateway, tool executor, checkpointer), which an
+  adapter must not construct on a read. The derivation uses the SAME IR (`compile`) and the SAME
+  node naming (`safeNodeName`). **What the test actually pins** (review L-1, wording narrowed):
+  the NODE NAMES and the active-agent set are compared to what a real `buildGraph` exposes
+  (`built.names(agent)`, `built.agents`), so a rename or a pruning change in the engine fails the
+  test. The EDGES, the `when` guards and the channels are compared to the IR, not to the compiled
+  graph — `BuiltGraph` exposes no edge list to compare against. Making that comparison real needs
+  either `graph.getGraph()`/`getGraphAsync()` from LangGraph or an edge list on `BuiltGraph`; it is
+  written into the backlog rather than claimed here.
+- **T-4 — metric and dashboard sections are written against the plan's file contracts** (M's
+  `models/semantic/<model>.yml`, D's `dashboards/<id>.yml`), because neither had landed when this
+  stream ran. Both adapters select by what is actually committed and, when nothing is, name the
+  missing file and state what it would enable (checklist T3 is therefore `partly` until M and D
+  merge).
+- **T-5 — the app's git section carries no file artefacts.** App source is not in git yet (it
+  lives in the OS file mirror, index `os-app-files`); listing those paths as `git file` artefacts
+  would be exactly the paraphrase this stream exists to remove. The section says so, names the
+  mirror and the `apps/<slug>/` subtree stream S will commit to, and lists the files it does hold
+  as a caveat.
+- **T-6 — `EngineeringPrincipal` is `CurrentUser`**, not a narrowed `{id,domains,role}`: the tab
+  gates take the whole user (`getAppForUser`), and a narrowed type only bought a cast at every
+  call site. It is a type-only import, so `core/engineering/types.ts` stays pure and testable.
+- **T-7 — one new MCP bundle registration** in `core/mcp/register-experimental.ts` (`engineering`,
+  always on). The tool itself refuses a kind whose tab is disabled, naming the reason, so there was
+  nothing to gate at the bundle level.
+- **T-8 — "Open in Dagster" links Dagster's OWN console, not `/tools/dagster`** (review H-3).
+  `core/infra/tool-proxy.ts` declares `ownTab` for Dagster because its Next.js chunks load from the
+  site root and render blank behind the proxy prefix, so the plan's "through the tool proxy"
+  (T-R1.3) would have shipped a link to a blank page. The panel uses `TOOLS.dagster.ownTab.consoleUrl`
+  and gates it on the tool's own `minRole` (builder); a creator sees the reason instead of a link
+  the ingress would refuse, and keeps the asset key and the command. Both branches are tested.
+- **T-9 — the repository's membership rule is re-applied by every adapter** (review H-1/M-1).
+  `getDataset` lets a Company-tier (`product`) data product be read from outside its domain, but
+  `tabs/data/lib/dbt/read.ts` `requireMember` gates the repository the panel reads from. A
+  non-member therefore gets that product's own model file, a caveat naming non-membership, and an
+  export offered as `href: null` with its reason — instead of bytes and a download the project API
+  would 403. Same in the metric and dashboard adapters.
+- **T-10 — "no uncommitted path" is structural, not per-adapter** (review M-2). `gitSection` takes
+  the tracked-path set and intersects its file list with it; `sealView(view, tracked)` throws on
+  any artefact `repoPath` the repository does not track. The one-off intersection in the data
+  adapter is gone.
+- **T-11 — `EngineeringExport` carries its `tool`** (review M-4), so `vocabularyViolations` checks
+  the export label too. `'dashboard-as-code file'` was failing that rule twice over and is now
+  `'git file — the dashboard-as-code YAML'`; the agent-system and app labels lead with their tool's
+  noun as well.
+- **T-12 — the diagram is a lazy chunk** (review M-3): `UnderTheHood` loads `GraphDiagram` through
+  `next/dynamic` with `ssr: false`, the pattern `SystemView` already uses for its canvas, so
+  `@xyflow/react` and its stylesheet do not ride along in the four bundles that have no graph.
+- **T-13 — review L-3 found nothing to fix on this branch.** No `outputSchema` claim exists in
+  stream T's diff (`McpTool` has no such field here); the only `structuredContent` reference is a
+  test reading the dispatcher's real typed-error envelope. Recorded rather than silently skipped.
+
+
 - **G-1 — `restoreVersion` SHIPPED as a gated, refusing capability, where the brief said "design the signature and stop".** The plan's hard rule for G was "do not ship `restoreVersion`"; the night's implementer brief asked for it as "a NEW commit through the object's normal writer". Resolution: the function, its owner/scope gate, its three refusals (`not_found` first, then `nothing_to_restore`, `version_too_large`, `restore_unsupported`) and the "one new commit, prior history byte-identical" contract are implemented and tested — but **no tab registers a restorer**, so no kind can actually be restored tonight, and the write across five kinds the plan was protecting against does not exist. The UI shows the refusal rather than hiding the button, which is what makes the gap visible instead of silent.
 - **G-2 — `restore_version` was NOT added to the MCP surface.** A write tool must be declared in `core/mcp/write-tools.ts` + `core/mcp/write-tool-meta.ts` (the governance-critical approval catalogue, shared with several streams), and tonight its only possible answer is `restore_unsupported`. Adding a refusing write tool to the approval catalogue is churn in a shared, safety-relevant file for no user-visible gain. `get_history`, `get_version` and `diff_versions` shipped; `restore_version` is one row in two files once a kind registers its writer.
 - **G-3 — the writer states are three, not two.** `GIT_OBJECT_LAYOUT` distinguishes `committed` (the module exists and reaches `commitTree`/`commitSubtree`), `landing` (declared, naming the stream that lands it tonight) and `backlog` (with a reason). Two states would have forced a lie: calling metric/dashboard/software/lifecycle-pin "committed" before M/D/S/V land their writers, or calling them "backlog" when they are explicitly in flight. The enumeration test asserts a `landing` row whose module starts committing must be flipped to `committed` — so the honesty is enforced rather than hoped for.

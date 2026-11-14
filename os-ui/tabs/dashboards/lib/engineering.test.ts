@@ -2,221 +2,124 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * TAB:        dashboards
- * FEATURE:    The engineering-view adapter contract for stream T (D25, D26)
- * USER STORY: As a data engineer I want the Under-the-hood panel to show the real artefacts in the
- *             tools' own words, with the command I would run and the export that lets me leave.
- * ARCHITECTURE: Pure, MCP-serialisable, and the VOCABULARY rule is a test, not an intention.
+ * FEATURE:    The dashboard engineering view — the dashboard-as-code file, and the dbt metrics it queries
+ * USER STORY: As a reviewer I want the dashboard's panel to show the committed dashboard-as-code
+ *             file with its path, and to name the dbt metrics each panel queries rather than
+ *             inventing a dashboard artefact of our own (checklist T1, T3, T6, T7).
+ * ARCHITECTURE:
+ *   - Pure: the store and the repository reader are module-mocked; `panelMetrics` is the tab's own.
+ *   - NIGHT-2 MERGE (T x D): the fixture now uses the REAL dashboard-as-code layout. The directory
+ *     is slugged from the dashboard's NAME, so it is `dashboards/revenue/dashboard.yaml`, not the
+ *     guessed `dashboards/dash_1.yml`, and the committed `dashboards/index.yml` is the mapping the
+ *     adapter prefers. Both are D's `lib/git/facts.ts`.
  */
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { engineeringView, type DashboardEngineeringInput } from '@tabs/dashboards/lib/engineering';
-import { projectSnapshot, snapshotDashboard, type StoredDashboard } from '@tabs/dashboards/lib/git/snapshot';
-import { placeDashboards } from '@tabs/dashboards/lib/git/generate';
-import { dashboardLifecycle, livePin, lifecycleWired, setLifecycleReader } from '@tabs/dashboards/lib/lifecycle-port';
+import { vocabularyViolations } from '@core/engineering/vocabulary';
+import type { EngineeringPrincipal } from '@core/engineering/types';
 
-const stored: StoredDashboard = {
+const CODE = "name: Revenue\nview: Orders\ncharts:\n  - { name: Revenue by month, vizType: line, metrics: [ds_1.revenue] }\n";
+const RECORD = {
   id: 'dash_1',
-  owner: 'alex@datamasterclass.com',
-  tier: 'domain',
-  domain: 'analytics',
-  spec: {
-    name: 'Sales Overview',
-    view: 'Orders',
-    charts: [
-      { name: 'Total revenue', vizType: 'big_number', metrics: ['Orders.revenue'] },
-      { name: 'Orphan', vizType: 'bar', metrics: ['Orders.unknown'] },
-    ],
-  },
+  domain: 'ops',
+  owner: 'amir',
+  tier: 'Domain',
+  spec: { name: 'Revenue', view: 'Orders', charts: [{ name: 'Revenue by month', vizType: 'line', metrics: ['ds_1.revenue'] }] },
 };
 
-function input(extra: Partial<DashboardEngineeringInput> = {}): DashboardEngineeringInput {
-  const dashboard = snapshotDashboard(stored, {
-    memberRef: (m) => (m === 'Orders.revenue' ? 'metric:met_rev' : null),
-    viewRef: () => 'dataset:ds_orders_gold',
-  });
-  const [placed] = placeDashboards(projectSnapshot('analytics', [dashboard]));
-  return { dashboard, domain: 'analytics', dir: placed.dir, ...extra };
-}
+/** The real layout: slug != id, so the directory is slugged from the NAME. */
+const DIR = 'dashboards/revenue';
+const YAML_PATH = `${DIR}/dashboard.yaml`;
+const INDEX_PATH = 'dashboards/index.yml';
+const INDEX = `dashboards:\n  - slug: revenue\n    id: dash_1\n    path: ${DIR}\n    name: Revenue\n`;
 
-test('the adapter refuses the wrong kind or the wrong id, loudly', () => {
-  assert.throws(() => engineeringView('metric', 'dash_1', input()), /handles kind 'dashboard'/);
-  assert.throws(() => engineeringView('dashboard', 'other', input()), /asked for dashboard 'other'/);
-});
+let paths: string[] = [INDEX_PATH, YAML_PATH];
 
-test('the view is JSON-serialisable, so the panel and the MCP render the identical structure', () => {
-  const view = engineeringView('dashboard', 'dash_1', input({ yaml: 'kind: Dashboard\n', headSha: 'a'.repeat(40) }));
-  assert.deepEqual(JSON.parse(JSON.stringify(view)), view);
-});
-
-test('T2 — every tool tab is named with the TOOL’s own noun, never an OS invention', () => {
-  const view = engineeringView('dashboard', 'dash_1', input());
-  assert.deepEqual(view.tools.map((t) => t.tool), ['git', 'Trino', 'dbt']);
-  const labels = view.tools.flatMap((t) => t.facts.map((f) => f.label));
-  // Each label either names a tool noun or is a plain repository/query noun. An OS-invented noun
-  // like "Artifact" or "Governed Object" fails this.
-  for (const label of labels) {
-    assert.ok(
-      /git|commit|Repository|Path|Subtree|Trino|dbt|view|SQL/i.test(label),
-      `“${label}” uses no tool vocabulary — the engineering view must speak the tools' own language`,
-    );
-  }
-  // The bridge to the OS term is allowed ONCE, in parentheses.
-  assert.ok(labels.some((l) => l === 'dbt metric (KPI)'));
-});
-
-test('the git tab names the real repository, path and subtree, and gives the commands', () => {
-  const view = engineeringView('dashboard', 'dash_1', input({ headSha: 'b'.repeat(40), gitBaseUrl: 'https://os.example.com' }));
-  const git = view.tools.find((t) => t.tool === 'git')!;
-  assert.deepEqual(
-    git.facts.map((f) => [f.label, f.value]),
-    [
-      ['Repository', 'analytics.git'],
-      ['Path', 'dashboards/sales-overview/dashboard.yaml'],
-      ['Head commit', 'b'.repeat(40)],
-      ['Subtree', 'dashboards/'],
-    ],
-  );
-  assert.ok(git.commands!.some((c) => c.command === 'git clone https://os.example.com/git/analytics.git'));
-  assert.ok(git.commands!.some((c) => c.command.includes('git log --stat -- dashboards/sales-overview/dashboard.yaml')));
-});
-
-test('an unresolved head commit SAYS WHY rather than showing a blank field', () => {
-  const view = engineeringView('dashboard', 'dash_1', input());
-  const head = view.tools.find((t) => t.tool === 'git')!.facts.find((f) => f.label === 'Head commit')!;
-  assert.equal(head.value, 'not resolved');
-  assert.match(head.note!, /has not been committed yet|boot reconcile/);
-});
-
-test('the Trino tab says the query runs as the VIEWER and that ad-hoc SQL is impossible', () => {
-  const view = engineeringView('dashboard', 'dash_1', input({ trinoPrincipal: 'alex@datamasterclass.com' }));
-  const trino = view.tools.find((t) => t.tool === 'Trino')!;
-  const runsAs = trino.facts.find((f) => f.label === 'Trino query runs as')!;
-  assert.equal(runsAs.value, 'alex@datamasterclass.com');
-  assert.match(runsAs.note!, /never a service account/);
-  const adhoc = trino.facts.find((f) => f.label === 'Ad-hoc SQL')!;
-  assert.equal(adhoc.value, 'not possible');
-  assert.match(adhoc.note!, /governed metric members only/i);
-});
-
-test('the dbt tab lists the governed ids, and names an unresolved member honestly', () => {
-  const view = engineeringView('dashboard', 'dash_1', input());
-  const dbt = view.tools.find((t) => t.tool === 'dbt')!;
-  const values = dbt.facts.map((f) => f.value);
-  assert.ok(values.some((v) => v.includes('dataset:ds_orders_gold')));
-  assert.ok(values.some((v) => v.includes('metric:met_rev')));
-  const unresolved = dbt.facts.find((f) => f.value === 'Orders.unknown')!;
-  assert.match(unresolved.note!, /No governed metric id resolves this member/);
-  assert.ok(dbt.commands!.some((c) => c.command.startsWith('dbt build --select')));
-});
-
-test('D26 — the native exports name the exact command to run them elsewhere', () => {
-  const view = engineeringView('dashboard', 'dash_1', input({ gitBaseUrl: 'https://os.example.com' }));
-  assert.deepEqual(view.exports.map((e) => e.filename), ['dashboard.yaml', 'analytics.tar']);
-  assert.match(view.exports[0].how, /git show HEAD:dashboards\/sales-overview\/dashboard\.yaml/);
-  assert.match(view.exports[1].how, /git clone https:\/\/os\.example\.com\/git\/analytics\.git/);
-});
-
-test('the caveats state what is NOT true yet, including the Superset relationship', () => {
-  const view = engineeringView('dashboard', 'dash_1', input());
-  const text = view.caveats.join('\n');
-  assert.match(text, /is NOT a Superset artefact/);
-  assert.match(text, /vendored as source and attributed/);
-  assert.match(text, /Layout, a native filter bar, tabs/);
-  assert.match(text, /No lifecycle version is pinned/);
-});
-
-test('a pinned dashboard drops the no-lifecycle caveat', () => {
-  const base = input();
-  const view = engineeringView('dashboard', 'dash_1', { ...base, dashboard: { ...base.dashboard, lifecycle: { live: 'v1' } } });
-  assert.ok(!view.caveats.join('\n').includes('No lifecycle version is pinned'));
-});
-
-// -------------------------------------------- the lifecycle port (V's contract) ---
-
-test('with no lifecycle reader wired, the port reports nothing — never an invented pin', async () => {
-  assert.equal(lifecycleWired(), false);
-  assert.equal(await dashboardLifecycle('dash_1'), null);
-  assert.equal(await livePin('dash_1'), null);
-});
-
-test('H-5 — the port is ASYNC and maps stream V’s own `{ref, at, by}` pin record', async () => {
-  // V's `core/infra/lifecycle-pins.ts` `livePin(kind, id)` returns `Promise<Pin | undefined>` —
-  // the pins live in a durable mirror — so a synchronous port could only have read a stale copy.
-  const off = setLifecycleReader(async (kind, id) =>
-    kind === 'dashboard' && id === 'dash_1'
-      ? { ref: '9f2c1ab0c4e5d6f70819a2b3c4d5e6f708192a3b', at: '2026-11-14T02:10:04.118Z', by: 'u_alex', domain: 'analytics' }
-      : undefined,
-  );
-  try {
-    assert.equal(lifecycleWired(), true);
-    assert.deepEqual(await dashboardLifecycle('dash_1'), {
-      live: '9f2c1ab0c4e5d6f70819a2b3c4d5e6f708192a3b',
-      liveAt: '2026-11-14T02:10:04.118Z',
-      liveBy: 'u_alex',
-    });
-    assert.equal(await livePin('dash_1'), '9f2c1ab0c4e5d6f70819a2b3c4d5e6f708192a3b');
-    // V's record describes exactly ONE thing — the live version — so draft/testing stay ABSENT
-    // rather than being invented from it.
-    const pin = await dashboardLifecycle('dash_1');
-    assert.equal(pin!.draft, undefined);
-    assert.equal(pin!.testing, undefined);
-    assert.equal(await livePin('dash_other'), null, 'an unpinned dashboard is null, not a guess');
-  } finally {
-    off();
-  }
-  assert.equal(lifecycleWired(), false, 'the uninstall restores the previous state');
-});
-
-test('H-5 — a reader may also return the already-mapped shape (what a test usually does)', async () => {
-  const off = setLifecycleReader(() => ({ draft: 'head', live: 'v1.0.0' }));
-  try {
-    assert.deepEqual(await dashboardLifecycle('dash_1'), { draft: 'head', live: 'v1.0.0' });
-  } finally {
-    off();
-  }
-});
-
-test('H-5 — an empty pin record is “no pin”, not an empty lifecycle block in the file', async () => {
-  const off = setLifecycleReader(() => ({}));
-  try {
-    assert.equal(await dashboardLifecycle('dash_1'), null);
-  } finally {
-    off();
-  }
-});
-
-test('a throwing or rejecting lifecycle reader degrades to “no pin”, never breaking the dashboard', async () => {
-  for (const reader of [
-    () => {
-      throw new Error('lifecycle is down');
+mock.module('@tabs/dashboards/lib/store', {
+  namedExports: {
+    getDashboard: (id: string) => {
+      if (id !== RECORD.id) { const e = new Error('Dashboard not found') as Error & { status?: number }; e.status = 404; throw e; }
+      return RECORD;
     },
-    async () => {
-      throw new Error('the mirror is unreachable');
-    },
-  ]) {
-    const off = setLifecycleReader(reader);
-    try {
-      assert.equal(await dashboardLifecycle('dash_1'), null);
-      assert.equal(await livePin('dash_1'), null);
-    } finally {
-      off();
-    }
-  }
+  },
+});
+mock.module('@core/engineering/repo', {
+  namedExports: {
+    repoPaths: async () => ({ repo: 'ops', head: 'beef', paths, reason: null }),
+    readRepoFiles: async (_repo: string, want: (p: string) => boolean) => ({
+      repo: 'ops',
+      head: 'beef',
+      files: paths.filter(want).map((p) => ({ path: p, content: p === INDEX_PATH ? INDEX : CODE })),
+      unreadable: [],
+      reason: null,
+    }),
+  },
 });
 
-test('H-5 — `toLifecyclePin` is the one mapping, and it never fabricates', async () => {
-  const { toLifecyclePin } = await import('@tabs/dashboards/lib/lifecycle-port');
-  assert.equal(toLifecyclePin(null), null);
-  assert.equal(toLifecyclePin(undefined), null);
-  assert.equal(toLifecyclePin({ ref: '', at: 'x', by: 'y' }), null, 'an empty ref is not a pin');
-  assert.deepEqual(toLifecyclePin({ ref: 'abc', at: '', by: '' }), { live: 'abc' }, 'absent at/by are omitted, not guessed');
+const { dashboardEngineeringView, dashboardPaths, DASHBOARD_DIR } = await import('@tabs/dashboards/lib/engineering');
+const USER = { id: 'amir', name: 'Amir', domains: ['ops'], allDomains: ['ops'], activeDomain: 'ops', role: 'admin' } as unknown as EngineeringPrincipal;
+const OUTSIDER = { id: 'fiona', name: 'Fiona', domains: ['finance'], allDomains: ['finance'], activeDomain: 'finance', role: 'admin' } as unknown as EngineeringPrincipal;
+
+test('the dashboard-as-code path of one dashboard is resolved through the committed index, not guessed', () => {
+  assert.equal(DASHBOARD_DIR, 'dashboards/');
+  const tracked = [INDEX_PATH, YAML_PATH, 'dashboards/other/dashboard.yaml'];
+  // The index is the mapping: id -> slugged directory. Only THIS dashboard's directory comes back.
+  assert.deepEqual(dashboardPaths(tracked, 'dash_1', { indexYaml: INDEX }), [YAML_PATH]);
+  // A dashboard nothing can locate is an EMPTY list, never a guessed `dashboards/<id>.yml`.
+  assert.deepEqual(dashboardPaths(tracked, 'dash_unknown', { indexYaml: INDEX }), []);
+  // With no index, the placement is recomputed from the record — and it is still the slug.
+  assert.deepEqual(dashboardPaths(tracked, 'dash_1', { record: RECORD as never, indexYaml: null }), [YAML_PATH]);
 });
 
-test('H-2/H-3 — the pin reads as a fact with its provenance, or as an honest absence', async () => {
-  const { pinSummary } = await import('@tabs/dashboards/lib/git/facts');
-  assert.match(pinSummary(null).value, /no version pinned/);
-  assert.match(pinSummary(null).note!, /Lifecycle is owned by the OS kernel, not by this tab/);
-  const s = pinSummary({ live: 'abc1234', liveAt: '2026-11-14T02:10:04.118Z', liveBy: 'u_alex' });
-  assert.equal(s.value, 'abc1234');
-  assert.match(s.note!, /at 2026-11-14T02:10:04\.118Z by u_alex/);
+test('T6: the git section shows the committed dashboard-as-code file and its path', async () => {
+  const view = await dashboardEngineeringView(USER, 'dash_1');
+  assert.deepEqual(vocabularyViolations(view), []);
+  const git = view.sections.find((s) => s.tool === 'git');
+  assert.equal(git?.artefacts[0].repoPath, YAML_PATH);
+  assert.equal(git?.artefacts[0].body, CODE);
+  assert.equal(view.export?.href, `/api/data/projects/ops/blob?path=${encodeURIComponent(YAML_PATH)}`);
+  // D's facts are ported in: git's own commands against the REAL path, and the live-pin line.
+  assert.ok(git?.commands.some((c) => c.command === `git log --stat -- ${YAML_PATH}`), 'D\'s gitCommands are present');
+  assert.ok((git?.caveats ?? []).some((c) => /Live pinned commit: no version pinned\./.test(c)), 'the unwired lifecycle port reads as "nothing pinned", with the reason');
+  // M-4: the export label leads with the tool's noun.
+  assert.equal(view.export?.tool, 'git');
+  assert.match(view.export?.label ?? '', /^git file/);
+});
+
+test('T3/T7: the dbt section names the metrics the panels query and gives the MetricFlow command', async () => {
+  const view = await dashboardEngineeringView(USER, 'dash_1');
+  const dbt = view.sections.find((s) => s.tool === 'dbt');
+  assert.match(dbt?.unavailable ?? '', /ds_1\.revenue/);
+  assert.ok((dbt?.caveats ?? []).some((c) => /signed-in user/.test(c)));
+  // NIGHT-2 MERGE: D's `governedRefs` are ported in — a member nothing governed owns is NAMED,
+  // never dropped, because the panel still charts it.
+  assert.ok((dbt?.caveats ?? []).some((c) => /Governed references:/.test(c)), 'D\'s governed refs are reported');
+  assert.ok((dbt?.caveats ?? []).some((c) => /No dbt metric owns .*ds_1\.revenue/.test(c)), 'an unresolved member is named');
+  assert.ok((dbt?.caveats ?? []).some((c) => /not importable by Superset/.test(c)), 'D\'s honesty caveats survive');
+});
+
+test('T7: with nothing committed, the export says which file is missing instead of offering a broken link', async () => {
+  // The index is committed, the dashboard's own directory is not.
+  paths = [INDEX_PATH];
+  const view = await dashboardEngineeringView(USER, 'dash_1');
+  assert.equal(view.export?.href, null);
+  assert.match(view.export?.unresolvedReason ?? '', /dashboards\/revenue\/dashboard\.yaml/);
+  const git = view.sections.find((s) => s.tool === 'git');
+  assert.match(git?.unavailable ?? '', /lands it at/);
+  assert.equal(git?.artefacts.length, 0, 'an unavailable section carries NO artefact (T7)');
+  paths = [INDEX_PATH, YAML_PATH];
+});
+
+test('T7: a dashboard that does not exist is the tab\'s own 404', async () => {
+  await assert.rejects(() => dashboardEngineeringView(USER, 'dash_missing'), (e: Error & { status?: number }) => e.status === 404);
+});
+
+test('H-1/M-1: a dashboard shared beyond its domain shows no committed file and no export to a non-member', async () => {
+  const view = await dashboardEngineeringView(OUTSIDER, 'dash_1');
+  assert.deepEqual(vocabularyViolations(view), []);
+  const git = view.sections.find((s) => s.tool === 'git');
+  assert.equal(git?.artefacts.length, 0);
+  assert.match(git?.unavailable ?? '', /members-only/);
+  assert.equal(view.export?.href, null);
+  assert.match(view.export?.unresolvedReason ?? '', /members-only/);
 });
