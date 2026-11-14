@@ -139,7 +139,10 @@ export async function acquireRepoLock(domain: string, opts: RepoLockOptions = {}
   const bounded = new Promise<'timeout'>((resolve) => {
     timer = setTimeout(() => resolve('timeout'), timeoutMs);
   });
-  (timer as unknown as { unref?: () => void })?.unref?.();
+  // Deliberately NOT unref'd: this timer IS the bounded wait. With nothing else keeping the
+  // event loop alive (a CI runner executing this file alone) an unref'd timer lets Node drain the
+  // loop before it fires, and the caller's promise is abandoned mid-wait. It is cleared below on
+  // either outcome, so it never holds the process open longer than `timeoutMs`.
   const outcome = await Promise.race([prev.then(() => 'ready' as const, () => 'ready' as const), bounded]);
   if (timer) clearTimeout(timer);
   if (outcome === 'timeout') {
