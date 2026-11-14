@@ -648,3 +648,275 @@ export async function push(domain: string, mirror: MirrorConfig, deps: PushDeps 
     return { ok: false, error: scrub(e instanceof Error ? e.message : String(e), token) };
   }
 }
+
+// ======================= === S TAG BLOCK === (stream S, night-2) ===========================
+// Delimited for a textual merge: stream G appends its read/diff block as `=== G READ BLOCK ===`
+// ABOVE this one. Neither block changes an existing export's signature. Do not interleave them.
+// ===========================================================================================
+// TAGS AND RELEASES — stream S's additive block (night-2, D17/S-R2.1).
+//
+// Appended at the end of the file ON PURPOSE: stream G owns the read/diff block and this one
+// changes NO existing export's signature. Everything below is new.
+//
+// WHY: `main` is the only long-lived ref, and a RELEASE is an annotated tag
+// `app/<slug>/v<MAJOR>.<MINOR>.<PATCH>` pointing at the reviewed commit. Tag namespacing by
+// slug is what makes one-repo-per-domain work — `listTags(domain, 'app/invoices/v')` IS that
+// app's release history. A tag is IMMUTABLE here: re-tagging the same name is a typed 409,
+// because "the release that is running" must not be re-pointable (12-factor V / OpenGitOps
+// "versioned and immutable"). Nothing in this block rewrites history.
+// ===========================================================================================
+
+/** `refs/tags/<name>`. */
+export function tagRef(name: string): string {
+  return `refs/tags/${name}`;
+}
+
+/**
+ * A tag name the OS will write: path-ish segments of `[A-Za-z0-9._-]`, no `..`, no leading or
+ * trailing `/`, no `@{`, not ending in `.lock` — the subset of git's `check-ref-format` rules
+ * that matters here, applied BEFORE anything reaches the ref store.
+ */
+const TAG_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export function assertTagName(name: string): string {
+  const n = String(name ?? '').trim();
+  const segments = n.split('/');
+  const ok =
+    n.length > 0 &&
+    n.length <= 200 &&
+    !n.includes('..') &&
+    !n.includes('@{') &&
+    segments.length <= 8 &&
+    segments.every((s) => TAG_SEGMENT_RE.test(s) && !s.endsWith('.lock'));
+  if (!ok) throw new GitStoreError(`invalid tag name '${n.slice(0, 60)}'`);
+  return n;
+}
+
+export type TagEntry = {
+  name: string;
+  /** The commit the tag resolves to. */
+  commit: string;
+  /** The tag object's own oid (annotated tags only). */
+  oid: string;
+  message: string;
+  tagger: GitAuthor;
+  /** Unix seconds. */
+  timestamp: number;
+};
+
+export type AnnotatedTagOptions = GitStoreOptions & {
+  /** The release's author — the acting user, exactly like a commit. */
+  tagger: GitAuthor;
+  /** The release manifest / notes. Trailers may already be included. */
+  message: string;
+  /** Extra trailers appended to the message's trailer block. */
+  trailers?: Record<string, string>;
+  /** `main`, `HEAD` or a sha (default: `main`). */
+  ref?: string;
+  /** Unix seconds (default: now). */
+  timestamp?: number;
+};
+
+/**
+ * Create an ANNOTATED tag at `ref`. Returns the tag object's oid and the commit it names.
+ * A tag that already exists is a 409 — an immutable release id is the whole point, so this
+ * never moves a tag and never force-writes a ref.
+ */
+export async function annotatedTag(domain: string, name: string, opts: AnnotatedTagOptions): Promise<TagEntry> {
+  const tag = assertTagName(name);
+  if (!repoExists(domain, opts)) throw new GitStoreError(`no repository for '${domain}'`, 404);
+  const gitdir = repoPath(domain, opts);
+  return withLock(gitdir, async () => {
+    const existing = await tagOid(gitdir, tag);
+    if (existing) throw new GitStoreError(`tag '${tag}' already exists — a release is immutable`, 409);
+    const commit = await resolveCommit(gitdir, opts.ref);
+    const timestamp = opts.timestamp ?? Math.floor(Date.now() / 1000);
+    const message = appendTrailers(opts.message, opts.trailers ?? {});
+    await git.annotatedTag({
+      fs,
+      gitdir,
+      ref: tag,
+      object: commit,
+      message,
+      tagger: { ...opts.tagger, timestamp, timezoneOffset: 0 },
+    });
+    // `annotatedTag` returns void, so read the ref back for the tag object's own oid.
+    const oid = (await tagOid(gitdir, tag)) ?? '';
+    if (!oid) throw new GitStoreError(`tag '${tag}' was not written`, 500);
+    return { name: tag, commit, oid, message, tagger: opts.tagger, timestamp };
+  });
+}
+
+async function tagOid(gitdir: string, tag: string): Promise<string | null> {
+  try {
+    return await git.resolveRef({ fs, gitdir, ref: tagRef(tag) });
+  } catch {
+    return null;
+  }
+}
+
+/** Read one tag. `null` when it does not exist. A lightweight tag reports the commit as its oid. */
+export async function resolveTag(domain: string, name: string, opts: GitStoreOptions = {}): Promise<TagEntry | null> {
+  const tag = assertTagName(name);
+  if (!repoExists(domain, opts)) return null;
+  const gitdir = repoPath(domain, opts);
+  const oid = await tagOid(gitdir, tag);
+  if (!oid) return null;
+  try {
+    const { tag: t } = await git.readTag({ fs, gitdir, oid });
+    return {
+      name: tag,
+      commit: t.object,
+      oid,
+      message: t.message ?? '',
+      tagger: { name: t.tagger?.name ?? '', email: t.tagger?.email ?? '' },
+      timestamp: t.tagger?.timestamp ?? 0,
+    };
+  } catch {
+    // A lightweight tag points straight at the commit: report it honestly rather than throwing.
+    const { commit } = await git.readCommit({ fs, gitdir, oid });
+    return {
+      name: tag,
+      commit: oid,
+      oid,
+      message: commit.message.split('\n')[0],
+      tagger: { name: commit.author.name, email: commit.author.email },
+      timestamp: commit.author.timestamp,
+    };
+  }
+}
+
+/**
+ * Every tag whose name starts with `prefix` (omit it for all), NEWEST FIRST by tagger time and
+ * then by name descending, so `listTags(d, 'app/invoices/v')` reads as a release history.
+ * An unreadable tag is skipped, never faked.
+ */
+export async function listTags(domain: string, prefix = '', opts: GitStoreOptions & { limit?: number } = {}): Promise<TagEntry[]> {
+  if (!repoExists(domain, opts)) return [];
+  const gitdir = repoPath(domain, opts);
+  let names: string[] = [];
+  try {
+    names = await git.listTags({ fs, gitdir });
+  } catch {
+    return [];
+  }
+  const out: TagEntry[] = [];
+  for (const n of names) {
+    if (prefix && !n.startsWith(prefix)) continue;
+    try {
+      const t = await resolveTag(domain, n, opts);
+      if (t) out.push(t);
+    } catch {
+      /* an unreadable tag is omitted — never reported as a release */
+    }
+  }
+  out.sort((a, b) => b.timestamp - a.timestamp || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+  const limit = Math.max(1, Math.min(opts.limit ?? 100, MAX_LOG_DEPTH));
+  return out.slice(0, limit);
+}
+
+/** The oid of `path` (a blob OR a subtree) in a commit's tree — `null` when it is absent. */
+async function oidAtPath(gitdir: string, commitOid: string, filepath: string): Promise<string | null> {
+  try {
+    const { commit } = await git.readCommit({ fs, gitdir, oid: commitOid });
+    let treeOid = commit.tree;
+    const parts = filepath.split('/');
+    for (let i = 0; i < parts.length; i++) {
+      const { tree } = await git.readTree({ fs, gitdir, oid: treeOid });
+      const entry = tree.find((e) => e.path === parts[i]);
+      if (!entry) return null;
+      if (i === parts.length - 1) return entry.oid;
+      if (entry.type !== 'tree') return null;
+      treeOid = entry.oid;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PATH-SCOPED log: the commits that CHANGED `path` (a file or a directory prefix), newest
+ * first. Computed by comparing the oid of `path` against the first parent's — which is exactly
+ * `git log -- <path>` for this repo shape (one branch, no merges) and needs no rename
+ * detection. The walk is bounded by {@link MAX_LOG_DEPTH} like every other read here; when the
+ * bound is hit the result says so rather than pretending to be complete.
+ */
+export async function logPath(
+  domain: string,
+  filepath: string,
+  opts: GitStoreOptions & { limit?: number; depth?: number } = {},
+): Promise<{ entries: LogEntry[]; truncated: boolean }> {
+  const want = Math.max(1, opts.limit ?? 50);
+  const all = await log(domain, { ...opts, limit: Math.max(want, Math.min(opts.depth ?? MAX_LOG_DEPTH, MAX_LOG_DEPTH)) });
+  if (all.length === 0) return { entries: [], truncated: false };
+  const path = assertRepoPath(String(filepath ?? '').replace(/\/+$/, ''));
+  const gitdir = repoPath(domain, opts);
+  const entries: LogEntry[] = [];
+  let scanned = 0;
+  for (const e of all) {
+    scanned++;
+    const mine = await oidAtPath(gitdir, e.sha, path);
+    const parent = e.parents[0] ? await oidAtPath(gitdir, e.parents[0], path) : null;
+    if (mine !== parent) entries.push(e);
+    if (entries.length >= want) break;
+  }
+  return { entries, truncated: scanned >= all.length && all.length >= MAX_LOG_DEPTH };
+}
+// ======================= === END S TAG BLOCK === ==========================================
+
+// ======================= === S READ-BACK BLOCK === (stream S, night-2 review M-5) ==========
+// A BOUNDED read of one subtree at a ref, in `@core` so a tab (or the admin tab's MCP module)
+// can read another tab's committed files WITHOUT importing that tab — the import
+// `tabs/admin/mcp` → `tabs/software/lib` was a tab→tab edge the structure ratchet cannot see,
+// because it was a dynamic `import()`. Generic: paths and strings in, no tab vocabulary.
+// ===========================================================================================
+
+/** Caps for {@link readSubtree}, so one read can never pull an unbounded tree into memory. */
+export const MAX_SUBTREE_FILES = 500;
+export const MAX_SUBTREE_BYTES = 8 * 1024 * 1024;
+
+export type SubtreeRead = {
+  /** Paths RELATIVE to the prefix, sorted. */
+  files: { path: string; content: string }[];
+  /** The commit that last changed this prefix (`''` when the prefix has no history). */
+  sha: string;
+  /** True when a cap stopped the read — the caller must SAY so rather than imply completeness. */
+  truncated: boolean;
+};
+
+/**
+ * Read every file under `prefix` at `ref`, with the prefix stripped, plus the sha of the commit
+ * that last CHANGED that prefix. `null` when the repository or the prefix does not exist — never
+ * an empty result that reads like an empty tree.
+ *
+ * Bounded by {@link MAX_SUBTREE_FILES} and {@link MAX_SUBTREE_BYTES}: one `listTree` walk plus
+ * at most that many blob reads, and `truncated: true` when a cap bit.
+ */
+export async function readSubtree(
+  domain: string,
+  prefix: string,
+  opts: GitStoreOptions & { ref?: string } = {},
+): Promise<SubtreeRead | null> {
+  if (!repoExists(domain, opts)) return null;
+  const pre = normalizePrefix(prefix);
+  const gitdir = repoPath(domain, opts);
+  if (!(await headSha(gitdir))) return null;
+  const ref = opts.ref ?? 'main';
+  const entries = (await listTree(domain, ref, opts)).filter((e) => e.path.startsWith(pre));
+  if (entries.length === 0) return null;
+  const files: SubtreeRead['files'] = [];
+  let bytes = 0;
+  let truncated = false;
+  for (const e of entries) {
+    if (files.length >= MAX_SUBTREE_FILES || bytes >= MAX_SUBTREE_BYTES) {
+      truncated = true;
+      break;
+    }
+    const content = await readBlob(domain, ref, e.path, opts);
+    bytes += Buffer.byteLength(content, 'utf8');
+    files.push({ path: e.path.slice(pre.length), content });
+  }
+  const mine = await logPath(domain, pre.replace(/\/$/, ''), { ...opts, limit: 1 });
+  return { files, sha: mine.entries[0]?.sha ?? '', truncated };
+}
+// ======================= === END S READ-BACK BLOCK === ====================================

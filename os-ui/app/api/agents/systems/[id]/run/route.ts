@@ -26,6 +26,7 @@ import { assertRunVisible } from '@tabs/agents/lib/engine/run-visibility';
 import { acquireTail } from '@tabs/agents/lib/engine/tail-limit';
 import { unmappedGrantNames } from '@tabs/agents/lib/build/os-tools';
 import { cleanTurns } from '@core/runtime/turns';
+import { guardAppIntent } from '@core/kernel/app-intent';
 
 export const dynamic = 'force-dynamic';
 // A multi-node team walk (each node a PLAN→ACT loop on a large model) can run long;
@@ -96,6 +97,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const { id } = await ctx.params;
     resolvedId = id;
     const body = await req.json().catch(() => ({}));
+
+    // REVIEW H-1: a governed app reaches this route same-origin with the ambient session, so a
+    // call that SAYS it is an app must present the signed, `agent-run`-scoped intent the OS
+    // injected when it rendered that app — minted for THIS user, unexpired. A cross-site POST is
+    // refused outright. The OS UI's own call carries neither header and is unaffected.
+    const intent = guardAppIntent(req.headers, resolvedUser, 'agent-run');
+    if (!intent.ok) return NextResponse.json({ error: intent.reason }, { status: intent.status });
 
     if (body.stop === true) {
       const rec = setRunning(id, resolvedUser, false);

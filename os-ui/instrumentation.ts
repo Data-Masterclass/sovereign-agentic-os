@@ -40,9 +40,17 @@ export async function register(): Promise<void> {
         // The literal must stay equal to `DASHBOARDS_PREFIX`
         // (`tabs/dashboards/lib/git/generate.ts`); `tabs/dashboards/lib/git/boot.test.ts` asserts it.
         reserveSubtree('dashboards/');
+        // Night 2 / stream S, review H-3: `apps/` is reserved HERE for exactly the same reason, and
+        // for the same second-line-of-defence argument. It was previously registered in a floating
+        // IIFE at the END of `register()`, which meant the data boot reconcile below could run
+        // FIRST and delete every app's source tree — the D-1 defect repeated. The literal must stay
+        // equal to `APPS_PREFIX` (`tabs/software/lib/git-commit.ts`); `git-commit.test.ts` asserts
+        // it does, and `tabs/software/lib/apps-reservation.test.ts` asserts the ORDER, not merely
+        // the existence.
+        reserveSubtree('apps/');
       }
     } catch (err) {
-      console.error(`[os-ui] agent projects: could NOT reserve the 'agents/' subtree — ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[os-ui] projects: could NOT reserve the 'agents/' + 'dashboards/' + 'apps/' subtrees — ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -236,8 +244,23 @@ export async function register(): Promise<void> {
       // for every domain, as the platform principal (`OS-Reason: boot-reconcile`). Commits only
       // where the tree actually moved; one unreadable domain never stops the others or the boot.
       // It runs AFTER step 2 so the reserved `agents/` subtree survives the whole-tree commit; if
-      // step 2 failed, the reconcile is SKIPPED rather than allowed to delete the subtree.
-      if (dataHookInstalled && agentsHookInstalled) {
+      // step 2 failed, the reconcile is SKIPPED rather than allowed to delete the subtree. Review
+      // H-3: the same condition now covers `apps/` — a whole-tree reconcile with `apps/`
+      // unreserved would delete every app's source tree, so the reconcile is skipped unless the
+      // reservation is demonstrably in place (checked against the registry, not assumed).
+      const reserved = await (async () => {
+        try {
+          const { reservedSubtrees } = await import('./core/infra/git-store.ts');
+          return reservedSubtrees();
+        } catch {
+          return [] as string[];
+        }
+      })();
+      const appsReserved = reserved.includes('apps/');
+      if (!appsReserved) {
+        console.error("[os-ui] software: 'apps/' is NOT reserved — the data boot reconcile is SKIPPED, because a whole-tree commit would delete every app's source tree");
+      }
+      if (dataHookInstalled && agentsHookInstalled && appsReserved) {
         try {
           const { reconcileDataProjectsAtBoot } = await import('./tabs/data/lib/dbt/boot-reconcile.ts');
           const reconciled = await reconcileDataProjectsAtBoot({

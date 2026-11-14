@@ -244,7 +244,6 @@ test('templateFiles: sovereign-app ships the full standard-app skeleton', () => 
     'app.yaml',
     'README.md',
     'Dockerfile',
-    '.forgejo/workflows/ci.yml',
   ]) {
     assert.ok(paths.includes(p), `scaffold includes ${p}`);
   }
@@ -287,7 +286,7 @@ test('createApp: empty → the bare minimum that still builds and deploys', asyn
   assert.equal(app.template, 'empty');
   assert.deepEqual(app.surface, { ui: true, api: false });
   const paths = templateFiles('empty', 'Scratch', 'scratch').map((f) => f.path);
-  for (const p of ['src/main.tsx', 'src/App.tsx', 'Dockerfile', '.forgejo/workflows/ci.yml']) {
+  for (const p of ['src/main.tsx', 'src/App.tsx', 'Dockerfile']) {
     assert.ok(paths.includes(p), `minimal scaffold includes ${p}`);
   }
 });

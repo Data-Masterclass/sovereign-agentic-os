@@ -24,6 +24,7 @@ import { securityScan } from '@tabs/software/lib/scan';
 import { resolveSurface } from '@tabs/software/lib/metadata';
 import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard';
 import { getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
+import { assertNotSeeded } from '@tabs/software/lib/seeded-evidence';
 import { deployApp, runnerStatus, type RunnerApp, type RunnerOpts, type RunnerOutcome, type RunnerStatus } from '@tabs/software/lib/runner';
 import { roleAtLeast } from '@core/kernel/session';
 import { config } from '@core/kernel/config';
@@ -334,6 +335,12 @@ export async function requestDeploy(
   // (the creator's recorded intent) WINS over the heuristic.
   app.surface = resolveSurface(files, app.declaredSurface);
 
+  // NIGHT-2 S3: a `demo-seed` result is STRUCTURALLY unusable as evidence. The tree under
+  // review must be the app's real source, never placeholder rows that reached it because no
+  // runner was live — an approval grounded in seeded data is a governance failure wearing a
+  // green tick. Refused with a typed 409 BEFORE a card or an approval exists.
+  assertNotSeeded('a deploy request', files);
+
   const requested = requestedEnvelope(app);
   const broadened = scopeBroadened(app.deploy.approved, requested);
 
@@ -404,6 +411,8 @@ export async function requestDeploy(
     warnings,
     decision: 'pending',
   };
+  // The card IS the evidence an approver reads: it may not carry a seeded value either (S3).
+  assertNotSeeded('a deploy review card', card);
   saveCard(card);
 
   app.deploy.state = 'review';
@@ -496,6 +505,11 @@ export async function decideDeploy(
   if (!isBuilder(user) || !user.domains.includes(card.domain)) {
     throw withStatus(new Error('Only a Builder or Administrator in this domain can review a deploy'), 403);
   }
+
+  // NIGHT-2 S3: the decisive gate. An approval may never be grounded in demo-seed data, so the
+  // card's own evidence is re-checked here — at the moment of the decision, not only when it was
+  // filed — and a seeded card is refused with a typed 409 for approver AND denier alike.
+  assertNotSeeded(`the approval of review card ${card.id}`, card);
 
   const app = await getAppByIdInternal(card.appId);
   if (!app) {
@@ -652,6 +666,12 @@ export async function reconcileDeployStatus(
   // what we cannot reach), and a running/deploying/failed runner is never re-applied.
   if (status.phase === 'absent' && (app.deploy.state === 'live' || app.deploy.state === 'preview')) {
     const healed = await deployApp(runnerAppFor(app), opts);
+    // NIGHT-2 S2: the heal can REFUSE — an `image` app with no published image provisions
+    // nothing and says why, instead of serving a placeholder container on the app's own host.
+    // Carry that reason onto the status the caller shows; never a silent "still absent".
+    if (!healed.live && healed.phase === 'failed' && healed.detail) {
+      status = { ...status, detail: healed.detail };
+    }
     if (healed.live) {
       void trace({
         principal: app.mcpPrincipal,

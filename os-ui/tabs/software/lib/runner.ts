@@ -103,15 +103,39 @@ export function runnerName(slug: string): string {
   return `app-${s || 'app'}`.slice(0, 52).replace(/-+$/g, '');
 }
 
+/** The typed, loud refusal of serving an `image` app that has no image (night-2 S2). */
+export class MissingAppImageError extends Error {
+  readonly code = 'missing_app_image';
+  readonly status = 409;
+  readonly slug: string;
+  constructor(slug: string) {
+    super(
+      `App '${slug}' is set to serve a container image but no image reference is set. ` +
+        'The OS does not build images: publish one yourself and set the app\u2019s image reference, ' +
+        'or switch the app to the declarative (spec) or runtime serve mode. ' +
+        'Nothing was provisioned — the OS will not serve a placeholder container on your domain.',
+    );
+    this.name = 'MissingAppImageError';
+    this.slug = slug;
+  }
+}
+
 /**
- * The image the runner serves: an explicit prebuilt `runImage` wins; else the
- * platform default (`SOFTWARE_RUNNER_IMAGE`, e.g. a teaching stub). We never BUILD
- * here — a missing/unpublished image simply fails readiness, honestly.
+ * The image the runner serves: the app's explicit prebuilt `runImage` wins; else the
+ * operator-set shared image (`SOFTWARE_RUNNER_IMAGE`), which is EMPTY by default.
+ *
+ * FAILS CLOSED AND LOUDLY when neither is set (night-2 S2 trap fix). It used to fall back to
+ * `config.softwareRunnerImage`, whose chart default was `traefik/whoami:latest` — so an app
+ * that went live with no image of its own served A STRANGER'S PLACEHOLDER CONTAINER on the
+ * customer's own domain, and the deploy reported success. We never BUILD here; a missing image
+ * is now a typed 409 that names the app, not a silent substitution.
  */
 export function appImageRef(app: { slug: string; runImage?: string }): string {
   const explicit = (app.runImage ?? '').trim();
   if (explicit) return explicit;
-  return config.softwareRunnerImage;
+  const shared = (config.softwareRunnerImage ?? '').trim();
+  if (shared) return shared;
+  throw new MissingAppImageError(app.slug);
 }
 
 /** Build the concrete runnable spec from an app (image + host + footprint). */
@@ -355,7 +379,24 @@ function collections(ns: string) {
  */
 export async function deployApp(app: RunnerApp, options: RunnerOpts = {}): Promise<RunnerOutcome> {
   const o = resolveOpts(options);
-  const spec = runnerSpec(app);
+  // FAIL CLOSED on a missing image (night-2 S2): no Deployment, no Service, no Ingress, no URL,
+  // and the reason is said out loud. Never a placeholder container on a customer domain.
+  let spec: RunnerSpec;
+  try {
+    spec = runnerSpec(app);
+  } catch (e) {
+    if (!(e instanceof MissingAppImageError)) throw e;
+    return {
+      ok: false,
+      live: false,
+      action: 'noop',
+      name: runnerName(app.slug),
+      host: app.host,
+      url: null,
+      phase: 'failed',
+      detail: e.message,
+    };
+  }
   const name = runnerName(spec.slug);
   const url = `https://${spec.host}`;
   const c = collections(o.namespace);

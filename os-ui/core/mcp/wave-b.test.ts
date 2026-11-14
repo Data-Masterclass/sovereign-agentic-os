@@ -194,14 +194,18 @@ test('get_file: a restricted file returns metadata but NEVER the text; an unenti
 
 // ---- READ_APP_FILES + GET_SOFTWARE_STATUS ----------------------------------------
 
-test('read_app_files: the committed tree + one file’s content, honestly labelled offline-mock without a cluster', async () => {
+// NIGHT-2 S1: the label is `source`, not `mode: 'offline-mock'`. There is no git forge to be
+// "unreachable" — the tree is either what the governed commit door committed into
+// `apps/<slug>/` of the domain repository, or (for an app with no commit yet) the template seed.
+test('read_app_files: the committed tree + one file’s content, labelled `template-seed` before any commit', async () => {
   resetAll();
   const app = payload<{ id: string }>(await call(builder, 'create_software', { name: 'Renewals', template: 'nextjs-supabase' }));
 
-  const tree = payload<{ mode: string; files: string[]; note: string }>(await call(builder, 'read_app_files', { appId: app.id }));
-  assert.equal(tree.mode, 'offline-mock', 'no live tree in tests — the mode is honestly labelled');
+  const tree = payload<{ source: string; files: string[]; note: string }>(await call(builder, 'read_app_files', { appId: app.id }));
+  assert.equal(tree.source, 'template-seed', 'a fresh app has no commit — say so, do not call it a forge outage');
+  assert.ok(!('mode' in (tree as Record<string, unknown>)), 'no `offline-mock` mode label any more');
+  assert.match(tree.note, /no commit yet/i, 'the honest reason is stated');
   assert.ok(tree.files.includes('app.yaml') && tree.files.includes('Dockerfile'), 'the template seed tree is visible');
-  assert.ok(tree.note.length > 0, 'the offline source is stated');
 
   const file = payload<{ path: string; content: string; contentNote: string | null }>(
     await call(builder, 'read_app_files', { appId: app.id, path: 'app.yaml' }),

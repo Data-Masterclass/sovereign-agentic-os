@@ -41,15 +41,20 @@ function reset() {
 
 // ------------------------------------------------------------- nil-safety ---
 
-test('normalizeServeMode: only "runtime" opts in; everything else is "image"', () => {
+// NIGHT-2 S2: the DEFAULT is 'spec'. Only the explicit 'runtime' / 'image' opt out. The old
+// default was 'image', which with the chart's `traefik/whoami:latest` runner image meant a
+// legacy record going live served a stranger's placeholder container on the customer's domain.
+test('normalizeServeMode: the default is "spec"; only explicit "runtime"/"image" opt out', () => {
   assert.equal(normalizeServeMode('runtime'), 'runtime');
   assert.equal(normalizeServeMode('image'), 'image');
-  assert.equal(normalizeServeMode(undefined), 'image');
-  assert.equal(normalizeServeMode(null), 'image');
-  assert.equal(normalizeServeMode('garbage'), 'image');
+  assert.equal(normalizeServeMode('spec'), 'spec');
+  assert.equal(normalizeServeMode(undefined), 'spec', 'a legacy record is NOT an image app');
+  assert.equal(normalizeServeMode(null), 'spec');
+  assert.equal(normalizeServeMode('garbage'), 'spec');
+  assert.equal(normalizeServeMode(7), 'spec');
   // serveModeOf reads a possibly-legacy record nil-safely.
-  assert.equal(serveModeOf({ serveMode: undefined } as Pick<App, 'serveMode'>), 'image');
-  assert.equal(serveModeOf({} as Pick<App, 'serveMode'>), 'image');
+  assert.equal(serveModeOf({ serveMode: undefined } as Pick<App, 'serveMode'>), 'spec');
+  assert.equal(serveModeOf({} as Pick<App, 'serveMode'>), 'spec');
 });
 
 test('a fresh app defaults to image serving', async () => {

@@ -191,8 +191,6 @@ osUI:
   # Browser-reachable consoles -> the public Ingress hosts (was localhost port-forwards).
   supersetUrl: "https://superset.REPLACE-DNS-NAME"
   langfuseConsoleUrl: "https://langfuse.REPLACE-DNS-NAME"
-  forgejoConsoleUrl: "https://forgejo.REPLACE-DNS-NAME"
-  argocdUrl: "https://argocd.REPLACE-DNS-NAME"
   openmetadataUrl: "https://openmetadata.REPLACE-DNS-NAME"
 
 # A3 (checklist A28): the scoped agent key's allowlist MUST cover every alias the OS can
@@ -363,8 +361,6 @@ ingress:
     langfuse: "langfuse.REPLACE-DNS-NAME"
     openmetadata: "openmetadata.REPLACE-DNS-NAME"
     superset: "superset.REPLACE-DNS-NAME"
-    forgejo: "forgejo.REPLACE-DNS-NAME"
-    argocd: "argocd.REPLACE-DNS-NAME"
     # Terminal + Workbench broker hosts (used when terminal/workbench are enabled).
     # Without these the os-ui gets empty TERMINAL_BROKER_WS / WORKBENCH_BROKER_URL
     # and the consoles cannot reach their brokers from the browser.

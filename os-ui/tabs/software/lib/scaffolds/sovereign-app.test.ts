@@ -170,9 +170,8 @@ test('sovereign-app scaffold: README is the skeleton guide and doubles as docs',
 
 // --------------------------------------------------------------- infra parity --
 
-test('sovereign-app scaffold: serves like every governed SPA (nginx 8080, CI, surface ui)', () => {
+test('sovereign-app scaffold: serves like every governed SPA (nginx 8080, surface ui)', () => {
   assert.match(byPath('Dockerfile'), /EXPOSE 8080/, 'serves on the runner probe port');
   assert.match(byPath('nginx.conf'), /listen 8080/, 'nginx on 8080');
   assert.match(byPath('app.yaml'), /surface: ui/, 'declares surface ui');
-  assert.match(byPath('.forgejo/workflows/ci.yml'), /docker push/, 'sovereign CI builds + pushes');
 });

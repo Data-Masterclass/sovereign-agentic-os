@@ -994,8 +994,13 @@ softwareRunner:
   enabled: false
   namespace: agentic-apps
   appsDomain: "apps.local"
-  # Teaching default served when a built app has no image of its own.
-  runnerImage: "traefik/whoami:latest"
+  # The shared image for `serveMode: 'image'` apps that carry no image of their own.
+  # EMPTY by default and it must stay that way unless an operator deliberately sets it:
+  # there is no OS image builder, so a non-empty default here serves a THIRD PARTY's
+  # placeholder container on a customer domain. With this empty, `appImageRef` fails
+  # closed and loudly (night-2 S2). Tier-1 ('spec') and Tier-2 ('runtime') apps never
+  # reach the runner at all — the OS serves them itself, same-origin.
+  runnerImage: ""
   ingressClass: ""        # falls back to ingress.className
   tlsIssuer: ""           # falls back to ingress.tlsIssuer
   # SECURITY (C2): isolate student apps from the platform.
@@ -1004,7 +1009,6 @@ softwareRunner:
     enabled: true
     ingressNamespace: ingress-nginx
 
-# Software DIRECT BUILD SERVICE (deploy redesign Phase B).
 # Connections golden path — manually-credentialed Connections (API/MCP/Database/
 # SaaS) a Builder/Admin creates.
 connections:

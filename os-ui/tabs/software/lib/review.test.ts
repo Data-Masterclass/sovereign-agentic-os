@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { testUser } from '@core/testing/user';
@@ -9,6 +9,27 @@ import { createApp } from '@tabs/software/lib/apps';
 import { startPreview, requestDeploy, decideDeploy, scopeBroadened } from './review.ts';
 import { consumeResource } from './lifecycle.ts';
 import { commitToApp } from './server.ts';
+
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { config as __cfg } from '@core/kernel/config';
+
+// Night-2 S5 + review M-2: `commitToApp` COMMITS to the domain repository and a commit git
+// refuses is a 503 that writes nothing. These tests commit real files, so they need a real repos
+// directory; depending on git being broken would be asserting the old silently-degrading path.
+let __reposDir = '';
+let __priorRepos = '';
+before(() => {
+  __reposDir = mkdtempSync(join(tmpdir(), 'os-repos-t-'));
+  __priorRepos = __cfg.reposDir;
+  (__cfg as { reposDir: string }).reposDir = __reposDir;
+});
+after(() => {
+  (__cfg as { reposDir: string }).reposDir = __priorRepos;
+  rmSync(__reposDir, { recursive: true, force: true });
+});
+
 
 const creator: CurrentUser = testUser({ id: 'alice', name: 'Alice', domains: ['sales'], role: 'creator' });
 const builder: CurrentUser = testUser({ id: 'bob', name: 'Bob', domains: ['sales'], role: 'builder' });

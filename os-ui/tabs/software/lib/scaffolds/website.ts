@@ -5,7 +5,7 @@
  * The WEBSITE template — a PUBLIC-FACING site (landing/marketing style).
  *
  * Like the other scaffolds this module is PURE DATA (`{path,content}[]`) written
- * into the per-app Forgejo repo by the seeder; it is never compiled as live
+ * into the app's source tree under `apps/<slug>/` by the seeder; it is never compiled as live
  * os-ui source.
  *
  * Design contract:
@@ -157,7 +157,7 @@ function appYaml(name: string): ScaffoldFile {
       'apiVersion: software.sovereign-os/v1',
       'kind: App',
       `name: '${name}'`,
-      'owner: gitea_admin',
+      '# owner: filled in by the OS from the app record (the app’s real owner).',
       `description: '${name} — a public website built in the Software tab.'`,
       '# A website serves a UI (and nothing else).',
       'surface: ui',
@@ -226,7 +226,6 @@ export const WEBSITE_EXPECTED_PATHS = [
   'src/index.css',
   'Dockerfile',
   'nginx.conf',
-  '.forgejo/workflows/ci.yml',
   'openapi.yaml',
   'src/main.tsx',
   'src/sections.tsx',

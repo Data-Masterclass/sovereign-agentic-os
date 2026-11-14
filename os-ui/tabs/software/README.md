@@ -41,6 +41,25 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 - `guide.md` — the golden path, shown in-product
 - `context.md` — the system prompt context this tab gives an agent
 
+## Where an app's source lives (night-2)
+
+An app's tree is a **subtree of its domain's git repository**: `apps/<slug>/`, written by
+`lib/git-commit.ts` through `core/infra/git-store.ts` `commitSubtree`, with a boot-time
+`reserveSubtree('apps/')` so the dbt generator's whole-tree commit cannot delete it. Git is the
+home of record; the OpenSearch `os-app-files` mirror (`lib/file-mirror.ts`) is a **cache** of the
+committed tree. The commit's author is the acting user, the committer is `Sovereign OS`, and the
+message carries `OS-Action` / `OS-Object: app:<id> (<name>)` / `OS-Surface` / `OS-Request-Id`
+(plus `OS-Actor`, and `OS-Run-Id` when a run caused it).
+
+`push_app_files` is the one documented verb for "code in Claude, push to the OS"
+(`lib/push-app-files.ts`); the MCP tool and `POST /api/software/<id>/files` call the **same
+service**. The compile gate runs before any write, and an unchanged push makes no commit.
+
+**What the OS does NOT do:** there is no CI runner, no image builder, no container registry and
+no GitOps controller. `release_software`, the gate set behind it and the six approval-card fields
+are explicitly not built yet — `lib/engineering.ts` says so in the product itself, under
+"Under the hood".
+
 ## Rules that apply here
 
 1. **Import only `@core/*` and this module.** A cross-tab need means the shared part belongs in `@core`.

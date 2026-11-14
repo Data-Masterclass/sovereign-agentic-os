@@ -13,7 +13,7 @@ import type { OsClient, QueryResult } from '@core/app-sdk/index';
 import type { ChartExplorerConfig } from '@tabs/software/lib/appspec/patterns';
 
 
-/** The leaf of a Cube member (`Orders.revenue` → `revenue`) for calm axis/label text. */
+/** The leaf of a qualified metric member (`orders.revenue` → `revenue`) for calm axis/label text. */
 function leaf(member: string): string {
   const i = member.lastIndexOf('.');
   return i >= 0 ? member.slice(i + 1) : member;
@@ -26,8 +26,9 @@ const num = (v: string) => {
 };
 
 /**
- * Render the `chart-explorer` pattern: query a GOVERNED metric via `os.metrics.query` (per-viewer
- * Cube RLS applies server-side) and chart it with ECharts. Simple controls let the viewer swap the
+ * Render the `chart-explorer` pattern: query a GOVERNED metric via `os.metrics.query` — the number
+ * is produced by the OS metric path running as the SIGNED-IN USER, with Trino row-level security
+ * and OPA applied server-side — and chart it with ECharts. Simple controls let the viewer swap the
  * time grain (when a time dimension is configured) between the config default and a few common
  * grains; the chart kind (line/bar/area) is the author's. The measure is the metric's leaf; the
  * category axis is the configured time/dimension column. Honest states: loading → Spinner, error →

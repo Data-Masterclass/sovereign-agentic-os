@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { listAppFiles, readAppFile, saveAppFile } from '@tabs/software/lib/apps';
+import { pushAppFiles } from '@tabs/software/lib/push-app-files';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,10 +14,16 @@ export const dynamic = 'force-dynamic';
  *
  *   GET  /api/software/{id}/files            → flat recursive file list (tree)
  *   GET  /api/software/{id}/files?path=a/b   → one file's content + blob SHA
- *   PUT  /api/software/{id}/files            → save the file (sha-checked)
+ *   PUT  /api/software/{id}/files            → save ONE file (sha-checked, editor)
+ *   POST /api/software/{id}/files            → PUSH a changeset (night-2 S6) — the UI twin of
+ *                                              the MCP `push_app_files`, over the SAME service
+ *                                              (`pushAppFiles`): compile gate before the write,
+ *                                              one git commit in `apps/<slug>/`, `changed:false`
+ *                                              and no commit when the bytes are identical.
  *
  * Builder/Admin-gated AND domain-scoped server-side (in lib/apps.ts), so the
- * role gate holds even if the UI is bypassed.
+ * role gate holds even if the UI is bypassed. A route is a SHELL: every gate, the compile
+ * check and the git commit live in the governed library functions these three lines call.
  */
 
 export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
@@ -38,4 +45,20 @@ export const PUT = withRoute<{ id: string }, { path?: string; content?: string; 
     message: typeof body.message === 'string' ? body.message : undefined,
   });
   return NextResponse.json(saved);
+}, { parse: true, defaultStatus: 500 });
+
+export const POST = withRoute<{ id: string }, { files?: { path: string; content: string }[]; message?: string }>(async ({ user, params, body }) => {
+  const { id } = params;
+  // The UI twin of the MCP `push_app_files` — the SAME service, so the parity test compares two
+  // invocations of one function rather than two code paths that happen to agree today.
+  const result = await pushAppFiles(
+    {
+      appId: id,
+      files: Array.isArray(body?.files) ? body!.files! : [],
+      message: typeof body?.message === 'string' ? body!.message : undefined,
+      surface: 'ui:software/files',
+    },
+    user,
+  );
+  return NextResponse.json(result);
 }, { parse: true, defaultStatus: 500 });
