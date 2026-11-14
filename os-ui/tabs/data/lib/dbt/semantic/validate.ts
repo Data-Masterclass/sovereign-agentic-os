@@ -42,8 +42,14 @@ const PREDICATE_RE =
  * formula over metric names. So it is held to: identifiers, digits, decimal points, the four
  * arithmetic operators, parentheses, commas, spaces and underscores. No quotes, no semicolons, no
  * comment markers, and no Jinja delimiter of any kind.
+ *
+ * AND AT LEAST ONE IDENTIFIER CHARACTER. Without the lookahead the second alternative accepted
+ * `+++`, `(((` or `.` — punctuation with nothing to compute — which would be emitted as a dbt
+ * `expr` and fail `dbt parse` for the WHOLE domain rather than being refused per-measure, which
+ * is precisely the failure mode this module exists to prevent. (The first alternative is a subset
+ * of the second and is kept only because it states the common case plainly.)
  */
-export const SAFE_EXPR_RE = /^[A-Za-z_][A-Za-z0-9_]*$|^[A-Za-z0-9_ ().,+\-*/]+$/;
+export const SAFE_EXPR_RE = /^[A-Za-z_][A-Za-z0-9_]*$|^(?=.*[A-Za-z_])[A-Za-z0-9_ ().,+\-*/]+$/;
 
 /** Is this `expr` one the emitter is allowed to write? */
 export function isSafeSemanticExpr(expr: string): boolean {

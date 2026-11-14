@@ -34,6 +34,8 @@ import { snapshotDashboard, type SnapshotDashboard, type StoredDashboard } from 
 import { emitDashboardChange, __resetDashboardListeners } from '@tabs/dashboards/lib/dashboard-events';
 
 const ACTOR = { id: 'alex@datamasterclass.com', name: 'Alexander Borek', email: 'alex@datamasterclass.com' };
+/** The ADMIN who performs a cross-domain move (`tabs/admin/lib/domain-move.ts` threads `user.id`). */
+const ADMIN = { id: 'sara@datamasterclass.com', name: 'Sara Admin', email: 'sara@datamasterclass.com' };
 
 function stored(id: string, name: string, tier: StoredDashboard['tier'] = 'domain'): StoredDashboard {
   return {
@@ -206,14 +208,22 @@ test('a cross-domain move commits BOTH repositories', async () => {
     __setDashboardProjectGitForTests(true);
     // The old domain no longer holds it; the new one does.
     const capture = (domain: string) => (domain === 'analytics' ? [] : snap({ ...stored('d1', 'Sales Overview'), domain: 'finance' }));
-    const off = installDashboardCommitHook({ reposDir, capture, mirror: false });
+    const off = installDashboardCommitHook({
+      reposDir,
+      capture,
+      mirror: false,
+      resolveActor: async (id) => (id === ADMIN.id ? ADMIN : { id }),
+    });
+    // M-8: a move is an ADMIN's act, and both commits must say whose. This used to pass
+    // `actorId: 'system'`, which is the one attribution a person's write may never carry — the
+    // plumbing threads `user.id` (`tabs/admin/lib/domain-move.ts`) and nothing asserted it.
     emitDashboardChange({
       domain: 'finance',
       previousDomain: 'analytics',
       dashboardId: 'd1',
       name: 'Sales Overview',
       action: 'move dashboard between domains',
-      actorId: 'system',
+      actorId: ADMIN.id,
     });
     await awaitDashboardCommits();
     off();
@@ -222,6 +232,13 @@ test('a cross-domain move commits BOTH repositories', async () => {
     assert.equal(analytics.length, 1, 'the OLD domain gets a commit (it lost the dashboard)');
     assert.equal(finance.length, 1, 'the NEW domain gets a commit (it gained it)');
     assert.match(finance[0].message, /move dashboard between domains/);
+    // THE ACTING ADMIN IS ON BOTH COMMITS — the one the old domain gained and the one it lost.
+    for (const [domain, entry] of [['analytics', analytics[0]], ['finance', finance[0]]] as const) {
+      assert.equal(entry.author.email, ADMIN.email, `${domain}: authored as the acting admin`);
+      assert.match(entry.message, new RegExp(`OS-Actor: ${ADMIN.id.replace('.', '\\.')}`), `${domain}: the trailer names the principal`);
+      assert.doesNotMatch(entry.message, /OS-Actor: system/, `${domain}: a person's move is never attributed to the platform`);
+      assert.doesNotMatch(entry.author.email, /@os\.local$/, `${domain}: the author is a real identity, not a synthesized one`);
+    }
     const tree = await listTree('finance', undefined, { reposDir });
     assert.ok(tree.some((t) => t.path.endsWith('/dashboard.yaml')));
     assert.deepEqual((await listTree('analytics', undefined, { reposDir })).map((t) => t.path), [`${DASHBOARDS_PREFIX}index.yml`]);

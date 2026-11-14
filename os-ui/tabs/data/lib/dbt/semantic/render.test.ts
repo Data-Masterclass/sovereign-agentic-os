@@ -161,6 +161,11 @@ test('REVIEW M-2: an `expr` carrying Jinja is stripped on emit AND refused by th
   for (const bad of ["{{ env_var('X') }}", '{% if 1 %}a{% endif %}', "a' or '1'='1", 'a; drop table t', 'a -- comment', 'a /* c */']) {
     assert.equal(isSafeSemanticExpr(bad), false, `should be refused: ${bad}`);
   }
+  // An `expr` with no identifier in it at all is punctuation, not an expression: it would be
+  // emitted and then break `dbt parse` for the whole domain instead of being refused here.
+  for (const bad of ['+++', '(((', '.', '1 + 2', '()', '   .  ', '42']) {
+    assert.equal(isSafeSemanticExpr(bad), false, `no identifier, so not an expr: ${bad}`);
+  }
   for (const ok of ['net_amount', 'revenue / orders', '(revenue - cost) * 100 / orders', 'coalesce(a, 0)']) {
     assert.equal(isSafeSemanticExpr(ok), true, ok);
   }

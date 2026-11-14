@@ -10,8 +10,16 @@
  *             IDENTICAL REGISTRY STATE, and an IDENTICAL HISTORY ENTRY except `OS-Surface`
  *             (`mcp:<tool>` vs `git:push`).
  * ARCHITECTURE:
- *   - TABLE-DRIVEN over kinds, so adding a kind is adding a row: `agent_system` and `dataset`
- *     tonight (the plan's two), `metric` and `dashboard` when M and D land their formats.
+ *   - TABLE-DRIVEN over kinds, so adding a kind is adding a row. `agent_system` is the row HERE;
+ *     `metric` and `dashboard` join when M and D land their formats.
+ *   - THE `dataset` ROW LIVES IN THE DATA TAB, not here (iteration 2). It was a placeholder row
+ *     with no-op hooks that reported `todo` by construction — two `todo`s that outlived their
+ *     reason, because E's dbt ingest landed and the real dataset coin test is GREEN in
+ *     `tabs/data/lib/dbt/ingest.test.ts` ("THE COIN: the same dataset over the MCP and by a push
+ *     leaves identical files and an identical row"). Wiring it here instead would need
+ *     `@tabs/data/*` from inside `tabs/agents/`, which is the one import a tab may not make — so
+ *     the row is deleted and the enumeration test below asserts the real test exists, by file and
+ *     by title. A pointer that is checked is worth more than a `todo` that is not.
  *   - A REAL bare repository per case (`mkdtemp`), the REAL commit path and the REAL generator —
  *     nothing about the file bytes is faked, because the bytes are the thing being compared.
  *   - THE MCP SIDE RUNS FOR REAL TONIGHT. It is driven through `handleRpc` exactly as a client
@@ -34,9 +42,12 @@
  */
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+/** os-ui's root, from this test's own location (`tabs/agents/lib/git/`). */
+const UI = join(import.meta.dirname, '..', '..', '..', '..');
 import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc, type JsonRpcResponse } from '@core/mcp/server';
 import { commitTree, listTree, readBlob, log, __clearReservedSubtrees } from '@core/infra/git-store';
@@ -247,20 +258,6 @@ const KINDS: Kind[] = [
         .sort((a, b) => a.name.localeCompare(b.name));
     },
   },
-  {
-    kind: 'dataset',
-    prefix: 'models/',
-    tool: 'create_dataset',
-    reset: () => {},
-    install: () => () => {},
-    drain: async () => {},
-    viaMcp: async () => {},
-    registry: () => null,
-    blocked:
-      'the dataset half needs E\'s dbt ingest (tabs/data/lib/dbt/ingest.ts: models + schema.yml → ' +
-      'dataset records) as well as reconcileFromGit; the MCP half already has its own parity suite ' +
-      'in tabs/data/lib/mcp-parity.test.ts, which this test does not duplicate.',
-  },
 ];
 
 /* ---------------------------------------------------------------------- driver -- */
@@ -401,12 +398,22 @@ for (const k of KINDS) {
   });
 }
 
-test('coin test: the table names every kind, and says why a kind is not in it yet', () => {
-  // The X1-style enumeration: a kind may be absent, but never silently.
-  assert.deepEqual(KINDS.map((k) => k.kind), ['agent_system', 'dataset'], 'tonight\'s two kinds, per the plan');
+test('coin test: the table names every kind, and says where a kind that is not in it lives', () => {
+  // The X1-style enumeration: a kind may be absent from THIS file, but never silently.
+  assert.deepEqual(KINDS.map((k) => k.kind), ['agent_system'], 'the kind this harness drives');
   for (const k of KINDS) {
     if (k.blocked) assert.ok(k.blocked.trim().length > 40, `${k.kind} states a reason, not a shrug`);
   }
+  // `dataset` is tested FOR REAL, in the tab that owns both halves — a tab may not import another
+  // tab, so the row cannot live here. The pointer is checked rather than asserted in prose: if
+  // that test is deleted or renamed, this fails and the gap is visible again.
+  const elsewhere = join(UI, 'tabs', 'data', 'lib', 'dbt', 'ingest.test.ts');
+  assert.ok(existsSync(elsewhere), 'the dataset coin test must exist at tabs/data/lib/dbt/ingest.test.ts');
+  assert.match(
+    readFileSync(elsewhere, 'utf8'),
+    /test\('THE COIN: the same dataset over the MCP and by a push leaves identical files and an identical row'/,
+    'the dataset coin test must still make the coin claim, by that name',
+  );
   // `metric` and `dashboard` join when M and D land their formats (plan X-R8) — recorded here so
   // the omission is visible in the test, not only in the plan.
   const later = ['metric', 'dashboard'];
