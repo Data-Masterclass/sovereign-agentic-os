@@ -14,6 +14,7 @@ import TenantSettings from '@tabs/admin/ui/TenantSettings';
 import UsersAccess from '@tabs/admin/ui/UsersAccess';
 import ModelsProviders from '@tabs/admin/ui/ModelsProviders';
 import BackupsRestore from '@tabs/admin/ui/BackupsRestore';
+import AccessTokens from '@tabs/admin/ui/AccessTokens';
 
 /**
  * Platform — ONE route, tabs on top, exactly like Governance.
@@ -98,6 +99,7 @@ function PlatformPageInner() {
         {current === 'access' && <UsersAccess />}
         {current === 'models' && <ModelsProviders />}
         {current === 'backups' && <BackupsRestore />}
+        {current === 'tokens' && <AccessTokens />}
       </div>
     </>
   );

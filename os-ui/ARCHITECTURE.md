@@ -1190,3 +1190,46 @@ metric's own `LIMIT` is not yet detected — a three-line fix in the metrics tab
 owner. And the confirm before a write is **prompt-level only**: `writeToolNames` stops a failed
 write re-firing byte-identically, but it is not a confirmation gate; the structural one is the
 writer node's tool allowlist (C15, backlog).
+
+## The coin — git is the system of record, and both doors write the same files
+
+*(stream E, night 2; decisions D27–D29. `docs/components/git.md` is the user-facing half.)*
+
+Git is where everything the OS builds lives: one bare repository per domain under
+`config.reposDir`, written by `core/infra/git-store.ts`. The registry (the tab stores) is a
+**derived index plus governance metadata** — ownership, tier, approvals, audit. Where a file and a
+row disagree, **the file wins and the row is re-derived**.
+
+There are exactly **two doors into those files**, and they meet at the same functions:
+
+| Door | Enters at | Identity | Commit surface |
+|---|---|---|---|
+| UI | `app/**/route.ts` → the tab's governed service (`tabs/data/lib/mutations-server.ts`, `tabs/agents/lib/store.ts`) | the signed-in `CurrentUser` | `ui:<route>` |
+| MCP / Ask the OS | `core/mcp/server.ts` `handleRpc` → the SAME governed service | the signed-in `CurrentUser` | `mcp:<tool>` |
+| `git push` | the repo's `pre-receive` hook → `app/api/git/receive` → `core/infra/git-receive.ts` → the SAME governed service | an OS **personal access token** resolved to a live principal (`core/auth/access-tokens*.ts`, `core/auth/git-http-auth.ts`) | `git:push` |
+
+Three rules keep the two sides of the coin from drifting, and each one is structural rather than a
+convention someone has to remember:
+
+1. **Read is unconditional; write is gated.** `/api/git/authenticate` gates reading on domain
+   membership and nothing else — the whole tree, `os/*.yml` included. Path ownership, validation
+   and serialisation apply only to a push.
+2. **One validator, not a second copy.** `core/` may not import a tab, so `git-receive.ts` holds no
+   validator at all: each kind **registers** the validator the UI already calls
+   (`registerRepoKind({ kind, matches, validate, ingest })` — `parseSystem` for an agent system, the
+   dbt gate for `schema.yml`). A second copy is not something a reviewer has to notice; there is
+   nowhere to put one.
+3. **One lock.** A push and an OS commit are mutually exclusive because `git-receive.ts` chains on
+   the **same** per-repo mutex `git-store.ts` serialises its writers on (the global
+   `Symbol.for('soa.git-store.locks')` map), held from `pre-receive` to `post-receive`. The wait is
+   bounded: a lock the OS holds too long fails the push with a readable message rather than hanging
+   a developer's terminal.
+
+After a push, `reconcileFromGit(domain, from, to, pusher)` dispatches to each kind's
+`ingestFromRepo`-shaped `ingest` — `tabs/data/lib/dbt/ingest.ts` (dbt models + `schema.yml` →
+dataset records, quality rules from the tests) and `tabs/agents/lib/git/ingest.ts` (`system.yaml` →
+agent systems) — writing **through the governed services**, attributed to the pusher, inside
+`runWithSurface('git:push')`. The test that keeps this honest is literal: the same change made over
+the MCP and by a push must leave identical files and identical registry state, differing only in the
+`OS-Surface` trailer.
+
