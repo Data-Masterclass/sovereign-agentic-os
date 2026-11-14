@@ -6,13 +6,12 @@ import assert from 'node:assert/strict';
 import { measureFromForm, type MetricForm } from '@tabs/metrics/lib/model';
 import { metricRecord, governMetric, canPromote, canCertify } from '@tabs/metrics/lib/governance';
 import { goldSales } from '@tabs/metrics/lib/fixtures';
-import type { Dataset } from '@tabs/data/lib/index';
 
 const FORM: MetricForm = { name: 'Revenue', aggregation: 'sum', column: 'net_amount', dimensions: ['region'] };
 const resolve = async () => 42000;
 
 /** `goldSales()` is a DOMAIN-tier (`asset`) dataset, which is the ceiling for its metrics. */
-function rec(over: Partial<Dataset> = {}) {
+function rec(over: Parameters<typeof goldSales>[0] = {}) {
   const d = goldSales(over);
   return metricRecord(d, measureFromForm(FORM), 'amir', 'personal');
 }
