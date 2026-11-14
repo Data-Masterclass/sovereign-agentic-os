@@ -8,6 +8,7 @@ import Link from 'next/link';
 import CodePanel from '@tabs/software/ui/CodePanel';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import GitHeadBadge from '@core/ui/git/GitHeadBadge';
+import CloneRepository from '@core/ui/git-clone/CloneRepository';
 import ReviewCard, { type ReviewCardData } from '@tabs/governance/ui/ReviewCard';
 import DomainTag from '@core/ui/DomainTag';
 import { useApprovalNotifier } from '@core/ui/lifecycle/useApprovalNotifier';
@@ -641,6 +642,7 @@ export default function SoftwareBuilder({
         </div>
       </div>
       {app.description ? <p className="sw-app-lead">{app.description}</p> : null}
+      <CloneRepository domain={app.domain} />
 
       {/* Coded apps only: the top-level Developer view is the raw code-files surface.
           Spec apps never reach it (the toggle is hidden) and always render the staged flow. */}

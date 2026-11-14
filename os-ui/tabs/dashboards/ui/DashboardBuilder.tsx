@@ -28,6 +28,8 @@ import {
   TIER_BADGE, TIER_LABEL,
 } from '@tabs/dashboards/ui/shared';
 import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
+import GitHeadBadge from '@core/ui/git/GitHeadBadge';
+import CloneRepository from '@core/ui/git-clone/CloneRepository';
 
 const leaf = (member: string) => (member.includes('.') ? member.slice(member.lastIndexOf('.') + 1) : member);
 
@@ -301,6 +303,7 @@ export default function DashboardBuilder({
           {(built.tier === 'domain' || built.tier === 'marketplace') ? <DomainTag domain={built.domain} /> : null}
           <span className={`badge ${TIER_BADGE[built.tier]}`}>{TIER_LABEL[built.tier]}</span>
           <span className="muted mono" style={{ fontSize: 12 }}>{built.view}</span>
+          {' '}· <GitHeadBadge kind="dashboard" id={built.id} />
           {/* Lifecycle + Promote live in the persistent detail header — reachable from View or
               Edit (there is no Govern stage). Governance unchanged (canManage / canApprove). */}
           {canManage ? (
@@ -394,6 +397,7 @@ export default function DashboardBuilder({
           </div>
           {/* night-2 stream T: the tool-native artefacts of this dashboard. */}
           <UnderTheHood kind="dashboard" id={built.id} />
+          <CloneRepository domain={built.domain} />
         </div>
       ) : (
         <div className="chat-empty">Save the dashboard first — there is nothing to view yet.</div>

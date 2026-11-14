@@ -36,6 +36,8 @@ import {
   datasetLayerLabel,
 } from '@tabs/metrics/ui/shared';
 import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
+import GitHeadBadge from '@core/ui/git/GitHeadBadge';
+import CloneRepository from '@core/ui/git-clone/CloneRepository';
 
 const METRIC_MODE_KEY = 'metrics.viewMode';
 
@@ -645,6 +647,7 @@ export default function MetricBuilder({
           <span className={`badge ${TIER_BADGE[saved.tier]}`}>{TIER_WORD[saved.tier]}</span>
           {(saved.tier === 'domain' || saved.tier === 'marketplace') ? <DomainTag domain={saved.domain} /> : null}
           <span className="muted mono" style={{ fontSize: 12 }}>{saved.member}</span>
+          {' '}· <GitHeadBadge kind="metric" id={saved.id} />
           {renameErr ? <span className="error-inline" style={{ fontSize: 12 }}>{renameErr}</span> : null}
           {/* Header actions: View⇄Edit toggle · Promote (left of Archive, per the OS-wide
               pattern) · lifecycle (Archive/Restore/Delete). Governance unchanged (canManage). */}
@@ -1063,6 +1066,7 @@ export default function MetricBuilder({
               restore <ConnectPowerBI domain={saved.domain} /> once it is proven working. */}
           {/* night-2 stream T: the tool-native artefacts of this KPI. */}
           <UnderTheHood kind="metric" id={saved.id} />
+          <CloneRepository domain={saved.domain} />
         </div>
       ) : (
         <div className="chat-empty">Nothing to view yet — define the metric first.</div>
