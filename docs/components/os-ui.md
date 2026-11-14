@@ -423,3 +423,40 @@ provider's code as `drive_detail`; `AADSTS7000215` means a bad secret.
 `supportsAllDrives`/`includeItemsFromAllDrives`. A **SharePoint or Teams**
 library is not reachable at all — the OneDrive connector calls `/me/drive`.
 Folder scope needs a Graph **item id**, not a path, despite the field label.
+
+## The app-building harness (`SOFTWARE_BUILDER`) — added by night-2 stream H
+
+The Software tab ships **two** builders. The default is unchanged; the second is opt-in.
+
+| | `spec` (default) | `agentic` |
+|---|---|---|
+| What it does | one reasoning-model turn fills a declarative `AppSpec`, plus up to two validator-seeded repair turns | a bounded **planner → coder → build → reviewer** loop that writes a real Vite/React tree |
+| Compile loop | none | the existing in-process gate every iteration, diagnostics fed back verbatim |
+| Grounding | the app's grants and story titles | a grounding pack: story specs, dataset **real columns + up to 5 real sample rows**, metric definitions, the SDK and UI API surfaces **extracted from `core/app-sdk` / `core/app-ui` source**, design tokens, one exemplar, the Tier-2 constraints |
+| Definition of done | the validator accepted the spec | acceptance checks **derived from the user stories**, scored with evidence |
+| Bound | 3 attempts | 4 iterations, plus a no-progress and a coder-error stop |
+| Writes | `setAppSpec` | the normal governed commit door (`commitToApp`), as the signed-in user, compile-gated before any write |
+
+**Environment.** `SOFTWARE_BUILDER` = `spec` (default) or `agentic`; anything else resolves to
+`spec`. `LITELLM_CODER_MODEL` optionally pins the new `coder` model role — empty means `coder` falls
+back to the reasoning tier, so enabling the loop needs no model change. Chart keys:
+`softwareBuilder.mode` and `softwareBuilder.coderModel`.
+
+**Where it lives.** `os-ui/tabs/software/lib/builder/**` (grounding, acceptance, build tool, loop,
+prompts, dispatch) and `os-ui/tabs/agents/lib/builtin/appsmith.ts` — the `os.appsmith` built-in
+system as a real `system.yaml` (planner → coder → reviewer, three guarded handoffs on declared
+boolean channels, `commit` as the build tool, `decide_deploy` deliberately not granted). The Build
+dispatch consults the flag in **exactly one** guarded line, in
+`tabs/software/lib/platform-mcp.ts` `case 'build_software'`.
+
+**What is NOT true yet.** The route and render acceptance checks are **static inspection of the
+TypeScript AST** — strong enough that a comment or a string naming `os.records.add` fails, but not
+rendering: the evidence string says `static check (AST)` on every line, and jsdom/screenshot
+rendering inside the loop is backlog. There are no story-derived **runtime** tests, and no
+model-quality evals — so the "harness vs model" split that motivated this work is measured on the
+harness side only. Three governance limits are recorded rather than implied: the rest of the
+platform-MCP write surface is still invisible to the agent hold gate (`commit` is fixed; the other
+thirteen are pinned by a test and handed to the software stream); sample-value masking is a column-
+NAME heuristic because the OS has no column-classification facility, and there is no trace redaction
+on that path; and builder model calls are still tagged `tab:assistant` because `assistantComplete`
+has no tab/run option.

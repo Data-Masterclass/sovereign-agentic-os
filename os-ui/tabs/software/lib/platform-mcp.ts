@@ -33,6 +33,8 @@ import { pushAppFiles } from '@tabs/software/lib/push-app-files';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 import { PATTERNS, PATTERN_IDS, isImplementedPattern } from '@tabs/software/lib/appspec/patterns';
 import { generateAppSpecForApp } from '@tabs/software/lib/appspec/generate-server';
+import { agenticBuilderEnabled } from '@tabs/software/lib/builder/dispatch';
+import { agenticBuild } from '@tabs/software/lib/builder/loop-server';
 
 /**
  * The IMPLEMENTED cookbook patterns, sourced from the authoritative registry
@@ -267,6 +269,10 @@ export async function callPlatformMcp(
       if (resolved.notFound) throw withStatus(new Error(`No epic/story matches that target on ${app.name}.`), 404);
       const gate = buildGate(app, target);
       if (!gate.ok) throw withStatus(new Error(gate.reason), 409);
+      // THE ONE GUARDED LINE (stream H). `SOFTWARE_BUILDER=agentic` routes Build to the bounded
+      // planner → coder → build → reviewer loop; the default 'spec' falls through to the
+      // byte-identical directive below. Nothing else in this case changes.
+      if (agenticBuilderEnabled()) { result = await agenticBuild(user, app, target); break; }
       const buildGrants = await resolveGrantedContext(app.grants, user);
       result = {
         stage: 'build',

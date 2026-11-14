@@ -621,6 +621,25 @@ export const config = {
   jupyterhubConsoleUrl: base(consoleEnv('JUPYTERHUB_CONSOLE_URL', 'http://localhost:8000')),
   mlflowConsoleUrl: base(consoleEnv('MLFLOW_CONSOLE_URL', 'http://localhost:5000')),
   featureformConsoleUrl: base(consoleEnv('FEATUREFORM_CONSOLE_URL', 'http://localhost:7878')),
+
+  // ---------------------------------------------------------------------------
+  // THE APP-BUILDING HARNESS (stream H). Appended as one block at the end of the
+  // object so it merges cleanly with edits elsewhere in this file.
+  //
+  // WHICH BUILDER the Software Build stage uses:
+  //   • 'spec'    (DEFAULT) — today's behaviour, byte-identical: one reasoning-model
+  //     turn fills an AppSpec, with up to two validator-seeded repair turns.
+  //   • 'agentic' — the bounded planner → coder → build → reviewer loop
+  //     (`tabs/software/lib/builder/`): a grounding pack extracted from source, real
+  //     compile diagnostics fed back each iteration, and acceptance checks derived
+  //     from the user stories. Opt-in only; anything but the exact string 'agentic'
+  //     resolves to 'spec', so a typo can never silently switch the builder.
+  softwareBuilder: env('SOFTWARE_BUILDER', 'spec') === 'agentic' ? 'agentic' : 'spec',
+  // The CODER model role (`core/models/roles.ts` role `coder`) — the tier that writes
+  // the app's code in the agentic builder. EMPTY by default, which means the `coder`
+  // role falls back to the REASONING tier, so no deployment needs a new env var to
+  // keep working. Pin a code-specialised LiteLLM model_name here to use one.
+  litellmCoderModel: env('LITELLM_CODER_MODEL', ''),
 } as const;
 
 export type AppConfig = typeof config;

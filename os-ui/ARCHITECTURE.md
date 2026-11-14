@@ -1278,3 +1278,45 @@ failure in a new place, and the guard is the same shape: an empty store is only 
 source answered. Second: *a new gate must not break what already works.* Before the one-time
 migration has established the index nothing has a pin, so a scheduled agent run falls open to the
 head — once, loudly, naming the fallback — and fails closed for ever after.
+
+## The agentic app builder (stream H)
+
+`tabs/software/lib/builder/**` is a second, flag-gated builder for the Software tab: a bounded
+**planner → coder → build → reviewer** loop. Three things about its shape are load-bearing, and
+breaking any of them is how it would rot.
+
+1. **Pure core, injected edges.** `grounding.ts`, `acceptance.ts`, `prompts.ts`, `loop.ts` and
+   `dispatch.ts` have no model client, no store, no `fs` and no `fetch`. That is why the loop's
+   headline property — *the first coder output fails to compile and the loop recovers on iteration
+   2* — is a deterministic unit test with a scripted coder rather than a live-model hope. The real
+   world lives in `grounding-server.ts`, `tools.ts` and `loop-server.ts` only.
+2. **The API surfaces are EXTRACTED FROM SOURCE, never written down.** The pack reads the shipped
+   `core/app-sdk` / `core/app-ui` source through the existing vendor readers and parses the
+   `OsClient` interface and each `*Props` type out of it. Hand-writing that list is the failure mode
+   it exists to prevent: the prompt would drift from what `compile-gate.ts` actually checks, and the
+   model would be blamed for the harness's stale brief.
+3. **Compile IS the write gate.** The loop never writes anything itself; it calls `commitToApp`,
+   which runs the compile gate before any write and throws the exact diagnostics as a typed 422. Do
+   not add a second write path "just for the builder" — a red tree would then be able to land.
+
+A fourth property was added by the review round, and it generalises beyond this builder:
+
+4. **A machine check over model-authored content must read the AST, not the text.** Scoring "this
+   file reaches governed data" with `String.includes('os.records.add')` is forgeable by a comment, a
+   string literal or a JSX text node — and the thing being scored is output the model chose. Any
+   future check over generated code belongs on `ts.createSourceFile` (`builder/symbols.ts` is the
+   pattern: parse-only, no program, no checker, cheap enough for every iteration).
+
+And one trap this stream fell into, recorded because the next person will too: **anything the Build
+dispatch can reach must not take a static import edge back to `@core/mcp/server`.** That module
+top-level-awaits its experimental bundle registration, one of those bundles is `platform-tools`,
+and `platform-tools` imports `tabs/software/lib/platform-mcp` — so a static edge from anything
+downstream of the dispatch closes a cycle on a pending top-level await and **every test file that
+touches the MCP server hangs** (28 of them, reported only as "unsettled top-level await"). Import it
+lazily at the call site. `builder/dispatch.test.ts` pins the property with a hard-timeout import.
+
+The honesty rules this codebase already punishes you for breaking apply with extra force here,
+because a builder is judged by its own report: an ungated shape is `unknown`, never a pass; a
+`manual` acceptance check is never machine-passed; a tree that compiles but satisfies no story is
+committed (on budget exhaustion) with `ok: false` and the unmet checks named; and a reviewer that
+says PASS over a scorecard with a FAIL is **overridden** and told so.
