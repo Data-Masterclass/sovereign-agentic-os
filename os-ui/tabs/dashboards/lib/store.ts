@@ -264,7 +264,7 @@ export function listDashboards(user: Principal, opts: { includeArchived?: boolea
   return { mine, domain, marketplace };
 }
 
-/** Dashboards the user can see that are bound to a given Cube view — the reverse
+/** Dashboards the user can see that are bound to a given governed view — the reverse
  *  lookup the Data tab's Publish stage uses to list "dashboards on this dataset".
  *  Pure over {@link listDashboards} (so it stays RLS-filtered); no new store read. */
 export function getDashboardsForView(view: string, user: Principal): DashboardSummary[] {
@@ -310,9 +310,9 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec):
  * other mutation (owner always; an in-domain domain_admin / platform admin on a
  * shared/certified dashboard — the reused {@link canManageArtifact} gate via requireOwned).
  *
- * CRITICAL — the physical identity NEVER moves: `spec.view` is the FROZEN Cube view the
+ * CRITICAL — the physical identity NEVER moves: `spec.view` is the FROZEN governed view the
  * dashboard binds to (every panel resolves against it). A rename touches ONLY `spec.name`
- * and NEVER `spec.view`, so no live Cube binding is ever orphaned. The prior spec is
+ * and NEVER `spec.view`, so no live panel binding is ever orphaned. The prior spec is
  * snapshotted to the version log first (restorable), then the name is set + persisted.
  * Trim; reject empty (400); no-op (no version churn) when unchanged.
  */
@@ -323,7 +323,7 @@ export function renameDashboard(id: string, user: Principal, newName: string): S
   if (name === d.spec.name) return d; // no-op → no version churn
   // Snapshot the PRIOR spec before overwriting so the rename is restorable.
   versions.record(d.id, user.id, snapshotState(d), 'rename');
-  // DISPLAY name only — spec.view (the frozen Cube identity) is deliberately untouched.
+  // DISPLAY name only — spec.view (the frozen view identity) is deliberately untouched.
   d.spec = { ...d.spec, name };
   writeThrough(d);
   announce(d, user.id, 'rename dashboard');

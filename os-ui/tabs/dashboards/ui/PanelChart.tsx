@@ -30,7 +30,7 @@ function downloadCsv(name: string, cols: string[], rows: Row[]) {
 /**
  * A single native dashboard panel, rendered with Apache ECharts (line/area/bar/pie) or a
  * calm HTML surface (big number KPI / table) on rows the caller already resolved from the
- * governed Cube layer (per-viewer RLS applied server-side). Degrades gracefully: a syncing
+ * governed metric layer (per-viewer RLS applied server-side). Degrades gracefully: a syncing
  * panel shows "syncing…", an empty result shows a quiet "no rows", never a hard error.
  */
 /** The drill request a click produces: a category filter (`region = DE`), or `null` for

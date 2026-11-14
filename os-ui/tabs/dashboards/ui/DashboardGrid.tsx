@@ -13,7 +13,7 @@ import PanelExpand from '@tabs/dashboards/ui/PanelExpand';
 import SourceUnavailable from '@core/ui/core/SourceUnavailable';
 import { panelSourceUnavailable } from '@core/kernel/source-availability';
 
-/** Render a Cube security context as a human RLS note (e.g. "region = DE"). */
+/** Render a row-level security context as a human RLS note (e.g. "region = DE"). */
 function rlsNote(ctx: Record<string, unknown>): string {
   const region = ctx.region;
   if (typeof region === 'string' && region) return `region = ${region}`;

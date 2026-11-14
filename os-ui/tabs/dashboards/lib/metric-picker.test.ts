@@ -42,7 +42,7 @@ test('metricTierSections drops empty buckets and keeps My→Domain→Company ord
   assert.equal(metricTierSections([m({ tier: 'domain' })]).length, 1);
 });
 
-test('viewDatasetName maps a Cube view id to its friendly dataset name', () => {
+test('viewDatasetName maps a governed view id to its friendly dataset name', () => {
   const list = [
     m({ member: 'SERVICE_PERFORMANCE.value', datasetName: 'Service Performance' }),
     m({ member: 'OTHER_VIEW.value', datasetName: 'Other Dataset' }),

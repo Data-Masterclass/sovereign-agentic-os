@@ -171,7 +171,7 @@ test('renameDashboard: changes spec.name but spec.view stays FROZEN', () => {
   saveDashboard(builder, 'dash_rn', { name: 'Sales Overview', view: 'sales__orders', charts: [] });
   const renamed = renameDashboard('dash_rn', builder, 'Revenue Overview');
   assert.equal(renamed.spec.name, 'Revenue Overview', 'display name changed');
-  assert.equal(renamed.spec.view, 'sales__orders', 'the Cube view is FROZEN across a rename');
+  assert.equal(renamed.spec.view, 'sales__orders', 'the bound view is FROZEN across a rename');
   // The tile summary carries the new name; the view (physical identity) is unchanged.
   const d = getDashboard('dash_rn', builder);
   assert.equal(d.spec.name, 'Revenue Overview');

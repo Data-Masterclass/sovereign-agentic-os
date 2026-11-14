@@ -14,9 +14,12 @@
  *     identifiers, JSX text — must be Cube-free, with ONE named exception: the `{CUBE}.` filter
  *     placeholder persisted inside `Measure.filters[].sql`, which is a real stored value in every
  *     existing tenant's data and cannot be renamed without a migration.
- *   - Scope: this tab plus the metric tools. `tabs/dashboards/**` is owned by another stream
- *     tonight and carries its own Cube claims; it is listed in this stream's report as a
- *     cross-stream need rather than edited here.
+ *   - Scope: this tab, the metric tools AND `tabs/dashboards/**`. Iteration 2 cleared the 27
+ *     Cube claims the dashboards tab still carried (its guide, its agent context, its lib README
+ *     and the UI/store comments that described the bound view in the present tense as a Cube
+ *     view), so the tab is in the tripwire rather than in a report as a cross-stream need. The
+ *     stale README rows for `cube-meta.ts` and `/api/dashboards/cube-meta` went with them: both
+ *     were deleted long ago, so the page documented two things that do not exist.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,10 +38,14 @@ const PROSE = [
   // a route that does not exist, and described the semantic layer as Cube's. Fixed with the metric
   // text because it IS metric text; `tabs/data/guide.md` is left to the stream that owns it.
   'tabs/data/context.md',
+  // Iteration 2 (M13 + X9): the dashboards tab's own user- and agent-facing prose.
+  'tabs/dashboards/guide.md',
+  'tabs/dashboards/context.md',
+  'tabs/dashboards/lib/README.md',
 ];
 
 /** Trees whose non-comment source must be Cube-free. */
-const TREES = ['tabs/metrics', 'core/mcp'];
+const TREES = ['tabs/metrics', 'core/mcp', 'tabs/dashboards'];
 
 /**
  * The names that legitimately survive, because they identify a STORED artefact rather than making
@@ -75,7 +82,7 @@ test('M13: no user- or agent-facing PROSE claims Cube serves or secures a number
   }
 });
 
-test('M13: no string, identifier or JSX text under tabs/metrics or core/mcp mentions Cube', () => {
+test('M13: no string, identifier or JSX text under tabs/metrics, core/mcp or tabs/dashboards mentions Cube', () => {
   const offenders: string[] = [];
   for (const tree of TREES) {
     for (const file of walk(join(UI, tree))) {

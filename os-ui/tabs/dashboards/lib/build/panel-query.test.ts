@@ -3,7 +3,7 @@
  */
 /**
  * runPanelQuery RLS proof (Tier 1, Phase 2): a panel resolves its numbers through the SAME
- * compiled-SQL metrics path the explorer uses (exploreMetric) — Cube is off the dashboards
+ * compiled-SQL metrics path the explorer uses (exploreMetric) — nothing sits between a panel
  * read path. The query runs UNDER the viewer's delegated identity, so two viewers with
  * different region entitlements see DIFFERENT rows. We force the OFFLINE-MOCK path (Trino
  * unreachable) whose executor itself filters by the security-context region, so the RLS

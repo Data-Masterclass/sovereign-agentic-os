@@ -1,13 +1,16 @@
 # Dashboards tab — build context
 
-**Purpose:** Charts + tiles over GOVERNED metric members (Superset/Cube). A Domain/Company dashboard stays per-viewer RLS-scoped via the guest token.
+**Purpose:** Charts + tiles over GOVERNED metric members. A Domain/Company dashboard stays per-viewer
+RLS-scoped because every panel is re-queried AS THE VIEWER (one compiled Trino SELECT through the
+same metric path the explorer uses) — there is no BI server, no semantic-layer server and no guest
+token in the loop.
 
 **Tools (MCP `dashboards`):**
 - `create_dashboard(name, view, charts[], id?)` — create (or replace, by `id`) a dashboard you own. Each chart references a governed metric member (e.g. `Orders.revenue`) — from any tier you can see, including your OWN (My-tier) metrics; the tab's picker groups them My · Domain · Company. Runs as you.
 
 **Golden path:** `define_metric` in Metrics → `create_dashboard` here with ≥1 chart on that member → (a Builder/Admin later promotes/certifies it wider).
 
-**Constraints:** every chart must bind to a governed metric member and a Cube `view` (one gold dataset’s view). Broadening the tier never broadens the rows. A creator builds their own; sharing wider is Builder/Admin.
+**Constraints:** every chart must bind to a governed metric member and a governed `view` (one gold dataset’s dbt view). Broadening the tier never broadens the rows. A creator builds their own; sharing wider is Builder/Admin.
 
 **Every save is a git commit.** A dashboard is CODE in the owning domain's repository:
 `dashboards/<slug>/dashboard.yaml` (plus a generated `README.md` and `dashboards/index.yml`), written
