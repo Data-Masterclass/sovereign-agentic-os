@@ -33,7 +33,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Workflow, Actor, ActorType } from '@tabs/knowledge/lib/schema';
 import { ACTOR_TYPES, EXTERNAL_ACTORS } from '@tabs/knowledge/lib/schema';
 import { stepsUsingActor } from '@tabs/knowledge/lib/actor-registry';
-import { actorAgentMd } from '@tabs/knowledge/lib/actor-prompt';
+import { actorAgentMd, promptWarnings } from '@tabs/knowledge/lib/actor-prompt';
 import type { CommitOutcome } from '@tabs/knowledge/lib/commit-queue';
 import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
 import { updateActor, removeActor } from '@tabs/knowledge/lib/step-edit';
@@ -96,6 +96,10 @@ export default function ActorInspector({
   // nobody will build reads as a promise. (`planAgents` also drops an actor whose every step
   // is set to manual in the handover panel — a choice made over there, not here.)
   const noAgentYet = used.length === 0;
+  // A stored prompt over the 64 KiB cap is truncated on load so the workflow still opens
+  // (`schema.ts` → `readActorPrompt`). That substitution must be visible, and here is where
+  // the author would otherwise save the short version over the long one without knowing.
+  const truncated = promptWarnings(workflow).find((p) => p.actorId === actor.id);
 
   async function commit(reduce: WorkflowReducer): Promise<boolean> {
     setSaving(true);
@@ -180,6 +184,7 @@ export default function ActorInspector({
       {/* ── An actor that IS an agent: its long prompt, and the AGENT.md it compiles into ── */}
       {category === 'Agent' && (
         <>
+          {truncated && <div className="ai-guard" style={{ marginTop: 14 }}>{truncated.message}</div>}
           <label className="ai-field" style={{ marginTop: 14 }}>
             <span className="ai-label">Prompt — this agent&rsquo;s instructions</span>
             <textarea

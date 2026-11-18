@@ -10,6 +10,7 @@ import {
   emptyDomainKnowledge,
   DOMAIN_SECTION_IDS,
   MAX_ACTOR_PROMPT_BYTES,
+  readActorPrompt,
 } from '@tabs/knowledge/lib/schema';
 
 const VALID_WORKFLOW = `---
@@ -350,19 +351,43 @@ test('an actor with no prompt writes no prompt key', () => {
   assert.ok(parseWorkflow(md).actors.every((a) => a.prompt === undefined));
 });
 
-test('a prompt is capped, with a typed error rather than an unbounded agent brief', () => {
+test('a WRITE refuses an over-cap prompt, with a typed error rather than an unbounded brief', () => {
   const w = parseWorkflow(VALID_WORKFLOW);
   const tooBig = 'x'.repeat(MAX_ACTOR_PROMPT_BYTES + 1);
   w.actors = [{ id: 'actor-agent-bot', name: 'Bot', category: 'Agent', prompt: tooBig }];
-  // The serializer refuses it where the user can still see their draft…
-  assert.throws(() => serializeWorkflow(w), KnowledgeError);
-  // …and a hand-edited file carrying one is a parse error, not a 64 KiB prompt in a graph.
-  const md = `---\nid: x\ntitle: X\ndomain: d\nvisibility: Personal\nstatus: draft\nversion: "1"\nactors:\n  - {id: a1, name: Bot, category: Agent, prompt: "${tooBig}"}\n---\n`;
-  assert.throws(() => parseWorkflow(md), (e: unknown) => {
+  // The serializer refuses it where the user can still see (and shorten) their draft.
+  assert.throws(() => serializeWorkflow(w), (e: unknown) => {
     assert.ok(e instanceof KnowledgeError);
     assert.match((e as Error).message, /prompt is \d+ bytes.*64 KiB/);
     return true;
   });
+});
+
+test('an over-cap prompt in a STORED file truncates with a warning — the workflow still opens', () => {
+  // A throw on the read path would make the workflow unopenable, which is worse than a
+  // bounded prompt the author is told about. The WRITE paths still refuse (above).
+  const tooBig = 'x'.repeat(MAX_ACTOR_PROMPT_BYTES + 10);
+  const md = `---\nid: x\ntitle: X\ndomain: d\nvisibility: Personal\nstatus: draft\nversion: "1"\nactors:\n  - {id: a1, name: Bot, category: Agent, prompt: "${tooBig}"}\n---\n`;
+  const w = parseWorkflow(md);
+  assert.equal(w.actors[0].prompt?.length, MAX_ACTOR_PROMPT_BYTES);
+  assert.equal(w.actors[0].promptTruncatedFrom, MAX_ACTOR_PROMPT_BYTES + 10);
+  // The truncated prompt is within the cap, so saving it back does not throw.
+  assert.doesNotThrow(() => serializeWorkflow(w));
+  // …and the marker is editor-only state: it never reaches the file.
+  assert.ok(!serializeWorkflow(w).includes('promptTruncatedFrom'));
+});
+
+test('readActorPrompt cuts on a character boundary, never mid-codepoint', () => {
+  const emoji = '😀'; // 4 bytes
+  const raw = 'a'.repeat(MAX_ACTOR_PROMPT_BYTES - 2) + emoji + emoji;
+  const out = readActorPrompt(raw);
+  assert.ok(new TextEncoder().encode(out.prompt).length <= MAX_ACTOR_PROMPT_BYTES);
+  assert.ok(!out.prompt.includes('�'), 'no replacement character from a split codepoint');
+  assert.equal(out.truncatedFrom, new TextEncoder().encode(raw).length);
+});
+
+test('a prompt within the cap reports no truncation', () => {
+  assert.deepEqual(readActorPrompt('  fine\r\n '), { prompt: 'fine' });
 });
 
 test('a CRLF prompt is normalised, so js-yaml keeps writing a readable block scalar', () => {

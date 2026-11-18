@@ -23,6 +23,7 @@ import { type System, type AgentSpec, type Edge, serializeSystem } from '@tabs/a
 import {
   actorAgentMd,
   defaultDisposition,
+  inline,
   planAgents,
   type Disposition,
 } from '@tabs/knowledge/lib/actor-prompt';
@@ -38,21 +39,23 @@ function stepAgentMd(workflow: Workflow, step: WorkflowStep, disp: Disposition):
     ...workflow.rules.filter((r) => r.hard && (r.scope === 'workflow' || r.step_id === step.id)),
     ...step.rules.filter((r) => r.hard),
   ];
+  // EVERY author-supplied value is flattened (`inline`) before it reaches a generated line:
+  // a step title carrying a newline used to be able to forge a heading or a rule here.
   const lines = [
-    `# ${step.title}`,
+    `# ${inline(step.title)}`,
     '',
-    `You ${disp === 'automate' ? 'AUTOMATE' : 'ASSIST a human with'} this step of the "${workflow.title}" workflow.`,
-    `Original actor: ${step.actor}${step.actor_name ? ` (${step.actor_name})` : ''}.`,
+    `You ${disp === 'automate' ? 'AUTOMATE' : 'ASSIST a human with'} this step of the "${inline(workflow.title)}" workflow.`,
+    `Original actor: ${step.actor}${step.actor_name ? ` (${inline(step.actor_name)})` : ''}.`,
     '',
-    step.inputs.length ? `Inputs: ${step.inputs.join(', ')}.` : '',
-    step.outputs.length ? `Outputs: ${step.outputs.join(', ')}.` : '',
-    step.links.length ? `Linked entities: ${step.links.map((l) => `${l.type}:${l.label || l.ref}`).join(', ')}.` : '',
+    step.inputs.length ? `Inputs: ${step.inputs.map(inline).join(', ')}.` : '',
+    step.outputs.length ? `Outputs: ${step.outputs.map(inline).join(', ')}.` : '',
+    step.links.length ? `Linked entities: ${step.links.map((l) => `${inline(l.type)}:${inline(l.label || l.ref)}`).join(', ')}.` : '',
     '',
     'Use the granted, governed `retrieve` tool to pull the workflow steps, tacit notes and rules as needed.',
   ];
   if (hardRules.length) {
     lines.push('', 'ENFORCED HARD RULES (do not violate):');
-    for (const r of hardRules) lines.push(`- ${r.text}`);
+    for (const r of hardRules) lines.push(`- ${inline(r.text)}`);
   }
   return lines.filter((l) => l !== '').join('\n');
 }
@@ -110,7 +113,7 @@ export function scaffoldSystem(
   for (const a of plan.actorAgents) {
     specById.set(a.agentId, {
       id: a.agentId,
-      role: `${a.actor.name} — the Agent actor in ${workflow.title}`,
+      role: `${inline(a.actor.name)} — the Agent actor in ${inline(workflow.title)}`,
       agent_md: actorAgentMd(workflow, a.actor),
       memory_md: '',
       tools: ['retrieve'],
@@ -119,7 +122,7 @@ export function scaffoldSystem(
   for (const s of plan.stepAgents) {
     specById.set(s.agentId, {
       id: s.agentId,
-      role: `${s.disposition === 'automate' ? 'Automates' : 'Assists'}: ${s.step.title}`,
+      role: `${s.disposition === 'automate' ? 'Automates' : 'Assists'}: ${inline(s.step.title)}`,
       agent_md: stepAgentMd(workflow, s.step, s.disposition),
       memory_md: '',
       tools: ['retrieve'],
@@ -134,8 +137,8 @@ export function scaffoldSystem(
     // the user can grow it in the Agents tab.
     const coord: AgentSpec = {
       id: 'coordinator',
-      role: `Coordinates the ${workflow.title} workflow`,
-      agent_md: `# Coordinator\n\nYou coordinate the "${workflow.title}" workflow. All steps are currently human/software handoffs — use the granted \`retrieve\` tool for context.`,
+      role: `Coordinates the ${inline(workflow.title)} workflow`,
+      agent_md: `# Coordinator\n\nYou coordinate the "${inline(workflow.title)}" workflow. All steps are currently human/software handoffs — use the granted \`retrieve\` tool for context.`,
       memory_md: '',
       tools: ['retrieve'],
     };
@@ -148,8 +151,10 @@ export function scaffoldSystem(
     // Supervisor routes through the agents in workflow order.
     const supervisor: AgentSpec = {
       id: 'supervisor',
-      role: `Runs the ${workflow.title} workflow`,
-      agent_md: `# Supervisor\n\nRoute the "${workflow.title}" workflow through its agents in order:\n${members.map((m, i) => `${i + 1}. ${m.title} (${m.spec.id})`).join('\n')}`,
+      role: `Runs the ${inline(workflow.title)} workflow`,
+      // `m.title` is an actor name or a step title — author-supplied, so flattened: one
+      // numbered line per agent, and no title can add a routing instruction of its own.
+      agent_md: `# Supervisor\n\nRoute the "${inline(workflow.title)}" workflow through its agents in order:\n${members.map((m, i) => `${i + 1}. ${inline(m.title)} (${m.spec.id})`).join('\n')}`,
       memory_md: '',
       members: members.map((m) => m.spec.id),
     };

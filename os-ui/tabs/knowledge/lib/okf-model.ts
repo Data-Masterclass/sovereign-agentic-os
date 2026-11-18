@@ -9,6 +9,7 @@ import {
   type Actor,
   type ActorType,
   ACTOR_TYPES,
+  readActorPrompt,
   resolveActorRegistry,
 } from '@tabs/knowledge/lib/schema';
 
@@ -414,8 +415,15 @@ function coerceActor(raw: unknown): Actor | null {
   if (typeof raw.id === 'string' && raw.id.trim()) actor.id = raw.id.trim();
   if (typeof raw.description === 'string' && raw.description.trim()) actor.description = raw.description.trim();
   // An Agent actor's long prompt is the head of its AGENT.md — a bundle that dropped it
-  // would import a workflow whose agents had lost their brief.
-  if (typeof raw.prompt === 'string' && raw.prompt.trim()) actor.prompt = raw.prompt.trim();
+  // would import a workflow whose agents had lost their brief. An OKF bundle is an INLET
+  // for prompt text like any other, so it is normalised (CRLF → LF) and capped here too;
+  // via the READ helper, because `okfDocToWorkflow` must not throw (graceful degradation),
+  // and the truncation is marked so the editor reports it.
+  if (typeof raw.prompt === 'string' && raw.prompt.trim()) {
+    const { prompt, truncatedFrom } = readActorPrompt(raw.prompt);
+    if (prompt) actor.prompt = prompt;
+    if (truncatedFrom !== undefined) actor.promptTruncatedFrom = truncatedFrom;
+  }
   return actor;
 }
 

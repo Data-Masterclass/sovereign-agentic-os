@@ -73,6 +73,16 @@ export type Actor = {
    * would silently destroy the author's work on a mis-click.
    */
   prompt?: string;
+  /**
+   * Set by a READ path (`parseActor`, an OKF import) when the stored prompt was over
+   * {@link MAX_ACTOR_PROMPT_BYTES} and had to be truncated: the original byte length, so the
+   * editor can tell the author what happened (`actor-prompt.ts` → `promptWarnings`).
+   *
+   * EDITOR-ONLY state — `serializeWorkflow` never writes it. A read path truncates rather
+   * than throwing, because a workflow that cannot be opened is worse than a bounded prompt
+   * the author is told about; the WRITE paths still refuse an over-cap prompt outright.
+   */
+  promptTruncatedFrom?: number;
 };
 
 export type StepLink = {
@@ -229,10 +239,12 @@ function parseActor(raw: unknown): Actor | null {
   const description = String(raw.description ?? '').trim();
   if (description) actor.description = description;
   // Normalised on the way in AND written normalised on the way out, so a save is a fixed
-  // point rather than a file that grows a newline per round trip. Over the cap it throws:
-  // a hand-edited or imported file is an inlet like any other.
-  const prompt = normalizeActorPrompt(name, String(raw.prompt ?? ''));
+  // point rather than a file that grows a newline per round trip. This is a READ path, so an
+  // over-cap prompt is TRUNCATED and marked (a workflow that cannot be opened is worse than
+  // a bounded prompt the author is told about); every write path refuses one outright.
+  const { prompt, truncatedFrom } = readActorPrompt(String(raw.prompt ?? ''));
   if (prompt) actor.prompt = prompt;
+  if (truncatedFrom !== undefined) actor.promptTruncatedFrom = truncatedFrom;
   return actor;
 }
 
@@ -262,6 +274,37 @@ export function normalizeActorPrompt(name: string, raw: string): string {
     );
   }
   return text;
+}
+
+/**
+ * The READ half of the same rule, for a document that already exists: the same
+ * normalisation, but an over-cap prompt is TRUNCATED to the cap and the original byte
+ * length is reported, instead of throwing.
+ *
+ * Why not throw: `parseActor` runs on every load, so a throw would make a stored workflow
+ * unopenable — the author could not even shorten the prompt that wedged it. A bounded
+ * prompt plus a warning the editor shows (`actor-prompt.ts` → `promptWarnings`) keeps the
+ * document editable and keeps the truncation visible, which is the rule a fallback has to
+ * obey: never substitute data silently. Writes still refuse (see {@link normalizeActorPrompt}).
+ *
+ * The cut is made on the decoded string, so it can never split a codepoint.
+ */
+export function readActorPrompt(raw: string): { prompt: string; truncatedFrom?: number } {
+  const text = raw.replace(/\r\n?/g, '\n').trim();
+  const encoder = new TextEncoder();
+  const total = encoder.encode(text).length;
+  if (total <= MAX_ACTOR_PROMPT_BYTES) return { prompt: text };
+  // Codepoint by codepoint (`Array.from`, not `slice`): a byte-wise cut can split a
+  // surrogate pair, and half a codepoint encodes back as U+FFFD — a visible corruption.
+  const kept: string[] = [];
+  let size = 0;
+  for (const ch of Array.from(text)) {
+    const n = encoder.encode(ch).length;
+    if (size + n > MAX_ACTOR_PROMPT_BYTES) break;
+    size += n;
+    kept.push(ch);
+  }
+  return { prompt: kept.join(''), truncatedFrom: total };
 }
 
 /**
