@@ -6,23 +6,28 @@
  * USER STORY: As a process owner I must be able to change a step's expert knowledge and SEE that it
  *             saved, instead of typing into a field that commits on blur and sometimes vanishes.
  * ARCHITECTURE:
- *   - CONTROLLED draft + one Save. The fields used to be `defaultValue` + `onBlur`, and the
- *     inspector was not keyed by step id, so switching steps showed the previous step's text and a
- *     blur-commit arriving during another commit was dropped (WorkflowView's old `actingRef`).
- *   - `mutate` now RESOLVES an outcome, so a failed commit keeps the draft and shows the error here
- *     rather than only in the page banner.
- *   - Every action (add a link, add a rule, add an actor) commits the open draft WITH it through
- *     `applyDraft`, so no path through the inspector can lose typed text.
+ *   - CONTROLLED draft + one Save. The fields used to be uncontrolled with blur-commits, and the
+ *     inspector was not keyed by step id, so switching steps showed the previous step's text.
+ *   - Every commit is a REDUCER over the freshly-read document (`lib/workflow-commit.ts`), never a
+ *     snapshot of this render's `workflow` prop: two quick edits used to make the later one revert
+ *     the earlier. Each action folds the open draft in through `applyDraft`, so no path loses text.
+ *   - `mutate` RESOLVES an outcome, so a failed commit keeps the draft and shows the error here.
+ *   - Dirtiness is REPORTED UP (`onDirtyChange`): the unsaved-changes prompt lives in WorkflowView,
+ *     which owns every way out of the inspector (another step, the same step, another panel).
+ *   - Dirty is computed on NORMALISED drafts (`lib/step-draft.ts`) — the store trims titles, drops
+ *     blank I/O lines and trims the note, so a raw comparison never cleared after a save.
  *   - Imports only `@core/*` and this tab; the pure mutations live in `lib/step-edit.ts`.
  */
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Workflow, WorkflowStep, ActorType, LinkType, Actor } from '@tabs/knowledge/lib/schema';
 import { ACTOR_TYPES, EXTERNAL_ACTORS } from '@tabs/knowledge/lib/schema';
 import type { Gap } from '@tabs/knowledge/lib/gaps';
 import type { ActorWarning } from '@tabs/knowledge/lib/actor-registry';
 import type { CommitOutcome } from '@tabs/knowledge/lib/commit-queue';
+import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
+import { stepDraftFrom, stepDraftDirty, type StepDraft } from '@tabs/knowledge/lib/step-draft';
 import {
   updateStep,
   setStepIO,
@@ -51,6 +56,7 @@ export default function StepInspector({
   actorWarning,
   canEdit,
   mutate,
+  onDirtyChange,
   onClose,
 }: {
   workflow: Workflow;
@@ -59,7 +65,9 @@ export default function StepInspector({
   /** Set when this step names an actor the registry does not hold. */
   actorWarning?: ActorWarning;
   canEdit: boolean;
-  mutate: (next: Workflow) => Promise<CommitOutcome>;
+  mutate: (reduce: WorkflowReducer) => Promise<CommitOutcome>;
+  /** Report the draft state up, so the parent can guard every way out of here. */
+  onDirtyChange: (state: { dirty: boolean; save: () => Promise<boolean> }) => void;
   onClose: () => void;
 }) {
   const stepGaps = gaps.filter((g) => g.stepId === step.id);
@@ -71,22 +79,12 @@ export default function StepInspector({
   );
 
   // --- the controlled draft (the saved step is the baseline) ------------------
-  const saved = {
-    title: step.title,
-    actorValue: currentActor ? actorOptionValue(currentActor) : '',
-    inputs: step.inputs.join('\n'),
-    outputs: step.outputs.join('\n'),
-    tacit: step.tacit,
-  };
-  const [title, setTitle] = useState(saved.title);
-  const [actorValue, setActorValue] = useState(saved.actorValue);
-  const [inputs, setInputs] = useState(saved.inputs);
-  const [outputs, setOutputs] = useState(saved.outputs);
-  const [tacit, setTacit] = useState(saved.tacit);
+  const saved = stepDraftFrom(step, currentActor ? actorOptionValue(currentActor) : '');
+  const [draft, setDraft] = useState<StepDraft>(saved);
+  const set = (patch: Partial<StepDraft>) => setDraft((d) => ({ ...d, ...patch }));
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
-  const [confirmClose, setConfirmClose] = useState(false);
 
   const [newLinkType, setNewLinkType] = useState<LinkType>('data');
   const [newLinkRef, setNewLinkRef] = useState('');
@@ -101,73 +99,73 @@ export default function StepInspector({
   const [naDesc, setNaDesc] = useState('');
 
   const idx = workflow.steps.findIndex((s) => s.id === step.id);
-
-  const dirty =
-    title !== saved.title ||
-    actorValue !== saved.actorValue ||
-    inputs !== saved.inputs ||
-    outputs !== saved.outputs ||
-    tacit !== saved.tacit;
+  const dirty = stepDraftDirty(draft, saved);
 
   /** Fold the open draft into a workflow — every commit from here carries it. */
   function applyDraft(base: Workflow): Workflow {
-    let next = updateStep(base, step.id, { title, tacit });
-    next = setStepIO(next, step.id, { inputs: inputs.split('\n'), outputs: outputs.split('\n') });
-    if (actorValue !== saved.actorValue) {
-      const picked = workflow.actors.find((a) => actorOptionValue(a) === actorValue);
+    let next = updateStep(base, step.id, { title: draft.title, tacit: draft.tacit });
+    next = setStepIO(next, step.id, {
+      inputs: draft.inputs.split('\n'),
+      outputs: draft.outputs.split('\n'),
+    });
+    if (draft.actorValue !== saved.actorValue) {
+      const picked = base.actors.find((a) => actorOptionValue(a) === draft.actorValue);
       if (picked) next = setStepActorFromRegistry(next, step.id, picked);
     }
     return next;
   }
 
-  async function commit(next: Workflow) {
+  async function commit(reduce: WorkflowReducer): Promise<boolean> {
     setSaving(true);
     setErr('');
-    const outcome = await mutate(next);
+    const outcome = await mutate(reduce);
     setSaving(false);
-    if (!outcome.ok) setErr(outcome.error);
-    return outcome.ok;
-  }
-
-  function revert() {
-    setTitle(saved.title);
-    setActorValue(saved.actorValue);
-    setInputs(saved.inputs);
-    setOutputs(saved.outputs);
-    setTacit(saved.tacit);
-    setErr('');
-  }
-
-  function requestClose() {
-    if (dirty) { setConfirmClose(true); return; }
-    onClose();
-  }
-
-  function selectActor(value: string) {
-    if (value === '__new__') { setAddingActor(true); return; }
-    setActorValue(value);
+    if (!outcome.ok) { setErr(outcome.error); return false; }
+    return true;
   }
 
   /** Commit every field above in one go. The ONLY path that saves the text fields. */
   async function save(): Promise<boolean> {
     if (!dirty) return true;
-    return commit(applyDraft(workflow));
+    if (!draft.title.trim()) { setErr('A step needs a title.'); return false; }
+    return commit((fresh) => applyDraft(fresh));
+  }
+
+  function revert() {
+    setDraft(saved);
+    setErr('');
+  }
+
+  // The latest `save` closure, so the parent's guard always saves the CURRENT draft.
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    onDirtyChange({ dirty, save: () => saveRef.current() });
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange({ dirty: false, save: async () => true }), [onDirtyChange]);
+
+  function selectActor(value: string) {
+    if (value === '__new__') { setAddingActor(true); return; }
+    set({ actorValue: value });
   }
 
   async function submitNewActor(e: React.FormEvent) {
     e.preventDefault();
     const name = naName.trim();
     if (!name) return;
-    // One commit: the open draft + the new registry actor + this step pointing at it.
-    const withActor = addActor(applyDraft(workflow), {
-      name,
-      category: naCategory,
-      ...(naDesc.trim() ? { description: naDesc.trim() } : {}),
+    // One commit over the FRESH document: the open draft + the new registry actor + this
+    // step pointing at it.
+    const ok = await commit((fresh) => {
+      const withActor = addActor(applyDraft(fresh), {
+        name,
+        category: naCategory,
+        ...(naDesc.trim() ? { description: naDesc.trim() } : {}),
+      });
+      const added = withActor.actors.find(
+        (a) => a.category === naCategory && a.name.trim().toLowerCase() === name.toLowerCase(),
+      );
+      return added ? setStepActorFromRegistry(withActor, step.id, added) : withActor;
     });
-    const added = withActor.actors.find(
-      (a) => a.category === naCategory && a.name.trim().toLowerCase() === name.toLowerCase(),
-    );
-    const ok = await commit(added ? setStepActorFromRegistry(withActor, step.id, added) : withActor);
     if (!ok) return;
     setAddingActor(false);
     setNaName(''); setNaCategory('Human'); setNaDesc('');
@@ -180,17 +178,8 @@ export default function StepInspector({
           {step.title}
           {dirty && <span className="si-dirty" title="Unsaved changes"> • unsaved</span>}
         </h3>
-        <button className="btn ghost sm" onClick={requestClose}>Close ✕</button>
+        <button className="btn ghost sm" onClick={onClose}>Close ✕</button>
       </div>
-
-      {confirmClose && (
-        <div className="si-guard">
-          <span>This step has unsaved changes.</span>
-          <button className="btn sm" onClick={() => { setConfirmClose(false); void save(); }}>Save &amp; close</button>
-          <button className="btn ghost sm" onClick={() => { setConfirmClose(false); onClose(); }}>Discard changes</button>
-          <button className="btn ghost sm" onClick={() => setConfirmClose(false)}>Keep editing</button>
-        </div>
-      )}
 
       {err && <div className="error si-error">{err}</div>}
 
@@ -204,12 +193,12 @@ export default function StepInspector({
       <div className="si-grid">
         <label className="si-field">
           <span className="si-label">Title</span>
-          <input type="text" value={title} disabled={!canEdit} onChange={(e) => setTitle(e.target.value)} />
+          <input type="text" value={draft.title} disabled={!canEdit} onChange={(e) => set({ title: e.target.value })} />
         </label>
         <label className="si-field">
           <span className="si-label">Actor</span>
-          <select value={actorValue} disabled={!canEdit} onChange={(e) => selectActor(e.target.value)}>
-            {!actorValue && (
+          <select value={draft.actorValue} disabled={!canEdit} onChange={(e) => selectActor(e.target.value)}>
+            {!draft.actorValue && (
               <option value="" disabled>
                 {step.actor_name ? `${step.actor}: ${step.actor_name} (not in the registry)` : 'Choose an actor…'}
               </option>
@@ -262,11 +251,11 @@ export default function StepInspector({
       <div className="si-grid" style={{ marginTop: 14 }}>
         <label className="si-field">
           <span className="si-label">Inputs (one per line)</span>
-          <textarea rows={3} value={inputs} disabled={!canEdit} onChange={(e) => setInputs(e.target.value)} />
+          <textarea rows={3} value={draft.inputs} disabled={!canEdit} onChange={(e) => set({ inputs: e.target.value })} />
         </label>
         <label className="si-field">
           <span className="si-label">Outputs (one per line)</span>
-          <textarea rows={3} value={outputs} disabled={!canEdit} onChange={(e) => setOutputs(e.target.value)} />
+          <textarea rows={3} value={draft.outputs} disabled={!canEdit} onChange={(e) => set({ outputs: e.target.value })} />
         </label>
       </div>
 
@@ -274,10 +263,10 @@ export default function StepInspector({
       <div className="si-section-label">Expert knowledge (inline)</div>
       <textarea
         rows={3}
-        value={tacit}
+        value={draft.tacit}
         disabled={!canEdit}
         placeholder="e.g. Officers often miss the date in section 4 — double-check."
-        onChange={(e) => setTacit(e.target.value)}
+        onChange={(e) => set({ tacit: e.target.value })}
         style={{ width: '100%' }}
       />
 
@@ -296,11 +285,11 @@ export default function StepInspector({
       {canEdit && (
         <div className="row" style={{ gap: 8, marginTop: 10 }}>
           <button className="btn ghost sm" disabled={idx <= 0 || saving}
-            onClick={() => void commit(moveStep(applyDraft(workflow), step.id, -1))}>← Move earlier</button>
+            onClick={() => void commit((fresh) => moveStep(applyDraft(fresh), step.id, -1))}>← Move earlier</button>
           <button className="btn ghost sm" disabled={idx >= workflow.steps.length - 1 || saving}
-            onClick={() => void commit(moveStep(applyDraft(workflow), step.id, 1))}>Move later →</button>
+            onClick={() => void commit((fresh) => moveStep(applyDraft(fresh), step.id, 1))}>Move later →</button>
           <button className="btn ghost sm" style={{ marginLeft: 'auto', color: 'var(--danger)' }} disabled={saving}
-            onClick={() => { void commit(removeStep(workflow, step.id)).then((ok) => { if (ok) onClose(); }); }}>
+            onClick={() => { void commit((fresh) => removeStep(fresh, step.id)).then((ok) => { if (ok) onClose(); }); }}>
             Remove step
           </button>
         </div>
@@ -327,8 +316,8 @@ export default function StepInspector({
                   <span className="badge ok" style={{ fontSize: 10 }}>resolved</span>
                 )}
                 {canEdit && (
-                  <button className="si-link-x" title="Remove link"
-                    onClick={() => void commit(removeStepLink(applyDraft(workflow), step.id, { type: l.type, ref: l.ref }))}>✕</button>
+                  <button className="si-link-x" title="Remove link" disabled={saving}
+                    onClick={() => void commit((fresh) => removeStepLink(applyDraft(fresh), step.id, { type: l.type, ref: l.ref }))}>✕</button>
                 )}
               </div>
             );
@@ -342,7 +331,7 @@ export default function StepInspector({
           onSubmit={(e) => {
             e.preventDefault();
             if (!newLinkRef.trim()) return;
-            void commit(addStepLink(applyDraft(workflow), step.id, {
+            void commit((fresh) => addStepLink(applyDraft(fresh), step.id, {
               type: newLinkType,
               ref: newLinkRef.trim(),
               ...(newLinkLabel.trim() ? { label: newLinkLabel.trim() } : {}),
@@ -372,12 +361,12 @@ export default function StepInspector({
               <span className="si-rule-text">{r.text}</span>
               {canEdit && (
                 <>
-                  <button className="btn ghost sm"
-                    onClick={() => void commit(setStepRuleHard(applyDraft(workflow), step.id, r.id, !r.hard))}>
+                  <button className="btn ghost sm" disabled={saving}
+                    onClick={() => void commit((fresh) => setStepRuleHard(applyDraft(fresh), step.id, r.id, !r.hard))}>
                     {r.hard ? 'Make soft' : 'Mark hard'}
                   </button>
-                  <button className="si-link-x" title="Remove rule"
-                    onClick={() => void commit(removeStepRule(applyDraft(workflow), step.id, r.id))}>✕</button>
+                  <button className="si-link-x" title="Remove rule" disabled={saving}
+                    onClick={() => void commit((fresh) => removeStepRule(applyDraft(fresh), step.id, r.id))}>✕</button>
                 </>
               )}
             </div>
@@ -391,7 +380,7 @@ export default function StepInspector({
           onSubmit={(e) => {
             e.preventDefault();
             if (!newRule.trim()) return;
-            void commit(addStepRule(applyDraft(workflow), step.id, { text: newRule.trim(), hard: newRuleHard }))
+            void commit((fresh) => addStepRule(applyDraft(fresh), step.id, { text: newRule.trim(), hard: newRuleHard }))
               .then((ok) => { if (ok) { setNewRule(''); setNewRuleHard(false); } });
           }}
         >
@@ -424,11 +413,6 @@ const StepInspectorStyles = `
   font-family: var(--font-head); font-size: 17px; font-weight: 600; margin: 0; letter-spacing: 0.3px;
 }
 .si-dirty { font-family: var(--font-body); font-size: 12px; font-weight: 500; color: var(--gold-text); }
-.si-guard {
-  display: flex; align-items: center; gap: 9px; flex-wrap: wrap; font-size: 12.5px;
-  padding: 9px 11px; margin-bottom: 12px;
-  border: 1px solid var(--gold-line); border-radius: 9px; background: var(--gold-soft);
-}
 .si-error { margin: 0 0 12px; }
 .si-warn {
   font-size: 12.5px; padding: 9px 11px; margin-bottom: 12px; border-radius: 9px;
@@ -463,6 +447,7 @@ const StepInspectorStyles = `
   font-size: 13px; padding: 2px 4px; line-height: 1;
 }
 .si-link-x:hover { color: var(--danger); }
+.si-link-x:disabled { cursor: default; opacity: 0.5; }
 .si-add-link, .si-add-rule { display: flex; gap: 8px; margin-top: 9px; align-items: center; flex-wrap: wrap; }
 .si-add-link input, .si-add-link select, .si-add-rule input {
   font-family: var(--font-body); font-size: 12.5px; padding: 6px 8px;

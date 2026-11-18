@@ -178,6 +178,33 @@ test('tacit: a three-line note with a --- line and a fence line round-trips unch
   assert.equal(twice.steps.length, w.steps.length, 'a fence inside the note must not split the document');
 });
 
+test('tacit: a hand-written lazy continuation line (no > prefix) is kept, not dropped', () => {
+  // Markdown's own blockquote lazy continuation: a human editing workflow.md by hand writes the
+  // second line without the `>`. The old regex captured it; the line scanner must too, or the
+  // next commit through the UI would delete someone's sentence.
+  const md = VALID_WORKFLOW.replace(
+    '> tacit: Loan officers often miss the income verification date in section 4.',
+    '> tacit: Loan officers often miss the income verification date in section 4.\nAsk the desk head when it is blank.',
+  );
+  const w = parseWorkflow(md);
+  assert.equal(
+    w.steps[0].tacit,
+    'Loan officers often miss the income verification date in section 4.\nAsk the desk head when it is blank.',
+  );
+  // …and once committed it round-trips as a proper `> tacit:` blockquote.
+  const again = parseWorkflow(serializeWorkflow(w));
+  assert.equal(again.steps[0].tacit, w.steps[0].tacit);
+});
+
+test('tacit: a blank line, a fence or a --- ends the note (prose after it is not swallowed)', () => {
+  const md = VALID_WORKFLOW.replace(
+    '> tacit: Loan officers often miss the income verification date in section 4.',
+    '> tacit: Note one.\n\nThis paragraph belongs to the document, not to the note.',
+  );
+  const w = parseWorkflow(md);
+  assert.equal(w.steps[0].tacit, 'Note one.');
+});
+
 test('throws KnowledgeError when frontmatter is missing', () => {
   assert.throws(() => parseWorkflow('# No frontmatter'), KnowledgeError);
 });

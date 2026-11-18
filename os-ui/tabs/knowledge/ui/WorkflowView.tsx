@@ -25,6 +25,13 @@ import { useFolders } from '@core/folders/useFolders';
 import { usePublishPageContext } from '@core/ui/core/PageContext';
 import { addStep } from '@tabs/knowledge/lib/step-edit';
 import { createCommitQueue, type CommitOutcome, type CommitQueue } from '@tabs/knowledge/lib/commit-queue';
+import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
+import {
+  requestNavigation,
+  resolveNavigation,
+  type EditorIntent,
+  type GuardChoice,
+} from '@tabs/knowledge/lib/editor-guard';
 import { actorWarnings, findActorById } from '@tabs/knowledge/lib/actor-registry';
 import { buildWorkflowReport, workflowPdfFilename } from '@tabs/knowledge/lib/workflow-pdf';
 import { renderSwimlaneSvg } from '@tabs/knowledge/lib/swimlane-svg';
@@ -103,10 +110,30 @@ export default function WorkflowView({
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
   const [actErr, setActErr] = useState('');
-  // One queue for the whole editor: commits run in order and none is dropped.
-  const queueRef = useRef<CommitQueue>(
-    createCommitQueue({ onError: (m) => setActErr(m), onBusyChange: (b) => setActing(b) }),
-  );
+  // An unsaved-changes prompt: which move is waiting for the user's answer.
+  const [pendingNav, setPendingNav] = useState<EditorIntent | null>(null);
+  // The open inspector's draft state, reported up so every exit is guarded.
+  const dirtyRef = useRef(false);
+  const saveDraftRef = useRef<(() => Promise<boolean>) | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
+  // ONE queue for the whole editor: commits run in order and none is dropped. Lazily
+  // created — a `useRef(createCommitQueue(…))` builds (and throws away) a queue on every
+  // render. After unmount there is no tree to tell, so a late failure is logged instead.
+  const queueRef = useRef<CommitQueue | null>(null);
+  const queue = useCallback((): CommitQueue => {
+    if (!queueRef.current) {
+      queueRef.current = createCommitQueue({
+        onError: (m) => {
+          if (mountedRef.current) setActErr(m);
+          else console.error('[knowledge] workflow commit failed after the editor closed:', m);
+        },
+        onBusyChange: (b) => { if (mountedRef.current) setActing(b); },
+      });
+    }
+    return queueRef.current;
+  }, []);
 
   // New step form
   const [newStepTitle, setNewStepTitle] = useState('');
@@ -175,13 +202,58 @@ export default function WorkflowView({
   // failure, and hands the outcome back to the caller — which is how an inspector can keep
   // its draft and show the error on the field the user was typing in.
   const mutate = useCallback(
-    async (next: Workflow): Promise<CommitOutcome> =>
-      queueRef.current.enqueue(async () => {
-        await commitWorkflow(workflowId, next);
+    async (reduce: WorkflowReducer): Promise<CommitOutcome> =>
+      queue().enqueue(async () => {
+        setActErr(''); // the banner belongs to the commit in flight, not to an older failure
+        await commitWorkflow(workflowId, reduce);
         await reload();
       }),
-    [workflowId, reload],
+    [workflowId, reload, queue],
   );
+
+  // --- the unsaved-changes guard --------------------------------------------
+  // Every exit from an inspector goes through `navigate`: another step, the same step
+  // again (deselect), another actor, another panel. The inspectors only report their
+  // draft state; the prompt and the moves live here, because this component owns
+  // `selectedStep` / `selectedActor` / `panel`.
+  const onDirtyChange = useCallback((state: { dirty: boolean; save: () => Promise<boolean> }) => {
+    dirtyRef.current = state.dirty;
+    saveDraftRef.current = state.dirty ? state.save : null;
+  }, []);
+
+  // "Open this step" from the actor inspector: the step rides along with the panel move,
+  // so the jump still works when the guard delays the move until the user has answered.
+  const stepJumpRef = useRef<string | null>(null);
+  const setPendingStepJump = useCallback((stepId: string) => { stepJumpRef.current = stepId; }, []);
+
+  const applyIntent = useCallback((intent: EditorIntent) => {
+    dirtyRef.current = false;
+    saveDraftRef.current = null;
+    if (intent.kind === 'step') { stepJumpRef.current = null; setSelectedStep(intent.stepId); return; }
+    if (intent.kind === 'actor') { stepJumpRef.current = null; setSelectedActor(intent.actorId); return; }
+    setPanel(intent.panel as Panel);
+    if (intent.panel === 'visual' && stepJumpRef.current) {
+      setSelectedStep(stepJumpRef.current);
+      stepJumpRef.current = null;
+    }
+  }, []);
+
+  const navigate = useCallback((intent: EditorIntent) => {
+    const req = requestNavigation(dirtyRef.current, intent);
+    if (req.action === 'navigate') applyIntent(intent);
+    else setPendingNav(intent);
+  }, [applyIntent]);
+
+  const answerGuard = useCallback(async (choice: GuardChoice) => {
+    const res = resolveNavigation(choice, pendingNav);
+    setPendingNav(null);
+    if (res.action === 'stay') return;
+    if (res.saveFirst) {
+      const ok = await (saveDraftRef.current?.() ?? Promise.resolve(true));
+      if (!ok) return; // the save failed — keep the draft and the inspector's error
+    }
+    applyIntent(res.intent);
+  }, [pendingNav, applyIntent]);
 
   async function saveMarkdown() {
     if (mdSaving || !data) return;
@@ -619,25 +691,36 @@ export default function WorkflowView({
         {pubMsg && <div className="hint" style={{ marginBottom: 10, color: 'var(--teal)' }}>{pubMsg}</div>}
         {pubError && <div className="error" style={{ marginBottom: 10 }}>{pubError}</div>}
         {actErr && <div className="error" style={{ marginBottom: 10 }}>{actErr}</div>}
+
+        {/* The unsaved-changes guard: one prompt for EVERY way out of an inspector —
+            another step, the same step again, another actor, another panel. */}
+        {pendingNav && (
+          <div className="k-guard">
+            <span>You have unsaved changes in the open editor.</span>
+            <button className="btn sm" onClick={() => void answerGuard('save')}>Save &amp; continue</button>
+            <button className="btn ghost sm" onClick={() => void answerGuard('discard')}>Discard changes</button>
+            <button className="btn ghost sm" onClick={() => void answerGuard('keep')}>Keep editing</button>
+          </div>
+        )}
         {pdfErr && <div className="error" style={{ marginBottom: 10 }}>{pdfErr}</div>}
 
         {/* Surface tabs */}
         <div className="tabstrip">
-          <button className={panel === 'visual' ? 'active' : ''} onClick={() => setPanel('visual')}>Visual flow</button>
-          <button className={panel === 'actors' ? 'active' : ''} onClick={() => setPanel('actors')}>
+          <button className={panel === 'visual' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'visual' })}>Visual flow</button>
+          <button className={panel === 'actors' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'actors' })}>
             Actors {wf.actors.length > 0 && <span className="badge muted" style={{ marginLeft: 6, fontSize: 10 }}>{wf.actors.length}</span>}
           </button>
-          <button className={panel === 'rules' ? 'active' : ''} onClick={() => setPanel('rules')}>Business rules</button>
-          <button className={panel === 'tacit' ? 'active' : ''} onClick={() => setPanel('tacit')}>Expert knowledge</button>
-          <button className={panel === 'links' ? 'active' : ''} onClick={() => setPanel('links')}>
+          <button className={panel === 'rules' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'rules' })}>Business rules</button>
+          <button className={panel === 'tacit' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'tacit' })}>Expert knowledge</button>
+          <button className={panel === 'links' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'links' })}>
             Data &amp; Metrics {(data.links.datasets.length + data.links.metrics.length) > 0 && (
               <span className="badge muted" style={{ marginLeft: 6, fontSize: 10 }}>{data.links.datasets.length + data.links.metrics.length}</span>
             )}
           </button>
-          <button className={panel === 'handover' ? 'active' : ''} onClick={() => setPanel('handover')}>Handover</button>
-          <button className={panel === 'markdown' ? 'active' : ''} onClick={() => setPanel('markdown')}>Markdown</button>
-          <button className={panel === 'mermaid' ? 'active' : ''} onClick={() => setPanel('mermaid')}>Diagram (read-only)</button>
-          <button className={panel === 'gaps' ? 'active' : ''} onClick={() => setPanel('gaps')}>
+          <button className={panel === 'handover' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'handover' })}>Handover</button>
+          <button className={panel === 'markdown' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'markdown' })}>Markdown</button>
+          <button className={panel === 'mermaid' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'mermaid' })}>Diagram (read-only)</button>
+          <button className={panel === 'gaps' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'gaps' })}>
             Gaps {data.gaps.length > 0 && <span className="badge err" style={{ marginLeft: 6, fontSize: 10 }}>{data.gaps.length}</span>}
           </button>
         </div>
@@ -651,7 +734,7 @@ export default function WorkflowView({
                 gaps={data.gaps}
                 selectedStepId={selectedStep}
                 canEdit={data.canEdit}
-                onSelectStep={(id) => setSelectedStep((cur) => (cur === id ? null : id))}
+                onSelectStep={(id) => navigate({ kind: 'step', stepId: selectedStep === id ? null : id })}
               />
 
               {data.canEdit && (
@@ -660,7 +743,7 @@ export default function WorkflowView({
                   onSubmit={(e) => {
                     e.preventDefault();
                     if (!newStepTitle.trim()) return;
-                    void mutate(addStep(wf, { title: newStepTitle.trim(), actor: newStepActor }));
+                    void mutate((fresh) => addStep(fresh, { title: newStepTitle.trim(), actor: newStepActor }));
                     setNewStepTitle('');
                   }}
                 >
@@ -682,7 +765,8 @@ export default function WorkflowView({
                   actorWarning={warnings.find((w) => w.stepId === step.id)}
                   canEdit={data.canEdit}
                   mutate={mutate}
-                  onClose={() => setSelectedStep(null)}
+                  onDirtyChange={onDirtyChange}
+                  onClose={() => navigate({ kind: 'step', stepId: null })}
                 />
               )}
             </>
@@ -720,7 +804,7 @@ export default function WorkflowView({
                 workflow={wf}
                 canEdit={data.canEdit}
                 selectedActorId={selectedActor}
-                onSelect={(id) => setSelectedActor((cur) => (cur === id ? null : id))}
+                onSelect={(id) => navigate({ kind: 'actor', actorId: selectedActor === id ? null : id })}
                 mutate={mutate}
               />
               {actor && (
@@ -730,8 +814,9 @@ export default function WorkflowView({
                   actor={actor}
                   canEdit={data.canEdit}
                   mutate={mutate}
-                  onSelectStep={(stepId) => { setSelectedStep(stepId); setPanel('visual'); }}
-                  onClose={() => setSelectedActor(null)}
+                  onDirtyChange={onDirtyChange}
+                  onSelectStep={(stepId) => { setPendingStepJump(stepId); navigate({ kind: 'panel', panel: 'visual' }); }}
+                  onClose={() => navigate({ kind: 'actor', actorId: null })}
                 />
               )}
             </>
@@ -809,6 +894,11 @@ export default function WorkflowView({
 const WorkflowViewStyles = `
 .k-detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
 .k-detail-title { font-family: var(--font-head); font-size: 20px; font-weight: 600; letter-spacing: 0.3px; margin: 0; }
+.k-guard {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap; font-size: 12.5px;
+  padding: 10px 12px; margin-bottom: 10px;
+  border: 1px solid var(--gold-line); border-radius: 9px; background: var(--gold-soft);
+}
 .k-add-step { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
 .k-add-step input, .k-add-step select {
   font-family: var(--font-body); font-size: 13px; padding: 7px 9px;

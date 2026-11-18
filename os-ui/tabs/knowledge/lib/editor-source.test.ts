@@ -44,12 +44,55 @@ test('no inspector field commits on blur — an explicit Save button does', () =
   }
 });
 
-test('both inspectors guard unsaved changes on close and show an inline error', () => {
+test('both inspectors show a dirty marker and report dirtiness UP for the guard', () => {
   for (const f of ['tabs/knowledge/ui/StepInspector.tsx', 'tabs/knowledge/ui/ActorInspector.tsx']) {
     const src = read(f);
     assert.match(src, /unsaved/i, `${f} must show a dirty / unsaved marker`);
-    assert.match(src, /Discard/i, `${f} must guard a close with unsaved changes`);
+    assert.match(src, /onDirtyChange\(\{ dirty, save/, `${f} must report its draft state to the parent`);
   }
+});
+
+test('the unsaved-changes guard covers EVERY exit, not just the ✕', () => {
+  const src = read('tabs/knowledge/ui/WorkflowView.tsx');
+  assert.match(src, /requestNavigation/, 'navigation must ask the guard first');
+  assert.match(src, /resolveNavigation/, 'the prompt must resolve through the guard');
+  assert.match(src, /Discard changes/, 'the prompt must offer Discard');
+  // No selection or panel change may bypass `navigate(…)`.
+  assert.ok(!/onClick=\{\(\) => setPanel\(/.test(src), 'a panel button must not call setPanel directly');
+  assert.ok(!/onSelectStep=\{\(id\) => setSelectedStep\(/.test(src), 'the canvas must not select a step directly');
+  assert.match(src, /onSelectStep=\{\(id\) => navigate\(/, 'the canvas selects through the guard');
+  assert.match(src, /onSelect=\{\(id\) => navigate\(/, 'an actor row selects through the guard');
+});
+
+test('every commit is a reducer over the fresh document — no snapshot of the render', () => {
+  const view = read('tabs/knowledge/ui/WorkflowView.tsx');
+  assert.match(view, /mutate = useCallback\(\s*async \(reduce: WorkflowReducer\)/);
+  assert.match(view, /setActErr\(''\)/, 'each queued commit clears the stale error banner');
+  assert.match(read('tabs/knowledge/ui/commitWorkflow.ts'), /commitReducer/);
+  for (const f of [
+    'tabs/knowledge/ui/StepInspector.tsx',
+    'tabs/knowledge/ui/ActorInspector.tsx',
+    'tabs/knowledge/ui/ActorsPanel.tsx',
+    'tabs/knowledge/ui/RulesPanel.tsx',
+  ]) {
+    const src = read(f);
+    assert.match(src, /WorkflowReducer/, `${f} must commit through a reducer`);
+    assert.ok(!/mutate\((?:add|remove|update|set|move)[A-Za-z]*\(workflow[,)]/.test(src),
+      `${f} must not commit a document built from this render's workflow prop`);
+  }
+});
+
+test('the row actions that fire mid-commit are disabled while a commit is in flight', () => {
+  const src = read('tabs/knowledge/ui/StepInspector.tsx');
+  // Each ✕ / toggle inside a list: link remove, rule remove, hard toggle.
+  const guarded = src.match(/disabled=\{saving\}/g) ?? [];
+  assert.ok(guarded.length >= 4, `expected the list actions to carry disabled={saving}, found ${guarded.length}`);
+});
+
+test('the commit queue is created lazily, not on every render', () => {
+  const src = read('tabs/knowledge/ui/WorkflowView.tsx');
+  assert.match(src, /useRef<CommitQueue \| null>\(null\)/);
+  assert.ok(!/useRef<CommitQueue>\(\s*createCommitQueue/.test(src), 'a queue must not be built inline on each render');
 });
 
 test('ActorsPanel no longer edits the name inline — a row opens the inspector', () => {

@@ -15,7 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseWorkflow, serializeWorkflow } from '@tabs/knowledge/lib/schema';
-import { removeActor, updateActor } from '@tabs/knowledge/lib/step-edit';
+import { addActor, removeActor, updateActor } from '@tabs/knowledge/lib/step-edit';
 import { actorWarnings, stepsUsingActor } from '@tabs/knowledge/lib/actor-registry';
 
 const WITH_REGISTRY = `---
@@ -181,4 +181,102 @@ test('stepsUsingActor lists the steps an actor is used by', () => {
   const w = parseWorkflow(WITH_REGISTRY);
   assert.deepEqual(stepsUsingActor(w, w.actors[0]).map((s) => s.id), ['prepare']);
   assert.deepEqual(stepsUsingActor(w, w.actors[1]).map((s) => s.id), ['submit']);
+});
+
+// --- ids are unique, even when two names slugify the same -------------------
+
+/** `Loan Officer` and `Loan-Officer` slugify identically — one id would address both. */
+const CLASHING_NAMES = `---
+id: wf
+title: WF
+domain: sales
+visibility: Personal
+status: draft
+version: "1"
+actors:
+  - name: Loan Officer
+    category: Human
+  - name: Loan-Officer
+    category: Human
+  - name: loan officer
+    category: Software
+---
+
+\`\`\`step
+id: prepare
+title: Prepare documents
+actor: Human
+actor_name: Loan Officer
+\`\`\`
+`;
+
+test('two actors whose names slugify alike still get DISTINCT ids', () => {
+  const w = parseWorkflow(CLASHING_NAMES);
+  const ids = w.actors.map((a) => a.id);
+  assert.equal(new Set(ids).size, ids.length, `ids must be unique, got ${ids.join(', ')}`);
+});
+
+test('deleting one of two like-slugged actors leaves the other (no two-for-one delete)', () => {
+  const w0 = parseWorkflow(CLASHING_NAMES);
+  const first = w0.actors[0];
+  const w = removeActor(w0, first.id!);
+  assert.equal(w.actors.length, w0.actors.length - 1);
+  assert.deepEqual(
+    w.actors.map((a) => `${a.category}:${a.name}`),
+    ['Human:Loan-Officer', 'Software:loan officer'],
+  );
+  // And it survives the round trip with its ids intact.
+  const again = parseWorkflow(serializeWorkflow(w));
+  assert.deepEqual(again.actors.map((a) => a.id), w.actors.map((a) => a.id));
+});
+
+test('renaming one of two like-slugged actors touches only its own steps', () => {
+  const w0 = parseWorkflow(CLASHING_NAMES);
+  const w = updateActor(w0, w0.actors[0].id!, { name: 'Senior Loan Officer' });
+  assert.equal(w.steps[0].actor_name, 'Senior Loan Officer');
+  assert.ok(w.actors.find((a) => a.name === 'Loan-Officer'), 'the other actor keeps its name');
+});
+
+// --- a reference with odd whitespace still resolves --------------------------
+
+const DOUBLE_SPACED_REF = `---
+id: wf
+title: WF
+domain: sales
+visibility: Personal
+status: draft
+version: "1"
+actors:
+  - id: a-officer
+    name: Loan Officer
+    category: Human
+---
+
+\`\`\`step
+id: prepare
+title: Prepare documents
+actor: Human
+actor_name: "Loan  Officer"
+\`\`\`
+`;
+
+test('a step referencing "Loan  Officer" resolves to the registry\'s "Loan Officer"', () => {
+  const w = parseWorkflow(DOUBLE_SPACED_REF);
+  assert.deepEqual(actorWarnings(w), [], 'interior whitespace must not make the actor look unknown');
+  assert.deepEqual(stepsUsingActor(w, w.actors[0]).map((s) => s.id), ['prepare']);
+});
+
+test('a rename reaches a step whose reference has interior double spaces', () => {
+  const w = updateActor(parseWorkflow(DOUBLE_SPACED_REF), 'a-officer', { name: 'Desk Head' });
+  assert.equal(w.steps[0].actor_name, 'Desk Head');
+  assert.deepEqual(actorWarnings(w), []);
+});
+
+test('a reassigning delete reaches a step whose reference has interior double spaces', () => {
+  const w0 = addActor(parseWorkflow(DOUBLE_SPACED_REF), { name: 'BankPortal', category: 'Software' });
+  const portal = w0.actors.find((a) => a.name === 'BankPortal')!;
+  const w = removeActor(w0, 'a-officer', { reassignTo: portal.id! });
+  assert.equal(w.steps[0].actor_name, 'BankPortal');
+  assert.equal(w.steps[0].actor, 'Software');
+  assert.deepEqual(actorWarnings(w), []);
 });

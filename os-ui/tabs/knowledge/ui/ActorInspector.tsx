@@ -13,15 +13,21 @@
  *     the SAME mutation — one commit, never a window where the steps disagree with the registry.
  *   - Delete is a question, not a default: an actor in use offers "reassign to …" or "clear the
  *     steps"; an unused actor deletes outright. `removeActor` holds both shapes.
+ *   - Every commit is a REDUCER over the freshly-read document (`lib/workflow-commit.ts`), never a
+ *     snapshot of this render's `workflow` prop — otherwise a save here reverts whatever landed
+ *     between the render and the click.
+ *   - Dirtiness is REPORTED UP (`onDirtyChange`); the unsaved-changes prompt lives in WorkflowView,
+ *     which owns every way out of this panel (another actor, another panel, a step jump).
  *   - Imports only `@core/*` and this tab; all mutations are the pure helpers in `lib/step-edit.ts`.
  */
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Workflow, Actor, ActorType } from '@tabs/knowledge/lib/schema';
 import { ACTOR_TYPES, EXTERNAL_ACTORS } from '@tabs/knowledge/lib/schema';
 import { stepsUsingActor } from '@tabs/knowledge/lib/actor-registry';
 import type { CommitOutcome } from '@tabs/knowledge/lib/commit-queue';
+import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
 import { updateActor, removeActor } from '@tabs/knowledge/lib/step-edit';
 
 const isExternal = (c: ActorType) => EXTERNAL_ACTORS.includes(c);
@@ -31,13 +37,16 @@ export default function ActorInspector({
   actor,
   canEdit,
   mutate,
+  onDirtyChange,
   onSelectStep,
   onClose,
 }: {
   workflow: Workflow;
   actor: Actor;
   canEdit: boolean;
-  mutate: (next: Workflow) => Promise<CommitOutcome>;
+  mutate: (reduce: WorkflowReducer) => Promise<CommitOutcome>;
+  /** Report the draft state up, so the parent can guard every way out of here. */
+  onDirtyChange: (state: { dirty: boolean; save: () => Promise<boolean> }) => void;
   /** Jump to a step that uses this actor (opens the visual flow with it selected). */
   onSelectStep: (stepId: string) => void;
   onClose: () => void;
@@ -56,16 +65,17 @@ export default function ActorInspector({
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
-  const [confirmClose, setConfirmClose] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [reassignTo, setReassignTo] = useState<string>(others[0]?.id ?? '');
 
-  const dirty = name !== saved.name || category !== saved.category || description !== saved.description;
+  const dirty = name.trim() !== saved.name.trim()
+    || category !== saved.category
+    || description.trim() !== saved.description.trim();
 
-  async function commit(next: Workflow): Promise<boolean> {
+  async function commit(reduce: WorkflowReducer): Promise<boolean> {
     setSaving(true);
     setErr('');
-    const outcome = await mutate(next);
+    const outcome = await mutate(reduce);
     setSaving(false);
     if (!outcome.ok) { setErr(outcome.error); return false; }
     return true;
@@ -75,12 +85,7 @@ export default function ActorInspector({
   async function save(): Promise<boolean> {
     if (!dirty) return true;
     if (!name.trim()) { setErr('An actor needs a name.'); return false; }
-    try {
-      return await commit(updateActor(workflow, actor.id ?? '', { name, category, description }));
-    } catch (e) {
-      setErr((e as Error).message);
-      return false;
-    }
+    return commit((fresh) => updateActor(fresh, actor.id ?? '', { name, category, description }));
   }
 
   function revert() {
@@ -90,18 +95,17 @@ export default function ActorInspector({
     setErr('');
   }
 
-  function requestClose() {
-    if (dirty) { setConfirmClose(true); return; }
-    onClose();
-  }
+  // The latest `save` closure, so the parent's guard always saves the CURRENT draft.
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    onDirtyChange({ dirty, save: () => saveRef.current() });
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange({ dirty: false, save: async () => true }), [onDirtyChange]);
 
   async function doDelete(opts: { reassignTo?: string; clearSteps?: boolean }) {
-    try {
-      const ok = await commit(removeActor(workflow, actor.id ?? '', opts));
-      if (ok) { setDeleting(false); onClose(); }
-    } catch (e) {
-      setErr((e as Error).message);
-    }
+    const ok = await commit((fresh) => removeActor(fresh, actor.id ?? '', opts));
+    if (ok) { setDeleting(false); onClose(); }
   }
 
   return (
@@ -114,17 +118,8 @@ export default function ActorInspector({
           </span>
           {dirty && <span className="ai-dirty" title="Unsaved changes"> • unsaved</span>}
         </h3>
-        <button className="btn ghost sm" onClick={requestClose}>Close ✕</button>
+        <button className="btn ghost sm" onClick={onClose}>Close ✕</button>
       </div>
-
-      {confirmClose && (
-        <div className="ai-guard">
-          <span>This actor has unsaved changes.</span>
-          <button className="btn sm" onClick={() => { setConfirmClose(false); void save(); }}>Save &amp; close</button>
-          <button className="btn ghost sm" onClick={() => { setConfirmClose(false); onClose(); }}>Discard changes</button>
-          <button className="btn ghost sm" onClick={() => setConfirmClose(false)}>Keep editing</button>
-        </div>
-      )}
 
       {err && <div className="error ai-error">{err}</div>}
 

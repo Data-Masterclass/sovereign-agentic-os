@@ -221,8 +221,14 @@ function parseActor(raw: unknown): Actor | null {
   return actor;
 }
 
-/** The identity of an actor REFERENCE on a step: its (category, name) pair. */
-export const actorKey = (category: ActorType, name: string) => `${category}::${name.trim().toLowerCase()}`;
+/**
+ * The identity of an actor REFERENCE on a step: its (category, name) pair.
+ * Interior whitespace is collapsed as well as trimmed, so a hand-typed
+ * `actor_name: "Loan  Officer"` still resolves to the registry's `Loan Officer`
+ * (otherwise it reads as an unknown actor and a rename never reaches it).
+ */
+export const actorKey = (category: ActorType, name: string) =>
+  `${category}::${name.trim().replace(/\s+/g, ' ').toLowerCase()}`;
 
 /**
  * A deterministic id for an actor that arrives without one (a legacy file's derived
@@ -235,9 +241,22 @@ export function stableActorId(category: ActorType, name: string): string {
   return `actor-${category.toLowerCase()}-${slug}`;
 }
 
-/** Fill in a missing id so EVERY registry actor is addressable (and therefore deletable). */
+/**
+ * Fill in a missing id so EVERY registry actor is addressable (and therefore deletable),
+ * and make the ids UNIQUE: `Loan Officer` and `Loan-Officer` slugify to the same string,
+ * and one id addressing two actors means a delete removes both, the inspector always
+ * opens the first, and React sees duplicate keys. A clash is suffixed `-2`, `-3`, …
+ */
 export function withActorIds(actors: Actor[]): Actor[] {
-  return actors.map((a) => (a.id ? a : { ...a, id: stableActorId(a.category, a.name) }));
+  const taken = new Set<string>();
+  return actors.map((a) => {
+    const base = a.id?.trim() || stableActorId(a.category, a.name);
+    let id = base;
+    let n = 2;
+    while (taken.has(id)) id = `${base}-${n++}`;
+    taken.add(id);
+    return a.id === id ? a : { ...a, id };
+  });
 }
 
 /**
@@ -300,6 +319,9 @@ export function resolveActorRegistry(steps: WorkflowStep[], declared: Actor[] | 
  * `> tacit:` on every line:
  *   - the note starts at the first line matching `> tacit:` and runs for as long as
  *     the blockquote does (every consecutive line starting `>`);
+ *   - markdown's own LAZY CONTINUATION is honoured: a hand-written note whose second
+ *     line has no `>` is still part of the blockquote, so it is kept rather than
+ *     deleted by the next commit. A blank line, a fence, a `---` or a heading ends it;
  *   - each line sheds its `>` + one space, then an optional `tacit:` + one space.
  *
  * The two defects this replaces: a regex that stripped only `> ` grew a literal
@@ -314,7 +336,14 @@ function parseTacit(after: string): string {
   const out: string[] = [];
   for (let i = start; i < lines.length; i++) {
     const line = lines[i];
-    if (!/^\s*>/.test(line)) break; // the blockquote — and so the note — ends here
+    if (!/^\s*>/.test(line)) {
+      // Lazy continuation: unquoted prose directly under the blockquote belongs to it.
+      // A blank line, a fence, a thematic break or a heading closes the paragraph.
+      const closes = line.trim() === '' || /^\s*(```|---|#)/.test(line);
+      if (closes) break;
+      out.push(line.trim());
+      continue;
+    }
     out.push(line.replace(/^\s*>\s?/, '').replace(/^tacit:[ \t]?/, ''));
   }
   // Trim blank lines at the edges but keep the note's own interior line breaks.

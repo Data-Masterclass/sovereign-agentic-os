@@ -20,6 +20,7 @@ import type { Workflow, ActorType } from '@tabs/knowledge/lib/schema';
 import { ACTOR_TYPES, EXTERNAL_ACTORS } from '@tabs/knowledge/lib/schema';
 import { actorWarnings, stepsUsingActor } from '@tabs/knowledge/lib/actor-registry';
 import type { CommitOutcome } from '@tabs/knowledge/lib/commit-queue';
+import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
 import { addActor } from '@tabs/knowledge/lib/step-edit';
 
 const isExternal = (c: ActorType) => EXTERNAL_ACTORS.includes(c);
@@ -36,7 +37,7 @@ export default function ActorsPanel({
   selectedActorId: string | null;
   /** Open an actor in the inspector. */
   onSelect: (actorId: string) => void;
-  mutate: (next: Workflow) => Promise<CommitOutcome>;
+  mutate: (reduce: WorkflowReducer) => Promise<CommitOutcome>;
 }) {
   const [name, setName] = useState('');
   const [category, setCategory] = useState<ActorType>('Human');
@@ -115,7 +116,7 @@ export default function ActorsPanel({
             if (!trimmed || adding) return;
             setAdding(true);
             setErr('');
-            void mutate(addActor(workflow, {
+            void mutate((fresh) => addActor(fresh, {
               name: trimmed,
               category,
               ...(description.trim() ? { description: description.trim() } : {}),
