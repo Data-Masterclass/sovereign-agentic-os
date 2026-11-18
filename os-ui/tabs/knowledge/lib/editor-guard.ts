@@ -19,6 +19,23 @@ export type EditorIntent =
   | { kind: 'actor'; actorId: string | null }
   | { kind: 'panel'; panel: string };
 
+/**
+ * Everything in the editor that can hold unsaved text. The guard asks about ALL of
+ * them, because each is an independent way to lose work: the open inspector's fields,
+ * the Markdown panel's buffer (its own editor, its own Save), and the little add-a-link
+ * / add-a-rule / new-actor forms, whose typed text is discarded on navigation.
+ */
+export type DirtySources = {
+  inspector?: boolean;
+  markdown?: boolean;
+  subForms?: boolean;
+};
+
+/** True when anything in the editor holds unsaved text. */
+export function editorDirty(sources: DirtySources): boolean {
+  return Boolean(sources.inspector || sources.markdown || sources.subForms);
+}
+
 export type NavRequest =
   | { action: 'navigate'; intent: EditorIntent }
   | { action: 'prompt'; intent: EditorIntent };

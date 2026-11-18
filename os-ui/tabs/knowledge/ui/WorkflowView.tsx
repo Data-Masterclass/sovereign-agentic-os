@@ -29,6 +29,7 @@ import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
 import {
   requestNavigation,
   resolveNavigation,
+  editorDirty,
   type EditorIntent,
   type GuardChoice,
 } from '@tabs/knowledge/lib/editor-guard';
@@ -144,10 +145,18 @@ export default function WorkflowView({
   const [pubMsg, setPubMsg] = useState('');
   const [pubError, setPubError] = useState('');
 
-  // Markdown buffer (Monaco-free fallback; a plain editor keeps the bundle light)
+  // Markdown buffer (Monaco-free fallback; a plain editor keeps the bundle light).
+  // It is an EXIT like any other: its buffer feeds the same unsaved-changes guard, and a
+  // reload triggered by a queued canvas commit must not overwrite it mid-typing.
   const [mdDraft, setMdDraft] = useState('');
   const [mdSaving, setMdSaving] = useState(false);
   const [mdMsg, setMdMsg] = useState('');
+  const mdDraftRef = useRef('');
+  const mdBaseRef = useRef('');
+  const mdDirtyRef = useRef(false);
+  const saveMarkdownRef = useRef<() => Promise<boolean>>(async () => true);
+  mdDraftRef.current = mdDraft;
+  mdDirtyRef.current = mdDraft !== mdBaseRef.current;
 
   // Export PDF (client-side jsPDF — same stack as the Agents run report).
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -168,8 +177,15 @@ export default function WorkflowView({
       const res = await fetch(`/api/knowledge/workflows/${workflowId}`, { cache: 'no-store' });
       const body = await res.json();
       if (!res.ok) { setError(body.error ?? 'Could not load workflow'); return null; }
-      setData(body as WorkflowData);
-      setMdDraft((body as WorkflowData).md);
+      const next = body as WorkflowData;
+      setData(next);
+      // Never clobber an unsaved Markdown buffer: a queued canvas commit reloads while the
+      // user may be typing here. A clean buffer re-seeds from the new source; a dirty one is
+      // left alone and the panel says the file moved underneath it.
+      if (mdDraftRef.current === mdBaseRef.current) {
+        setMdDraft(next.md);
+        mdBaseRef.current = next.md;
+      }
       setError('');
       return body as WorkflowData;
     } catch (e) {
@@ -239,24 +255,39 @@ export default function WorkflowView({
   }, []);
 
   const navigate = useCallback((intent: EditorIntent) => {
-    const req = requestNavigation(dirtyRef.current, intent);
+    const dirty = editorDirty({
+      inspector: dirtyRef.current,
+      markdown: mdDirtyRef.current,
+    });
+    const req = requestNavigation(dirty, intent);
     if (req.action === 'navigate') applyIntent(intent);
     else setPendingNav(intent);
   }, [applyIntent]);
+
+  /** Throw away the Markdown buffer (the inspectors' drafts die with their remount). */
+  const discardDrafts = useCallback(() => {
+    setMdDraft(mdBaseRef.current);
+    setMdMsg('');
+  }, []);
 
   const answerGuard = useCallback(async (choice: GuardChoice) => {
     const res = resolveNavigation(choice, pendingNav);
     setPendingNav(null);
     if (res.action === 'stay') return;
     if (res.saveFirst) {
-      const ok = await (saveDraftRef.current?.() ?? Promise.resolve(true));
-      if (!ok) return; // the save failed — keep the draft and the inspector's error
+      // Save whichever editor holds the draft: an open inspector, or the Markdown buffer.
+      const saveInspector = saveDraftRef.current;
+      if (saveInspector && !(await saveInspector())) return; // keep the draft + its error
+      if (mdDirtyRef.current && !(await saveMarkdownRef.current())) return;
+    } else {
+      discardDrafts();
     }
     applyIntent(res.intent);
-  }, [pendingNav, applyIntent]);
+  }, [pendingNav, applyIntent, discardDrafts]);
 
-  async function saveMarkdown() {
-    if (mdSaving || !data) return;
+  /** Commit the Markdown buffer. Returns whether it landed, so the guard can wait on it. */
+  async function saveMarkdown(): Promise<boolean> {
+    if (mdSaving || !data) return false;
     setMdSaving(true);
     setMdMsg('');
     try {
@@ -266,14 +297,20 @@ export default function WorkflowView({
         body: JSON.stringify({ md: mdDraft, sha: data.sha }),
       });
       const body = await res.json();
-      if (!res.ok) setMdMsg(`✗ ${body.error ?? 'Save failed'}`);
-      else { setMdMsg('✓ Committed.'); await reload(); }
+      if (!res.ok) { setMdMsg(`✗ ${body.error ?? 'Save failed'}`); return false; }
+      setMdMsg('✓ Committed.');
+      // The buffer is now the source: clear the baseline so `reload` re-seeds it.
+      mdBaseRef.current = mdDraft;
+      await reload();
+      return true;
     } catch (e) {
       setMdMsg(`✗ ${(e as Error).message}`);
+      return false;
     } finally {
       setMdSaving(false);
     }
   }
+  saveMarkdownRef.current = saveMarkdown;
 
   /**
    * Rasterise a standalone SVG string to a PNG data URL at `scale`× so the flow
@@ -536,7 +573,10 @@ export default function WorkflowView({
   const actor = selectedActor ? findActorById(wf, selectedActor) ?? null : null;
   // A step naming an actor the registry does not hold is a warning, never a re-added actor.
   const warnings = actorWarnings(wf);
-  const dirty = mdDraft !== data.md;
+  // The Markdown buffer's own dirtiness, against the source it was seeded from (NOT the
+  // latest reload — a queued canvas commit may have moved the file underneath it).
+  const mdDirty = mdDirtyRef.current;
+  const mdBehind = mdDirty && mdBaseRef.current !== data.md;
 
   return (
     <ConfirmProvider>
@@ -776,12 +816,19 @@ export default function WorkflowView({
           {panel === 'markdown' && (
             <div className="k-md-panel">
               <div className="k-md-head">
-                <span className="mono" style={{ fontSize: 12 }}>workflow.md{dirty ? ' •' : ''}</span>
+                <span className="mono" style={{ fontSize: 12 }}>workflow.md{mdDirty ? ' •' : ''}</span>
+                {/* Your buffer was kept (a commit elsewhere reloaded the file underneath it). */}
+                {mdBehind && (
+                  <span className="badge warn" style={{ fontSize: 10 }}
+                    title="Another edit changed workflow.md after you started typing. Saving will overwrite it.">
+                    based on an older version
+                  </span>
+                )}
                 {data.canEdit ? (
                   <div className="row" style={{ gap: 10, alignItems: 'center' }}>
                     {mdMsg && <span className={mdMsg.startsWith('✓') ? 'hint' : 'error'} style={{ fontSize: 12, margin: 0 }}>{mdMsg}</span>}
-                    <button className="btn sm" onClick={() => void saveMarkdown()} disabled={mdSaving || !dirty}>
-                      {mdSaving ? <span className="spin" /> : dirty ? 'Save & commit' : 'Saved'}
+                    <button className="btn sm" onClick={() => void saveMarkdown()} disabled={mdSaving || !mdDirty}>
+                      {mdSaving ? <span className="spin" /> : mdDirty ? 'Save & commit' : 'Saved'}
                     </button>
                   </div>
                 ) : <span className="badge muted">read-only</span>}

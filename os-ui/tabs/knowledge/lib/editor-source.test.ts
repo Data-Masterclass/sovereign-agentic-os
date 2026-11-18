@@ -40,7 +40,7 @@ test('no inspector field commits on blur — an explicit Save button does', () =
     const src = read(f);
     assert.ok(!src.includes('onBlur='), `${f} must not commit on blur`);
     assert.match(src, /onClick=\{\(\) => void save\(\)\}/, `${f} must offer an explicit Save button`);
-    assert.match(src, /disabled=\{!dirty \|\| saving\}/, `${f}'s Save must be disabled when nothing changed`);
+    assert.match(src, /disabled=\{!(?:dirty|draftDirty) \|\| saving\}/, `${f}'s Save must be disabled when nothing changed`);
   }
 });
 
@@ -87,6 +87,30 @@ test('the row actions that fire mid-commit are disabled while a commit is in fli
   // Each ✕ / toggle inside a list: link remove, rule remove, hard toggle.
   const guarded = src.match(/disabled=\{saving\}/g) ?? [];
   assert.ok(guarded.length >= 4, `expected the list actions to carry disabled={saving}, found ${guarded.length}`);
+});
+
+test('the Markdown buffer is guarded too, and a reload never clobbers it', () => {
+  const src = read('tabs/knowledge/ui/WorkflowView.tsx');
+  assert.match(src, /editorDirty\(/, 'the guard must be asked about every unsaved source');
+  assert.match(src, /markdown: mdDirtyRef\.current/, 'the Markdown buffer must feed the guard');
+  assert.match(src, /saveMarkdownRef\.current\(\)/, 'Save & continue must be able to save the Markdown buffer');
+  assert.match(src, /mdDraftRef\.current === mdBaseRef\.current/, 'reload must not overwrite an unsaved buffer');
+});
+
+test('"Remove step" stops reporting a draft for a step that no longer exists', () => {
+  const src = read('tabs/knowledge/ui/StepInspector.tsx');
+  // The remove path closes the inspector; reporting dirty afterwards would let the guard
+  // try to "Save & continue" into a vanished step.
+  assert.match(src, /discardDraft\(\);\s*\n?\s*onClose\(\);/, 'the remove path must discard the draft before closing');
+  assert.match(src, /function discardDraft\(\)[\s\S]{0,200}onDirtyChange\(\{ dirty: false/);
+});
+
+test('the inspector reports typed-but-unadded sub-form text as unsaved', () => {
+  const src = read('tabs/knowledge/ui/StepInspector.tsx');
+  assert.match(src, /subFormDirty\(\[/, 'the sub-form buffers must be part of the dirtiness report');
+  for (const buffer of ['newLinkRef', 'newRule', 'naName']) {
+    assert.ok(new RegExp(`subFormDirty\\(\\[[\\s\\S]{0,200}${buffer}`).test(src), `${buffer} must be counted`);
+  }
 });
 
 test('the commit queue is created lazily, not on every render', () => {

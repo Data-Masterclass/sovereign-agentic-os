@@ -49,6 +49,15 @@ export function stepDraftFrom(step: WorkflowStep, actorValue: string): StepDraft
   };
 }
 
+/**
+ * True when any of the inspector's little add-a-link / add-a-rule / new-actor forms
+ * holds text. That text is not part of the step yet and is discarded on navigation, so
+ * the guard has to know about it — whitespace alone does not count.
+ */
+export function subFormDirty(buffers: Array<string | undefined>): boolean {
+  return buffers.some((b) => Boolean(b && b.trim()));
+}
+
 /** True when the draft would actually change the stored step. */
 export function stepDraftDirty(draft: StepDraft, saved: StepDraft): boolean {
   const a = normaliseStepDraft(draft);
