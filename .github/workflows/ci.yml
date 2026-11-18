@@ -55,6 +55,13 @@ jobs:
       - name: Structure ratchet (core / tabs / components)
         run: node scripts/check-structure.mjs
 
+      # The registry deploy mode and the widened conflict-copy check. No Docker, no network, no
+      # cluster: it drives `deploy.sh --verify-only` against a fake digest probe and runs the
+      # real gate.sh / check-structure.mjs inside throwaway trees. It also asserts the CI worker
+      # smoke in build-images.yml is still deploy.sh's command verbatim.
+      - name: deploy.sh --from-registry + conflict-copy tests
+        run: bash scripts/tests/deploy-from-registry.test.sh
+
       # Generates the code map and fails if the generator cannot (a broken
       # manifest, an unreadable tab). Deliberately NOT `--check`: comparing a
       # COMMITTED copy made the artifact a merge-conflict magnet without
