@@ -166,3 +166,80 @@ Local dev stays green because the suite does not set `NODE_ENV=production` — t
 The chart sets the flag explicitly, so a normal `helm upgrade` needs **no** value change:
 `osUI.offlineMock` defaults to `refuse`. A teaching install that wants the laptop flow in a
 cluster sets `--set osUI.offlineMock=allow`, deliberately and visibly.
+
+---
+
+## 8. Outcome (TEST phase, 2026-11-18)
+
+### Gates, measured on `fix/offline-mock-production-guard`
+
+| Check | Result |
+|---|---|
+| `npm --prefix os-ui test` | **exit 0** — 6310 tests, 6306 pass, **0 fail**, 4 todo |
+| `bash os-ui/scripts/gate.sh` | **exit 0** — 436 tests, 432 pass, 0 fail, 4 todo; all four chart/allowlist checks pass |
+| `node scripts/check-structure.mjs` | **exit 0** — "ok (no new violations)" |
+| ratchet | `TAB-ISOLATION 419` · `LEGACY-IMPORT 1` · `CORE-INDEPENDENCE 200` · `FILE-HEADER 1233` — all unmoved |
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | **exit 0**, no output |
+| `helm lint charts/sovereign-agentic-os -f values.local.yaml` | **exit 0** — 1 linted, 0 failed |
+| `node scripts/check-worker-env.mjs` | **exit 0** — and now also asserts `OS_OFFLINE_MOCK` is explicit on both pods and renders `refuse` on a DEFAULT install |
+
+No baseline moved. The whole suite stays green because it never sets
+`NODE_ENV=production`, so the predicate answers `allow` and every pre-existing offline-mock
+test is unaffected — which is the property that made it safe to change nine places at once.
+
+### What the tripwire now pins
+
+53 non-test files under `tabs/**` + `core/**` name `offline-mock`. They are partitioned into
+**9 deciders** (import *and* call the predicate), **1 recogniser** (`core/mcp/server.ts` —
+imports it to map a refusal, must not decide) and **43 labels** (types, badges, propagators,
+tool descriptions, reachability probes — must not import it at all). A file in no list fails
+by name.
+
+The two judgement calls, recorded because a later reader will want them:
+
+* **`tabs/connections/lib/connection-adapters.ts` is gated at the three branches that invent
+  a fact** — an unprobed "reachable ✓", and the `128` / `42` / `17`-row sync seeds. The static
+  tool PRESETS, the credential capture and the placeholder OAuth token the real callback
+  overwrites keep their `offline-mock` label ungated: they ran offline but invent nothing, and
+  refusing them would break connection creation for no honesty gain.
+* **`tabs/software/lib/review.ts` moved from decider to label.** It used to decide via
+  `securityScan(files, opts.scanMode ?? 'offline-mock')`; that default is gone, so the engine
+  is decided once, in `scan.ts`.
+
+### Open items, with reasons
+
+1. **No live security scanner is wired.** With the gate closed, a software deploy on a real
+   cluster **cannot be approved** until Semgrep / Trivy / gitleaks is wired behind
+   `securityScan(files, 'live')`. That is the honest state — `decide_deploy` approves only on
+   `scan.passed`, and a pass from an engine that never ran is the defect — but it is a real
+   product gap, not a side effect to be shrugged at. The two-entry hardcoded "known-bad deps"
+   list standing in for an OSV/Trivy feed is untouched.
+2. **No live connection sync client exists** (`lib/connection-clients.ts` was never written),
+   so "Enable data usage" and "Test connection" now refuse on a cluster instead of returning a
+   seed. Same shape of gap: the refusal is correct, the missing client is the work.
+3. **`tabs/data/lib/reconcile-server.ts` `domainTableMissing` keeps its don't-cry-wolf
+   `false`** when the engine is unreachable. It fabricates nothing — it declines to *flag* —
+   and throwing out of a single-dataset detail read would break the page. Deliberate, not
+   overlooked.
+4. **`runVerified`'s `catch` still labels a thrown exception `mode: 'offline-mock'`**
+   (`connection-adapters.ts`). It is a mislabel on an `ok: false` row, never a fabricated
+   success, so it was left alone to keep this change inside its brief.
+5. **`OS_PROFILE` is still unset everywhere.** Deliberately not fixed: `deploymentProfile` is
+   now deployment *identity* only (shown on Settings), and the tripwire fails if a decider
+   ever keys on it again. Setting it would re-create the temptation.
+6. **Not deployed, not merged** — per the brief. The branch is pushed and one PR is open.
+
+### The Helm value an operator must set
+
+**None.** `osUI.offlineMock` defaults to `refuse` and the chart writes `OS_OFFLINE_MOCK`
+explicitly into both the `os-ui` and `os-ui-worker` env, so a normal `helm upgrade` closes the
+hole with no values change. Verified on a default render by `scripts/check-worker-env.mjs`.
+
+The only reason to set anything is to go the *other* way — a teaching install that wants the
+labelled worked examples inside a cluster:
+
+```
+--set osUI.offlineMock=allow
+```
+
+`values.local.yaml` (the kind/laptop profile) already carries `osUI.offlineMock: allow`.
