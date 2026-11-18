@@ -44,6 +44,34 @@ test('reconcileGranted keeps existing access, adds new at cap default, drops de-
   assert.equal(isGranted(grants, 'data', 'b'), false);
 });
 
+test('reconcileGranted KEEPS a grant the narrowed feed never listed (out-of-domain)', () => {
+  // The available-context feed is scoped to the ACTIVE domain, so an app granted an artifact
+  // in another domain is never offered that id — it cannot be in the tree's selection. Reading
+  // that absence as a de-selection deleted the grant on the first tick anywhere in the picker.
+  const cap = contextAccessCap('read-propose');
+  let grants = emptyContextGrants();
+  grants = {
+    ...grants,
+    data: [
+      { id: 'ds_local', access: 'read-only' },
+      { id: 'ds_foreign', access: 'read-write' },
+    ],
+  };
+  const listed = new Set(['ds_local', 'ds_other_local']);
+  const next = reconcileGranted(grants, 'data', new Set(['ds_local']), cap, listed);
+  assert.equal(isGranted(next, 'data', 'ds_foreign'), true, 'the unlisted grant survives');
+  assert.equal(accessOf(next, 'data', 'ds_foreign'), 'read-write', 'with its access intact');
+  assert.equal(isGranted(next, 'data', 'ds_local'), true, 'the selected one stays');
+});
+
+test('reconcileGranted still DROPS a listed grant the user de-selected', () => {
+  const cap = contextAccessCap('read-propose');
+  let grants = emptyContextGrants();
+  grants = { ...grants, data: [{ id: 'ds_local', access: 'read-only' }] };
+  const next = reconcileGranted(grants, 'data', new Set<string>(), cap, new Set(['ds_local']));
+  assert.equal(isGranted(next, 'data', 'ds_local'), false, 'de-selecting something shown removes it');
+});
+
 // -------------------- Personal-DATA grant warning (0.6.115 C1) --
 
 test('C1: a Personal-scoped DATA grant surfaces the access-denied risk', () => {

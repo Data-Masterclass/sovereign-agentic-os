@@ -28,8 +28,15 @@ export const GET = withRoute<{ slug: string }>(async ({ user, params }) => {
   if (!app) return NextResponse.json({ error: 'App not found' }, { status: 404 });
 
   // One canView/RLS-scoped name lookup per kind the app actually has grants in.
+  //
+  // Deliberately with `activeDomain: null`. `availableContext` narrows to the caller's ACTIVE
+  // domain (that is what the grant PICKER should offer), but this surface resolves names for
+  // grants the app already holds — including ones made in another domain. Narrowing here would
+  // render those as raw ids, which is exactly the dishonesty this route exists to fix. It
+  // widens nothing: `user.allDomains` membership and each lister's canView gate are unchanged,
+  // and only grants already on `app.grants` are ever looked up.
   const kindsWithGrants = CONTEXT_KINDS.filter((k) => app.grants[k].length > 0);
-  const names = await availableContext(user, kindsWithGrants);
+  const names = await availableContext({ ...user, activeDomain: null }, kindsWithGrants);
   const nameFor = (kind: ContextKind, id: string): string =>
     names[kind]?.find((i) => i.id === id)?.name ?? id; // honest fallback: the id itself
 

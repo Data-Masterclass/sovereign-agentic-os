@@ -1010,6 +1010,24 @@ active domain). Three things that fix had to get right, and each generalises:
   grant against the acting principal at build/run (`tabs/agents/lib/build/os-tools.ts`).
   A build-time resolution must be a function of the runner's authority, not of whatever
   a picker currently shows, or the same system does different things on different days.
+  And be precise about which gate you are invoking: the first draft of this entry credited
+  `assertGrantsWithinAuthority` with gating agent grants. It does not — it validates the
+  grantee list of a **promotion approval**. An agent grant rides the edit-scoped `system.yaml`
+  PUT with no per-id validation at all; what makes it safe is that execution runs as the
+  acting principal, so a grant the runner cannot read returns nothing. Naming the wrong gate
+  in a comment is how a codebase convinces its next reader that something is checked when it
+  is not.
+- **A narrowed feed is also a narrowed DIFF, and a diff is what deletes things.** The review
+  of this change found the hole: the picker reconciled the tree's selection against the whole
+  system, so a grant the narrowed feed could no longer show looked exactly like one the user
+  had just unticked — and the first tick deleted it. `triState` renders an item-less folder
+  'none' and `computeSelection` skips it, so a re-admitted node alone fixes nothing. The
+  reconcile (now `tabs/agents/lib/grant-apply.ts`, lifted out of the component so it is
+  testable) removes only inside what the feed actually showed: `listedItemIds` and
+  `protectedFolders`. Pass neither and it removes nothing — when the universe is unknown, do
+  nothing rather than destroy. The identical bug existed in the software context picker
+  (`reconcileGranted` kept `current.filter(g => target.has(g.id))`). **Any time you narrow a
+  feed, audit every reconcile that treats that feed as the full universe.**
 - **Carve-outs are part of the predicate, not of the caller.** Marketplace items and
   domainless artifacts are always kept, and a `null` target narrows nothing (Ask the OS
   in "All domains" has no single domain to narrow to). Written once, those rules cannot

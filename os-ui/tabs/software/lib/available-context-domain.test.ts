@@ -17,10 +17,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { narrowToDomainScope } from '@core/kernel/domain-scope';
+import { inDomainScope, narrowToDomainScope } from '@core/kernel/domain-scope';
 
 const ACTIVE = 'agentic-leader-autumn-winter-2026-2027';
 const FOREIGN = 'agentic-leader-q3-2026';
+
+/**
+ * The source with comments stripped. A NEGATIVE source assertion must look at code only:
+ * the prose that explains why a call is written one way legitimately quotes the other way,
+ * and a grep that cannot tell the two apart fails on its own documentation.
+ */
+function codeOnly(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
 
 /** Rows shaped as `forKind` builds them, across two of a four-domain admin's domains. */
 const rows = [
@@ -45,5 +54,17 @@ test('CONTEXT-DOMAIN-TRIPWIRE: the feed module narrows its items and its folder 
   assert.match(src, /from '@core\/kernel\/domain-scope'/, 'it uses the shared predicate');
   assert.match(src, /narrowToDomainScope\(/, 'and applies it to the items');
   assert.match(src, /activeDomain/, 'and knows about the active domain at all');
-  assert.match(src, /listFolders\([\s\S]{0,200}activeDomain/, 'and narrows the folder rows like /api/folders');
+  assert.match(src, /inDomainScope\(/, 'and narrows the FOLDER rows with the same predicate');
+  assert.ok(
+    !/listFolders\([^)]*activeDomain/.test(codeOnly(src)),
+    'never via listFolders\' activeDomain option, which drops a domainless row (M6)',
+  );
+});
+
+test('CONTEXT-DOMAIN: a domainless folder row / item is kept by the predicate the module uses', () => {
+  // The asymmetry this pins: `core/folders`' own `activeDomain` filter drops an unstamped row,
+  // the feed's predicate keeps it. The feed must use the predicate, or an unassigned folder
+  // vanishes from the picker while its items are still listed.
+  assert.equal(inDomainScope({ scope: 'personal', domain: '' }, ACTIVE), true);
+  assert.equal(inDomainScope({ scope: 'domain', domain: '' }, ACTIVE), true);
 });

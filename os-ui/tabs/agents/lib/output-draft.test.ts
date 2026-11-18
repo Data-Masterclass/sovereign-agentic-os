@@ -19,6 +19,10 @@ import {
   EMPTY_OUTPUT_DRAFT,
   outputDraftDirty,
   outputDraftValid,
+  outputDraftFolder,
+  outputDraftStorageKey,
+  serializeOutputDraft,
+  parseOutputDraft,
   type OutputDraft,
 } from '@tabs/agents/lib/output-draft';
 
@@ -41,12 +45,47 @@ test('OUTPUT-DRAFT: whitespace-only text is not a change', () => {
   assert.equal(outputDraftDirty(draft({ folder: '  ' })), false, 'a blank folder is the empty root');
 });
 
-test('OUTPUT-DRAFT: valid needs a name AND a folder — root counts as a folder', () => {
+test('OUTPUT-DRAFT: valid needs a NAME; blank folder text means root, exactly as the commit reads it', () => {
   assert.equal(outputDraftValid(draft({ name: 'Weekly report' })), true, 'name + root folder');
   assert.equal(outputDraftValid(draft({ name: 'Weekly report', folder: '/reports' })), true);
+  assert.equal(EMPTY_OUTPUT_DRAFT.folder, '/', 'the empty draft already sits at root');
+  assert.equal(
+    outputDraftValid(draft({ name: 'Weekly report', folder: '   ' })),
+    true,
+    'blank folder text is the ROOT, not a missing field — `addOutput` normalises it the same way',
+  );
+  assert.equal(outputDraftFolder(draft({ name: 'x', folder: '   ' })), '/', 'and that is what gets committed');
   assert.equal(outputDraftValid(EMPTY_OUTPUT_DRAFT), false, 'nothing typed');
   assert.equal(outputDraftValid(draft({ name: '   ' })), false, 'a whitespace name is no name');
-  assert.equal(outputDraftValid(draft({ name: 'Weekly report', folder: '   ' })), false, 'no folder');
+});
+
+test('OUTPUT-DRAFT: a parked draft round-trips, per system id', () => {
+  const d = draft({ name: 'Weekly report', kind: 'data', scope: 'domain', folder: '/reports' });
+  assert.deepEqual(parseOutputDraft(serializeOutputDraft(d)), d);
+  assert.notEqual(
+    outputDraftStorageKey('sys_a'),
+    outputDraftStorageKey('sys_b'),
+    'two teams park two drafts',
+  );
+});
+
+test('OUTPUT-DRAFT: parsing never throws and trusts nothing', () => {
+  assert.equal(parseOutputDraft(null), null, 'nothing parked');
+  assert.equal(parseOutputDraft(''), null, 'empty string');
+  assert.equal(parseOutputDraft('not json'), null, 'garbage');
+  assert.equal(parseOutputDraft('[1,2,3]'), null, 'wrong shape');
+  assert.equal(parseOutputDraft('{}'), null, 'an empty object holds nothing to restore');
+  assert.equal(
+    parseOutputDraft(serializeOutputDraft(EMPTY_OUTPUT_DRAFT)),
+    null,
+    'a clean draft is not a restore',
+  );
+  const odd = parseOutputDraft('{"kind":"spreadsheet","scope":"galaxy","name":"R","folder":5}');
+  assert.deepEqual(
+    odd,
+    { kind: 'files', name: 'R', scope: 'personal', folder: '/' },
+    'unrecognised enums and wrong types fall back to the empty draft’s values',
+  );
 });
 
 test('OUTPUT-DRAFT: a dirty draft can be invalid — that is the case that must PROMPT', () => {
@@ -64,4 +103,15 @@ test('OUTPUT-DRAFT-TRIPWIRE: the button no longer says "+ Add output", and the g
   assert.match(src, /outputDraftDirty\(/, 'dirtiness drives the marker + the exit guard');
   assert.match(src, /outputDraftValid\(/, 'validity decides commit-on-exit vs prompt');
   assert.ok(src.includes('unsaved output'), 'the draft row carries a visible unsaved marker');
+  // M5: the stage guard cannot see the exits it does not own (sidebar, another tab, a reload),
+  // so the draft is parked per system and restored on remount.
+  assert.match(src, /outputDraftStorageKey\(/, 'the draft is parked per system id');
+  assert.match(src, /parseOutputDraft\(/, 'and restored on remount');
+  // M4: the prompt's Save button reads VALIDITY from state, not from a ref — a ref does not
+  // re-render, so the button could never become enabled.
+  assert.match(
+    src,
+    /useState<\{ dirty: boolean; valid: boolean \}>/,
+    'dirty/valid are mirrored into state for the prompt to render against',
+  );
 });
