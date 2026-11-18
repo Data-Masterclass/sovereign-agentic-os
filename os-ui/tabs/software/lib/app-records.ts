@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { runnerStatus, runnerName } from '@tabs/software/lib/runner';
 import { getSnapshot } from '@tabs/software/lib/file-mirror';
 import { templateFiles } from '@tabs/software/lib/apps';
@@ -189,6 +190,15 @@ async function executeRecordTool(
  * optional `actor` is REQUIRED for record tools (both record doors thread it in); if a
  * record tool is reached without one, it falls back to the honest demo seed rather
  * than leaking across the caller's scope.
+ *
+ * THE HONESTY GATE (2026-11-18, re-review). The final `result ?? seedToolResult(tool, args)`
+ * returned two invented rows — "Sample record A" / "Sample record B" — whenever the runner was
+ * not live, labelled `source: 'demo-seed'`. `seeded-evidence.ts` makes that label STRUCTURAL at
+ * the deploy GATES, but the tool RESULT still reached the caller, and `source` is a response
+ * field: an agent that reads `items[]` and summarises them never looks at it. So unless this
+ * deployment explicitly asked for the teaching flow, a tool call against an app that is not
+ * running is refused — a typed ENGINE_UNAVAILABLE naming the app and the tool, which an agent can
+ * route on, rather than two rows it will cite.
  */
 export async function executeAppTool(
   app: App,
@@ -206,5 +216,13 @@ export async function executeAppTool(
     const op = resolveToolOperation(files, tool);
     if (op) result = await callLiveApp(app.slug, op, args);
   }
-  return result ?? seedToolResult(tool, args);
+  if (result) return result;
+  if (!offlineMockAllowed()) {
+    refuseOfflineMock(
+      `“${app.name}” (${app.slug}) cannot answer \`${tool}\`: its runner is not running` +
+        `${status.live ? ` (phase ${status.phase})` : ''}, so no response came from the app. ` +
+        'Start the app (or its preview) and call it again; nothing was read and nothing was written.',
+    );
+  }
+  return seedToolResult(tool, args);
 }

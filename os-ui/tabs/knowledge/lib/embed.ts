@@ -14,9 +14,23 @@
  *     allowlist, 400 budget / malformed, 429) → `GatewayRejectedError` is THROWN; nothing is indexed.
  *   - The store is embedded AND queried through this one function, so live-vs-offline is consistent
  *     within a session (a model switch = a reindex). Deterministic path: opts into the gateway cache.
+ *   - THE HONESTY GATE (2026-11-18, re-review). `hashEmbed` is a HASH of the text, not an
+ *     embedding: vectors built from it bear no semantic relationship to one another, so a k-NN
+ *     search over them returns essentially arbitrary passages — which an agent then quotes, with a
+ *     citation, as the relevant context from the OS's OWN knowledge base. This is the identical
+ *     defect fixed in `tabs/files/lib/embed.ts`, on a worse corpus, and it survived that fix
+ *     because it spells its stand-in `source: 'offline-hash'` rather than `mode: 'mock'`.
+ *     `core/infra/context/librarian-live.ts` returning `[]` for an `offline-hash` batch mitigates
+ *     the READ side only; `index-pipeline.ts` propagates `embedSource` and by then the rows are
+ *     written. So the gate belongs at the WRITE, which is here: unless this deployment explicitly
+ *     asked for the teaching flow, an unreachable or mis-dimensioned gateway REFUSES and nothing
+ *     is embedded or indexed. A 4xx keeps throwing `GatewayRejectedError` — a decision about this
+ *     caller is not an unreachable dependency, and collapsing the two would hide a fixable
+ *     misconfiguration behind an outage message.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { roleModel } from '@core/models/roles';
 import {
   callerCredential,
@@ -95,11 +109,21 @@ export async function embed(texts: string[], caller: EmbedCaller = PLATFORM_CALL
     }
   }
 
+  if (!offlineMockAllowed()) {
+    refuseOfflineMock(
+      `Cannot embed ${texts.length} knowledge passage(s) with ${roleModel('embeddings')}: the ` +
+        'embeddings gateway is unreachable or answered at the wrong dimension. A hash of the text ' +
+        'is not an embedding — similarity search over such rows ranks by a hash while looking ' +
+        'exactly like retrieval — so nothing was embedded and nothing was indexed.',
+    );
+  }
   return { vectors: texts.map((t) => hashEmbed(t, config.embedDim)), source: 'offline-hash' };
 }
 
 /** Embed a single query string. */
 export async function embedQuery(text: string, caller: EmbedCaller = PLATFORM_CALLER): Promise<{ vector: number[]; source: EmbedResult['source'] }> {
+  // `embed` already decided: it either returned real vectors or threw the typed refusal. The
+  // `?? hashEmbed(...)` below is reachable only on the path that was already allowed to hash.
   const { vectors, source } = await embed([text], caller);
   return { vector: vectors[0] ?? hashEmbed(text, config.embedDim), source };
 }

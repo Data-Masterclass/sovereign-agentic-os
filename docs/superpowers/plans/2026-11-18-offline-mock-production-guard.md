@@ -380,3 +380,66 @@ Two residual labelled-but-ungated `offline-mock` returns remain, deliberately an
 the connection adapters' static tool presets / credential capture / placeholder OAuth token (they
 invent nothing), and `domainTableMissing`'s don't-cry-wolf `false` (it declines to flag rather than
 asserting anything).
+
+---
+
+## 10. Re-review round (PR #56, 2026-11-18) — two more of the same class
+
+The re-review said MERGE and named two live ungated sites the marker set still missed. **Both are
+the same failure as H2, and both were missed for the same reason: a NAME, not a missing gate.**
+Twice now. That is itself the finding, and the tripwire's docstring says so.
+
+### (1) `tabs/knowledge/lib/embed.ts` — the identical defect to Files, on the corpus agents cite. **Fixed.**
+On a timeout, a transport failure, a 5xx or a wrong-dimension reply it returned
+`hashEmbed(t, config.embedDim)` with `source: 'offline-hash'`. A hash of the text is not an
+embedding: the vectors bear no semantic relationship, so a k-NN search over them ranks by a hash
+while looking exactly like retrieval — and this is the OS's *own* knowledge base, which agents
+quote **with a citation**. `index-pipeline.ts:24` propagates `embedSource`, so the rows are written
+before anything notices; `core/infra/context/librarian-live.ts:47,68` returning `[]` for an
+`offline-hash` batch mitigates the **read** side only. The gate therefore belongs at the write.
+*How:* `refuseOfflineMock()` before the hash fallback, with a reason that says why a hash is not an
+acceptable stand-in. A **4xx still throws `GatewayRejectedError`** — a decision about this caller
+(key, model allowlist, budget) is not an unreachable dependency, and collapsing the two would hide
+a fixable misconfiguration behind an outage message. That distinction is asserted.
+*Test:* `tabs/knowledge/lib/offline-mock-production.test.ts` (6) — unreachable, 5xx, wrong-dim,
+the 4xx distinction, the empty batch (nothing in ⇒ nothing invented), and two laptop cases.
+
+> ⚠️ **Pre-existing `offline-hash` rows in the Knowledge index need a re-index**, exactly as the
+> Files index does (§9, H2). They are not retroactively identifiable from the rows themselves: a
+> hash vector is indistinguishable from a real one once written. Re-index once the embeddings
+> gateway is reachable. This is the second index with this debt, and the two should be re-indexed
+> together.
+
+### (2) `tabs/software/lib/app-records.ts:209` — "Sample record A". **Fixed.**
+`result ?? seedToolResult(tool, args)` returned two invented rows labelled `source: 'demo-seed'`
+whenever the app runner answered nothing. `seeded-evidence.ts` already makes that label
+*structural* at the deploy GATES — but the tool RESULT still reached the caller, and `source` is a
+response field: an agent that reads `items[]` and summarises them never looks at it. That is
+precisely the "a label is not a guard" failure this whole branch exists to close, surviving inside
+the module that documents it.
+*How:* gated at the one `??`; refused ⇒ a typed `ENGINE_UNAVAILABLE` naming the app, the slug, the
+tool and the runner phase, so an agent can route on it and a person knows what to start.
+*Test:* `tabs/software/lib/offline-mock-seed-production.test.ts` (4) — all five tool-name shapes
+refuse, the refusal carries no seed row, it names the app and tool, plus the laptop and `allow`
+cases.
+
+### Marker set, now seven strings plus one pattern
+Added `hashEmbed(`, `'offline-hash'`, `seedToolResult(`. The `mode: mock` family moved to a
+**quote- and space-tolerant pattern** (`/\bmode\s*:\s*['"]mock['"]/`), because `mode: "mock"`
+and `mode:'mock'` are the same fact and a literal `includes` would have missed either variant.
+Partition: **15 deciders · 1 recogniser · 56 labels**.
+
+Six files joined LABELS with the widened set, and the reasoning is worth keeping: `embed-core.ts`
+*defines* `hashEmbed`; `eval-harness.ts` hashes **both sides** of a comparison over its own
+fixtures, which is a self-consistent offline scoring harness standing in for no real read;
+`index-pipeline.ts` and `retrieve.ts` carry `embedSource`; `librarian-live.ts` and
+`agentic-graph.ts` **read** it as a guard; `tool-exec.ts` defines `seedToolResult`. Defining a
+stand-in is not choosing one.
+
+### Gates for this round (scoped, as instructed — not the full suite)
+
+| Check | Result |
+|---|---|
+| `tabs/knowledge/**` + `tabs/software/**` + the tripwire + the predicate | **exit 0** — 1350 tests, 1350 pass, 0 fail |
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | **exit 0**, no output |
+| `node scripts/check-structure.mjs` | **exit 0** — ratchet unmoved `419 / 1 / 200 / 1233` |
