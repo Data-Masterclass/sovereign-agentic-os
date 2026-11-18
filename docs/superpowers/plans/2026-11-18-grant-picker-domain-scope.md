@@ -3,7 +3,7 @@
 
 # Grant picker shows folders from every domain — narrow the feed to the system's domain
 
-**Date:** 2026-11-18 · **Branch:** `fix/grant-picker-domain-scope` · **Status:** PLAN
+**Date:** 2026-11-18 · **Branch:** `fix/grant-picker-domain-scope` · **Status:** DONE (gates green)
 
 ## The report
 
@@ -340,6 +340,37 @@ export function outputDraftDirty(draft: OutputDraft): boolean;
 /** Committable: a trimmed name AND a folder path ('/' counts — root is a destination). */
 export function outputDraftValid(draft: OutputDraft): boolean;
 ```
+
+
+## TEST — what was actually run, and what it says
+
+| gate | result |
+| --- | --- |
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | clean |
+| targeted: `domain-scope` · `grant-feed` · `output-draft` · `available-context-domain` · `grant-folders` · `grants-available` | 34 tests, 34 pass, 0 fail |
+| full suite (`--test-concurrency=2`, `core/**` + `tabs/**`) | **6473 tests, 6469 pass, 0 fail, 4 todo**, exit 0 |
+| `bash os-ui/scripts/gate.sh` | exit 0 — 436 tests, 432 pass, 0 fail, 4 todo (`check-worker-env` / `check-trino-rules-chart` SKIPPED: no subchart `.tgz` in this worktree) |
+| `node scripts/check-structure.mjs` | TAB-ISOLATION 419 · LEGACY-IMPORT 1 · CORE-INDEPENDENCE 200 · FILE-HEADER 1230 — no new violations |
+
+The 4 `todo` tests are the pre-existing `tabs/agents/lib/build/os-tools.test.ts` entries marked
+`# fixed in Phase 2` (held-approval arguments, the layer pass-through). They were todo before
+this branch and are untouched by it.
+
+New tests added by this change: **24** (6 `domain-scope`, 11 `grant-feed` incl. the route
+tripwire, 6 `output-draft` incl. the label tripwire, 3 `available-context-domain` incl. its
+tripwire — the predicate assertions in that last file are counted once each).
+
+### Deliberately NOT done
+
+- `tabs/agents/lib/build/os-tools.ts` (the build/run folder-grant resolution) is unchanged — see
+  §4. Narrowing it would change what an already-built system reads at run time.
+- `availableContext*` in "All domains" still spans domains — see §2. No single target exists
+  there, and guessing one would hide artifacts the user asked to see.
+- The `grantable.ts` feed that grounds the Grant-stage ASSISTANT is unchanged: it offers names
+  for a prompt, not a tree, and it already mirrors the route's per-kind logic by hand. Narrowing
+  it is a sensible follow-up, not part of a presentation fix for the picker.
+- Two other agents own `tabs/files/ui/*` and the promotion/approval paths; nothing there was
+  touched.
 
 ## Guardrails for the execution
 
