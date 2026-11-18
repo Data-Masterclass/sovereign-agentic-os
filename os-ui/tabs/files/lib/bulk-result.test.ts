@@ -111,10 +111,58 @@ test('fresh and already-pending requests are counted separately, in that order',
   assert.match(s.notice, /^1 requested · 9 already pending · 2 failed\. A domain admin approves each\./);
 });
 
+/**
+ * The promote route answers with exactly ONE of three shapes (PR #61, header-documented):
+ *   { requested: true,  promoted: false, approval }       a request was FILED
+ *   { requested: true,  already: true,   approvalId }     one was already open
+ *   { promoted: true,   requested: false, approvalId, … } the owner-approver's one shot
+ * A domain_admin/admin OWNER gets the third: the file is ALREADY in the domain, so telling
+ * them "a domain admin approves each" would invent an approval step that has already happened.
+ */
+function promoted(n: number): BulkOutcome[] {
+  return Array.from({ length: n }, (_, i) => ({ id: `as_${i}`, name: `invoice-${i}.pdf`, ok: true, promoted: true }));
+}
+
+test('the owner-approver’s one shot reads as promoted, with no approval to wait for', () => {
+  const s = summariseBulk(promoted(12), { verb: 'requested', approvalNote: 'A domain admin approves each.' });
+  assert.equal(s.promoted, 12);
+  assert.equal(s.requested, 0);
+  assert.equal(s.ok, 12, 'twelve files really did change');
+  assert.equal(s.notice, '12 promoted.');
+  assert.ok(!s.notice.includes('A domain admin'), s.notice);
+});
+
+test('all three shapes in one press are counted apart', () => {
+  const s = summariseBulk(
+    [{ id: 'a', name: 'filed.pdf', ok: true }, ...promoted(2), ...pending(3), ...failures(4)],
+    { verb: 'requested', approvalNote: 'A domain admin approves each.' },
+  );
+  assert.equal(s.requested, 1);
+  assert.equal(s.promoted, 2);
+  assert.equal(s.already, 3);
+  assert.equal(s.failed, 4);
+  // The approval sentence belongs to the FILED one only — and it is there because of it.
+  assert.match(s.notice, /^1 requested · 2 promoted · 3 already pending · 4 failed\. A domain admin approves each\./);
+});
+
+test('the approval sentence is keyed on requested, not on success', () => {
+  const note = { verb: 'requested', approvalNote: 'A domain admin approves each.' };
+  // promoted-only, already-only, and promoted+already all have nothing awaiting an admin.
+  assert.ok(!summariseBulk(promoted(3), note).notice.includes('A domain admin'));
+  assert.ok(!summariseBulk(pending(3), note).notice.includes('A domain admin'));
+  assert.ok(!summariseBulk([...promoted(2), ...pending(2)], note).notice.includes('A domain admin'));
+  assert.equal(summariseBulk([...promoted(2), ...pending(2)], note).notice, '2 promoted · 2 already pending.');
+  // One filed request brings it back.
+  assert.ok(summariseBulk([{ id: 'a', name: 'a.pdf', ok: true }, ...promoted(2)], note).notice.includes('A domain admin'));
+});
+
 test('a verb other than "requested" reads correctly in every clause', () => {
   // Bulk archive and bulk move share this formatter (review M2), so the grammar must not be
   // promote-shaped. A whole-selection refusal is also a sentence, not a bare count (L2).
   assert.equal(summariseBulk([], { verb: 'archived', skipped: 3 }).notice, 'Nothing archived · 3 skipped.');
+  // An action that cannot promote anything never grows a promoted clause.
+  assert.equal(summariseBulk([{ id: 'a', name: 'a.pdf', ok: true }], { verb: 'archived' }).promoted, 0);
+  assert.equal(summariseBulk([{ id: 'a', name: 'a.pdf', ok: true }], { verb: 'archived' }).notice, '1 archived.');
   assert.equal(
     summariseBulk([{ id: 'a', name: 'a.pdf', ok: false, error: 'Not permitted to change this file' }], { verb: 'moved' }).notice,
     'Nothing moved · 1 failed. a.pdf: Not permitted to change this file.',

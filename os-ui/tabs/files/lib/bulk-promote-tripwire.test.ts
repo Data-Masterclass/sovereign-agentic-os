@@ -121,6 +121,30 @@ test('a 200 that filed nothing is not counted as a request (already: true)', () 
   assert.match(body, /already:/, 'it must reach summariseBulk as its own outcome, not as ok');
 });
 
+/**
+ * PR #61 gives a domain_admin/admin OWNER a ONE-SHOT promotion:
+ * `{ promoted: true, requested: false, … }`. Read as a bare 200 it would report "12
+ * requested" for twelve files that are already IN the domain — a third spelling of the
+ * original defect, so the branch is pinned here.
+ */
+test('the owner-approver’s one shot is read as promoted, not as a filed request', () => {
+  const body = callbackBody(src(BROWSER), 'bulkPromote');
+  assert.match(body, /data\.promoted/, 'bulkPromote must branch on the route’s `promoted` flag');
+  assert.match(body, /promoted:/, 'it must reach summariseBulk as its own outcome');
+  // The three shapes are mutually exclusive, so the classification must not treat a promoted
+  // response as an already-pending one.
+  assert.ok(
+    body.indexOf('data.promoted') < body.indexOf('data.already'),
+    'classify the one-shot first — `promoted: true` carries `requested: false`',
+  );
+});
+
+test('the single-file path announces the one shot instead of an approval', () => {
+  const body = callbackBody(src(PREVIEW), 'requestPromote');
+  assert.match(body, /data\.promoted/, 'FilePreview must branch on the one-shot too');
+  assert.match(body, /Promoted to the domain/, 'the owner-approver needs the outcome, not a wait');
+});
+
 test('no bulk notice is hand-formatted any more — summariseBulk owns every one', () => {
   const source = src(BROWSER);
   // The two whole-selection refusals used to be built by hand (review L2).

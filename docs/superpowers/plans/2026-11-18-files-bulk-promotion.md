@@ -304,3 +304,44 @@ commit (nothing outside `tabs/files/**` changed, and the machine is memory-const
   volume ever matters, the move is to send only the ready rows and report the rest as
   *skipped* with the pre-flight's own reason — which needs the two reason vocabularies
   (pre-flight `missing`, server `error`) unified first.
+
+---
+
+## 8. Interop with PR #61 (promotion audit) — three response shapes, three sentences
+
+PR #61 (`public/fix/promotion-audit` @ `f47878f3`, merging after this branch) makes
+`POST /api/files/[id]/promote` answer with **exactly one of three** header-documented shapes:
+
+| Response | Meaning | Outcome flag |
+|---|---|---|
+| `{ requested: true, promoted: false, approval }` | a request was FILED | neither |
+| `{ requested: true, already: true, approvalId }` | one was already open | `already` |
+| `{ promoted: true, requested: false, approvalId, applied, asset }` | the owner-approver's **one shot** — self-approved, already in the domain | `promoted` |
+
+A `domain_admin`/`admin` **owner** gets the third: `requestPromotion` still runs first (owner
+check + the documentation gate), the approval is still **enqueued** so no audience move is
+invisible to the Governance queue or the audit trail, and then `applyEffect` + `decide` close
+it out in the same press.
+
+Read as a bare 200 that would be a **third spelling of the original defect**: an admin
+promoting twelve of their own files would read "12 requested · A domain admin approves each"
+for twelve files that are *already shared*, with no admin left to wait for. So:
+
+- `BulkOutcome` gains `promoted?: boolean`; `summariseBulk` counts `requested`, `promoted` and
+  `already` **apart** (`promoted` tested first — it carries `requested: false`), `ok` becomes
+  `requested + promoted`, and there is an `N promoted` clause.
+- **The approval sentence is keyed on `requested`, never on success.** Promoted-only,
+  already-only and promoted+already results never claim an approver is involved:
+  `12 promoted.` · `2 promoted · 2 already pending.` · and with one real filing,
+  `1 requested · 2 promoted · 3 already pending · 4 failed. A domain admin approves each.`
+- `FilePreview.requestPromote` branches the same way: `✓ Promoted to the domain.` for the one
+  shot, `⏳ Already proposed — awaiting a domain admin…` for the handle-only reply, and the
+  existing OS-wide approval notification only when an `approval` object really came back.
+
+The tripwire pins both branches, including that `data.promoted` is classified **before**
+`data.already`. Gates: `tsc` clean · Files tab **196 tests, 196 pass** ·
+`check-structure` 419 / 1 / 200 / 1230 unchanged.
+
+Note for whoever merges second: this branch now reads a contract that only exists on #61's
+branch. Until #61 lands, `data.promoted` is simply never `true` and every notice behaves as
+before — the classification is additive, not conditional on the other branch.
