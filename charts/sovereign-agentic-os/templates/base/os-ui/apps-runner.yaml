@@ -159,6 +159,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: os-ui
+        # The run worker executes agent runs (AGENTS_WORKER=worker) and therefore the governed
+        # data tools; without this peer every run saw "Could not reach query-tool" and fell back
+        # to offline-mock (2026-11-18, first live worker rollout).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui-worker
       ports:
         - { protocol: TCP, port: 8000 }
 ---
@@ -182,6 +188,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: os-ui
+        # The run worker executes agent runs (AGENTS_WORKER=worker) and therefore the governed
+        # data tools; without this peer every run saw "Could not reach query-tool" and fell back
+        # to offline-mock (2026-11-18, first live worker rollout).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui-worker
       ports:
         - { protocol: TCP, port: 8000 }
 {{- end }}
