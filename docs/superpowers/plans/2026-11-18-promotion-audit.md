@@ -211,3 +211,87 @@ Plus source tripwires (files read as TEXT — a test may not import a `.tsx`) fo
 (`node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test
 --test-concurrency=2 'core/**/*.test.ts' 'tabs/**/*.test.ts'`) · `bash os-ui/scripts/gate.sh` ·
 `node scripts/check-structure.mjs` must not exceed 419 / 1 / 200 / 1230.
+
+---
+
+# DESIGN
+
+## The one constraint that shapes every fix
+
+`scripts/check-structure.mjs` counts **CORE-INDEPENDENCE per import statement** (a regex over
+`from '…'`), and the baseline is exactly **200**. So *no file under `os-ui/core/` may gain a new
+`@tabs/*` import statement* — not even the test file. Two consequences:
+
+1. New shared logic must live in a module `core/` **already** imports, so the added names ride an
+   existing `import { … } from '@tabs/…'` statement (adding names to the braces matches no new
+   `from`). That is why `promoteDatasetOrPropose` goes into `tabs/data/lib/publish-server.ts` and
+   `promoteFileOrPropose` into `tabs/files/lib/store.ts` — both are already imported by
+   `core/mcp/experimental/promotion-write-tools.ts` and by `core/policy/effects.ts`.
+2. `core/policy/promotion-matrix.test.ts` drives everything through `handleRpc`
+   (`@core/mcp/server`) and `@core/policy/approvals` **only**. No tab import, no reset-store
+   import — `node --test` gives each file its own process, so a fresh queue per file plus
+   `__resetApprovals()` per test is enough.
+
+The same constraint rules out adding a `metric` case to `applyLadder` (it would need
+`@tabs/metrics`), which is a second, independent reason the metric fix is an honest refusal rather
+than a new applier.
+
+## Signatures
+
+```ts
+// tabs/data/lib/publish-server.ts  (server-only, already holds publishPromotionLive)
+export async function promoteDatasetOrPropose(
+  id: string, user: Principal, opts?: { visibility?: DataVisibility; grants?: Grant[] },
+): Promise<
+  | { promoted: true; dataset: Dataset; publish: { ok: boolean; fqn: string; mode?: string } }
+  | { propose: true; request: PromotionRequest }
+>;
+
+// tabs/files/lib/store.ts
+export function promoteFileOrPropose(
+  id: string, user: Principal, opts?: { visibility?: DataVisibility; grants?: Grant[] },
+): { promoted: true; asset: FileAsset } | { propose: true; request: FilePromotionRequest };
+```
+
+Both are pure compositions of code that already exists:
+
+```
+promote…OrPropose(id, user, opts)
+  req = requestPromotion(id, user, opts)      // owner-only + docs/transparency gate, verbatim
+  if canPromote(user.role, 'Personal')        // the rung-1 APPROVER authority, unchanged
+      -> apply as the owner-approver          // publishPromotionLive | applyApprovedFilePromotion
+                                              //   (in-domain + canTransition + docs re-check
+                                              //    + assertGrantsWithinAuthority all intact)
+  else -> { propose: true, request: req }     // the caller enqueues, exactly as today
+```
+
+Why `requestPromotion` runs **first** on both branches: it is the owner-only trigger and the
+documentation gate. Running it before the direct apply means the one-shot path cannot skip a gate
+the proposing path enforces, and the refusal the owner sees is byte-identical either way.
+
+Why the enqueue stays in the callers: `tabs/files/lib/store.ts` must not grow a `server-only`
+dependency (`@core/policy/approvals` imports it) — the store is imported from non-server places.
+The function therefore returns the *request*, and the route and the MCP tool enqueue it with their
+existing wording.
+
+Why this does not widen access: the direct branch requires **owner AND
+`canPromote(role,'Personal')`** — i.e. a domain_admin/admin promoting their own asset, which is
+precisely the pair of authorities the two-step path would have combined anyway. Nobody gains a
+right they did not already hold; the only thing removed is the impossibility of exercising both.
+
+## The metric refusal, verbatim
+
+```
+A metric's audience is its dataset's audience — promote the dataset “<name>” to Domain in the
+Data tab and this metric follows.
+```
+
+409, from `/api/metrics/[id]/promote` (POST), its GET (which must stop reporting a phantom pending
+request) and `promote_metric`. Written into `tabs/metrics/guide.md` as the documented gate.
+
+## Ordering
+
+IMPLEMENT is test-first: `core/policy/promotion-matrix.test.ts` is written and red before any
+production edit, then S1–S7 and U1–U5 turn it green. The `.tsx` fixes are pinned by source
+tripwires in the same file (a test may not import a `.tsx`, so the file is read as text and the
+required branch asserted by pattern).
