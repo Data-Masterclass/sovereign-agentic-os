@@ -924,6 +924,33 @@ clickable but means a broken connection renders as a *successful* sync of
 invented files. Any fallback that substitutes fake data must label itself in the
 result, and the UI must surface that label.
 
+**A label is not a guard, and a guard keyed on an unset variable is not a guard
+either.** Both halves of that cost a live incident on 2026-11-18. Every
+degrade-to-mock site gated itself on `config.deploymentProfile !== 'local'`, and
+`OS_PROFILE` is set *nowhere* in `charts/`, `values*.yaml`, `deploy/` or
+`scripts/` — `config.ts` says so itself, twice, which is why the two fail-closed
+guards in that file key on `NODE_ENV` instead. So on the cluster an unreachable
+Trino served hash-seeded `offline-mock` rows as KPIs, the Data tools created,
+transformed and built against an in-memory fake, and the Software security scan
+— whose mode was a *default parameter*, never a decision — gated deploy approval
+while always reading `offline-mock`. Nothing noticed, because the only signal was
+a `mode` field in a response body: advisory, droppable, and read by no caller.
+
+The answer is `core/kernel/offline-mock.ts`: **one switch and one predicate.**
+`OS_OFFLINE_MOCK=allow|refuse` defaults to `refuse` under `NODE_ENV=production`
+(the one variable the deploy does set), the chart writes it explicitly into the
+os-ui *and* os-ui-worker env, and every site that chooses to fabricate calls
+`offlineMockAllowed()` — nothing else. Refusing is typed:
+`refuseOfflineMock(reason)` throws `ENGINE_UNAVAILABLE` (503), which the MCP
+error mapper hands an agent as `{error:{code:'ENGINE_UNAVAILABLE'}}`, never a
+row. `offline-mock-tripwire.test.ts` greps `tabs/**` and `core/**` and partitions
+every file naming `'offline-mock'` into deciders (must import the predicate) and
+labels (must not decide), so the tenth decision site cannot be added quietly.
+The lesson generalises: when a guarantee must hold in production, key it on
+something production **has**, make the gate structural rather than advisory, and
+put a grep in CI that fails when a new call site forgets it — the same move
+`tabs/software/lib/seeded-evidence.ts` made for seeded evidence.
+
 ## Generated documentation
 
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,

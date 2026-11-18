@@ -1282,6 +1282,16 @@ osUI:
   # In-memory user seeding while the mirror is unreachable is a no-cluster DEV
   # convenience only. Production fails closed (503)
   allowOfflineUserSeed: false
+  # MAY THIS DEPLOYMENT FABRICATE? (OS_OFFLINE_MOCK — core/kernel/offline-mock.ts)
+  # `refuse` (the default, and what every unrecognised value resolves to): an unreachable
+  # engine — Trino, the query-tool, the data-runner, an app runner — is an OUTAGE. The OS
+  # returns a typed ENGINE_UNAVAILABLE refusal and NO number, NO table, NO row count and NO
+  # passing security scan. `allow`: the local TEACHING flow, where no cluster exists and the
+  # deterministic, honestly-labelled `offline-mock` worked example is the point.
+  # Set it here rather than leaving it to a default: the predecessor gate keyed on OS_PROFILE,
+  # which nothing in this chart ever set, so it read `local` on a real cluster and the OS served
+  # hash-seeded numbers as KPIs. Rendered into BOTH the os-ui and os-ui-worker env.
+  offlineMock: refuse
   image:
     repository: sovereign-os/os-ui    # built locally, loaded into kind
     tag: "0.1.0"
