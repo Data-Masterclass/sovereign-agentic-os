@@ -36,7 +36,12 @@ import { itemsUnderFolder, normaliseFolderPath } from '@core/kernel/folders';
  */
 
 export type Available = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace'; layers?: DataLayer[]; folder?: string };
-export type FolderNode = { path: string; scope: 'personal' | 'domain' };
+/** A folder row from the feed. `outsideDomain` marks a node that is only present because a
+ *  LIVE grant on this system points at it from outside the system's domain — the feed is
+ *  otherwise narrowed to that domain. Such a node still renders (and still shows as ticked),
+ *  with a warning, because hiding a grant the system really holds would be a lie, and a
+ *  tick-and-save round trip over a tree missing it would delete it. */
+export type FolderNode = { path: string; scope: 'personal' | 'domain'; outsideDomain?: boolean };
 export type AvailableFeed = { items: Available[]; folders?: FolderNode[] };
 
 /** Highest built layer of a dataset (Gold > Silver > Bronze), or null if none built. */
@@ -191,6 +196,14 @@ export function FolderResourcePicker({
   const cap = accessCap(system.safetyPreset);
   const scopeOf = (id: string): 'personal' | 'domain' | 'marketplace' => availOf(id)?.scope ?? 'personal';
   const mktGrantedIds = new Set(grantedItems.map((g) => g.id));
+  // Folder grants the feed flagged as pointing OUTSIDE this system's domain (legacy): they
+  // still render and still tick, but the chip says so, so the author can see why a foreign
+  // folder is attached and remove it deliberately rather than discover it at run time.
+  const outsideDomain = new Set(
+    folders.filter((f) => f.outsideDomain).map((f) => `${f.scope} ${normaliseFolderPath(f.path)}`),
+  );
+  const isOutside = (f: { path: string; scope: string }) =>
+    outsideDomain.has(`${f.scope} ${normaliseFolderPath(f.path)}`);
   const addableMkt = mktItems.filter((a) => !mktGrantedIds.has(a.id));
 
   return (
@@ -222,7 +235,19 @@ export function FolderResourcePicker({
         <div className="sb-chips" style={{ marginTop: 8 }}>
           {grantedFolders.map((g) => (
             <span key={`f:${g.folder!.scope}:${g.folder!.path}`} className="sb-chip granted" style={{ gap: 8 }}>
-              <span>📁 {g.folder!.path === '/' ? 'All' : g.folder!.path}<span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(g.folder!.scope === 'domain' ? 'shared' : 'mine')}</span></span>
+              <span>
+                📁 {g.folder!.path === '/' ? 'All' : g.folder!.path}
+                <span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(g.folder!.scope === 'domain' ? 'shared' : 'mine')}</span>
+                {isOutside(g.folder!) ? (
+                  <span
+                    className="badge warn"
+                    style={{ marginLeft: 6 }}
+                    title="This folder belongs to another domain than this team. The grant still works, but it was made before grants were scoped to the team's domain — remove it unless you meant it."
+                  >
+                    outside this domain
+                  </span>
+                ) : null}
+              </span>
               {/* Files are folder-granted only, so the folder chip carries the SAME access
                   selector item grants use — this is the only place a Files write can be set.
                   `cap` (from the system safety preset) bounds it exactly like every kind. */}
