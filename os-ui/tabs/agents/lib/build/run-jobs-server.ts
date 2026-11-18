@@ -57,7 +57,7 @@ import { currentUserOf, executeTeamRun, prepareRunYaml, type RunReportBody } fro
 import type { LivePrincipal } from '@tabs/agents/lib/engine/resume';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 import type { Approval } from '@core/policy/approvals';
-import { getSystemForRun } from '@tabs/agents/lib/store';
+import { getSystemForRun, refreshSystemFromMirror } from '@tabs/agents/lib/store';
 import { publishRunEvent } from '@tabs/agents/lib/engine/run-events';
 import { sweepRetention, RETENTION_EVERY_MS, type RetentionOutcome, type ThreadDeleter } from '@tabs/agents/lib/engine/retention';
 
@@ -280,6 +280,8 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
   const user = hydrated.user;
 
   try {
+    // Worker: the registry here is a read-only mirror — fetch THIS system fresh (no-op in os-ui).
+    await refreshSystemFromMirror(job.systemId);
     const view = getSystemForRun(job.systemId, user);
     const yaml = await prepareRunYaml(user, view, job.systemId);
     const body = await executeTeamRun({
@@ -493,6 +495,7 @@ export async function enqueueResumeAfterDecision(input: { runner: LivePrincipal;
   const a = input.approval;
   if (!a.runId || !a.systemId) throw new Error('resume: the approval carries no run');
   const user = currentUserOf(input.runner);
+  await refreshSystemFromMirror(a.systemId);
   const view = getSystemForRun(a.systemId, user);
   const domain = view.system.system.domain;
   const store = await runJobStore();

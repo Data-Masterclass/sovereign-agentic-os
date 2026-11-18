@@ -35,6 +35,7 @@ export type WorkerBoot = {
   resumeHook: boolean;
   approvals: boolean;
   langfuse: boolean;
+  systems: 'hydrated' | 'failed' | 'pending';
 };
 
 const log = (m: string) => console.info(`[agent-runs-worker] ${m}`);
@@ -93,7 +94,7 @@ export async function bootWorker(): Promise<WorkerBoot> {
   markRunWorkerProcess();
   log('agent-system DEFINITION writes are refused in this process (no os-repos mount — RWO, os-ui only); run bookkeeping is unaffected');
 
-  const boot: WorkerBoot = { checkpointer: 'memory', jobs: 'memory', resumeHook: false, approvals: false, langfuse: false };
+  const boot: WorkerBoot = { checkpointer: 'memory', jobs: 'memory', resumeHook: false, approvals: false, langfuse: false, systems: 'pending' };
 
   // The approval → resume hook: a decision taken in os-ui enqueues a `resume` job, and a decision
   // taken here (MCP through the worker is not served, but the hook must exist for symmetry) does
@@ -116,6 +117,21 @@ export async function bootWorker(): Promise<WorkerBoot> {
     warn(`approvals queue not hydrated (held writes may re-park): ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // The agent-system REGISTRY, hydrated from its durable mirror. `getSystemForRun` reads the
+  // in-process store, which in this pod starts EMPTY: the first live worker rollout (0.9.2,
+  // 2026-11-18) failed every run with "System not found" because nothing here ever loaded it.
+  // Boot loads the whole registry once; the executor re-reads the ONE record each job needs
+  // (`refreshSystemFromMirror`), so an edit made in os-ui after this boot still runs as edited.
+  try {
+    const { ensureHydrated: hydrateSystems, hydrationState } = await import('@tabs/agents/lib/store');
+    await hydrateSystems();
+    boot.systems = hydrationState();
+    if (boot.systems !== 'hydrated') warn(`agent-system registry NOT hydrated (${boot.systems}) — runs answer "System not found" until the mirror is reachable`);
+  } catch (err) {
+    boot.systems = 'failed';
+    warn(`agent-system registry not hydrated: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // The LangGraph checkpoint store — without it a run cannot survive this pod, which is the whole
   // point of the worker.
   const { ensureCheckpointerReady } = await import('@tabs/agents/lib/engine/checkpointer');
@@ -136,7 +152,7 @@ export async function bootWorker(): Promise<WorkerBoot> {
     warn(`Langfuse client unavailable: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  log(`boot: checkpointer=${boot.checkpointer} jobs=${boot.jobs} resumeHook=${boot.resumeHook} approvals=${boot.approvals} langfuse=${boot.langfuse}`);
+  log(`boot: checkpointer=${boot.checkpointer} jobs=${boot.jobs} resumeHook=${boot.resumeHook} approvals=${boot.approvals} langfuse=${boot.langfuse} systems=${boot.systems}`);
   return boot;
 }
 
