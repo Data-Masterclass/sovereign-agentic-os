@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -2582,6 +2583,18 @@ function executeMock(c: Connection, tool: string, args: Record<string, unknown>,
   // + a human note, so the tool-result UI + the agent tool-result path can render/carry it and
   // nobody mistakes a demonstration fixture for a live call. A registered real executor never
   // reaches here; this is only the fallback path for connectors with no live client wired.
+  //
+  // THE HONESTY GATE (2026-11-18). That label is a FIELD, and a field can be dropped: an agent
+  // asked this connection for files and got `Q3 plan.docx`, `budget.xlsx`, `notes.md` — three
+  // documents that do not exist — and summarised them. On a real deployment the fixtures are
+  // refused outright unless somebody explicitly asked for the teaching flow; the tool call then
+  // surfaces as ENGINE_UNAVAILABLE, which an agent can route on instead of believing.
+  if (!offlineMockAllowed()) {
+    refuseOfflineMock(
+      `“${c.name}” cannot answer \`${tool}\`: no live executor is wired for this connector, so the ` +
+        'only available answer would be demonstration fixtures rather than data from the connected system.',
+    );
+  }
   const base = {
     connection: c.name,
     credentialInjectedServerSide: credentialPresent,

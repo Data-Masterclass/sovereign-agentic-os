@@ -352,11 +352,17 @@ export async function requestDeploy(
   // auto-deploy is forced onto the review card when there is a dataset warning.
   const datasetWarning = await ungrantedDatasetWarningForApp(app, files);
   const warnings = datasetWarning ? [datasetWarning] : [];
-  // The security scan runs on EVERY deploy request over the files resolved above —
-  // the deterministic baseline scanner, labelled `offline-mock` unless a caller injects
-  // a live scanner mode. A routine update can only auto-deploy when BOTH in-envelope
-  // AND clean.
-  const scan = securityScan(files, opts.scanMode ?? 'offline-mock');
+  // The security scan runs on EVERY deploy request over the files resolved above — the
+  // deterministic baseline scanner when a caller injects no live scanner mode. A routine update
+  // can only auto-deploy when BOTH in-envelope AND clean.
+  //
+  // The `?? 'offline-mock'` default that used to sit here is GONE (2026-11-18): it meant the
+  // card's engine label was never a decision, so on the cluster every scan claimed the offline
+  // engine and `decideDeploy` below — which approves only on `scan.passed` — was green by
+  // construction. `securityScan` now decides through the ONE kernel predicate and reports
+  // `unavailable` + `passed: false` when no engine ran, so the gate closes instead of waving
+  // through. Passing a mode here still wins, which is how a live scanner is wired in.
+  const scan = securityScan(files, opts.scanMode);
 
   // Routine update within the approved envelope + a clean scan + NO dataset warning →
   // auto-deploy. An ungranted-dataset reference re-opens the review gate so it is seen.
@@ -539,8 +545,14 @@ export async function decideDeploy(
 
   if (decision === 'approve') {
     if (!card.scan.passed) {
+      // Two different facts, and an approver must be told which: findings were found, or NOTHING
+      // SCANNED. The second one used to be indistinguishable from the first (2026-11-18).
       throw withStatus(
-        new Error('Cannot approve: the security scan did not pass (fix the findings and re-request).'),
+        new Error(
+          card.scan.unavailable
+            ? `Cannot approve: there is no security verdict to approve. ${card.scan.reason ?? ''}`.trim()
+            : 'Cannot approve: the security scan did not pass (fix the findings and re-request).',
+        ),
         409,
       );
     }

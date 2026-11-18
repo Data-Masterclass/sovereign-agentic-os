@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { ScanCategory, ScanFinding, ScanResult, ScaffoldFile } from '@tabs/software/lib/model';
+import type { ScanCategory, ScanFinding, ScanMode, ScanResult, ScaffoldFile } from '@tabs/software/lib/model';
+import { offlineMockAllowed } from '@core/kernel/offline-mock';
 
 /**
  * The security scanner that feeds the Builder review card (Software golden path
@@ -113,17 +114,36 @@ const BLOCKING = new Set(['high', 'critical']);
  * is NO secret finding and NO high/critical SAST/deps finding — the exact gate
  * the review card enforces.
  */
-export function securityScan(files: ScaffoldFile[], mode: ScanResult['mode'] = 'offline-mock'): ScanResult {
+export function securityScan(files: ScaffoldFile[], mode?: ScanMode): ScanResult {
   const findings = [...scanSecrets(files), ...scanSast(files), ...scanDeps(files)];
   const summary = emptySummary();
   for (const f of findings) summary[f.category] += 1;
   const hasSecret = findings.some((f) => f.category === 'secrets');
   const hasBlocking = findings.some((f) => BLOCKING.has(f.severity));
-  return {
-    mode,
-    passed: !hasSecret && !hasBlocking,
-    findings,
-    summary,
-    scannedAt: new Date().toISOString(),
-  };
+  const clean = !hasSecret && !hasBlocking;
+  // THE HONESTY GATE (2026-11-18). `mode` used to DEFAULT to 'offline-mock', so it was never a
+  // decision: on the cluster every card said `offline-mock` and `decideDeploy` \u2014 which approves
+  // only on `card.scan.passed` \u2014 was green by construction, a green tick for a scan no engine
+  // ran. A caller that injects a real engine ('live') is unaffected; an absent engine is now
+  // reported as `unavailable` with `passed: false` unless this deployment explicitly asked for the
+  // teaching flow. The findings above are REAL either way and are always returned: refusing a
+  // VERDICT is not the same as hiding evidence.
+  const resolved: ScanMode = mode ?? (offlineMockAllowed() ? 'offline-mock' : 'unavailable');
+  const scannedAt = new Date().toISOString();
+  if (resolved === 'unavailable') {
+    return {
+      mode: 'unavailable',
+      passed: false,
+      findings,
+      summary,
+      scannedAt,
+      unavailable: true,
+      reason:
+        'No security scanner engine ran: this deployment has no live scanner wired (Semgrep / ' +
+        'Trivy / gitleaks) and refuses to issue a passing verdict from the offline baseline. ' +
+        `The ${findings.length} finding(s) listed are real and were read from the committed files; ` +
+        'the VERDICT is withheld, so this deploy cannot be approved until a scanner is configured.',
+    };
+  }
+  return { mode: resolved, passed: clean, findings, summary, scannedAt };
 }

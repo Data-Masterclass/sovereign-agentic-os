@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { queryRun } from '@core/infra/governed';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { assistantComplete } from '@core/runtime/complete';
 import type { Role } from '@core/kernel/session';
 import { emptyVersions, type Dataset } from '@tabs/data/lib/dataset-schema';
@@ -80,6 +81,18 @@ export async function ingestUpload(input: {
   const dataset = bronzeCtxDataset(input.datasetName, schema);
 
   if (!(await dataRunnerReachable())) {
+    // THE HONESTY GATE (2026-11-18). An unreachable data-runner on a real deployment is an
+    // OUTAGE: the "report" below names a Bronze table that was never written, with a row count
+    // read out of the CSV head. In the agent run of 2026-11-18 that report came back `ok` and
+    // the agents transformed and built on top of it. So unless this deployment explicitly asked
+    // for the teaching flow, REFUSE before anything is recorded — the caller then cannot
+    // register a version, because it never gets a report.
+    if (!offlineMockAllowed()) {
+      refuseOfflineMock(
+        `Cannot ingest “${input.fileName}” into ${table}: the data-runner is unreachable, so no ` +
+          'physical Bronze table can be written. Nothing was uploaded and no version was registered.',
+      );
+    }
     // Offline teaching mock — no physical write; the row is honestly labelled.
     const mock = makeMockAdapters(newMockBackends());
     const row = await runAdapter(mock.dlt, {

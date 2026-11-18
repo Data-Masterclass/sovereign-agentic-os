@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { trace as gvTrace } from '@core/infra/agent-governed';
 import { enqueue } from '@core/policy/approvals';
 import { type System } from '@tabs/agents/lib/system-schema';
@@ -55,6 +56,16 @@ export async function buildSystem(systemId: string, yaml: string): Promise<Build
     // The live adapters write their own governance traces as they go, so there is
     // nothing to mirror here.
     return { ...report, mode: 'live' };
+  }
+  // THE HONESTY GATE (2026-11-18). The mock build writes no OPA grants, mints no scoped
+  // LiteLLM key, reloads no graph and lands no Langfuse trace \u2014 it reports \u2713 for work that did
+  // not happen, and the Build panel's green rows are what a user trusts before pressing Run. On a
+  // real deployment refuse instead; the teaching flow keeps the in-process build.
+  if (!offlineMockAllowed()) {
+    refuseOfflineMock(
+      `Cannot build agent system ${systemId}: the model gateway's admin API is unreachable, so the ` +
+        'grants, the scoped key and the compiled graph cannot be verified. Nothing was built.',
+    );
   }
   // Offline teaching fallback: the in-process mock build.
   const backends = newMockBackends();

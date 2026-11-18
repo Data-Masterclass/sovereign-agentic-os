@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@core/kernel/config';
+import { offlineMockAllowed } from '@core/kernel/offline-mock';
 import { queryRun } from '@core/infra/governed';
 import { type DelegatedToken, propagate } from '@tabs/data/lib/index';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
@@ -35,14 +35,20 @@ import { liveMetricsReachable } from '@tabs/metrics/lib/build/live-clients';
 export type ExploreMode = 'live' | 'live (sql)' | 'offline-mock' | 'unavailable';
 
 /**
- * On a real deployment (OS_PROFILE ≠ 'local') the governed query backend is required — if
- * it's unreachable that's an OUTAGE, and a metric must say so, never fabricate a plausible
- * number. The offline-mock resolver (a hash-seeded demo value) is ONLY legitimate on the
- * local/laptop teaching flow, where no cluster exists and the mock is clearly a worked
- * example. This gate is what stops a made-up 286,936 from being shown as if it were a real KPI.
+ * Must this metric be computed for real? The governed query backend is required on any
+ * deployment that has not EXPLICITLY asked for the teaching flow — if it's unreachable that's an
+ * OUTAGE, and a metric must say so, never fabricate a plausible number. The offline-mock
+ * resolver (a hash-seeded demo value) is legitimate only where no cluster exists and the mock is
+ * clearly a worked example. This gate is what stops a made-up 286,936 from being shown as a KPI.
+ *
+ * IT USED TO READ `config.deploymentProfile !== 'local'`, AND THAT IS WHY IT FAILED. `OS_PROFILE`
+ * is set nowhere in `charts/`, `values*.yaml`, `deploy/` or `scripts/` — `config.ts` says so
+ * itself, twice — so on the live cluster this returned FALSE and the fabricated row was served.
+ * The decision now belongs to the ONE kernel predicate, which keys on `NODE_ENV` like the other
+ * two fail-closed guards in `config.ts`. See `core/kernel/offline-mock.ts`.
  */
 function metricsMustBeLive(): boolean {
-  return config.deploymentProfile !== 'local';
+  return !offlineMockAllowed();
 }
 
 /**
