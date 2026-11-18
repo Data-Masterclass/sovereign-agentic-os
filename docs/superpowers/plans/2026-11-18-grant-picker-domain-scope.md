@@ -171,6 +171,8 @@ green and unchanged — the narrowing happens before it, never inside it.
 
 | file | change |
 | --- | --- |
+| `os-ui/core/kernel/domain-scope.ts` | **new** — the pure `inDomainScope` / `narrowToDomainScope` predicate both tabs share |
+| `os-ui/core/kernel/domain-scope.test.ts` | **new** — the predicate's rules incl. the null-target and domainless carve-outs |
 | `os-ui/tabs/agents/lib/grant-feed.ts` | **new** — pure feed builder: domain narrowing, folder-node derivation (delegates to `grantFolderNodes`), legacy out-of-domain grant re-admission |
 | `os-ui/tabs/agents/lib/grant-feed.test.ts` | **new** — the eight assertions above |
 | `os-ui/app/api/agents/systems/[id]/grants/available/route.ts` | reads the system's domain, passes `activeDomain: target` to `listFolders`, delegates assembly to `grant-feed.ts` |
@@ -235,6 +237,109 @@ The persistence path is unchanged: `addOutput(system, …)` → `onCommit` → t
 | `os-ui/tabs/agents/lib/output-draft.ts` | **new** — `OutputDraft`, `EMPTY_OUTPUT_DRAFT`, `outputDraftDirty`, `outputDraftValid` |
 | `os-ui/tabs/agents/lib/output-draft.test.ts` | **new** — the predicates + the label/wiring tripwire |
 | `os-ui/tabs/agents/ui/SimpleBuilder.tsx` | one draft object, `Save output` label, `unsaved output` badge, `{dirty,valid,save}` reported up through `DefineStep`, the exit guard + prompt in `SimpleBuilder` |
+
+## DESIGN — the contracts
+
+### `core/kernel/domain-scope.ts` (new, pure, client-safe, imports nothing)
+
+The predicate both surfaces share. It lives in the kernel because `tabs/agents` and
+`tabs/software` both need it and a tab may not import another tab.
+
+```ts
+export type ScopeTier = 'personal' | 'domain' | 'marketplace';
+
+/** True when an item belongs in a feed narrowed to `target`.
+ *  `target === null` ⇒ no domain context: keep everything (today's behaviour).
+ *  marketplace ⇒ always kept (cross-domain discovery is the Marketplace's job).
+ *  a domainless item ⇒ always kept (unassigned artifacts show everywhere so an
+ *  admin can still domain-move them). */
+export function inDomainScope(
+  item: { scope: ScopeTier; domain?: string | null },
+  target: string | null,
+): boolean;
+
+/** `items.filter(i => inDomainScope(i, target))`, typed through. */
+export function narrowToDomainScope<T extends { scope: ScopeTier; domain?: string | null }>(
+  items: T[],
+  target: string | null,
+): T[];
+```
+
+### `tabs/agents/lib/grant-feed.ts` (new, pure)
+
+```ts
+/** What a lister contributes: the response shape PLUS the item's home domain. */
+export type GrantFeedInput = {
+  id: string; name: string; scope: ScopeTier;
+  /** The artifact's own domain; absent/'' ⇒ unassigned. NOT returned on the wire. */
+  domain?: string | null;
+  layers?: ('bronze' | 'silver' | 'gold')[];
+  folder?: string;
+};
+/** What the route returns per item (domain deliberately projected away). */
+export type GrantFeedItem = { id: string; name: string; scope: ScopeTier; layers?: …; folder?: string };
+export type GrantFeedFolder = {
+  path: string; scope: 'personal' | 'domain';
+  /** Set when this node exists ONLY because a live grant points at it from
+   *  outside the system's domain — the picker renders it with a warning. */
+  outsideDomain?: true;
+};
+
+export function buildGrantFeed(args: {
+  /** The already-DLS-scoped items of ONE kind, each carrying its own domain. */
+  items: GrantFeedInput[];
+  /** The SYSTEM's domain — `getSystem(id, principal).domain`. */
+  domain: string | null;
+  /** Explicit registry rows, already read with `{ activeDomain: domain }`. */
+  explicitFolders?: { path: string; scope: 'personal' | 'domain' }[];
+  /** The folder grants LIVE on this system, so a legacy out-of-domain one is re-admitted. */
+  grantedFolders?: { path: string; scope: 'personal' | 'domain' }[];
+  /** Foldered kinds only: return `folders`. */
+  withFolders?: boolean;
+}): { items: GrantFeedItem[]; folders?: GrantFeedFolder[] };
+```
+
+Order inside `buildGrantFeed`: narrow items → derive nodes via the **existing**
+`grantFolderNodes(explicit, narrowedItems)` (unchanged, still the only folder-node
+derivation) → append any `grantedFolders` entry the result does not already contain,
+flagged `outsideDomain: true`.
+
+### The route (`app/api/agents/systems/[id]/grants/available/route.ts`)
+
+```
+const sys = getSystem(id, principal);          // scope gate (403/404) AND the target domain
+… per-kind listers, each item mapped with `domain: <summary>.domain`
+listFolders(viewer, tab, scope, { activeDomain: sys.domain })   // like /api/folders
+buildGrantFeed({ items, domain: sys.domain, explicitFolders, grantedFolders, withFolders })
+```
+
+`grantedFolders` comes from `sys.system.grants[kind]` — each `ArtifactGrant.folder`
+(`{ path, scope }`). `operating-manual` and `connection(s)` have no folders; the manual feed
+is not narrowed at all (see above).
+
+### `tabs/software/lib/available-context.ts`
+
+`forKind` maps each row with its `domain` and filters through
+`narrowToDomainScope(rows, user.activeDomain ?? null)`; `foldersForKind` passes
+`{ activeDomain: user.activeDomain ?? null }` to `listFolders`. With no active domain both are
+identity — the documented unchanged case.
+
+### `tabs/agents/lib/output-draft.ts` (new, pure)
+
+```ts
+export type OutputDraft = {
+  kind: 'files' | 'data' | 'knowledge';
+  name: string;
+  scope: 'personal' | 'domain';
+  folder: string;
+};
+export const EMPTY_OUTPUT_DRAFT: OutputDraft; // { kind:'files', name:'', scope:'personal', folder:'/' }
+
+/** Any field differs from the empty draft ⇒ the row shows "unsaved output". */
+export function outputDraftDirty(draft: OutputDraft): boolean;
+/** Committable: a trimmed name AND a folder path ('/' counts — root is a destination). */
+export function outputDraftValid(draft: OutputDraft): boolean;
+```
 
 ## Guardrails for the execution
 
