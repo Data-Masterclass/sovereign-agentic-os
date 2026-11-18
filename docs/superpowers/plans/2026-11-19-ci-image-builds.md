@@ -160,3 +160,164 @@ blocks, and the two deploy commands.
    and the packages made visible to the cluster's puller.
 3. `git-daemon` has no tag trigger (it changes almost never); it is dispatch-only. Add
    `git-daemon-v*` if that stops being true.
+
+---
+
+## Design — the exact shapes (phase DESIGN, 2026-11-19)
+
+Everything below is the contract the IMPLEMENT commit must satisfy. Written out first because
+three of these four pieces have a failure mode that is silent, and one touches a production
+deploy path.
+
+### A · `build-images.yml` — the resolve step is the whole design
+
+```
+on:
+  push:    tags: [os-ui-v*, git-http-v*, dagster-v*]
+  workflow_dispatch:
+    inputs: { image: choice(os-ui|git-http|git-daemon|dagster), version: string }
+
+permissions: { contents: read, packages: write }
+
+jobs.build:
+  outputs: { image, version, ref, digest }
+  steps:
+    resolve  -> image, version, dockerfile, context, ref       (id: meta)
+    checkout
+    buildx
+    login    -> ghcr.io, username github.actor,
+                password ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+    build-load (os-ui only, push:false load:true)    \_ one buildx cache,
+    smoke      (os-ui only, the deploy.sh command)   /  two calls
+    build-push (push:true, provenance:false, platforms linux/amd64, cache type=gha)
+    summary  -> digest + the deploy command
+```
+
+`secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN` is the one trick that lets both owner options
+live in one file: in a `${{ }}` expression an **unset secret is the empty string**, which is
+falsy, so the `||` falls through to the built-in token. No `if:`, no second job, no error when
+the secret does not exist. `vars.IMAGE_REPO_PREFIX` behaves the same way, hence
+`${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}`.
+
+Resolve, in shell, because a matrix cannot express "one of four, chosen by the tag":
+
+| input | image | version |
+|---|---|---|
+| `GITHUB_REF_NAME=os-ui-v0.9.0` | `os-ui` | `0.9.0` |
+| `GITHUB_REF_NAME=dagster-v1.2.3` | `dagster` | `1.2.3` |
+| dispatch `{image: git-http, version: 1.0.1}` | `git-http` | `1.0.1` |
+
+Split on the LAST `-v`, so a hypothetical `os-ui-v2-v0.9.0` still resolves. Then the
+image name is looked up in a `case` that also yields the dockerfile and the context —
+and **exits 1 on an unknown image**, so a typo'd dispatch fails instead of building
+something arbitrary. `version` is refused unless it matches
+`^[A-Za-z0-9][A-Za-z0-9._-]*$` (a Docker tag), which also keeps a dispatch input out of
+the shell.
+
+Actions are pinned to commit SHAs, as `ci.yml` already does:
+`actions/checkout`, `docker/setup-buildx-action`, `docker/login-action`,
+`docker/build-push-action`.
+
+The smoke runs **before** the pushing build so a broken worker graph never reaches the
+registry. Because buildx caches to `type=gha`, the second call is a cache hit and costs
+seconds — the alternative (`push` then test then try to un-push) does not exist in a registry.
+
+### B · `deploy.sh` — the contract
+
+```
+usage: deploy.sh [--from-registry] [--verify-only] [--help] <version>
+
+env    IMAGE_FROM_REGISTRY=1     same as --from-registry
+       IMAGE_VERIFY_ONLY=1       same as --verify-only
+       IMAGE_REPO=<repo>         default ghcr.io/aborek/sovereign-os   (UNCHANGED)
+       SKIP_BUILD=1              unchanged: reuse an already-built local image
+       DEPLOY_REGISTRY_PROBE=cmd `cmd <ref>` prints sha256:… (tests / no-tool machines)
+       KUBE_CONTEXT NS REL WORK VALUES   unchanged
+```
+
+```
+IMG=$IMAGE_REPO/os-ui:$VERSION          # was a literal ghcr.io/aborek/…
+```
+
+Three branches where there was one `if`:
+
+```
+if from-registry        -> remote_digest "$IMG"   (no docker at all)
+elif SKIP_BUILD=1 && image present locally -> reuse, then smoke, then push
+else                    -> build, smoke, push
+```
+
+`remote_digest <ref>` — first tool that exists wins, and it must print exactly `sha256:…`:
+
+1. `DEPLOY_REGISTRY_PROBE` if set → `$DEPLOY_REGISTRY_PROBE <ref>`
+2. `crane digest <ref>`
+3. `skopeo inspect --format '{{.Digest}}' docker://<ref>`
+4. `curl` against the registry v2 API: `GET https://<host>/token?service=<host>&scope=repository:<path>:pull`
+   (basic-authed with `gh auth token` when `gh` is logged in), then
+   `HEAD https://<host>/v2/<path>/manifests/<tag>` with
+   `Accept: application/vnd.oci.image.index.v1+json, …manifest.v1+json, …docker.distribution.manifest.list.v2+json, …manifest.v2+json`
+   and read `docker-content-digest` from the response headers.
+5. none available → exit 1 naming all three, rather than deploying something unverified.
+
+`docker manifest inspect` is deliberately **absent**: it needs the daemon this mode exists to
+avoid.
+
+The helm call gains exactly one conditional argument and keeps every existing one:
+
+```
+helm … upgrade … -f "$VALUES" \
+  --set osUI.image.tag="$VERSION@$DIGEST" \
+  ${IMAGE_REPO_SET:+--set osUI.image.repository="$IMAGE_REPO/os-ui"} \
+  --force-conflicts --skip-schema-validation --timeout 20m
+```
+
+`IMAGE_REPO_SET` is set only when the operator passed `IMAGE_REPO`. With no `IMAGE_REPO` the
+command line is **byte-for-byte what it is today**, so a default deploy cannot be changed by
+this branch. The night-1 values derivation is not touched at all: it still carries the
+operator's `osUI.image.repository` and the dagster user-deployment repositories over from the
+live release, and `--set` only ever overrides on top of that.
+
+`--verify-only` exits after printing the ref and the digest, **before** the first `kubectl`.
+That ordering is the whole reason the mode is testable without a cluster.
+
+### C · the widened conflict-copy check
+
+```sh
+find .. \( -path '*/node_modules' -o -path '*/.next' -o -path '*/.git' \) -prune -o \
+        \( -name '* 2' -o -name '* 2.*' \) \( -type f -o -type d -o -type l \) -print -prune
+```
+
+`-print -prune` is the load-bearing part: print the match, then refuse to descend into it. On a
+duplicated `os-ui/node_modules 2` the old expression would have printed one line per vendored
+file; this prints one line, the directory. `-type l` is listed explicitly because a symlink is
+neither `f` nor `d`.
+
+`scripts/check-structure.mjs` gets the same rule as a second door, scoped and hard:
+
+```
+rule 7  CLOUD-SYNC-DUPLICATE   roots: os-ui/ charts/ scripts/ docs/
+        name matches /(^| )2$/ or / 2\.[^/]*$/ on the basename
+        never descends into node_modules | .next | a match | a dotted dir
+        not in structure-baseline.json  ->  count > 0 fails
+```
+
+### D · `CONTRIBUTING.md` → "Images: build in CI"
+
+Slots under "Operating this repo", after the Colima bullet it partly retires. Two fenced
+blocks, one per owner option, then the two deploy commands:
+
+```
+git tag os-ui-v<version> && git push public os-ui-v<version>     # CI builds and pushes
+IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>              # roll it out, no Docker
+```
+
+### Decisions taken here, and what they cost
+
+- **One job, not a matrix.** A tag names one image; a matrix would build four on every tag.
+- **`load: true` then `push: true` for os-ui only.** The other three images have no run-path
+  module graph to smoke — git-http is lighttpd + a CGI, git-daemon is a distro binary, dagster's
+  contract is covered by `pytest images/extensions/dagster/tests/`.
+- **No digest pinning of the pushed tag back into the chart.** `deploy.sh` resolves the digest
+  at deploy time; writing it into `values.yaml` would make every build a commit.
+- **`--verify-only` rather than a general `--dry-run`.** A dry run that stops somewhere in the
+  middle of a deploy is a lie about what was verified; this stops at one honest boundary.
