@@ -30,6 +30,7 @@ import { DATA_CHECK_RULES, type DataCheckRule } from '@tabs/data/lib/index';
 import { queryRun } from '@core/infra/governed';
 import { publishPromotionLive } from '@tabs/data/lib/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@core/policy/approvals';
+import { canApprove } from '@core/policy/roles';
 import { canBuildStage, canPassThrough, stageArtifact } from '@tabs/data/lib/panels';
 import { ingestAndRegisterBronze } from '@tabs/data/lib/ingest';
 import { buildStage, commitLayerVersion } from '@tabs/data/lib/build/server';
@@ -163,38 +164,51 @@ export const promotionTools: McpTool[] = [
         grants: (args.grants as Grant[]) || undefined,
       };
       const approvalKind = kind === 'dataset' ? 'dataset_promote' : 'file_promote';
-      // Don't file a duplicate pending request for the same asset.
+
+      // THE OWNER CHECK COMES FIRST, for both kinds. `request*Promotion` is the owner-only
+      // trigger and the documentation gate. The duplicate lookup used to run BEFORE it and
+      // return the whole pending Approval, so any authenticated principal — including a
+      // creator in another domain — could read a foreign asset's name, owner, domain and
+      // queued payload (its policy grants included) just by guessing an id while a request
+      // was open. The gate runs first now, and the dedup answers with the HANDLE only.
+      const req: PromotionRequest | FilePromotionRequest = kind === 'dataset'
+        ? requestDatasetPromotion(id, p, opts)
+        : requestFilePromotion(id, p, opts);
       const existing = enqueueDedup(approvalKind, id);
-      if (existing) return pendingHandle(existing, { artifactKind: kind, target: existing.detail, domain: existing.domain, already: true });
+      if (existing) {
+        return { ...pendingHandle(existing), artifactKind: kind, already: true };
+      }
 
       if (kind === 'dataset') {
-        const req: PromotionRequest = requestDatasetPromotion(id, p, opts);
+        const dsReq = req as PromotionRequest;
         const approval = enqueue({
           kind: 'dataset_promote',
-          title: `Promote “${req.datasetName}” to a data asset`,
-          detail: `${user.id} requests promoting ${req.datasetName} into ${req.target} (visibility: ${req.visibility}). A domain admin must approve.`,
+          title: `Promote “${dsReq.datasetName}” to a data asset`,
+          detail: `${user.id} requests promoting ${dsReq.datasetName} into ${dsReq.target} (visibility: ${dsReq.visibility}). A domain admin must approve.`,
           agent: user.id,
-          domain: req.domain,
+          domain: dsReq.domain,
           requestedBy: user.id,
           tool: 'data_promote',
-          payload: req as unknown as Record<string, unknown>,
+          payload: dsReq as unknown as Record<string, unknown>,
           approverRole: 'domain_admin',
+          scope: 'domain',
         });
-        return pendingHandle(approval, { artifactKind: kind, target: req.target, domain: req.domain });
+        return pendingHandle(approval, { artifactKind: kind, target: dsReq.target, domain: dsReq.domain });
       }
-      const req: FilePromotionRequest = requestFilePromotion(id, p, opts);
+      const fileReq = req as FilePromotionRequest;
       const approval = enqueue({
         kind: 'file_promote',
-        title: `Share “${req.fileName}” with the ${req.domain} domain`,
-        detail: `${user.id} requests promoting ${req.fileName} into ${req.target} (visibility: ${req.visibility}). A domain admin must approve.`,
+        title: `Share “${fileReq.fileName}” with the ${fileReq.domain} domain`,
+        detail: `${user.id} requests promoting ${fileReq.fileName} into ${fileReq.target} (visibility: ${fileReq.visibility}). A domain admin must approve.`,
         agent: user.id,
-        domain: req.domain,
+        domain: fileReq.domain,
         requestedBy: user.id,
         tool: 'file_promote',
-        payload: req as unknown as Record<string, unknown>,
+        payload: fileReq as unknown as Record<string, unknown>,
         approverRole: 'domain_admin',
+        scope: 'domain',
       });
-      return pendingHandle(approval, { artifactKind: kind, target: req.target, domain: req.domain });
+      return pendingHandle(approval, { artifactKind: kind, target: fileReq.target, domain: fileReq.domain });
     },
   },
   {
@@ -203,7 +217,7 @@ export const promotionTools: McpTool[] = [
     extraTabs: ['files'],
     minRole: 'domain_admin',
     description:
-      'APPLY a filed promotion request (dataset or file) — the Domain-admin/Admin half of the split. Path: the approve step of the Data/Files golden paths. Before: a creator filed `request_promotion`. Governance: domain_admin+ AND in the asset’s domain (both re-checked in-lib); a creator/builder is refused with a typed forbidden. Idempotency: an already-decided request returns a `conflict`.',
+      'APPLY a filed promotion request (dataset or file) — the Domain-admin/Admin half of the split. Path: the approve step of the Data/Files golden paths. Before: a creator filed `request_promotion`. Governance: the SAME per-item `canApprove` gate the Governance inbox uses — rank ≥ the item’s approver role AND in its scope, re-checked here and again in-lib; a creator/builder is refused with a typed forbidden. You may clear a rung-1 request you filed on your OWN artifact (otherwise an owner who is also the approver could never promote it), but NOT one raised by a parked agent run — that is decided in Governance so the write executes as the RUNNER. Idempotency: an already-decided request returns a `conflict`.',
     inputSchema: {
       type: 'object',
       properties: { approvalId: { type: 'string', description: 'The approval id from request_promotion.' } },
@@ -218,6 +232,20 @@ export const promotionTools: McpTool[] = [
       if (approval.status !== 'pending') fail(`Already ${approval.status}`, 409);
       if (approval.kind !== 'dataset_promote' && approval.kind !== 'file_promote') {
         fail('approve_promotion only applies dataset/file promotions', 400);
+      }
+      // A PARKED AGENT RUN IS NOT DECIDED HERE. An approval carrying a `runId` must be cleared
+      // through Governance, because `decide()` fires the resume hook that continues the run and
+      // executes the held call AS ITS RUNNER. Applying it here would perform the write as the
+      // APPROVER and leave the run parked forever — the escalation silently re-attributed.
+      if (approval.runId) {
+        fail('This request came from a parked agent run — decide it in Governance (decide_approval), so the write executes as the run’s own runner.', 409);
+      }
+      // The per-item gate, identical to the Governance inbox: rank ≥ the item's approver role,
+      // in scope, and four-eyes except for the rung-1 audience carve-out. The `minRole` floor
+      // on this tool is not that gate — it cannot see the item.
+      if (!canApprove({ id: user.id, role: user.role, domains: user.domains }, approval)) {
+        const need = approval.scope === 'tenant' ? 'a platform Admin' : `a Domain admin of ${approval.domain}`;
+        fail(`This request needs ${need}`, 403);
       }
       const p = P(user);
       // Apply BEFORE recording the decision so a blocked gate leaves it pending.

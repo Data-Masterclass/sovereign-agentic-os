@@ -78,14 +78,29 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
 /**
- * What the shared <PromoteButton> polls on mount. There is NEVER a pending metric promotion
- * request to report: nothing files one any more, because nothing could apply one. Answering
- * `{ request: null }` keeps the control's contract (it reads `data.request`) and keeps it
- * honest — an "awaiting approval" pill over a request that does not exist is the worst of the
- * three possible answers.
+ * What the shared <PromoteButton> polls on mount. There is never a pending metric promotion
+ * request — nothing files one, because nothing could apply one — so `request` is always null.
+ *
+ * But answering ONLY that left the control enabled and every click a 409. A gate the UI cannot
+ * see is a button that exists to fail, so the Personal tier reports its `gate` with the reason
+ * and the dataset to act on: the caller disables the control and shows the sentence instead of
+ * discovering it on click. Same shape the Data tab's promote GET already returns
+ * (`{ gate: { ok, reason } }`), so one control can read both.
  */
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
-  void user; // gate enforces auth; user not needed for the read
-  void params;
-  return NextResponse.json({ request: null });
+  const { id } = params;
+  const record = getMetric(id, user); // view gate; an unseeable metric is not_found
+  if (record.tier !== 'personal') {
+    return NextResponse.json({ request: null, gate: { ok: true } });
+  }
+  return NextResponse.json({
+    request: null,
+    gate: {
+      ok: false,
+      reason:
+        `A metric's audience is its dataset's audience — promote the dataset “${record.dataset.name}” ` +
+        'to Domain in the Data tab and this metric follows.',
+      datasetId: record.dataset.id,
+    },
+  });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

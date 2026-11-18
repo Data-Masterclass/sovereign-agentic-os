@@ -5,48 +5,51 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { getDataset } from '@tabs/data/lib/store';
-import { promoteDatasetOrPropose } from '@tabs/data/lib/publish-server';
+import { getDataset, requestPromotion } from '@tabs/data/lib/store';
 import { transparencyGate } from '@tabs/data/lib/transparency';
-import { enqueue, listApprovals } from '@core/policy/approvals';
+import { canPromote } from '@core/kernel/session';
+import { decide, enqueue, listApprovals, recordEffect } from '@core/policy/approvals';
+import { applyEffect } from '@core/policy/effects';
+import { buildEffectDeps } from '@core/policy/ladder';
+import { record as audit } from '@core/policy/audit';
 import type { DataVisibility, Grant } from '@tabs/data/lib/index';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Promotion → Data Asset, separation-of-duties (data-architecture-model.md):
- *   POST  — the OWNER (Creator) REQUESTS promotion; we validate ownership + the
- *           transparency gate, then enqueue a `dataset_promote` into the SHARED
- *           approvals queue. A domain admin approves it in Governance (which
- *           applies the dataset→asset move into Trino). The Creator cannot self-promote.
- *   GET   — the request's status for this dataset (so the stepper shows pending/approved).
+ * Promotion → Data Asset, separation-of-duties (data-architecture-model.md).
+ *
+ * POST response shape — exactly one of these three, and every caller (the Data builder, the
+ * shared <PromoteButton>, a bulk counter) must branch on `promoted` / `requested`:
+ *   `{ requested: true,  promoted: false, approval }`        a request was FILED
+ *   `{ requested: true,  already: true,   approvalId }`      one was already open (handle only)
+ *   `{ promoted: true,   requested: false, approvalId, applied, dataset, publish }`
+ *                                                            the owner-approver's one shot
+ * A refusal is `{ error }` with the gate's own status (400/403/409) or 502 when the physical
+ * publish failed, in which case the request is left PENDING and the tier unchanged.
+ *
+ * GET — the transparency gate + this dataset's latest request, for the stepper.
  */
 export const POST = withRoute<{ id: string }, { visibility?: DataVisibility; grants?: Grant[] }>(async ({ user, params, body }) => {
   const { id } = params;
 
-  // Avoid a duplicate pending request for the same dataset.
+  // THE OWNER CHECK COMES FIRST. `requestPromotion` is the owner-only trigger and the
+  // Silver/Gold + transparency gate, and it must run BEFORE the duplicate lookup: a dedup that
+  // answered first handed any authenticated caller the full pending Approval — dataset name,
+  // owner, domain and the queued payload including its policy grants — for any id they could
+  // guess while a request was open. Its refusals are byte-identical on both branches below.
+  const request = requestPromotion(id, user, { visibility: body.visibility, grants: body.grants });
+
+  // Now that the caller is proven to be the owner, a second filing is idempotent. Return the
+  // HANDLE only — the record itself belongs to the Governance inbox, which is scope-filtered.
   const existing = listApprovals({ status: 'pending' }).find(
     (a) => a.kind === 'dataset_promote' && a.payload?.datasetId === id,
   );
-  if (existing) return NextResponse.json({ requested: true, approval: existing, already: true });
+  if (existing) return NextResponse.json({ requested: true, already: true, approvalId: existing.id });
 
-  // PROMOTE-OR-PROPOSE. An owner who ALSO holds the rung-1 authority runs the full physical
-  // publish as themself; everyone else files. `canApprove` refuses the requester whatever
-  // their rank, so filing for an owner-approver would strand their dataset in My. Gates run in
-  // the same order either way (owner-only trigger → Silver/Gold → transparency → publish), and
-  // a failed materialization leaves the tier untouched exactly as on the approval path.
-  const out = await promoteDatasetOrPropose(id, user, { visibility: body.visibility, grants: body.grants });
-  if (out.promoted) {
-    if (!out.outcome.ok) {
-      return NextResponse.json(
-        { error: `Physical publish FAILED — the dataset stays private (tier unchanged): ${out.outcome.error}`, publish: out.outcome },
-        { status: 502 },
-      );
-    }
-    return NextResponse.json({ promoted: true, dataset: out.outcome.dataset, publish: { ok: true, fqn: out.outcome.fqn, mode: out.outcome.mode } });
-  }
-
-  const request = out.request;
+  // ONE RECORD, ALWAYS. Even the owner-approver's one-shot is enqueued first, so the Governance
+  // queue and the audit trail show every audience move — an un-recorded promotion is invisible
+  // to the people the queue exists for.
   const approval = enqueue({
     kind: 'dataset_promote',
     title: `Promote "${request.datasetName}" to a data asset`,
@@ -62,8 +65,34 @@ export const POST = withRoute<{ id: string }, { visibility?: DataVisibility; gra
     approverRole: 'domain_admin',
     scope: 'domain',
   });
-  // `requested: true` is the shape every other kind's promote route answers.
-  return NextResponse.json({ requested: true, approval });
+
+  // A caller WITHOUT the rung-1 authority stops here: the request is filed and a domain admin
+  // decides it. `requested: true` is the shape every other kind's promote route answers.
+  if (!canPromote(user.role, 'Personal')) {
+    return NextResponse.json({ requested: true, promoted: false, approval });
+  }
+
+  // THE OWNER-APPROVER'S ONE SHOT. It runs through the SAME effect seam a Governance decision
+  // runs — the governed CTAS as this identity, the independent domain-table probe, the OPA push
+  // and the conformance check — then closes its own record out and audits it. Four-eyes bought
+  // no second pair of eyes here; it only made the dataset unpromotable.
+  const effect = await applyEffect(approval, { id: user.id, role: user.role, domains: user.domains }, buildEffectDeps());
+  if (!effect.ok) {
+    // Leave the request PENDING and retriable, exactly as the queue path does.
+    recordEffect(approval.id, { applied: effect.applied, live: false, publish: effect.publish });
+    return NextResponse.json({ error: effect.applied, publish: effect.publish, approvalId: approval.id }, { status: 502 });
+  }
+  decide(approval.id, 'approve', user.id);
+  recordEffect(approval.id, { applied: effect.applied, live: effect.live, publish: effect.publish });
+  audit({ actor: user.id, action: effect.audit.action, subject: effect.audit.subject, domain: approval.domain, reason: effect.audit.reason, detail: { approvalId: approval.id, ...effect.audit.detail } });
+  return NextResponse.json({
+    promoted: true,
+    requested: false,
+    approvalId: approval.id,
+    applied: effect.applied,
+    dataset: getDataset(id, user),
+    publish: effect.publish,
+  });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
 
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {

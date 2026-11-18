@@ -9,9 +9,9 @@ import { applyEffect, type EffectDeps, type EffectResult } from '@core/policy/ef
 import { record as auditRecord } from '@core/policy/audit';
 import { publishPromotionLive } from '@tabs/data/lib/publish-server';
 import { getWorkflow } from '@tabs/knowledge/lib/index';
-import { getPersonalKnowledge, decertifyPersonalKnowledge, unsharePersonalKnowledge } from '@tabs/knowledge/lib/personal-store';
+import { getPersonalKnowledge, getPersonalKnowledgeForGovernance, decertifyPersonalKnowledge, unsharePersonalKnowledge } from '@tabs/knowledge/lib/personal-store';
 import { freezeCertifiedKnowledgeBundle } from '@tabs/knowledge/lib/okf-freeze';
-import { getDashboardForGovernance, demoteDashboard } from '@tabs/dashboards/lib/index';
+import { getDashboard, getDashboardForGovernance, demoteDashboard } from '@tabs/dashboards/lib/index';
 import { getConnectionForUser, promoteConnection, demoteConnection, approveOnce } from '@tabs/connections/lib/index';
 import { approveExposureActions } from '@tabs/connections/lib/exposures';
 import { getArtifact, promoteArtifact, demoteArtifact } from '@core/kernel/artifacts';
@@ -80,22 +80,32 @@ function normVisibility(v: string): 'Personal' | 'Shared' | 'Marketplace' {
  * caller may at least see it (an unseeable id is a uniform not_found — no
  * existence leak). Reuses each tab's own governed getter where it scope-checks.
  */
-export async function resolveLadderArtifact(kind: LadderKind, id: string, user: CurrentUser): Promise<Resolved> {
+export async function resolveLadderArtifact(
+  kind: LadderKind,
+  id: string,
+  user: CurrentUser,
+  opts: { forGovernanceAct?: boolean } = {},
+): Promise<Resolved> {
   const p = { id: user.id, domains: user.domains, role: user.role };
+  const forGovernanceAct = opts.forGovernanceAct === true;
   switch (kind) {
     case 'knowledge': {
       const w = getWorkflow(id, p); // throws 403/404 when unseeable
       return { owner: w.owner, domain: w.domain, name: w.title, visibility: w.visibility };
     }
     case 'personal_knowledge': {
-      const e = getPersonalKnowledge(id, p); // throws 403/404 when unseeable
+      // Plain view gate by default (a Personal entry is owner-only, and stays so); the widened
+      // governance read only for the approve-half — the same opt-in as `dashboard`.
+      const e = forGovernanceAct ? getPersonalKnowledgeForGovernance(id, p) : getPersonalKnowledge(id, p);
       return { owner: e.owner, domain: e.domain, name: e.title, visibility: e.visibility };
     }
     case 'dashboard': {
-      // View gate UNIONED with the manage scope: a Personal dashboard is owner-visible
-      // only, so the plain view gate refused the very domain admin the ladder appoints as
-      // its approver. Never narrower than `getDashboard`.
-      const d = getDashboardForGovernance(id, p); // throws 403/404
+      // The PLAIN view gate by default — a Personal dashboard stays owner-only here, so
+      // resolving one is not a way for a domain admin to read its name. The widened
+      // governance read is reached ONLY through `opts.forGovernanceAct`, which the two call
+      // sites that genuinely need it pass: the approve-half of a request the owner filed
+      // (`promoteThroughSeam`) and the effect's own `transitionDashboard`.
+      const d = forGovernanceAct ? getDashboardForGovernance(id, p) : getDashboard(id, p); // throws 403/404
       return { owner: d.owner, domain: d.domain, name: d.spec.name, visibility: d.tier };
     }
     case 'connection': {
@@ -254,7 +264,10 @@ export async function promoteThroughSeam(
   user: CurrentUser,
   opts: { mode?: string; rung?: 'promote' | 'certify' } = {},
 ): Promise<EffectResult & { rung: 'promote' | 'certify'; artifact: Resolved }> {
-  const art = await resolveLadderArtifact(kind, id, user);
+  // `forGovernanceAct`: this entry IS the approve-half (the ladder's own one-shot and the
+  // re-pointed UI promote buttons), so the appointed approver may read what they are deciding.
+  // Filing (`fileArtifactPromotion`) and certification-filing deliberately do NOT pass it.
+  const art = await resolveLadderArtifact(kind, id, user, { forGovernanceAct: true });
   const tier = normVisibility(art.visibility);
   if (tier === 'Marketplace') fail(`This ${kind} is already certified`, 409);
   const rung: 'promote' | 'certify' = tier === 'Personal' ? 'promote' : 'certify';
@@ -291,10 +304,44 @@ export async function promoteThroughSeam(
     createdAt: new Date().toISOString(),
   };
   const effect = await applyEffect(synthetic, { id: user.id, role: user.role, domains: user.domains }, buildEffectDeps());
-  // If this satisfied a real filed request, close it out so it doesn't linger.
-  if (realPending && effect.ok) {
-    decide(realPending.id, 'approve', user.id);
-    recordEffect(realPending.id, { applied: effect.applied, live: effect.live, publish: effect.publish });
+
+  // THE ONE-SHOT MUST LEAVE THE SAME TRACE AS A DECISION. `applyEffect` returns the audit entry
+  // it wants written; the queue path writes it, and this path used to DROP it — so an audience
+  // move made by an owner-approver (or by one of the UI direct-promote buttons) appeared in no
+  // audit log and in no Governance queue. An un-recorded promotion is invisible to exactly the
+  // people the queue exists for, which is worse than a noisy one.
+  if (effect.ok) {
+    if (realPending) {
+      // It satisfied a request somebody really filed: close that record out.
+      decide(realPending.id, 'approve', user.id);
+      recordEffect(realPending.id, { applied: effect.applied, live: effect.live, publish: effect.publish });
+    } else {
+      // Nobody filed one, so MINT the record and self-approve it, with `source: 'ladder'` and
+      // `decidedBy` saying who did it. The inbox then shows what happened and by whom.
+      const minted = enqueue({
+        kind: synthetic.kind,
+        title: synthetic.title,
+        detail: synthetic.detail,
+        agent: user.id,
+        domain: art.domain,
+        requestedBy: user.id,
+        tool: synthetic.tool,
+        payload: synthetic.payload,
+        approverRole: synthetic.approverRole,
+        scope: synthetic.scope,
+        source: 'ladder',
+      });
+      decide(minted.id, 'approve', user.id);
+      recordEffect(minted.id, { applied: effect.applied, live: effect.live, publish: effect.publish });
+    }
+    auditRecord({
+      actor: user.id,
+      action: effect.audit.action,
+      subject: effect.audit.subject,
+      domain: art.domain,
+      reason: effect.audit.reason,
+      detail: { ...effect.audit.detail, oneShot: true, rung },
+    });
   }
   return { ...effect, rung, artifact: art };
 }

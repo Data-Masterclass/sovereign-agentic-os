@@ -169,6 +169,32 @@ function requireView(id: string, user: Principal): PersonalKnowledgeRecord {
   return rec;
 }
 
+/**
+ * Read an entry for a GOVERNANCE act on the AUDIENCE ladder — the view gate UNIONED with the
+ * ladder's appointed approvers for the entry's domain (an in-domain `domain_admin`, or a
+ * platform `admin`). The exact twin of `getDashboardForGovernance`, for the same reason.
+ *
+ * `canView` keeps a Personal entry owner-only — deliberately, since private know-how is nobody
+ * else's business, and unlike a workflow draft not even an in-domain Builder may read it. But
+ * `promotePersonalKnowledge` read through that gate, so the domain admin who must approve a
+ * filed `artifact_promote` could not see the record: every personal-knowledge promotion was
+ * fileable and then permanently unapprovable ("Not permitted to view this knowledge entry"),
+ * and the owner could not decide it either (four-eyes, for the rung-1 carve-out's own reasons —
+ * the owner here is a creator). The entry could not leave My at all.
+ *
+ * THE OWNER'S FILED REQUEST IS THE CONSENT. A Personal entry only reaches this function because
+ * its owner asked for it to be shared (`fileArtifactPromotion` is owner-only, and the one-shot
+ * admits a non-owner only as the approve-half of a request that already exists). Never narrower
+ * than `canView`; the list and read surfaces are untouched.
+ */
+export function getPersonalKnowledgeForGovernance(id: string, user: Principal): PersonalKnowledgeRecord {
+  const rec = get(id);
+  if (canView(rec, user)) return rec;
+  const isLadderApprover = user.role === 'admin' || (user.role === 'domain_admin' && user.domains.includes(rec.domain));
+  if (isLadderApprover) return rec;
+  fail('Not permitted to view this knowledge entry', 403);
+}
+
 function requireEdit(id: string, user: Principal): PersonalKnowledgeRecord {
   const rec = get(id);
   if (!canEdit(rec, user)) fail('Not permitted to edit this knowledge entry', 403);
@@ -352,8 +378,9 @@ export function restorePersonalKnowledgeVersion(id: string, user: Principal, ver
 /** Personal → Shared. Domain admin+ only (the effect seam already enforced SoD). */
 export function promotePersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
   if (!roleAtLeast(user.role, 'domain_admin')) fail('Only domain admins and admins can promote knowledge', 403);
-  // Approver authority is the role gate above — approvers need not own the entry.
-  const rec = requireView(id, user);
+  // Approver authority is the role gate above — approvers need not own the entry, and a Personal
+  // entry is owner-only to VIEW, so the governance read is what makes a filed request appliable.
+  const rec = getPersonalKnowledgeForGovernance(id, user);
   if (rec.visibility !== 'Personal') fail('This knowledge is already promoted', 409);
   rec.visibility = 'Shared';
   rec.updatedAt = now();
@@ -364,7 +391,7 @@ export function promotePersonalKnowledge(id: string, user: Principal): PersonalK
 /** Shared → Marketplace. Admin only. */
 export function certifyPersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
   if (!roleAtLeast(user.role, 'admin')) fail('Only admins can certify knowledge to the marketplace', 403);
-  const rec = requireView(id, user);
+  const rec = getPersonalKnowledgeForGovernance(id, user);
   if (rec.visibility === 'Marketplace') fail('This knowledge is already certified', 409);
   if (rec.visibility !== 'Shared') fail('Promote this knowledge to the domain before certifying', 409);
   rec.visibility = 'Marketplace';

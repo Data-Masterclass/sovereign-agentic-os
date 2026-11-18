@@ -34,6 +34,9 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc, type JsonRpcResponse, type ToolError } from '@core/mcp/server';
 import { __resetApprovals, enqueue, getApproval, listApprovals, type Approval } from '@core/policy/approvals';
 import { livePin } from '@core/infra/lifecycle-pins';
+import { createArtifact, getArtifact } from '@core/kernel/artifacts';
+import { search as auditSearch, __resetAudit } from '@core/policy/audit';
+import { canApprove } from '@core/policy/roles';
 
 // --------------------------------------------------------------- principals ---
 /** The owner of almost everything below: a creator, who may only PROPOSE. */
@@ -72,8 +75,26 @@ async function refusal(u: CurrentUser, n: string, a: Record<string, unknown> = {
   return (r.structuredContent as { error: ToolError }).error;
 }
 
+/** Read one artefact's AUDIENCE back, whichever door it has. */
+async function audienceOf(k: KindSpec, id: string, as: CurrentUser): Promise<string> {
+  if ('kernel' in k.read) return String((await getArtifact(id))?.visibility ?? '');
+  const row = await call<Record<string, unknown>>(as, k.read.tool, { [k.read.arg]: id });
+  return String(row[k.read.field]);
+}
+
 const UI = dirname(dirname(dirname(fileURLToPath(import.meta.url)))); // …/os-ui
 const src = (rel: string): string => readFileSync(join(UI, rel), 'utf8');
+
+/**
+ * The same file with every comment removed. A tripwire that matches prose can be satisfied by
+ * writing the prose — two of these were, until this helper existed — so every pattern below is
+ * matched against CODE: an identifier, a property name or a status code.
+ */
+function code(rel: string): string {
+  return src(rel)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:\\])\/\/[^\n]*/g, '$1');
+}
 
 type Filed = { status?: string; requestId?: string; approvalId?: string; kind?: string; promoted?: boolean };
 
@@ -87,7 +108,7 @@ type KindSpec = {
   create: (owner: CurrentUser, name: string) => Promise<string>;
   /** Who may create this kind at all (connections need a Builder). */
   owner: CurrentUser;
-  read: { tool: string; arg: string; field: 'visibility' | 'tier' };
+  read: { tool: string; arg: string; field: 'visibility' | 'tier' } | { kernel: 'artifact' };
   /** The audience values this kind persists, in ladder order. */
   audience: { my: string; domain: string; company: string };
   approvalKind: Approval['kind'];
@@ -138,6 +159,29 @@ const LADDER: KindSpec[] = [
     approvalKind: 'artifact_promote',
   },
   {
+    // Connections need a Builder to create at all, so BEN owns this one — which also proves a
+    // builder OWNER proposes rather than approving (he is below the rung-1 authority).
+    kind: 'connection',
+    lifecycleKind: 'connection',
+    owner: ben,
+    create: async (o, n) =>
+      (await call<{ id: string }>(o, 'create_connection', { name: n, template: 'generic-api', endpoint: 'https://api.example.com', credential: 'tok' })).id,
+    read: { tool: 'get_connection', arg: 'connId', field: 'visibility' },
+    audience: { my: 'Personal', domain: 'Shared', company: 'Certified' },
+    approvalKind: 'artifact_promote',
+  },
+  {
+    // A kernel artifact: created through `@core/kernel/artifacts` (core, so no tab import) and
+    // read back the same way — it has no MCP getter of its own.
+    kind: 'artifact',
+    lifecycleKind: 'app',
+    owner: cara,
+    create: async (o, n) => (await createArtifact(o, { type: 'dataset', name: n })).id,
+    read: { kernel: 'artifact' },
+    audience: { my: 'Personal', domain: 'Shared', company: 'Certified' },
+    approvalKind: 'artifact_promote',
+  },
+  {
     kind: 'file',
     lifecycleKind: 'knowledge', // files have no lifecycle kind of their own; the pin must stay empty regardless
     owner: cara,
@@ -174,9 +218,10 @@ test('matrix (b,c): every kind refuses a NON-owner trigger by name, and never le
   __resetApprovals();
   for (const k of LADDER) {
     const id = await k.create(k.owner, `nonowner-${k.kind}`);
-    // ben can SEE nothing personal of cara's, but he is in the domain: the refusal must be
-    // about OWNERSHIP, never a silent success.
-    const e = await refusal(ben, 'request_promotion', { kind: k.kind, id });
+    // An in-domain NON-owner (whoever that is for this kind — connections are owned by ben,
+    // everything else by cara) must be refused about OWNERSHIP, never silently succeed.
+    const other = k.owner.id === ben.id ? cara : ben;
+    const e = await refusal(other, 'request_promotion', { kind: k.kind, id });
     assert.match(
       e.reason,
       /owner can (request its promotion|promote it directly)|[Nn]ot permitted|not authorized|not found/i,
@@ -246,8 +291,7 @@ test('matrix (e): the domain admin APPROVES and the audience flips to Domain —
   for (const k of LADDER) {
     __resetApprovals();
     const id = await k.create(k.owner, `approve-${k.kind}`);
-    const before = await call<Record<string, unknown>>(k.owner, k.read.tool, { [k.read.arg]: id });
-    assert.equal(before[k.read.field], k.audience.my, `${k.kind}: starts in My`);
+    assert.equal(await audienceOf(k, id, k.owner), k.audience.my, `${k.kind}: starts in My`);
     const pinBefore = await livePin(k.lifecycleKind, id);
 
     const filed = await call<Filed>(k.owner, 'request_promotion', { kind: k.kind, id });
@@ -258,8 +302,7 @@ test('matrix (e): the domain admin APPROVES and the audience flips to Domain —
     assert.equal(decided.decided, 'approved', `${k.kind}: the domain admin can decide`);
     assert.equal(decided.effect.ok, true, `${k.kind}: the effect ran — ${decided.effect.applied}`);
 
-    const after = await call<Record<string, unknown>>(k.owner, k.read.tool, { [k.read.arg]: id });
-    assert.equal(after[k.read.field], k.audience.domain, `${k.kind}: the audience is now Domain`);
+    assert.equal(await audienceOf(k, id, k.owner), k.audience.domain, `${k.kind}: the audience is now Domain`);
     assert.equal(getApproval(filed.requestId!)!.status, 'approved', `${k.kind}: the request is closed out`);
     assert.ok(getApproval(filed.requestId!)!.effect?.applied, `${k.kind}: the card records what the approval did`);
 
@@ -286,8 +329,7 @@ test('matrix (g): rung 2 — the domain files, only a platform ADMIN certifies t
     assert.match(e.reason, /platform Admin|your own request/i, `${k.kind}: certification needs a platform admin (${e.reason})`);
 
     await call(ada, 'decide_approval', { requestId: cert.requestId!, decision: 'approve' });
-    const after = await call<Record<string, unknown>>(k.owner, k.read.tool, { [k.read.arg]: id });
-    assert.equal(after[k.read.field], k.audience.company, `${k.kind}: the audience is now Company`);
+    assert.equal(await audienceOf(k, id, k.owner), k.audience.company, `${k.kind}: the audience is now Company`);
   }
 });
 
@@ -305,8 +347,7 @@ test('matrix (d): an owner who IS the approver is never dead-ended — files, th
 
     const decided = await call<{ decided: string }>(dana, 'decide_approval', { requestId: filed.requestId!, decision: 'approve' });
     assert.equal(decided.decided, 'approved', `${k.kind}: the owner-approver can clear their own audience request`);
-    const after = await call<Record<string, unknown>>(dana, k.read.tool, { [k.read.arg]: id });
-    assert.equal(after[k.read.field], k.audience.domain, `${k.kind}: the owner-approver's asset really reached Domain`);
+    assert.equal(await audienceOf(k, id, dana), k.audience.domain, `${k.kind}: the owner-approver's asset really reached Domain`);
     assert.equal(listApprovals({ status: 'pending' }).length, 0, `${k.kind}: nothing left pending`);
   }
 });
@@ -355,14 +396,6 @@ test('matrix (d): the self-decide carve-out is for AUDIENCE moves only — rank 
   );
 });
 
-test('tripwire: the dataset and file promote routes offer the owner-approver a one-shot', () => {
-  assert.match(src('app/api/files/[id]/promote/route.ts'), /promoteFileOrPropose/, 'the Files promote route must use promote-or-propose');
-  assert.match(src('app/api/data/datasets/[id]/promote/route.ts'), /promoteDatasetOrPropose/, 'the Data promote route must use promote-or-propose');
-  for (const rel of ['app/api/files/[id]/promote/route.ts', 'app/api/data/datasets/[id]/promote/route.ts']) {
-    assert.match(src(rel), /requested: true/, `${rel}: a filed request must answer { requested: true } like every other kind`);
-  }
-});
-
 test('matrix (d): the one-shot path still enforces the documentation gate', async () => {
   __resetApprovals();
   // dana is the owner AND the approver, but the file is undocumented: the SAME refusal.
@@ -382,8 +415,7 @@ test('matrix: a dataset files a domain_admin rung-1 request, and no creator can 
   await call(cara, 'add_dataset_version', { datasetId: ds.id, layer: 'silver', body: 'select 1 as a from bronze' });
   await call(cara, 'document_dataset', { datasetId: ds.id, description: 'One row.', columns: [{ name: 'a', description: 'A' }] });
 
-  // A NON-owner cannot file — checked BEFORE anything is filed, because the dedup branch
-  // would otherwise hand ben the owner's existing pending handle.
+  // A NON-owner cannot file.
   assert.match(
     (await refusal(ben, 'request_promotion', { kind: 'dataset', id: ds.id })).reason,
     /owner can request its promotion/i,
@@ -436,6 +468,171 @@ test('matrix: a dataset owner who IS the approver files, decides, and the publis
   assert.equal(after.tier, 'asset', 'the tier flipped only after the publish succeeded');
 });
 
+
+// ============ H1: A PENDING REQUEST IS NOT A PUBLIC RECORD ====================
+
+test('H1: the dedup lookup can never serve a foreign principal the pending Approval', async () => {
+  for (const kind of ['file', 'dataset'] as const) {
+    __resetApprovals();
+    // cara owns a documented asset and files a request, so one IS pending.
+    const id = kind === 'file'
+      ? (await call<{ id: string }>(cara, 'upload_file', { name: 'secret-plan.md', text: 'x', description: 'Acquisition plan.', tags: ['secret'] })).id
+      : await (async () => {
+          const ds = await call<{ id: string }>(cara, 'create_dataset', { name: 'Payroll', columns: [{ name: 'a', description: 'A' }] });
+          await call(cara, 'add_dataset_version', { datasetId: ds.id, layer: 'bronze' });
+          await call(cara, 'add_dataset_version', { datasetId: ds.id, layer: 'silver', body: 'select 1 as a from bronze' });
+          await call(cara, 'document_dataset', { datasetId: ds.id, description: 'Pay.', columns: [{ name: 'a', description: 'A' }] });
+          return ds.id;
+        })();
+    const filed = await call<Filed>(cara, 'request_promotion', { kind, id });
+    assert.equal(filed.status, 'pending');
+
+    // Every other principal POSTing that id must be REFUSED — the owner gate runs before the
+    // dedup, so there is no response that could carry the record's name, owner or payload.
+    for (const stranger of [dan, bob, ben, dana, ada]) {
+      const r = await raw(stranger, 'request_promotion', { kind, id });
+      assert.equal(r.isError, true, `${kind}: ${stranger.id} must be refused while a request is pending`);
+      const e = (r.structuredContent as { error: ToolError }).error;
+      assert.match(e.reason, /owner can request its promotion|not found|already/i, `${kind}: ${stranger.id} got "${e.reason}"`);
+      const blob = JSON.stringify(r);
+      for (const leak of ['secret-plan', 'Payroll', 'grantee', 'fileId', 'datasetId']) {
+        assert.ok(!blob.includes(leak), `${kind}: the refusal to ${stranger.id} leaked "${leak}"`);
+      }
+    }
+
+    // The OWNER's second filing is idempotent and returns the HANDLE only — no record fields.
+    const again = await call<Filed & Record<string, unknown>>(cara, 'request_promotion', { kind, id });
+    assert.equal(again.requestId, filed.requestId, `${kind}: idempotent for the owner`);
+    assert.equal(again.already, true);
+    const ownerBlob = JSON.stringify(again);
+    assert.ok(!ownerBlob.includes('secret-plan') && !ownerBlob.includes('Payroll'), `${kind}: even the owner's dedup answer is a handle, not the record`);
+    assert.equal(listApprovals({ status: 'pending' }).length, 1, `${kind}: still exactly one request`);
+  }
+});
+
+// ============ H2: NO AUDIENCE MOVE WITHOUT A RECORD AND AN AUDIT ==============
+
+test('H2: the ladder one-shot writes an audit entry AND a self-approved queue record', async () => {
+  __resetApprovals();
+  __resetAudit();
+  // dana owns a workflow and holds the rung-1 authority, so `publish_knowledge` is a one-shot
+  // through the ladder seam — the path that used to move the audience and leave no trace.
+  const wf = await call<{ id: string }>(dana, 'author_knowledge', { title: 'One-shot' });
+  await call(dana, 'publish_knowledge', { workflowId: wf.id });
+
+  const rows = listApprovals({});
+  assert.equal(rows.length, 1, 'the one-shot minted exactly one queue record');
+  assert.equal(rows[0].kind, 'artifact_promote');
+  assert.equal(rows[0].status, 'approved', 'and self-approved it');
+  assert.equal(rows[0].decidedBy, dana.id, 'the record names who did it');
+  assert.equal(rows[0].source, 'ladder');
+  assert.ok(rows[0].effect?.applied, 'and records what it applied');
+
+  const log = auditSearch({ actor: dana.id });
+  assert.ok(log.length >= 1, 'the one-shot is in the audit log');
+  assert.ok(
+    log.some((e) => e.action === 'approve' && /knowledge promote approved/i.test(e.reason)),
+    `the audit entry is the effect's own: ${log.map((e) => e.reason).join(' | ')}`,
+  );
+});
+
+test('H2: an owner-approver decision is recorded and audited the same way', async () => {
+  __resetApprovals();
+  __resetAudit();
+  const f = await call<{ id: string }>(dana, 'upload_file', { name: 'own.md', text: 'x', description: 'Mine.', tags: ['t'] });
+  const filed = await call<Filed>(dana, 'request_promotion', { kind: 'file', id: f.id });
+  await call(dana, 'decide_approval', { requestId: filed.requestId!, decision: 'approve' });
+  const rec = getApproval(filed.requestId!)!;
+  assert.equal(rec.status, 'approved');
+  assert.equal(rec.decidedBy, dana.id);
+  assert.ok(rec.effect?.applied, 'the record carries what was applied');
+  assert.ok(auditSearch({ actor: dana.id }).some((e) => e.action === 'approve'), 'and it is audited');
+});
+
+// ============ DECISION: FOUR-EYES STAYS AT COMPANY ===========================
+
+test('DECISION: the self-decide carve-out does NOT extend to the Company rung', async () => {
+  __resetApprovals();
+  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'company-rung' });
+  const filed = await call<Filed>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
+  await call(dana, 'decide_approval', { requestId: filed.requestId!, decision: 'approve' });
+
+  // ada is a platform admin AND the filer. Rung 2 is tenant-scoped and company-wide, so
+  // four-eyes holds: a lone admin may not file and certify their own artefact.
+  const cert = await call<Filed>(ada, 'request_certification', { kind: 'knowledge', id: wf.id });
+  const e = await refusal(ada, 'decide_approval', { requestId: cert.requestId!, decision: 'approve' });
+  assert.match(e.reason, /cannot approve your own request/i, `got: ${e.reason}`);
+  assert.equal(getApproval(cert.requestId!)!.status, 'pending', 'nothing was certified');
+
+  // The predicate itself says so, for both certify kinds.
+  for (const kind of ['promote_certify', 'dataset_certify'] as const) {
+    assert.equal(
+      canApprove({ id: 'ada', role: 'admin', domains: ['sales'] }, { kind, domain: 'sales', approverRole: 'admin', scope: 'tenant', requestedBy: 'ada' }),
+      false,
+      `${kind} must stay four-eyes`,
+    );
+  }
+  // ...while the rung-1 kinds are the carve-out.
+  for (const kind of ['artifact_promote', 'dataset_promote', 'file_promote'] as const) {
+    assert.equal(
+      canApprove({ id: 'dana', role: 'domain_admin', domains: ['sales'] }, { kind, domain: 'sales', approverRole: 'domain_admin', scope: 'domain', requestedBy: 'dana' }),
+      true,
+      `${kind} is the rung-1 carve-out`,
+    );
+  }
+});
+
+// ============ M2: approve_promotion is gated per ITEM, not by a floor ========
+
+test('M2: approve_promotion re-gates canApprove and refuses a parked agent run', async () => {
+  __resetApprovals();
+  const f = await call<{ id: string }>(cara, 'upload_file', { name: 'gated.md', text: 'x', description: 'D.', tags: ['t'] });
+  const filed = await call<Filed>(cara, 'request_promotion', { kind: 'file', id: f.id });
+
+  // A domain admin of ANOTHER domain clears the tool's minRole floor but not the item's scope.
+  const foreign: CurrentUser = { id: 'owen', name: 'Owen', domains: ['ops'], role: 'domain_admin' };
+  const e = await refusal(foreign, 'approve_promotion', { approvalId: filed.requestId! });
+  assert.match(e.reason, /needs a Domain admin of sales|not found/i, `got: ${e.reason}`);
+  assert.equal(getApproval(filed.requestId!)!.status, 'pending');
+
+  // A PARKED AGENT RUN must go through the queue so the write executes as the RUNNER.
+  const held = enqueue({
+    kind: 'file_promote',
+    title: 'held promote',
+    detail: 'an agent run parked on a promotion',
+    agent: 'agent:sales',
+    domain: 'sales',
+    requestedBy: cara.id,
+    tool: 'file_promote',
+    payload: { fileId: f.id, fileName: 'gated.md', domain: 'sales', owner: cara.id, visibility: 'domain', grants: [], target: 't' },
+    approverRole: 'domain_admin',
+    scope: 'domain',
+    runId: 'run_xyz',
+    threadId: 'run_xyz',
+    interruptKey: 'run_xyz:call_1',
+  });
+  const parked = await refusal(dana, 'approve_promotion', { approvalId: held.id });
+  assert.match(parked.reason, /parked agent run/i, `got: ${parked.reason}`);
+  assert.equal(getApproval(held.id)!.status, 'pending', 'the run was not re-attributed to the approver');
+
+  // The in-domain domain admin still works.
+  await call(dana, 'approve_promotion', { approvalId: filed.requestId! });
+  assert.equal(getApproval(filed.requestId!)!.status, 'approved');
+});
+
+// ============ M4: the knowledge guard is on the AUDIENCE axis =================
+
+test('M4: a Personal workflow is promoted on its AUDIENCE, not on its legacy status word', async () => {
+  __resetApprovals();
+  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'personal-but-live' });
+  const filed = await call<Filed>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
+  await call(dana, 'decide_approval', { requestId: filed.requestId!, decision: 'approve' });
+  const rec = await call<{ visibility: string }>(cara, 'get_knowledge', { workflowId: wf.id });
+  assert.equal(rec.visibility, 'Shared', 'the AUDIENCE moved');
+  // A second promotion is refused on the audience, with the audience's reason.
+  assert.match((await refusal(cara, 'request_promotion', { kind: 'knowledge', id: wf.id })).reason, /already promoted/i);
+});
+
 // ================================ METRICS =====================================
 
 test('matrix: a metric has NO independent rung — the refusal names the dataset to promote', async () => {
@@ -465,16 +662,59 @@ test('matrix: a metric has NO independent rung — the refusal names the dataset
 
 test('matrix: nothing files a metric promotion request any more', () => {
   for (const rel of ['app/api/metrics/[id]/promote/route.ts', 'tabs/metrics/mcp/metric-write-tools.ts']) {
-    const code = src(rel);
+    const c = code(rel);
     assert.ok(
-      !/artifactKind:\s*'metric'/.test(code) || !/enqueue\(/.test(code),
-      `${rel}: must not enqueue an artifactKind:'metric' request — nothing can apply it`,
+      !/artifactKind:\s*'metric'/.test(c),
+      `${rel}: must not construct an artifactKind:'metric' payload — nothing can apply it`,
     );
-    assert.match(code, /audience is its dataset/, `${rel}: must carry the honest refusal that names the dataset`);
+    assert.match(c, /409/, `${rel}: the metric audience refusal is a typed 409`);
+  }
+  // The GET must report the closed gate, not a phantom request, so the control is disabled.
+  const get = code('app/api/metrics/[id]/promote/route.ts');
+  assert.match(get, /gate:\s*\{[\s\S]*ok:\s*false/, 'the GET must answer gate.ok=false for a Personal metric');
+  assert.match(get, /datasetId:/, 'and name the dataset to act on');
+  assert.match(code('core/ui/lifecycle/PromoteButton.tsx'), /disabled=\{busy \|\| blocked\}/, 'the shared control must honour a closed gate');
+});
+
+test('tripwire: the two promote routes enqueue BEFORE applying, and answer one documented shape', () => {
+  for (const rel of ['app/api/files/[id]/promote/route.ts', 'app/api/data/datasets/[id]/promote/route.ts']) {
+    const c = code(rel);
+    // H1: the owner-only trigger must be called before the duplicate lookup is consulted.
+    const gateAt = c.indexOf('requestPromotion(');
+    const dedupAt = c.indexOf("listApprovals({ status: 'pending' })");
+    assert.ok(gateAt > 0 && dedupAt > 0, `${rel}: both the gate and the dedup must be present`);
+    assert.ok(gateAt < dedupAt, `${rel}: the owner/docs gate must run BEFORE the dedup lookup`);
+    // …and the dedup answer is a handle, never the record.
+    assert.match(c, /already:\s*true,\s*approvalId/, `${rel}: the dedup answer must be a handle, not the Approval`);
+    // H2: the one-shot goes through applyEffect and leaves a decision + an audit entry.
+    assert.match(c, /applyEffect\(/, `${rel}: the one-shot must run through the effect seam`);
+    assert.match(c, /decide\(approval\.id, 'approve', user\.id\)/, `${rel}: it must close its own record out`);
+    assert.match(c, /audit\(\{/, `${rel}: it must write the effect's audit entry`);
+    // M3: one documented response shape, so a bulk counter can branch on it.
+    assert.match(c, /promoted:\s*true,\s*\n?\s*requested:\s*false/, `${rel}: the one-shot must answer { promoted: true, requested: false }`);
+    assert.match(c, /requested:\s*true,\s*promoted:\s*false/, `${rel}: a filed request must answer { requested: true, promoted: false }`);
   }
 });
 
-// ===================== (c)+(f) THE UI SURFACES — TRIPWIRES ====================
+test('tripwire: the HTTP approvals door applies BEFORE it decides, and keeps the gate status', () => {
+  const c = code('app/api/governance/approvals/route.ts');
+  const applyAt = c.indexOf('applyEffect(');
+  const decideAt = c.indexOf("decide(id, 'approve'");
+  assert.ok(applyAt > 0 && decideAt > 0, 'both must be present');
+  assert.ok(applyAt < decideAt, 'the effect must run before the request is marked approved');
+  assert.match(c, /status:\s*\(e as \{ status\?: number \}\)\.status \?\? 502/, 'a gate refusal keeps its own status, not a blanket 502');
+  assert.ok(!/error:\s*'Effect failed'\s*\}/.test(c), 'the cause must travel in `error`, not be flattened to a literal');
+});
+
+test('tripwire: the ladder one-shot is never silent', () => {
+  const c = code('core/policy/ladder.ts');
+  assert.match(c, /auditRecord\(\{/, 'promoteThroughSeam must write the effect audit entry');
+  assert.match(c, /source:\s*'ladder'/, 'and mint a queue record for a move nobody filed');
+  // L2: the widened dashboard read is opt-in, not the default for every resolve.
+  assert.match(c, /forGovernanceAct/, 'the widened dashboard read must be explicit per call site');
+  assert.match(c, /getDashboard\(id, p\)/, 'the default resolve keeps the plain view gate');
+});
+
 
 test('tripwire: the agent-system promote button handles the filed-request response', () => {
   const code = src('tabs/agents/ui/SystemView.tsx');
