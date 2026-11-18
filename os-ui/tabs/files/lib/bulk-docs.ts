@@ -61,6 +61,26 @@ export function unionTags(existing: string[], added: string[]): string[] {
   return cleanTags([...existing, ...added]);
 }
 
+/** The tab's own vocabulary for the sharing ladder — the labels the scope rail uses. */
+const TIER_LABEL: { tier: 'dataset' | 'asset' | 'product'; label: string }[] = [
+  { tier: 'dataset', label: 'personal' },
+  { tier: 'asset', label: 'domain' },
+  { tier: 'product', label: 'company' },
+];
+
+/**
+ * "3 personal · 9 domain" — what the selection IS, in ladder order, naming only the tiers
+ * present. A domain admin can select files that are already shared, and "Describe & tag"
+ * relabels those too; the dialog says so before Apply rather than after (review L1).
+ */
+export function tierBreakdown(rows: { tier: 'dataset' | 'asset' | 'product' }[]): string {
+  return TIER_LABEL
+    .map(({ tier, label }) => ({ label, count: rows.filter((r) => r.tier === tier).length }))
+    .filter((t) => t.count > 0)
+    .map((t) => `${t.count} ${t.label}`)
+    .join(' · ');
+}
+
 function same(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((t, i) => t === b[i]);
 }

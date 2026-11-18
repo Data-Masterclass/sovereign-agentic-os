@@ -80,6 +80,47 @@ test('skipped files are reported but are not failures', () => {
   assert.equal(summariseBulk([], { verb: 'requested', skipped: 2 }).notice, 'Nothing requested · 2 skipped.');
 });
 
+/**
+ * REVIEW M1 — the same "a count is not a reason" defect one layer along. The promote route
+ * answers a file that ALREADY has a pending request with 200 `{ already: true }`
+ * (app/api/files/[id]/promote/route.ts), so re-pressing Promote on twelve pending files
+ * reported "12 requested" and filed nothing. "Already pending" is its own outcome.
+ */
+function pending(n: number): BulkOutcome[] {
+  return Array.from({ length: n }, (_, i) => ({ id: `as_${i}`, name: `invoice-${i}.pdf`, ok: true, already: true }));
+}
+
+test('an already-pending request is not a fresh one', () => {
+  const s = summariseBulk(pending(12), { verb: 'requested', approvalNote: 'A domain admin approves each.' });
+  assert.equal(s.ok, 0, 'nothing was filed by this press');
+  assert.equal(s.already, 12);
+  assert.equal(s.failed, 0);
+  assert.equal(s.notice, 'Nothing requested · 12 already pending.');
+  // Nothing was filed, so nothing new is awaiting an admin because of this press.
+  assert.ok(!s.notice.includes('A domain admin'), s.notice);
+});
+
+test('fresh and already-pending requests are counted separately, in that order', () => {
+  const s = summariseBulk(
+    [{ id: 'a', name: 'new.pdf', ok: true }, ...pending(9), ...failures(2)],
+    { verb: 'requested', approvalNote: 'A domain admin approves each.' },
+  );
+  assert.equal(s.ok, 1);
+  assert.equal(s.already, 9);
+  assert.equal(s.failed, 2);
+  assert.match(s.notice, /^1 requested · 9 already pending · 2 failed\. A domain admin approves each\./);
+});
+
+test('a verb other than "requested" reads correctly in every clause', () => {
+  // Bulk archive and bulk move share this formatter (review M2), so the grammar must not be
+  // promote-shaped. A whole-selection refusal is also a sentence, not a bare count (L2).
+  assert.equal(summariseBulk([], { verb: 'archived', skipped: 3 }).notice, 'Nothing archived · 3 skipped.');
+  assert.equal(
+    summariseBulk([{ id: 'a', name: 'a.pdf', ok: false, error: 'Not permitted to change this file' }], { verb: 'moved' }).notice,
+    'Nothing moved · 1 failed. a.pdf: Not permitted to change this file.',
+  );
+});
+
 test('a failure with no body at all still produces a reason', () => {
   const s = summariseBulk([{ id: 'a', name: 'a.pdf', ok: false }], { verb: 'requested' });
   assert.match(s.notice, /a\.pdf: no reason given\./);

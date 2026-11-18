@@ -83,6 +83,62 @@ test('the browser imports the shared formatter and the shared gate', () => {
   );
 });
 
+/**
+ * REVIEW M2 — the defect was not specific to Promote. `bulkArchive` tallied `res.ok` the same
+ * way, and the bulk move kept only the LAST `setErr`, so eleven of twelve refusals vanished.
+ * All four bulk actions are held to the one rule, and a fifth must join this list.
+ */
+const BULK_ACTIONS = ['bulkPromote', 'bulkDescribeAndTag', 'bulkArchive', 'moveInto'];
+
+test('EVERY bulk action reads the body and reports through the shared formatter', () => {
+  const source = src(BROWSER);
+  for (const name of BULK_ACTIONS) {
+    const body = callbackBody(source, name);
+    assert.match(body, /res\.json\(\)/, `${name} must read the response body`);
+    assert.match(body, /serverError\(/, `${name} must carry the server's own text`);
+    assert.match(body, /summariseBulk\(/, `${name} must report through summariseBulk`);
+    assert.ok(
+      body.indexOf('res.json()') < body.indexOf('res.ok'),
+      `${name}: the body must be read BEFORE res.ok decides the outcome`,
+    );
+    // A tally of the ACTION cannot carry a reason. (A `skipped` counter may: a skip has no
+    // server response to quote.)
+    assert.ok(
+      !/(failed|requested|archived|moved|updated) \+= 1/.test(body),
+      `${name}: count outcomes carrying their reason, not a tally`,
+    );
+    // The last writer wins — which is how the bulk move lost eleven of twelve reasons.
+    assert.ok(
+      !/setErr\(\(await res\.json\(\)\)/.test(body),
+      `${name}: a per-file failure must become an outcome, not overwrite one error strip`,
+    );
+  }
+});
+
+test('a 200 that filed nothing is not counted as a request (already: true)', () => {
+  const body = callbackBody(src(BROWSER), 'bulkPromote');
+  assert.match(body, /data\.already/, 'the route answers an existing request with { already: true }');
+  assert.match(body, /already:/, 'it must reach summariseBulk as its own outcome, not as ok');
+});
+
+test('no bulk notice is hand-formatted any more — summariseBulk owns every one', () => {
+  const source = src(BROWSER);
+  // The two whole-selection refusals used to be built by hand (review L2).
+  assert.ok(!/Nothing to promote/.test(source), 'the empty-selection notice must come from summariseBulk');
+  assert.ok(!/Nothing to archive/.test(source), 'the empty-selection notice must come from summariseBulk');
+  // Every setBulkNotice call must be fed by the formatter.
+  const calls = source.match(/setBulkNotice\([^)]*/g) ?? [];
+  for (const call of calls) {
+    const ok = call.includes('summariseBulk') || call.includes("''");
+    assert.ok(ok, `a hand-formatted notice is back: ${call}`);
+  }
+});
+
+test('the Describe & tag dialog tells the admin which tiers it is about to relabel', () => {
+  const source = src(BROWSER);
+  assert.match(source, /tierBreakdown\(/, 'the dialog must show the selection’s tier breakdown (review L1)');
+});
+
 test('bulkDescribeAndTag reports per file and writes through the EXISTING per-file route', () => {
   const body = callbackBody(src(BROWSER), 'bulkDescribeAndTag');
   assert.match(body, /describeAndTagPatch\(/, 'the patch semantics live in the tested lib');

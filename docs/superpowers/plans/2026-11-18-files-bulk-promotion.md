@@ -219,3 +219,88 @@ With none ready, the governance sentence is gone:
   folder of invoices and wrong for a mixed selection; the per-file editor remains the place to
   differentiate, and the overwrite guard (off by default) is what keeps a mixed selection from
   losing its existing text.
+
+---
+
+## 7. Review round (PR #59, 2026-11-18) — MERGE with follow-ups
+
+The review verdict was **merge**, with follow-ups of the same class as the original defect:
+*a count is not a reason*. The fix had corrected it in `bulkPromote` only, and the same shape
+survived three more places in the very same file. Closed here in one commit, test-first.
+
+### M1 — a 200 that filed nothing was counted as a request
+
+`app/api/files/[id]/promote/route.ts` answers a file whose request is still pending with
+**200 `{ approval, already: true }`**. `bulkPromote` read only `res.ok`, so pressing Promote a
+second time on twelve pending files reported **"12 requested"** and filed nothing — a count
+standing in for a state, one layer along from the original bug.
+
+`BulkOutcome` gains `already?: boolean` and `summariseBulk` gives it its **own clause**:
+
+```
+Nothing requested · 12 already pending.
+1 requested · 9 already pending · 2 failed. A domain admin approves each.
+```
+
+The approval sentence is governed by `ok` alone — what **this press** filed — so a selection
+that was already pending no longer claims to have created work for an admin.
+
+### M2 — the other two bulk actions had the identical defect
+
+- `bulkArchive` tallied `res.ok` exactly as Promote had.
+- The **bulk move** was worse than a tally: every failure went into the one `setErr` strip, so
+  moving twelve files and being refused on eleven displayed the twelfth's reason and lost the
+  other ten. *Last writer wins* is the same defect wearing different clothes.
+
+Both now build `BulkOutcome[]` and report through `summariseBulk` with verbs `archived` and
+`moved`. The tripwire no longer tests one function: it iterates **all four** bulk actions
+(`bulkPromote`, `bulkDescribeAndTag`, `bulkArchive`, `moveInto`) and asserts for each that the
+body is parsed before `res.ok` is consulted, that the text reaches `serverError`, that the
+notice comes from `summariseBulk`, that no `<verb> += 1` tally decides the outcome, and that no
+per-file failure is written into a shared error strip. A fifth bulk action must join that list.
+
+### L2 — the two hand-written notices
+
+"Nothing to promote — N not promotable." and its archive twin were the last two notices built
+by hand; both now go through `summariseBulk([], { verb, skipped })`, and a new tripwire asserts
+that **every** `setBulkNotice(…)` call in the file is fed by the formatter (or clears it).
+
+### L1 — the dialog says which tiers it will relabel
+
+`tierBreakdown` (in `bulk-docs.ts`, unit-tested) renders the selection as
+**"3 personal · 9 domain"** in the Describe & tag header, so a domain admin can see that the
+action also rewrites files that are *already shared* — before pressing Apply.
+
+### Gates after the follow-up commit
+
+`tsc --noEmit -p os-ui` clean · Files tab **191 tests, 191 pass, 0 fail** ·
+`check-structure` ok, 419 / 1 / 200 / 1230 unchanged. The full suite was not re-run for this
+commit (nothing outside `tabs/files/**` changed, and the machine is memory-constrained).
+
+### Deferred, with the reason
+
+- **M3 — the describe-and-tag write is serial, uncapped and unconditional.** Each `PATCH`
+  re-embeds the file (`reindexById` in the route — "the editor pays for the re-embed"), so a
+  200-file selection is 200 sequential gateway round-trips with no progress beyond a spinner,
+  no cap on the selection size, and no version precondition: two admins describing the same
+  selection concurrently last-write-wins, with no sha to check. The right fix is the shape
+  ARCHITECTURE.md already prescribes for queued writes — a reducer applied to the document the
+  store just returned, committed with *that read's* token, through a bounded queue with
+  per-file progress. That is a store-and-route change, not a notice change, and it does not
+  belong in a commit about reporting.
+- **L3 — tag dedupe is client-side only.** `cleanTags` dedupes case-insensitively before the
+  PATCH, but `setDocs` itself only trims and drops blanks, so "Finance" and "finance" can still
+  coexist on a file written by any other door (MCP, an import). The dedupe belongs in the store
+  next to the trim; doing it there changes stored data for every writer and wants its own
+  migration note.
+- **L4 — the tripwire's `callbackBody` is a text slice.** It keys on
+  `const <name> = useCallback(` and the next `}, [`, which is sound for the four functions as
+  written and would silently widen if one of them ever contained that sequence in a nested
+  literal. A real fix parses, which means a parser dependency for a grep.
+- **L5 — the pre-flight knows which rows will 400, and posts them anyway.** Promote sends every
+  eligible file, including the ones `promotionReadiness` has already judged blocked, and lets
+  the server refuse them. That is deliberate for now: the server is the only authority on the
+  gate, and skipping client-side would make the UI's judgement load-bearing. If the request
+  volume ever matters, the move is to send only the ready rows and report the rest as
+  *skipped* with the pre-flight's own reason — which needs the two reason vocabularies
+  (pre-flight `missing`, server `error`) unified first.

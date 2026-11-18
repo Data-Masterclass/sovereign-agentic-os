@@ -23,7 +23,7 @@ import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { uploadRawFile, createNoteFile } from '@tabs/files/lib/upload-client';
 import { serverError, summariseBulk, type BulkOutcome } from '@tabs/files/lib/bulk-result';
-import { describeAndTagPatch, parseTagInput, type DescribeAndTagInput } from '@tabs/files/lib/bulk-docs';
+import { describeAndTagPatch, parseTagInput, tierBreakdown, type DescribeAndTagInput } from '@tabs/files/lib/bulk-docs';
 import { promotionReadiness, readinessLabel, readinessHint } from '@tabs/files/lib/promotion';
 import FilePreview from '@tabs/files/ui/FilePreview';
 import NoteEditor from '@tabs/files/ui/NoteEditor';
@@ -188,12 +188,17 @@ function canManageFile(u: ManageUser | null, f: Summary): boolean {
  * only where one is missing. Replacing or overwriting is an explicit tick, because a bulk
  * action that silently dropped an author's own words would destroy work on a mis-click.
  */
-function DescribeAndTagModal({ count, busy, onCancel, onApply }: {
-  count: number;
+function DescribeAndTagModal({ rows, busy, onCancel, onApply }: {
+  /** The files this will touch — already filtered to what the user may manage. */
+  rows: Summary[];
   busy: boolean;
   onCancel: () => void;
   onApply: (input: DescribeAndTagInput) => void;
 }) {
+  const count = rows.length;
+  // A domain admin's selection can span tiers, and this relabels SHARED assets too — say so
+  // before Apply, not after (review L1).
+  const breakdown = tierBreakdown(rows);
   const [description, setDescription] = useState('');
   const [tagText, setTagText] = useState('');
   const [overwriteDescription, setOverwriteDescription] = useState(false);
@@ -226,6 +231,7 @@ function DescribeAndTagModal({ count, busy, onCancel, onApply }: {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, letterSpacing: 0.2 }}>
             Describe &amp; tag {files}
+            {breakdown ? <span className="file-sub" style={{ marginLeft: 8, fontWeight: 400 }}>{breakdown}</span> : null}
           </h3>
           <button className="btn ghost sm" onClick={onCancel} aria-label="Close" style={{ fontSize: 18, lineHeight: 1 }}>
             ×
@@ -435,20 +441,36 @@ function FilesBrowserInner() {
   }, [loadFolders]);
 
   // Move one or many files into a folder via the edit-gated folder route.
+  //
+  // PER-FILE RESULTS (review M2). This loop wrote every failure into the ONE error strip, so
+  // moving twelve files and being refused on eleven showed the twelfth's reason and lost the
+  // rest — "the last writer wins" is the same defect as counting `res.ok`. Each file is now an
+  // outcome carrying the server's own text, reported by the shared formatter.
   const moveInto = useCallback(async (ids: string[], folder: string) => {
     setErr('');
+    const all = groups ? [...groups.mine, ...groups.domain, ...groups.marketplace] : [];
+    const nameOf = (id: string) => all.find((f) => f.id === id)?.name ?? id;
+    setBulkBusy(true); setBulkNotice('');
+    const outcomes: BulkOutcome[] = [];
     for (const id of ids) {
       try {
         const res = await fetch(`/api/files/${id}/folder`, {
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ folder }),
         });
-        if (!res.ok) { setErr((await res.json()).error ?? 'Move failed'); }
-      } catch (e) { setErr((e as Error).message); }
+        const data = await res.json().catch(() => ({}));
+        outcomes.push(res.ok
+          ? { id, name: nameOf(id), ok: true }
+          : { id, name: nameOf(id), ok: false, error: serverError(data, 'Move failed') });
+      } catch (e) {
+        outcomes.push({ id, name: nameOf(id), ok: false, error: (e as Error).message });
+      }
     }
+    setBulkBusy(false);
     setPicked(new Set());
+    setBulkNotice(summariseBulk(outcomes, { verb: 'moved' }).notice);
     refresh();
-  }, [refresh]);
+  }, [refresh, groups]);
 
   const promptMove = useCallback((ids: string[]) => {
     if (ids.length === 0) return;
@@ -472,7 +494,7 @@ function FilesBrowserInner() {
     const eligible = files.filter((f) => f.tier === 'dataset' && canManageFile(mu, f));
     const skipped = files.length - eligible.length;
     if (eligible.length === 0) {
-      setBulkNotice(`Nothing to promote — ${skipped} not promotable.`);
+      setBulkNotice(summariseBulk([], { verb: 'requested', skipped }).notice);
       return;
     }
     setBulkBusy(true); setBulkNotice(''); setErr('');
@@ -483,8 +505,10 @@ function FilesBrowserInner() {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
         });
         const data = await res.json().catch(() => ({}));
+        // A 200 carrying `already: true` means a request was ALREADY pending and this press
+        // filed nothing — its own clause, never a fresh request (review M1).
         outcomes.push(res.ok
-          ? { id: f.id, name: f.name, ok: true }
+          ? { id: f.id, name: f.name, ok: true, already: data.already === true }
           : { id: f.id, name: f.name, ok: false, error: serverError(data, 'Could not request promotion') });
       } catch (e) {
         outcomes.push({ id: f.id, name: f.name, ok: false, error: (e as Error).message });
@@ -541,29 +565,35 @@ function FilesBrowserInner() {
   // Bulk ARCHIVE — reuses the SAME archive path the single-file LifecycleActions uses
   // (POST /api/files/{id} {action:'archive'}), per id. Confirmed once via the shared
   // ConfirmDialog (a multi-item lifecycle action). Only files the user can manage are
-  // attempted; the rest are reported as skipped.
+  // attempted; the rest are reported as skipped — and each refusal keeps the server's own
+  // reason, through the same formatter Promote uses (review M2).
   const bulkArchive = useCallback(async (files: Summary[]) => {
     const mu = user ? { id: user.id, role: user.role, domains: user.domains } : null;
     const eligible = files.filter((f) => canManageFile(mu, f));
     const skipped = files.length - eligible.length;
     if (eligible.length === 0) {
-      setBulkNotice(`Nothing to archive — ${skipped} not yours to manage.`);
+      setBulkNotice(summariseBulk([], { verb: 'archived', skipped }).notice);
       return;
     }
     if (!await confirm(archiveFolderCopy(`${eligible.length} file${eligible.length > 1 ? 's' : ''}`, eligible.length))) return;
     setBulkBusy(true); setBulkNotice(''); setErr('');
-    let archived = 0; let failed = 0;
+    const outcomes: BulkOutcome[] = [];
     for (const f of eligible) {
       try {
         const res = await fetch(`/api/files/${f.id}`, {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'archive' }),
         });
-        if (res.ok) archived += 1; else failed += 1;
-      } catch { failed += 1; }
+        const data = await res.json().catch(() => ({}));
+        outcomes.push(res.ok
+          ? { id: f.id, name: f.name, ok: true }
+          : { id: f.id, name: f.name, ok: false, error: serverError(data, 'Archive failed') });
+      } catch (e) {
+        outcomes.push({ id: f.id, name: f.name, ok: false, error: (e as Error).message });
+      }
     }
     setBulkBusy(false);
     setPicked(new Set());
-    setBulkNotice(`${archived} archived${failed ? ` · ${failed} failed` : ''}${skipped ? ` · ${skipped} skipped` : ''}.`);
+    setBulkNotice(summariseBulk(outcomes, { verb: 'archived', skipped }).notice);
     refresh();
   }, [user, confirm, refresh]);
 
@@ -1079,7 +1109,7 @@ function FilesBrowserInner() {
               reports per file exactly like Promote does. ---- */}
       {docsOpen ? (
         <DescribeAndTagModal
-          count={manageable.length}
+          rows={manageable}
           busy={bulkBusy}
           onCancel={() => setDocsOpen(false)}
           onApply={(input) => { setDocsOpen(false); void bulkDescribeAndTag(manageable, input); }}
