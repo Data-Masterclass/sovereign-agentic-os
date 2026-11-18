@@ -27,6 +27,9 @@ import {
 } from '@tabs/agents/lib/capability-tools';
 import { setEntrypoint } from '@tabs/agents/lib/canvas-edit';
 import { canSaveFromResult, DATA_NON_TABULAR_NOTE } from '@tabs/agents/lib/output-save';
+import {
+  EMPTY_OUTPUT_DRAFT, outputDraftDirty, outputDraftValid, type OutputDraft,
+} from '@tabs/agents/lib/output-draft';
 import { AGENT_TEMPLATES, agentTemplate, type AgentTemplateKey } from '@tabs/agents/lib/agent-templates';
 import StageShell from '@core/ui/core/StageShell';
 import { usePublishPageContext } from '@core/ui/core/PageContext';
@@ -145,6 +148,18 @@ export default function SimpleBuilder({
   const [err, setErr] = useState('');
 
   const editable = canEdit && !busy;
+
+  // ── the unsaved-output guard ──────────────────────────────────────────────
+  // "Where the results go" keeps a typed output as a DRAFT until it is saved, and the
+  // Define stage unmounts on every exit — the rail, "Grant context →", a back button — so
+  // the author filled the fields, moved on, and came back to an empty row ("it reset").
+  // The guard therefore lives HERE, with the component that owns the transitions: the
+  // section only reports `{ dirty, valid, save, discard }` upward. A guard inside the
+  // section would cover none of those exits (the same lesson as the knowledge editor's
+  // `editor-guard.ts`), and two guards on one exit ask the user twice.
+  const outputDraft = useRef<OutputDraftState>(EMPTY_OUTPUT_DRAFT_STATE);
+  const onOutputDraftState = useCallback((state: OutputDraftState) => { outputDraft.current = state; }, []);
+  const [pendingStage, setPendingStage] = useState<StageState<AgentStageId> | null>(null);
   const hasAgents = system.agents.length > 0;
   const ready = hasAgents && !!system.entrypoint;
   const hasRun = !!buildRun.lastRun && ((buildRun.lastRun.nodes?.length ?? 0) > 0 || !!buildRun.lastRun.output);
@@ -175,9 +190,36 @@ export default function SimpleBuilder({
 
   // Every transition goes through the shared stage model: `go` jumps (entry-gated),
   // `next` advances and records the current phase's ✓ only when its condition is met
-  // — the same "mark if done, then move" behavior the builder always had.
-  const go = (id: AgentStageId) => setStage((s) => goTo(PHASES, s, id, ctx));
-  const next = () => setStage((s) => advance(PHASES, s, ctx));
+  // — the same "mark if done, then move" behavior the builder always had. All of them
+  // (and the rail, via `onState`) funnel through `applyStage`, the ONE exit the
+  // unsaved-output guard watches.
+  const applyStage = (nextState: StageState<AgentStageId>) => {
+    const draft = outputDraft.current;
+    if (phase === 'define' && nextState.current !== 'define' && draft.dirty) {
+      // Complete enough to keep? Keep it — there is nothing to ask. Otherwise ask, and
+      // do not move until the author has answered.
+      if (draft.valid) draft.save();
+      else { setPendingStage(nextState); return; }
+    }
+    setStage(nextState);
+  };
+  const go = (id: AgentStageId) => applyStage(goTo(PHASES, stage, id, ctx));
+  const next = () => applyStage(advance(PHASES, stage, ctx));
+
+  /** Resolve the unsaved-output prompt. `keep` stays put; nothing is ever discarded silently. */
+  const answerOutputGuard = (choice: 'save' | 'discard' | 'keep') => {
+    const target = pendingStage;
+    if (choice === 'keep' || !target) { setPendingStage(null); return; }
+    const draft = outputDraft.current;
+    if (choice === 'save') {
+      if (!draft.valid) return; // an incomplete output cannot be saved — stay on the stage
+      draft.save();
+    } else {
+      draft.discard();
+    }
+    setPendingStage(null);
+    setStage(target);
+  };
 
   // Build · Run · Evaluate complete inside their own panels (no explicit "Next"), so
   // once the user is ON one of those phases and its live condition is met, record it
@@ -214,7 +256,7 @@ export default function SimpleBuilder({
         stages={PHASES}
         state={stage}
         ctx={ctx}
-        onState={setStage}
+        onState={applyStage}
         ariaLabel="Build phases"
         showHeader={false}
         showNav={false}
@@ -230,6 +272,31 @@ export default function SimpleBuilder({
 
       {err ? <div className="error" style={{ marginBottom: 12 }}>{err}</div> : null}
 
+      {/* The unsaved-output prompt — one prompt, for every way out of Define. It only
+          appears for a draft that cannot be saved as it stands; a complete one is simply
+          saved on the way out. */}
+      {pendingStage ? (
+        <div
+          className="row"
+          style={{
+            gap: 8, alignItems: 'center', marginBottom: 12, padding: '8px 10px',
+            border: '1px solid var(--amber, #b58900)', borderRadius: 6,
+          }}
+        >
+          <span>You have an unsaved output under “Where the results go” — it still needs a name.</span>
+          <button
+            className="btn sm"
+            disabled={!outputDraft.current.valid}
+            title="Give the output a name first"
+            onClick={() => answerOutputGuard('save')}
+          >
+            Save output
+          </button>
+          <button className="btn ghost sm" onClick={() => answerOutputGuard('discard')}>Discard</button>
+          <button className="btn ghost sm" onClick={() => answerOutputGuard('keep')}>Keep editing</button>
+        </div>
+      ) : null}
+
       {phase === 'define' ? (
         <div>
           {assistant}
@@ -240,6 +307,7 @@ export default function SimpleBuilder({
             onCommit={(next) => commit(next)}
             onReload={onReload}
             onNext={next}
+            onOutputDraftState={onOutputDraftState}
           />
         </div>
       ) : null}
@@ -468,6 +536,7 @@ function DefineStep({
   onCommit,
   onReload,
   onNext,
+  onOutputDraftState,
 }: {
   systemId: string;
   system: System;
@@ -475,6 +544,8 @@ function DefineStep({
   onCommit: (next: System) => void;
   onReload: () => void | Promise<void>;
   onNext: () => void;
+  /** Report the output section's draft state up to the builder, which owns every exit. */
+  onOutputDraftState?: (state: OutputDraftState) => void;
 }) {
   const [name, setName] = useState(system.system.name === 'Untitled system' ? '' : system.system.name);
   // Seed the deliverable box from the persisted description so the judge's task and the
@@ -534,7 +605,13 @@ function DefineStep({
       </div>
 
       {/* Where the results go — declared outputs (auto-provisioned Write targets) */}
-      <OutputsSection systemId={systemId} system={system} canEdit={canEdit} onCommit={onCommit} />
+      <OutputsSection
+        systemId={systemId}
+        system={system}
+        canEdit={canEdit}
+        onCommit={onCommit}
+        onDraftState={onOutputDraftState}
+      />
 
       {/* How the team is triggered — Manual / On schedule / Called from system. Part of
           DEFINING the team, so it lives here (not next to Run). Same /schedule route. */}
@@ -1568,6 +1645,22 @@ function EvaluateStep({
 
 /* ─────────────────────────── Outputs (Define) ─────────────────────────── */
 
+/**
+ * What the output section reports up so the builder can guard the stage exit: whether there
+ * is unsaved typing, whether it may be committed as it stands, and the two actions.
+ * `save`/`discard` are re-registered on every draft change, so they always act on the
+ * CURRENT draft (a stale closure would save text the author has since changed).
+ */
+type OutputDraftState = {
+  dirty: boolean;
+  valid: boolean;
+  save: () => void;
+  discard: () => void;
+};
+const EMPTY_OUTPUT_DRAFT_STATE: OutputDraftState = {
+  dirty: false, valid: false, save: () => {}, discard: () => {},
+};
+
 /** A DLS-scoped folder row from the grants-available feed (path + scope). */
 type FolderNode = { path: string; scope: 'personal' | 'domain' };
 
@@ -1586,12 +1679,14 @@ const OUTPUT_KIND_CARDS: { kind: OutputKind; label: string; feedKind: 'files' | 
  * materialises when the first result is saved. Consistent with the grants picker.
  */
 function OutputsSection({
-  systemId, system, canEdit, onCommit,
+  systemId, system, canEdit, onCommit, onDraftState,
 }: {
   systemId: string;
   system: System;
   canEdit: boolean;
   onCommit: (next: System) => void;
+  /** Report `{ dirty, valid, save, discard }` up — the builder owns the exit guard. */
+  onDraftState?: (state: OutputDraftState) => void;
 }) {
   // Folders per kind, from the DLS-scoped grants-available feed (one fetch per kind).
   const [foldersByKind, setFoldersByKind] = useState<Record<string, FolderNode[]>>({});
@@ -1609,24 +1704,40 @@ function OutputsSection({
 
   const outputs = system.outputs ?? [];
 
-  // Draft row state (Type/Name/Folder/Scope) — persisted only on "Add output".
-  const [draftKind, setDraftKind] = useState<OutputKind>('files');
-  const [draftName, setDraftName] = useState('');
-  const [draftScope, setDraftScope] = useState<'personal' | 'domain'>('personal');
-  const [draftFolder, setDraftFolder] = useState('/');
+  // The draft row (Type/Name/Scope/Folder) — ONE object, so dirtiness and validity are
+  // decided by the shared predicates rather than by four ad-hoc comparisons.
+  const [draft, setDraft] = useState<OutputDraft>(EMPTY_OUTPUT_DRAFT);
+  const patch = (next: Partial<OutputDraft>) => setDraft((d) => ({ ...d, ...next }));
 
   const foldersFor = (kind: OutputKind, scope: 'personal' | 'domain'): string[] =>
     (foldersByKind[kind] ?? []).filter((f) => f.scope === scope).map((f) => f.path);
 
-  const addRow = () => {
-    if (!canEdit || !draftName.trim()) return;
+  const dirty = canEdit && outputDraftDirty(draft);
+  const valid = outputDraftValid(draft);
+
+  // Save the draft as a declared output. UNCHANGED governance: `addOutput` → `onCommit` →
+  // the governed system.yaml write, exactly as the old add-output button did (the label changed,
+  // the path did not).
+  // NOTE: the old label is deliberately not quoted anywhere in this file — output-draft.test.ts
+  // greps for it.
+  const saveRow = useCallback(() => {
+    if (!canEdit || !outputDraftValid(draft)) return;
     onCommit(addOutput(system, {
-      kind: draftKind,
-      name: draftName.trim(),
-      folder: { path: normaliseFolderPath(draftFolder), scope: draftScope },
+      kind: draft.kind,
+      name: draft.name.trim(),
+      folder: { path: normaliseFolderPath(draft.folder), scope: draft.scope },
     }));
-    setDraftName(''); setDraftFolder('/');
-  };
+    setDraft(EMPTY_OUTPUT_DRAFT);
+  }, [canEdit, draft, onCommit, system]);
+
+  // Re-register on every draft change, so the save the builder's guard holds reads the
+  // CURRENT draft — a closure captured when dirtiness last flipped would save stale text.
+  useEffect(() => {
+    onDraftState?.({ dirty, valid, save: saveRow, discard: () => setDraft(EMPTY_OUTPUT_DRAFT) });
+  }, [dirty, valid, saveRow, onDraftState]);
+  // Leaving the section unmounted with nothing pending: clear the report so a later stage
+  // never guards a draft that no longer exists.
+  useEffect(() => () => onDraftState?.(EMPTY_OUTPUT_DRAFT_STATE), [onDraftState]);
 
   const kindLabel = (k: OutputKind) => OUTPUT_KIND_CARDS.find((c) => c.kind === k)?.label ?? k;
 
@@ -1663,17 +1774,17 @@ function OutputsSection({
         <div className="sb-out-add">
           <div className="sb-out-add-fields">
             <label className="sb-field-label" style={{ margin: 0 }}>Type</label>
-            <select value={draftKind} onChange={(e) => setDraftKind(e.target.value as OutputKind)}>
+            <select value={draft.kind} onChange={(e) => patch({ kind: e.target.value as OutputKind })}>
               {OUTPUT_KIND_CARDS.map((c) => <option key={c.kind} value={c.kind}>{c.label}</option>)}
             </select>
 
             <label className="sb-field-label" style={{ margin: 0 }}>Name</label>
             <input
               type="text"
-              value={draftName}
-              placeholder={draftKind === 'data' ? 'e.g. Scored campaigns' : 'e.g. Weekly report'}
-              onChange={(e) => setDraftName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRow(); } }}
+              value={draft.name}
+              placeholder={draft.kind === 'data' ? 'e.g. Scored campaigns' : 'e.g. Weekly report'}
+              onChange={(e) => patch({ name: e.target.value })}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveRow(); } }}
               style={{ minWidth: 180 }}
             />
 
@@ -1684,9 +1795,9 @@ function OutputsSection({
                   key={s}
                   type="button"
                   role="radio"
-                  aria-checked={draftScope === s}
-                  className={`sb-access-seg-btn${draftScope === s ? ' active' : ''}`}
-                  onClick={() => { if (draftScope !== s) { setDraftScope(s); setDraftFolder('/'); } }}
+                  aria-checked={draft.scope === s}
+                  className={`sb-access-seg-btn${draft.scope === s ? ' active' : ''}`}
+                  onClick={() => { if (draft.scope !== s) patch({ scope: s, folder: '/' }); }}
                 >
                   {s === 'domain' ? 'Domain' : 'My'}
                 </button>
@@ -1695,15 +1806,26 @@ function OutputsSection({
 
             <label className="sb-field-label" style={{ margin: 0 }}>Folder</label>
             <NewFolderField
-              folders={foldersFor(draftKind, draftScope)}
-              value={draftFolder}
-              scope={draftScope}
+              folders={foldersFor(draft.kind, draft.scope)}
+              value={draft.folder}
+              scope={draft.scope}
               canEdit={canEdit}
-              onChange={setDraftFolder}
+              onChange={(folder) => patch({ folder })}
             />
           </div>
-          <button type="button" className="btn ghost sm sb-out-addbtn" disabled={!draftName.trim()} onClick={addRow}>
-            + Add output
+          {/* The draft is NOT on the system until it is saved — say so where the typing is,
+              as soon as anything is typed. */}
+          {dirty ? (
+            <span
+              className="badge warn"
+              style={{ marginRight: 8 }}
+              title="This output is not stored yet — save it, or you will be asked when you leave this step."
+            >
+              unsaved output
+            </span>
+          ) : null}
+          <button type="button" className="btn ghost sm sb-out-addbtn" disabled={!valid} onClick={saveRow}>
+            Save output
           </button>
         </div>
       ) : null}

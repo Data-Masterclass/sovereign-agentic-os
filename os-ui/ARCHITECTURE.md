@@ -986,6 +986,50 @@ documents and hash vectors from before this gate, and nothing in the rows marks
 them. Re-indexing is the only remedy. That asymmetry — cheap to prevent,
 impossible to undo — is the argument for the gate being structural.
 
+**A picker scoped to "everything the caller may see" is not scoped to the thing being
+edited.** The agent grant picker built its feed from `listDatasets/listWorkflows/
+listPersonalKnowledge/listFiles/listMetrics(principal)` — each of which scopes to
+`principal.domains`, the union of the caller's memberships whenever no single active
+domain is chosen — and never consulted the SYSTEM's own domain, which it had already
+read for the 403 gate and thrown away. An admin in four domains editing a system in one
+of them was therefore offered all four domains' folders, including their personal
+folders elsewhere. `/api/folders` had the answer the whole time: it narrows with
+`activeDomain`, and the two surfaces simply never compared notes. The fix is one shared
+predicate, `core/kernel/domain-scope.ts`, applied by the agents grant feed
+(`tabs/agents/lib/grant-feed.ts`, with the system's domain as the target) and by the
+tab-agnostic context feed (`tabs/software/lib/available-context.ts`, with the user's
+active domain). Three things that fix had to get right, and each generalises:
+
+- **A narrowing that hides a live grant is a lie.** A folder grant saved before the
+  narrowing can point outside the system's domain; dropping its node would show a
+  system granting less than it grants — and because the tree's tick-and-save round trip
+  removes de-selected folder grants, the next save would DELETE it. Such a node is
+  re-admitted flagged `outsideDomain` and rendered with a warning instead.
+- **Narrow the presentation, never the enforcement.** The real gates stayed put: the
+  canView/DLS filter inside each lister, and the per-item re-resolution of every folder
+  grant against the acting principal at build/run (`tabs/agents/lib/build/os-tools.ts`).
+  A build-time resolution must be a function of the runner's authority, not of whatever
+  a picker currently shows, or the same system does different things on different days.
+- **Carve-outs are part of the predicate, not of the caller.** Marketplace items and
+  domainless artifacts are always kept, and a `null` target narrows nothing (Ask the OS
+  in "All domains" has no single domain to narrow to). Written once, those rules cannot
+  drift between the two feeds; written at each call site they would have.
+
+**A draft the user can see is a promise the component has to keep.** "Where the results
+go" kept the typed output (kind · name · scope · folder) in `useState` and committed it
+only when a button labelled `+ Add output` was pressed — a label that reads as "add
+another", not as "this is how your typing is saved". Every exit from the Define stage
+unmounts the section, so the author filled the fields, moved on, and came back to an
+empty row: "the settings reset". Two rules, both already learned in the Knowledge
+editor and both re-learned here: the **guard belongs to whoever owns the exit** (the
+builder owns the stage rail, the "Grant context →" button and the back buttons, so the
+section only reports `{dirty, valid, save, discard}` upward — a guard inside the section
+would have covered none of them), and the registered `save` must be **re-registered on
+every draft change** so it saves what is on screen rather than what was on screen when
+dirtiness last flipped. A complete draft is committed on the way out; only an incomplete
+one is worth a question. `tabs/agents/lib/output-draft.ts` holds the two predicates, and
+a source tripwire keeps the old label from coming back.
+
 ## Generated documentation
 
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,

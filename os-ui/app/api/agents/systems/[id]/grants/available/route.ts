@@ -10,8 +10,8 @@ import { listPersonalKnowledge, ensureHydrated as ensurePersonalHydrated } from 
 import { listMetrics } from '@tabs/metrics/lib/store';
 import { listConnectionsForUser } from '@tabs/connections/lib/index';
 import { listFiles, ensureHydrated as ensureFilesHydrated } from '@tabs/files/lib/store';
-import { listFolders, ensureHydrated as ensureFoldersHydrated, type FolderTab } from '@core/folders/index';
-import { grantFolderNodes } from '@tabs/agents/lib/grant-folders';
+import { listFolders, ensureHydrated as ensureFoldersHydrated } from '@core/folders/index';
+import { buildGrantFeed, type GrantFeedInput } from '@tabs/agents/lib/grant-feed';
 import { resolveManual } from '@tabs/knowledge/lib/manual';
 import {
   MANUAL_SCOPES,
@@ -30,7 +30,18 @@ export const dynamic = 'force-dynamic';
  * (personal + own-domain shared + marketplace), so this never leaks another
  * user's private drafts or another domain's artifacts.
  *
- * Response: `{ items: [{ id, name, scope, folder? }], folders?: [{ path, scope }] }`.
+ * DOMAIN SCOPE (2026-11-18). The feed is narrowed to the SYSTEM's own domain, not to the union
+ * of every domain the caller belongs to: an admin in four domains editing a system in one of
+ * them was offered all four domains' folders (incl. their personal folders elsewhere), because
+ * every lister scopes to `principal.domains` and `user.domains` is narrowed only when a single
+ * active domain is chosen. The narrowing is PRESENTATION — every row was already canView/DLS
+ * filtered, and `tabs/agents/lib/build/os-tools.ts` still re-resolves each grant per item
+ * against the acting principal at build/run. Marketplace items and the operating-manual scopes
+ * are NOT narrowed; a folder grant that already points outside the domain comes back flagged
+ * `outsideDomain` so the picker warns instead of silently dropping it. See
+ * `tabs/agents/lib/grant-feed.ts` + `docs/superpowers/plans/2026-11-18-grant-picker-domain-scope.md`.
+ *
+ * Response: `{ items: [{ id, name, scope, folder? }], folders?: [{ path, scope, outsideDomain? }] }`.
  * DATA items additionally carry `layers` (which medallion layers are BUILT) so the
  * grant picker only ever offers a real, queryable Bronze/Silver/Gold choice. For the
  * FOLDERED kinds (data · knowledge · files) each item carries its `folder` path AND
@@ -56,19 +67,11 @@ const KINDS: Kind[] = [
 ];
 
 /** The kinds that carry folders — the ones whose feed returns folder nodes. */
-const FOLDER_TABS: Record<string, FolderTab> = { data: 'data', knowledge: 'knowledge', files: 'files' };
+const FOLDER_TABS: Record<string, 'data' | 'knowledge' | 'files'> = { data: 'data', knowledge: 'knowledge', files: 'files' };
 
-type Item = {
-  id: string;
-  name: string;
-  scope: 'personal' | 'domain' | 'marketplace';
-  /** DATA only: which medallion layers are built (so the picker offers real layers). */
-  layers?: ('bronze' | 'silver' | 'gold')[];
-  /** FOLDERED kinds only: the folder path this item lives in (normalised; `'/'` = root). */
-  folder?: string;
-};
-
-type FolderNodeOut = { path: string; scope: 'personal' | 'domain' };
+/** Each lister's rows, carrying the item's OWN domain so the feed can narrow on it.
+ *  `domain` is stripped before the response — the picker never reads it. */
+type Item = GrantFeedInput;
 
 /** The built medallion layers of a dataset summary, from its B/S/G dots. */
 function builtLayers(dots: { bronze: boolean; silver: boolean; gold: boolean }): ('bronze' | 'silver' | 'gold')[] {
@@ -83,8 +86,11 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
     const { id } = params;
     const principal = { id: user.id, domains: user.domains, role: user.role };
 
-    // Scope gate: confirm the caller can view this system (throws 403/404).
-    getSystem(id, principal);
+    // Scope gate: confirm the caller can view this system (throws 403/404) — and read the
+    // narrowing target from the SAME record, so the feed shows the domain of the system under
+    // edit rather than everything this caller may see. A domainless system narrows nothing.
+    const sys = getSystem(id, principal);
+    const targetDomain = sys.domain || null;
 
     const kind = new URL(req.url).searchParams.get('kind') as Kind | null;
     if (!kind || !KINDS.includes(kind)) {
@@ -96,9 +102,9 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
       await ensureHydrated();
       const g = listDatasets(principal);
       items = [
-        ...g.mine.map((d) => ({ id: d.id, name: d.name, scope: 'personal' as const, layers: builtLayers(d.dots), folder: d.folder })),
-        ...g.domain.map((d) => ({ id: d.id, name: d.name, scope: 'domain' as const, layers: builtLayers(d.dots), folder: d.folder })),
-        ...g.marketplace.map((d) => ({ id: d.id, name: d.name, scope: 'marketplace' as const, layers: builtLayers(d.dots), folder: d.folder })),
+        ...g.mine.map((d) => ({ id: d.id, name: d.name, scope: 'personal' as const, domain: d.domain, layers: builtLayers(d.dots), folder: d.folder })),
+        ...g.domain.map((d) => ({ id: d.id, name: d.name, scope: 'domain' as const, domain: d.domain, layers: builtLayers(d.dots), folder: d.folder })),
+        ...g.marketplace.map((d) => ({ id: d.id, name: d.name, scope: 'marketplace' as const, domain: d.domain, layers: builtLayers(d.dots), folder: d.folder })),
       ];
     } else if (kind === 'knowledge') {
       // Hydrate both knowledge stores before listing (best-effort; OS-mirror backed).
@@ -107,30 +113,31 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
       const pk = listPersonalKnowledge(principal);
       items = [
         // Workflows (wf_xxx) — no folder support ⇒ live at root.
-        ...wf.mine.map((w) => ({ id: w.id, name: w.title, scope: 'personal' as const, folder: '/' })),
-        ...wf.domain.map((w) => ({ id: w.id, name: w.title, scope: 'domain' as const, folder: '/' })),
-        ...wf.marketplace.map((w) => ({ id: w.id, name: w.title, scope: 'marketplace' as const, folder: '/' })),
+        ...wf.mine.map((w) => ({ id: w.id, name: w.title, scope: 'personal' as const, domain: w.domain, folder: '/' })),
+        ...wf.domain.map((w) => ({ id: w.id, name: w.title, scope: 'domain' as const, domain: w.domain, folder: '/' })),
+        ...wf.marketplace.map((w) => ({ id: w.id, name: w.title, scope: 'marketplace' as const, domain: w.domain, folder: '/' })),
         // Personal knowledge entries (pk_xxx) — same canView scoping, separate store; foldered.
-        ...pk.mine.map((p) => ({ id: p.id, name: p.title, scope: 'personal' as const, folder: p.folder })),
-        ...pk.domain.map((p) => ({ id: p.id, name: p.title, scope: 'domain' as const, folder: p.folder })),
-        ...pk.marketplace.map((p) => ({ id: p.id, name: p.title, scope: 'marketplace' as const, folder: p.folder })),
+        ...pk.mine.map((p) => ({ id: p.id, name: p.title, scope: 'personal' as const, domain: p.domain, folder: p.folder })),
+        ...pk.domain.map((p) => ({ id: p.id, name: p.title, scope: 'domain' as const, domain: p.domain, folder: p.folder })),
+        ...pk.marketplace.map((p) => ({ id: p.id, name: p.title, scope: 'marketplace' as const, domain: p.domain, folder: p.folder })),
       ];
     } else if (kind === 'files') {
       await ensureFilesHydrated();
       const g = listFiles(principal);
       items = [
-        ...g.mine.map((f) => ({ id: f.id, name: f.name, scope: 'personal' as const, folder: f.folder })),
-        ...g.domain.map((f) => ({ id: f.id, name: f.name, scope: 'domain' as const, folder: f.folder })),
-        ...g.marketplace.map((f) => ({ id: f.id, name: f.name, scope: 'marketplace' as const, folder: f.folder })),
+        ...g.mine.map((f) => ({ id: f.id, name: f.name, scope: 'personal' as const, domain: f.domain, folder: f.folder })),
+        ...g.domain.map((f) => ({ id: f.id, name: f.name, scope: 'domain' as const, domain: f.domain, folder: f.folder })),
+        ...g.marketplace.map((f) => ({ id: f.id, name: f.name, scope: 'marketplace' as const, domain: f.domain, folder: f.folder })),
       ];
     } else if (kind === 'metric') {
       await ensureHydrated();
       const g = listMetrics(principal);
       const nm = (m: { datasetName: string; name: string }) => `${m.datasetName} · ${m.name}`;
       items = [
-        ...g.mine.map((m) => ({ id: m.id, name: nm(m), scope: 'personal' as const })),
-        ...g.domain.map((m) => ({ id: m.id, name: nm(m), scope: 'domain' as const })),
-        ...g.marketplace.map((m) => ({ id: m.id, name: nm(m), scope: 'marketplace' as const })),
+        // A metric's domain rides from its owning dataset (absent ⇒ a domainless dataset).
+        ...g.mine.map((m) => ({ id: m.id, name: nm(m), scope: 'personal' as const, domain: m.domain })),
+        ...g.domain.map((m) => ({ id: m.id, name: nm(m), scope: 'domain' as const, domain: m.domain })),
+        ...g.marketplace.map((m) => ({ id: m.id, name: nm(m), scope: 'marketplace' as const, domain: m.domain })),
       ];
     } else if (kind === 'operating-manual') {
       // The three Operating-Manual scopes the caller may VIEW — gated by the SAME
@@ -147,6 +154,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
       items = conns.map((c) => ({
         id: c.id,
         name: c.name,
+        domain: c.domain,
         scope:
           c.visibility === 'Certified' ? 'marketplace' : c.visibility === 'Shared' ? 'domain' : 'personal',
       }));
@@ -163,17 +171,33 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
     //      section rendered BLANK even though the user has folders. Data/Knowledge get
     //      the same union for consistency. Every synthesized node inherits ITS ITEM's
     //      scope (marketplace items fold under no tree — the picker only trees My/Domain).
-    let folders: FolderNodeOut[] | undefined;
+    // The registry rows are read NARROWED to the system's domain, exactly as `/api/folders`
+    // reads its rail, and the folder grants the system ALREADY holds go in too, so a legacy
+    // one pointing outside this domain comes back flagged instead of disappearing.
     const tab = FOLDER_TABS[kind];
+    let explicitFolders: { path: string; scope: 'personal' | 'domain'; domain: string }[] | undefined;
+    let grantedFolders: { path: string; scope: 'personal' | 'domain' }[] | undefined;
     if (tab) {
       await ensureFoldersHydrated();
       const viewer = { id: user.id, role: user.role, domains: user.domains };
-      const explicit = [
-        ...listFolders(viewer, tab, 'personal').map((f) => ({ path: f.path, scope: 'personal' as const })),
-        ...listFolders(viewer, tab, 'domain').map((f) => ({ path: f.path, scope: 'domain' as const })),
+      explicitFolders = [
+        ...listFolders(viewer, tab, 'personal', { activeDomain: targetDomain })
+          .map((f) => ({ path: f.path, scope: 'personal' as const, domain: f.domain })),
+        ...listFolders(viewer, tab, 'domain', { activeDomain: targetDomain })
+          .map((f) => ({ path: f.path, scope: 'domain' as const, domain: f.domain })),
       ];
-      folders = grantFolderNodes(explicit, items);
+      grantedFolders = (sys.system.grants[tab] ?? [])
+        .map((g) => g.folder)
+        .filter((f): f is NonNullable<typeof f> => !!f)
+        .map((f) => ({ path: f.path, scope: f.scope }));
     }
 
-    return NextResponse.json(folders ? { items, folders } : { items });
+    const feed = buildGrantFeed({
+      items,
+      domain: targetDomain,
+      explicitFolders,
+      grantedFolders,
+      withFolders: !!tab,
+    });
+    return NextResponse.json(feed.folders ? { items: feed.items, folders: feed.folders } : { items: feed.items });
 }, { defaultStatus: 500 });
