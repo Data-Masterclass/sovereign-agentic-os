@@ -22,7 +22,7 @@ import { createFolder, type FolderScope, type Principal as FolderPrincipal } fro
 // Part D: the pure event seam the git commit hook subscribes to (never git from here — this
 // module is reachable from the client bundle).
 import { emitSystemChange } from '@tabs/agents/lib/system-events';
-import { assertSystemWriteAvailable } from '@tabs/agents/lib/write-availability';
+import { assertSystemWriteAvailable, isRunWorkerProcess } from '@tabs/agents/lib/write-availability';
 
 /**
  * The agent-system store — the durable file-backed record behind the Agents tab (kind-only,
@@ -364,6 +364,28 @@ export async function ensureHydrated(): Promise<void> {
     s.hydration = hydrate();
   }
   return s.hydration;
+}
+
+/**
+ * Worker-side freshness for ONE system (0.9.2 incident, 2026-11-18). The run worker never writes
+ * a definition, so its in-process registry is only ever as fresh as its last hydration — and
+ * `hydrate()` deliberately keeps a record it already holds. In os-ui that is right (the process
+ * that writes is authoritative); in the worker it meant every run answered "System not found" on
+ * a cold registry, and would have run a STALE definition after any edit. So, in the run-worker
+ * process only, re-read the one record a job needs from the mirror and let it overwrite memory.
+ * In every other process this is a no-op. `read` is injectable for tests; `null` from the mirror
+ * (missing or unreachable — `getDoc` cannot tell) leaves memory untouched, so the lookup that
+ * follows answers exactly as it would have.
+ */
+export async function refreshSystemFromMirror(
+  systemId: string,
+  read: (id: string) => Promise<unknown | null> = (id) => mirror.getDoc(id),
+): Promise<'refreshed' | 'unavailable' | 'not-worker'> {
+  if (!isRunWorkerProcess()) return 'not-worker';
+  const doc = (await read(systemId)) as Partial<SystemRecord> | null;
+  if (!doc || doc.id !== systemId || typeof doc.yaml !== 'string') return 'unavailable';
+  state().store.set(systemId, doc as SystemRecord);
+  return 'refreshed';
 }
 
 /**
