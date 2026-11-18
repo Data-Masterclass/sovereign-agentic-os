@@ -329,10 +329,12 @@ function FolderedKind({
   const onTree = (sel: FolderSelection) => {
     if (!canEdit) return;
     const next = expandSelectionToIds(grantable, sel.folderGrants, sel.itemGrants);
-    // Bound the removal by what this picker could SHOW: the feed is narrowed to the active
-    // domain, so a grant on an out-of-domain artifact is never in `next` and must not be read
-    // as a de-selection. `listed` is every id the feed returned, tree items + marketplace.
-    const listed = new Set(items.map((a) => a.id));
+    // Bound the removal by what the TREE could show: the feed is narrowed to the active domain,
+    // so a grant on an out-of-domain artifact is never in `next` and must not be read as a
+    // de-selection. `listed` is therefore `treeItems` only — marketplace items are granted
+    // through their own separate picker and are not tickable here, so including them made the
+    // first tick delete every marketplace grant.
+    const listed = new Set(treeItems.map((i) => i.id));
     onChange(reconcileGranted(value, kind, next, cap, listed));
   };
 

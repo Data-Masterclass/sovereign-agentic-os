@@ -1739,18 +1739,24 @@ function OutputsSection({
   // written to session storage on every change and read back on mount. `sessionStorage` is
   // absent on the server and THROWS in a private window, so every access is guarded and a
   // failure simply means no parking, never a broken section.
+  // The "have I read this slot yet" marker is the KEY, not a boolean: the same mounted section
+  // can be handed another system (the builder is reused), and a boolean would then leave the
+  // previous system's draft on screen AND park it under the new system's key.
   const parkKey = outputDraftStorageKey(systemId);
-  const restored = useRef(false);
+  const restoredFor = useRef<string | null>(null);
   useEffect(() => {
-    if (restored.current) return;
-    restored.current = true;
+    if (restoredFor.current === parkKey) return;
+    restoredFor.current = parkKey;
+    let parked: OutputDraft | null = null;
     try {
-      const parked = parseOutputDraft(window.sessionStorage.getItem(parkKey));
-      if (parked) setDraft(parked);
+      parked = parseOutputDraft(window.sessionStorage.getItem(parkKey));
     } catch { /* no session storage (private window) — nothing to restore */ }
+    // Reset to empty when the new system has nothing parked, so the old system's typing
+    // cannot follow the author into another team.
+    setDraft(parked ?? EMPTY_OUTPUT_DRAFT);
   }, [parkKey]);
   useEffect(() => {
-    if (!restored.current) return; // never park over a slot before reading it
+    if (restoredFor.current !== parkKey) return; // never park over a slot before reading it
     try {
       if (outputDraftDirty(draft)) window.sessionStorage.setItem(parkKey, serializeOutputDraft(draft));
       else window.sessionStorage.removeItem(parkKey);

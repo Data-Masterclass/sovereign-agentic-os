@@ -113,12 +113,13 @@ that the domain narrowing dropped, marked `outsideDomain: true`:
 { items, folders: [{ path, scope, outsideDomain?: true }] }
 ```
 
-The node is present ⇒ the tree renders it and shows it ticked (the tick already derives from
-`system.grants`), so nothing is dropped and no round trip destroys it. `GrantPickers.tsx`
-renders an `outside this domain` warning badge on that folder's chip so the author can see
-why it looks foreign and remove it deliberately. Item grants need no equivalent: the granted
-chips already render from `system.grants[kind]` regardless of the feed, and `nameOf()` falls
-back to the id.
+**Superseded by review round 1 — see below.** This paragraph originally claimed the re-admitted
+node "renders ticked" in the tree. It does not: the narrowed feed gives that folder no items,
+and `triState` renders an item-less folder as `'none'`. What actually ships: the flagged row is
+kept OUT of the tree and rendered as a read-only chip with an `outside this domain` badge, and
+`tabs/agents/lib/grant-apply.ts` protects it from the reconcile so no round trip can delete it.
+Item grants the feed no longer lists get the same treatment — kept, and badged, because
+`nameOf()` can only fall back to the raw id for them.
 
 ### 4. Governance is unchanged — this is presentation only
 
@@ -466,6 +467,33 @@ edit-scoped `system.yaml` PUT with no per-id validation at all.
 | `os-ui/app/api/apps/by-slug/[slug]/context/route.ts` | M7 |
 | `os-ui/tabs/connections/lib/warehouse/providers/snowflake.ts` | M3 — pre-existing raw control bytes in a regex → escapes (semantics identical) |
 | `os-ui/ARCHITECTURE.md` | the L10 correction + the "a narrowed feed is a narrowed diff" lesson |
+
+## Review round 2 — merge, with five corrections
+
+The re-review cleared the change and named five things, all applied in one commit.
+
+1. **Marketplace item grants were still deleted by the first tick.** The reconcile was handed
+   `listedItemIds: items.map(…)` — the WHOLE feed — while the tree only ever shows `treeItems`
+   (personal + domain). Marketplace items are granted through the separate
+   "+ Add from marketplace" picker, so they can never be unticked, and counting them as listed
+   made their absence from the selection look like a de-selection. Now `treeItems.map(…)`, and
+   the same one-word fix in `SoftwareContextGrants` (`treeItems`, not `items`), whose comment
+   claimed the opposite. A marketplace-survives test in **both** test files.
+2. **The out-of-domain folder chip's `AccessLevelSelect` was still live.** This picker cannot
+   show what is inside a folder in another domain, so raising its capability would grant write
+   over contents the author cannot inspect. `canEdit={canEdit && !isOutside(g.folder!)}`;
+   removing the grant (✕) stays available, because that only ever reduces. Tripwired.
+3. **Patch damage and stale comments.** A duplicated doc-comment opener at the top of
+   `FolderResourcePicker`, and two comments still asserting the out-of-domain node "still
+   renders ticked" — the claim round 1 disproved. Corrected here and in §3 above.
+4. **Out-of-domain ITEM grants now carry the badge too.** They rendered as a bare id (that is
+   all `nameOf()` has for an artifact the feed did not return) with a *scope* badge guessed at
+   `'personal'`. The wording says only what is known: not in this view — usually another
+   domain, possibly an artifact that is gone.
+5. **`restoredFor` is keyed, not boolean.** The marker for "have I read this parking slot" is
+   now the key itself, so handing the mounted section another system re-reads that system's
+   slot (and resets to empty when it has none) instead of leaving the previous team's typing on
+   screen and parking it under the new team's key.
 
 ## Guardrails for the execution
 
