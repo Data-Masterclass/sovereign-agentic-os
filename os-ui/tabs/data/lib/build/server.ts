@@ -5,6 +5,7 @@ import 'server-only';
 import { type Dataset, type Layer, type Quality } from '@tabs/data/lib/dataset-schema';
 import { type DataStage } from '@tabs/data/lib/build/adapter';
 import type { ExecuteIdentity } from '@core/infra/governed';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { orchestrateStage, type DataBuildReport } from '@tabs/data/lib/build/orchestrate';
 import { makeMockAdapters, newMockBackends } from '@tabs/data/lib/build/mocks';
 import { makeRealClients, queryToolReachable, probeQueryable } from '@tabs/data/lib/build/live-clients';
@@ -46,6 +47,16 @@ export async function buildStage(
   if (await queryToolReachable()) {
     const report = await orchestrateStage(stage, ctx, makeLiveAdapters(await makeRealClients()));
     return { ...report, mode: 'live' };
+  }
+  // THE HONESTY GATE (2026-11-18). The mock adapters report ✓ for an apply+verify that ran
+  // against an in-process backend — no CTAS, no Iceberg table, no Trino. On a real deployment
+  // that is a BUILD THAT DID NOT HAPPEN, and the ✓ reaches the registry as a built layer. So
+  // refuse unless this deployment explicitly asked for the teaching flow.
+  if (!offlineMockAllowed()) {
+    refuseOfflineMock(
+      `Cannot build the ${stage} stage of “${dataset.name}”: the governed query path (query-tool → ` +
+        'Trino) is unreachable, so no table can be written or verified. Nothing was registered.',
+    );
   }
   const report = await orchestrateStage(stage, ctx, makeMockAdapters(newMockBackends()));
   return { ...report, mode: 'offline-mock' };

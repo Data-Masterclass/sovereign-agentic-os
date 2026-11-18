@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { queryToolReachable, realTrino } from '@tabs/data/lib/build/live-clients';
 import { listGovernedDatasets } from '@tabs/data/lib/store';
 import { rematerializeDomainTableLive } from '@tabs/data/lib/publish-server';
@@ -34,6 +35,17 @@ export async function reconcileDomainTablesLive(
   opts: { domain?: string } = {},
 ): Promise<ReconcileReport> {
   const engineLive = await queryToolReachable();
+  // THE HONESTY GATE (2026-11-18). With the engine down the verifier below answers `true` for
+  // every table, so the sweep reports "all present" having probed nothing — a fallback that
+  // reports success, over the exact fact the sweep exists to establish. On a real deployment
+  // that is refused; the teaching flow keeps the deliberate no-op, because on a laptop no domain
+  // schema exists and a blanket "missing" would trigger a re-materialize storm.
+  if (!engineLive && !offlineMockAllowed()) {
+    refuseOfflineMock(
+      'Cannot reconcile the promoted domain tables: the governed query path (query-tool \u2192 Trino) ' +
+        'is unreachable, so no table can be probed. Nothing was re-materialized.',
+    );
+  }
   const verifyDomainTable: MaterializationVerifier = engineLive
     ? (fqn, principal) => realTrino().tableQueryable(fqn, principal)
     : async () => true;

@@ -37,6 +37,14 @@ const VALUES = join(repo, 'values.local.yaml');
 const ADMIN_ONLY = ['LITELLM_MASTER_KEY', 'LITELLM_UI_USERNAME', 'LITELLM_UI_PASSWORD', 'GRAPH_CLIENT_SECRET', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET'];
 /** The run path cannot work without these, so their absence is a broken split, not a safe one. */
 const RUN_PATH = ['LITELLM_AGENT_KEY', 'AGENT_RUNS_DATABASE_URL', 'LANGFUSE_SECRET_KEY', 'OPA_URL'];
+/**
+ * Must be on BOTH pods, EXPLICITLY (2026-11-18). `OS_OFFLINE_MOCK` decides whether this
+ * deployment may answer with fabricated data; the os-ui-worker EXECUTES agent runs, so a worker
+ * that disagreed with the UI would have agents fabricating while the UI refused. The predecessor
+ * gate keyed on `OS_PROFILE`, which no chart ever set — hence "explicitly": it is asserted
+ * PRESENT here, not merely assumed to have a sensible default in code.
+ */
+const BOTH_PODS = ['OS_OFFLINE_MOCK'];
 
 function helmAvailable() {
   try {
@@ -95,10 +103,26 @@ if (worker) {
   const have = names(worker);
   for (const n of ADMIN_ONLY) if (have.has(n)) problems.push(`os-ui-worker carries the ADMIN-ONLY env ${n} — include soa.osUI.runEnv, not soa.osUI.env`);
   for (const n of RUN_PATH) if (!have.has(n)) problems.push(`os-ui-worker is MISSING the run-path env ${n} — the split dropped something a run needs`);
+  for (const n of BOTH_PODS) if (!have.has(n)) problems.push(`os-ui-worker is MISSING ${n} — the honesty switch must be set explicitly on the run path too`);
 }
 if (osui) {
   const have = names(osui);
   for (const n of ADMIN_ONLY) if (!have.has(n)) problems.push(`os-ui is MISSING ${n} — soa.osUI.env must still include soa.osUI.adminEnv`);
+  for (const n of BOTH_PODS) if (!have.has(n)) problems.push(`os-ui is MISSING ${n} — the honesty switch must be set explicitly`);
+}
+
+// The DEFAULT render (chart values only) must REFUSE. values.local.yaml deliberately sets
+// `allow` for the laptop teaching flow, so the default has to be asserted on its own render —
+// a default that is only right in the one profile nobody deploys is how OS_PROFILE happened.
+{
+  const def = execFileSync('helm', ['template', CHART, '--set', 'osUI.worker.enabled=true'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  for (const [pod, doc] of deployments(def)) {
+    if (pod !== 'os-ui' && pod !== 'os-ui-worker') continue;
+    const value = doc.match(/- name: OS_OFFLINE_MOCK\n\s+value: "([^"]*)"/)?.[1];
+    if (value !== 'refuse') {
+      problems.push(`${pod}: OS_OFFLINE_MOCK renders as ${value === undefined ? '(absent)' : `"${value}"`} on a DEFAULT install — it must be "refuse"`);
+    }
+  }
 }
 
 if (problems.length) {
@@ -106,4 +130,4 @@ if (problems.length) {
   for (const p of problems) console.error(`  - ${p}`);
   process.exit(1);
 }
-console.log(`check-worker-env: ok — os-ui-worker holds none of ${ADMIN_ONLY.length} admin credentials and all ${RUN_PATH.length} run-path ones`);
+console.log(`check-worker-env: ok — os-ui-worker holds none of ${ADMIN_ONLY.length} admin credentials and all ${RUN_PATH.length} run-path ones; OS_OFFLINE_MOCK is explicit on both pods and defaults to refuse`);

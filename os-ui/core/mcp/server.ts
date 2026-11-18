@@ -6,6 +6,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import type { ChatArtifact } from '@core/runtime/chat-artifacts';
 import { ROLES, type Role } from '@core/kernel/session';
 import { config } from '@core/kernel/config';
+import { ENGINE_UNAVAILABLE, isOfflineMockRefused } from '@core/kernel/offline-mock';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 import { listSystems, ensureHydrated as agentsHydrated } from '@tabs/agents/lib/store';
 import { getRegisteredTools, getBundleTools, hydrateAllBundles } from '@core/mcp/registry';
@@ -579,6 +580,21 @@ function isUpstreamUnreachable(e: unknown): boolean {
 export function structuredError(e: unknown): ToolError {
   const status = (e as { status?: number }).status;
   const reason = (e as Error).message || 'Tool execution failed';
+  // THE OFFLINE-MOCK REFUSAL comes FIRST, keyed on the error's own `code` and not on its status:
+  // this deployment declined to fabricate, which is a POLICY outcome and not a transport failure
+  // (`upstream_error`) nor an unactionable `error`. An agent can route on it — which is the whole
+  // point, because on 2026-11-18 a fabricated row and a measured one were the same shape and the
+  // agents built on the fabricated one. See `core/kernel/offline-mock.ts`.
+  if (isOfflineMockRefused(e)) {
+    return {
+      code: ENGINE_UNAVAILABLE,
+      reason,
+      hint:
+        'A component this tool needs is unreachable, and this deployment refuses to answer with ' +
+        'fabricated data. Nothing was written. Check the component’s health row in ' +
+        'Platform → Components, then retry — your arguments are fine.',
+    };
+  }
   const code =
     status === 403 ? 'forbidden'
       : status === 404 ? 'not_found'

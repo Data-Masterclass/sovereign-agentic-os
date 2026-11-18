@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { buildStage } from '@tabs/data/lib/build/server';
 import { queryToolReachable, realTrino } from '@tabs/data/lib/build/live-clients';
 import { publishApprovedPromotion, rematerializeDomainTable, type PublishOutcome, type RematerializeOutcome } from '@tabs/data/lib/publish';
@@ -14,9 +15,21 @@ import type { MaterializationVerifier, Principal, PromotionRequest } from '@tabs
  * (`queryToolReachable`). LIVE ⇒ a REAL
  * governed `tableQueryable` probe on the exact domain target. Only a genuinely unreachable
  * query-tool (true offline-mock — no domain schema to probe) trusts the in-process build ✓.
+ *
+ * THE HONESTY GATE (2026-11-18). `return true` is a fallback that reports SUCCESS: it flips a
+ * dataset's tier to `asset` on the strength of a probe that never ran. On a real deployment an
+ * unreachable query-tool means the publish cannot be verified, and an unverified publish must
+ * not happen — so refuse rather than assert. The teaching flow keeps the trust-the-build path,
+ * because on a laptop there is genuinely no domain schema to probe.
  */
 const verifyDomainTable: MaterializationVerifier = async (fqn, principal) => {
   if (await queryToolReachable()) return realTrino().tableQueryable(fqn, principal);
+  if (!offlineMockAllowed()) {
+    refuseOfflineMock(
+      `Cannot verify the domain table ${fqn}: the governed query path (query-tool → Trino) is ` +
+        'unreachable, so the publish cannot be confirmed. The dataset’s tier was not changed.',
+    );
+  }
   return true;
 };
 

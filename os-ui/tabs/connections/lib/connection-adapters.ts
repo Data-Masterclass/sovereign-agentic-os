@@ -35,6 +35,7 @@ import {
   type OpaConnectionBundle,
   type CompilerGrant,
 } from '@core/infra/capability-compiler';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import type { ConnectionTool, ConnectionTemplate, CapabilityMode, ConnectorKind } from '@tabs/connections/lib/schema';
 
 export type { ConnectorKind };
@@ -125,6 +126,31 @@ function toCompilerTools(tools: ConnectionTool[]) {
   }));
 }
 
+/**
+ * THE HONESTY GATE for this file (2026-11-18). No live client is injected anywhere in the shipped
+ * code — `ctx.clients` is populated only by tests — so on a real cluster EVERY op below took the
+ * offline branch, and three of those branches FABRICATE: a reachability test that reports ✓
+ * without probing, and a sync that reports "128 rows ingested (kind seed)" having ingested
+ * nothing. Those are the sites that call this; it refuses unless the deployment explicitly asked
+ * for the teaching flow.
+ *
+ * The other `mode: 'offline-mock'` returns in this file are deliberately NOT routed through here,
+ * and the distinction is the point: a static tool PRESET read off the template, a credential the
+ * Builder typed being captured verbatim, "MCP is a tool surface (no sync)", and the placeholder
+ * OAuth token the real callback overwrites are all honest answers that merely ran offline. They
+ * invent no fact about the outside world. Refusing them would break connection creation and buy
+ * nothing.
+ */
+function fabricated<T>(what: string, result: OpResult<T>): OpResult<T> {
+  if (!offlineMockAllowed()) {
+    refuseOfflineMock(
+      `${what} No live client is wired for this connector in this deployment, so the result would ` +
+        'be a demonstration figure rather than a fact about the connected system.',
+    );
+  }
+  return result;
+}
+
 /** compilePolicy is identical for every adapter — the compiler is the one rule. */
 function compilePolicy(principal: string, ctx: AdapterCtx): OpaConnectionBundle {
   const tools = ctx.tools ?? ctx.template.tools;
@@ -150,7 +176,11 @@ async function probeTest(ctx: AdapterCtx, label: string): Promise<OpResult> {
       detail: live.ok ? `${label}: reached ${ctx.endpoint} with the stored credential.` : `${label}: endpoint returned ${live.status ?? 'error'}.`,
     };
   }
-  return { ok: true, mode: 'offline-mock', detail: `${label}: credential present; endpoint not probed offline. The secret is never sent to the browser.` };
+  return fabricated(`Cannot test ${label} (${ctx.endpoint}): the endpoint was never probed.`, {
+    ok: true,
+    mode: 'offline-mock',
+    detail: `${label}: credential present; endpoint not probed offline. The secret is never sent to the browser.`,
+  });
 }
 
 // ----------------------------------------------------------------- adapters -----
@@ -178,7 +208,7 @@ const driveAdapter: ConnectionAdapter = {
   async sync(ctx) {
     const live = ctx.clients?.sync ? await ctx.clients.sync.run('drive', ctx.endpoint).catch(() => null) : null;
     if (live) return { ok: true, mode: 'live', detail: `Indexed ${live.records} Drive items → Files.`, data: { records: live.records, target: 'files' } };
-    return { ok: true, mode: 'offline-mock', detail: 'Indexed 3 Drive items → Files (kind seed).', data: { records: 3, target: 'files' } };
+    return fabricated('Cannot sync this Drive connection: nothing was indexed.', { ok: true, mode: 'offline-mock', detail: 'Indexed 3 Drive items → Files (kind seed).', data: { records: 3, target: 'files' } });
   },
 };
 
@@ -194,7 +224,7 @@ const databaseAdapter: ConnectionAdapter = {
   async sync(ctx) {
     const live = ctx.clients?.sync ? await ctx.clients.sync.run('database', ctx.endpoint).catch(() => null) : null;
     if (live) return { ok: true, mode: 'live', detail: `dlt → Bronze: ${live.records} rows ingested.`, data: { records: live.records, target: 'bronze' } };
-    return { ok: true, mode: 'offline-mock', detail: 'dlt → Bronze: 128 rows ingested (kind seed).', data: { records: 128, target: 'bronze' } };
+    return fabricated('Cannot sync this Database connection: no rows were ingested.', { ok: true, mode: 'offline-mock', detail: 'dlt → Bronze: 128 rows ingested (kind seed).', data: { records: 128, target: 'bronze' } });
   },
 };
 
@@ -220,7 +250,7 @@ const apiAdapter: ConnectionAdapter = {
   async sync(ctx) {
     const live = ctx.clients?.sync ? await ctx.clients.sync.run('api', ctx.endpoint).catch(() => null) : null;
     if (live) return { ok: true, mode: 'live', detail: `dlt → Bronze: ${live.records} records ingested.`, data: { records: live.records, target: 'bronze' } };
-    return { ok: true, mode: 'offline-mock', detail: 'dlt → Bronze: 42 records ingested (kind seed).', data: { records: 42, target: 'bronze' } };
+    return fabricated('Cannot sync this API connection: no records were ingested.', { ok: true, mode: 'offline-mock', detail: 'dlt → Bronze: 42 records ingested (kind seed).', data: { records: 42, target: 'bronze' } });
   },
 };
 
@@ -265,7 +295,7 @@ const saasAdapter: ConnectionAdapter = {
   async sync(ctx) {
     const live = ctx.clients?.sync ? await ctx.clients.sync.run('saas', ctx.endpoint).catch(() => null) : null;
     if (live) return { ok: true, mode: 'live', detail: `dlt → Bronze: ${live.records} records ingested.`, data: { records: live.records, target: 'bronze' } };
-    return { ok: true, mode: 'offline-mock', detail: 'dlt → Bronze: 17 records ingested (kind seed).', data: { records: 17, target: 'bronze' } };
+    return fabricated('Cannot sync this SaaS connection: no records were ingested.', { ok: true, mode: 'offline-mock', detail: 'dlt → Bronze: 17 records ingested (kind seed).', data: { records: 17, target: 'bronze' } });
   },
 };
 

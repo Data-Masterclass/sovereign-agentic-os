@@ -93,14 +93,29 @@ export type ScanFinding = {
   path?: string;
 };
 
+/**
+ * WHICH ENGINE produced the verdict. `'unavailable'` is the third state (2026-11-18): no scanner
+ * engine ran at all, so there is no verdict to give \u2014 distinct from `offline-mock`, which means
+ * the deterministic baseline really did read the real files. See `core/kernel/offline-mock.ts`.
+ */
+export type ScanMode = RunMode | 'unavailable';
+
 export type ScanResult = {
-  mode: RunMode;
+  mode: ScanMode;
   /** True only when no finding is `high`/`critical` AND no secret leaked. */
   passed: boolean;
   findings: ScanFinding[];
   /** A finding count by category for the review-card summary. */
   summary: Record<ScanCategory, number>;
   scannedAt: string;
+  /**
+   * Set when NO scanner engine ran: `passed` is false for THAT reason, not because of a finding.
+   * An approver must be able to tell "we looked and it is clean" from "nothing looked", because
+   * `decideDeploy` approves only on `passed` and the second one used to read as the first.
+   */
+  unavailable?: true;
+  /** Why there is no verdict. Present with `unavailable`. */
+  reason?: string;
 };
 
 // ------------------------------------------------------------- Review card -----
