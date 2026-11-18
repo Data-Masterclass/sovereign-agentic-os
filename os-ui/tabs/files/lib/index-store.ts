@@ -183,6 +183,38 @@ export async function bulkIndex(docs: ChunkDoc[]): Promise<boolean> {
   return Boolean(res && res.ok);
 }
 
+/**
+ * Remove a file's OpenSearch chunks EXCEPT the ones just written — the prune half of an
+ * add-then-prune re-index (the admin re-index, 2026-11-19).
+ *
+ * Why this order and not delete-then-add: a re-parse can produce FEWER chunks than the index
+ * holds (`<fileId>#0…#7` becomes `#0…#4`), so the surplus must go — but deleting first means a
+ * failed bulk write leaves the file with NO rows at all, which is exactly "deleting a row it
+ * could not replace". `bulkIndex` overwrites by `_id`, so adding first is idempotent and this
+ * sweep only ever removes what the new write did not cover. Call it ONLY after `bulkIndex`
+ * returned true, and never with an empty `keepIds` (that would be the delete-everything case this
+ * function exists to make impossible — it refuses).
+ *
+ * Returns true when the delete-by-query was accepted; false when OpenSearch was unreachable or
+ * refused, in which case the stale rows simply stay (honest, and harmless — they are duplicates
+ * of content the new rows already carry, never the only copy).
+ */
+export async function pruneChunksExcept(fileId: string, keepIds: string[]): Promise<boolean> {
+  if (keepIds.length === 0) return false; // never prune to nothing
+  const body = {
+    query: {
+      bool: {
+        must: [{ term: { file_id: fileId } }],
+        must_not: [{ ids: { values: keepIds } }],
+      },
+    },
+  };
+  const res = await osFetch(`/${config.filesIndex}/_delete_by_query?refresh=true`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  return Boolean(res && res.ok);
+}
+
 /** Build the OpenSearch hybrid query (knn + multi_match) with the DLS as a filter.
  *  Exported so Phase 5's retrieve can run it live (and so it is inspectable/testable). */
 export function buildOpenSearchQuery(queryVector: number[], queryText: string, filter: DlsFilter, k = 8): Record<string, unknown> {
