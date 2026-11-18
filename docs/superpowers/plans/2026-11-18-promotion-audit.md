@@ -363,3 +363,86 @@ Two findings the audit matrix did not predict, both found by the tests rather th
 - **a metric's tier IS its dataset's tier**, so `tier === 'personal'` can only mean the dataset is
   private; the "file a request" branch was unreachable-by-design in one direction and
   un-appliable in the other.
+
+---
+
+# REVIEW ROUND — what the independent review found, and what it changed
+
+The first pass fixed the dead ends and the swallowed refusals. The review found that two of those
+fixes had their own holes, and that one of them had quietly widened a different thing.
+
+## H1 — a pending request was readable by anyone authenticated
+
+Both promote routes and the MCP tool ran the duplicate-request lookup **before** the owner check
+and returned the whole `Approval`. So while a request was open, any authenticated principal —
+including a creator in another domain — could POST a guessed id and read the asset's name, owner,
+domain and the queued payload *including its policy grants*. The first pass had even written a
+test that documented the leak ("the dedup branch would otherwise hand ben the owner's existing
+pending handle") instead of closing it, which is the worst possible artefact: a test that pins a
+bug in place.
+
+Fixed by ordering: `requestPromotion` (the owner-only trigger and the documentation gate) runs
+first on every branch, so the dedup is only ever reached by the owner, and it answers
+`{ requested: true, already: true, approvalId }` — a handle, never the record. The test now walks
+five foreign principals against a pending request and asserts both the refusal and that no
+response contains the asset's name, its grants or its payload keys.
+
+## H2 — a one-shot promotion left no trace
+
+`promoteThroughSeam` dropped `effect.audit`, and the new one-shot routes wrote no approval record
+at all. So the audience moves most likely to matter — the ones an admin makes on their own
+artefact — appeared in no audit log and in no Governance queue. An un-recorded promotion is
+invisible to exactly the people the queue exists for.
+
+Both paths now mint the record, self-approve it (`source: 'ladder'`, `decidedBy` naming who did
+it), record the effect on it, and write the effect's own audit entry. The two routes additionally
+go **through `applyEffect`** rather than calling the appliers directly, so there is one seam, one
+audit shape and one failure contract for every audience move, whoever makes it. The two
+`promote…OrPropose` helpers are gone — the flow belongs at the server boundary, not in a store.
+
+## DECISION — four-eyes stays at Company
+
+`AUDIENCE_PROMOTION_KINDS` included the certify kinds, which would have let a lone platform admin
+file **and** certify their own artefact company-wide. That is a much larger blast radius than
+sharing inside one domain, and not the deadlock the carve-out exists to clear (rung 2 is filed by
+a Builder/Domain-admin of the domain, so there is normally somebody else to ask). The set is now
+rung-1 only — `artifact_promote`, `dataset_promote`, `file_promote` — and a test pins both halves:
+the certify kinds refuse the filer, the rung-1 kinds admit them.
+
+**Open for the owner:** relaxing this for a genuinely single-admin tenant is a one-line change to
+that set. It is deliberately *not* taken here.
+
+## M1–M5, L1–L4
+
+- **M1** The HTTP door decided and then applied, so a request whose effect could not run (a legacy
+  metric request, a gate refusal) was marked `approved` with nothing applied. It now applies first
+  and leaves a failure **pending**, matching the MCP door. **L3**: the catch keeps the gate's own
+  status (`e.status ?? 502`) — a refusal and an outage are different facts.
+- **M2** `approve_promotion` consulted neither `canApprove` nor `runId`, so a parked agent run's
+  promotion could be cleared there *as the approver*, skipping resume-as-runner and silently
+  re-attributing the write. Both gates added; a parked run is now a typed 409 pointing at
+  Governance.
+- **M3** One documented response shape per route, in the route header:
+  `{requested:true, promoted:false, approval}` · `{requested:true, already:true, approvalId}` ·
+  `{promoted:true, requested:false, approvalId, applied, …}`.
+- **M4** `publishWorkflow` guarded on `rec.status === 'live'` while lines below are its only
+  setter, so a Personal-but-live workflow filed a request this function would always reject. The
+  guard is now on the AUDIENCE axis (`visibility !== 'Personal'`), which is what a promotion moves.
+- **M5** Driving `connection`, `personal_knowledge` and `artifact` end-to-end found **a third
+  unapprovable kind**: a "My knowledge" entry is owner-only to view — stricter than a workflow
+  draft, which Builder+ in-domain may read — so `promotePersonalKnowledge` could not see the record
+  it was approving. Same resolution as dashboards: the owner's filed request is the consent, and
+  the fix is a governance read, not a weaker privacy rule. `personal_knowledge` has no MCP door, so
+  its row of the matrix lives in `tabs/knowledge/lib/promotion-matrix.test.ts` (a tab test may
+  import its own tab; the core file may not).
+- **L1** The metric promote GET answered `{request:null}`, so the button rendered enabled and every
+  click was a 409. It now returns `gate: { ok:false, reason, datasetId }` for the Personal tier and
+  the shared `<PromoteButton>` disables itself and shows the sentence.
+- **L2** The widened dashboard read had been applied in `resolveLadderArtifact`, which five call
+  sites reach — including certification filing, where it would have let an in-domain builder read a
+  Personal dashboard's name. It is now opt-in per call site (`forGovernanceAct`), passed only by the
+  approve-half and the effect's own `transitionDashboard`.
+- **L4** Two tripwires were satisfied by the comment prose they were meant to police. Every tripwire
+  now matches against a comment-stripped copy of the source, and asserts identifiers, property
+  names, status codes and **call ordering** (gate before dedup, apply before decide) rather than
+  sentences.

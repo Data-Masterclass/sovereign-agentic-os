@@ -144,15 +144,21 @@ export function canSee(actor: Actor, a: Pick<Approval, 'domain' | 'requestedBy'>
 }
 
 /**
- * The AUDIENCE-LADDER kinds — My→Domain→Company moves the owner PROPOSES on their own
- * artefact. Named here because they are the one family where "the requester may not decide"
- * has to yield; see {@link canApprove}.
+ * The RUNG-1 audience moves (My→Domain) the owner PROPOSES on their own artefact. These are
+ * the one family where "the requester may not decide" has to yield; see {@link canApprove}.
+ *
+ * THE CERTIFY KINDS ARE DELIBERATELY ABSENT. `promote_certify` and `dataset_certify` are the
+ * Domain→COMPANY rung, approved by a platform admin and visible to the whole tenant. Including
+ * them would let a lone platform admin file AND certify their own artefact company-wide with no
+ * second pair of eyes — a much larger blast radius than sharing something inside one domain, and
+ * not the deadlock this carve-out exists to clear (rung 2 is filed by a Builder/Domain-admin of
+ * the domain, so there is normally somebody else to ask). Four-eyes therefore stays at Company.
+ * The owner may relax this later; it is recorded as an open decision in
+ * `docs/superpowers/plans/2026-11-18-promotion-audit.md`.
  */
 const AUDIENCE_PROMOTION_KINDS: ReadonlySet<string> = new Set([
   'artifact_promote',
-  'promote_certify',
   'dataset_promote',
-  'dataset_certify',
   'file_promote',
 ]);
 
@@ -166,7 +172,7 @@ const AUDIENCE_PROMOTION_KINDS: ReadonlySet<string> = new Set([
  * escalation, because the whole point of the hold is that a second human authorises what the
  * first one's agent tried to do. That rule is absolute for anything carrying a `runId`.
  *
- * An AUDIENCE PROMOTION is a different shape. The owner proposes their own artefact — that is
+ * A RUNG-1 AUDIENCE PROMOTION (My→Domain) is a different shape. The owner proposes their own artefact — that is
  * the only way a rung-1 request can ever be filed (`fileArtifactPromotion` is owner-only) — and
  * the approver vouches for it. When ONE person holds both roles, which on a small tenant is the
  * normal case and not an edge case, blanket four-eyes did not enforce a second pair of eyes; it
@@ -175,11 +181,12 @@ const AUDIENCE_PROMOTION_KINDS: ReadonlySet<string> = new Set([
  * forever and the asset could not leave My. (The dataset/file MCP half, `approve_promotion`,
  * never had this check — so the two front doors also disagreed.)
  *
- * So for the audience-ladder kinds, and only when nothing parked a run on them, the requester
+ * So for the RUNG-1 audience kinds, and only when nothing parked a run on them, the requester
  * may decide — PROVIDED they independently clear the rank and scope gates above, which is what
  * makes this not a widening: a creator still cannot approve anything, a builder still cannot
  * approve a `domain_admin` rung, and a domain admin still cannot certify to Company. The
- * audience move stays fully gated; only the self-deadlock goes away.
+ * Domain→Company rung keeps four-eyes outright (see {@link AUDIENCE_PROMOTION_KINDS}); only the
+ * My→Domain self-deadlock goes away.
  *
  * Fail-closed on an absent `kind`: a caller that cannot say what the item is gets four-eyes.
  */

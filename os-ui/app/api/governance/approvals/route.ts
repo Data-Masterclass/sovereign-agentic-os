@@ -74,10 +74,80 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `This item needs ${need}` }, { status: 403 });
   }
 
-  const updated = decide(id, decision, user.id);
-  if (!updated) return NextResponse.json({ error: 'Could not decide' }, { status: 500 });
+  // APPLY BEFORE DECIDING on approve — the order the MCP door already used. Deciding first
+  // marked a request `approved` and only then discovered the effect could not run (a legacy
+  // metric request, a gate refusal, an unreachable publisher), leaving a permanently-approved
+  // item with nothing applied and no way to retry it. The queue's own rule is that a refusal
+  // leaves the request PENDING, and the two front doors must not disagree about it.
+  if (decision === 'approve') {
+    const target = existing;
+    let effect;
+    try {
+      effect = await applyEffect(target, { id: user.id, role: user.role, domains: user.domains }, buildEffectDeps());
+    } catch (e) {
+      audit({
+        actor: user.id,
+        action: 'approve',
+        subject: target.tool || target.kind,
+        domain: target.domain,
+        reason: `Effect FAILED — request left pending: ${(e as Error).message}`,
+        detail: { approvalId: target.id, error: (e as Error).message },
+      });
+      recordEffect(target.id, { applied: `Effect failed: ${(e as Error).message}`, live: false });
+      // The CAUSE travels in `error`, and the STATUS is the gate's own (403/409/…) rather than
+      // a blanket 502 — a refusal and an outage are different facts.
+      return NextResponse.json(
+        { approval: { ...getApproval(target.id) }, applied: null, error: `Effect failed: ${(e as Error).message}` },
+        { status: (e as { status?: number }).status ?? 502 },
+      );
+    }
+    if (!effect.ok) {
+      recordEffect(target.id, { applied: effect.applied, live: false, publish: effect.publish });
+      return NextResponse.json(
+        { approval: { ...getApproval(target.id) }, applied: null, error: effect.applied, publish: effect.publish },
+        { status: 502 },
+      );
+    }
+    const decidedOk = decide(id, 'approve', user.id);
+    if (!decidedOk) return NextResponse.json({ error: 'Could not decide (raced?)' }, { status: 409 });
+    let standingPolicyId: string | undefined;
+    if (body?.remember && decidedOk.rememberable) {
+      standingPolicyId = remember({
+        kind: decidedOk.kind,
+        payload: decidedOk.payload,
+        domain: decidedOk.domain,
+        createdBy: user.id,
+        fromApproval: decidedOk.id,
+      }).id;
+    }
+    recordEffect(decidedOk.id, { applied: effect.applied, live: effect.live, standingPolicyId, publish: effect.publish });
+    audit({
+      actor: user.id,
+      action: effect.audit.action,
+      subject: effect.audit.subject,
+      domain: decidedOk.domain,
+      reason: effect.audit.reason + (standingPolicyId ? ' (+ standing policy)' : ''),
+      detail: { approvalId: decidedOk.id, ...effect.audit.detail, standingPolicyId },
+    });
+    // A2: for an agent-run approval the decide() hook resumed the run as its runner — wait for
+    // it so the card can show what the resume did (done / refused / failed) right away.
+    await decisionSettled(decidedOk.id);
+    return NextResponse.json({
+      approval: { ...getApproval(decidedOk.id) },
+      applied: effect.applied,
+      live: effect.live,
+      publish: effect.publish,
+      standingPolicyId,
+      resume: getApproval(decidedOk.id)?.resume,
+    });
+  }
 
-  if (decision === 'reject') {
+  // Only REJECT remains — approve returned above. A reject needs no effect: it writes back to
+  // the Software release record where that applies, audits, and resumes a parked run so the
+  // agent receives the typed rejection.
+  const updated = decide(id, 'reject', user.id);
+  if (!updated) return NextResponse.json({ error: 'Could not decide' }, { status: 500 });
+  {
     // A Software deploy-review reject must ALSO write back to the release record —
     // flip the app's deploy state review → preview so the Software app shows the
     // deploy was rejected (back to the free preview loop), not stuck "awaiting
@@ -112,72 +182,4 @@ export async function POST(req: Request) {
     await decisionSettled(updated.id);
     return NextResponse.json({ approval: { ...getApproval(updated.id) }, applied: null, resume: getApproval(updated.id)?.resume });
   }
-
-  // Approve === act: execute the governed effect, then audit (+ optional standing).
-  // The approver's FULL session identity is passed (id + role + domains): the
-  // dataset publish runs its CTAS as this identity — the approving Builder, never
-  // the requester — and the physical publisher is injected at this server boundary.
-  let effect;
-  try {
-    effect = await applyEffect(
-      updated,
-      { id: user.id, role: user.role, domains: user.domains },
-      buildEffectDeps(),
-    );
-  } catch (e) {
-    // The decision stands (item is approved) but the effect failed — record the
-    // failure to audit rather than silently dropping it, and surface a 502.
-    audit({
-      actor: user.id,
-      action: 'approve',
-      subject: updated.tool || updated.kind,
-      domain: updated.domain,
-      reason: `Effect FAILED after approval: ${(e as Error).message}`,
-      detail: { approvalId: updated.id, error: (e as Error).message },
-    });
-    recordEffect(updated.id, { applied: `Effect failed: ${(e as Error).message}`, live: false });
-    // The CAUSE travels in `error`. It used to be flattened to the literal "Effect failed",
-    // with the real message reachable only from the audit log or a page reload — so the one
-    // person who could act on it (the approver, right now) was the one person who could not
-    // see it. A gate refusal here reads like "Promoting to Shared requires a Domain admin" or
-    // "not authorized to view this dashboard"; that is the whole answer.
-    return NextResponse.json(
-      { approval: { ...getApproval(updated.id) }, applied: null, error: `Effect failed: ${(e as Error).message}` },
-      { status: 502 },
-    );
-  }
-  let standingPolicyId: string | undefined;
-  // Never mint a standing policy from an effect that reported failure (e.g. a
-  // publish whose materialization failed — the tier did not flip).
-  if (effect.ok && body?.remember && updated.rememberable) {
-    const sp = remember({
-      kind: updated.kind,
-      payload: updated.payload,
-      domain: updated.domain,
-      createdBy: user.id,
-      fromApproval: updated.id,
-    });
-    standingPolicyId = sp.id;
-  }
-  recordEffect(updated.id, { applied: effect.applied, live: effect.live, standingPolicyId, publish: effect.publish });
-  audit({
-    actor: user.id,
-    action: effect.audit.action,
-    subject: effect.audit.subject,
-    domain: updated.domain,
-    reason: effect.audit.reason + (standingPolicyId ? ' (+ standing policy)' : ''),
-    detail: { approvalId: updated.id, ...effect.audit.detail, standingPolicyId },
-  });
-
-  // A2: for an agent-run approval the decide() hook resumed the run as its runner — wait for it so
-  // the card can show what the resume did (done / refused / failed) right away.
-  await decisionSettled(updated.id);
-  return NextResponse.json({
-    approval: { ...getApproval(updated.id) },
-    applied: effect.applied,
-    live: effect.live,
-    publish: effect.publish,
-    standingPolicyId,
-    resume: getApproval(updated.id)?.resume,
-  });
 }

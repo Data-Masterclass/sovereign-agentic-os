@@ -59,6 +59,10 @@ export default function PromoteButton({
   const [busy, setBusy] = useState(false);
   const [requested, setRequested] = useState(false);
   const [err, setErr] = useState('');
+  // A gate the server already knows is closed. Rendering an enabled button over one means every
+  // click is a refusal the user could have been shown first (the Metrics tab's dataset-derived
+  // audience is the case that forced this).
+  const [gate, setGate] = useState<{ ok: boolean; reason?: string } | null>(null);
 
   // Persist the "awaiting approval" pill across reloads: ask the route for any
   // pending request this owner already filed. Silent on failure — a missing pill
@@ -70,7 +74,9 @@ export default function PromoteButton({
         const res = await fetch(promoteUrl, { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json().catch(() => ({}));
-        if (live && data?.request) setRequested(true);
+        if (!live) return;
+        if (data?.request) setRequested(true);
+        if (data?.gate && data.gate.ok === false) setGate(data.gate as { ok: boolean; reason?: string });
       } catch {
         /* ignore — pill just won't pre-fill */
       }
@@ -157,11 +163,13 @@ export default function PromoteButton({
     );
   }
 
+  const blocked = gate?.ok === false;
   return (
     <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-      <button type="button" className="btn" onClick={run} disabled={busy}>
+      <button type="button" className="btn" onClick={run} disabled={busy || blocked} title={blocked ? gate?.reason : undefined}>
         {busy ? <span className="spin" /> : text}
       </button>
+      {blocked && gate?.reason ? <span className="hint" style={{ margin: 0 }}>{gate.reason}</span> : null}
       {err ? <span className="error" style={{ marginTop: 0 }}>{err}</span> : null}
     </div>
   );

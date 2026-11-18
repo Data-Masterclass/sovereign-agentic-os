@@ -537,7 +537,12 @@ export function publishWorkflow(id: string, user: Principal): WorkflowRecord {
   // The APPROVER authority is `canPromote` (above) — an approver need not be the
   // artifact owner, so gate on VIEW here, not edit (which is owner/domain_admin-only).
   const rec = requireView(id, user);
-  if (rec.status === 'live') fail('Workflow is already published', 400);
+  // GUARD ON THE AUDIENCE AXIS. This read `rec.status === 'live'`, but `status` is this tab's
+  // own legacy lifecycle word and the lines below are its ONLY setter — so a workflow that was
+  // Personal AND live (an imported file, a hand-edited md, any path that set status without
+  // moving visibility) refused promotion forever: its owner could file a request that this
+  // function would then always reject. Audience is `visibility`; that is what a promotion moves.
+  if (rec.visibility !== 'Personal') fail('Workflow is already published', 400);
 
   // Patch the frontmatter in the md to reflect the new state.
   const w = parseWorkflow(rec.md);

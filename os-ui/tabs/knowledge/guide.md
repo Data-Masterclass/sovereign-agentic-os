@@ -189,3 +189,17 @@ search_knowledge({ query: "reconcile invoice exceptions" })
 
 A domain admin then calls `publish_knowledge({ workflowId: "wf_04F..." })` to make
 it available to agents.
+
+### Promotion — who may read what
+
+A **business process (workflow)** draft is visible to Builder+ in its own domain, so the domain
+admin who approves a filed promotion can already read it. A **"My knowledge" entry** is stricter:
+Personal means *owner only* — not an admin, not a domain admin. Filing `request_promotion` on one
+is the owner asking for it to be shared, and from that point the appointed approver may read the
+record in order to decide it (`getPersonalKnowledgeForGovernance`). Nothing else widens: the
+lists and the normal read path are unchanged, and an entry nobody filed stays private.
+
+The audience gate is `visibility` (My · Domain · Company), never the workflow's legacy
+`status: draft|live` word — a Personal entry that is somehow already `live` still promotes, and a
+second promotion is refused with `This knowledge is already promoted` / `Workflow is already
+published`.
