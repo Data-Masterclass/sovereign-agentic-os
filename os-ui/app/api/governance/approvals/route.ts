@@ -136,7 +136,15 @@ export async function POST(req: Request) {
       detail: { approvalId: updated.id, error: (e as Error).message },
     });
     recordEffect(updated.id, { applied: `Effect failed: ${(e as Error).message}`, live: false });
-    return NextResponse.json({ approval: { ...getApproval(updated.id) }, applied: null, error: 'Effect failed' }, { status: 502 });
+    // The CAUSE travels in `error`. It used to be flattened to the literal "Effect failed",
+    // with the real message reachable only from the audit log or a page reload — so the one
+    // person who could act on it (the approver, right now) was the one person who could not
+    // see it. A gate refusal here reads like "Promoting to Shared requires a Domain admin" or
+    // "not authorized to view this dashboard"; that is the whole answer.
+    return NextResponse.json(
+      { approval: { ...getApproval(updated.id) }, applied: null, error: `Effect failed: ${(e as Error).message}` },
+      { status: 502 },
+    );
   }
   let standingPolicyId: string | undefined;
   // Never mint a standing policy from an effect that reported failure (e.g. a

@@ -476,8 +476,23 @@ export default function SoftwareBuilder({
     setMsg('');
     try {
       const res = await fetch(`/api/apps/${app.id}/promote`, { method: 'POST' });
-      const body = await res.json();
-      setMsg(res.ok ? `✓ Promoted to ${visDisplayLabel(body.app.visibility)}.` : `✗ ${body.error}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsg(`✗ ${body.error ?? `Promotion failed (HTTP ${res.status}).`}`);
+        onReload();
+        return;
+      }
+      // A NON-APPROVER OWNER GETS A FILED REQUEST, NOT A PROMOTION. The route answers
+      // `{ requested: true, approval }` with a 200 and NO `app` key, so the old unconditional
+      // dereference of `body.app` threw "Cannot read properties of undefined" and the catch below
+      // showed the user that TypeError as the entire result of pressing Promote.
+      if (body.requested) {
+        setMsg('⏳ Request filed — awaiting approval in Policies & Approvals.');
+        if (body.approval?.id) notifyApprovalFiled(body.approval as FiledApproval, 'app', onReload);
+        onReload();
+        return;
+      }
+      setMsg(`✓ Promoted to ${visDisplayLabel(body.app?.visibility ?? app.visibility)}.`);
       onReload();
     } catch (e) {
       setMsg((e as Error).message);
@@ -492,8 +507,12 @@ export default function SoftwareBuilder({
     setMsg('');
     try {
       const res = await fetch(`/api/apps/${app.id}/demote`, { method: 'POST' });
-      const body = await res.json();
-      setMsg(res.ok ? `✓ Revoked → ${visDisplayLabel(body.app.visibility)}.` : `✗ ${body.error}`);
+      const body = await res.json().catch(() => ({}));
+      setMsg(
+        res.ok
+          ? `✓ Revoked → ${visDisplayLabel(body.app?.visibility ?? app.visibility)}.`
+          : `✗ ${body.error ?? `Revoke failed (HTTP ${res.status}).`}`,
+      );
       onReload();
     } catch (e) {
       setMsg((e as Error).message);

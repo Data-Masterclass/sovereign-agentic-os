@@ -530,8 +530,10 @@ export default function WorkflowView({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action }),
       });
-      const d = await res.json();
-      if (!res.ok) { setPubError(d.error ?? 'Failed'); return; }
+      // A bare res.json() on a 502 or an HTML error page REJECTS, and this function had no
+      // catch — so a real failure showed no message at all and the button simply re-enabled.
+      const d = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) { setPubError((d.error as string) ?? `Failed (HTTP ${res.status}).`); return; }
       if (d.requested) {
         setPubMsg(action === 'certify'
           ? 'Certification requested — approve it in Policies & Approvals.'
@@ -539,10 +541,28 @@ export default function WorkflowView({
         // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
         const approval = d.approval as FiledApproval | undefined;
         if (approval?.id) notifyApprovalFiled(approval, 'workflow', () => { void reload(); });
+        // Re-read even on the request path: the pending request is part of this page's state,
+        // and returning without it left the view looking exactly as it did before the click.
+        await reload();
         return;
       }
-      setPubMsg(`Business process is now ${d.visibility === 'Marketplace' ? 'certified company-wide' : 'live'}.`);
+      // INDEXING IS PART OF THE OUTCOME. The route reports `indexing: { ok: false, code }`
+      // when the embed/index pipeline was refused (no scoped key, the alias off the
+      // allowlist, a budget cap). The flip succeeded, but the published process is NOT
+      // retrievable by any agent until it is indexed — reporting only "now live" would be a
+      // success message over a knowledge base nobody can search.
+      const indexing = d.indexing as { ok?: boolean; code?: string; error?: string } | undefined;
+      const live = `Business process is now ${d.visibility === 'Marketplace' ? 'certified company-wide' : 'live'}.`;
+      setPubMsg(live);
+      if (indexing && indexing.ok === false) {
+        setPubError(
+          `Published, but NOT yet indexed for retrieval (${indexing.code ?? 'index_failed'}): ${indexing.error ?? 'the indexing pipeline refused'}. ` +
+            'Agents cannot cite it until indexing succeeds — re-publish once the model gateway is reachable.',
+        );
+      }
       await reload();
+    } catch (e) {
+      setPubError((e as Error).message);
     } finally {
       setPublishing(false);
     }

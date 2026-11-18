@@ -121,12 +121,12 @@ export const promotionTools: McpTool[] = [
     extraTabs: ['files'],
     minRole: 'creator',
     description:
-      'FILE a rung-1 promotion request (My → a governed DOMAIN asset) for ANY ownable artifact: a dataset, file, knowledge workflow, connection, dashboard, model, app or agent system. Path: the promote step of every tab’s golden path — the ONE governed ladder. Before: create + document the artifact (creating in My scope needs no approval; only this promotion up a scope is gated). After: a domain admin (or tenant admin) in the domain runs `decide_approval` (or `approve_promotion` for dataset/file). Governance: OWNER-ONLY trigger — edit rights are not enough; it does NOT promote, it enqueues the governed request and returns the pending handle. Certification (Domain → Company) is the separate `request_certification`. Idempotency: filing while a request is pending returns the existing handle.',
+      'FILE a rung-1 promotion request (My → a governed DOMAIN asset) for ANY ownable artifact: a dataset, file, knowledge workflow, personal knowledge entry, connection, dashboard, artifact, app or agent system. Path: the promote step of every tab’s golden path — the ONE governed ladder. Before: create + document the artifact (creating in My scope needs no approval; only this promotion up a scope is gated). After: a domain admin (or tenant admin) in the domain runs `decide_approval` (or `approve_promotion` for dataset/file). Governance: OWNER-ONLY trigger — edit rights are not enough; it does NOT promote, it enqueues the governed request and returns the pending handle. If you are the owner AND already hold the rung-1 authority (a domain admin or platform admin promoting your OWN artifact), you may then decide your own request: the rank and scope gates still apply, and blocking it would simply leave your artifact unpromotable. Certification (Domain → Company) is the separate `request_certification`. Idempotency: filing while a request is pending returns the existing handle.',
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['dataset', 'file', 'knowledge', 'connection', 'dashboard', 'app', 'agent_system']
-, description: 'What to promote (you must OWN it).' },
+        kind: { type: 'string', enum: ['dataset', 'file', 'knowledge', 'personal_knowledge', 'connection', 'dashboard', 'artifact', 'app', 'agent_system']
+, description: 'What to promote (you must OWN it). A metric is NOT on this list: a metric IS a measure on a dataset, so its audience is its dataset’s — promote the dataset.' },
         id: { type: 'string', description: 'The artifact id you own and have documented.' },
         visibility: { type: 'string', description: 'Requested asset visibility (dataset/file only; default domain).' },
         grants: { type: 'array', description: 'Optional explicit policy grants (dataset/file only; else a domain read grant).' },
@@ -139,15 +139,23 @@ export const promotionTools: McpTool[] = [
       const id = str(args.id).trim();
       if (!id) fail('request_promotion needs an `id`', 400);
 
-      // The formerly-DIRECT ladder kinds (knowledge/connection/dashboard/model/app/
-      // agent_system) file through the ONE ladder seam — owner-only, effect applied
-      // on approval.
+      // The formerly-DIRECT ladder kinds (knowledge/personal_knowledge/connection/
+      // dashboard/artifact/app/agent_system) file through the ONE ladder seam — owner-only,
+      // effect applied on approval. An owner who also HOLDS the rung-1 authority can decide
+      // this request themself (`canApprove`'s audience-promotion carve-out); the rank and
+      // scope gates are unchanged.
       if (isLadderKind(kind)) {
         const approval = await fileArtifactPromotion(kind as LadderKind, id, user);
         return pendingHandle(approval, { artifactKind: kind, target: approval.detail, domain: approval.domain });
       }
+      if (kind === 'metric') {
+        fail(
+          "A metric's audience is its dataset's audience — a metric IS a measure on a governed dataset, so promote the dataset with request_promotion({kind:'dataset'}) in the Data tab and this metric follows.",
+          409,
+        );
+      }
       if (kind !== 'dataset' && kind !== 'file') {
-        fail('request_promotion needs `kind` = dataset | file | knowledge | connection | dashboard | model | app | agent_system', 400);
+        fail('request_promotion needs `kind` = dataset | file | knowledge | personal_knowledge | connection | dashboard | artifact | app | agent_system', 400);
       }
       const p = P(user);
       const opts = {

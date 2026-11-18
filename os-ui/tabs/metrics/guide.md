@@ -29,7 +29,7 @@ In the UI, ＋ New first asks **Simple or Complex** on a two-card chooser (the f
    - `drillMembers` — drill-down members exposed for exploration.
 6. **Read the definition back.** Call `get_metric` with the metric `id` (`<datasetId>.<measure>`) to read back exactly what was registered — the aggregation + column, the backing dataset and the canonical member — before iterating or charting it. `list_metrics` also returns each metric's dbt `metricType` and its `grain` (the finest time bucket it can be sliced at), so you can pick a valid slice without a round trip.
 7. **Read the number.** Call `query_metric` with the metric `id` from `list_metrics` (`<datasetId>.<measure>`), optionally sliced by `dimensions` / `timeDimension` + `granularity`. This is how "what is revenue this month" resolves — through the SEMANTIC LAYER, never raw SQL: the tool accepts no SQL by construction, and the compiled `SELECT` runs as YOUR delegated Trino principal, so Trino + OPA apply your row/column security and the number you read is identical to the charts.
-8. **Promote (optional).** To move a metric up the governance ladder (Personal→Domain or Domain→Company), call `promote_metric(metricId)`. A creator owner files a request (`{ requested: true, approval }`) — a domain admin must approve. A builder+ runs the consistency-gated transition directly. The metric inherits its backing dataset's governance: promote the dataset in the Data tab first if it is still Personal.
+8. **Audience (read this before trying to promote).** A metric is **not** an artefact with an audience of its own — it IS a measure on a governed dataset, and its scope is read straight off that dataset. So there is no My → Domain step for a metric: `promote_metric` on a Personal metric refuses with `A metric's audience is its dataset's audience — promote the dataset “<name>” (request_promotion({kind:'dataset', id:'<id>'})) to Domain and this metric follows.` (409). Promote the dataset in the Data tab and every metric on it moves with it. Domain → Company is an Admin act on `promote_metric`, because certifying the measure and certifying the table it reads are the same decision and must not drift apart; it is gated by the **consistency check** (documented + defined + resolves on its canonical member) and the **dataset tier ceiling**, and both refusals reach you verbatim.
 
 That is the complete flow.
 
@@ -49,7 +49,8 @@ That is the complete flow.
 |---|---|
 | `suggest_metrics`, `list_datasets`, `list_metrics`, `get_metric`, `query_metric` | Creator |
 | `define_metric` | Creator |
-| Promotion | Inherited from backing Gold dataset |
+| Audience (My/Domain/Company) | Inherited from the backing dataset — promote the DATASET |
+| Certify to Company | Admin (consistency gate + dataset tier ceiling) |
 
 OPA enforces that the caller has read access to the Gold dataset before `define_metric` is permitted. DLS on the dataset applies to all metric queries — a metric does not widen row access. Langfuse traces every metric query.
 

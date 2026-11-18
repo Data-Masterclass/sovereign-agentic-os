@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
-import { roleAtLeast } from '@core/kernel/session';
+import { canPromote } from '@core/kernel/session';
 import { getWorkflow, getDomainKnowledge } from '@tabs/knowledge/lib/store';
 import { indexWorkflow, indexDomain } from '@tabs/knowledge/lib/index-pipeline';
 import { actingCaller } from '@tabs/knowledge/lib/embed';
@@ -27,9 +27,13 @@ export const POST = withRoute<{ id: string }, { action?: 'publish' | 'certify' }
     // the workflow's tier is a typed conflict, never a silent tier jump.
     const rung = body.action === 'certify' ? 'certify' : 'promote';
 
-    // A creator lacks the promote/certify gate → file the governed request and
-    // hand off, rather than 403. Builder+ (promote) / Admin (certify) one-shot.
-    const canAct = rung === 'certify' ? roleAtLeast(user.role, 'admin') : roleAtLeast(user.role, 'builder');
+    // A caller without the APPROVER authority for this rung files the governed request and
+    // hands off, rather than taking a 403. The gate MUST be the same `canPromote` the store's
+    // `publishWorkflow` / `certifyWorkflow` enforce (domain_admin+ to publish, admin to
+    // certify): it used to read `roleAtLeast('builder')` here, so a BUILDER who owned a draft
+    // was sent down the one-shot path and met "Only domain admins and admins can publish
+    // workflows" — a dead end with no request filed and nothing to approve.
+    const canAct = canPromote(user.role, rung === 'certify' ? 'Shared' : 'Personal');
     if (!canAct) {
       const approval = rung === 'certify'
         ? await fileArtifactCertification('knowledge', id, user)

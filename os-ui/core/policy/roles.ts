@@ -144,19 +144,56 @@ export function canSee(actor: Actor, a: Pick<Approval, 'domain' | 'requestedBy'>
 }
 
 /**
+ * The AUDIENCE-LADDER kinds — My→Domain→Company moves the owner PROPOSES on their own
+ * artefact. Named here because they are the one family where "the requester may not decide"
+ * has to yield; see {@link canApprove}.
+ */
+const AUDIENCE_PROMOTION_KINDS: ReadonlySet<string> = new Set([
+  'artifact_promote',
+  'promote_certify',
+  'dataset_promote',
+  'dataset_certify',
+  'file_promote',
+]);
+
+/**
  * Can `actor` APPROVE this item? The control-plane gate: role rank ≥ the item's
  * required approver AND the item is in the actor's scope. Egress / tenant items
  * are Admin-only; domain items need a Builder (or Admin) of that domain.
- * NEVER the requester (A2 review L-G): a domain admin who runs an agent cannot
- * approve their own run's escalation — four-eyes is the point of the hold.
+ *
+ * FOUR-EYES, AND THE ONE PLACE IT HAS TO YIELD. The requester normally may not decide their
+ * own item (A2 review L-G): a domain admin who RUNS an agent must not approve that run's own
+ * escalation, because the whole point of the hold is that a second human authorises what the
+ * first one's agent tried to do. That rule is absolute for anything carrying a `runId`.
+ *
+ * An AUDIENCE PROMOTION is a different shape. The owner proposes their own artefact — that is
+ * the only way a rung-1 request can ever be filed (`fileArtifactPromotion` is owner-only) — and
+ * the approver vouches for it. When ONE person holds both roles, which on a small tenant is the
+ * normal case and not an edge case, blanket four-eyes did not enforce a second pair of eyes; it
+ * made the artefact unpromotable. The owner's own dataset, file, dashboard, workflow, app or
+ * agent system could be requested and then never decided by anybody: the request sat pending
+ * forever and the asset could not leave My. (The dataset/file MCP half, `approve_promotion`,
+ * never had this check — so the two front doors also disagreed.)
+ *
+ * So for the audience-ladder kinds, and only when nothing parked a run on them, the requester
+ * may decide — PROVIDED they independently clear the rank and scope gates above, which is what
+ * makes this not a widening: a creator still cannot approve anything, a builder still cannot
+ * approve a `domain_admin` rung, and a domain admin still cannot certify to Company. The
+ * audience move stays fully gated; only the self-deadlock goes away.
+ *
+ * Fail-closed on an absent `kind`: a caller that cannot say what the item is gets four-eyes.
  */
 export function canApprove(
   actor: Actor,
-  a: Pick<Approval, 'domain' | 'approverRole' | 'scope'> & Partial<Pick<Approval, 'requestedBy'>>,
+  a: Pick<Approval, 'domain' | 'approverRole' | 'scope'> & Partial<Pick<Approval, 'requestedBy' | 'kind' | 'runId'>>,
 ): boolean {
-  if (a.requestedBy && a.requestedBy === actor.id) return false;
   if (roleRank(actor.role) < roleRank(a.approverRole)) return false;
-  return inScope(actor, a.domain, a.scope);
+  if (!inScope(actor, a.domain, a.scope)) return false;
+  if (a.requestedBy && a.requestedBy === actor.id) {
+    if (a.runId) return false; // a parked agent run: four-eyes is absolute
+    if (!a.kind || !AUDIENCE_PROMOTION_KINDS.has(a.kind)) return false;
+  }
+  return true;
 }
 
 /**

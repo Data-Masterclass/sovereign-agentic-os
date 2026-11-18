@@ -11,7 +11,7 @@ import { publishPromotionLive } from '@tabs/data/lib/publish-server';
 import { getWorkflow } from '@tabs/knowledge/lib/index';
 import { getPersonalKnowledge, decertifyPersonalKnowledge, unsharePersonalKnowledge } from '@tabs/knowledge/lib/personal-store';
 import { freezeCertifiedKnowledgeBundle } from '@tabs/knowledge/lib/okf-freeze';
-import { getDashboard, demoteDashboard } from '@tabs/dashboards/lib/index';
+import { getDashboardForGovernance, demoteDashboard } from '@tabs/dashboards/lib/index';
 import { getConnectionForUser, promoteConnection, demoteConnection, approveOnce } from '@tabs/connections/lib/index';
 import { approveExposureActions } from '@tabs/connections/lib/exposures';
 import { getArtifact, promoteArtifact, demoteArtifact } from '@core/kernel/artifacts';
@@ -28,9 +28,21 @@ import { getSystem, demoteSystem } from '@tabs/agents/lib/store';
  *
  * Two canonical rungs (owner decision, do NOT relitigate):
  *   Rung 1 — Promotion (Personal→Domain): TRIGGER = the artifact OWNER only;
- *            APPROVE = a Builder+ of that domain.
+ *            APPROVE = a DOMAIN ADMIN of that domain. (This docstring used to say
+ *            "a Builder+", which never matched either the gate or the queue: every
+ *            rung-1 record is enqueued `approverRole: 'domain_admin'`, and
+ *            `canPromote(role,'Personal')` is domain_admin+. A plain builder OWNS
+ *            and PROPOSES; it does not decide.)
  *   Rung 2 — Certification (Domain→Marketplace): TRIGGER = a Builder/Domain-admin
  *            in the artifact's domain; APPROVE = a platform Admin.
+ *
+ * ONE PERSON MAY HOLD BOTH ROLES. When the owner is also the rung's approver — a
+ * domain admin or the platform admin promoting their own artefact, the normal case on a
+ * small tenant — they file and then decide it themselves. That is `canApprove`'s
+ * audience-promotion carve-out (`core/policy/roles.ts`), and it is not a widening: rank
+ * and scope are still checked, so a creator approves nothing and a domain admin certifies
+ * nothing. Blanket four-eyes here bought no second pair of eyes; it made the artefact
+ * unpromotable.
  *
  * The actual tier flip happens ONLY inside `effects.ts::applyEffect` (the effect
  * seam). This module never flips a tier itself — it files the governed request
@@ -80,7 +92,10 @@ export async function resolveLadderArtifact(kind: LadderKind, id: string, user: 
       return { owner: e.owner, domain: e.domain, name: e.title, visibility: e.visibility };
     }
     case 'dashboard': {
-      const d = getDashboard(id, p); // throws 403/404
+      // View gate UNIONED with the manage scope: a Personal dashboard is owner-visible
+      // only, so the plain view gate refused the very domain admin the ladder appoints as
+      // its approver. Never narrower than `getDashboard`.
+      const d = getDashboardForGovernance(id, p); // throws 403/404
       return { owner: d.owner, domain: d.domain, name: d.spec.name, visibility: d.tier };
     }
     case 'connection': {
@@ -254,7 +269,7 @@ export async function promoteThroughSeam(
   if (rung === 'promote' && art.owner !== user.id) {
     realPending = existingPending('artifact_promote', kind, id);
     if (!realPending) {
-      fail(`Only the ${kind} owner can promote it directly — the owner must file request_promotion first, then a Builder approves it.`, 403);
+      fail(`Only the ${kind} owner can promote it directly — the owner must file request_promotion first, then a domain admin approves it.`, 403);
     }
   }
 

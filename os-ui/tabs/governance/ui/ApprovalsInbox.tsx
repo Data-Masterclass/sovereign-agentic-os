@@ -106,9 +106,13 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ id, decision, ...(remember ? { remember: true } : {}) }),
         });
-        const body = await res.json();
-        if (!res.ok) setError(body.error ?? 'Decision failed');
-        else await load();
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) setError(body.error ?? `Decision failed (HTTP ${res.status}).`);
+        // RE-READ EITHER WAY. A 502 from the effect still means the decision was COMMITTED:
+        // the card's status and its recorded `effect.applied` both changed server-side, and
+        // skipping the reload left the row rendering as "pending" with the reason invisible
+        // until someone reloaded the page by hand.
+        await load();
       } catch (e) {
         setError((e as Error).message);
       } finally {

@@ -7,7 +7,8 @@ import { buildStage } from '@tabs/data/lib/build/server';
 import { queryToolReachable, realTrino } from '@tabs/data/lib/build/live-clients';
 import { publishApprovedPromotion, rematerializeDomainTable, type PublishOutcome, type RematerializeOutcome } from '@tabs/data/lib/publish';
 import { promoteAsView, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
-import type { MaterializationVerifier, Principal, PromotionRequest } from '@tabs/data/lib/store';
+import { requestPromotion, type MaterializationVerifier, type Principal, type PromotionRequest } from '@tabs/data/lib/store';
+import { canPromote } from '@core/kernel/session';
 
 /**
  * The independent FAIL-CLOSED domain-table probe (#96) the publish runs right before
@@ -54,6 +55,37 @@ export async function publishPromotionLive(
     asView: promoteAsView(),
   });
   return outcome;
+}
+
+/**
+ * PROMOTE-OR-PROPOSE for a dataset — the twin of `promoteFileOrPropose`, and the one entry
+ * both front doors (`/api/data/datasets/[id]/promote` and MCP `request_promotion`) use.
+ *
+ * WHY. Both doors always FILED, and `canApprove` refuses the requester whatever their rank
+ * (four-eyes). An owner who ALSO holds the rung-1 authority filed a request only they could
+ * decide — so a domain admin's or the platform admin's OWN dataset could never leave My.
+ *
+ * It widens nothing: the direct branch needs `requestPromotion` to pass (OWNER-only trigger,
+ * Silver/Gold built, the transparency gate) AND `canPromote(role,'Personal')`, and then runs
+ * the FULL physical publish through {@link publishPromotionLive} as that same identity — the
+ * governed CTAS, the independent domain-table probe, the OPA push and the conformance check,
+ * with the tier flipping only on ✓. A failed materialization returns the real error and the
+ * dataset stays private, exactly as on the approval path.
+ *
+ * `requestPromotion` runs FIRST on both branches, so the one-shot cannot skip a gate the
+ * proposing path enforces. The enqueue stays with the caller (same reason as for files).
+ */
+export async function promoteDatasetOrPropose(
+  id: string,
+  user: Principal,
+  opts: { visibility?: PromotionRequest['visibility']; grants?: PromotionRequest['grants'] } = {},
+): Promise<
+  | { promoted: true; outcome: PublishOutcome }
+  | { promoted: false; request: PromotionRequest }
+> {
+  const request = requestPromotion(id, user, opts); // owner-only + Silver/Gold + transparency
+  if (!canPromote(user.role, 'Personal')) return { promoted: false, request };
+  return { promoted: true, outcome: await publishPromotionLive(request, user) };
 }
 
 /**

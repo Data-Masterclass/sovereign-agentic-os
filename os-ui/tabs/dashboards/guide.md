@@ -24,6 +24,7 @@ That is the complete build flow. The dashboard renders natively at View time (EC
 ## What to consider
 
 - **Every chart must bind a metric member.** A chart that references a raw dataset column rather than a governed `metric` member returns `bad_request`. Define the metric first.
+- **A filed promotion lets its approver read the dashboard.** A Personal dashboard is otherwise visible to its owner alone — no admin, no domain admin. Filing `request_promotion` on it is the owner asking for it to be published, so from that point the domain admin who must decide can read the record (`getDashboardForGovernance`). Nothing else widens: the lists and the normal read path are unchanged, and an unpromoted dashboard nobody filed stays private.
 - **DLS is enforced per-viewer at query time.** Promoting a dashboard to a higher scope never widens the rows a viewer sees — every panel re-queries the governed metric layer as the viewer. DLS is a separate enforcement layer. Do not assume that a Domain dashboard gives viewers access to all rows.
 - **list_metrics before create_dashboard.** Building a dashboard with metric IDs you have not verified exist will cause `not_found` errors inside the `charts` array. Always inventory first.
 - **list_dashboards before creating a new one.** Call `list_dashboards` to confirm you are not duplicating an existing view of the same metrics.
@@ -36,7 +37,7 @@ That is the complete build flow. The dashboard renders natively at View time (EC
 | `list_metrics`, `list_dashboards`, `get_dashboard` | Creator |
 | `define_metric` | Creator |
 | `create_dashboard` | Creator (My scope by default, no approval) |
-| Promote to Domain | Domain admin |
+| Promote to Domain | Domain admin (of the dashboard's domain) |
 | Promote to Company (certify) | Admin |
 
 OPA enforces metric read access at dashboard creation time. Every panel resolves through the governed metric layer as the viewer — one compiled Trino SELECT, with the viewer's DLS scope applied on each query — so the server never widens a viewer's rows. Langfuse traces every dashboard render.
