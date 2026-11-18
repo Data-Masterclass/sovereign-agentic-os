@@ -15,8 +15,16 @@
  *     (a lone Type or Scope flip is unsaved work too). VALID is the subset `addOutput` can
  *     accept: a real name and a folder path. Keeping them separate is the point — a dirty but
  *     invalid draft is exactly the case that must ask rather than guess.
- *   - Nothing here persists anything: committing still goes `addOutput(system, …)` → `onCommit`
- *     → the governed `system.yaml` write, unchanged.
+ *   - Committing still goes `addOutput(system, …)` → `onCommit` → the governed `system.yaml`
+ *     write, unchanged. What IS persisted here is the DRAFT, per system id, in the browser's
+ *     session storage: the stage guard only covers exits it can see, and leaving the system
+ *     altogether (sidebar, another tab, a reload) unmounts the section with no transition to
+ *     intercept — which is the "it reset" the owner originally reported. The draft is parked on
+ *     every keystroke and restored on remount; saving it clears the parking slot.
+ *   - The storage helpers are PURE (key, serialize, parse); the component owns the `try/catch`
+ *     around `sessionStorage`, which throws in a private window and is absent on the server.
+ *     `parseOutputDraft` never throws and returns `null` for anything it cannot trust —
+ *     foreign JSON, a bad enum, or a draft that holds nothing worth restoring.
  */
 
 /** The destination kinds a declared output can target (mirrors `OutputKind`). */
@@ -55,7 +63,71 @@ export function outputDraftDirty(draft: OutputDraft): boolean {
   );
 }
 
-/** True when the draft is complete enough to commit: a name and a folder. */
+/**
+ * True when the draft is complete enough to commit: it needs a NAME.
+ *
+ * It deliberately does not demand folder text. Blank folder text means the ROOT — that is how
+ * `folderOf` reads it here and how `addOutput`'s `normaliseFolderPath` reads it on the way in —
+ * and root is a real destination. Requiring non-blank text made a perfectly saveable draft
+ * un-saveable and, worse, un-promptable: the guard would ask a question whose "Save" button
+ * could never be pressed.
+ */
 export function outputDraftValid(draft: OutputDraft): boolean {
-  return draft.name.trim() !== '' && draft.folder.trim() !== '';
+  return draft.name.trim() !== '';
+}
+
+/** The draft as `addOutput` will receive it: the folder normalised the way the commit does. */
+export function outputDraftFolder(draft: OutputDraft): string {
+  return folderOf(draft);
+}
+
+// ------------------------------------------------------------ parking a draft --
+
+/** Session-storage key for one system's parked draft. Per system: two teams, two drafts. */
+export function outputDraftStorageKey(systemId: string): string {
+  return `os.agents.output-draft.${systemId}`;
+}
+
+/** The draft as a string to park. */
+export function serializeOutputDraft(draft: OutputDraft): string {
+  return JSON.stringify({
+    kind: draft.kind,
+    name: draft.name,
+    scope: draft.scope,
+    folder: draft.folder,
+  });
+}
+
+const KINDS: OutputDraftKind[] = ['files', 'data', 'knowledge'];
+const SCOPES: OutputDraft['scope'][] = ['personal', 'domain'];
+
+/**
+ * A parked draft, or `null` when there is nothing to restore. Never throws: storage holds
+ * whatever a previous version (or another tab) left there, so every field is checked and
+ * anything unrecognised falls back to the empty draft's value. A draft that is not dirty is
+ * `null` too — restoring an empty row is not a restore.
+ */
+export function parseOutputDraft(raw: string | null | undefined): OutputDraft | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const rec = parsed as Record<string, unknown>;
+  const kind = KINDS.includes(rec.kind as OutputDraftKind)
+    ? (rec.kind as OutputDraftKind)
+    : EMPTY_OUTPUT_DRAFT.kind;
+  const scope = SCOPES.includes(rec.scope as OutputDraft['scope'])
+    ? (rec.scope as OutputDraft['scope'])
+    : EMPTY_OUTPUT_DRAFT.scope;
+  const draft: OutputDraft = {
+    kind,
+    name: typeof rec.name === 'string' ? rec.name : '',
+    scope,
+    folder: typeof rec.folder === 'string' && rec.folder.trim() !== '' ? rec.folder : '/',
+  };
+  return outputDraftDirty(draft) ? draft : null;
 }

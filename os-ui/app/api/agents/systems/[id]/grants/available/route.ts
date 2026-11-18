@@ -38,7 +38,15 @@ export const dynamic = 'force-dynamic';
  * filtered, and `tabs/agents/lib/build/os-tools.ts` still re-resolves each grant per item
  * against the acting principal at build/run. Marketplace items and the operating-manual scopes
  * are NOT narrowed; a folder grant that already points outside the domain comes back flagged
- * `outsideDomain` so the picker warns instead of silently dropping it. See
+ * `outsideDomain` so the picker warns instead of silently dropping it (and
+ * `tabs/agents/lib/grant-apply.ts` keeps the tree's round trip from deleting it).
+ *
+ * This feed is a PICKER, not a gate. Nothing validates granted ids when `system.yaml` is
+ * written — that PUT is edit-scoped and sha-checked, and takes the document as given — so the
+ * guarantees come from elsewhere: the canView/DLS filter inside each lister bounds what is
+ * ever OFFERED, and at build/run every granted tool call executes as the acting principal
+ * under OPA + row/document-level security. A narrower feed is a better picker, never a
+ * tighter permission. See
  * `tabs/agents/lib/grant-feed.ts` + `docs/superpowers/plans/2026-11-18-grant-picker-domain-scope.md`.
  *
  * Response: `{ items: [{ id, name, scope, folder? }], folders?: [{ path, scope, outsideDomain? }] }`.
@@ -171,9 +179,13 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
     //      section rendered BLANK even though the user has folders. Data/Knowledge get
     //      the same union for consistency. Every synthesized node inherits ITS ITEM's
     //      scope (marketplace items fold under no tree — the picker only trees My/Domain).
-    // The registry rows are read NARROWED to the system's domain, exactly as `/api/folders`
-    // reads its rail, and the folder grants the system ALREADY holds go in too, so a legacy
-    // one pointing outside this domain comes back flagged instead of disappearing.
+    // The registry rows are read UNNARROWED and filtered by the feed's own predicate. Note
+    // the asymmetry that forced this: `listFolders`' `activeDomain` option drops a row whose
+    // `domain` is empty, while the feed deliberately KEEPS a domainless artifact (an admin has
+    // to be able to find and file it). Passing `activeDomain` here therefore made an
+    // unstamped folder vanish from the tree — and, if it was granted, show up as "outside this
+    // domain", which it is not. The folder grants the system ALREADY holds go in too, so a
+    // legacy one pointing outside this domain comes back flagged instead of disappearing.
     const tab = FOLDER_TABS[kind];
     let explicitFolders: { path: string; scope: 'personal' | 'domain'; domain: string }[] | undefined;
     let grantedFolders: { path: string; scope: 'personal' | 'domain' }[] | undefined;
@@ -181,9 +193,9 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
       await ensureFoldersHydrated();
       const viewer = { id: user.id, role: user.role, domains: user.domains };
       explicitFolders = [
-        ...listFolders(viewer, tab, 'personal', { activeDomain: targetDomain })
+        ...listFolders(viewer, tab, 'personal')
           .map((f) => ({ path: f.path, scope: 'personal' as const, domain: f.domain })),
-        ...listFolders(viewer, tab, 'domain', { activeDomain: targetDomain })
+        ...listFolders(viewer, tab, 'domain')
           .map((f) => ({ path: f.path, scope: 'domain' as const, domain: f.domain })),
       ];
       grantedFolders = (sys.system.grants[tab] ?? [])

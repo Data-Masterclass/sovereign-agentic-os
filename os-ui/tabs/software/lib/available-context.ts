@@ -10,7 +10,7 @@ import { listConnectionsForUser } from '@tabs/connections/lib/index';
 import { listFiles, ensureHydrated as ensureFilesHydrated } from '@tabs/files/lib/store';
 import { listSystems } from '@tabs/agents/lib/store';
 import { listFolders } from '@core/folders/index';
-import { narrowToDomainScope } from '@core/kernel/domain-scope';
+import { inDomainScope, narrowToDomainScope } from '@core/kernel/domain-scope';
 import type { ContextKind } from '@core/kernel/context-grants';
 import type { CurrentUser } from '@core/kernel/auth';
 
@@ -143,18 +143,28 @@ export async function availableAgents(user: CurrentUser): Promise<AvailableConte
   ];
 }
 
-/** The folder rows (personal + domain) a foldered kind exposes to the grant tree, narrowed to
- *  the active domain — the same `activeDomain` argument `/api/folders` passes, so the picker's
- *  tree and the tab's own rail cannot disagree. */
+/**
+ * The folder rows (personal + domain) a foldered kind exposes to the grant tree, narrowed to
+ * the active domain by the SAME predicate the items use.
+ *
+ * Deliberately NOT `listFolders(..., { activeDomain })`: that option drops a row whose
+ * `domain` is empty, while `inDomainScope` keeps a domainless artifact (an admin must still be
+ * able to find and file an unassigned one). Using the option here made an unstamped folder
+ * vanish from the picker even though its items were listed.
+ */
 function foldersForKind(kind: ContextKind, user: CurrentUser): AvailableFolder[] {
   if (!FOLDERED_KINDS.includes(kind)) return [];
   const tab = KIND_TAB[kind as 'data' | 'knowledge' | 'files'];
   const principal = { id: user.id, domains: user.domains, role: user.role };
-  const activeDomain = targetDomainOf(user);
+  const target = targetDomainOf(user);
+  const keep = (scope: 'personal' | 'domain') => (f: { domain: string }) =>
+    inDomainScope({ scope, domain: f.domain }, target);
   try {
-    const personal = listFolders(principal, tab, 'personal', { activeDomain })
+    const personal = listFolders(principal, tab, 'personal')
+      .filter(keep('personal'))
       .map((f) => ({ path: f.path, scope: 'personal' as const }));
-    const domain = listFolders(principal, tab, 'domain', { activeDomain })
+    const domain = listFolders(principal, tab, 'domain')
+      .filter(keep('domain'))
       .map((f) => ({ path: f.path, scope: 'domain' as const }));
     return [...personal, ...domain];
   } catch {

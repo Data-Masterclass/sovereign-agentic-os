@@ -25,6 +25,15 @@ import { buildGrantFeed, type GrantFeedInput } from '@tabs/agents/lib/grant-feed
 const SYSTEM_DOMAIN = 'agentic-leader-autumn-winter-2026-2027';
 const FOREIGN = 'agentic-leader-q3-2026';
 
+/**
+ * The source with comments stripped. A NEGATIVE source assertion must look at code only:
+ * the prose that explains why a call is written one way legitimately quotes the other way,
+ * and a grep that cannot tell the two apart fails on its own documentation.
+ */
+function codeOnly(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
 /** The reporter: an admin in four domains, so every lister spans all four. */
 const admin = {
   id: 'alex',
@@ -159,7 +168,30 @@ test('GRANT-FEED-TRIPWIRE: the route really delegates, and really hands over the
   assert.match(src, /domain:\s*targetDomain/, 'and passes the system’s domain as the narrowing target');
   assert.match(
     src,
-    /activeDomain:\s*targetDomain/,
-    'and reads the explicit folder rows narrowed to it, exactly like /api/folders',
+    /domain:\s*f\.domain/,
+    'and tags each explicit folder row with its own domain, so the feed can narrow them',
   );
+  assert.ok(
+    !/listFolders\([^)]*activeDomain/.test(codeOnly(src)),
+    'and does NOT use listFolders\' activeDomain option, which drops a domainless row',
+  );
+  assert.match(src, /grantedFolders\s*=/, 'and hands over the folder grants the system already holds');
+});
+
+test('GRANT-FEED: a DOMAINLESS explicit folder row survives the narrowing (M6)', () => {
+  // `listFolders(..., { activeDomain })` would have dropped this row; the feed's own predicate
+  // keeps an unassigned artifact, and the two must agree or an unstamped folder disappears
+  // from the tree while its items are still listed.
+  const { folders } = buildGrantFeed({
+    items: [],
+    domain: SYSTEM_DOMAIN,
+    explicitFolders: [
+      { path: '/unfiled', scope: 'personal', domain: '' },
+      { path: '/elsewhere', scope: 'personal', domain: FOREIGN },
+    ],
+    withFolders: true,
+  });
+  const paths = (folders ?? []).map((f) => f.path);
+  assert.ok(paths.includes('/unfiled'), 'an unassigned folder row is still offered');
+  assert.ok(!paths.includes('/elsewhere'), 'a foreign one is still dropped');
 });

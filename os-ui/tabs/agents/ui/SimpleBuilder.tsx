@@ -28,7 +28,9 @@ import {
 import { setEntrypoint } from '@tabs/agents/lib/canvas-edit';
 import { canSaveFromResult, DATA_NON_TABULAR_NOTE } from '@tabs/agents/lib/output-save';
 import {
-  EMPTY_OUTPUT_DRAFT, outputDraftDirty, outputDraftValid, type OutputDraft,
+  EMPTY_OUTPUT_DRAFT, outputDraftDirty, outputDraftValid,
+  outputDraftStorageKey, serializeOutputDraft, parseOutputDraft,
+  type OutputDraft,
 } from '@tabs/agents/lib/output-draft';
 import { AGENT_TEMPLATES, agentTemplate, type AgentTemplateKey } from '@tabs/agents/lib/agent-templates';
 import StageShell from '@core/ui/core/StageShell';
@@ -157,8 +159,20 @@ export default function SimpleBuilder({
   // section only reports `{ dirty, valid, save, discard }` upward. A guard inside the
   // section would cover none of those exits (the same lesson as the knowledge editor's
   // `editor-guard.ts`), and two guards on one exit ask the user twice.
+  //
+  // The two FLAGS are mirrored into state as well as the ref. A ref does not re-render, so a
+  // prompt whose Save button read `outputDraft.current.valid` was frozen at whatever validity
+  // held when the prompt opened — it could never enable. The CALLBACKS stay in the ref (they
+  // are re-registered on every keystroke, and re-rendering the builder for each would be a
+  // waste); only the flags the UI renders go through state.
   const outputDraft = useRef<OutputDraftState>(EMPTY_OUTPUT_DRAFT_STATE);
-  const onOutputDraftState = useCallback((state: OutputDraftState) => { outputDraft.current = state; }, []);
+  const [draftFlags, setDraftFlags] = useState<{ dirty: boolean; valid: boolean }>({ dirty: false, valid: false });
+  const onOutputDraftState = useCallback((state: OutputDraftState) => {
+    outputDraft.current = state;
+    setDraftFlags((prev) => (
+      prev.dirty === state.dirty && prev.valid === state.valid ? prev : { dirty: state.dirty, valid: state.valid }
+    ));
+  }, []);
   const [pendingStage, setPendingStage] = useState<StageState<AgentStageId> | null>(null);
   const hasAgents = system.agents.length > 0;
   const ready = hasAgents && !!system.entrypoint;
@@ -193,18 +207,25 @@ export default function SimpleBuilder({
   // — the same "mark if done, then move" behavior the builder always had. All of them
   // (and the rail, via `onState`) funnel through `applyStage`, the ONE exit the
   // unsaved-output guard watches.
-  const applyStage = (nextState: StageState<AgentStageId>) => {
+  // The transition is applied through the FUNCTIONAL `setStage` form (never a value computed
+  // from the rendered `stage`), so a transition that lands after another state update still
+  // reduces over the current state. The guard only needs to know WHERE it would land, which a
+  // probe over the rendered state answers.
+  const applyStage = (update: (s: StageState<AgentStageId>) => StageState<AgentStageId>) => {
     const draft = outputDraft.current;
-    if (phase === 'define' && nextState.current !== 'define' && draft.dirty) {
-      // Complete enough to keep? Keep it — there is nothing to ask. Otherwise ask, and
-      // do not move until the author has answered.
-      if (draft.valid) draft.save();
-      else { setPendingStage(nextState); return; }
+    if (phase === 'define' && draft.dirty) {
+      const probe = update(stage);
+      if (probe.current !== 'define') {
+        // Complete enough to keep? Keep it — there is nothing to ask. Otherwise ask, and
+        // do not move until the author has answered.
+        if (draft.valid) draft.save();
+        else { setPendingStage(probe); return; }
+      }
     }
-    setStage(nextState);
+    setStage(update);
   };
-  const go = (id: AgentStageId) => applyStage(goTo(PHASES, stage, id, ctx));
-  const next = () => applyStage(advance(PHASES, stage, ctx));
+  const go = (id: AgentStageId) => applyStage((s) => goTo(PHASES, s, id, ctx));
+  const next = () => applyStage((s) => advance(PHASES, s, ctx));
 
   /** Resolve the unsaved-output prompt. `keep` stays put; nothing is ever discarded silently. */
   const answerOutputGuard = (choice: 'save' | 'discard' | 'keep') => {
@@ -218,7 +239,7 @@ export default function SimpleBuilder({
       draft.discard();
     }
     setPendingStage(null);
-    setStage(target);
+    setStage(() => target);
   };
 
   // Build · Run · Evaluate complete inside their own panels (no explicit "Next"), so
@@ -256,7 +277,7 @@ export default function SimpleBuilder({
         stages={PHASES}
         state={stage}
         ctx={ctx}
-        onState={applyStage}
+        onState={(s) => applyStage(() => s)}
         ariaLabel="Build phases"
         showHeader={false}
         showNav={false}
@@ -283,11 +304,14 @@ export default function SimpleBuilder({
             border: '1px solid var(--amber, #b58900)', borderRadius: 6,
           }}
         >
-          <span>You have an unsaved output under “Where the results go” — it still needs a name.</span>
+          <span>
+            You have an unsaved output under “Where the results go”
+            {draftFlags.valid ? '.' : ' — it still needs a name.'}
+          </span>
           <button
             className="btn sm"
-            disabled={!outputDraft.current.valid}
-            title="Give the output a name first"
+            disabled={!draftFlags.valid}
+            title={draftFlags.valid ? 'Save it and continue' : 'Give the output a name first'}
             onClick={() => answerOutputGuard('save')}
           >
             Save output
@@ -1709,6 +1733,30 @@ function OutputsSection({
   const [draft, setDraft] = useState<OutputDraft>(EMPTY_OUTPUT_DRAFT);
   const patch = (next: Partial<OutputDraft>) => setDraft((d) => ({ ...d, ...next }));
 
+  // PARK the draft per system. The stage guard covers the exits the builder owns; it cannot
+  // cover leaving the system (the sidebar, another tab, a reload), which unmounts this section
+  // with no transition to intercept — the "it reset" the owner reported. So the draft is
+  // written to session storage on every change and read back on mount. `sessionStorage` is
+  // absent on the server and THROWS in a private window, so every access is guarded and a
+  // failure simply means no parking, never a broken section.
+  const parkKey = outputDraftStorageKey(systemId);
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    restored.current = true;
+    try {
+      const parked = parseOutputDraft(window.sessionStorage.getItem(parkKey));
+      if (parked) setDraft(parked);
+    } catch { /* no session storage (private window) — nothing to restore */ }
+  }, [parkKey]);
+  useEffect(() => {
+    if (!restored.current) return; // never park over a slot before reading it
+    try {
+      if (outputDraftDirty(draft)) window.sessionStorage.setItem(parkKey, serializeOutputDraft(draft));
+      else window.sessionStorage.removeItem(parkKey);
+    } catch { /* storage unavailable — the in-memory draft still works for this mount */ }
+  }, [draft, parkKey]);
+
   const foldersFor = (kind: OutputKind, scope: 'personal' | 'domain'): string[] =>
     (foldersByKind[kind] ?? []).filter((f) => f.scope === scope).map((f) => f.path);
 
@@ -1722,21 +1770,26 @@ function OutputsSection({
   // greps for it.
   const saveRow = useCallback(() => {
     if (!canEdit || !outputDraftValid(draft)) return;
+    try { window.sessionStorage.removeItem(parkKey); } catch { /* nothing parked */ }
     onCommit(addOutput(system, {
       kind: draft.kind,
       name: draft.name.trim(),
       folder: { path: normaliseFolderPath(draft.folder), scope: draft.scope },
     }));
     setDraft(EMPTY_OUTPUT_DRAFT);
-  }, [canEdit, draft, onCommit, system]);
+  }, [canEdit, draft, onCommit, system, parkKey]);
 
   // Re-register on every draft change, so the save the builder's guard holds reads the
   // CURRENT draft — a closure captured when dirtiness last flipped would save stale text.
+  const discardRow = useCallback(() => {
+    try { window.sessionStorage.removeItem(parkKey); } catch { /* nothing parked */ }
+    setDraft(EMPTY_OUTPUT_DRAFT);
+  }, [parkKey]);
   useEffect(() => {
-    onDraftState?.({ dirty, valid, save: saveRow, discard: () => setDraft(EMPTY_OUTPUT_DRAFT) });
-  }, [dirty, valid, saveRow, onDraftState]);
-  // Leaving the section unmounted with nothing pending: clear the report so a later stage
-  // never guards a draft that no longer exists.
+    onDraftState?.({ dirty, valid, save: saveRow, discard: discardRow });
+  }, [dirty, valid, saveRow, discardRow, onDraftState]);
+  // On unmount, stop REPORTING a draft (a later stage must not guard a section that is gone) —
+  // but the draft itself stays parked in session storage, so remounting restores it.
   useEffect(() => () => onDraftState?.(EMPTY_OUTPUT_DRAFT_STATE), [onDraftState]);
 
   const kindLabel = (k: OutputKind) => OUTPUT_KIND_CARDS.find((c) => c.kind === k)?.label ?? k;

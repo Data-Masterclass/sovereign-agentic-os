@@ -6,9 +6,10 @@
 import { useEffect, useState } from 'react';
 import type { System, DataLayer, SafetyPreset } from '@tabs/agents/lib/system-schema';
 import {
-  setArtifactGrant, removeArtifactGrant, setDataGrantLayer,
-  setFolderGrant, removeFolderGrant, setArtifactGrantLevel, setFolderGrantLevel,
+  setDataGrantLayer, removeArtifactGrant, removeFolderGrant,
+  setArtifactGrantLevel, setFolderGrantLevel,
 } from '@tabs/agents/lib/simple-edit';
+import { applyFolderSelection, folderGrantsOf } from '@tabs/agents/lib/grant-apply';
 import {
   accessCap, allowedAccessLevels, capabilityToAccess, clampAccess,
   ACCESS_LABELS, type AccessLevel, type AccessCap,
@@ -53,63 +54,8 @@ export function highestLayer(layers: DataLayer[] | undefined): DataLayer | null 
   return null;
 }
 
-/** The folder grants of a kind currently on the system (each `{path,scope}`). */
-function folderGrantsOf(system: System, kind: 'data' | 'knowledge' | 'files'): FolderNode[] {
-  return system.grants[kind]
-    .filter((g) => g.folder)
-    .map((g) => ({ path: g.folder!.path, scope: g.folder!.scope }));
-}
-
 /**
- * Apply a FolderTree {@link FolderSelection} onto the system for one foldered kind,
- * as a minimal diff that PRESERVES existing per-item write capabilities. Folder grants
- * and item grants both default to Read on first tick; the write toggle below the tree
- * is what lifts a specific grant. Files carry NO per-item list, so only their folder
- * grants are applied (individual file ticks are inert — surfaced in the UI hint).
- */
-export function applyFolderSelection(
-  system: System,
-  kind: 'data' | 'knowledge' | 'files',
-  sel: FolderSelection,
-  itemLayer: (id: string) => DataLayer,
-  // When the knowledge feed is split into Workflows vs Knowledge, each picker
-  // reconciles ONLY its own item family so it never removes the other's grants.
-  // `manageFolders` is false for the Workflows picker (workflows carry no folders).
-  opts: { inFamily?: (id: string) => boolean; manageFolders?: boolean } = {},
-): System {
-  const inFamily = opts.inFamily ?? (() => true);
-  const manageFolders = opts.manageFolders ?? true;
-  let next = system;
-  const key = (f: { path: string; scope: string }) => `${f.scope}:${normaliseFolderPath(f.path)}`;
-
-  // ── Folder grants: add newly-selected, remove de-selected. ──
-  if (manageFolders) {
-    const wantFolders = new Set(sel.folderGrants.map(key));
-    const haveFolders = folderGrantsOf(system, kind);
-    for (const f of sel.folderGrants) {
-      if (!haveFolders.some((h) => key(h) === key(f))) next = setFolderGrant(next, kind, f, false);
-    }
-    for (const h of haveFolders) {
-      if (!wantFolders.has(key(h))) next = removeFolderGrant(next, kind, h);
-    }
-  }
-
-  // ── Item grants (all foldered kinds, INCLUDING files — a single file can be
-  //    granted by its id, exactly like a dataset or a knowledge entry). ──
-  {
-    const wantItems = new Set(sel.itemGrants.filter(inFamily));
-    const haveItems = next.grants[kind].filter((g) => !g.folder && g.id && inFamily(g.id)).map((g) => g.id);
-    for (const id of wantItems) {
-      if (!haveItems.includes(id)) next = setArtifactGrant(next, kind, id, false, itemLayer(id));
-    }
-    for (const id of haveItems) {
-      if (!wantItems.has(id)) next = removeArtifactGrant(next, kind, id);
-    }
-  }
-  return next;
-}
-
-/**
+ * Wave-3 folder-aware grant picker/**
  * Wave-3 folder-aware grant picker for the FOLDERED kinds (data · knowledge · files).
  * Renders the shared `<FolderTree variant="checkbox">` over the DLS-scoped feed so the
  * author ticks whole FOLDERS (→ a folder grant that late-binds to every item under it,
@@ -156,7 +102,15 @@ export function FolderResourcePicker({
   const inFamily = (id: string) =>
     !idFamily ? true : idFamily === 'workflow' ? isWorkflowId(id) : !isWorkflowId(id);
   const items = (feed?.items ?? []).filter((a) => inFamily(a.id));
-  const folders = feed?.folders ?? [];
+  const allFolders = feed?.folders ?? [];
+  // A folder flagged `outsideDomain` exists only because a LIVE grant points at it from
+  // outside this system's domain. It is deliberately NOT a tree node: the narrowed feed gives
+  // it no items, and `triState` renders an item-less folder UNTICKED — a tree that showed a
+  // live grant as unticked would be a lie, and the next tick would emit a selection without
+  // it and delete it. It is rendered below as a read-only chip with a warning instead, and
+  // passed to the reconcile as protected so no round trip can remove it.
+  const outsideFolders = allFolders.filter((f) => f.outsideDomain);
+  const folders = allFolders.filter((f) => !f.outsideDomain);
   const availOf = (id: string) => items.find((a) => a.id === id);
   const nameOf = (id: string) => availOf(id)?.name ?? (id.includes('_') ? id.split('_').slice(1).join('_') : id);
   const layersOf = (id: string): DataLayer[] => availOf(id)?.layers ?? [];
@@ -187,7 +141,14 @@ export function FolderResourcePicker({
 
   const onChange = (sel: FolderSelection) => {
     if (!canEdit) return;
-    onCommit(applyFolderSelection(system, kind, sel, layerFor, { inFamily, manageFolders: managesFolders }));
+    onCommit(applyFolderSelection(system, kind, sel, layerFor, {
+      inFamily,
+      manageFolders: managesFolders,
+      // Removal is bounded by what the tree could actually show: the feed's own item ids,
+      // and the out-of-domain folders it was never given.
+      listedItemIds: items.map((a) => a.id),
+      protectedFolders: outsideFolders.map((f) => ({ path: f.path, scope: f.scope })),
+    }));
   };
 
   // The granted chips (item grants + folder grants) shown below the tree with controls.
@@ -199,11 +160,9 @@ export function FolderResourcePicker({
   // Folder grants the feed flagged as pointing OUTSIDE this system's domain (legacy): they
   // still render and still tick, but the chip says so, so the author can see why a foreign
   // folder is attached and remove it deliberately rather than discover it at run time.
-  const outsideDomain = new Set(
-    folders.filter((f) => f.outsideDomain).map((f) => `${f.scope} ${normaliseFolderPath(f.path)}`),
-  );
+  const outsideKeys = new Set(outsideFolders.map((f) => `${f.scope}:${normaliseFolderPath(f.path)}`));
   const isOutside = (f: { path: string; scope: string }) =>
-    outsideDomain.has(`${f.scope} ${normaliseFolderPath(f.path)}`);
+    outsideKeys.has(`${f.scope}:${normaliseFolderPath(f.path)}`);
   const addableMkt = mktItems.filter((a) => !mktGrantedIds.has(a.id));
 
   return (

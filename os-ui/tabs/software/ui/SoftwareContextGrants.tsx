@@ -329,7 +329,11 @@ function FolderedKind({
   const onTree = (sel: FolderSelection) => {
     if (!canEdit) return;
     const next = expandSelectionToIds(grantable, sel.folderGrants, sel.itemGrants);
-    onChange(reconcileGranted(value, kind, next, cap));
+    // Bound the removal by what this picker could SHOW: the feed is narrowed to the active
+    // domain, so a grant on an out-of-domain artifact is never in `next` and must not be read
+    // as a de-selection. `listed` is every id the feed returned, tree items + marketplace.
+    const listed = new Set(items.map((a) => a.id));
+    onChange(reconcileGranted(value, kind, next, cap, listed));
   };
 
   const options = allowedContextAccess(cap);

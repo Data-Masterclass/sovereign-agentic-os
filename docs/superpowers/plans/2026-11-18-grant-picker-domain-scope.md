@@ -124,12 +124,21 @@ back to the id.
 
 Stated explicitly because it is the thing a reviewer must not have to guess:
 
-- No authorisation decision moves. The real gates stay exactly where they are: the
-  canView/DLS filter inside every lister (nothing the caller cannot see was ever in the
-  feed), `assertGrantsWithinAuthority` on the promotion path
-  (`tabs/data/lib/store.ts:1694`, `tabs/files/lib/store.ts:842`), and the **per-item DLS at
-  build/run**, where `tabs/agents/lib/build/os-tools.ts`'s `ScopedItemsLoader` re-resolves
-  every folder grant through the same owner-scoped lists as the acting principal.
+- No authorisation decision moves. **Corrected after review (L10):** an earlier draft of this
+  section named `assertGrantsWithinAuthority` as the gate on agent grants. It is not. That
+  function (`tabs/data/lib/store.ts:1694`, `tabs/files/lib/store.ts:842`) validates the grantee
+  list of a dataset/file **promotion approval** — a different surface entirely. Said honestly,
+  an agent grant is written by the edit-scoped `system.yaml` PUT
+  (`app/api/agents/systems/[id]/files/route.ts` → `writeFile`, owner / in-domain domain_admin /
+  admin, optimistic-concurrency on the sha) and **nothing validates the granted ids at write
+  time**: a system.yaml may name any id its author can type.
+- What makes that safe is that a grant is not an access decision. The gates are (a) the
+  canView/DLS filter inside every lister, so the PICKER only ever offers what the caller can
+  already see; and (b) execution: every granted tool call at build/run runs AS the acting
+  principal, OPA-checked and row/document-level filtered, and
+  `tabs/agents/lib/build/os-tools.ts`'s `ScopedItemsLoader` re-resolves each folder grant
+  through the same owner-scoped lists. A grant on an id the runner cannot read yields nothing —
+  it is a *pointer*, not a permission.
 - `os-tools.ts` is deliberately **not** narrowed. A build/run resolution must stay a function
   of the runner's authority, not of a picker's current view; narrowing it would change what an
   existing system actually does at run time, which is a governance change and out of scope.
@@ -371,6 +380,92 @@ tripwire — the predicate assertions in that last file are counted once each).
   it is a sensible follow-up, not part of a presentation fix for the picker.
 - Two other agents own `tabs/files/ui/*` and the promotion/approval paths; nothing there was
   touched.
+
+## Review round 1 — what the independent review found, and what changed
+
+The review BLOCKED the first version. Every finding was real; the headline two were the same
+mistake in two tabs, and it was worse than the bug being fixed.
+
+**H1 (block) — the narrowed feed made the agents picker DELETE out-of-domain grants on the
+first tick.** Re-admitting the foreign folder NODE was not enough: the narrowed feed gives that
+folder no items, `triState` (`core/kernel/folders.ts`) calls an item-less folder `'none'` so it
+renders UNTICKED, and `computeSelection` (`core/ui/core/FolderTree.tsx`) skips folders with no
+items — so the selection the tree emits omits it, and the old reconcile read that omission as a
+de-selection and removed the grant. The same held for any ITEM grant whose id the narrowed feed
+stopped listing, because item grants reconciled against the feed rather than against
+`system.grants`. My "renders as ticked" claim in the code comment and in ARCHITECTURE.md was
+simply false.
+
+Fixed by moving the reconcile out of the component into **`tabs/agents/lib/grant-apply.ts`**
+(so the round trip is testable at all) and bounding removal by what the tree could actually
+show: `listedItemIds` (the feed's own ids) and `protectedFolders` (the out-of-domain nodes).
+Pass neither and nothing is removed — an unknown universe must not authorise destruction. The
+out-of-domain folders are now deliberately kept OUT of the tree (an item-less node can only
+render as a lie) and shown below as read-only chips with the warning badge.
+
+**H2 (block) — the identical deletion in the software context picker.** `reconcileGranted` kept
+`current.filter(g => target.has(g.id))`, and the narrowed `availableContext` no longer lists an
+out-of-domain grant, so any tick dropped it. Now `target.has(g.id) || !listed.has(g.id)`, with
+`listed` = the ids the feed returned.
+
+**M3 — raw NUL bytes.** Two files (my `grant-feed.ts` key builder, and the pre-existing
+`tabs/connections/lib/warehouse/providers/snowflake.ts` control-char regex) contained literal
+control bytes where the author meant the escapes `\0` / `\x00-\x1f`. Git treats such a file as
+binary, so the review could not see the lines it had to judge. Both rewritten as escapes, plus
+`core/kernel/source-text-tripwire.test.ts` over `core/ tabs/ app/ worker/`. Its docstring says
+what it cannot see (bytes 0x0b-0x1f, and anything else that makes source unreadable).
+
+**M4 — the guard's "Save output" could never enable:** it read validity from a ref, and a ref
+does not re-render. `{dirty, valid}` are now mirrored into state (the callbacks stay in the
+ref).
+
+**M5 — the guard only covered the exits the builder owns.** Leaving the system entirely
+(sidebar, another tab, a reload) unmounts the section with no transition to intercept — the
+"it reset" as originally reported. The draft is now parked per system id in `sessionStorage`
+(`outputDraftStorageKey` / `serializeOutputDraft` / `parseOutputDraft`, all pure and tested;
+the component owns the try/catch, since storage is absent on the server and throws in a private
+window) and restored on remount. Unmount stops REPORTING the draft; it no longer discards it.
+
+**M6 — a predicate asymmetry that hid unassigned folders.** `inDomainScope` keeps a domainless
+artifact; `listFolders`' own `activeDomain` option DROPS a row whose domain is empty. Passing
+that option therefore made an unstamped folder vanish from the grant tree and the outputs
+dropdown — and mislabelled it "outside this domain" if it was granted. Both feeds now read the
+rows unnarrowed and filter them with `inDomainScope`. Two tripwires pin that `listFolders` is
+never called with `activeDomain` there (asserted against the source with COMMENTS STRIPPED —
+the first version of that assertion failed on its own explanatory prose).
+
+**M7 — `/api/apps/by-slug/[slug]/context`** resolved display names through the now-narrowed
+`availableContext`, so an app's out-of-domain grant rendered as a raw id on the very surface
+that exists to be honest about what an app was granted. It resolves with
+`{ ...user, activeDomain: null }`; it widens nothing (membership and canView unchanged) and only
+ids already on `app.grants` are looked up.
+
+**L8** `outputDraftValid` demanded non-blank folder text while `addOutput` normalises blank to
+`'/'` — so a saveable draft was reported invalid, and the prompt it triggered had a Save button
+that could never be pressed. Validity is now "a name", and `outputDraftFolder` exposes the same
+normalisation the commit applies. **L9** `go`/`next` had lost the functional `setStage` form;
+restored, with the guard probing where the transition would land. **L10** this plan and the
+route header named `assertGrantsWithinAuthority` as the gate on agent grants — see §4, now
+corrected: that function gates promotion-approval grantees, and an agent grant rides the
+edit-scoped `system.yaml` PUT with no per-id validation at all.
+
+### Files added or changed in this round
+
+| file | change |
+| --- | --- |
+| `os-ui/tabs/agents/lib/grant-apply.ts` | **new** — the reconcile, lifted out of `GrantPickers.tsx`, with `listedItemIds` + `protectedFolders` bounding every removal |
+| `os-ui/tabs/agents/lib/grant-apply.test.ts` | **new** — 8 tests incl. the full round trip (system in domain A, legacy grant in B, tick in A, B survives) |
+| `os-ui/core/kernel/source-text-tripwire.test.ts` | **new** — no control byte below 0x09 in any source file |
+| `os-ui/tabs/agents/ui/GrantPickers.tsx` | delegates to `grant-apply`; out-of-domain folders kept out of the tree and shown as badged chips; NUL removed |
+| `os-ui/tabs/software/lib/grant-granularity.ts` + `.test.ts` | `reconcileGranted(…, listed)` keeps grants the feed no longer lists (+2 tests) |
+| `os-ui/tabs/software/ui/SoftwareContextGrants.tsx` | passes `listed` |
+| `os-ui/tabs/agents/lib/output-draft.ts` + `.test.ts` | L8 validity; the parking helpers (+3 tests) |
+| `os-ui/tabs/agents/ui/SimpleBuilder.tsx` | M4 state mirror, M5 parking + restore, L9 functional `setStage` |
+| `os-ui/tabs/software/lib/available-context.ts` | M6 folder rows via `inDomainScope` |
+| `os-ui/app/api/agents/systems/[id]/grants/available/route.ts` | M6 (no `activeDomain` on `listFolders`), L10 header |
+| `os-ui/app/api/apps/by-slug/[slug]/context/route.ts` | M7 |
+| `os-ui/tabs/connections/lib/warehouse/providers/snowflake.ts` | M3 — pre-existing raw control bytes in a regex → escapes (semantics identical) |
+| `os-ui/ARCHITECTURE.md` | the L10 correction + the "a narrowed feed is a narrowed diff" lesson |
 
 ## Guardrails for the execution
 

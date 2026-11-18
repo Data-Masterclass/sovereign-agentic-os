@@ -76,16 +76,23 @@ export function isPersonalDataGrantRisk(
  * Reconcile the granted item set for ONE kind against a target id set: keep ids that
  * persist (with their current access), drop de-selected ones, add new ids at the cap
  * default. Pure — returns a NEW grants object.
+ *
+ * `listed` is what the PICKER could actually show. It matters because the available-context
+ * feed is narrowed to the active domain: a grant on an artifact outside that domain is never
+ * offered, so it can never be in `target` — and reading that absence as "the user de-selected
+ * it" DELETED a live grant on the first tick. An id the picker never listed is therefore kept.
+ * Omit `listed` and every current id counts as listed (the historical behaviour).
  */
 export function reconcileGranted(
   grants: ContextGrants,
   kind: ContextKind,
   target: Set<string>,
   cap: ContextAccessCap,
+  listed?: ReadonlySet<string>,
 ): ContextGrants {
   const current = grants[kind];
   const currentIds = new Set(current.map((g) => g.id));
-  const kept = current.filter((g) => target.has(g.id));
+  const kept = current.filter((g) => target.has(g.id) || (listed !== undefined && !listed.has(g.id)));
   const added = [...target]
     .filter((id) => !currentIds.has(id))
     .map((id) => ({ id, access: clampContextAccess(cap.default, cap) }));
