@@ -161,7 +161,11 @@ export function scaffoldSystem(
     agents.push(supervisor, ...members.map((m) => m.spec));
     entrypoint = 'supervisor';
     for (let i = 0; i < members.length - 1; i++) {
-      edges.push({ from: members[i].spec.id, to: members[i + 1].spec.id, type: 'handoff', when: 'step complete' });
+      // No `when:` guard — an unguarded handoff is the sequential edge build-graph already treats
+      // as unconditional (`h.when === null`). The previous literal 'step complete' was never a
+      // valid `when` expression (grammar: channels, booleans, ==/!=, &&/||) and failed every Build
+      // of a scaffolded team at "Wiring the graph" (2026-11-18).
+      edges.push({ from: members[i].spec.id, to: members[i + 1].spec.id, type: 'handoff' });
     }
   }
 

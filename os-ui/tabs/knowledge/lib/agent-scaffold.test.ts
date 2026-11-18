@@ -349,3 +349,14 @@ test('all-manual workflow scaffolds a single coordinator with the workflow conte
   assert.equal(out.system.agents[0].id, 'coordinator');
   assert.deepEqual(out.system.grants.knowledge, [{ id: 'bank-submission', capability: 'Read' }]);
 });
+
+test('scaffolded handoff edges carry NO `when` guard — "step complete" was never a valid when-expression', () => {
+  // Agentify every step that CAN be (Human + Agent; Software stays manual) → supervisor + handoffs.
+  const out = scaffoldSystem(parseWorkflow(WF), { dispositions: { prepare: 'augment', submit: 'automate', verify: 'automate' } });
+  const handoffs = out.system.edges.filter((e) => e.type === 'handoff');
+  assert.equal(handoffs.length, 2, 'three agents under a supervisor → two sequential handoffs');
+  for (const e of handoffs) assert.equal(e.when, undefined, `${e.from} → ${e.to} must be an unguarded (sequential) handoff`);
+  // And the yaml the Agents tab receives re-parses without a guard on any edge.
+  const sys = parseSystem(out.yaml);
+  assert.ok(sys.edges.every((e) => e.when === undefined));
+});
