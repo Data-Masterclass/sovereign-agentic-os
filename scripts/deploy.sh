@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG
-# deploy.sh <version> — build, push and roll out os-ui to a real cluster.
+# deploy.sh [--from-registry] [--verify-only] <version> — roll out os-ui to a real cluster.
 #
-#   ./scripts/deploy.sh 0.7.0
+#   ./scripts/deploy.sh 0.7.0                     build here, push, upgrade (as always)
+#   ./scripts/deploy.sh --from-registry 0.7.0     use a tag CI already built — no local Docker
+#   ./scripts/deploy.sh --help
 #
 # Run it DIRECTLY — never `deploy.sh … | tail`. A pipeline's exit status is the
 # last command's, so a failed upgrade reports 0 and looks like success. The
@@ -16,18 +18,143 @@
 # the chart's values.yaml is the laptop profile, so never deploy a cloud cluster
 # from the defaults. This script derives the values file from the live release and
 # drops only the keys the chart no longer defines.
+#
+# --from-registry exists because building here costs too much: the Colima VM reserves 14 GB on a
+# 24 GB host, its DNS failed twice mid-build, the host has OOM-killed runs, and an emulated
+# amd64 build blocks the machine for 10-15 minutes. `.github/workflows/build-images.yml` builds
+# the same Dockerfile on an amd64 runner and pushes the tag; this mode then VERIFIES that tag
+# exists, reads its digest from the registry, and does everything else — backup gate, values
+# derivation, --force-conflicts, the single helm upgrade — exactly as a local build does.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VERSION=${1:?usage: deploy.sh <version>}
+
+FROM_REGISTRY=${IMAGE_FROM_REGISTRY:-}
+VERIFY_ONLY=${IMAGE_VERIFY_ONLY:-}
+VERSION=
+usage() {
+  cat <<'USAGE'
+usage: deploy.sh [--from-registry] [--verify-only] [--help] <version>
+
+  <version>            the os-ui image tag to deploy, e.g. 0.9.0
+
+  --from-registry      do NOT build or push. Verify <version> already exists in the registry,
+                       read its digest from there, and upgrade. Needs no Docker daemon — use it
+                       for a tag built by .github/workflows/build-images.yml.
+  --verify-only        resolve the image reference, prove it exists, print its digest, exit.
+                       Touches no cluster. Implies --from-registry.
+  --help               this text.
+
+environment
+  IMAGE_FROM_REGISTRY=1     same as --from-registry
+  IMAGE_VERIFY_ONLY=1       same as --verify-only
+  IMAGE_REPO=<repo>         os-ui image repository (default ghcr.io/aborek/sovereign-os).
+                            When set, the upgrade also --sets osUI.image.repository.
+  SKIP_BUILD=1              reuse an already-built LOCAL image instead of building again
+  DEPLOY_REGISTRY_PROBE=<cmd>
+                            use `<cmd> <ref>` to read a remote digest instead of
+                            crane / skopeo / the registry v2 API. For tests.
+  KUBE_CONTEXT NS REL WORK VALUES   as before
+
+images are built in CI — pick ONE of these once (see CONTRIBUTING.md -> "Images: build in CI")
+  A  push to ghcr.io/data-masterclass/sovereign-os (the workflow default, no secret needed):
+       git tag os-ui-v<version> && git push public os-ui-v<version>
+       IMAGE_REPO=ghcr.io/data-masterclass/sovereign-os IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>
+  B  keep ghcr.io/aborek/sovereign-os (repo variable IMAGE_REPO_PREFIX + secret GHCR_TOKEN):
+       git tag os-ui-v<version> && git push public os-ui-v<version>
+       IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>
+USAGE
+}
+while [ $# -gt 0 ]; do
+  case $1 in
+    --from-registry) FROM_REGISTRY=1 ;;
+    --verify-only)   VERIFY_ONLY=1; FROM_REGISTRY=1 ;;
+    -h|--help)       usage; exit 0 ;;
+    -*)              echo "deploy.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
+    *)               [ -z "$VERSION" ] || { echo "deploy.sh: unexpected argument $1" >&2; exit 2; }
+                     VERSION=$1 ;;
+  esac
+  shift
+done
+[ -n "$VERIFY_ONLY" ] && FROM_REGISTRY=1
+[ -n "$VERSION" ] || { usage >&2; exit 2; }
+
 CTX=${KUBE_CONTEXT:-dmagenticos}
 NS=${NS:-agentic-os}
 REL=${REL:-agentic-os}
 CHART=charts/sovereign-agentic-os
-IMG=ghcr.io/aborek/sovereign-os/os-ui:$VERSION
+# The DEFAULT is unchanged. IMAGE_REPO is for the day the owner moves the namespace (option A
+# above); when it is set the upgrade below also --sets osUI.image.repository, because the chart
+# would otherwise keep pulling the repository the live release carries.
+IMAGE_REPO_DEFAULT=ghcr.io/aborek/sovereign-os
+IMAGE_REPO=${IMAGE_REPO:-$IMAGE_REPO_DEFAULT}
+IMG=$IMAGE_REPO/os-ui:$VERSION
 WORK=${WORK:-$(mktemp -d)}
 VALUES=${VALUES:-$WORK/release-values.yaml}
 
 say() { printf '\n==> %s\n' "$*"; }
+
+# remote_digest <ref> — print the `sha256:…` a registry tag resolves to, with NO Docker daemon.
+# `docker manifest inspect` is deliberately not used: it needs the very daemon this mode exists
+# to avoid. First tool that is present wins; if none is, refuse rather than deploy something
+# unverified.
+remote_digest() {
+  ref=$1
+  if [ -n "${DEPLOY_REGISTRY_PROBE:-}" ]; then
+    $DEPLOY_REGISTRY_PROBE "$ref"; return
+  fi
+  if command -v crane >/dev/null 2>&1; then
+    crane digest "$ref"; return
+  fi
+  if command -v skopeo >/dev/null 2>&1; then
+    skopeo inspect --format '{{.Digest}}' "docker://$ref"; return
+  fi
+  command -v curl >/dev/null 2>&1 || {
+    echo "NO_REGISTRY_TOOL — install crane (brew install crane) or skopeo, or set DEPLOY_REGISTRY_PROBE" >&2
+    return 1
+  }
+  # Registry v2 by hand. host/path:tag — the path is everything between the first `/` and the
+  # `:`, which for ghcr.io is `<owner>/<repo>/<image>`.
+  host=${ref%%/*}
+  rest=${ref#*/}
+  path=${rest%:*}
+  tag=${rest##*:}
+  # A pull token is required even for a public GHCR package. `gh auth token` is used when the
+  # CLI is logged in (a private package needs it); otherwise ask anonymously.
+  auth=
+  if command -v gh >/dev/null 2>&1; then
+    tok=$(gh auth token 2>/dev/null || true)
+    [ -n "$tok" ] && auth="-u x:$tok"
+  fi
+  # shellcheck disable=SC2086  # $auth is two words on purpose, or none
+  bearer=$(curl -sS $auth "https://$host/token?service=$host&scope=repository:$path:pull" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token") or "")' 2>/dev/null || true)
+  [ -n "$bearer" ] || { echo "REGISTRY_TOKEN_FAILED for $path on $host" >&2; return 1; }
+  curl -sSI -X HEAD \
+    -H "Authorization: Bearer $bearer" \
+    -H 'Accept: application/vnd.oci.image.index.v1+json' \
+    -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+    -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+    -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+    "https://$host/v2/$path/manifests/$tag" \
+    | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" { print $2 }'
+}
+
+if [ -n "$FROM_REGISTRY" ]; then
+  say "verifying $IMG exists in the registry (no local build)"
+  DIGEST=$(remote_digest "$IMG" || true)
+  case ${DIGEST:-} in
+    sha256:*) ;;
+    *) echo "IMAGE_NOT_IN_REGISTRY — $IMG did not resolve to a digest." >&2
+       echo "   Build it first:  git tag os-ui-v$VERSION && git push public os-ui-v$VERSION" >&2
+       echo "   (or run the build-images workflow by hand), then retry." >&2
+       exit 1 ;;
+  esac
+  say "digest $DIGEST"
+  if [ -n "$VERIFY_ONLY" ]; then
+    echo "VERIFY_${VERSION}_OK $IMG $DIGEST"
+    exit 0
+  fi
+fi
 
 say "context $CTX / namespace $NS"
 kubectl --context "$CTX" -n "$NS" get deploy os-ui >/dev/null
@@ -107,6 +234,13 @@ say "pre-upgrade backup (standing rule — aborts the deploy if it fails)"
 kubectl config use-context "$CTX" >/dev/null
 KUBECONFIG=${KUBECONFIG:-$HOME/.kube/config} deploy/pre-upgrade-backup.sh
 
+if [ -n "$FROM_REGISTRY" ]; then
+  # Already verified above, and the smoke that follows a local build ran in CI against this
+  # exact image before it was pushed (.github/workflows/build-images.yml). Nothing to build,
+  # nothing to push, no Docker daemon needed.
+  say "using the registry image $IMG@$DIGEST (built in CI)"
+else
+
 # SKIP_BUILD=1 reuses an already-built local image — useful when a run died after
 # the build (emulated amd64 builds take 10-15 min on an arm64 Mac).
 if [ "${SKIP_BUILD:-}" = "1" ] && docker image inspect "$IMG" >/dev/null 2>&1; then
@@ -140,6 +274,8 @@ DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMG" | sed -E 's/.
 [ -n "$DIGEST" ] || { echo "DIGEST_EMPTY — refusing to deploy an unpinned image"; exit 1; }
 say "digest $DIGEST"
 
+fi  # end of the local build-and-push path
+
 say "helm upgrade"
 # --skip-schema-validation: the dagster subchart's values.schema.json $ref's a
 # JSON schema on raw.githubusercontent.com. Helm fetches it at upgrade time, and
@@ -147,8 +283,17 @@ say "helm upgrade"
 # image had already been built and pushed. A deploy must not depend on GitHub
 # answering within Helm's timeout. Our own values are still exercised by the
 # template/diff step above and by `helm lint` in CI.
+#
+# The image REPOSITORY is normally the operator's, carried over from the live release by the
+# derivation above (night-1: the chart owns the TAG, the operator owns the REPOSITORY). Only
+# when IMAGE_REPO was passed explicitly do we override it — so a plain `deploy.sh <version>`
+# runs the exact command line it has always run.
+REPO_SET=()
+[ "$IMAGE_REPO" = "$IMAGE_REPO_DEFAULT" ] || REPO_SET=(--set "osUI.image.repository=$IMAGE_REPO/os-ui")
+[ ${#REPO_SET[@]} -eq 0 ] || say "overriding osUI.image.repository=$IMAGE_REPO/os-ui (IMAGE_REPO)"
 helm --kube-context "$CTX" upgrade "$REL" "$CHART" -n "$NS" -f "$VALUES" \
-  --set osUI.image.tag="$VERSION@$DIGEST" --force-conflicts --skip-schema-validation --timeout 20m
+  --set osUI.image.tag="$VERSION@$DIGEST" "${REPO_SET[@]+"${REPO_SET[@]}"}" \
+  --force-conflicts --skip-schema-validation --timeout 20m
 # No rollout restart: the image change already rolls os-ui exactly once.
 
 say "rollout"
