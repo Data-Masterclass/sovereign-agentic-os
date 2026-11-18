@@ -52,6 +52,7 @@ MLflow	Layer 4 (off)	Apache-2.0	optional	licenses/Apache-2.0.txt	Experiment trac
 KServe	Layer 4 (off)	Apache-2.0	optional	licenses/Apache-2.0.txt	Model serving / inference
 amazon/aws-cli	2.31.13	Apache-2.0	yes	licenses/Apache-2.0.txt	Bucket-init helper image
 traefik/whoami	1.10.3	MIT	yes	licenses/MIT.txt	Software-delivery demo app
+Trivy (aquasec/trivy)	0.58.2	Apache-2.0	yes	licenses/Apache-2.0.txt	Software deploy security scanner: one Job per deploy request (deps + secrets). DEPLOYED IMAGE ONLY - no Trivy source is vendored or compiled into os-ui
 Docker-in-Docker (dind)	27	Apache-2.0	yes	licenses/Apache-2.0.txt	CI build sidecar (Moby/Docker engine)
 MinIO	digest-pinned	AGPL-3.0	no	licenses/AGPL-3.0.txt	LOCAL DEV-ONLY S3 stand-in; AGPL, NEVER bundled/redistributed (SeaweedFS is the bundled option)
 STACKIT AI Model Serving	managed	n/a	no	n/a	Inference runs on the managed STACKIT API (reasoning Qwen3-VL-235B, standard/worker gpt-oss-20b, embeddings Qwen3-VL-Embedding-8B). No model engine or weights bundled/redistributed here.

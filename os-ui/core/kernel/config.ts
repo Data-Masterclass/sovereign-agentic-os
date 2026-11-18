@@ -278,6 +278,29 @@ export const config = {
   appsIngressClass: env('OS_APPS_INGRESS_CLASS', 'nginx'),
   appsTlsIssuer: env('OS_APPS_TLS_ISSUER', 'letsencrypt-prod'),
 
+  // Software — the LIVE SECURITY SCANNER (tabs/software/lib/scan-trivy.ts). Trivy
+  // (Apache-2.0) runs as ONE Kubernetes Job per deploy request over the app's committed
+  // tree: dependency vulnerabilities from its manifests/lockfiles, plus committed secrets.
+  // ON by default (the opposite of the runner, which fails closed on a missing image):
+  // a cluster WITHOUT a scanner cannot approve a software deploy at all (PR #56), so the
+  // useful default is "try, and say so honestly when it does not work". A disabled scanner,
+  // an unreachable API server, a failed Job or a timeout all leave the scan `unavailable`
+  // with a reason — never a passing verdict. `SOFTWARE_SCANNER_DB_MODE`:
+  //   `mirror`  — the Job fetches Trivy's vulnerability DB from SOFTWARE_SCANNER_DB_REPOSITORY
+  //               (needs DNS + 443 egress; the chart's NetworkPolicy opens exactly that).
+  //   `offline` — `--skip-db-update`: the DB must ALREADY be baked into the scanner image.
+  // `mirror` is the default deliberately: `offline` against an image with no DB finds nothing
+  // and would report a PASS, which is the one outcome this whole gate exists to prevent.
+  softwareScannerEnabled: env('SOFTWARE_SCANNER_ENABLED', 'true') !== 'false',
+  softwareScannerImage: env('SOFTWARE_SCANNER_IMAGE', 'aquasec/trivy:0.58.2'),
+  // Empty = the platform namespace the os-ui itself runs in (resolved by the adapter, which
+  // reads `platformNamespace` below — the scanner Job lives beside os-ui, not in the untrusted
+  // apps-runner namespace, because it holds the app's SOURCE and must not be reachable by apps).
+  softwareScannerNamespace: env('SOFTWARE_SCANNER_NAMESPACE', ''),
+  softwareScannerDbMode: env('SOFTWARE_SCANNER_DB_MODE', 'mirror') === 'offline' ? 'offline' : 'mirror',
+  softwareScannerDbRepository: env('SOFTWARE_SCANNER_DB_REPOSITORY', 'ghcr.io/aquasecurity/trivy-db'),
+  softwareScannerTimeoutMs: Number(env('SOFTWARE_SCANNER_TIMEOUT_MS', '180000')) || 180000,
+
   // (The Phase-B "DIRECT BUILD SERVICE" config lived here — `softwareBuildEnabled`,
   // `softwareBuildNamespace` and `kanikoImage`. Its implementation was deleted with the
   // v2-lean cut and the keys had ZERO call sites, so they are gone (night-2 S1). There is

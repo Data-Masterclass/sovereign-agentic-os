@@ -155,6 +155,16 @@ export type ApprovalEffect = {
   live: boolean;
   standingPolicyId?: string;
   publish?: { ok: boolean; fqn: string; error?: string; mode?: string };
+  /**
+   * THE AUDITED NO-SCAN HATCH (2026-11-19). Set on an `app_deploy` approval that an ADMIN
+   * approved while the software security scan was `unavailable` — i.e. no scanner engine ran, so
+   * there was no verdict to approve and a named human took responsibility instead. It is NOT an
+   * exemption from the scan (a scan that RAN and FAILED can never be acknowledged) and it is NOT
+   * related to `OS_OFFLINE_MOCK`, which keeps its single lever: nothing here lets the OS claim a
+   * clean scan. Stamped here so the Governance card shows the acknowledgement without the
+   * Software tab having to re-tell the story, and so it rides the approval's durable mirror.
+   */
+  approvedWithoutScan?: { reason: string; by: string; scanMode: string };
 };
 
 // Pinned to globalThis so the queue is a TRUE singleton across separately
