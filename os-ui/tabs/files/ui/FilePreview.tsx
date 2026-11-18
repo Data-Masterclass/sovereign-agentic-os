@@ -105,6 +105,9 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   const [promote, setPromote] = useState<PromoteStatus | null>(null);
   const [lineage, setLineage] = useState<LineageEdge[]>([]);
   const [useAsMsg, setUseAsMsg] = useState('');
+  // The outcome of the last sharing act. An owner who is ALSO the approver gets a one-shot
+  // promotion (PR #61), and "⏳ awaiting a domain admin's approval" would be a lie for them.
+  const [shareMsg, setShareMsg] = useState('');
   const [showFullText, setShowFullText] = useState(false);
   const reuploadRef = useRef<HTMLInputElement>(null);
   // Re-upload progress: pct (0–100) while a new version is in flight, and its own
@@ -176,15 +179,24 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   }, []);
 
   const requestPromote = useCallback(async () => {
-    setErr('');
+    setErr(''); setShareMsg('');
     const res = await fetch(`/api/files/${id}/promote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     const data = await res.json();
     // The server's own words — the SAME helper the bulk path uses, so the two cannot drift
     // (the bulk notice once dropped this text entirely and reported a bare count).
     if (!res.ok) { setErr(serverError(data, 'Could not request promotion')); return; }
-    // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
-    const approval = data.approval as FiledApproval | undefined;
-    if (approval?.id) notifyApprovalFiled(approval, 'file', () => { void load(); onMutated(); });
+    // THE OWNER-APPROVER'S ONE SHOT (PR #61): `{ promoted: true, requested: false }` means the
+    // file is already in the domain — there is no approval to notify and nothing to wait for.
+    if (data.promoted === true) {
+      setShareMsg('Promoted to the domain');
+    } else {
+      // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
+      const approval = data.approval as FiledApproval | undefined;
+      if (approval?.id) notifyApprovalFiled(approval, 'file', () => { void load(); onMutated(); });
+      // `{ requested: true, already: true }` carries a handle only — the request was already
+      // open, so say that rather than implying this press filed it.
+      else if (data.already === true) setShareMsg('Already proposed — awaiting a domain admin');
+    }
     await load(); onMutated();
   }, [id, load, onMutated, notifyApprovalFiled]);
 
@@ -571,7 +583,9 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         <label className="rail-group-title">Sharing</label>
         {a.tier === 'dataset' ? (
           promote?.request ? (
-            <span className="hint" style={{ margin: 0 }}>⏳ Proposed — awaiting a domain admin’s approval…</span>
+            <span className="hint" style={{ margin: 0 }}>
+              {shareMsg ? `⏳ ${shareMsg}…` : '⏳ Proposed — awaiting a domain admin’s approval…'}
+            </span>
           ) : isOwner ? (
             <>
               {promote && !promote.gate.ok ? (
@@ -585,7 +599,9 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
           ) : <span className="hint" style={{ margin: 0 }}>Private to {a.owner}.</span>
         ) : a.tier === 'asset' ? (
           <>
-            <span className="hint" style={{ margin: 0 }}>Shared with your domain.</span>
+            <span className="hint" style={{ margin: 0 }}>
+              {shareMsg ? `✓ ${shareMsg}.` : 'Shared with your domain.'}
+            </span>
             {isAdmin ? <button className="btn ghost sm" onClick={certify}>Certify to Company →</button> : null}
           </>
         ) : (

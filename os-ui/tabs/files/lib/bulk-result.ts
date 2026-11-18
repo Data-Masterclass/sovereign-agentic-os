@@ -20,20 +20,39 @@
 /**
  * One file's outcome in a bulk action. `error` is the server's text, never a paraphrase.
  *
- * `already` is the 200 that CHANGED NOTHING: the promote route answers a file whose request is
- * still pending with `{ approval, already: true }`. Counting that as a fresh request told a
- * user who pressed Promote twice that twelve more were filed when none were — the same
- * "a count is not a reason" defect one layer along (review M1).
+ * A success is not one thing. The promote route answers with exactly one of three
+ * header-documented shapes, and each means something different to the person reading the
+ * notice:
+ *   `{ requested: true, promoted: false, approval }`        a request was FILED      → neither flag
+ *   `{ requested: true, already: true, approvalId }`        one was already open     → `already`
+ *   `{ promoted: true, requested: false, approvalId, … }`   the owner-approver's one → `promoted`
+ *                                                            shot; already in the domain
+ *
+ * `already` is the 200 that CHANGED NOTHING — counting it as a fresh request told a user who
+ * pressed Promote twice that twelve more were filed when none were (review M1). `promoted` is
+ * the opposite error: a domain_admin/admin OWNER's file is already shared, so reporting it as
+ * "requested … a domain admin approves each" would invent a step that has already happened.
  */
-export type BulkOutcome = { id: string; name: string; ok: boolean; error?: string; already?: boolean };
+export type BulkOutcome = {
+  id: string;
+  name: string;
+  ok: boolean;
+  error?: string;
+  already?: boolean;
+  promoted?: boolean;
+};
 
 /** Identical reasons, collapsed: "12 files: add a description, at least one tag first". */
 export type ReasonGroup = { reason: string; count: number; names: string[] };
 
 export type BulkSummary = {
-  /** Calls that CHANGED something. For Promote this is requests FILED, not promotions
-   *  applied — and never a request that was already pending before the press. */
+  /** Every call that CHANGED something: `requested + promoted`. Never one that was already
+   *  pending before the press. */
   ok: number;
+  /** Requests FILED by this press — the only count that puts work in an approver's queue. */
+  requested: number;
+  /** Applied outright by an owner who is also the approver (the one shot). */
+  promoted: number;
   /** Succeeded, but nothing happened because it was already in that state. */
   already: number;
   failed: number;
@@ -82,9 +101,14 @@ export function summariseBulk(
   outcomes: BulkOutcome[],
   opts: { verb: string; skipped?: number; approvalNote?: string },
 ): BulkSummary {
-  // A 200 that filed nothing is its own clause, never a success (review M1).
-  const ok = outcomes.filter((o) => o.ok && !o.already).length;
-  const already = outcomes.filter((o) => o.ok && o.already).length;
+  // The three success shapes are mutually exclusive and are counted apart: a one-shot
+  // promotion is not a filed request (PR #61), and a 200 that filed nothing is neither
+  // (review M1). `promoted` is tested first because it carries `requested: false`.
+  const successes = outcomes.filter((o) => o.ok);
+  const promoted = successes.filter((o) => o.promoted).length;
+  const already = successes.filter((o) => !o.promoted && o.already).length;
+  const requested = successes.filter((o) => !o.promoted && !o.already).length;
+  const ok = requested + promoted;
   const failures = outcomes.filter((o) => !o.ok);
   const skipped = opts.skipped ?? 0;
 
@@ -98,19 +122,25 @@ export function summariseBulk(
   }
   const reasons = [...groups.values()].sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
 
-  const counts = [ok > 0 ? `${ok} ${opts.verb}` : `Nothing ${opts.verb}`];
+  const counts: string[] = [];
+  if (requested) counts.push(`${requested} ${opts.verb}`);
+  if (promoted) counts.push(`${promoted} promoted`);
+  // Nothing CHANGED — say so in the caller's own verb rather than leading with a refusal.
+  if (counts.length === 0) counts.push(`Nothing ${opts.verb}`);
   if (already) counts.push(`${already} already pending`);
   if (failures.length) counts.push(`${failures.length} failed`);
   if (skipped) counts.push(`${skipped} skipped`);
 
   const sentences = [`${counts.join(' · ')}.`];
-  // The approval claim is only true if a request really was filed BY THIS PRESS.
-  if (ok > 0 && opts.approvalNote) sentences.push(opts.approvalNote);
+  // The approval claim is keyed on REQUESTED, not on success: a one-shot promotion is already
+  // applied and an already-pending one was filed by an earlier press, so neither puts
+  // anything new in front of an approver because of this one.
+  if (requested > 0 && opts.approvalNote) sentences.push(opts.approvalNote);
   for (const g of reasons) {
     // With one casualty the NAME is the more useful fact; with several, the count is.
     const subject = g.count === 1 ? (g.names[0] || '1 file') : `${g.count} files`;
     sentences.push(`${subject}: ${g.reason}.`);
   }
 
-  return { ok, already, failed: failures.length, skipped, reasons, notice: sentences.join(' ') };
+  return { ok, requested, promoted, already, failed: failures.length, skipped, reasons, notice: sentences.join(' ') };
 }

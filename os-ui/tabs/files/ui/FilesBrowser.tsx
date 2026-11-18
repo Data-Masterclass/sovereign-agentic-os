@@ -505,10 +505,15 @@ function FilesBrowserInner() {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
         });
         const data = await res.json().catch(() => ({}));
-        // A 200 carrying `already: true` means a request was ALREADY pending and this press
-        // filed nothing — its own clause, never a fresh request (review M1).
+        // The route answers with exactly one of three shapes, and each reads differently:
+        //   { promoted: true, requested: false } — the owner-approver's ONE SHOT: already in
+        //       the domain, so it is not a request and nobody has to approve it (PR #61);
+        //   { requested: true, already: true }   — a request was ALREADY open; this press
+        //       filed nothing (review M1);
+        //   { requested: true, promoted: false } — a request was filed.
+        // `promoted` is tested first because it carries `requested: false`.
         outcomes.push(res.ok
-          ? { id: f.id, name: f.name, ok: true, already: data.already === true }
+          ? { id: f.id, name: f.name, ok: true, promoted: data.promoted === true, already: data.already === true }
           : { id: f.id, name: f.name, ok: false, error: serverError(data, 'Could not request promotion') });
       } catch (e) {
         outcomes.push({ id: f.id, name: f.name, ok: false, error: (e as Error).message });
