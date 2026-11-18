@@ -355,3 +355,47 @@ test('WorkflowView commits through the never-dropping queue, not the drop-if-bus
 `npm --prefix os-ui test`, `bash os-ui/scripts/gate.sh`, `node scripts/check-structure.mjs`,
 `os-ui/node_modules/.bin/tsc --noEmit -p os-ui`. All green, structure counts not above
 419 / 1 / 200 / 1233.
+
+---
+
+# RESULTS (2026-11-18)
+
+| Task | Status | Evidence |
+|---|---|---|
+| 1 — registry is the source of truth | done | `actor-registry.test.ts` 4 tests (resurrection, empty-registry round trip, derived stable ids, registry-not-re-derived) |
+| 2 — rename travels, delete asks | done | `actor-registry.test.ts` 6 tests (rename, category change, reassign, clear, immutability, `stepsUsingActor`) |
+| 3 — the commit queue | done | `commit-queue.test.ts` 4 tests (never drops + order, failure reported and non-blocking, busy transitions, non-`Error` throw) |
+| 4 — tacit, symmetric | done | `schema.test.ts` — the three-line note with a `---` line and a fence line, asserted over TWO round trips; the existing `okf-model.test.ts` / `okf-roundtrip.test.ts` round trips still pass |
+| 5 — the two inspectors | done | `editor-source.test.ts` 7 tripwires; `ActorInspector.tsx` new; `ActorsPanel` is list + add only; `StepInspector` controlled with one Save |
+| 6 — the gate | green | see below |
+
+```
+npm --prefix os-ui test        6296 tests · 6292 pass · 0 fail · 4 todo (pre-existing)
+bash os-ui/scripts/gate.sh     exit 0 · 436 tests · 432 pass · 0 fail · 4 todo (pre-existing)
+node scripts/check-structure.mjs   TAB-ISOLATION 419 · LEGACY-IMPORT 1 · CORE-INDEPENDENCE 200 ·
+                                   FILE-HEADER 1231 (4 BELOW the 1235 baseline) — ok, no new violations
+os-ui/node_modules/.bin/tsc --noEmit -p os-ui   clean
+```
+
+## Deviations from the design
+
+* `removeActor`'s default (no options) is **registry-only** removal rather than "clear the steps":
+  that default is what leaves the warning behind, and it is the shape the resurrection test needs.
+  The UI never uses the default for an actor in use — it asks, and passes `reassignTo` or
+  `clearSteps`.
+* Every action inside `StepInspector` (add a link, add a rule, add an actor, reorder) commits the
+  open draft **with** it via `applyDraft`, instead of refusing to act while the form is dirty. The
+  alternative loses typed text, which is the defect being fixed.
+* `updateActor` now refuses a rename that would collide with another registry actor
+  (`Another actor is already named …`) — the registry is keyed by (category, name), so a collision
+  would merge two actors' steps silently.
+
+## Left open
+
+* `scripts/structure-baseline.json` still records `FILE-HEADER: 1235` while the tree measures 1231.
+  Locking it in (`node scripts/check-structure.mjs --baseline`) is deliberately **not** part of this
+  branch: the baseline is a shared tree-wide file and other branches move the same number.
+* The markdown panel still saves with its own `saveMarkdown` (its own sha + dirty state) rather than
+  through the commit queue. It is already an explicit-Save surface, so it has neither defect; moving
+  it behind the queue would be a refactor beyond this fix.
+* Links and step rules remain immediate commits by design (they are actions, not text fields).

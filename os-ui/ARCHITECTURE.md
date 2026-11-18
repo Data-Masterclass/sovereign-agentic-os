@@ -781,6 +781,38 @@ the pattern.
 **TypeScript parameter properties do not work.** `constructor(readonly x: string)`
 is rejected by the same type-stripping. Declare the field explicitly.
 
+**A registry that is re-derived on every load cannot be deleted from.** The
+Knowledge workflow's actor registry was rebuilt on each parse as the declared
+`actors:` merged with every distinct (category, name) on the steps. A delete
+therefore survived exactly one round trip: the next load re-derived the actor from
+the step that still named it — and re-derived it without an `id`, so the ✕ that
+only renders for an actor with an id disappeared too. Two rules came out of it,
+and they generalise to any derived-or-declared collection:
+
+- **Presence of the section is the signal, not its emptiness.** Once `actors:` exists
+  it is the source of truth, and `serializeWorkflow` writes it *even when empty* —
+  otherwise deleting the last entry hands the next parse a section-less file and
+  derivation starts again. Derivation is for a legacy file only.
+- **A reference the registry does not hold is a validation warning, never a
+  repair.** `tabs/knowledge/lib/actor-registry.ts` reports it; nothing adds the
+  entry back. Silent repair is indistinguishable from "my delete did not work".
+
+Derived entries also get a **deterministic** id (`stableActorId`), so writing the
+derivation back is a fixed point rather than a file that churns on every load.
+
+**"Drop the action if one is already in flight" loses the user's work.** The
+workflow editor's `mutate` returned early while a previous commit+reload ran, and
+every field committed on blur — so "type, then click" dropped the edit with no
+error anywhere. The commit path must **queue**, not drop
+(`tabs/knowledge/lib/commit-queue.ts`: serial because each commit re-reads the sha,
+resolving an outcome so the caller can keep its draft and show the failure where
+the user typed). A busy flag may disable a button; it must never swallow an edit.
+
+**An inspector over a selected item needs `key={item.id}` and controlled fields.**
+`defaultValue` plus no key means React keeps the previous item's DOM state, so
+selecting another step showed the first step's text — and because the fields also
+committed on blur, the stale text could be saved onto the new step.
+
 **Never restate a route path that already exists in the nav.** The Drive OAuth
 callback sent every user to `/files`, which exists only as an API path and has
 no page, while the Files tab is at `/unstructured`. All eight exits of that
