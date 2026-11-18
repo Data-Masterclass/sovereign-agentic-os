@@ -446,3 +446,60 @@ that set. It is deliberately *not* taken here.
   now matches against a comment-stripped copy of the source, and asserts identifiers, property
   names, status codes and **call ordering** (gate before dedup, apply before decide) rather than
   sentences.
+
+---
+
+# RE-REVIEW ROUND
+
+## M — the same decision, the second door
+
+`canApprove` now refuses a requester who tries to decide their own **certification**. But
+`promoteThroughSeam`'s separation-of-duties check read **rung 1 only**
+(`rung === 'promote' && art.owner !== user.id`), and none of the tab-level promote entries names a
+rung — `publish_knowledge`, `promote_connection`, the software `promote`, the UI promote buttons all
+derive it from the current tier. So an admin who OWNED a *Shared* artefact called one of them,
+landed on the certify rung, certified it company-wide in a single call, and minted a
+`promote_certify` record with `decidedBy === requestedBy`: exactly the act the Governance door had
+just been taught to refuse. One rule, two doors, and only one of them enforced it.
+
+The check now covers both rungs. Rung 1 keeps the carve-out — the owner may one-shot, because a
+rung-1 request is owner-only to file and refusing them would only strand the artefact. Rung 2 does
+not: the seam files (or reuses) the pending `promote_certify` and answers
+`{ requested: true, approval, hint: 'Certification to Company needs a second Admin — you filed this
+request, so you cannot also decide it.' }`. `promoteThroughSeam`'s return type gained that member,
+so every caller has to deal with it; the three that read fields off the result
+(`promote_connection`, the personal-knowledge route's two rungs, `promoteOrRequest`) now forward the
+pending handle instead of a false success.
+
+A second test pins the other half — a **non-owner** admin still certifies in one shot, because
+there the domain vouched and she is the second pair of eyes.
+
+## L — a decision that did not land is now audited at both doors
+
+The `!effect.ok` branches stamped `recordEffect` on the card and wrote nothing to the audit log, and
+the MCP door's `catch` did neither. A decision that was made and did not land is precisely what an
+auditor asks about later, and "which door was used" should not decide whether the event exists. Both
+doors now audit the reported-failure branch, and the MCP door audits its throw branch too (the HTTP
+door already did). Pinned by a behavioural test over a legacy metric request plus a tripwire that
+reads each `!effect.ok` branch.
+
+## L — apply-before-decide, and the `claim()` design we did not build
+
+Moving to apply-then-decide (M1 of the previous round) fixed the real defect — a request marked
+`approved` with nothing applied, unretriable — but it shifts where double-apply is prevented. Under
+decide-then-apply, `decide()` was the mutex: it returns `null` for an already-decided item, so a
+racing second approver could not reach the effect. Now both approvers can enter `applyEffect`
+concurrently, and the thing that stops a double application is **each store's own 409 guard**:
+`validatePromotion` ("Dataset is no longer pending promotion"), `applyApprovedFilePromotion` ("File
+is no longer pending promotion"), `publishWorkflow` ("Workflow is already published"),
+`promoteArtifact` ("Already Certified"), `promoteSystem`, `promotePersonalKnowledge` ("This
+knowledge is already promoted"). Every ladder kind has one, which is why this is safe today, and the
+second approver gets a typed conflict rather than a second tier flip.
+
+It is nevertheless a weaker guarantee than a mutex, and it is load-bearing on a property of the
+stores rather than of the queue. The clean fix is a **`claim()`** step in `core/policy/approvals`:
+one atomic `pending → applying` transition that only one caller can win, with the effect run by the
+winner and the record moved to `approved` or back to `pending` afterwards. That is a queue-state
+change touching every decision path and both doors, so it is recorded here rather than smuggled into
+a review round. Until it exists, the per-kind 409 guard is the thing a new ladder kind MUST have —
+a kind whose promote is idempotent-by-overwrite would apply twice under a race.

@@ -168,14 +168,35 @@ export const governanceTools: McpTool[] = [
       try {
         effect = await applyEffect(a, { id: user.id, role: user.role, domains: user.domains }, buildEffectDeps());
       } catch (e) {
-        // The effect's own gate refused (e.g. certify needs Admin) or it errored —
-        // leave the request pending, propagate the typed status.
+        // The effect's own gate refused (e.g. certify needs Admin) or it errored — leave the
+        // request pending and propagate the typed status. AUDIT IT: a decision was made, and it
+        // did not land. The HTTP door already recorded this; without it here the MCP door was
+        // the quiet one, and "which door was used" is not something an auditor should have to
+        // know in order to find the event.
+        audit({
+          actor: user.id,
+          action: 'approve',
+          subject: a.tool || a.kind,
+          domain: a.domain,
+          reason: `Effect FAILED — request left pending: ${(e as Error).message}`,
+          detail: { approvalId: a.id, kind: a.kind, error: (e as Error).message },
+        });
+        recordEffect(a.id, { applied: `Effect failed: ${(e as Error).message}`, live: false });
         const status = (e as { status?: number }).status ?? 502;
         fail(`Effect failed — request left pending: ${(e as Error).message}`, status);
       }
       if (!effect.ok) {
-        // The effect ran but reported failure (e.g. a physical publish that failed);
-        // record it for the audit trail and leave the request pending.
+        // The effect ran but reported failure (e.g. a physical publish that failed). Record it on
+        // the card AND in the audit log — `recordEffect` writes only the card, so the one place an
+        // auditor looks would have had no trace of a decision that was made and did not land.
+        audit({
+          actor: user.id,
+          action: 'approve',
+          subject: a.tool || a.kind,
+          domain: a.domain,
+          reason: `Effect did not complete — request left pending: ${effect.applied}`,
+          detail: { approvalId: a.id, kind: a.kind, publish: effect.publish },
+        });
         recordEffect(a.id, { applied: effect.applied, live: false, publish: effect.publish });
         fail(`Effect did not complete — request left pending: ${effect.applied}`, 502);
       }

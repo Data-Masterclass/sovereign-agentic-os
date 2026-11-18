@@ -35,6 +35,7 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
     if (entry.visibility === 'Personal') {
       if (roleAtLeast(user.role, 'domain_admin')) {
         const r = await promoteThroughSeam('personal_knowledge', id, user, { rung: 'promote' });
+        if (r.requested) return NextResponse.json({ requested: true, approval: r.approval, hint: r.hint });
         return NextResponse.json({ ok: r.ok, visibility: r.artifact.visibility, applied: r.applied });
       }
       const approval = await fileArtifactPromotion('personal_knowledge', id, user);
@@ -45,6 +46,9 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
     if (entry.visibility === 'Shared') {
       if (roleAtLeast(user.role, 'admin')) {
         const r = await promoteThroughSeam('personal_knowledge', id, user, { rung: 'certify' });
+        // An ADMIN WHO OWNS IT files instead: Company scope keeps four-eyes, so the seam hands
+        // back the filed request rather than performing both halves.
+        if (r.requested) return NextResponse.json({ requested: true, approval: r.approval, hint: r.hint });
         return NextResponse.json({ ok: r.ok, visibility: r.artifact.visibility, applied: r.applied });
       }
       const approval = await fileArtifactCertification('personal_knowledge', id, user);
